@@ -62,7 +62,7 @@ struct ParsedInstallScript {
 ///
 /// Extracts download URLs and related metadata from Chocolatey install scripts
 /// by matching known PowerShell function patterns and variable assignments.
-/// Does not execute the script — static analysis only.
+/// Does not execute the script -- static analysis only.
 class InstallScriptParser {
 public:
     InstallScriptParser() = default;

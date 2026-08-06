@@ -2967,6 +2967,52 @@ gate teaches people to disable both.
            selectCallArgs, readFormat, parseModifiers, normalizeUrl) - the same
            pure-seam pattern the C++ side uses throughout.
 
+- [ ] R5-G21-12 NON-ASCII BYTES WERE HIDING TWO REAL DEFECTS, NOT JUST STYLE.
+      Measured 2026-08-05. 116 tracked text files held 48,779 bytes above 0x7F and
+      53 carried a UTF-8 BOM. 97% of that was decoration - box-drawing rules used as
+      comment separators - but going through it character by character rather than
+      running a blanket substitution turned up two things that were not decoration:
+
+        1. tests/unit/test_encryption.cpp:199. roundTrip_nonAsciiPassword's password
+           literal was cp1252 mojibake. The intended string was the word "password"
+           in three scripts (Cyrillic parol, Chinese mima, Japanese pasuwaado); what
+           was actually on disk was that string's UTF-8 bytes re-encoded a second
+           time, so the test had been round-tripping a Latin-1 byte soup and proving
+           nothing about the multi-script input its name promises. Recovered by
+           reversing the cp1252 step and rewritten as \u escapes, so the test now
+           exercises what it claims and the file is ASCII.
+        2. src/core/partition_apfs_writer.cpp:147. The same double-encoding, on an
+           em dash in a comment.
+
+      Neither is visible in review: mangled text still renders as text. That is the
+      argument for the gate rather than a convention.
+
+      Converted 88 files. Decoration was substituted (-- for em dash, -> for arrow,
+      <= and >= for the relational signs, "section " for the section sign, | + - for
+      box drawing). Where a glyph reaches a user it was NOT degraded - the em dash in
+      the "Address Book" window title and the em dash / ellipsis in the conversion
+      report's HTML table keep their codepoints as \u escapes, so the rendered output
+      is byte-identical and only the source moved. U+2404 SYMBOL FOR END OF
+      TRANSMISSION, which had been standing in for the four NUL bytes that begin the
+      HFS+ Private Data directory name, was replaced by naming the bytes.
+
+      scripts/check_ascii_only.ps1 enforces it: no byte above 0x7F, no BOM. It is a
+      binary-extension DENYLIST, not a text allowlist, so a new text file type is
+      covered by default and a new binary type fails loudly until it is named.
+
+      Two exclusions, neither a style exemption:
+        - Vendored third-party trees (tools/chocolatey, tools/uup, tools/iperf3,
+          tools/smartmontools). Rewriting the copyright sign in someone else's
+          license header, or the accented letter in an author's name, alters a notice
+          the license requires be preserved.
+        - artifacts/ certification evidence. Those reports record what a live run
+          produced; editing one after the fact edits the evidence.
+
+      Remaining: 3 files (partition_apfs_writer.cpp, partition_script_builder.cpp,
+      partition_hfs_internal.h) were deferred because a verification wave was reading
+      them when the conversion ran. They are converted and the gate is wired in a
+      follow-up commit; until then the gate is present but not yet enforced.
+
 ### G17 - defects found while FIXING, that the review never reported
 
 Wave 5 fixed the 43 verified MEDIUM findings. While doing so it uncovered defects more
@@ -3075,6 +3121,25 @@ Running tally of gates that reported healthy while analyzing nothing:
       coverage that did not exist
 - [ ] R5-G16-5 Audit for the inverse defect: targets that build but are never registered
       with add_test, and add_test entries excluded by a label or filter
+- [ ] R5-G16-6 EVERY TEST TARGET IS WRAPPED IN A GUARD THAT MAKES ITS OWN DISAPPEARANCE
+      SILENT. Measured 2026-08-05. tests/CMakeLists.txt declares 209 test targets, and
+      every one of them sits inside `if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/<file>")`.
+      All 209 guarded paths exist, so not one guard is load-bearing today -- their only
+      effect is on the day a source file is renamed, moved, or deleted, at which point
+      the target quietly stops being declared, ctest reports a smaller suite, and nothing
+      fails. That is the same shape as the defect this whole section is about: G16 exists
+      because nine test files were documented as covering code while never compiling. The
+      guard institutionalizes it for all 209.
+
+      CMake already fails closed here -- add_executable on a missing source is a hard
+      configure error naming the file. The guards convert that error into silence, which
+      is the wrong direction for a gate. check_test_registration.ps1 checks the forward
+      direction (every test_*.cpp has a target) and cannot see this one, because once the
+      .cpp is gone there is nothing left to be unregistered.
+
+      Fix: drop the guards so a vanished test source breaks configure, and assert the
+      resulting ctest count against a recorded baseline so a silent shrink is a failure
+      rather than a smaller green number.
 
 ### G10 - definition of done for this campaign
 

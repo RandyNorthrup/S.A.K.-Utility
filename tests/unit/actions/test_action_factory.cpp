@@ -39,7 +39,7 @@ private Q_SLOTS:
     void testAllCategoriesValid();
     void testRequiresAdminIsBool();
 
-    // Category distribution — every category has at least one action
+    // Category distribution -- every category has at least one action
     void testAllCategoriesPopulated();
 
     // Initial state

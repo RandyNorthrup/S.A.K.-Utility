@@ -14,36 +14,36 @@ class AdvancedSearchTypesTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── SearchMatch ──
+    // -- SearchMatch --
     void searchMatch_defaultConstruction();
     void searchMatch_valueSemantics();
     void searchMatch_contextLines();
 
-    // ── SearchConfig ──
+    // -- SearchConfig --
     void searchConfig_defaultValues();
     void searchConfig_defaultExcludes();
     void searchConfig_valueSemantics();
 
-    // ── SearchPreferences ──
+    // -- SearchPreferences --
     void searchPreferences_defaultValues();
     void searchPreferences_copyable();
 
-    // ── RegexPatternInfo ──
+    // -- RegexPatternInfo --
     void regexPatternInfo_defaultConstruction();
     void regexPatternInfo_copyable();
 
-    // ── Extension Sets ──
+    // -- Extension Sets --
     void imageExtensions_containsExpected();
     void imageExtensions_doesNotContainWrong();
     void fileMetadataExtensions_containsExpected();
     void archiveExtensions_containsExpected();
 
-    // ── Compile-Time Invariants ──
+    // -- Compile-Time Invariants --
     void staticAsserts_defaultConstructible();
     void staticAsserts_copyConstructible();
 };
 
-// ── SearchMatch ─────────────────────────────────────────────────────────────
+// -- SearchMatch -------------------------------------------------------------
 
 void AdvancedSearchTypesTests::searchMatch_defaultConstruction() {
     sak::SearchMatch match;
@@ -94,7 +94,7 @@ void AdvancedSearchTypesTests::searchMatch_contextLines() {
     QCOMPARE(match.context_after[1], "line 6");
 }
 
-// ── SearchConfig ────────────────────────────────────────────────────────────
+// -- SearchConfig ------------------------------------------------------------
 
 void AdvancedSearchTypesTests::searchConfig_defaultValues() {
     sak::SearchConfig config;
@@ -152,7 +152,7 @@ void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
     QCOMPARE(copy.context_lines, 5);
 }
 
-// ── SearchPreferences ───────────────────────────────────────────────────────
+// -- SearchPreferences -------------------------------------------------------
 
 void AdvancedSearchTypesTests::searchPreferences_defaultValues() {
     sak::SearchPreferences prefs;
@@ -174,7 +174,7 @@ void AdvancedSearchTypesTests::searchPreferences_copyable() {
     QCOMPARE(copy.max_preview_file_size_mb, 20);
 }
 
-// ── RegexPatternInfo ────────────────────────────────────────────────────────
+// -- RegexPatternInfo --------------------------------------------------------
 
 void AdvancedSearchTypesTests::regexPatternInfo_defaultConstruction() {
     sak::RegexPatternInfo info;
@@ -199,7 +199,7 @@ void AdvancedSearchTypesTests::regexPatternInfo_copyable() {
     QCOMPARE(copy.enabled, true);
 }
 
-// ── Extension Sets ──────────────────────────────────────────────────────────
+// -- Extension Sets ----------------------------------------------------------
 
 void AdvancedSearchTypesTests::imageExtensions_containsExpected() {
     QVERIFY(sak::kImageExtensions.contains("jpg"));
@@ -237,7 +237,7 @@ void AdvancedSearchTypesTests::archiveExtensions_containsExpected() {
     QVERIFY(!sak::kArchiveExtensions.contains("gz"));
 }
 
-// ── Compile-Time Invariants Verification ────────────────────────────────────
+// -- Compile-Time Invariants Verification ------------------------------------
 
 void AdvancedSearchTypesTests::staticAsserts_defaultConstructible() {
     QVERIFY(std::is_default_constructible_v<sak::SearchMatch>);

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_advanced_search_controller.cpp
-/// @brief Unit tests for AdvancedSearchController — state machine, history,
+/// @brief Unit tests for AdvancedSearchController -- state machine, history,
 ///        preferences, worker lifecycle
 
 #include "sak/advanced_search_controller.h"
@@ -30,19 +30,19 @@ class AdvancedSearchControllerTests : public QObject {
 private Q_SLOTS:
     void initTestCase();
 
-    // ── Initial State ──
+    // -- Initial State --
     void initialState_isIdle();
     void patternLibrary_notNull();
     void patternLibrary_hasBuiiltins();
 
-    // ── Search Lifecycle ──
+    // -- Search Lifecycle --
     void startSearch_changesState();
     void startSearch_emitsSignals();
     void cancelSearch_changesState();
     void cancelSearch_emitsSignal();
     void searchComplete_returnsToIdle();
 
-    // ── Search History ──
+    // -- Search History --
     void history_initiallyEmpty();
     void history_addedOnSearch();
     void history_preventsDuplicates();
@@ -50,12 +50,12 @@ private Q_SLOTS:
     void history_emptyPatternNotAdded();
     void history_clearHistory();
 
-    // ── Preferences ──
+    // -- Preferences --
     void preferences_defaultValues();
     void preferences_setAndGet();
     void preferences_clampedValues();
 
-    // ── Worker Double-Start ──
+    // -- Worker Double-Start --
     void doubleStart_cancelsFirst();
 
     // -- Codex review 5: completeness must travel with the counts --
@@ -75,7 +75,7 @@ void AdvancedSearchControllerTests::initTestCase() {
     testFile.close();
 }
 
-// ── Initial State ───────────────────────────────────────────────────────────
+// -- Initial State -----------------------------------------------------------
 
 void AdvancedSearchControllerTests::initialState_isIdle() {
     AdvancedSearchController ctrl;
@@ -92,7 +92,7 @@ void AdvancedSearchControllerTests::patternLibrary_hasBuiiltins() {
     QCOMPARE(ctrl.patternLibrary()->builtinPatterns().size(), 8);
 }
 
-// ── Search Lifecycle ────────────────────────────────────────────────────────
+// -- Search Lifecycle --------------------------------------------------------
 
 void AdvancedSearchControllerTests::startSearch_changesState() {
     AdvancedSearchController ctrl;
@@ -228,7 +228,7 @@ void AdvancedSearchControllerTests::searchComplete_returnsToIdle() {
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Idle);
 }
 
-// ── Search History ──────────────────────────────────────────────────────────
+// -- Search History ----------------------------------------------------------
 
 void AdvancedSearchControllerTests::history_initiallyEmpty() {
     AdvancedSearchController ctrl;
@@ -296,7 +296,7 @@ void AdvancedSearchControllerTests::history_clearHistory() {
     QVERIFY(ctrl.searchHistory().isEmpty());
 }
 
-// ── Preferences ─────────────────────────────────────────────────────────────
+// -- Preferences -------------------------------------------------------------
 
 void AdvancedSearchControllerTests::preferences_defaultValues() {
     AdvancedSearchController ctrl;
@@ -354,7 +354,7 @@ void AdvancedSearchControllerTests::preferences_clampedValues() {
     QVERIFY(prefs.context_lines <= 10);
 }
 
-// ── Worker Double-Start ─────────────────────────────────────────────────────
+// -- Worker Double-Start -----------------------------------------------------
 
 void AdvancedSearchControllerTests::doubleStart_cancelsFirst() {
     AdvancedSearchController ctrl;
@@ -372,7 +372,7 @@ void AdvancedSearchControllerTests::doubleStart_cancelsFirst() {
     // Start first search
     ctrl.startSearch(config1);
 
-    // Immediately start second — should cancel first
+    // Immediately start second -- should cancel first
     ctrl.startSearch(config2);
 
     // Only the second search reaches this signal: the superseded worker's queued

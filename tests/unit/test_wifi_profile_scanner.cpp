@@ -12,7 +12,7 @@ class TestWifiProfileScanner : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── wifiSecurityTypeFromProfileXml ──────────────────────────────────
+    // -- wifiSecurityTypeFromProfileXml ----------------------------------
     void security_wpa2Personal();
     void security_wpa3Personal();
     void security_open();

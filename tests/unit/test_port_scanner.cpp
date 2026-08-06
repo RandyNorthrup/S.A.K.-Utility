@@ -14,11 +14,11 @@ class TestPortScanner : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──────────────────────────────────────────────
+    // -- Construction ----------------------------------------------
     void construction_default();
     void construction_nonCopyable();
 
-    // ── getServiceName ────────────────────────────────────────────
+    // -- getServiceName --------------------------------------------
     void serviceName_http();
     void serviceName_https();
     void serviceName_ssh();
@@ -28,18 +28,18 @@ private Q_SLOTS:
     void serviceName_rdp();
     void serviceName_unknownPort();
 
-    // ── getPresets ────────────────────────────────────────────────
+    // -- getPresets ------------------------------------------------
     void presets_nonEmpty();
     void presets_haveValidPorts();
     void presets_haveNames();
 
-    // ── ScanConfig defaults ──────────────────────────────────────
+    // -- ScanConfig defaults --------------------------------------
     void scanConfig_defaults();
 };
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Construction
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestPortScanner::construction_default() {
     PortScanner scanner;
@@ -52,9 +52,9 @@ void TestPortScanner::construction_nonCopyable() {
     QVERIFY(!std::is_move_constructible_v<PortScanner>);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // getServiceName
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestPortScanner::serviceName_http() {
     const auto name = PortScanner::getServiceName(80);
@@ -107,9 +107,9 @@ void TestPortScanner::serviceName_unknownPort() {
     QVERIFY(name.isEmpty() || name.contains("Unknown", Qt::CaseInsensitive));
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // getPresets
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestPortScanner::presets_nonEmpty() {
     const auto presets = PortScanner::getPresets();
@@ -134,9 +134,9 @@ void TestPortScanner::presets_haveNames() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // ScanConfig defaults
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestPortScanner::scanConfig_defaults() {
     PortScanner::ScanConfig config;

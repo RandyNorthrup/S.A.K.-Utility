@@ -1,4 +1,4 @@
-// S.A.K. Utility — cppcheck suppressions
+// S.A.K. Utility -- cppcheck suppressions
 // Only fundamental tool limitations. All real findings fixed in code.
 
 // cppcheck does not have Qt/system headers available.

@@ -22,7 +22,7 @@ class TestPdfEmailWriter : public QObject {
 private Q_SLOTS:
 
     // ====================================================================
-    // Happy Path — Plain text message to PDF
+    // Happy Path -- Plain text message to PDF
     // ====================================================================
 
     void testWritePlainTextPdf() {

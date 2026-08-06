@@ -46,12 +46,12 @@ enum class FeatureId : uint16_t {
     // Email Tools (200-299)
     EmailInspector = 200,
 
-    // Quick Actions — Standard (300-349)
+    // Quick Actions -- Standard (300-349)
     GenerateSystemReport = 300,
     ScreenshotSettings = 301,
     OptimizePowerSettings = 302,
 
-    // Quick Actions — Elevated (350-399)
+    // Quick Actions -- Elevated (350-399)
     BackupBitlockerKeys = 350,
     VerifySystemFiles = 351,
     CheckDiskErrors = 352,
@@ -120,20 +120,20 @@ struct FeatureElevation {
 /// Every user-facing feature must appear in this table. The table is sorted
 /// by FeatureId for binary-search lookup.
 inline constexpr FeatureElevation kFeatureElevationTable[] = {
-    // File Management — Standard
+    // File Management -- Standard
     {FeatureId::AdvancedSearch, ElevationTier::Standard, "Advanced Search", ""},
     {FeatureId::FileOrganizer, ElevationTier::Standard, "File Organizer", ""},
     {FeatureId::DuplicateFinder, ElevationTier::Standard, "Duplicate Finder", ""},
 
-    // Email Tools — Standard
+    // Email Tools -- Standard
     {FeatureId::EmailInspector, ElevationTier::Standard, "Email Inspector", ""},
 
-    // Quick Actions — Standard
+    // Quick Actions -- Standard
     {FeatureId::GenerateSystemReport, ElevationTier::Standard, "Generate System Report", ""},
     {FeatureId::ScreenshotSettings, ElevationTier::Standard, "Screenshot Settings", ""},
     {FeatureId::OptimizePowerSettings, ElevationTier::Standard, "Optimize Power Settings", ""},
 
-    // Quick Actions — Elevated
+    // Quick Actions -- Elevated
     {FeatureId::BackupBitlockerKeys,
      ElevationTier::Elevated,
      "Backup BitLocker Keys",
@@ -151,7 +151,7 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
      "Reset Network Stack",
      "netsh reset commands require administrator privileges"},
 
-    // Image Flasher — Elevated
+    // Image Flasher -- Elevated
     {FeatureId::FlashUsbDrive,
      ElevationTier::Elevated,
      "Flash USB Drive",
@@ -161,7 +161,7 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
      "UUP ISO Conversion",
      "DISM AppX provisioning requires administrator privileges"},
 
-    // Partition Manager — Mixed/Elevated
+    // Partition Manager -- Mixed/Elevated
     {FeatureId::PartitionInventory,
      ElevationTier::Mixed,
      "Partition Manager Inventory",
@@ -187,7 +187,7 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
      "Secure Wipe",
      "Disk and volume wipe operations require administrator privileges"},
 
-    // Backup & Restore — Mixed
+    // Backup & Restore -- Mixed
     {FeatureId::BackupCurrentUser, ElevationTier::Standard, "Backup Current User", ""},
     {FeatureId::BackupCrossUser,
      ElevationTier::Elevated,
@@ -199,7 +199,7 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
      "Restore with ACLs",
      "SE_RESTORE_NAME and SE_TAKE_OWNERSHIP_NAME required"},
 
-    // App Management — Mixed
+    // App Management -- Mixed
     {FeatureId::AppScanning, ElevationTier::Standard, "Application Scanner", ""},
     {FeatureId::ChocolateyBrowse, ElevationTier::Standard, "Browse Chocolatey Packages", ""},
     {FeatureId::ChocolateyInstall,
@@ -215,7 +215,7 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
      "Advanced Uninstall",
      "System application removal requires administrator privileges"},
 
-    // Network Management — mostly Standard
+    // Network Management -- mostly Standard
     {FeatureId::NetworkDiagnostics, ElevationTier::Standard, "Network Diagnostics", ""},
     {FeatureId::WifiAnalyzer, ElevationTier::Standard, "WiFi Analyzer", ""},
     {FeatureId::ActiveConnections, ElevationTier::Standard, "Active Connections Monitor", ""},
@@ -238,7 +238,7 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
      "Modify Adapter Configuration",
      "Changing IP/DNS settings requires administrator privileges"},
 
-    // Hardware & Diagnostics — Mixed
+    // Hardware & Diagnostics -- Mixed
     {FeatureId::HardwareInventory, ElevationTier::Standard, "Hardware Inventory", ""},
     {FeatureId::CpuThermalData,
      ElevationTier::Elevated,
@@ -246,7 +246,7 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
      "root/WMI thermal namespace requires administrator access"},
     {FeatureId::StressTest, ElevationTier::Standard, "Stress Test", ""},
 
-    // Permissions — Elevated
+    // Permissions -- Elevated
     {FeatureId::PermissionStripInherit,
      ElevationTier::Mixed,
      "Strip/Inherit Permissions",

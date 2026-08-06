@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_leftover_scanner.cpp
-/// @brief Unit tests for LeftoverScanner — pattern matching, risk classification,
+/// @brief Unit tests for LeftoverScanner -- pattern matching, risk classification,
 ///        protected paths, file system scanning, and cancellation support
 
 #include "sak/leftover_scanner.h"
@@ -40,13 +40,13 @@ class LeftoverScannerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──
+    // -- Construction --
     void construction_safe();
     void construction_moderate();
     void construction_advanced();
     void construction_notCopyable();
 
-    // ── File System Scanning ──
+    // -- File System Scanning --
     void scan_findsMatchingFolder();
     void scan_findsMatchingFile();
     void scan_ignoresNonMatchingFolder();
@@ -55,24 +55,24 @@ private Q_SLOTS:
     void scan_progressCallbackInvoked();
     void scan_preSelectsSafeItems();
 
-    // ── Pattern Matching ──
+    // -- Pattern Matching --
     void scan_matchesProgramNameExact();
     void scan_matchesProgramNameCaseInsensitive();
     void scan_matchesConcatenatedName();
     void scan_skipsCommonWords();
     void scan_matchesInstallDirName();
 
-    // ── Risk Classification ──
+    // -- Risk Classification --
     void scan_safeInAppData();
     void scan_safeInProgramFiles();
     void scan_registryKeySafe();
     void scan_serviceScanAtAdvanced();
 
-    // ── Empty Program ──
+    // -- Empty Program --
     void scan_emptyProgram_noResults();
     void scan_emptyPublisher_noPublisherPatterns();
 
-    // ── Service leftover builder (SCM seam, locale-independent) ──
+    // -- Service leftover builder (SCM seam, locale-independent) --
     void buildServiceItems_matchesNameOrDisplay();
     void buildServiceItems_stopRequestedInterrupts();
     void buildServiceItems_localeIndependentFields();
@@ -112,7 +112,7 @@ private Q_SLOTS:
     void scan_installLocationUnpinnable_yieldsNoCandidate();
 };
 
-// ── Helper ──────────────────────────────────────────────────────────────────
+// -- Helper ------------------------------------------------------------------
 
 namespace {
 
@@ -130,7 +130,7 @@ ProgramInfo makeTestProgram(const QString& name,
 
 }  // namespace
 
-// ── Construction ────────────────────────────────────────────────────────────
+// -- Construction ------------------------------------------------------------
 
 void LeftoverScannerTests::construction_safe() {
     ProgramInfo prog = makeTestProgram("TestApp");
@@ -157,7 +157,7 @@ void LeftoverScannerTests::construction_notCopyable() {
     QVERIFY(std::is_move_constructible_v<LeftoverScanner>);
 }
 
-// ── File System Scanning ────────────────────────────────────────────────────
+// -- File System Scanning ----------------------------------------------------
 
 void LeftoverScannerTests::scan_findsMatchingFolder() {
     QTemporaryDir tempDir;
@@ -176,7 +176,7 @@ void LeftoverScannerTests::scan_findsMatchingFolder() {
     auto results = scanner.scan(stop);
 
     // The scanner scans standard system directories (Program Files, AppData, etc.)
-    // not our temp dir — so we just verify it runs without error
+    // not our temp dir -- so we just verify it runs without error
     QVERIFY(results.size() >= 0);
 }
 
@@ -197,7 +197,7 @@ void LeftoverScannerTests::scan_findsMatchingFile() {
 
     auto results = scanner.scan(stop);
 
-    // Scanner scans standard dirs, not temp dir — no crash is the test
+    // Scanner scans standard dirs, not temp dir -- no crash is the test
     QVERIFY(results.size() >= 0);
 }
 
@@ -280,7 +280,7 @@ void LeftoverScannerTests::scan_preSelectsSafeItems() {
     }
 }
 
-// ── Pattern Matching ────────────────────────────────────────────────────────
+// -- Pattern Matching --------------------------------------------------------
 
 void LeftoverScannerTests::scan_matchesProgramNameExact() {
     // Use a program name that DOES exist in common system directories
@@ -351,7 +351,7 @@ void LeftoverScannerTests::scan_matchesInstallDirName() {
     QVERIFY(results.size() >= 0);
 }
 
-// ── Risk Classification ─────────────────────────────────────────────────────
+// -- Risk Classification -----------------------------------------------------
 
 void LeftoverScannerTests::scan_safeInAppData() {
     // Items found in AppData directories should be classified as Safe
@@ -439,7 +439,7 @@ void LeftoverScannerTests::scan_serviceScanAtAdvanced() {
     }
 }
 
-// ── Empty Program ───────────────────────────────────────────────────────────
+// -- Empty Program -----------------------------------------------------------
 
 void LeftoverScannerTests::scan_emptyProgram_noResults() {
     ProgramInfo prog;  // All fields empty
@@ -465,7 +465,7 @@ void LeftoverScannerTests::scan_emptyPublisher_noPublisherPatterns() {
     QVERIFY(results.size() >= 0);
 }
 
-// ── Service leftover builder (SCM seam) ──────────────────────────────────────
+// -- Service leftover builder (SCM seam) --------------------------------------
 // buildServiceLeftoverItems is the locale-independent successor to the old sc.exe console parse:
 // it consumes (serviceName, displayName) pairs -- exactly what EnumServicesStatusExW yields -- so
 // the matching no longer depends on English "SERVICE_NAME:"/"DISPLAY_NAME:" labels. These pure

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file elevation_broker.cpp
-/// @brief Implements the ElevationBroker — client-side IPC with elevated helper
+/// @brief Implements the ElevationBroker -- client-side IPC with elevated helper
 
 #include "sak/elevation_broker.h"
 
@@ -217,7 +217,7 @@ void ElevationBroker::shutdown() {
 }
 
 // ======================================================================
-// Private — Helper Launch
+// Private -- Helper Launch
 // ======================================================================
 
 auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
@@ -267,7 +267,7 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
 }
 
 // ======================================================================
-// Private — Named Pipe Connection
+// Private -- Named Pipe Connection
 // ======================================================================
 
 auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
@@ -360,7 +360,7 @@ auto ElevationBroker::verifyServerImage(unsigned long server_pid)
 #endif
 
 // ======================================================================
-// Private — Pipe I/O
+// Private -- Pipe I/O
 // ======================================================================
 
 bool ElevationBroker::sendRaw(const QByteArray& data) {
@@ -488,7 +488,7 @@ bool ElevationBroker::isHelperAlive() const {
 }
 
 // ======================================================================
-// Private — Cleanup
+// Private -- Cleanup
 // ======================================================================
 
 void ElevationBroker::cleanup() {
@@ -523,7 +523,7 @@ void ElevationBroker::cleanup() {
 }
 
 // ======================================================================
-// Private — Utility
+// Private -- Utility
 // ======================================================================
 
 auto ElevationBroker::findHelperPath() -> std::expected<QString, sak::error_code> {

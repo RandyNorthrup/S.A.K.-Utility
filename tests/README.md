@@ -1,4 +1,4 @@
-# SAK Utility — Test Suite
+# SAK Utility -- Test Suite
 
 ## Overview
 
@@ -8,107 +8,107 @@ Comprehensive test suite for SAK Utility using the **Qt Test** framework with **
 
 ```
 tests/
-├── unit/                                  # Unit tests (158 C++ files, including actions/)
-│   ├── actions/                           # Quick action validation tests
-│   │   ├── test_action_factory.cpp
-│   │   └── test_all_actions_metadata.cpp
-│   ├── test_active_connections_monitor.cpp
-│   ├── test_advanced_search_controller.cpp
-│   ├── test_advanced_search_types.cpp
-│   ├── test_advanced_search_worker.cpp
-│   ├── test_advanced_uninstall_controller.cpp
-│   ├── test_advanced_uninstall_types.cpp
-│   ├── test_app_installation_worker.cpp
-│   ├── test_app_scanner.cpp
-│   ├── test_bandwidth_tester.cpp
-│   ├── test_bundled_tools_manager.cpp
-│   ├── test_chocolatey_manager.cpp
-│   ├── test_cleanup_worker.cpp
-│   ├── test_config_manager.cpp
-│   ├── test_connectivity_tester.cpp
-│   ├── test_cpu_benchmark_worker.cpp
-│   ├── test_decompressor_factory.cpp
-│   ├── test_diagnostic_controller.cpp
-│   ├── test_diagnostic_report_generator.cpp
-│   ├── test_diagnostic_types.cpp
-│   ├── test_disk_benchmark_worker.cpp
-│   ├── test_dns_diagnostic_tool.cpp
-│   ├── test_drive_scanner.cpp
-│   ├── test_drive_unmounter.cpp
-│   ├── test_duplicate_finder_worker.cpp
-│   ├── test_elevation_manager.cpp
-│   ├── test_email_export_worker.cpp
-│   ├── test_email_profile_manager.cpp
-│   ├── test_email_report_generator.cpp
-│   ├── test_email_search_worker.cpp
-│   ├── test_email_types.cpp
-│   ├── test_encryption.cpp
-│   ├── test_error_codes.cpp
-│   ├── test_ethernet_config_manager.cpp
-│   ├── test_file_hash.cpp
-│   ├── test_file_scanner.cpp
-│   ├── test_firewall_rule_auditor.cpp
-│   ├── test_flash_coordinator.cpp
-│   ├── test_flash_types.cpp
-│   ├── test_flash_worker.cpp
-│   ├── test_format_utils.cpp
-│   ├── test_hardware_inventory_scanner.cpp
-│   ├── test_image_source.cpp
-│   ├── test_input_validator.cpp    ├── test_install_script_parser.cpp│   ├── test_keep_awake.cpp
-│   ├── test_leftover_scanner.cpp
-│   ├── test_linux_distro_catalog.cpp
-│   ├── test_linux_iso_downloader.cpp
-│   ├── test_logger.cpp
-│   ├── test_mbox_parser.cpp
-│   ├── test_memory_benchmark_worker.cpp
-│   ├── test_migration_report.cpp
-│   ├── test_network_adapter_inspector.cpp
-│   ├── test_network_diagnostic_controller.cpp
-│   ├── test_network_diagnostic_report.cpp
-│   ├── test_network_diagnostic_types.cpp
-│   ├── test_network_diagnostic_utils.cpp
-│   ├── test_network_share_browser.cpp
-    ├── test_nuget_dependency_resolver.cpp
-    ├── test_nuget_version_range.cpp
-    ├── test_organizer_worker.cpp
-    ├── test_package_list_manager.cpp
-│   ├── test_package_matcher.cpp
-│   ├── test_path_utils.cpp
-│   ├── test_permission_manager.cpp
-│   ├── test_port_scanner.cpp
-│   ├── test_process_runner.cpp
-│   ├── test_program_enumerator.cpp
-│   ├── test_pst_parser.cpp
-│   ├── test_quick_action.cpp
-│   ├── test_quick_action_controller.cpp
-│   ├── test_quick_action_result_io.cpp
-│   ├── test_regex_pattern_library.cpp
-│   ├── test_registry_snapshot_engine.cpp
-│   ├── test_restore_point_manager.cpp    ├── test_script_rewriter.cpp│   ├── test_secure_memory.cpp
-│   ├── test_smart_disk_analyzer.cpp
-│   ├── test_smart_file_filter.cpp
-│   ├── test_streaming_decompressor.cpp
-│   ├── test_stress_test_worker.cpp
-│   ├── test_thermal_monitor.cpp
-│   ├── test_uninstall_worker.cpp
-│   ├── test_user_data_manager.cpp
-│   ├── test_user_profile_backup_worker.cpp
-│   ├── test_user_profile_restore_worker.cpp
-│   ├── test_user_profile_types.cpp
-│   ├── test_uup_dump_api.cpp
-│   ├── test_uup_iso_builder.cpp
-│   ├── test_wifi_analyzer.cpp
-│   ├── test_wifi_profile_scanner.cpp
-│   ├── test_windows_iso_downloader.cpp
-│   ├── test_windows_usb_creator.cpp
-│   ├── test_windows_user_scanner.cpp
-│   └── test_worker_base.cpp
-├── integration/                           # End-to-end workflow tests (3 files)
-│   ├── test_offline_package_builder.cpp
-│   ├── test_ost_integration.cpp
-│   └── test_uup_conversion_pipeline.cpp
-├── CMakeLists.txt                         # Test build configuration
-└── README.md                              # This file
++-- unit/                                  # Unit tests (158 C++ files, including actions/)
+|   +-- actions/                           # Quick action validation tests
+|   |   +-- test_action_factory.cpp
+|   |   +-- test_all_actions_metadata.cpp
+|   +-- test_active_connections_monitor.cpp
+|   +-- test_advanced_search_controller.cpp
+|   +-- test_advanced_search_types.cpp
+|   +-- test_advanced_search_worker.cpp
+|   +-- test_advanced_uninstall_controller.cpp
+|   +-- test_advanced_uninstall_types.cpp
+|   +-- test_app_installation_worker.cpp
+|   +-- test_app_scanner.cpp
+|   +-- test_bandwidth_tester.cpp
+|   +-- test_bundled_tools_manager.cpp
+|   +-- test_chocolatey_manager.cpp
+|   +-- test_cleanup_worker.cpp
+|   +-- test_config_manager.cpp
+|   +-- test_connectivity_tester.cpp
+|   +-- test_cpu_benchmark_worker.cpp
+|   +-- test_decompressor_factory.cpp
+|   +-- test_diagnostic_controller.cpp
+|   +-- test_diagnostic_report_generator.cpp
+|   +-- test_diagnostic_types.cpp
+|   +-- test_disk_benchmark_worker.cpp
+|   +-- test_dns_diagnostic_tool.cpp
+|   +-- test_drive_scanner.cpp
+|   +-- test_drive_unmounter.cpp
+|   +-- test_duplicate_finder_worker.cpp
+|   +-- test_elevation_manager.cpp
+|   +-- test_email_export_worker.cpp
+|   +-- test_email_profile_manager.cpp
+|   +-- test_email_report_generator.cpp
+|   +-- test_email_search_worker.cpp
+|   +-- test_email_types.cpp
+|   +-- test_encryption.cpp
+|   +-- test_error_codes.cpp
+|   +-- test_ethernet_config_manager.cpp
+|   +-- test_file_hash.cpp
+|   +-- test_file_scanner.cpp
+|   +-- test_firewall_rule_auditor.cpp
+|   +-- test_flash_coordinator.cpp
+|   +-- test_flash_types.cpp
+|   +-- test_flash_worker.cpp
+|   +-- test_format_utils.cpp
+|   +-- test_hardware_inventory_scanner.cpp
+|   +-- test_image_source.cpp
+|   +-- test_input_validator.cpp    +-- test_install_script_parser.cpp|   +-- test_keep_awake.cpp
+|   +-- test_leftover_scanner.cpp
+|   +-- test_linux_distro_catalog.cpp
+|   +-- test_linux_iso_downloader.cpp
+|   +-- test_logger.cpp
+|   +-- test_mbox_parser.cpp
+|   +-- test_memory_benchmark_worker.cpp
+|   +-- test_migration_report.cpp
+|   +-- test_network_adapter_inspector.cpp
+|   +-- test_network_diagnostic_controller.cpp
+|   +-- test_network_diagnostic_report.cpp
+|   +-- test_network_diagnostic_types.cpp
+|   +-- test_network_diagnostic_utils.cpp
+|   +-- test_network_share_browser.cpp
+    +-- test_nuget_dependency_resolver.cpp
+    +-- test_nuget_version_range.cpp
+    +-- test_organizer_worker.cpp
+    +-- test_package_list_manager.cpp
+|   +-- test_package_matcher.cpp
+|   +-- test_path_utils.cpp
+|   +-- test_permission_manager.cpp
+|   +-- test_port_scanner.cpp
+|   +-- test_process_runner.cpp
+|   +-- test_program_enumerator.cpp
+|   +-- test_pst_parser.cpp
+|   +-- test_quick_action.cpp
+|   +-- test_quick_action_controller.cpp
+|   +-- test_quick_action_result_io.cpp
+|   +-- test_regex_pattern_library.cpp
+|   +-- test_registry_snapshot_engine.cpp
+|   +-- test_restore_point_manager.cpp    +-- test_script_rewriter.cpp|   +-- test_secure_memory.cpp
+|   +-- test_smart_disk_analyzer.cpp
+|   +-- test_smart_file_filter.cpp
+|   +-- test_streaming_decompressor.cpp
+|   +-- test_stress_test_worker.cpp
+|   +-- test_thermal_monitor.cpp
+|   +-- test_uninstall_worker.cpp
+|   +-- test_user_data_manager.cpp
+|   +-- test_user_profile_backup_worker.cpp
+|   +-- test_user_profile_restore_worker.cpp
+|   +-- test_user_profile_types.cpp
+|   +-- test_uup_dump_api.cpp
+|   +-- test_uup_iso_builder.cpp
+|   +-- test_wifi_analyzer.cpp
+|   +-- test_wifi_profile_scanner.cpp
+|   +-- test_windows_iso_downloader.cpp
+|   +-- test_windows_usb_creator.cpp
+|   +-- test_windows_user_scanner.cpp
+|   +-- test_worker_base.cpp
++-- integration/                           # End-to-end workflow tests (3 files)
+|   +-- test_offline_package_builder.cpp
+|   +-- test_ost_integration.cpp
+|   +-- test_uup_conversion_pipeline.cpp
++-- CMakeLists.txt                         # Test build configuration
++-- README.md                              # This file
 ```
 
 ## Running Tests
@@ -420,7 +420,7 @@ endif()
 
 ## Best Practices
 
-- **Isolation:** Use `QTemporaryDir` for file operations — auto-cleaned after test
+- **Isolation:** Use `QTemporaryDir` for file operations -- auto-cleaned after test
 - **No hardcoded counts:** Validate structure and invariants, not exact numbers
 - **One concept per test:** Keep tests focused and named descriptively
 - **Fast:** Target < 1 second per test (use mocks for slow operations)

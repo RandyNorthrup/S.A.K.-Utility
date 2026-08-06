@@ -45,11 +45,11 @@ EmailContactsDialog::EmailContactsDialog(::EmailInspectorController* controller,
                                          const QVector<uint64_t>& contact_folder_ids,
                                          QWidget* parent)
     : QDialog(parent), m_controller(controller), m_folder_ids(contact_folder_ids) {
-    setWindowTitle(tr("Address Book — Contacts"));
+    setWindowTitle(tr("Address Book \u2014 Contacts"));
     setModal(true);
     resize(kWizardLargeWidth, kWizardLargeHeight);
 
-    // Debounce search input — refilter at most once every 150 ms while
+    // Debounce search input -- refilter at most once every 150 ms while
     // the user is typing to avoid O(N) scans on every keystroke.
     constexpr int kSearchDebounceMs = 150;
     m_search_timer = new QTimer(this);

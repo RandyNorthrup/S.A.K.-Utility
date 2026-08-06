@@ -24,7 +24,7 @@ namespace sak {
 /// Uses SHGetStockIconInfo to retrieve the system's shield icon at the
 /// small-icon size (typically 16x16). Returns an empty QIcon on failure.
 ///
-/// The result is cached internally — safe to call multiple times.
+/// The result is cached internally -- safe to call multiple times.
 [[nodiscard]] inline QIcon getShieldIcon() {
     static QIcon cached;
     if (!cached.isNull()) {
@@ -39,7 +39,7 @@ namespace sak {
         return {};
     }
 
-    // Convert HICON → QPixmap via DIB extraction
+    // Convert HICON -> QPixmap via DIB extraction
     ICONINFO icon_info{};
     if (!GetIconInfo(sii.hIcon, &icon_info)) {
         DestroyIcon(sii.hIcon);

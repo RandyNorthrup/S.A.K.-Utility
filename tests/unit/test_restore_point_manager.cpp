@@ -36,14 +36,14 @@ void TestRestorePointManager::isElevated_returnsBool() {
     const bool elevated = RestorePointManager::isElevated();
     // Unit tests typically run without elevation
     QVERIFY(!elevated || elevated);
-    // Verify it's a deterministic call — same result twice
+    // Verify it's a deterministic call -- same result twice
     QCOMPARE(RestorePointManager::isElevated(), elevated);
 }
 
 void TestRestorePointManager::isSystemRestoreEnabled_returnsBool() {
     RestorePointManager manager;
     const bool enabled = manager.isSystemRestoreEnabled();
-    // Verify deterministic — same result on repeated call
+    // Verify deterministic -- same result on repeated call
     QCOMPARE(manager.isSystemRestoreEnabled(), enabled);
 }
 

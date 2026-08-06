@@ -14,11 +14,11 @@ class TestWiFiAnalyzer : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──────────────────────────────────────────────
+    // -- Construction ----------------------------------------------
     void construction_default();
     void construction_nonCopyable();
 
-    // ── frequencyToChannel ────────────────────────────────────────
+    // -- frequencyToChannel ----------------------------------------
     void freqToChannel_2_4ghz_channel1();
     void freqToChannel_2_4ghz_channel6();
     void freqToChannel_2_4ghz_channel11();
@@ -28,16 +28,16 @@ private Q_SLOTS:
     void freqToChannel_5ghz_channel149();
     void freqToChannel_5ghz_channel165();
 
-    // ── frequencyToBand ───────────────────────────────────────────
+    // -- frequencyToBand -------------------------------------------
     void freqToBand_2_4ghz();
     void freqToBand_5ghz();
 
-    // ── calculateChannelUtilization ───────────────────────────────
+    // -- calculateChannelUtilization -------------------------------
     void channelUtil_emptyInput();
     void channelUtil_singleNetwork();
     void channelUtil_multipleNetworks();
 
-    // ── deriveBssSecurity (per-BSSID, B9-13) ──────────────────────
+    // -- deriveBssSecurity (per-BSSID, B9-13) ----------------------
     void bssSecurity_openNoPrivacyNoIe();
     void bssSecurity_wepPrivacyNoIe();
     void bssSecurity_wpa1VendorIe();
@@ -48,15 +48,15 @@ private Q_SLOTS:
     void bssSecurity_emptyRsnPayloadNotSecure();
     void bssSecurity_rsnInvalidVersionNotSecure();
 
-    // ── lookupVendor (once-init OUI table, B9-14) ─────────────────
+    // -- lookupVendor (once-init OUI table, B9-14) -----------------
     void lookupVendor_knownFallbackPrefix();
     void lookupVendor_unknownPrefixEmpty();
     void lookupVendor_shortInputEmpty();
 };
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Construction
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestWiFiAnalyzer::construction_default() {
     WiFiAnalyzer analyzer;
@@ -69,9 +69,9 @@ void TestWiFiAnalyzer::construction_nonCopyable() {
     QVERIFY(!std::is_move_constructible_v<WiFiAnalyzer>);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // frequencyToChannel
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestWiFiAnalyzer::freqToChannel_2_4ghz_channel1() {
     // 2412 MHz = Channel 1 (2.4 GHz)
@@ -113,9 +113,9 @@ void TestWiFiAnalyzer::freqToChannel_5ghz_channel165() {
     QCOMPARE(WiFiAnalyzer::frequencyToChannel(5'825'000), 165);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // frequencyToBand
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestWiFiAnalyzer::freqToBand_2_4ghz() {
     const auto band = WiFiAnalyzer::frequencyToBand(2'437'000);
@@ -129,9 +129,9 @@ void TestWiFiAnalyzer::freqToBand_5ghz() {
     QVERIFY(band.contains("5", Qt::CaseInsensitive));
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // calculateChannelUtilization
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestWiFiAnalyzer::channelUtil_emptyInput() {
     const QVector<WiFiNetworkInfo> empty;
@@ -183,9 +183,9 @@ void TestWiFiAnalyzer::channelUtil_multipleNetworks() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // deriveBssSecurity -- per-BSSID security from 802.11 IEs (B9-13)
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestWiFiAnalyzer::bssSecurity_openNoPrivacyNoIe() {
     // No Privacy bit, no RSN/WPA IE => genuinely open.
@@ -267,9 +267,9 @@ void TestWiFiAnalyzer::bssSecurity_rsnInvalidVersionNotSecure() {
     QCOMPARE(sec.authentication, QStringLiteral("Open"));
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // lookupVendor -- once-initialized OUI table (B9-14 thread-safe init)
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestWiFiAnalyzer::lookupVendor_knownFallbackPrefix() {
     // With no oui_database.txt beside the test exe, the built-in fallback set is

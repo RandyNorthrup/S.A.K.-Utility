@@ -22,7 +22,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# ── Local config (not tracked by git) ───────────────────────────
+# -- Local config (not tracked by git) ---------------------------
 # Copy scripts/sign-config.template.ps1 to scripts/sign-config.ps1
 # and fill in your subscription ID.
 $configPath = Join-Path $PSScriptRoot "sign-config.ps1"
@@ -32,13 +32,13 @@ if (-not (Test-Path $configPath)) {
 }
 . $configPath
 
-# ── Configuration ────────────────────────────────────────────────
+# -- Configuration ------------------------------------------------
 $AccountName      = "scnetsolutions"
 $ProfileName      = "SAKUtility"
 $Endpoint         = "https://wus.codesigning.azure.net/"
 $TimestampUrl     = "http://timestamp.acs.microsoft.com"
 
-# ── Resolve exe path ────────────────────────────────────────────
+# -- Resolve exe path --------------------------------------------
 $resolvedPath = Resolve-Path $ExePath -ErrorAction SilentlyContinue
 if (-not $resolvedPath) {
     Write-Error "Executable not found: $ExePath"
@@ -48,7 +48,7 @@ if (-not $resolvedPath) {
 $ExePath = $resolvedPath.Path
 Write-Host "Signing: $ExePath"
 
-# ── Check Azure CLI ─────────────────────────────────────────────
+# -- Check Azure CLI ---------------------------------------------
 $azCmd = Get-Command az -ErrorAction SilentlyContinue
 if (-not $azCmd) {
     Write-Error "Azure CLI (az) not found. Install from https://aka.ms/installazurecliwindows"
@@ -70,7 +70,7 @@ if ($LASTEXITCODE -ne 0) {
 az account set --subscription $SubscriptionId
 Write-Host "Using subscription: $SubscriptionId"
 
-# ── Locate signtool ─────────────────────────────────────────────
+# -- Locate signtool ---------------------------------------------
 $signtool = $null
 
 # Check Windows SDK paths
@@ -98,7 +98,7 @@ if (-not $signtool) {
 }
 Write-Host "Using signtool: $signtool"
 
-# ── Install Azure Trusted Signing dlib ───────────────────────────
+# -- Install Azure Trusted Signing dlib ---------------------------
 # The Trusted Signing dlib (Azure.CodeSigning.Dlib) is required by signtool.
 # Install via NuGet if not already present.
 $dlibDir = Join-Path $PSScriptRoot "..\build\trusted-signing-dlib"
@@ -122,7 +122,7 @@ if (-not (Test-Path $dlibDll)) {
     Write-Host "Dlib installed: $dlibDll"
 }
 
-# ── Create metadata JSON for Trusted Signing ────────────────────
+# -- Create metadata JSON for Trusted Signing --------------------
 $metadataJson = Join-Path $dlibDir "metadata.json"
 $jsonContent = @{
     Endpoint               = $Endpoint
@@ -133,7 +133,7 @@ $jsonContent = @{
 [System.IO.File]::WriteAllText($metadataJson, $jsonContent, (New-Object System.Text.UTF8Encoding $false))
 Write-Host "Metadata: $metadataJson"
 
-# ── Sign ─────────────────────────────────────────────────────────
+# -- Sign ---------------------------------------------------------
 Write-Host ""
 Write-Host "=== Signing executable ==="
 & $signtool sign /v `
@@ -149,7 +149,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# ── Verify ───────────────────────────────────────────────────────
+# -- Verify -------------------------------------------------------
 Write-Host ""
 Write-Host "=== Verifying signature ==="
 $sig = Get-AuthenticodeSignature $ExePath

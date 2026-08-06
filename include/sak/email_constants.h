@@ -26,7 +26,7 @@ constexpr int kMaxSearchResults = 10'000;
 /// Maximum single attachment size (500 MB)
 constexpr int64_t kMaxAttachmentSize = 500LL * 1024 * 1024;
 
-/// Maximum PST file size (50 GB — format limit)
+/// Maximum PST file size (50 GB -- format limit)
 constexpr int64_t kMaxFileSize = 50LL * 1024 * 1024 * 1024;
 
 /// NDB page size in bytes (ANSI PST and legacy Unicode PST)
@@ -232,7 +232,7 @@ constexpr uint8_t kEncryptNone = 0x00;
 /// Compressible encryption (byte-substitution, reversible without key)
 constexpr uint8_t kEncryptCompressible = 0x01;
 
-/// High encryption (not supported — password-protected)
+/// High encryption (not supported -- password-protected)
 constexpr uint8_t kEncryptHigh = 0x02;
 
 // ============================================================================
@@ -425,27 +425,27 @@ constexpr int kCalendarBarGap = 1;
 // Calendar Busy-Status Colors (fill / border pairs)
 // ============================================================================
 
-/// Free — green tones
+/// Free -- green tones
 constexpr auto kCalColorFreeFill = "#bbf7d0";
 constexpr auto kCalColorFreeBorder = "#16a34a";
 
-/// Tentative — amber tones
+/// Tentative -- amber tones
 constexpr auto kCalColorTentativeFill = "#fde68a";
 constexpr auto kCalColorTentativeBorder = "#d97706";
 
-/// Busy — blue tones
+/// Busy -- blue tones
 constexpr auto kCalColorBusyFill = "#bfdbfe";
 constexpr auto kCalColorBusyBorder = "#2563eb";
 
-/// Out of Office — violet tones
+/// Out of Office -- violet tones
 constexpr auto kCalColorOofFill = "#ddd6fe";
 constexpr auto kCalColorOofBorder = "#7c3aed";
 
-/// Default / unknown — slate-blue
+/// Default / unknown -- slate-blue
 constexpr auto kCalColorDefaultFill = "#bfdbfe";
 constexpr auto kCalColorDefaultBorder = "#3b82f6";
 
-/// Meeting request — purple tones
+/// Meeting request -- purple tones
 constexpr auto kCalColorMeetingFill = "#e9d5ff";
 constexpr auto kCalColorMeetingBorder = "#9333ea";
 

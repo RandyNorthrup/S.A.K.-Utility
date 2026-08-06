@@ -29,7 +29,7 @@ private Q_SLOTS:
     void cancel_doesNotCrash();
     void ping_localhost_completesSuccessfully();
 
-    // ── sanitizeConfig bounds (B9-17) ─────────────────────────────
+    // -- sanitizeConfig bounds (B9-17) -----------------------------
     void sanitizePing_clampsOutOfRange();
     void sanitizePing_passesValidThrough();
     void sanitizeTraceroute_clampsOutOfRange();
@@ -171,9 +171,9 @@ void TestConnectivityTester::ping_localhost_completesSuccessfully() {
     QCOMPARE(result.resolvedIP, QStringLiteral("127.0.0.1"));
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // sanitizeConfig -- clamp every numeric field to a safe range (B9-17)
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestConnectivityTester::sanitizePing_clampsOutOfRange() {
     ConnectivityTester::PingConfig config;

@@ -34,7 +34,7 @@ namespace {
 constexpr int kBuildTimeoutMs = 240'000;  // Keep below Qt Test's 5-minute watchdog
 constexpr int kMinSuccessCount = 3;       // At least 3 of 5 must succeed
 
-/// The Office PC preset — same IDs as PackageListManager::buildOfficePreset()
+/// The Office PC preset -- same IDs as PackageListManager::buildOfficePreset()
 const QVector<QPair<QString, QString>> kOfficePcPackages = {
     {"7zip", ""},
     {"vlc", ""},
@@ -196,7 +196,7 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
 
     worker.buildDeploymentBundle(kOfficePcPackages,
                                  m_output_dir.path(),
-                                 "Integration test — Office PC");
+                                 "Integration test -- Office PC");
 
     // Wait for completion with timeout
     if (!operation_finished) {
@@ -212,7 +212,7 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
         qWarning().noquote() << "Operation error:" << operation_error;
     }
     for (auto iter = package_errors.cbegin(); iter != package_errors.cend(); ++iter) {
-        qWarning().noquote() << QString("  FAILED: %1 — %2").arg(iter.key(), iter.value());
+        qWarning().noquote() << QString("  FAILED: %1 -- %2").arg(iter.key(), iter.value());
     }
 
     // Assertions
@@ -239,7 +239,7 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
 
     logFinalSummary(final_stats);
 
-    // At least kMinSuccessCount packages must succeed — some may fail due to
+    // At least kMinSuccessCount packages must succeed -- some may fail due to
     // transient CDN errors, unresolvable URLs (e.g., ${locale} in firefox),
     // or packages no longer available on Chocolatey.
     QVERIFY2(final_stats.completed >= kMinSuccessCount,

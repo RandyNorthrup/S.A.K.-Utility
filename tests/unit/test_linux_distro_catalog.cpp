@@ -17,7 +17,7 @@ class TestLinuxDistroCatalog : public QObject {
 private Q_SLOTS:
     void initTestCase();
 
-    // ── Catalog population ──────────────────────────────────
+    // -- Catalog population ----------------------------------
     void testCatalogNonEmpty();
     void testAllDistrosHaveIds();
     void testAllDistrosHaveNames();
@@ -25,16 +25,16 @@ private Q_SLOTS:
     void testAllDistrosHavePositiveSize();
     void testNoDuplicateIds();
 
-    // ── Category operations ─────────────────────────────────
+    // -- Category operations ---------------------------------
     void testCategoryNames();
     void testDistrosByCategory();
     void testAllCategoriesPresent();
 
-    // ── ID lookup ───────────────────────────────────────────
+    // -- ID lookup -------------------------------------------
     void testDistroByIdFound();
     void testDistroByIdNotFound();
 
-    // ── URL resolution ──────────────────────────────────────
+    // -- URL resolution --------------------------------------
     void testResolveDownloadUrl();
     void testResolveChecksumUrl();
     void testResolveFileName();

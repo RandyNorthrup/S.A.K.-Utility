@@ -23,7 +23,7 @@ class TestHtmlEmailWriter : public QObject {
 private Q_SLOTS:
 
     // ====================================================================
-    // Happy Path — Plain text message
+    // Happy Path -- Plain text message
     // ====================================================================
 
     void testWritePlainTextMessage() {

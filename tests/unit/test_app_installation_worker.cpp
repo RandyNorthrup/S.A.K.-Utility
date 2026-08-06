@@ -23,7 +23,7 @@ private:
                                                                   int noPackage) {
         auto report = std::make_shared<sak::MigrationReport>();
 
-        // Selected + available + has choco package → should become jobs
+        // Selected + available + has choco package -> should become jobs
         for (int i = 0; i < selectedAvailable; ++i) {
             sak::MigrationReport::MigrationEntry entry;
             entry.app_name = QString("AvailableApp%1").arg(i);
@@ -34,7 +34,7 @@ private:
             report->addEntry(entry);
         }
 
-        // Selected but NOT available → should be skipped
+        // Selected but NOT available -> should be skipped
         for (int i = 0; i < selectedUnavailable; ++i) {
             sak::MigrationReport::MigrationEntry entry;
             entry.app_name = QString("UnavailableApp%1").arg(i);
@@ -45,7 +45,7 @@ private:
             report->addEntry(entry);
         }
 
-        // Not selected → should be skipped
+        // Not selected -> should be skipped
         for (int i = 0; i < unselected; ++i) {
             sak::MigrationReport::MigrationEntry entry;
             entry.app_name = QString("UnselectedApp%1").arg(i);
@@ -56,11 +56,11 @@ private:
             report->addEntry(entry);
         }
 
-        // No choco package → should be skipped
+        // No choco package -> should be skipped
         for (int i = 0; i < noPackage; ++i) {
             sak::MigrationReport::MigrationEntry entry;
             entry.app_name = QString("NoPackageApp%1").arg(i);
-            entry.choco_package = "";  // Empty → skip
+            entry.choco_package = "";  // Empty -> skip
             entry.selected = true;
             entry.available = true;
             entry.status = "pending";
@@ -152,7 +152,7 @@ private Q_SLOTS:
         auto report = createTestReport(4, 0, 0, 0);
         worker.startMigration(report, 1);
 
-        // Cancel immediately — some jobs may already be in-flight
+        // Cancel immediately -- some jobs may already be in-flight
         worker.cancel();
 
         QCOMPARE(cancelSpy.count(), 1);

@@ -12,11 +12,11 @@ class TestUupDumpApi : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──────────────────────────────────────────────
+    // -- Construction ----------------------------------------------
     void construction_default();
     void construction_nonCopyable();
 
-    // ── channelToRing ─────────────────────────────────────────────
+    // -- channelToRing ---------------------------------------------
     void channelToRing_retail();
     void channelToRing_releasePreview();
     void channelToRing_beta();
@@ -24,30 +24,30 @@ private Q_SLOTS:
     void channelToRing_canary();
     void channelToRing_allNonEmpty();
 
-    // ── channelToDisplayName ──────────────────────────────────────
+    // -- channelToDisplayName --------------------------------------
     void channelToDisplayName_retail();
     void channelToDisplayName_dev();
     void channelToDisplayName_allNonEmpty();
 
-    // ── allChannels ───────────────────────────────────────────────
+    // -- allChannels -----------------------------------------------
     void allChannels_nonEmpty();
     void allChannels_containsRetail();
     void allChannels_noDuplicates();
 
-    // ── BuildInfo defaults ────────────────────────────────────────
+    // -- BuildInfo defaults ----------------------------------------
     void buildInfo_defaults();
 
-    // ── FileInfo defaults ─────────────────────────────────────────
+    // -- FileInfo defaults -----------------------------------------
     void fileInfo_defaults();
 
-    // ── SHA-1 validation (B10-20) ─────────────────────────────────
+    // -- SHA-1 validation (B10-20) ---------------------------------
     void isValidSha1_acceptsWellFormed();
     void isValidSha1_rejectsMalformed();
 };
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Construction
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestUupDumpApi::construction_default() {
     UupDumpApi api;
@@ -60,9 +60,9 @@ void TestUupDumpApi::construction_nonCopyable() {
     QVERIFY(!std::is_move_constructible_v<UupDumpApi>);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // channelToRing
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestUupDumpApi::channelToRing_retail() {
     const auto ring = UupDumpApi::channelToRing(UupDumpApi::ReleaseChannel::Retail);
@@ -96,9 +96,9 @@ void TestUupDumpApi::channelToRing_allNonEmpty() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // channelToDisplayName
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestUupDumpApi::channelToDisplayName_retail() {
     const auto name = UupDumpApi::channelToDisplayName(UupDumpApi::ReleaseChannel::Retail);
@@ -121,9 +121,9 @@ void TestUupDumpApi::channelToDisplayName_allNonEmpty() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // allChannels
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestUupDumpApi::allChannels_nonEmpty() {
     const auto channels = UupDumpApi::allChannels();
@@ -145,9 +145,9 @@ void TestUupDumpApi::allChannels_noDuplicates() {
     QCOMPARE(unique.size(), channels.size());
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // BuildInfo / FileInfo defaults
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestUupDumpApi::buildInfo_defaults() {
     UupDumpApi::BuildInfo info;
@@ -166,9 +166,9 @@ void TestUupDumpApi::fileInfo_defaults() {
     QVERIFY(info.url.isEmpty());
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // SHA-1 validation (B10-20)
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestUupDumpApi::isValidSha1_acceptsWellFormed() {
     // 40 hex chars, lower/upper/mixed case.

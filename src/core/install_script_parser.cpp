@@ -387,7 +387,7 @@ QString InstallScriptParser::extractParameter(const QString& call_text,
 }
 
 QString InstallScriptParser::extractHashtableValue(const QString& block, const QString& key) const {
-    // Quoted values first — handles URLs containing ${var} or special chars
+    // Quoted values first -- handles URLs containing ${var} or special chars
     QRegularExpression quoted_pattern(
         QString::fromLatin1(kQuotedHashtableValuePattern).arg(QRegularExpression::escape(key)),
         QRegularExpression::CaseInsensitiveOption);

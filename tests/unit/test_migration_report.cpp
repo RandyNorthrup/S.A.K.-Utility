@@ -25,7 +25,7 @@ class TestMigrationReport : public QObject {
 private Q_SLOTS:
     void init();
 
-    // ── Entry CRUD ──────────────────────────────────────────
+    // -- Entry CRUD ------------------------------------------
     void testAddEntry();
     void testUpdateEntry();
     void testRemoveEntry();
@@ -33,14 +33,14 @@ private Q_SLOTS:
     void testGetEntryBoundsChecked();  // B7-22
     void testClear();
 
-    // ── Selection ───────────────────────────────────────────
+    // -- Selection -------------------------------------------
     void testSelectEntry();
     void testSelectAll();
     void testDeselectAll();
     void testSelectByConfidence();
     void testSelectByMatchType();
 
-    // ── Counts & statistics ─────────────────────────────────
+    // -- Counts & statistics ---------------------------------
     void testGetEntryCount();
     void testGetSelectedCount();
     void testGetMatchedCount();
@@ -48,15 +48,15 @@ private Q_SLOTS:
     void testGetMatchRateEmpty();
     void testGetMatchRatePartial();
 
-    // ── Filtered views ──────────────────────────────────────
+    // -- Filtered views --------------------------------------
     void testGetSelectedEntries();
     void testGetUnmatchedEntries();
     void testGetMatchTypeDistribution();
 
-    // ── Metadata ────────────────────────────────────────────
+    // -- Metadata --------------------------------------------
     void testInitialMetadata();
 
-    // ── Export/import safety (P06-37/38/39/40) ──────────────
+    // -- Export/import safety (P06-37/38/39/40) --------------
     void testHtmlEscapesMarkup();
     void testCsvNeutralizesFormula();
     void testImportRejectsInvalidPreservesEntries();

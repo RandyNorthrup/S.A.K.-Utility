@@ -58,17 +58,17 @@ class TestQuickActionController : public QObject {
 private Q_SLOTS:
     void init();
 
-    // ── Registration & lookup ───────────────────────────────
+    // -- Registration & lookup -------------------------------
     void testRegisterAndGet();
     void testGetUnknownReturnsNull();
     void testGetAllActions();
     void testNoDuplicateRegistration();
 
-    // ── Category filtering ──────────────────────────────────
+    // -- Category filtering ----------------------------------
     void testGetByCategory();
     void testGetByCategoryEmpty();
 
-    // ── Configuration setters ───────────────────────────────
+    // -- Configuration setters -------------------------------
     void testSetBackupLocation();
     void testSetLoggingEnabled();
 

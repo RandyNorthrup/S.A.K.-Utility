@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_elevation_hardening.cpp
-/// @brief Phase 5 hardening tests — legacy removal verification, tier coverage,
+/// @brief Phase 5 hardening tests -- legacy removal verification, tier coverage,
 ///        gate behavior, cancellation, and elevated-mode bypass
 
 #include "sak/elevated_pipe_protocol.h"
@@ -26,12 +26,12 @@ class TestElevationHardening : public QObject {
 
 private Q_SLOTS:
     // ====================================================================
-    // 5.1 — Legacy Removal Verification
+    // 5.1 -- Legacy Removal Verification
     // ====================================================================
     void legacyElevationManager_delegatesToIsElevated();
 
     // ====================================================================
-    // Tier 1 — All Standard features must not require elevation
+    // Tier 1 -- All Standard features must not require elevation
     // ====================================================================
     void tier1_advancedSearchIsStandard();
     void tier1_fileOrganizerIsStandard();
@@ -57,7 +57,7 @@ private Q_SLOTS:
     void tier1_stressTestIsStandard();
 
     // ====================================================================
-    // Tier 2 — All Elevated features must require elevation
+    // Tier 2 -- All Elevated features must require elevation
     // ====================================================================
     void tier2_backupBitlockerKeysIsElevated();
     void tier2_verifySystemFilesIsElevated();
@@ -77,13 +77,13 @@ private Q_SLOTS:
     void tier2_permissionTakeOwnershipIsElevated();
 
     // ====================================================================
-    // Tier 2 — Gate function classification
+    // Tier 2 -- Gate function classification
     // ====================================================================
     void gate_enumContainsAllThreeResults();
     void gate_alreadyElevatedSkipsDialog();
 
     // ====================================================================
-    // Tier 3 — Mixed features need elevation for some sub-tasks
+    // Tier 3 -- Mixed features need elevation for some sub-tasks
     // ====================================================================
     void tier3_permissionStripInheritIsMixed();
     void tier3_permissionSetAclIsMixed();
@@ -97,14 +97,14 @@ private Q_SLOTS:
     void featureTable_countMatchesExpected();
 
     // ====================================================================
-    // Dispatcher — allowlist hardening
+    // Dispatcher -- allowlist hardening
     // ====================================================================
     void dispatcher_rejectsEmptyTaskId();
     void dispatcher_rejectsUnregisteredTaskId();
     void dispatcher_multipleRegistrationsAllAllowed();
 
     // ====================================================================
-    // Error codes — all elevation error codes exist
+    // Error codes -- all elevation error codes exist
     // ====================================================================
     void errorCodes_elevationRequiredExists();
     void errorCodes_elevationFailedExists();
@@ -115,13 +115,13 @@ private Q_SLOTS:
     void errorCodes_taskNotAllowedExists();
 
     // ====================================================================
-    // IPC protocol — cancellation round-trip
+    // IPC protocol -- cancellation round-trip
     // ====================================================================
     void ipc_cancelRequestRoundTrip();
     void ipc_taskRequestPreservesPayload();
 
     // ====================================================================
-    // Identity binding — fail-closed client/server verification seams
+    // Identity binding -- fail-closed client/server verification seams
     // ====================================================================
     void identity_clientPidFailsClosedOnMissingParent();
     void identity_clientImageFailsClosedOnEmpty();
@@ -132,7 +132,7 @@ private Q_SLOTS:
 };
 
 // ============================================================================
-// 5.1 — Legacy Removal Verification
+// 5.1 -- Legacy Removal Verification
 // ============================================================================
 
 void TestElevationHardening::legacyElevationManager_delegatesToIsElevated() {
@@ -143,7 +143,7 @@ void TestElevationHardening::legacyElevationManager_delegatesToIsElevated() {
 }
 
 // ============================================================================
-// Tier 1 — Standard Features
+// Tier 1 -- Standard Features
 // ============================================================================
 
 static void verifyTierIs(sak::FeatureId id, sak::ElevationTier expected_tier, const char* name) {
@@ -265,7 +265,7 @@ void TestElevationHardening::tier1_stressTestIsStandard() {
 }
 
 // ============================================================================
-// Tier 2 — Elevated Features
+// Tier 2 -- Elevated Features
 // ============================================================================
 
 void TestElevationHardening::tier2_backupBitlockerKeysIsElevated() {
@@ -353,7 +353,7 @@ void TestElevationHardening::tier2_permissionTakeOwnershipIsElevated() {
 }
 
 // ============================================================================
-// Tier 2 — Gate function classification
+// Tier 2 -- Gate function classification
 // ============================================================================
 
 void TestElevationHardening::gate_enumContainsAllThreeResults() {
@@ -374,7 +374,7 @@ void TestElevationHardening::gate_alreadyElevatedSkipsDialog() {
 }
 
 // ============================================================================
-// Tier 3 — Mixed features
+// Tier 3 -- Mixed features
 // ============================================================================
 
 void TestElevationHardening::tier3_permissionStripInheritIsMixed() {
@@ -448,7 +448,7 @@ void TestElevationHardening::featureTable_countMatchesExpected() {
 }
 
 // ============================================================================
-// Dispatcher — allowlist hardening
+// Dispatcher -- allowlist hardening
 // ============================================================================
 
 void TestElevationHardening::dispatcher_rejectsEmptyTaskId() {
@@ -490,7 +490,7 @@ void TestElevationHardening::dispatcher_multipleRegistrationsAllAllowed() {
 }
 
 // ============================================================================
-// Error codes — all elevation error codes exist
+// Error codes -- all elevation error codes exist
 // ============================================================================
 
 void TestElevationHardening::errorCodes_elevationRequiredExists() {
@@ -529,7 +529,7 @@ void TestElevationHardening::errorCodes_taskNotAllowedExists() {
 }
 
 // ============================================================================
-// IPC protocol — cancellation round-trip
+// IPC protocol -- cancellation round-trip
 // ============================================================================
 
 void TestElevationHardening::ipc_cancelRequestRoundTrip() {
@@ -567,7 +567,7 @@ void TestElevationHardening::ipc_taskRequestPreservesPayload() {
 }
 
 // ============================================================================
-// Identity binding — fail-closed client/server verification seams
+// Identity binding -- fail-closed client/server verification seams
 // ============================================================================
 
 void TestElevationHardening::identity_clientPidFailsClosedOnMissingParent() {

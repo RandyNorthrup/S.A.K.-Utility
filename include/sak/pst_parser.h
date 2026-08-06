@@ -6,7 +6,7 @@
 ///
 /// Parses Microsoft PST and OST files without requiring Outlook or any
 /// COM/MAPI library. Implements the three-layer architecture:
-///   NDB (Node Database) → LTP (Lists, Tables, Properties) → Messaging
+///   NDB (Node Database) -> LTP (Lists, Tables, Properties) -> Messaging
 ///
 /// Reference: [MS-PST]: Outlook Personal Folders (.pst) File Format
 
@@ -60,7 +60,7 @@ public:
     /// Get file info for the currently open file
     [[nodiscard]] sak::PstFileInfo fileInfo() const;
 
-    /// Get the folder tree (hierarchy only — items loaded on demand)
+    /// Get the folder tree (hierarchy only -- items loaded on demand)
     [[nodiscard]] sak::PstFolderTree folderTree() const;
 
     /// Load items (messages, contacts, etc.) for a specific folder
@@ -107,7 +107,7 @@ public:
     /// Get all cached NBT node IDs (for deleted-item / orphan scanning)
     [[nodiscard]] QVector<uint64_t> allNodeIds() const;
 
-    /// Table Context column descriptor (§2.3.4.2)
+    /// Table Context column descriptor (section 2.3.4.2)
     struct TcColDesc {
         uint16_t prop_type = 0;
         uint16_t prop_id = 0;
@@ -198,7 +198,7 @@ private:
     };
 
     // ======================================================================
-    // NDB Layer — Node Database
+    // NDB Layer -- Node Database
     // ======================================================================
 
     /// Parse and validate the PST file header
@@ -363,18 +363,18 @@ private:
     void decryptBlock(std::span<uint8_t> data) const;
 
     // ======================================================================
-    // LTP Layer — Lists, Tables, Properties
+    // LTP Layer -- Lists, Tables, Properties
     // ======================================================================
 
-    /// Read the Property Context (PC) for a node → MAPI properties
+    /// Read the Property Context (PC) for a node -> MAPI properties
     [[nodiscard]] std::expected<QVector<sak::MapiProperty>, sak::error_code> readPropertyContext(
         uint64_t nid);
 
-    /// Read the Table Context (TC) for a node → rows of MAPI properties
+    /// Read the Table Context (TC) for a node -> rows of MAPI properties
     [[nodiscard]] std::expected<QVector<QVector<sak::MapiProperty>>, sak::error_code>
     readTableContext(uint64_t nid);
 
-    /// Row matrix payload with per-block end offsets (MS-PST §2.3.4.4.1).
+    /// Row matrix payload with per-block end offsets (MS-PST section 2.3.4.4.1).
     /// When the row matrix is stored as a sub-node, each data block ends with
     /// padding bytes that must be skipped when addressing rows by index.
     struct TcRowMatrix {
@@ -451,7 +451,7 @@ private:
     /// Unpack a 32-bit HID/HNID reference, honoring the 64-bit 4K-page layout.
     [[nodiscard]] HidParts unpackHid(uint32_t hn_id) const;
 
-    /// Resolve an HNID: subnode map → NID check → HID heap lookup
+    /// Resolve an HNID: subnode map -> NID check -> HID heap lookup
     [[nodiscard]] std::expected<QByteArray, sak::error_code> resolveHnid(
         uint32_t hnid,
         const QByteArray& heap_data,

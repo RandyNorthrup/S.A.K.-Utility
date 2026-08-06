@@ -14,17 +14,17 @@ class TestDnsDiagnosticTool : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──────────────────────────────────────────────
+    // -- Construction ----------------------------------------------
     void construction_default();
     void construction_nonCopyable();
 
-    // ── wellKnownDnsServers ───────────────────────────────────────
+    // -- wellKnownDnsServers ---------------------------------------
     void wellKnown_nonEmpty();
     void wellKnown_containsGoogle();
     void wellKnown_containsCloudflare();
     void wellKnown_pairsHaveNameAndIp();
 
-    // ── supportedRecordTypes ──────────────────────────────────────
+    // -- supportedRecordTypes --------------------------------------
     void recordTypes_nonEmpty();
     void recordTypes_containsA();
     void recordTypes_containsAAAA();
@@ -32,15 +32,15 @@ private Q_SLOTS:
     void recordTypes_containsCNAME();
     void recordTypes_noDuplicates();
 
-    // ── B9-18 hardening seams ─────────────────────────────────────
+    // -- B9-18 hardening seams -------------------------------------
     void isSupportedRecordType_acceptsKnownRejectsUnknown();
     void isNumericIpv4_acceptsValidRejectsNonNumeric();
     void answersEquivalent_orderInsensitive();
 };
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Construction
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestDnsDiagnosticTool::construction_default() {
     DnsDiagnosticTool tool;
@@ -53,9 +53,9 @@ void TestDnsDiagnosticTool::construction_nonCopyable() {
     QVERIFY(!std::is_move_constructible_v<DnsDiagnosticTool>);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // wellKnownDnsServers
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestDnsDiagnosticTool::wellKnown_nonEmpty() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
@@ -100,9 +100,9 @@ void TestDnsDiagnosticTool::wellKnown_pairsHaveNameAndIp() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // supportedRecordTypes
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestDnsDiagnosticTool::recordTypes_nonEmpty() {
     const auto types = DnsDiagnosticTool::supportedRecordTypes();
@@ -136,9 +136,9 @@ void TestDnsDiagnosticTool::recordTypes_noDuplicates() {
     QCOMPARE(unique_types.size(), types.size());
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // B9-18 hardening seams
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestDnsDiagnosticTool::isSupportedRecordType_acceptsKnownRejectsUnknown() {
     QVERIFY(DnsDiagnosticTool::isSupportedRecordType(QStringLiteral("A")));

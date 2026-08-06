@@ -18,32 +18,32 @@ class RegexPatternLibraryTests : public QObject {
 private Q_SLOTS:
     void init();  // Runs before each test method to reset persistent state
 
-    // ── Built-in Patterns ──
+    // -- Built-in Patterns --
     void builtinPatterns_count();
     void builtinPatterns_haveExpectedKeys();
     void builtinPatterns_startDisabled();
     void builtinPatterns_validRegex();
 
-    // ── Enable / Disable ──
+    // -- Enable / Disable --
     void setPatternEnabled_builtin();
     void setPatternEnabled_emitsSignal();
     void setPatternEnabled_unknownKeyNoOp();
 
-    // ── Combined Pattern ──
+    // -- Combined Pattern --
     void combinedPattern_emptyWhenNoneActive();
     void combinedPattern_singleActive();
     void combinedPattern_multipleActive();
 
-    // ── Active Count ──
+    // -- Active Count --
     void activeCount_initiallyZero();
     void activeCount_increments();
     void activeCount_decrements();
 
-    // ── Clear All ──
+    // -- Clear All --
     void clearAll_disablesEverything();
     void clearAll_emitsSignal();
 
-    // ── Custom Pattern CRUD ──
+    // -- Custom Pattern CRUD --
     void addCustomPattern_basic();
     void addCustomPattern_duplicateKeyRejected();
     void addCustomPattern_builtinKeyConflictRejected();
@@ -59,22 +59,22 @@ private Q_SLOTS:
     void updateCustomPattern_nonExistent();
     void updateCustomPattern_emitsSignal();
 
-    // ── Custom Pattern Enable/Disable ──
+    // -- Custom Pattern Enable/Disable --
     void customPattern_enableDisable();
     void customPattern_inCombinedPattern();
 
-    // ── Pattern Validation Helpers ──
+    // -- Pattern Validation Helpers --
     void builtinEmailPattern_matchesEmail();
     void builtinUrlPattern_matchesUrl();
     void builtinIpv4Pattern_matchesIp();
 
-    // ── Persistence (regression: inverted-assert crash + atomic save) ──
+    // -- Persistence (regression: inverted-assert crash + atomic save) --
     void construction_withNoSavedPatternsDoesNotAbort();
     void persistence_roundTripSavesAndLoads();
     void persistence_saveEmptyListDoesNotAbort();
 };
 
-// ── Per-test Cleanup ─────────────────────────────────────────────────────────
+// -- Per-test Cleanup ---------------------------------------------------------
 
 void RegexPatternLibraryTests::init() {
     // Remove any persisted custom patterns file before each test to avoid
@@ -87,7 +87,7 @@ void RegexPatternLibraryTests::init() {
                       .filePath(QStringLiteral("custom_regex_patterns.json")));
 }
 
-// ── Built-in Patterns ───────────────────────────────────────────────────────
+// -- Built-in Patterns -------------------------------------------------------
 
 void RegexPatternLibraryTests::builtinPatterns_count() {
     sak::RegexPatternLibrary lib(nullptr);
@@ -134,7 +134,7 @@ void RegexPatternLibraryTests::builtinPatterns_validRegex() {
     }
 }
 
-// ── Enable / Disable ────────────────────────────────────────────────────────
+// -- Enable / Disable --------------------------------------------------------
 
 void RegexPatternLibraryTests::setPatternEnabled_builtin() {
     sak::RegexPatternLibrary lib(nullptr);
@@ -170,7 +170,7 @@ void RegexPatternLibraryTests::setPatternEnabled_unknownKeyNoOp() {
     QCOMPARE(spy.count(), 0);
 }
 
-// ── Combined Pattern ────────────────────────────────────────────────────────
+// -- Combined Pattern --------------------------------------------------------
 
 void RegexPatternLibraryTests::combinedPattern_emptyWhenNoneActive() {
     sak::RegexPatternLibrary lib(nullptr);
@@ -204,7 +204,7 @@ void RegexPatternLibraryTests::combinedPattern_multipleActive() {
     QVERIFY(regex.isValid());
 }
 
-// ── Active Count ────────────────────────────────────────────────────────────
+// -- Active Count ------------------------------------------------------------
 
 void RegexPatternLibraryTests::activeCount_initiallyZero() {
     sak::RegexPatternLibrary lib(nullptr);
@@ -232,7 +232,7 @@ void RegexPatternLibraryTests::activeCount_decrements() {
     QCOMPARE(lib.activeCount(), 1);
 }
 
-// ── Clear All ───────────────────────────────────────────────────────────────
+// -- Clear All ---------------------------------------------------------------
 
 void RegexPatternLibraryTests::clearAll_disablesEverything() {
     sak::RegexPatternLibrary lib(nullptr);
@@ -256,7 +256,7 @@ void RegexPatternLibraryTests::clearAll_emitsSignal() {
     QCOMPARE(spy.count(), 1);
 }
 
-// ── Custom Pattern CRUD ─────────────────────────────────────────────────────
+// -- Custom Pattern CRUD -----------------------------------------------------
 
 void RegexPatternLibraryTests::addCustomPattern_basic() {
     sak::RegexPatternLibrary lib(nullptr);
@@ -298,11 +298,11 @@ void RegexPatternLibraryTests::addCustomPattern_invalidRegexRejected() {
     lib.addCustomPattern("bad_regex", "Bad", R"((unclosed)");
 
     // Pattern should be rejected (invalid regex)
-    // Note: R"((unclosed)" has mismatched parens — let's use a clearly invalid one
+    // Note: R"((unclosed)" has mismatched parens -- let's use a clearly invalid one
     lib.addCustomPattern("bad2", "Bad2", "[invalid");
 
     // The actually invalid one should be rejected
-    // First one: "(unclosed" — actually this IS invalid because opening paren has no close
+    // First one: "(unclosed" -- actually this IS invalid because opening paren has no close
     // But let's verify:
     QRegularExpression testRe(R"((unclosed)");
     if (testRe.isValid()) {
@@ -399,7 +399,7 @@ void RegexPatternLibraryTests::updateCustomPattern_emitsSignal() {
     QCOMPARE(spy.count(), 1);
 }
 
-// ── Custom Pattern Enable/Disable ───────────────────────────────────────────
+// -- Custom Pattern Enable/Disable -------------------------------------------
 
 void RegexPatternLibraryTests::customPattern_enableDisable() {
     sak::RegexPatternLibrary lib(nullptr);
@@ -428,7 +428,7 @@ void RegexPatternLibraryTests::customPattern_inCombinedPattern() {
     QVERIFY(regex.isValid());
 }
 
-// ── Pattern Validation Helpers ──────────────────────────────────────────────
+// -- Pattern Validation Helpers ----------------------------------------------
 
 void RegexPatternLibraryTests::builtinEmailPattern_matchesEmail() {
     sak::RegexPatternLibrary lib(nullptr);
@@ -487,7 +487,7 @@ void RegexPatternLibraryTests::builtinIpv4Pattern_matchesIp() {
     QVERIFY(!regex.match("abc.def.ghi.jkl").hasMatch());
 }
 
-// ── Persistence ─────────────────────────────────────────────────────────────
+// -- Persistence -------------------------------------------------------------
 
 void RegexPatternLibraryTests::construction_withNoSavedPatternsDoesNotAbort() {
     // init() has removed any persisted file, so the constructor's

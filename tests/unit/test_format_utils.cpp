@@ -12,7 +12,7 @@ class TestFormatUtils : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── formatBytes(qint64) ─────────────────────────────────────────────
+    // -- formatBytes(qint64) ---------------------------------------------
     void formatBytes_zero();
     void formatBytes_negative();
     void formatBytes_bytes();
@@ -22,7 +22,7 @@ private Q_SLOTS:
     void formatBytes_terabytes();
     void formatBytes_exactBoundaries();
 
-    // ── formatBytes(uint64_t) overload ──────────────────────────────────
+    // -- formatBytes(uint64_t) overload ----------------------------------
     void formatBytes_unsignedOverload();
 };
 

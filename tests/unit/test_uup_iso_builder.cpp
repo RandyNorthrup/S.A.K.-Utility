@@ -21,27 +21,27 @@ class TestUupIsoBuilder : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction defaults ───────────────────────────────
+    // -- Construction defaults -------------------------------
     void testInitialPhase();
     void testNotRunningInitially();
 
-    // ── Cancel when idle ────────────────────────────────────
+    // -- Cancel when idle ------------------------------------
     void testCancelWhenIdle();
 
-    // ── Download-set completeness (B10-21) ──────────────────
+    // -- Download-set completeness (B10-21) ------------------
     void missingFiles_allPresentComplete_returnsEmpty();
     void missingFiles_absentOrTruncated_reported();
 
-    // ── Convert-then-replace (B10-21) ───────────────────────
+    // -- Convert-then-replace (B10-21) -----------------------
     void replaceFinalIso_movesOverExisting();
     void replaceFinalIso_leavesNoBackupArtifact();
 
-    // ── Metadata size accumulation (R3-14) ──────────────────
+    // -- Metadata size accumulation (R3-14) ------------------
     void computeTotalDownloadBytes_sumsValidSizes();
     void computeTotalDownloadBytes_rejectsNegativeSize();
     void computeTotalDownloadBytes_rejectsOverflow();
 
-    // ── ISO 9660 structural signature (R3-05) ───────────────
+    // -- ISO 9660 structural signature (R3-05) ---------------
     void hasIso9660Signature_acceptsValidPvd();
     void hasIso9660Signature_rejectsNonIso();
 };

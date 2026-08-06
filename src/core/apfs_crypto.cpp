@@ -89,7 +89,7 @@ bool isAesKeyLen(qsizetype n) {
 }
 
 /// @brief AES-ECB transform of @p data (a multiple of 16 bytes) in one CNG call.
-/// ECB processes each 16-byte block independently — the building block for both
+/// ECB processes each 16-byte block independently -- the building block for both
 /// RFC 3394 (single block) and the AES-XTS construction (whole data unit). The
 /// Windows CNG XTS-AES provider rejects BCryptEncrypt on this platform, so XTS is
 /// built here from AES-ECB, which is the textbook XTS definition.
@@ -136,7 +136,7 @@ QByteArray le128(uint64_t value) {
     return out;
 }
 
-/// @brief GF(2^128) multiply-by-alpha (x), little-endian, reduction poly 0x87 —
+/// @brief GF(2^128) multiply-by-alpha (x), little-endian, reduction poly 0x87 --
 /// advances the XTS tweak from one 16-byte block to the next (IEEE Std 1619).
 QByteArray gf128MulAlpha(const QByteArray& t) {
     QByteArray out = t;

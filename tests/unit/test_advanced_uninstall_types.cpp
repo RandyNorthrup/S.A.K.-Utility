@@ -17,47 +17,47 @@ class AdvancedUninstallTypesTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── ProgramInfo ──
+    // -- ProgramInfo --
     void programInfo_defaultConstruction();
     void programInfo_valueSemantics();
     void programInfo_moveSemantics();
     void programInfo_sourceEnum();
 
-    // ── ScanLevel ──
+    // -- ScanLevel --
     void scanLevel_enumValues();
 
-    // ── LeftoverItem ──
+    // -- LeftoverItem --
     void leftoverItem_defaultConstruction();
     void leftoverItem_typeEnum();
     void leftoverItem_riskEnum();
     void leftoverItem_valueSemantics();
 
-    // ── UninstallReport ──
+    // -- UninstallReport --
     void uninstallReport_defaultConstruction();
     void uninstallReport_resultEnum();
     void uninstallReport_valueSemantics();
 
-    // ── UninstallQueueItem ──
+    // -- UninstallQueueItem --
     void queueItem_defaultConstruction();
     void queueItem_statusEnum();
     void queueItem_valueSemantics();
 
-    // ── ViewFilter ──
+    // -- ViewFilter --
     void viewFilter_enumValues();
 
-    // ── Leftover scan provenance (proof-of-scan binding) ──
+    // -- Leftover scan provenance (proof-of-scan binding) --
     void provenanceKey_stableAcrossFormatting();
     void provenanceKey_distinctForDifferentItems();
     void provenanceStore_recordsAndMatches();
     void provenanceStore_bindsRealObjectIdentity();
 
-    // ── Compile-Time Invariants ──
+    // -- Compile-Time Invariants --
     void staticAsserts_defaultConstructible();
     void staticAsserts_copyConstructible();
     void staticAsserts_movable();
 };
 
-// ── ProgramInfo ─────────────────────────────────────────────────────────────
+// -- ProgramInfo -------------------------------------------------------------
 
 void AdvancedUninstallTypesTests::programInfo_defaultConstruction() {
     sak::ProgramInfo info;
@@ -141,7 +141,7 @@ void AdvancedUninstallTypesTests::programInfo_sourceEnum() {
     QCOMPARE(static_cast<int>(sak::ProgramInfo::Source::Provisioned), 4);
 }
 
-// ── ScanLevel ───────────────────────────────────────────────────────────────
+// -- ScanLevel ---------------------------------------------------------------
 
 void AdvancedUninstallTypesTests::scanLevel_enumValues() {
     QCOMPARE(static_cast<int>(sak::ScanLevel::Safe), 0);
@@ -149,7 +149,7 @@ void AdvancedUninstallTypesTests::scanLevel_enumValues() {
     QCOMPARE(static_cast<int>(sak::ScanLevel::Advanced), 2);
 }
 
-// ── LeftoverItem ────────────────────────────────────────────────────────────
+// -- LeftoverItem ------------------------------------------------------------
 
 void AdvancedUninstallTypesTests::leftoverItem_defaultConstruction() {
     sak::LeftoverItem item;
@@ -213,7 +213,7 @@ void AdvancedUninstallTypesTests::leftoverItem_valueSemantics() {
     QCOMPARE(moved.path, original.path);
 }
 
-// ── UninstallReport ─────────────────────────────────────────────────────────
+// -- UninstallReport ---------------------------------------------------------
 
 void AdvancedUninstallTypesTests::uninstallReport_defaultConstruction() {
     sak::UninstallReport report;
@@ -278,7 +278,7 @@ void AdvancedUninstallTypesTests::uninstallReport_valueSemantics() {
     QCOMPARE(copy.errorLog.size(), 1);
 }
 
-// ── UninstallQueueItem ──────────────────────────────────────────────────────
+// -- UninstallQueueItem ------------------------------------------------------
 
 void AdvancedUninstallTypesTests::queueItem_defaultConstruction() {
     sak::UninstallQueueItem item;
@@ -315,7 +315,7 @@ void AdvancedUninstallTypesTests::queueItem_valueSemantics() {
     QCOMPARE(copy.report.programName, "Queued App");
 }
 
-// ── ViewFilter ──────────────────────────────────────────────────────────────
+// -- ViewFilter --------------------------------------------------------------
 
 void AdvancedUninstallTypesTests::viewFilter_enumValues() {
     QCOMPARE(static_cast<int>(sak::ViewFilter::All), 0);
@@ -325,7 +325,7 @@ void AdvancedUninstallTypesTests::viewFilter_enumValues() {
     QCOMPARE(static_cast<int>(sak::ViewFilter::OrphanedOnly), 4);
 }
 
-// ── Compile-Time Invariants ─────────────────────────────────────────────────
+// -- Compile-Time Invariants -------------------------------------------------
 
 void AdvancedUninstallTypesTests::staticAsserts_defaultConstructible() {
     QVERIFY(std::is_default_constructible_v<sak::ProgramInfo>);
@@ -348,7 +348,7 @@ void AdvancedUninstallTypesTests::staticAsserts_movable() {
     QVERIFY(std::is_move_constructible_v<sak::UninstallQueueItem>);
 }
 
-// ── Leftover scan provenance (proof-of-scan binding) ─────────────────────────
+// -- Leftover scan provenance (proof-of-scan binding) -------------------------
 
 namespace {
 sak::LeftoverItem makeItem(sak::LeftoverItem::Type type,

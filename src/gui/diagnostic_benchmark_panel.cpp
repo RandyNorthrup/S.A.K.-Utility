@@ -977,7 +977,7 @@ QString DiagnosticBenchmarkPanel::formatUptime(uint64_t seconds) {
 }
 
 // ============================================================================
-// Quick Actions — System Maintenance Section
+// Quick Actions -- System Maintenance Section
 // ============================================================================
 
 QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {

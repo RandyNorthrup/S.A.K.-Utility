@@ -26,12 +26,12 @@ private Q_SLOTS:
     void isIperf3Available_returnsBool();
     void bandwidthTestResult_defaults();
 
-    // ── composeFirewallRuleName (per-instance uniqueness, B9-16) ──
+    // -- composeFirewallRuleName (per-instance uniqueness, B9-16) --
     void firewallRuleName_containsPortAndToken();
     void firewallRuleName_uniquePerToken();
     void firewallRuleName_noShellMetacharacters();
 
-    // ── parseIperfJson (bad-output not a success, B9-18) ──────────
+    // -- parseIperfJson (bad-output not a success, B9-18) ----------
     void parseIperf_rejectsGarbage();
     void parseIperf_rejectsJsonWithoutEndSummary();
     void parseIperf_acceptsValidTcpResult();
@@ -126,9 +126,9 @@ void TestBandwidthTester::bandwidthTestResult_defaults() {
     QVERIFY(!result.reverseMode);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // composeFirewallRuleName -- per-instance uniqueness (B9-16)
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestBandwidthTester::firewallRuleName_containsPortAndToken() {
     const QString name = BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("abc123"));
@@ -155,9 +155,9 @@ void TestBandwidthTester::firewallRuleName_noShellMetacharacters() {
     QVERIFY(!name.contains(QLatin1Char(' ')));
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // parseIperfJson -- unparseable output must not read as a zero success (B9-18)
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestBandwidthTester::parseIperf_rejectsGarbage() {
     QVERIFY(!BandwidthTester::parseIperfJson(QByteArrayLiteral("not json at all")).has_value());

@@ -25,23 +25,23 @@ class NetworkDiagnosticReportTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──
+    // -- Construction --
     void construction_default();
     void construction_nonCopyable();
 
-    // ── Section enum ──
+    // -- Section enum --
     void sectionEnum_allDistinct();
 
-    // ── HTML: Empty report ──
+    // -- HTML: Empty report --
     void html_emptyReport_containsStructure();
     void html_emptyReport_containsDoctype();
 
-    // ── HTML: Metadata ──
+    // -- HTML: Metadata --
     void html_metadata_technicianName();
     void html_metadata_ticketNumber();
     void html_metadata_notes();
 
-    // ── HTML: Sections ──
+    // -- HTML: Sections --
     void html_section_adapterConfig();
     void html_section_pingResults();
     void html_section_dnsResults();
@@ -55,10 +55,10 @@ private Q_SLOTS:
     void html_connectionFields_htmlEscaped();
     void html_section_networkShares();
 
-    // ── HTML: Section exclusion ──
+    // -- HTML: Section exclusion --
     void html_sectionExclusion_onlyIncluded();
 
-    // ── JSON: Basic structure ──
+    // -- JSON: Basic structure --
     void json_emptyReport_validJson();
     void json_metadata_included();
     void json_pingData_serialized();
@@ -68,14 +68,14 @@ private Q_SLOTS:
     void json_firewallData_serialized();
     void json_shareData_serialized();
 
-    // ── File output: atomic write + flush (B9-12) ──
+    // -- File output: atomic write + flush (B9-12) --
     void generateHtml_writesCompleteFileAndEmitsSignal();
     void generateJson_writesValidJsonAndEmitsSignal();
 };
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // Construction
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::construction_default() {
     NetworkDiagnosticReportGenerator gen;
@@ -89,9 +89,9 @@ void NetworkDiagnosticReportTests::construction_nonCopyable() {
     QVERIFY(!std::is_copy_assignable_v<NetworkDiagnosticReportGenerator>);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // Section Enum
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::sectionEnum_allDistinct() {
     using S = NetworkDiagnosticReportGenerator::Section;
@@ -110,9 +110,9 @@ void NetworkDiagnosticReportTests::sectionEnum_allDistinct() {
     QCOMPARE(values.size(), 10);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // HTML: Empty Report
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::html_emptyReport_containsStructure() {
     NetworkDiagnosticReportGenerator gen;
@@ -131,9 +131,9 @@ void NetworkDiagnosticReportTests::html_emptyReport_containsDoctype() {
             html.contains(QStringLiteral("<html"), Qt::CaseInsensitive));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // HTML: Metadata
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::html_metadata_technicianName() {
     NetworkDiagnosticReportGenerator gen;
@@ -156,9 +156,9 @@ void NetworkDiagnosticReportTests::html_metadata_notes() {
     QVERIFY(html.contains(QStringLiteral("intermittent connectivity")));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // HTML: Sections
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::html_section_adapterConfig() {
     NetworkDiagnosticReportGenerator gen;
@@ -395,9 +395,9 @@ void NetworkDiagnosticReportTests::html_sectionExclusion_onlyIncluded() {
     QVERIFY(!html.contains(QStringLiteral("unique_wifi_ssid_abc")));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // JSON
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::json_emptyReport_validJson() {
     NetworkDiagnosticReportGenerator gen;

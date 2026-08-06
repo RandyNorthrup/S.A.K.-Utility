@@ -20,7 +20,7 @@ class TestEmlWriter : public QObject {
 private Q_SLOTS:
 
     // ====================================================================
-    // Happy Path — Simple Plain-Text Message
+    // Happy Path -- Simple Plain-Text Message
     // ====================================================================
 
     void testWritePlainTextMessage() {
@@ -55,7 +55,7 @@ private Q_SLOTS:
     }
 
     // ====================================================================
-    // HTML Message — Multipart Alternative
+    // HTML Message -- Multipart Alternative
     // ====================================================================
 
     void testWriteHtmlMessage() {
@@ -88,7 +88,7 @@ private Q_SLOTS:
     }
 
     // ====================================================================
-    // Message with Attachments — Multipart Mixed
+    // Message with Attachments -- Multipart Mixed
     // ====================================================================
 
     void testWriteMessageWithAttachments() {
@@ -172,7 +172,7 @@ private Q_SLOTS:
     }
 
     // ====================================================================
-    // Filename Sanitization — Invalid Characters
+    // Filename Sanitization -- Invalid Characters
     // ====================================================================
 
     void testSanitizeInvalidCharacters() {
@@ -200,7 +200,7 @@ private Q_SLOTS:
     }
 
     // ====================================================================
-    // Empty Subject — Fallback Filename
+    // Empty Subject -- Fallback Filename
     // ====================================================================
 
     void testEmptySubjectFallback() {
@@ -262,7 +262,7 @@ private Q_SLOTS:
     // ====================================================================
 
     // ====================================================================
-    // Header Injection — CRLF in header values must not forge headers
+    // Header Injection -- CRLF in header values must not forge headers
     // ====================================================================
 
     void testHeaderInjectionStripped() {
@@ -293,7 +293,7 @@ private Q_SLOTS:
     }
 
     // ====================================================================
-    // Body Transfer-Encoding — raw UTF-8 must be labelled 8bit, not QP
+    // Body Transfer-Encoding -- raw UTF-8 must be labelled 8bit, not QP
     // ====================================================================
 
     void testPlainBodyLabeled8bit() {

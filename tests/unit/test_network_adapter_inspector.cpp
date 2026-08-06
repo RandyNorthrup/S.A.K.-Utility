@@ -14,11 +14,11 @@ class TestNetworkAdapterInspector : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──────────────────────────────────────────────
+    // -- Construction ----------------------------------------------
     void construction_default();
     void construction_nonCopyable();
 
-    // ── formatLinkSpeed ───────────────────────────────────────────
+    // -- formatLinkSpeed -------------------------------------------
     void formatLinkSpeed_zero();
     void formatLinkSpeed_bitsPerSecond();
     void formatLinkSpeed_kilobits();
@@ -27,16 +27,16 @@ private Q_SLOTS:
     void formatLinkSpeed_tenGigabit();
     void formatLinkSpeed_hundredMegabit();
 
-    // ── formatMacAddress ──────────────────────────────────────────
+    // -- formatMacAddress ------------------------------------------
     void formatMacAddress_standard();
     void formatMacAddress_allZeros();
     void formatMacAddress_allOnes();
     void formatMacAddress_zeroLength();
 };
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Construction
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestNetworkAdapterInspector::construction_default() {
     NetworkAdapterInspector inspector;
@@ -49,9 +49,9 @@ void TestNetworkAdapterInspector::construction_nonCopyable() {
     QVERIFY(!std::is_copy_assignable_v<NetworkAdapterInspector>);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // formatLinkSpeed
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestNetworkAdapterInspector::formatLinkSpeed_zero() {
     const auto result = NetworkAdapterInspector::formatLinkSpeed(0);
@@ -102,9 +102,9 @@ void TestNetworkAdapterInspector::formatLinkSpeed_tenGigabit() {
             result.contains("10", Qt::CaseInsensitive));
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // formatMacAddress
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestNetworkAdapterInspector::formatMacAddress_standard() {
     const unsigned char mac[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};

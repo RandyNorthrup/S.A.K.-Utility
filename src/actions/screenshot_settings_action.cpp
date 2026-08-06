@@ -252,7 +252,7 @@ bool ScreenshotSettingsAction::captureSettingsWindow(const QDir& output_dir,
         reinterpret_cast<LPARAM>(&settings_hwnd));
 
     if (!settings_hwnd) {
-        // Refuse to capture an arbitrary foreground window — the caller
+        // Refuse to capture an arbitrary foreground window -- the caller
         // asked for Settings, not "whatever happens to be on top".
         sak::logWarning("ScreenshotSettingsAction: Settings window not found for page {}",
                         page_name.toStdString());

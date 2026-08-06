@@ -22,7 +22,7 @@ class NetworkDiagnosticUtilsTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── WiFi: frequencyToChannel ──
+    // -- WiFi: frequencyToChannel --
     void wifi_freqToChannel_2_4GHz_channel1();
     void wifi_freqToChannel_2_4GHz_channel6();
     void wifi_freqToChannel_2_4GHz_channel11();
@@ -36,21 +36,21 @@ private Q_SLOTS:
     void wifi_freqToChannel_unknown();
     void wifi_freqToChannel_zero();
 
-    // ── WiFi: frequencyToBand ──
+    // -- WiFi: frequencyToBand --
     void wifi_freqToBand_2_4GHz();
     void wifi_freqToBand_5GHz();
     void wifi_freqToBand_6GHz();
     void wifi_freqToBand_unknown();
     void wifi_freqToBand_boundaries();
 
-    // ── WiFi: lookupVendor ──
+    // -- WiFi: lookupVendor --
     void wifi_lookupVendor_knownOui();
     void wifi_lookupVendor_unknownOui();
     void wifi_lookupVendor_tooShort();
     void wifi_lookupVendor_empty();
     void wifi_lookupVendor_caseInsensitive();
 
-    // ── WiFi: calculateChannelUtilization ──
+    // -- WiFi: calculateChannelUtilization --
     void wifi_channelUtil_emptyInput();
     void wifi_channelUtil_singleNetwork();
     void wifi_channelUtil_multipleOnSameChannel();
@@ -59,14 +59,14 @@ private Q_SLOTS:
     void wifi_channelUtil_averageSignal();
     void wifi_channelUtil_interferenceNonNegative();
 
-    // ── PortScanner: getPresets ──
+    // -- PortScanner: getPresets --
     void port_presets_notEmpty();
     void port_presets_haveNames();
     void port_presets_havePorts();
     void port_presets_commonServices();
     void port_presets_top100HasExpectedPorts();
 
-    // ── PortScanner: getServiceName ──
+    // -- PortScanner: getServiceName --
     void port_serviceName_http();
     void port_serviceName_https();
     void port_serviceName_ssh();
@@ -75,25 +75,25 @@ private Q_SLOTS:
     void port_serviceName_rdp();
     void port_serviceName_unknown();
 
-    // ── DNS: wellKnownDnsServers ──
+    // -- DNS: wellKnownDnsServers --
     void dns_servers_notEmpty();
     void dns_servers_haveNames();
     void dns_servers_includeGoogle();
     void dns_servers_includeCloudflare();
     void dns_servers_includeSystemDefault();
 
-    // ── DNS: supportedRecordTypes ──
+    // -- DNS: supportedRecordTypes --
     void dns_recordTypes_notEmpty();
     void dns_recordTypes_includeCommon();
     void dns_recordTypes_includeAll();
 
-    // ── Port scan: concurrency honors maxConcurrent (B9-19) ──
+    // -- Port scan: concurrency honors maxConcurrent (B9-19) --
     void port_scan_concurrentReturnsAllPorts();
 };
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // WiFi: frequencyToChannel
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticUtilsTests::wifi_freqToChannel_2_4GHz_channel1() {
     QCOMPARE(WiFiAnalyzer::frequencyToChannel(2'412'000), 1);
@@ -149,9 +149,9 @@ void NetworkDiagnosticUtilsTests::wifi_freqToChannel_zero() {
     QCOMPARE(WiFiAnalyzer::frequencyToChannel(0), 0);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // WiFi: frequencyToBand
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticUtilsTests::wifi_freqToBand_2_4GHz() {
     QCOMPARE(WiFiAnalyzer::frequencyToBand(2'412'000), QStringLiteral("2.4 GHz"));
@@ -187,16 +187,16 @@ void NetworkDiagnosticUtilsTests::wifi_freqToBand_boundaries() {
     QCOMPARE(WiFiAnalyzer::frequencyToBand(netdiag::kFreq6GHzEnd), QStringLiteral("6 GHz"));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // WiFi: lookupVendor
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticUtilsTests::wifi_lookupVendor_knownOui() {
     // The OUI database should contain major manufacturers
     // We can verify that *some* well-known OUI returns a non-empty string
     // without depending on the exact vendor name
     const auto result = WiFiAnalyzer::lookupVendor(QStringLiteral("AA:BB:CC:DD:EE:FF"));
-    // May or may not be in the database — just test it doesn't crash
+    // May or may not be in the database -- just test it doesn't crash
     Q_UNUSED(result);
 }
 
@@ -223,9 +223,9 @@ void NetworkDiagnosticUtilsTests::wifi_lookupVendor_caseInsensitive() {
     QCOMPARE(upper, lower);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // WiFi: calculateChannelUtilization
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticUtilsTests::wifi_channelUtil_emptyInput() {
     QVector<WiFiNetworkInfo> empty;
@@ -363,9 +363,9 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_interferenceNonNegative() {
     QVERIFY(result[0].interferenceScore >= 0.0);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // PortScanner: getPresets
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticUtilsTests::port_presets_notEmpty() {
     const auto presets = PortScanner::getPresets();
@@ -424,9 +424,9 @@ void NetworkDiagnosticUtilsTests::port_presets_top100HasExpectedPorts() {
     QVERIFY2(found, "Could not find 'Top 100' preset");
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // PortScanner: getServiceName
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticUtilsTests::port_serviceName_http() {
     const auto name = PortScanner::getServiceName(80);
@@ -470,9 +470,9 @@ void NetworkDiagnosticUtilsTests::port_serviceName_unknown() {
     QVERIFY(name.isEmpty());
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // DNS: wellKnownDnsServers
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticUtilsTests::dns_servers_notEmpty() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
@@ -527,9 +527,9 @@ void NetworkDiagnosticUtilsTests::dns_servers_includeSystemDefault() {
     QVERIFY2(found, "System Default DNS entry not found");
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // DNS: supportedRecordTypes
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticUtilsTests::dns_recordTypes_notEmpty() {
     const auto types = DnsDiagnosticTool::supportedRecordTypes();
@@ -553,9 +553,9 @@ void NetworkDiagnosticUtilsTests::dns_recordTypes_includeAll() {
     QVERIFY(types.contains(QStringLiteral("PTR")));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // Port scan: batched concurrency honors maxConcurrent (B9-19)
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticUtilsTests::port_scan_concurrentReturnsAllPorts() {
     // Scan several localhost ports with maxConcurrent > 1: the batched path must

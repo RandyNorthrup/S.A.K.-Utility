@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Lizard complexity checker for S.A.K. Utility — TigerStyle settings.
+"""Lizard complexity checker for S.A.K. Utility -- TigerStyle settings.
 
-Hard limits (block commit — warnings are errors in this repo):
-  - Cyclomatic complexity (CCN) ≤ 10
-  - Parameter count ≤ 5
-  - Function length ≤ 70 lines
+Hard limits (block commit -- warnings are errors in this repo):
+  - Cyclomatic complexity (CCN) <= 10
+  - Parameter count <= 5
+  - Function length <= 70 lines
 
 All three are blocking; there are no advisory-only violations.
 
@@ -86,8 +86,8 @@ def classify_warning(line: str) -> str | None:
     """Classify a lizard warning line.
 
     Returns:
-        "hard"  — CCN, PARAM, or length violation (blocks commit)
-        None    — not a warning line
+        "hard"  -- CCN, PARAM, or length violation (blocks commit)
+        None    -- not a warning line
     """
     match = WARNING_RE.search(line)
     if not match:
@@ -135,7 +135,7 @@ def main() -> int:
         print(f"\nFAILED: {len(hard_errors)} violation(s) must be fixed.")
         return 1
 
-    print("\nPASSED — all functions within limits.")
+    print("\nPASSED -- all functions within limits.")
     return 0
 
 

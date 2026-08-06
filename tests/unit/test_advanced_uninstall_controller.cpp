@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_advanced_uninstall_controller.cpp
-/// @brief Unit tests for AdvancedUninstallController — state machine, queue,
+/// @brief Unit tests for AdvancedUninstallController -- state machine, queue,
 ///        settings, input validation, accessor/mutator pairs
 
 #include "sak/advanced_uninstall_controller.h"
@@ -23,12 +23,12 @@ class AdvancedUninstallControllerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Initial State ──
+    // -- Initial State --
     void initialState_isIdle();
     void initialPrograms_empty();
     void initialQueue_empty();
 
-    // ── Accessor / Mutator Pairs ──
+    // -- Accessor / Mutator Pairs --
     void autoRestorePoint_setAndGet();
     void autoCleanSafe_setAndGet();
     void safeLeftovers_filtersSafeOnlyAndSelects();
@@ -39,10 +39,10 @@ private Q_SLOTS:
     void showSystemComponents_setAndGet();
     void defaultScanLevel_allValues();
 
-    // ── Restore Point Manager ──
+    // -- Restore Point Manager --
     void restorePointManager_notNull();
 
-    // ── Queue Management ──
+    // -- Queue Management --
     void addToQueue_appendsItem();
     void addToQueue_multipleItems();
     void addToQueue_emptyNameRejected();
@@ -53,27 +53,27 @@ private Q_SLOTS:
     void queueItem_defaultStatus();
     void queueMutation_refusedDuringBatch();
 
-    // ── State Guards ──
+    // -- State Guards --
     void uninstallProgram_rejectsWhenBusy();
     void forceUninstall_rejectsWhenBusy();
     void removeRegistryEntry_rejectsWhenBusy();
     void startBatch_rejectsEmptyQueue();
     void startBatch_setsUninstallingState();
 
-    // ── Input Validation ──
+    // -- Input Validation --
     void uninstallProgram_rejectsEmptyName();
     void forceUninstall_rejectsEmptyName();
     void removeRegistryEntry_rejectsEmptyKeyPath();
     void removeRegistryEntry_rejectsNonHiveRooted();
 
-    // ── Settings Persistence ──
+    // -- Settings Persistence --
     void saveAndLoadSettings_roundTrip();
 
-    // ── State Machine ──
+    // -- State Machine --
     void stateChanged_emitsSignal();
     void refreshPrograms_changesState();
 
-    // ── Cancel When Idle ──
+    // -- Cancel When Idle --
     void cancelOperation_whenIdle_noOp();
 
     // R5-P7-9: registry-derived uninstall program trust policy
@@ -83,7 +83,7 @@ private Q_SLOTS:
     void silentMsiCommand_namesMsiexecByAbsoluteSystem32Path();
 };
 
-// ── Initial State ───────────────────────────────────────────────────────────
+// -- Initial State -----------------------------------------------------------
 
 void AdvancedUninstallControllerTests::initialState_isIdle() {
     AdvancedUninstallController ctrl;
@@ -100,7 +100,7 @@ void AdvancedUninstallControllerTests::initialQueue_empty() {
     QVERIFY(ctrl.queue().isEmpty());
 }
 
-// ── Accessor / Mutator Pairs ────────────────────────────────────────────────
+// -- Accessor / Mutator Pairs ------------------------------------------------
 
 void AdvancedUninstallControllerTests::autoRestorePoint_setAndGet() {
     AdvancedUninstallController ctrl;
@@ -283,14 +283,14 @@ void AdvancedUninstallControllerTests::defaultScanLevel_allValues() {
     }
 }
 
-// ── Restore Point Manager ───────────────────────────────────────────────────
+// -- Restore Point Manager ---------------------------------------------------
 
 void AdvancedUninstallControllerTests::restorePointManager_notNull() {
     AdvancedUninstallController ctrl;
     QVERIFY(ctrl.restorePointManager() != nullptr);
 }
 
-// ── Queue Management ────────────────────────────────────────────────────────
+// -- Queue Management --------------------------------------------------------
 
 void AdvancedUninstallControllerTests::addToQueue_appendsItem() {
     AdvancedUninstallController ctrl;
@@ -448,7 +448,7 @@ void AdvancedUninstallControllerTests::queueMutation_refusedDuringBatch() {
     ctrl.cancelOperation();            // request stop; destructor joins the worker
 }
 
-// ── State Guards ────────────────────────────────────────────────────────────
+// -- State Guards ------------------------------------------------------------
 
 void AdvancedUninstallControllerTests::uninstallProgram_rejectsWhenBusy() {
     AdvancedUninstallController ctrl;
@@ -542,7 +542,7 @@ void AdvancedUninstallControllerTests::startBatch_setsUninstallingState() {
     ctrl.cancelOperation();  // request stop; destructor joins the worker
 }
 
-// ── Input Validation ────────────────────────────────────────────────────────
+// -- Input Validation --------------------------------------------------------
 
 void AdvancedUninstallControllerTests::uninstallProgram_rejectsEmptyName() {
     AdvancedUninstallController ctrl;
@@ -601,7 +601,7 @@ void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsNonHiveRooted(
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
-// ── Settings Persistence ────────────────────────────────────────────────────
+// -- Settings Persistence ----------------------------------------------------
 
 void AdvancedUninstallControllerTests::saveAndLoadSettings_roundTrip() {
     // Set non-default values and save
@@ -635,7 +635,7 @@ void AdvancedUninstallControllerTests::saveAndLoadSettings_roundTrip() {
     }
 }
 
-// ── State Machine ───────────────────────────────────────────────────────────
+// -- State Machine -----------------------------------------------------------
 
 void AdvancedUninstallControllerTests::stateChanged_emitsSignal() {
     AdvancedUninstallController ctrl;
@@ -662,7 +662,7 @@ void AdvancedUninstallControllerTests::refreshPrograms_changesState() {
     ctrl.cancelOperation();
 }
 
-// ── Cancel When Idle ────────────────────────────────────────────────────────
+// -- Cancel When Idle --------------------------------------------------------
 
 void AdvancedUninstallControllerTests::cancelOperation_whenIdle_noOp() {
     AdvancedUninstallController ctrl;

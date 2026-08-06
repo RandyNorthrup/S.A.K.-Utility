@@ -1,4 +1,4 @@
-# S.A.K. Utility — Copilot Instructions
+# S.A.K. Utility -- Copilot Instructions
 
 ## Project Identity
 
@@ -15,11 +15,11 @@ with the app, Qt runtime files, plugins, and bundled technician tools.
 
 ---
 
-## TigerStyle — Best-Practice Philosophy
+## TigerStyle -- Best-Practice Philosophy
 
 This project aspires to **TigerStyle**, a coding discipline from
 [TigerBeetle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md)
-that prioritizes **safety → performance → developer experience**, in that order.
+that prioritizes **safety -> performance -> developer experience**, in that order.
 
 TigerStyle is a **guiding philosophy, not a blocker**. Strive to follow these
 guidelines, but never let them prevent code from shipping when the release
@@ -27,42 +27,42 @@ hooks pass. The hard gates are: **zero build warnings, zero build errors,
 and all tests passing** (see *Build & CI Requirements* below).
 
 > "The design is not just what it looks like and feels like.
-> The design is how it works." — Steve Jobs
+> The design is how it works." -- Steve Jobs
 
 ### Core Tenets
 
-1. **Zero technical debt** — Do it right the first time. What we ship is solid.
+1. **Zero technical debt** -- Do it right the first time. What we ship is solid.
    No workarounds, no placeholders, no stubs, no "fix later" comments.
 
-2. **Assertions are a force multiplier** — Use assertions to validate meaningful
-   preconditions and postconditions. Every assertion should catch a real bug —
+2. **Assertions are a force multiplier** -- Use assertions to validate meaningful
+   preconditions and postconditions. Every assertion should catch a real bug --
    never add assertions just to hit a density target. Use `Q_ASSERT` for
    debug-mode checks, `static_assert` for compile-time invariants.
 
-3. **Simplicity is the hardest revision** — The first attempt is never the
+3. **Simplicity is the hardest revision** -- The first attempt is never the
    simplest. Refactor until the code reads as obviously correct.
 
-4. **Put a limit on everything** — All loops, queues, buffers, and timeouts have
+4. **Put a limit on everything** -- All loops, queues, buffers, and timeouts have
    bounded sizes expressed as named constants.
 
-5. **Fail fast** — Detect violations sooner rather than later. Never silently
+5. **Fail fast** -- Detect violations sooner rather than later. Never silently
    swallow errors. Every user-visible error must also be logged via `sak::logError`
    or `sak::logWarning`.
 
 ### TigerStyle Best-Practice Targets
 
 These are goals to strive for. Violations are acceptable when pragmatically
-necessary — they should be improved over time, not block a commit that passes
+necessary -- they should be improved over time, not block a commit that passes
 the release hooks.
 
 | Guideline | Target | Notes |
 |---|---|---|
-| Function body length | ≤70 lines | Data-only initializers may exceed if splitting hurts readability |
-| Nesting depth | ≤3 levels | Prefer early returns and helper extraction |
-| Line length | ≤100 columns | Enforced by `.clang-format` |
+| Function body length | <=70 lines | Data-only initializers may exceed if splitting hurts readability |
+| Nesting depth | <=3 levels | Prefer early returns and helper extraction |
+| Line length | <=100 columns | Enforced by `.clang-format` |
 | Assertions | Meaningful preconditions/postconditions | Every assertion should catch a real bug |
 | `catch(...)` | Should have explanatory comment | Only in logger (exempt) |
-| Magic numbers | Prefer named `constexpr` constants | 0, 1, −1 are acceptable bare literals |
+| Magic numbers | Prefer named `constexpr` constants | 0, 1, -1 are acceptable bare literals |
 | Single-letter variables | Avoid | Except tiny lambda predicates (`c` in `\[\](QChar c)`) |
 | `else` after `return` | Avoid | Prefer early-return guard clauses |
 | Nested ternary | Avoid | Prefer `if`/`else` or helper function |
@@ -77,7 +77,7 @@ the release hooks.
 | `comptime assert` | `static_assert()` |
 | `zig fmt` | `.clang-format` (100-col limit) |
 | `snake_case` everywhere | `snake_case` for vars/functions, `PascalCase` for types (Qt convention) |
-| No dynamic allocation | Not applicable — Qt widgets require `new` with parent ownership |
+| No dynamic allocation | Not applicable -- Qt widgets require `new` with parent ownership |
 | No dependencies | Qt6 is the framework; vcpkg for utilities |
 
 ---
@@ -90,7 +90,7 @@ All code **must** compile cleanly under:
 ```
 /W4 /WX /permissive- /utf-8 /std:c++latest
 ```
-Zero warnings. Zero errors. **This is a release hook — it must always pass.**
+Zero warnings. Zero errors. **This is a release hook -- it must always pass.**
 
 ### Naming Conventions
 
@@ -105,9 +105,9 @@ QString local_variable;              // Local variables are snake_case
 
 ### File Organization
 
-- Headers: `include/sak/*.h` — `#pragma once`, public API with `///` Doxygen docs
+- Headers: `include/sak/*.h` -- `#pragma once`, public API with `///` Doxygen docs
 - Sources: `src/core/`, `src/gui/`, `src/actions/`, `src/threading/`
-- Tests: `tests/test_*.cpp` — one test file per unit
+- Tests: `tests/test_*.cpp` -- one test file per unit
 - Project headers before Qt headers before STL headers
 
 ### Qt-Specific Rules
@@ -122,32 +122,32 @@ QString local_variable;              // Local variables are snake_case
 
 - **Never silence errors.** Every `QMessageBox::warning` / `::critical` must have
   a corresponding `sak::logError()` or `sak::logWarning()` call.
-- **Logger API uses `std::string`** — convert with `.toStdString()`:
+- **Logger API uses `std::string`** -- convert with `.toStdString()`:
   ```cpp
   sak::logError("Failed to open: {}", path.toStdString());
   ```
-- **Use `std::expected`** for functions that can fail — not exceptions for control flow.
-- **Typed catches only** — `catch (const std::exception&)` or
+- **Use `std::expected`** for functions that can fail -- not exceptions for control flow.
+- **Typed catches only** -- `catch (const std::exception&)` or
   `catch (const std::filesystem::filesystem_error&)`. Never bare `catch(...)` without
   a comment explaining why.
-- **Check all process results** — `waitForStarted()`, `waitForFinished()` return
+- **Check all process results** -- `waitForStarted()`, `waitForFinished()` return
   values must always be checked. Kill on timeout.
 
 ### Constants & Magic Numbers
 
-- All timeouts, buffer sizes, retry counts → named `constexpr` in the appropriate
+- All timeouts, buffer sizes, retry counts -> named `constexpr` in the appropriate
   constants header (`style_constants.h`, `layout_constants.h`, etc.)
-- Column indices → `enum` in the panel header
-- Colors → `style_constants.h` or `windows11_theme.cpp`
+- Column indices -> `enum` in the panel header
+- Colors -> `style_constants.h` or `windows11_theme.cpp`
 - Acceptable bare literals: `0`, `1`, `-1`, `nullptr`, `true`, `false`
 
 ### Code Shape (Best Practice)
 
-- **Aim for ≤70 lines per function.** Data-only initializers (e.g., distro catalog
+- **Aim for <=70 lines per function.** Data-only initializers (e.g., distro catalog
   entries) may exceed if splitting harms readability. Slightly exceeding 70 lines
-  is acceptable — refactor when practical, but don't let it block a commit.
-- **Aim for ≤3 levels of nesting.** Use early returns (guard clauses) to flatten.
-- **≤100 characters per line.** Break long strings, connect calls, and signatures.
+  is acceptable -- refactor when practical, but don't let it block a commit.
+- **Aim for <=3 levels of nesting.** Use early returns (guard clauses) to flatten.
+- **<=100 characters per line.** Break long strings, connect calls, and signatures.
 - **One declaration per line.** No `int a, b, c;`.
 
 ---
@@ -159,10 +159,10 @@ QString local_variable;              // Local variables are snake_case
 When adding a new feature, panel, action, or core component, you **must** add
 corresponding tests in `tests/`:
 
-1. **Unit tests for core logic** — Test the controller/worker/manager, not the GUI.
-2. **Happy path** — The normal successful case.
-3. **Error/edge cases** — Invalid input, empty input, boundary values.
-4. **Resource cleanup** — Verify no leaks via RAII; test cancel/abort paths.
+1. **Unit tests for core logic** -- Test the controller/worker/manager, not the GUI.
+2. **Happy path** -- The normal successful case.
+3. **Error/edge cases** -- Invalid input, empty input, boundary values.
+4. **Resource cleanup** -- Verify no leaks via RAII; test cancel/abort paths.
 
 ### Test File Naming
 
@@ -190,7 +190,7 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-All tests must pass before any commit. **This is a release hook — it must
+All tests must pass before any commit. **This is a release hook -- it must
 always pass.**
 
 ### Test Coverage Expectations
@@ -217,11 +217,11 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-### CI Gate (Release Hooks — Must Always Pass)
+### CI Gate (Release Hooks -- Must Always Pass)
 
 These are the **hard requirements**. Every PR must pass these gates:
-- [ ] **Build with zero warnings** (`/W4 /WX`) — non-negotiable
-- [ ] **Pass all tests** (100% pass rate) — non-negotiable
+- [ ] **Build with zero warnings** (`/W4 /WX`) -- non-negotiable
+- [ ] **Pass all tests** (100% pass rate) -- non-negotiable
 - [ ] Include tests for new features
 
 TigerStyle guidelines (function length, nesting depth, naming, etc.) are
@@ -235,45 +235,45 @@ release hooks above.
 ### Directory Structure
 
 ```
-include/sak/          — Public headers (one .h per class, 160 headers)
-include/sak/actions/  — Action headers (7 files, 167 headers total)
-src/core/             — Core business logic, workers, parsers, managers (106 files)
-src/gui/              — Qt widget panels, dialogs, and themes (37 files)
-src/actions/          — Quick action workers (one file per action, 7 files)
-src/threading/        — Thread workers (backup, scan, hash, flash, 4 files)
-src/third_party/      — Bundled third-party source (qrcodegen)
-tests/unit/           — Qt Test unit tests (112 files)
-tests/unit/actions/   — Action validation tests (2 files)
-tests/integration/    — End-to-end workflow tests (3 files)
-resources/            — QRC files, icons, themes
-scripts/              — Build/lint/utility scripts
-docs/                 — Project documentation
-cmake/                — CMake modules and build config
+include/sak/          -- Public headers (one .h per class, 160 headers)
+include/sak/actions/  -- Action headers (7 files, 167 headers total)
+src/core/             -- Core business logic, workers, parsers, managers (106 files)
+src/gui/              -- Qt widget panels, dialogs, and themes (37 files)
+src/actions/          -- Quick action workers (one file per action, 7 files)
+src/threading/        -- Thread workers (backup, scan, hash, flash, 4 files)
+src/third_party/      -- Bundled third-party source (qrcodegen)
+tests/unit/           -- Qt Test unit tests (112 files)
+tests/unit/actions/   -- Action validation tests (2 files)
+tests/integration/    -- End-to-end workflow tests (3 files)
+resources/            -- QRC files, icons, themes
+scripts/              -- Build/lint/utility scripts
+docs/                 -- Project documentation
+cmake/                -- CMake modules and build config
 ```
 
 ### Key Patterns
 
-- **Panel + Controller** — GUI panels delegate logic to controllers.
-  `FooPanel` (UI) → `FooController` (logic). Keep panels thin.
-- **Worker threads** — Long operations use `WorkerBase` subclasses moved to
+- **Panel + Controller** -- GUI panels delegate logic to controllers.
+  `FooPanel` (UI) -> `FooController` (logic). Keep panels thin.
+- **Worker threads** -- Long operations use `WorkerBase` subclasses moved to
   `QThread`. Communicate via signals/slots only. Never touch GUI from a worker.
-- **Modal dialog isolation** — Modal dialogs that share a controller with the
+- **Modal dialog isolation** -- Modal dialogs that share a controller with the
   parent panel must disconnect overlapping signals before `dialog.exec()` and
   reconnect after. Use `disconnectDialogSignals()` / `reconnectDialogSignals()`
   helpers plus a `m_dialog_active` guard flag for lambdas.
-- **Action system** — Quick actions inherit `QuickAction` and implement `execute()`.
+- **Action system** -- Quick actions inherit `QuickAction` and implement `execute()`.
   Actions are registered with `QuickActionController` in the panels that host them.
-- **Logging** — `sak::logInfo`, `sak::logWarning`, `sak::logError` write to
-  `_logs/` with rotation. Uses `std::vformat` — all args must be `std::string`.
+- **Logging** -- `sak::logInfo`, `sak::logWarning`, `sak::logError` write to
+  `_logs/` with rotation. Uses `std::vformat` -- all args must be `std::string`.
 
 ### Important Conventions
 
-- **Portable mode** — Detected by `portable.ini` in the exe directory.
+- **Portable mode** -- Detected by `portable.ini` in the exe directory.
   All paths relative to exe, no registry writes.
-- **Signal naming** — `Q_SIGNALS` use past tense: `scanFinished`, `errorOccurred`,
+- **Signal naming** -- `Q_SIGNALS` use past tense: `scanFinished`, `errorOccurred`,
   `progressUpdated`.
-- **Slot naming** — Private slots use `on` prefix: `onScanClicked`, `onTimerExpired`.
-- **Section separators** — Use `// ======` comment blocks to visually divide
+- **Slot naming** -- Private slots use `on` prefix: `onScanClicked`, `onTimerExpired`.
+- **Section separators** -- Use `// ======` comment blocks to visually divide
   major sections within source files.
 
 ---
@@ -282,21 +282,21 @@ cmake/                — CMake modules and build config
 
 ### Hard Rules (will break release hooks)
 
-- Do not introduce build warnings — the build **must** pass `/W4 /WX`.
-- Do not break existing tests — all tests **must** pass.
+- Do not introduce build warnings -- the build **must** pass `/W4 /WX`.
+- Do not break existing tests -- all tests **must** pass.
 - Do not bypass build warnings with pragmas or casts.
 - Do not silence errors or swallow exceptions.
-- Do not use `emit` — use `Q_EMIT` (project uses `QT_NO_KEYWORDS`).
+- Do not use `emit` -- use `Q_EMIT` (project uses `QT_NO_KEYWORDS`).
 
 ### Best Practices (strive for, but not blockers)
 
 - Avoid adding features without tests.
 - Avoid `catch(...)` without a justifying comment.
-- Avoid leaving `TODO`/`FIXME` in committed code — file an issue instead.
-- Avoid committed commented-out code — Git preserves history.
+- Avoid leaving `TODO`/`FIXME` in committed code -- file an issue instead.
+- Avoid committed commented-out code -- Git preserves history.
 - Avoid abbreviated or single-letter variable names.
 - Aim to keep functions under 70 lines.
-- Aim to keep nesting to ≤3 levels.
+- Aim to keep nesting to <=3 levels.
 - Prefer named constants over magic numbers.
 - Prefer `static_cast`, `dynamic_cast` over C-style casts.
 

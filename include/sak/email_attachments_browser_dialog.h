@@ -125,14 +125,14 @@ private:
     // Search state
     QString m_search_text;
 
-    // Save state — shared batch saver
+    // Save state -- shared batch saver
     sak::AttachmentBatchSave m_batch_save;
 
-    // Navigation state — set when user chooses "View Containing Email"
+    // Navigation state -- set when user chooses "View Containing Email"
     uint64_t m_navigate_folder_id{0};
     uint64_t m_navigate_message_id{0};
 
-    // Maps message node_id → folder_id for navigation
+    // Maps message node_id -> folder_id for navigation
     QHash<uint64_t, uint64_t> m_message_folder_map;
 };
 

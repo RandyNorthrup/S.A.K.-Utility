@@ -35,7 +35,7 @@ class QVBoxLayout;
 namespace sak {
 
 // ============================================================================
-// CalendarEvent — enriched event for display
+// CalendarEvent -- enriched event for display
 // ============================================================================
 
 /// @brief Enriched calendar event combining summary and detail data
@@ -46,7 +46,7 @@ struct CalendarEvent {
     QString sender_name;
     QDateTime start_time;
 
-    // Detail fields — populated when detail is loaded
+    // Detail fields -- populated when detail is loaded
     bool detail_loaded = false;
     QDateTime end_time;
     QString location;
@@ -128,7 +128,7 @@ private Q_SLOTS:
     void onDetailLoaded(sak::PstItemDetail detail);
 
 private:
-    // UI setup helpers — each builds one section of the dialog
+    // UI setup helpers -- each builds one section of the dialog
     void setupUi();
     void setupToolbar(QVBoxLayout* parent_layout);
     void setupNavButtons(QHBoxLayout* layout);
@@ -234,8 +234,8 @@ private:
 
     // Event data
     QVector<CalendarEvent> m_all_events;
-    QMap<QDate, QVector<int>> m_date_index;  ///< date → indices into m_all_events
-    QHash<uint64_t, int> m_node_index;       ///< node_id → index into m_all_events
+    QMap<QDate, QVector<int>> m_date_index;  ///< date -> indices into m_all_events
+    QHash<uint64_t, int> m_node_index;       ///< node_id -> index into m_all_events
     int m_folders_loaded{0};
     int m_details_pending{0};
 };

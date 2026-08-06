@@ -1,5 +1,5 @@
 # =============================================================================
-# S.A.K. Utility — Clang-Tidy Configuration
+# S.A.K. Utility -- Clang-Tidy Configuration
 # Production-grade static analysis for C++23 / Qt 6 / MSVC 2022
 # Requires: clang-tidy 17+
 # =============================================================================
@@ -10,7 +10,7 @@ InheritParentConfig: false
 # Header filter: only analyze our own headers, not Qt/system
 HeaderFilterRegex: 'include/sak/.*\.h$'
 
-# Warnings are errors in CI — enforce zero tolerance
+# Warnings are errors in CI -- enforce zero tolerance
 WarningsAsErrors: '*'
 
 # Treat system headers as system (suppress diagnostics)
@@ -75,7 +75,7 @@ Checks: >
   -readability-convert-member-functions-to-static,
 
 CheckOptions:
-  # ── Naming conventions (match existing codebase style) ─────────────
+  # -- Naming conventions (match existing codebase style) -------------
   # Classes: PascalCase
   - key: readability-identifier-naming.ClassCase
     value: CamelCase
@@ -148,7 +148,7 @@ CheckOptions:
   - key: readability-identifier-naming.MacroDefinitionCase
     value: UPPER_CASE
 
-  # ── Thresholds & limits ────────────────────────────────────────────
+  # -- Thresholds & limits --------------------------------------------
   - key: readability-function-size.LineThreshold
     value: '120'
   - key: readability-function-size.StatementThreshold
@@ -160,7 +160,7 @@ CheckOptions:
   - key: readability-function-size.NestingThreshold
     value: '5'
 
-  # ── Modernize preferences ─────────────────────────────────────────
+  # -- Modernize preferences -----------------------------------------
   - key: modernize-use-nullptr.NullMacros
     value: 'NULL'
   - key: modernize-use-auto.MinTypeNameLength
@@ -176,7 +176,7 @@ CheckOptions:
   - key: modernize-use-emplace.SmartPointers
     value: '::std::shared_ptr;::std::unique_ptr;::std::auto_ptr;::std::weak_ptr'
 
-  # ── Performance tuning ────────────────────────────────────────────
+  # -- Performance tuning --------------------------------------------
   - key: performance-unnecessary-value-param.AllowedTypes
     value: 'QString;QStringList;QVariant;QUrl;QByteArray'
   - key: performance-for-range-copy.WarnOnAllAutoCopies
@@ -184,11 +184,11 @@ CheckOptions:
   - key: performance-move-const-arg.CheckTriviallyCopyableMove
     value: 'false'
 
-  # ── Concurrency ───────────────────────────────────────────────────
+  # -- Concurrency ---------------------------------------------------
   - key: concurrency-mt-unsafe.FunctionSet
     value: 'posix'
 
-  # ── Miscellaneous ─────────────────────────────────────────────────
+  # -- Miscellaneous -------------------------------------------------
   - key: misc-unused-parameters.StrictMode
     value: 'false'
   - key: bugprone-argument-comment.StrictMode

@@ -3,13 +3,13 @@
 
 /**
  * @file test_windows_usb_creator.cpp
- * @brief TST-07 — Unit tests for WindowsUSBCreator validation logic.
+ * @brief TST-07 -- Unit tests for WindowsUSBCreator validation logic.
  *
  * Tests the input validation and error handling that runs before any
  * OS process is spawned. Verifies BUG-09 fix (disk number command
  * injection prevention) and ISO existence checks.
  *
- * No admin privileges or hardware required — all tests exercise
+ * No admin privileges or hardware required -- all tests exercise
  * validation that fires before formatDriveNTFS/QProcess calls.
  */
 
@@ -105,7 +105,7 @@ void WindowsUSBCreatorTests::validDiskNumbers() {
 
     WindowsUSBCreator creator;
 
-    // Valid disk number + nonexistent ISO → should pass disk validation
+    // Valid disk number + nonexistent ISO -> should pass disk validation
     // and fail on ISO check instead.
     bool result = creator.createBootableUSB(QStringLiteral("/nonexistent/test.iso"), diskNum);
     QVERIFY(!result);
@@ -205,7 +205,7 @@ void WindowsUSBCreatorTests::lastErrorIsThreadSafe() {
     creator.createBootableUSB(QStringLiteral("/no/such.iso"), QStringLiteral("bad!"));
     QVERIFY(!creator.lastError().isEmpty());
 
-    // Call lastError multiple times — should be safe and consistent.
+    // Call lastError multiple times -- should be safe and consistent.
     const QString err1 = creator.lastError();
     const QString err2 = creator.lastError();
     QCOMPARE(err1, err2);

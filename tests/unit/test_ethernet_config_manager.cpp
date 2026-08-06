@@ -21,11 +21,11 @@ class TestEthernetConfigManager : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──────────────────────────────────────────────
+    // -- Construction ----------------------------------------------
     void construction_default();
     void construction_nonCopyable();
 
-    // ── EthernetConfigSnapshot ────────────────────────────────────
+    // -- EthernetConfigSnapshot ------------------------------------
     void snapshot_defaults();
     void snapshot_isValid_emptyInvalid();
     void snapshot_isValid_withData();
@@ -37,17 +37,17 @@ private Q_SLOTS:
     void snapshot_toJson_staticIp();
     void snapshot_toJson_multipleDns();
 
-    // ── File I/O (atomic write) ───────────────────────────────────
+    // -- File I/O (atomic write) -----------------------------------
     void saveToFile_atomicRoundTrip();
 
-    // ── MAC lookup (B9-19) ────────────────────────────────────────
+    // -- MAC lookup (B9-19) ----------------------------------------
     void lookupAdapterMac_unknownAdapterEmpty();
     void lookupAdapterMac_realAdapterHasMacFormat();
 };
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Construction
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestEthernetConfigManager::construction_default() {
     EthernetConfigManager mgr;
@@ -60,9 +60,9 @@ void TestEthernetConfigManager::construction_nonCopyable() {
     QVERIFY(!std::is_move_constructible_v<EthernetConfigManager>);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // EthernetConfigSnapshot
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestEthernetConfigManager::snapshot_defaults() {
     EthernetConfigSnapshot snapshot;
@@ -139,7 +139,7 @@ void TestEthernetConfigManager::snapshot_fromJson_missingFields() {
     QJsonObject partial;
     partial["adapterName"] = "Test";
     const auto snapshot = EthernetConfigSnapshot::fromJson(partial);
-    // Should handle gracefully — either invalid or partial data
+    // Should handle gracefully -- either invalid or partial data
     QVERIFY(snapshot.adapterName == "Test" || snapshot.adapterName.isEmpty());
 }
 

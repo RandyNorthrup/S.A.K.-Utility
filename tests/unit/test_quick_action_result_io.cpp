@@ -22,7 +22,7 @@ class TestQuickActionResultIO : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── actionStatusToString ────────────────────────────────
+    // -- actionStatusToString --------------------------------
     void toStringIdle();
     void toStringScanning();
     void toStringReady();
@@ -31,17 +31,17 @@ private Q_SLOTS:
     void toStringFailed();
     void toStringCancelled();
 
-    // ── actionStatusFromString ──────────────────────────────
+    // -- actionStatusFromString ------------------------------
     void fromStringExact();
     void fromStringMixedCase();
     void fromStringWithWhitespace();
     void fromStringUnknownReturnsIdle();
     void fromStringEmptyReturnsIdle();
 
-    // ── round-trip enum ↔ string ────────────────────────────
+    // -- round-trip enum <-> string ----------------------------
     void roundTripAllStatuses();
 
-    // ── file write / read ───────────────────────────────────
+    // -- file write / read -----------------------------------
     void writeReadRoundTrip();
     void writeReadLargeValues();
     void readMissingFileReturnsFalse();
@@ -119,7 +119,7 @@ void TestQuickActionResultIO::fromStringEmptyReturnsIdle() {
 }
 
 // ============================================================================
-// Round-trip enum → string → enum
+// Round-trip enum -> string -> enum
 // ============================================================================
 
 void TestQuickActionResultIO::roundTripAllStatuses() {

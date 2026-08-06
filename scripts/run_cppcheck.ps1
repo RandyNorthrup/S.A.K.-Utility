@@ -55,7 +55,7 @@ function Find-Cppcheck {
 $CppcheckExe = Find-Cppcheck
 
 # ---------------------------------------------------------------------------
-# Build command arguments — STRICTEST settings
+# Build command arguments -- STRICTEST settings
 # ---------------------------------------------------------------------------
 $CppcheckArgs = @(
     "--enable=all"                  # All check categories
@@ -125,7 +125,7 @@ if ($Files -and $Files.Count -gt 0) {
     }
     $CppcheckArgs += $CppFiles
 } else {
-    # Full project scan — exclude third-party code
+    # Full project scan -- exclude third-party code
     $CppcheckArgs += "-i"
     $CppcheckArgs += (Join-Path $ProjectRoot "src" "third_party")
     $CppcheckArgs += (Join-Path $ProjectRoot "src")

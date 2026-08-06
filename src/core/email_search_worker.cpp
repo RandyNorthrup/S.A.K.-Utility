@@ -237,7 +237,7 @@ void EmailSearchWorker::cancel() {
 }
 
 // ============================================================================
-// Internal — Text Matching
+// Internal -- Text Matching
 // ============================================================================
 
 bool EmailSearchWorker::matchesQuery(const QString& text,
@@ -277,7 +277,7 @@ QString EmailSearchWorker::extractContextSnippet(const QString& text,
 }
 
 // ============================================================================
-// Internal — Item Filtering & Matching
+// Internal -- Item Filtering & Matching
 // ============================================================================
 
 bool EmailSearchWorker::passesItemFilters(const sak::PstItemSummary& item,

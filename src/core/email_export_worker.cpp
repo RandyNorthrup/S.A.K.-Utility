@@ -480,7 +480,7 @@ void addCalendarTaskCsvFields(CsvFieldMap& map) {
 /// row structure (a quote/CR/LF) (B7-config).
 QString validateCsvConfig(const QStringList& columns, QChar delimiter);
 
-/// Build the complete CSV column→extractor dispatch table
+/// Build the complete CSV column->extractor dispatch table
 const CsvFieldMap& csvFieldMap() {
     static const auto map = [] {
         CsvFieldMap result;

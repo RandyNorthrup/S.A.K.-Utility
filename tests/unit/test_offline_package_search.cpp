@@ -282,7 +282,7 @@ void TestOfflinePackageSearch::searchResult_dataRoles_storePackageInfo() {
     QListWidget search_results;
 
     // Simulate populating search results (as onOfflineSearchComplete does)
-    auto* item = new QListWidgetItem("googlechrome  (v120.0.6099.130)  — 50000000 downloads");
+    auto* item = new QListWidgetItem("googlechrome  (v120.0.6099.130)  -- 50000000 downloads");
     item->setData(Qt::UserRole, "googlechrome");
     item->setData(Qt::UserRole + 1, "120.0.6099.130");
     item->setToolTip("A web browser by Google");

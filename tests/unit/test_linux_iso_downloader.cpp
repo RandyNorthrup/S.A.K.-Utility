@@ -52,16 +52,16 @@ private Q_SLOTS:
     void testDistrosByCategory();
     void testDistrosByCategoryCount();
 
-    // URL resolution — DirectURL
+    // URL resolution -- DirectURL
     void testResolveDirectUrl_Ubuntu();
     void testResolveDirectUrl_Kali();
 
-    // URL resolution — SourceForge
+    // URL resolution -- SourceForge
     void testResolveSourceForgeUrl_SystemRescue();
     void testResolveSourceForgeUrl_Clonezilla();
     void testResolveSourceForgeUrl_GParted();
 
-    // URL resolution — GitHub
+    // URL resolution -- GitHub
     void testResolveGitHubUrl_NoCache();
     void testResolveGitHubUrl_RequiresVersionCheck();
 
@@ -115,7 +115,7 @@ private Q_SLOTS:
     void testShouldApplyVerifyResult_gating();
 
     // ========================================================================
-    // Network Tests (require internet — auto-skip if unreachable)
+    // Network Tests (require internet -- auto-skip if unreachable)
     // ========================================================================
     void testGitHubVersionCheck_Network();
     void testDirectUrlReachable_Ubuntu();
@@ -261,7 +261,7 @@ void LinuxISODownloaderTests::testDistrosByCategoryCount() {
 }
 
 // ============================================================================
-// Catalog: URL Resolution — DirectURL
+// Catalog: URL Resolution -- DirectURL
 // ============================================================================
 
 void LinuxISODownloaderTests::testResolveDirectUrl_Ubuntu() {
@@ -282,7 +282,7 @@ void LinuxISODownloaderTests::testResolveDirectUrl_Kali() {
 }
 
 // ============================================================================
-// Catalog: URL Resolution — SourceForge
+// Catalog: URL Resolution -- SourceForge
 // ============================================================================
 
 void LinuxISODownloaderTests::testResolveSourceForgeUrl_SystemRescue() {
@@ -319,7 +319,7 @@ void LinuxISODownloaderTests::testResolveSourceForgeUrl_GParted() {
 }
 
 // ============================================================================
-// Catalog: URL Resolution — GitHub
+// Catalog: URL Resolution -- GitHub
 // ============================================================================
 
 void LinuxISODownloaderTests::testResolveGitHubUrl_NoCache() {
@@ -744,12 +744,12 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_Network() {
     }
 
     if (!gotResponse) {
-        QSKIP("GitHub API unreachable — skipping network test");
+        QSKIP("GitHub API unreachable -- skipping network test");
     }
 
     if (failedSpy.count() > 0) {
         qWarning() << "GitHub API error:" << failedSpy.at(0).at(1).toString();
-        QSKIP("GitHub API returned error — skipping");
+        QSKIP("GitHub API returned error -- skipping");
     }
 
     QCOMPARE(completedSpy.count(), 1);
@@ -783,7 +783,7 @@ void LinuxISODownloaderTests::testDirectUrlReachable_Ubuntu() {
     bool ok = QTest::qWaitFor([&finishedSpy]() { return finishedSpy.count() > 0; }, 15'000);
     if (!ok) {
         reply->deleteLater();
-        QSKIP("Network timeout — skipping URL reachability test");
+        QSKIP("Network timeout -- skipping URL reachability test");
     }
 
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -806,19 +806,19 @@ void LinuxISODownloaderTests::testSourceForgeUrlStructure_AllDistros() {
 
         QVERIFY2(url.startsWith("https://sourceforge.net/projects/"),
                  qPrintable("SF URL must start with https://sourceforge.net/projects/: " + d.id +
-                            " → " + url));
+                            " -> " + url));
         QVERIFY2(url.endsWith("/download"),
-                 qPrintable("SF URL must end with /download: " + d.id + " → " + url));
+                 qPrintable("SF URL must end with /download: " + d.id + " -> " + url));
         QVERIFY2(url.contains(d.version),
-                 qPrintable("SF URL must contain version: " + d.id + " → " + url));
+                 qPrintable("SF URL must contain version: " + d.id + " -> " + url));
         QVERIFY2(!url.contains("{version}"),
-                 qPrintable("Unresolved {version} placeholder: " + d.id + " → " + url));
+                 qPrintable("Unresolved {version} placeholder: " + d.id + " -> " + url));
 
         // Verify filename resolution
         QString filename = m_catalog->resolveFileName(d);
         QVERIFY2(!filename.isEmpty(), qPrintable("SF distro " + d.id + " has empty filename"));
         QVERIFY2(filename.contains(d.version),
-                 qPrintable("SF filename missing version: " + d.id + " → " + filename));
+                 qPrintable("SF filename missing version: " + d.id + " -> " + filename));
     }
 }
 

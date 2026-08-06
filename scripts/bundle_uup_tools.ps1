@@ -12,10 +12,10 @@
 # Required tools after bundling:
 #   tools/uup/aria2c.exe              - Multi-connection download manager
 #   tools/uup/uupmc/                  - Patched UUP Media Creator
-#     ├── UUPMediaConverter.exe        - UUP-to-ISO conversion utility
-#     ├── UUPDownload.exe              - UUP download utility
-#     ├── libwim-15.dll                - WIM library
-#     └── CDImage/cdimage.exe          - CD/DVD image builder
+#     +-- UUPMediaConverter.exe        - UUP-to-ISO conversion utility
+#     +-- UUPDownload.exe              - UUP download utility
+#     +-- libwim-15.dll                - WIM library
+#     +-- CDImage/cdimage.exe          - CD/DVD image builder
 
 param(
     [string]$OutputDir = (Join-Path $PSScriptRoot "..\tools\uup"),

@@ -28,12 +28,12 @@ namespace sak {
 
 /// @brief IPC message types sent over the named pipe
 enum class PipeMessageType : uint8_t {
-    // Client → Server
+    // Client -> Server
     TaskRequest = 0x01,    ///< Execute a task: { task, payload }
     CancelRequest = 0x02,  ///< Cancel current task: { task }
     Shutdown = 0x03,       ///< Gracefully shut down helper
 
-    // Server → Client
+    // Server -> Client
     ProgressUpdate = 0x10,  ///< Progress: { percent, status }
     TaskResult = 0x11,      ///< Final result: { success, data }
     TaskError = 0x12,       ///< Error: { code, message }
@@ -47,7 +47,7 @@ enum class PipeMessageType : uint8_t {
 /// @brief Header size: 4 bytes length + 1 byte type
 inline constexpr int kPipeHeaderSize = 5;
 
-/// @brief Maximum message payload (4 MB — generous for JSON, prevents abuse)
+/// @brief Maximum message payload (4 MB -- generous for JSON, prevents abuse)
 inline constexpr uint32_t kPipeMaxPayload = 4 * 1024 * 1024;
 
 /// @brief Named pipe base path

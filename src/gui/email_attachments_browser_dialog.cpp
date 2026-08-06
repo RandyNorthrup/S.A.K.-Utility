@@ -236,7 +236,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createButtonRow() {
 }
 
 // ============================================================================
-// Folder collection — recursively gather all folder IDs
+// Folder collection -- recursively gather all folder IDs
 // ============================================================================
 
 void EmailAttachmentsBrowserDialog::collectFolderIds(const PstFolderTree& tree) {
@@ -255,7 +255,7 @@ void EmailAttachmentsBrowserDialog::collectFolderIdsRecursive(const PstFolder& f
 }
 
 // ============================================================================
-// Scan — iterate all folders, collect items with attachments
+// Scan -- iterate all folders, collect items with attachments
 // ============================================================================
 
 void EmailAttachmentsBrowserDialog::startScan() {
@@ -286,7 +286,7 @@ void EmailAttachmentsBrowserDialog::startScan() {
 
 void EmailAttachmentsBrowserDialog::scanNextFolder() {
     if (m_folders_scanned >= m_all_folder_ids.size()) {
-        // All folders scanned — now load details for items with attachments
+        // All folders scanned -- now load details for items with attachments
         m_details_total = m_pending_detail_ids.size();
         m_details_loaded = 0;
         if (m_details_total == 0) {
@@ -657,14 +657,14 @@ void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t message_id
 }
 
 void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& message) {
-    // During detail loading — skip this item and continue
+    // During detail loading -- skip this item and continue
     if (!m_scan_complete && m_details_total > 0) {
         ++m_details_loaded;
         m_progress_bar->setValue(m_details_loaded);
         QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
         return;
     }
-    // During folder scanning — skip this folder and continue
+    // During folder scanning -- skip this folder and continue
     if (m_folders_scanned < m_all_folder_ids.size()) {
         ++m_folders_scanned;
         m_current_folder_offset = 0;
@@ -672,7 +672,7 @@ void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& message) {
         QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::scanNextFolder);
         return;
     }
-    // During save — count as failure and update status
+    // During save -- count as failure and update status
     if (m_batch_save.isActive()) {
         m_batch_save.recordError();
         sak::logWarning("Attachment save error: {}", message.toStdString());
@@ -705,7 +705,7 @@ QString EmailAttachmentsBrowserDialog::formatBytes(qint64 bytes) {
     return QStringLiteral("%1 B").arg(bytes);
 }
 
-// Data-driven extension → category mapping
+// Data-driven extension -> category mapping
 static const QHash<QString, QString>& extensionCategories() {
     static const QHash<QString, QString> map = {
         // Images

@@ -69,7 +69,7 @@ private Q_SLOTS:
     }
 
     // ======================================================================
-    // Dispatch — Success
+    // Dispatch -- Success
     // ======================================================================
 
     void testDispatchSuccess() {
@@ -112,7 +112,7 @@ private Q_SLOTS:
     }
 
     // ======================================================================
-    // Dispatch — Unregistered Task
+    // Dispatch -- Unregistered Task
     // ======================================================================
 
     void testDispatchUnregisteredTask() {
@@ -125,7 +125,7 @@ private Q_SLOTS:
     }
 
     // ======================================================================
-    // Dispatch — Exception Safety
+    // Dispatch -- Exception Safety
     // ======================================================================
 
     void testDispatchExceptionSafety() {
@@ -194,7 +194,7 @@ private Q_SLOTS:
                 return result;
             });
 
-        // Normal run — not cancelled
+        // Normal run -- not cancelled
         auto result1 = dispatcher.dispatch(
             "CancellableTask", {}, [](int, const QString&) {}, [] { return false; });
         QVERIFY(result1->success);

@@ -194,7 +194,7 @@ private Q_SLOTS:
     }
 
     void testParseJsonArray() {
-        // Arrays should be rejected — we only accept objects
+        // Arrays should be rejected -- we only accept objects
         sak::PipeMessage msg = sak::parsePayload(sak::PipeMessageType::TaskRequest, "[1,2,3]");
         QVERIFY(!msg.valid);
     }

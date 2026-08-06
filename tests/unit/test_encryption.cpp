@@ -196,7 +196,9 @@ void EncryptionTests::roundTrip_largeData() {
 void EncryptionTests::roundTrip_nonAsciiPassword() {
     const QByteArray original = "Data with unicode password";
     const QString password = QString::fromUtf8(
-        u8"Ð¿Ð°Ñ€Ð¾Ð»ÑŒå¯†ç ãƒ‘ã‚¹ãƒ¯ãƒ¼ãƒ‰");
+        u8"\u043F\u0430\u0440\u043E\u043B\u044C"  // parol (Cyrillic)
+        u8"\u5BC6\u7801"                          // mima (Chinese)
+        u8"\u30D1\u30B9\u30EF\u30FC\u30C9");      // pasuwaado (Japanese)
 
     auto encrypted = sak::encryptData(original, password);
     QVERIFY(encrypted.has_value());

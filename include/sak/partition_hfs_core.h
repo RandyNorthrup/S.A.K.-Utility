@@ -318,7 +318,7 @@ struct HfsCatalogRecord {
     [[nodiscard]] bool regularFile() const noexcept { return record_type == kHfsCatalogFileRecord; }
 
     // A hard-link alias is a 'hlnk'/'hfs+' file record whose special @44 is the
-    // iNodeNum of the real data in the `␄␄␄␄HFS+ Private Data` metadata directory.
+    // iNodeNum of the real data in the `\0\0\0\0HFS+ Private Data` metadata directory.
     [[nodiscard]] bool hardLinkAlias() const noexcept {
         return regularFile() && file_type == kHfsHardLinkFileType &&
                file_creator == kHfsHardLinkFileCreator;

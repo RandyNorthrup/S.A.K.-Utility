@@ -27,7 +27,7 @@ namespace sak {
 inline constexpr int kDefaultNoteColorYellow = 3;
 
 // ============================================================================
-// PST File Header (MS-PST §2.2.2.6)
+// PST File Header (MS-PST section 2.2.2.6)
 // ============================================================================
 
 /// @brief PST/OST file header parsed from the first 564/580 bytes
@@ -41,7 +41,7 @@ struct PstHeader {
     uint8_t platform_access = 0;  ///< 0x01 = Windows
     uint8_t encryption_type = 0;  ///< 0=None, 1=Compressible, 2=High
 
-    // Root structure pointers (Unicode PST — 64-bit offsets)
+    // Root structure pointers (Unicode PST -- 64-bit offsets)
     uint64_t root_nbt_page = 0;  ///< File offset of Node BTree root page
     uint64_t root_bbt_page = 0;  ///< File offset of Block BTree root page
     uint64_t file_size = 0;      ///< Recorded file size
@@ -53,7 +53,7 @@ struct PstHeader {
 
 /// @brief Represents a node in the PST Node BTree
 struct PstNode {
-    uint64_t node_id = 0;         ///< NID — encodes type in low bits
+    uint64_t node_id = 0;         ///< NID -- encodes type in low bits
     uint64_t data_bid = 0;        ///< Block ID for this node's data
     uint64_t subnode_bid = 0;     ///< Block ID for sub-node BTree
     uint64_t parent_node_id = 0;  ///< Parent NID in hierarchy

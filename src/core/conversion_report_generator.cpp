@@ -144,7 +144,7 @@ QString ConversionReportGenerator::generateCsvManifest(
 
     file.close();
 
-    logInfo("ConversionReport: CSV manifest saved — {} items", std::to_string(count));
+    logInfo("ConversionReport: CSV manifest saved -- {} items", std::to_string(count));
     return csv_path;
 }
 
@@ -209,27 +209,27 @@ QString ConversionReportGenerator::buildFileResultsTableHtml(
             status_class = QStringLiteral("success");
         }
 
-        html +=
-            QStringLiteral(
-                "<tr><td>%1</td>"
-                "<td class='%2'>%3</td>"
-                "<td class='%4'>%5</td>"
-                "<td>%6</td>"
-                "<td>%7</td>"
-                "<td>%8</td>"
-                "<td class='hash-preview'>%9</td>"
-                "</tr>")
-                .arg(result.source_path.toHtmlEscaped())
-                .arg(status_class)
-                .arg(result.items_converted)
-                .arg(result.items_failed > 0 ? QStringLiteral("error") : QString())
-                .arg(result.items_failed)
-                .arg(result.items_recovered)
-                .arg(formatBytes(result.bytes_written))
-                .arg(formatDuration(file_dur))
-                .arg(result.source_sha256.isEmpty()
-                         ? QStringLiteral("—")
-                         : result.source_sha256.left(kSha256PreviewChars) + QStringLiteral("…"));
+        html += QStringLiteral(
+                    "<tr><td>%1</td>"
+                    "<td class='%2'>%3</td>"
+                    "<td class='%4'>%5</td>"
+                    "<td>%6</td>"
+                    "<td>%7</td>"
+                    "<td>%8</td>"
+                    "<td class='hash-preview'>%9</td>"
+                    "</tr>")
+                    .arg(result.source_path.toHtmlEscaped())
+                    .arg(status_class)
+                    .arg(result.items_converted)
+                    .arg(result.items_failed > 0 ? QStringLiteral("error") : QString())
+                    .arg(result.items_failed)
+                    .arg(result.items_recovered)
+                    .arg(formatBytes(result.bytes_written))
+                    .arg(formatDuration(file_dur))
+                    .arg(result.source_sha256.isEmpty()
+                             ? QStringLiteral("\u2014")
+                             : result.source_sha256.left(kSha256PreviewChars) +
+                                   QStringLiteral("\u2026"));
     }
 
     html += QStringLiteral("</table>");

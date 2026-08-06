@@ -26,7 +26,7 @@ class TestMboxWriter : public QObject {
 private Q_SLOTS:
 
     // ====================================================================
-    // Happy Path — Write single message
+    // Happy Path -- Write single message
     // ====================================================================
 
     void testWriteSingleMessage() {
@@ -167,7 +167,7 @@ private Q_SLOTS:
     }
 
     // ====================================================================
-    // Header injection — CRLF in a field must not forge a header
+    // Header injection -- CRLF in a field must not forge a header
     // ====================================================================
 
     void testHeaderInjectionStripped() {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_advanced_search_worker.cpp
-/// @brief Unit tests for AdvancedSearchWorker — regex compilation, text search,
+/// @brief Unit tests for AdvancedSearchWorker -- regex compilation, text search,
 ///        metadata, archive, binary, dispatch logic, cancellation
 
 #include "sak/advanced_search_types.h"
@@ -39,7 +39,7 @@ private Q_SLOTS:
     void initTestCase();
     void cleanupTestCase();
 
-    // ── Regex Compilation (via execute()) ──
+    // -- Regex Compilation (via execute()) --
     void emptyPattern_returnsError();
     void plainText_findsMatch();
     void plainText_caseInsensitive();
@@ -49,7 +49,7 @@ private Q_SLOTS:
     void regexMode_specialChars();
     void regexEscape_literalDots();
 
-    // ── Text Content Search ──
+    // -- Text Content Search --
     void textSearch_singleMatch();
     void textSearch_multipleMatches();
     void textSearch_contextLines();
@@ -58,29 +58,29 @@ private Q_SLOTS:
     void textSearch_binaryFileSkipped();
     void textSearch_maxResults();
 
-    // ── File Extension Filter ──
+    // -- File Extension Filter --
     void extensionFilter_matchesIncluded();
     void extensionFilter_excludesOthers();
     void extensionFilter_emptyMatchesAll();
 
-    // ── Exclusion Patterns ──
+    // -- Exclusion Patterns --
     void excludePatterns_gitExcluded();
     void excludePatterns_customExclude();
 
-    // ── File Size Limit ──
+    // -- File Size Limit --
     void fileSizeLimit_skipsOversized();
 
-    // ── Single File Search ──
+    // -- Single File Search --
     void singleFileSearch_worksWithFilePath();
 
-    // ── Batch Emission ──
+    // -- Batch Emission --
     void batchEmission_emitsResults();
 
-    // ── Hex/Binary Search ──
+    // -- Hex/Binary Search --
     void hexSearch_findsPattern();
     void hexSearch_exclusiveMode();
 
-    // ── Image Metadata Search ──
+    // -- Image Metadata Search --
     void imageMetadataSearch_findsEmbeddedMetadata();
     void imageMetadataSearch_matchesByTagName();
     void imageMetadataSearch_matchesDimensions();
@@ -88,33 +88,33 @@ private Q_SLOTS:
     void imageMetadataSearch_jpegExifExtraction();
     void imageMetadataSearch_directorySearch();
 
-    // ── Diagnostic: Real directory ──
+    // -- Diagnostic: Real directory --
     void imageMetadataSearch_realDirectory();
 
-    // ── File Metadata Search ──
+    // -- File Metadata Search --
     void fileMetadataSearch_findsFileInfo();
     void fileMetadataSearch_hasMetadataFormat();
 
-    // ── Archive Search ──
+    // -- Archive Search --
     void archiveSearch_validZip();
     void archiveSearch_zipEntryNames();
     void archiveSearch_deflateCompressed();
 
-    // ── Cancellation ──
+    // -- Cancellation --
     void cancellation_stopsEarly();
 
-    // ── Progress Reporting ──
+    // -- Progress Reporting --
     void progress_emitsProgressSignal();
 
-    // ── Malformed-media hardening ──
+    // -- Malformed-media hardening --
     void malformedMedia_doesNotCrash();
 
-    // ── B6-22: surface unreadable files + bad exclude regex ──
+    // -- B6-22: surface unreadable files + bad exclude regex --
     void firstInvalidExcludePattern_detectsBadRegex();
     void invalidExcludePattern_failsClosed();
     void unreadableFile_isCounted();
 
-    // ── Codex review 3 (search) ──
+    // -- Codex review 3 (search) --
     void missingRoot_failsClosed();
     void binarySearch_byteExactOffsetsAndArbitraryBytes();
     void negativeContextLines_noCrash();
@@ -280,7 +280,7 @@ QByteArray AdvancedSearchWorkerTests::createMinimalZip(const QString& entryName,
     QByteArray zip;
     const QByteArray nameBytes = entryName.toUtf8();
 
-    // ── Local File Header ──
+    // -- Local File Header --
     zip.append("\x50\x4B\x03\x04", 4);
     zip.append("\x14\x00", 2);
     zip.append("\x00\x00", 2);
@@ -297,7 +297,7 @@ QByteArray AdvancedSearchWorkerTests::createMinimalZip(const QString& entryName,
     zip.append(nameBytes);
     zip.append(entryData);
 
-    // ── Central Directory Header ──
+    // -- Central Directory Header --
     zip.append("\x50\x4B\x01\x02", 4);
     zip.append("\x14\x00", 2);
     zip.append("\x14\x00", 2);
@@ -313,7 +313,7 @@ QByteArray AdvancedSearchWorkerTests::createMinimalZip(const QString& entryName,
     zip.append(reinterpret_cast<const char*>(&zero), 4);
     zip.append(nameBytes);
 
-    // ── End of Central Directory ──
+    // -- End of Central Directory --
     quint32 cdOffset = static_cast<quint32>(30 + nameBytes.size() + entryData.size());
     quint32 cdSize = static_cast<quint32>(46 + nameBytes.size());
     zip.append("\x50\x4B\x05\x06", 4);
@@ -337,7 +337,7 @@ QByteArray AdvancedSearchWorkerTests::createDeflateZip(const QString& entryName,
     strm.next_out = reinterpret_cast<Bytef*>(compressed.data());
     strm.avail_out = static_cast<uInt>(compressed.size());
 
-    // -MAX_WBITS → raw deflate (what ZIP uses)
+    // -MAX_WBITS -> raw deflate (what ZIP uses)
     deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, 8, Z_DEFAULT_STRATEGY);
     deflate(&strm, Z_FINISH);
     deflateEnd(&strm);
@@ -354,7 +354,7 @@ QByteArray AdvancedSearchWorkerTests::createDeflateZip(const QString& entryName,
 
     QByteArray zip;
 
-    // ── Local File Header ──
+    // -- Local File Header --
     zip.append("\x50\x4B\x03\x04", 4);  // Signature
     zip.append("\x14\x00", 2);          // Version needed (2.0)
     zip.append("\x00\x00", 2);          // Flags
@@ -368,7 +368,7 @@ QByteArray AdvancedSearchWorkerTests::createDeflateZip(const QString& entryName,
     zip.append(nameBytes);
     zip.append(compressed);
 
-    // ── Central Directory Header ──
+    // -- Central Directory Header --
     zip.append("\x50\x4B\x01\x02", 4);
     zip.append("\x14\x00", 2);          // Version made by
     zip.append("\x14\x00", 2);          // Version needed
@@ -384,7 +384,7 @@ QByteArray AdvancedSearchWorkerTests::createDeflateZip(const QString& entryName,
     zip.append(reinterpret_cast<const char*>(&zero), 4);  // Local header offset
     zip.append(nameBytes);
 
-    // ── End of Central Directory ──
+    // -- End of Central Directory --
     quint32 cdOffset = static_cast<quint32>(30 + nameBytes.size() + compressed.size());
     quint32 cdSize = static_cast<quint32>(46 + nameBytes.size());
     zip.append("\x50\x4B\x05\x06", 4);
@@ -494,13 +494,13 @@ QByteArray AdvancedSearchWorkerTests::buildExifJpeg() {
     // IFD0: 2 entries
     tiff.append("\x02\x00", 2);  // Entry count
 
-    // Entry 0 — Software (tag 0x0131), ASCII, 11 bytes at offset 38
+    // Entry 0 -- Software (tag 0x0131), ASCII, 11 bytes at offset 38
     tiff.append("\x31\x01", 2);          // Tag
     tiff.append("\x02\x00", 2);          // Type (ASCII)
     tiff.append("\x0B\x00\x00\x00", 4);  // Count = 11
     tiff.append("\x26\x00\x00\x00", 4);  // Offset = 38
 
-    // Entry 1 — DateTime (tag 0x0132), ASCII, 20 bytes at offset 49
+    // Entry 1 -- DateTime (tag 0x0132), ASCII, 20 bytes at offset 49
     tiff.append("\x32\x01", 2);          // Tag
     tiff.append("\x02\x00", 2);          // Type (ASCII)
     tiff.append("\x14\x00\x00\x00", 4);  // Count = 20
@@ -799,7 +799,7 @@ void AdvancedSearchWorkerTests::fileSizeLimit_skipsOversized() {
     SearchConfig config;
     config.root_path = m_temp_dir.path();
     config.pattern = "Hello";
-    config.max_file_size = 1;  // 1 byte — every file is too large
+    config.max_file_size = 1;  // 1 byte -- every file is too large
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
@@ -930,7 +930,7 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_matchesByTagName() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    // "Comment" is a metadata key name — key matching should find it
+    // "Comment" is a metadata key name -- key matching should find it
     QVERIFY2(matches.size() >= 1, "Searching by metadata tag name should produce matches");
 
     bool found_key_match = false;

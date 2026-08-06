@@ -22,9 +22,9 @@ namespace sak {
 
 /// @brief Result of an elevation gate check
 enum class ElevationGateResult : uint8_t {
-    AlreadyElevated,   ///< Process is already admin — proceed normally
-    RestartRequested,  ///< User accepted restart as admin — caller should return
-    Declined           ///< User declined elevation — caller should abort or degrade
+    AlreadyElevated,   ///< Process is already admin -- proceed normally
+    RestartRequested,  ///< User accepted restart as admin -- caller should return
+    Declined           ///< User declined elevation -- caller should abort or degrade
 };
 
 /// @brief Check elevation and show a restart-as-admin dialog if needed
@@ -37,7 +37,7 @@ enum class ElevationGateResult : uint8_t {
 /// @param parent  Parent widget for the dialog
 /// @param feature Human-readable feature name (e.g. "USB Flash")
 /// @param reason  Why elevation is needed (shown in dialog body)
-/// @return Gate result — caller decides how to proceed
+/// @return Gate result -- caller decides how to proceed
 [[nodiscard]] inline ElevationGateResult showElevationGate(QWidget* parent,
                                                            const QString& feature,
                                                            const QString& reason) {

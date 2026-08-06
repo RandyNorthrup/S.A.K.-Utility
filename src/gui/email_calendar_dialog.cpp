@@ -114,7 +114,7 @@ enum DayListColumn {
 static const char* const kBusyLabels[] = {"Free", "Tentative", "Busy", "Out of Office"};
 
 // ============================================================================
-// CalendarMonthView — custom-painted month grid
+// CalendarMonthView -- custom-painted month grid
 // ============================================================================
 
 class CalendarMonthView : public QWidget {
@@ -396,7 +396,7 @@ private:
 };
 
 // ============================================================================
-// CalendarWeekDayView — custom-painted week or day time grid
+// CalendarWeekDayView -- custom-painted week or day time grid
 // ============================================================================
 
 class CalendarWeekDayView : public QWidget {
@@ -762,7 +762,7 @@ private:
 };
 
 // ============================================================================
-// EmailCalendarDialog — Construction
+// EmailCalendarDialog -- Construction
 // ============================================================================
 
 EmailCalendarDialog::EmailCalendarDialog(::EmailInspectorController* controller,
@@ -797,7 +797,7 @@ bool EmailCalendarDialog::eventFilter(QObject* watched, QEvent* event) {
 }
 
 // ============================================================================
-// UI Setup — main layout
+// UI Setup -- main layout
 // ============================================================================
 
 void EmailCalendarDialog::setupUi() {
@@ -812,7 +812,7 @@ void EmailCalendarDialog::setupUi() {
 }
 
 // ============================================================================
-// UI Setup — toolbar (navigation, view switch, search)
+// UI Setup -- toolbar (navigation, view switch, search)
 // ============================================================================
 
 void EmailCalendarDialog::setupToolbar(QVBoxLayout* parent) {
@@ -929,7 +929,7 @@ void EmailCalendarDialog::setupSearchBar(QHBoxLayout* layout) {
 }
 
 // ============================================================================
-// UI Setup — main content (sidebar + views + detail)
+// UI Setup -- main content (sidebar + views + detail)
 // ============================================================================
 
 void EmailCalendarDialog::setupMainContent(QVBoxLayout* parent) {
@@ -953,7 +953,7 @@ void EmailCalendarDialog::setupMainContent(QVBoxLayout* parent) {
 }
 
 // ============================================================================
-// UI Setup — sidebar (filters, day events)
+// UI Setup -- sidebar (filters, day events)
 // ============================================================================
 
 void EmailCalendarDialog::setupSidebar(QSplitter* splitter) {
@@ -1046,7 +1046,7 @@ void EmailCalendarDialog::setupDayEventList(QVBoxLayout* layout) {
 }
 
 // ============================================================================
-// UI Setup — calendar views (stacked month/week/day)
+// UI Setup -- calendar views (stacked month/week/day)
 // ============================================================================
 
 void EmailCalendarDialog::setupCalendarViews(QSplitter* splitter) {
@@ -1099,7 +1099,7 @@ void EmailCalendarDialog::setupCalendarViews(QSplitter* splitter) {
 }
 
 // ============================================================================
-// UI Setup — detail panel
+// UI Setup -- detail panel
 // ============================================================================
 
 void EmailCalendarDialog::setupDetailPanel(QSplitter* splitter) {
@@ -1113,7 +1113,7 @@ void EmailCalendarDialog::setupDetailPanel(QSplitter* splitter) {
 }
 
 // ============================================================================
-// UI Setup — footer (status, export, close)
+// UI Setup -- footer (status, export, close)
 // ============================================================================
 
 void EmailCalendarDialog::setupFooter(QVBoxLayout* parent) {
@@ -1694,7 +1694,7 @@ void EmailCalendarDialog::updateStatusLabel() {
 }
 
 // ============================================================================
-// Event display — detail panel
+// Event display -- detail panel
 // ============================================================================
 
 void EmailCalendarDialog::displayEventSummary(const CalendarEvent& evt) {

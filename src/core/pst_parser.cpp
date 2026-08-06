@@ -25,7 +25,7 @@
 using sak::error_code;
 
 // ============================================================================
-// MS-PST §5.1 — Compressible Encryption Decrypt Table
+// MS-PST section 5.1 -- Compressible Encryption Decrypt Table
 // ============================================================================
 
 // clang-format off
@@ -641,7 +641,7 @@ static const QHash<uint16_t, DetailSetter>& detailSetters() {
 
 static const QHash<uint16_t, SummarySetter>& summarySetters() {
     static const QHash<uint16_t, SummarySetter> kMap = {
-        {kPidTagLtpRowId,  // PidTagLtpRowId — NID
+        {kPidTagLtpRowId,  // PidTagLtpRowId -- NID
          [](sak::PstItemSummary& item, const sak::MapiProperty& col) {
              if (col.raw_value.size() >= kPropertyValueRefSize)
                  item.node_id = localReadLE<uint32_t>(col.raw_value, 0);
@@ -747,7 +747,7 @@ static const QHash<uint16_t, AttachSetter>& attachmentSetters() {
 }
 // clang-format on
 
-/// Sender property ID → slot mapping: 0=name, 1=email
+/// Sender property ID -> slot mapping: 0=name, 1=email
 static const QHash<uint16_t, int>& senderPropSlots() {
     static const QHash<uint16_t, int> kMap = {
         {sak::email::kPropIdSenderName, 0},
@@ -847,7 +847,7 @@ static std::expected<PstParser::TcInfo, error_code> parseTcInfo(const QByteArray
 static sak::PstNode readNodeLeafEntry(const QByteArray& data, int off, bool is_unicode) {
     sak::PstNode node;
     if (is_unicode) {
-        // MS-PST §2.2.2.7.7.4: NBTENTRY nid field is 8 bytes in Unicode
+        // MS-PST section 2.2.2.7.7.4: NBTENTRY nid field is 8 bytes in Unicode
         // files but only the lower 32 bits are the actual NID.  OST files
         // may have non-zero upper bits, so mask to 32 bits.
         node.node_id = localReadLE<uint64_t>(data, off) & kNidLower32Mask;
@@ -999,10 +999,10 @@ void PstParser::open(const QString& file_path) {
     }
 
 
-    sak::logInfo("PstParser: NBT cache loaded — {} nodes", m_nbt_cache.size());
+    sak::logInfo("PstParser: NBT cache loaded -- {} nodes", m_nbt_cache.size());
 
 
-    sak::logInfo("PstParser: BBT cache loaded — {} blocks", m_bbt_cache.size());
+    sak::logInfo("PstParser: BBT cache loaded -- {} blocks", m_bbt_cache.size());
 
     populateFileInfo(file_path);
 
@@ -1223,7 +1223,7 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t mes
 }
 
 // ============================================================================
-// NDB Layer — Header Parsing
+// NDB Layer -- Header Parsing
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::readHeaderBytes() {
@@ -1363,13 +1363,13 @@ std::expected<void, error_code> PstParser::parseHeader() {
     }
 
     const auto& data = *header_bytes;
-    // §2.2.2.6 — dwMagic at offset 0
+    // section 2.2.2.6 -- dwMagic at offset 0
     auto preamble_result = parseHeaderPreamble(data);
     if (!preamble_result) {
         return std::unexpected(preamble_result.error());
     }
 
-    // §2.2.2.6 — authenticate the header before trusting any field past the
+    // section 2.2.2.6 -- authenticate the header before trusting any field past the
     // preamble. dwCRCPartial/dwCRCFull cover the version, ROOT BREF pointers, and
     // crypt method; a mismatch means the bytes we are about to parse as the on-disk
     // layout are corrupt or forged, so fail closed here.
@@ -1378,9 +1378,9 @@ std::expected<void, error_code> PstParser::parseHeader() {
         return std::unexpected(integrity_result.error());
     }
 
-    // wMagicClient at offset 8 — content type (SM or SO)
-    // wVer at offset 10 — version
-    // bCryptMethod — encryption type
+    // wMagicClient at offset 8 -- content type (SM or SO)
+    // wVer at offset 10 -- version
+    // bCryptMethod -- encryption type
     // ANSI: offset 513, Unicode: offset 513
     auto encryption_result = parseHeaderEncryption(data);
     if (!encryption_result) {
@@ -1388,11 +1388,11 @@ std::expected<void, error_code> PstParser::parseHeader() {
     }
 
     // Root structure pointers differ between ANSI and Unicode.
-    // MS-PST §2.2.2.6: header fields before ROOT include rgnid[32]
+    // MS-PST section 2.2.2.6: header fields before ROOT include rgnid[32]
     // (128 bytes) plus bid/unique fields whose sizes depend on format.
     //   Unicode: ROOT at offset 0xB4 (180)
     //   ANSI:    ROOT at offset 0xA4 (164)
-    // ROOT layout (§2.2.2.7.5):
+    // ROOT layout (section 2.2.2.7.5):
     //   +0  dwReserved (4)
     //   +4  ibFileEof  (8 Unicode / 4 ANSI)
     //   +36 BREFNBT    (16 Unicode / 8 ANSI)
@@ -1405,7 +1405,7 @@ std::expected<void, error_code> PstParser::parseHeader() {
 }
 
 // ============================================================================
-// NDB Layer — BTree Page Parsing
+// NDB Layer -- BTree Page Parsing
 // ============================================================================
 
 PstParser::PageFormatSizes PstParser::pageFormatSizes() const {
@@ -1471,7 +1471,7 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(
 std::expected<void, error_code> PstParser::verifyPageTrailer(const QByteArray& page_data,
                                                              const PageFormatSizes& fmt,
                                                              uint64_t page_offset) {
-    // §2.2.2.7.1: dwCRC over the page body preceding the trailer, and
+    // section 2.2.2.7.1: dwCRC over the page body preceding the trailer, and
     // wSig == ComputeSig(page ib, page bid). A structurally-typed-but-corrupt page
     // (bit rot, or a crafted page whose ptype matches by luck) fails here.
     const int trailer_offset = fmt.page_size - fmt.trailer_size;
@@ -1505,7 +1505,7 @@ void PstParser::parsePageMeta(BTreePageInfo& info, int meta_offset) {
 }
 
 // ============================================================================
-// NDB Layer — BTree Loading
+// NDB Layer -- BTree Loading
 // ============================================================================
 
 std::expected<void, error_code> PstParser::loadNodeBTree(uint64_t page_offset, int depth) {
@@ -1616,11 +1616,11 @@ std::expected<void, error_code> PstParser::loadBlockBTreeGuarded(uint64_t page_o
 }
 
 // ============================================================================
-// NDB Layer — Block Reading
+// NDB Layer -- Block Reading
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
-    // §2.2.2.2 — The BBT stores BIDs with the fInternal bit (bit 1)
+    // section 2.2.2.2 -- The BBT stores BIDs with the fInternal bit (bit 1)
     // intact, so look up the BID as-is.
     auto it = m_bbt_cache.find(bid);
     if (it == m_bbt_cache.end()) {
@@ -1635,7 +1635,7 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
         return QByteArray{};
     }
 
-    // Read exactly cb bytes of block data (§2.2.2.8 — data precedes trailer).
+    // Read exactly cb bytes of block data (section 2.2.2.8 -- data precedes trailer).
     // readBytes returns whatever the file has, so a truncated file yields a short buffer;
     // downstream fixed-offset reads treat the block as cb bytes, so require the full length
     // and fail closed on a short read rather than parsing past the end.
@@ -1654,7 +1654,7 @@ std::expected<QByteArray, error_code> PstParser::postProcessBlock(QByteArray raw
                                                                   uint64_t file_offset,
                                                                   int cb,
                                                                   uint64_t bid) {
-    // Authenticate the block via its on-disk trailer (§2.2.2.8.1) BEFORE any
+    // Authenticate the block via its on-disk trailer (section 2.2.2.8.1) BEFORE any
     // decompression or decryption -- the dwCRC is authored over the raw cb bytes
     // exactly as stored. A corrupt or forged block fails closed here.
     auto trailer_result = verifyBlockTrailer(raw, file_offset, cb, bid);
@@ -1834,7 +1834,7 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
 }
 
 // ============================================================================
-// NDB Layer — Block Decompression (Unicode4K / wVer ≥ 36)
+// NDB Layer -- Block Decompression (Unicode4K / wVer >= 36)
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::readBlockTrailer(uint64_t file_offset, int cb) {
@@ -1925,7 +1925,7 @@ std::expected<QByteArray, error_code> PstParser::decompressBlockIf4k(const QByte
         return raw;
     }
 
-    // Block is zlib-compressed — decompress using qUncompress.
+    // Block is zlib-compressed -- decompress using qUncompress.
     // qUncompress expects a 4-byte big-endian size prefix before the
     // raw zlib stream.
     QByteArray prefixed;
@@ -1952,7 +1952,7 @@ void PstParser::decryptBlock(std::span<uint8_t> data) const {
 }
 
 // ============================================================================
-// LTP Layer — BTH Multi-Level Traversal
+// LTP Layer -- BTH Multi-Level Traversal
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::readBthLeafData(
@@ -2014,7 +2014,7 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafDataGuarded(uint32_t
 }
 
 // ============================================================================
-// LTP Layer — BTH Collection & Property Parsing
+// LTP Layer -- BTH Collection & Property Parsing
 // ============================================================================
 
 std::expected<PstParser::BthLeafResult, error_code> PstParser::collectBthLeafData(
@@ -2104,7 +2104,7 @@ QVector<sak::MapiProperty> PstParser::parsePropertyRecords(const BthLeafResult& 
 }
 
 // ============================================================================
-// LTP Layer — Property Context
+// LTP Layer -- Property Context
 // ============================================================================
 
 std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyContext(uint64_t nid) {
@@ -2150,7 +2150,7 @@ std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyCon
 }
 
 // ============================================================================
-// LTP Layer — Table Context
+// LTP Layer -- Table Context
 // ============================================================================
 
 std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTableContext(
@@ -2235,7 +2235,7 @@ PstParser::TcRowMatrix PstParser::loadTcRowData(const TcInfo& tc,
         }
     } else {
         // Subnode-stored: row matrix spans multiple data blocks with per-
-        // block tail padding (MS-PST §2.3.4.4.1).  Capture block boundaries.
+        // block tail padding (MS-PST section 2.3.4.4.1).  Capture block boundaries.
         auto sub = ctx.subnode_map.find(tc.hnid_rows);
         if (sub != ctx.subnode_map.end()) {
             auto sub_data = readDataTree(sub->data_bid, &matrix.block_ends);
@@ -2256,7 +2256,7 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& ma
         return {};
     }
 
-    // Per MS-PST §2.3.4.4.1, when the row matrix is stored as a sub-node,
+    // Per MS-PST section 2.3.4.4.1, when the row matrix is stored as a sub-node,
     // each data block contains floor(block_bytes / row_size) rows followed
     // by padding.  dwRowIndex from TCROWID is a *logical* row number across
     // all blocks, so we must convert it to (block_i, row_in_block) and skip
@@ -2266,7 +2266,7 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& ma
     const int rows_per_block = (block_count > 1) ? (first_block_bytes / row_size)
                                                  : (matrix.data.size() / row_size);
 
-    // MS-PST §2.3.4.3.1 — TCROWID BTH is the authoritative list of live rows.
+    // MS-PST section 2.3.4.3.1 -- TCROWID BTH is the authoritative list of live rows.
     // The row matrix often contains stale/deleted/padding slots that are NOT
     // valid rows; iterating the matrix directly yields garbled subjects and
     // inflated counts.  Walk the row-index BTH and materialize only the rows
@@ -2420,7 +2420,7 @@ sak::MapiProperty PstParser::buildTcCell(const QByteArray& row_data,
 }
 
 // ============================================================================
-// LTP Layer — Heap-on-Node
+// LTP Layer -- Heap-on-Node
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::readHeapOnNode(const QByteArray& heap_data,
@@ -2486,7 +2486,7 @@ PstParser::HidParts PstParser::unpackHid(uint32_t hn_id) const {
 }
 
 // ============================================================================
-// LTP Layer — Unified HNID Resolution
+// LTP Layer -- Unified HNID Resolution
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::resolveHnid(
@@ -2503,17 +2503,17 @@ std::expected<QByteArray, error_code> PstParser::resolveHnid(
         return readDataTree(subnode_map[hnid].data_bid);
     }
 
-    // 2. Non-zero low 5 bits → NID not in sub-node map
+    // 2. Non-zero low 5 bits -> NID not in sub-node map
     if ((hnid & kNidTypeMask) != 0) {
         return QByteArray{};
     }
 
-    // 3. HID — delegate to heap reader (validates block range)
+    // 3. HID -- delegate to heap reader (validates block range)
     return readHeapOnNode(heap_data, hnid, block_offsets);
 }
 
 // ============================================================================
-// LTP Layer — Sub-Node BTree
+// LTP Layer -- Sub-Node BTree
 // ============================================================================
 
 std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeBTree(
@@ -2614,7 +2614,7 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeI
 }
 
 // ============================================================================
-// LTP Layer — Property Formatting
+// LTP Layer -- Property Formatting
 // ============================================================================
 
 QString PstParser::formatPropertyValue(uint16_t prop_type, const QByteArray& raw_value) const {
@@ -2628,7 +2628,7 @@ QString PstParser::formatPropertyValue(uint16_t prop_type, const QByteArray& raw
         return (*fmt_it)(raw_value);
     }
 
-    // Unknown type — hex dump for small values, size summary for large
+    // Unknown type -- hex dump for small values, size summary for large
     constexpr int kMaxInlineHexBytes = 16;
     if (raw_value.size() <= kMaxInlineHexBytes) {
         return raw_value.toHex(' ');
@@ -2754,7 +2754,7 @@ QString PstParser::propertyIdToName(uint16_t prop_id) {
 }
 
 // ============================================================================
-// Messaging Layer — Folder Hierarchy
+// Messaging Layer -- Folder Hierarchy
 // ============================================================================
 
 std::expected<sak::PstFolderTree, error_code> PstParser::buildFolderHierarchy(uint64_t root_nid,
@@ -2857,7 +2857,7 @@ void PstParser::loadChildFolders(sak::PstFolder& folder,
 }
 
 // ============================================================================
-// Messaging Layer — Contents Table
+// Messaging Layer -- Contents Table
 // ============================================================================
 
 std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsTable(
@@ -2901,7 +2901,7 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsT
 }
 
 // ============================================================================
-// Messaging Layer — Full Message Read
+// Messaging Layer -- Full Message Read
 // ============================================================================
 
 std::expected<sak::PstItemDetail, error_code> PstParser::readMessage(uint64_t message_nid) {
@@ -2950,7 +2950,7 @@ std::expected<sak::PstItemDetail, error_code> PstParser::readMessage(uint64_t me
 }
 
 // ============================================================================
-// Messaging Layer — Lightweight Sender Read
+// Messaging Layer -- Lightweight Sender Read
 // ============================================================================
 
 std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult& bth,
@@ -3164,7 +3164,7 @@ void PstParser::enrichItemSenders(QVector<sak::PstItemSummary>& items) {
 }
 
 // ============================================================================
-// Messaging Layer — Attachments
+// Messaging Layer -- Attachments
 // ============================================================================
 
 std::expected<sak::PstAttachmentInfo, error_code> PstParser::readSingleAttachment(

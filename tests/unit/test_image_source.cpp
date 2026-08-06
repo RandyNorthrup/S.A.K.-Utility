@@ -15,14 +15,14 @@ class TestImageSource : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── ImageMetadata ─────────────────────────────────────────────
+    // -- ImageMetadata ---------------------------------------------
     void metadata_defaults();
     void metadata_isValid_empty();
     void metadata_isValid_withData();
     void metadata_isValid_zeroSize();
     void metadata_isValid_unknownFormat();
 
-    // ── FileImageSource::detectFormat ─────────────────────────────
+    // -- FileImageSource::detectFormat -----------------------------
     void detectFormat_iso();
     void detectFormat_img();
     void detectFormat_gz();
@@ -31,7 +31,7 @@ private Q_SLOTS:
     void detectFormat_unknown();
     void detectFormat_emptyPath();
 
-    // ── CompressedImageSource::isCompressed ───────────────────────
+    // -- CompressedImageSource::isCompressed -----------------------
     void isCompressed_gzip();
     void isCompressed_bzip2();
     void isCompressed_xz();
@@ -40,14 +40,14 @@ private Q_SLOTS:
     void isCompressed_longExtensions();
     void isCompressed_zipNotStreamable();
 
-    // ── FileImageSource construction ──────────────────────────────
+    // -- FileImageSource construction ------------------------------
     void fileSource_construction();
     void fileSource_openNonExistent();
 };
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // ImageMetadata
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestImageSource::metadata_defaults() {
     ImageMetadata meta;
@@ -86,9 +86,9 @@ void TestImageSource::metadata_isValid_unknownFormat() {
     QVERIFY(!meta.isValid());
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // detectFormat
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestImageSource::detectFormat_iso() {
     QCOMPARE(FileImageSource::detectFormat("image.iso"), ImageFormat::ISO);
@@ -121,9 +121,9 @@ void TestImageSource::detectFormat_emptyPath() {
     QCOMPARE(FileImageSource::detectFormat(""), ImageFormat::Unknown);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // isCompressed
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestImageSource::isCompressed_gzip() {
     QVERIFY(CompressedImageSource::isCompressed("file.img.gz"));
@@ -161,9 +161,9 @@ void TestImageSource::isCompressed_zipNotStreamable() {
     QVERIFY(!CompressedImageSource::isCompressed("file.zip"));
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // FileImageSource
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestImageSource::fileSource_construction() {
     FileImageSource source("C:\\nonexistent.iso");

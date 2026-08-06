@@ -79,7 +79,7 @@ void MboxParser::open(const QString& file_path) {
         return;
     }
 
-    // Quick validation — first line should start with "From "
+    // Quick validation -- first line should start with "From "
     QByteArray first_line = m_file.readLine(kFromLineProbeBytes);
     if (!isFromLine(first_line)) {
         const auto message =
@@ -317,7 +317,7 @@ std::expected<QByteArray, error_code> MboxParser::readAttachmentData(int message
 }
 
 // ============================================================================
-// Internal — Message Index Building
+// Internal -- Message Index Building
 // ============================================================================
 
 std::optional<error_code> MboxParser::mimeParseFailure() const {
@@ -365,7 +365,7 @@ void MboxParser::buildMessageIndex() {
 }
 
 // ============================================================================
-// Internal — Raw Message Reading
+// Internal -- Raw Message Reading
 // ============================================================================
 
 std::expected<QByteArray, error_code> MboxParser::readRawMessage(int message_index) {
@@ -408,14 +408,14 @@ std::expected<QByteArray, error_code> MboxParser::readRawMessage(int message_ind
         return std::unexpected(error_code::read_error);
     }
 
-    // Un-escape "From " lines: ">From " → "From "
+    // Un-escape "From " lines: ">From " -> "From "
     data.replace("\n>From ", "\nFrom ");
 
     return data;
 }
 
 // ============================================================================
-// Internal — Header Parsing (RFC 5322)
+// Internal -- Header Parsing (RFC 5322)
 // ============================================================================
 
 QMap<QString, QString> MboxParser::parseHeaders(const QByteArray& raw_message) {
@@ -489,7 +489,7 @@ std::pair<int, int> findBodyBoundary(const QByteArray& data) {
     return {header_end, body_start};
 }
 
-/// True only for a real MIME boundary delimiter line (RFC 2046 §5.1.1): the line
+/// True only for a real MIME boundary delimiter line (RFC 2046 section 5.1.1): the line
 /// is exactly "--<boundary>" (opening) or "--<boundary>--" (closing), allowing
 /// only trailing linear whitespace. A body line that merely SHARES the delimiter
 /// prefix (e.g. delimiter "--sep" and content line "--separator") is not a
@@ -626,7 +626,7 @@ QString extractBoundary(const QString& content_type) {
 }  // anonymous namespace
 
 // ============================================================================
-// Internal — MIME Parsing
+// Internal -- MIME Parsing
 // ============================================================================
 
 void MboxParser::parseSinglePart(const QByteArray& body,
@@ -850,7 +850,7 @@ std::expected<QVector<MboxAttachmentPayload>, error_code> MboxParser::readAllAtt
 }
 
 // ============================================================================
-// Internal — Decoding
+// Internal -- Decoding
 // ============================================================================
 
 QByteArray MboxParser::decodeTransferEncoding(const QByteArray& data, const QString& encoding) {
@@ -872,7 +872,7 @@ QByteArray MboxParser::decodeTransferEncoding(const QByteArray& data, const QStr
     if (encoding.compare(QLatin1String("quoted-printable"), Qt::CaseInsensitive) == 0) {
         return decodeQuotedPrintable(data);
     }
-    // 7bit, 8bit, binary — no decoding needed
+    // 7bit, 8bit, binary -- no decoding needed
     return data;
 }
 
@@ -894,7 +894,7 @@ QString MboxParser::decodeCharset(const QByteArray& data, const QString& charset
 }
 
 // ============================================================================
-// Internal — Date Parsing
+// Internal -- Date Parsing
 // ============================================================================
 
 QDateTime MboxParser::parseEmailDate(const QString& date_str) {
@@ -933,7 +933,7 @@ QDateTime MboxParser::parseEmailDate(const QString& date_str) {
 }
 
 // ============================================================================
-// Internal — MBOX "From " Detection
+// Internal -- MBOX "From " Detection
 // ============================================================================
 
 bool MboxParser::isFromLine(const QByteArray& line) {

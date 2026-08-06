@@ -103,7 +103,7 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
     return mac;
 }
 
-// ── Per-BSSID security from 802.11 information elements ──────────────────────
+// -- Per-BSSID security from 802.11 information elements ----------------------
 constexpr int kIeIdRsn = 48;                     ///< RSN IE (WPA2/WPA3)
 constexpr int kIeIdVendor = 221;                 ///< Vendor-specific IE (holds WPA1)
 constexpr uint16_t kCapabilityPrivacy = 0x0010;  ///< Beacon capability Privacy bit

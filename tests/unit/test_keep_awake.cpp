@@ -89,7 +89,7 @@ void TestKeepAwake::guard_construction() {
         QVERIFY(guard.isActive());
         QVERIFY(KeepAwake::isActive());
     }
-    // Guard destroyed — should be inactive
+    // Guard destroyed -- should be inactive
     QVERIFY(!KeepAwake::isActive());
 }
 
