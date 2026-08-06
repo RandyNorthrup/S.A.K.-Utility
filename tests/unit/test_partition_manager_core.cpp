@@ -1859,6 +1859,8 @@ private Q_SLOTS:
     void extFileSystemReader_exportsDirectoriesRecursively();
     void extFileSystemReader_readsExtentMappedFilesAndBlocksUnsafePaths();
     void extFileSystemReader_rejectsMalformedSuperblockGeometry();
+    void apfsFileSystemReader_refusesAContainerDeclaringNoBlocks();
+    void hfsFileSystemReader_surfacesTheReaderOwnLoadBlockers();
     void extFileSystemReader_boundsBlockAndInodeReferences();
     void extFileSystemReader_rejectsUnknownIncompatFeature();
     void extFileSystemReader_rejectsMalformedExtentTree();
@@ -3733,6 +3735,40 @@ void PartitionManagerCoreTests::extFileSystemReader_rejectsMalformedSuperblockGe
         PartitionExtFileSystemReader::listDirectory(&buffer, QStringLiteral("/"), 20);
     QVERIFY(!listing.ok);
     QVERIFY(listing.blockers.join(' ').contains(QStringLiteral("inode size")));
+}
+
+void PartitionManagerCoreTests::apfsFileSystemReader_refusesAContainerDeclaringNoBlocks() {
+    // R5-P4-12: readBlock bounded every read against blockCount_ but skipped the bound entirely
+    // when blockCount_ was zero -- so the one input that leaves the check nothing to check
+    // against was the one that removed it, and reads fell back to the DEVICE as their only
+    // limit. blockCount_ is now required to be non-zero, checked after the device clamp so a
+    // device too small to hold a single block is refused for the same reason.
+    QByteArray image(64 * 1024, '\0');
+    writeAscii(&image, kTestApfsMagicOffset, "NXSB");
+    writeLe32(&image, kTestApfsBlockSizeOffset, 4096);
+    writeLe64(&image, kTestApfsBlockCountOffset, 0);
+    QBuffer buffer(&image);
+    QVERIFY(buffer.open(QIODevice::ReadOnly));
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectory(&buffer, QStringLiteral("/"), 20);
+    QVERIFY(!listing.ok);
+    QVERIFY(listing.blockers.join(' ').contains(QStringLiteral("declares no blocks")));
+}
+
+void PartitionManagerCoreTests::hfsFileSystemReader_surfacesTheReaderOwnLoadBlockers() {
+    // R5-P4-43: the public entry points replaced HfsReader::blockers() with one generic
+    // sentence, so "no readable device", "volume header was not found" and every specific
+    // validateVolume rejection reached the operator as the same unactionable string. The
+    // specific cause now travels with the generic line naming the refused operation.
+    QByteArray notHfs(64 * 1024, '\0');
+    QBuffer buffer(&notHfs);
+    QVERIFY(buffer.open(QIODevice::ReadOnly));
+    const auto listing =
+        PartitionHfsFileSystemReader::listDirectory(&buffer, QStringLiteral("/"), 20);
+    QVERIFY(!listing.ok);
+    const QString blockers = listing.blockers.join(' ');
+    QVERIFY(blockers.contains(QStringLiteral("volume header was not found")));  // the real cause
+    QVERIFY(blockers.contains(QStringLiteral("for listing")));                  // and the context
 }
 
 void PartitionManagerCoreTests::extFileSystemReader_boundsBlockAndInodeReferences() {
@@ -13682,11 +13718,11 @@ namespace {
 void verifyApfsCryptoHashHmacKeywrapVectors() {
     using namespace sak::apfs_crypto;
 
-    // SHA-256("abc") — FIPS 180-4 example B.1.
+    // SHA-256("abc") -- FIPS 180-4 example B.1.
     QCOMPARE(sha256(QByteArrayLiteral("abc")).toHex(),
              QByteArray("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
 
-    // HMAC-SHA-256 — RFC 4231 Test Case 1.
+    // HMAC-SHA-256 -- RFC 4231 Test Case 1.
     QCOMPARE(hmacSha256(QByteArray::fromHex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"),
                         QByteArrayLiteral("Hi There"))
                  .toHex(),
@@ -13708,7 +13744,7 @@ void verifyApfsCryptoHashHmacKeywrapVectors() {
     QVERIFY(pbkdf2Sha256(pwd, salt, 0, 32).isEmpty());
     QVERIFY(pbkdf2Sha256(pwd, salt, 100'000'001ULL, 32).isEmpty());
 
-    // RFC 3394 §4.6 — wrap a 256-bit key under a 256-bit KEK.
+    // RFC 3394 section 4.6 -- wrap a 256-bit key under a 256-bit KEK.
     const QByteArray kek =
         QByteArray::fromHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
     const QByteArray key =
@@ -13721,7 +13757,7 @@ void verifyApfsCryptoHashHmacKeywrapVectors() {
     QVERIFY(unwrapped.has_value());
     QCOMPARE(*unwrapped, key);
 
-    // Wrong KEK fails the RFC 3394 integrity check (A6A6...) — never silent garbage.
+    // Wrong KEK fails the RFC 3394 integrity check (A6A6...) -- never silent garbage.
     QByteArray wrongKek = kek;
     wrongKek[0] = static_cast<char>(wrongKek[0] ^ 0x01);
     QVERIFY(!aesKeyUnwrap(wrongKek, wrapped).has_value());
@@ -13737,7 +13773,7 @@ void verifyApfsCryptoHashHmacKeywrapVectors() {
 void verifyApfsCryptoXtsVectors() {
     using namespace sak::apfs_crypto;
 
-    // AES-XTS — IEEE Std 1619-2007 Vector 1 (32-byte data unit, sequence 0,
+    // AES-XTS -- IEEE Std 1619-2007 Vector 1 (32-byte data unit, sequence 0,
     // all-zero key and plaintext): a definitive external known-answer.
     const QByteArray zeroKey(32, '\0');
     const QByteArray zeroPt(32, '\0');

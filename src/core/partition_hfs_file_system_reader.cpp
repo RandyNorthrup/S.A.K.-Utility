@@ -332,14 +332,30 @@ private:
     const QString canonical_root_;
 };
 
+// Why a load() failed, as the reader itself recorded it. The public entry points used to replace
+// that detail with a single generic sentence, so "no readable device", "volume header not found"
+// and every specific validateVolume rejection reached the operator as the same unactionable
+// string. The ext reader already surfaces its own blockers(); this brings HFS+ into line. The
+// generic line is kept as a suffix -- it names which operation was refused -- and as the sole
+// message if the reader somehow failed without recording a reason, so the result is never an
+// empty blocker list claiming failure.
+QStringList hfsLoadFailureBlockers(const HfsReader& reader, const QString& context) {
+    QStringList blockers = reader.blockers();
+    blockers.append(context);
+    return blockers;
+}
+
 }  // namespace
 
 PartitionHfsConsistencyCheckResult PartitionHfsFileSystemReader::checkConsistency(QIODevice* device,
                                                                                   int max_records) {
     HfsReader reader(device);
     if (!reader.load()) {
-        return reader.consistencyFailureResult(
+        PartitionHfsConsistencyCheckResult result = reader.consistencyFailureResult(
             QStringLiteral("Unable to open HFS+ filesystem for consistency check"));
+        result.blockers = hfsLoadFailureBlockers(
+            reader, QStringLiteral("Unable to open HFS+ filesystem for consistency check"));
+        return result;
     }
     return reader.checkConsistency(max_records);
 }
@@ -367,7 +383,8 @@ PartitionHfsFileReadResult PartitionHfsFileSystemReader::listDirectory(QIODevice
     HfsReader reader(device);
     if (!reader.load()) {
         PartitionHfsFileReadResult result;
-        result.blockers.append(QStringLiteral("Unable to open HFS+ filesystem for listing"));
+        result.blockers = hfsLoadFailureBlockers(
+            reader, QStringLiteral("Unable to open HFS+ filesystem for listing"));
         return result;
     }
     return reader.listDirectory(path, max_entries);
@@ -386,7 +403,8 @@ PartitionHfsFileReadResult PartitionHfsFileSystemReader::readFile(QIODevice* dev
     HfsReader reader(device);
     if (!reader.load()) {
         PartitionHfsFileReadResult result;
-        result.blockers.append(QStringLiteral("Unable to open HFS+ filesystem for reading"));
+        result.blockers = hfsLoadFailureBlockers(
+            reader, QStringLiteral("Unable to open HFS+ filesystem for reading"));
         return result;
     }
     return reader.readFile(path, max_bytes);
@@ -405,7 +423,8 @@ PartitionHfsFileReadResult PartitionHfsFileSystemReader::readResourceFork(QIODev
     HfsReader reader(device);
     if (!reader.load()) {
         PartitionHfsFileReadResult result;
-        result.blockers.append(QStringLiteral("Unable to open HFS+ filesystem for reading"));
+        result.blockers = hfsLoadFailureBlockers(
+            reader, QStringLiteral("Unable to open HFS+ filesystem for reading"));
         return result;
     }
     return reader.readResourceFork(path, max_bytes);
@@ -425,8 +444,8 @@ PartitionHfsAttributeReadResult PartitionHfsFileSystemReader::readAttributeValue
         PartitionHfsAttributeReadResult result;
         result.file_id = file_id;
         result.attribute_name = attribute_name.trimmed();
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ filesystem for attribute reading"));
+        result.blockers = hfsLoadFailureBlockers(
+            reader, QStringLiteral("Unable to open HFS+ filesystem for attribute reading"));
         return result;
     }
     return reader.readAttributeValue(file_id, attribute_name, max_bytes);

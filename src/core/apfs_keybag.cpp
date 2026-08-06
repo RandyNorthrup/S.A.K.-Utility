@@ -95,9 +95,19 @@ QList<DerField> derParse(const QByteArray& buf) {
             if (n == 0 || n > 8 || i + n > buf.size()) {
                 break;
             }
+            // Accumulate UNSIGNED. An 8-byte length with bit 63 set overflows a signed qint64
+            // shift, which is undefined behaviour before the len<0 test below ever sees it --
+            // the check was relying on the wrap it is not entitled to assume. Bounding the
+            // unsigned value against the bytes actually remaining also removes the i+len
+            // overflow the later test would otherwise have to survive.
+            quint64 accumulated = 0;
             for (int k = 0; k < n; ++k) {
-                len = (len << 8) | static_cast<uint8_t>(buf.at(i++));
+                accumulated = (accumulated << 8) | static_cast<uint8_t>(buf.at(i++));
             }
+            if (accumulated > static_cast<quint64>(buf.size() - i)) {
+                break;
+            }
+            len = static_cast<qint64>(accumulated);
         }
         if (len < 0 || i + len > buf.size()) {
             break;

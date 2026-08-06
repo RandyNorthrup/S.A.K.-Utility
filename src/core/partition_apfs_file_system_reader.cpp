@@ -642,6 +642,15 @@ private:
                 blockCount_ = std::min<uint64_t>(blockCount_, deviceBytes / blockSize_);
             }
         }
+        // Checked AFTER the clamp, so it catches both a superblock declaring zero blocks and a
+        // device too small to hold even one. readBlock bounds every read against this count, and
+        // a zero count used to be treated as "no bound at all" -- exactly inverting the check on
+        // the one input that gives it nothing to check against.
+        if (blockCount_ == 0) {
+            result->blockers.append(
+                QStringLiteral("APFS container declares no blocks, or the device holds none"));
+            return false;
+        }
         if (firstBlock->size() < static_cast<qsizetype>(blockSize_)) {
             return readBlock(0, firstBlock, result);
         }
@@ -2178,7 +2187,10 @@ private:
                                  PartitionApfsFileReadResult* result,
                                  bool appendBlocker = true,
                                  bool validateObjectChecksum = true) {
-        if (block >= blockCount_ && blockCount_ != 0) {
+        // No zero-count escape: blockCount_ is proven non-zero before any read reaches here
+        // (readInitialContainerBlock refuses a container that declares none), so an unbounded
+        // read cannot be reached by making the bound itself unreadable.
+        if (block >= blockCount_) {
             if (appendBlocker) {
                 result->blockers.append(
                     QStringLiteral("APFS block %1 is outside container bounds").arg(block));
@@ -2466,6 +2478,18 @@ private:
         result_.warnings.append(file.warnings);
         if (!file.ok) {
             result_.blockers.append(file.blockers);
+            return false;
+        }
+        // ok means the read succeeded, NOT that it returned the whole file. Writing a truncated
+        // read to the export target produces a file that is complete-looking, silently short, and
+        // indistinguishable afterwards from the real thing -- the caller exported it to keep.
+        // fitsByteCaps refuses anything over the cap before the read, so reaching this is a
+        // truncation the reader found on its own (an over-ceiling decmpfs size, a short stream).
+        if (file.truncated) {
+            result_.blockers.append(
+                QStringLiteral("APFS file was truncated by the read ceiling, so it was not "
+                               "exported: %1")
+                    .arg(entry.path));
             return false;
         }
         if (!writeExportFile(

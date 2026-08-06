@@ -362,16 +362,29 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: walkExtentRefTree returns true on paddr==0 (6652-6654) while failing closed on a zero CHILD pointer and past the depth budget (6655-6658). An absent extent-ref tree is legitimate for some volumes; a corrupt root=0 loses ref tracking but is confined to the operator-chosen certified write target.
   - Fix: If the volume superblock advertises a non-zero extentref oid, treat a resolved root paddr of 0 as a blocker rather than empty-success.
-- [ ] **R5-P4-12** [LOW] [PARTIAL] Reader accepts nx_block_count==0; bound treats zero as unbounded
+- [x] **R5-P4-12** [LOW] [PARTIAL] Reader accepts nx_block_count==0; bound treats zero as unbounded
   - Files: src/core/partition_apfs_file_system_reader.cpp:630, src/core/partition_apfs_file_system_reader.cpp:2181
   - Boundary: untrusted-input (reachable)
   - Evidence: validateBlockGeometry (654) checks blockSize but not blockCount_; readBlock (2181) and appendExtentBytes (2058) skip the bound when blockCount_==0. However reads are still bounded by device seek/short-read (readBytes 2248) and EVERY block is Fletcher-verified via validateObjectBlockChecksum (2202,2238), and blockCount_ is clamped to device size (642). No OOB/escape; residual is a missing explicit reject.
   - Fix: Reject blockCount_==0 in validateBlockGeometry (fail closed) rather than treating it as unbounded.
-- [ ] **R5-P4-18** [LOW] [PARTIAL] Exporter accepts file.ok while ignoring file.truncated
+  - FIXED 2026-08-05: readBlock's bound read `block >= blockCount_ && blockCount_ != 0`,
+    so a zero count -- the one value that leaves the check nothing to check against --
+    disabled the check entirely and left the DEVICE as the only limit. blockCount_ is now
+    required non-zero, verified AFTER the device clamp so a device too small for one block
+    is refused too, and readBlock's escape is gone. Pinned by
+    apfsFileSystemReader_refusesAContainerDeclaringNoBlocks; mutation-tested.
+- [x] **R5-P4-18** [LOW] [PARTIAL] Exporter accepts file.ok while ignoring file.truncated
   - Files: src/core/partition_apfs_file_system_reader.cpp:2461, src/core/partition_apfs_file_system_reader.cpp:946
   - Boundary: untrusted-input (reachable)
   - Evidence: exportFile checks file.ok but not file.truncated (2467). Mostly mitigated: fitsByteCaps pre-blocks entry.size_bytes>max_file_bytes (2480-2489) before the read, and the truncation warning is merged into result warnings (2466). R4 H5 (doc:139) added the truncated flag and fixed the writer patch path; the exporter check was not added.
   - Fix: In exportFile treat file.truncated as a blocker (fail closed) as a defense-in-depth mirror of H5.
+  - FIXED 2026-08-05: exportFile treated file.ok as 'the whole file', so a truncated read
+    was written to the export target as a complete-looking, silently short file that is
+    indistinguishable afterwards from the real one. It now refuses to export a truncated
+    read and records a blocker naming the path. NOT directly unit-tested: reaching the
+    truncation path needs an APFS fixture whose decmpfs header claims more than its
+    directory entry (fitsByteCaps refuses an over-cap entry before the read), which is a
+    fixture this suite does not have. Covered by the APFS fuzz harness item under G14.
 - [x] **R5-P4-27** [LOW] [PARTIAL] ext legacy direct/indirect pointers unchecked vs s_blocks_count
   - Files: src/core/partition_ext_file_system_reader.cpp:534, src/core/partition_ext_file_system_reader.cpp:837
   - Boundary: untrusted-input (reachable)
@@ -417,21 +430,32 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
     mutation-tested (deleting either one fails the test). Verified against genuine
     mke2fs 1.47.4 images -- ext2/ext3/ext4 at 1K/2K/4K blocks -- so the new rules reject
     no real volume.
-- [ ] **R5-P4-34** [LOW] [PARTIAL] DER long-form length accumulates into signed qint64 (overflow UB)
+- [x] **R5-P4-34** [LOW] [PARTIAL] DER long-form length accumulates into signed qint64 (overflow UB)
   - Files: src/core/apfs_keybag.cpp:81
   - Boundary: untrusted-input (reachable)
   - Evidence: derParse rejects indefinite form, n>8, and length bytes past buffer (95), and rejects len<0 / i+len>buf.size (102) - closing the prior negative-index bug. Residual: an 8-byte length with bit 63 set still overflows the signed qint64 shift (99) = technically UB before the len<0 catch; in practice two's-complement wraps to negative and is caught at 102 (no OOB). Reachable from untrusted keybag DER.
   - Fix: Accumulate into uint64_t and reject value>INT64_MAX (or >buf.size) before casting to qint64.
+  - FIXED 2026-08-05: the long-form length now accumulates into an UNSIGNED quint64 and is
+    bounded against the bytes actually remaining, instead of shifting into a signed qint64
+    (undefined behaviour for an 8-byte length with bit 63 set) and relying on the wrap it
+    is not entitled to assume. This also removes the i+len overflow the following test
+    would otherwise have had to survive. NOT directly unit-tested: derParse lives in an
+    anonymous namespace with no seam. Belongs to the keybag/APFS fuzz harness under G14.
 - [ ] **R5-P4-41** [LOW] [PARTIAL] File checksum ignores seek failures / no position restore / div-by-zero
   - Files: src/core/image_source.cpp:125
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: calculateChecksum ignores the seek(0) return (133), doesn't restore oldPos on a read error (144-147 returns before 157), and divides progress by size() (152) which can be 0. The div is only reached inside while(!atEnd()), so it needs cached metadata.size==0 while the device still has bytes (stale-metadata edge). Operates on the app's own images, not a security path.
   - Fix: Check seek() returns, restore position in an early-return/RAII, and guard size()==0 before the percentage divide.
-- [ ] **R5-P4-43** [LOW] [CONFIRMED_REAL] HFS+ wrappers discard detailed blockers()
+- [x] **R5-P4-43** [LOW] [CONFIRMED_REAL] HFS+ wrappers discard detailed blockers()
   - Files: src/core/partition_hfs_file_system_reader.cpp:322
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: Public HFS+ entry points replace HfsReader::blockers() detail with a generic 'Unable to open HFS+ filesystem...' message (e.g. checkConsistency 298-301), weakening diagnosis of the exact fail-closed cause. Diagnosability quality issue only; the ext reader already surfaces its blockers() (ext:314).
   - Fix: Append reader.blockers() to the returned result like the ext/apfs readers do.
+  - FIXED 2026-08-05: every public HFS+ entry point now surfaces HfsReader::blockers() --
+    the real cause -- and appends the generic line naming which operation was refused,
+    rather than substituting the generic line for the cause. Matches what the ext reader
+    already did. Pinned by hfsFileSystemReader_surfacesTheReaderOwnLoadBlockers;
+    mutation-tested.
 - [ ] **R5-P4-44** [LOW] [CONFIRMED_REAL] Three drifted export-path impls; HFS lacks containment
   - RE-MEASURED 2026-08-05: the HFS half is ALREADY CLOSED and this item is stale on that
     point. partition_hfs_file_system_reader.cpp now carries realizedPathWithinRoot (87),
@@ -2829,6 +2853,23 @@ gate teaches people to disable both.
            local run can produce.
         3. Only then make the checks required with enforce_admins=true.
       Doing 3 before 2 blocks every push against checks that are already failing.
+
+- [x] R5-G21-11 A MUTATION TEST THAT DOES NOT VERIFY ITS BUILD PROVES NOTHING.
+      Recorded 2026-08-05. Two guards were mutation-tested in one batch: both mutants
+      appeared to SURVIVE, which reads as "these tests are decoration". They were not.
+      One of the two mutations produced an unreferenced-parameter warning that failed
+      the build under warnings-as-errors, so the test binary was never relinked and BOTH
+      tests ran against the ORIGINAL, unmutated code. Re-run one at a time with the build
+      exit code checked, both mutants died as they should.
+
+      The failure mode is silent and it points the WRONG way: a stale binary makes strong
+      tests look weak, and the natural response -- rewriting a test that was already
+      correct -- is wasted work at best. It could just as easily point the other way if
+      the stale binary happened to contain a mutation.
+
+      Rule for the rest of this program, and for the G18 mutation work specifically:
+      mutate ONE thing at a time, assert the build succeeded before running the test, and
+      treat "mutant survived" as a claim requiring the build exit code as evidence.
 
 - [ ] R5-G21-9 NO GATE HAS EVER SEEN THE EXTENSION JAVASCRIPT.
       Measured 2026-08-05 while hand-reviewing fix wave 1. The lizard hook is
