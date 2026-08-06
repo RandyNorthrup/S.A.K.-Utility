@@ -997,11 +997,30 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: SHFileOperationW with FOF_ALLOWUNDO permanently deletes on volumes without a recycle bin / UNC; this is documented intended behavior (recycle_bin.h:15-16). Residual fail-open: deleteOne treats sendPathToRecycleBin==true as 'recycled' (449-453) with no distinction, so a permanent delete is reported to the user as a recoverable recycle.
   - Fix: Detect UNC / no-recycle-bin volumes (GetDriveType / SHQueryRecycleBin) and surface that the item was permanently deleted rather than reporting a plain recycle success.
-- [ ] **R5-P9-8** [MEDIUM] [PARTIAL] Archive extraction trusts declared sizes; no post-decode size/status verification
+- [x] **R5-P9-8** [MEDIUM] [PARTIAL] Archive extraction trusts declared sizes; no post-decode size/status verification
   - Files: src/core/file_explorer_archive_service.cpp:293, src/core/file_explorer_archive_service.cpp:226, src/core/file_explorer_archive_service.cpp:229
   - Boundary: untrusted-input (reachable)
   - Evidence: total_bytes += info.size (293) precedes the cap check on the SAME value (294) so positive sizes are fine; and the per-file cap uses the declared size before decode. Residuals: (a) a negative declared size (ZIP64 >2^63 into qint64) passes info.size>kExtractMaxFileBytes (294) and skips the isEmpty guard (229, gated on info.size>0), letting a corrupt/empty entry be written as success; (b) after reader.fileData (226) neither reader.status()==NoError nor data.size()==info.size is verified, so a partial/short non-empty decode is written and counted as complete.
   - Fix: Reject info.size<0; after fileData verify reader.status()==NoError and data.size()==info.size.
+  - FIXED 2026-08-05: (a) a NEGATIVE declared size is now refused outright. It was not a
+    small file but a lie the size checks could not see: a ZIP64 length past 2^63 lands
+    negative in info.size, passes `info.size > kExtractMaxFileBytes` (it is less than the
+    cap, not more), drags ctx->total_bytes DOWN so later entries get a larger budget than
+    the archive is allowed, and skips the corrupt-payload guard because that is gated on
+    info.size > 0. (b) after fileData, the reader's own status must be NoError AND the
+    decoded length must equal the declared size -- without that a short inflate was
+    written out and counted in result.entries, so the caller was told the archive
+    extracted while the file on disk was truncated and afterwards indistinguishable from
+    the real one.
+  - Pinned by extractZip_refusesAnEntryWhoseDeclaredSizeIsALie, which builds a real
+    archive and inflates the declared uncompressed size in both the local file header and
+    the central directory. Mutation-tested: deleting the size-equality guard fails the
+    test. NOT pinned: the reader.status() guard, whose mutant SURVIVES a verified build.
+    That is reported rather than papered over -- the status check is a redundant net that
+    fires in cases the length check already catches (a truncated archive yields both a
+    bad status and a short read), so isolating it needs an archive whose status fails
+    while the length still matches. It is kept because it is correct and cheap, and it is
+    listed for the ZIP fuzz harness under G14 rather than counted as covered.
 - [x] **R5-P9-10** [MEDIUM] [CONFIRMED_REAL] Incomplete ordinary directory copies enter completedItems() (contract 'landed whole' violated)
   - FIXED: wave 5
   - Files: src/core/file_explorer_transfer_worker.cpp:402, src/core/file_explorer_transfer_worker.cpp:428, include/sak/file_explorer_transfer_worker.h:159

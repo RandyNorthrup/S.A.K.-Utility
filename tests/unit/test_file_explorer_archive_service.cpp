@@ -30,6 +30,7 @@ private Q_SLOTS:
     void compressThenExtract_roundTrips();
     void compressToZip_missingSourceFailsClosed();
     void compressToZip_countsDirectoriesTowardEntryCap();
+    void extractZip_refusesAnEntryWhoseDeclaredSizeIsALie();
 };
 
 void FileExplorerArchiveServiceTests::compressToZip_refusesExistingOutputWithoutClobber() {
@@ -113,6 +114,50 @@ void FileExplorerArchiveServiceTests::compressToZip_countsDirectoriesTowardEntry
 
     QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
     QCOMPARE(result.entries, 3);
+}
+
+void FileExplorerArchiveServiceTests::extractZip_refusesAnEntryWhoseDeclaredSizeIsALie() {
+    // R5-P9-8: the extractor sized and accepted every entry on the archive's OWN declared size
+    // and never checked what the decode actually produced. A short or failed inflate was written
+    // out and counted in result.entries, so the caller was told the archive extracted while the
+    // file on disk was truncated -- and afterwards indistinguishable from the real one.
+    //
+    // The archive is built normally and then its declared uncompressed size is inflated in both
+    // the local file header (offset 22) and the central directory record (offset 24). Nothing
+    // else is touched, so the entry still decodes; it simply decodes to fewer bytes than it
+    // claims, which is exactly the case the old code accepted.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = dir.filePath(QStringLiteral("data.txt"));
+    writeFile(src, QByteArrayLiteral("payload-12345"));
+    const QString zip = dir.filePath(QStringLiteral("archive.zip"));
+    QVERIFY(FileExplorerArchiveService::compressToZip(zip, {src}).ok);
+
+    QFile archive(zip);
+    QVERIFY(archive.open(QIODevice::ReadOnly));
+    QByteArray bytes = archive.readAll();
+    archive.close();
+
+    const auto patchSizeAt = [&bytes](const QByteArray& signature, int sizeOffset) {
+        const qsizetype at = bytes.indexOf(signature);
+        QVERIFY2(at >= 0, "expected zip record signature not found in the built archive");
+        const quint32 lie = 4096;
+        for (int i = 0; i < 4; ++i) {
+            bytes[at + sizeOffset + i] = static_cast<char>((lie >> (8 * i)) & 0xFF);
+        }
+    };
+    patchSizeAt(QByteArrayLiteral("PK\x03\x04"), 22);  // local file header, uncompressed size
+    patchSizeAt(QByteArrayLiteral("PK\x01\x02"), 24);  // central directory, uncompressed size
+    writeFile(zip, bytes);
+
+    const QString outdir = dir.filePath(QStringLiteral("extracted"));
+    const auto extracted = FileExplorerArchiveService::extractZip(zip, outdir);
+
+    QVERIFY2(!extracted.ok, "an entry that decodes to fewer bytes than it declares must fail");
+    QVERIFY(!extracted.blockers.isEmpty());
+    // The truncated payload must not be left on disk claiming to be the extracted file.
+    QVERIFY2(!QFile::exists(QDir(outdir).filePath(QStringLiteral("data.txt"))),
+             "the short entry must not be written");
 }
 
 QTEST_GUILESS_MAIN(FileExplorerArchiveServiceTests)

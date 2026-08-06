@@ -232,6 +232,27 @@ bool writeExtractedFile(const QZipReader& reader,
                 .arg(info.filePath));
         return false;
     }
+    // The reader's own verdict on the decode. Without it a partial or failed inflate is written
+    // out and counted in result->entries as a complete file: the caller is told the archive
+    // extracted, and the short file is indistinguishable from the real one afterwards.
+    if (reader.status() != QZipReader::NoError) {
+        result->blockers.append(
+            QStringLiteral("Extraction of entry %1 failed (archive read error).")
+                .arg(info.filePath));
+        return false;
+    }
+    // And the decode has to have produced what the entry declared. A short inflate that still
+    // returns some bytes passes the isEmpty guard above; comparing against the declared size is
+    // what makes "extracted" mean the whole entry. info.size is validated non-negative before
+    // this point, so the comparison is between two known-good lengths.
+    if (data.size() != info.size) {
+        result->blockers.append(QStringLiteral("Extraction of entry %1 produced %2 bytes, not the "
+                                               "declared %3 (truncated or corrupt).")
+                                    .arg(info.filePath)
+                                    .arg(data.size())
+                                    .arg(info.size));
+        return false;
+    }
     // Exclusive create (NewOnly): if a file was raced into the (op-layer-verified
     // new/empty) destination at this entry's path, fail closed rather than clobber
     // it. Validated entries never collide with each other, so this only trips on a
@@ -288,6 +309,19 @@ bool extractZipEntry(const QZipReader& reader,
             return true;
         }
         result->blockers.append(QStringLiteral("Could not create directory %1.").arg(out_path));
+        return false;
+    }
+    // A NEGATIVE declared size is not a small file, it is a lie the size checks cannot see: a
+    // ZIP64 length past 2^63 lands negative in info.size, passes `info.size > kExtractMaxFileBytes`
+    // (it is less than the cap, not more), drags ctx->total_bytes DOWN so later entries get a
+    // larger budget than the archive is allowed, and skips the corrupt-payload guard because that
+    // is gated on info.size > 0 -- so the entry is written and counted as an extracted file.
+    // Refuse it before it can influence any of those.
+    if (info.size < 0) {
+        result->blockers.append(
+            QStringLiteral("Refused entry %1 (declared size %2 is not a valid length).")
+                .arg(info.filePath)
+                .arg(info.size));
         return false;
     }
     ctx->total_bytes += info.size;
