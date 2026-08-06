@@ -49,6 +49,7 @@ private slots:
     void renderSnapshot_honorsExtensionTruncationFlag();
     void renderSnapshot_flagsOmittedCrossOriginIframes();
     void renderSnapshot_listsOmittedFrameUrls();
+    void renderSnapshot_reportsExtensionSideOmittedFrameTruncation();
     void renderSnapshot_dropsInlineTextBoxNoise();
     void renderSnapshot_escapesRoleToPreventForgedLines();
     void renderSnapshot_ignoresNonIntegerBackendNodeId();
@@ -83,6 +84,7 @@ private slots:
     void buildCommand_windowToolsBuild();
     void catalog_advertisesBatch3Tools();
     void buildCommand_rejectsUnknownArgument();
+    void buildCommand_carriesOriginExpectationsToTheExtension();
     void buildCommand_rejectsFractionalAndOutOfRangeInt();
     void buildCommand_rejectsWrongTypedRef();
     void buildCommand_rejectsMalformedSelectValues();
@@ -222,6 +224,30 @@ void BrowserContractTests::renderSnapshot_listsOmittedFrameUrls() {
     QVERIFY(!view.outline.contains(QStringLiteral("\n  - button \"Forged\"")));
     QVERIFY(!view.ref_index.contains(QStringLiteral("e9")));
     QVERIFY(view.outline.contains(QStringLiteral("(more omitted frames)")));  // list is capped
+}
+
+void BrowserContractTests::renderSnapshot_reportsExtensionSideOmittedFrameTruncation() {
+    // The extension caps its own frame list before sending it. A short array plus
+    // omittedFramesTruncated therefore still means frames were left out, and the outline has
+    // to say so: without the flag the renderer would see two URLs, stay under its own cap, and
+    // present a page hiding hundreds of cross-origin frames as one hiding two.
+    const QJsonObject capture{
+        {QStringLiteral("omittedFrames"),
+         QJsonArray{QStringLiteral("https://a.example/"), QStringLiteral("https://b.example/")}},
+        {QStringLiteral("omittedFramesTruncated"), true},
+        {QStringLiteral("nodes"),
+         QJsonArray{node(1, QStringLiteral("button"), QStringLiteral("Go"), true)}}};
+    const SnapshotView view = renderSnapshot(capture);
+    QVERIFY(view.outline.contains(QStringLiteral("https://a.example/")));
+    QVERIFY(view.outline.contains(QStringLiteral("(more omitted frames)")));
+
+    // ... and an untruncated list of the same length must NOT claim there are more.
+    const QJsonObject complete{
+        {QStringLiteral("omittedFrames"),
+         QJsonArray{QStringLiteral("https://a.example/"), QStringLiteral("https://b.example/")}},
+        {QStringLiteral("nodes"),
+         QJsonArray{node(1, QStringLiteral("button"), QStringLiteral("Go"), true)}}};
+    QVERIFY(!renderSnapshot(complete).outline.contains(QStringLiteral("(more omitted frames)")));
 }
 
 void BrowserContractTests::renderSnapshot_dropsInlineTextBoxNoise() {
@@ -926,6 +952,53 @@ void BrowserContractTests::buildCommand_rejectsUnknownArgument() {
     QVERIFY(!cmd.ok);
     QVERIFY(cmd.error.contains(QStringLiteral("Unknown argument")));
     QVERIFY(cmd.error.contains(QStringLiteral("evil")));
+}
+
+void BrowserContractTests::buildCommand_carriesOriginExpectationsToTheExtension() {
+    // The extension refuses a storage read/write or a credential arming whose declared
+    // origin does not match the live tab. That guard is INERT unless this layer both
+    // declares the argument (an undeclared key is rejected as unknown) and copies it into
+    // the command frame -- which is exactly how it shipped: the guard existed and no caller
+    // could ever reach it. These two assertions are the wiring.
+    const ExtensionCommand storage = buildExtensionCommand(
+        QStringLiteral("browser_storage"),
+        QJsonObject{{QStringLiteral("action"), QStringLiteral("get")},
+                    {QStringLiteral("key"), QStringLiteral("session")},
+                    {QStringLiteral("expect_origin"), QStringLiteral("https://example.com")}},
+        {});
+    QVERIFY2(storage.ok, qPrintable(storage.error));
+    QCOMPARE(storage.command.value(QStringLiteral("expect_origin")).toString(),
+             QStringLiteral("https://example.com"));
+
+    const ExtensionCommand auth = buildExtensionCommand(
+        QStringLiteral("browser_http_auth"),
+        QJsonObject{{QStringLiteral("username"), QStringLiteral("tech")},
+                    {QStringLiteral("password"), QStringLiteral("hunter2")},
+                    {QStringLiteral("origin"), QStringLiteral("https://intranet.example.com")}},
+        {});
+    QVERIFY2(auth.ok, qPrintable(auth.error));
+    QCOMPARE(auth.command.value(QStringLiteral("origin")).toString(),
+             QStringLiteral("https://intranet.example.com"));
+
+    // Both are advertised to the model too: a guard nothing knows to use is not a guard.
+    const QJsonArray tools = browserToolCatalog();
+    int checked = 0;
+    for (const QJsonValue& entry : tools) {
+        const QString name = entry.toObject().value(QStringLiteral("name")).toString();
+        const QJsonObject props = entry.toObject()
+                                      .value(QStringLiteral("inputSchema"))
+                                      .toObject()
+                                      .value(QStringLiteral("properties"))
+                                      .toObject();
+        if (name == QLatin1String("browser_storage")) {
+            QVERIFY(props.contains(QStringLiteral("expect_origin")));
+            ++checked;
+        } else if (name == QLatin1String("browser_http_auth")) {
+            QVERIFY(props.contains(QStringLiteral("origin")));
+            ++checked;
+        }
+    }
+    QCOMPARE(checked, 2);
 }
 
 void BrowserContractTests::buildCommand_rejectsFractionalAndOutOfRangeInt() {

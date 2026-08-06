@@ -12,6 +12,7 @@
 #include <QtTest/QtTest>
 
 #include <atomic>
+#include <chrono>
 #include <thread>
 
 using sak::win32mcp::BrowserBridgePipeServer;
@@ -56,6 +57,42 @@ struct FakeExtension {
     }
 };
 
+// A fake extension that behaves like a POLLING handler: it does not answer until the test
+// releases it. That is the only shape in which the abandoned-exchange bug is observable --
+// a handler that replies promptly never outlives its command.
+struct SlowFakeExtension {
+    QJsonObject last_command;
+    std::atomic<bool> release{false};
+    std::atomic<int> cancels_seen{0};
+
+    sak::win32mcp::BrowserWriteFn writer() {
+        return [this](const QJsonObject& frame) {
+            if (frame.value(QStringLiteral("type")).toString() == QLatin1String("cancel")) {
+                cancels_seen.fetch_add(1);
+                release.store(true);  // the poll loop stops when its command is retired
+                return true;
+            }
+            last_command = frame;
+            return true;
+        };
+    }
+    sak::win32mcp::BrowserReadFn reader() {
+        return [this](QJsonObject* out) {
+            // Bounded, so that a regression which stops the cancel from arriving FAILS this
+            // test instead of hanging it. A hang reads as a stuck machine and gets retried;
+            // a failure names the defect.
+            const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (!release.load() && std::chrono::steady_clock::now() < give_up) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            *out = QJsonObject{{QStringLiteral("type"), QStringLiteral("error")},
+                               {QStringLiteral("id"), last_command.value(QStringLiteral("id"))},
+                               {QStringLiteral("error"), QStringLiteral("command superseded")}};
+            return true;
+        };
+    }
+};
+
 }  // namespace
 
 class BrowserBridgeRelayTests : public QObject {
@@ -66,6 +103,7 @@ private slots:
     void relayHandshake_rejectsBadToken();
     void relayHandshake_rejectsProtocolMismatch();
     void relay_forwardsCommandAndReplyOverRealPipe();
+    void relay_forwardsCancelToAPollingExtensionWhenTheServerAbandons();
     void control_notConnectedReportsError();
     void control_snapshotRoundTripsThroughRelay();
 };
@@ -161,6 +199,49 @@ void BrowserBridgeRelayTests::relay_forwardsCommandAndReplyOverRealPipe() {
     // The relay forwarded exactly the server's command, id-transparent.
     QCOMPARE(extension.last_command.value(QStringLiteral("cmd")).toString(),
              QStringLiteral("snapshot"));
+    CloseHandle(pipe);
+    server.stop();
+}
+
+void BrowserBridgeRelayTests::relay_forwardsCancelToAPollingExtensionWhenTheServerAbandons() {
+    QTemporaryDir dir;
+    auto options = serverOptions(dir.filePath(QStringLiteral("r.json")));
+    // Short enough that the exchange is abandoned while the fake extension is still polling,
+    // which is the whole condition under test.
+    options.io_timeout_ms = 400;
+    BrowserBridgePipeServer server(options);
+    QString error;
+    QVERIFY2(server.start(&error), qPrintable(error));
+
+    QString token;
+    int protocol = 0;
+    const HANDLE pipe =
+        relayConnect(dir.filePath(QStringLiteral("r.json")), &token, &protocol, &error);
+    QVERIFY(pipe != INVALID_HANDLE_VALUE);
+    QVERIFY2(relayHandshake(pipe, token, protocol, &error), qPrintable(error));
+    QTRY_VERIFY_WITH_TIMEOUT(server.clientConnected(), 5000);
+
+    SlowFakeExtension extension;
+    std::thread relay([&] { (void)relayPumpOnce(pipe, extension.reader(), extension.writer()); });
+
+    const auto exchange = server.sendCommandAwaitReply(
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("command")},
+                    {QStringLiteral("id"), QStringLiteral("b-slow")},
+                    {QStringLiteral("cmd"), QStringLiteral("download")}});
+    relay.join();
+
+    // The server gave up on the exchange...
+    QVERIFY(!exchange.ok);
+    QVERIFY(exchange.error.contains(QStringLiteral("did not reply")));
+    // ...and the extension was TOLD, rather than being left polling until its own ceiling.
+    // Without the cancel this count is 0 and the reader never releases, so the join above
+    // would hang -- the assertion and the test's ability to finish are the same thing.
+    QCOMPARE(extension.cancels_seen.load(), 1);
+    // relayPumpOnce's own return is deliberately NOT asserted: whether the late reply lands
+    // in the server's drain read or after the teardown is a genuine race, and pinning it
+    // would make this test flaky rather than more truthful. What matters is that the
+    // extension was told, and the exchange still failed for the caller.
+
     CloseHandle(pipe);
     server.stop();
 }

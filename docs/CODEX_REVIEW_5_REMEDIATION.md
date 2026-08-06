@@ -3,13 +3,16 @@
 Fifth whole-codebase Codex review (gpt-5.6-sol, xhigh), 2026-08-04, over commit 7d62385.
 
 SCOPE CORRECTION: campaigns R1-R4 asserted whole-codebase coverage but never measured it.
-R5 introduces a COVERAGE LEDGER: 997 first-party files, 389781 lines, enumerated and
-tracked so coverage is provable rather than claimed. Phase 1 of R5 ran 11 subsystem
-passes (this document). Phase 2 runs a per-file sweep over all 1072 review units so that
-every line of first-party code is reviewed under its own dedicated pass.
+R5 introduces a COVERAGE LEDGER: first-party files enumerated and tracked so coverage is
+provable rather than claimed (997 files / 389781 lines at ledger build; 1098 review units
+after the August 5 reconciliation against HEAD). Phase 1 of R5 ran 11 subsystem passes
+(this document). Phase 2 runs a per-file sweep over every review unit so that every line of
+first-party code is reviewed under its own dedicated pass.
 
 STANDING RULES: no fallbacks, fail closed, surface the real error. Fix every issue found.
-Do the optionals. Plain 7-bit ASCII docs. Full Release ctest must pass before every commit.
+Do the optionals. Nothing is DELETED to make a finding go away -- a half-built feature gets
+FINISHED, and any removal needs the user's explicit authorization. Plain 7-bit ASCII docs.
+Full Release ctest must pass before every commit.
 
 ## PHASE 1 RESULT (11 subsystem passes)
 
@@ -400,6 +403,20 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Evidence: Public HFS+ entry points replace HfsReader::blockers() detail with a generic 'Unable to open HFS+ filesystem...' message (e.g. checkConsistency 298-301), weakening diagnosis of the exact fail-closed cause. Diagnosability quality issue only; the ext reader already surfaces its blockers() (ext:314).
   - Fix: Append reader.blockers() to the returned result like the ext/apfs readers do.
 - [ ] **R5-P4-44** [LOW] [CONFIRMED_REAL] Three drifted export-path impls; HFS lacks containment
+  - RE-MEASURED 2026-08-05: the HFS half is ALREADY CLOSED and this item is stale on that
+    point. partition_hfs_file_system_reader.cpp now carries realizedPathWithinRoot (87),
+    a canonicalRoot-taking writeExportFile (99-107), the exporter's targetPath re-check
+    (239), and passes canonical_root_ on BOTH the data-fork (273) and resource-fork (301)
+    writes; test_partition_manager_core exporter_realizedPathWithinRootRejectsEscape pins
+    it against APFS (cited as p4_rawfs-22, fixed in an earlier R5 wave, never ticked here).
+    Diffing all three implementations: realizedPathWithinRoot is byte-identical in APFS
+    (383), ext (1086) and HFS (87); writeExportFile differs only in local variable names
+    and blocker wording. Behaviour is uniform.
+  - WHAT IS STILL OPEN is the duplication itself, which is how the HFS gap arose in the
+    first place, plus an unpinned third copy: ext exposes NO exportPathWithinRootForTesting
+    seam and has NO containment test, so only two of the three guards are proven. Fix:
+    one shared helper all three call, a test seam on each reader so no reader can quietly
+    keep a local copy, and ext added to the existing containment case.
   - Files: src/core/partition_hfs_file_system_reader.cpp:82, src/core/partition_apfs_file_system_reader.cpp:378
   - Boundary: untrusted-input (reachable)
   - Evidence: APFS (378-418) and ext (1081-1118) share the realizedPathWithinRoot+NewOnly export guard (R4 M-A4-27) but HFS+ writeExportFile (82-90) has neither the containment check nor a canonicalRoot param - the drift finding 22 exploits. Consolidating into one shared helper would remove the divergence and close the HFS gap.
@@ -531,7 +548,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: decompressBlockIf4k reads footer uncompressed_size (1921), qUncompress with a BE size prefix, and only rejects an EMPTY result (1937-1942). It never asserts decompressed.size()==uncompressed_size. The compressed raw bytes are CRC+wSig authenticated by the block trailer (wave F), and downstream heap reads are bounds-checked, so a size mismatch is non-exploitable but is an unverified invariant.
   - Fix: reject when decompressed.size()!=uncompressed_size (fail closed with pst_decompression_failed)
-- [ ] **R5-P6-22** [LOW] [DESIGN_INTENT] IMAP credentials duplicated into buffers, never zeroized; socket writes only check negative
+- [x] **R5-P6-22** [LOW] [DESIGN_INTENT] IMAP credentials duplicated into buffers, never zeroized; socket writes only check negative
+  - MOOT 2026-08-05: src/core/imap_uploader.cpp was deleted with the user-authorized IMAP-upload removal (20ddf70). The cited code no longer exists. The live IMAP path is ImapSession, which this finding was not about.
   - Files: src/core/imap_uploader.cpp:168, src/core/imap_uploader.cpp:314, src/core/imap_uploader.cpp:421
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: plainAuthCommand/xoauth2 build QByteArray/QString with the user's own password (314-320) that are not scrubbed. This concerns the user's OWN credentials, not attacker-reachable data; QString/QByteArray implicit sharing makes reliable in-place wiping unreliable. QAbstractSocket::write(<0) is the standard error check (a buffered socket queues the full payload). Defense-in-depth hardening, not a fail-open on untrusted input.
@@ -541,11 +559,11 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: resolveFilenameConflict loops _1.._9999 checking existence (1299-1307), then unconditionally returns `base_<ms-epoch>.ext` WITHOUT an existence check (1310-1311) -- a fallback that can collide and overwrite, and produces a trailing dot when ext is empty. Violates the no-fallback/fail-closed rule, though reaching it needs 9999 same-base collisions and a same-ms timestamp collision (practically negligible).
   - Fix: fail closed (return error) when the numbered attempts exhaust, or include the timestamp candidate in the existence-checked loop
-- [ ] **R5-P6-25** [LOW] [CONFIRMED_REAL] Dead non-conformant PST/MSG writer bodies + second stubbed IMAP command/auth with unsafe interpolation
-  - Files: src/core/pst_writer.cpp:150, src/core/msg_writer.cpp:106, src/core/imap_uploader.cpp:670
+- [x] **R5-P6-25** [LOW] [CONFIRMED_REAL] Dead non-conformant PST/MSG writer bodies + second stubbed IMAP command/auth with unsafe interpolation
+  - Files: src/core/pst_writer.cpp:150, src/core/msg_writer.cpp:106, src/core/imap_uploader.cpp:670 (all three files no longer exist)
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: Large writer bodies below the gated create()/writeMessage() are unreachable (m_is_open never set). ImapUploader::sendCommand (705-710) is a stub returning connection_failed, so the legacy ImapUploader::authenticate (647-699) -- which interpolates credentials unescaped as LOGIN "%1" "%2" (670) -- is dead code that never transmits. Real sessions use the ImapSession worker with imapQuote. Code-quality/dead-code cleanup, correctly rated LOW.
-  - Fix: delete the unreachable writer bodies and the stubbed ImapUploader command/auth methods
+  - RESOLVED 2026-08-05 by the user-authorized OST Converter scope decision (48e9a7f / 20ddf70 / 626df4c): all three files deleted outright rather than having their dead bodies trimmed. See R5-G19-2. The live IMAP path is unaffected -- ImapSession with imapQuote was always the real one.
 
 ### p7_sysops -- Deployment / package / vulnerability / uninstall / user-data
 
@@ -777,11 +795,11 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: Optional fields are coerced not strict-validated: create_subdirectories/recover_deleted via toBool(true/false) (1013,3158), compress sources via .toArray()+toString() dropping non-string entries (3329-3333). Wrong-typed inputs collapse to safe defaults rather than failing closed, contrary to the standing rule; impact is low because the defaults are safe.
   - Fix: Strict-check optional fields (isBool/isArray/isString) and reject wrong types instead of coercing to a default.
-- [ ] **R5-P8-26** [LOW] [CONFIRMED_REAL] Conversion schema advertises pst/msg/dbx outputs the handler always rejects
+- [x] **R5-P8-26** [LOW] [CONFIRMED_REAL] Conversion schema advertises pst/msg/dbx outputs the handler always rejects
   - Files: src/core/app_mutating_actions.cpp:3195, src/core/app_mutating_actions.cpp:3148
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: convertOstParamsSchema enum lists pst/eml/msg/mbox/dbx/html/pdf (3195-3201) but convertOst rejects pst/msg/dbx via isOutputFormatSupported (3148-3153). Misleading schema; it fails CLOSED with a precise reason, so it is a quality/consistency defect, not a security hole.
-  - Fix: Drop pst/msg/dbx from the convert_ost format enum so the advertised schema matches the handler.
+  - RESOLVED 2026-08-05 (626df4c), more completely than the suggested fix: the `format` parameter is GONE, not narrowed. The converter has one output. convert_ost now REFUSES any format argument rather than ignoring it, because an ignored argument would hand the caller MBOX and report success for the PDF it asked for -- convertOstRefusesAnyFormatArgument pins that for seven values including "mbox". See R5-G19-2.
 - [ ] **R5-P8-27** [LOW] [DESIGN_INTENT] Ciphertext has no magic/version/algorithm/embedded KDF params
   - Files: include/sak/encryption.h:39, src/core/encryption.cpp:354
   - Boundary: app-own-certified-path (not-attacker-reachable)
@@ -1409,23 +1427,256 @@ EVERY first-party file its own dedicated Codex pass, with files over 2000 lines 
 
 | Metric | Value |
 |---|---|
-| First-party files | 997 |
+| First-party files | 997 (at ledger build) -> 1008 at HEAD |
 | First-party lines | 389781 |
-| Review units (chunked) | 1072 |
+| Review units (chunked) | 1072 -> 1098 after reconciliation |
 
 Inventory by tree: include 334 files / 54535 lines; src 303 / 212496; tests 219 / 91652;
 scripts 103 / 25150; resources 30 / 1753; browser 5 / 2452; cmake and root build files 3.
 
-- [ ] R5-LEDGER-1 Run all 1072 per-file review units to completion
+### Ledger reconciliation (August 5, 2026)
+
+The ledger was built once, at the start of the campaign, and the campaign then changed the
+tree underneath it. A ledger that measures a tree which no longer exists is the exact
+"assert coverage instead of measuring it" failure Phase 2 exists to correct, so it is
+reconciled against HEAD rather than left to drift:
+
+- 15 units RETIRED because their file no longer exists at HEAD (the PST, DBX, IMAP and MSG
+  writers and their tests, removed with authorization in 48e9a7f / 20ddf70 / 626df4c).
+  Each retired unit keeps a stub recording WHY it produced no findings; a unit is never
+  silently dropped, or "N units run" stops meaning anything.
+- 26 units ADDED for files created during the campaign itself -- the pure seams extracted
+  while fixing findings (email_folder_selection, backup_file_codec, flasher_policy,
+  rich_text_safety, windows_path_policy, app_installation_busy, email_view_ids,
+  backup_destination_guard, email_safe_text_browser and their tests) plus four gate
+  scripts. New code written during a review campaign is exactly the code that has never
+  been independently reviewed.
+
+Net 1072 -> 1098 units. src/third_party is excluded as it always was.
+
+### Status (August 5, 2026)
+
+- [ ] R5-LEDGER-1 Run all 1098 per-file review units to completion
+      BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
+      exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334
+      units (246 tests, 75 src, 9 include, 4 scripts) cannot be run before then. This is
+      an account cap, not a tooling failure; the drivers are idempotent and claim-based,
+      so the run resumes from exactly where it stopped.
 - [ ] R5-LEDGER-2 Verify every per-file finding against the local tree
+      IN PROGRESS: 35 of 723 briefs verified (4.8%); 688 briefs holding 8156 unverified
+      allegations remain.
 - [ ] R5-LEDGER-3 Fix every confirmed per-file finding in gated waves
+      IN PROGRESS: 649 findings survive verification so far -- 3 CRITICAL, 77 HIGH,
+      283 MEDIUM, 286 LOW. First fix wave (browser) is in the working tree, ungated.
 - [ ] R5-LEDGER-4 Commit the coverage ledger so future campaigns measure coverage
       rather than assert it (this is the R1-R4 process failure being corrected)
+
+#### Verification method
+
+A FILE, not a finding, is the unit of verification: the same defect is reported from the
+header, from the implementation, and once per overlapping 1800-line chunk, and only an
+agent holding all of them at once can collapse them. The 8894 raw findings therefore route
+into 723 briefs (batched at 25 allegations each so no agent is asked to skim). Each brief
+gets a skeptical verifier that reads the real code AND greps its callers; every surviving
+CRITICAL/HIGH claim then gets an adversarial refuter that must find the guard proving it
+false.
+
+Raw finding counts are NOT defect counts. A per-file reviewer sees one file with no
+callers, so it must assume the worst about every caller. The raw distribution is 533
+CRITICAL / 4056 HIGH / 2929 MEDIUM / 1410 LOW, which measures review volume, not risk.
+Measured against the first 35 briefs the deflation is large and real: 737 verdicts ->
+39 FALSE_POSITIVE, 38 DUPLICATE, 11 killed by refutation, 649 actionable, and only 80 of
+those are CRITICAL/HIGH where the raw labels claimed 553.
+
+Where the surviving CRITICAL/HIGH work actually is:
+
+| File | CRIT+HIGH |
+|---|---|
+| src/core/partition_apfs_writer.cpp | 55 |
+| include/sak/partition_hfs_internal.h | 9 |
+| src/core/partition_script_builder.cpp | 7 |
+| browser/extension/background.js | 4 |
+| src/core/partition_manager_controller.cpp | 2 |
+| apfs_keybag.cpp, partition_file_system_detector.cpp, partition_ext_file_system_reader.cpp | 1 each |
+
+#### A fail-open found in the verification harness itself
+
+The collector keyed each refutation to its claim by (unit-string, finding-id). Both halves
+were wrong: finding ids are unique only within one brief, and the unit string is free text
+the agent authors -- three batches of one file all echoed the same string. The join matched
+NOTHING, so six findings the adversarial pass had KILLED were recorded as survivors and
+would have been sent to fix agents to be "fixed" again. The collector now keys on the
+(file, line, title) triple parsed back out of the prompt the refuter was actually shown,
+and ABORTS rather than recording an unmatched refutation. 11 claims have been killed by
+refutation so far; the six that exposed the bug all hinge on a single guard the per-file
+reviewer could not see -- advanceCheckpoint refuses to publish while its blockers list is
+non-empty -- which is exactly the class of error an adversarial pass exists to catch.
 
 Gaps this ledger exposed that four prior campaigns never scoped: include/sak headers
 (334 files, including partition_hfs_internal.h at 11163 lines, which carries the entire
 HFS+ engine and was only ever read because Codex followed an include), the 219-file test
 suite, the 103 build and certification scripts, the browser extension, and src/main.cpp.
+
+### Fix wave 1 - browser control (IN THE WORKING TREE, NOT YET GATED OR COMMITTED)
+
+87 findings against browser/. The four HIGH were fixed by hand rather than delegated,
+because this is the surface that drives a real user's browser:
+
+- **Stale element refs.** Refs were pinned to the snapshot's TAB but never its DOM
+  generation. The bridge does check the epoch, but it reads the marker off the REPLY --
+  after the click has already landed. Blink allocates backendNodeIds from a per-renderer
+  counter, so after a cross-site navigation a live id names an arbitrary node of the NEW
+  document. lastSnapshotEpoch is now stamped at capture and checked before dispatch.
+- **Wildcard origin.** `*` is not a forbidden host code point, so `new URL("https://*")`
+  parses with host `*`, reaching chrome.contentSettings as `https://*/*` and granting
+  camera/microphone/geolocation on EVERY https origin. The host must now be a single
+  concrete name or a bracketed IPv6 literal.
+- **Occlusion fail-open.** A ref click proceeded and returned ok:true even when the
+  hit-test proved another element covered the target, and a FAILED hit-test returned "not
+  occluded" -- asserting precisely what could not be established. Both now refuse.
+- **Drag.** The only ref-taking handler with no snapshot gate. The left button was also
+  pressed outside any try, so a mid-drag throw left the page holding a pressed button
+  forever. The release now runs in a finally, at the pointer's real last position rather
+  than the intended destination, so a half-failed drag does not drop its payload on the
+  target as though it had arrived.
+
+Two silent coercions on the same path were fixed with them (not cited by the review, found
+while reading it): parseModifiers dropped unknown tokens, so a requested ctrl+click became
+a plain click -- the difference between opening a background tab and navigating the page
+away -- and button/click_count coerced garbage to left/1. Both refuse now, including the
+identical unguarded copy one function over in handleClickAt.
+
+The 78 MEDIUM/LOW went to fix agents. Three things had to be corrected in their output:
+
+1. Both new PowerShell guard tests were dropped into tests/unit/ as test_*.ps1, which
+   check_test_registration.ps1 did not scan -- so they would have sat in the tree looking
+   like coverage while ctest never invoked them once. That is the exact failure that gate
+   exists to stop, one file extension over. Both are now registered in tests/CMakeLists.txt
+   and the gate has a third direction for unregistered test_*.ps1, proven to fail closed
+   with a planted probe file.
+2. test_register_native_host.ps1 mutated the developer's LIVE Chrome native-host
+   registration and relied on a finally block to restore it -- a test that has to put back
+   what it broke leaves the machine broken whenever it is interrupted.
+   register_native_host.ps1 now takes -RegistryRoot (constrained to HKCU:, so a typo
+   cannot become a machine-wide HKLM write) and the test registers into a per-run GUID key
+   it deletes outright.
+3. **R5-F17 was left half-built, and I made it worse before fixing it.** An agent added a
+   `{type:"cancel"}` frame handler to the extension implementing F17 ("the protocol has no
+   cancellation, so a long-running command keeps running after the app abandons the
+   exchange"). Nothing in the C++ bridge sent one, and I deleted the handler as speculative
+   dead code. That was wrong: it was the RECEIVER half of a verified finding, and the
+   correct response to half-built is to finish it. Both halves now exist:
+   - BrowserBridgePipeServer::serveConnected writes a cancel when its I/O deadline elapses,
+     then drains the cancelled command's late reply before tearing down. The drain is
+     load-bearing, not politeness: sending the cancel and disconnecting immediately
+     discards it before the relay -- which samples the pipe every 25 ms -- can read it, so
+     without the drain the cancel would almost never arrive.
+   - relayPumpOnce now waits for the extension's reply on a separate thread while the main
+     thread polls the pipe and forwards any cancel. Handle ownership is split so nothing
+     has two users (reply thread owns stdin, main thread owns the pipe), which is what
+     makes this safe without CancelIoEx on a synchronous handle.
+   - test_browser_bridge_relay gains relay_forwardsCancelToAPollingExtensionWhenTheServer-
+     Abandons, driving a real pipe server and a fake extension that behaves like a POLLING
+     handler. Its wait is bounded so a regression FAILS rather than hangs, and it was
+     verified to fail with the sender neutered. 9/9 pass in 564 ms.
+
+   The concrete driver: browser_download polls to 120 s while the bridge deadline is 30 s,
+   so it kept driving the page for 90 s after the app had already errored and torn the
+   connection down. browser_wait_for's ceiling was separately clamped to 25 s (R5-F37).
+
+#### Hand review of the fix-agent diff (62 remaining findings)
+
+Every agent-touched hunk was read. What the agents got wrong, and what was corrected:
+
+- **F9 was broken by its own fix.** The focus check rejected exactly the case its comment
+  claimed to protect: with `attachShadow({delegatesFocus:true})`, `document.activeElement`
+  is the HOST while focus lives inside the shadow root, and `Node.contains` does not cross
+  a shadow boundary. It now walks every level of the focus chain.
+- **F42/F47 over-reached.** An ordinary mid-navigation context teardown was made to hard-fail
+  browser_wait_for. A failed read now counts as "nothing established" -- so an `absent`
+  condition still cannot be satisfied by one -- and the poll continues; an invalid selector
+  still fails fast. transientReadError carries that distinction explicitly.
+- **F23/F31 kept, contracts corrected.** Both guards are right (an index-addressed close
+  landing on a moved tab; a persistent camera grant naming no site), but they left three C++
+  tool descriptions describing behavior the extension no longer had.
+- **pack-extension.ps1 was shipped broken.** `Start-Process -ArgumentList` does not quote
+  array elements, so a stage or key path containing a space arrived as two arguments.
+  Format-NativeArgument now quotes each one; verified by round-tripping through Windows'
+  own CommandLineToArgvW (4/4 exact, including `C:\Program Files\my stage`).
+- **F47 (the cap, not the wait) was a cross-language fail-open.** MAX_OMITTED_FRAMES meant
+  two different things in two functions, and truncation was signalled by SENDING ONE EXTRA
+  entry -- a convention silently coupled to kMaxOmittedFramesListed in browser_contract.cpp.
+  Raising either constant alone turns a cut list back into an apparently complete one, and
+  the read path (which capped exactly) never carried the evidence at all. The extension now
+  states `omittedFramesTruncated` outright and both paths honour the cap;
+  renderSnapshot_reportsExtensionSideOmittedFrameTruncation pins both directions.
+- **F60 was a missed-event race.** handleNewTab probed `status` and then called
+  waitForComplete, which only listens for the TRANSITION: a load finishing in that window
+  fired no further event, so the tool waited the full 15 s and then reported
+  `load_complete:false` for a page that had loaded -- a false statement about the page, not
+  a slow one. The same shape hit handleNavigate on a same-document (fragment) navigation.
+  waitForComplete now re-reads the tab AFTER attaching its listener, and takes the
+  pre-navigation url so "already settled" cannot be satisfied by the document the caller
+  navigated away from. A tab that cannot be read now errors instead of being reported as
+  not-loaded.
+- **F14, prototype hazard.** An element carrying an attribute literally named `__proto__`
+  was silently dropped from browser_get_attribute's map (assigning a string to `__proto__`
+  sets nothing), while `count` still claimed it -- the page choosing which of its own
+  attributes the model may see. Object.defineProperty makes it an own property.
+
+Two script defects found in the same read, both real:
+
+- **register_native_host.ps1 guarded less than it claimed.** The comment says a UNC share
+  would let a remote host supply the native-host binary; the guard only refused a leading
+  `\\`, so `net use Z: \\host\share` walked straight through. The volume is now classified
+  and only Fixed/Removable is accepted, with unclassifiable roots refused alongside remote
+  ones. Its cleanup `finally` could also replace the real failure with "could not remove
+  the staging file"; it now warns instead of throwing. 16/16 guard cases pass.
+- **pack-extension.ps1 killed only the launcher.** chrome.exe spawns its own children, so
+  `$proc.Kill()` on a wedged pack left that tree running -- still holding the staging
+  directory the cleanup then tried to delete. Now `Kill($true)`. Its `-Out` base directory
+  also came from `(Get-Location).Path`, which on a PowerShell-only FileSystem drive is a
+  PowerShell path (`Work:\sub`) that System.IO cannot combine or open; `.ProviderPath` is
+  the filesystem's own view.
+
+test_pack_extension's Chrome-run cases were assertions on the shipped SOURCE TEXT
+(`$packText -match 'WaitForExit\('`), which pass just as happily when the code around those
+tokens is dead. The run is now a real seam, Invoke-ChromePack, driven by fake browsers that
+behave the way a failing Chrome does: exit 22 with an explanation on stderr, a clean exit
+that produced no CRX, and a wedge that spawns a surviving child. The tree-kill case was
+mutation-tested -- reverting to `Kill()` fails it, and the orphan holds pack-stdout.txt open,
+which is the hazard itself.
+
+**Nothing verified that the committed CRX matched the source it was packed from.** The
+installer test pins manifest.json's version against kBrowserExtensionVersion, and this file
+pins the CRX's derived id, but a CRX is a signed blob: editing browser/extension changes what
+a developer loads unpacked while every customer keeps running whatever was last packed. Every
+source fix in this wave could have shipped as a no-op. test_pack_extension now unzips the
+committed CRX and compares its entry list and every entry's content against
+browser/extension, normalizing line endings (core.autocrlf rewrites the working copy on
+checkout while the CRX is binary in .gitattributes). It caught a real 76-character drift on
+its first run -- comment edits made after the repack -- and was confirmed to pass only after
+repacking. 30 checks.
+
+check_test_registration's new direction-3 scan had a fail-open of its own: it tested the WHOLE
+file for a `${var}.ps1` add_test, so one such loop vouched for every other foreach in
+tests/CMakeLists.txt, and a .ps1 sharing a stem with any C++ target listed in one would have
+counted as registered while nothing ran it. It now matches each loop's variable, list and body
+together. Verified green on the real tree (2 PowerShell tests, both found through the loop)
+and still failing closed on a planted unregistered probe.
+
+Not gate-blocking, logged rather than fixed here: lizard is wired for C/C++ only, so 3300
+lines of security-relevant extension JavaScript have never been complexity-gated. Running it
+by hand reports 22 remaining CCN violations (dispatchCommand 41, axNodeToCapture 33,
+handleEmulate 27, selectOptionFn 26, handleStorage 25, handleWindow 23 against a limit of
+10). The two LENGTH violations found in review are fixed (handleSelect 97 -> 37,
+handleEmulate 80 -> 30); dispatchCommand at 86 lines remains. See R5-G21-9.
+
+Baseline before this wave: full Release ctest 221/221 at 626df4c. The wave still needs the
+extension version bump (0.3.12 -> 0.3.13 in manifest.json AND
+include/sak/win32mcp/browser_extension_installer.h), a CRX re-sign via
+browser/pack-extension.ps1 -- source edits do NOT reach a customer until the committed,
+Chrome-signed CRX is repacked -- and the full gate before commit.
 
 ## COMPLIANCE GATE PROGRAM
 
@@ -2372,22 +2623,40 @@ So the suite itself must be audited for tests that pass regardless of the code.
 - [ ] R5-G19-2 Find declared-but-unwired features: manifest entries with supported:false,
       settings with no consumer, signals with no connection, handlers never registered,
       menu actions that do nothing
-  - [x] PST output (2026-08-05). PstWriter::create() refused unconditionally and nothing
-        ever set m_is_open, so the whole NDB/LTP writer plus PstSplitter was unreachable
-        (~500 lines) and would have emitted corrupt .pst if ungated. DELETED, along with
-        every consumer that could only serve it: PstSplitSize, split_size/custom_split_mb,
-        pst_volumes_created, the split-size GUI row (only visible when format == PST,
-        which the picker disables), writeItemPst and ensurePstFolderHierarchy. Two real
-        defects fell out: the worker EXEMPTED PST from the unsupported-format gate and
-        reported "Failed to create PST output" (reads like a disk/permission fault) rather
-        than naming the missing writer, and the email.convert_ost tool schema advertised
-        pst/msg/dbx in its format enum -- inviting a model call that can only be refused.
-        The schema enum is now derived from isOutputFormatSupported so it cannot drift.
-  - [ ] MSG and DBX are the same shape as PST and are still present: both are gated off by
-        isOutputFormatSupported, so createPerItemWriter's Msg/Dbx arms, writeItemMsg and
-        writeItemDbx, and MsgWriter/DbxWriter themselves are unreachable through the
-        pipeline. Decide per writer: make it spec-conformant or delete it as PST was.
-        Separate commit -- each has its own test target and its own blast radius.
+  - [x] OST Converter scope, CLOSED 2026-08-05 in four gated commits (48e9a7f, 20ddf70,
+        ee72121, 626df4c; ~4450 lines deleted, full Release ctest green on each).
+
+        EVERY REMOVAL HERE WAS AUTHORIZED BY THE USER BEFORE IT WAS MADE. The user set the
+        scope: the converter is for FULL MAILBOX FILES (OST/PST in, MBOX out) and the Email
+        Inspector is for INDIVIDUAL emails. EML, MSG, HTML and PDF were per-message formats
+        on the wrong side of that line, and EML/HTML/PDF duplicated the inspector's
+        ExportFormat outright.
+
+        - PstWriter::create() refused unconditionally and nothing ever set m_is_open, so
+          the whole NDB/LTP writer plus PstSplitter was unreachable (~500 lines) and would
+          have emitted corrupt .pst if ungated. Deleted with every consumer that could only
+          serve it: PstSplitSize, split_size/custom_split_mb, pst_volumes_created, the
+          split-size GUI row, writeItemPst, ensurePstFolderHierarchy.
+        - DBX output, IMAP upload and MsgWriter deleted (MsgWriter's CFB directory tree was
+          never spec-conformant). EmlWriter, HtmlEmailWriter and PdfEmailWriter all STAY --
+          the inspector's export worker uses them.
+        - isOutputFormatSupported and unsupportedFormatLabel are GONE, not updated. That
+          table existed to record which formats did NOT work: a list of switched-off
+          features living in the source. There is no longer any mechanism in this tab for
+          "a feature that exists but is disabled".
+        - The whole-store gap was closed FIRST, in ee72121: the inspector's folder tree
+          gained "Export ALL Mail Folders as" before the converter lost per-message
+          formats, so no commit in history is missing the capability.
+
+        Four real defects fell out. The worker EXEMPTED PST from its own unsupported-format
+        gate and reported "Failed to create PST output" (reads like a disk fault) rather
+        than naming the missing writer. The email.convert_ost schema advertised pst/msg/dbx
+        -- inviting a model call that could only be refused. With `format` removed, an
+        unknown argument would be silently ignored and the caller told "Converted N item(s)"
+        after receiving MBOX, so convert_ost now REFUSES any format argument and names
+        where per-message output lives. And one_mbox_per_folder was read by MboxWriter but
+        nothing could set it -- every conversion ran on the default; it is now the tab's one
+        real checkbox.
 - [ ] R5-G19-3 Find stubs that return a plausible default instead of doing the work; this
       is the fallback rule applied to whole functions
 - [ ] R5-G19-4 Verify every AI tool and app action listed as available actually dispatches
@@ -2513,6 +2782,34 @@ gate teaches people to disable both.
         3. Only then make the checks required with enforce_admins=true.
       Doing 3 before 2 blocks every push against checks that are already failing.
 
+- [ ] R5-G21-9 NO GATE HAS EVER SEEN THE EXTENSION JAVASCRIPT.
+      Measured 2026-08-05 while hand-reviewing fix wave 1. The lizard hook is
+      declared `types_or: [c, c++]` with `files: \.(cpp|h|hpp|cxx|cc|hxx)$`, and
+      clang-format, clang-tidy and cppcheck are all C/C++ by construction. That
+      leaves browser/extension/background.js -- 3300 lines that drive a real user's
+      browser over CDP, parse page-controlled data, and hold every fail-closed guard
+      in the browser surface -- with no complexity gate, no format gate, no linter,
+      and no unit test harness of any kind. Its correctness rests entirely on review.
+
+      Lizard does support JavaScript. Run by hand at the repo's own thresholds
+      (CCN <= 10, length <= 70, params <= 5) it reports 22 violations, all CCN except
+      one length: dispatchCommand 41 CCN / 86 lines, axNodeToCapture 33, handleEmulate
+      27, selectOptionFn 26, handleStorage 25, handleWindow 23, then a tail of 11-18.
+      The two length violations found in review (handleSelect 97, handleEmulate 80)
+      are fixed; dispatchCommand's 86 lines are not.
+
+      Three parts, in this order, so the gate cannot be added and then immediately
+      suppressed:
+        1. Extend the lizard hook to JavaScript (browser/**/*.js) at the SAME
+           thresholds, with the current violations recorded as a written baseline
+           rather than a blanket exclusion.
+        2. Close the 22 violations. dispatchCommand is a dispatch table written as a
+           chain and should become one.
+        3. A JS test harness. There is no seam today for the pure functions that
+           already exist and are individually testable (tabSettledAt, capFrameUrls,
+           selectCallArgs, readFormat, parseModifiers, normalizeUrl) - the same
+           pure-seam pattern the C++ side uses throughout.
+
 ### G17 - defects found while FIXING, that the review never reported
 
 Wave 5 fixed the 43 verified MEDIUM findings. While doing so it uncovered defects more
@@ -2626,7 +2923,8 @@ Running tally of gates that reported healthy while analyzing nothing:
 
 The campaign is complete only when ALL of the following are simultaneously true:
 
-- [ ] R5-G10-1 All 1072 per-file review units executed and every finding dispositioned
+- [ ] R5-G10-1 All 1098 per-file review units executed and every finding dispositioned
+      (764 executed; 35 of 723 verification briefs adjudicated -- see PHASE 2 status)
 - [ ] R5-G10-2 Zero open findings in this document
 - [ ] R5-G10-3 cppcheck_suppressions.txt deleted; cppcheck clean project-wide
 - [ ] R5-G10-4 clang-tidy wired and clean with all checks enabled

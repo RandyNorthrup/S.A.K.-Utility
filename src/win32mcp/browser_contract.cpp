@@ -349,8 +349,8 @@ QHash<QString, CmdSpec> advancedInputCommandSpecs() {
     };
 }
 
-// Gated infrastructure command specs (Batch 4).
-QHash<QString, CmdSpec> infraCommandSpecs() {
+// Gated infrastructure command specs (Batch 4): the ones that reshape or render the PAGE.
+QHash<QString, CmdSpec> renderingCommandSpecs() {
     return {
         {QStringLiteral("browser_emulate"),
          {QStringLiteral("emulate"),
@@ -371,6 +371,14 @@ QHash<QString, CmdSpec> infraCommandSpecs() {
            {QStringLiteral("paper_height"), QStringLiteral("number"), false},
            {QStringLiteral("print_background"), QStringLiteral("bool"), false},
            {QStringLiteral("page_ranges"), QStringLiteral("string"), false}}}},
+    };
+}
+
+// Gated infrastructure command specs (Batch 4): the ones that touch ORIGIN-SCOPED state --
+// permissions, storage, cookies, downloads and credentials. Each of these acts on whatever tab
+// is active when it lands, which is why several carry an explicit origin expectation.
+QHash<QString, CmdSpec> infraCommandSpecs() {
+    return {
         {QStringLiteral("browser_permission"),
          {QStringLiteral("permission"),
           QStringLiteral("none"),
@@ -383,7 +391,12 @@ QHash<QString, CmdSpec> infraCommandSpecs() {
           {{QStringLiteral("action"), QStringLiteral("string"), true},
            {QStringLiteral("area"), QStringLiteral("string"), false},
            {QStringLiteral("key"), QStringLiteral("string"), false},
-           {QStringLiteral("value"), QStringLiteral("string"), false}}}},
+           {QStringLiteral("value"), QStringLiteral("string"), false},
+           // The origin the caller BELIEVES it is acting on. Storage is per-origin, and the
+           // op targets whatever tab is active when it lands -- a focus change between plan
+           // and execution silently retargets it at another site. Declaring the expectation
+           // lets the extension refuse instead of reading the wrong origin's storage.
+           {QStringLiteral("expect_origin"), QStringLiteral("string"), false}}}},
         {QStringLiteral("browser_cookies"),
          {QStringLiteral("cookies"),
           QStringLiteral("none"),
@@ -407,7 +420,13 @@ QHash<QString, CmdSpec> infraCommandSpecs() {
           QStringLiteral("none"),
           {{QStringLiteral("username"), QStringLiteral("string"), false},
            {QStringLiteral("password"), QStringLiteral("string"), false},
-           {QStringLiteral("clear"), QStringLiteral("bool"), false}}}},
+           {QStringLiteral("clear"), QStringLiteral("bool"), false},
+           // Credentials are armed against whichever tab is active at execution time. A
+           // popup or focus change between the operator's decision and this call would arm
+           // them for an attacker's origin, and the later same-origin check would then
+           // validate against that wrong origin. Naming the intended origin is what makes
+           // the arming refusable.
+           {QStringLiteral("origin"), QStringLiteral("string"), false}}}},
     };
 }
 
@@ -433,6 +452,7 @@ const QHash<QString, CmdSpec>& commandSpecs() {
         merged.insert(inspectionCommandSpecs());
         merged.insert(advancedInputCommandSpecs());
         merged.insert(windowCommandSpecs());
+        merged.insert(renderingCommandSpecs());
         merged.insert(infraCommandSpecs());
         return merged;
     }();
@@ -869,10 +889,15 @@ void appendTabTools(QJsonArray& tools) {
                            toolSchema({}, {})));
     tools.append(
         toolEntry(QStringLiteral("browser_select_tab"),
-                  QStringLiteral("Make the tab at the given index active."),
+                  QStringLiteral("Make the tab at the given index active. Call browser_tabs first: "
+                                 "an index is only meaningful against a listing, and the call is "
+                                 "refused if the tabs moved since that listing so the index cannot "
+                                 "land on a tab you did not choose."),
                   toolSchema(QJsonObject{{QStringLiteral("index"),
                                           typedProperty(QStringLiteral("integer"),
-                                                        QStringLiteral("Zero-based tab index."))}},
+                                                        QStringLiteral("Zero-based tab index from "
+                                                                       "the last browser_tabs "
+                                                                       "listing."))}},
                              QJsonArray{QStringLiteral("index")})));
     tools.append(toolEntry(
         QStringLiteral("browser_new_tab"),
@@ -882,10 +907,14 @@ void appendTabTools(QJsonArray& tools) {
                    {})));
     tools.append(toolEntry(
         QStringLiteral("browser_close_tab"),
-        QStringLiteral("Close the tab at index, or the active tab if omitted."),
+        QStringLiteral("Close the tab at index, or the active tab if omitted. When you pass an "
+                       "index, call browser_tabs first: closing is not undoable, so the index is "
+                       "checked against that listing and refused if the tabs moved."),
         toolSchema(QJsonObject{{QStringLiteral("index"),
                                 typedProperty(QStringLiteral("integer"),
-                                              QStringLiteral("Zero-based tab index (optional)."))}},
+                                              QStringLiteral("Zero-based tab index from the last "
+                                                             "browser_tabs listing (optional; "
+                                                             "omit for the active tab)."))}},
                    {})));
     tools.append(toolEntry(
         QStringLiteral("browser_group_tabs"),
@@ -1086,7 +1115,11 @@ void appendPermissionTool(QJsonArray& tools) {
             "Set a site permission for an origin so automation can pre-answer prompts: "
             "name is one of geolocation, notifications, camera, microphone, images, "
             "javascript, popups, automatic_downloads; setting is allow, block, or ask "
-            "(the default). origin defaults to the active tab (e.g. \"https://site.com\")."),
+            "(the default). setting=allow REQUIRES an explicit origin (e.g. "
+            "\"https://site.com\"): a grant is persistent and origin-scoped, so the site "
+            "being handed the camera has to be named in the request rather than left as "
+            "whatever tab happens to be in front. block and ask may omit it and apply to "
+            "the active tab."),
         toolSchema(
             QJsonObject{
                 {QStringLiteral("name"),
@@ -1094,8 +1127,9 @@ void appendPermissionTool(QJsonArray& tools) {
                 {QStringLiteral("setting"),
                  stringProperty(QStringLiteral("allow, block, or ask (default)."))},
                 {QStringLiteral("origin"),
-                 stringProperty(QStringLiteral("Origin the setting applies to (optional; "
-                                               "defaults to the active tab)."))}},
+                 stringProperty(QStringLiteral("Origin the setting applies to. Required for "
+                                               "setting=allow; defaults to the active tab for "
+                                               "block and ask."))}},
             QJsonArray{QStringLiteral("name"), QStringLiteral("setting")})));
 }
 
@@ -1115,7 +1149,13 @@ void appendStorageTool(QJsonArray& tools) {
                         {QStringLiteral("key"),
                          stringProperty(QStringLiteral("Storage key for get/set/remove."))},
                         {QStringLiteral("value"),
-                         stringProperty(QStringLiteral("String value to store for set."))}},
+                         stringProperty(QStringLiteral("String value to store for set."))},
+                        {QStringLiteral("expect_origin"),
+                         stringProperty(QStringLiteral(
+                             "Origin you expect the active tab to be on, e.g. "
+                             "https://example.com (optional). The call is refused if the "
+                             "tab is somewhere else, so a tab change cannot redirect the "
+                             "read or write at another site's storage."))}},
             QJsonArray{QStringLiteral("action")})));
 }
 
@@ -1186,7 +1226,12 @@ void appendHttpAuthTool(QJsonArray& tools) {
                  stringProperty(QStringLiteral("Auth password (used only to answer challenges)."))},
                 {QStringLiteral("clear"),
                  typedProperty(QStringLiteral("boolean"),
-                               QStringLiteral("Disarm and stop intercepting auth."))}},
+                               QStringLiteral("Disarm and stop intercepting auth."))},
+                {QStringLiteral("origin"),
+                 stringProperty(QStringLiteral(
+                     "Origin the credentials are for, e.g. https://example.com (optional "
+                     "but recommended). Arming is refused if the active tab is somewhere "
+                     "else, so a focus change cannot bind them to another site."))}},
             {})));
 }
 
@@ -1213,16 +1258,22 @@ constexpr int kMaxOmittedFramesListed = 20;
 // and length-capped (a newline in a URL could otherwise forge an outline line); refs are
 // only ever trusted from ref_index, never parsed from this text. Falls back to the older
 // boolean-only note when an extension does not send the URL list.
+//
+// The list is cut twice -- once by the extension's own cap, once by this one -- and either cut
+// has to be stated. The extension's cut arrives as omittedFramesTruncated rather than as a
+// longer array, so the note does not depend on the two caps being kept numerically in step:
+// raising one alone would otherwise turn a cut list back into an apparently complete one.
 void appendOmittedFramesNote(const QJsonObject& capture, QString& outline) {
     const QJsonArray frames = capture.value(QStringLiteral("omittedFrames")).toArray();
     if (!frames.isEmpty()) {
         outline += QStringLiteral(
             "  ... (cross-origin iframe content not included; "
             "browser_navigate to a frame URL to read it):\n");
+        bool cut = capture.value(QStringLiteral("omittedFramesTruncated")).toBool();
         int listed = 0;
         for (const QJsonValue& value : frames) {
             if (listed >= kMaxOmittedFramesListed) {
-                outline += QStringLiteral("    ... (more omitted frames)\n");
+                cut = true;
                 break;
             }
             const QString url = oneLine(value.toString(), kMaxUrlChars);
@@ -1231,6 +1282,9 @@ void appendOmittedFramesNote(const QJsonObject& capture, QString& outline) {
             }
             outline += QStringLiteral("    - %1\n").arg(url);
             ++listed;
+        }
+        if (cut) {
+            outline += QStringLiteral("    ... (more omitted frames)\n");
         }
         return;
     }

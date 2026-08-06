@@ -16,6 +16,19 @@ namespace sak::win32mcp {
 
 namespace {
 
+// Budget for the best-effort cancel written after an exchange has already blown its
+// deadline. Short on purpose: the connection is being torn down either way, and this must
+// not add another full timeout to a teardown that is already late.
+constexpr DWORD kCancelWriteBudgetMs = 1000;
+
+// Budget for draining the extension's late reply after a cancel. Writing the cancel is not
+// enough on its own: tearing the pipe down immediately afterwards discards it before the
+// relay -- which only looks at the pipe every few milliseconds -- can read it, so the
+// cancel would almost never arrive. Waiting for the reply the cancelled command produces is
+// what proves the relay consumed it. The reply is prompt, because the poll loop checks its
+// command generation every iteration.
+constexpr DWORD kCancelDrainBudgetMs = 3000;
+
 // An ABSOLUTE deadline (a GetTickCount64 tick by which the whole logical operation
 // must finish) plus the event that aborts the wait (the server shutdown event). The
 // deadline is absolute, not per-call, so a byte-at-a-time dribble cannot keep
@@ -447,6 +460,26 @@ void BrowserBridgePipeServer::serveConnected() {
         } else if (!readFrame(pipe_, deadline, &reply)) {
             result.error = QStringLiteral("browser did not reply within %1 ms (connection reset)")
                                .arg(options_.io_timeout_ms);
+            // Abandoning the exchange here does not stop the extension: a handler that POLLS
+            // (browser_download runs to 120 s, well past this deadline) keeps driving the page
+            // for as long as ITS own timeout allows, because nothing has told it the command is
+            // dead. The cancel is that signal -- the relay forwards it while it waits, the
+            // extension retires the command generation, and the poll loop stops on its next
+            // iteration. Best effort on a fresh short budget: the deadline above has already
+            // elapsed, and a peer that will not take the frame is being torn down anyway.
+            const IoDeadline cancel_deadline{GetTickCount64() + kCancelWriteBudgetMs,
+                                             shutdown_event_};
+            if (writeFrame(pipe_,
+                           QJsonObject{{QStringLiteral("type"), QStringLiteral("cancel")}},
+                           cancel_deadline)) {
+                // Do not tear down until the relay has had the chance to act on it. The
+                // late reply is the proof it did; it belongs to a command this exchange has
+                // already failed, so it is read only to be discarded.
+                const IoDeadline drain_deadline{GetTickCount64() + kCancelDrainBudgetMs,
+                                                shutdown_event_};
+                QJsonObject discarded;
+                readFrame(pipe_, drain_deadline, &discarded);
+            }
         } else {
             result.ok = true;
             result.reply = reply;

@@ -9,12 +9,19 @@
 #include <QByteArray>
 #include <QtEndian>
 
+#include <atomic>
 #include <cstdio>
 #include <iostream>
+#include <thread>
 
 namespace sak::win32mcp {
 
 namespace {
+
+// How often the pump looks at the pipe while it is waiting for the extension's reply.
+// Short enough that a cancel stops a polling handler promptly, long enough that an idle
+// wait costs nothing measurable.
+constexpr DWORD kCancelPollMs = 25;
 
 void setError(QString* error, const QString& message) {
     if (error) {
@@ -245,6 +252,65 @@ bool relayHandshake(HANDLE pipe, const QString& token, int protocol, QString* er
     return true;
 }
 
+// Wait for the extension's reply while staying able to see a cancel the server sends
+// mid-exchange.
+//
+// The server abandons an exchange when its own I/O deadline elapses
+// (BrowserBridgePipeServer::serveConnected). A handler that POLLS -- browser_wait_for,
+// browser_download -- does not stop when that happens: it keeps driving the page for as
+// long as ITS timeout allows, because a strictly synchronous pump is parked in the
+// extension read and cannot notice anything arriving on the pipe. Forwarding the cancel
+// is what stops it.
+//
+// Ownership is split so no handle has two users: the reply thread is the only code that
+// touches stdin, and this thread is the only code that touches the pipe (and the only
+// caller of browser_write). That is what makes this safe without CancelIoEx on a
+// synchronous handle. The reply thread is ALWAYS joined -- an early return that abandoned
+// a thread still reading stdin would leave it writing into a destroyed frame.
+bool awaitBrowserReply(HANDLE pipe,
+                       const BrowserReadFn& browser_read,
+                       const BrowserWriteFn& browser_write,
+                       QJsonObject* reply) {
+    std::atomic<bool> finished{false};
+    bool read_ok = false;
+    std::thread reader([&] {
+        read_ok = browser_read(reply);
+        finished.store(true, std::memory_order_release);
+    });
+
+    bool pipe_ok = true;
+    while (!finished.load(std::memory_order_acquire)) {
+        DWORD available = 0;
+        if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) == FALSE) {
+            pipe_ok = false;  // the server went away; stop watching and let the read finish
+            break;
+        }
+        if (available < 4) {
+            Sleep(kCancelPollMs);
+            continue;
+        }
+        QJsonObject frame;
+        if (!relayReadPipeFrame(pipe, &frame)) {
+            pipe_ok = false;
+            break;
+        }
+        // Only a cancel may arrive mid-exchange. Anything else means the server sent a
+        // second command while this one is unanswered, which would desync the one-op pump
+        // -- fail closed rather than forward it.
+        if (frame.value(QStringLiteral("type")).toString() != QLatin1String("cancel")) {
+            pipe_ok = false;
+            break;
+        }
+        if (!browser_write(frame)) {
+            pipe_ok = false;  // Chrome closed the port
+            break;
+        }
+    }
+
+    reader.join();
+    return pipe_ok && read_ok;
+}
+
 bool relayPumpOnce(HANDLE pipe,
                    const BrowserReadFn& browser_read,
                    const BrowserWriteFn& browser_write) {
@@ -256,8 +322,8 @@ bool relayPumpOnce(HANDLE pipe,
         return false;  // Chrome closed the extension port
     }
     QJsonObject reply;
-    if (!browser_read(&reply)) {
-        return false;                         // the extension/Chrome went away
+    if (!awaitBrowserReply(pipe, browser_read, browser_write, &reply)) {
+        return false;  // the extension/Chrome went away, or the server abandoned the exchange
     }
     return relayWritePipeFrame(pipe, reply);  // false if the server reset the connection
 }

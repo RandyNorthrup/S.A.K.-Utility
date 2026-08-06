@@ -16,9 +16,16 @@
 #
 # The rule that produced this gate: an assertion is only evidence once it runs.
 #
-# Two directions are checked, because both are ways for a test to stop running:
+# Three directions are checked, because each is a way for a test to stop running:
 #   1. a test source with no add_executable  -> it never builds
 #   2. a test target with no add_test        -> it builds but ctest never runs it
+#   3. a test_*.ps1 with no add_test         -> it needs no build, so nothing else
+#                                               would ever notice it does not run
+#
+# Direction 3 was added after two PowerShell guard tests landed in tests/unit/ during
+# the R5 campaign. This gate scanned only test_*.cpp, so they sat in the tree looking
+# like coverage while ctest never invoked them -- the same failure this gate exists to
+# stop, one file extension over.
 #
 # Fails closed: a missing file, an unreadable CMakeLists, or zero discovered
 # tests is an error, never a silent pass.
@@ -121,6 +128,34 @@ foreach ($target in $declaredTargets) {
     $unregistered += $target
 }
 
+# A PowerShell test has no build step, so "does it compile" says nothing about whether it
+# runs. Its stem must appear as an add_test name -- either literally, or inside a
+# foreach() list that registers "${<var>}.ps1".
+# The loop must be matched as a whole -- its variable, its list, and its body -- and the body
+# must register THAT variable as a .ps1. Testing the file for any "${x}.ps1" instead would let
+# one such loop vouch for every other foreach in the file, so a .ps1 sharing a stem with some
+# unrelated C++ target listed in one would be recorded as running when nothing runs it. That is
+# the same silent non-execution this gate exists to catch.
+$psLoopRegistered = @()
+$loopPattern = '(?s)foreach\(\s*([A-Za-z_][A-Za-z0-9_]*)\s+([^)]*)\)(.*?)endforeach\(\)'
+foreach ($m in [regex]::Matches($testsCMakeText, $loopPattern)) {
+    $loopVar = $m.Groups[1].Value
+    $loopBody = $m.Groups[3].Value
+    if ($loopBody -notmatch ([regex]::Escape('${' + $loopVar + '}') + '\.ps1')) { continue }
+    if ($loopBody -notmatch '\badd_test\b') { continue }
+    foreach ($n in [regex]::Matches($m.Groups[2].Value, '\btest_[A-Za-z0-9_]+\b')) {
+        $psLoopRegistered += $n.Value
+    }
+}
+
+$psSources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Filter 'test_*.ps1')
+$psUnregistered = @()
+foreach ($ps in $psSources) {
+    if ($registeredTests -contains $ps.BaseName) { continue }
+    if ($psLoopRegistered -contains $ps.BaseName) { continue }
+    $psUnregistered += $ps.FullName.Substring($ProjectRoot.Length + 1)
+}
+
 $failed = $false
 
 if ($unbuilt.Count -gt 0) {
@@ -141,13 +176,24 @@ if ($unregistered.Count -gt 0) {
     Write-Host 'this script WITH a comment stating why.'
 }
 
+if ($psUnregistered.Count -gt 0) {
+    $failed = $true
+    Write-Host ''
+    Write-Host 'POWERSHELL TESTS THAT ctest NEVER RUNS:' -ForegroundColor Red
+    $psUnregistered | Sort-Object | ForEach-Object { Write-Host "  $_" }
+    Write-Host ''
+    Write-Host 'Add an add_test(NAME <stem> COMMAND pwsh -NoProfile -NonInteractive -File ...)'
+    Write-Host 'entry in tests/CMakeLists.txt. A .ps1 test needs no build step, so nothing'
+    Write-Host 'else will ever notice that it is not running.'
+}
+
 if ($failed) {
     Write-Host ''
-    Write-Error ("Test registration gate failed: {0} unbuilt source(s), {1} unregistered target(s)." -f
-                 $unbuilt.Count, $unregistered.Count)
+    Write-Error ("Test registration gate failed: {0} unbuilt source(s), {1} unregistered target(s), {2} unregistered PowerShell test(s)." -f
+                 $unbuilt.Count, $unregistered.Count, $psUnregistered.Count)
     exit 1
 }
 
-Write-Host ("Test registration: {0} test sources, all built; {1} targets, all registered ({2} certifiers exempt)." -f
-            $sources.Count, $declaredTargets.Count, $IntentionallyUnregistered.Count)
+Write-Host ("Test registration: {0} test sources, all built; {1} targets, all registered ({2} certifiers exempt); {3} PowerShell test(s), all registered." -f
+            $sources.Count, $declaredTargets.Count, $IntentionallyUnregistered.Count, $psSources.Count)
 exit 0

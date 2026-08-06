@@ -7182,6 +7182,35 @@ foreach(_sak_core_test_target
 endforeach()
 
 # ============================================================================
+# ============================================================================
+# PowerShell guard tests
+# ============================================================================
+#
+# browser/pack-extension.ps1 and browser/native-host/register_native_host.ps1 are
+# PowerShell, so their guards cannot be exercised from a QtTest binary. Registering them
+# here is what makes those guards evidence: the test-registration gate only scans
+# test_*.cpp, so a test_*.ps1 left unregistered would sit in the tree looking like
+# coverage while never running once -- the precise failure that gate was built to stop.
+#
+# Both are hermetic: each copies the script under test into a scratch directory and, for
+# the native host, passes a throwaway -RegistryRoot, so neither touches the developer's
+# Chrome installation or the committed manifest.
+if(PLATFORM_WINDOWS)
+    find_program(SAK_PWSH_EXECUTABLE NAMES pwsh)
+    if(NOT SAK_PWSH_EXECUTABLE)
+        message(FATAL_ERROR
+                "pwsh was not found, so the PowerShell guard tests could not run. "
+                "Refusing to configure a test suite that silently drops them.")
+    endif()
+    foreach(_sak_ps_test test_pack_extension test_register_native_host)
+        add_test(NAME ${_sak_ps_test}
+                 COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                         -File "${CMAKE_CURRENT_SOURCE_DIR}/unit/${_sak_ps_test}.ps1")
+        set_tests_properties(${_sak_ps_test} PROPERTIES TIMEOUT 300)
+    endforeach()
+endif()
+
+# ============================================================================
 # Debug / sanitizer run environment
 # ============================================================================
 #
