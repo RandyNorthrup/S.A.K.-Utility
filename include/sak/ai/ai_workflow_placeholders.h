@@ -21,8 +21,11 @@ enum class WorkflowPlaceholderMode {
 };
 
 /// @brief Resolves a single workflow input key to a display string. Strings are
-/// trimmed; string arrays are joined with ", "; missing/empty values return
-/// @p fallback.
+/// trimmed; an array is joined with ", " only when EVERY member is a non-empty
+/// string -- one malformed member makes the whole array unresolvable, so a caller
+/// can never receive a silently truncated subset. Missing, empty, wrong-typed and
+/// malformed values all return @p fallback, which callers that drive real work
+/// must treat as "absent" and refuse, not as a usable default.
 [[nodiscard]] QString workflowInputValue(const AiWorkflowPhaseContext& context,
                                          const QString& key,
                                          const QString& fallback = {});
@@ -30,7 +33,16 @@ enum class WorkflowPlaceholderMode {
 /// @brief Replaces every `${key}` token in @p text with its resolved value.
 /// Recognized keys: `user_message`, `workflow_id`, `run_id`,
 /// `result_<phase>_<field>` (prior phase results), and any workflow input key.
-/// Unknown keys resolve to empty. See @ref WorkflowPlaceholderMode for escaping.
+/// Unknown keys, unknown phases, and malformed values resolve to EMPTY: this
+/// function has no error channel, so a caller that substitutes into a destructive
+/// target must itself reject an unresolved placeholder rather than proceed with a
+/// blank one. A numeric result field is rendered only when it is an exact integer
+/// (never rounded). See @ref WorkflowPlaceholderMode for escaping -- `Raw` is the
+/// default because prompts and argv values need no escaping; a SHELL command
+/// template must pass the mode for its shell, and is validated at load by
+/// @ref powerShellCommandTemplateIsSingleQuoteSafe /
+/// @ref cmdCommandTemplateIsPlaceholderFree so an unescaped placeholder in a
+/// command cannot survive to substitution time.
 [[nodiscard]] QString substituteWorkflowPlaceholders(
     const QString& text,
     const AiWorkflowPhaseContext& context,

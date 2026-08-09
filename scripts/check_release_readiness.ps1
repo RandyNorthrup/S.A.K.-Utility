@@ -17,6 +17,42 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 
+if ($RequireSignedPackage -and [string]::IsNullOrWhiteSpace($PackageRoot)) {
+    throw "-RequireSignedPackage requires -PackageRoot: there is no package to verify signatures for."
+}
+
+function Assert-ContainedProjectPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    # The certification root drives -Force writes. Resolve it and refuse anything that leaves
+    # the repository (absolute path, traversal) or is reached through a junction/symlink, so
+    # generated evidence cannot be redirected outside repository artifact storage.
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "$Label must not be empty"
+    }
+    $root = [System.IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\')
+    $candidate = if ([System.IO.Path]::IsPathRooted($Path)) { $Path } else { Join-Path $root $Path }
+    $full = [System.IO.Path]::GetFullPath($candidate).TrimEnd('\')
+    if ($full.Length -le $root.Length -or
+        -not $full.StartsWith($root + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Label must stay inside the repository: $Path"
+    }
+    if (Test-Path -LiteralPath $full) {
+        $item = Get-Item -LiteralPath $full -Force
+        $reparse = [System.IO.FileAttributes]::ReparsePoint
+        if (($item.Attributes -band $reparse) -eq $reparse) {
+            throw "$Label resolves through a reparse point: $full"
+        }
+    }
+}
+
+Assert-ContainedProjectPath -Path $PartitionCertificationRoot -Label "-PartitionCertificationRoot"
+
 function Invoke-IsolatedPowerShellScript {
     param(
         [Parameter(Mandatory = $true)]
@@ -121,10 +157,18 @@ try {
     }
 
     Invoke-ReleaseReadinessScript -Name "scripts/scan_secrets.ps1" -Body {
-        & scripts/scan_secrets.ps1 -SkipExternalTools
+        # No -SkipExternalTools on the release gate: gitleaks/trufflehog run whenever they are
+        # installed, so readiness cannot pass on regex coverage alone.
+        & scripts/scan_secrets.ps1
     }
     & scripts/check_blocking_patterns.ps1
     $syntaxFiles = @(git ls-files "*.ps1")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release readiness check failed: git ls-files could not enumerate PowerShell files (exit $LASTEXITCODE)"
+    }
+    if ($syntaxFiles.Count -eq 0) {
+        throw "Release readiness check failed: git ls-files returned no PowerShell files"
+    }
     $syntaxFiles += "scripts/get_partition_manager_certification_status.ps1"
     $syntaxFiles += "scripts/new_partition_manager_external_evidence_manifest.ps1"
     $syntaxFiles += "scripts/check_partition_manager_certification_matrix_integrity.ps1"
@@ -169,7 +213,9 @@ try {
     $syntaxFiles += "scripts/new_partition_manager_certification_gap_report.ps1"
     $syntaxFiles += "scripts/verify_partition_manager_certification.ps1"
     $syntaxFiles = @($syntaxFiles | Sort-Object -Unique)
-    & scripts/check_powershell_syntax.ps1 -Files $syntaxFiles
+    Invoke-ReleaseReadinessScript -Name "scripts/check_powershell_syntax.ps1" -Body {
+        & scripts/check_powershell_syntax.ps1 -Files $syntaxFiles
+    }
     Invoke-IsolatedPowerShellScript -ScriptPath (Join-Path $ProjectRoot "scripts/check_accessibility_patterns.ps1")
     & scripts/check_gui_style_tokens.ps1
     & scripts/check_gui_stylesheet_literals.ps1
@@ -207,8 +253,11 @@ try {
     $partitionCertificationRoot = $PartitionCertificationRoot
     $partitionExternalEvidenceManifest = $PartitionExternalEvidenceManifest
     $partitionExternalEvidenceChecklist = $PartitionExternalEvidenceChecklist
+    # Auto-detection only fills in evidence the caller supplied none of. An explicitly passed
+    # checklist (or manifest, or non-default root) is never replaced by auto-detected evidence.
     if ($PartitionCertificationRoot -eq "artifacts\partition-manager-certification\readiness" -and
-        [string]::IsNullOrWhiteSpace($PartitionExternalEvidenceManifest)) {
+        [string]::IsNullOrWhiteSpace($PartitionExternalEvidenceManifest) -and
+        [string]::IsNullOrWhiteSpace($PartitionExternalEvidenceChecklist)) {
         $strictRoot = "artifacts\partition-manager-certification\vhd-strict"
         $strictManifest = "artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json"
         $strictChecklist = "artifacts\partition-manager-certification\vm-lab\external-evidence.imported.checklist.md"
@@ -356,10 +405,19 @@ try {
 
     if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
         $package = Resolve-Path -LiteralPath $PackageRoot
-        & scripts/verify_portable_release_smoke.ps1 -PackageRoot $package.Path -RepoRoot $ProjectRoot
-        & scripts/run_portable_e2e_smoke.ps1 -PackageRoot $package.Path
         if ($RequireSignedPackage) {
-            & scripts/verify_authenticode_signatures.ps1 -RootDir $package.Path
+            # Trust is established BEFORE any package binary runs: the smoke checks launch
+            # sak_utility.exe out of this directory, so an unsigned or tampered package must be
+            # rejected first rather than after it has already executed.
+            Invoke-ReleaseReadinessScript -Name "scripts/verify_authenticode_signatures.ps1" -Body {
+                & scripts/verify_authenticode_signatures.ps1 -RootDir $package.Path
+            }
+        }
+        Invoke-ReleaseReadinessScript -Name "scripts/verify_portable_release_smoke.ps1" -Body {
+            & scripts/verify_portable_release_smoke.ps1 -PackageRoot $package.Path -RepoRoot $ProjectRoot
+        }
+        Invoke-ReleaseReadinessScript -Name "scripts/run_portable_e2e_smoke.ps1" -Body {
+            & scripts/run_portable_e2e_smoke.ps1 -PackageRoot $package.Path
         }
     }
 

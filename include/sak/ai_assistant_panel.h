@@ -31,6 +31,7 @@
 #include <QVector>
 #include <QWidget>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <type_traits>
@@ -50,6 +51,7 @@ class QSplitter;
 class QTextBrowser;
 class QThread;
 class QTimer;
+class QUrl;
 class QVBoxLayout;
 
 namespace sak {
@@ -239,10 +241,13 @@ private:
     void configureExecutionBrokers();
     [[nodiscard]] bool initializeAccessibilityAuditUi();
     [[nodiscard]] bool loadWorkflowDefaults(QStringList* workflow_errors);
-    void loadSkillDefaults();
+    // Collects (never swallows) the skill-catalog load errors so the caller can show
+    // them once the panel UI exists.
+    void loadSkillDefaults(QStringList* skill_errors);
     [[nodiscard]] QString initializeToolHealthLedger();
     void initializeStandardPanel(bool workflows_loaded,
                                  const QStringList& workflow_errors,
+                                 const QStringList& skill_errors,
                                  const QString& health_ledger_error);
     void initializePackageManager();
     void setupContextPaneSessionSection(QVBoxLayout* layout, QWidget* pane);
@@ -497,6 +502,13 @@ private:
     [[nodiscard]] QString allocateCommandId();
     void appendCitationsToList(const QVector<ai::OpenAIUrlCitation>& citations);
     [[nodiscard]] QJsonObject runScreenshotTool(const QString& reason);
+    // Validate a download request and resolve where the file will be written, returning an
+    // empty path with *error_message set to why it cannot proceed. The artifact path is
+    // resolved on the GUI thread because download_file itself runs on a worker thread.
+    [[nodiscard]] QString resolveDownloadDestination(const QUrl& url,
+                                                     const QString& url_string,
+                                                     const QString& filename,
+                                                     QString* error_message);
     [[nodiscard]] QJsonObject runDownloadTool(const QString& url, const QString& filename);
     [[nodiscard]] QJsonObject runWorkflowPowerShellTool(const QJsonObject& args,
                                                         const QString& command_preview);
@@ -634,9 +646,11 @@ private:
     void applyPromptTemplate(const QString& title, const QString& prompt);
     void applyWorkflowTemplate(const ai::WorkflowTemplate& workflow);
     void addWorkflowContextChip(const ai::WorkflowTemplate& workflow);
-    void addWorkflowResourceContext(const QString& resource_path,
-                                    const QString& label_prefix,
-                                    ContextItem::Type type);
+    // False when the resource did not reach the context (missing, unreadable, empty),
+    // so the caller can refuse to announce a half-attached workflow as added.
+    [[nodiscard]] bool addWorkflowResourceContext(const QString& resource_path,
+                                                  const QString& label_prefix,
+                                                  ContextItem::Type type);
     void refreshTraceStoreForSession();
     void startAiRunTrace(const QString& message,
                          const QString& model,
@@ -939,6 +953,10 @@ private:
     // Empty in production (installer uses real Chrome-policy paths); the panel test seam
     // points it at a throwaway HKCU key + temp dir so button clicks never touch real Chrome.
     sak::win32mcp::ExtensionInstallConfig m_browserExtensionConfig;
+    // Setup state the extension button was last rendered from. A click that finds a
+    // different state re-renders instead of acting on a stale label.
+    sak::win32mcp::ExtensionInstallState m_browserExtensionRenderedState{
+        sak::win32mcp::ExtensionInstallState::Error};
 
     std::unique_ptr<ai::OpenAIResponsesClient> m_client;
     std::unique_ptr<ai::CredentialStore> m_credentialStore;
@@ -1021,7 +1039,9 @@ private:
     // modal onto the GUI thread would otherwise have that modal shown by the drain
     // pump and block on exec() forever -- there is no user to answer during
     // teardown. When set, the modal gate methods decline immediately instead.
-    bool m_shuttingDown{false};
+    // Atomic: worker threads read it before marshaling blocking work onto the GUI
+    // thread, so a teardown that started on the GUI thread is visible to them.
+    std::atomic<bool> m_shuttingDown{false};
     QTimer* m_activityTimer{nullptr};
     QTimer* m_contextTokenTimer{nullptr};
     QString m_contextTokenRequestId;
@@ -1049,6 +1069,9 @@ private:
     ai::AiToolLoopDetector m_toolLoopDetector;
 
     static constexpr int kMaxToolTurnsPerUserMessage = 12;
+    // Hard ceiling on the tool calls accepted from ONE model response: the batch is
+    // model-controlled, and each synchronous call nests one dispatch frame.
+    static constexpr int kMaxToolCallsPerResponse = 32;
 };
 
 }  // namespace sak

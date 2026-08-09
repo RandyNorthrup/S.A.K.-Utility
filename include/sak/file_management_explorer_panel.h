@@ -55,6 +55,8 @@ class QAbstractItemView;
 class QKeyEvent;
 class QMouseEvent;
 class QTimer;
+template <typename T>
+class QFutureWatcher;
 
 namespace sak {
 
@@ -214,6 +216,9 @@ private:
     bool dispatchFilteredEvent(QObject* watched, QEvent* event);
     void connectNavigationSignals();
     void connectPaneSignals(FileExplorerPane* pane, int pane_index);
+    /// The per-view wiring (double-click, context menu, and the viewport/view
+    /// event filters) connectPaneSignals installs for each item view in a pane.
+    void connectPaneViewSignals(FileExplorerPane* pane, int pane_index);
     void installCommandShortcuts();
     void setTargets(QVector<FileManagementTarget> targets);
     void appendTarget(const FileManagementTarget& target);
@@ -637,6 +642,23 @@ private:
                                 const QString& edited);
     void removeTagsFromSelection();
     void createFolderWithSelection();
+    /// Create @p name under the current folder and move @p selection into it,
+    /// journalling the create and the move; warns under "Create Folder" and
+    /// stops at the first hard failure.
+    void createFolderAndMoveSelection(const FileManagementTarget& target,
+                                      const QString& name,
+                                      const FileExplorerSelection& selection);
+    /// True only when @p name is PROVEN vacant in the current folder. A create over
+    /// an existing entry would journal a CreateNew whose undo then removes what was
+    /// already there, and a listing that could not be read is not proof of vacancy.
+    /// Warns under @p title and fails closed otherwise.
+    bool createDestinationVacant(const FileManagementTarget& target,
+                                 const QString& name,
+                                 const QString& title);
+    /// True only when the Write File destination may be written: a folder is never
+    /// replaced, an unverifiable destination is refused, and replacing an existing
+    /// file needs the user's explicit confirmation.
+    bool writeFileDestinationAllowed(const FileManagementTarget& target, const QString& name);
     void openTerminalHere();
     void editSelectionInNotepad();
     /// Files decompress legs: the Ctrl+E dialog, extract-here, smart (skip a
@@ -683,7 +705,14 @@ private:
     void invertCurrentSelection();
     void toggleCurrentItemSelection();
     void stepLayoutSize(int direction);
-    void performInlineRename(int row, const QString& new_name);
+    /// @param expected_source_path Path of the entry the user actually edited,
+    ///        captured when the model emitted the commit. The commit is deferred
+    ///        so the editor closes first, and a listing landing in between would
+    ///        leave a DIFFERENT entry at @p row; a mismatch is refused. Empty
+    ///        means "no bound identity" (direct callers).
+    void performInlineRename(int row,
+                             const QString& new_name,
+                             const QString& expected_source_path = QString());
     void activatePaneForView(QAbstractItemView* view);
     bool handleViewKeyPress(QAbstractItemView* view, QKeyEvent* key);
     bool handleViewportMouseEvent(QAbstractItemView* view, QEvent* event);
@@ -746,14 +775,28 @@ private:
                                             const FileExplorerSelection& selection) const;
     void updatePreviewPane(const FileManagementTarget& target,
                            const FileExplorerSelection& selection);
+    /// Finished handler for the off-thread preview read: drops a superseded
+    /// read, otherwise renders it (or the read's failure) for @p entry.
+    void onPreviewReadFinished(QFutureWatcher<FileManagementReadResult>* watcher,
+                               quint64 preview_revision,
+                               const FileManagementEntry& entry,
+                               const QString& preview_target_id);
     void showPreviewHint(const QString& message);
-    void renderPreviewForEntry(const FileManagementEntry& entry, const QByteArray& bytes);
+    /// @param reader_truncated The reader itself stopped short of the end of the
+    ///        file. Byte count alone cannot see that cut (see
+    ///        FileManagementReadResult::truncated), so it is passed in.
+    void renderPreviewForEntry(const FileManagementEntry& entry,
+                               const QByteArray& bytes,
+                               bool reader_truncated = false);
     void showImagePreviewForEntry(const FileManagementEntry& entry, const QImage& image);
     [[nodiscard]] QStringList buildDetailsProperties(const FileManagementTarget& target,
                                                      const FileExplorerSelection& selection) const;
     [[nodiscard]] QStringList buildDetailsSafety(const FileManagementTarget& target) const;
     [[nodiscard]] QStringList commandAvailabilityLines() const;
     [[nodiscard]] QStringList buildDetailsEvidence(const FileManagementTarget& target) const;
+    /// Append the on-demand file-hash evidence block (with its cross-target
+    /// provenance note) to @p evidence; a no-op when no hash was taken.
+    void appendHashEvidence(const QString& current_target_id, QStringList* evidence) const;
     static void appendEvidenceReportLinks(const FileManagementTarget& target,
                                           QStringList* evidence);
     [[nodiscard]] int resolveContextMenuTargetIndex(const QPoint& position);
@@ -849,6 +892,10 @@ private:
     // Path of the file currently rendered in the preview pane, so selection churn does not
     // re-read the same file; empty when no single readable file is selected.
     QString m_last_preview_path;
+    // Target the cached preview above was read from. Two targets can hold the same
+    // path, so the path alone is not an identity and would show one volume's bytes
+    // under another volume's entry.
+    QString m_last_preview_target_id;
     // Result of the most recent mutation, surfaced in the Evidence tab (path + hashes).
     FileManagementMutationResult m_last_mutation;
     // Favorites drag-reorder candidate: press position and pin index armed on
@@ -867,8 +914,17 @@ private:
     QString m_last_hash_name;
     QString m_last_hash_sha256;
     bool m_last_hash_capped{false};
+    // Targets the hash and the mutation evidence above were produced on. The
+    // Evidence tab is headed by the CURRENT target, so evidence carrying no
+    // identity of its own would be read as belonging to whatever disk is selected.
+    QString m_last_hash_target_id;
+    QString m_last_mutation_target_id;
     // Live omnibar search worker (one per search; stopped on re-search/mode exit).
     AdvancedSearchWorker* m_search_worker{nullptr};
+    // Superseded searches are orphaned rather than waited for (see
+    // stopExplorerSearch); this counts the ones still winding down so debounced
+    // typing cannot pile up worker threads without bound.
+    int m_orphaned_searches{0};
     // Running copy/move + archive I/O worker threads (parented children that deleteLater on
     // finish). Tracked so ~FileManagementExplorerPanel can requestStop()+join (or detach) each
     // before ~QObject would otherwise destroy a still-running QThread mid-write ("QThread destroyed

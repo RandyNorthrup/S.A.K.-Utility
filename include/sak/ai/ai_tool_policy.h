@@ -53,12 +53,14 @@ struct AiToolPolicyDecision {
 [[nodiscard]] AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy,
                                                       const AiToolCallRequest& request);
 
-// Restrictiveness rank (0 = most restrictive). Used to clamp a delegated
-// sub-agent so it can never be more permissive than the session that spawned it.
+// Restrictiveness rank (0 = most restrictive), for ordering/display. The modes are not a
+// single capability line (ReadOnlyPc and PackageToolsOnly grant different things), so
+// clamping uses capability containment rather than this rank.
 [[nodiscard]] int toolPolicyRank(AiToolPolicy policy);
 
-// Returns whichever of @p requested / @p ceiling is MORE restrictive, so a
-// caller can bound a requested sub-agent policy to the session's ceiling.
+// Bounds a requested sub-agent policy to the session's ceiling: @p requested is honored
+// only when the ceiling already grants everything it grants, otherwise the ceiling itself
+// is returned. A sub-agent can therefore never gain a capability the session lacks.
 [[nodiscard]] AiToolPolicy clampToolPolicy(AiToolPolicy requested, AiToolPolicy ceiling);
 
 }  // namespace sak::ai

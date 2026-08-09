@@ -83,6 +83,7 @@
 #include <QGroupBox>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHostAddress>
 #include <QIcon>
 #include <QInputDialog>
 #include <QJsonArray>
@@ -155,6 +156,16 @@ constexpr int kDefaultCommandTimeoutSec = 120;
 constexpr int kDefaultOutputCapKb = 256;
 constexpr qint64 kContextMaxFileBytes = 50LL * sak::kBytesPerMB;
 constexpr qint64 kContextTextPreviewBytes = 512LL * sak::kBytesPerKB;
+// Cumulative ceiling on attached context. The per-file cap alone bounds nothing: many
+// 50 MiB images/PDFs stay resident in m_contextItems and are base64-expanded into every
+// request, so the whole attachment set is bounded too.
+constexpr int kContextMaxItems = 64;
+constexpr qint64 kContextMaxTotalBytes = 200LL * sak::kBytesPerMB;
+// A citation URL is provider/model-controlled text that ends up as a clickable link in a
+// generated report the panel opens automatically, so both its length and how many may be
+// retained per session are bounded (the dedup below is O(n^2) in that count).
+constexpr int kMaxSessionCitations = 500;
+constexpr int kCitationUrlMaxChars = 2048;
 constexpr const char* kWheelRequiresFocusProperty = "sakWheelRequiresFocus";
 constexpr int kApprovalDialogWidth = 760;
 constexpr int kApprovalDialogHeight = 520;
@@ -301,6 +312,14 @@ constexpr int kAsyncDrainDeadlineMs = 30'000;
 // shared run token this often so a Stop (or panel teardown) aborts the in-flight
 // offline worker instead of blocking on an unbounded semaphore acquire.
 constexpr int kOfflineWaitSliceMs = 50;
+// Overall ceiling on one blocking offline operation. A bundle build/install over a slow
+// link is legitimately long, so this is generous; reaching it force-cancels the worker
+// and fails the run closed instead of waiting on a stuck worker forever.
+constexpr qint64 kOfflineWaitMaxMs = 4LL * 60 * 60 * 1000;
+// Caps on what one offline run may accumulate from worker-controlled (package script)
+// output before the result-side truncation ever runs.
+constexpr int kOfflineWorkerLogLineMax = 5000;
+constexpr int kOfflineWorkerPackageEventMax = 5000;
 constexpr int kPackageResultOutputMaxChars = 8000;
 constexpr int kPackageFileResultLimit = 200;
 constexpr int kPackageArtifactDisplayLimit = 20;
@@ -2075,6 +2094,32 @@ QString dataUrlForBytes(const QString& mime_type, const QByteArray& bytes) {
         .arg(mime_type, QString::fromLatin1(bytes.toBase64()));
 }
 
+// Windows resolves a reserved device name in every directory and with any extension,
+// ':' opens an alternate data stream instead of a file, and a trailing dot or space is
+// silently stripped into a different name. A download target that is any of those is
+// refused outright rather than repaired into something that writes somewhere else.
+bool isUnsafeWindowsFileName(const QString& name) {
+    if (name.isEmpty() || name.endsWith(QLatin1Char('.')) || name.endsWith(QLatin1Char(' '))) {
+        return true;
+    }
+    for (const QChar character : name) {
+        if (character.unicode() < 0x20 || QStringLiteral("<>:\"/\\|?*").contains(character)) {
+            return true;
+        }
+    }
+    const QString stem = name.section(QLatin1Char('.'), 0, 0).trimmed().toUpper();
+    return QStringList{QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
+                       QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
+                       QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
+                       QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
+                       QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
+                       QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
+                       QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
+                       QStringLiteral("LPT9")}
+        .contains(stem);
+}
+
+// Empty means "refuse this download": the caller surfaces it as a failed tool call.
 QString safeDownloadFileName(const QUrl& url, const QString& filename) {
     // Reduce to a bare filename: a download must never create or escape into other
     // directories, so strip any path components the model supplied (defense in depth;
@@ -2091,12 +2136,38 @@ QString safeDownloadFileName(const QUrl& url, const QString& filename) {
                         .arg(QDateTime::currentDateTimeUtc().toString(
                             QStringLiteral("yyyyMMdd_HHmmsszzz")));
     }
+    if (isUnsafeWindowsFileName(safe_name)) {
+        return {};
+    }
     return safe_name;
+}
+
+// Reject a download target that points back at this machine or at a private/link-local
+// network: the model picks the URL, so an https GET must not become a probe of services
+// that are only reachable from this host. URL credentials are refused outright.
+bool isBlockedDownloadHost(const QUrl& url) {
+    if (!url.userInfo().isEmpty()) {
+        return true;
+    }
+    const QString host = url.host().trimmed();
+    if (host.isEmpty() || host.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    QHostAddress address;
+    if (!address.setAddress(host)) {
+        // A name, not a literal: DNS is resolved inside the network stack, so this
+        // guard covers only what is decidable here.
+        return false;
+    }
+    return !address.isGlobal();
 }
 
 // Hard ceiling on a single AI-tool download so a server that streams a multi-gigabyte
 // (or unbounded chunked) body cannot buffer the whole response into RAM and OOM the app.
 constexpr qint64 kMaxDownloadBytes = 512LL * 1024 * 1024;  // 512 MiB
+// Flow-control ceiling for one readyRead delivery, so the running-total abort can never
+// be overshot by more than this much before the guard fires.
+constexpr qint64 kDownloadReadBufferBytes = 1LL * 1024 * 1024;  // 1 MiB
 constexpr int kDownloadCancelPollMs = 200;
 
 struct DownloadState {
@@ -2129,6 +2200,13 @@ void applyDownloadOutcome(DownloadState* state,
         state->error = QStringLiteral("Download failed: %1").arg(reply->errorString());
     } else {
         state->payload.append(reply->readAll());
+        if (state->payload.size() > kMaxDownloadBytes) {
+            // The tail read can carry the body past the ceiling the readyRead guard
+            // enforces; drop it instead of handing the caller an over-cap buffer.
+            state->payload.clear();
+            state->error = QStringLiteral("Download exceeded %1 byte limit").arg(kMaxDownloadBytes);
+            return;
+        }
         state->ok = true;
     }
 }
@@ -2189,6 +2267,9 @@ void startDownloadOnWorker(QObject* worker,
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
     auto* reply = nam->get(request);
+    // Without a read buffer the reply keeps everything the server sends between
+    // deliveries, so one readyRead could blow past the size cap before it is checked.
+    reply->setReadBufferSize(kDownloadReadBufferBytes);
     auto* timeout_timer = new QTimer(worker);
     timeout_timer->setSingleShot(true);
     const auto completed = std::make_shared<std::atomic_bool>(false);
@@ -2257,21 +2338,55 @@ bool downloadUrlBytes(const QUrl& url,
 bool writeDownloadBytes(const QString& destination,
                         const QByteArray& bytes,
                         QString* error_message) {
+    // The destination was validated as a path string and is now reopened by name, so
+    // refuse anything already sitting there: an existing artifact must never be
+    // overwritten, and a planted link must never be followed to its target. NewOnly
+    // makes the create exclusive (CREATE_NEW), and the pre-check catches a dangling
+    // link whose target does not exist yet.
+    const QFileInfo existing(destination);
+    if (existing.exists() || existing.isSymLink()) {
+        if (error_message) {
+            *error_message =
+                QStringLiteral("Download destination already exists: %1").arg(destination);
+        }
+        return false;
+    }
     QFile file(destination);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
         if (error_message) {
             *error_message =
                 QStringLiteral("Could not write destination: %1").arg(file.errorString());
         }
         return false;
     }
-    if (file.write(bytes) != bytes.size()) {
+    if (file.write(bytes) != bytes.size() || !file.flush()) {
         if (error_message) {
             *error_message = QStringLiteral("Short write to destination: %1").arg(destination);
         }
+        file.close();
+        // A half-written artifact must not survive as if it were the download.
+        (void)file.remove();
         return false;
     }
+    file.close();
     return true;
+}
+
+// Hard ceiling on the retained stdout/stderr of one command tool call. The buffers are
+// fed by attacker-influenced process output with no natural end, so past the cap the
+// tail is dropped with an explicit marker instead of growing without bound.
+constexpr int kMaxCommandBufferChars = 4 * 1024 * 1024;
+
+void appendCappedCommandOutput(QString* buffer, const QString& chunk) {
+    if (!buffer || buffer->size() > kMaxCommandBufferChars) {
+        return;
+    }
+    buffer->append(chunk);
+    if (buffer->size() > kMaxCommandBufferChars) {
+        buffer->truncate(kMaxCommandBufferChars);
+        buffer->append(QStringLiteral("\n...[command output truncated at %1 characters]")
+                           .arg(kMaxCommandBufferChars));
+    }
 }
 
 enum class PanelReportFormat {
@@ -3530,10 +3645,11 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
 
     QStringList workflow_errors;
     const bool workflows_loaded = loadWorkflowDefaults(&workflow_errors);
-    loadSkillDefaults();
+    QStringList skill_errors;
+    loadSkillDefaults(&skill_errors);
     const QString health_ledger_error = initializeToolHealthLedger();
     registerToolDispatcherHandlers();
-    initializeStandardPanel(workflows_loaded, workflow_errors, health_ledger_error);
+    initializeStandardPanel(workflows_loaded, workflow_errors, skill_errors, health_ledger_error);
     initializePackageManager();
     logInfo("AiAssistantPanel initialized");
 }
@@ -3566,15 +3682,25 @@ bool AiAssistantPanel::loadWorkflowDefaults(QStringList* workflow_errors) {
     return m_workflowStore && m_workflowStore->loadDefaults(workflow_errors);
 }
 
-void AiAssistantPanel::loadSkillDefaults() {
+void AiAssistantPanel::loadSkillDefaults(QStringList* skill_errors) {
     if (!m_skillStore) {
+        if (skill_errors) {
+            skill_errors->append(QStringLiteral("skill store is unavailable"));
+        }
         return;
     }
-    QStringList skill_errors;
-    // Best-effort: a malformed skill file must not block panel startup; log and go.
-    (void)m_skillStore->loadDefaults(&skill_errors);
-    for (const auto& error : skill_errors) {
+    QStringList errors;
+    // A malformed skill file must not block panel startup, but it must not vanish into
+    // the app log either: the caller surfaces every error in the panel event list once
+    // the UI exists, so a partially loaded skill catalog is visible to the technician.
+    if (!m_skillStore->loadDefaults(&errors) && errors.isEmpty()) {
+        errors.append(QStringLiteral("skill catalog failed to load"));
+    }
+    for (const auto& error : errors) {
         logWarning("Skill load: {}", error.toStdString());
+    }
+    if (skill_errors) {
+        *skill_errors += errors;
     }
 }
 
@@ -3591,6 +3717,7 @@ QString AiAssistantPanel::initializeToolHealthLedger() {
 
 void AiAssistantPanel::initializeStandardPanel(bool workflows_loaded,
                                                const QStringList& workflow_errors,
+                                               const QStringList& skill_errors,
                                                const QString& health_ledger_error) {
     setupUi();
     connectAiClient();
@@ -3611,6 +3738,9 @@ void AiAssistantPanel::initializeStandardPanel(bool workflows_loaded,
     }
     for (const auto& error : workflow_errors) {
         appendLocalEvent(tr("Workflow catalog: %1").arg(error));
+    }
+    for (const auto& error : skill_errors) {
+        appendLocalEvent(tr("Skill catalog: %1").arg(error));
     }
 }
 
@@ -3939,9 +4069,13 @@ void AiAssistantPanel::refreshBrowserExtensionStatus() {
         return;
     }
     sak::win32mcp::BrowserExtensionInstaller installer(m_browserExtensionConfig);
+    // Remember exactly what this label was rendered from: the click handler refuses to
+    // act when the setup state has moved since, so an "Install extension" button can
+    // never turn into an uninstall.
+    m_browserExtensionRenderedState = installer.state();
     QString statusText;
     QString buttonText;
-    switch (installer.state()) {
+    switch (m_browserExtensionRenderedState) {
     case sak::win32mcp::ExtensionInstallState::Installed:
         statusText = tr("Installed. Restart Chrome if it is open.");
         buttonText = tr("Uninstall extension");
@@ -3967,12 +4101,33 @@ void AiAssistantPanel::refreshBrowserExtensionStatus() {
 
 void AiAssistantPanel::onBrowserExtensionButtonClicked() {
     sak::win32mcp::BrowserExtensionInstaller installer(m_browserExtensionConfig);
-    const bool installed = installer.state() == sak::win32mcp::ExtensionInstallState::Installed;
+    const sak::win32mcp::ExtensionInstallState state = installer.state();
+    if (state != m_browserExtensionRenderedState) {
+        // The setup state changed under the button: acting now would run the opposite
+        // of what the label offered. Re-render and make the user click again.
+        refreshBrowserExtensionStatus();
+        appendLocalEvent(
+            tr("Browser extension state changed; review the new status and click again"));
+        Q_EMIT statusMessage(tr("Browser extension state changed; click again"),
+                             sak::kTimerStatusDefaultMs);
+        return;
+    }
+    if (state == sak::win32mcp::ExtensionInstallState::Error) {
+        // An unreadable setup state must not be coerced into an install.
+        appendLocalEvent(tr("Browser extension setup status could not be read; no change made"));
+        Q_EMIT statusMessage(tr("Browser extension status could not be read"),
+                             sak::kTimerStatusDefaultMs);
+        return;
+    }
+    const bool installed = state == sak::win32mcp::ExtensionInstallState::Installed;
     const sak::win32mcp::ExtensionInstallResult result = installed ? installer.uninstall()
                                                                    : installer.install();
 
-    appendLocalEvent(result.ok ? tr("Browser extension: %1").arg(result.summary)
-                               : tr("Browser extension setup failed: %1").arg(result.summary));
+    const QString detail = result.detail.trimmed().isEmpty()
+                               ? result.summary
+                               : tr("%1 (%2)").arg(result.summary, result.detail.trimmed());
+    appendLocalEvent(result.ok ? tr("Browser extension: %1").arg(detail)
+                               : tr("Browser extension setup failed: %1").arg(detail));
     Q_EMIT statusMessage(result.summary, sak::kTimerStatusDefaultMs);
     refreshBrowserExtensionStatus();
 }
@@ -4591,7 +4746,7 @@ void AiAssistantPanel::handleElevationBrokerProgress(int percent, const QString&
     }
     if (status.startsWith(QLatin1String("STDOUT|"))) {
         const QString chunk = status.mid(7);
-        m_currentStdoutBuffer.append(chunk);
+        appendCappedCommandOutput(&m_currentStdoutBuffer, chunk);
         emitPrefixedLogLines(
             [this](const QString& line) {
                 Q_EMIT logOutput(ai::CredentialStore::redactSecrets(line));
@@ -4602,7 +4757,7 @@ void AiAssistantPanel::handleElevationBrokerProgress(int percent, const QString&
     }
     if (status.startsWith(QLatin1String("STDERR|"))) {
         const QString chunk = status.mid(7);
-        m_currentStderrBuffer.append(chunk);
+        appendCappedCommandOutput(&m_currentStderrBuffer, chunk);
         emitPrefixedLogLines(
             [this](const QString& line) {
                 Q_EMIT logOutput(ai::CredentialStore::redactSecrets(line));
@@ -5068,6 +5223,8 @@ AiAssistantPanel::BusyPromptAction AiAssistantPanel::askBusyPromptAction(const Q
     box.setIcon(QMessageBox::Question);
     box.setWindowTitle(tr("AI Task In Progress"));
     box.setText(tr("The assistant is already working. What should SAK do with this new request?"));
+    // The message is user/model text: show it literally, never as rich text.
+    box.setTextFormat(Qt::PlainText);
     box.setInformativeText(message.left(kHumanApprovalInfoMaxChars));
     auto* steer = box.addButton(tr("Apply as Steering"), QMessageBox::AcceptRole);
     auto* queue = box.addButton(tr("Queue Next"), QMessageBox::ActionRole);
@@ -5076,6 +5233,9 @@ AiAssistantPanel::BusyPromptAction AiAssistantPanel::askBusyPromptAction(const Q
     box.setDefaultButton(qobject_cast<QPushButton*>(steer));
     box.exec();
 
+    if (box.clickedButton() == steer) {
+        return BusyPromptAction::ApplySteering;
+    }
     if (box.clickedButton() == queue) {
         return BusyPromptAction::QueueAfterRun;
     }
@@ -5085,10 +5245,22 @@ AiAssistantPanel::BusyPromptAction AiAssistantPanel::askBusyPromptAction(const Q
     if (box.clickedButton() == discard) {
         return BusyPromptAction::Discard;
     }
-    return BusyPromptAction::ApplySteering;
+    // Dismissed (Escape / window close) or no recognized button: do nothing with the
+    // message rather than steering an active run with a choice the user never made.
+    return BusyPromptAction::Discard;
 }
 
 void AiAssistantPanel::applySteeringMessage(const QString& message) {
+    if (m_workflowRunActive) {
+        // A running workflow never re-reads the chat instructions, so steering cannot
+        // reach its phases and would be cleared when the run completes. Queue it for the
+        // next turn and say so, instead of reporting it as applied to the active run.
+        queuePromptForLater(message, tr("Steering during workflow run"));
+        appendLocalEvent(
+            tr("Workflow run in progress: message queued for the next turn, not "
+               "applied to the running workflow"));
+        return;
+    }
     m_pendingSteeringMessages.append(message);
     if (m_transcriptView) {
         appendTranscriptMessage(QStringLiteral("Steering"), message);
@@ -5291,13 +5463,31 @@ void AiAssistantPanel::applyWorkflowTemplate(const ai::WorkflowTemplate& workflo
     applyPromptTemplate(workflow.title, workflow.promptSummary());
     addWorkflowContextChip(workflow);
 
+    QStringList missing_resources;
     for (const auto& instruction : workflow.instructions) {
-        addWorkflowResourceContext(instruction, tr("Instruction"), ContextItem::Type::Instruction);
+        if (!addWorkflowResourceContext(
+                instruction, tr("Instruction"), ContextItem::Type::Instruction)) {
+            missing_resources << instruction;
+        }
     }
     for (const auto& skill : workflow.skills) {
-        addWorkflowResourceContext(skill, tr("Skill"), ContextItem::Type::Skill);
+        if (!addWorkflowResourceContext(skill, tr("Skill"), ContextItem::Type::Skill)) {
+            missing_resources << skill;
+        }
     }
 
+    if (!missing_resources.isEmpty()) {
+        // A workflow whose guidance did not load is NOT the workflow the user picked;
+        // report the gap instead of announcing it as added.
+        const QString message = tr("Workflow %1 is incomplete: %2 resource(s) could not be "
+                                   "loaded (%3)")
+                                    .arg(workflow.title)
+                                    .arg(missing_resources.size())
+                                    .arg(missing_resources.join(QStringLiteral(", ")));
+        appendLocalEvent(message);
+        Q_EMIT statusMessage(message, sak::kTimerStatusDefaultMs);
+        return;
+    }
     Q_EMIT statusMessage(tr("Workflow added: %1").arg(workflow.title), sak::kTimerStatusDefaultMs);
     appendLocalEvent(tr("Added workflow: %1").arg(workflow.title));
 }
@@ -5323,26 +5513,28 @@ void AiAssistantPanel::addWorkflowContextChip(const ai::WorkflowTemplate& workfl
     persistContextItem(item);
 }
 
-void AiAssistantPanel::addWorkflowResourceContext(const QString& resource_path,
+// Returns false when the named resource did not make it into the context, so the caller
+// can refuse to announce a half-attached workflow as added.
+bool AiAssistantPanel::addWorkflowResourceContext(const QString& resource_path,
                                                   const QString& label_prefix,
                                                   ContextItem::Type type) {
     QString path = resource_path.trimmed();
     if (path.isEmpty()) {
-        return;
+        return false;
     }
     if (!path.startsWith(QStringLiteral(":/"))) {
         path = QStringLiteral(":/ai/%1").arg(path);
     }
     for (const auto& existing : m_contextItems) {
         if (existing.path == path) {
-            return;
+            return true;
         }
     }
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         appendLocalEvent(tr("Workflow resource not found: %1").arg(path));
-        return;
+        return false;
     }
     const QByteArray bytes = file.readAll();
     QString text = QString::fromUtf8(bytes.left(kContextTextPreviewBytes)).trimmed();
@@ -5351,7 +5543,8 @@ void AiAssistantPanel::addWorkflowResourceContext(const QString& resource_path,
                     .arg(kContextTextPreviewBytes);
     }
     if (text.isEmpty()) {
-        return;
+        appendLocalEvent(tr("Workflow resource is empty: %1").arg(path));
+        return false;
     }
 
     const QString file_name = path.section(QLatin1Char('/'), -1);
@@ -5366,6 +5559,7 @@ void AiAssistantPanel::addWorkflowResourceContext(const QString& resource_path,
     refreshContextList();
     persistContextItem(item);
     appendLocalEvent(tr("Added workflow resource: %1").arg(item.display_name));
+    return true;
 }
 
 QString AiAssistantPanel::messageText() const {
@@ -5385,6 +5579,12 @@ QString AiAssistantPanel::buildInstructions() const {
     if (m_conversationStore) {
         QString error;
         input.session_memory = m_conversationStore->memoryText(kSessionMemoryMaxChars, &error);
+        if (!error.isEmpty()) {
+            // Never ship a prompt that silently lost its session memory: mark the gap in
+            // the instructions and log it, instead of pretending there was no memory.
+            logWarning("AI session memory unavailable: {}", error.toStdString());
+            input.session_memory = QStringLiteral("[session memory unavailable: %1]").arg(error);
+        }
     }
     return ai::AiPromptAssembler::assemble(input);
 }
@@ -5443,7 +5643,17 @@ QVector<ai::OpenAIInputAttachment> AiAssistantPanel::buildContextAttachments() c
 
 void AiAssistantPanel::beginToolTurn(const ai::OpenAIResponseResult& response) {
     QString error;
-    if (!m_toolTurn.begin(response.id, response.function_calls, &error)) {
+    // The batch size is model-controlled. Cap it before the calls are copied into the
+    // turn: every synchronous call nests one dispatchNextToolCall frame (the output
+    // handler re-enters it), so an unbounded batch is both an unbounded queue of local
+    // operations and a stack-depth hazard.
+    const bool too_many_calls = response.function_calls.size() > kMaxToolCallsPerResponse;
+    if (too_many_calls) {
+        error = tr("response requested %1 tool calls; the per-response limit is %2")
+                    .arg(static_cast<int>(response.function_calls.size()))
+                    .arg(kMaxToolCallsPerResponse);
+    }
+    if (too_many_calls || !m_toolTurn.begin(response.id, response.function_calls, &error)) {
         const QString message = tr("Pending tool turn could not start: %1")
                                     .arg(error.isEmpty() ? tr("unknown error") : error);
         appendLocalEvent(message);
@@ -5581,8 +5791,13 @@ void AiAssistantPanel::invokeOnGuiThreadBlocking(const std::function<void()>& fu
     }
     // The worker blocks until the functor runs on the GUI thread, so the by-ref
     // capture stays alive. The same-thread guard above avoids self-deadlock.
-    QMetaObject::invokeMethod(
+    const bool invoked = QMetaObject::invokeMethod(
         const_cast<AiAssistantPanel*>(this), [&func]() { func(); }, Qt::BlockingQueuedConnection);
+    if (!invoked) {
+        // The functor never ran, so the caller keeps whatever its result variable was
+        // initialized to; surface that instead of letting a silent no-op read as success.
+        logError("AI panel GUI-thread invocation failed; the marshaled call did not run");
+    }
 }
 
 bool AiAssistantPanel::isAsyncBuiltInKind(ai::AiToolCallKind kind) {
@@ -6124,8 +6339,10 @@ bool AiAssistantPanel::confirmCommandWithUser(const QString& shell,
     acceptCommandApproval(gate_id, metadata, shell, previous_status);
 
     const bool restore_ok = offerRestorePointIfNeeded(preview, risky_change, catastrophic);
-    m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
-                                                                 : ai::AiRunStatus::Running;
+    if (m_runState.status != ai::AiRunStatus::Cancelling) {
+        m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
+                                                                     : ai::AiRunStatus::Running;
+    }
     saveRunStateSnapshot();
     emitStatusDetails();
     return restore_ok;
@@ -6228,8 +6445,12 @@ bool AiAssistantPanel::rejectCommandApproval(const QString& gate_id,
                  QStringLiteral("command_approval"),
                  QStringLiteral("rejected"),
                  metadata);
-    m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
-                                                                 : ai::AiRunStatus::Running;
+    // A Stop that arrived while the modal was open must survive: restoring the
+    // pre-dialog status would re-arm a run the user already cancelled.
+    if (m_runState.status != ai::AiRunStatus::Cancelling) {
+        m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
+                                                                     : ai::AiRunStatus::Running;
+    }
     m_runState.message = tr("Command rejected");
     saveRunStateSnapshot();
     emitStatusDetails();
@@ -6251,8 +6472,12 @@ void AiAssistantPanel::acceptCommandApproval(const QString& gate_id,
                  QStringLiteral("command_approval"),
                  QStringLiteral("approved"),
                  metadata);
-    m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
-                                                                 : ai::AiRunStatus::Running;
+    // A Stop that arrived while the modal was open must survive: restoring the
+    // pre-dialog status would re-arm a run the user already cancelled.
+    if (m_runState.status != ai::AiRunStatus::Cancelling) {
+        m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
+                                                                     : ai::AiRunStatus::Running;
+    }
     m_runState.message = tr("Command approved");
     saveRunStateSnapshot();
     emitStatusDetails();
@@ -6382,8 +6607,10 @@ bool AiAssistantPanel::handleRestorePointOfferChoice(int choice,
         restoreRunStatusAfterHumanDecision(previous_status, tr("Restore point cancelled"));
         return false;
     }
-    m_restorePointOfferedThisSession = true;
     if (restore_choice == ApprovalPromptChoice::Secondary) {
+        // The user consciously skipped the restore point; that decision stands for the
+        // rest of the session for non-catastrophic commands.
+        m_restorePointOfferedThisSession = true;
         metadata[QStringLiteral("decision")] = QStringLiteral("skipped");
         metadata[QStringLiteral("summary")] =
             tr("User skipped restore point before risky AI command");
@@ -6412,9 +6639,13 @@ bool AiAssistantPanel::handleRestorePointOfferChoice(int choice,
                  QStringLiteral("approved"),
                  metadata);
     restoreRunStatusAfterHumanDecision(previous_status, tr("Creating restore point"));
-    return createRestorePoint()
-               ? true
-               : handleRestorePointFailure(gate_id, metadata, previous_status, preview);
+    if (!createRestorePoint()) {
+        // The flag is NOT set here: a failed creation must not suppress the offer for
+        // the next risky command of this session.
+        return handleRestorePointFailure(gate_id, metadata, previous_status, preview);
+    }
+    m_restorePointOfferedThisSession = true;
+    return true;
 }
 
 bool AiAssistantPanel::handleRestorePointFailure(const QString& gate_id,
@@ -6475,8 +6706,12 @@ bool AiAssistantPanel::handleRestorePointFailure(const QString& gate_id,
 
 void AiAssistantPanel::restoreRunStatusAfterHumanDecision(ai::AiRunStatus previous_status,
                                                           const QString& message) {
-    m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
-                                                                 : previous_status;
+    // A cancellation that landed while the gate was open outranks the status this
+    // decision would otherwise restore.
+    if (m_runState.status != ai::AiRunStatus::Cancelling) {
+        m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
+                                                                     : previous_status;
+    }
     m_runState.message = message;
     saveRunStateSnapshot();
     emitStatusDetails();
@@ -6520,8 +6755,13 @@ QString AiAssistantPanel::restorePointDescription() const {
 }
 
 QString AiAssistantPanel::restorePointScript(const QString& description) const {
+    // $ErrorActionPreference + -ErrorAction Stop are load-bearing: without them a
+    // NON-terminating Checkpoint-Computer error never reaches catch, and the success
+    // marker would be printed with exit 0 for a restore point that was never created.
     return QStringLiteral(
-               "try { Checkpoint-Computer -Description '%1' -RestorePointType MODIFY_SETTINGS; "
+               "$ErrorActionPreference = 'Stop'; "
+               "try { Checkpoint-Computer -Description '%1' -RestorePointType MODIFY_SETTINGS "
+               "-ErrorAction Stop; "
                "Write-Output 'restore-point-created' } "
                "catch { Write-Error $_; exit 1 }")
         .arg(description);
@@ -6562,7 +6802,11 @@ bool AiAssistantPanel::handleRestorePointResponse(const QJsonObject& response_da
                                                   QJsonObject trace_metadata) {
     const QString stdout_text = response_data.value(QStringLiteral("stdout")).toString();
     const int exit_code = response_data.value(QStringLiteral("exit_code")).toInt(-1);
-    if (exit_code == kRestorePointSuccessExitCode &&
+    // A cancelled or timed-out helper run can still carry a zero exit code and a partial
+    // stdout; neither may be read as a created restore point.
+    const bool aborted = response_data.value(QStringLiteral("timed_out")).toBool(false) ||
+                         response_data.value(QStringLiteral("cancelled")).toBool(false);
+    if (!aborted && exit_code == kRestorePointSuccessExitCode &&
         stdout_text.contains(QStringLiteral("restore-point-created"))) {
         appendLocalEvent(tr("Windows restore point created"));
         Q_EMIT statusMessage(tr("Restore point created"), sak::kTimerStatusDefaultMs);
@@ -6636,27 +6880,46 @@ QJsonObject AiAssistantPanel::runScreenshotTool(const QString& reason) {
     return result;
 }
 
+QString AiAssistantPanel::resolveDownloadDestination(const QUrl& url,
+                                                     const QString& url_string,
+                                                     const QString& filename,
+                                                     QString* error_message) {
+    if (!m_conversationStore) {
+        *error_message = QStringLiteral("No active AI session for download");
+        return {};
+    }
+    if (!url.isValid() || url.scheme().toLower() != QLatin1String("https")) {
+        *error_message = QStringLiteral("Only https URLs are accepted; got '%1'").arg(url_string);
+        return {};
+    }
+    if (isBlockedDownloadHost(url)) {
+        *error_message = QStringLiteral(
+                             "Download host is not allowed (URL credentials, loopback, or a "
+                             "private/link-local address): '%1'")
+                             .arg(url_string);
+        return {};
+    }
+    const QString safe_name = safeDownloadFileName(url, filename);
+    if (safe_name.isEmpty()) {
+        *error_message = QStringLiteral("Download filename '%1' is not a usable Windows file name")
+                             .arg(filename);
+        return {};
+    }
+    // download_file runs on a worker thread; resolve the artifact path (which
+    // touches the conversation store) on the GUI thread.
+    return runOnGuiThread([this, &safe_name, error_message]() {
+        return m_conversationStore->artifactPath(QStringLiteral("downloads"),
+                                                 safe_name,
+                                                 error_message);
+    });
+}
+
 QJsonObject AiAssistantPanel::runDownloadTool(const QString& url_string, const QString& filename) {
     QJsonObject result;
     result[QStringLiteral("success")] = false;
-    if (!m_conversationStore) {
-        result[QStringLiteral("error_message")] =
-            QStringLiteral("No active AI session for download");
-        return result;
-    }
     const QUrl url(url_string);
-    if (!url.isValid() || url.scheme().toLower() != QLatin1String("https")) {
-        result[QStringLiteral("error_message")] =
-            QStringLiteral("Only https URLs are accepted; got '%1'").arg(url_string);
-        return result;
-    }
-    const QString safe_name = safeDownloadFileName(url, filename);
     QString error;
-    // download_file runs on a worker thread; resolve the artifact path (which
-    // touches the conversation store) on the GUI thread.
-    const QString destination = runOnGuiThread([this, &safe_name, &error]() {
-        return m_conversationStore->artifactPath(QStringLiteral("downloads"), safe_name, &error);
-    });
+    const QString destination = resolveDownloadDestination(url, url_string, filename, &error);
     if (destination.isEmpty()) {
         result[QStringLiteral("error_message")] = error;
         return result;
@@ -6666,8 +6929,17 @@ QJsonObject AiAssistantPanel::runDownloadTool(const QString& url_string, const Q
     const auto cancel_requested = [this]() {
         return m_activeToolRunToken.isValid() && m_activeToolRunToken.isCancellationRequested();
     };
-    if (!downloadUrlBytes(url, &bytes, &error, cancel_requested) ||
-        !writeDownloadBytes(destination, bytes, &error)) {
+    if (!downloadUrlBytes(url, &bytes, &error, cancel_requested)) {
+        result[QStringLiteral("error_message")] = error;
+        return result;
+    }
+    // Stop between the transfer and the write must neither leave a file behind nor be
+    // reported as a completed download.
+    if (cancel_requested()) {
+        result[QStringLiteral("error_message")] = QStringLiteral("Download cancelled");
+        return result;
+    }
+    if (!writeDownloadBytes(destination, bytes, &error)) {
         result[QStringLiteral("error_message")] = error;
         return result;
     }
@@ -6742,6 +7014,15 @@ ai::AiCommandResult AiAssistantPanel::executeElevatedWorkflowPowerShellRequest(
         return runElevatedPowerShell(request);
     }
     ai::AiCommandResult command_result;
+    // Teardown in progress: the queued call may never be delivered (and must not start
+    // an elevated helper while the panel is being destroyed), which would leave this
+    // worker blocked on `done` forever. Fail closed instead.
+    if (m_shuttingDown) {
+        command_result.elevated = true;
+        command_result.error_message =
+            QStringLiteral("Panel is shutting down; elevated PowerShell was not started");
+        return command_result;
+    }
     QSemaphore done;
     const bool invoked = QMetaObject::invokeMethod(
         this,
@@ -6895,10 +7176,13 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
     // respawning one per call. The pool outlives this per-call gateway (panel
     // member) and is thread-safe, so the provider-gateway worker thread may use it.
     gateway.setMcpSessionPool(&m_mcpSessionPool);
+    // One snapshot for the whole call: reading the mode twice can mix two different
+    // modes into one access decision if it changes between the reads.
+    const AccessMode mode = currentAccessMode();
     ai::AiProviderGatewayToolAccess access = ai::AiProviderGatewayToolAccess::ChatAndResearch;
-    if (currentAccessMode() == AccessMode::AssistedFullAccess) {
+    if (mode == AccessMode::AssistedFullAccess) {
         access = ai::AiProviderGatewayToolAccess::AssistedFullAccess;
-    } else if (currentAccessMode() == AccessMode::UnattendedFullAccess) {
+    } else if (mode == AccessMode::UnattendedFullAccess) {
         access = ai::AiProviderGatewayToolAccess::UnattendedFullAccess;
     }
 
@@ -7035,6 +7319,40 @@ QJsonObject AiAssistantPanel::runSkillTool(const QJsonObject& args) const {
     return result;
 }
 
+namespace {
+// Parse the sak_app_action 'arguments' payload fail-closed. A JSON object is taken as
+// given and a JSON object string is parsed; absent means "no arguments". Anything else
+// is REJECTED rather than coerced: QJsonValue::toString() would turn a wrong-typed
+// argument payload into the empty string and run a mutating action with NO arguments,
+// leaving the handler's own defaults to pick the destructive target.
+bool parseAppActionArguments(const QJsonValue& raw, QJsonObject* out, QString* error) {
+    if (raw.isUndefined() || raw.isNull()) {
+        return true;
+    }
+    if (raw.isObject()) {
+        *out = raw.toObject();
+        return true;
+    }
+    if (raw.isString()) {
+        const QString args_text = raw.toString().trimmed();
+        if (args_text.isEmpty() || args_text == QLatin1String("{}")) {
+            return true;
+        }
+        QJsonParseError parse_error;
+        const QJsonDocument doc = QJsonDocument::fromJson(args_text.toUtf8(), &parse_error);
+        if (parse_error.error == QJsonParseError::NoError && doc.isObject()) {
+            *out = doc.object();
+            return true;
+        }
+    }
+    if (error) {
+        *error = QStringLiteral(
+            "sak_app_action arguments must be a JSON object, or a JSON object string, e.g. \"{}\"");
+    }
+    return false;
+}
+}  // namespace
+
 QJsonObject AiAssistantPanel::runAppActionTool(const QJsonObject& args) {
     if (!m_appActionService) {
         return toolError(tr("App action service is not available"));
@@ -7055,17 +7373,12 @@ QJsonObject AiAssistantPanel::runAppActionTool(const QJsonObject& args) {
     if (operation == QLatin1String("run")) {
         const QString action_id = args.value(QStringLiteral("action_id")).toString().trimmed();
         QJsonObject action_args;
-        const QString args_text = args.value(QStringLiteral("arguments")).toString().trimmed();
-        if (!args_text.isEmpty() && args_text != QLatin1String("{}")) {
-            QJsonParseError parse_error;
-            const QJsonDocument doc = QJsonDocument::fromJson(args_text.toUtf8(), &parse_error);
-            if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-                QJsonObject result = toolError(
-                    tr("sak_app_action arguments must be a JSON object string, e.g. \"{}\""));
-                result[QStringLiteral("failure_class")] = QStringLiteral("invalid_request");
-                return result;
-            }
-            action_args = doc.object();
+        QString args_error;
+        if (!parseAppActionArguments(
+                args.value(QStringLiteral("arguments")), &action_args, &args_error)) {
+            QJsonObject result = toolError(args_error);
+            result[QStringLiteral("failure_class")] = QStringLiteral("invalid_request");
+            return result;
         }
         return runAppActionRun(action_id, action_args);
     }
@@ -7129,6 +7442,16 @@ std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDes
     return std::nullopt;
 }
 
+// True when a code point cannot be shown literally in a confirm dialog: an invisible C0/C1
+// control, or a bidi/format control that silently reorders the surrounding text.
+static bool requiresVisibleToken(uint code) {
+    const bool control = code < 0x20u || (code >= 0x7fu && code <= 0x9fu);
+    const bool bidi_or_format = (code >= 0x200bu && code <= 0x200fu) ||
+                                (code >= 0x202au && code <= 0x202eu) ||
+                                (code >= 0x2066u && code <= 0x2069u) || code == 0xfeffu;
+    return control || bidi_or_format;
+}
+
 // Render a model-supplied item batch (e.g. software.clean_leftovers) as a human-reviewable,
 // one-line-per-item preview for the catastrophic-confirm dialog, instead of a truncated JSON blob a
 // human cannot vet. Each line shows the item's type + path (+ registry value name), clamped per
@@ -7136,11 +7459,31 @@ std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDes
 // Make one confirm field human-verifiable: control chars / newlines become VISIBLE tokens (never
 // collapse whitespace -- a registry value name's spaces are significant, and two distinct
 // destructive targets must not render identically), and truncation is marked explicitly.
+// Every character a human cannot see (C0/C1 control) or that silently reorders what
+// they see (Unicode bidi/format control) becomes a VISIBLE <U+XXXX> token, so two
+// distinct destructive targets can never render identically in the confirm dialog.
+static QString visibleControlTokens(const QString& raw) {
+    QString out;
+    out.reserve(raw.size());
+    for (const QChar character : raw) {
+        const uint code = character.unicode();
+        if (requiresVisibleToken(code)) {
+            out += QStringLiteral("<U+%1>").arg(code, 4, 16, QLatin1Char('0')).toUpper();
+        } else {
+            out += character;
+        }
+    }
+    return out;
+}
+
 static QString confirmFieldText(const QString& raw) {
     QString out = raw;
     out.replace(QLatin1Char('\r'), QStringLiteral("<CR>"));
     out.replace(QLatin1Char('\n'), QStringLiteral("<LF>"));
     out.replace(QLatin1Char('\t'), QStringLiteral("<TAB>"));
+    // The three above get friendly names; EVERY other control / bidi character still
+    // has to be made visible before the clamp, or a target can be spoofed.
+    out = visibleControlTokens(out);
     if (out.size() > kConfirmItemFieldMaxChars) {
         out = out.left(kConfirmItemFieldMaxChars) +
               QObject::tr("...[+%1 chars TRUNCATED]").arg(out.size() - kConfirmItemFieldMaxChars);
@@ -7275,6 +7618,14 @@ static QString buildActionConfirmDetail(const AppActionDescriptor& descriptor,
             return {};
         }
         QStringList blocks = confirmBatchWarnings(action_args, items);
+        // Every OTHER argument still reaches the handler and can change what the batch
+        // does (output path, recycle-bin flag, override switches). Show them too instead
+        // of letting an 'items' array suppress the rest of what is being authorized.
+        QJsonObject other_args = action_args;
+        other_args.remove(QStringLiteral("items"));
+        if (!other_args.isEmpty()) {
+            blocks << renderArgsConfirmPreview(other_args);
+        }
         blocks << renderItemsConfirmPreview(items);
         return blocks.join(QLatin1Char('\n'));
     }
@@ -7393,12 +7744,20 @@ QJsonObject AiAssistantPanel::packageManagerPackagePreflight(const QString& oper
 }
 
 QJsonObject AiAssistantPanel::authorizePackageManagerChange(const QString& preview) {
-    if (currentAccessMode() == AccessMode::AssistedFullAccess &&
-        !confirmCommandWithUser(tr("SAK Package Manager"), preview, true)) {
-        return toolError(QStringLiteral("User declined SAK package manager operation"));
+    // ONE immutable snapshot decides the whole authorization. Re-reading the mode per
+    // branch lets a switch to Chat between the two reads fall through BOTH of them and
+    // authorize the install/uninstall with no confirm and no restore point.
+    const AccessMode mode = currentAccessMode();
+    if (mode == AccessMode::ChatAndResearch) {
+        return toolError(QStringLiteral("Local package management is disabled in Chat mode"));
     }
-    if (currentAccessMode() == AccessMode::UnattendedFullAccess &&
-        !offerRestorePointIfNeeded(preview, true)) {
+    if (mode == AccessMode::AssistedFullAccess) {
+        if (!confirmCommandWithUser(tr("SAK Package Manager"), preview, true)) {
+            return toolError(QStringLiteral("User declined SAK package manager operation"));
+        }
+        return {};
+    }
+    if (!offerRestorePointIfNeeded(preview, true)) {
         return toolError(QStringLiteral("User cancelled before package manager operation"));
     }
     return {};
@@ -11853,7 +12212,7 @@ void AiAssistantPanel::onBrokerStarted(const QString& command_id) {
 }
 
 void AiAssistantPanel::onBrokerStdoutChunk(const QString& command_id, const QString& chunk) {
-    m_currentStdoutBuffer.append(chunk);
+    appendCappedCommandOutput(&m_currentStdoutBuffer, chunk);
     emitPrefixedLogLines(
         [this](const QString& line) { Q_EMIT logOutput(ai::CredentialStore::redactSecrets(line)); },
         QStringLiteral("[%1]").arg(command_id),
@@ -11861,7 +12220,7 @@ void AiAssistantPanel::onBrokerStdoutChunk(const QString& command_id, const QStr
 }
 
 void AiAssistantPanel::onBrokerStderrChunk(const QString& command_id, const QString& chunk) {
-    m_currentStderrBuffer.append(chunk);
+    appendCappedCommandOutput(&m_currentStderrBuffer, chunk);
     emitPrefixedLogLines(
         [this](const QString& line) { Q_EMIT logOutput(ai::CredentialStore::redactSecrets(line)); },
         QStringLiteral("[%1 err]").arg(command_id),

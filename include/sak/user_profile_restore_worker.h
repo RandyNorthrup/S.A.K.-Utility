@@ -36,11 +36,17 @@ public:
     ~UserProfileRestoreWorker() override;
 
     /// @brief Configuration for restore operation behavior
+    ///
+    /// Every field carries an explicit default so a default-constructed RestoreConfig is
+    /// fully DEFINED (the enums and bools used to be indeterminate, and reading them was
+    /// undefined behavior), and so an aggregate initializer that omits a field selects the
+    /// least-destructive policy -- never overwrite an existing file, never rewrite an ACL --
+    /// instead of whatever happens to sit at value zero.
     struct RestoreConfig {
-        ConflictResolution conflict_mode;
-        PermissionMode perm_mode;
-        bool verify;
-        bool create_backup;  // Save a recoverable copy before overwriting an existing file
+        ConflictResolution conflict_mode{ConflictResolution::SkipDuplicate};
+        PermissionMode perm_mode{PermissionMode::PreserveOriginal};
+        bool verify{false};
+        bool create_backup{false};  // Save a recoverable copy before overwriting a file
 
         /// Required to restore an encrypted backup. The worker refuses the run rather
         /// than restoring the encrypted bytes as if they were file content.
@@ -59,11 +65,17 @@ public:
      * @brief Start restore operation
      * @param backupPath Path to backup directory
      * @param manifest Backup manifest with source data
-     * @param mappings User mappings (source -> destination)
+     * @param mappings User mappings (source -> destination). An EMPTY set is a valid
+     *        restore of nothing that completes with a zero-file summary.
      * @param config Restore behavior configuration
-     * @param selections WiFi/Ethernet/AppData selections (empty = none)
+     * @param selections WiFi/Ethernet/AppData selections (empty = none for WiFi/Ethernet;
+     *        an empty AppData list excludes nothing, i.e. restores all AppData)
+     * @return true when this call armed and started the run. false (nothing started, no
+     *         state changed) when a restore is already running/armed, or when the backup
+     *         is encrypted and no password was supplied -- a caller must not read the
+     *         absence of an immediate error as a started run.
      */
-    void startRestore(const QString& backupPath,
+    bool startRestore(const QString& backupPath,
                       const BackupManifest& manifest,
                       const QVector<UserMapping>& mappings,
                       const RestoreConfig& config,
@@ -148,6 +160,16 @@ protected:
     void run() override;
 
 private:
+    /// @brief Consume the startRestore() arm at the top of run() and fail closed (emit the
+    ///        refusal, return false) on an unconfigured QThread::start(), which would otherwise
+    ///        re-execute the previous run's configuration. Extracted from run() to keep it under
+    ///        the length cap.
+    bool consumeConfiguredArm();
+    /// @brief Build the final summary and emit restoreComplete, reporting success only when
+    ///        nothing errored AND the run was not cancelled. Extracted from run() to keep it
+    ///        under the length cap.
+    void emitRestoreSummary();
+
     // Core operations
     bool restoreUser(const UserMapping& mapping);
     /// @brief Restore every selected folder of one user (extracted from restoreUser so the
@@ -188,8 +210,12 @@ private:
     bool validateBackup();
     bool verifyUserPayloadChecksums();
     /// @brief Verify one manifest user's payload tree against its sealed SHA-256 digest.
-    ///        An absent digest is accepted only for a legacy backup when verification was NOT
-    ///        requested (m_verify); with verify on, an absent or mismatched digest fails closed.
+    ///        A mismatched digest ALWAYS fails closed. An absent digest is accepted only when
+    ///        the manifest itself carries no integrity checksum either (a genuinely legacy
+    ///        backup, predating digests); once the manifest IS sealed, a missing payload digest
+    ///        is tamper evidence and fails closed. It is deliberately NOT coupled to m_verify:
+    ///        m_verify selects per-file content hashing (verifyFile), which stands on its own
+    ///        for a legacy backup that has no digest to bind to.
     ///        Reused post-restore so a source swapped after pre-restore validation is caught.
     bool verifyUserPayloadChecksum(const BackupUserData& user);
     /// @brief Find a user's data in the manifest by username
@@ -267,6 +293,12 @@ private:
 
     // Progress tracking
     std::atomic<bool> m_cancelled{false};
+    /// Armed by startRestore() (under m_mutex, immediately before start()) and CONSUMED by
+    /// run(). QThread::start() is public, so without this a direct start() -- or a second
+    /// start() after a completed restore -- would re-execute the previous run's backup path,
+    /// mappings, permission mode and network selections with no fresh confirmation. run()
+    /// refuses when it is not armed, so one configuration can never execute twice.
+    std::atomic<bool> m_configured{false};
     QMutex m_mutex;
 
     qint64 m_totalBytesToRestore{0};

@@ -11,17 +11,30 @@
 #include <QRegularExpression>
 
 #include <algorithm>
+#include <cmath>
 
 namespace sak::ai {
 
 namespace {
+
+// 2^63: the first double above the qint64 range (and exactly representable).
+constexpr double kTwoPow63 = 9223372036854775808.0;
 
 QString scalarJsonValueToString(const QJsonValue& value) {
     if (value.isString()) {
         return value.toString().trimmed();
     }
     if (value.isDouble()) {
-        return QString::number(value.toDouble(), 'f', 0);
+        // Every numeric result field this resolves (size_bytes, exit_code) is an integer.
+        // A fractional, non-finite, or out-of-qint64-range number is therefore malformed,
+        // and the old 'f',0 formatting silently ROUNDED it -- injecting a different number
+        // than the tool reported into the next phase's command. Fail closed instead.
+        const double number = value.toDouble();
+        if (!std::isfinite(number) || number != std::trunc(number) || number < -kTwoPow63 ||
+            number >= kTwoPow63) {
+            return {};
+        }
+        return QString::number(static_cast<qint64>(number));
     }
     if (value.isBool()) {
         return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
@@ -34,16 +47,22 @@ QString workflowPhaseResultValue(const AiWorkflowPhaseContext& context, const QS
         return {};
     }
     const QString tail = key.mid(7);
+    // LONGEST field name FIRST, and kept that way: `result_<phase>_<field>` is ambiguous
+    // whenever one field name is a suffix of another (`path` inside `stdout_path`), and the
+    // first matching suffix wins. Longest-first makes the winner the most specific field, so
+    // ${result_backup_stdout_path} resolves phase "backup" field "stdout_path" -- never phase
+    // "backup_stdout" field "path". A candidate whose phase id is unknown resolves to empty
+    // (fail closed) rather than being re-interpreted as a shorter field of a different phase.
     const QStringList known_fields{
         QStringLiteral("error_message"),
-        QStringLiteral("source_url"),
-        QStringLiteral("size_bytes"),
         QStringLiteral("stdout_path"),
         QStringLiteral("stderr_path"),
+        QStringLiteral("source_url"),
+        QStringLiteral("size_bytes"),
         QStringLiteral("exit_code"),
+        QStringLiteral("success"),
         QStringLiteral("sha256"),
         QStringLiteral("path"),
-        QStringLiteral("success"),
     };
     for (const auto& field : known_fields) {
         const QString suffix = QStringLiteral("_%1").arg(field);
@@ -287,12 +306,21 @@ QString workflowInputValue(const AiWorkflowPhaseContext& context,
         return text.isEmpty() ? fallback : text;
     }
     if (value.isArray()) {
+        // A malformed member makes the WHOLE array unresolvable. Dropping the non-string or
+        // blank members and rendering the survivors turned "act on these five items" into
+        // "act on three" with no error on any channel -- a silently incomplete enumeration
+        // driving real work. The caller gets @p fallback (absent), never a partial list.
         QStringList parts;
         const auto array = value.toArray();
         for (const auto& item : array) {
-            if (item.isString() && !item.toString().trimmed().isEmpty()) {
-                parts << item.toString().trimmed();
+            if (!item.isString()) {
+                return fallback;
             }
+            const QString text = item.toString().trimmed();
+            if (text.isEmpty()) {
+                return fallback;
+            }
+            parts << text;
         }
         return parts.isEmpty() ? fallback : parts.join(QStringLiteral(", "));
     }

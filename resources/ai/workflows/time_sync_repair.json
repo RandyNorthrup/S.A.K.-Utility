@@ -25,7 +25,7 @@
       "tool": "run_powershell",
       "operation": "diagnose",
       "arguments": {
-        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; Section 'Local time'; Get-Date; Section 'Time service'; Get-Service W32Time -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | Format-List; Section 'W32TM status'; w32tm /query /status 2>&1 | Out-String | Write-Output; Section 'W32TM peers'; w32tm /query /peers 2>&1 | Out-String | Write-Output; Section 'Time events'; Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-Time-Service'; StartTime=(Get-Date).AddDays(-14)} -MaxEvents 100 -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,LevelDisplayName,Message | Format-List",
+        "command": "$ErrorActionPreference='Continue'; $systemRoot=$env:SystemRoot; if([string]::IsNullOrWhiteSpace($systemRoot)){ throw 'SystemRoot is not set, so w32tm.exe cannot be resolved' }; $w32tm=Join-Path $systemRoot 'System32\\w32tm.exe'; if(-not (Test-Path -LiteralPath $w32tm -PathType Leaf)){ throw ('Required Windows tool not found: ' + $w32tm) }; function Section($n){ Write-Output ('== ' + $n + ' ==') }; Section 'Local time'; Get-Date; Section 'Time service'; try { Get-Service W32Time -ErrorAction Stop | Select-Object Name,Status,StartType | Format-List } catch { Write-Output ('[warning] W32Time service query failed: ' + $_.Exception.Message) }; Section 'W32TM status'; & $w32tm /query /status 2>&1 | Out-String | Write-Output; Write-Output ('w32tm /query /status exit code: ' + $LASTEXITCODE); Section 'W32TM peers'; & $w32tm /query /peers 2>&1 | Out-String | Write-Output; Write-Output ('w32tm /query /peers exit code: ' + $LASTEXITCODE); Section 'Time events'; try { Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-Time-Service'; StartTime=(Get-Date).AddDays(-14)} -MaxEvents 100 -ErrorAction Stop | Select-Object TimeCreated,Id,LevelDisplayName,Message | Format-List } catch { Write-Output ('[warning] Time-Service events unavailable: ' + $_.Exception.Message) }",
         "timeout_seconds": 120,
         "requires_admin": false,
         "max_output_bytes": 1048576
@@ -41,15 +41,16 @@
       "type": "tool_action",
       "tool": "run_powershell",
       "operation": "repair",
+      "condition": "approval_gate_succeeded",
       "arguments": {
-        "command": "$ErrorActionPreference='Continue'; Write-Output 'Resyncing Windows time after approval.'; Start-Service W32Time -ErrorAction SilentlyContinue; w32tm /resync /force 2>&1 | Out-String | Write-Output; w32tm /query /status 2>&1 | Out-String | Write-Output",
+        "command": "$ErrorActionPreference='Stop'; $systemRoot=$env:SystemRoot; if([string]::IsNullOrWhiteSpace($systemRoot)){ throw 'SystemRoot is not set, so w32tm.exe cannot be resolved' }; $w32tm=Join-Path $systemRoot 'System32\\w32tm.exe'; if(-not (Test-Path -LiteralPath $w32tm -PathType Leaf)){ throw ('Required Windows repair tool not found: ' + $w32tm) }; $failures=@(); Write-Output 'Resyncing Windows time after approval.'; try { $service=Get-Service W32Time -ErrorAction Stop; if($service.Status -ne 'Running'){ Start-Service -Name W32Time -ErrorAction Stop }; Write-Output ('W32Time status: ' + (Get-Service W32Time).Status) } catch { $failures+=('Start-Service W32Time failed: ' + $_.Exception.Message) }; Write-Output '== w32tm /resync /force =='; & $w32tm /resync /force; $resyncExit=$LASTEXITCODE; Write-Output ('w32tm /resync /force exit code: ' + $resyncExit); if($resyncExit -ne 0){ $failures+=('w32tm /resync /force exit ' + $resyncExit) }; Write-Output '== w32tm /query /status =='; & $w32tm /query /status; $statusExit=$LASTEXITCODE; Write-Output ('w32tm /query /status exit code: ' + $statusExit); if($statusExit -ne 0){ $failures+=('w32tm /query /status exit ' + $statusExit) }; if($failures.Count -gt 0){ throw ('Approved time resync failed: ' + ($failures -join '; ')) }; Write-Output 'Approved time resync completed.'",
         "timeout_seconds": 120,
         "requires_admin": true,
         "max_output_bytes": 524288
       },
-      "prompt": "Run only after approval and restore point offer. Start/resync Windows Time and capture output.",
+      "prompt": "Run only after the approval gate succeeded and the restore point offer. Start/resync Windows Time and capture output. Fail the phase when the service cannot be started or any w32tm command reports a non-zero exit code.",
       "risk": "system_change",
-      "completion": "Approved time resync completed or failure is recorded."
+      "completion": "Service start and resync both reported success, or the phase failed with the exact failing step and exit code."
     },
     {
       "id": "verify_time",
@@ -57,7 +58,7 @@
       "tool": "run_powershell",
       "operation": "verify",
       "arguments": {
-        "command": "$ErrorActionPreference='Continue'; Get-Date; Get-Service W32Time -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | Format-List; w32tm /query /status 2>&1 | Out-String | Write-Output",
+        "command": "$ErrorActionPreference='Continue'; $systemRoot=$env:SystemRoot; if([string]::IsNullOrWhiteSpace($systemRoot)){ throw 'SystemRoot is not set, so w32tm.exe cannot be resolved' }; $w32tm=Join-Path $systemRoot 'System32\\w32tm.exe'; if(-not (Test-Path -LiteralPath $w32tm -PathType Leaf)){ throw ('Required Windows tool not found: ' + $w32tm) }; Write-Output '== Local time =='; Get-Date; Write-Output '== Time service =='; try { Get-Service W32Time -ErrorAction Stop | Select-Object Name,Status,StartType | Format-List } catch { Write-Output ('[warning] W32Time service query failed: ' + $_.Exception.Message) }; Write-Output '== W32TM status =='; & $w32tm /query /status 2>&1 | Out-String | Write-Output; $statusExit=$LASTEXITCODE; Write-Output ('w32tm /query /status exit code: ' + $statusExit); if($statusExit -ne 0){ throw ('w32tm /query /status failed with exit code ' + $statusExit + ', so time sync state is not verified') }",
         "timeout_seconds": 60,
         "requires_admin": false,
         "max_output_bytes": 262144

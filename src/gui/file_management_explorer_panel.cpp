@@ -7,6 +7,7 @@
 #include "sak/file_management_explorer_panel.h"
 
 #include "sak/advanced_search_worker.h"
+#include "sak/app_action_guards.h"
 #include "sak/drive_unmounter.h"
 #include "sak/file_explorer_archive_service.h"
 #include "sak/file_explorer_archive_worker.h"
@@ -31,6 +32,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QBuffer>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
@@ -49,6 +51,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QImage>
+#include <QImageReader>
 #include <QInputDialog>
 #include <QItemSelection>
 #include <QItemSelectionModel>
@@ -1379,23 +1382,7 @@ void FileManagementExplorerPanel::installSelectionCheckboxes(FileExplorerPane* p
             });
 }
 
-void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int pane_index) {
-    installSelectionCheckboxes(pane);
-    if (pane->sharedSelectionModel()) {
-        connect(pane->sharedSelectionModel(),
-                &QItemSelectionModel::selectionChanged,
-                this,
-                [this, pane, pane_index]() {
-                    // Only a real (non-empty) selection promotes a pane to active, so an empty
-                    // selection signal (e.g. a model reset on the hidden second pane) never steals
-                    // focus from the pane the user is working in.
-                    if (pane->sharedSelectionModel() &&
-                        pane->sharedSelectionModel()->hasSelection()) {
-                        activatePane(pane_index);
-                    }
-                    updateActionButtons();
-                });
-    }
+void FileManagementExplorerPanel::connectPaneViewSignals(FileExplorerPane* pane, int pane_index) {
     for (auto* view : pane->itemViews()) {
         if (!view) {
             continue;
@@ -1417,21 +1404,46 @@ void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int
         view->viewport()->installEventFilter(this);
         view->installEventFilter(this);
     }
+}
+
+void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int pane_index) {
+    installSelectionCheckboxes(pane);
+    if (pane->sharedSelectionModel()) {
+        connect(pane->sharedSelectionModel(),
+                &QItemSelectionModel::selectionChanged,
+                this,
+                [this, pane, pane_index]() {
+                    // Only a real (non-empty) selection promotes a pane to active, so an empty
+                    // selection signal (e.g. a model reset on the hidden second pane) never steals
+                    // focus from the pane the user is working in.
+                    if (pane->sharedSelectionModel() &&
+                        pane->sharedSelectionModel()->hasSelection()) {
+                        activatePane(pane_index);
+                    }
+                    updateActionButtons();
+                });
+    }
+    connectPaneViewSignals(pane, pane_index);
     // Drag payloads reuse the clipboard batch builder; the transfer direction
     // is decided at drop time by the modifier cascade.
     pane->itemModel()->setDragPayloadProvider(
         [this, pane_index](const QList<int>& rows) { return buildDragMimeData(pane_index, rows); });
-    // Inline rename commits arrive from the model; queued so the editor is
-    // fully closed before the bridge mutation and listing reload run.
-    connect(
-        pane->itemModel(),
-        &FileExplorerItemModel::renameRequested,
-        this,
-        [this, pane_index](const int row, const QString& new_name) {
-            activatePane(pane_index);
-            performInlineRename(row, new_name);
-        },
-        Qt::QueuedConnection);
+    // Inline rename commits arrive from the model. The victim's path is bound
+    // HERE, while the model still holds the row the user edited; the mutation
+    // itself is deferred so the editor is fully closed before the bridge write
+    // and the listing reload run. A listing that lands in that window would
+    // otherwise leave a different entry at the same row.
+    connect(pane->itemModel(),
+            &FileExplorerItemModel::renameRequested,
+            this,
+            [this, pane_index, model = pane->itemModel()](const int row, const QString& new_name) {
+                const QString source_path = model->hasEntry(row) ? model->entryAt(row).path
+                                                                 : QString();
+                QTimer::singleShot(0, this, [this, pane_index, row, new_name, source_path]() {
+                    activatePane(pane_index);
+                    performInlineRename(row, new_name, source_path);
+                });
+            });
     connect(pane,
             &FileExplorerPane::columnsDirectoryPreviewRequested,
             this,
@@ -2797,10 +2809,11 @@ void FileManagementExplorerPanel::hashSelectedFile() {
     Q_EMIT statusMessage(tr("Hashing %1...").arg(entry.name), sak::kTimerStatusMessageMs);
 
     auto* watcher = new QFutureWatcher<FileManagementHashResult>(this);
+    const QString hash_target_id = FileExplorerTargetId::fromTarget(target).value;
     connect(watcher,
             &QFutureWatcher<FileManagementHashResult>::finished,
             this,
-            [this, watcher, name = entry.name]() {
+            [this, watcher, name = entry.name, hash_target_id]() {
                 watcher->deleteLater();
                 const FileManagementHashResult result = watcher->result();
                 if (!result.ok) {
@@ -2809,6 +2822,9 @@ void FileManagementExplorerPanel::hashSelectedFile() {
                         sak::kTimerStatusMessageMs);
                     return;
                 }
+                // The Evidence tab is headed by the CURRENT target; record which
+                // target this hash actually came from.
+                m_last_hash_target_id = hash_target_id;
                 m_last_hash_name = name;
                 m_last_hash_sha256 = result.sha256;
                 m_last_hash_capped = result.capped;
@@ -3788,6 +3804,7 @@ void FileManagementExplorerPanel::applyTransferSideEffects(FileExplorerTransferW
         recordTransferHistory(worker, completion);
     }
     if (!worker->lastFileSha256().isEmpty() && !worker->completedItems().isEmpty()) {
+        m_last_hash_target_id = FileExplorerTargetId::fromTarget(completion.source_target).value;
         m_last_hash_name = nameForPath(worker->completedItems().last().source_path,
                                        completion.source_target.local_file_system);
         m_last_hash_sha256 = worker->lastFileSha256();
@@ -4522,8 +4539,12 @@ bool FileManagementExplorerPanel::confirmHistoryDelete(const FileExplorerStorage
                  historyDeletePathList(history.items),
                  historyDeleteScopeText(!target.local_file_system, has_directory),
                  tr("Continue?"));
-    const auto response = sak::showQuestionLogged(
-        this, tr("Undo"), message, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    // The message embeds foreign entry paths on an AutoText sink.
+    const auto response = sak::showQuestionLogged(this,
+                                                  tr("Undo"),
+                                                  ui::asLiteralRichText(message),
+                                                  QMessageBox::Yes | QMessageBox::No,
+                                                  QMessageBox::No);
     return response == QMessageBox::Yes;
 }
 
@@ -4589,6 +4610,23 @@ bool FileManagementExplorerPanel::resolveCrossPaneCopyItem(const PasteBatch& bat
     if (batch.same_namespace && destination_path == entry.path) {
         blockers->append(
             tr("Skipped %1: the source and destination are the same.").arg(entry.name));
+        return false;
+    }
+    // The transfer legs write through whatever already holds the destination name
+    // (a file is overwritten, a directory merged into). A collision is refused
+    // here rather than resolved silently, and a destination that could not be
+    // read is not proof that it is free.
+    const PasteEntryKind occupant =
+        destinationEntryKind(batch.target, batch.destination_dir, entry.name);
+    if (occupant == PasteEntryKind::Unknown) {
+        blockers->append(
+            tr("Could not verify whether %1 already exists in the other pane; it was not copied.")
+                .arg(entry.name));
+        return false;
+    }
+    if (occupant != PasteEntryKind::None) {
+        blockers->append(
+            tr("Skipped %1: an item with that name is already in the other pane.").arg(entry.name));
         return false;
     }
     *item = {entry.path, destination_path, entry.size_bytes, entry.directory};
@@ -4658,6 +4696,34 @@ void FileManagementExplorerPanel::crossPaneCopySelection() {
     startTransferWorker(request, completion);
 }
 
+namespace {
+
+// A listing this comparison cannot trust yields a non-empty reason. A reader
+// that failed carries its blockers. A listing that filled the cap, or one the
+// reader had to warn about, hides entries: every "only in this pane" line built
+// from it would be an absence that is really an omission, so refuse rather than
+// present it as a comparison. Empty means both listings are complete.
+QString comparePanesBlocker(const FileManagementListResult& listing_a,
+                            const FileManagementListResult& listing_b) {
+    if (!listing_a.ok || !listing_b.ok) {
+        return (listing_a.blockers + listing_b.blockers).join(QLatin1Char('\n'));
+    }
+    if (listing_a.entries.size() >= kExplorerListMaxEntries ||
+        listing_b.entries.size() >= kExplorerListMaxEntries) {
+        return FileManagementExplorerPanel::tr(
+                   "A folder holds more than %1 entries, so the comparison would "
+                   "be incomplete; it was not run.")
+            .arg(kExplorerListMaxEntries);
+    }
+    const QStringList listing_warnings = listing_a.warnings + listing_b.warnings;
+    if (!listing_warnings.isEmpty()) {
+        return listing_warnings.join(QLatin1Char('\n'));
+    }
+    return QString();
+}
+
+}  // namespace
+
 void FileManagementExplorerPanel::comparePanes() {
     const FileExplorerCommandState state =
         FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes, commandContext());
@@ -4670,10 +4736,9 @@ void FileManagementExplorerPanel::comparePanes() {
                                                                          kExplorerListMaxEntries);
     const auto listing_b = FileManagementFileSystemBridge::listDirectory(
         otherPaneTarget(), m_secondary_state.location.path, kExplorerListMaxEntries);
-    if (!listing_a.ok || !listing_b.ok) {
-        sak::showWarningLogged(this,
-                               tr("Compare Panes"),
-                               (listing_a.blockers + listing_b.blockers).join(QLatin1Char('\n')));
+    const QString listing_blocker = comparePanesBlocker(listing_a, listing_b);
+    if (!listing_blocker.isEmpty()) {
+        sak::showWarningLogged(this, tr("Compare Panes"), listing_blocker);
         return;
     }
     QHash<QString, quint64> sizes_b;
@@ -4714,9 +4779,12 @@ void FileManagementExplorerPanel::logMessage(const QString& message) {
 void FileManagementExplorerPanel::showMutationResult(const QString& title,
                                                      const FileManagementMutationResult& result) {
     // Record for the Evidence tab and force the preview to re-read (a mutation may have changed
-    // the bytes of the currently selected file).
+    // the bytes of the currently selected file). The recorded target travels with the
+    // result: the Evidence tab is headed by whatever target is current when it is read.
     m_last_mutation = result;
+    m_last_mutation_target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
     m_last_preview_path.clear();
+    m_last_preview_target_id.clear();
     QStringList details;
     details.append(result.blockers);
     details.append(result.warnings);
@@ -5286,6 +5354,14 @@ void FileManagementExplorerPanel::commitPropertiesRename(const QString& captured
     if (!propertiesRenameAllowed(target, captured_target_id, captured_directory, edited)) {
         return;
     }
+    // The original name is reconstructed from a listing of foreign, attacker-
+    // authored bytes; a separator smuggled into it would make childPathFor
+    // address an entry outside the captured directory. Screen it like the edited
+    // name rather than trusting it because it came from our own model.
+    if (!isSafeChildName(original)) {
+        sak::showWarningLogged(this, tr("Rename"), tr("Enter a name without path separators."));
+        return;
+    }
     const QString source_path = childPathFor(m_current_path, original, target.local_file_system);
     const QString destination_path = childPathFor(m_current_path, edited, target.local_file_system);
     const auto result =
@@ -5407,14 +5483,17 @@ void FileManagementExplorerPanel::editSelectedItemTags() {
     const QString path = selection.entries.first().path;
     const QString current = tagsForSelectedItem().join(QStringLiteral(", "));
     bool accepted = false;
-    const QString entered = QInputDialog::getText(this,
-                                                  tr("Edit Tags"),
-                                                  tr("Comma-separated tags for %1 (S.A.K. metadata "
-                                                     "only, never written to the file system):")
-                                                      .arg(selection.entries.first().name),
-                                                  QLineEdit::Normal,
-                                                  current,
-                                                  &accepted);
+    // The prompt embeds an entry name read off a foreign volume, and the dialog's
+    // label is an AutoText sink; render the name literally rather than as markup.
+    const QString entered = QInputDialog::getText(
+        this,
+        tr("Edit Tags"),
+        ui::asLiteralRichText(tr("Comma-separated tags for %1 (S.A.K. metadata only, never "
+                                 "written to the file system):")
+                                  .arg(selection.entries.first().name)),
+        QLineEdit::Normal,
+        current,
+        &accepted);
     if (!accepted) {
         return;
     }
@@ -5453,38 +5532,32 @@ void FileManagementExplorerPanel::removeTagsFromSelection() {
                          sak::kTimerStatusMessageMs);
 }
 
-void FileManagementExplorerPanel::createFolderWithSelection() {
-    // Files CreateFolderWithSelectionAction: make a folder and move the
-    // selection into it - the move runs through the same-target kernel, so
-    // raw APFS/HFS selections reparent through the certified writers.
-    const FileExplorerSelection selection = currentSelection();
-    const FileManagementTarget target = currentTarget();
-    if (selection.isEmpty() || !target.can_write_files) {
-        return;
+// A create over an existing entry (createDirectory is mkpath, and writeFile
+// overwrites) would journal a CreateNew whose undo then removes what was already
+// there, so the destination must be PROVEN vacant - and a listing that could not
+// be read authoritatively is not proof.
+bool FileManagementExplorerPanel::createDestinationVacant(const FileManagementTarget& target,
+                                                          const QString& name,
+                                                          const QString& title) {
+    const PasteEntryKind occupant = destinationEntryKind(target, m_current_path, name);
+    if (occupant == PasteEntryKind::Unknown) {
+        sak::showWarningLogged(
+            this,
+            title,
+            tr("Could not verify whether %1 already exists here; nothing was created.").arg(name));
+        return false;
     }
-    QString identity_blocker;
-    if (!validateCurrentTargetIdentity(&identity_blocker)) {
-        sak::showWarningLogged(this, tr("Create Folder"), identity_blocker);
-        return;
+    if (occupant != PasteEntryKind::None) {
+        sak::showWarningLogged(this, title, tr("An item named %1 already exists here.").arg(name));
+        return false;
     }
-    bool accepted = false;
-    const QString name = QInputDialog::getText(this,
-                                               tr("Create Folder with Selection"),
-                                               tr("Folder name:"),
-                                               QLineEdit::Normal,
-                                               tr("New folder"),
-                                               &accepted);
-    if (!accepted || !isSafeChildName(name)) {
-        return;
-    }
-    // A create over an existing folder (mkpath) would journal a CreateNew that
-    // undo could use to recycle the pre-existing folder; refuse it.
-    if (destinationOccupied(target, m_current_path, name.trimmed())) {
-        sak::showWarningLogged(this,
-                               tr("Create Folder"),
-                               tr("An item named %1 already exists here.").arg(name.trimmed()));
-        return;
-    }
+    return true;
+}
+
+void FileManagementExplorerPanel::createFolderAndMoveSelection(
+    const FileManagementTarget& target,
+    const QString& name,
+    const FileExplorerSelection& selection) {
     const QString folder_path = childPathFor(m_current_path, name, target.local_file_system);
     const auto created = FileManagementFileSystemBridge::createDirectory(target, folder_path);
     if (!created.ok) {
@@ -5516,6 +5589,42 @@ void FileManagementExplorerPanel::createFolderWithSelection() {
     Q_EMIT statusMessage(
         tr("Moved %1 of %2 item(s) into %3.").arg(moved).arg(items.size()).arg(name),
         sak::kTimerStatusDefaultMs);
+}
+
+void FileManagementExplorerPanel::createFolderWithSelection() {
+    // Files CreateFolderWithSelectionAction: make a folder and move the
+    // selection into it - the move runs through the same-target kernel, so
+    // raw APFS/HFS selections reparent through the certified writers.
+    const FileExplorerSelection selection = currentSelection();
+    const FileManagementTarget target = currentTarget();
+    if (selection.isEmpty() || !target.can_write_files) {
+        return;
+    }
+    QString identity_blocker;
+    if (!validateCurrentTargetIdentity(&identity_blocker)) {
+        sak::showWarningLogged(this, tr("Create Folder"), identity_blocker);
+        return;
+    }
+    bool accepted = false;
+    const QString name = QInputDialog::getText(this,
+                                               tr("Create Folder with Selection"),
+                                               tr("Folder name:"),
+                                               QLineEdit::Normal,
+                                               tr("New folder"),
+                                               &accepted);
+    if (!accepted || !isSafeChildName(name)) {
+        return;
+    }
+    if (!createDestinationVacant(target, name.trimmed(), tr("Create Folder"))) {
+        return;
+    }
+    // The identity check above ran BEFORE a modal prompt; re-assert it so a target
+    // swapped underneath the dialog cannot receive this create-and-move.
+    if (!targetStillSelected(target, &identity_blocker)) {
+        sak::showWarningLogged(this, tr("Create Folder"), identity_blocker);
+        return;
+    }
+    createFolderAndMoveSelection(target, name, selection);
 }
 
 void FileManagementExplorerPanel::openTerminalHere() {
@@ -5660,6 +5769,13 @@ void FileManagementExplorerPanel::extractSelection(const ExtractMode mode) {
     if (request.archives.isEmpty()) {
         return;
     }
+    // The Dialog leg opens a modal destination chooser per archive; re-assert the
+    // identity the check above proved so a target swapped underneath it cannot
+    // receive the extraction.
+    if (!targetStillSelected(target, &identity_blocker)) {
+        sak::showWarningLogged(this, tr("Extract"), identity_blocker);
+        return;
+    }
     startArchiveWorker(request, tr("Extract"));
 }
 
@@ -5735,7 +5851,11 @@ void FileManagementExplorerPanel::finishArchiveWorker(FileExplorerArchiveWorker*
                                                     ? FileExplorerReturnResult::Success
                                                     : FileExplorerReturnResult::Failed));
     loadDirectory(m_current_path);
-    if (!worker->warnings().isEmpty()) {
+    // A warning here is an OMISSION (a skipped symlink or special entry), so the
+    // run did not do what it was asked to. Surfacing it only in the log would let
+    // the card and the status line report a partial archive as a clean one.
+    const bool skipped = !worker->warnings().isEmpty();
+    if (skipped) {
         logMessage(worker->warnings().join(QLatin1Char('\n')));
     }
     if (!worker->blockers().isEmpty()) {
@@ -5743,14 +5863,19 @@ void FileManagementExplorerPanel::finishArchiveWorker(FileExplorerArchiveWorker*
         if (request.compress) {
             return;
         }
+    } else if (skipped) {
+        sak::showWarningLogged(this, failure_title, worker->warnings().join(QStringLiteral("\n")));
     }
-    Q_EMIT statusMessage(
+    QString status =
         request.compress
             ? tr("Created %1 (%2 file(s)).").arg(request.zip_name).arg(worker->zipEntryCount())
             : tr("Extracted %1 of %2 archive(s).")
                   .arg(worker->completedCount())
-                  .arg(request.archives.size()),
-        sak::kTimerStatusDefaultMs);
+                  .arg(request.archives.size());
+    if (skipped) {
+        status += QLatin1Char(' ') + tr("Some entries were skipped.");
+    }
+    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
 }
 
 void FileManagementExplorerPanel::togglePreviewPane() {
@@ -5982,7 +6107,11 @@ bool FileManagementExplorerPanel::flattenEntryIntoRoot(const FileManagementTarge
         return false;
     }
     if (destinationOccupied(target, root, entry.name)) {
-        return false;  // Files skips name collisions
+        // Files skips a name collision; the skip is REPORTED so a folder that kept
+        // its subfolders is never mistaken for a fully flattened one.
+        blockers->append(
+            tr("Skipped %1: an item with that name is already in the folder.").arg(entry.name));
+        return false;
     }
     const auto result = FileManagementFileSystemBridge::renameEntry(
         target, entry.path, childPathFor(root, entry.name, target.local_file_system));
@@ -6003,12 +6132,23 @@ int FileManagementExplorerPanel::flattenFolderTree(const FileManagementTarget& t
         blockers->append(tr("Flatten stopped: folder tree deeper than %1.").arg(kFlattenMaxDepth));
         return 0;
     }
+    constexpr int kFlattenListCap = 10'000;
     const FileManagementListResult listing =
-        FileManagementFileSystemBridge::listDirectory(target, current, 10'000);
+        FileManagementFileSystemBridge::listDirectory(target, current, kFlattenListCap);
     if (!listing.ok) {
         blockers->append(listing.blockers);
         return 0;
     }
+    // A listing that filled the cap hides the rest of the folder: those entries
+    // would never be moved, yet the emptied-subfolder sweep and the "flattened N
+    // item(s)" tally would report the folder as done.
+    if (listing.entries.size() >= kFlattenListCap) {
+        blockers->append(tr("%1 holds more than %2 entries; it was not flattened.")
+                             .arg(current)
+                             .arg(kFlattenListCap));
+        return 0;
+    }
+    blockers->append(listing.warnings);
     int moved = 0;
     for (const FileManagementEntry& entry : listing.entries) {
         if (entry.directory) {
@@ -6148,7 +6288,13 @@ void FileManagementExplorerPanel::stopExplorerSearch() {
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     if (!worker->isRunning()) {
         worker->deleteLater();
+        return;
     }
+    // A stopped worker keeps running until it notices; count the ones still
+    // winding down so repeated debounced input cannot accumulate threads without
+    // bound (startSearchWorker refuses to add another past the cap).
+    ++m_orphaned_searches;
+    connect(worker, &QThread::finished, this, [this]() { --m_orphaned_searches; });
 }
 
 // Shared worker setup for the inline search surfaces: suggestions cap at 10
@@ -6159,6 +6305,12 @@ void FileManagementExplorerPanel::startSearchWorker(
     std::function<void(const QVector<SearchMatch>&)> on_matches,
     std::function<void()> on_finished) {
     stopExplorerSearch();
+    constexpr int kMaxOrphanedSearches = 8;
+    if (m_orphaned_searches >= kMaxOrphanedSearches) {
+        Q_EMIT statusMessage(tr("Earlier searches are still stopping; try again in a moment."),
+                             sak::kTimerStatusMessageMs);
+        return;
+    }
     SearchConfig config;
     config.file_system_target = currentTarget();
     config.use_file_system_target = true;
@@ -6184,16 +6336,26 @@ void FileManagementExplorerPanel::startSearchWorker(
                 handler(matches);
             });
     if (on_finished) {
-        connect(m_search_worker,
-                &QThread::finished,
-                this,
-                [this, search_target_id, handler = std::move(on_finished)]() {
-                    if (FileExplorerTargetId::fromTarget(currentTarget()).value !=
-                        search_target_id) {
-                        return;
-                    }
-                    handler();
-                });
+        connect(
+            m_search_worker,
+            &QThread::finished,
+            this,
+            [this, worker = m_search_worker, search_target_id, handler = std::move(on_finished)]() {
+                if (FileExplorerTargetId::fromTarget(currentTarget()).value != search_target_id) {
+                    return;
+                }
+                handler();
+                // A run that could not cover everything it was asked to (an
+                // unreadable file, a truncated listing, a hit result cap) makes
+                // the count the handler just reported non-authoritative.
+                if (worker->scanIncomplete()) {
+                    logMessage(worker->incompleteReasons().join(QLatin1Char('\n')));
+                    Q_EMIT statusMessage(
+                        tr("The search could not cover everything it was asked to; the "
+                           "result list is incomplete."),
+                        sak::kTimerStatusDefaultMs);
+                }
+            });
     }
     m_search_worker->start();
 }
@@ -6435,6 +6597,33 @@ void FileManagementExplorerPanel::executePaletteSuggestion(QListWidgetItem* item
 
 namespace {
 
+// Decode a preview image without letting the file itself dictate the allocation.
+// The byte cap on the READ says nothing about the decoded size: a small crafted
+// image can declare an enormous geometry, and QImage::loadFromData would expand
+// it (and QPixmap::fromImage duplicate it) on the GUI thread. The declared
+// geometry is therefore checked against a pixel budget BEFORE any decode, and a
+// file that cannot state its geometry is refused rather than decoded blind.
+QImage decodePreviewImage(const QByteArray& bytes) {
+    QBuffer buffer;
+    buffer.setData(bytes);
+    if (!buffer.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    QImageReader reader(&buffer);
+    reader.setDecideFormatFromContent(true);
+    const QSize size = reader.size();
+    if (!size.isValid() || size.isEmpty()) {
+        return {};
+    }
+    // 16 Mpx = 64 MiB as ARGB32, which a 480 px preview never needs to exceed.
+    constexpr qint64 kMaxPreviewPixels = 16LL * 1024 * 1024;
+    if (static_cast<qint64>(size.width()) * static_cast<qint64>(size.height()) >
+        kMaxPreviewPixels) {
+        return {};
+    }
+    return reader.read();
+}
+
 // Reader-provided storage detail lines (resource fork, compression, sparseness).
 QStringList describeEntryStorage(const FileManagementEntry& entry) {
     QStringList lines;
@@ -6566,25 +6755,45 @@ QStringList FileManagementExplorerPanel::commandAvailabilityLines() const {
     return lines;
 }
 
+void FileManagementExplorerPanel::appendHashEvidence(const QString& current_target_id,
+                                                     QStringList* evidence) const {
+    if (m_last_hash_sha256.isEmpty()) {
+        return;
+    }
+    evidence->append(QString());
+    evidence->append(tr("Hashed file: %1").arg(m_last_hash_name));
+    // Evidence carries its own provenance: without it, a hash taken on one
+    // disk reads as evidence for whichever disk is selected now.
+    if (m_last_hash_target_id != current_target_id) {
+        evidence->append(
+            tr("Recorded on target %1, NOT the target shown above.")
+                .arg(m_last_hash_target_id.isEmpty() ? tr("(unknown)") : m_last_hash_target_id));
+    }
+    evidence->append(m_last_hash_capped
+                         ? tr("SHA-256 (capped to first window): %1").arg(m_last_hash_sha256)
+                         : tr("SHA-256: %1").arg(m_last_hash_sha256));
+}
+
 QStringList FileManagementExplorerPanel::buildDetailsEvidence(
     const FileManagementTarget& target) const {
     QStringList evidence;
+    const QString current_target_id = FileExplorerTargetId::fromTarget(target).value;
     if (!target.root_path.isEmpty()) {
         evidence.append(tr("Target ID: %1").arg(target.id));
         evidence.append(tr("Source: %1").arg(target.source));
     }
-    if (!m_last_hash_sha256.isEmpty()) {
-        evidence.append(QString());
-        evidence.append(tr("Hashed file: %1").arg(m_last_hash_name));
-        evidence.append(m_last_hash_capped
-                            ? tr("SHA-256 (capped to first window): %1").arg(m_last_hash_sha256)
-                            : tr("SHA-256: %1").arg(m_last_hash_sha256));
-    }
+    appendHashEvidence(current_target_id, &evidence);
     if (m_last_mutation.path.isEmpty()) {
         evidence.append(tr("No File Explorer mutation has run this session."));
         return evidence;
     }
     evidence.append(QString());
+    if (m_last_mutation_target_id != current_target_id) {
+        evidence.append(tr("The last operation below ran on target %1, NOT the target shown "
+                           "above.")
+                            .arg(m_last_mutation_target_id.isEmpty() ? tr("(unknown)")
+                                                                     : m_last_mutation_target_id));
+    }
     evidence.append(tr("Last operation path: %1").arg(m_last_mutation.path));
     evidence.append(tr("Result: %1").arg(m_last_mutation.ok ? tr("ok") : tr("blocked")));
     if (m_last_mutation.bytes_written > 0) {
@@ -6622,12 +6831,20 @@ QStringList FileManagementExplorerPanel::evidenceReportsForTarget(const QString&
     if (needle.isEmpty()) {
         return matches;
     }
+    // The evidence tree is ordinary, user-writable storage: bound what a hostile
+    // tree can make this walk allocate (every report is read whole) and how many
+    // rows it can push into the Evidence tab.
+    constexpr qint64 kMaxReportBytes = 4LL * 1024 * 1024;
+    constexpr int kMaxReportsScanned = 2000;
+    constexpr int kMaxReportsListed = 50;
+    int scanned = 0;
     QDirIterator it(
         evidence_root, {QStringLiteral("*.json")}, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
+    while (it.hasNext() && scanned < kMaxReportsScanned && matches.size() < kMaxReportsListed) {
+        ++scanned;
         const QString report_path = it.next();
         QFile file(report_path);
-        if (!file.open(QIODevice::ReadOnly)) {
+        if (file.size() > kMaxReportBytes || !file.open(QIODevice::ReadOnly)) {
             continue;
         }
         const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
@@ -6685,6 +6902,36 @@ QString FileManagementExplorerPanel::composeStatusText(
     return text;
 }
 
+void FileManagementExplorerPanel::onPreviewReadFinished(
+    QFutureWatcher<FileManagementReadResult>* watcher,
+    quint64 preview_revision,
+    const FileManagementEntry& entry,
+    const QString& preview_target_id) {
+    watcher->deleteLater();
+    if (preview_revision != m_preview_revision) {
+        return;  // a newer selection superseded this preview
+    }
+    const FileManagementReadResult read = watcher->result();
+    if (!read.ok) {
+        showPreviewHint(
+            tr("Preview unavailable: %1").arg(read.blockers.join(QStringLiteral("; "))));
+        return;
+    }
+    m_last_preview_path = entry.path;
+    m_last_preview_target_id = preview_target_id;
+    renderPreviewForEntry(entry, read.data, read.truncated);
+    // A warning on an ok read means the bytes shown are not the whole
+    // story; showing them with no notice would present a partial read as
+    // the file's contents.
+    if (!read.warnings.isEmpty()) {
+        if (auto* caption = m_details_pane->previewCaption()) {
+            caption->setText(
+                caption->text() + QLatin1Char('\n') +
+                tr("Preview warnings: %1").arg(read.warnings.join(QStringLiteral("; "))));
+        }
+    }
+}
+
 void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& target,
                                                     const FileExplorerSelection& selection) {
     if (!m_preview_text || !m_details_pane) {
@@ -6702,31 +6949,22 @@ void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& 
         showPreviewHint(tr("%1 is not a previewable file.").arg(entry.name));
         return;
     }
-    if (entry.path == m_last_preview_path) {
+    // Two targets can hold the same path, so the cached path alone is not an
+    // identity: it must be paired with the target the bytes were read from.
+    const QString preview_target_id = FileExplorerTargetId::fromTarget(target).value;
+    if (entry.path == m_last_preview_path && preview_target_id == m_last_preview_target_id) {
         return;
     }
     // The read runs off the GUI thread: a raw-target preview walks the whole
     // file-system metadata plus up to 1 MiB of extents, which froze the panel
     // on every selection change when it ran synchronously here.
     auto* watcher = new QFutureWatcher<FileManagementReadResult>(this);
-    connect(
-        watcher,
-        &QFutureWatcher<FileManagementReadResult>::finished,
-        this,
-        [this, watcher, preview_revision, entry]() {
-            watcher->deleteLater();
-            if (preview_revision != m_preview_revision) {
-                return;  // a newer selection superseded this preview
-            }
-            const FileManagementReadResult read = watcher->result();
-            if (!read.ok) {
-                showPreviewHint(
-                    tr("Preview unavailable: %1").arg(read.blockers.join(QStringLiteral("; "))));
-                return;
-            }
-            m_last_preview_path = entry.path;
-            renderPreviewForEntry(entry, read.data);
-        });
+    connect(watcher,
+            &QFutureWatcher<FileManagementReadResult>::finished,
+            this,
+            [this, watcher, preview_revision, entry, preview_target_id]() {
+                onPreviewReadFinished(watcher, preview_revision, entry, preview_target_id);
+            });
     watcher->setFuture(QtConcurrent::run([target, path = entry.path]() {
         return FileManagementFileSystemBridge::readFile(target, path, kExplorerPreviewMaxBytes);
     }));
@@ -6734,6 +6972,7 @@ void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& 
 
 void FileManagementExplorerPanel::showPreviewHint(const QString& message) {
     m_last_preview_path.clear();
+    m_last_preview_target_id.clear();
     m_details_pane->showImagePreview(false);
     if (auto* caption = m_details_pane->previewCaption()) {
         caption->clear();
@@ -6744,13 +6983,16 @@ void FileManagementExplorerPanel::showPreviewHint(const QString& message) {
 }
 
 void FileManagementExplorerPanel::renderPreviewForEntry(const FileManagementEntry& entry,
-                                                        const QByteArray& bytes) {
-    QImage image;
-    if (image.loadFromData(bytes) && !image.isNull()) {
+                                                        const QByteArray& bytes,
+                                                        const bool reader_truncated) {
+    const QImage image = decodePreviewImage(bytes);
+    if (!image.isNull()) {
         showImagePreviewForEntry(entry, image);
         return;
     }
-    const bool capped = bytes.size() >= kExplorerPreviewMaxBytes;
+    // The reader can stop short without the byte count showing it (see
+    // FileManagementReadResult::truncated), so its own verdict counts too.
+    const bool capped = reader_truncated || bytes.size() >= kExplorerPreviewMaxBytes;
     const auto preview = FileManagementFileSystemBridge::renderPreview(bytes, capped);
     QString caption = tr("%1 - %2 bytes - %3")
                           .arg(entry.name,
@@ -6806,7 +7048,17 @@ void FileManagementExplorerPanel::updateActionButtons() {
 }
 
 void FileManagementExplorerPanel::onRefreshMountedTargets() {
-    setTargets(FileManagementFileSystemBridge::mountedTargets());
+    const auto targets = FileManagementFileSystemBridge::mountedTargets();
+    // An enumeration that produced nothing is a failure, not "the machine has no
+    // volumes": publishing it would wipe the target list and still log success.
+    if (targets.isEmpty()) {
+        const QString message =
+            tr("No mounted targets were found; the target list was left unchanged.");
+        logMessage(message);
+        Q_EMIT statusMessage(message, sak::kTimerStatusDefaultMs);
+        return;
+    }
+    setTargets(targets);
     logMessage(tr("File explorer mounted targets refreshed"));
 }
 
@@ -6815,6 +7067,23 @@ void FileManagementExplorerPanel::onScanDiskTargets() {
     setEnabled(false);
     const auto inventory = StorageInventoryWorker::scanCurrentSystem();
     setEnabled(true);
+    // An empty inventory, or one whose partition enumeration failed on any disk,
+    // is not a picture of the machine. Replacing the target list from it would
+    // silently drop targets and then log the scan as complete.
+    if (inventory.isEmpty() || inventory.hasPartitionEnumerationFailure()) {
+        const QString message =
+            inventory.warnings.isEmpty()
+                ? tr("The disk scan did not return a complete inventory; no targets were "
+                     "replaced.")
+                : inventory.warnings.join(QStringLiteral("\n"));
+        logMessage(message);
+        Q_EMIT statusMessage(tr("Disk target scan incomplete; the target list was left unchanged."),
+                             sak::kTimerStatusDefaultMs);
+        return;
+    }
+    if (!inventory.warnings.isEmpty()) {
+        logMessage(inventory.warnings.join(QStringLiteral("\n")));
+    }
     setTargets(FileManagementFileSystemBridge::targetsFromInventory(inventory));
     logMessage(tr("File explorer disk target scan complete"));
 }
@@ -6879,7 +7148,11 @@ int FileManagementExplorerPanel::resolveSidebarTargetIndex(QListWidgetItem* item
         return -1;
     }
     if (kind == SidebarEntryKind::Target) {
-        return item->data(kTargetIndexRole).toInt();
+        // Fail closed on a row whose target index is missing or not an integer;
+        // QVariant would otherwise hand back target 0.
+        bool index_ok = false;
+        const int target_index = item->data(kTargetIndexRole).toInt(&index_ok);
+        return index_ok ? target_index : -1;
     }
     return -1;
 }
@@ -6957,7 +7230,8 @@ void FileManagementExplorerPanel::updateActiveTabLabel() {
     }
     const QString title = tabTitleForCurrentLocation();
     m_tab_bar->setTabText(m_active_tab, title);
-    m_tab_bar->setTabToolTip(m_active_tab, m_current_path);
+    // A tooltip has no plain-text mode; the path comes off a foreign volume.
+    m_tab_bar->setTabToolTip(m_active_tab, ui::asLiteralRichText(m_current_path));
     if (m_active_tab < m_tabs.size()) {
         m_tabs[m_active_tab].title = title;
     }
@@ -6965,11 +7239,15 @@ void FileManagementExplorerPanel::updateActiveTabLabel() {
 
 void FileManagementExplorerPanel::restoreTab(const FileExplorerTabState& tab) {
     m_restoring_tab = true;
+    // Everything below addresses the tab's slots as "primary = physical pane A".
+    // With pane B still active from the previous tab, m_pane_state IS pane B's
+    // slot, so assigning tab.primary to it would load pane A's saved state into
+    // pane B and then mix both panes' target/path state.
+    if (m_active_pane_index == 1) {
+        activatePane(0);
+    }
     if (m_dual_pane_enabled && !tab.secondary_pane_enabled) {
         // The incoming tab is single-pane: collapse the split left over from the prior tab.
-        if (m_active_pane_index == 1) {
-            activatePane(0);
-        }
         m_dual_pane_enabled = false;
         if (m_pane_b) {
             m_pane_b->hide();
@@ -7034,9 +7312,16 @@ void FileManagementExplorerPanel::openPathInNewTab(const QString& path) {
     }
     FileExplorerTabState fresh = captureCurrentTab();
     if (!path.isEmpty()) {
-        fresh.primary.location.path = path;
-        fresh.primary.back_stack.clear();
-        fresh.primary.forward_stack.clear();
+        // captureCurrentTab un-swaps the panes, so `primary` is physical pane A.
+        // The path came from the ACTIVE pane and is only meaningful against THAT
+        // pane's target; writing it into pane A's slot while pane B was active
+        // would open a raw path such as "/folder" on the wrong disk.
+        auto& active_slot = (fresh.secondary_pane_enabled && fresh.active_pane_index == 1)
+                                ? fresh.secondary
+                                : fresh.primary;
+        active_slot.location.path = path;
+        active_slot.back_stack.clear();
+        active_slot.forward_stack.clear();
     }
     fresh.title = tr("New Tab");
     m_tabs.append(fresh);
@@ -7135,6 +7420,26 @@ void FileManagementExplorerPanel::saveTabSession() const {
     }
 }
 
+namespace {
+
+// The saved session is ordinary user-writable storage. A record this panel did
+// not write is corruption, not a hint: an out-of-range active index or pane
+// index would otherwise be coerced into "some tab" / "pane B", and an
+// unbounded tab array would build one UI tab per record. So the whole session
+// is refused unless every field is in range.
+bool tabSessionRestorable(const FileExplorerTabSession& session) {
+    constexpr qsizetype kMaxRestoredTabs = 64;
+    const auto pane_index_valid = [](const FileExplorerTabState& tab) {
+        return !tab.secondary_pane_enabled || tab.active_pane_index == 0 ||
+               tab.active_pane_index == 1;
+    };
+    return session.tabs.size() <= kMaxRestoredTabs && session.active_index >= 0 &&
+           session.active_index < session.tabs.size() &&
+           std::ranges::all_of(session.tabs, pane_index_valid);
+}
+
+}  // namespace
+
 void FileManagementExplorerPanel::restoreTabSession() {
     if (!m_tab_session_persistence || !m_tab_bar) {
         return;
@@ -7143,6 +7448,10 @@ void FileManagementExplorerPanel::restoreTabSession() {
     const FileExplorerTabSession session =
         FileExplorerSessionStore::load(settings, QString::fromLatin1(kTabSessionGroup));
     if (session.tabs.isEmpty()) {
+        return;
+    }
+    if (!tabSessionRestorable(session)) {
+        logMessage(tr("The saved File Explorer tab session is malformed; it was not restored."));
         return;
     }
 
@@ -7156,7 +7465,9 @@ void FileManagementExplorerPanel::restoreTabSession() {
         m_tab_bar->addTab(tab.title.isEmpty() ? tr("New Tab") : tab.title);
     }
     nameTabCloseButtons();
-    m_active_tab = std::clamp(session.active_index, 0, static_cast<int>(m_tabs.size()) - 1);
+    // Validated above, so no clamp: a session that could not name its own active
+    // tab was already refused whole.
+    m_active_tab = session.active_index;
     m_tab_bar->setCurrentIndex(m_active_tab);
     restoreTab(m_tabs.at(m_active_tab));
 }
@@ -7463,6 +7774,61 @@ void FileManagementExplorerPanel::onCreateFileClicked() {
     }
 }
 
+// writeFileFromHostPath overwrites whatever already holds the destination name.
+// A folder is never replaced, a destination that could not be read is not proof
+// of vacancy, and replacing an existing file is a destructive act the user has to
+// agree to - it is not journalled and cannot be undone.
+bool FileManagementExplorerPanel::writeFileDestinationAllowed(const FileManagementTarget& target,
+                                                              const QString& name) {
+    const PasteEntryKind occupant = destinationEntryKind(target, m_current_path, name);
+    if (occupant == PasteEntryKind::Unknown) {
+        sak::showWarningLogged(
+            this,
+            tr("Write File"),
+            tr("Could not verify whether %1 already exists here; nothing was written.").arg(name));
+        return false;
+    }
+    if (occupant == PasteEntryKind::Directory) {
+        sak::showWarningLogged(this,
+                               tr("Write File"),
+                               tr("A folder named %1 already exists here.").arg(name));
+        return false;
+    }
+    if (occupant == PasteEntryKind::File) {
+        return sak::showQuestionLogged(
+                   this,
+                   tr("Write File"),
+                   ui::asLiteralRichText(
+                       tr("%1 already exists here and will be overwritten. This cannot be "
+                          "undone. Continue?")
+                           .arg(name)),
+                   QMessageBox::Yes | QMessageBox::No,
+                   QMessageBox::No) == QMessageBox::Yes;
+    }
+    return true;
+}
+
+namespace {
+
+// isFile() below FOLLOWS a reparse point, and the bridge reopens this same
+// pathname later: screen the leaf first so an elevated read cannot be
+// redirected onto a substituted symlink/junction target (or a UNC path).
+// Non-empty is the reason the chosen source must not be read.
+QString writeSourceFileBlocker(const QString& source_path) {
+    if (sak::pathIsReparsePoint(source_path)) {
+        return FileManagementExplorerPanel::tr(
+                   "Refusing to read %1: it is a symbolic link, a junction, or a "
+                   "network/device path.")
+            .arg(source_path);
+    }
+    if (!QFileInfo(source_path).isFile()) {
+        return FileManagementExplorerPanel::tr("Unable to read source file: %1").arg(source_path);
+    }
+    return QString();
+}
+
+}  // namespace
+
 void FileManagementExplorerPanel::onWriteFileClicked() {
     const auto target = currentTarget();
     if (!target.can_write_files) {
@@ -7478,13 +7844,12 @@ void FileManagementExplorerPanel::onWriteFileClicked() {
     if (sourcePath.isEmpty()) {
         return;
     }
-    const QFileInfo sourceInfo(sourcePath);
-    if (!sourceInfo.isFile()) {
-        sak::showWarningLogged(this,
-                               tr("Write File"),
-                               tr("Unable to read source file: %1").arg(sourcePath));
+    const QString source_blocker = writeSourceFileBlocker(sourcePath);
+    if (!source_blocker.isEmpty()) {
+        sak::showWarningLogged(this, tr("Write File"), source_blocker);
         return;
     }
+    const QFileInfo sourceInfo(sourcePath);
     bool ok = false;
     const QString name = QInputDialog::getText(this,
                                                tr("Write File"),
@@ -7502,7 +7867,10 @@ void FileManagementExplorerPanel::onWriteFileClicked() {
                                tr("Enter a file name without path separators."));
         return;
     }
-    // Two modal dialogs ran since the identity check; re-assert it so a target
+    if (!writeFileDestinationAllowed(target, name.trimmed())) {
+        return;
+    }
+    // Modal dialogs ran since the identity check; re-assert it so a target
     // swapped underneath them cannot receive this write.
     if (!targetStillSelected(target, &identity_blocker)) {
         sak::showWarningLogged(this, tr("Write File"), identity_blocker);
@@ -7541,9 +7909,39 @@ void FileManagementExplorerPanel::onRenameClicked() {
     view->edit(name_index);
 }
 
-void FileManagementExplorerPanel::performInlineRename(const int row, const QString& new_name) {
+namespace {
+
+// Non-empty when the proposed rename target name is unacceptable: a name that
+// carries path separators, or a reserved DOS device name. The reserved-name
+// rule is only meaningful on local Windows paths -- raw APFS/HFS volumes
+// legitimately allow such names.
+QString renameNameBlocker(const QString& new_name, const FileManagementTarget& target) {
+    if (!isSafeChildName(new_name)) {
+        return FileManagementExplorerPanel::tr("Enter a name without path separators.");
+    }
+    if (target.local_file_system && isReservedWindowsName(new_name)) {
+        return FileManagementExplorerPanel::tr("'%1' is a reserved name on Windows.").arg(new_name);
+    }
+    return QString();
+}
+
+}  // namespace
+
+void FileManagementExplorerPanel::performInlineRename(const int row,
+                                                      const QString& new_name,
+                                                      const QString& expected_source_path) {
     const auto target = currentTarget();
     if (!target.can_write_files || !m_item_model || !m_item_model->hasEntry(row)) {
+        return;
+    }
+    // The row is a position, not an identity: refuse when the entry sitting there
+    // is no longer the one whose editor the user committed.
+    if (!expected_source_path.isEmpty() &&
+        m_item_model->entryAt(row).path != expected_source_path) {
+        sak::showWarningLogged(
+            this,
+            tr("Rename"),
+            tr("The listing changed before the rename was applied; nothing was renamed."));
         return;
     }
     QString identity_blocker;
@@ -7551,16 +7949,9 @@ void FileManagementExplorerPanel::performInlineRename(const int row, const QStri
         sak::showWarningLogged(this, tr("Rename"), identity_blocker);
         return;
     }
-    if (!isSafeChildName(new_name)) {
-        sak::showWarningLogged(this, tr("Rename"), tr("Enter a name without path separators."));
-        return;
-    }
-    // Files blocks reserved DOS device names; only meaningful on local
-    // Windows paths - raw APFS/HFS volumes legitimately allow such names.
-    if (target.local_file_system && isReservedWindowsName(new_name)) {
-        sak::showWarningLogged(this,
-                               tr("Rename"),
-                               tr("'%1' is a reserved name on Windows.").arg(new_name));
+    const QString name_blocker = renameNameBlocker(new_name, target);
+    if (!name_blocker.isEmpty()) {
+        sak::showWarningLogged(this, tr("Rename"), name_blocker);
         return;
     }
     const QString sourcePath = m_item_model->entryAt(row).path;
@@ -7614,12 +8005,15 @@ void FileManagementExplorerPanel::deleteSelectionWithConfirmation(const bool per
     // and every raw-target delete - is permanent. The confirmation always fires
     // (DeleteConfirmationPolicies.Always is the Files default).
     const bool recycle = !permanent && target.local_file_system;
-    const auto response =
-        sak::showQuestionLogged(this,
-                                tr("Delete Entry"),
-                                deleteConfirmationText(recycle, target, selection),
-                                QMessageBox::Yes | QMessageBox::No,
-                                QMessageBox::No);
+    const auto response = sak::showQuestionLogged(
+        this,
+        tr("Delete Entry"),
+        // Target label and entry paths are foreign, attacker-authored
+        // text on an AutoText sink; a destructive confirmation must
+        // render them literally, never as markup.
+        ui::asLiteralRichText(deleteConfirmationText(recycle, target, selection)),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
     if (response != QMessageBox::Yes) {
         return;
     }
@@ -7794,20 +8188,37 @@ void FileManagementExplorerPanel::addTagsSubmenu(QMenu* menu,
     const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
     QSettings settings;
     const QStringList known_tags = allKnownTags();
-    for (const QString& tag : known_tags) {
-        const bool on_all =
-            !selection.entries.isEmpty() &&
-            std::ranges::all_of(selection.entries, [&](const FileManagementEntry& entry) {
-                return FileExplorerTagStore::tagsFor(
-                           settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path)
-                    .contains(tag, Qt::CaseInsensitive);
-            });
-        QAction* action = tags_menu->addAction(tag);
+    // The tag store is user-writable and uncapped. Read each selected entry's tags
+    // ONCE (not once per tag x entry, which is a quadratic settings walk on the
+    // GUI thread), bound the rows this menu builds, and bound the label length a
+    // single record can push into a menu item.
+    QList<QStringList> entry_tags;
+    entry_tags.reserve(selection.entries.size());
+    for (const FileManagementEntry& entry : selection.entries) {
+        entry_tags.append(FileExplorerTagStore::tagsFor(
+            settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path));
+    }
+    constexpr qsizetype kMaxTagMenuRows = 100;
+    constexpr qsizetype kMaxTagLabelChars = 120;
+    const qsizetype shown_tags = std::min<qsizetype>(known_tags.size(), kMaxTagMenuRows);
+    for (qsizetype index = 0; index < shown_tags; ++index) {
+        const QString tag = known_tags.at(index);
+        const bool on_all = !entry_tags.isEmpty() &&
+                            std::ranges::all_of(entry_tags, [&tag](const QStringList& tags) {
+                                return tags.contains(tag, Qt::CaseInsensitive);
+                            });
+        QAction* action = tags_menu->addAction(tag.left(kMaxTagLabelChars));
         action->setCheckable(true);
         action->setChecked(on_all);
         connect(action, &QAction::triggered, this, [this, tag](const bool checked) {
             toggleTagOnSelection(tag, checked);
         });
+    }
+    if (known_tags.size() > shown_tags) {
+        // Never drop rows silently: say how many are not listed.
+        QAction* more = tags_menu->addAction(tr(
+            "... and %n more tag(s)", nullptr, static_cast<int>(known_tags.size() - shown_tags)));
+        more->setEnabled(false);
     }
     if (!known_tags.isEmpty()) {
         tags_menu->addSeparator();
@@ -7861,8 +8272,16 @@ int FileManagementExplorerPanel::resolveContextMenuTargetIndex(const QPoint& pos
         if (item) {
             const auto kind = static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt());
             if (kind == SidebarEntryKind::Target) {
+                // A row that cannot say WHICH target it is must not be coerced into
+                // target 0 by QVariant's default; a target action would then run
+                // against a guessed disk.
+                bool index_ok = false;
+                const int target_index = item->data(kTargetIndexRole).toInt(&index_ok);
+                if (!index_ok) {
+                    return -1;
+                }
                 m_target_list->setCurrentRow(index.row());
-                return item->data(kTargetIndexRole).toInt();
+                return target_index;
             }
         }
     }

@@ -246,7 +246,7 @@ UserProfileRestoreWorker::~UserProfileRestoreWorker() {
     delete m_permissionManager;
 }
 
-void UserProfileRestoreWorker::startRestore(const QString& backupPath,
+bool UserProfileRestoreWorker::startRestore(const QString& backupPath,
                                             const BackupManifest& manifest,
                                             const QVector<UserMapping>& mappings,
                                             const RestoreConfig& config,
@@ -257,43 +257,56 @@ void UserProfileRestoreWorker::startRestore(const QString& backupPath,
     // with a zero-file summary. Asserting either turned input that Release
     // handles into a Debug-only process abort, which is what made this worker's
     // own test suite impossible to run in Debug.
-    if (isRunning()) {
-        Q_EMIT logMessage(tr("Restore already in progress"), true);
-        return;
-    }
-
     // Refuse up front rather than failing file by file. Without the password every file
     // would fail to decode, and the run would report hundreds of errors instead of the
     // one thing that is actually wrong.
     if (manifest.encrypted && config.password.isEmpty()) {
         Q_EMIT logMessage(tr("This backup is encrypted; a password is required"), true);
         Q_EMIT restoreComplete(false, tr("A password is required to restore this backup"));
-        return;
+        return false;
     }
 
-    QMutexLocker locker(&m_mutex);
+    bool refused = false;
+    {
+        QMutexLocker locker(&m_mutex);
+        // The busy test lives UNDER the mutex: outside it, two concurrent callers could both
+        // see "not running" and then both overwrite the configuration that a just-started
+        // run() is already reading. m_configured additionally covers the window between
+        // start() and run()'s first line, where the thread is armed but not yet running.
+        if (isRunning() || m_configured.load()) {
+            refused = true;
+        } else {
+            m_backupPath = backupPath;
+            m_manifest = manifest;
+            m_mappings = mappings;
+            m_wifiProfiles = selections.wifi_profiles;
+            m_ethernetConfigs = selections.ethernet_configs;
+            m_appDataSources = selections.app_data_sources;
+            m_conflictMode = config.conflict_mode;
+            m_permissionMode = config.perm_mode;
+            m_verify = config.verify;
+            m_createBackup = config.create_backup;
+            m_password = config.password;
 
-    m_backupPath = backupPath;
-    m_manifest = manifest;
-    m_mappings = mappings;
-    m_wifiProfiles = selections.wifi_profiles;
-    m_ethernetConfigs = selections.ethernet_configs;
-    m_appDataSources = selections.app_data_sources;
-    m_conflictMode = config.conflict_mode;
-    m_permissionMode = config.perm_mode;
-    m_verify = config.verify;
-    m_createBackup = config.create_backup;
-    m_password = config.password;
+            m_cancelled = false;
+            m_bytesRestored = 0;
+            m_filesRestored = 0;
+            m_filesSkipped = 0;
+            m_filesErrored = 0;
+            m_lastProgressFileCount = 0;
+            m_lastProgressByteCount = 0;
 
-    m_cancelled = false;
-    m_bytesRestored = 0;
-    m_filesRestored = 0;
-    m_filesSkipped = 0;
-    m_filesErrored = 0;
-    m_lastProgressFileCount = 0;
-    m_lastProgressByteCount = 0;
-
-    start();
+            // Arm the run BEFORE start(): run() consumes this, so a direct QThread::start()
+            // can never execute a stale configuration (see m_configured).
+            m_configured = true;
+            start();
+        }
+    }
+    if (refused) {
+        Q_EMIT logMessage(tr("Restore already in progress"), true);
+        return false;
+    }
+    return true;
 }
 
 void UserProfileRestoreWorker::cancel() {
@@ -301,7 +314,42 @@ void UserProfileRestoreWorker::cancel() {
     Q_EMIT logMessage(tr("Canceling restore..."), false);
 }
 
+// QThread::start() is public, so run() can be entered without a fresh startRestore().
+// Consume the arm and refuse otherwise: an unconfigured start() would restore the PREVIOUS
+// run's backup path, mappings, permission mode and network selections -- a repeat of a
+// destructive operation the user confirmed once. Fail closed. Returns true only when
+// startRestore() armed this run.
+bool UserProfileRestoreWorker::consumeConfiguredArm() {
+    if (m_configured.exchange(false)) {
+        return true;
+    }
+    Q_EMIT logMessage(tr("Restore was not configured by startRestore(); refusing to run"), true);
+    Q_EMIT restoreComplete(false, tr("Restore was not configured"));
+    return false;
+}
+
+// Settle the outcome: build the human-readable summary and report success only when nothing
+// errored (a copy/mkpath/remove failure or a refused reparse point) AND the run was not
+// cancelled; a partial or cancelled restore must not read as clean success.
+void UserProfileRestoreWorker::emitRestoreSummary() {
+    QString summary = tr("Restore complete!\nFiles restored: %1\nFiles skipped: %2\nErrors: "
+                         "%3\nTotal size: %4 MB")
+                          .arg(m_filesRestored)
+                          .arg(m_filesSkipped)
+                          .arg(m_filesErrored)
+                          .arg(m_bytesRestored / sak::kBytesPerMBf, 0, 'f', 1);
+
+    Q_EMIT logMessage(tr("=== Restore Complete ==="), false);
+    Q_EMIT logMessage(summary, false);
+    const bool success = (m_filesErrored == 0) && !m_cancelled;
+    Q_EMIT restoreComplete(success, summary);
+}
+
 void UserProfileRestoreWorker::run() {
+    if (!consumeConfiguredArm()) {
+        return;
+    }
+
     // No assert on m_mappings: restoring an empty selection is a restore of
     // nothing, which completes with a zero-file summary (see startRestore).
     Q_EMIT logMessage(tr("=== Restore Started ==="), false);
@@ -356,20 +404,7 @@ void UserProfileRestoreWorker::run() {
         applyNetworkSettings();
     }
 
-    QString summary = tr("Restore complete!\nFiles restored: %1\nFiles skipped: %2\nErrors: "
-                         "%3\nTotal size: %4 MB")
-                          .arg(m_filesRestored)
-                          .arg(m_filesSkipped)
-                          .arg(m_filesErrored)
-                          .arg(m_bytesRestored / sak::kBytesPerMBf, 0, 'f', 1);
-
-    Q_EMIT logMessage(tr("=== Restore Complete ==="), false);
-    Q_EMIT logMessage(summary, false);
-    // Report success only when nothing errored (copy/mkpath/remove failure or a
-    // refused reparse point) AND the run was not cancelled; a partial or cancelled
-    // restore must not read as clean success.
-    const bool success = (m_filesErrored == 0) && !m_cancelled;
-    Q_EMIT restoreComplete(success, summary);
+    emitRestoreSummary();
 }
 
 bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
@@ -1057,14 +1092,25 @@ QString UserProfileRestoreWorker::resolveConflict(const QString& destPath) {
 // ============================================================================
 
 QString UserProfileRestoreWorker::resolveSystem32Netsh() {
-    // System32-qualify netsh so a hostile netsh.exe planted in the working
-    // directory cannot win the search order. No "bare netsh.exe" fallback: if
-    // %SystemRoot% is unset we cannot safely resolve it, so fail closed.
+    // System32-qualify netsh so a hostile netsh.exe planted in the working directory cannot
+    // win the search order. %SystemRoot% alone is NOT trustworthy for that: an unprivileged
+    // HKCU\Environment write propagates through Explorer into an elevated process, so it is
+    // used only as a presence gate -- the path actually returned comes from the OS
+    // (GetSystemDirectoryW, via sak::system32Path) and must MATCH the environment-composed
+    // one. No fallback anywhere: an unset %SystemRoot%, an unresolvable system directory, or
+    // a mismatch (poisoned environment) all return empty and every caller fails closed.
     const QString root = QString::fromLocal8Bit(qgetenv("SystemRoot"));
     if (root.isEmpty()) {
         return {};
     }
-    return QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("System32/netsh.exe")));
+    const QString fromEnv =
+        QDir::fromNativeSeparators(QDir(root).filePath(QStringLiteral("System32/netsh.exe")));
+    const QString fromOs = system32Path(QStringLiteral("netsh.exe"));
+    if (fromOs.isEmpty() ||
+        QDir::fromNativeSeparators(fromOs).compare(fromEnv, Qt::CaseInsensitive) != 0) {
+        return {};
+    }
+    return QDir::toNativeSeparators(fromOs);
 }
 
 bool UserProfileRestoreWorker::isAppDataPathExcluded(const QString& profileRelativePath,

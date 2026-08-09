@@ -6,6 +6,8 @@
 #include <QRegularExpression>
 #include <QStringList>
 
+#include <optional>
+
 namespace sak::ai {
 
 namespace {
@@ -131,6 +133,12 @@ bool hasNegatedActionIntent(const QString& text) {
     // affirmative intent; the caller then falls through to the stricter gate.
     return textMatchesAny(text,
                           {QStringLiteral("do not "),
+                           // Bare " not " / "n't " catch the forms the phrase list missed --
+                           // "can you not install Foo?", "I can't install Foo" -- which
+                           // carry a request marker and the verb and were therefore read as
+                           // consent. No consent here means the stricter gate blocks.
+                           QStringLiteral(" not "),
+                           QStringLiteral("n't "),
                            QStringLiteral("don't "),
                            QStringLiteral("dont "),
                            QStringLiteral("never "),
@@ -272,11 +280,17 @@ bool packageMutationMissingExplicitIntent(const AiToolCallRequest& request) {
            !hasExplicitPackageMutationIntent(request);
 }
 
+// Defined below with the read-only allowlist machinery: true ONLY when the command is
+// positively proven read-only by that allowlist, never merely "absent from the blacklist".
+bool shellCommandProvenReadOnly(const QString& preview);
+
 struct ToolPolicyContext {
     bool shell{false};
     bool package_tool{false};
     bool provider_gateway{false};
     bool mutating_package{false};
+    // A shell/process command the read-only allowlist cannot PROVE non-mutating.
+    bool shell_unproven{false};
     bool risky{false};
     bool catastrophic{false};
 };
@@ -288,6 +302,14 @@ ToolPolicyContext policyContext(const AiToolCallRequest& request) {
     context.provider_gateway = isReadOnlyProviderOperation(request);
     context.mutating_package = context.package_tool &&
                                isMutatingPackageOperation(request.operation);
+    // commandLooksRiskyChange is a blacklist, and a blacklist is fail-open: "fsutil file
+    // setzerodata", "powershell -File attacker.ps1", a vendor wipe utility, or any mutator
+    // invented after this list was written match none of its patterns, so under the mutating
+    // policies they took NO lease, NO exclusive lease and NO restore point. Under those
+    // policies a shell command therefore counts as mutating unless the read-only allowlist
+    // proves otherwise (fail closed); the read-only policy keeps its own allowlist path so it
+    // still reports precisely why a command was refused.
+    context.shell_unproven = context.shell && !shellCommandProvenReadOnly(request.command_preview);
     // An obfuscated/indirected shell command (encoded, concatenated verb, in-memory
     // download-and-run) hides its real effect from commandLooksCatastrophic, so it
     // cannot be proven non-catastrophic. Treat it as catastrophic and force the hard
@@ -339,9 +361,15 @@ bool commandHasUnsafeConstruct(const QString& preview) {
     // discards (>nul / >$null) are NOT writes and stay allowed. Any hit forfeits the
     // read-only allowlist -- this is why a mutation blacklist is fail-open and an
     // allowlist is required here.
+    //
+    // cmd.exe %VAR% expansion happens BEFORE the line is tokenized, so an
+    // attacker-writable environment value containing "& attacker_tool" becomes real
+    // command syntax after this check passed on "echo %VAR%". Delayed !VAR! expansion is
+    // rejected with it: neither form's real command text is knowable here, so neither can
+    // be proven read-only.
     static const QRegularExpression unsafe(
         QStringLiteral(
-            R"((::|\.\s*\w+\s*\(|`|\$\(|\{|\biex\b|\binvoke-expression\b|>>?\s*(?!&|nul\b|\$null\b|/dev/null\b)[^\s>&|]))"),
+            R"((::|\.\s*\w+\s*\(|`|\$\(|\{|%[^\s%]{1,64}%|![a-z_][a-z0-9_]{0,63}!|\biex\b|\binvoke-expression\b|>>?\s*(?!&|nul\b|\$null\b|/dev/null\b)[^\s>&|]))"),
         QRegularExpression::CaseInsensitiveOption);
     return unsafe.match(preview).hasMatch() || commandUsesResolutionIndirection(preview);
 }
@@ -361,30 +389,81 @@ bool segmentLeadIsReadOnly(const QString& segment) {
     return lead.match(segment).hasMatch();
 }
 
+// A parenthesis inside a quoted string is literal text, not a group delimiter, so a
+// quoted region is skipped wholesale. Returns true once the character has been
+// accounted for by quote tracking and the caller needs to do nothing further with it.
+bool consumeQuoteChar(QChar c, QChar& quote) {
+    if (!quote.isNull()) {
+        if (c == quote) {
+            quote = QChar();
+        }
+        return true;
+    }
+    if (c == QLatin1Char('\'') || c == QLatin1Char('"')) {
+        quote = c;
+        return true;
+    }
+    return false;
+}
+
+// Running state of the top-level paren scan: the groups closed so far, the current
+// nesting depth, and where the open top-level group started (-1 when outside one).
+struct ParenScan {
+    QStringList groups;
+    int depth{0};
+    qsizetype start{-1};
+};
+
+// Fold the delimiter at index i into the scan. A ')' with no matching '(' means the
+// grouping is broken and cannot be resolved with confidence, so it returns false and
+// the caller fails closed; every other character leaves the scan valid.
+bool applyParenBoundary(ParenScan& scan, const QString& s, qsizetype i) {
+    const QChar c = s.at(i);
+    if (c == QLatin1Char('(')) {
+        if (scan.depth == 0) {
+            scan.start = i + 1;
+        }
+        ++scan.depth;
+    } else if (c == QLatin1Char(')')) {
+        if (scan.depth == 0) {
+            return false;
+        }
+        --scan.depth;
+        if (scan.depth == 0 && scan.start >= 0) {
+            scan.groups.append(s.mid(scan.start, i - scan.start));
+            scan.start = -1;
+        }
+    }
+    return true;
+}
+
 // Contents of each top-level (...) group. PowerShell evaluates a parenthesized
 // sub-expression BEFORE the surrounding command, so a read-only-looking lead can
 // still run a mutation hidden in a group -- "Write-Output (Restart-Computer -Force)"
 // reboots the machine. Those groups must be validated as their own commands.
-QStringList topLevelParenGroups(const QString& s) {
-    QStringList groups;
-    int depth = 0;
-    qsizetype start = -1;
+//
+// A parenthesis inside a quoted string is literal text, so quoted regions are skipped: the
+// earlier quote-blind scan counted a fake quoted "(" as a real opener, which swallowed the
+// following REAL group and hid it from validation, so
+// 'Write-Output "(" (attacker_tool)' passed as a read-only Write-Output. Unbalanced
+// parentheses or an unterminated quote mean the command cannot be parsed with confidence,
+// so nullopt is returned and the caller fails closed.
+std::optional<QStringList> topLevelParenGroups(const QString& s) {
+    ParenScan scan;
+    QChar quote;
     for (qsizetype i = 0; i < s.size(); ++i) {
         const QChar c = s.at(i);
-        if (c == QLatin1Char('(')) {
-            if (depth == 0) {
-                start = i + 1;
-            }
-            ++depth;
-        } else if (c == QLatin1Char(')') && depth > 0) {
-            --depth;
-            if (depth == 0 && start >= 0) {
-                groups.append(s.mid(start, i - start));
-                start = -1;
-            }
+        if (consumeQuoteChar(c, quote)) {
+            continue;
+        }
+        if (!applyParenBoundary(scan, s, i)) {
+            return std::nullopt;
         }
     }
-    return groups;
+    if (scan.depth != 0 || !quote.isNull()) {
+        return std::nullopt;
+    }
+    return scan.groups;
 }
 
 constexpr int kMaxReadOnlyParenDepth = 8;
@@ -413,14 +492,19 @@ bool allSegmentsReadOnly(const QString& normalized) {
 // behind a read-only lead). Fail closed if the grouping nests deeper than we
 // will verify.
 bool parenSubExpressionsReadOnly(const QString& normalized, int depthRemaining) {
-    const QStringList groups = topLevelParenGroups(normalized);
-    if (groups.isEmpty()) {
+    const std::optional<QStringList> groups = topLevelParenGroups(normalized);
+    if (!groups.has_value()) {
+        // Unbalanced parentheses or an unterminated quote: the grouping cannot be resolved,
+        // so the command cannot be proven read-only.
+        return false;
+    }
+    if (groups->isEmpty()) {
         return true;
     }
     if (depthRemaining <= 0) {
         return false;
     }
-    for (const QString& group : groups) {
+    for (const QString& group : *groups) {
         const QString inner = group.trimmed();
         if (!inner.isEmpty() && !commandIsReadOnlyDiagnostic(inner, depthRemaining - 1)) {
             return false;
@@ -442,12 +526,16 @@ bool commandIsReadOnlyDiagnostic(const QString& preview, int depthRemaining) {
            parenSubExpressionsReadOnly(normalized, depthRemaining);
 }
 
+bool shellCommandProvenReadOnly(const QString& preview) {
+    return commandIsReadOnlyDiagnostic(preview, kMaxReadOnlyParenDepth);
+}
+
 AiToolPolicyDecision evaluateReadOnlyShell(const QString& preview) {
     // Read-only shell is an ALLOWLIST, not a mutation blacklist. A blacklist is
     // fail-open: novel binaries (python -c, node -e), .NET/WMI method calls
     // ([IO.File]::WriteAllText, Invoke-WmiMethod), and unknown mutators slip through.
     // Only commands proven read-only by the allowlist run under the read-only lease.
-    if (!commandIsReadOnlyDiagnostic(preview, kMaxReadOnlyParenDepth)) {
+    if (!shellCommandProvenReadOnly(preview)) {
         return block(QStringLiteral(
             "Read-only PC policy allows only known read-only diagnostic shell commands "
             "(ping, ipconfig, systeminfo, tasklist, netstat, whoami, Get-*/Test-* reads, ...); "
@@ -520,9 +608,9 @@ AiToolPolicyDecision evaluateKnownPolicy(AiToolPolicy policy,
     case AiToolPolicy::DownloadOnly:
         return evaluateDownloadOnlyPolicy(request);
     case AiToolPolicy::MutatingRequiresLease:
-        return evaluateMutatingPolicy(context.risky, false);
+        return evaluateMutatingPolicy(context.risky || context.shell_unproven, false);
     case AiToolPolicy::ExclusiveMutatingExecutor:
-        return evaluateMutatingPolicy(context.risky, true);
+        return evaluateMutatingPolicy(context.risky || context.shell_unproven, true);
     }
     return block(QStringLiteral("Unsupported tool policy"));
 }
@@ -654,6 +742,18 @@ QString shellEscapeStrippedPreview(const QString& preview) {
     return stripped;
 }
 
+QString shellCommandNormalizedPreview(const QString& preview) {
+    // Windows resolves "format.com", "cipher.exe" and "wbadmin.exe" to exactly the programs
+    // the bare names name, but every whole-word pattern below is written for the bare name
+    // and expects a space after it, so the suffixed spelling matched NOTHING: "format.com D:"
+    // and "cipher.exe /w:c" escaped even the risky tier. Match the escape-stripped form with
+    // the executable suffix removed as well.
+    QString normalized = shellEscapeStrippedPreview(preview);
+    static const QRegularExpression exe_suffix(QStringLiteral(R"(\.(exe|com|cmd|bat|ps1|msc)\b)"),
+                                               QRegularExpression::CaseInsensitiveOption);
+    normalized.remove(exe_suffix);
+    return normalized;
+}
 
 bool commandLooksObfuscated(const QString& preview) {
     // Encoded/indirection shapes that hide the real command from the risk regex.
@@ -677,14 +777,20 @@ bool commandLooksCatastrophic(const QString& preview) {
     // Irreversible, system/data-destroying operations. These must never run
     // ungated; callers force an explicit human confirmation even in unattended
     // mode. Kept tight to avoid false positives on ordinary mutating commands.
+    //
+    // Switches may precede the drive letter ("format /q D:"); Remove-Item's aliases rm/ri
+    // wipe exactly what Remove-Item wipes; PowerShell accepts forward slashes in paths
+    // ("C:/Windows"); and dd destroys whichever way round if=/of= are written.
     static const QRegularExpression catastrophic(
         QStringLiteral(
-            R"((\bformat\b\s+[a-z]:|\bformat-volume\b|\bdiskpart\b|\bclear-disk\b|\bremove-partition\b|\bclear-volume\b|\breset-physicaldisk\b|\binitialize-disk\b|\bbcdedit\b|\bvssadmin\b\s+delete|\bwbadmin\b\s+delete|\bwevtutil\b\s+cl\b|\bcipher\b\s+/w|\breg\b\s+delete\s+hk|\bremove-item\b[^\n]*\bhk(lm|cu|cr|u):|\bset-executionpolicy\b\s+\S*(unrestricted|bypass)|\bremove-item\b(?=[^\n]*-recurse)(?=[^\n]*(\$env:systemroot|\$env:windir|c:\\windows|c:\\program files))|\b(rd|rmdir)\b\s+/s\b(?=[^\n]*(c:\\windows|c:\\program files|%systemroot%|%windir%))|\bmkfs\b|\bdd\b\s+if=))"),
+            R"((\bformat\b\s+(?:/\S+\s+)*[a-z]:|\bformat-volume\b|\bdiskpart\b|\bclear-disk\b|\bremove-partition\b|\bclear-volume\b|\breset-physicaldisk\b|\binitialize-disk\b|\bbcdedit\b|\bvssadmin\b\s+delete|\bwbadmin\b\s+delete|\bwevtutil\b\s+cl\b|\bcipher\b\s+/w|\breg\b\s+delete\s+hk|\bremove-item\b[^\n]*\bhk(lm|cu|cr|u):|\bset-executionpolicy\b\s+\S*(unrestricted|bypass)|\b(?:remove-item|rm|ri)\b(?=[^\n]*\s-r)(?=[^\n]*(\$env:systemroot|\$env:windir|c:[\\/]windows|c:[\\/]program files))|\b(rd|rmdir)\b\s+/s\b(?=[^\n]*(c:[\\/]windows|c:[\\/]program files|%systemroot%|%windir%))|\bmkfs\b|\bdd\b(?=[^\n]*\b(if|of)=)))"),
         QRegularExpression::CaseInsensitiveOption);
     // Match the shell-escape-stripped form as well, so "fo^rmat C:" and "For`mat-Volume"
-    // are classified exactly like the plain commands they execute as.
+    // are classified exactly like the plain commands they execute as, and the
+    // executable-suffix-stripped form so "format.com D:" is too.
     return catastrophic.match(preview).hasMatch() ||
-           catastrophic.match(shellEscapeStrippedPreview(preview)).hasMatch();
+           catastrophic.match(shellEscapeStrippedPreview(preview)).hasMatch() ||
+           catastrophic.match(shellCommandNormalizedPreview(preview)).hasMatch();
 }
 
 bool commandLooksRiskyChange(const QString& preview) {
@@ -702,6 +808,7 @@ bool commandLooksRiskyChange(const QString& preview) {
         QRegularExpression::CaseInsensitiveOption);
     return risky.match(preview).hasMatch() ||
            risky.match(shellEscapeStrippedPreview(preview)).hasMatch() ||
+           risky.match(shellCommandNormalizedPreview(preview)).hasMatch() ||
            commandLooksObfuscated(preview) || commandLooksCatastrophic(preview);
 }
 
@@ -782,12 +889,38 @@ int toolPolicyRank(AiToolPolicy policy) {
     return 0;
 }
 
+namespace {
+
+// Capability containment. The modes are NOT a single line of increasing permission:
+// ReadOnlyPc grants shell diagnostics, screenshots, session search and provider status,
+// none of which PackageToolsOnly or DownloadOnly grant. Ranking alone therefore answered
+// "is ReadOnlyPc within a PackageToolsOnly ceiling?" with yes (rank 1 < 2) and handed a
+// package-only session a shell-capable sub-agent. A request is honored only when the
+// ceiling already grants everything the request grants.
+bool policyGrantsSubsetOf(AiToolPolicy requested, AiToolPolicy ceiling) {
+    if (requested == ceiling || requested == AiToolPolicy::NoLocalExecution) {
+        return true;
+    }
+    if (ceiling == AiToolPolicy::ExclusiveMutatingExecutor) {
+        return true;
+    }
+    if (ceiling == AiToolPolicy::MutatingRequiresLease) {
+        // The mutating modes allow every known local tool, so every narrower mode is
+        // contained; only the exclusive executor is not (it is the broader lease tier).
+        return requested != AiToolPolicy::ExclusiveMutatingExecutor;
+    }
+    return false;
+}
+
+}  // namespace
+
 AiToolPolicy clampToolPolicy(AiToolPolicy requested, AiToolPolicy ceiling) {
-    // A strictly-more-restrictive request is honored; otherwise fall back to the
-    // session ceiling. Equal-rank-but-different-axis (e.g. DownloadOnly vs
-    // PackageToolsOnly) resolves to the ceiling so a sub-agent never gains a
-    // capability the session itself was not granted.
-    return toolPolicyRank(requested) < toolPolicyRank(ceiling) ? requested : ceiling;
+    // A request is honored only when the session ceiling already grants everything it
+    // grants; otherwise the ceiling stands, so a sub-agent never gains a capability the
+    // session itself was not granted. An incomparable pair (DownloadOnly vs
+    // PackageToolsOnly, ReadOnlyPc under a package-only ceiling) resolves to the ceiling,
+    // never to the union of the two capability sets.
+    return policyGrantsSubsetOf(requested, ceiling) ? requested : ceiling;
 }
 
 }  // namespace sak::ai

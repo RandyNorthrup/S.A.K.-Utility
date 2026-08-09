@@ -26,25 +26,70 @@
       "completion": "Scope is clear and safe."
     },
     {
-      "id": "collect_evidence",
+      "id": "collect_system_evidence",
       "type": "tool_action",
       "tool": "run_powershell",
       "operation": "diagnose",
       "arguments": {
-        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; function TrySection($n,[scriptblock]$b){ Section $n; try { & $b } catch { Write-Output ('[warning] ' + $n + ' unavailable: ' + $_.Exception.Message) } }; TrySection 'System' { Get-ComputerInfo | Select-Object OsName,OsVersion,OsBuildNumber,WindowsVersion,CsManufacturer,CsModel,CsTotalPhysicalMemory | Format-List }; TrySection 'Uptime' { Get-CimInstance Win32_OperatingSystem | Select-Object LastBootUpTime,LocalDateTime | Format-List }; TrySection 'Volumes' { Get-Volume | Select-Object DriveLetter,FileSystemLabel,FileSystem,HealthStatus,OperationalStatus,SizeRemaining,Size | Format-List }; TrySection 'Physical disks' { Get-PhysicalDisk | Select-Object FriendlyName,SerialNumber,MediaType,HealthStatus,OperationalStatus,Size | Format-List }; TrySection 'Storage reliability' { $pd=Get-PhysicalDisk -ErrorAction Stop; try { $counters=$pd | Get-StorageReliabilityCounter -ErrorAction Stop; if($counters){ $counters | Select-Object DeviceId,Temperature,ReadErrorsTotal,WriteErrorsTotal,ReadErrorsUncorrected,WriteErrorsUncorrected,Wear,PowerOnHours,PowerCycleCount | Format-List } else { Write-Output '[warning] No storage reliability counters returned.' } } catch { Write-Output ('[warning] Storage reliability counters unavailable without administrator/storage CIM access: ' + $_.Exception.Message); Write-Output 'Fallback: physical disk, Win32_DiskDrive, Get-Disk, and event-log evidence collected below.' } }; TrySection 'Disk fallback status' { Get-CimInstance Win32_DiskDrive | Select-Object Model,SerialNumber,MediaType,Status,Size,InterfaceType | Format-List; Get-Disk -ErrorAction SilentlyContinue | Select-Object Number,FriendlyName,HealthStatus,OperationalStatus,PartitionStyle,Size,IsBoot,IsSystem | Format-List }; TrySection 'Top CPU live sample' { $s1=@{}; Get-Process | Where-Object { $null -ne $_.CPU } | ForEach-Object { $s1[$_.Id]=$_.CPU }; Start-Sleep -Milliseconds 1200; Get-Process | Where-Object { $null -ne $_.CPU -and $s1.ContainsKey($_.Id) } | ForEach-Object { [pscustomobject]@{ProcessName=$_.ProcessName;Id=$_.Id;CpuSecondsDelta=[math]::Round(($_.CPU-$s1[$_.Id]),3);WorkingSetMB=[math]::Round($_.WorkingSet64/1MB,1)} } | Sort-Object CpuSecondsDelta -Descending | Select-Object -First 10 | Format-Table -AutoSize }; TrySection 'Memory' { Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List }; TrySection 'Defender' { Get-MpComputerStatus -ErrorAction Stop | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated | Format-List }; TrySection 'Critical event summary' { $events=Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 200 -ErrorAction SilentlyContinue; if($events){ $events | Group-Object ProviderName,Id,LevelDisplayName | Sort-Object Count -Descending | Select-Object Count,Name | Format-Table -AutoSize; Write-Output '== Critical event details =='; $events | Select-Object -First 40 TimeCreated,ProviderName,Id,LevelDisplayName,Message | Format-List } else { Write-Output 'No critical/error system events found in the last 7 days.' } }",
+        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; function TrySection($n,[scriptblock]$b){ Section $n; $Error.Clear(); try { & $b } catch { Write-Output ('[warning] ' + $n + ' unavailable: ' + $_.Exception.Message) }; if($Error.Count -gt 0){ foreach($e in ($Error | Select-Object -First 5)){ Write-Output ('[warning] ' + $n + ' error: ' + $e.Exception.Message) } }; $Error.Clear() }; TrySection 'System' { Get-ComputerInfo | Select-Object OsName,OsVersion,OsBuildNumber,WindowsVersion,CsManufacturer,CsModel,CsTotalPhysicalMemory | Format-List }; TrySection 'Uptime' { Get-CimInstance Win32_OperatingSystem | Select-Object LastBootUpTime,LocalDateTime | Format-List }; TrySection 'Memory' { Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List }",
         "timeout_seconds": 180,
         "requires_admin": false,
         "max_output_bytes": 1048576
       },
-      "prompt": "Collect broad read-only health evidence from system, disk, memory, security, live process sample, and event-log sources. Treat any '[warning]' lines as missing evidence that must be disclosed.",
+      "prompt": "Collect read-only OS build, uptime, and memory-pressure evidence. Treat any '[warning]' line as missing evidence that must be disclosed.",
       "risk": "read_only",
-      "completion": "Raw health evidence is captured and any missing admin-only evidence is explicitly visible."
+      "completion": "System, uptime, and memory evidence is captured and any collection error is explicitly visible."
+    },
+    {
+      "id": "collect_storage_evidence",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "diagnose",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; function TrySection($n,[scriptblock]$b){ Section $n; $Error.Clear(); try { & $b } catch { Write-Output ('[warning] ' + $n + ' unavailable: ' + $_.Exception.Message) }; if($Error.Count -gt 0){ foreach($e in ($Error | Select-Object -First 5)){ Write-Output ('[warning] ' + $n + ' error: ' + $e.Exception.Message) } }; $Error.Clear() }; TrySection 'Volumes' { Get-Volume | Select-Object DriveLetter,FileSystemLabel,FileSystem,HealthStatus,OperationalStatus,SizeRemaining,Size | Format-List }; TrySection 'Physical disks' { Get-PhysicalDisk | Select-Object FriendlyName,SerialNumber,MediaType,HealthStatus,OperationalStatus,Size | Format-List }; TrySection 'Storage reliability' { $pd=Get-PhysicalDisk -ErrorAction Stop; try { $counters=$pd | Get-StorageReliabilityCounter -ErrorAction Stop; if($counters){ $counters | Select-Object DeviceId,Temperature,ReadErrorsTotal,WriteErrorsTotal,ReadErrorsUncorrected,WriteErrorsUncorrected,Wear,PowerOnHours,PowerCycleCount | Format-List } else { Write-Output '[warning] No storage reliability counters returned.' } } catch { Write-Output ('[warning] Storage reliability counters unavailable without administrator/storage CIM access: ' + $_.Exception.Message); Write-Output 'Fallback: physical disk, Win32_DiskDrive, Get-Disk, and event-log evidence collected in the disk and event phases.' } }; TrySection 'Disk fallback status' { Get-CimInstance Win32_DiskDrive | Select-Object Model,SerialNumber,MediaType,Status,Size,InterfaceType | Format-List; Get-Disk -ErrorAction Stop | Select-Object Number,FriendlyName,HealthStatus,OperationalStatus,PartitionStyle,Size,IsBoot,IsSystem | Format-List }",
+        "timeout_seconds": 180,
+        "requires_admin": false,
+        "max_output_bytes": 1048576
+      },
+      "prompt": "Collect read-only volume, physical-disk, storage-reliability, and fallback disk evidence. Treat any '[warning]' line as missing evidence that must be disclosed; never present denied reliability counters as healthy.",
+      "risk": "read_only",
+      "completion": "Storage evidence is captured and any admin-only reliability gap is explicitly visible."
+    },
+    {
+      "id": "collect_security_performance_evidence",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "diagnose",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; function TrySection($n,[scriptblock]$b){ Section $n; $Error.Clear(); try { & $b } catch { Write-Output ('[warning] ' + $n + ' unavailable: ' + $_.Exception.Message) }; if($Error.Count -gt 0){ foreach($e in ($Error | Select-Object -First 5)){ Write-Output ('[warning] ' + $n + ' error: ' + $e.Exception.Message) } }; $Error.Clear() }; TrySection 'Defender' { Get-MpComputerStatus -ErrorAction Stop | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureLastUpdated | Format-List }; TrySection 'Top CPU live sample' { $s1=@{}; Get-Process | Where-Object { $null -ne $_.CPU } | ForEach-Object { $s1[$_.Id]=$_.CPU }; Start-Sleep -Milliseconds 1200; Get-Process | Where-Object { $null -ne $_.CPU -and $s1.ContainsKey($_.Id) } | ForEach-Object { [pscustomobject]@{ProcessName=$_.ProcessName;Id=$_.Id;CpuSecondsDelta=[math]::Round(($_.CPU-$s1[$_.Id]),3);WorkingSetMB=[math]::Round($_.WorkingSet64/1MB,1)} } | Sort-Object CpuSecondsDelta -Descending | Select-Object -First 10 | Format-Table -AutoSize }",
+        "timeout_seconds": 180,
+        "requires_admin": false,
+        "max_output_bytes": 1048576
+      },
+      "prompt": "Collect read-only Defender protection state and a short live CPU/working-set process sample. Treat any '[warning]' line as missing evidence that must be disclosed.",
+      "risk": "read_only",
+      "completion": "Security state and a live (not lifetime) CPU sample are captured."
+    },
+    {
+      "id": "collect_event_evidence",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "diagnose",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; function TrySection($n,[scriptblock]$b){ Section $n; $Error.Clear(); try { & $b } catch { Write-Output ('[warning] ' + $n + ' unavailable: ' + $_.Exception.Message) }; if($Error.Count -gt 0){ foreach($e in ($Error | Select-Object -First 5)){ Write-Output ('[warning] ' + $n + ' error: ' + $e.Exception.Message) } }; $Error.Clear() }; TrySection 'Critical event summary' { $evterr=$null; $events=Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 200 -ErrorAction SilentlyContinue -ErrorVariable evterr; $Error.Clear(); $evfailed=$false; if($evterr -and ($evterr[0].FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*')){ $evfailed=$true; Write-Output ('[warning] Critical event query failed, so the system event log is UNKNOWN, not clean: ' + $evterr[0].Exception.Message) }; if($events){ $events | Group-Object ProviderName,Id,LevelDisplayName | Sort-Object Count -Descending | Select-Object Count,Name | Format-Table -AutoSize; Write-Output '== Critical event details =='; $events | Select-Object -First 40 TimeCreated,ProviderName,Id,LevelDisplayName,Message | Format-List } elseif(-not $evfailed){ Write-Output 'No critical/error system events found in the last 7 days.' } }",
+        "timeout_seconds": 180,
+        "requires_admin": false,
+        "max_output_bytes": 1048576
+      },
+      "prompt": "Collect read-only critical/error system event evidence for the last 7 days. A failed query must be reported as a warning, never as a clean event log.",
+      "risk": "read_only",
+      "completion": "Event evidence is captured, or the query failure is explicitly disclosed."
     },
     {
       "id": "analyze_evidence",
       "type": "delegate",
       "agent": "diagnostic_agent",
-      "prompt": "Analyze collected OS/build, uptime, disk health, storage reliability or fallback disk evidence, memory pressure, live CPU sample, Defender state, and critical event log evidence. Call out any missing evidence caused by permission limits.",
+      "prompt": "Analyze all four evidence phases (system, storage, security/performance, events): OS/build, uptime, disk health, storage reliability or fallback disk evidence, memory pressure, live CPU sample, Defender state, and critical event log evidence. Call out any evidence phase that is missing from your context, and any '[warning]' line, as missing evidence caused by permission limits or collection failure.",
       "expected_output": "diagnostic_findings",
       "risk": "read_only",
       "completion": "Evidence is grouped by system area."
@@ -59,7 +104,7 @@
       "id": "critic",
       "type": "delegate",
       "agent": "critic_agent",
-      "prompt": "Check whether evidence supports the findings and whether any high-value read-only check is missing. Verify that permission-denied storage counters are not presented as healthy evidence.",
+      "prompt": "Check whether evidence supports the findings and whether any high-value read-only check is missing. Verify that permission-denied storage counters, failed event queries, and absent evidence phases are not presented as healthy evidence.",
       "expected_output": "quality_review",
       "risk": "none",
       "completion": "Review passes or gaps are listed."
@@ -85,6 +130,7 @@
     "Read-only diagnostics ran before any repair recommendation.",
     "Disk, event log, security, performance, and reliability evidence were considered.",
     "Any permission-denied or missing admin-only evidence is explicitly disclosed.",
+    "A failed event-log or reliability query is reported as unknown evidence, never as a clean result.",
     "CPU/process findings use a live sample rather than lifetime CPU totals.",
     "Findings include severity, confidence, evidence, and next step.",
     "Final response states no changes were made unless the user approved them."

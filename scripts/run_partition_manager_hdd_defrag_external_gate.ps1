@@ -11,7 +11,10 @@
 
 [CmdletBinding()]
 param(
-    [int]$TargetDiskNumber = 1,
+    # No default: this gate wipes a whole physical disk back to RAW, and a defaulted "1"
+    # meant a no-argument run destroyed whatever happened to be disk 1. The disk must be
+    # named explicitly on every invocation.
+    [int]$TargetDiskNumber = 0,
     [string]$EvidenceDir = "\\vboxsvr\sakrepo\artifacts\partition-manager-certification\vm-lab\external-evidence\external.hdd-defrag-execution",
     [string]$GuestReportPath = "\\vboxsvr\sakrepo\artifacts\partition-manager-certification\vm-lab\external-hdd-defrag-guest-report.json",
     [switch]$NoCleanup,
@@ -19,6 +22,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($TargetDiskNumber -lt 1) {
+    throw "TargetDiskNumber is required and must be >= 1. This gate destroys every partition on that physical disk; run Get-Disk and pass the disposable disk's number explicitly rather than relying on a default."
+}
 
 $GateId = "external.hdd-defrag-execution"
 $GateName = "Direct in-app HDD defrag execution proof"
