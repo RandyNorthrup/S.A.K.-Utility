@@ -75,6 +75,14 @@ public:
     ///        refuse to launch the destructive op. Pure; unit-testable.
     [[nodiscard]] static QString systemToolPath(const QString& systemRoot, const QString& exeName);
 
+    /// @brief The absolute System32 path this worker will actually launch @p exeName from.
+    ///
+    /// Resolved from the OS (GetSystemDirectoryW), never from %SystemRoot% -- that variable is
+    /// writable by an unprivileged same-user attacker via HKCU\\Environment and used to be what
+    /// fed the elevated sc.exe / schtasks.exe / netsh.exe launches. Exposed so a test can pin
+    /// the choice of root; empty means fail closed.
+    [[nodiscard]] static QString launchableSystemTool(const QString& exeName);
+
 Q_SIGNALS:
     void itemCleaned(const QString& path, bool success);
     void cleanupComplete(int succeeded, int failed, qint64 bytesRecovered);

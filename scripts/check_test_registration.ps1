@@ -173,6 +173,17 @@ foreach ($ps in $psSources) {
     $psUnregistered += $ps.FullName.Substring($ProjectRoot.Length + 1)
 }
 
+# JavaScript tests have no build step either, so nothing but this gate would ever notice one
+# that ctest does not run. This directions exists because the .ps1 case above was added after
+# two PowerShell suites sat unregistered -- the gate covered .cpp only, and the failure simply
+# moved one file extension over. It has now moved once more, to the browser-extension suite.
+$jsSources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Include 'test_*.mjs', 'test_*.js')
+$jsUnregistered = @()
+foreach ($js in $jsSources) {
+    if ($registeredTests -contains $js.BaseName) { continue }
+    $jsUnregistered += $js.FullName.Substring($ProjectRoot.Length + 1)
+}
+
 $failed = $false
 
 if ($unbuilt.Count -gt 0) {
@@ -204,15 +215,26 @@ if ($psUnregistered.Count -gt 0) {
     Write-Host 'else will ever notice that it is not running.'
 }
 
+if ($jsUnregistered.Count -gt 0) {
+    $failed = $true
+    Write-Host ''
+    Write-Host 'JAVASCRIPT TESTS THAT ctest NEVER RUNS:' -ForegroundColor Red
+    $jsUnregistered | Sort-Object | ForEach-Object { Write-Host "  $_" }
+    Write-Host ''
+    Write-Host 'Add an add_test(NAME <stem> COMMAND "${SAK_NODE_EXECUTABLE}" --test ...) entry'
+    Write-Host 'in tests/CMakeLists.txt. A .mjs test needs no build step either, so nothing'
+    Write-Host 'else will ever notice that it is not running.'
+}
+
 if ($failed) {
     Write-Host ''
-    Write-Error ("Test registration gate failed: {0} unbuilt source(s), {1} unregistered target(s), {2} unregistered PowerShell test(s)." -f
-                 $unbuilt.Count, $unregistered.Count, $psUnregistered.Count)
+    Write-Error ("Test registration gate failed: {0} unbuilt source(s), {1} unregistered target(s), {2} unregistered PowerShell test(s), {3} unregistered JavaScript test(s)." -f
+                 $unbuilt.Count, $unregistered.Count, $psUnregistered.Count, $jsUnregistered.Count)
     exit 1
 }
 
 $psExempt = @($psSources | Where-Object { $NonTestScripts -contains $_.BaseName }).Count
-Write-Host ("Test registration: {0} test sources, all built; {1} targets, all registered ({2} certifiers exempt); {3} PowerShell test(s), all registered ({4} exempt as non-tests)." -f
+Write-Host ("Test registration: {0} test sources, all built; {1} targets, all registered ({2} certifiers exempt); {3} PowerShell test(s), all registered ({4} exempt as non-tests); {5} JavaScript test(s), all registered." -f
             $sources.Count, $declaredTargets.Count, $IntentionallyUnregistered.Count,
-            ($psSources.Count - $psExempt), $psExempt)
+            ($psSources.Count - $psExempt), $psExempt, $jsSources.Count)
 exit 0

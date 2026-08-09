@@ -6806,6 +6806,24 @@ if(PLATFORM_WINDOWS)
     set_tests_properties(test_partition_manager_certification_tools PROPERTIES TIMEOUT 600)
 endif()
 
+# The browser-control service worker is ~3300 lines of privileged JavaScript that drives a
+# real user's browser over CDP and parses page-controlled data. No C/C++ gate can see it, so
+# until this suite existed its correctness rested entirely on review (R5-G21-9). node runs
+# the worker AS SHIPPED under a stubbed chrome and exercises its pure decision functions.
+#
+# A missing node is FATAL rather than a skip: silently dropping the only gate that has ever
+# covered that file is exactly the failure R5-G16 documents nine times over.
+find_program(SAK_NODE_EXECUTABLE NAMES node)
+if(NOT SAK_NODE_EXECUTABLE)
+    message(FATAL_ERROR
+            "node was not found, so the browser-extension unit suite could not run. "
+            "Refusing to configure a test suite that silently drops it.")
+endif()
+add_test(NAME test_browser_extension_pure
+         COMMAND "${SAK_NODE_EXECUTABLE}" --test
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_extension_pure.mjs")
+set_tests_properties(test_browser_extension_pure PROPERTIES TIMEOUT 120)
+
 # ============================================================================
 # Debug / sanitizer run environment
 # ============================================================================

@@ -188,15 +188,43 @@ bool recoverableRecycleAllowed(const QString& path) {
 }  // namespace
 
 QString CleanupWorker::systemToolPath(const QString& systemRoot, const QString& exeName) {
-    // Resolve a Windows system tool (e.g. "sc.exe") to its ABSOLUTE %SystemRoot%\System32 path. A
-    // bare program name handed to CreateProcess resolves through the app dir / CWD / PATH first, so
-    // a portable install with a same-named binary planted alongside it would run the attacker's
-    // tool in our stead (the hijack AppScanner::composePowerShellPath also defends against). Empty
-    // (fail closed) when SystemRoot is unknown -- the caller then refuses to launch.
+    // Compose a Windows system tool (e.g. "sc.exe") into an ABSOLUTE <root>\System32 path. A bare
+    // program name handed to CreateProcess resolves through the app dir / CWD / PATH first, so a
+    // portable install with a same-named binary planted alongside it would run the attacker's tool
+    // in our stead (the hijack AppScanner::composePowerShellPath also defends against).
+    //
+    // THE ROOT MUST NOT COME FROM %SystemRoot%. This function used to be called with
+    // qEnvironmentVariable("SystemRoot") while its own comment claimed to defend against hijacking,
+    // and that variable is the classic same-user UAC-bypass primitive: an unprivileged attacker
+    // writes HKCU\Environment\SystemRoot, the value propagates through Explorer into the elevated
+    // sak_utility process, and every "absolute System32 path" below then pointed into a directory
+    // the attacker owns -- with the app's elevated token. Callers now pass sak::system32Path(),
+    // which asks the OS via GetSystemDirectoryW. This overload survives only as the pure seam the
+    // unit test drives, and it validates what it is handed rather than trusting it.
     if (systemRoot.isEmpty()) {
         return {};
     }
-    return QDir::cleanPath(systemRoot + QStringLiteral("/System32/") + exeName);
+    // A relative root ("windows"), a UNC root (\\attacker\share) or a bare drive-relative path
+    // would all compose into something that is not the local system directory. Requiring a real
+    // absolute local path keeps the seam honest even though its only production caller now
+    // supplies an OS-derived one.
+    const QString normalized = QDir::fromNativeSeparators(systemRoot);
+    if (normalized.startsWith(QStringLiteral("//"))) {
+        return {};  // UNC: never the local Windows directory
+    }
+    if (!QDir::isAbsolutePath(normalized)) {
+        return {};
+    }
+    return QDir::cleanPath(normalized + QStringLiteral("/System32/") + exeName);
+}
+
+QString CleanupWorker::launchableSystemTool(const QString& exeName) {
+    // The single place the destructive CLI tools are resolved for launch, so "which root does an
+    // elevated sc.exe come from?" has exactly one answer and a test can pin it. sak::system32Path
+    // asks the OS (GetSystemDirectoryW); it is deliberately NOT %SystemRoot%, which an unprivileged
+    // same-user attacker controls via HKCU\Environment. Empty means fail closed and the caller
+    // refuses to launch rather than falling back to a bare name that PATH would resolve.
+    return sak::system32Path(exeName);
 }
 
 CleanupWorker::CleanupWorker(const QVector<LeftoverItem>& selectedItems,
@@ -920,7 +948,7 @@ bool CleanupWorker::removeService(const QString& serviceName) {
     Q_ASSERT(!serviceName.isEmpty());
     // Launch sc.exe by its absolute System32 path so a same-named binary in the app dir/CWD/PATH
     // cannot run in our stead. Fail closed when SystemRoot is unknown.
-    const QString sc = systemToolPath(qEnvironmentVariable("SystemRoot"), QStringLiteral("sc.exe"));
+    const QString sc = launchableSystemTool(QStringLiteral("sc.exe"));
     if (sc.isEmpty()) {
         sak::logWarning("Refusing service removal: cannot resolve System32 sc.exe");
         return false;
@@ -943,8 +971,7 @@ bool CleanupWorker::removeService(const QString& serviceName) {
 
 bool CleanupWorker::removeScheduledTask(const QString& taskName) {
     // Launch schtasks.exe by its absolute System32 path (anti-hijack); fail closed when unknown.
-    const QString schtasks = systemToolPath(qEnvironmentVariable("SystemRoot"),
-                                            QStringLiteral("schtasks.exe"));
+    const QString schtasks = launchableSystemTool(QStringLiteral("schtasks.exe"));
     if (schtasks.isEmpty()) {
         sak::logWarning("Refusing scheduled-task removal: cannot resolve System32 schtasks.exe");
         return false;
@@ -962,8 +989,7 @@ bool CleanupWorker::removeFirewallRule(const LeftoverItem& item) {
     // with the dir=/profile=/program= identity captured at scan time so only the one
     // matching rule is deleted.
     // Launch netsh.exe by its absolute System32 path (anti-hijack); fail closed when unknown.
-    const QString netsh = systemToolPath(qEnvironmentVariable("SystemRoot"),
-                                         QStringLiteral("netsh.exe"));
+    const QString netsh = launchableSystemTool(QStringLiteral("netsh.exe"));
     if (netsh.isEmpty()) {
         sak::logWarning("Refusing firewall-rule removal: cannot resolve System32 netsh.exe");
         return false;

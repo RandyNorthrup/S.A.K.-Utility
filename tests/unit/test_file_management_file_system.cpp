@@ -49,6 +49,33 @@ private Q_SLOTS:
         QCOMPARE(QString::fromUtf8(read.data), QStringLiteral("hello target bridge"));
     }
 
+    void readWasCapped_trustsTheReaderNotOnlyTheByteCount() {
+        // R5 CRITICAL. The APFS reader clamps every request to its own 512 MiB ceiling, and the
+        // callers' cap is the same 512 MiB. So a 700 MB file comes back as EXACTLY max_bytes
+        // with the reader's truncated flag set, and the byte-count test -- bytes_read >
+        // max_bytes -- is false for it. That flag used to be dropped on the way through
+        // FileManagementReadResult, so a hash reported itself uncapped over a prefix and an
+        // export reported complete; the move path then deleted the intact 700 MB source.
+        using B = sak::FileManagementFileSystemBridge;
+        constexpr uint64_t cap = 512ULL * 1024 * 1024;
+
+        // The exact shape of the bug: cut at precisely the cap, invisible to the count.
+        QVERIFY2(B::readWasCapped(true, cap, cap),
+                 "a reader-truncated read at exactly the cap must count as capped");
+
+        // The caller's own probe still works: one byte past the cap.
+        QVERIFY(B::readWasCapped(false, cap + 1, cap));
+
+        // A genuinely complete file at exactly the cap is NOT capped -- that is the case the
+        // one-extra-byte probe exists to distinguish, and it must not become a false positive.
+        QVERIFY(!B::readWasCapped(false, cap, cap));
+        QVERIFY(!B::readWasCapped(false, 10, cap));
+
+        // A 0 cap means "no limit", so only the reader can report a short read.
+        QVERIFY(!B::readWasCapped(false, cap + 1, 0));
+        QVERIFY(B::readWasCapped(true, 10, 0));
+    }
+
     void readFileWithMaxUint64CapReadsWholeFile() {
         // B8-18: a UINT64_MAX cap must not wrap (max_bytes + 1 -> 0) and read nothing;
         // it must read the whole file. A 0 cap ("no limit") reads all too.

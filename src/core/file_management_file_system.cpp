@@ -588,16 +588,24 @@ FileManagementReadResult readLocalFile(const QString& path, uint64_t maxBytes) {
     return result;
 }
 
+// ext and HFS+ both FAIL CLOSED above their read cap rather than returning a prefix, so a
+// successful read from either is complete by construction and truncated stays false.
 FileManagementReadResult fromExtReadResult(const PartitionExtFileReadResult& input) {
-    return {input.ok, input.file_system, input.blockers, input.warnings, input.data};
+    return {input.ok, input.file_system, input.blockers, input.warnings, input.data, false};
 }
 
 FileManagementReadResult fromHfsReadResult(const PartitionHfsFileReadResult& input) {
-    return {input.ok, input.file_system, input.blockers, input.warnings, input.data};
+    return {input.ok, input.file_system, input.blockers, input.warnings, input.data, false};
 }
 
+// APFS is the exception: it returns a PREFIX with truncated set instead of failing. That flag
+// is the only honest signal that the data is partial, because the reader clamps to its own
+// 512 MiB ceiling and the callers' cap is the same number -- so the byte count alone cannot
+// tell a complete 512 MiB file from a cut 700 MB one. Dropping it here is what let a hash
+// report itself uncapped over a prefix, and let a move delete the intact source.
 FileManagementReadResult fromApfsReadResult(const PartitionApfsFileReadResult& input) {
-    return {input.ok, input.file_system, input.blockers, input.warnings, input.data};
+    return {
+        input.ok, input.file_system, input.blockers, input.warnings, input.data, input.truncated};
 }
 
 FileManagementMutationResult fromHfsWriteResult(const PartitionHfsFileWriteResult& input) {
@@ -1158,6 +1166,15 @@ FileManagementReadResult FileManagementFileSystemBridge::readFile(
     return result;
 }
 
+bool FileManagementFileSystemBridge::readWasCapped(bool reader_truncated,
+                                                   uint64_t bytes_read,
+                                                   uint64_t max_bytes) {
+    if (reader_truncated) {
+        return true;
+    }
+    return max_bytes != 0 && bytes_read > max_bytes;
+}
+
 FileManagementHashResult FileManagementFileSystemBridge::hashFile(
     const FileManagementTarget& target, const QString& path, uint64_t max_bytes) {
     FileManagementHashResult result;
@@ -1196,8 +1213,8 @@ FileManagementHashResult FileManagementFileSystemBridge::hashFile(
         return result;
     }
     QByteArray data = read.data;
-    result.capped = max_bytes != 0 && static_cast<uint64_t>(data.size()) > max_bytes;
-    if (result.capped) {
+    result.capped = readWasCapped(read.truncated, static_cast<uint64_t>(data.size()), max_bytes);
+    if (max_bytes != 0 && static_cast<uint64_t>(data.size()) > max_bytes) {
         data.truncate(static_cast<qsizetype>(max_bytes));
     }
     QCryptographicHash hash(QCryptographicHash::Sha256);
@@ -1261,8 +1278,11 @@ bool writeRawSourceOut(const FileManagementReadResult& read,
         return false;
     }
     QByteArray data = read.data;
-    result.capped = max_bytes != 0 && static_cast<uint64_t>(data.size()) > max_bytes;
-    if (result.capped) {
+    // An export that reports complete over a prefix is worse than a hash that does, because
+    // the move path deletes the source on the strength of it.
+    result.capped = FileManagementFileSystemBridge::readWasCapped(
+        read.truncated, static_cast<uint64_t>(data.size()), max_bytes);
+    if (max_bytes != 0 && static_cast<uint64_t>(data.size()) > max_bytes) {
         data.truncate(static_cast<qsizetype>(max_bytes));
     }
     if (dest.write(data) != data.size()) {

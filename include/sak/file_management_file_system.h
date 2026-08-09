@@ -110,6 +110,15 @@ struct FileManagementReadResult {
     QStringList blockers;
     QStringList warnings;
     QByteArray data;
+    /// @brief The reader itself stopped short of the end of the file.
+    ///
+    /// Callers must NOT infer truncation from the byte count alone. The "ask for one extra
+    /// byte" probe used elsewhere in this file cannot see a cut the READER made: the APFS
+    /// reader clamps every request to its own 512 MiB ceiling, which happens to equal the
+    /// callers' cap, so a 700 MB file comes back as exactly max_bytes and `size() > max_bytes`
+    /// is false. A hash then covers a prefix while reporting itself uncapped, and an export
+    /// reports complete -- after which the move path deletes the intact source.
+    bool truncated{false};
 };
 
 struct FileManagementMutationResult {
@@ -255,6 +264,25 @@ public:
     /// Compute the SHA-256 of @p path. Local targets are hashed in full via a chunked reader;
     /// raw/non-native targets are hashed from up to @p max_bytes read through the file-system
     /// reader (the result is marked @ref FileManagementHashResult::capped when that limit is hit).
+    /// @brief Whether a completed read covered less than the whole file.
+    ///
+    /// Two independent ways a read can fall short, and only one of them is visible in the
+    /// byte count:
+    ///   - the CALLER's cap bit, seen as bytes_read > max_bytes (the "ask for one extra
+    ///     byte" probe);
+    ///   - the READER's own ceiling, which returns a prefix and reports it in
+    ///     reader_truncated. The APFS reader clamps to 512 MiB, which is exactly the
+    ///     callers' cap, so a cut 700 MB file comes back as bytes_read == max_bytes and the
+    ///     first test is false for it.
+    ///
+    /// Taking only the byte count reported a prefix as a whole file: a hash claimed to cover
+    /// the file, and an export claimed complete -- after which the move path deleted the
+    /// intact source. Exposed as a pure seam so that decision is unit-testable without a
+    /// half-gigabyte fixture.
+    [[nodiscard]] static bool readWasCapped(bool reader_truncated,
+                                            uint64_t bytes_read,
+                                            uint64_t max_bytes);
+
     [[nodiscard]] static FileManagementHashResult hashFile(const FileManagementTarget& target,
                                                            const QString& path,
                                                            uint64_t max_bytes);

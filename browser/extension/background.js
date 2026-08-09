@@ -61,6 +61,10 @@ const DEFAULT_SCROLL_PX = 400;
 // silently couples this constant to the renderer's own cap, and raising either one alone would
 // turn a cut list back into an apparently complete one.
 const MAX_OMITTED_FRAMES = 20;
+// How much of a control's live value the accessibility capture carries. A value longer than
+// this is cut and flagged with value_truncated rather than silently shortened, so a clipped
+// entry is never mistaken for the control's full contents.
+const AX_VALUE_MAX_CHARS = 80;
 // Skia caps a single raster surface at 16384 DEVICE px per edge; a full-page clip past
 // that fails the capture. The clip is expressed in CSS px and rasterized at the display's
 // devicePixelRatio, so the CSS clip is clamped to this cap divided by dpr (below).
@@ -435,91 +439,67 @@ async function runCommand(cmd, args) {
   }
 }
 
+// The command table. Each entry declares what its handler needs rather than repeating a
+// call shape 43 times: `tab` means the handler is given the active tab id, `args` means it
+// is given the command's arguments.
+//
+// This is a Map, NOT an object literal, and that is a security property rather than a
+// style choice. `cmd` arrives from the native-messaging relay, so an object literal would
+// resolve inherited names -- COMMAND_TABLE["constructor"] and ["toString"] are truthy on
+// any plain object, so a frame naming one would pass the "is this a known command?" test
+// and then be called. A Map has no prototype chain to walk, so only keys put here match.
+const COMMAND_TABLE = new Map([
+  ["snapshot", { fn: captureSnapshot, tab: true, args: false }],
+  ["read", { fn: handleRead, tab: true, args: true }],
+  ["navigate", { fn: handleNavigate, tab: true, args: true }],
+  ["back", { fn: () => handleHistory("back"), tab: false, args: false }],
+  ["forward", { fn: () => handleHistory("forward"), tab: false, args: false }],
+  ["reload", { fn: handleReload, tab: false, args: false }],
+  ["listTabs", { fn: handleListTabs, tab: false, args: false }],
+  ["selectTab", { fn: handleSelectTab, tab: false, args: true }],
+  ["newTab", { fn: handleNewTab, tab: false, args: true }],
+  ["closeTab", { fn: handleCloseTab, tab: false, args: true }],
+  ["click", { fn: handleClick, tab: true, args: true }],
+  ["clickAt", { fn: handleClickAt, tab: true, args: true }],
+  ["hover", { fn: handleHover, tab: true, args: true }],
+  ["drag", { fn: handleDrag, tab: true, args: true }],
+  ["dialog", { fn: handleDialog, tab: true, args: true }],
+  ["type", { fn: handleType, tab: true, args: true }],
+  ["select", { fn: handleSelect, tab: true, args: true }],
+  ["setValue", { fn: handleSetValue, tab: true, args: true }],
+  ["media", { fn: handleMedia, tab: true, args: true }],
+  ["pressKey", { fn: handlePressKey, tab: true, args: true }],
+  ["scroll", { fn: handleScroll, tab: true, args: true }],
+  ["screenshot", { fn: handleScreenshot, tab: true, args: true }],
+  ["groupTabs", { fn: handleGroupTabs, tab: false, args: true }],
+  ["ungroupTabs", { fn: handleUngroupTabs, tab: false, args: true }],
+  ["waitFor", { fn: handleWaitFor, tab: true, args: true }],
+  ["getValue", { fn: handleGetValue, tab: true, args: true }],
+  ["getAttribute", { fn: handleGetAttribute, tab: true, args: true }],
+  ["box", { fn: handleBox, tab: true, args: true }],
+  ["focus", { fn: handleFocus, tab: true, args: true }],
+  ["reveal", { fn: handleReveal, tab: true, args: true }],
+  ["jsClick", { fn: handleJsClick, tab: true, args: true }],
+  ["listWindows", { fn: handleListWindows, tab: false, args: false }],
+  ["window", { fn: handleWindow, tab: false, args: true }],
+  ["emulate", { fn: handleEmulate, tab: true, args: true }],
+  ["print", { fn: handlePrint, tab: true, args: true }],
+  ["permission", { fn: handlePermission, tab: false, args: true }],
+  ["storage", { fn: handleStorage, tab: true, args: true }],
+  ["cookies", { fn: handleCookies, tab: false, args: true }],
+  ["download", { fn: handleDownload, tab: false, args: true }],
+  ["httpAuth", { fn: handleHttpAuth, tab: true, args: true }],
+]);
+
 async function dispatchCommand(cmd, args) {
-  switch (cmd) {
-    case "snapshot":
-      return await captureSnapshot(await activeTabId());
-    case "read":
-      return await handleRead(await activeTabId(), args);
-    case "navigate":
-      return await handleNavigate(await activeTabId(), args);
-    case "back":
-      return await handleHistory("back");
-    case "forward":
-      return await handleHistory("forward");
-    case "reload":
-      return await handleReload();
-    case "listTabs":
-      return await handleListTabs();
-    case "selectTab":
-      return await handleSelectTab(args);
-    case "newTab":
-      return await handleNewTab(args);
-    case "closeTab":
-      return await handleCloseTab(args);
-    case "click":
-      return await handleClick(await activeTabId(), args);
-    case "clickAt":
-      return await handleClickAt(await activeTabId(), args);
-    case "hover":
-      return await handleHover(await activeTabId(), args);
-    case "drag":
-      return await handleDrag(await activeTabId(), args);
-    case "dialog":
-      return await handleDialog(await activeTabId(), args);
-    case "type":
-      return await handleType(await activeTabId(), args);
-    case "select":
-      return await handleSelect(await activeTabId(), args);
-    case "setValue":
-      return await handleSetValue(await activeTabId(), args);
-    case "media":
-      return await handleMedia(await activeTabId(), args);
-    case "pressKey":
-      return await handlePressKey(await activeTabId(), args);
-    case "scroll":
-      return await handleScroll(await activeTabId(), args);
-    case "screenshot":
-      return await handleScreenshot(await activeTabId(), args);
-    case "groupTabs":
-      return await handleGroupTabs(args);
-    case "ungroupTabs":
-      return await handleUngroupTabs(args);
-    case "waitFor":
-      return await handleWaitFor(await activeTabId(), args);
-    case "getValue":
-      return await handleGetValue(await activeTabId(), args);
-    case "getAttribute":
-      return await handleGetAttribute(await activeTabId(), args);
-    case "box":
-      return await handleBox(await activeTabId(), args);
-    case "focus":
-      return await handleFocus(await activeTabId(), args);
-    case "reveal":
-      return await handleReveal(await activeTabId(), args);
-    case "jsClick":
-      return await handleJsClick(await activeTabId(), args);
-    case "listWindows":
-      return await handleListWindows();
-    case "window":
-      return await handleWindow(args);
-    case "emulate":
-      return await handleEmulate(await activeTabId(), args);
-    case "print":
-      return await handlePrint(await activeTabId(), args);
-    case "permission":
-      return await handlePermission(args);
-    case "storage":
-      return await handleStorage(await activeTabId(), args);
-    case "cookies":
-      return await handleCookies(args);
-    case "download":
-      return await handleDownload(args);
-    case "httpAuth":
-      return await handleHttpAuth(await activeTabId(), args);
-    default:
-      throw new Error("Unknown command: " + cmd);
+  const entry = COMMAND_TABLE.get(cmd);
+  if (!entry) {
+    throw new Error("Unknown command: " + cmd);
   }
+  const params = [];
+  if (entry.tab) { params.push(await activeTabId()); }
+  if (entry.args) { params.push(args); }
+  return await entry.fn(...params);
 }
 
 // -- Active tab helpers ------------------------------------------------------
@@ -829,8 +809,15 @@ function axValue(v) {
   return v && v.value !== undefined && v.value !== null ? String(v.value) : "";
 }
 
+// Null-prototype, because the keys are property NAMES arriving from the accessibility tree
+// and the values are read back by name a few lines later. On a plain object literal, a
+// property named "__proto__" would set this map's prototype instead of becoming an own key,
+// and every later lookup for a state the page never set would resolve through an object the
+// page chose. Chrome populates these names from its own AXPropertyName enum rather than from
+// page strings, so this is defence in depth rather than a live hole -- but a null prototype
+// costs nothing and removes the question.
 function indexProps(properties) {
-  const map = {};
+  const map = Object.create(null);
   for (const p of properties || []) {
     if (p && p.name && p.value) {
       map[p.name] = p.value.value;
@@ -877,6 +864,86 @@ function isEditableRole(role) {
   return role === "textbox" || role === "searchbox";
 }
 
+// An ARIA state that is present but false is not the same fact as one that is absent, so
+// these helpers only ever ADD a field. A caller reading a missing field learns "the page did
+// not say", which is the honest answer, rather than a fabricated false.
+const axTruthy = (v) => v === true || v === "true" || v === "mixed";
+
+// ARIA `checked` is TRI-state. "mixed" is a partially-checked control (the "select all" whose
+// children are split), which is neither checked nor unchecked: collapsing it either way states
+// something about the control that is not true, so it is reported as its own field and the
+// boolean is left absent -- the outline then makes no claim it cannot support.
+function axApplyCheckedState(props, rec) {
+  if (props.checked === "mixed") {
+    rec.mixed = true;
+  } else if (props.checked !== undefined) {
+    rec.checked = props.checked === true || props.checked === "true";
+  }
+}
+
+// The states that are simply "present and true" become one row each. Written as data rather
+// than as a branch per state so that adding an ARIA state is a table entry, and so the shape
+// of the check is visible side by side instead of spread over fifteen conditionals.
+const AX_STATE_FLAGS = [
+  { prop: "disabled", field: "disabled", when: (v) => v === true },
+  { prop: "readonly", field: "readonly", when: (v) => v === true },
+  { prop: "required", field: "required", when: (v) => v === true },
+  { prop: "busy", field: "busy", when: (v) => v === true },
+  { prop: "selected", field: "selected", when: axTruthy },
+  { prop: "pressed", field: "pressed", when: axTruthy },
+  // "invalid" carries a reason string ("spelling", "grammar"), so anything that is not
+  // absent and not an explicit false counts as invalid.
+  { prop: "invalid", field: "invalid",
+    when: (v) => v !== undefined && v !== false && v !== "false" },
+];
+
+// ARIA state, so the model can read expanded/selected/pressed/validity without a round-trip.
+function axApplyStateFlags(props, role, rec) {
+  for (const flag of AX_STATE_FLAGS) {
+    if (flag.when(props[flag.prop])) {
+      rec[flag.field] = true;
+    }
+  }
+  if (isEditableRole(role) || (props.editable !== undefined && props.editable !== false)) {
+    rec.editable = true;
+  }
+  axApplyCheckedState(props, rec);
+  // expanded is reported as a real boolean rather than only when true, because a collapsed
+  // control and a control with no expanded state are different facts to a caller.
+  if (props.expanded !== undefined && props.expanded !== "undefined") {
+    rec.expanded = axTruthy(props.expanded);
+  }
+}
+
+// The live value of inputs, sliders and spinbuttons.
+function axApplyValueFields(node, props, rec) {
+  const currentValue = node.value && node.value.value;
+  if (currentValue !== undefined && currentValue !== null && currentValue !== "") {
+    // A silently sliced value reads as the whole value; mark the cut like every other capped
+    // field in this file so a longer entry is not mistaken for the control's full contents.
+    const raw = String(currentValue);
+    rec.value = raw.slice(0, AX_VALUE_MAX_CHARS);
+    if (raw.length > AX_VALUE_MAX_CHARS) {
+      rec.value_truncated = true;
+    }
+  }
+  if (typeof props.valuemin === "number" && typeof props.valuemax === "number") {
+    rec.valuemin = props.valuemin;
+    rec.valuemax = props.valuemax;
+  }
+}
+
+function axApplyGeometry(node, boundsByBackend, rec) {
+  if (typeof node.backendDOMNodeId !== "number") {
+    return;
+  }
+  rec.backendNodeId = node.backendDOMNodeId;
+  const b = boundsByBackend.get(node.backendDOMNodeId);
+  if (b) {
+    rec.bounds = b;
+  }
+}
+
 function axNodeToCapture(node, depth, boundsByBackend) {
   if (node.ignored) {
     return null;
@@ -893,56 +960,9 @@ function axNodeToCapture(node, depth, boundsByBackend) {
     return null;
   }
   const rec = { role, name, depth, interactable, visible: props.hidden !== true };
-  if (typeof node.backendDOMNodeId === "number") {
-    rec.backendNodeId = node.backendDOMNodeId;
-    const b = boundsByBackend.get(node.backendDOMNodeId);
-    if (b) {
-      rec.bounds = b;
-    }
-  }
-  if (props.disabled === true) {
-    rec.disabled = true;
-  }
-  if (isEditableRole(role) || (props.editable !== undefined && props.editable !== false)) {
-    rec.editable = true;
-  }
-  // ARIA `checked` is TRI-state. "mixed" is a partially-checked control (the "select all" whose
-  // children are split), which is neither checked nor unchecked: collapsing it either way states
-  // something about the control that is not true, so it is reported as its own field and the
-  // boolean is left absent -- the outline then makes no claim it cannot support.
-  if (props.checked === "mixed") {
-    rec.mixed = true;
-  } else if (props.checked !== undefined) {
-    rec.checked = props.checked === true || props.checked === "true";
-  }
-  // ARIA state + current value, so the model can read expanded/selected/pressed/validity and
-  // the live value of inputs, sliders, and spinbuttons without a separate round-trip.
-  const truthy = (v) => v === true || v === "true" || v === "mixed";
-  if (props.expanded !== undefined && props.expanded !== "undefined") {
-    rec.expanded = truthy(props.expanded);
-  }
-  if (truthy(props.selected)) { rec.selected = true; }
-  if (truthy(props.pressed)) { rec.pressed = true; }
-  if (props.readonly === true) { rec.readonly = true; }
-  if (props.required === true) { rec.required = true; }
-  if (props.invalid !== undefined && props.invalid !== false && props.invalid !== "false") {
-    rec.invalid = true;
-  }
-  if (props.busy === true) { rec.busy = true; }
-  const currentValue = node.value && node.value.value;
-  if (currentValue !== undefined && currentValue !== null && currentValue !== "") {
-    // A silently sliced value reads as the whole value; mark the cut like every other capped
-    // field in this file so a longer entry is not mistaken for the control's full contents.
-    const raw = String(currentValue);
-    rec.value = raw.slice(0, 80);
-    if (raw.length > 80) {
-      rec.value_truncated = true;
-    }
-  }
-  if (typeof props.valuemin === "number" && typeof props.valuemax === "number") {
-    rec.valuemin = props.valuemin;
-    rec.valuemax = props.valuemax;
-  }
+  axApplyGeometry(node, boundsByBackend, rec);
+  axApplyStateFlags(props, role, rec);
+  axApplyValueFields(node, props, rec);
   return rec;
 }
 

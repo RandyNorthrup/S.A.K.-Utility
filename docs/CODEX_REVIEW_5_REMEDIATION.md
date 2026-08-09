@@ -1592,11 +1592,19 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
       August 11. RELAUNCH IS A MANUAL STEP after the cap resets -- nothing is waiting to
       pick this up on its own, and 764/1098 is where it stands until someone starts it.
 - [ ] R5-LEDGER-2 Verify every per-file finding against the local tree
-      IN PROGRESS: 35 of 723 briefs verified (4.8%); 688 briefs holding 8156 unverified
-      allegations remain.
+      IN PROGRESS: 99 of 723 briefs verified (13.7%) after wave 6; 624 briefs remain.
+      Wave 7 (64 more) is running.
 - [ ] R5-LEDGER-3 Fix every confirmed per-file finding in gated waves
-      IN PROGRESS: 649 findings survive verification so far -- 3 CRITICAL, 77 HIGH,
-      283 MEDIUM, 286 LOW. First fix wave (browser) is in the working tree, ungated.
+      IN PROGRESS: 1488 findings survive verification so far -- 5 CRITICAL, 102 HIGH,
+      560 MEDIUM, 821 LOW. Wave 1 (browser) is committed as b2d3e96; wave 2 closed the two
+      CRITICALs wave 6 surfaced outside the APFS writer (see "Fix wave 2" above).
+
+      Wave 6's deflation was much steeper than waves 1-5: 156 FALSE_POSITIVE against 39
+      before, and only 5 CRITICAL/HIGH survived in its first 432 verdicts. That is the
+      expected shape for a header-heavy batch -- a reviewer shown include/sak/foo.h with no
+      callers has to assume every caller is hostile -- and it means the raw CRITICAL/HIGH
+      labels on the remaining briefs overstate the real high-severity count by a wide margin.
+      It does NOT shrink the MEDIUM/LOW tail, which is where most of the remaining work is.
 - [ ] R5-LEDGER-4 Commit the coverage ledger so future campaigns measure coverage
       rather than assert it (this is the R1-R4 process failure being corrected)
 
@@ -1645,6 +1653,64 @@ Gaps this ledger exposed that four prior campaigns never scoped: include/sak hea
 (334 files, including partition_hfs_internal.h at 11163 lines, which carries the entire
 HFS+ engine and was only ever read because Codex followed an include), the 219-file test
 suite, the 103 build and certification scripts, the browser extension, and src/main.cpp.
+
+### Fix wave 2 - the two CRITICALs wave 6 found outside the APFS writer (2026-08-05)
+
+Verification wave 6 (64 briefs) raised the ledger from 649 surviving findings to 1488 and
+turned up two CRITICALs that the first five waves had not reached. Both are fixed, both are
+mutation-verified, and the mutation for each was re-run in a form that COMPILES after the
+first attempt failed the build -- a mutant that does not build proves nothing (R5-G21-11).
+
+- [x] R5-W6-C1 ELEVATED sc.exe / schtasks.exe / netsh.exe RESOLVED THROUGH %SystemRoot%.
+      src/core/cleanup_worker.cpp:190. systemToolPath() composed `<root>\System32\<exe>` and
+      its own comment claimed to defend against binary hijacking -- while all three callers
+      passed it qEnvironmentVariable("SystemRoot"). That variable is the classic same-user
+      UAC-bypass primitive: an unprivileged attacker writes HKCU\Environment\SystemRoot, the
+      value propagates through Explorer into the elevated sak_utility process, and every
+      "absolute System32 path" then pointed inside a directory the attacker owns. Cleaning
+      any Service, ScheduledTask, FirewallRule or StartupEntry item ran the attacker's binary
+      with the app's elevated token. The same poisoned variable also disarms the
+      "inside the Windows system directory" screen in filePathDeletionRefusal.
+
+      The repo already had the right primitive and this was the one place ignoring it:
+      sak::system32Path() asks the OS via GetSystemDirectoryW and fails closed, and
+      AppScanner states the rule outright ("never the attacker-influenceable %SystemRoot%
+      env var").
+
+      Fixed by routing all three callers through a new single resolver,
+      CleanupWorker::launchableSystemTool(), which delegates to sak::system32Path(). Making
+      it one named function rather than three call sites is what makes the fix testable: the
+      regression test poisons %SystemRoot% and asserts the resolver is unmoved, so reverting
+      any caller to the environment variable fails. systemToolPath() survives as the pure
+      seam the older test drives and now validates what it is handed -- a UNC root, a
+      relative root and a traversal root are all refused rather than composed.
+
+- [x] R5-W6-C2 APFS TRUNCATION DROPPED, AND THE MOVE PATH THEN DELETED THE INTACT SOURCE.
+      src/core/file_management_file_system.cpp:599. PartitionApfsFileReadResult carries
+      `truncated` and its header says a read-modify-write caller MUST fail closed on it.
+      fromApfsReadResult built a FileManagementReadResult without that field, so the bridge
+      was left inferring truncation from the byte count -- and that inference is defeated by
+      an exact numeric coincidence: the APFS reader clamps every request to its own 512 MiB
+      ceiling (kMaxFileReadBytes), and the callers' cap (kExplorerHashMaxBytes) is the same
+      512 MiB. A 700 MB file therefore returns EXACTLY max_bytes with truncated set, and
+      `bytes_read > max_bytes` is false for it.
+
+      Consequences, both reachable: a hash of a >512 MiB file on a raw APFS target reported
+      "SHA-256 of X" with capped false while covering only the first 512 MiB; and cutting a
+      DIRECTORY containing such a file from a raw APFS pane exported it truncated with
+      capped false / capped_files 0 / complete true, after which transferOne called
+      deleteMovedSource and permanently destroyed the intact original. The per-file size
+      guard in the transfer worker does not apply to directories, so nothing else caught it.
+      HFS+ and ext do not have this hole -- both fail closed above their cap.
+
+      Fixed by carrying the flag: FileManagementReadResult gains `truncated`,
+      fromApfsReadResult sets it (ext and HFS+ pass false, correct by construction since they
+      refuse rather than return a prefix), and both cap decisions now go through a new pure
+      seam, FileManagementFileSystemBridge::readWasCapped(reader_truncated, bytes_read,
+      max_bytes). Extracting it is what makes the fix testable without a half-gigabyte
+      fixture: the test asserts the exact shape of the bug -- truncated at precisely the cap
+      -- alongside the case the one-extra-byte probe exists to distinguish, a genuinely
+      complete file at exactly the cap, which must NOT become a false positive.
 
 ### Fix wave 1 - browser control (COMMITTED b2d3e96, 2026-08-05)
 
@@ -2946,7 +3012,51 @@ gate teaches people to disable both.
       mutate ONE thing at a time, assert the build succeeded before running the test, and
       treat "mutant survived" as a claim requiring the build exit code as evidence.
 
-- [ ] R5-G21-9 NO GATE HAS EVER SEEN THE EXTENSION JAVASCRIPT.
+- [~] R5-G21-9 NO GATE HAD EVER SEEN THE EXTENSION JAVASCRIPT. Gate and harness LANDED
+      2026-08-05; the enumerated violation list is being worked down. Status:
+
+        1. DONE. scripts/run_lizard.py now runs JavaScript at the repo's own thresholds
+           (CCN <= 10, PARAM <= 5, length <= 70) against browser/, and node is a REQUIRED
+           entry in the toolchain preflight so the gate cannot silently stop running.
+        2. IN PROGRESS. 24 violations at the start, 22 now. dispatchCommand (41 CCN, the
+           worst) and axNodeToCapture (33) are closed. The rest are held by
+           scripts/lizard_js_baseline.txt, which is a RATCHET rather than an exclusion: a
+           violation not in the list fails, a listed function that gets worse fails, and a
+           listed function that no longer violates fails until its row is deleted. That last
+           rule is the point -- a baseline nobody must prune is an exclusion list with extra
+           steps. All three directions were proven to fail before the gate was wired.
+        3. DONE. tests/unit/test_browser_extension_pure.mjs, 24 tests, registered with ctest.
+
+      The harness loads background.js AS SHIPPED under a stubbed chrome rather than splitting
+      the pure functions into a separate module. Extracting them would have meant changing the
+      artifact that is packed, signed and installed, and then testing the copy instead of the
+      thing that runs; the worker only touches chrome at top level to register listeners and
+      call connect(), so a recording proxy satisfies it. These tests exercise the exact bytes
+      that ship.
+
+      Eight mutations were run against the guards it claims to cover -- an unknown pointer
+      button coerced to left, tabSettledAt no longer disqualifying a pending navigation,
+      normalizeUrl passing any scheme, capFrameUrls never reporting truncation, and four more
+      -- and all eight were killed. The mutation runner refuses to report a result when its
+      search string does not match, which caught a real mistake: the first run used LF search
+      strings against a CRLF working copy, and without that check three "killed" mutants would
+      have been three mutations that never applied.
+
+      Two things found while refactoring, neither of them complexity:
+        - dispatchCommand became a Map, not an object literal. `cmd` arrives from the native
+          messaging relay, and on a plain object COMMAND_TABLE["constructor"] and
+          ["toString"] are truthy inherited values -- they would have passed the "is this a
+          known command?" test and then been invoked. Asserted in the suite.
+        - indexProps built its map with `{}` while keying it on accessibility-tree property
+          NAMES. A property named "__proto__" would set the map's prototype instead of
+          becoming a key, so a later lookup for a state the page never set would resolve
+          through an object the page chose. Chrome populates those names from its own
+          AXPropertyName enum rather than from page strings, so this was defence in depth
+          rather than a live hole -- now Object.create(null).
+
+      Original measurement follows.
+
+- [ ] R5-G21-9-ORIG NO GATE HAS EVER SEEN THE EXTENSION JAVASCRIPT.
       Measured 2026-08-05 while hand-reviewing fix wave 1. The lizard hook is
       declared `types_or: [c, c++]` with `files: \.(cpp|h|hpp|cxx|cc|hxx)$`, and
       clang-format, clang-tidy and cppcheck are all C/C++ by construction. That

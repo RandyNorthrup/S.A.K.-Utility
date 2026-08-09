@@ -31,7 +31,11 @@ $RequiredTools = @(
     @{ Name = "clang-format"; Purpose = "formatting gate"; VersionArgs = @("--version") },
     @{ Name = "cppcheck"; Purpose = "static analysis gate"; VersionArgs = @("--version") },
     @{ Name = "cmake"; Purpose = "build and test gates"; VersionArgs = @("--version") },
-    @{ Name = "git"; Purpose = "repository gates"; VersionArgs = @("--version") }
+    @{ Name = "git"; Purpose = "repository gates"; VersionArgs = @("--version") },
+    # The browser-control service worker is ~3300 lines of privileged JavaScript that no
+    # C/C++ gate can see. node runs its unit suite and the lizard JavaScript pass, so
+    # without it that whole surface silently returns to being ungated (R5-G21-9).
+    @{ Name = "node"; Purpose = "browser extension unit tests and JavaScript complexity gate"; VersionArgs = @("--version") }
 )
 
 # Optional: used by deeper analysis that is not yet part of every run.

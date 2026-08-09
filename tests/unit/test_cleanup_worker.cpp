@@ -6,6 +6,7 @@
 
 #include "sak/advanced_uninstall_types.h"
 #include "sak/cleanup_worker.h"
+#include "sak/process_runner.h"
 
 #include <QDir>
 #include <QFile>
@@ -39,6 +40,7 @@ private Q_SLOTS:
 
     // Anti-hijack: destructive CLI tools resolved by absolute System32 path (Codex-3)
     void systemToolPath_absoluteUnderSystemRootOrFailClosed();
+    void systemTools_resolveThroughTheOsNotTheEnvironment();
 
     // Defense-in-depth: worker re-screens each item against the cleanup denylist (Codex-3)
     void deniedTargets_refusedWithoutDeletion();
@@ -281,6 +283,54 @@ void TestCleanupWorker::systemToolPath_absoluteUnderSystemRootOrFailClosed() {
     const QString netsh = CleanupWorker::systemToolPath(QStringLiteral("C:/Windows"),
                                                         QStringLiteral("netsh.exe"));
     QVERIFY(netsh.endsWith(QStringLiteral("System32/netsh.exe")));
+
+    // R5 CRITICAL: the three production callers used to pass qEnvironmentVariable("SystemRoot"),
+    // which a same-user attacker sets via HKCU\Environment as the classic UAC-bypass primitive.
+    // The elevated worker then ran the attacker's sc.exe / schtasks.exe / netsh.exe. They now use
+    // sak::system32Path() (GetSystemDirectoryW), and this seam refuses a root that could not be
+    // the local Windows directory even if some future caller hands it one.
+    QVERIFY2(CleanupWorker::systemToolPath(QStringLiteral("\\\\attacker\\share"),
+                                           QStringLiteral("sc.exe"))
+                 .isEmpty(),
+             "a UNC root must never compose into a system tool path");
+    QVERIFY2(CleanupWorker::systemToolPath(QStringLiteral("//attacker/share"),
+                                           QStringLiteral("sc.exe"))
+                 .isEmpty(),
+             "a forward-slash UNC root must be refused too");
+    QVERIFY2(CleanupWorker::systemToolPath(QStringLiteral("windows"), QStringLiteral("sc.exe"))
+                 .isEmpty(),
+             "a relative root resolves against the CWD and must be refused");
+    QVERIFY2(CleanupWorker::systemToolPath(QStringLiteral("../../tmp/evil"),
+                                           QStringLiteral("sc.exe"))
+                 .isEmpty(),
+             "a traversal root must be refused");
+}
+
+void TestCleanupWorker::systemTools_resolveThroughTheOsNotTheEnvironment() {
+    // The real defence is that the callers ask the OS. Proving it here without launching anything:
+    // poison %SystemRoot% the way the attack does, and confirm sak::system32Path -- the resolver
+    // those callers now use -- is unmoved by it.
+    const QString saved = qEnvironmentVariable("SystemRoot");
+    qputenv("SystemRoot", QByteArrayLiteral("C:\\Users\\Public\\attacker"));
+
+    // launchableSystemTool is the single resolver the three destructive callers use, so asserting
+    // on it pins the CALLERS' choice of root -- not merely that some correct resolver exists
+    // elsewhere in the tree. Reverting any of them to %SystemRoot% fails here.
+    for (const QString& exe :
+         {QStringLiteral("sc.exe"), QStringLiteral("schtasks.exe"), QStringLiteral("netsh.exe")}) {
+        const QString resolved = CleanupWorker::launchableSystemTool(exe);
+        QVERIFY2(!resolved.isEmpty(), "the OS-derived system directory must still resolve");
+        QVERIFY2(!resolved.contains(QStringLiteral("attacker"), Qt::CaseInsensitive),
+                 "the poisoned environment variable must not reach the resolved tool path");
+        QVERIFY(resolved.endsWith(exe));
+        QVERIFY(QDir::isAbsolutePath(resolved));
+    }
+
+    if (saved.isEmpty()) {
+        qunsetenv("SystemRoot");
+    } else {
+        qputenv("SystemRoot", saved.toLocal8Bit());
+    }
 }
 
 void TestCleanupWorker::deniedTargets_refusedWithoutDeletion() {

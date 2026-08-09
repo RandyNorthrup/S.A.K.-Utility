@@ -1,0 +1,40 @@
+# JavaScript complexity baseline -- a RATCHET, not an exclusion list.
+#
+# browser/extension/background.js drives a real user's browser over the DevTools protocol
+# and had never been seen by any gate (R5-G21-9), so it arrived over the limit in two dozen
+# places. Excluding it would have left that exactly as it was. Instead every violation is
+# enumerated here with its measured numbers, and scripts/run_lizard.py enforces:
+#
+#   - a violation NOT listed here fails            -> no new debt
+#   - a listed function that gets worse fails      -> no drift
+#   - a listed function that no longer violates
+#     fails until its row is deleted               -> the list can only shrink
+#
+# That last rule is what keeps this from becoming a permanent carve-out. Fix a function,
+# delete its row; there is no way to leave a stale row behind.
+#
+# Thresholds are the repo's own, unchanged: CCN <= 10, PARAM <= 5, length <= 70.
+#
+# Format:  function@path | ccn | params | length
+String@browser/extension/background.js               | 15 | 1 | 26
+applyDeviceMetrics@browser/extension/background.js   | 14 | 3 | 24
+buildBoundsMap@browser/extension/background.js       | 13 | 1 | 25
+buildNodes@browser/extension/background.js           | 15 | 2 | 47
+collectMediaNodes@browser/extension/background.js    | 18 | 2 | 35
+ensureAttached@browser/extension/background.js       | 11 | 1 | 32
+handleCookies@browser/extension/background.js        | 17 | 1 | 25
+handleDownload@browser/extension/background.js       | 18 | 1 | 33
+handleGroupTabs@browser/extension/background.js      | 11 | 1 | 22
+handleHttpAuth@browser/extension/background.js       | 18 | 2 | 40
+handleNewTab@browser/extension/background.js         | 14 | 1 | 31
+handleSetValue@browser/extension/background.js       | 14 | 2 | 44
+handleStorage@browser/extension/background.js        | 25 | 2 | 37
+handleWaitFor@browser/extension/background.js        | 16 | 2 | 60
+handleWindow@browser/extension/background.js         | 23 | 1 | 44
+mediaFn@browser/extension/background.js              | 17 | 2 | 27
+occlusionAt@browser/extension/background.js          | 18 | 4 | 36
+onHostMessage@browser/extension/background.js        | 15 | 1 | 62
+printPageOptions@browser/extension/background.js     | 13 | 1 | 22
+selectCallArgs@browser/extension/background.js       | 13 | 1 | 20
+selectOptionFn@browser/extension/background.js       | 26 | 5 | 56
+viewportState@browser/extension/background.js        | 15 | 1 | 21
