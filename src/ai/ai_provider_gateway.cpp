@@ -15,6 +15,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace sak::ai {
@@ -53,6 +54,84 @@ QString compactJsonValue(const QJsonValue& value) {
     }
     return QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("value"), value}})
                                  .toJson(QJsonDocument::Compact));
+}
+
+// Non-empty when a tools/call response envelope is not the shape MCP defines. The peer that
+// produced it is untrusted (a remote docs endpoint, or the win32 server), so a malformed
+// envelope must FAIL CLOSED with the real shape error instead of being coerced into an empty
+// text block with isError=false -- which would record a remote failure as a success.
+QString mcpContentError(const QJsonArray& content) {
+    for (const auto& item_value : content) {
+        if (!item_value.isObject()) {
+            return QStringLiteral("result.content entry is not an object");
+        }
+        const QJsonObject item = item_value.toObject();
+        const QJsonValue type = item.value(QStringLiteral("type"));
+        if (!type.isString()) {
+            return QStringLiteral("result.content entry carries no type string");
+        }
+        if (type.toString() == QLatin1String("text") &&
+            !item.value(QStringLiteral("text")).isString()) {
+            return QStringLiteral("result.content text block carries no text string");
+        }
+    }
+    return {};
+}
+
+QString mcpEnvelopeError(const QJsonValue& result_value) {
+    if (!result_value.isObject()) {
+        return QStringLiteral("response carries no result object");
+    }
+    const QJsonObject result = result_value.toObject();
+    const QJsonValue is_error = result.value(QStringLiteral("isError"));
+    if (!is_error.isUndefined() && !is_error.isBool()) {
+        return QStringLiteral("result.isError is not a boolean");
+    }
+    const QJsonValue content = result.value(QStringLiteral("content"));
+    if (content.isUndefined()) {
+        return {};
+    }
+    if (!content.isArray()) {
+        return QStringLiteral("result.content is not an array");
+    }
+    return mcpContentError(content.toArray());
+}
+
+// True only for an absolute http(s) URL that names a host. A docs FETCH target must be a real
+// URL, never a search phrase that merely begins with "http".
+bool isAbsoluteHttpUrl(const QString& value, bool require_tls) {
+    const QUrl url(value, QUrl::StrictMode);
+    if (!url.isValid() || url.host().isEmpty()) {
+        return false;
+    }
+    const QString scheme = url.scheme().toLower();
+    return scheme == QLatin1String("https") || (!require_tls && scheme == QLatin1String("http"));
+}
+
+// Non-empty when one of @p keys is present with a non-string value. Qt would turn such a value
+// into an empty string and the caller would then report it as ABSENT, so reject it explicitly.
+QString stringFieldTypeError(const QJsonObject& object,
+                             const QStringList& keys,
+                             const QString& field_prefix) {
+    for (const QString& key : keys) {
+        const QJsonValue value = object.value(key);
+        if (!value.isUndefined() && !value.isString()) {
+            return QStringLiteral("%1.%2 must be a string").arg(field_prefix, key);
+        }
+    }
+    return {};
+}
+
+// True only for a JSON number that is an exact int. QJsonValue::toInt() silently returns its
+// default for a string, a fractional value, or a value outside int range.
+bool isIntegralJsonNumber(const QJsonValue& value) {
+    if (!value.isDouble()) {
+        return false;
+    }
+    const double number = value.toDouble();
+    return number >= static_cast<double>(std::numeric_limits<int>::min()) &&
+           number <= static_cast<double>(std::numeric_limits<int>::max()) &&
+           static_cast<double>(static_cast<int>(number)) == number;
 }
 
 QString mcpTextContent(const QJsonValue& result_value) {
@@ -157,6 +236,15 @@ QString firstNonEmpty(const QJsonObject& object, const QString& primary, const Q
 }
 
 DocsToolPlan context7DocsPlan(const QString& query, const QJsonObject& extra) {
+    const QString type_error = stringFieldTypeError(extra,
+                                                    {QStringLiteral("libraryId"),
+                                                     QStringLiteral("library_id"),
+                                                     QStringLiteral("libraryName"),
+                                                     QStringLiteral("library_name")},
+                                                    QStringLiteral("docs_query arguments"));
+    if (!type_error.isEmpty()) {
+        return {.error = type_error};
+    }
     const QString library_id =
         firstNonEmpty(extra, QStringLiteral("libraryId"), QStringLiteral("library_id"));
     const QString library_name =
@@ -199,14 +287,53 @@ DocsToolPlan microsoftCodeSamplePlan(const QString& query,
             .tool_arguments = arguments};
 }
 
+bool isKnownMicrosoftDocsTool(const QString& requested_tool) {
+    static const QSet<QString> tools{QStringLiteral("microsoft_docs_search"),
+                                     QStringLiteral("microsoft_docs_fetch"),
+                                     QStringLiteral("microsoft_code_sample_search"),
+                                     QStringLiteral("code_sample_search")};
+    return tools.contains(requested_tool);
+}
+
+// Plans a microsoft_docs_fetch when an explicit url (or an explicit fetch request) is present,
+// and an empty plan when this is not a fetch. A fetch target must be a real absolute URL: a
+// query that merely starts with "http" is a search phrase, not a URL, and must not be fetched.
+DocsToolPlan microsoftFetchPlan(const QString& query,
+                                const QString& url,
+                                const QString& requested_tool) {
+    const bool explicit_fetch = requested_tool == QLatin1String("microsoft_docs_fetch");
+    if (url.isEmpty() && !explicit_fetch && !isAbsoluteHttpUrl(query, false)) {
+        return {};
+    }
+    const QString target = url.isEmpty() ? query : url;
+    if (!isAbsoluteHttpUrl(target, false)) {
+        return {.error = QStringLiteral(
+                    "microsoft_docs_fetch requires an absolute http(s) url in arguments.url")};
+    }
+    return {.provider_tool = QStringLiteral("microsoft_docs_fetch"),
+            .tool_arguments = QJsonObject{{QStringLiteral("url"), target}}};
+}
+
 DocsToolPlan microsoftDocsPlan(const QString& query, const QJsonObject& extra) {
+    const QString type_error = stringFieldTypeError(
+        extra,
+        {QStringLiteral("tool"), QStringLiteral("url"), QStringLiteral("language")},
+        QStringLiteral("docs_query arguments"));
+    if (!type_error.isEmpty()) {
+        return {.error = type_error};
+    }
     const QString requested_tool = extra.value(QStringLiteral("tool")).toString().trimmed();
     const QString url = extra.value(QStringLiteral("url")).toString().trimmed();
     const QString language = extra.value(QStringLiteral("language")).toString().trimmed();
-    if (!url.isEmpty() || query.startsWith(QLatin1String("http"), Qt::CaseInsensitive)) {
-        return {.provider_tool = QStringLiteral("microsoft_docs_fetch"),
-                .tool_arguments =
-                    QJsonObject{{QStringLiteral("url"), url.isEmpty() ? query : url}}};
+    // Fail CLOSED on an explicit tool request this provider does not implement, instead of
+    // quietly downgrading it to an ordinary docs search the caller never asked for.
+    if (!requested_tool.isEmpty() && !isKnownMicrosoftDocsTool(requested_tool)) {
+        return {.error = QStringLiteral("Unknown microsoft_docs tool: %1").arg(requested_tool)};
+    }
+
+    DocsToolPlan fetch = microsoftFetchPlan(query, url, requested_tool);
+    if (fetch.ok() || !fetch.error.isEmpty()) {
+        return fetch;
     }
 
     DocsToolPlan code_sample = microsoftCodeSamplePlan(query, language, requested_tool);
@@ -247,6 +374,18 @@ QJsonObject loadHttpDocsProvider(const AiProviderRegistry& registry,
         return {};
     }
     if (provider.value(QStringLiteral("transport")).toString() == QLatin1String("http")) {
+        // An on-disk providers.json silently overrides the bundled manifest, so the endpoint is
+        // untrusted text. Refuse anything that is not an absolute https URL rather than posting
+        // the model's query at whatever a rewritten manifest names.
+        const QString endpoint = provider.value(QStringLiteral("endpoint")).toString().trimmed();
+        if (!isAbsoluteHttpUrl(endpoint, true)) {
+            if (error_message) {
+                *error_message =
+                    QStringLiteral("docs_query provider endpoint is not an absolute https URL: %1")
+                        .arg(provider_id);
+            }
+            return {};
+        }
         return provider;
     }
     if (error_message) {
@@ -278,21 +417,63 @@ bool isAppOperation(const QString& operation) {
     return operations.contains(operation);
 }
 
+// Keeps the pointer-level error channel in step with the availability envelope: a success
+// clears it (never leave stale text next to success=true), a failure carries the same message.
+QJsonObject withAvailabilityError(QJsonObject result, QString* error_message) {
+    if (!error_message) {
+        return result;
+    }
+    if (result.value(QStringLiteral("success")).toBool(false)) {
+        error_message->clear();
+    } else {
+        *error_message = result.value(QStringLiteral("error_message")).toString();
+    }
+    return result;
+}
+
 QJsonObject providerRegistryAvailability(const AiProviderRegistry& registry,
-                                         const QString& operation,
-                                         QString* error_message) {
+                                         const QString& operation) {
     QString error;
     const QJsonObject providers = registry.providersObject(&error);
     if (!error.isEmpty() || providers.isEmpty()) {
-        if (error_message) {
-            *error_message = error;
-        }
-        return availabilityError(operation, QStringLiteral("provider_registry_unavailable"), error);
-    }
-    if (error_message) {
-        error_message->clear();
+        // An empty registry is itself the failure; synthesize the reason so the caller never
+        // receives a failure with no message at all.
+        return availabilityError(operation,
+                                 QStringLiteral("provider_registry_unavailable"),
+                                 error.isEmpty()
+                                     ? QStringLiteral("Provider registry is empty or unreadable")
+                                     : error);
     }
     return availabilityOk(operation);
+}
+
+// provider_status is a question about ONE provider, so the registry loading is not enough:
+// resolve the requested id too, or the check reports success for a provider that cannot be read.
+QJsonObject providerStatusAvailability(const AiProviderRegistry& registry,
+                                       const QJsonObject& args,
+                                       const QString& operation) {
+    const QJsonObject registry_status = providerRegistryAvailability(registry, operation);
+    if (!registry_status.value(QStringLiteral("success")).toBool(false)) {
+        return registry_status;
+    }
+    const QString provider_id = args.value(QStringLiteral("provider_id")).toString().trimmed();
+    if (provider_id.isEmpty()) {
+        return availabilityError(operation,
+                                 QStringLiteral("invalid_request"),
+                                 QStringLiteral("provider_status requires provider_id"));
+    }
+    QString error;
+    const QJsonObject provider = registry.providerStatus(provider_id, &error);
+    if (!error.isEmpty() || provider.isEmpty()) {
+        return availabilityError(operation,
+                                 QStringLiteral("provider_unknown"),
+                                 error.isEmpty()
+                                     ? QStringLiteral("Unknown provider: %1").arg(provider_id)
+                                     : error);
+    }
+    QJsonObject ok = availabilityOk(operation);
+    ok[QStringLiteral("provider_id")] = provider_id;
+    return ok;
 }
 
 QJsonObject docsQueryAvailability(const AiProviderRegistry& registry,
@@ -308,7 +489,11 @@ QJsonObject docsQueryAvailability(const AiProviderRegistry& registry,
     }
     const QJsonObject provider = registry.providerStatus(provider_id, &error);
     if (!error.isEmpty() || provider.isEmpty()) {
-        return availabilityError(operation, QStringLiteral("provider_unknown"), error);
+        return availabilityError(operation,
+                                 QStringLiteral("provider_unknown"),
+                                 error.isEmpty()
+                                     ? QStringLiteral("Unknown provider: %1").arg(provider_id)
+                                     : error);
     }
     if (!provider.value(QStringLiteral("available")).toBool(false)) {
         const QString reason = provider.value(QStringLiteral("missing_reason"))
@@ -319,6 +504,12 @@ QJsonObject docsQueryAvailability(const AiProviderRegistry& registry,
         return availabilityError(operation,
                                  QStringLiteral("unsupported_transport"),
                                  QStringLiteral("docs_query requires HTTP provider"));
+    }
+    if (!isAbsoluteHttpUrl(provider.value(QStringLiteral("endpoint")).toString().trimmed(), true)) {
+        return availabilityError(operation,
+                                 QStringLiteral("invalid_endpoint"),
+                                 QStringLiteral(
+                                     "docs_query provider endpoint is not an absolute https URL"));
     }
     QJsonObject ok = availabilityOk(operation);
     ok[QStringLiteral("provider_id")] = provider_id;
@@ -340,7 +531,11 @@ QJsonObject appOperationAvailability(const AiProviderRegistry& registry,
                                      ? registry.appManifest(app_id, &error)
                                      : registry.appCapabilities(app_id, action, &error);
     if (!error.isEmpty() || manifest.isEmpty()) {
-        return availabilityError(operation, QStringLiteral("app_manifest_unavailable"), error);
+        return availabilityError(operation,
+                                 QStringLiteral("app_manifest_unavailable"),
+                                 error.isEmpty()
+                                     ? QStringLiteral("No bundled manifest for app: %1").arg(app_id)
+                                     : error);
     }
     if (operation != QLatin1String("app_manifest") &&
         !manifest.value(QStringLiteral("requested_action_supported")).toBool(false)) {
@@ -355,6 +550,135 @@ QJsonObject appOperationAvailability(const AiProviderRegistry& registry,
         ok[QStringLiteral("action")] = action;
     }
     return ok;
+}
+
+// Non-empty when a docs_query request carries a wrong-typed field. A non-object "arguments"
+// would otherwise become an empty object and the provider-specific planner would report the
+// caller's fields as absent instead of rejecting the request.
+QString docsQueryEnvelopeError(const QJsonObject& args) {
+    const QJsonValue arguments = args.value(QStringLiteral("arguments"));
+    if (!arguments.isUndefined() && !arguments.isObject()) {
+        return QStringLiteral("docs_query arguments must be an object");
+    }
+    return stringFieldTypeError(args,
+                                {QStringLiteral("provider_id"), QStringLiteral("query")},
+                                QStringLiteral("docs_query"));
+}
+
+// Non-empty when a win32_mcp_call request carries a wrong-typed control field. Qt would coerce
+// each of these to an empty/default value: a non-object tool_arguments would silently drop the
+// model's explicit arguments and run the tool on server defaults (active tab/window), and a
+// non-integer timeout_ms would silently become the 20s default.
+QString win32CallEnvelopeError(const QJsonObject& args) {
+    const QJsonValue arguments = args.value(QStringLiteral("arguments"));
+    if (!arguments.isUndefined() && !arguments.isObject()) {
+        return QStringLiteral("win32_mcp_call arguments must be an object");
+    }
+    const QJsonObject extra = arguments.toObject();
+    const QString type_error =
+        stringFieldTypeError(extra,
+                             {QStringLiteral("tool"), QStringLiteral("tool_name")},
+                             QStringLiteral("win32_mcp_call arguments"));
+    if (!type_error.isEmpty()) {
+        return type_error;
+    }
+    const QJsonValue tool_arguments = extra.value(QStringLiteral("tool_arguments"));
+    if (!tool_arguments.isUndefined() && !tool_arguments.isObject()) {
+        return QStringLiteral("win32_mcp_call arguments.tool_arguments must be an object");
+    }
+    const QJsonValue timeout = extra.value(QStringLiteral("timeout_ms"));
+    if (!timeout.isUndefined() && !isIntegralJsonNumber(timeout)) {
+        return QStringLiteral("win32_mcp_call arguments.timeout_ms must be an integer");
+    }
+    return {};
+}
+
+// Environment variables an on-disk providers.json must never set for the MCP child process:
+// they redirect where that child resolves code (PATH, Qt plugin paths) or which user
+// directories it reads and writes. The child can run elevated, so a manifest that names one of
+// these is a configuration attack, not a preference -- fail closed instead of honoring it.
+bool isProtectedChildEnvVar(const QString& name) {
+    static const QSet<QString> protected_vars{
+        QStringLiteral("PATH"),
+        QStringLiteral("PATHEXT"),
+        QStringLiteral("COMSPEC"),
+        QStringLiteral("SYSTEMROOT"),
+        QStringLiteral("WINDIR"),
+        QStringLiteral("SYSTEMDRIVE"),
+        QStringLiteral("TEMP"),
+        QStringLiteral("TMP"),
+        QStringLiteral("APPDATA"),
+        QStringLiteral("LOCALAPPDATA"),
+        QStringLiteral("PROGRAMDATA"),
+        QStringLiteral("USERPROFILE"),
+        QStringLiteral("HOMEDRIVE"),
+        QStringLiteral("HOMEPATH"),
+        QStringLiteral("PROGRAMFILES"),
+        QStringLiteral("PROGRAMFILES(X86)"),
+        QStringLiteral("PROGRAMW6432"),
+        QStringLiteral("COMMONPROGRAMFILES"),
+        QStringLiteral("COMMONPROGRAMFILES(X86)"),
+        QStringLiteral("__COMPAT_LAYER"),
+    };
+    const QString key = name.trimmed().toUpper();
+    return protected_vars.contains(key) || key.startsWith(QLatin1String("QT_")) ||
+           key.startsWith(QLatin1String("LD_"));
+}
+
+// Fold a provider manifest's "environment" object into the child environment. Returns the
+// first violation, empty on success -- a manifest that names a protected variable or supplies
+// a non-string value is rejected outright rather than partially applied.
+QString mergeManifestEnvironment(const QJsonObject& provider_env, QProcessEnvironment* env) {
+    for (auto it = provider_env.constBegin(); it != provider_env.constEnd(); ++it) {
+        if (isProtectedChildEnvVar(it.key())) {
+            return QStringLiteral(
+                       "Provider manifest may not set MCP child environment "
+                       "variable: %1")
+                .arg(it.key());
+        }
+        if (!it.value().isString()) {
+            return QStringLiteral("Provider manifest environment value is not a string: %1")
+                .arg(it.key());
+        }
+        env->insert(it.key(), it.value().toString());
+    }
+    return {};
+}
+
+bool isKnownWin32SecurityProfile(const QString& profile) {
+    return profile == QLatin1String("read_only") || profile == QLatin1String("interactive") ||
+           profile == QLatin1String("unrestricted");
+}
+
+// Refusing to build a child environment always means returning an empty one and, when the
+// caller asked for it, the reason. Keeping that in one place stops the null check on the
+// out-parameter from being repeated at every failure site.
+QProcessEnvironment envFailure(QString* error_message, const QString& reason) {
+    if (error_message) {
+        *error_message = reason;
+    }
+    return {};
+}
+
+QJsonObject jsonFailure(QString* error_message, const QString& reason) {
+    if (error_message) {
+        *error_message = reason;
+    }
+    return {};
+}
+
+// Non-empty when a call plan cannot be executed as given. Checked on every call because a
+// plan is a plain struct that a caller could have assembled by hand.
+QString win32McpPlanError(const Win32McpCallPlan& plan) {
+    if (plan.provider.isEmpty() || plan.tool_name.trimmed().isEmpty()) {
+        return QStringLiteral("Win32 MCP call plan is incomplete");
+    }
+    if (plan.timeout_ms < kWin32McpMinimumTimeoutMs ||
+        plan.timeout_ms > kWin32McpMaximumTimeoutMs) {
+        return QStringLiteral("Win32 MCP call plan timeout is out of range: %1")
+            .arg(plan.timeout_ms);
+    }
+    return {};
 }
 
 QString win32ToolName(const QJsonObject& extra) {
@@ -457,6 +781,13 @@ QJsonObject runDocsToolCall(const QJsonObject& provider,
     if (message.isEmpty()) {
         return {};
     }
+    const QString envelope_error = mcpEnvelopeError(message.value(QStringLiteral("result")));
+    if (!envelope_error.isEmpty()) {
+        if (error_message) {
+            *error_message = QStringLiteral("docs_query MCP %1").arg(envelope_error);
+        }
+        return {};
+    }
     QJsonObject result =
         mcpDocsQueryResult(provider, plan.provider_tool, query, plan.tool_arguments, message);
     const QString logical_error = docsQueryLogicalError(result);
@@ -491,6 +822,13 @@ QJsonObject AiProviderGateway::providerStatus(const QString& provider_id,
 }
 
 QJsonObject AiProviderGateway::docsQuery(const QJsonObject& args, QString* error_message) const {
+    const QString envelope_error = docsQueryEnvelopeError(args);
+    if (!envelope_error.isEmpty()) {
+        if (error_message) {
+            *error_message = envelope_error;
+        }
+        return {};
+    }
     const QString provider_id =
         args.value(QStringLiteral("provider_id")).toString().trimmed().toLower();
     if (provider_id.isEmpty()) {
@@ -533,6 +871,25 @@ QJsonObject AiProviderGateway::appCapabilities(const QString& app_id,
     return m_registry.appCapabilities(app_id, action, error_message);
 }
 
+QJsonObject AiProviderGateway::win32McpAvailability(const QJsonObject& args,
+                                                    const QString& operation) const {
+    QString error;
+    const Win32McpCallPlan plan = planWin32McpCall(args, &error);
+    if (!error.isEmpty() || plan.provider.isEmpty()) {
+        return availabilityError(operation,
+                                 QStringLiteral("win32_mcp_unavailable"),
+                                 error.isEmpty()
+                                     ? QStringLiteral("Win32 MCP provider is unavailable")
+                                     : error);
+    }
+    QJsonObject ok = availabilityOk(operation);
+    ok[QStringLiteral("provider_id")] = QStringLiteral("win32_mcp");
+    ok[QStringLiteral("provider_tool")] = plan.tool_name;
+    ok[QStringLiteral("read_only_tool")] = plan.read_only;
+    ok[QStringLiteral("high_risk_tool")] = plan.high_risk;
+    return ok;
+}
+
 QJsonObject AiProviderGateway::checkAvailability(const QJsonObject& args,
                                                  QString* error_message) const {
     const QString operation =
@@ -546,41 +903,48 @@ QJsonObject AiProviderGateway::checkAvailability(const QJsonObject& args,
                                  QStringLiteral("Provider gateway requires operation"));
     }
 
-    if (operation == QLatin1String("providers") || operation == QLatin1String("provider_status")) {
-        return providerRegistryAvailability(m_registry, operation, error_message);
+    if (operation == QLatin1String("providers")) {
+        return withAvailabilityError(providerRegistryAvailability(m_registry, operation),
+                                     error_message);
+    }
+
+    if (operation == QLatin1String("provider_status")) {
+        return withAvailabilityError(providerStatusAvailability(m_registry, args, operation),
+                                     error_message);
     }
 
     if (operation == QLatin1String("docs_query")) {
-        return docsQueryAvailability(m_registry, args, operation);
+        return withAvailabilityError(docsQueryAvailability(m_registry, args, operation),
+                                     error_message);
     }
 
     if (operation == QLatin1String("win32_mcp_call")) {
-        QString error;
-        const Win32McpCallPlan plan = planWin32McpCall(args, &error);
-        if (!error.isEmpty() || plan.provider.isEmpty()) {
-            return availabilityError(operation, QStringLiteral("win32_mcp_unavailable"), error);
-        }
-        QJsonObject ok = availabilityOk(operation);
-        ok[QStringLiteral("provider_id")] = QStringLiteral("win32_mcp");
-        ok[QStringLiteral("provider_tool")] = plan.tool_name;
-        ok[QStringLiteral("read_only_tool")] = plan.read_only;
-        ok[QStringLiteral("high_risk_tool")] = plan.high_risk;
-        return ok;
+        return withAvailabilityError(win32McpAvailability(args, operation), error_message);
     }
 
     if (isAppOperation(operation)) {
-        return appOperationAvailability(m_registry, args, operation);
+        return withAvailabilityError(appOperationAvailability(m_registry, args, operation),
+                                     error_message);
     }
 
-    return availabilityError(
-        operation,
-        QStringLiteral("unsupported_operation"),
-        QStringLiteral("Unsupported provider gateway operation: %1").arg(operation));
+    return withAvailabilityError(
+        availabilityError(
+            operation,
+            QStringLiteral("unsupported_operation"),
+            QStringLiteral("Unsupported provider gateway operation: %1").arg(operation)),
+        error_message);
 }
 
 AiProviderGateway::Win32McpCallPlan AiProviderGateway::planWin32McpCall(
     const QJsonObject& args, QString* error_message) const {
     Win32McpCallPlan plan;
+    const QString envelope_error = win32CallEnvelopeError(args);
+    if (!envelope_error.isEmpty()) {
+        if (error_message) {
+            *error_message = envelope_error;
+        }
+        return plan;
+    }
     QJsonObject provider = m_registry.providerStatus(QStringLiteral("win32_mcp"), error_message);
     if (provider.isEmpty()) {
         return plan;
@@ -605,18 +969,25 @@ AiProviderGateway::Win32McpCallPlan AiProviderGateway::planWin32McpCall(
 
 QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
                                             QString* error_message) const {
-    if (plan.provider.isEmpty() || plan.tool_name.trimmed().isEmpty()) {
-        if (error_message) {
-            *error_message = QStringLiteral("Win32 MCP call plan is incomplete");
-        }
-        return {};
+    // A plan is a plain struct, so re-validate the execution-shaping fields here rather than
+    // trusting that this one came from planWin32McpCall.
+    const QString plan_error = win32McpPlanError(plan);
+    if (!plan_error.isEmpty()) {
+        return jsonFailure(error_message, plan_error);
+    }
+
+    QString environment_error;
+    const QProcessEnvironment environment =
+        win32McpEnvironment(plan.security_profile, plan.provider, &environment_error);
+    if (!environment_error.isEmpty()) {
+        return jsonFailure(error_message, environment_error);
     }
 
     const AiMcpStdioCallRequest request{
         .command = plan.provider.value(QStringLiteral("resolved_command")).toString(),
         .tool_name = plan.tool_name,
         .arguments = plan.tool_arguments,
-        .environment = win32McpEnvironment(plan.security_profile, plan.provider),
+        .environment = environment,
         .timeout_ms = plan.timeout_ms};
     // With a pool, the server process is reused across calls (keyed on command +
     // the full launch environment, so security profiles never share a process);
@@ -625,6 +996,10 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
                                            : AiMcpStdioClient::callTool(request, error_message);
     if (message.isEmpty()) {
         return {};
+    }
+    const QString result_error = mcpEnvelopeError(message.value(QStringLiteral("result")));
+    if (!result_error.isEmpty()) {
+        return jsonFailure(error_message, QStringLiteral("Win32 MCP %1").arg(result_error));
     }
     if (error_message) {
         error_message->clear();
@@ -747,15 +1122,43 @@ bool AiProviderGateway::isWin32DesktopInputTool(const QString& tool_name) {
 }
 
 QProcessEnvironment AiProviderGateway::win32McpEnvironment(const QString& security_profile,
-                                                           const QJsonObject& provider) {
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    const QJsonObject provider_env = provider.value(QStringLiteral("environment")).toObject();
-    for (auto it = provider_env.constBegin(); it != provider_env.constEnd(); ++it) {
-        env.insert(it.key(), it.value().toString());
+                                                           const QJsonObject& provider,
+                                                           QString* error_message) {
+    const QString profile = security_profile.trimmed().toLower();
+    const bool read_only_profile = profile == QLatin1String("read_only");
+    if (!isKnownWin32SecurityProfile(profile)) {
+        return envFailure(
+            error_message,
+            QStringLiteral("Unknown Win32 MCP security profile: %1").arg(security_profile));
     }
-    env.insert(QStringLiteral("WIN32_MCP_SECURITY_PROFILE"), security_profile);
+
+    const QJsonValue provider_env_value = provider.value(QStringLiteral("environment"));
+    if (!provider_env_value.isUndefined() && !provider_env_value.isObject()) {
+        return envFailure(error_message,
+                          QStringLiteral("Provider manifest environment is not an object"));
+    }
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    const QString merge_error = mergeManifestEnvironment(provider_env_value.toObject(), &env);
+    if (!merge_error.isEmpty()) {
+        return envFailure(error_message, merge_error);
+    }
+    // The server resolves WIN32_MCP_SECURITY_PROFILE with exactly two recognized states: the
+    // token "read_only" locks it down, and an UNSET token is the documented full-access default
+    // the interactive/unrestricted tiers plan for. Any OTHER token makes the server fail closed
+    // to read-only, so passing "interactive"/"unrestricted" verbatim would silently reject every
+    // mutating call AFTER planning and confirmation had already reported success. Clear the
+    // variable instead, including any value inherited from this process or set by the manifest.
+    if (read_only_profile) {
+        env.insert(QStringLiteral("WIN32_MCP_SECURITY_PROFILE"), QStringLiteral("read_only"));
+    } else {
+        env.remove(QStringLiteral("WIN32_MCP_SECURITY_PROFILE"));
+    }
     env.insert(QStringLiteral("WIN32_MCP_RESULT_ENVELOPE"), QStringLiteral("true"));
     env.insert(QStringLiteral("WIN32_MCP_REDACT_SENSITIVE_OUTPUT"), QStringLiteral("true"));
+    if (error_message) {
+        error_message->clear();
+    }
     return env;
 }
 

@@ -36,13 +36,28 @@ function Assert-CommitOk {
         [string]$Label,
         [string]$OutputImage = ""
     )
+    # No silent opt-out: an empty OutputImage would disable the artifact check entirely,
+    # so a caller that forgets it fails the assertion instead of weakening it.
+    if ([string]::IsNullOrEmpty($OutputImage)) {
+        Fail "$Label assertion was called without an output image to verify"
+    }
+    # "ok" must be a JSON boolean. PowerShell treats the STRING "false" as truthy, so a
+    # wrong-typed report would otherwise pass as a success.
+    if ($Report.ok -isnot [bool]) {
+        Fail "$Label report 'ok' is not a JSON boolean"
+    }
     if (-not $Report.ok) {
         Fail "$Label report not ok: $($Report.blockers -join '; ')"
     }
-    if ($OutputImage -ne "" -and -not (Test-Path -LiteralPath $OutputImage -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $OutputImage -PathType Leaf)) {
         Fail "$Label did not create output image"
     }
-    if ((Test-HasProperty $Report "previous_xid") -and (Test-HasProperty $Report "new_xid")) {
+    $hasPrevious = Test-HasProperty $Report "previous_xid"
+    $hasNew = Test-HasProperty $Report "new_xid"
+    if ($hasPrevious -ne $hasNew) {
+        Fail "$Label reported only one of previous_xid/new_xid"
+    }
+    if ($hasPrevious -and $hasNew) {
         if ([int64]$Report.new_xid -le [int64]$Report.previous_xid) {
             Fail "$Label new_xid ($($Report.new_xid)) did not advance past previous_xid ($($Report.previous_xid))"
         }
@@ -54,17 +69,42 @@ function Assert-Blocked {
     param(
         [object]$Report,
         [string]$Label,
-        [string]$ExpectSubstring
+        [string]$ExpectSubstring = ""
     )
+    # No silent opt-out: an empty ExpectSubstring would accept ANY refusal reason.
+    if ([string]::IsNullOrEmpty($ExpectSubstring)) {
+        Fail "$Label assertion was called without an expected blocker substring"
+    }
+    if ($Report.ok -isnot [bool]) {
+        Fail "$Label report 'ok' is not a JSON boolean"
+    }
     if ($Report.ok) {
         Fail "$Label reported ok"
     }
-    $text = [string]::Join(" ", @($Report.blockers))
-    if ($ExpectSubstring -ne "" -and -not $text.Contains($ExpectSubstring)) {
+    $blockers = @($Report.blockers)
+    if ($blockers.Count -lt 1) {
+        Fail "$Label did not report a blocker"
+    }
+    $text = [string]::Join(" ", $blockers)
+    if (-not $text.Contains($ExpectSubstring)) {
         Fail "$Label did not explain guard (blockers: $text)"
     }
-    if (@($Report.blockers).Count -lt 1) {
-        Fail "$Label did not report a blocker"
+}
+
+# Shared assertion for the raw-device target guard. A nonzero exit ALONE proves nothing --
+# a usage error, a missing binary or a crash would satisfy it too -- so the refusal text
+# must be the guard's own.
+function Assert-RawTargetGuardRefused {
+    param(
+        [string]$Label,
+        [string]$Output,
+        [int]$ExitCode
+    )
+    if ($ExitCode -eq 0) {
+        Fail "$Label was accepted (exit 0)"
+    }
+    if (-not $Output.Contains("Refusing raw APFS write")) {
+        Fail "$Label did not fail closed through the raw-target guard (exit $ExitCode): $Output"
     }
 }
 
@@ -75,17 +115,17 @@ if (-not (Test-Path -LiteralPath $CliPath -PathType Leaf)) {
 $runRoot = Join-Path $OutputRoot ("run-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
 
-# --- Regression (review finding 1): the defense-in-depth OS-disk guard must refuse a
-# --- confirmed --allow-raw-target aimed at PhysicalDrive0 or an OS volume/device alias
-# --- (\\.\C:), not only \\.\PhysicalDriveN. Both must fail closed BEFORE any write.
-& $CliPath format-raw --target "\\.\PhysicalDrive0" --size-bytes 67108864 --allow-raw-target 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Fail "raw OS-disk guard accepted a PhysicalDrive0 target"
-}
-& $CliPath format-raw --target "\\.\$($env:SystemDrive)" --size-bytes 67108864 --allow-raw-target 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Fail "raw OS-disk guard accepted an OS volume-alias target (\\.\$($env:SystemDrive))"
-}
+# --- Regression (review finding 1): the defense-in-depth OS-disk guard must refuse an
+# --- --allow-raw-target aimed at PhysicalDrive0 or an OS volume/device alias (\\.\C:),
+# --- not only \\.\PhysicalDriveN. Both must fail closed BEFORE any write, and the refusal
+# --- must be the guard's own (see Assert-RawTargetGuardRefused). --confirm-target is
+# --- deliberately NOT passed: the guard runs first in main(), so the confirm gate stays
+# --- behind it as a second wall and a regression here still cannot format this machine.
+$guardOutput = (& $CliPath format-raw --target "\\.\PhysicalDrive0" --size-bytes 67108864 --allow-raw-target 2>&1 | Out-String).Trim()
+Assert-RawTargetGuardRefused -Label "raw OS-disk guard (PhysicalDrive0 target)" -Output $guardOutput -ExitCode $LASTEXITCODE
+
+$guardOutput = (& $CliPath format-raw --target "\\.\$($env:SystemDrive)" --size-bytes 67108864 --allow-raw-target 2>&1 | Out-String).Trim()
+Assert-RawTargetGuardRefused -Label "raw OS-disk guard (OS volume-alias target \\.\$($env:SystemDrive))" -Output $guardOutput -ExitCode $LASTEXITCODE
 
 $sizeBytes = 67108864
 $imagePath = Join-Path $runRoot "generated.apfs"
@@ -221,6 +261,9 @@ $caseInsertReportPath = Join-Path $runRoot "commit-image-file-insert-case.json"
     --file-name "CaseFold" `
     --payload-file $payloadPath `
     --output-json $caseInsertReportPath
+if ($LASTEXITCODE -ne 0) {
+    Fail "commit-image-file-insert (CaseFold) exited $LASTEXITCODE"
+}
 Assert-CommitOk -Report (Read-Report $caseInsertReportPath) -Label "commit-image-file-insert (CaseFold)" -OutputImage $caseInsertImagePath
 
 $caseCollisionReportPath = Join-Path $runRoot "commit-image-file-insert-case-collision.json"
@@ -231,6 +274,9 @@ $caseCollisionReportPath = Join-Path $runRoot "commit-image-file-insert-case-col
     --file-name "casefold" `
     --payload-file $payloadPath `
     --output-json $caseCollisionReportPath
+if ($LASTEXITCODE -eq 0) {
+    Fail "commit-image-file-insert accepted a case-insensitive name collision"
+}
 Assert-Blocked -Report (Read-Report $caseCollisionReportPath) -Label "case-insensitive commit-image-file-insert collision" -ExpectSubstring "already exists"
 
 # --- COW root-file patch (in range) ---
@@ -261,6 +307,9 @@ $overflowPatchReportPath = Join-Path $runRoot "commit-image-file-patch-overflow.
     --payload-file $patchPayloadPath `
     --patch-offset-bytes 18446744073709551615 `
     --output-json $overflowPatchReportPath
+if ($LASTEXITCODE -eq 0) {
+    Fail "commit-image-file-patch accepted an out-of-range patch offset"
+}
 Assert-Blocked -Report (Read-Report $overflowPatchReportPath) -Label "overflow commit-image-file-patch" -ExpectSubstring "maximum supported"
 
 # --- COW root-file delete ---

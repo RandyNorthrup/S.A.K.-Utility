@@ -8,7 +8,7 @@
   ],
   "detect": {
     "commands": [
-      "Get-Command sfc.exe"
+      "Test-Path -LiteralPath C:\\Windows\\System32\\sfc.exe -PathType Leaf"
     ],
     "process_names": [
       "sfc.exe"
@@ -19,7 +19,7 @@
       "supported": true,
       "method": "powershell",
       "requires_admin": true,
-      "command": "sfc.exe /verifyonly",
+      "command": "C:\\Windows\\System32\\sfc.exe /verifyonly",
       "timeout_seconds": 7200,
       "evidence": [
         "process_exit_code",

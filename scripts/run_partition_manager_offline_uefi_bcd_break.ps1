@@ -22,20 +22,34 @@ $script:RunRoot = ""
 $script:Actions = @()
 
 trap {
+    # Capture the REAL failure first: the evidence writes below are themselves fallible
+    # (network OutputRoot, full disk), and a secondary failure must never replace the
+    # destructive-operation error that brought us here.
+    $originalError = $_
     if (-not [string]::IsNullOrWhiteSpace($script:RunRoot)) {
-        $errorPath = Join-Path $script:RunRoot "offline-uefi-break-error.json"
-        [pscustomobject]@{
-            tool = "partition-manager-offline-uefi-bcd-break"
-            status = "Failed"
-            created_utc = (Get-Date).ToUniversalTime().ToString("o")
-            error = $_.Exception.Message
-            position = $_.InvocationInfo.PositionMessage
-            stack = $_.ScriptStackTrace
-            actions = $script:Actions
-        } | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $errorPath -Encoding UTF8
+        try {
+            $errorPath = Join-Path $script:RunRoot "offline-uefi-break-error.json"
+            [pscustomobject]@{
+                tool = "partition-manager-offline-uefi-bcd-break"
+                status = "Failed"
+                created_utc = (Get-Date).ToUniversalTime().ToString("o")
+                error = $originalError.Exception.Message
+                position = $originalError.InvocationInfo.PositionMessage
+                stack = $originalError.ScriptStackTrace
+                actions = $script:Actions
+            } | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $errorPath -Encoding UTF8
+        }
+        catch {
+            Write-Warning "Could not write the error report: $($_.Exception.Message)"
+        }
     }
     if ($script:TranscriptStarted) {
-        Stop-Transcript | Out-Null
+        try {
+            Stop-Transcript | Out-Null
+        }
+        catch {
+            Write-Warning "Could not stop the transcript: $($_.Exception.Message)"
+        }
         $script:TranscriptStarted = $false
     }
     break
@@ -68,14 +82,23 @@ function Invoke-NativeCommand {
 
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    # Clear the inherited exit code first: a command that never STARTS leaves the PREVIOUS
+    # command's $LASTEXITCODE in place, and a stale 0 would be read as success.
+    $global:LASTEXITCODE = $null
     try {
         $output = & $FilePath @Arguments 2>&1
+        $started = $?
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $oldPreference
     }
-    Add-Action -Name $Name -Detail ((($output | ForEach-Object { $_.ToString() }) -join "`n").Trim())
+    $outputText = (($output | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+    # Evidence records the command line and exit code, not just the (possibly empty) output.
+    Add-Action -Name $Name -Detail ("$FilePath $($Arguments -join ' ') (exit $exitCode)`n$outputText").Trim()
+    if (-not $started -or $null -eq $exitCode) {
+        throw "$Name did not run: $FilePath could not be started. $outputText"
+    }
     if ($exitCode -ne 0) {
         throw "$Name failed with exit code $exitCode."
     }
@@ -88,14 +111,21 @@ function Invoke-DiskPartScript {
     )
 
     $scriptPath = Join-Path $script:RunRoot ("diskpart-" + [guid]::NewGuid().ToString("N") + ".txt")
-    Set-Content -LiteralPath $scriptPath -Value ($Lines -join [Environment]::NewLine) -Encoding ASCII
+    $lineText = $Lines -join [Environment]::NewLine
+    Set-Content -LiteralPath $scriptPath -Value $lineText -Encoding ASCII
+    # Link the generated DiskPart command file into the evidence; the report otherwise
+    # names neither the script nor the commands it ran.
+    Add-Action -Name "$Name-diskpart-script" -Detail "$scriptPath`n$lineText"
     Invoke-NativeCommand -Name $Name -FilePath "diskpart.exe" -Arguments @("/s", $scriptPath)
 }
 
 function Get-AvailableDriveLetter {
+    # A Get-Volume failure must not silently degrade into an EMPTY used-letter list (which
+    # would hand back a letter that is already mounted). Test-Path is the independent second
+    # check and also sees network/SUBST mappings Get-Volume never reports.
     $used = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object DriveLetter | ForEach-Object { [string]$_.DriveLetter })
     foreach ($letter in @("S", "W", "R", "T", "U", "V", "X", "Y", "Z", "P", "Q", "L", "M", "N")) {
-        if ($used -notcontains $letter) {
+        if ($used -notcontains $letter -and -not (Test-Path -LiteralPath "${letter}:")) {
             return $letter
         }
     }
@@ -127,6 +157,7 @@ function Get-DiskSnapshot {
         friendly_name = [string]$disk.FriendlyName
         serial_number = [string]$disk.SerialNumber
         unique_id = [string]$disk.UniqueId
+        disk_guid = [string]$disk.Guid
         bus_type = [string]$disk.BusType
         partition_style = [string]$disk.PartitionStyle
         size_bytes = [uint64]$disk.Size
@@ -144,8 +175,18 @@ if (-not (Test-IsAdmin)) {
 if (-not $Force) {
     throw "Pass -Force after confirming the attached disk is the disposable target clone."
 }
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    throw "OutputRoot must name the evidence directory; it cannot be empty."
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedTargetLabel)) {
+    throw "ExpectedTargetLabel must describe the disposable target; it cannot be empty."
+}
 
-$script:RunRoot = Join-Path $OutputRoot (Get-Date -Format "yyyyMMdd-HHmmss")
+# A second-resolution timestamp alone collides: two runs started in the same second would
+# share a run directory, transcript, action log and ESP backup names, mixing or overwriting
+# each other's evidence. Bind every per-run name to one unique token.
+$runToken = [guid]::NewGuid().ToString("N").Substring(0, 8)
+$script:RunRoot = Join-Path $OutputRoot ((Get-Date -Format "yyyyMMdd-HHmmss") + "-" + $runToken)
 New-Item -ItemType Directory -Path $script:RunRoot -Force | Out-Null
 Start-Transcript -Path (Join-Path $script:RunRoot "offline-uefi-break-transcript.log") -Force | Out-Null
 $script:TranscriptStarted = $true
@@ -166,8 +207,10 @@ $before = Get-DiskSnapshot -DiskNumber $TargetDiskNumber
 if ($before.is_boot -or $before.is_system) {
     throw "Refusing boot/system disk $TargetDiskNumber."
 }
-if ($before.size_bytes -lt 60GB -or $before.size_bytes -gt 120GB) {
-    throw "Refusing disk $TargetDiskNumber size $($before.size_bytes); expected disposable cloned OS disk."
+# Same bounds as the autodiscovery filter above (exclusive on both ends), so an explicitly
+# named disk can never be accepted at a size autodiscovery would have rejected.
+if ($before.size_bytes -le 60GB -or $before.size_bytes -ge 120GB) {
+    throw "Refusing disk $TargetDiskNumber size $($before.size_bytes); expected disposable cloned OS disk (60-120GB, exclusive)."
 }
 
 $newDiskGuid = [guid]::NewGuid().ToString("D")
@@ -182,6 +225,27 @@ Invoke-DiskPartScript -Name "prepare-target-disk" -Lines @(
 )
 Update-HostStorageCache
 
+# DiskPart reports success even when an individual command in the script failed -- and
+# "online disk noerr" is explicitly told to continue -- so prove the postconditions instead
+# of trusting the exit code. The report claims the new GUID; verify the disk actually took it.
+$prepared = Get-DiskSnapshot -DiskNumber $TargetDiskNumber
+if ($prepared.is_boot -or $prepared.is_system) {
+    throw "Disk $TargetDiskNumber is a boot/system disk after prepare-target-disk; refusing to continue."
+}
+if ($prepared.is_read_only) {
+    throw "Disk $TargetDiskNumber is still read-only after prepare-target-disk; refusing to continue."
+}
+if ($prepared.is_offline) {
+    throw "Disk $TargetDiskNumber is still offline after prepare-target-disk; refusing to continue."
+}
+if ($prepared.partition_style -eq "GPT") {
+    if ([string]::IsNullOrWhiteSpace($prepared.disk_guid) -or
+        ([guid]$prepared.disk_guid) -ne ([guid]$newDiskGuid)) {
+        throw "Disk $TargetDiskNumber GUID was not changed to $newDiskGuid (observed '$($prepared.disk_guid)')."
+    }
+}
+Add-Action -Name "verify-prepared-disk" -Detail "Disk $TargetDiskNumber is online and writable; GUID $($prepared.disk_guid)."
+
 $efiPartition = Get-Partition -DiskNumber $TargetDiskNumber | Where-Object { [string]$_.Type -eq "System" } | Sort-Object Size | Select-Object -First 1
 if ($null -eq $efiPartition) {
     throw "No EFI System partition found on disk $TargetDiskNumber."
@@ -193,6 +257,9 @@ if (-not $efiPartition.DriveLetter) {
         Add-PartitionAccessPath -DiskNumber $TargetDiskNumber -PartitionNumber $efiPartition.PartitionNumber -AccessPath "${efiLetter}:"
     }
     catch {
+        # Record the real failure before falling back to DiskPart; the postcondition check
+        # below is what actually proves the letter landed on the intended partition.
+        Add-Action -Name "assign-efi-letter-access-path-failed" -Detail $_.Exception.Message
         Invoke-DiskPartScript -Name "assign-efi-letter" -Lines @(
             "select disk $TargetDiskNumber",
             "select partition $($efiPartition.PartitionNumber)",
@@ -202,25 +269,62 @@ if (-not $efiPartition.DriveLetter) {
     Add-Action -Name "assign-efi-letter" -Detail "Assigned ${efiLetter}: to EFI partition $($efiPartition.PartitionNumber)."
 }
 
-$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+# Resolve the letter BACK to the selected partition before anything is deleted through it:
+# an assignment that silently landed on another volume would otherwise take that volume's
+# boot files with it.
+Update-HostStorageCache
+$assignedPartition = Get-Partition -DiskNumber $TargetDiskNumber -PartitionNumber $efiPartition.PartitionNumber -ErrorAction Stop
+if ([string]$assignedPartition.DriveLetter -ne $efiLetter) {
+    throw "Drive letter ${efiLetter}: does not resolve to disk $TargetDiskNumber partition $($efiPartition.PartitionNumber) (observed '$([string]$assignedPartition.DriveLetter)')."
+}
+if ([string]$assignedPartition.Type -ne "System") {
+    throw "Disk $TargetDiskNumber partition $($efiPartition.PartitionNumber) is no longer an EFI System partition."
+}
+Add-Action -Name "verify-efi-letter" -Detail "${efiLetter}: resolves to disk $TargetDiskNumber partition $($efiPartition.PartitionNumber) (type System)."
+
+$stamp = (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + $runToken
 $bcdPath = "${efiLetter}:\EFI\Microsoft\Boot\BCD"
 $bcdBackupPath = "${efiLetter}:\EFI\Microsoft\Boot\BCD.sak-broken-$stamp"
 if (-not (Test-Path -LiteralPath $bcdPath -PathType Leaf)) {
     throw "BCD store not found at $bcdPath."
 }
+# Prove the backup is byte-identical BEFORE deleting the original, and prove the deletion
+# happened afterwards -- the report claims both, so neither may be assumed.
+$bcdHash = (Get-FileHash -LiteralPath $bcdPath -Algorithm SHA256).Hash
 Copy-Item -LiteralPath $bcdPath -Destination $bcdBackupPath -Force
+if (-not (Test-Path -LiteralPath $bcdBackupPath -PathType Leaf) -or
+    (Get-FileHash -LiteralPath $bcdBackupPath -Algorithm SHA256).Hash -ne $bcdHash) {
+    throw "BCD backup at $bcdBackupPath does not match the live store; refusing to remove the BCD."
+}
 Remove-Item -LiteralPath $bcdPath -Force
-Add-Action -Name "remove-microsoft-bcd" -Detail "Backed up $bcdPath to $bcdBackupPath, then removed active BCD."
+if (Test-Path -LiteralPath $bcdPath) {
+    throw "BCD store is still present after removal: $bcdPath."
+}
+Add-Action -Name "remove-microsoft-bcd" -Detail "Backed up $bcdPath to $bcdBackupPath (SHA256 $bcdHash), then removed active BCD."
 
 $fallbackBoot = "${efiLetter}:\EFI\BOOT\BOOTX64.EFI"
 $fallbackBackupPath = ""
 $fallbackRemoved = $false
 if (Test-Path -LiteralPath $fallbackBoot -PathType Leaf) {
     $fallbackBackupPath = "${efiLetter}:\EFI\BOOT\BOOTX64.EFI.sak-broken-$stamp"
+    $fallbackHash = (Get-FileHash -LiteralPath $fallbackBoot -Algorithm SHA256).Hash
     Copy-Item -LiteralPath $fallbackBoot -Destination $fallbackBackupPath -Force
+    if (-not (Test-Path -LiteralPath $fallbackBackupPath -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $fallbackBackupPath -Algorithm SHA256).Hash -ne $fallbackHash) {
+        throw "Fallback loader backup at $fallbackBackupPath does not match the original; refusing to remove it."
+    }
     Remove-Item -LiteralPath $fallbackBoot -Force
+    if (Test-Path -LiteralPath $fallbackBoot) {
+        throw "Fallback loader is still present after removal: $fallbackBoot."
+    }
     $fallbackRemoved = $true
-    Add-Action -Name "remove-fallback-loader" -Detail "Backed up $fallbackBoot to $fallbackBackupPath, then removed fallback loader."
+    Add-Action -Name "remove-fallback-loader" -Detail "Backed up $fallbackBoot to $fallbackBackupPath (SHA256 $fallbackHash), then removed fallback loader."
+}
+else {
+    # Not a failure (some clones carry no fallback loader), but it must be visible rather
+    # than leaving fallback_removed=false unexplained in the report.
+    Add-Action -Name "fallback-loader-absent" -Detail "No fallback loader at $fallbackBoot; only the BCD break applies to this disk."
+    Write-Warning "No fallback loader at $fallbackBoot -- fallback_removed stays false in the report."
 }
 
 $after = Get-DiskSnapshot -DiskNumber $TargetDiskNumber
@@ -248,6 +352,12 @@ $report = [ordered]@{
 }
 $reportPath = Join-Path $script:RunRoot "offline-uefi-break-report.json"
 $report | ConvertTo-Json -Depth 24 | Set-Content -LiteralPath $reportPath -Encoding UTF8
+
+# Never announce completion off a report whose own evidence says the break did not happen.
+if (-not $report.bcd_removed) {
+    throw "BCD store is still present at $bcdPath; the offline UEFI break did not complete."
+}
+
 if ($script:TranscriptStarted) {
     Stop-Transcript | Out-Null
     $script:TranscriptStarted = $false

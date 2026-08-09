@@ -35,6 +35,20 @@ namespace sak {
 namespace {
 constexpr int kAttachMethodEmbeddedMessage = 5;
 constexpr int kAttachMethodOleObject = 6;
+
+// Size column: a plain QTableWidgetItem sorts on its DISPLAY string, so "9.0 KB" would sort
+// above "10.0 MB" and the column would lie about which attachment is biggest. Order on the
+// exact byte count carried alongside the text instead.
+class AttachmentSizeItem : public QTableWidgetItem {
+public:
+    AttachmentSizeItem(const QString& text, qint64 size_bytes) : QTableWidgetItem(text) {
+        setData(Qt::UserRole + 1, size_bytes);
+    }
+
+    bool operator<(const QTableWidgetItem& other) const override {
+        return data(Qt::UserRole + 1).toLongLong() < other.data(Qt::UserRole + 1).toLongLong();
+    }
+};
 }  // namespace
 
 // ============================================================================
@@ -259,6 +273,12 @@ void EmailAttachmentsBrowserDialog::collectFolderIdsRecursive(const PstFolder& f
 // ============================================================================
 
 void EmailAttachmentsBrowserDialog::startScan() {
+    if (m_controller == nullptr) {
+        // Fail closed: every request below would dereference it. Say so instead of crashing.
+        m_progress_bar->hide();
+        m_status_label->setText(tr("No mailbox reader is available. Nothing was scanned."));
+        return;
+    }
     m_folders_scanned = 0;
     m_progress_bar->setRange(0, m_all_folder_ids.size());
     m_progress_bar->setValue(0);
@@ -323,13 +343,26 @@ void EmailAttachmentsBrowserDialog::requestNextDetail() {
 // Data loading slots
 // ============================================================================
 
-void EmailAttachmentsBrowserDialog::onFolderItemsLoaded(uint64_t /*folder_id*/,
+void EmailAttachmentsBrowserDialog::onFolderItemsLoaded(uint64_t folder_id,
                                                         QVector<sak::PstItemSummary> items,
                                                         int total) {
+    // Correlate the arrival with the folder this dialog actually asked for. The controller is
+    // shared and onErrorOccurred can advance the cursor while a request is still in flight, so
+    // an uncorrelated arrival would be counted against the wrong folder -- and once every
+    // folder has been scanned there is no slot left to index at all, making
+    // m_all_folder_ids[m_folders_scanned] an out-of-bounds read.
+    if (m_folders_scanned >= m_all_folder_ids.size()) {
+        return;
+    }
+    const uint64_t expected_folder_id = m_all_folder_ids[m_folders_scanned];
+    if (folder_id != expected_folder_id) {
+        return;
+    }
+
     for (const auto& item : items) {
         if (item.has_attachments) {
             m_pending_detail_ids.append(item.node_id);
-            m_message_folder_map.insert(item.node_id, m_all_folder_ids[m_folders_scanned]);
+            m_message_folder_map.insert(item.node_id, expected_folder_id);
         }
     }
 
@@ -422,9 +455,9 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
         name_item->setData(Qt::UserRole, idx);
         m_table->setItem(row, ColFilename, name_item);
 
-        auto* size_item = new QTableWidgetItem(formatBytes(entry.size_bytes));
-        size_item->setData(Qt::UserRole + 1, entry.size_bytes);
-        m_table->setItem(row, ColSize, size_item);
+        m_table->setItem(row,
+                         ColSize,
+                         new AttachmentSizeItem(formatBytes(entry.size_bytes), entry.size_bytes));
 
         m_table->setItem(row,
                          ColType,
@@ -520,8 +553,12 @@ void EmailAttachmentsBrowserDialog::onTableContextMenu(const QPoint& pos) {
     if (name_item == nullptr) {
         return;
     }
-    int att_idx = name_item->data(Qt::UserRole).toInt();
-    if (att_idx < 0 || att_idx >= m_all_attachments.size()) {
+    // A missing or wrong-typed row index coerces to 0 through a bare toInt(), which would
+    // silently offer the FIRST attachment for a row that no longer resolves. Fail closed.
+    bool index_ok = false;
+    const int att_idx = name_item->data(Qt::UserRole).toInt(&index_ok);
+    if (!index_ok || att_idx < 0 || att_idx >= m_all_attachments.size()) {
+        m_status_label->setText(tr("That row no longer resolves to an attachment."));
         return;
     }
     const auto& entry = m_all_attachments[att_idx];
@@ -614,23 +651,37 @@ void EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked() {
     }
 
     QVector<AttachmentRef> refs;
-    refs.reserve(m_table->rowCount());
-    for (int row = 0; row < m_table->rowCount(); ++row) {
-        auto* item = m_table->item(row, ColFilename);
-        if (item == nullptr) {
-            continue;
-        }
-        int att_idx = item->data(Qt::UserRole).toInt();
-        if (att_idx < 0 || att_idx >= m_all_attachments.size()) {
-            continue;
-        }
-        const auto& entry = m_all_attachments[att_idx];
-        refs.append(AttachmentRef{entry.message_node_id, entry.attachment_index});
+    if (!collectVisibleAttachmentRefs(&refs)) {
+        m_status_label->setText(
+            tr("The table changed while the save was starting. Nothing was written."));
+        return;
     }
     if (refs.isEmpty()) {
         return;
     }
     startBatch(dir, refs);
+}
+
+// False when any visible row fails to resolve to a real attachment. A bare toInt() would turn
+// a missing or wrong-typed row index into 0 -- saving the FIRST attachment in place of the row
+// the user is looking at -- and skipping such a row would make "Save All Visible" write a
+// silent subset. Both are fail-closed here: one bad row abandons the whole batch.
+bool EmailAttachmentsBrowserDialog::collectVisibleAttachmentRefs(QVector<AttachmentRef>* refs) {
+    refs->reserve(m_table->rowCount());
+    for (int row = 0; row < m_table->rowCount(); ++row) {
+        auto* item = m_table->item(row, ColFilename);
+        if (item == nullptr) {
+            return false;
+        }
+        bool index_ok = false;
+        const int att_idx = item->data(Qt::UserRole).toInt(&index_ok);
+        if (!index_ok || att_idx < 0 || att_idx >= m_all_attachments.size()) {
+            return false;
+        }
+        const auto& entry = m_all_attachments[att_idx];
+        refs->append(AttachmentRef{entry.message_node_id, entry.attachment_index});
+    }
+    return true;
 }
 
 void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t message_id,

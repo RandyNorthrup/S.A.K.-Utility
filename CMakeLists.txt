@@ -127,18 +127,41 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     )
 
     # Config-specific flags.
+    #
+    # -march=native bakes the BUILD host's instruction set into the image, so a
+    # release compiled on a newer CPU dies with an illegal instruction on the
+    # older technician and customer machines this tool exists to service. It
+    # stays available for local benchmarking, but it has to be asked for: a
+    # distributable build must never pick it up by accident.
+    option(SAK_ENABLE_MARCH_NATIVE
+        "Optimize Release builds for the build host's CPU (NOT distributable)" OFF)
     add_compile_options(
         $<$<CONFIG:Release>:-O3>
-        $<$<CONFIG:Release>:-march=native>
         $<$<CONFIG:Release>:-flto>
         $<$<CONFIG:Debug>:-O0>
         $<$<CONFIG:Debug>:-g3>
     )
+    if(SAK_ENABLE_MARCH_NATIVE)
+        add_compile_options($<$<CONFIG:Release>:-march=native>)
+        message(STATUS "-march=native:      ENABLED (the binary is NOT portable off this host)")
+    endif()
     add_link_options($<$<CONFIG:Release>:-flto>)
 
-    # Security features
-    add_compile_options(-fstack-protector-strong -D_FORTIFY_SOURCE=2)
-    add_link_options(-Wl,-z,relro -Wl,-z,now)
+    # Security features.
+    #
+    # _FORTIFY_SOURCE needs an optimizing compile to do anything at all; glibc
+    # answers -O0 with "#warning _FORTIFY_SOURCE requires compiling with
+    # optimization", and the -Werror above turns that into a hard error - so the
+    # flag meant to harden Release would instead stop every Debug build. Apply it
+    # only to the configurations where it has an effect.
+    add_compile_options(-fstack-protector-strong)
+    add_compile_options($<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=2>)
+    # -z relro / -z now are ELF-only. Apple's linker rejects -z outright and the
+    # MinGW/PE linkers ignore it, so emit them only where they mean something
+    # rather than shipping flags whose fate depends on the linker in use.
+    if(PLATFORM_LINUX)
+        add_link_options(-Wl,-z,relro -Wl,-z,now)
+    endif()
 endif()
 
 # ============================================================================
@@ -162,9 +185,20 @@ option(ENABLE_ASAN "Enable Address Sanitizer (Debug builds)" ON)
 option(ENABLE_UBSAN "Enable Undefined Behavior Sanitizer (Clang/GCC Debug)" ON)
 option(ENABLE_TSAN "Enable Thread Sanitizer (mutually exclusive with ASan)" OFF)
 
+# Effective state, reported in the configuration summary below. The option
+# values are requests; these say what the build will actually instrument.
+set(SAK_ASAN_STATE "OFF")
+set(SAK_UBSAN_STATE "OFF")
+set(SAK_TSAN_STATE "OFF")
+
+# Two mutually exclusive sanitizers were requested. Quietly dropping one leaves
+# the build reporting coverage it does not have, so refuse to configure and make
+# the caller say which one is wanted.
 if(ENABLE_TSAN AND ENABLE_ASAN)
-    message(WARNING "TSan and ASan are mutually exclusive. Disabling ASan in favor of TSan.")
-    set(ENABLE_ASAN OFF)
+    message(FATAL_ERROR
+        "ENABLE_TSAN and ENABLE_ASAN are mutually exclusive: one binary cannot carry "
+        "both instrumentations. Configure with -DENABLE_TSAN=ON -DENABLE_ASAN=OFF for a "
+        "TSan build, or leave ENABLE_TSAN=OFF for the default ASan+UBSan build.")
 endif()
 
 # The sanitizer flags MUST be selected per-configuration with a generator
@@ -209,7 +243,8 @@ if(TRUE)
                     "component of the Visual Studio installer, or configure with "
                     "-DENABLE_ASAN=OFF.")
             endif()
-            message(STATUS "Address Sanitizer:  ENABLED for the Debug configuration")
+            set(SAK_ASAN_STATE "ENABLED for the Debug configuration")
+            message(STATUS "Address Sanitizer:  ${SAK_ASAN_STATE}")
             message(STATUS "ASan runtime:       ${SAK_ASAN_RUNTIME}")
             # Stage it beside both Debug output roots at configure time, so every
             # Debug executable finds it without depending on the developer's PATH.
@@ -221,11 +256,20 @@ if(TRUE)
         endif()
         # Note: MSVC does not support UBSan or TSan.
         # Use clang-cl or GCC for UBSan/TSan coverage.
+        # ENABLE_UBSAN is ON by default, so its value here is not a request from
+        # anyone; report the effective state and carry on. ENABLE_TSAN defaults
+        # OFF, so ON means somebody explicitly asked for coverage this toolchain
+        # cannot give - that fails configure instead of printing SKIPPED and
+        # then building an uninstrumented binary that looks tested.
         if(ENABLE_UBSAN)
-            message(STATUS "UBSan:              SKIPPED (MSVC does not support UBSan)")
+            set(SAK_UBSAN_STATE "SKIPPED (MSVC has no UBSan; use clang-cl or GCC)")
+            message(STATUS "UBSan:              ${SAK_UBSAN_STATE}")
         endif()
         if(ENABLE_TSAN)
-            message(STATUS "TSan:               SKIPPED (MSVC does not support TSan)")
+            message(FATAL_ERROR
+                "ENABLE_TSAN=ON but the compiler is MSVC, which has no ThreadSanitizer. "
+                "Build the TSan configuration with clang-cl or GCC, or configure with "
+                "-DENABLE_TSAN=OFF.")
         endif()
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         # GCC/Clang Sanitizers - strictest flags. Same per-config rule as MSVC.
@@ -236,7 +280,8 @@ if(TRUE)
                 $<$<CONFIG:Debug>:-fno-optimize-sibling-calls>  # Better stack traces
             )
             add_link_options($<$<CONFIG:Debug>:-fsanitize=address>)
-            message(STATUS "Address Sanitizer:  ENABLED for the Debug configuration")
+            set(SAK_ASAN_STATE "ENABLED for the Debug configuration")
+            message(STATUS "Address Sanitizer:  ${SAK_ASAN_STATE}")
         endif()
 
         if(ENABLE_UBSAN)
@@ -244,12 +289,23 @@ if(TRUE)
                 $<$<CONFIG:Debug>:-fsanitize=undefined>
                 $<$<CONFIG:Debug>:-fsanitize=float-divide-by-zero>
                 $<$<CONFIG:Debug>:-fsanitize=float-cast-overflow>
-                $<$<CONFIG:Debug>:-fsanitize=integer>
                 $<$<CONFIG:Debug>:-fno-sanitize-recover=all>  # Strictest: abort on any UB
                 $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
             )
+            # -fsanitize=integer is a Clang-only group (unsigned-integer-overflow
+            # and friends). GCC rejects the command line outright, so a GCC Debug
+            # build - a configuration this branch explicitly claims to support -
+            # would fail before compiling a single file. Add it where it exists,
+            # and say plainly where it does not.
+            if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+                add_compile_options($<$<CONFIG:Debug>:-fsanitize=integer>)
+                set(SAK_UBSAN_STATE "ENABLED for Debug (strictest, no recovery, +integer)")
+            else()
+                set(SAK_UBSAN_STATE
+                    "ENABLED for Debug (strictest, no recovery; -fsanitize=integer is Clang-only)")
+            endif()
             add_link_options($<$<CONFIG:Debug>:-fsanitize=undefined>)
-            message(STATUS "UBSan:              ENABLED for Debug (strictest, no recovery)")
+            message(STATUS "UBSan:              ${SAK_UBSAN_STATE}")
         endif()
 
         if(ENABLE_TSAN)
@@ -258,7 +314,8 @@ if(TRUE)
                 $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
             )
             add_link_options($<$<CONFIG:Debug>:-fsanitize=thread>)
-            message(STATUS "Thread Sanitizer:   ENABLED for the Debug configuration")
+            set(SAK_TSAN_STATE "ENABLED for the Debug configuration")
+            message(STATUS "Thread Sanitizer:   ${SAK_TSAN_STATE}")
         endif()
     endif()
 endif()
@@ -1405,25 +1462,58 @@ add_custom_command(TARGET sak_utility POST_BUILD
     VERBATIM
 )
 
+# The assistant reads its provider policy and its app-action recipes from these
+# directories. A build that quietly omits them ships an AI panel running on a
+# partial tool policy, which is exactly the kind of "configured but not really"
+# state the rest of this file refuses to produce.
+if(SAK_ENABLE_AI_ASSISTANT)
+    foreach(_sak_ai_data_dir providers app_manifests)
+        if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/${_sak_ai_data_dir}")
+            message(FATAL_ERROR
+                "SAK_ENABLE_AI_ASSISTANT is ON but resources/ai/${_sak_ai_data_dir} is missing. "
+                "The assistant loads its tool/provider policy from that directory, so the build "
+                "would ship a partial security configuration. Restore it from git, or configure "
+                "with -DSAK_ENABLE_AI_ASSISTANT=OFF.")
+        endif()
+    endforeach()
+endif()
+
+# Bundled AI policy data is staged by a target of its own, and that target runs
+# on EVERY build. Two staleness hazards made the old POST_BUILD copies unsafe
+# for security-relevant data:
+#   - a POST_BUILD command only runs when its target relinks, so editing a
+#     manifest and rebuilding left the OLD manifest sitting beside the exe;
+#   - copy_directory never deletes, so a manifest removed from the source tree
+#     kept shipping forever.
+# The staging purges each destination first, so what ships is what is in the
+# source tree - nothing older, nothing withdrawn.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers")
-    add_custom_command(TARGET sak_utility POST_BUILD
+    add_custom_target(sak_stage_ai_providers ALL
+        COMMAND ${CMAKE_COMMAND} -E rm -rf
+            "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers"
             "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers"
         COMMAND ${CMAKE_COMMAND} -E rm -f
             "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers/provider_secrets.example.json"
             "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers/provider_secrets.local.json"
-        COMMENT "Copying bundled AI provider manifests to output directory"
+        COMMENT "Staging bundled AI provider manifests to output directory"
+        VERBATIM
     )
+    add_dependencies(sak_stage_ai_providers sak_utility)
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/app_manifests")
-    add_custom_command(TARGET sak_utility POST_BUILD
+    add_custom_target(sak_stage_ai_app_manifests ALL
+        COMMAND ${CMAKE_COMMAND} -E rm -rf
+            "$<TARGET_FILE_DIR:sak_utility>/data/ai/app_manifests"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/app_manifests"
             "$<TARGET_FILE_DIR:sak_utility>/data/ai/app_manifests"
-        COMMENT "Copying bundled AI app manifests to output directory"
+        COMMENT "Staging bundled AI app manifests to output directory"
+        VERBATIM
     )
+    add_dependencies(sak_stage_ai_app_manifests sak_utility)
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png")
@@ -1446,13 +1536,17 @@ endif()
 
 # Signed browser-control extension CRX: the assistant force-installs this into Chrome.
 # Copied next to the exe so BrowserExtensionInstaller finds it at <appDir>/<crx name>.
+# Staged by an always-run target for the same reason as the AI manifests: a re-signed
+# CRX must not wait for an unrelated relink before it reaches the output directory.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx")
-    add_custom_command(TARGET sak_utility POST_BUILD
+    add_custom_target(sak_stage_browser_crx ALL
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx"
             "$<TARGET_FILE_DIR:sak_utility>/sak_browser_control.crx"
-        COMMENT "Copying browser-control extension CRX to output directory"
+        COMMENT "Staging browser-control extension CRX to output directory"
+        VERBATIM
     )
+    add_dependencies(sak_stage_browser_crx sak_utility)
 endif()
 
 # Compile definitions
@@ -1462,12 +1556,21 @@ target_compile_definitions(sak_utility PRIVATE
     QT_DISABLE_DEPRECATED_BEFORE=0x060000  # Disable deprecated Qt APIs
 )
 
+# Icon bootstrap from the parent directory (see the two uses below).
+option(SAK_IMPORT_PARENT_ICON
+    "Overwrite the tracked resources/ icon with ../icon.ico|.icns during configure" OFF)
+
 # Windows-specific settings
 if(PLATFORM_WINDOWS)
-    # Set Windows subsystem
-    if(CMAKE_BUILD_TYPE STREQUAL "Release")
-        set_target_properties(sak_utility PROPERTIES WIN32_EXECUTABLE TRUE)
-    endif()
+    # Set Windows subsystem. This has to be per-configuration, not
+    # "if(CMAKE_BUILD_TYPE STREQUAL Release)": under the Visual Studio
+    # multi-config generator CMAKE_BUILD_TYPE is empty and gets FORCEd to
+    # Release at the top of this file, so that test was true even for a
+    # --config Debug build and Debug lost its console. WIN32_EXECUTABLE accepts
+    # generator expressions, which are evaluated per configuration.
+    set_target_properties(sak_utility PROPERTIES
+        WIN32_EXECUTABLE $<NOT:$<CONFIG:Debug>>
+    )
 
     # Manifest is embedded via the RC file; suppress linker-generated manifest to avoid conflict
     if(MSVC)
@@ -1476,13 +1579,20 @@ if(PLATFORM_WINDOWS)
         )
     endif()
 
-    # Copy icon to resources
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../icon.ico")
+    # Icon bootstrap from the parent directory. resources/icon.ico is tracked, so
+    # importing it unconditionally let an UNTRACKED file one level above the
+    # repository root overwrite a committed resource during configure - the build
+    # output would depend on whatever happens to sit outside the checkout. Keep
+    # the bootstrap for a tree that has no icon yet, and require an explicit
+    # opt-in to replace one that does.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../icon.ico"
+       AND (SAK_IMPORT_PARENT_ICON OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"))
         configure_file(
             "${CMAKE_CURRENT_SOURCE_DIR}/../icon.ico"
             "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"
             COPYONLY
         )
+        message(STATUS "Icon:               imported from ../icon.ico into resources/")
     endif()
 endif()
 
@@ -1496,13 +1606,18 @@ if(PLATFORM_MACOS)
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
     )
 
-    # Copy icon to resources
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../icon.icns")
+    # Icon bootstrap - same rule as the Windows .ico above: an untracked file
+    # outside the checkout does not silently replace a committed resource.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../icon.icns"
+       AND (SAK_IMPORT_PARENT_ICON OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.icns"))
         configure_file(
             "${CMAKE_CURRENT_SOURCE_DIR}/../icon.icns"
             "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.icns"
             COPYONLY
         )
+        message(STATUS "Icon:               imported from ../icon.icns into resources/")
+    endif()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.icns")
         set_target_properties(sak_utility PROPERTIES
             MACOSX_BUNDLE_ICON_FILE icon.icns
         )
@@ -1524,10 +1639,57 @@ endif()
 # Installation
 # ============================================================================
 
+# Everything the app resolves next to its own executable at run time has to be
+# part of the install, not only of the build directory. sak_utility launches the
+# elevated helper and the two writer CLIs by path, and refuses to run features
+# whose bundled tool or policy file is absent - so an install tree holding only
+# the GUI exe is a package that fails on the customer's PC, not a smaller one.
 install(TARGETS sak_utility
     RUNTIME DESTINATION bin
     BUNDLE DESTINATION .
 )
+
+install(TARGETS sak_apfs_writer_cli sak_hfs_writer_cli
+    RUNTIME DESTINATION bin
+)
+
+if(PLATFORM_WINDOWS)
+    install(TARGETS sak_elevated_helper
+        RUNTIME DESTINATION bin
+    )
+endif()
+
+# Bundled technician tools (smartctl, aria2c, UUP media converter, iperf3,
+# portable chocolatey, filesystem tool manifest). Their presence is already a
+# configure-time FATAL_ERROR above; ship what was verified.
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tools/"
+    DESTINATION bin/tools
+)
+
+# AI provider/app policy, minus the secret templates that must never ship.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers")
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers/"
+        DESTINATION bin/data/ai/providers
+        PATTERN "provider_secrets.example.json" EXCLUDE
+        PATTERN "provider_secrets.local.json" EXCLUDE
+    )
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/app_manifests")
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/app_manifests/"
+        DESTINATION bin/data/ai/app_manifests
+    )
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png")
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png"
+        DESTINATION bin
+    )
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico")
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"
+        DESTINATION bin
+    )
+endif()
 
 # Ship the signed browser-control CRX beside the installed exe so the assistant's
 # extension installer resolves it at <appDir>/sak_browser_control.crx on customer PCs.
@@ -1539,36 +1701,88 @@ endif()
 
 # Qt deployment
 if(PLATFORM_WINDOWS)
-    # Use windeployqt
+    # Use windeployqt. Without it the output directory holds an executable that
+    # cannot start (no Qt DLLs, no platform plugin), so a missing windeployqt is
+    # a broken package, not a degraded one - fail configure instead of leaving a
+    # build that only appears to have produced something shippable.
     find_program(WINDEPLOYQT windeployqt HINTS "${Qt6_DIR}/../../../bin")
-    if(WINDEPLOYQT)
-        add_custom_command(TARGET sak_utility POST_BUILD
-            COMMAND ${WINDEPLOYQT} --release --no-translations --no-compiler-runtime $<TARGET_FILE:sak_utility>
-            COMMENT "Running windeployqt..."
-        )
+    if(NOT WINDEPLOYQT)
+        message(FATAL_ERROR
+            "windeployqt was not found (searched PATH and '${Qt6_DIR}/../../../bin'). It is "
+            "required to place the Qt runtime and platform plugins beside sak_utility.exe; "
+            "without it the built and installed trees cannot run. Add the Qt bin directory to "
+            "PATH or pass -DCMAKE_PREFIX_PATH pointing at the Qt installation.")
     endif()
-
-    # Bundle dynamic vcpkg runtime DLLs when using the x64-windows triplet.
-    # Static triplets do not have these DLLs, so missing aliases are ignored.
-    set(SAK_VCPKG_RUNTIME_DLLS
-        z.dll
-        zlib1.dll
-        bz2.dll
-        libbz2.dll
-        liblzma.dll
-        lzma.dll
+    # No --release/--debug here on purpose: windeployqt reads the binary and
+    # deploys the matching Qt build. Hard-coding --release deployed release Qt
+    # DLLs next to a --config Debug executable, which links the debug ones.
+    add_custom_command(TARGET sak_utility POST_BUILD
+        COMMAND ${WINDEPLOYQT} --no-translations --no-compiler-runtime $<TARGET_FILE:sak_utility>
+        COMMENT "Running windeployqt..."
     )
+    # ... and the same for the install tree, which install(TARGETS) alone leaves
+    # without any Qt runtime at all.
+    install(CODE "
+        execute_process(
+            COMMAND \"${WINDEPLOYQT}\" --no-translations --no-compiler-runtime
+                    \"\${CMAKE_INSTALL_PREFIX}/bin/sak_utility.exe\"
+            RESULT_VARIABLE _sak_windeployqt_result)
+        if(NOT _sak_windeployqt_result EQUAL 0)
+            message(FATAL_ERROR
+                \"windeployqt failed on the installed executable (result \${_sak_windeployqt_result}); \"
+                \"the installed tree would be missing the Qt runtime.\")
+        endif()
+    ")
+
+    # Bundle dynamic vcpkg runtime DLLs when using a dynamic triplet.
+    # Each group lists the accepted file names for ONE library, separated by "|":
+    # vcpkg has renamed these across versions and the alias that exists is the
+    # one to ship.
+    set(SAK_VCPKG_RUNTIME_DLL_GROUPS
+        "z.dll|zlib1.dll"
+        "bz2.dll|libbz2.dll"
+        "liblzma.dll|lzma.dll"
+    )
+    # A triplet whose name contains "-static" supplies static libraries, so there
+    # is no DLL to bundle and nothing to check. Any other triplet supplies import
+    # libraries, and then the DLLs are load-bearing: shipping without them
+    # produces an exe that dies at load time on the customer's PC.
+    if(DEFINED VCPKG_TARGET_TRIPLET AND NOT "${VCPKG_TARGET_TRIPLET}" MATCHES "-static")
+        set(_sak_vcpkg_dlls_required TRUE)
+    else()
+        set(_sak_vcpkg_dlls_required FALSE)
+    endif()
+    if(_sak_vcpkg_dlls_required AND NOT DEFINED VCPKG_INSTALLED_DIR)
+        message(FATAL_ERROR
+            "vcpkg triplet '${VCPKG_TARGET_TRIPLET}' supplies shared libraries but "
+            "VCPKG_INSTALLED_DIR is not set, so zlib/bzip2/liblzma DLLs cannot be located "
+            "or bundled. Configure with the vcpkg toolchain file so VCPKG_INSTALLED_DIR is "
+            "defined, or use a -static triplet.")
+    endif()
     if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
         set(SAK_VCPKG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
-        foreach(dll ${SAK_VCPKG_RUNTIME_DLLS})
-            set(runtime_dll "${SAK_VCPKG_BIN}/${dll}")
-            if(EXISTS "${runtime_dll}")
-                add_custom_command(TARGET sak_utility POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${runtime_dll}"
-                        "$<TARGET_FILE_DIR:sak_utility>"
-                    COMMENT "Bundling ${dll} from vcpkg..."
-                )
+        foreach(group ${SAK_VCPKG_RUNTIME_DLL_GROUPS})
+            string(REPLACE "|" ";" group_dlls "${group}")
+            set(group_found FALSE)
+            foreach(dll ${group_dlls})
+                set(runtime_dll "${SAK_VCPKG_BIN}/${dll}")
+                if(EXISTS "${runtime_dll}")
+                    add_custom_command(TARGET sak_utility POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${runtime_dll}"
+                            "$<TARGET_FILE_DIR:sak_utility>"
+                        COMMENT "Bundling ${dll} from vcpkg..."
+                    )
+                    install(FILES "${runtime_dll}" DESTINATION bin)
+                    set(group_found TRUE)
+                endif()
+            endforeach()
+            if(_sak_vcpkg_dlls_required AND NOT group_found)
+                message(FATAL_ERROR
+                    "vcpkg triplet '${VCPKG_TARGET_TRIPLET}' is a shared-library triplet but none "
+                    "of '${group}' was found in '${SAK_VCPKG_BIN}'. The app links that library, so "
+                    "the package would ship without a DLL it loads at startup. Install the port for "
+                    "this triplet, or build with -DVCPKG_TARGET_TRIPLET=x64-windows-static-md.")
             endif()
         endforeach()
     endif()
@@ -1578,6 +1792,10 @@ if(PLATFORM_WINDOWS)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)
 
+    # This project is required to build against the dynamic CRT (see the CRT
+    # coherence gate above), so msvcp140/vcruntime140 are not optional extras -
+    # the app cannot start without them on a PC that has no VC redistributable
+    # installed. Neither discovery path is allowed to end in a warning.
     if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
         foreach(lib ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS})
             add_custom_command(TARGET sak_utility POST_BUILD
@@ -1587,6 +1805,7 @@ if(PLATFORM_WINDOWS)
                 COMMENT "Bundling ${lib}..."
             )
         endforeach()
+        install(FILES ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION bin)
     else()
         # Fallback: manually locate MSVC runtime DLLs across installed VS editions.
         file(GLOB MSVC_VERSIONS
@@ -1596,28 +1815,38 @@ if(PLATFORM_WINDOWS)
         list(SORT MSVC_VERSIONS)
         list(REVERSE MSVC_VERSIONS)
 
-        if(MSVC_VERSIONS)
-            list(GET MSVC_VERSIONS 0 LATEST_MSVC)
-            set(MSVC_DLLS
-                "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/msvcp140.dll"
-                "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140.dll"
-                "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140_1.dll"
-            )
-        else()
-            set(MSVC_DLLS)
-            message(WARNING "MSVC redistributable directory not found; packaged app may need VC runtime installed.")
+        if(NOT MSVC_VERSIONS)
+            message(FATAL_ERROR
+                "MSVC runtime DLLs could not be located: InstallRequiredSystemLibraries found "
+                "none and no VC redistributable directory exists under the Visual Studio 2022 "
+                "install. This build links the dynamic CRT, so the packaged app would fail to "
+                "start on any PC without the VC++ redistributable. Install the "
+                "'C++ 2022 Redistributable MSMs / Redist' component of Visual Studio.")
         endif()
 
+        list(GET MSVC_VERSIONS 0 LATEST_MSVC)
+        set(MSVC_DLLS
+            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/msvcp140.dll"
+            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140.dll"
+            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140_1.dll"
+        )
+
         foreach(dll ${MSVC_DLLS})
-            if(EXISTS "${dll}")
-                add_custom_command(TARGET sak_utility POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${dll}"
-                        "$<TARGET_FILE_DIR:sak_utility>"
-                    COMMENT "Bundling $(notdir ${dll})..."
-                )
+            if(NOT EXISTS "${dll}")
+                message(FATAL_ERROR
+                    "Required MSVC runtime DLL '${dll}' is missing from the redistributable "
+                    "directory. Bundling only part of the CRT ships an app that loads on the "
+                    "build machine and fails on the customer's. Repair the Visual Studio "
+                    "'Redist' component, or install a toolset whose redistributable is complete.")
             endif()
+            add_custom_command(TARGET sak_utility POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${dll}"
+                    "$<TARGET_FILE_DIR:sak_utility>"
+                COMMENT "Bundling ${dll}..."
+            )
         endforeach()
+        install(FILES ${MSVC_DLLS} DESTINATION bin)
     endif()
 elseif(PLATFORM_MACOS)
     # Use macdeployqt
@@ -1643,17 +1872,37 @@ if(SAK_CODE_SIGN AND PLATFORM_WINDOWS)
     endif()
 
     set(SIGN_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/sign-exe.ps1")
-    if(POWERSHELL_EXE AND EXISTS "${SIGN_SCRIPT}")
-        add_custom_command(TARGET sak_utility POST_BUILD
+    # Signing was asked for explicitly. Warning and then producing unsigned
+    # binaries is the worst outcome available: the release looks signed to
+    # whoever read the option and is not.
+    if(NOT POWERSHELL_EXE)
+        message(FATAL_ERROR
+            "SAK_CODE_SIGN is ON but neither pwsh nor powershell was found, so nothing can be "
+            "signed. Install PowerShell 7, or configure with -DSAK_CODE_SIGN=OFF.")
+    endif()
+    if(NOT EXISTS "${SIGN_SCRIPT}")
+        message(FATAL_ERROR
+            "SAK_CODE_SIGN is ON but the signing script '${SIGN_SCRIPT}' does not exist. "
+            "Restore it from git, or configure with -DSAK_CODE_SIGN=OFF.")
+    endif()
+
+    # Every executable that ships gets signed, not just the GUI. The elevated
+    # helper is the one that runs as administrator, and the two writer CLIs are
+    # the ones that mutate raw disks -- exactly the binaries a customer machine
+    # has the most reason to check the signature of.
+    set(SAK_SIGN_TARGETS sak_utility sak_apfs_writer_cli sak_hfs_writer_cli)
+    if(TARGET sak_elevated_helper)
+        list(APPEND SAK_SIGN_TARGETS sak_elevated_helper)
+    endif()
+    foreach(sign_target ${SAK_SIGN_TARGETS})
+        add_custom_command(TARGET ${sign_target} POST_BUILD
             COMMAND ${POWERSHELL_EXE} -ExecutionPolicy Bypass -File "${SIGN_SCRIPT}"
-                -ExePath "$<TARGET_FILE:sak_utility>"
-            COMMENT "Signing sak_utility.exe via Azure Trusted Signing..."
+                -ExePath "$<TARGET_FILE:${sign_target}>"
+            COMMENT "Signing ${sign_target} via Azure Trusted Signing..."
             VERBATIM
         )
-        message(STATUS "Code Signing:      ENABLED (Azure Trusted Signing)")
-    else()
-        message(WARNING "Code signing enabled but PowerShell or sign-exe.ps1 not found")
-    endif()
+    endforeach()
+    message(STATUS "Code Signing:      ENABLED (Azure Trusted Signing) for ${SAK_SIGN_TARGETS}")
 else()
     message(STATUS "Code Signing:      OFF (enable with -DSAK_CODE_SIGN=ON)")
 endif()
@@ -1680,7 +1929,12 @@ if(ENABLE_CLANG_TIDY)
         )
         message(STATUS "clang-tidy:         ENABLED (warnings-as-errors)")
     else()
-        message(WARNING "clang-tidy not found")
+        # The analysis was requested. Continuing without it produces a build that
+        # passed a check nobody ran.
+        message(FATAL_ERROR
+            "ENABLE_CLANG_TIDY is ON but clang-tidy was not found on PATH. Install it (LLVM, or "
+            "the 'C++ Clang tools for Windows' Visual Studio component), or configure with "
+            "-DENABLE_CLANG_TIDY=OFF.")
     endif()
 endif()
 
@@ -1704,7 +1958,12 @@ if(ENABLE_CPPCHECK)
         )
         message(STATUS "cppcheck:           ENABLED (exhaustive, all checks, C++23)")
     else()
-        message(WARNING "cppcheck not found -- install from https://cppcheck.sourceforge.io/")
+        # Same rule as clang-tidy above: a requested analysis either runs or the
+        # configure fails; it never silently does not happen.
+        message(FATAL_ERROR
+            "ENABLE_CPPCHECK is ON but cppcheck was not found (searched PATH and "
+            "'C:/Program Files/Cppcheck'). Install it from https://cppcheck.sourceforge.io/, "
+            "or configure with -DENABLE_CPPCHECK=OFF.")
     endif()
 endif()
 
@@ -1734,14 +1993,32 @@ if(LIZARD_EXE)
     )
 endif()
 
-# Full static analysis target (runs all tools)
+# Standalone analysis target.
+#
+# This used to announce a "full static analysis suite" while depending on lizard
+# alone, and it vanished entirely when lizard was absent - so `--target analyze`
+# either ran one tool under a name promising three, or reported an unknown
+# target. Both read as "analysis is fine". Say what it runs, always define it,
+# and make a missing tool stop the build instead of reporting nothing to fix.
+#
+# clang-tidy and cppcheck are compiler-integrated here, not standalone: they run
+# on every translation unit via -DENABLE_CLANG_TIDY=ON / -DENABLE_CPPCHECK=ON,
+# both of which now fail configure when their tool is missing.
 find_program(PYTHON_EXE python3 python)
 if(LIZARD_EXE)
     add_custom_target(analyze
-        COMMENT "Running full static analysis suite..."
+        COMMENT "Running standalone analysis suite (lizard complexity)..."
         VERBATIM
     )
     add_dependencies(analyze lizard)
+else()
+    add_custom_target(analyze
+        COMMAND ${CMAKE_COMMAND} -E echo
+            "analyze: lizard was not found (searched PATH and .venv/Scripts). Install it with 'pip install lizard' and re-run cmake."
+        COMMAND ${CMAKE_COMMAND} -E false
+        COMMENT "Standalone analysis suite (unavailable)"
+        VERBATIM
+    )
 endif()
 
 # ============================================================================
@@ -1753,17 +2030,29 @@ message(STATUS "========================================")
 message(STATUS "SAK Utility Configuration Summary")
 message(STATUS "========================================")
 message(STATUS "Version:           ${PROJECT_VERSION}")
-message(STATUS "Build Type:        ${CMAKE_BUILD_TYPE}")
+if(CMAKE_CONFIGURATION_TYPES)
+    # Multi-config generator: the configuration is chosen at build time by
+    # --config, so printing CMAKE_BUILD_TYPE here would name one that is not
+    # necessarily the one built.
+    message(STATUS "Build Type:        chosen per build (--config): ${CMAKE_CONFIGURATION_TYPES}")
+else()
+    message(STATUS "Build Type:        ${CMAKE_BUILD_TYPE}")
+endif()
 message(STATUS "C++ Standard:      C++${CMAKE_CXX_STANDARD}")
 message(STATUS "Compiler:          ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "Platform:          ${CMAKE_SYSTEM_NAME}")
 message(STATUS "Qt Version:        ${Qt6_VERSION}")
 message(STATUS "Build Testing:     ${BUILD_TESTING}")
-message(STATUS "ASan:              ${ENABLE_ASAN}")
-message(STATUS "UBSan:             ${ENABLE_UBSAN}")
-message(STATUS "TSan:              ${ENABLE_TSAN}")
+# Report what is actually instrumented, not what was requested. An option that
+# reads ON while nothing carries the instrumentation is the exact failure this
+# file already had to fix once for /fsanitize=address.
+message(STATUS "ASan:              ${SAK_ASAN_STATE}")
+message(STATUS "UBSan:             ${SAK_UBSAN_STATE}")
+message(STATUS "TSan:              ${SAK_TSAN_STATE}")
 if(LIZARD_EXE)
     message(STATUS "Lizard:            AVAILABLE (cmake --build build --target lizard)")
+else()
+    message(STATUS "Lizard:            NOT FOUND (the 'analyze' target will fail until installed)")
 endif()
 if(CPPCHECK)
     message(STATUS "cppcheck:          AVAILABLE")
@@ -1772,6 +2061,10 @@ if(CLANG_TIDY)
     message(STATUS "clang-tidy:        AVAILABLE")
 endif()
 message(STATUS "========================================")
-message(STATUS "Analysis targets:  lizard, analyze")
+if(LIZARD_EXE)
+    message(STATUS "Analysis targets:  lizard, analyze")
+else()
+    message(STATUS "Analysis targets:  analyze (fails: lizard not installed)")
+endif()
 message(STATUS "========================================")
 message(STATUS "")

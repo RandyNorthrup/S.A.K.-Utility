@@ -89,6 +89,9 @@ private:
     void saveOneAttachment(const AttachmentEntry& entry);
     /// Begin a batch for @p refs into @p dir and issue the content requests.
     /// Surfaces its own refusal and issues nothing when the batch cannot start.
+    /// Fills refs with one entry per visible row. Returns false, leaving the batch to be
+    /// abandoned, if any row cannot be resolved to a real attachment.
+    [[nodiscard]] bool collectVisibleAttachmentRefs(QVector<AttachmentRef>* refs);
     void startBatch(const QString& dir, const QVector<AttachmentRef>& refs);
     /// Both save buttons stay locked while a batch is running, so a second batch
     /// cannot interleave its arrivals with the first one's.

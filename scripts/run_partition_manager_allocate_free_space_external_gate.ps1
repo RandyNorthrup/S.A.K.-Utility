@@ -30,17 +30,42 @@ $MinimumVhdSizeMB = 640
 $SizeToleranceBytes = 2MB
 $Script:RunRoot = $null
 $Script:TranscriptStarted = $false
+$Script:RunLock = $null
+
+function Close-RunLock {
+    if ($null -ne $Script:RunLock) {
+        $Script:RunLock.Dispose()
+        $Script:RunLock = $null
+    }
+}
 
 trap {
-    $errorText = ($_ | Format-List * -Force | Out-String)
+    $originalError = $_
+    $errorText = ($originalError | Format-List * -Force | Out-String)
     if (-not [string]::IsNullOrWhiteSpace($Script:RunRoot) -and (Test-Path -LiteralPath $Script:RunRoot -PathType Container)) {
-        $errorText | Set-Content -LiteralPath (Join-Path $Script:RunRoot "allocate-free-space-error.txt") -Encoding UTF8
+        try {
+            $errorText | Set-Content -LiteralPath (Join-Path $Script:RunRoot "allocate-free-space-error.txt") -Encoding UTF8
+        }
+        catch {
+            Write-Warning "Failed to write trap evidence file: $($_.Exception.Message)"
+        }
     }
     if ($Script:TranscriptStarted) {
-        Stop-Transcript | Out-Null
+        try {
+            Stop-Transcript | Out-Null
+        }
+        catch {
+            Write-Warning "Failed to stop transcript: $($_.Exception.Message)"
+        }
         $Script:TranscriptStarted = $false
     }
-    throw $_
+    try {
+        Close-RunLock
+    }
+    catch {
+        Write-Warning "Failed to release run lock: $($_.Exception.Message)"
+    }
+    throw $originalError
 }
 
 function Resolve-ProjectRoot {
@@ -74,10 +99,37 @@ function ConvertTo-ProjectRelativePath {
 function ConvertTo-ProcessArgument {
     param([Parameter(Mandatory = $true)] [string]$Value)
 
-    if ($Value -match '[\s"]') {
-        return '"' + ($Value -replace '"', '\"') + '"'
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') {
+        return $Value
     }
-    return $Value
+
+    # Windows CommandLineToArgvW rules: a run of backslashes is only escaped when
+    # it precedes a double quote, so quoting has to be built character by character.
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $backslashes = 0
+    foreach ($character in $Value.ToCharArray()) {
+        if ($character -eq [char]'\') {
+            $backslashes++
+            continue
+        }
+        if ($character -eq [char]'"') {
+            [void]$builder.Append([char]'\', ($backslashes * 2) + 1)
+            [void]$builder.Append([char]'"')
+        }
+        else {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append([char]'\', $backslashes)
+            }
+            [void]$builder.Append($character)
+        }
+        $backslashes = 0
+    }
+    if ($backslashes -gt 0) {
+        [void]$builder.Append([char]'\', $backslashes * 2)
+    }
+    [void]$builder.Append('"')
+    return $builder.ToString()
 }
 
 function Test-IsAdmin {
@@ -136,6 +188,30 @@ function Assert-Condition {
     }
 }
 
+function Assert-NoReparsePointBelowRoot {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Path,
+        [Parameter(Mandatory = $true)] [string]$Root
+    )
+
+    $rootKey = [System.IO.Path]::GetFullPath($Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+    $current = [System.IO.Path]::GetFullPath($Path).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+    while (-not [string]::IsNullOrEmpty($current) -and
+        -not $current.Equals($rootKey, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if (Test-Path -LiteralPath $current) {
+            $attributes = [System.IO.File]::GetAttributes($current)
+            if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Refusing to operate through a reparse point. Path=$current Root=$rootKey"
+            }
+        }
+        $parent = [System.IO.Path]::GetDirectoryName($current)
+        if ([string]::IsNullOrEmpty($parent) -or $parent.TrimEnd([System.IO.Path]::DirectorySeparatorChar) -eq $current) {
+            break
+        }
+        $current = $parent.TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+    }
+}
+
 function Assert-PathUnderRoot {
     param(
         [Parameter(Mandatory = $true)] [string]$Path,
@@ -150,12 +226,25 @@ function Assert-PathUnderRoot {
     if (-not $fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to operate outside expected root. Path=$fullPath Root=$fullRoot"
     }
+    Assert-NoReparsePointBelowRoot -Path $fullPath -Root $fullRoot
 }
 
 function ConvertTo-PlainText {
     param([object[]]$Value)
 
-    return (($Value | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+    return ((@($Value) | ForEach-Object {
+        if ($null -eq $_) { "" } else { $_.ToString() }
+    }) -join "`n").Trim()
+}
+
+function Resolve-SystemToolPath {
+    param([Parameter(Mandatory = $true)] [string]$Name)
+
+    $path = Join-Path ([System.Environment]::SystemDirectory) $Name
+    if (-not [System.IO.File]::Exists($path)) {
+        throw "Required system tool not found: $path"
+    }
+    return $path
 }
 
 function Invoke-NativeCommand {
@@ -165,8 +254,13 @@ function Invoke-NativeCommand {
         [string[]]$Arguments = @()
     )
 
+    if (-not [System.IO.Path]::IsPathRooted($FilePath) -or -not [System.IO.File]::Exists($FilePath)) {
+        throw "Refusing to run '$Name' from an unresolved command name: $FilePath"
+    }
+
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $global:LASTEXITCODE = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
@@ -174,11 +268,14 @@ function Invoke-NativeCommand {
     finally {
         $ErrorActionPreference = $oldPreference
     }
+    if ($null -eq $exitCode) {
+        throw "Native command '$Name' did not report an exit code: $FilePath`n$(ConvertTo-PlainText -Value $output)"
+    }
     [pscustomobject]@{
         name = $Name
         file_path = $FilePath
         arguments = $Arguments
-        exit_code = $exitCode
+        exit_code = [int]$exitCode
         output = ConvertTo-PlainText -Value $output
     }
 }
@@ -186,8 +283,15 @@ function Invoke-NativeCommand {
 function Assert-RobocopySuccess {
     param([Parameter(Mandatory = $true)] [object]$Command)
 
-    if ($Command.exit_code -gt 7) {
-        throw "robocopy failed for $($Command.name) with exit code $($Command.exit_code)."
+    if ($null -eq $Command.exit_code) {
+        throw "robocopy did not report an exit code for $($Command.name)."
+    }
+    $exitCode = [int]$Command.exit_code
+    if ($exitCode -lt 0 -or $exitCode -ge 8) {
+        throw "robocopy failed for $($Command.name) with exit code $exitCode."
+    }
+    if (($exitCode -band 4) -ne 0) {
+        throw "robocopy reported mismatched files or directories for $($Command.name) with exit code $exitCode."
     }
 }
 
@@ -195,8 +299,9 @@ function Invoke-DiskPartScript {
     param([Parameter(Mandatory = $true)] [string[]]$Lines)
 
     $scriptPath = Join-Path $Script:RunRoot "diskpart-$([guid]::NewGuid()).txt"
+    Assert-PathUnderRoot -Path $scriptPath -Root $Script:RunRoot
     Set-Content -LiteralPath $scriptPath -Value ($Lines -join [Environment]::NewLine) -Encoding ASCII
-    $command = Invoke-NativeCommand -Name "diskpart" -FilePath "diskpart.exe" -Arguments @("/s", $scriptPath)
+    $command = Invoke-NativeCommand -Name "diskpart" -FilePath (Resolve-SystemToolPath -Name "diskpart.exe") -Arguments @("/s", $scriptPath)
     if ($command.exit_code -ne 0) {
         throw "diskpart failed with exit code $($command.exit_code)`n$($command.output)"
     }
@@ -206,18 +311,21 @@ function Invoke-DiskPartScript {
 function Get-AttachedVhdDisk {
     param([Parameter(Mandatory = $true)] [string]$Path)
 
+    $lastError = $null
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
         try {
             $disk = Get-DiskImage -ImagePath $Path -ErrorAction Stop | Get-Disk -ErrorAction Stop
             if ($null -ne $disk) {
                 return $disk
             }
+            $lastError = "Get-Disk returned no disk for the attached image."
         }
         catch {
+            $lastError = $_.Exception.Message
             Start-Sleep -Milliseconds 250
         }
     }
-    throw "Attached VHD disk not found for $Path"
+    throw "Attached VHD disk not found for $Path. Last error: $lastError"
 }
 
 function New-DisposableVhdDisk {
@@ -233,16 +341,42 @@ function New-DisposableVhdDisk {
         Remove-Item -LiteralPath $path -Force
     }
 
-    $size = [Math]::Max($VhdSizeMB, $MinimumVhdSizeMB)
-    Invoke-DiskPartScript -Lines @(
+    $size = $VhdSizeMB
+    $diskpartCommand = Invoke-DiskPartScript -Lines @(
         "create vdisk file=`"$path`" maximum=$size type=expandable",
         "attach vdisk"
-    ) | Out-Null
+    )
+    $commands.Add($diskpartCommand)
 
-    $disk = Get-AttachedVhdDisk -Path $path
-    Set-Disk -Number $disk.Number -IsOffline $false -ErrorAction SilentlyContinue
-    Set-Disk -Number $disk.Number -IsReadOnly $false -ErrorAction Stop
-    Assert-DisposableDisk -Disk $disk -ExpectedPath $path
+    try {
+        $disk = Get-AttachedVhdDisk -Path $path
+        # Prove the disk is this image and is not boot/system before mutating its state.
+        Assert-VhdDiskIdentity -Vhd ([pscustomobject]@{ path = $path; disk_number = [int]$disk.Number })
+        if ($disk.IsOffline) {
+            Set-Disk -Number $disk.Number -IsOffline $false -ErrorAction Stop
+        }
+        if ($disk.IsReadOnly) {
+            Set-Disk -Number $disk.Number -IsReadOnly $false -ErrorAction Stop
+        }
+        $disk = Get-AttachedVhdDisk -Path $path
+        Assert-DisposableDisk -Disk $disk -ExpectedPath $path
+        Assert-Condition -Condition (-not $disk.IsOffline) -Message "Disposable VHD disk $($disk.Number) is still offline."
+        Assert-Condition -Condition (-not $disk.IsReadOnly) -Message "Disposable VHD disk $($disk.Number) is still read-only."
+    }
+    catch {
+        $creationError = $_
+        try {
+            Dismount-DiskImage -ImagePath $path -ErrorAction Stop | Out-Null
+            if (-not $KeepVhd -and (Test-Path -LiteralPath $path)) {
+                Assert-PathUnderRoot -Path $path -Root $Script:RunRoot
+                Remove-Item -LiteralPath $path -Force
+            }
+        }
+        catch {
+            Write-Warning "Rollback of the partially created disposable VHD failed: $($_.Exception.Message)"
+        }
+        throw $creationError
+    }
 
     [pscustomobject]@{
         path = $path
@@ -255,15 +389,22 @@ function New-DisposableVhdDisk {
 function Remove-DisposableVhdDisk {
     param([Parameter(Mandatory = $true)] [object]$Vhd)
 
+    $dismountError = $null
     try {
-        Dismount-DiskImage -ImagePath $Vhd.path -ErrorAction SilentlyContinue | Out-Null
+        Dismount-DiskImage -ImagePath $Vhd.path -ErrorAction Stop | Out-Null
+        $image = Get-DiskImage -ImagePath $Vhd.path -ErrorAction Stop
+        Assert-Condition -Condition (-not $image.Attached) -Message "Disposable VHD is still attached after dismount: $($Vhd.path)"
     }
-    finally {
-        if (-not $KeepVhd -and (Test-Path -LiteralPath $Vhd.path)) {
-            Assert-PathUnderRoot -Path $Vhd.path -Root $Script:RunRoot
-            Assert-Condition -Condition ([System.IO.Path]::GetExtension($Vhd.path) -eq ".vhdx") -Message "Refusing to remove non-VHDX artifact: $($Vhd.path)"
-            Remove-Item -LiteralPath $Vhd.path -Force
-        }
+    catch {
+        $dismountError = $_
+    }
+    if ($null -eq $dismountError -and -not $KeepVhd -and (Test-Path -LiteralPath $Vhd.path)) {
+        Assert-PathUnderRoot -Path $Vhd.path -Root $Script:RunRoot
+        Assert-Condition -Condition ([System.IO.Path]::GetExtension($Vhd.path) -eq ".vhdx") -Message "Refusing to remove non-VHDX artifact: $($Vhd.path)"
+        Remove-Item -LiteralPath $Vhd.path -Force
+    }
+    if ($null -ne $dismountError) {
+        throw $dismountError
     }
 }
 
@@ -281,16 +422,39 @@ function Assert-DisposableDisk {
     if ([int]$imageDisk.Number -ne [int]$Disk.Number) {
         throw "Mounted VHD disk mismatch. Expected $($Disk.Number), got $($imageDisk.Number)."
     }
-    $requestedSizeMB = [Math]::Max($VhdSizeMB, $MinimumVhdSizeMB)
+    $requestedSizeMB = $VhdSizeMB
     if ($Disk.Size -lt ($MinimumVhdSizeMB * 1MB) -or $Disk.Size -gt (($requestedSizeMB + 64) * 1MB)) {
         throw "Target VHD size outside disposable range: $($Disk.Size)"
     }
 }
 
+function Assert-VhdDiskIdentity {
+    param([Parameter(Mandatory = $true)] [object]$Vhd)
+
+    $image = Get-DiskImage -ImagePath $Vhd.path -ErrorAction Stop
+    Assert-Condition -Condition ([bool]$image.Attached) -Message "Disposable VHD is no longer attached: $($Vhd.path)"
+    $imageDisk = $image | Get-Disk -ErrorAction Stop
+    Assert-Condition -Condition ($null -ne $imageDisk) -Message "Disposable VHD no longer exposes a disk: $($Vhd.path)"
+    Assert-Condition -Condition ([int]$imageDisk.Number -eq [int]$Vhd.disk_number) -Message "Disposable VHD disk number changed. Expected $($Vhd.disk_number), got $($imageDisk.Number)."
+    Assert-Condition -Condition (-not ($imageDisk.IsBoot -or $imageDisk.IsSystem)) -Message "Refusing to operate on boot/system disk $($imageDisk.Number)."
+}
+
+function Assert-DriveLetterOnDisk {
+    param(
+        [Parameter(Mandatory = $true)] [string]$DriveLetter,
+        [Parameter(Mandatory = $true)] [int]$DiskNumber,
+        [Parameter(Mandatory = $true)] [int]$PartitionNumber
+    )
+
+    $partition = Get-Partition -DriveLetter $DriveLetter -ErrorAction Stop
+    Assert-Condition -Condition ([int]$partition.DiskNumber -eq $DiskNumber) -Message "Drive $DriveLetter is on disk $($partition.DiskNumber), not disposable disk $DiskNumber."
+    Assert-Condition -Condition ([int]$partition.PartitionNumber -eq $PartitionNumber) -Message "Drive $DriveLetter no longer maps to partition $PartitionNumber on disk $DiskNumber."
+}
+
 function Get-FreeCertificationDriveLetters {
     param([int]$Count = 2)
 
-    $used = @(Get-Volume -ErrorAction SilentlyContinue |
+    $used = @(Get-Volume -ErrorAction Stop |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_.DriveLetter) } |
         ForEach-Object { $_.DriveLetter.ToString().ToUpperInvariant() })
     $letters = @()
@@ -313,9 +477,9 @@ function Get-PartitionVolumeId {
     )
 
     $partition = Get-Partition -DiskNumber $DiskNumber -PartitionNumber $PartitionNumber -ErrorAction Stop
-    $volumeId = @($partition.AccessPaths | Where-Object { $_ -like "\\?\Volume{*}\" } | Select-Object -First 1)
+    $volumeId = [string](@($partition.AccessPaths) | Where-Object { $_ -like "\\?\Volume{*}\" } | Select-Object -First 1)
     if ([string]::IsNullOrWhiteSpace($volumeId)) {
-        $volumeId = "\\.\$DriveLetter`:"
+        throw "No volume GUID access path for disk $DiskNumber partition $PartitionNumber (drive $DriveLetter); volume identity cannot be recorded."
     }
     return $volumeId
 }
@@ -324,7 +488,7 @@ function Get-DiskSnapshot {
     param([Parameter(Mandatory = $true)] [int]$DiskNumber)
 
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
-    $partitions = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | ForEach-Object {
+    $partitions = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop | ForEach-Object {
         $volume = $null
         try {
             $volume = $_ | Get-Volume -ErrorAction Stop
@@ -374,7 +538,13 @@ function New-SeedFiles {
     "Nested donor fixture" |
         Set-Content -LiteralPath (Join-Path $DonorRoot "nested\child.txt") -Encoding UTF8
     $bytes = New-Object byte[] 65536
-    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    }
+    finally {
+        $rng.Dispose()
+    }
     [System.IO.File]::WriteAllBytes((Join-Path $DonorRoot "payload.bin"), $bytes)
     "SAK allocate free space source fixture $(Get-Date -Format o)" |
         Set-Content -LiteralPath (Join-Path $SourceRoot "source-fixture.txt") -Encoding UTF8
@@ -440,19 +610,31 @@ function Compare-HashManifest {
 function Invoke-RepairScan {
     param([Parameter(Mandatory = $true)] [string]$DriveLetter)
 
-    if (-not (Get-Command Repair-Volume -ErrorAction SilentlyContinue)) {
-        return [pscustomobject]@{
-            drive_letter = $DriveLetter
-            status = "Skipped"
-            message = "Repair-Volume command not available"
-        }
+    if (-not (Get-Command -Name "Repair-Volume" -CommandType Cmdlet -ErrorAction SilentlyContinue)) {
+        throw "Repair-Volume cmdlet is not available; the filesystem health evidence this gate reports cannot be collected."
     }
 
     $output = Repair-Volume -DriveLetter $DriveLetter -Scan -ErrorAction Stop
+    $outputText = ConvertTo-PlainText -Value @($output)
+    if ($outputText -ne "NoErrorsFound") {
+        throw "Repair-Volume scan of drive $DriveLetter reported '$outputText' instead of NoErrorsFound."
+    }
     [pscustomobject]@{
         drive_letter = $DriveLetter
         status = "Completed"
-        output = ConvertTo-PlainText -Value @($output)
+        output = $outputText
+    }
+}
+
+function ConvertTo-EvidenceOrSentinel {
+    param([object]$Value = $null)
+
+    if ($null -ne $Value) {
+        return $Value
+    }
+    return [pscustomobject]@{
+        verified = $false
+        status = "not-verified"
     }
 }
 
@@ -506,6 +688,7 @@ function Initialize-LabVolumes {
         [Parameter(Mandatory = $true)] [string]$DonorLetter
     )
 
+    Assert-VhdDiskIdentity -Vhd $Vhd
     Initialize-Disk -Number $Vhd.disk_number -PartitionStyle GPT -ErrorAction Stop
     $source = New-Partition -DiskNumber $Vhd.disk_number -Size ($SourceSizeMB * 1MB) -DriveLetter $SourceLetter -ErrorAction Stop
     Format-Volume -DriveLetter $SourceLetter -FileSystem NTFS -NewFileSystemLabel "SAKALLOC_SRC" -Confirm:$false -Force | Out-Null
@@ -525,11 +708,17 @@ if ($RelaunchElevated -and -not (Test-IsAdmin)) {
 if (-not (Test-IsAdmin)) {
     throw "Run from an elevated PowerShell session, or pass -RelaunchElevated."
 }
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    throw "OutputRoot must be a non-empty path."
+}
 if ($AllocateMB -le 0 -or $SourceSizeMB -le 0 -or $DonorSizeMB -le 0) {
     throw "Source, donor, and allocate sizes must be positive."
 }
 if ($AllocateMB -ge ($DonorSizeMB - 64)) {
     throw "AllocateMB must leave at least 64 MB for recreated donor volume."
+}
+if ($VhdSizeMB -lt $MinimumVhdSizeMB) {
+    throw "VhdSizeMB must be at least $MinimumVhdSizeMB MB for disposable lab media."
 }
 if ($VhdSizeMB -lt ($SourceSizeMB + $DonorSizeMB + 96)) {
     throw "VhdSizeMB too small for requested source/donor sizes."
@@ -548,18 +737,29 @@ if ([string]::IsNullOrWhiteSpace($GuestReportPath)) {
 else {
     $GuestReportPath = Resolve-ProjectPath -Path $GuestReportPath
 }
-$Script:RunRoot = Join-Path $resolvedOutputRoot ("allocate-free-space-stage-debug\run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+Assert-PathUnderRoot -Path $EvidenceDir -Root $resolvedOutputRoot
+Assert-PathUnderRoot -Path $GuestReportPath -Root $resolvedOutputRoot
+$stageRoot = Join-Path $resolvedOutputRoot "allocate-free-space-stage-debug"
+$Script:RunRoot = Join-Path $stageRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 New-Item -ItemType Directory -Path $EvidenceDir -Force | Out-Null
+New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $Script:RunRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Split-Path -Parent $GuestReportPath) -Force | Out-Null
+Assert-PathUnderRoot -Path $Script:RunRoot -Root $stageRoot
 
 try {
-    Start-Transcript -Path (Join-Path $Script:RunRoot "run_partition_manager_allocate_free_space_external_gate.log") -Force | Out-Null
-    $Script:TranscriptStarted = $true
+    $Script:RunLock = [System.IO.File]::Open(
+        (Join-Path $stageRoot "gate.lock"),
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None)
 }
 catch {
-    $Script:TranscriptStarted = $false
+    throw "Another Allocate Free Space external gate run holds $stageRoot; concurrent runs would overwrite shared evidence. $($_.Exception.Message)"
 }
+
+Start-Transcript -Path (Join-Path $Script:RunRoot "run_partition_manager_allocate_free_space_external_gate.log") -Force | Out-Null
+$Script:TranscriptStarted = $true
 
 foreach ($staleReport in @("report.json", "report.failed.json", "report.failed-cleanup.json")) {
     $stalePath = Join-Path $EvidenceDir $staleReport
@@ -590,6 +790,8 @@ try {
     $donorLetter = $letters[1]
     $vhd = New-DisposableVhdDisk -Name "allocate-free-space"
     $layout = Initialize-LabVolumes -Vhd $vhd -SourceLetter $sourceLetter -DonorLetter $donorLetter
+    Assert-DriveLetterOnDisk -DriveLetter $sourceLetter -DiskNumber $vhd.disk_number -PartitionNumber $layout.source.PartitionNumber
+    Assert-DriveLetterOnDisk -DriveLetter $donorLetter -DiskNumber $vhd.disk_number -PartitionNumber $layout.donor.PartitionNumber
     New-SeedFiles -SourceRoot "$sourceLetter`:\" -DonorRoot "$donorLetter`:\"
 
     $sourceBefore = Get-Partition -DiskNumber $vhd.disk_number -PartitionNumber $layout.source.PartitionNumber
@@ -597,31 +799,43 @@ try {
     $sourceVolumeId = Get-PartitionVolumeId -DiskNumber $vhd.disk_number -PartitionNumber $sourceBefore.PartitionNumber -DriveLetter $sourceLetter
     $donorVolumeId = Get-PartitionVolumeId -DiskNumber $vhd.disk_number -PartitionNumber $donorBefore.PartitionNumber -DriveLetter $donorLetter
     $beforeLayout = Get-DiskSnapshot -DiskNumber $vhd.disk_number
+    $sourceManifestBefore = Get-DirectoryHashManifest -Root "$sourceLetter`:\"
 
     $backupRoot = Join-Path $Script:RunRoot "donor-backup"
+    Assert-PathUnderRoot -Path $backupRoot -Root $Script:RunRoot
     New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
     $beforeManifest = Get-DirectoryHashManifest -Root "$donorLetter`:\"
     $beforeManifestPath = Join-Path $EvidenceDir "donor-manifest-before.json"
     $beforeManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $beforeManifestPath -Encoding UTF8
 
-    $backup = Invoke-NativeCommand -Name "backup-donor" -FilePath "robocopy.exe" -Arguments @("$donorLetter`:\", $backupRoot, "/MIR", "/R:1", "/W:1", "/NP")
+    $backup = Invoke-NativeCommand -Name "backup-donor" -FilePath (Resolve-SystemToolPath -Name "robocopy.exe") -Arguments @("$donorLetter`:\", $backupRoot, "/MIR", "/R:1", "/W:1", "/NP")
     $commands.Add($backup)
     Assert-RobocopySuccess -Command $backup
+    $backupManifest = Get-DirectoryHashManifest -Root $backupRoot
+    $backupComparison = Compare-HashManifest -Expected $beforeManifest -Actual $backupManifest
+    Assert-Condition -Condition $backupComparison.matched -Message "Donor backup does not match the donor volume; refusing to delete the donor partition. Errors: $(@($backupComparison.errors) -join ', ')"
 
+    Assert-VhdDiskIdentity -Vhd $vhd
+    Assert-DriveLetterOnDisk -DriveLetter $donorLetter -DiskNumber $vhd.disk_number -PartitionNumber $donorBefore.PartitionNumber
     Remove-Partition -DiskNumber $vhd.disk_number -PartitionNumber $donorBefore.PartitionNumber -Confirm:$false -ErrorAction Stop
     Start-Sleep -Milliseconds 500
 
     $allocatedBytes = [uint64]($AllocateMB * 1MB)
     $sourceTargetSize = [uint64]$sourceBefore.Size + $allocatedBytes
+    Assert-VhdDiskIdentity -Vhd $vhd
+    Assert-DriveLetterOnDisk -DriveLetter $sourceLetter -DiskNumber $vhd.disk_number -PartitionNumber $sourceBefore.PartitionNumber
     Resize-Partition -DiskNumber $vhd.disk_number -PartitionNumber $sourceBefore.PartitionNumber -Size $sourceTargetSize -ErrorAction Stop
     Start-Sleep -Milliseconds 500
 
     $donorTargetSize = [uint64]$donorBefore.Size - $allocatedBytes
+    Assert-VhdDiskIdentity -Vhd $vhd
     $donorAfterCreate = New-Partition -DiskNumber $vhd.disk_number -Size $donorTargetSize -DriveLetter $donorLetter -ErrorAction Stop
     Format-Volume -DriveLetter $donorLetter -FileSystem NTFS -NewFileSystemLabel "SAKALLOC_DONOR" -Confirm:$false -Force | Out-Null
     Start-Sleep -Milliseconds 500
+    Assert-DriveLetterOnDisk -DriveLetter $donorLetter -DiskNumber $vhd.disk_number -PartitionNumber $donorAfterCreate.PartitionNumber
+    $donorVolumeIdAfterRecreate = Get-PartitionVolumeId -DiskNumber $vhd.disk_number -PartitionNumber $donorAfterCreate.PartitionNumber -DriveLetter $donorLetter
 
-    $restore = Invoke-NativeCommand -Name "restore-donor" -FilePath "robocopy.exe" -Arguments @($backupRoot, "$donorLetter`:\", "/MIR", "/R:1", "/W:1", "/NP")
+    $restore = Invoke-NativeCommand -Name "restore-donor" -FilePath (Resolve-SystemToolPath -Name "robocopy.exe") -Arguments @($backupRoot, "$donorLetter`:\", "/MIR", "/R:1", "/W:1", "/NP")
     $commands.Add($restore)
     Assert-RobocopySuccess -Command $restore
 
@@ -641,9 +855,15 @@ try {
     Assert-Condition -Condition ($sourceVolumeAfter.FileSystem -eq "NTFS") -Message "Source volume not mounted as NTFS after resize."
     Assert-Condition -Condition ($donorVolumeAfter.FileSystem -eq "NTFS") -Message "Donor volume not mounted as NTFS after recreate."
 
+    $sourceManifestAfter = Get-DirectoryHashManifest -Root "$sourceLetter`:\"
+    $sourceComparison = Compare-HashManifest -Expected $sourceManifestBefore -Actual $sourceManifestAfter
+    Assert-Condition -Condition $sourceComparison.matched -Message "Source volume data did not survive the extend. Errors: $(@($sourceComparison.errors) -join ', ')"
+
     $sourceScan = Invoke-RepairScan -DriveLetter $sourceLetter
     $donorScan = Invoke-RepairScan -DriveLetter $donorLetter
     $afterLayout = Get-DiskSnapshot -DiskNumber $vhd.disk_number
+    Assert-Condition -Condition (@($afterLayout.partitions).Count -eq @($beforeLayout.partitions).Count) -Message "Disk $($vhd.disk_number) has $(@($afterLayout.partitions).Count) partitions after the operation, expected $(@($beforeLayout.partitions).Count)."
+    Assert-Condition -Condition (-not ($afterLayout.is_boot -or $afterLayout.is_system)) -Message "Disk $($vhd.disk_number) reports boot/system after the operation."
 
     $volumeSizeDelta = [pscustomobject]@{
         source_before_bytes = [uint64]$sourceBefore.Size
@@ -662,6 +882,14 @@ try {
         errors = @($manifestComparison.errors)
         before_manifest_path = ConvertTo-ProjectRelativePath -Path $beforeManifestPath
         after_manifest_path = ConvertTo-ProjectRelativePath -Path $afterManifestPath
+        backup_matched_donor_before_delete = $backupComparison.matched
+        backup_expected_file_count = $backupComparison.expected_count
+        backup_actual_file_count = $backupComparison.actual_count
+        backup_errors = @($backupComparison.errors)
+        source_matched = $sourceComparison.matched
+        source_expected_file_count = $sourceComparison.expected_count
+        source_actual_file_count = $sourceComparison.actual_count
+        source_errors = @($sourceComparison.errors)
     }
     $mountValidation = [pscustomobject]@{
         source_drive_letter = "$sourceLetter`:"
@@ -670,6 +898,7 @@ try {
         donor_file_system = $donorVolumeAfter.FileSystem
         source_repair_scan = $sourceScan
         donor_repair_scan = $donorScan
+        donor_volume_id_after_recreate = $donorVolumeIdAfterRecreate
     }
     $rollbackEvidence = [pscustomobject]@{
         backup_directory = ConvertTo-ProjectRelativePath -Path $backupRoot
@@ -709,12 +938,12 @@ catch {
     $failedEvidence = [pscustomobject]@{
         source_volume_id = $sourceVolumeId
         donor_volume_id = $donorVolumeId
-        before_layout = if ($null -ne $beforeLayout) { $beforeLayout } else { "not-verified" }
-        after_layout = if ($null -ne $afterLayout) { $afterLayout } else { "not-verified" }
-        volume_size_delta = if ($null -ne $volumeSizeDelta) { $volumeSizeDelta } else { "not-verified" }
-        file_hash_validation = if ($null -ne $fileHashValidation) { $fileHashValidation } else { "not-verified" }
-        mount_validation = if ($null -ne $mountValidation) { $mountValidation } else { "not-verified" }
-        rollback_or_backup_evidence = if ($null -ne $rollbackEvidence) { $rollbackEvidence } else { "not-verified" }
+        before_layout = ConvertTo-EvidenceOrSentinel -Value $beforeLayout
+        after_layout = ConvertTo-EvidenceOrSentinel -Value $afterLayout
+        volume_size_delta = ConvertTo-EvidenceOrSentinel -Value $volumeSizeDelta
+        file_hash_validation = ConvertTo-EvidenceOrSentinel -Value $fileHashValidation
+        mount_validation = ConvertTo-EvidenceOrSentinel -Value $mountValidation
+        rollback_or_backup_evidence = ConvertTo-EvidenceOrSentinel -Value $rollbackEvidence
     }
     $failedReport = New-ExternalReport `
         -Status "Failed" `
@@ -730,16 +959,41 @@ finally {
             Remove-DisposableVhdDisk -Vhd $vhd
         }
         catch {
-            $cleanupErrors.Add($_.Exception.Message)
+            $cleanupError = $_
+            $cleanupErrors.Add($cleanupError.Exception.Message)
             if ($status -eq "Passed") {
                 $status = "Failed"
                 $failedCleanupPath = Join-Path $EvidenceDir "report.failed-cleanup.json"
                 if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
                     Move-Item -LiteralPath $reportPath -Destination $failedCleanupPath -Force
                 }
+                $rollbackEvidence.cleanup_mode = "VHD cleanup failed: $($cleanupError.Exception.Message)"
+                $cleanupReport = New-ExternalReport `
+                    -Status "Failed" `
+                    -Evidence $evidence `
+                    -Artifacts $artifacts `
+                    -VerificationSummary "Allocate Free Space external gate verified the operation but failed to clean up the disposable VHD." `
+                    -OperatorNotes $cleanupError.Exception.Message
+                $cleanupReport | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $failedCleanupPath -Encoding UTF8
             }
         }
     }
+}
+
+if ($Script:TranscriptStarted) {
+    try {
+        Stop-Transcript | Out-Null
+    }
+    catch {
+        $cleanupErrors.Add("Failed to stop transcript: $($_.Exception.Message)")
+        if ($status -eq "Passed") {
+            $status = "Failed"
+            if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+                Move-Item -LiteralPath $reportPath -Destination (Join-Path $EvidenceDir "report.failed-cleanup.json") -Force
+            }
+        }
+    }
+    $Script:TranscriptStarted = $false
 }
 
 $vhdPathForReport = ""
@@ -793,17 +1047,20 @@ try {
     $guestReport | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $GuestReportPath -Encoding UTF8
 }
 catch {
+    $guestReportError = $_.Exception.Message
     $fallbackPath = "$GuestReportPath.write-error.txt"
-    "Failed to write guest report: $($_.Exception.Message)" | Set-Content -LiteralPath $fallbackPath -Encoding UTF8
+    "Failed to write guest report: $guestReportError" | Set-Content -LiteralPath $fallbackPath -Encoding UTF8
+    if ($status -eq "Passed" -and (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+        Move-Item -LiteralPath $reportPath -Destination (Join-Path $EvidenceDir "report.failed-cleanup.json") -Force
+    }
+    $status = "Failed"
+    Write-Error "Required guest evidence was not written: $guestReportError" -ErrorAction Continue
 }
 
-if ($Script:TranscriptStarted) {
-    Stop-Transcript | Out-Null
-    $Script:TranscriptStarted = $false
-}
+Close-RunLock
 
 if ($status -ne "Passed") {
-    Write-Error "External Allocate Free Space gate failed. Report: $GuestReportPath"
+    Write-Error "External Allocate Free Space gate failed. Report: $GuestReportPath" -ErrorAction Continue
     exit 1
 }
 

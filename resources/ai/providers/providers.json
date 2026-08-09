@@ -89,6 +89,7 @@
         "wait_for_window",
         "wait_for_idle",
         "uia_click_control",
+        "dismiss_dialog",
         "click_text",
         "mouse_click",
         "type_text",
@@ -152,7 +153,7 @@
       "policy": "manifest_gated_mutation",
       "environment": {
         "SAK_WIN32_MCP_MODE": "1",
-        "WIN32_MCP_SECURITY_PROFILE": "interactive",
+        "WIN32_MCP_SECURITY_PROFILE": "read_only",
         "WIN32_MCP_RESULT_ENVELOPE": "true",
         "WIN32_MCP_REDACT_SENSITIVE_OUTPUT": "true"
       }

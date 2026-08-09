@@ -13,12 +13,40 @@
 #include <QDateTime>
 #include <QtConcurrent>
 
+#include <cmath>
+
 namespace sak {
 
 namespace {
 constexpr qsizetype kDiskKeyPrefixLength = 4;
 constexpr double kWmiTenthsKelvinDivisor = 10.0;
 constexpr double kKelvinZeroCelsius = 273.15;
+// No silicon or drive sensor reports above this; a larger value is telemetry corruption,
+// not a temperature, and must not reach the thresholds or the UI.
+constexpr double kMaxPlausibleCelsius = 150.0;
+
+// A sensor value must be a FINITE Celsius reading inside the plausible range.
+// QString::toDouble accepts "nan"/"inf", and a NaN passes a bare `temp <= 0` test, enters
+// the reading set, then silently fails every threshold comparison in processReadings
+// (NaN >= x is false) -- a warning that can never fire. Reject instead of coercing.
+[[nodiscard]] bool isPlausibleCelsius(double temp) {
+    return std::isfinite(temp) && temp > 0.0 && temp <= kMaxPlausibleCelsius;
+}
+
+// True only for the "disk<DeviceId>" keys the combined script emits: the suffix must be a
+// non-empty run of digits. Any other "disk*" key is not a device identity we can trust, so
+// the line is dropped instead of becoming a component named after arbitrary text.
+[[nodiscard]] bool isDiskDeviceId(const QString& device_id) {
+    if (device_id.isEmpty()) {
+        return false;
+    }
+    for (const QChar ch : device_id) {
+        if (!ch.isDigit()) {
+            return false;
+        }
+    }
+    return true;
+}
 }  // namespace
 
 // ============================================================================
@@ -121,9 +149,19 @@ void ThermalMonitor::onTimerTick() {
         return;
     }
 
-    // Run pollOnce() on the thread pool -- no UI blocking
+    // Run pollOnce() on the thread pool -- no UI blocking.
     // Lambda (not &pollOnce) to disambiguate the overload set: pollOnce() vs pollOnce(bool&).
-    m_poll_watcher.setFuture(QtConcurrent::run([] { return ThermalMonitor::pollOnce(); }));
+    // The bool& overload is taken deliberately: a FAILED query (unresolvable interpreter,
+    // non-zero exit, timeout) also yields an empty vector, so without this the periodic path
+    // would report a sensor failure as a normal "no readable sensors" tick and say nothing.
+    m_poll_watcher.setFuture(QtConcurrent::run([] {
+        bool query_ok = false;
+        QVector<ThermalReading> readings = ThermalMonitor::pollOnce(query_ok);
+        if (!query_ok) {
+            logWarning("Thermal sensor query FAILED; this poll reports no readings");
+        }
+        return readings;
+    }));
 }
 
 void ThermalMonitor::onPollComplete() {
@@ -156,19 +194,26 @@ QString ThermalMonitor::buildCombinedThermalScript() {
         "$r['cpu']=[math]::Round(($t.CurrentTemperature/10)-273.15,1)"
         "}}catch{};"
 
-        // GPU: try nvidia-smi at well-known paths, then PATH
+        // GPU: nvidia-smi at its absolute install paths ONLY. A bare "nvidia-smi" resolved
+        // through PATH/CWD is a forbidden fallback here -- the poll can run from an elevated
+        // session, where an attacker-planted nvidia-smi would then execute as admin.
+        // nvidia-smi prints one line per GPU: report the HOTTEST so a second, overheating
+        // card is never hidden behind a cool first one.
         "$nvp=@("
         "'C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe',"
-        "'C:\\Windows\\System32\\nvidia-smi.exe',"
-        "'nvidia-smi');"
+        "'C:\\Windows\\System32\\nvidia-smi.exe');"
         "foreach($p in $nvp){"
+        "if(-not (Test-Path -LiteralPath $p -PathType Leaf)){continue};"
         "try{"
         "$o=&$p --query-gpu=temperature.gpu "
         "--format=csv,noheader,nounits 2>$null;"
         "if($LASTEXITCODE -eq 0 -and $o){"
-        "$r['gpu']=[double]$o.Trim().Split(\"`n\")[0].Trim();"
+        "$g=@($o)|ForEach-Object{$_.ToString().Split(\"`n\")}|"
+        "ForEach-Object{$_.Trim()}|Where-Object{$_}|ForEach-Object{[double]$_};"
+        "if($g){"
+        "$r['gpu']=($g|Measure-Object -Maximum).Maximum;"
         "break"
-        "}}catch{}};"
+        "}}}catch{}};"
 
         // Disk temps via StorageReliabilityCounter (admin required)
         "try{"
@@ -200,7 +245,7 @@ QVector<ThermalReading> ThermalMonitor::parseThermalOutput(const QString& output
         const auto key = trimmed.left(eq_pos).toLower();
         bool ok = false;
         const double temp = trimmed.mid(eq_pos + 1).toDouble(&ok);
-        if (!ok || temp <= 0) {
+        if (!ok || !isPlausibleCelsius(temp)) {
             continue;
         }
 
@@ -209,7 +254,11 @@ QVector<ThermalReading> ThermalMonitor::parseThermalOutput(const QString& output
         } else if (key == QLatin1String("gpu")) {
             readings.append({"GPU", temp, now});
         } else if (key.startsWith(QLatin1String("disk"))) {
-            readings.append({QString("Disk %1").arg(key.mid(kDiskKeyPrefixLength)), temp, now});
+            const QString device_id = key.mid(kDiskKeyPrefixLength);
+            if (!isDiskDeviceId(device_id)) {
+                continue;
+            }
+            readings.append({QString("Disk %1").arg(device_id), temp, now});
         }
     }
     return readings;
@@ -262,12 +311,15 @@ double ThermalMonitor::queryCpuTemperature() {
     const QString output = result.std_out.trimmed();
     bool ok = false;
     const double raw_value = output.toDouble(&ok);
-    if (!ok || raw_value <= 0) {
+    if (!ok || !std::isfinite(raw_value) || raw_value <= 0) {
         return -1.0;
     }
 
     // WMI returns temperature in tenths of Kelvin
-    return (raw_value / kWmiTenthsKelvinDivisor) - kKelvinZeroCelsius;
+    const double celsius = (raw_value / kWmiTenthsKelvinDivisor) - kKelvinZeroCelsius;
+    // Fail closed: a non-finite or out-of-range value would sail through the caller's
+    // "temp >= abort threshold" test (NaN compares false) and defeat thermal protection.
+    return isPlausibleCelsius(celsius) ? celsius : -1.0;
 }
 
 }  // namespace sak

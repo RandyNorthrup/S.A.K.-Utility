@@ -47,9 +47,41 @@ function Invoke-CheckedStep {
 
     $global:LASTEXITCODE = 0
     & $Body
+    # $LASTEXITCODE alone is not a complete status contract for an in-process .ps1 call: a
+    # checker that fails without an explicit `exit` leaves the pre-seeded 0 in place. Take
+    # the last statement's success ($?) as well, so a failing step cannot pass silently.
+    $stepSucceeded = $?
     $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        throw "Partition Manager strict hardware certification step failed: $Name"
+    if (-not $stepSucceeded -or $exitCode -ne 0) {
+        throw "Partition Manager strict hardware certification step failed: $Name (exit code $exitCode, succeeded=$stepSucceeded)"
+    }
+}
+
+# A generated artifact must be proven to come from THIS run: clear it first, then require
+# the producing step to have recreated it. Otherwise a step that quietly produced nothing
+# leaves a stale HardwareCertified status/bundle for the later checks to consume.
+function Clear-GeneratedArtifact {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Path) {
+        throw "Could not clear stale certification artifact before regenerating it: $Path"
+    }
+}
+
+function Assert-GeneratedArtifact {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Partition Manager strict hardware certification step '$Name' did not produce $Path"
     }
 }
 
@@ -70,6 +102,11 @@ function Resolve-LatestCertificationReport {
 
 Push-Location $ProjectRoot
 try {
+    # An empty/whitespace CertificationRoot would silently resolve to the project root and
+    # widen the recursive report search to the whole repository. Refuse it.
+    if ([string]::IsNullOrWhiteSpace($CertificationRoot)) {
+        throw "CertificationRoot must name the strict certification directory; it cannot be empty."
+    }
     $resolvedCertificationRoot = Resolve-ProjectPath -Path $CertificationRoot
     if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
         $OutputRoot = $resolvedCertificationRoot
@@ -123,6 +160,11 @@ try {
                 -ManifestPath $externalManifestCheckPath
         }
     }
+    else {
+        Write-Warning ("External lab package check SKIPPED (-SkipExternalLabPackageCheck). " +
+            "A mandatory strict gate did not run, so this run does NOT establish a complete " +
+            "HardwareCertified claim.")
+    }
 
     Invoke-CheckedStep -Name "strict hardware evidence verification" -Body {
         & scripts\verify_partition_manager_certification.ps1 `
@@ -133,6 +175,7 @@ try {
     }
 
     $statusPath = Join-Path $resolvedOutputRoot "hardware-certification-status.json"
+    Clear-GeneratedArtifact -Path $statusPath
     Invoke-CheckedStep -Name "hardware certification status" -Body {
         & scripts\get_partition_manager_certification_status.ps1 `
             -ReportPath $resolvedReportPath `
@@ -141,8 +184,12 @@ try {
             -Quiet
     }
 
+    Assert-GeneratedArtifact -Path $statusPath -Name "hardware certification status"
+
     $gapReportPath = Join-Path $resolvedOutputRoot "hardware-certification-gap-report.json"
     $gapMarkdownPath = Join-Path $resolvedOutputRoot "hardware-certification-gap-report.md"
+    Clear-GeneratedArtifact -Path $gapReportPath
+    Clear-GeneratedArtifact -Path $gapMarkdownPath
     Invoke-CheckedStep -Name "hardware certification gap report" -Body {
         & scripts\new_partition_manager_certification_gap_report.ps1 `
             -StatusPath $statusPath `
@@ -151,6 +198,8 @@ try {
             -Force `
             -Quiet
     }
+    Assert-GeneratedArtifact -Path $gapReportPath -Name "hardware certification gap report"
+    Assert-GeneratedArtifact -Path $gapMarkdownPath -Name "hardware certification gap report"
     Invoke-CheckedStep -Name "hardware certification gap verification" -Body {
         & scripts\check_partition_manager_certification_gap_report.ps1 `
             -StatusPath $statusPath `
@@ -160,6 +209,7 @@ try {
 
     $bundlePath = Join-Path $resolvedOutputRoot "hardware-certification-artifact-bundle.json"
     $preflightPath = Join-Path $resolvedCertificationRoot "vhd-preflight.json"
+    Clear-GeneratedArtifact -Path $bundlePath
     Invoke-CheckedStep -Name "hardware certification artifact bundle" -Body {
         & scripts\new_partition_manager_certification_bundle.ps1 `
             -CertificationRoot $resolvedCertificationRoot `
@@ -173,16 +223,31 @@ try {
             -Force `
             -Quiet
     }
+    Assert-GeneratedArtifact -Path $bundlePath -Name "hardware certification artifact bundle"
     Invoke-CheckedStep -Name "hardware certification artifact bundle verification" -Body {
         & scripts\check_partition_manager_certification_bundle.ps1 -BundlePath $bundlePath
     }
 
     $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
+    # claim_level must be the exact STRING: a single-element array compares -ne to an empty
+    # (falsy) result, so an array-valued claim_level would slip through the check below.
+    if ($status.claim_level -isnot [string]) {
+        throw "Strict hardware certification status has a non-string claim_level; refusing to claim HardwareCertified."
+    }
     if ($status.claim_level -ne "HardwareCertified") {
         throw "Strict hardware certification did not reach HardwareCertified. Claim level: $($status.claim_level). External incomplete: $(@($status.external_gates.incomplete_ids).Count)."
     }
+    # A HardwareCertified claim while gates are still listed incomplete is a contradiction;
+    # the claim level alone must not be the whole acceptance test.
+    $incompleteGateIds = @($status.external_gates.incomplete_ids)
+    if ($incompleteGateIds.Count -ne 0) {
+        throw "Strict hardware certification reports HardwareCertified with $($incompleteGateIds.Count) incomplete external gate(s): $($incompleteGateIds -join ', ')."
+    }
 
     Write-Host "Partition Manager strict hardware certification passed: HardwareCertified"
+    if ($SkipExternalLabPackageCheck) {
+        Write-Warning "Claim is INCOMPLETE: the external lab package check was skipped for this run."
+    }
     Write-Host "Report: $resolvedReportPath"
     Write-Host "Status: $statusPath"
     Write-Host "Bundle: $bundlePath"

@@ -10,11 +10,15 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
+#include <QFile>
 #include <QFileInfo>
 #include <QMutexLocker>
 #include <QSet>
 #include <QThread>
 
+#include <cstddef>
+#include <exception>
+#include <limits>
 #include <vector>
 
 #include <windows.h>
@@ -23,7 +27,19 @@
 
 namespace {
 constexpr qint64 kDefaultFlashBufferSizeMb = 256;
-constexpr int kMaxPhysicalDriveNumber = 99;
+// Per-worker I/O buffer ceiling. Each running worker allocates one, and the size can
+// come from an attacker-writable config file, so it is bounded rather than passed
+// through to an allocation. Well above the 512 MB the settings dialog offers.
+constexpr qint64 kMaxFlashBufferSizeMb = 1024;
+// Upper bound on a parsed \\.\PhysicalDriveN index. It exists to catch a garbage
+// parse, not to cap real hardware, so it is high enough for an enterprise JBOD -- a
+// lower bound silently refused legitimate high-numbered disks after they had already
+// passed validation.
+constexpr int kMaxPhysicalDriveNumber = 1023;
+// Ceiling on targets in one run. Every target costs a worker, a thread and a device
+// handle, and they are all created AFTER the disks have been taken offline -- an
+// unbounded list turns an allocation failure there into offline disks with no writer.
+constexpr int kMaxTargetDrives = 64;
 // One drive at a time unless a caller raises it. Matches the ConfigManager default
 // the settings dialog shows, so an untouched install behaves the way the dialog says.
 constexpr int kDefaultMaxConcurrentWrites = 1;
@@ -65,10 +81,30 @@ int queryHandleDriveNumber(HANDLE handle) {
                          nullptr)) {
         return -1;
     }
+    // A "successful" short reply would leave the zero-initialized struct in place and
+    // let a zeroed DeviceNumber pass for a real answer. Require the whole record.
+    if (bytesReturned < sizeof(deviceNumber)) {
+        return -1;
+    }
     if (deviceNumber.DeviceType != FILE_DEVICE_DISK) {
         return -1;
     }
     return static_cast<int>(deviceNumber.DeviceNumber);
+}
+
+// True when the file really begins with a ZIP local-file-header signature
+// ("PK\x03\x04"), whatever its extension says. Returns false when the file cannot be
+// opened or is shorter than the signature; the caller pairs this with the
+// extension-based check and the image source's own open(), which both fail closed.
+bool hasZipContainerMagic(const QString& imagePath) {
+    QFile file(imagePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    char magic[4] = {};
+    const qint64 read = file.read(magic, static_cast<qint64>(sizeof(magic)));
+    return read == static_cast<qint64>(sizeof(magic)) && magic[0] == 'P' && magic[1] == 'K' &&
+           magic[2] == '\x03' && magic[3] == '\x04';
 }
 
 // A file the flasher recognizes as a compressed container but the streaming
@@ -76,8 +112,29 @@ int queryHandleDriveNumber(HANDLE handle) {
 // multi-member archive). Such a file MUST be refused, never raw-written: writing
 // the archive bytes verbatim produces a corrupt, unbootable target.
 bool isUnsupportedCompressedContainer(const QString& imagePath) {
-    return FileImageSource::detectFormat(imagePath) == sak::ImageFormat::ZIP &&
-           !CompressedImageSource::isCompressed(imagePath);
+    if (CompressedImageSource::isCompressed(imagePath)) {
+        return false;  // The streaming decompressor turns this one into raw bytes.
+    }
+    // detectFormat() reads the EXTENSION only, so a .zip renamed to .img would sail
+    // past it and be written to the disk verbatim. Sniff the container signature too
+    // and refuse on either signal.
+    return FileImageSource::detectFormat(imagePath) == sak::ImageFormat::ZIP ||
+           hasZipContainerMagic(imagePath);
+}
+
+// True only when a SUCCESSFUL IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS reply actually
+// carries the extents it claims. A short or empty "success" would otherwise be read
+// straight out of the zero-initialized buffer, walk no extents at all, and clear the
+// OS disk for a raw write on no evidence.
+bool volumeExtentsReplyIsComplete(const VOLUME_DISK_EXTENTS* extents,
+                                  DWORD bytesReturned,
+                                  DWORD maxExtents) {
+    if (extents->NumberOfDiskExtents == 0 || extents->NumberOfDiskExtents > maxExtents) {
+        return false;
+    }
+    const size_t headerSize = offsetof(VOLUME_DISK_EXTENTS, Extents);
+    const size_t returned = bytesReturned;
+    return returned >= headerSize + extents->NumberOfDiskExtents * sizeof(DISK_EXTENT);
 }
 
 // Returns whether the given physical-drive number backs the current OS (system)
@@ -114,6 +171,10 @@ OsDiskCheck physicalDriveOsDiskCheck(int driveNumber) {
     if (!ok) {
         return OsDiskCheck::Undetermined;
     }
+    // Fail closed on a reply that does not carry the extents it claims.
+    if (!volumeExtentsReplyIsComplete(extents, bytesReturned, kMaxExtents)) {
+        return OsDiskCheck::Undetermined;
+    }
     for (DWORD i = 0; i < extents->NumberOfDiskExtents && i < kMaxExtents; ++i) {
         if (static_cast<int>(extents->Extents[i].DiskNumber) == driveNumber) {
             return OsDiskCheck::IsSystem;
@@ -122,9 +183,6 @@ OsDiskCheck physicalDriveOsDiskCheck(int driveNumber) {
     return OsDiskCheck::NotSystem;
 }
 
-// Returns the first target path that appears more than once (case-insensitive,
-// since Windows device paths are not case-sensitive), or an empty string if all
-// targets are distinct.
 }  // namespace
 
 FlashCoordinator::FlashCoordinator(QObject* parent)
@@ -154,6 +212,16 @@ FlashCoordinator::~FlashCoordinator() {
         cancel();
     }
     cleanupWorkers();
+    // A run torn down by destruction (owner shutdown, a timeout, a cancel that the
+    // workers answer after we are gone) never reaches emitTerminalOutcome, so nothing
+    // has cleared the PERSISTENT OFFLINE attribute the unmount step set. Clear it here
+    // or the targets stay offline until someone runs `diskpart online disk` by hand.
+    const QStringList stranded = reonlineOfflinedDrives();
+    if (!stranded.isEmpty()) {
+        sak::logError(QString("Drives left OFFLINE at shutdown (need `diskpart online disk`): %1")
+                          .arg(stranded.join(QStringLiteral(", ")))
+                          .toStdString());
+    }
 }
 
 bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& targetDrives) {
@@ -170,6 +238,9 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
     // is still in its synchronous Validating/Unmounting phase.
     if (!beginFlashClaim()) {
         sak::logError("Flash already in progress");
+        // Say so on the error channel too: a caller that only listens to flashError
+        // (the AI action path does) would otherwise see a bare false with no reason.
+        Q_EMIT flashError("A flash run is already in progress");
         return false;
     }
 
@@ -178,35 +249,20 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
                      .arg(targetDrives.size())
                      .toStdString());
 
+    // Before the first step that can fail, so a rejected image cannot leave the
+    // PREVIOUS run's totals, operation text and results on display under the new state.
+    resetRunState(targetDrives);
+
     if (!validateImagePath(imagePath)) {
         return false;
     }
 
-    m_isCancelled = false;
-    m_targetDrives = targetDrives;
-
-    // Reset per-run progress and result. The coordinator is long-lived and reused across flashes;
-    // without this a stale non-zero completedDrives/failedDrives from a prior run satisfies the
-    // finalize predicate on the first completion of the next run, aborting still-active workers.
-    m_progress.completedDrives = 0;
-    m_progress.failedDrives = 0;
-    m_progress.activeDrives = 0;
-    m_progress.bytesWritten = 0;
-    m_progress.speedMBps = 0.0;
-    m_progress.percentage = 0.0;
-    m_result = sak::FlashResult{};
-    m_reportedWorkers.clear();
-    m_flashTimer.start();
-
     // Validate targets
-    m_state = sak::FlashState::Validating;
-    Q_EMIT stateChanged(m_state, "Validating targets...");
+    Q_EMIT stateChanged(sak::FlashState::Validating, "Validating targets...");
 
     if (!validateTargets(targetDrives)) {
         sak::logError("Target validation failed");
-        m_state = sak::FlashState::Failed;
-        Q_EMIT stateChanged(m_state, "Validation failed");
-        Q_EMIT flashError("Target validation failed");
+        failRun("Validation failed", "Target validation failed");
         return false;
     }
 
@@ -214,7 +270,9 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
         return false;
     }
 
-    m_progress.totalBytes = m_imageSource->size() * targetDrives.size();
+    if (!recordTotalBytes(imagePath, targetDrives.size())) {
+        return false;
+    }
 
     // Source checksum is calculated by each FlashWorker on its own
     // thread, not here on the UI thread (avoids freezing the GUI
@@ -223,19 +281,103 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
     return unmountAndFlash(imagePath, targetDrives);
 }
 
+void FlashCoordinator::resetRunState(const QStringList& targetDrives) {
+    // The coordinator is long-lived and reused across flashes; without this a stale
+    // non-zero completedDrives/failedDrives from a prior run satisfies the finalize
+    // predicate on the first completion of the next run, aborting still-active workers.
+    // Everything here is read by the locked cross-thread getters, so it is written
+    // under the same lock rather than raced against them.
+    QMutexLocker locker(&m_mutex);
+    m_isCancelled = false;
+    m_targetDrives = targetDrives;
+    m_progress.completedDrives = 0;
+    m_progress.failedDrives = 0;
+    m_progress.activeDrives = 0;
+    m_progress.bytesWritten = 0;
+    m_progress.totalBytes = 0;
+    m_progress.speedMBps = 0.0;
+    m_progress.percentage = 0.0;
+    m_progress.currentOperation.clear();
+    m_progress.state = m_state;
+    m_result = sak::FlashResult{};
+    m_reportedWorkers.clear();
+    m_flashTimer.start();
+}
+
+bool FlashCoordinator::recordTotalBytes(const QString& imagePath, qsizetype targetCount) {
+    // The opened source must report a positive, representable size BEFORE any disk is
+    // taken offline. A container whose header does not yield a decompressed size
+    // reports 0 or -1 here; accepting it would offline every target and then hand the
+    // workers an image they reject, and it would make every progress figure meaningless.
+    const qint64 imageBytes = m_imageSource->size();
+    if (imageBytes <= 0) {
+        sak::logError(QString("Refusing %1: the image source reports a size of %2 bytes")
+                          .arg(imagePath)
+                          .arg(imageBytes)
+                          .toStdString());
+        failRun("Unknown image size",
+                QString("Refusing to flash %1: its uncompressed size could not be determined")
+                    .arg(imagePath));
+        return false;
+    }
+    if (targetCount <= 0 || imageBytes > std::numeric_limits<qint64>::max() / targetCount) {
+        sak::logError(QString("Refusing %1: %2 bytes across %3 targets overflows the byte total")
+                          .arg(imagePath)
+                          .arg(imageBytes)
+                          .arg(targetCount)
+                          .toStdString());
+        failRun(
+            "Image too large",
+            QString("Refusing to flash %1: the reported image size is not usable").arg(imagePath));
+        return false;
+    }
+    QMutexLocker locker(&m_mutex);
+    m_progress.totalBytes = imageBytes * targetCount;
+    return true;
+}
+
+void FlashCoordinator::setState(sak::FlashState state) {
+    QMutexLocker locker(&m_mutex);
+    m_state = state;
+    // FlashProgress carries its own copy of the state and callers read it from the
+    // progress snapshot; leaving it at Idle for the whole run misreports the operation.
+    m_progress.state = state;
+}
+
+void FlashCoordinator::failRun(const QString& stateMessage, const QString& errorMessage) {
+    setState(sak::FlashState::Failed);
+    Q_EMIT stateChanged(sak::FlashState::Failed, stateMessage);
+    if (!errorMessage.isEmpty()) {
+        Q_EMIT flashError(errorMessage);
+    }
+    releaseImageSource();
+}
+
+void FlashCoordinator::releaseImageSource() {
+    // A run that ends before the workers start must not leave the coordinator's own
+    // image handle open until the next run or destruction reclaims it.
+    if (m_imageSource) {
+        m_imageSource->close();
+        m_imageSource.reset();
+    }
+}
+
 bool FlashCoordinator::validateImagePath(const QString& imagePath) {
     sak::path_validation_config img_cfg;
     img_cfg.must_exist = true;
     img_cfg.must_be_file = true;
     img_cfg.check_read_permission = true;
-    auto path_result =
-        sak::input_validator::validatePath(std::filesystem::path(imagePath.toStdString()), img_cfg);
+    // Build the filesystem path from the WIDE string. QString::toStdString() is UTF-8,
+    // but std::filesystem::path reads a narrow string in the active code page on
+    // Windows, so a non-ASCII path would be validated as a DIFFERENT path than the one
+    // every later Qt call opens.
+    auto path_result = sak::input_validator::validatePath(
+        std::filesystem::path(imagePath.toStdWString()), img_cfg);
     if (!path_result) {
         sak::logError("Image path validation failed: {}", path_result.error_message);
-        m_state = sak::FlashState::Failed;
-        Q_EMIT stateChanged(m_state, "Invalid image path");
-        Q_EMIT flashError(
-            QString::fromStdString("Image path validation failed: " + path_result.error_message));
+        failRun("Invalid image path",
+                QString::fromStdString("Image path validation failed: " +
+                                       path_result.error_message));
         return false;
     }
     // Reject a zero-length image (fail closed). It would write nothing yet pass:
@@ -244,9 +386,7 @@ bool FlashCoordinator::validateImagePath(const QString& imagePath) {
     // path validator only checks existence/type, not that there is data to flash.
     if (QFileInfo(imagePath).size() == 0) {
         sak::logError("Refusing to flash a zero-length image");
-        m_state = sak::FlashState::Failed;
-        Q_EMIT stateChanged(m_state, "Empty image");
-        Q_EMIT flashError("Image file is empty (0 bytes); nothing to flash");
+        failRun("Empty image", "Image file is empty (0 bytes); nothing to flash");
         return false;
     }
     return true;
@@ -261,19 +401,30 @@ bool FlashCoordinator::prepareImageSource(const QString& imagePath) {
         m_imageSource = std::make_unique<CompressedImageSource>(imagePath);
     } else if (isUnsupportedCompressedContainer(imagePath)) {
         sak::logError("Refusing to flash an unsupported compressed container (e.g. .zip)");
-        m_state = sak::FlashState::Failed;
-        Q_EMIT stateChanged(m_state, "Unsupported compressed image");
-        Q_EMIT flashError("Unsupported compressed image; extract the disk image before flashing");
+        failRun("Unsupported compressed image",
+                "Unsupported compressed image; extract the disk image before flashing");
         return false;
     } else {
         m_imageSource = std::make_unique<FileImageSource>(imagePath);
     }
 
-    if (!m_imageSource->open()) {
-        sak::logError("Failed to open image source");
-        m_state = sak::FlashState::Failed;
-        Q_EMIT stateChanged(m_state, "Failed to open image");
-        Q_EMIT flashError("Failed to open image file");
+    // Capture the source's own reason for a failed open instead of replacing it with
+    // generic text. The connection is direct (same thread) and is dropped again right
+    // away, so it cannot outlive this scope or catch a later read error.
+    QString openError;
+    auto captureError = [&openError](const QString& error) {
+        openError = error;
+    };
+    const QMetaObject::Connection errorConnection =
+        connect(m_imageSource.get(), &ImageSource::readError, this, captureError);
+    const bool opened = m_imageSource->open();
+    disconnect(errorConnection);
+    if (!opened) {
+        sak::logError(QString("Failed to open image source: %1").arg(openError).toStdString());
+        failRun("Failed to open image",
+                openError.isEmpty()
+                    ? QString("Failed to open image file %1").arg(imagePath)
+                    : QString("Failed to open image file %1: %2").arg(imagePath, openError));
         return false;
     }
     return true;
@@ -284,18 +435,32 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
     // validateImagePath() on the image, which no empty path survives.
     Q_ASSERT(!imagePath.isEmpty());
     Q_ASSERT(!targetDrives.isEmpty());
-    m_state = sak::FlashState::Unmounting;
-    Q_EMIT stateChanged(m_state, "Unmounting volumes...");
 
-    if (!unmountVolumes(targetDrives)) {
-        // unmountVolumes() already emitted flashError() with details
-        m_state = sak::FlashState::Failed;
-        Q_EMIT stateChanged(m_state, "Failed to unmount target volumes");
+    // A cancel that arrived during the synchronous validation phase must stop the run
+    // HERE. Without this check the next state assignment simply overwrites Cancelled
+    // and the run goes on to take every target offline for a write that
+    // startPendingWorkers() will then refuse to start -- disks offline, nothing
+    // written, no terminal outcome ever emitted.
+    if (abortIfCancelled("Cancelled before unmounting; no drive was taken offline")) {
         return false;
     }
 
-    m_state = sak::FlashState::Flashing;
-    Q_EMIT stateChanged(m_state, QString("Writing to %1 drives...").arg(targetDrives.size()));
+    setState(sak::FlashState::Unmounting);
+    Q_EMIT stateChanged(sak::FlashState::Unmounting, "Unmounting volumes...");
+
+    if (!unmountVolumes(targetDrives)) {
+        // unmountVolumes() already emitted flashError() with details
+        failRun("Failed to unmount target volumes", QString());
+        return false;
+    }
+
+    if (abortIfCancelled("Cancelled during unmount")) {
+        return false;
+    }
+
+    setState(sak::FlashState::Flashing);
+    Q_EMIT stateChanged(sak::FlashState::Flashing,
+                        QString("Writing to %1 drives...").arg(targetDrives.size()));
 
     // Build every worker up front, but start only as many as the concurrent-write
     // ceiling allows; the rest are queued and started as earlier drives finish.
@@ -305,20 +470,8 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
     // Point the queue at the first worker THIS run creates rather than at index 0,
     // so a leftover finished worker from a previous run can never be restarted.
     m_nextWorkerIndex = m_workers.size();
-    for (const QString& drive : targetDrives) {
-        std::unique_ptr<ImageSource> workerSource;
-        if (CompressedImageSource::isCompressed(imagePath)) {
-            workerSource = std::make_unique<CompressedImageSource>(imagePath);
-        } else {
-            workerSource = std::make_unique<FileImageSource>(imagePath);
-        }
-
-        auto worker = std::make_unique<FlashWorker>(std::move(workerSource), drive);
-        worker->setVerificationEnabled(m_verificationEnabled);
-        worker->setBufferSize(m_bufferSize);
-        worker->setValidationMode(m_validationMode);
-        connectWorkerSignals(worker.get());
-        m_workers.push_back(std::move(worker));
+    if (!buildWorkerQueue(imagePath, targetDrives)) {
+        return false;
     }
 
     startPendingWorkers();
@@ -326,15 +479,72 @@ bool FlashCoordinator::unmountAndFlash(const QString& imagePath, const QStringLi
     return true;
 }
 
+// Constructs one queued worker per target. Opens nothing: FlashWorker opens its image source
+// and device handle on its own thread inside execute(), so a queued worker holds no handle
+// while it waits.
+bool FlashCoordinator::buildWorkerQueue(const QString& imagePath, const QStringList& targetDrives) {
+    try {
+        for (const QString& drive : targetDrives) {
+            std::unique_ptr<ImageSource> workerSource;
+            if (CompressedImageSource::isCompressed(imagePath)) {
+                workerSource = std::make_unique<CompressedImageSource>(imagePath);
+            } else {
+                workerSource = std::make_unique<FileImageSource>(imagePath);
+            }
+
+            auto worker = std::make_unique<FlashWorker>(std::move(workerSource), drive);
+            worker->setVerificationEnabled(m_verificationEnabled);
+            worker->setBufferSize(m_bufferSize);
+            worker->setValidationMode(m_validationMode);
+            connectWorkerSignals(worker.get());
+            m_workers.push_back(std::move(worker));
+        }
+    } catch (const std::exception& e) {
+        // Every target is already OFFLINE at this point. Letting an allocation failure escape
+        // startFlash would leave them that way with no writer and no terminal outcome, so
+        // retire the partial queue, put the disks back and fail closed.
+        const QString reason = QString::fromUtf8(e.what());
+        sak::logError(QString("Failed to build the flash workers: %1").arg(reason).toStdString());
+        cleanupWorkers();
+        rollbackAndReport();
+        failRun("Failed to start the flash", QString("Could not start the flash: %1").arg(reason));
+        return false;
+    }
+    return true;
+}
+
+bool FlashCoordinator::abortIfCancelled(const QString& reason) {
+    if (!m_isCancelled.load()) {
+        return false;
+    }
+    sak::logInfo(QString("Flash cancelled: %1").arg(reason).toStdString());
+    // Bring back anything this run already took offline -- a cancelled run must not
+    // leave a disk carrying the persistent OFFLINE attribute.
+    const QStringList stranded = reonlineOfflinedDrives();
+    setState(sak::FlashState::Cancelled);
+    Q_EMIT stateChanged(sak::FlashState::Cancelled, reason);
+    if (!stranded.isEmpty()) {
+        Q_EMIT flashError(QString("Cancelled, but these drives are still offline and need a "
+                                  "manual `diskpart online disk`: %1")
+                              .arg(stranded.join(QStringLiteral(", "))));
+    }
+    releaseImageSource();
+    return true;
+}
+
 void FlashCoordinator::startPendingWorkers() {
     std::vector<FlashWorker*> toStart;
+    bool leftVerifying = false;
     {
         QMutexLocker locker(&m_mutex);
         // A cancelled or already-finished run must not start another drive. Without
         // this, cancelling a queued multi-drive run would tear down the running
         // worker and then start the next queued one on the back of its failure
         // report -- the run would keep writing drives after the user stopped it.
-        if (m_isCancelled.load() || m_state != sak::FlashState::Flashing) {
+        // Verifying counts as live: an earlier drive reading itself back does not mean
+        // the queue behind it is abandoned.
+        if (m_isCancelled.load() ||
+            (m_state != sak::FlashState::Flashing && m_state != sak::FlashState::Verifying)) {
             return;
         }
         // Saturate rather than subtract blind: m_workers is cleared at teardown while
@@ -342,7 +552,11 @@ void FlashCoordinator::startPendingWorkers() {
         // "nothing queued" into a huge pending count.
         const size_t queued =
             m_nextWorkerIndex < m_workers.size() ? m_workers.size() - m_nextWorkerIndex : 0;
-        const int pending = static_cast<int>(queued);
+        // Clamp instead of narrowing blind: the cast is only safe because the target
+        // ceiling bounds m_workers, and saying so beats relying on it.
+        const int pending = queued > static_cast<size_t>(std::numeric_limits<int>::max())
+                                ? std::numeric_limits<int>::max()
+                                : static_cast<int>(queued);
         const int startable =
             startableWorkerCount(m_maxConcurrentWrites, m_progress.activeDrives, pending);
         for (int i = 0; i < startable; ++i) {
@@ -352,10 +566,40 @@ void FlashCoordinator::startPendingWorkers() {
         // Count them as active before releasing the lock so a completion arriving
         // between here and start() cannot see a stale slot as free.
         m_progress.activeDrives += startable;
+        if (startable > 0 && m_state == sak::FlashState::Verifying) {
+            m_state = sak::FlashState::Flashing;
+            m_progress.state = m_state;
+            leftVerifying = true;
+        }
     }
 
-    for (FlashWorker* worker : toStart) {
+    if (leftVerifying) {
+        Q_EMIT stateChanged(sak::FlashState::Flashing, "Writing to the next drive...");
+    }
+
+    startWorkers(toStart);
+}
+
+void FlashCoordinator::startWorkers(const std::vector<FlashWorker*>& workers) {
+    std::vector<FlashWorker*> failedToStart;
+    for (FlashWorker* worker : workers) {
         worker->start();
+        // QThread::start() returns void and only warns when the thread cannot be
+        // created. It marks the thread running synchronously before run() begins, so a
+        // worker that is neither running nor finished never started -- and the run
+        // would otherwise wait forever for a terminal signal that cannot come.
+        if (!worker->isRunning() && !worker->isFinished()) {
+            sak::logError(QString("Could not start the writer thread for %1")
+                              .arg(worker->targetDevice())
+                              .toStdString());
+            failedToStart.push_back(worker);
+        }
+    }
+
+    // Report AFTER the start loop: onWorkerFailedFor() can finalize the run and tear
+    // the workers down, which would invalidate the pointers still being iterated above.
+    for (FlashWorker* worker : failedToStart) {
+        onWorkerFailedFor(worker, QStringLiteral("Could not start the writer thread"));
     }
 }
 
@@ -378,8 +622,34 @@ void FlashCoordinator::cancel() {
 
     markQueuedWorkersCancelled();
 
-    m_state = sak::FlashState::Cancelled;
-    Q_EMIT stateChanged(m_state, "Cancelled by user");
+    // A cancel that lands before any worker started leaves nothing that will ever emit
+    // a terminal signal, so the run would sit in Cancelled forever with every target
+    // still carrying the persistent OFFLINE attribute. Finish it here when every drive
+    // is already accounted for; otherwise the running workers report and the usual
+    // finalize path in onWorkerFailedFor() takes over.
+    bool terminal = false;
+    sak::FlashResult terminalResult;
+    QString terminalMessage;
+    {
+        QMutexLocker locker(&m_mutex);
+        m_state = sak::FlashState::Cancelled;
+        m_progress.state = m_state;
+        if (m_progress.activeDrives <= 0 &&
+            m_progress.completedDrives + m_progress.failedDrives >= m_targetDrives.size()) {
+            m_result.success = false;
+            finalizeResultMetrics();
+            terminal = true;
+            terminalResult = m_result;
+            terminalMessage = QString("Cancelled: %1 successful, %2 failed")
+                                  .arg(m_result.successfulDrives.size())
+                                  .arg(m_result.failedDrives.size());
+        }
+    }
+
+    Q_EMIT stateChanged(sak::FlashState::Cancelled, "Cancelled by user");
+    if (terminal) {
+        emitTerminalOutcome(sak::FlashState::Cancelled, terminalResult, terminalMessage);
+    }
 }
 
 void FlashCoordinator::markQueuedWorkersCancelled() {
@@ -413,9 +683,21 @@ bool FlashCoordinator::beginFlashClaim() {
     if (isActiveFlashState(m_state)) {
         return false;  // A run is already active -- refuse re-entry atomically.
     }
+    // Cancelled/Failed is NOT the same as "no writers left". requestStop() is
+    // cooperative and a worker wedged in a long raw WriteFile keeps writing sectors
+    // well after cancel() published Cancelled. Claiming a new run now would reset the
+    // shared counters, target list and dedup set out from under those live writers and
+    // let their late terminal signals be counted against the new run. Fail closed until
+    // the previous run's threads are actually gone.
+    for (const std::unique_ptr<FlashWorker>& worker : m_workers) {
+        if (worker && worker->isRunning()) {
+            return false;
+        }
+    }
     // Claim the run under the lock so a concurrent startFlash cannot also pass the
     // gate before the first one has moved the state out of Idle/Completed/Failed.
     m_state = sak::FlashState::Validating;
+    m_progress.state = m_state;
     return true;
 }
 
@@ -438,6 +720,18 @@ bool FlashCoordinator::isVerificationEnabled() const {
 }
 
 void FlashCoordinator::setBufferSize(qint64 sizeBytes) {
+    // Same contract as setMaxConcurrentWrites: refuse a value that cannot work and say
+    // so, rather than passing it down to a worker that quietly substitutes its own.
+    // Zero/negative starts no I/O at all, and an oversized value is an allocation
+    // request the caller (config file, settings dialog) does not get to make unbounded.
+    const qint64 maxBytes = kMaxFlashBufferSizeMb * sak::kBytesPerMB;
+    if (sizeBytes <= 0 || sizeBytes > maxBytes) {
+        sak::logError("Refusing a flash buffer size of {} bytes (allowed 1..{}); keeping {}",
+                      sizeBytes,
+                      maxBytes,
+                      m_bufferSize);
+        return;
+    }
     m_bufferSize = sizeBytes;
 }
 
@@ -478,6 +772,12 @@ void FlashCoordinator::onWorkerProgress(double percentage, qint64 bytesWritten) 
 
 void FlashCoordinator::connectWorkerSignals(FlashWorker* worker) {
     connect(worker, &FlashWorker::progressUpdated, this, &FlashCoordinator::onWorkerProgress);
+    // The coordinator otherwise advertised Flashing for the whole read-back stage and
+    // never entered Verifying at all, so its reported state described the wrong
+    // operation for the entire second half of a verified run.
+    connect(worker, &FlashWorker::verificationProgress, this, [this](double, qint64) {
+        noteVerificationStarted();
+    });
     connect(
         worker, &FlashWorker::verificationCompleted, this, &FlashCoordinator::onWorkerCompleted);
     connect(worker, &FlashWorker::error, this, &FlashCoordinator::onWorkerFailed);
@@ -507,6 +807,20 @@ void FlashCoordinator::connectWorkerSignals(FlashWorker* worker) {
     }
 }
 
+void FlashCoordinator::noteVerificationStarted() {
+    // Only the Flashing -> Verifying edge publishes, so the periodic verification
+    // progress signal does not turn into a stateChanged storm.
+    {
+        QMutexLocker locker(&m_mutex);
+        if (m_state != sak::FlashState::Flashing) {
+            return;
+        }
+        m_state = sak::FlashState::Verifying;
+        m_progress.state = m_state;
+    }
+    Q_EMIT stateChanged(sak::FlashState::Verifying, "Verifying written data...");
+}
+
 QString FlashCoordinator::recordDriveCompletion(const QString& devicePath,
                                                 const sak::ValidationResult& result) {
     // Called with m_mutex held. completedDrives counts SUCCESSES only (failures bump
@@ -517,18 +831,71 @@ QString FlashCoordinator::recordDriveCompletion(const QString& devicePath,
         sak::logError(QString("Verification failed for drive: %1").arg(devicePath).toStdString());
         m_progress.failedDrives++;
         m_result.failedDrives.append(devicePath);
+        // Keep EVERY reported reason, not just the first: the later entries are the
+        // ones that say where and how the verification diverged.
         const QString errorMsg = result.errors.isEmpty() ? QStringLiteral("Verification failed")
-                                                         : result.errors.first();
+                                                         : result.errors.join(QStringLiteral("; "));
         m_result.errorMessages.append(QString("%1: %2").arg(devicePath).arg(errorMsg));
         return errorMsg;
     }
+
+    // The checksum of the image this drive was written FROM. The worker's own source
+    // hash is the honest provenance; on a passing full verify the device read-back
+    // hash equals it, and it is all there is in Sample/Skip mode.
+    const QString reportedSource = result.sourceChecksum.isEmpty() ? result.targetChecksum
+                                                                   : result.sourceChecksum;
+
+    // Every drive in a run must have been written from the SAME image. Each worker
+    // opens the image file itself, so an image replaced mid-run gives different drives
+    // different bytes and each one still verifies against the copy it read. Pin the
+    // first reported source hash and refuse any drive that reports a different one.
+    if (!reportedSource.isEmpty() && !m_result.sourceChecksum.isEmpty() &&
+        reportedSource != m_result.sourceChecksum) {
+        const QString errorMsg = QStringLiteral(
+            "Source image changed during the run: this drive was written from "
+            "different bytes than the first drive");
+        sak::logError(QString("%1: %2").arg(devicePath, errorMsg).toStdString());
+        m_progress.failedDrives++;
+        m_result.failedDrives.append(devicePath);
+        m_result.errorMessages.append(QString("%1: %2").arg(devicePath).arg(errorMsg));
+        return errorMsg;
+    }
+
     m_progress.completedDrives++;
     m_result.successfulDrives.append(devicePath);
-    // The verified device checksum (== source when verification is on).
-    if (m_result.sourceChecksum.isEmpty() && !result.targetChecksum.isEmpty()) {
-        m_result.sourceChecksum = result.targetChecksum;
+    if (m_result.sourceChecksum.isEmpty() && !reportedSource.isEmpty()) {
+        m_result.sourceChecksum = reportedSource;
     }
     return QString();
+}
+
+bool FlashCoordinator::finalizeRunIfLastDrive(sak::FlashState* terminalState,
+                                              sak::FlashResult* terminalResult,
+                                              QString* terminalMessage) {
+    if (m_progress.completedDrives + m_progress.failedDrives < m_targetDrives.size()) {
+        return false;
+    }
+    // The terminal state must reflect the RUN outcome, not which handler fired last: if any
+    // drive failed (e.g. the last worker to report failed its verification), the run FAILED
+    // even though the success handler is what got us here.
+    const bool anyFailed = m_progress.failedDrives > 0;
+    // A cancelled run ends Cancelled, not Failed: the outcome has to be able to say the user
+    // stopped it rather than blaming the flash.
+    const bool cancelled = m_isCancelled.load();
+    m_state = cancelled ? sak::FlashState::Cancelled
+                        : (anyFailed ? sak::FlashState::Failed : sak::FlashState::Completed);
+    m_progress.state = m_state;
+    m_result.success = !anyFailed && !cancelled;
+    finalizeResultMetrics();
+    *terminalState = m_state;
+    *terminalResult = m_result;
+    *terminalMessage =
+        QString("%1: %2 successful, %3 failed")
+            .arg(cancelled ? QStringLiteral("Cancelled")
+                           : (anyFailed ? QStringLiteral("Failed") : QStringLiteral("Completed")))
+            .arg(m_result.successfulDrives.size())
+            .arg(m_result.failedDrives.size());
+    return true;
 }
 
 void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
@@ -537,6 +904,12 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     Q_ASSERT(!m_targetDrives.isEmpty());
     const FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
     if (!worker) {
+        // Not expected: this slot is private and only connectWorkerSignals() wires it.
+        // Do not swallow it silently -- an unattributable completion leaves the run
+        // waiting for a drive that has already finished, with its disk still offline.
+        sak::logError(
+            "Flash completion arrived with no FlashWorker sender; it cannot be "
+            "attributed to a drive");
         return;
     }
 
@@ -562,23 +935,7 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
         m_progress.activeDrives--;
         errorMsg = recordDriveCompletion(devicePath, result);
 
-        if (m_progress.completedDrives + m_progress.failedDrives >= m_targetDrives.size()) {
-            // The terminal state must reflect the RUN outcome, not which handler fired
-            // last: if any drive failed (e.g. the last worker to report failed its
-            // verification), the run FAILED even though this is the success handler.
-            const bool anyFailed = m_progress.failedDrives > 0;
-            m_state = anyFailed ? sak::FlashState::Failed : sak::FlashState::Completed;
-            m_result.success = !anyFailed;
-            finalizeResultMetrics();
-            terminal = true;
-            terminalState = m_state;
-            terminalResult = m_result;
-            terminalMessage = QString("%1: %2 successful, %3 failed")
-                                  .arg(anyFailed ? QStringLiteral("Failed")
-                                                 : QStringLiteral("Completed"))
-                                  .arg(m_result.successfulDrives.size())
-                                  .arg(m_result.failedDrives.size());
-        }
+        terminal = finalizeRunIfLastDrive(&terminalState, &terminalResult, &terminalMessage);
     }
 
     if (!passed) {
@@ -607,6 +964,11 @@ void FlashCoordinator::onWorkerFailed(const QString& error) {
         error.isEmpty() ? tr("Flash failed (the worker reported no reason)") : error;
     const FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
     if (!worker) {
+        // See onWorkerCompleted: an unattributable failure must not vanish quietly, or
+        // the run waits forever for a drive that has already given up.
+        sak::logError(QString("Flash failure arrived with no FlashWorker sender: %1")
+                          .arg(reportedError)
+                          .toStdString());
         return;
     }
     onWorkerFailedFor(worker, reportedError);
@@ -649,13 +1011,19 @@ void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QStrin
         m_result.errorMessages.append(QString("%1: %2").arg(devicePath, error));
 
         if (m_progress.completedDrives + m_progress.failedDrives >= m_targetDrives.size()) {
-            m_state = sak::FlashState::Failed;
+            // A cancelled run ends Cancelled: overwriting it with Failed would make a
+            // user-stopped run indistinguishable from a flash that went wrong.
+            const bool cancelled = m_isCancelled.load();
+            m_state = cancelled ? sak::FlashState::Cancelled : sak::FlashState::Failed;
+            m_progress.state = m_state;
             m_result.success = false;
             finalizeResultMetrics();
             terminal = true;
             terminalState = m_state;
             terminalResult = m_result;
-            terminalMessage = QString("Failed: %1 successful, %2 failed")
+            terminalMessage = QString("%1: %2 successful, %3 failed")
+                                  .arg(cancelled ? QStringLiteral("Cancelled")
+                                                 : QStringLiteral("Failed"))
                                   .arg(m_result.successfulDrives.size())
                                   .arg(m_result.failedDrives.size());
         }
@@ -683,21 +1051,41 @@ void FlashCoordinator::emitTerminalOutcome(sak::FlashState state,
     // target offline would strand it, requiring a manual `diskpart online disk`.
     // Re-onlining a half-written disk is safe: it cannot corrupt anything further,
     // and the user can immediately re-partition or re-flash it.
-    reonlineDrives(result.successfulDrives + result.failedDrives);
+
+    // Take THIS run's workers and image handle out of the coordinator BEFORE emitting
+    // anything. A direct-connected stateChanged/flashCompleted handler is allowed to
+    // start the next run, and a teardown running afterwards against the member would
+    // stop and destroy the NEW run's workers and close its image instead of ours.
+    std::vector<std::unique_ptr<FlashWorker>> finished;
+    {
+        QMutexLocker locker(&m_mutex);
+        finished.swap(m_workers);
+        m_nextWorkerIndex = 0;
+    }
+    releaseImageSource();
+
+    sak::FlashResult finalResult = result;
+    finalResult.reonlineFailedDrives = reonlineOfflinedDrives();
+    if (!finalResult.reonlineFailedDrives.isEmpty()) {
+        // A log line would tell the user the run finished while leaving disks carrying
+        // the persistent OFFLINE attribute. Put it in the reported result instead.
+        finalResult.errorMessages.append(
+            QString("Still offline after the run (run `diskpart online disk`): %1")
+                .arg(finalResult.reonlineFailedDrives.join(QStringLiteral(", "))));
+    }
 
     // Eject AFTER re-onlining, never instead of it. The OFFLINE attribute is
     // persistent, so ejecting while it is still set would leave a drive that comes
     // back offline the next time it is plugged in -- the eject must remove a normal,
     // online disk.
     // ejectCompletedDrives opens devices, so it runs here with m_mutex released.
-    sak::FlashResult finalResult = result;
     if (m_ejectOnCompletion) {
         ejectCompletedDrives(finalResult);
     }
 
     Q_EMIT stateChanged(state, statusMessage);
     Q_EMIT flashCompleted(finalResult);
-    cleanupWorkers();
+    retireWorkers(finished);
 }
 
 void FlashCoordinator::ejectCompletedDrives(sak::FlashResult& result) {
@@ -724,25 +1112,65 @@ void FlashCoordinator::ejectCompletedDrives(sak::FlashResult& result) {
     }
 }
 
-void FlashCoordinator::reonlineDrives(const QStringList& drivePaths) {
+QStringList FlashCoordinator::reonlineDrives(const QStringList& drivePaths) {
+    QStringList stillOffline;
     if (drivePaths.isEmpty()) {
-        return;
+        return stillOffline;
     }
     DriveUnmounter unmounter;
     for (const QString& devicePath : drivePaths) {
         const int driveNumber = parsePhysicalDriveNumber(devicePath);
         if (driveNumber < 0 || driveNumber > kMaxPhysicalDriveNumber) {
-            sak::logWarning(QString("Cannot re-online %1: unparseable drive number")
-                                .arg(devicePath)
-                                .toStdString());
+            sak::logError(QString("Cannot re-online %1: unparseable drive number")
+                              .arg(devicePath)
+                              .toStdString());
+            stillOffline.append(devicePath);
             continue;
         }
         if (!unmounter.allowAutoMount(driveNumber)) {
-            sak::logWarning(QString("Failed to bring drive %1 back online: %2")
-                                .arg(devicePath, unmounter.lastError())
-                                .toStdString());
+            sak::logError(QString("Failed to bring drive %1 back online: %2")
+                              .arg(devicePath, unmounter.lastError())
+                              .toStdString());
+            stillOffline.append(devicePath);
         }
     }
+    return stillOffline;
+}
+
+QStringList FlashCoordinator::reonlineOfflinedDrives() {
+    const QStringList offlined = m_offlinedDrives;
+    m_offlinedDrives.clear();
+    const QStringList stillOffline = reonlineDrives(offlined);
+    // Keep the ones that refused so a later teardown tries again instead of losing
+    // track of a disk left with a persistent OFFLINE attribute.
+    m_offlinedDrives = stillOffline;
+    return stillOffline;
+}
+
+QStringList FlashCoordinator::rollbackOfflinedDrives(const QStringList& offlinedPaths) {
+    // Clear the persistent OFFLINE attribute on drives we already offlined this run,
+    // so a mid-list unmount failure does not strand the earlier targets.
+    if (offlinedPaths.isEmpty()) {
+        return QStringList();
+    }
+    sak::logInfo(QString("Rolling back %1 drive(s) taken offline before the failure")
+                     .arg(offlinedPaths.size())
+                     .toStdString());
+    return reonlineDrives(offlinedPaths);
+}
+
+void FlashCoordinator::rollbackAndReport() {
+    const QStringList offlined = m_offlinedDrives;
+    m_offlinedDrives = rollbackOfflinedDrives(offlined);
+    if (m_offlinedDrives.isEmpty()) {
+        return;
+    }
+    sak::logError(QString("Rollback left these drives offline: %1")
+                      .arg(m_offlinedDrives.join(QStringLiteral(", ")))
+                      .toStdString());
+    Q_EMIT flashError(QString("These drives are still offline and need a manual "
+                              "`diskpart online disk`: %1")
+                          .arg(m_offlinedDrives.join(QStringLiteral(", "))));
 }
 
 int FlashCoordinator::parsePhysicalDriveNumber(const QString& devicePath) {
@@ -768,9 +1196,41 @@ QString FlashCoordinator::firstDuplicateTarget(const QStringList& targetDrives) 
     return QString();
 }
 
+QString FlashCoordinator::firstDuplicatePhysicalDrive(const QStringList& targetDrives) {
+    QSet<int> seen;
+    for (const QString& devicePath : targetDrives) {
+        const int driveNumber = parsePhysicalDriveNumber(devicePath);
+        if (driveNumber < 0) {
+            // No parseable disk identity. validateSingleTarget() refuses such a path
+            // outright (it cannot prove the path opens the disk it names), so it is not
+            // folded into the identity set here.
+            continue;
+        }
+        if (seen.contains(driveNumber)) {
+            return devicePath;
+        }
+        seen.insert(driveNumber);
+    }
+    return QString();
+}
+
 bool FlashCoordinator::validateTargets(const QStringList& targetDrives) {
     // Sole caller startFlash() returns false on an empty drive list before reaching here.
     Q_ASSERT(!targetDrives.isEmpty());
+
+    // Bound the run. Every target costs a worker, a thread and a device handle, and
+    // they are all created AFTER the disks are offline -- an unbounded list turns a
+    // failed allocation there into offline disks with nothing writing to them.
+    if (targetDrives.size() > kMaxTargetDrives) {
+        sak::logError(QString("Refusing %1 targets in one run (ceiling %2)")
+                          .arg(targetDrives.size())
+                          .arg(kMaxTargetDrives)
+                          .toStdString());
+        Q_EMIT flashError(QString("Refusing %1 target drives: at most %2 may be flashed in one run")
+                              .arg(targetDrives.size())
+                              .arg(kMaxTargetDrives));
+        return false;
+    }
 
     // Reject duplicate target paths: two workers writing the SAME physical disk
     // concurrently interleave their raw writes and corrupt each other.
@@ -778,6 +1238,22 @@ bool FlashCoordinator::validateTargets(const QStringList& targetDrives) {
     if (!duplicate.isEmpty()) {
         sak::logError(QString("Duplicate target device rejected: %1").arg(duplicate).toStdString());
         Q_EMIT flashError(QString("Duplicate target device: %1").arg(duplicate));
+        return false;
+    }
+
+    // String equality is not device identity. "\\.\PhysicalDrive1" and
+    // "\\?\PhysicalDrive1" are different strings naming the SAME disk and sail past the
+    // check above, putting two raw writers on one target. validateSingleTarget() below
+    // proves each path really opens the physical disk its name claims, so the parsed
+    // number IS the disk identity -- reject a repeat of it.
+    const QString duplicateDisk = firstDuplicatePhysicalDrive(targetDrives);
+    if (!duplicateDisk.isEmpty()) {
+        sak::logError(QString("Duplicate target physical disk rejected: %1")
+                          .arg(duplicateDisk)
+                          .toStdString());
+        Q_EMIT flashError(QString("Duplicate target device: %1 names a physical disk that is "
+                                  "already in the target list")
+                              .arg(duplicateDisk));
         return false;
     }
 
@@ -923,9 +1399,11 @@ bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
     // Sole caller unmountAndFlash() forwards startFlash()'s list, already rejected if empty.
     Q_ASSERT(!targetDrives.isEmpty());
     DriveUnmounter unmounter;
-    // Track drives we successfully took offline so we can roll them back online if a
-    // LATER target fails to unmount -- otherwise earlier targets are stranded offline.
-    std::vector<int> offlined;
+    // Track drives we successfully took offline (in m_offlinedDrives) so we can roll
+    // them back online if a LATER target fails to unmount -- otherwise earlier targets
+    // are stranded offline -- and so a teardown that never reaches emitTerminalOutcome
+    // can still clear the attribute.
+    m_offlinedDrives.clear();
 
     for (const QString& devicePath : targetDrives) {
         sak::logInfo(QString("Unmounting volumes on %1").arg(devicePath).toStdString());
@@ -938,39 +1416,29 @@ bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
                               .arg(devicePath)
                               .toStdString());
             Q_EMIT flashError(QString("Invalid device path format: %1").arg(devicePath));
-            rollbackOfflinedDrives(unmounter, offlined);
+            rollbackAndReport();
             return false;
         }
 
         if (!unmounter.unmountDrive(driveNumber)) {
-            sak::logError(QString("Failed to unmount volumes on %1").arg(devicePath).toStdString());
+            // Carry the unmounter's own reason: "failed to unmount" without it hides
+            // which handle or which API call actually refused.
+            sak::logError(QString("Failed to unmount volumes on %1: %2")
+                              .arg(devicePath, unmounter.lastError())
+                              .toStdString());
             Q_EMIT flashError(
-                QString("Failed to unmount volumes on %1. "
+                QString("Failed to unmount volumes on %1: %2. "
                         "Please close any applications using this drive and try again.")
-                    .arg(devicePath));
-            rollbackOfflinedDrives(unmounter, offlined);
+                    .arg(devicePath, unmounter.lastError()));
+            rollbackAndReport();
             return false;
         }
 
-        offlined.push_back(driveNumber);
+        m_offlinedDrives.append(devicePath);
         sak::logInfo(QString("Successfully unmounted volumes on %1").arg(devicePath).toStdString());
     }
 
     return true;
-}
-
-void FlashCoordinator::rollbackOfflinedDrives(DriveUnmounter& unmounter,
-                                              const std::vector<int>& offlined) {
-    // Best-effort: clear the persistent OFFLINE attribute on drives we already
-    // offlined this run, so a mid-list unmount failure does not strand them.
-    for (const int driveNumber : offlined) {
-        if (!unmounter.allowAutoMount(driveNumber)) {
-            sak::logWarning(QString("Rollback: failed to bring drive %1 back online: %2")
-                                .arg(driveNumber)
-                                .arg(unmounter.lastError())
-                                .toStdString());
-        }
-    }
 }
 
 void FlashCoordinator::updateProgress() {
@@ -990,8 +1458,11 @@ void FlashCoordinator::updateProgress() {
 
         m_progress.speedMBps = totalSpeed;
         m_progress.percentage = m_progress.getOverallProgress();
+        m_progress.state = m_state;
         m_progress.currentOperation =
-            QString("Writing to %1 drives...").arg(m_progress.activeDrives);
+            m_state == sak::FlashState::Verifying
+                ? QString("Verifying %1 drives...").arg(m_progress.activeDrives)
+                : QString("Writing to %1 drives...").arg(m_progress.activeDrives);
         snapshot = m_progress;
     }
 
@@ -1008,13 +1479,30 @@ void FlashCoordinator::finalizeResultMetrics() {
     }
     m_result.bytesWritten = total_bytes;
     m_result.elapsedSeconds = static_cast<double>(m_flashTimer.elapsed()) / 1000.0;
+    // Say whether anything actually read the drives back. With verification off a
+    // "successful" drive means the write succeeded and nothing checked it, and the
+    // result must report that rather than let a skipped verify read as a passed one.
+    m_result.verified = m_verificationEnabled;
 }
 
 void FlashCoordinator::cleanupWorkers() {
     // m_imageSource may legitimately be null (called from the dtor when no flash ran, and after a
-    // reset); the `if (m_imageSource)` guard below handles it. No entry assert.
+    // reset); releaseImageSource() handles it. No entry assert.
+    std::vector<std::unique_ptr<FlashWorker>> workers;
+    {
+        QMutexLocker locker(&m_mutex);
+        workers.swap(m_workers);
+        // The queue index is an index into m_workers; leaving it behind would make it
+        // point past the end of an empty vector.
+        m_nextWorkerIndex = 0;
+    }
+    retireWorkers(workers);
+    releaseImageSource();
+}
+
+void FlashCoordinator::retireWorkers(std::vector<std::unique_ptr<FlashWorker>>& workers) {
     // Wait for all workers to finish with cooperative stop
-    for (auto& worker : m_workers) {
+    for (auto& worker : workers) {
         if (!worker->isRunning()) {
             continue;
         }
@@ -1040,18 +1528,15 @@ void FlashCoordinator::cleanupWorkers() {
         // and the queued deleteLater reclaims the detached worker on the owning
         // thread's event loop.
         FlashWorker* detached = worker.get();
+        // Sever every signal back to the coordinator BEFORE letting go. A detached
+        // worker outlives this run, and its eventual terminal signal would be counted
+        // against the NEXT run -- whose startFlash cleared the dedup set -- corrupting
+        // that run's drive counters and possibly finalizing it early.
+        disconnect(detached, nullptr, this, nullptr);
         connect(detached, &QThread::finished, detached, &QObject::deleteLater);
         detached->setParent(nullptr);
         static_cast<void>(worker.release());
     }
 
-    m_workers.clear();
-    // The queue index is an index into m_workers; leaving it behind would make it
-    // point past the end of an empty vector.
-    m_nextWorkerIndex = 0;
-
-    if (m_imageSource) {
-        m_imageSource->close();
-        m_imageSource.reset();
-    }
+    workers.clear();
 }

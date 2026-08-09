@@ -35,12 +35,14 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <expected>
 #include <filesystem>
 #include <functional>
 #include <future>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stop_token>
 #include <thread>
@@ -53,6 +55,9 @@ namespace {
 constexpr int kQuickActionCancelPollMs = sak::kTimerRetryBaseMs;
 constexpr int kThermalQueryTimeoutMs = sak::kTimeoutThermalQueryMs;
 constexpr int kHelperStartupFailureExitCode = 2;
+// The client vanished while a privileged task was running, so its result could never be
+// delivered. That is not a clean exit and must not be reported as one.
+constexpr int kHelperClientLostExitCode = 3;
 
 // ======================================================================
 // Command-Line Parsing
@@ -63,14 +68,57 @@ struct HelperArgs {
     qint64 parent_pid{0};
 };
 
-HelperArgs parseArgs(int argc, char* argv[]) {
+bool applyPipeArg(const QString& value, HelperArgs* args) {
+    if (value.isEmpty()) {
+        sak::logError("ElevatedHelper: --pipe value is empty");
+        return false;
+    }
+    if (!args->pipe_name.isEmpty()) {
+        sak::logError("ElevatedHelper: --pipe supplied more than once");
+        return false;
+    }
+    args->pipe_name = value;
+    return true;
+}
+
+// Fail closed on a malformed parent PID: an unchecked toLongLong() would silently yield 0,
+// which authorizes nobody but hides the real cause behind a generic pipe-start failure.
+bool applyParentPidArg(const QString& value, HelperArgs* args) {
+    bool ok = false;
+    const qint64 pid = value.toLongLong(&ok);
+    if (!ok || pid <= 0) {
+        sak::logError("ElevatedHelper: invalid --parent-pid value '{}'", value.toStdString());
+        return false;
+    }
+    if (args->parent_pid != 0) {
+        sak::logError("ElevatedHelper: --parent-pid supplied more than once");
+        return false;
+    }
+    args->parent_pid = pid;
+    return true;
+}
+
+// Refuse an unrecognized option, a duplicated option and an option with no value instead of
+// ignoring them: the only launcher (ElevationBroker) passes exactly --pipe and --parent-pid, so
+// anything else means the command line is not the one this process was meant to run under.
+std::optional<HelperArgs> parseArgs(int argc, char* argv[]) {
     HelperArgs args;
     for (int i = 1; i < argc; ++i) {
-        QString arg = QString::fromLocal8Bit(argv[i]);
-        if (arg == "--pipe" && i + 1 < argc) {
-            args.pipe_name = QString::fromLocal8Bit(argv[++i]);
-        } else if (arg == "--parent-pid" && i + 1 < argc) {
-            args.parent_pid = QString::fromLocal8Bit(argv[++i]).toLongLong();
+        const QString arg = QString::fromLocal8Bit(argv[i]);
+        const bool is_pipe = (arg == "--pipe");
+        const bool is_parent_pid = (arg == "--parent-pid");
+        if (!is_pipe && !is_parent_pid) {
+            sak::logError("ElevatedHelper: unrecognized argument '{}'", arg.toStdString());
+            return std::nullopt;
+        }
+        if (i + 1 >= argc) {
+            sak::logError("ElevatedHelper: argument '{}' requires a value", arg.toStdString());
+            return std::nullopt;
+        }
+        const QString value = QString::fromLocal8Bit(argv[++i]);
+        const bool applied = is_pipe ? applyPipeArg(value, &args) : applyParentPidArg(value, &args);
+        if (!applied) {
+            return std::nullopt;
         }
     }
     return args;
@@ -87,8 +135,17 @@ bool configurePortableRuntimeDirs() {
         return false;
     }
     const QByteArray native_temp = QDir::toNativeSeparators(temp_dir).toLocal8Bit();
-    qputenv("TMP", native_temp);
-    qputenv("TEMP", native_temp);
+    // Both writes must land: a half-applied redirect leaves elevated children resolving their
+    // temp directory from the inherited (potentially attacker-influenced) variable.
+    const bool tmp_set = qputenv("TMP", native_temp);
+    const bool temp_set = qputenv("TEMP", native_temp);
+    if (!tmp_set || !temp_set) {
+        sak::logError("ElevatedHelper: failed to redirect TMP/TEMP to '{}' (TMP={}, TEMP={})",
+                      temp_dir.toStdString(),
+                      tmp_set ? 1 : 0,
+                      temp_set ? 1 : 0);
+        return false;
+    }
     return true;
 }
 
@@ -104,6 +161,13 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
                                       sak::CancelCheck is_cancelled,
                                       CtorArgs&&... ctor_args) {
     (void)payload;
+
+    // Synchronous pre-cancel check: the poller below can only relay a cancel that arrives after
+    // execute() has begun, so a cancel that was already requested must stop the privileged work
+    // from starting at all.
+    if (is_cancelled()) {
+        return {false, {}, QStringLiteral("Task cancelled before it started")};
+    }
 
     auto action = std::make_unique<ActionT>(std::forward<CtorArgs>(ctor_args)...);
 
@@ -132,16 +196,29 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
 
     sak::TaskHandlerResult result;
     auto exec_result = action->lastExecutionResult();
-    result.success = exec_result.success;
+    // A cancellation that raced the action's completion must not be reported as a success: the
+    // requester asked for the work to stop, so the outcome is "cancelled", not "done".
+    const bool cancelled = is_cancelled();
+    result.success = exec_result.success && !cancelled;
 
     QJsonObject data;
     data["message"] = exec_result.message;
     data["log"] = exec_result.log;
     data["status"] = static_cast<int>(action->status());
+    data["cancelled"] = cancelled;
     result.data = data;
 
+    // Never return a failure with no error at all: the client would see "failed" and have
+    // nothing to report or log.
     if (!result.success) {
-        result.error_message = exec_result.message;
+        if (cancelled) {
+            result.error_message = QStringLiteral("Task cancelled");
+        } else if (exec_result.message.isEmpty()) {
+            result.error_message = QStringLiteral("Quick action failed with status %1")
+                                       .arg(static_cast<int>(action->status()));
+        } else {
+            result.error_message = exec_result.message;
+        }
     }
 
     return result;
@@ -151,38 +228,63 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
 // Task Registration
 // ======================================================================
 
-// Paths (path/source/destination) are supplied only by the main app's own trusted code over
-// the authenticated named-pipe IPC boundary, never from external input. No reparse/confinement
-// guard is added here: these ops legitimately target arbitrary paths (including symlinked ones),
-// so such a guard would break valid operations without fully closing the junction-TOCTOU window.
-// The elevated permission/copy ops are single synchronous syscalls with no interruptible loop,
-// so there is nothing to poll is_cancelled against mid-operation.
-sak::TaskHandlerResult runPermissionTask(
-    const QJsonObject& payload,
-    sak::ProgressCallback progress,
+// Paths (path/source/destination) are chosen by the main app and reach this process over the
+// authenticated (parent-pid + image bound) named-pipe IPC boundary. The payload FIELDS are still
+// validated here rather than coerced: an absent or wrong-typed value is refused, never turned
+// into an empty string that some layer downstream might reinterpret. No reparse/confinement
+// guard is added: these ops legitimately target arbitrary paths (including symlinked ones), so
+// such a guard would break valid operations without fully closing the junction-TOCTOU window --
+// that remains an owner decision, recorded in the review docs.
+// The elevated permission ops are single synchronous syscalls with no interruptible loop, so
+// is_cancelled can only be honored BEFORE the syscall starts; that check is made below.
+struct PermissionTaskSpec {
     std::function<std::expected<void, sak::error_code>(
-        sak::PermissionManager&, const QString&, const QString&)> operation,
-    const QString& action_label,
-    bool needs_user_sid) {
-    QString path = payload["path"].toString();
-    if (path.isEmpty()) {
-        return {false, {}, "Missing path in payload"};
+        sak::PermissionManager&, const QString&, const QString&)>
+        operation;
+    QString action_label;
+    bool needs_user_sid{false};
+};
+
+sak::TaskHandlerResult runPermissionTask(const QJsonObject& payload,
+                                         sak::ProgressCallback progress,
+                                         const sak::CancelCheck& is_cancelled,
+                                         const PermissionTaskSpec& spec) {
+    const QJsonValue path_value = payload.value(QStringLiteral("path"));
+    if (!path_value.isString() || path_value.toString().trimmed().isEmpty()) {
+        return {false, {}, "Missing or invalid path in payload"};
     }
-    QString user_sid = needs_user_sid ? payload["user_sid"].toString() : QString();
-    if (needs_user_sid && user_sid.isEmpty()) {
-        return {false, {}, "Missing user_sid in payload"};
+    const QString path = path_value.toString();
+    QString user_sid;
+    if (spec.needs_user_sid) {
+        const QJsonValue sid_value = payload.value(QStringLiteral("user_sid"));
+        if (!sid_value.isString() || sid_value.toString().trimmed().isEmpty()) {
+            return {false, {}, "Missing or invalid user_sid in payload"};
+        }
+        user_sid = sid_value.toString();
     }
-    progress(0, action_label + path);
+    if (is_cancelled()) {
+        return {false, {}, "Task cancelled before it started"};
+    }
+    progress(0, spec.action_label + path);
     sak::PermissionManager pm;
-    auto result = operation(pm, path, user_sid);
+    auto result = spec.operation(pm, path, user_sid);
     if (!result) {
-        return {false, {}, pm.getLastError()};
+        // Do not discard the structured error: a PermissionManager that failed without setting a
+        // message would otherwise produce a failure carrying no error at all.
+        QString message = pm.getLastError();
+        if (message.isEmpty()) {
+            message = QString::fromStdString(std::string(sak::to_string(result.error())));
+        }
+        return {false, {}, message};
     }
-    progress(sak::kPercentMax, action_label + QStringLiteral("done"));
+    progress(sak::kPercentMax, spec.action_label + QStringLiteral("done"));
     return {true, {}, {}};
 }
 
-QString cappedTaskOutput(const QString& value, int max_bytes) {
+QString cappedTaskOutput(const QString& value, int max_bytes, bool* truncated = nullptr) {
+    if (truncated != nullptr) {
+        *truncated = false;
+    }
     if (max_bytes <= 0) {
         return {};
     }
@@ -192,7 +294,18 @@ QString cappedTaskOutput(const QString& value, int max_bytes) {
         return value;
     }
 
-    return QString::fromUtf8(bytes.left(max_bytes)) +
+    // Never cut inside a multi-byte UTF-8 sequence: fromUtf8 would replace the orphaned bytes
+    // with U+FFFD, silently corrupting output a machine reader may be parsing. Drop back to the
+    // start of the sequence that straddles the cap.
+    qsizetype cut = max_bytes;
+    while (cut > 0 && (static_cast<unsigned char>(bytes.at(cut)) & 0xC0U) == 0x80U) {
+        --cut;
+    }
+    if (truncated != nullptr) {
+        *truncated = true;
+    }
+
+    return QString::fromUtf8(bytes.left(cut)) +
            QStringLiteral("\n...[output truncated to %1 bytes]").arg(max_bytes);
 }
 
@@ -226,8 +339,36 @@ struct ElevatedJobGuard {
         }
         return true;
     }
+    // Last resort for a started child that could not be placed in the job: without the job it
+    // escapes KILL_ON_JOB_CLOSE and can outlive the helper, so kill it now.
+    static void terminateUncontained(qint64 pid) {
+        const HANDLE handle = ::OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
+        if (!handle) {
+            sak::logError(
+                "ElevatedHelper: OpenProcess to terminate uncontained child {} "
+                "failed: {}",
+                pid,
+                ::GetLastError());
+            return;
+        }
+        if (!::TerminateProcess(handle, 1)) {
+            sak::logError("ElevatedHelper: TerminateProcess for uncontained child {} failed: {}",
+                          pid,
+                          ::GetLastError());
+        }
+        ::CloseHandle(handle);
+    }
     void assign(qint64 pid) {
-        if (!ensureJob() || pid <= 0) {
+        if (pid <= 0) {
+            return;
+        }
+        // Fail closed: an unassigned elevated child escapes KILL_ON_JOB_CLOSE and could
+        // survive helper exit, so terminate it now rather than leak an orphaned descendant.
+        // That applies just as much when the job itself could not be created as when the
+        // assignment failed.
+        if (!ensureJob()) {
+            sak::logError("ElevatedHelper: no job object; terminating uncontained child {}", pid);
+            terminateUncontained(pid);
             return;
         }
         const HANDLE handle =
@@ -235,20 +376,24 @@ struct ElevatedJobGuard {
         if (!handle) {
             sak::logError("ElevatedHelper: OpenProcess for job assign failed: {}",
                           ::GetLastError());
+            terminateUncontained(pid);
             return;
         }
-        // Fail closed: an unassigned elevated child escapes KILL_ON_JOB_CLOSE and could
-        // survive helper exit, so terminate it now rather than leak an orphaned descendant.
         if (!::AssignProcessToJobObject(job, handle)) {
             sak::logError("ElevatedHelper: AssignProcessToJobObject failed: {}; terminating child",
                           ::GetLastError());
-            ::TerminateProcess(handle, 1);
+            if (!::TerminateProcess(handle, 1)) {
+                sak::logError(
+                    "ElevatedHelper: TerminateProcess after failed job assign "
+                    "failed: {}",
+                    ::GetLastError());
+            }
         }
         ::CloseHandle(handle);
     }
     void terminate() const {
-        if (job) {
-            ::TerminateJobObject(job, 1);
+        if (job && !::TerminateJobObject(job, 1)) {
+            sak::logError("ElevatedHelper: TerminateJobObject failed: {}", ::GetLastError());
         }
     }
 };
@@ -268,6 +413,10 @@ constexpr int kPowerShellRunningProgress = 5;
 constexpr int kPowerShellOutputProgress = 50;
 constexpr int kPowerShellFinishedProgress = 100;
 constexpr int kActiveTaskCancelPollMs = 50;
+// The live output stream is not covered by the final output cap, so each progress frame is
+// bounded on its own: a single frame must stay well under the pipe's 4 MiB payload ceiling even
+// after JSON escaping.
+constexpr int kMaxProgressChunkBytes = 64 * 1024;
 constexpr uint64_t kMaxPartitionProbeBytes = 2ULL * 1024ULL * 1024ULL;
 
 struct ElevatedPowerShellConfig {
@@ -319,12 +468,24 @@ void fillElevatedPowerShellResult(QJsonObject* data,
     (*data)[QStringLiteral("exit_code")] = result.exit_code;
     (*data)[QStringLiteral("exit_status")] = result.exit_status;
     (*data)[QStringLiteral("duration_ms")] = static_cast<double>(duration_ms);
-    (*data)[QStringLiteral("stdout")] = cappedTaskOutput(result.std_out, half_cap);
-    (*data)[QStringLiteral("stderr")] = cappedTaskOutput(result.std_err, half_cap);
+    bool stdout_truncated = false;
+    bool stderr_truncated = false;
+    (*data)[QStringLiteral("stdout")] =
+        cappedTaskOutput(result.std_out, half_cap, &stdout_truncated);
+    (*data)[QStringLiteral("stderr")] =
+        cappedTaskOutput(result.std_err, half_cap, &stderr_truncated);
+    // These count the RETAINED buffers, which the process runner may already have capped
+    // (result.output_truncated). Report the truncation explicitly so a machine reader is never
+    // left to assume the text it received is the whole output.
     (*data)[QStringLiteral("stdout_full_bytes")] =
         static_cast<double>(result.std_out.toUtf8().size());
     (*data)[QStringLiteral("stderr_full_bytes")] =
         static_cast<double>(result.std_err.toUtf8().size());
+    (*data)[QStringLiteral("stdout_truncated")] = stdout_truncated;
+    (*data)[QStringLiteral("stderr_truncated")] = stderr_truncated;
+    (*data)[QStringLiteral("runner_output_dropped")] = result.output_truncated;
+    (*data)[QStringLiteral("output_truncated")] = stdout_truncated || stderr_truncated ||
+                                                  result.output_truncated;
 }
 
 QString elevatedPowerShellResultError(const sak::ProcessResult& result) {
@@ -334,28 +495,94 @@ QString elevatedPowerShellResultError(const sak::ProcessResult& result) {
     if (result.cancelled) {
         return QStringLiteral("Command cancelled");
     }
+    // A crash-exit paired with exit code 0 is not a clean run: report the abnormal termination
+    // rather than let the zero exit code speak for it.
+    if (result.exit_status != 0) {
+        return QStringLiteral("Command terminated abnormally (exit status %1)")
+            .arg(result.exit_status);
+    }
     if (result.exit_code != 0) {
         return QStringLiteral("Command exited with code %1").arg(result.exit_code);
     }
     return {};
 }
 
-// timeout_seconds/max_output_bytes are optional operational parameters: an absent key uses a
-// documented default and the std::clamp calls enforce safe operational bounds (a security
-// control, not a fallback that hides a malformed request). payloadUInt64 (used for the raw-probe
-// numeric fields) already fails closed on wrong-typed input by returning std::nullopt.
-ElevatedPowerShellConfig elevatedPowerShellConfig(const QJsonObject& payload) {
+sak::TaskHandlerResult elevatedPowerShellOutcome(QJsonObject data,
+                                                 const sak::ProcessResult& result,
+                                                 qint64 duration_ms,
+                                                 int half_cap,
+                                                 const sak::ProgressCallback& progress) {
+    fillElevatedPowerShellResult(&data, result, duration_ms, half_cap);
+    const QString result_error = elevatedPowerShellResultError(result);
+    data[QStringLiteral("error_message")] = result_error;
+
+    progress(kPowerShellFinishedProgress, QStringLiteral("Elevated PowerShell finished"));
+    sak::TaskHandlerResult task;
+    // B5-05: gate success on the actual outcome. The process starting is not
+    // success -- a timeout, a cancellation, an abnormal (crash) termination, or a
+    // non-zero exit is a failure and must be reported as one (previously success
+    // was hard-coded true once the process started).
+    task.success = result.completedSuccessfully() && result.exit_status == 0;
+    task.error_message = result_error;
+    task.data = data;
+    return task;
+}
+
+// timeout_seconds/max_output_bytes are optional operational parameters. An absent key uses the
+// documented default, but a PRESENT key that is not a whole number is REFUSED rather than
+// silently coerced to that default: a malformed request must never run under limits the caller
+// never asked for. QJsonValue::toInt(default) cannot make that distinction, hence this helper.
+std::optional<int> optionalPayloadInt(const QJsonObject& payload,
+                                      const QString& key,
+                                      int default_value,
+                                      QString* errorMessage) {
+    const QJsonValue value = payload.value(key);
+    if (value.isUndefined()) {
+        return default_value;
+    }
+    if (!value.isDouble()) {
+        *errorMessage = QStringLiteral("Payload field '%1' must be a number").arg(key);
+        return std::nullopt;
+    }
+    const double raw = value.toDouble();
+    if (!std::isfinite(raw) || std::floor(raw) != raw ||
+        raw < static_cast<double>(std::numeric_limits<int>::min()) ||
+        raw > static_cast<double>(std::numeric_limits<int>::max())) {
+        *errorMessage = QStringLiteral("Payload field '%1' must be a whole 32-bit number").arg(key);
+        return std::nullopt;
+    }
+    return static_cast<int>(raw);
+}
+
+// The std::clamp calls below enforce the operational ceiling (a security bound applied at every
+// layer, and the effective values are reported back in the result data so a clamp is visible to
+// the caller). payloadUInt64 (used for the raw-probe numeric fields) fails closed on wrong-typed
+// input by returning std::nullopt.
+std::optional<ElevatedPowerShellConfig> elevatedPowerShellConfig(const QJsonObject& payload,
+                                                                 QString* errorMessage) {
+    const QJsonValue command_value = payload.value(QStringLiteral("command"));
+    if (!command_value.isString()) {
+        *errorMessage = QStringLiteral("PowerShell command must be a string");
+        return std::nullopt;
+    }
+    const auto timeout_seconds = optionalPayloadInt(
+        payload, QStringLiteral("timeout_seconds"), kDefaultPowerShellTimeoutSeconds, errorMessage);
+    if (!timeout_seconds.has_value()) {
+        return std::nullopt;
+    }
+    const auto max_output_bytes = optionalPayloadInt(
+        payload, QStringLiteral("max_output_bytes"), kDefaultPowerShellOutputBytes, errorMessage);
+    if (!max_output_bytes.has_value()) {
+        return std::nullopt;
+    }
+
     ElevatedPowerShellConfig config;
-    config.command = payload[QStringLiteral("command")].toString();
-    const int timeout_seconds = std::clamp(payload[QStringLiteral("timeout_seconds")].toInt(
-                                               kDefaultPowerShellTimeoutSeconds),
-                                           kMinPowerShellTimeoutSeconds,
-                                           kMaxPowerShellTimeoutSeconds);
-    config.timeout_ms = timeout_seconds * kPowerShellMillisecondsPerSecond;
+    config.command = command_value.toString();
+    config.timeout_ms =
+        std::clamp(*timeout_seconds, kMinPowerShellTimeoutSeconds, kMaxPowerShellTimeoutSeconds) *
+        kPowerShellMillisecondsPerSecond;
     config.output_cap =
-        std::clamp(payload[QStringLiteral("max_output_bytes")].toInt(kDefaultPowerShellOutputBytes),
-                   kMinPowerShellOutputBytes,
-                   kMaxPowerShellOutputBytes);
+        std::clamp(*max_output_bytes, kMinPowerShellOutputBytes, kMaxPowerShellOutputBytes);
     config.half_cap = std::max(config.output_cap / kPowerShellOutputHalfDivisor,
                                kMinPowerShellHalfOutputBytes);
     return config;
@@ -364,32 +591,25 @@ ElevatedPowerShellConfig elevatedPowerShellConfig(const QJsonObject& payload) {
 // Resolve powershell.exe to its absolute path under the system directory. Launching an
 // unqualified "powershell.exe" resolves via PATH, which an attacker who controls a PATH
 // entry (or the working directory) could hijack -- especially dangerous in an elevated
-// process. Returns an empty string on any failure so the caller fails closed rather than
-// falling back to the unqualified name.
+// process. Delegates to the shared sak::systemPowerShellPath() so this process cannot drift
+// from the resolution rule the rest of the codebase uses; it returns an empty string on any
+// failure so every caller fails closed rather than falling back to the unqualified name.
 QString resolveSystemPowerShellPath() {
-#ifdef _WIN32
-    wchar_t system_dir[MAX_PATH];
-    const UINT len = GetSystemDirectoryW(system_dir, MAX_PATH);
-    if (len == 0 || len >= MAX_PATH) {
-        sak::logError("ElevatedHelper: GetSystemDirectoryW failed: {}", GetLastError());
-        return {};
-    }
-    const QString dir = QString::fromWCharArray(system_dir, static_cast<int>(len));
-    const QString path = dir + QStringLiteral("\\WindowsPowerShell\\v1.0\\powershell.exe");
-    if (!QFile::exists(path)) {
-        sak::logError("ElevatedHelper: PowerShell not found at '{}'", path.toStdString());
-        return {};
+    const QString path = sak::systemPowerShellPath();
+    if (path.isEmpty()) {
+        sak::logError("ElevatedHelper: could not resolve the system PowerShell path");
     }
     return path;
-#else
-    return QStringLiteral("powershell.exe");
-#endif
 }
 
-// The command is not allowlisted by design: it originates only from the main app's own
-// trusted code across the authenticated (parent-pid-gated) named-pipe IPC boundary, not
-// from any external input. -ExecutionPolicy Bypass is the standard programmatic mode; task
-// success is gated on completedSuccessfully(), so this is not a fail-open surface.
+// The command text crosses this boundary from the main app, and one of its senders is the AI
+// assistant's elevated-command path (AiAssistantPanel::runElevatedPowerShell), so the text is
+// NOT inherently trusted: the authorization decision (risk tier + human gate) is made in the app
+// before the request is sent, and this process enforces only the parent-pid/image binding on the
+// pipe. There is deliberately no command allowlist -- a technician utility must be able to run
+// arbitrary administrative PowerShell -- so the containment that does apply is the
+// KILL_ON_JOB_CLOSE job, the clamped timeout, the capped output, and success gated on
+// completedSuccessfully(). -ExecutionPolicy Bypass is the standard programmatic mode.
 QStringList elevatedPowerShellArgs(const QString& command) {
     return {QStringLiteral("-NoProfile"),
             QStringLiteral("-ExecutionPolicy"),
@@ -399,10 +619,15 @@ QStringList elevatedPowerShellArgs(const QString& command) {
 }
 
 void configureElevatedPowerShellProgress(sak::ProcessStreamingRequest* request,
-                                         sak::ProgressCallback* progress) {
-    request->on_output = [progress](const QString& chunk, bool is_stderr) {
+                                         sak::ProgressCallback* progress,
+                                         int chunk_cap) {
+    request->on_output = [progress, chunk_cap](const QString& chunk, bool is_stderr) {
+        // The live stream is deliberately not covered by the final output cap, so bound each
+        // frame here: an unbounded chunk from a runaway child would otherwise be pushed straight
+        // into the pipe (blowing the frame ceiling) and allocated in full on both sides.
         (*progress)(kPowerShellOutputProgress,
-                    (is_stderr ? QStringLiteral("STDERR|") : QStringLiteral("STDOUT|")) + chunk);
+                    (is_stderr ? QStringLiteral("STDERR|") : QStringLiteral("STDOUT|")) +
+                        cappedTaskOutput(chunk, chunk_cap));
     };
 }
 
@@ -451,10 +676,18 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
                                                  sak::CancelCheck is_cancelled) {
     QJsonObject data = baseElevatedPowerShellData();
 
-    const ElevatedPowerShellConfig config = elevatedPowerShellConfig(payload);
-    if (config.command.trimmed().isEmpty()) {
+    QString config_error;
+    const auto config = elevatedPowerShellConfig(payload, &config_error);
+    if (!config.has_value()) {
+        return elevatedPowerShellFailure(data, config_error);
+    }
+    if (config->command.trimmed().isEmpty()) {
         return elevatedPowerShellFailure(data, QStringLiteral("PowerShell command is empty"));
     }
+    // Report the limits actually in force so a clamped request is visible to the caller instead
+    // of silently running under different bounds than it asked for.
+    data[QStringLiteral("timeout_ms")] = config->timeout_ms;
+    data[QStringLiteral("max_output_bytes")] = config->output_cap;
 
     const QString powershell_path = resolveSystemPowerShellPath();
     if (powershell_path.isEmpty()) {
@@ -474,9 +707,11 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
     bool started = false;
     sak::ProcessStreamingRequest request;
     request.program = powershell_path;
-    request.args = elevatedPowerShellArgs(config.command);
-    request.timeout_ms = config.timeout_ms;
-    configureElevatedPowerShellProgress(&request, &progress);
+    request.args = elevatedPowerShellArgs(config->command);
+    request.timeout_ms = config->timeout_ms;
+    configureElevatedPowerShellProgress(&request,
+                                        &progress,
+                                        std::min(config->half_cap, kMaxProgressChunkBytes));
     configureElevatedPowerShellStart(&request,
                                      &started,
                                      &progress
@@ -500,20 +735,7 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
                                          timer.elapsed());
     }
 
-    fillElevatedPowerShellResult(&data, result, timer.elapsed(), config.half_cap);
-    const QString result_error = elevatedPowerShellResultError(result);
-    data[QStringLiteral("error_message")] = result_error;
-
-    progress(kPowerShellFinishedProgress, QStringLiteral("Elevated PowerShell finished"));
-    sak::TaskHandlerResult task;
-    // B5-05: gate success on the actual outcome. The process starting is not
-    // success -- a timeout, a cancellation, or a non-zero exit is a failure and
-    // must be reported as one (previously success was hard-coded true once the
-    // process started).
-    task.success = result.completedSuccessfully();
-    task.error_message = result_error;
-    task.data = data;
-    return task;
+    return elevatedPowerShellOutcome(data, result, timer.elapsed(), config->half_cap, progress);
 }
 
 bool isAllowedPhysicalDrivePath(const QString& path) {
@@ -528,6 +750,10 @@ bool isAllowedPhysicalDrivePath(const QString& path) {
     return std::all_of(suffix.cbegin(), suffix.cend(), [](QChar ch) { return ch.isDigit(); });
 }
 
+// Largest integer a JSON double carries exactly (2^53). Beyond it a double no longer identifies
+// a single byte offset, so a value that big is refused instead of being silently rounded.
+constexpr double kMaxExactJsonInteger = 9007199254740992.0;
+
 std::optional<uint64_t> payloadUInt64(const QJsonObject& payload, const QString& key) {
     const auto value = payload.value(key);
     bool ok = false;
@@ -538,20 +764,25 @@ std::optional<uint64_t> payloadUInt64(const QJsonObject& payload, const QString&
             return static_cast<uint64_t>(parsed);
         }
     }
-    if (value.isDouble() && value.toDouble() >= 0) {
-        return static_cast<uint64_t>(value.toDouble());
+    if (value.isDouble()) {
+        // Fail closed on a fractional value, on a value too large to be represented exactly, and
+        // on anything outside the range: casting such a double to uint64_t is undefined
+        // behaviour, and these values pick raw-disk offsets and lengths.
+        const double raw = value.toDouble();
+        if (std::isfinite(raw) && raw >= 0.0 && raw <= kMaxExactJsonInteger &&
+            std::floor(raw) == raw) {
+            return static_cast<uint64_t>(raw);
+        }
     }
     return std::nullopt;
 }
 
+// Both inputs are already validated as non-zero by the caller, so every bound here narrows the
+// read; nothing widens it back to the ceiling.
 uint64_t partitionProbeReadLimit(uint64_t partition_size_bytes, uint64_t requested_bytes) {
     uint64_t limit = kMaxPartitionProbeBytes;
-    if (partition_size_bytes > 0) {
-        limit = std::min(limit, partition_size_bytes);
-    }
-    if (requested_bytes > 0) {
-        limit = std::min(limit, requested_bytes);
-    }
+    limit = std::min(limit, partition_size_bytes);
+    limit = std::min(limit, requested_bytes);
     return limit;
 }
 
@@ -563,6 +794,22 @@ struct PartitionProbeRequest {
 
 sak::TaskHandlerResult partitionProbeFailure(const QString& message) {
     return {false, {}, message};
+}
+
+// Resolve the optional max_bytes override. Absent means "the 2 MiB ceiling"; present means it
+// MUST parse and MUST be non-zero -- an explicit zero asks for no bytes and a malformed value
+// must not be read as "no limit".
+std::optional<uint64_t> partitionProbeRequestedBytes(const QJsonObject& payload,
+                                                     QString* errorMessage) {
+    if (payload.value(QStringLiteral("max_bytes")).isUndefined()) {
+        return kMaxPartitionProbeBytes;
+    }
+    const auto requested = payloadUInt64(payload, QStringLiteral("max_bytes"));
+    if (!requested.has_value() || *requested == 0) {
+        *errorMessage = QStringLiteral("Raw probe byte limit is invalid");
+        return std::nullopt;
+    }
+    return requested;
 }
 
 std::optional<PartitionProbeRequest> partitionProbeRequest(const QJsonObject& payload,
@@ -583,9 +830,17 @@ std::optional<PartitionProbeRequest> partitionProbeRequest(const QJsonObject& pa
         *errorMessage = QStringLiteral("Raw probe offset is too large");
         return std::nullopt;
     }
-    const uint64_t requestedBytes =
-        payloadUInt64(payload, QStringLiteral("max_bytes")).value_or(kMaxPartitionProbeBytes);
-    const uint64_t readLimit = partitionProbeReadLimit(*partitionSize, requestedBytes);
+    // A declared zero-length partition bounds the read to nothing: accepting it and then falling
+    // back to the 2 MiB ceiling would read data the request never described.
+    if (*partitionSize == 0) {
+        *errorMessage = QStringLiteral("Raw probe partition size must be greater than zero");
+        return std::nullopt;
+    }
+    const auto requestedBytes = partitionProbeRequestedBytes(payload, errorMessage);
+    if (!requestedBytes.has_value()) {
+        return std::nullopt;
+    }
+    const uint64_t readLimit = partitionProbeReadLimit(*partitionSize, *requestedBytes);
     if (readLimit == 0 || readLimit > kMaxPartitionProbeBytes) {
         *errorMessage = QStringLiteral("Raw probe byte limit is invalid");
         return std::nullopt;
@@ -699,50 +954,131 @@ void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
 }
 
 void registerPermissionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
-    dispatcher.registerHandler(
-        QStringLiteral("TakeOwnership"),
-        [](const QJsonObject& payload,
-           sak::ProgressCallback progress,
-           sak::CancelCheck /*is_cancelled*/) -> sak::TaskHandlerResult {
-            return runPermissionTask(
-                payload,
-                std::move(progress),
-                [](sak::PermissionManager& pm, const QString& path, const QString& sid) {
-                    return pm.tryTakeOwnership(path, sid);
-                },
-                QStringLiteral("Taking ownership of: "),
-                true);
-        });
+    dispatcher.registerHandler(QStringLiteral("TakeOwnership"),
+                               [](const QJsonObject& payload,
+                                  sak::ProgressCallback progress,
+                                  sak::CancelCheck is_cancelled) -> sak::TaskHandlerResult {
+                                   return runPermissionTask(
+                                       payload,
+                                       std::move(progress),
+                                       is_cancelled,
+                                       PermissionTaskSpec{[](sak::PermissionManager& pm,
+                                                             const QString& path,
+                                                             const QString& sid) {
+                                                              return pm.tryTakeOwnership(path, sid);
+                                                          },
+                                                          QStringLiteral("Taking ownership of: "),
+                                                          true});
+                               });
 
-    dispatcher.registerHandler(
-        QStringLiteral("StripPermissions"),
-        [](const QJsonObject& payload,
-           sak::ProgressCallback progress,
-           sak::CancelCheck /*is_cancelled*/) -> sak::TaskHandlerResult {
-            return runPermissionTask(
-                payload,
-                std::move(progress),
-                [](sak::PermissionManager& pm, const QString& path, const QString& /*sid*/) {
-                    return pm.tryStripPermissions(path);
-                },
-                QStringLiteral("Stripping permissions: "),
-                false);
-        });
+    dispatcher.registerHandler(QStringLiteral("StripPermissions"),
+                               [](const QJsonObject& payload,
+                                  sak::ProgressCallback progress,
+                                  sak::CancelCheck is_cancelled) -> sak::TaskHandlerResult {
+                                   return runPermissionTask(
+                                       payload,
+                                       std::move(progress),
+                                       is_cancelled,
+                                       PermissionTaskSpec{[](sak::PermissionManager& pm,
+                                                             const QString& path,
+                                                             const QString& /*sid*/) {
+                                                              return pm.tryStripPermissions(path);
+                                                          },
+                                                          QStringLiteral("Stripping permissions: "),
+                                                          false});
+                               });
 
     dispatcher.registerHandler(
         QStringLiteral("SetStandardPermissions"),
         [](const QJsonObject& payload,
            sak::ProgressCallback progress,
-           sak::CancelCheck /*is_cancelled*/) -> sak::TaskHandlerResult {
+           sak::CancelCheck is_cancelled) -> sak::TaskHandlerResult {
             return runPermissionTask(
                 payload,
                 std::move(progress),
-                [](sak::PermissionManager& pm, const QString& path, const QString& sid) {
-                    return pm.trySetStandardUserPermissions(path, sid);
-                },
-                QStringLiteral("Setting permissions: "),
-                true);
+                is_cancelled,
+                PermissionTaskSpec{
+                    [](sak::PermissionManager& pm, const QString& path, const QString& sid) {
+                        return pm.trySetStandardUserPermissions(path, sid);
+                    },
+                    QStringLiteral("Setting permissions: "),
+                    true});
         });
+}
+
+// The catch branch reports the real CIM failure on stderr and still emits the -1 sentinel, so a
+// missing sensor and a broken query are told apart instead of both surfacing as "no data".
+QString thermalQueryScript() {
+    return QStringLiteral(
+        "try{"
+        "$t=Get-CimInstance -Namespace root/WMI "
+        "-ClassName MSAcpi_ThermalZoneTemperature "
+        "-ErrorAction Stop|Select-Object -First 1;"
+        "if($t.CurrentTemperature -gt 0){"
+        "Write-Output ([math]::Round(($t.CurrentTemperature/10)-273.15,1))"
+        "}else{Write-Output '-1'}"
+        "}catch{Write-Error $_;Write-Output '-1'}");
+}
+
+QString withThermalDetail(const QString& message, const sak::ProcessResult& result) {
+    const QString detail = result.std_err.trimmed();
+    if (detail.isEmpty()) {
+        return message;
+    }
+    return message + QStringLiteral(": ") + detail;
+}
+
+sak::TaskHandlerResult runThermalDataTask(const QJsonObject& /*payload*/,
+                                          sak::ProgressCallback progress,
+                                          sak::CancelCheck is_cancelled) {
+    if (is_cancelled()) {
+        return {false, {}, "Task cancelled before it started"};
+    }
+    progress(0, QStringLiteral("Querying thermal sensors..."));
+
+    // Resolve the absolute System32 PowerShell path. Launching an unqualified
+    // "powershell.exe" from this elevated helper would resolve via PATH/CWD, which
+    // an attacker controlling a PATH entry or the working directory could hijack to
+    // run arbitrary code elevated. Fail closed if it cannot be resolved.
+    const QString powershell_path = resolveSystemPowerShellPath();
+    if (powershell_path.isEmpty()) {
+        return {false, {}, "Could not resolve system PowerShell path"};
+    }
+
+    const auto result = sak::runProcess(powershell_path,
+                                        {QStringLiteral("-NoProfile"),
+                                         QStringLiteral("-NoLogo"),
+                                         QStringLiteral("-Command"),
+                                         thermalQueryScript()},
+                                        kThermalQueryTimeoutMs,
+                                        is_cancelled);
+    // Report what actually went wrong: a start failure, a crash and a non-zero exit are not
+    // timeouts, and the child's stderr is the only description of the real fault.
+    if (result.cancelled) {
+        return {false, {}, "Thermal query cancelled"};
+    }
+    if (result.timed_out) {
+        return {false, {}, "Thermal query timed out"};
+    }
+    if (!result.succeeded()) {
+        return {false,
+                {},
+                withThermalDetail(
+                    QStringLiteral("Thermal query failed with exit code %1").arg(result.exit_code),
+                    result)};
+    }
+
+    const QString output = result.std_out.trimmed();
+    bool ok = false;
+    const double temp = output.toDouble(&ok);
+    if (!ok || temp <= 0) {
+        return {false, {}, withThermalDetail(QStringLiteral("No thermal data available"), result)};
+    }
+
+    QJsonObject data;
+    data["cpu_temperature"] = temp;
+    progress(sak::kPercentMax, QStringLiteral("Thermal data retrieved"));
+    return {true, data, {}};
 }
 
 void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
@@ -750,11 +1086,21 @@ void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
         QStringLiteral("BackupFile"),
         [](const QJsonObject& payload,
            sak::ProgressCallback progress,
-           sak::CancelCheck /*is_cancelled*/) -> sak::TaskHandlerResult {
-            QString source = payload["source"].toString();
-            QString destination = payload["destination"].toString();
-            if (source.isEmpty() || destination.isEmpty()) {
-                return {false, {}, "Missing source or destination in payload"};
+           sak::CancelCheck is_cancelled) -> sak::TaskHandlerResult {
+            // Refuse an absent or wrong-typed field instead of coercing it to an empty string:
+            // this handler copies files with administrator rights.
+            const QJsonValue source_value = payload.value(QStringLiteral("source"));
+            const QJsonValue destination_value = payload.value(QStringLiteral("destination"));
+            if (!source_value.isString() || source_value.toString().isEmpty() ||
+                !destination_value.isString() || destination_value.toString().isEmpty()) {
+                return {false, {}, "Missing or invalid source or destination in payload"};
+            }
+            const QString source = source_value.toString();
+            const QString destination = destination_value.toString();
+            // QFile::copy is a single uninterruptible call, so a cancel can only be honored
+            // before it starts.
+            if (is_cancelled()) {
+                return {false, {}, "Task cancelled before it started"};
             }
             progress(0, QStringLiteral("Copying: ") + source);
             if (!QFile::copy(source, destination)) {
@@ -764,54 +1110,7 @@ void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
             return {true, {}, {}};
         });
 
-    dispatcher.registerHandler(
-        QStringLiteral("ReadThermalData"),
-        [](const QJsonObject& /*payload*/,
-           sak::ProgressCallback progress,
-           sak::CancelCheck /*is_cancelled*/) -> sak::TaskHandlerResult {
-            progress(0, QStringLiteral("Querying thermal sensors..."));
-
-            // Resolve the absolute System32 PowerShell path. Launching an unqualified
-            // "powershell.exe" from this elevated helper would resolve via PATH/CWD, which
-            // an attacker controlling a PATH entry or the working directory could hijack to
-            // run arbitrary code elevated. Fail closed if it cannot be resolved.
-            const QString powershell_path = resolveSystemPowerShellPath();
-            if (powershell_path.isEmpty()) {
-                return {false, {}, "Could not resolve system PowerShell path"};
-            }
-
-            QString script = QStringLiteral(
-                "try{"
-                "$t=Get-CimInstance -Namespace root/WMI "
-                "-ClassName MSAcpi_ThermalZoneTemperature "
-                "-ErrorAction Stop|Select-Object -First 1;"
-                "if($t.CurrentTemperature -gt 0){"
-                "Write-Output ([math]::Round(($t.CurrentTemperature/10)-273.15,1))"
-                "}else{Write-Output '-1'}"
-                "}catch{Write-Output '-1'}");
-
-            const auto result = sak::runProcess(powershell_path,
-                                                {QStringLiteral("-NoProfile"),
-                                                 QStringLiteral("-NoLogo"),
-                                                 QStringLiteral("-Command"),
-                                                 script},
-                                                kThermalQueryTimeoutMs);
-            if (!result.succeeded()) {
-                return {false, {}, "Thermal query timed out"};
-            }
-
-            QString output = result.std_out.trimmed();
-            bool ok = false;
-            double temp = output.toDouble(&ok);
-            if (!ok || temp <= 0) {
-                return {false, {}, "No thermal data available"};
-            }
-
-            QJsonObject data;
-            data["cpu_temperature"] = temp;
-            progress(sak::kPercentMax, QStringLiteral("Thermal data retrieved"));
-            return {true, data, {}};
-        });
+    dispatcher.registerHandler(QStringLiteral("ReadThermalData"), runThermalDataTask);
 
     dispatcher.registerHandler(QStringLiteral("ReadPartitionProbe"), runPartitionProbeReadTask);
 }
@@ -835,8 +1134,13 @@ void sendTaskDispatchResult(sak::ElevatedPipeServer& server,
                             const std::expected<sak::TaskHandlerResult, sak::error_code>& result) {
     if (result) {
         QJsonObject data = result->data;
-        if (!result->success && !result->error_message.isEmpty()) {
-            data[QStringLiteral("error_message")] = result->error_message;
+        if (!result->success) {
+            // A failure must always carry an error: never hand the client a bare "failed" with
+            // nothing that says why.
+            data[QStringLiteral("error_message")] =
+                result->error_message.isEmpty()
+                    ? QStringLiteral("Task failed without an error message")
+                    : result->error_message;
         }
         server.sendResult(result->success, data);
     } else {
@@ -845,13 +1149,68 @@ void sendTaskDispatchResult(sak::ElevatedPipeServer& server,
     }
 }
 
-bool finishActiveTaskWithCancelPolling(
+enum class ActiveTaskOutcome {
+    Completed,
+    ShutdownRequested,
+    ClientLost
+};
+
+/// @brief Handle one client message that arrived while a task is running.
+/// @return true when the client asked the helper to shut down once the task finishes.
+/// @note The caller holds the server mutex, so this may use the server directly.
+bool applyActiveTaskMessage(const sak::PipeMessage& msg,
+                            sak::ElevatedPipeServer& server,
+                            const QString& active_task_id,
+                            const std::shared_ptr<std::atomic_bool>& cancel_requested) {
+    switch (msg.type) {
+    case sak::PipeMessageType::CancelRequest: {
+        // A cancel that names a DIFFERENT task is stale (the task it names already finished):
+        // acting on it would abort work the client never asked to stop. A cancel that names no
+        // task at all still applies to the one running task.
+        const QString target = msg.json.value(QStringLiteral("task")).toString();
+        if (!target.isEmpty() && target != active_task_id) {
+            sak::logWarning("ElevatedHelper: ignoring stale cancel for '{}' (active task '{}')",
+                            target.toStdString(),
+                            active_task_id.toStdString());
+            return false;
+        }
+        cancel_requested->store(true, std::memory_order_relaxed);
+        sak::logInfo("ElevatedHelper: active task cancel requested");
+        return false;
+    }
+    case sak::PipeMessageType::Shutdown:
+        cancel_requested->store(true, std::memory_order_relaxed);
+        sak::logInfo("ElevatedHelper: shutdown requested during active task");
+        return true;
+    case sak::PipeMessageType::TaskRequest:
+        // Answer instead of dropping: the helper runs one task at a time, and a silently
+        // discarded request leaves the client waiting for a result that will never be sent.
+        sak::logWarning("ElevatedHelper: refused a task request while '{}' is running",
+                        active_task_id.toStdString());
+        server.sendError(
+            static_cast<int>(sak::error_code::invalid_argument),
+            QStringLiteral("Elevated helper is busy with task '%1'").arg(active_task_id));
+        return false;
+    default:
+        sak::logWarning("ElevatedHelper: ignored message type {} during active task",
+                        static_cast<int>(msg.type));
+        return false;
+    }
+}
+
+// The task runs on a std::async worker that reports progress through the same pipe server this
+// loop polls, and ElevatedPipeServer is documented single-threaded. Every touch of the server on
+// either thread is serialized through @p server_mutex.
+ActiveTaskOutcome finishActiveTaskWithCancelPolling(
     sak::ElevatedPipeServer& server,
+    std::mutex& server_mutex,
+    const QString& active_task_id,
     std::future<std::expected<sak::TaskHandlerResult, sak::error_code>>* future,
     const std::shared_ptr<std::atomic_bool>& cancel_requested) {
     bool shutdown_after_task = false;
     while (future->wait_for(std::chrono::milliseconds(kActiveTaskCancelPollMs)) !=
            std::future_status::ready) {
+        const std::lock_guard<std::mutex> lock(server_mutex);
         switch (server.pollPipe()) {
         case sak::ElevatedPipeServer::PipePoll::NoData:
             continue;
@@ -861,7 +1220,7 @@ bool finishActiveTaskWithCancelPolling(
             // send an explicit cancel.
             cancel_requested->store(true, std::memory_order_relaxed);
             sak::logWarning("ElevatedHelper: client pipe broken during active task; cancelling");
-            return true;
+            return ActiveTaskOutcome::ClientLost;
         case sak::ElevatedPipeServer::PipePoll::MessageReady:
             break;
         }
@@ -869,31 +1228,78 @@ bool finishActiveTaskWithCancelPolling(
         auto msg = server.readMessage();
         if (!msg) {
             cancel_requested->store(true, std::memory_order_relaxed);
-            return true;
+            sak::logWarning("ElevatedHelper: read failed during active task ({}); cancelling",
+                            std::string(sak::to_string(msg.error())));
+            return ActiveTaskOutcome::ClientLost;
         }
 
-        switch (msg->type) {
-        case sak::PipeMessageType::CancelRequest:
-            cancel_requested->store(true, std::memory_order_relaxed);
-            sak::logInfo("ElevatedHelper: active task cancel requested");
-            break;
-        case sak::PipeMessageType::Shutdown:
-            cancel_requested->store(true, std::memory_order_relaxed);
+        if (applyActiveTaskMessage(*msg, server, active_task_id, cancel_requested)) {
             shutdown_after_task = true;
-            sak::logInfo("ElevatedHelper: shutdown requested during active task");
-            break;
-        default:
-            sak::logWarning("ElevatedHelper: ignored message type {} during active task",
-                            static_cast<int>(msg->type));
-            break;
         }
     }
 
-    sendTaskDispatchResult(server, future->get());
-    return shutdown_after_task;
+    {
+        const std::lock_guard<std::mutex> lock(server_mutex);
+        sendTaskDispatchResult(server, future->get());
+    }
+    return shutdown_after_task ? ActiveTaskOutcome::ShutdownRequested
+                               : ActiveTaskOutcome::Completed;
+}
+
+// Run one TaskRequest to completion. @p server_mutex serializes the worker's progress sends
+// against this thread's pipe polling.
+ActiveTaskOutcome runTaskRequest(const sak::PipeMessage& msg,
+                                 sak::ElevatedPipeServer& server,
+                                 std::mutex& server_mutex,
+                                 sak::ElevatedTaskDispatcher& dispatcher) {
+    // Validate the message shape before anything privileged runs. An absent or wrong-typed
+    // task/payload is REFUSED, never coerced into an empty string or an empty object: a handler
+    // that ignores its payload (Reset Network) would otherwise run off a malformed request.
+    const QJsonValue task_value = msg.json.value(QStringLiteral("task"));
+    const QJsonValue payload_value = msg.json.value(QStringLiteral("payload"));
+    if (!task_value.isString() || task_value.toString().trimmed().isEmpty() ||
+        !payload_value.isObject()) {
+        sak::logError("ElevatedHelper: malformed TaskRequest refused");
+        const std::lock_guard<std::mutex> lock(server_mutex);
+        server.sendError(static_cast<int>(sak::error_code::invalid_argument),
+                         QStringLiteral("Malformed task request: 'task' must be a non-empty "
+                                        "string and 'payload' must be an object"));
+        return ActiveTaskOutcome::Completed;
+    }
+
+    const QString task_id = task_value.toString();
+    const QJsonObject payload = payload_value.toObject();
+    auto cancel_requested = std::make_shared<std::atomic_bool>(false);
+
+    sak::logInfo("ElevatedHelper: executing task '{}'", task_id.toStdString());
+
+    auto progress_cb = [&server, &server_mutex](int pct, const QString& status) {
+        const std::lock_guard<std::mutex> lock(server_mutex);
+        server.sendProgress(pct, status);
+    };
+    auto cancel_cb = [cancel_requested]() {
+        return cancel_requested->load(std::memory_order_relaxed);
+    };
+
+    auto future =
+        std::async(std::launch::async,
+                   [&dispatcher,
+                    task_id,
+                    payload,
+                    progress_cb = std::move(progress_cb),
+                    cancel_cb = std::move(cancel_cb)]() mutable {
+                       return dispatcher.dispatch(task_id, payload, progress_cb, cancel_cb);
+                   });
+    return finishActiveTaskWithCancelPolling(
+        server, server_mutex, task_id, &future, cancel_requested);
 }
 
 int runHelper(sak::ElevatedPipeServer& server, sak::ElevatedTaskDispatcher& dispatcher) {
+    // Guards every use of the pipe server. Only the task path is concurrent (the handler's
+    // progress callback runs on the async worker), but the mutex is held on this thread's server
+    // calls too so the two can never drive the documented single-threaded server at once.
+    std::mutex server_mutex;
+
     server.sendReady();
     sak::logInfo("ElevatedHelper: sent Ready, entering task loop");
 
@@ -914,30 +1320,15 @@ int runHelper(sak::ElevatedPipeServer& server, sak::ElevatedTaskDispatcher& disp
             break;
         }
         case sak::PipeMessageType::TaskRequest: {
-            QString task_id = msg->json["task"].toString();
-            QJsonObject payload = msg->json["payload"].toObject();
-            auto cancel_requested = std::make_shared<std::atomic_bool>(false);
-
-            sak::logInfo("ElevatedHelper: executing task '{}'", task_id.toStdString());
-
-            auto progress_cb = [&server](int pct, const QString& status) {
-                server.sendProgress(pct, status);
-            };
-            auto cancel_cb = [cancel_requested]() {
-                return cancel_requested->load(std::memory_order_relaxed);
-            };
-
-            auto future =
-                std::async(std::launch::async,
-                           [&dispatcher,
-                            task_id,
-                            payload,
-                            progress_cb = std::move(progress_cb),
-                            cancel_cb = std::move(cancel_cb)]() mutable {
-                               return dispatcher.dispatch(task_id, payload, progress_cb, cancel_cb);
-                           });
-            if (finishActiveTaskWithCancelPolling(server, &future, cancel_requested)) {
+            switch (runTaskRequest(*msg, server, server_mutex, dispatcher)) {
+            case ActiveTaskOutcome::Completed:
+                break;
+            case ActiveTaskOutcome::ShutdownRequested:
                 return 0;
+            case ActiveTaskOutcome::ClientLost:
+                // The task ran but its result could never be delivered. Report that as an
+                // abnormal exit rather than a clean one.
+                return kHelperClientLostExitCode;
             }
             break;
         }
@@ -976,9 +1367,18 @@ int main(int argc, char* argv[]) {
     sak::logInfo("SAK Elevated Helper starting");
     sak::logInfo("========================================");
 
-    HelperArgs args = parseArgs(argc, argv);
+    const auto parsed_args = parseArgs(argc, argv);
+    if (!parsed_args.has_value()) {
+        sak::logError("ElevatedHelper: refusing to run with a malformed command line");
+        return 1;
+    }
+    const HelperArgs args = *parsed_args;
     if (args.pipe_name.isEmpty()) {
         sak::logError("ElevatedHelper: --pipe argument required");
+        return 1;
+    }
+    if (args.parent_pid <= 0) {
+        sak::logError("ElevatedHelper: --parent-pid argument required");
         return 1;
     }
 

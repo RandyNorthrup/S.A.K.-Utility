@@ -86,6 +86,16 @@ struct FlashResult {
     /// failure this reporting exists to prevent.
     QStringList ejectedDrives;
     QStringList ejectFailedDrives;
+    /// Drives that could not be brought back online when the run ended. The unmount
+    /// step sets a PERSISTENT OFFLINE attribute, so a drive left in this list needs a
+    /// manual `diskpart online disk`. Reported rather than only logged: telling the
+    /// user a run is finished while a disk is still offline is the failure this
+    /// reporting exists to prevent.
+    QStringList reonlineFailedDrives;
+    /// True only when post-write verification actually ran for this run. With
+    /// verification disabled a "successful" drive means the WRITE succeeded and
+    /// nothing read it back, and the result must say so rather than imply a verify.
+    bool verified = false;
 
     bool hasErrors() const { return !failedDrives.isEmpty(); }
     int totalDrives() const { return successfulDrives.size() + failedDrives.size(); }
@@ -164,6 +174,15 @@ public:
     ///        interleave their raw writes and corrupt each other, so a duplicate is
     ///        rejected before flashing. Pure; unit-testable.
     [[nodiscard]] static QString firstDuplicateTarget(const QStringList& targetDrives);
+
+    /// @brief Return the first target whose PhysicalDrive NUMBER already appeared
+    ///        earlier in @p targetDrives, or empty when every parseable target names a
+    ///        distinct disk. String equality is not device identity --
+    ///        "\\.\PhysicalDrive1" and "\\?\PhysicalDrive1" are different strings for
+    ///        the SAME disk and slip past firstDuplicateTarget(). Paths with no
+    ///        parseable number are skipped; validateSingleTarget() refuses those
+    ///        outright. Pure; unit-testable.
+    [[nodiscard]] static QString firstDuplicatePhysicalDrive(const QStringList& targetDrives);
 
     /// @brief Parse the PhysicalDrive number from a device path such as
     ///        "\\.\PhysicalDriveN". Returns the number (>=0), or -1 when the path
@@ -327,20 +346,67 @@ private:
     ///        refuses on a boot disk OR an indeterminate probe. Protects a split-boot
     ///        ESP that lives on a different physical disk than \Windows.
     bool passesBootDiskGuard(const QString& devicePath, int driveNumber);
+    /// @brief Stop a run that was cancelled during its synchronous phase: re-online
+    ///        anything already taken offline, publish Cancelled and drop the image
+    ///        handle. Returns true when the run was cancelled (caller must bail).
+    bool abortIfCancelled(const QString& reason);
     bool unmountVolumes(const QStringList& targetDrives);
     /// @brief Roll back (clear OFFLINE on) drives already offlined this run when a
     ///        later target fails to unmount, so earlier targets are not stranded.
-    static void rollbackOfflinedDrives(DriveUnmounter& unmounter, const std::vector<int>& offlined);
+    /// @return The drives that refused to come back online (empty when all did).
+    QStringList rollbackOfflinedDrives(const QStringList& offlinedPaths);
+    /// @brief Roll back every drive offlined so far and SURFACE the ones that stayed
+    ///        offline (flashError, not a log line) -- a stranded disk needs a manual
+    ///        `diskpart online disk`. Leaves the still-offline drives recorded so a
+    ///        later teardown tries again.
+    void rollbackAndReport();
+    /// @brief Clear the recorded offline set, bringing each of those drives back
+    ///        online. Drives that refuse are returned AND kept recorded so the
+    ///        destructor retries them.
+    QStringList reonlineOfflinedDrives();
     /// @brief Atomically refuse re-entry and, if idle, claim the run by moving the
-    ///        state to Validating under the lock. Returns false if a run is active.
+    ///        state to Validating under the lock. Returns false if a run is active OR
+    ///        if a worker from a previous run is still writing.
     bool beginFlashClaim();
+    /// @brief Publish a new coordinator state under m_mutex (m_state and the mirrored
+    ///        m_progress.state are read from other threads by the locked getters, so
+    ///        an unlocked write is a data race). Emit stateChanged AFTER this returns,
+    ///        never while the lock is held (B10-07).
+    void setState(sak::FlashState state);
+    /// @brief Move the run to Failed, announce it, and release the coordinator's image
+    ///        handle. @p errorMessage may be empty when the failing step already
+    ///        emitted its own flashError.
+    void failRun(const QString& stateMessage, const QString& errorMessage);
+    /// @brief Close and drop the coordinator's own image source, so a run that ends
+    ///        before the workers start does not leak the open handle.
+    void releaseImageSource();
+    /// @brief Zero the per-run progress/result/dedup state and start the run clock.
+    ///        Runs BEFORE the first step that can fail, so a rejected image cannot
+    ///        leave the previous run's totals on display.
+    void resetRunState(const QStringList& targetDrives);
+    /// @brief Fail-closed byte-total gate run BEFORE anything is taken offline: the
+    ///        opened source must report a positive size that multiplies by the target
+    ///        count without overflowing. Refuses (failRun) otherwise.
+    bool recordTotalBytes(const QString& imagePath, qsizetype targetCount);
+    /// @brief Move Flashing -> Verifying the first time a worker reports verification
+    ///        progress, so the reported state matches what the run is actually doing.
+    void noteVerificationStarted();
     void updateProgress();
     /// Record one drive's success/failure into m_progress + m_result. Call with
     /// m_mutex held. Returns the error message on failure (empty on success).
     QString recordDriveCompletion(const QString& devicePath, const sak::ValidationResult& result);
     /// Populate FlashResult::bytesWritten (summed across drives) + elapsedSeconds at
     /// finalize. Call with m_mutex held. (These were previously left at zero.)
+    /// Builds one queued FlashWorker per target. On failure the partial queue is retired, the
+    /// already-offline disks are put back, and the run fails closed.
+    [[nodiscard]] bool buildWorkerQueue(const QString& imagePath, const QStringList& targetDrives);
     void finalizeResultMetrics();
+    /// When this drive was the last one outstanding, settles the run's terminal state and
+    /// copies out what the caller needs to emit AFTER releasing m_mutex. Returns false while
+    /// drives remain. MUST be called with m_mutex held.
+    [[nodiscard]] bool finalizeRunIfLastDrive(sak::FlashState* terminalState,
+                                              sak::FlashResult* terminalResult,
+                                              QString* terminalMessage);
     /// Emit the terminal stateChanged + flashCompleted signals and tear workers down.
     /// MUST be called with m_mutex released (it emits and cleanupWorkers() can wait()).
     void emitTerminalOutcome(sak::FlashState state,
@@ -350,15 +416,26 @@ private:
     /// drive so completed media is not left permanently offline (the attribute was
     /// set at unmount time and survives the flash). Best-effort per drive; MUST be
     /// called with m_mutex released (it opens the physical drive).
-    void reonlineDrives(const QStringList& drivePaths);
+    /// @return The drives that could not be brought back online (empty when all did).
+    QStringList reonlineDrives(const QStringList& drivePaths);
     void cleanupWorkers();
+    /// Cooperatively stop, wait for and destroy @p workers (detaching any that refuse
+    /// to stop rather than terminating a live raw write). Takes the vector by reference
+    /// and empties it, so a caller can hand over a run's workers BEFORE emitting its
+    /// terminal signals -- a handler that starts the next run then cannot have the new
+    /// run's workers torn down underneath it. MUST be called with m_mutex released.
+    void retireWorkers(std::vector<std::unique_ptr<FlashWorker>>& workers);
     /// Start as many queued workers as the concurrent-write ceiling currently
     /// allows. Called once the workers are built and again each time one finishes.
-    /// Starts nothing once the run has been cancelled or has left Flashing, so a
-    /// cancel cannot be followed by a queued drive quietly starting to write.
+    /// Starts nothing once the run has been cancelled or has left Flashing/Verifying,
+    /// so a cancel cannot be followed by a queued drive quietly starting to write.
     /// MUST be called with m_mutex released (it takes the lock itself and then
     /// starts threads outside it).
     void startPendingWorkers();
+    /// Start each of @p workers and report the ones QThread refused to launch as failed
+    /// drives, so a thread that never started cannot leave the run waiting forever for
+    /// a terminal signal it can never send. MUST be called with m_mutex released.
+    void startWorkers(const std::vector<FlashWorker*>& workers);
     /// Record every still-queued (never-started) worker as a failed drive so a
     /// cancelled run can still reach its finalize predicate. MUST be called with
     /// m_mutex released (it takes the lock itself).
@@ -395,5 +472,11 @@ private:
     std::atomic<bool> m_isCancelled;
 
     QStringList m_targetDrives;
+    /// Targets whose PERSISTENT OFFLINE attribute this run set and has not cleared
+    /// yet. Written and read only on the coordinator (run-driving) thread, so it is
+    /// not part of the m_mutex set; it exists so a teardown that never reaches
+    /// emitTerminalOutcome (destructor, cancel during the synchronous phase) can still
+    /// bring the disks back instead of stranding them offline.
+    QStringList m_offlinedDrives;
     QElapsedTimer m_flashTimer;  ///< Wall-clock for FlashResult::elapsedSeconds
 };
