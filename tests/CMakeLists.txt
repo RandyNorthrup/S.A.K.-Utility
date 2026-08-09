@@ -1968,6 +1968,10 @@ add_executable(test_ai_tool_health_ledger
     unit/test_ai_tool_health_ledger.cpp
     ../src/ai/ai_tool_health_ledger.cpp
     ../include/sak/ai/ai_tool_health_ledger.h
+    # The ledger now reports its own failures instead of swallowing them, which pulls in the
+    # logger; carry it the same way the helper-built unit tests do.
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
 )
 set_target_properties(test_ai_tool_health_ledger PROPERTIES
     AUTOMOC ON
@@ -2966,6 +2970,9 @@ add_executable(test_ai_tool_dispatcher
     ../include/sak/ai/ai_tool_dispatcher.h
     ../include/sak/ai/ai_tool_health_ledger.h
     ../include/sak/ai/ai_tool_policy.h
+    # Pulled in by the health ledger, which now surfaces its own failures.
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
 )
 set_target_properties(test_ai_tool_dispatcher PROPERTIES
     AUTOMOC ON

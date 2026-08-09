@@ -20,17 +20,24 @@ class BrowserControl;
 /// Server-side enforcement of the security controls the provider gateway sets in the spawned
 /// server's environment (WIN32_MCP_SECURITY_PROFILE, WIN32_MCP_REDACT_SENSITIVE_OUTPUT). The
 /// gateway pools a distinct process per security profile, so a value read once at startup holds
-/// for the whole process lifetime. Defaults are permissive/no-redaction so a server started
-/// outside the gateway (and every pure unit test) behaves exactly as before.
+/// for the whole process lifetime. An UNSET token keeps the permissive/no-redaction default --
+/// the gateway REMOVES the profile token for a full-access session, and every pure unit test runs
+/// with neither token -- while any UNRECOGNIZED token fails CLOSED (see fromEnvironment).
 struct Win32McpServerPolicy {
     // WIN32_MCP_SECURITY_PROFILE == "read_only": tools/list advertises only read-only tools and
     // tools/call refuses any non-read-only tool, so a read-only session cannot invoke a mutating
     // or input tool even if the client's own policy gate were bypassed.
     bool read_only_profile{false};
-    // WIN32_MCP_REDACT_SENSITIVE_OUTPUT == "true": mask obvious secrets in tool result text
-    // before it leaves the process, so raw passwords/tokens never reach the model.
+    // WIN32_MCP_REDACT_SENSITIVE_OUTPUT == "true": mask the secret assignments
+    // redactWin32McpSensitiveText models in the TEXT blocks of a tool result before it leaves the
+    // process. Scope is that keyword scrubber and text blocks only -- image blocks (screenshots)
+    // and secrets in a shape it does not model pass through, so this reduces exposure rather than
+    // guaranteeing no credential reaches the model.
     bool redact_sensitive_output{false};
 
+    /// Read both tokens from the process environment. An unrecognized non-empty token is an
+    /// operator typo and resolves to the RESTRICTIVE state (read-only / redacting), never to the
+    /// full surface.
     [[nodiscard]] static Win32McpServerPolicy fromEnvironment();
 };
 
@@ -39,8 +46,10 @@ struct Win32McpServerPolicy {
 /// so it never trusts the client. KEEP THE TWO LISTS IN SYNC when adding a read-only tool.
 [[nodiscard]] bool win32McpToolIsReadOnly(const QString& tool_name);
 
-/// Mask obvious secrets (password/token/secret/api key/bearer assignments) in @p text so raw
-/// sensitive output never reaches the model. Exposed for unit testing.
+/// Mask the secret assignments this scrubber models (password/pwd/secret/token/api key/access
+/// key/client secret/bearer, in `key=value`, `key: value` and quoted-JSON shapes) in @p text.
+/// Best-effort by design: a credential in a shape it does not model passes through unchanged, so
+/// callers must treat it as exposure reduction, not a guarantee. Exposed for unit testing.
 [[nodiscard]] QString redactWin32McpSensitiveText(const QString& text);
 
 /// Validate tool-call @p args against a native tool's advertised @p input_schema: returns an

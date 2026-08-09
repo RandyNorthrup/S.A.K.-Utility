@@ -13,6 +13,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <optional>
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -47,7 +49,11 @@ bool RestorePointManager::isSystemRestoreEnabled() const {
              "  $k = Get-ItemProperty "
              "    -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' "
              "    -Name 'RPSessionInterval' -ErrorAction Stop; "
-             "  if ([int]$k.RPSessionInterval -gt 0) { Write-Output 'ENABLED'; } "
+             // Require the REG_DWORD the API documents. A [int] cast would coerce a planted
+             // string ("1") or any other type into a number, letting a wrong-typed registry
+             // value report System Protection as on -- a safety check failing OPEN.
+             "  if (($k.RPSessionInterval -is [int]) -and ($k.RPSessionInterval -gt 0)) "
+             "    { Write-Output 'ENABLED'; } "
              "  else { Write-Output 'DISABLED'; } "
              "} catch { "
              "  Write-Output 'DISABLED'; "  // fail closed: cannot confirm -> not enabled
@@ -87,6 +93,45 @@ QString buildCheckpointScript(const QString& safe_desc) {
         .arg(safe_desc);
 }
 
+/// @brief The detail worth reporting from a checkpoint run: stderr, or stdout when stderr is bare.
+QString checkpointErrorDetail(const sak::ProcessResult& result) {
+    const QString err = result.std_err.trimmed();
+    return err.isEmpty() ? result.std_out.trimmed() : err;
+}
+
+/// @brief Why @p result is not a created restore point; an empty string means it is one.
+///
+/// Exit 0 alone is not proof of a checkpoint: require the script's explicit SUCCESS sentinel, so a
+/// run that exited clean without reaching the Write-Output (truncated/garbled output, a host that
+/// swallowed the error) is never reported as a created restore point. Downstream destructive work
+/// asks this question before it starts, so it must fail closed. Every failure reason is non-empty,
+/// so the empty string is unambiguously the success answer.
+QString checkpointFailureReason(const sak::ProcessResult& result) {
+    if (result.timed_out) {
+        return QStringLiteral("Timeout creating restore point (exceeded 2 minutes).");
+    }
+
+    if (result.exit_code != 0) {
+        const QString err = checkpointErrorDetail(result);
+
+        // Check for throttle (Windows only allows one per 24h in some configs)
+        if (err.contains("frequency", Qt::CaseInsensitive) ||
+            err.contains("1440", Qt::CaseInsensitive)) {
+            return QStringLiteral(
+                "Windows limits restore point creation to once per 24 hours. "
+                "A recent restore point already exists.");
+        }
+        return QString("Failed to create restore point: %1").arg(err);
+    }
+
+    if (!result.std_out.contains(QStringLiteral("SUCCESS"))) {
+        return QString("Restore point creation did not confirm success: %1")
+            .arg(checkpointErrorDetail(result));
+    }
+
+    return {};
+}
+
 }  // namespace
 
 bool RestorePointManager::createRestorePoint(const QString& description) {
@@ -124,26 +169,9 @@ bool RestorePointManager::createRestorePoint(const QString& description) {
                                          buildCheckpointScript(safe_desc)},
                                         kCreateTimeoutMs);
 
-    if (result.timed_out) {
-        Q_EMIT restorePointFailed("Timeout creating restore point (exceeded 2 minutes).");
-        return false;
-    }
-
-    if (result.exit_code != 0) {
-        QString err = result.std_err.trimmed();
-        if (err.isEmpty()) {
-            err = result.std_out.trimmed();
-        }
-
-        // Check for throttle (Windows only allows one per 24h in some configs)
-        if (err.contains("frequency", Qt::CaseInsensitive) ||
-            err.contains("1440", Qt::CaseInsensitive)) {
-            Q_EMIT restorePointFailed(
-                "Windows limits restore point creation to once per 24 hours. "
-                "A recent restore point already exists.");
-        } else {
-            Q_EMIT restorePointFailed(QString("Failed to create restore point: %1").arg(err));
-        }
+    const QString failure = checkpointFailureReason(result);
+    if (!failure.isEmpty()) {
+        Q_EMIT restorePointFailed(failure);
         return false;
     }
 
@@ -153,16 +181,118 @@ bool RestorePointManager::createRestorePoint(const QString& description) {
 
 namespace {
 
+/// Windows PowerShell 5.1 serializes a DateTime through JavaScriptSerializer, so ConvertTo-Json
+/// can emit "/Date(1754323200000)/" (epoch milliseconds, optionally with a +hhmm offset suffix)
+/// rather than an ISO string. The query below asks for a round-trip ISO string, but accept this
+/// documented encoding too: without it every restore point on such a host parses as invalid.
+QDateTime parseEpochMillisecondsDate(const QString& date_str) {
+    if (!date_str.startsWith(QLatin1String("/Date(")) || !date_str.endsWith(QLatin1String(")/"))) {
+        return {};
+    }
+    QString digits = date_str.mid(6, date_str.size() - 8);
+    qsizetype offset_at = digits.lastIndexOf(QLatin1Char('+'));
+    if (offset_at < 1) {
+        offset_at = digits.lastIndexOf(QLatin1Char('-'));
+    }
+    if (offset_at > 0) {
+        digits = digits.left(offset_at);  // the epoch value itself is UTC; the suffix is display
+    }
+    bool ok = false;
+    const qint64 msecs = digits.toLongLong(&ok);
+    if (!ok) {
+        return {};
+    }
+    QDateTime dt;
+    dt.setMSecsSinceEpoch(msecs);
+    return dt;
+}
+
 QDateTime parseRestorePointDate(const QString& date_str) {
-    QDateTime dt = QDateTime::fromString(date_str, Qt::ISODateWithMs);
+    const QString trimmed = date_str.trimmed();
+    QDateTime dt = QDateTime::fromString(trimmed, Qt::ISODateWithMs);
     if (dt.isValid()) {
         return dt;
     }
-    dt = QDateTime::fromString(date_str, Qt::ISODate);
+    dt = QDateTime::fromString(trimmed, Qt::ISODate);
     if (dt.isValid()) {
         return dt;
     }
-    return QDateTime::fromString(date_str, "M/d/yyyy h:mm:ss AP");
+    dt = parseEpochMillisecondsDate(trimmed);
+    if (dt.isValid()) {
+        return dt;
+    }
+    return QDateTime::fromString(trimmed, "M/d/yyyy h:mm:ss AP");
+}
+
+/// @brief The Get-ComputerRestorePoint query, one compressed JSON record per restore point.
+///
+/// Fail closed: SilentlyContinue would swallow a WMI/query failure and emit empty output with a
+/// zero exit, which reads as a genuine "no restore points". Force errors to terminate and exit
+/// non-zero so a failed query is surfaced (queryOk stays false) instead of masqueraded as an
+/// empty result. A true zero-restore-point machine still exits 0 with empty output.
+///
+/// ToString('o') pins the timestamp to a culture-invariant round-trip ISO string. Handing
+/// ConvertTo-Json a raw DateTime lets Windows PowerShell 5.1 serialize it as "/Date(ms)/", which
+/// no ISO/locale parse accepts -- every restore point would then be dropped while the query still
+/// reported success.
+QString restorePointQueryScript() {
+    return QStringLiteral(
+        "$ErrorActionPreference='Stop'; try { "
+        "Get-ComputerRestorePoint | "
+        "Select-Object "
+        "@{N='Date';E={$_.ConvertToDateTime($_.CreationTime).ToString('o')}}, "
+        "Description | "
+        "Sort-Object Date -Descending | "
+        "ConvertTo-Json -Compress "
+        "} catch { exit 1 }");
+}
+
+/// @brief The payload's restore-point records, or nullopt when it is not a record list at all.
+///
+/// Validate the shape instead of coercing it: a scalar payload is not a restore-point list, so
+/// refuse it rather than read a bare number as a checkpoint. ConvertTo-Json emits a lone restore
+/// point as an object rather than a one-element array, which IS a record list of one.
+std::optional<QJsonArray> restorePointRecords(const QByteArray& output) {
+    QJsonParseError error;
+    const QJsonDocument doc = QJsonDocument::fromJson(output, &error);
+    if (error.error != QJsonParseError::NoError) {
+        return std::nullopt;
+    }
+    if (doc.isArray()) {
+        return doc.array();
+    }
+    if (doc.isObject()) {
+        QJsonArray single;
+        single.append(doc.object());
+        return single;
+    }
+    return std::nullopt;
+}
+
+/// @brief One record's (date, description), or nullopt when the record is not a restore point.
+///
+/// A record that is not an object, or whose Date is missing/wrong-typed/unparseable, means we
+/// cannot enumerate the machine's checkpoints -- the caller reports a FAILED query rather than
+/// silently skipping records and presenting the survivors as the complete list.
+std::optional<QPair<QDateTime, QString>> restorePointFromRecord(const QJsonValue& record) {
+    if (!record.isObject()) {
+        return std::nullopt;
+    }
+    const QJsonObject obj = record.toObject();
+    const QJsonValue date_value = obj.value(QStringLiteral("Date"));
+    const QJsonValue description_value = obj.value(QStringLiteral("Description"));
+    if (!date_value.isString()) {
+        return std::nullopt;
+    }
+    if (!description_value.isString() && !description_value.isNull() &&
+        !description_value.isUndefined()) {
+        return std::nullopt;
+    }
+    const QDateTime dt = parseRestorePointDate(date_value.toString());
+    if (!dt.isValid()) {
+        return std::nullopt;
+    }
+    return QPair<QDateTime, QString>{dt, description_value.toString()};
 }
 
 }  // namespace
@@ -183,25 +313,12 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints(bool& 
         return points;
     }
 
-    const auto result = sak::runProcess(
-        powershell,
-        {QStringLiteral("-NoProfile"),
-         QStringLiteral("-NonInteractive"),
-         QStringLiteral("-Command"),
-         // Fail closed: SilentlyContinue would swallow a WMI/query failure and
-         // emit empty output with a zero exit, which reads as a genuine "no
-         // restore points". Force errors to terminate and exit non-zero so a
-         // failed query is surfaced (queryOk stays false) instead of masqueraded
-         // as an empty result. A true zero-restore-point machine still exits 0
-         // with empty output.
-         QStringLiteral("$ErrorActionPreference='Stop'; try { "
-                        "Get-ComputerRestorePoint | "
-                        "Select-Object @{N='Date';E={$_.ConvertToDateTime($_.CreationTime)}}, "
-                        "Description | "
-                        "Sort-Object Date -Descending | "
-                        "ConvertTo-Json -Compress "
-                        "} catch { exit 1 }")},
-        kCheckTimeoutMs);
+    const auto result = sak::runProcess(powershell,
+                                        {QStringLiteral("-NoProfile"),
+                                         QStringLiteral("-NonInteractive"),
+                                         QStringLiteral("-Command"),
+                                         restorePointQueryScript()},
+                                        kCheckTimeoutMs);
 
     if (!result.succeeded()) {
         return points;  // query FAILED (non-zero exit / timeout) -> queryOk stays false
@@ -216,25 +333,21 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints(bool& 
         return points;
     }
 
-    QJsonParseError error;
-    QJsonDocument doc = QJsonDocument::fromJson(output, &error);
-    if (error.error != QJsonParseError::NoError) {
-        return points;  // succeeded but malformed -> treat as a failed query (queryOk false)
+    // Malformed, or parsed but not a record list -> a FAILED query (queryOk stays false), never
+    // an empty result the caller would read as "this machine has no restore points".
+    const std::optional<QJsonArray> records = restorePointRecords(output);
+    if (!records) {
+        return points;
     }
 
-    QJsonArray arr;
-    if (doc.isArray()) {
-        arr = doc.array();
-    } else if (doc.isObject()) {
-        arr.append(doc.object());
-    }
-
-    for (const auto& val : arr) {
-        QJsonObject obj = val.toObject();
-        QDateTime dt = parseRestorePointDate(obj["Date"].toString());
-        if (dt.isValid()) {
-            points.append({dt, obj["Description"].toString()});
+    // One unusable record fails the WHOLE enumeration: a partial list presented as complete is
+    // what lets a caller believe a checkpoint it never saw does not exist.
+    for (const auto& record : *records) {
+        const std::optional<QPair<QDateTime, QString>> point = restorePointFromRecord(record);
+        if (!point) {
+            return {};
         }
+        points.append(*point);
     }
 
     queryOk = true;

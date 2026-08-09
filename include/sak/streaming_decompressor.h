@@ -45,7 +45,15 @@ public:
     [[nodiscard]] bool isOpen() const;
 
     /// @brief Read decompressed data into buffer
-    /// @return Bytes produced, 0 at end, -1 on error
+    /// @param data Destination buffer; must not be null
+    /// @param maxSize Buffer capacity; must be > 0 and <= the decoders' 32-bit output
+    ///        limit (zlib/bzip2 avail_out is a uInt, so a larger request would be
+    ///        truncated by setOutput() while the full request was credited as produced).
+    ///        A 0-size request is refused too: returning 0 for it is indistinguishable
+    ///        from the clean end-of-stream 0 below.
+    /// @return Bytes produced, 0 at end, -1 on error. Once a read fails the decompressor
+    ///         is TERMINALLY failed (see m_failed): every later read returns -1 rather
+    ///         than decoding against a library stream left in an undefined state.
     qint64 read(char* data, qint64 maxSize);
 
     /// @brief Check if at end of decompressed data
@@ -150,6 +158,11 @@ private:
     bool m_eof{false};
     /// The compressed input file has been fully read (no more bytes on disk).
     bool m_input_exhausted{false};
+    /// Terminal failure: a decode error, a file read error or a detected truncated
+    /// stream. Sticky until the next open()/close(), so a caller that ignores one -1
+    /// cannot keep pumping a broken library stream -- and can never be handed the 0 that
+    /// means "clean end of file" for a stream that in fact failed.
+    bool m_failed{false};
     qint64 m_compressedBytesRead{0};
     qint64 m_decompressedBytesProduced{0};
 };

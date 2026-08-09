@@ -15,8 +15,10 @@
 #include "sak/restore_point_manager.h"
 #include "sak/uninstall_worker.h"
 
+#include <QMetaType>
 #include <QThread>
 #include <QTimer>
+#include <QVariant>
 
 #include <memory>
 
@@ -38,7 +40,7 @@ constexpr int kRecoveredSizeDisplayPrecision = 1;
 // thread and, if it refuses within the bound, DETACHES it (bounded leak, self-deletes
 // when it finally exits) instead of force-terminating and destroying it.
 template <typename WorkerT>
-void retireWorker(std::unique_ptr<WorkerT>& worker) {
+void retireWorker(std::unique_ptr<WorkerT>& worker, const QObject* owner) {
     if (!worker) {
         return;
     }
@@ -47,11 +49,39 @@ void retireWorker(std::unique_ptr<WorkerT>& worker) {
         if (!worker->wait(kThreadWaitMs)) {
             WorkerT* stale = worker.release();
             stale->setParent(nullptr);
+            // Sever every signal back to the controller BEFORE letting go. A detached worker
+            // outlives the operation that created it, and its late uninstallComplete / failed /
+            // cancelled / cleanupComplete carries no run identity -- the controller would apply
+            // it to whatever runs NEXT, mis-marking a queued program, re-emitting a stale report
+            // or forcing the live run to Idle. Severing first also means the deleteLater wiring
+            // below is the only connection that survives.
+            QObject::disconnect(stale, nullptr, owner, nullptr);
             QObject::connect(stale, &QThread::finished, stale, &QObject::deleteLater);
             return;
         }
     }
     worker.reset();
+}
+
+// Read a persisted boolean preference fail-closed. QVariant::toBool() coerces ANY non-empty,
+// non-"0"/"false" string to true, so a truncated write or an attacker-edited config value would
+// silently become a setting the user never chose. A value that is not recognizably a boolean is
+// refused and @p malformed_safe (the conservative choice for that specific preference, not
+// necessarily the shipped default) is kept instead.
+bool loadBoolSetting(const char* key, bool absent_default, bool malformed_safe) {
+    const QVariant raw = ConfigManager::instance().getValue(key, absent_default);
+    if (raw.typeId() == QMetaType::Bool) {
+        return raw.toBool();
+    }
+    const QString text = raw.toString().trimmed().toLower();
+    if (text == QLatin1String("true") || text == QLatin1String("1")) {
+        return true;
+    }
+    if (text == QLatin1String("false") || text == QLatin1String("0")) {
+        return false;
+    }
+    sak::logError("Malformed boolean setting {}; using the fail-closed value", key);
+    return malformed_safe;
 }
 
 // A registry key path is well-formed only when it is rooted at a recognized hive. Anything else is
@@ -194,7 +224,7 @@ void AdvancedUninstallController::uninstallProgram(const ProgramInfo& program,
 
     // Safely dispose of any prior worker whose thread may still be exiting before the
     // unique_ptr is overwritten (B10-09).
-    retireWorker(m_uninstall_worker);
+    retireWorker(m_uninstall_worker, this);
     m_uninstall_worker = std::make_unique<UninstallWorker>(
         program, uninstallModeForProgram(program), scanLevel, createRestorePoint, this);
     connectUninstallWorkerSignals(true);
@@ -221,7 +251,7 @@ void AdvancedUninstallController::forceUninstall(const ProgramInfo& program,
     m_autoCleanSafe = false;  // Force uninstall always shows results for review
     setState(State::Uninstalling);
 
-    retireWorker(m_uninstall_worker);
+    retireWorker(m_uninstall_worker, this);
     m_uninstall_worker = std::make_unique<UninstallWorker>(
         program, UninstallWorker::Mode::ForcedUninstall, scanLevel, createRestorePoint, this);
 
@@ -258,7 +288,7 @@ void AdvancedUninstallController::removeRegistryEntry(const ProgramInfo& program
 
     setState(State::Uninstalling);
 
-    retireWorker(m_uninstall_worker);
+    retireWorker(m_uninstall_worker, this);
     m_uninstall_worker = std::make_unique<UninstallWorker>(
         program, UninstallWorker::Mode::RegistryOnly, ScanLevel::Safe, false, this);
 
@@ -339,8 +369,21 @@ void AdvancedUninstallController::cleanLeftovers(const QVector<LeftoverItem>& se
         return;
     }
 
-    // Manual clean honors the user's recycle preference and MAY permanently delete (they reviewed).
-    startCleanupWorker(screenedItems, m_useRecycleBin, /*requireRecoverable=*/false);
+    // Say so in aggregate too: the per-item "Skipped protected item" notices scroll past, and a
+    // clean that quietly does less than was asked for must be visible as such.
+    if (refused > 0) {
+        Q_EMIT statusMessage(
+            QString("%1 selected item(s) were refused by safety screening and were not cleaned.")
+                .arg(refused),
+            kStatusTimeoutLongMs);
+    }
+
+    // Manual clean honors the user's recycle preference. When that preference is the Recycle Bin,
+    // recoverability is REQUIRED as well: forcing the mode alone still let a recycle FAILURE fall
+    // through to a permanent delete, turning the recoverable removal the user asked for into an
+    // irreversible one behind their back. A user who chose permanent deletion (m_useRecycleBin
+    // false) reviewed the items and gets exactly that.
+    startCleanupWorker(screenedItems, m_useRecycleBin, /*requireRecoverable=*/m_useRecycleBin);
 }
 
 void AdvancedUninstallController::startCleanupWorker(const QVector<LeftoverItem>& screenedItems,
@@ -352,7 +395,7 @@ void AdvancedUninstallController::startCleanupWorker(const QVector<LeftoverItem>
     Q_EMIT cleanupStarted(total);
     Q_EMIT statusMessage(QString("Cleaning %1 leftover items...").arg(total), 0);
 
-    retireWorker(m_cleanup_worker);
+    retireWorker(m_cleanup_worker, this);
     m_cleanup_worker = std::make_unique<CleanupWorker>(screenedItems, useRecycleBin, this);
     m_cleanup_worker->setRequireRecoverable(requireRecoverable);
     connectCleanupWorkerSignals(m_cleanup_worker.get());
@@ -628,15 +671,17 @@ void AdvancedUninstallController::loadSettings() {
         raw_scan_level = kDefaultScanLevelValue;
     }
     m_defaultScanLevel = static_cast<ScanLevel>(raw_scan_level);
-    // The boolean prefs use toBool() coercion by design: they are written only by saveSettings()
-    // from typed bool members (app-controlled config), so there is no untrusted wrong-typed input
-    // to fail closed on here -- unlike the scan level above, which is range-validated because an
-    // out-of-range int would cast to an invalid ScanLevel enum.
-    m_autoRestorePoint = cfg.getValue("advuninstall/auto_restore_point", true).toBool();
-    m_autoCleanSafe = cfg.getValue("advuninstall/auto_clean_safe", true).toBool();
-    m_showSystemComponents = cfg.getValue("advuninstall/show_system_components", false).toBool();
-    m_useRecycleBin = cfg.getValue("advuninstall/use_recycle_bin", false).toBool();
-    m_selectAllByDefault = cfg.getValue("advuninstall/select_all_by_default", false).toBool();
+    // The boolean prefs are range-validated like the scan level above rather than coerced with
+    // toBool(): saveSettings() writes them as typed bools, so anything else in the file is a
+    // truncated write or an edit from outside the app, and toBool() would turn any such string
+    // into "true". Each one names the value to keep when the stored text is not a boolean -- the
+    // conservative choice for THAT preference (recycle rather than permanently delete, do not
+    // auto-clean, do not pre-select), which is not always the shipped default.
+    m_autoRestorePoint = loadBoolSetting("advuninstall/auto_restore_point", true, true);
+    m_autoCleanSafe = loadBoolSetting("advuninstall/auto_clean_safe", true, false);
+    m_showSystemComponents = loadBoolSetting("advuninstall/show_system_components", false, false);
+    m_useRecycleBin = loadBoolSetting("advuninstall/use_recycle_bin", false, true);
+    m_selectAllByDefault = loadBoolSetting("advuninstall/select_all_by_default", false, false);
 }
 
 void AdvancedUninstallController::saveSettings() {
@@ -897,8 +942,8 @@ void AdvancedUninstallController::stopEnumThread() {
 void AdvancedUninstallController::cleanupWorkers() {
     stopEnumThread();
     // Cooperative stop + detach-if-refuses, never terminate()+destroy a live QThread.
-    retireWorker(m_uninstall_worker);
-    retireWorker(m_cleanup_worker);
+    retireWorker(m_uninstall_worker, this);
+    retireWorker(m_cleanup_worker, this);
 }
 
 void AdvancedUninstallController::connectUninstallWorkerSignals(bool includeNativeSignals) {
@@ -1041,7 +1086,7 @@ void AdvancedUninstallController::processNextQueueItem() {
     // Don't create individual restore points in batch (already done).
     // Ensure the previous worker is safely retired (detach if it refuses to stop)
     // before its unique_ptr is overwritten, so we never destroy a live QThread.
-    retireWorker(m_uninstall_worker);
+    retireWorker(m_uninstall_worker, this);
     m_uninstall_worker = std::make_unique<UninstallWorker>(
         qi.program, uninstallModeForProgram(qi.program), qi.scanLevel, false, this);
     connectBatchUninstallWorkerSignals();

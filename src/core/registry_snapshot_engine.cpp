@@ -14,7 +14,13 @@ namespace sak {
 
 namespace {
 constexpr DWORD kRegistrySubkeyNameBufferChars = 256;
-}
+// Breadth budgets. HKCU is writable by the very account being uninstalled from, so a
+// planted key can otherwise fan this walk out without bound (memory and CPU) even though
+// the depth is capped. Hitting either budget truncates the walk AND clears the
+// reliability flag, so an elevated caller can never consume the result as complete.
+constexpr DWORD kMaxChildKeysPerKey = 8192;
+constexpr int kMaxSnapshotKeys = 250'000;
+}  // namespace
 
 // Monitored registry paths for snapshot
 const QStringList RegistrySnapshotEngine::kMonitoredPaths = {
@@ -33,15 +39,29 @@ namespace {
 // longer exists (deleted between enumeration and open) is NOT a reliability failure.
 HKEY openKeyForRead(HKEY hive, const QString& subkey, bool& reliable) {
     HKEY key = nullptr;
-    const LONG rc =
-        RegOpenKeyExW(hive, reinterpret_cast<LPCWSTR>(subkey.utf16()), 0, KEY_READ, &key);
-    if (rc == ERROR_SUCCESS) {
-        return key;
+    // REG_OPTION_OPEN_LINK opens a registry symbolic link itself instead of silently
+    // following it. Without it an attacker-writable REG_LINK could redirect this walk
+    // outside the monitored subtree while every emitted path kept a trusted-looking
+    // name -- and those names are what an elevated leftover cleanup later deletes.
+    const LONG rc = RegOpenKeyExW(
+        hive, reinterpret_cast<LPCWSTR>(subkey.utf16()), REG_OPTION_OPEN_LINK, KEY_READ, &key);
+    if (rc != ERROR_SUCCESS) {
+        if (rc != ERROR_FILE_NOT_FOUND && rc != ERROR_PATH_NOT_FOUND) {
+            reliable = false;
+        }
+        return nullptr;
     }
-    if (rc != ERROR_FILE_NOT_FOUND && rc != ERROR_PATH_NOT_FOUND) {
+    DWORD link_value_type = 0;
+    if (RegQueryValueExW(key, L"SymbolicLinkValue", nullptr, &link_value_type, nullptr, nullptr) ==
+            ERROR_SUCCESS &&
+        link_value_type == REG_LINK) {
+        // A link: refuse to traverse it and mark the snapshot partial rather than
+        // recording the link target's keys under the link's own path.
+        RegCloseKey(key);
         reliable = false;
+        return nullptr;
     }
-    return nullptr;
+    return key;
 }
 
 // Query the subkey count. A failure means we cannot know how many children exist, so
@@ -73,26 +93,44 @@ QStringList readChildNames(HKEY key, bool& reliable) {
     if (!querySubkeyCount(key, count, reliable)) {
         return {};
     }
+    if (count > kMaxChildKeysPerKey) {
+        // Too wide to walk. Truncate and flag instead of growing the result without
+        // bound on an attacker-chosen child count.
+        reliable = false;
+        count = kMaxChildKeysPerKey;
+    }
     QStringList names;
     wchar_t name_buf[kRegistrySubkeyNameBufferChars];
     for (DWORD i = 0; i < count; ++i) {
         DWORD len = kRegistrySubkeyNameBufferChars;
         const LONG rc = RegEnumKeyExW(key, i, name_buf, &len, nullptr, nullptr, nullptr, nullptr);
         if (rc != ERROR_SUCCESS) {
-            if (rc != ERROR_NO_MORE_ITEMS) {
-                reliable = false;
+            // ERROR_NO_MORE_ITEMS before the counted end means the child set shrank
+            // under us, so this snapshot is not the complete picture either.
+            reliable = false;
+            if (rc == ERROR_NO_MORE_ITEMS) {
+                break;
             }
             continue;
         }
         names.append(QString::fromWCharArray(name_buf, len));
     }
+    // A child added after the count was sampled would be silently missed. Probe one past
+    // the counted end so a key that grew mid-walk is reported unreliable, not ignored.
+    DWORD probe_len = kRegistrySubkeyNameBufferChars;
+    if (RegEnumKeyExW(key, count, name_buf, &probe_len, nullptr, nullptr, nullptr, nullptr) ==
+        ERROR_SUCCESS) {
+        reliable = false;
+    }
     return names;
 }
 
 // HKLM\SOFTWARE\Classes is enormous and irrelevant to leftover detection; skip it.
+// Exact name match only: a prefix match also excluded unrelated siblings an attacker (or
+// a vendor) can name, such as "ClassesBackup", hiding real leftovers from the diff.
 bool shouldSkipChild(const QString& childName, const QString& hiveName, const QString& subkey) {
-    return childName.startsWith("Classes", Qt::CaseInsensitive) && hiveName == "HKLM" &&
-           subkey == "SOFTWARE";
+    return childName.compare(QStringLiteral("Classes"), Qt::CaseInsensitive) == 0 &&
+           hiveName == "HKLM" && subkey == "SOFTWARE";
 }
 
 QString joinKeyPath(const QString& hiveName, const QString& subkey) {
@@ -138,6 +176,12 @@ QSet<QString> RegistrySnapshotEngine::captureSnapshot(bool* reliable) {
 void RegistrySnapshotEngine::enumerateKeys(
     HKEY hive, const QString& subkey, const QString& hiveName, SnapshotSink sink, int maxDepth) {
     if (maxDepth <= 0) {
+        return;
+    }
+    if (sink.keys.size() >= kMaxSnapshotKeys) {
+        // Total-size budget reached: stop and flag rather than letting attacker-controlled
+        // breadth grow the key set without bound.
+        sink.reliable = false;
         return;
     }
     HKEY key = openKeyForRead(hive, subkey, sink.reliable);

@@ -28,11 +28,41 @@ function Get-Sha256Hex([string]$Path) {
     return [System.BitConverter]::ToString($hash).Replace("-", "").ToLowerInvariant()
 }
 
+# The report IS the evidence, so read it strictly. Without these checks PowerShell
+# coercion lets a malformed report pass every assertion below: "ok":"false" is truthy,
+# a single-element array ["Passed"] compares -ne "Passed" as false, and a bare string
+# substitutes for the blockers/warnings arrays.
 function Read-Report([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         Fail "missing report: $Path"
     }
-    return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    $raw = Get-Content -LiteralPath $Path -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        Fail "empty report: $Path"
+    }
+    $parsed = @($raw | ConvertFrom-Json)
+    if ($parsed.Count -ne 1 -or $parsed[0] -isnot [pscustomobject]) {
+        Fail "report is not a single JSON object: $Path"
+    }
+    $report = $parsed[0]
+    $fieldNames = @($report.PSObject.Properties.Name)
+    foreach ($boolField in @("ok")) {
+        if (($fieldNames -contains $boolField) -and ($report.$boolField -isnot [bool])) {
+            Fail "report field '$boolField' is not a JSON boolean: $Path"
+        }
+    }
+    foreach ($stringField in @("status")) {
+        if (($fieldNames -contains $stringField) -and ($report.$stringField -isnot [string])) {
+            Fail "report field '$stringField' is not a JSON string: $Path"
+        }
+    }
+    foreach ($arrayField in @("blockers", "warnings")) {
+        if (($fieldNames -contains $arrayField) -and ($null -ne $report.$arrayField) -and
+            ($report.$arrayField -isnot [System.Array])) {
+            Fail "report field '$arrayField' is not a JSON array: $Path"
+        }
+    }
+    return $report
 }
 
 if (-not (Test-Path -LiteralPath $CliPath -PathType Leaf)) {
@@ -156,24 +186,44 @@ if (-not $invalidBlockers.Contains("Unable to open HFS+ filesystem")) {
 # --- Regression (review finding 3): the HFS CLI now carries the same defense-in-depth
 # --- OS-disk guard as the APFS CLI. A confirmed --allow-raw-target aimed at PhysicalDrive0
 # --- or an OS volume/device alias (\\.\C:) must fail closed BEFORE any device write.
-& $CliPath delete-file-image --target "\\.\PhysicalDrive0" --hfs-path "/x" --allow-raw-target 2>&1 | Out-Null
+# --- The refusal is written to stderr before the target is ever opened, so assert on the
+# --- refusal text: a bare "nonzero exit" is equally satisfied by the missing-confirmation
+# --- or non-HFS guard and would not prove the OS-disk guard fired at all.
+if ([string]::IsNullOrWhiteSpace($env:SystemDrive)) {
+    Fail "SystemDrive is not set; the OS volume-alias guard cannot be exercised"
+}
+$rawDriveOutput = (& $CliPath delete-file-image --target "\\.\PhysicalDrive0" --hfs-path "/x" --allow-raw-target 2>&1 | Out-String)
 if ($LASTEXITCODE -eq 0) {
     Fail "raw OS-disk guard accepted a PhysicalDrive0 target"
 }
-& $CliPath delete-file-image --target "\\.\$($env:SystemDrive)" --hfs-path "/x" --allow-raw-target 2>&1 | Out-Null
+if (-not $rawDriveOutput.Contains("Refusing raw")) {
+    Fail "PhysicalDrive0 target was refused by another guard, not the OS-disk guard: $rawDriveOutput"
+}
+$rawVolumeOutput = (& $CliPath delete-file-image --target "\\.\$($env:SystemDrive)" --hfs-path "/x" --allow-raw-target 2>&1 | Out-String)
 if ($LASTEXITCODE -eq 0) {
     Fail "raw OS-disk guard accepted an OS volume-alias target (\\.\$($env:SystemDrive))"
+}
+if (-not $rawVolumeOutput.Contains("Refusing raw")) {
+    Fail "OS volume-alias target was refused by another guard, not the OS-disk guard: $rawVolumeOutput"
 }
 
 # --- Regression (review finding 7): create-empty-files-image must fail closed on a
 # --- malformed or out-of-range --file-count instead of coercing it to 0/unbounded.
-& $CliPath create-empty-files-image --target $targetPath --hfs-path "/gen" --file-count "not-a-number" 2>&1 | Out-Null
+# --- Argument validation runs before the target is opened, so the diagnostic must name
+# --- --file-count; otherwise the invalid-media guard alone would satisfy these tests.
+$malformedCountOutput = (& $CliPath create-empty-files-image --target $targetPath --hfs-path "/gen" --file-count "not-a-number" 2>&1 | Out-String)
 if ($LASTEXITCODE -eq 0) {
     Fail "create-empty-files-image accepted a malformed --file-count"
 }
-& $CliPath create-empty-files-image --target $targetPath --hfs-path "/gen" --file-count 100000000 2>&1 | Out-Null
+if (-not $malformedCountOutput.Contains("--file-count")) {
+    Fail "malformed --file-count was rejected by another guard: $malformedCountOutput"
+}
+$outOfRangeCountOutput = (& $CliPath create-empty-files-image --target $targetPath --hfs-path "/gen" --file-count 100000000 2>&1 | Out-String)
 if ($LASTEXITCODE -eq 0) {
     Fail "create-empty-files-image accepted an out-of-range --file-count"
+}
+if (-not $outOfRangeCountOutput.Contains("--file-count")) {
+    Fail "out-of-range --file-count was rejected by another guard: $outOfRangeCountOutput"
 }
 
 & $CertifierPath `
@@ -901,6 +951,24 @@ if (-not (($deleteCreatedFileReport.warnings -join ' ') -like "*zeroing released
     Fail "delete created file did not report secure released-block wipe"
 }
 
+# Independent of the CLI's own ok/warning text: the catalog entry must be gone AND the
+# released blocks must no longer hold the payload. A no-op that emitted the right warning
+# passes every check above but neither of these.
+& $CertifierPath `
+    --input $resizeFixturePath `
+    --expect "HFS+" `
+    --hfs-read-file "/created-renamed.txt" `
+    --hfs-read-max-bytes 1024 `
+    --output (Join-Path $runRoot "hfs-delete-created-file-negative-read.json") 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "securely deleted file is still readable from the catalog"
+}
+$resizeFixtureText = [System.Text.Encoding]::ASCII.GetString(
+    [System.IO.File]::ReadAllBytes($resizeFixturePath))
+if ($resizeFixtureText.Contains([System.Text.Encoding]::ASCII.GetString($createFileBytes))) {
+    Fail "secure delete left the released file payload in the image"
+}
+
 & $CliPath create-empty-folder-image `
     --target $resizeFixturePath `
     --hfs-path "/Created Folder" `
@@ -1101,6 +1169,25 @@ if (-not $growStage1Report.ok) {
 }
 Invoke-RealVolumeFsck "stage-1 fragmented growth"
 
+# fsck_hfs cannot tell a real fragmented growth from a no-op (a no-op leaves a perfectly
+# consistent volume), so read the grown file back and hash it.
+$expectedStage1Hash = Get-Sha256Hex $growStage1Path
+$growStage1ReadBackPath = Join-Path $runRoot "real-grow-stage1-readback.json"
+& $CertifierPath `
+    --input $realImagePath `
+    --expect "HFS+" `
+    --hfs-read-file "/frag-2.bin" `
+    --hfs-read-max-bytes (16 * 1024 * 1024) `
+    --output $growStage1ReadBackPath
+if ($LASTEXITCODE -ne 0) {
+    Fail "real-volume stage-1 grow read-back certifier exited $LASTEXITCODE"
+}
+$growStage1ReadBack = Read-Report $growStage1ReadBackPath
+if ($growStage1ReadBack.status -ne "Passed" -or
+    $growStage1ReadBack.hfs_read_file.sha256 -ne $expectedStage1Hash) {
+    Fail "real-volume stage-1 grow read-back hash mismatch"
+}
+
 foreach ($index in @(4, 6)) {
     $report = Invoke-RealDeleteFile "/frag-$index.bin" `
         (Join-Path $runRoot "real-delete2-frag-$index.json")
@@ -1165,6 +1252,18 @@ if (-not $overflowDeleteWarnings.Contains("extents-overflow records for the dele
 }
 Invoke-RealVolumeFsck "extents-overflow delete"
 
+# Independent proof the overflow-backed file really went away rather than the CLI only
+# saying so: the certifier must no longer be able to read it.
+& $CertifierPath `
+    --input $realImagePath `
+    --expect "HFS+" `
+    --hfs-read-file "/frag-2.bin" `
+    --hfs-read-max-bytes 4096 `
+    --output (Join-Path $runRoot "real-delete-overflow-negative-read.json") 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "extents-overflow deleted file is still readable"
+}
+
 $splitSeen = $false
 $lastSplitName = ""
 foreach ($index in 1..24) {
@@ -1228,6 +1327,17 @@ if (-not $postSplitCreateReport.ok) {
 }
 Invoke-RealVolumeFsck "post-split create"
 
+# The depth-2 catalog must actually hold the new record, not merely stay consistent.
+& $CertifierPath `
+    --input $realImagePath `
+    --expect "HFS+" `
+    --hfs-read-file "/post-split-created.txt" `
+    --hfs-read-max-bytes 1 `
+    --output (Join-Path $runRoot "real-post-split-create-readback.json")
+if ($LASTEXITCODE -ne 0) {
+    Fail "post-split created file is not readable from the depth-2 catalog"
+}
+
 $postSplitRenameReportPath = Join-Path $runRoot "real-post-split-rename.json"
 & $CliPath rename-catalog-entry-image `
     --target $realImagePath `
@@ -1245,6 +1355,25 @@ if (-not $postSplitRenameReport.ok) {
 }
 Invoke-RealVolumeFsck "post-split rename"
 
+& $CertifierPath `
+    --input $realImagePath `
+    --expect "HFS+" `
+    --hfs-read-file "/aa-post-split-renamed.txt" `
+    --hfs-read-max-bytes 1 `
+    --output (Join-Path $runRoot "real-post-split-rename-readback.json")
+if ($LASTEXITCODE -ne 0) {
+    Fail "post-split renamed file is not readable under its new name"
+}
+& $CertifierPath `
+    --input $realImagePath `
+    --expect "HFS+" `
+    --hfs-read-file "/post-split-created.txt" `
+    --hfs-read-max-bytes 1 `
+    --output (Join-Path $runRoot "real-post-split-rename-negative-read.json") 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "post-split rename left the old catalog name in place"
+}
+
 $postSplitDeleteReportPath = Join-Path $runRoot "real-post-split-delete.json"
 & $CliPath delete-empty-file-image `
     --target $realImagePath `
@@ -1260,6 +1389,16 @@ if (-not $postSplitDeleteReport.ok) {
     Fail "post-split delete not ok: $($postSplitDeleteReport.blockers -join '; ')"
 }
 Invoke-RealVolumeFsck "post-split delete"
+
+& $CertifierPath `
+    --input $realImagePath `
+    --expect "HFS+" `
+    --hfs-read-file "/aa-post-split-renamed.txt" `
+    --hfs-read-max-bytes 1 `
+    --output (Join-Path $runRoot "real-post-split-delete-negative-read.json") 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "post-split deleted file is still readable"
+}
 
 # --- New-attribute create on the real volume: materializes the first
 # --- attributes B-tree leaf and must pass fsck_hfs afterwards.
@@ -1323,8 +1462,22 @@ if (-not $depth3Report.ok) {
 }
 Invoke-RealVolumeFsck "depth-3 bulk create"
 
-$depth3DeleteReportPath = Join-Path $runRoot "real-depth3-delete.json"
+# Exit code, ok and fsck do not show that the 60 records reached the tree. Read two of the
+# generated entries back so the bulk create is proven by the catalog itself.
 $depth3Pad = "x" * 220
+foreach ($depth3Probe in @("/d3-0030-$depth3Pad.txt", "/d3-0031-$depth3Pad.txt")) {
+    & $CertifierPath `
+        --input $realImagePath `
+        --expect "HFS+" `
+        --hfs-read-file $depth3Probe `
+        --hfs-read-max-bytes 1 `
+        --output (Join-Path $runRoot "real-depth3-create-readback.json")
+    if ($LASTEXITCODE -ne 0) {
+        Fail "depth-3 bulk create did not produce a readable $depth3Probe"
+    }
+}
+
+$depth3DeleteReportPath = Join-Path $runRoot "real-depth3-delete.json"
 & $CliPath delete-empty-file-image `
     --target $realImagePath `
     --hfs-path "/d3-0030-$depth3Pad.txt" `
@@ -1339,6 +1492,25 @@ if (-not $depth3DeleteReport.ok) {
     Fail "depth-3 delete not ok: $($depth3DeleteReport.blockers -join '; ')"
 }
 Invoke-RealVolumeFsck "depth-3 delete"
+
+& $CertifierPath `
+    --input $realImagePath `
+    --expect "HFS+" `
+    --hfs-read-file "/d3-0030-$depth3Pad.txt" `
+    --hfs-read-max-bytes 1 `
+    --output (Join-Path $runRoot "real-depth3-delete-negative-read.json") 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "depth-3 deleted file is still readable"
+}
+& $CertifierPath `
+    --input $realImagePath `
+    --expect "HFS+" `
+    --hfs-read-file "/d3-0031-$depth3Pad.txt" `
+    --hfs-read-max-bytes 1 `
+    --output (Join-Path $runRoot "real-depth3-delete-survivor-read.json")
+if ($LASTEXITCODE -ne 0) {
+    Fail "depth-3 delete removed more than the requested entry"
+}
 
 # --- Fork-backed attribute create on the real volume (allocates blocks),
 # --- then delete both attributes; fsck_hfs must pass after every step.
@@ -1399,6 +1571,18 @@ if (-not $attrDeleteForkReport.ok) {
 }
 Invoke-RealVolumeFsck "fork attribute delete"
 
+# The attribute must be unreadable afterwards; ok plus a clean fsck also describes a no-op.
+& $CertifierPath `
+    --input $realImagePath `
+    --expect "HFS+" `
+    --hfs-read-attribute-file-id $frag8Report.catalog_id `
+    --hfs-read-attribute-name "org.sak.fork-proof" `
+    --hfs-read-max-bytes 65536 `
+    --output (Join-Path $runRoot "real-attr-delete-fork-negative-read.json") 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "deleted fork attribute is still readable"
+}
+
 $attrDeleteInlineReportPath = Join-Path $runRoot "real-attr-delete-inline.json"
 & $CliPath delete-attribute-image `
     --target $realImagePath `
@@ -1418,6 +1602,17 @@ if (-not (([string]::Join(" ", @($attrDeleteInlineReport.warnings))).Contains("e
     Fail "real-volume final attribute delete did not free the attributes leaf"
 }
 Invoke-RealVolumeFsck "inline attribute delete"
+
+& $CertifierPath `
+    --input $realImagePath `
+    --expect "HFS+" `
+    --hfs-read-attribute-file-id $frag8Report.catalog_id `
+    --hfs-read-attribute-name "org.sak.proof" `
+    --hfs-read-max-bytes 1024 `
+    --output (Join-Path $runRoot "real-attr-delete-inline-negative-read.json") 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Fail "deleted inline attribute is still readable"
+}
 
 # --- Journaled volume: replay command handles a fresh (needs-init) journal,
 # --- mutations still pass fsck, and replay on the non-journaled volume blocks.
@@ -1445,19 +1640,41 @@ if (-not $journalReplayReport.ok -or
     -not ($journalWarnings.Contains("nothing to replay"))) {
     Fail "journal replay on fresh journal did not no-op cleanly"
 }
+$journalCreateReportPath = Join-Path $runRoot "journal-create.json"
 & $CliPath create-empty-file-image `
     --target $journalImagePath `
     --hfs-path "/journaled-create.txt" `
     --confirm-target `
     --allow-journaled-volume `
     --evidence-id "ctest.hfs-cli-journaled-create" `
-    --output-json (Join-Path $runRoot "journal-create.json") | Out-Null
+    --output-json $journalCreateReportPath | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Fail "create on journaled volume exited $LASTEXITCODE"
+}
+# The report was requested, so read it: exit 0 over a structurally valid but unchanged
+# volume would otherwise pass without the file ever having been created.
+$journalCreateReport = Read-Report $journalCreateReportPath
+if (-not $journalCreateReport.ok) {
+    Fail "journaled create report not ok: $($journalCreateReport.blockers -join '; ')"
 }
 & $fsckHfs -n -f $journalImagePath | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Fail "fsck_hfs failed on journaled volume after create"
+}
+$journalCreateReadBackPath = Join-Path $runRoot "journal-create-readback.json"
+& $CertifierPath `
+    --input $journalImagePath `
+    --expect "HFS+" `
+    --hfs-read-file "/journaled-create.txt" `
+    --hfs-read-max-bytes 1 `
+    --output $journalCreateReadBackPath
+if ($LASTEXITCODE -ne 0) {
+    Fail "journaled created file read-back certifier exited $LASTEXITCODE"
+}
+$journalCreateReadBack = Read-Report $journalCreateReadBackPath
+if ($journalCreateReadBack.status -ne "Passed" -or
+    $journalCreateReadBack.hfs_read_file.sha256 -ne "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") {
+    Fail "journaled created file read-back mismatch"
 }
 $journalBlockedReportPath = Join-Path $runRoot "journal-replay-blocked.json"
 & $CliPath replay-journal-image `

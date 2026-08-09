@@ -168,9 +168,15 @@ private:
      * @brief Close all handles to a drive
      * @param driveNumber Physical drive number
      * @return true if the Restart Manager handle-close pass completed; false if it
-     *         could not run/complete. ADVISORY ONLY -- the authoritative guard
-     *         against concurrent access is the persistent OFFLINE attribute plus
-     *         the exclusive volume locks, so unmountDrive does not fail on false.
+     *         could not run/complete -- including an INCOMPLETE volume enumeration,
+     *         which must not be reported as "nothing was holding a handle".
+     *         ADVISORY ONLY -- the authoritative guard against concurrent access is
+     *         the persistent OFFLINE attribute plus the exclusive volume locks, so
+     *         unmountDrive does not fail on false.
+     *
+     * NOTE: this does not merely close handles. The Restart Manager pass FORCE-
+     * TERMINATES the processes holding them (RmForceShutdown), without giving them a
+     * chance to save. Every holder it can name is logged before the shutdown.
      */
     bool closeAllHandles(int driveNumber);
 
@@ -181,12 +187,18 @@ private:
     /**
      * @brief Find all volume GUID paths belonging to a physical drive
      * @param driveNumber Physical drive number
+     * @param enumerationOk Out-param set to false when the enumeration itself failed or
+     *        could not classify a volume. An empty list is otherwise indistinguishable
+     *        from "no volume on this drive holds a handle", which is exactly the
+     *        fiction that would let the Restart Manager pass report success after
+     *        enumerating nothing.
      * @return List of volume GUID paths (without trailing backslash)
      */
-    QStringList findVolumesForDrive(int driveNumber) const;
+    QStringList findVolumesForDrive(int driveNumber, bool* enumerationOk = nullptr) const;
 
     /**
-     * @brief Use Restart Manager to force-close open handles on volumes
+     * @brief Use Restart Manager to FORCE-TERMINATE the processes holding open handles
+     *        on the given volumes (RmForceShutdown; holders do not get to save)
      * @param dwSession Active Restart Manager session handle
      * @param mountPoints Volume GUID paths to process
      * @return true if the Restart Manager pass completed (nothing left holding a

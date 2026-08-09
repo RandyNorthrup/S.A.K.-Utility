@@ -71,6 +71,7 @@
 #include <QShortcut>
 #include <QSlider>
 #include <QSplitter>
+#include <QStandardPaths>
 #include <QStyle>
 #include <QTabBar>
 #include <QTableView>
@@ -85,6 +86,7 @@
 
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <utility>
 
 namespace sak {
@@ -280,8 +282,12 @@ bool pathContains(const QString& ancestor, const QString& path, bool local) {
         base.append(QLatin1Char('/'));
     }
     candidate.append(QLatin1Char('/'));
-    // Local Windows paths compare case-insensitively; raw APFS/HFSX paths are case-sensitive.
-    return candidate.startsWith(base, local ? Qt::CaseInsensitive : Qt::CaseSensitive);
+    // Local Windows paths compare case-insensitively, and raw APFS/HFS+ volumes are
+    // case-insensitive by default (a case-sensitive APFS or HFSX volume is the exception),
+    // so the raw comparison is case-insensitive too: over-detecting containment only
+    // refuses a transfer, while under-detecting lets a folder be moved or copied into
+    // its own subtree and recurse into the growing copy.
+    return candidate.startsWith(base, Qt::CaseInsensitive);
 }
 
 // Lazy drag-out materialization for raw (non-mounted) sources, mirroring the Files
@@ -2501,6 +2507,23 @@ bool FileManagementExplorerPanel::validateCurrentTargetIdentity(QString* blocker
     return true;
 }
 
+bool FileManagementExplorerPanel::targetStillSelected(const FileManagementTarget& target,
+                                                      QString* blocker) const {
+    if (!validateCurrentTargetIdentity(blocker)) {
+        return false;
+    }
+    if (FileExplorerTargetId::fromTarget(currentTarget()).value !=
+        FileExplorerTargetId::fromTarget(target).value) {
+        if (blocker) {
+            *blocker = tr(
+                "The selected target changed while the dialog was open; "
+                "nothing was written.");
+        }
+        return false;
+    }
+    return true;
+}
+
 void FileManagementExplorerPanel::resetListingForUnavailableTarget(const QString& message,
                                                                    const bool is_error) {
     ++m_listing_revision[m_active_pane_index];
@@ -2572,6 +2595,15 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
     FileExplorerLocation destination;
     destination.target_id = FileExplorerTargetId::fromTarget(target);
     destination.path = requested_path;
+    // A target switch must not leave the previous target's rows -- and their
+    // selection -- actionable while the new listing loads: a command fired in
+    // that window would run stale paths against the now-current target.
+    if (m_pane_state.location.target_id.value != destination.target_id.value) {
+        if (m_item_model) {
+            m_item_model->clear();
+        }
+        m_pane_state.selection.clear();
+    }
     if (add_history) {
         m_pane_state.navigateTo(destination, target.local_file_system);
     } else {
@@ -3187,6 +3219,28 @@ bool FileManagementExplorerPanel::confirmTypedRawImport(const FileManagementTarg
     return accepted && typed.trimmed() == QStringLiteral("WRITE");
 }
 
+bool FileManagementExplorerPanel::confirmTypedRawMove(const FileManagementTarget& target,
+                                                      const int file_count) {
+    // A move removes the source entries from raw media through the certified
+    // writer with no recycle bin behind it, so it takes the same typed
+    // acknowledgement a raw import does.
+    bool accepted = false;
+    const QString typed = QInputDialog::getText(
+        this,
+        tr("Confirm Raw Move"),
+        tr("This moves %1 item(s) on raw media through the certified writer.\n"
+           "Raw target: %2\nFile system: %3\nIdentity: %4\n\n"
+           "The source entries are removed permanently. Type MOVE to continue:")
+            .arg(QString::number(file_count),
+                 target.label,
+                 target.file_system,
+                 FileExplorerTargetId::fromTarget(target).value),
+        QLineEdit::Normal,
+        {},
+        &accepted);
+    return accepted && typed.trimmed() == QStringLiteral("MOVE");
+}
+
 FileManagementExplorerPanel::PasteCollisionChoice
 FileManagementExplorerPanel::resolvePasteCollision(const QString& name,
                                                    const bool multiple,
@@ -3200,6 +3254,9 @@ FileManagementExplorerPanel::resolvePasteCollision(const QString& name,
     QMessageBox box(this);
     box.setWindowTitle(tr("Replace or Skip Files"));
     box.setIcon(QMessageBox::Question);
+    // The name comes off the (possibly foreign) file system: AutoText would let a
+    // crafted name render as markup and spoof this destructive prompt.
+    box.setTextFormat(Qt::PlainText);
     box.setText(tr("'%1' already exists in this folder.").arg(name));
     auto* generate = box.addButton(tr("Generate new name"), QMessageBox::AcceptRole);
     auto* replace = box.addButton(tr("Replace"), QMessageBox::DestructiveRole);
@@ -3253,9 +3310,14 @@ bool FileManagementExplorerPanel::resolvePasteDestination(const FileManagementTa
         return false;
     }
     if (choice == PasteCollisionChoice::GenerateNew) {
-        destination->path = childPathFor(destination_dir,
-                                         uniqueChildName(target, destination_dir, name),
-                                         target.local_file_system);
+        const QString unique = uniqueChildName(target, destination_dir, name);
+        if (unique.isEmpty()) {
+            blockers->append(tr("Could not find a free name for %1 at the destination; "
+                                "the item was skipped.")
+                                 .arg(name));
+            return false;
+        }
+        destination->path = childPathFor(destination_dir, unique, target.local_file_system);
         return true;
     }
     destination->replace = true;
@@ -3278,25 +3340,42 @@ QString FileManagementExplorerPanel::uniqueChildName(const FileManagementTarget&
     const int last_dot = name.lastIndexOf(QLatin1Char('.'));
     const QString base = last_dot > 0 ? name.left(last_dot) : name;
     const QString extension = last_dot > 0 ? name.mid(last_dot) : QString();
-    QString candidate = name;
     for (int index = 2; index < 10'000; ++index) {
-        candidate = QStringLiteral("%1 (%2)%3").arg(base).arg(index).arg(extension);
+        const QString candidate = QStringLiteral("%1 (%2)%3").arg(base).arg(index).arg(extension);
         if (!destinationOccupied(target, directory, candidate)) {
-            break;
+            return candidate;
         }
     }
-    return candidate;
+    // Every candidate in the Files window is occupied, or none of them could be
+    // verified. Handing back the last one would name an entry that already
+    // exists, and the write that follows is overwrite-capable, so return nothing
+    // and let the caller block the item.
+    return {};
 }
 
-FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::destinationEntryKind(
-    const FileManagementTarget& target, const QString& directory, const QString& name) const {
-    if (target.local_file_system) {
-        const QFileInfo info(childPathFor(directory, name, true));
-        if (!info.exists()) {
-            return PasteEntryKind::None;
-        }
+FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::localDestinationEntryKind(
+    const QString& directory, const QString& name) {
+    const QFileInfo info(childPathFor(directory, name, true));
+    if (info.exists()) {
         return info.isDir() ? PasteEntryKind::Directory : PasteEntryKind::File;
     }
+    // exists() resolves the link and stats the resolved object, so it is also
+    // false for a dangling reparse point and for a name this process cannot
+    // stat at all. Neither proves the name is free, and the write that follows
+    // is overwrite-capable, so anything short of a readable parent plus a
+    // clean absence fails closed.
+    if (info.isSymLink() || info.isJunction()) {
+        return PasteEntryKind::Unknown;
+    }
+    const QFileInfo parent_info(directory);
+    if (!parent_info.isDir() || !parent_info.isReadable()) {
+        return PasteEntryKind::Unknown;
+    }
+    return PasteEntryKind::None;
+}
+
+FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::rawDestinationEntryKind(
+    const FileManagementTarget& target, const QString& directory, const QString& name) {
     // Raw APFS/HFS+ default to case-insensitive, so a differing-case name still
     // collides; matching case-insensitively can only over-detect, which is the
     // safe bias (a false collision picks a new name, never a silent overwrite).
@@ -3322,6 +3401,14 @@ FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::destina
     return PasteEntryKind::None;
 }
 
+FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::destinationEntryKind(
+    const FileManagementTarget& target, const QString& directory, const QString& name) const {
+    if (target.local_file_system) {
+        return localDestinationEntryKind(directory, name);
+    }
+    return rawDestinationEntryKind(target, directory, name);
+}
+
 bool FileManagementExplorerPanel::destinationOccupied(const FileManagementTarget& target,
                                                       const QString& directory,
                                                       const QString& name) const {
@@ -3331,17 +3418,15 @@ bool FileManagementExplorerPanel::destinationOccupied(const FileManagementTarget
 }
 
 bool FileManagementExplorerPanel::preparePasteDestination(const PasteSources& sources) {
-    const FileManagementTarget target = currentTarget();
     if (!sources.raw_items.isEmpty() && targetIndexForId(sources.source_target_id) < 0) {
         sak::showWarningLogged(this,
                                tr("Paste"),
                                tr("The copied items' source target is no longer available."));
         return false;
     }
-    const int count = static_cast<int>(sources.host_files.size() + sources.raw_items.size());
-    if (!target.local_file_system && !confirmTypedRawImport(target, count)) {
-        return false;
-    }
+    // The typed raw-write and raw-move confirmations run inside executePasteTo,
+    // the single executor every paste path funnels through, so the drop paths
+    // that never come through here cannot bypass them.
     QString identity_blocker;
     if (!validateCurrentTargetIdentity(&identity_blocker)) {
         sak::showWarningLogged(this, tr("Paste"), identity_blocker);
@@ -3369,16 +3454,75 @@ void FileManagementExplorerPanel::executePaste(const PasteSources& sources,
     executePasteTo(currentTarget(), sources, destination_dir);
 }
 
+// Every irreversible half of a paste takes its own typed acknowledgement before
+// any of it starts. Both prompts hang off executePasteTo, the one executor all
+// paste paths funnel through, so a drop onto a raw sidebar target cannot land
+// what the clipboard path has to prompt for.
+bool FileManagementExplorerPanel::confirmPasteWrites(const FileManagementTarget& target,
+                                                     const FileManagementTarget& source_target,
+                                                     const PasteSources& sources,
+                                                     const int requested) {
+    if (!target.local_file_system && !confirmTypedRawImport(target, requested)) {
+        return false;
+    }
+    // A move deletes its sources; on raw media that delete is permanent, so it
+    // takes its own typed confirmation whatever the destination is.
+    if (sources.move && !source_target.local_file_system &&
+        !confirmTypedRawMove(source_target, requested)) {
+        return false;
+    }
+    return true;
+}
+
+// Settle what happens once the paste worker finishes: the operation families and
+// the status wording differ only by move-vs-copy, and only a move that really
+// came off the clipboard may consume it.
+FileManagementExplorerPanel::TransferCompletion
+FileManagementExplorerPanel::pasteTransferCompletion(const PasteBatch& batch,
+                                                     const PasteSources& sources,
+                                                     const int requested,
+                                                     const bool preflight_blocked) {
+    TransferCompletion completion;
+    completion.history_op = sources.move ? FileExplorerHistoryOperation::Move
+                                         : FileExplorerHistoryOperation::Copy;
+    completion.card_operation = sources.move ? FileExplorerOperationType::Move
+                                             : FileExplorerOperationType::Copy;
+    completion.source_target = batch.source_target;
+    completion.destination_target = batch.target;
+    completion.destination_dir = batch.destination_dir;
+    completion.status_template = sources.move ? tr("Moved %1 of %2 item(s).")
+                                              : tr("Pasted %1 of %2 item(s).");
+    completion.requested_count = requested;
+    completion.move = sources.move;
+    completion.consume_clipboard = sources.move && sources.clipboard;
+    completion.preflight_blocked = preflight_blocked;
+    return completion;
+}
+
 void FileManagementExplorerPanel::executePasteTo(const FileManagementTarget& target,
                                                  const PasteSources& sources,
                                                  const QString& destination_dir) {
     const int source_index = targetIndexForId(sources.source_target_id);
+    // A payload naming raw source items whose target is gone must never be re-read
+    // as host paths: those paths would then be resolved against the local file
+    // system. Fail closed here as well as in preparePasteDestination, because the
+    // sidebar and view drop paths reach this executor directly.
+    if (!sources.raw_items.isEmpty() && source_index < 0) {
+        sak::showWarningLogged(this,
+                               tr("Paste"),
+                               tr("The copied items' source target is no longer available."));
+        return;
+    }
     // External URL drops have no tracked source target; they are host paths, so a
     // plain local target routes them (moves never originate from external payloads).
     const FileManagementTarget source_target =
         source_index >= 0 ? m_targets.at(source_index)
                           : FileManagementFileSystemBridge::localTarget(QString());
     const QList<PasteItem> items = pasteItemsFor(sources);
+    const int requested = static_cast<int>(items.size());
+    if (!confirmPasteWrites(target, source_target, sources, requested)) {
+        return;
+    }
     // Source and destination paths share a namespace only when both are host paths or
     // both live on the same raw target; only then can a folder contain its destination.
     const bool same_namespace = (source_target.local_file_system && target.local_file_system) ||
@@ -3402,20 +3546,23 @@ void FileManagementExplorerPanel::executePasteTo(const FileManagementTarget& tar
     request.items = resolved;
     request.move = sources.move;
     request.raw_read_cap = kExplorerHashMaxBytes;
-    TransferCompletion completion;
-    completion.history_op = sources.move ? FileExplorerHistoryOperation::Move
-                                         : FileExplorerHistoryOperation::Copy;
-    completion.card_operation = sources.move ? FileExplorerOperationType::Move
-                                             : FileExplorerOperationType::Copy;
-    completion.source_target = source_target;
-    completion.destination_target = target;
-    completion.destination_dir = destination_dir;
-    completion.status_template = sources.move ? tr("Moved %1 of %2 item(s).")
-                                              : tr("Pasted %1 of %2 item(s).");
-    completion.requested_count = static_cast<int>(items.size());
-    completion.move = sources.move;
-    completion.consume_clipboard = sources.move && sources.clipboard;
-    startTransferWorker(request, completion);
+    startTransferWorker(request,
+                        pasteTransferCompletion(batch, sources, requested, !blockers.isEmpty()));
+}
+
+// Non-empty when this item is a folder that would land inside its own subtree.
+// Only a shared namespace can express that containment; across namespaces the two
+// path strings describe different volumes and cannot nest.
+QString FileManagementExplorerPanel::pasteSelfContainmentBlocker(const PasteBatch& batch,
+                                                                 const PasteItem& item,
+                                                                 const QString& name) {
+    if (!item.directory || !batch.same_namespace ||
+        !pathContains(item.path, batch.destination_dir, batch.target.local_file_system)) {
+        return {};
+    }
+    return (batch.move ? tr("Cannot move %1 into its own subfolder.")
+                       : tr("Cannot paste %1 into its own subfolder."))
+        .arg(name);
 }
 
 QList<FileExplorerTransferItem> FileManagementExplorerPanel::resolveTransferItems(
@@ -3426,11 +3573,9 @@ QList<FileExplorerTransferItem> FileManagementExplorerPanel::resolveTransferItem
     QList<FileExplorerTransferItem> resolved;
     for (const PasteItem& item : items) {
         const QString name = nameForPath(item.path, batch.source_target.local_file_system);
-        if (item.directory && batch.same_namespace &&
-            pathContains(item.path, batch.destination_dir, batch.target.local_file_system)) {
-            blockers->append((batch.move ? tr("Cannot move %1 into its own subfolder.")
-                                         : tr("Cannot paste %1 into its own subfolder."))
-                                 .arg(name));
+        const QString containment = pasteSelfContainmentBlocker(batch, item, name);
+        if (!containment.isEmpty()) {
+            blockers->append(containment);
             continue;
         }
         PasteDestination destination{
@@ -3442,10 +3587,15 @@ QList<FileExplorerTransferItem> FileManagementExplorerPanel::resolveTransferItem
             }
             // Same-folder copy-paste duplicates with the Files incremental
             // name; no conflict dialog fires (GetCollisions skips src==dest).
+            const QString unique = uniqueChildName(batch.target, batch.destination_dir, name);
+            if (unique.isEmpty()) {
+                blockers->append(tr("Could not find a free name for %1 at the destination; "
+                                    "the item was skipped.")
+                                     .arg(name));
+                continue;
+            }
             destination.path =
-                childPathFor(batch.destination_dir,
-                             uniqueChildName(batch.target, batch.destination_dir, name),
-                             batch.target.local_file_system);
+                childPathFor(batch.destination_dir, unique, batch.target.local_file_system);
         } else if (!resolvePasteDestination(
                        batch.target, batch.multiple, policy, &destination, blockers)) {
             continue;
@@ -3456,10 +3606,40 @@ QList<FileExplorerTransferItem> FileManagementExplorerPanel::resolveTransferItem
     return resolved;
 }
 
-// Files two-card pattern: post the in-progress card with a cancel source,
-// stream worker progress into it, and swap in the terminal card on finish.
-void FileManagementExplorerPanel::startTransferWorker(const FileExplorerTransferRequest& request,
-                                                      const TransferCompletion& completion) {
+// The raw endpoints a transfer will mutate, deduplicated. Local endpoints and
+// identity-less ones lock nothing, so they are not tracked.
+QStringList FileManagementExplorerPanel::rawTargetIdsFor(
+    const FileExplorerTransferRequest& request) {
+    QStringList raw_ids;
+    for (const FileManagementTarget& endpoint :
+         {request.source_target, request.destination_target}) {
+        const QString id = FileExplorerTargetId::fromTarget(endpoint).value;
+        if (!endpoint.local_file_system && !id.isEmpty() && !raw_ids.contains(id)) {
+            raw_ids.append(id);
+        }
+    }
+    return raw_ids;
+}
+
+// Non-empty when one of those endpoints already has a worker on it. One mutation
+// at a time per raw target: a second worker rewriting the same APFS/HFS+ metadata
+// from independently read state corrupts the volume, so a run against a busy raw
+// target is refused rather than raced.
+QString FileManagementExplorerPanel::busyRawTargetBlocker(const QStringList& raw_ids) const {
+    for (const QString& id : raw_ids) {
+        if (m_busy_raw_target_ids.contains(id)) {
+            return tr(
+                "Another operation is still running on this raw target. "
+                "Wait for it to finish and retry.");
+        }
+    }
+    return {};
+}
+
+// Files posts the in-progress card before the worker starts, so the transfer is
+// cancellable from the moment it exists.
+FileExplorerStatusCardRequest FileManagementExplorerPanel::inProgressTransferCard(
+    const FileExplorerTransferRequest& request, const TransferCompletion& completion) {
     FileExplorerStatusCardRequest card_request;
     card_request.result = FileExplorerReturnResult::InProgress;
     card_request.operation = completion.card_operation;
@@ -3470,7 +3650,24 @@ void FileManagementExplorerPanel::startTransferWorker(const FileExplorerTransfer
     card_request.items_count = request.items.size();
     card_request.can_provide_progress = true;
     card_request.cancelable = true;
-    FileExplorerStatusCenterItem* card = m_status_center->addItem(card_request);
+    return card_request;
+}
+
+// Files two-card pattern: post the in-progress card with a cancel source,
+// stream worker progress into it, and swap in the terminal card on finish.
+void FileManagementExplorerPanel::startTransferWorker(const FileExplorerTransferRequest& request,
+                                                      const TransferCompletion& completion) {
+    const QStringList raw_ids = rawTargetIdsFor(request);
+    const QString busy_blocker = busyRawTargetBlocker(raw_ids);
+    if (!busy_blocker.isEmpty()) {
+        sak::showWarningLogged(this,
+                               completion.failure_title.isEmpty() ? tr("Paste")
+                                                                  : completion.failure_title,
+                               busy_blocker);
+        return;
+    }
+    FileExplorerStatusCenterItem* card =
+        m_status_center->addItem(inProgressTransferCard(request, completion));
 
     auto* worker = new FileExplorerTransferWorker(request, this);
     connect(worker,
@@ -3484,12 +3681,36 @@ void FileManagementExplorerPanel::startTransferWorker(const FileExplorerTransfer
             worker,
             &FileExplorerTransferWorker::requestStop,
             Qt::DirectConnection);
-    connect(worker, &QThread::finished, this, [this, worker, card, completion]() {
-        m_active_io_workers.remove(worker);
-        finishTransferWorker(worker, card, completion);
-        worker->deleteLater();
-    });
+    // An internal abort raises no per-item blocker, so the failure signal is
+    // captured here: without it a failed run would post a Success terminal card.
+    auto failure = std::make_shared<QString>();
+    connect(worker,
+            &FileExplorerTransferWorker::failed,
+            this,
+            [this, failure](const int code, const QString& message) {
+                *failure = message.trimmed().isEmpty()
+                               ? tr("The transfer failed with error %1.").arg(code)
+                               : message;
+            });
+    connect(worker,
+            &QThread::finished,
+            this,
+            // completion arrives as a const reference, so capturing it by name would make the
+            // closure member const too and the worker_failure assignment below would not
+            // compile. An init-capture takes a plain, writable copy.
+            [this, worker, card, completion = completion, failure, raw_ids]() mutable {
+                m_active_io_workers.remove(worker);
+                for (const QString& id : std::as_const(raw_ids)) {
+                    m_busy_raw_target_ids.remove(id);
+                }
+                completion.worker_failure = *failure;
+                finishTransferWorker(worker, card, completion);
+                worker->deleteLater();
+            });
     m_active_io_workers.insert(worker);
+    for (const QString& id : std::as_const(raw_ids)) {
+        m_busy_raw_target_ids.insert(id);
+    }
     worker->start();
 }
 
@@ -3502,11 +3723,18 @@ void FileManagementExplorerPanel::finishTransferWorker(FileExplorerTransferWorke
     m_status_center->removeItem(card);
     m_status_center->addItem(terminalTransferCard(worker, completion, canceled));
     applyTransferSideEffects(worker, completion, written);
-    if (!worker->blockers().isEmpty() && !canceled) {
+    // Blockers recorded BEFORE a cancel are real failures; suppressing them on
+    // cancel hid the actual cause. An internal worker abort reports itself here
+    // too, since it raises no per-item blocker of its own.
+    QStringList problems = worker->blockers();
+    if (!completion.worker_failure.isEmpty()) {
+        problems.append(completion.worker_failure);
+    }
+    if (!problems.isEmpty()) {
         sak::showWarningLogged(this,
                                completion.failure_title.isEmpty() ? tr("Paste")
                                                                   : completion.failure_title,
-                               worker->blockers().join(QStringLiteral("\n")));
+                               problems.join(QStringLiteral("\n")));
     }
     Q_EMIT statusMessage(
         canceled
@@ -3520,9 +3748,14 @@ FileExplorerStatusCardRequest FileManagementExplorerPanel::terminalTransferCard(
     const TransferCompletion& completion,
     const bool canceled) const {
     FileExplorerStatusCardRequest terminal;
+    // Success means the whole requested batch landed: a GUI-thread preflight
+    // rejection or an internal worker abort counts against it even when the
+    // worker itself recorded no per-item blocker.
+    const bool clean = worker->blockers().isEmpty() && !completion.preflight_blocked &&
+                       completion.worker_failure.isEmpty();
     terminal.result = canceled ? FileExplorerReturnResult::Cancelled
-                               : (worker->blockers().isEmpty() ? FileExplorerReturnResult::Success
-                                                               : FileExplorerReturnResult::Failed);
+                               : (clean ? FileExplorerReturnResult::Success
+                                        : FileExplorerReturnResult::Failed);
     terminal.operation = completion.card_operation;
     for (const FileExplorerTransferItem& item : worker->completedItems()) {
         terminal.source.append(item.source_path);
@@ -3632,6 +3865,12 @@ bool FileManagementExplorerPanel::pasteSameTargetMove(const FileManagementTarget
         return true;
     }
     const QList<PasteItem> items = pasteItemsFor(sources);
+    // A same-target move on raw media rewrites the volume through the certified
+    // writer and removes the source entries; it never reaches executePasteTo, so
+    // it takes the typed confirmation here.
+    if (!target.local_file_system && !confirmTypedRawMove(target, static_cast<int>(items.size()))) {
+        return true;
+    }
     PasteCollisionPolicy policy;
     QStringList blockers;
     const PasteBatch batch{target, target, destination_dir, true, items.size() > 1, true};
@@ -3660,8 +3899,60 @@ bool FileManagementExplorerPanel::pasteSameTargetMove(const FileManagementTarget
     completion.requested_count = static_cast<int>(items.size());
     completion.move = true;
     completion.consume_clipboard = sources.clipboard;
+    completion.preflight_blocked = !blockers.isEmpty();
     startTransferWorker(request, completion);
     return true;
+}
+
+// Move a Replace-resolved occupant ASIDE rather than destroying it, and report
+// where it went (empty when it could not be staged, with the reason recorded).
+// A confirmed replacement must never cost the destination AND leave the source
+// where it was, so the occupant has to stay recoverable until the item that
+// replaces it has actually landed.
+QString FileManagementExplorerPanel::stageReplacedOccupant(const FileManagementTarget& target,
+                                                           const QString& destination_dir,
+                                                           const QString& name,
+                                                           const QString& occupied_path,
+                                                           QStringList* blockers) const {
+    const QString aside = uniqueChildName(target, destination_dir, name);
+    if (aside.isEmpty()) {
+        blockers->append(tr("Could not stage a replacement for %1.").arg(name));
+        return {};
+    }
+    const QString displaced = childPathFor(destination_dir, aside, target.local_file_system);
+    const auto staged =
+        FileManagementFileSystemBridge::renameEntry(target, occupied_path, displaced);
+    if (!staged.ok) {
+        blockers->append(staged.blockers);
+        return {};
+    }
+    return displaced;
+}
+
+// Retire or restore the staged occupant once this item's own rename has been
+// attempted: a landed move retires it, a failed one rolls it back into place.
+void FileManagementExplorerPanel::settleDisplacedOccupant(const FileManagementTarget& target,
+                                                          const QString& displaced,
+                                                          const QString& occupied_path,
+                                                          const bool renamed,
+                                                          QStringList* blockers) {
+    if (displaced.isEmpty()) {
+        return;
+    }
+    if (!renamed) {
+        // Roll the confirmed occupant back into place.
+        const auto restored =
+            FileManagementFileSystemBridge::renameEntry(target, displaced, occupied_path);
+        if (!restored.ok) {
+            blockers->append(restored.blockers);
+        }
+        return;
+    }
+    const auto removed = FileManagementFileSystemBridge::removeExistingEntry(
+        target, displaced, kExplorerListMaxEntries);
+    if (!removed.ok) {
+        blockers->append(removed.blockers);
+    }
 }
 
 int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTarget& target,
@@ -3687,13 +3978,13 @@ int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTar
         if (!resolvePasteDestination(target, multiple, policy, &destination, blockers)) {
             continue;
         }
-        // A Replace-resolved occupant is removed immediately before this item's
-        // own rename (kind re-resolved authoritatively at execution time).
+        // The occupant is staged aside immediately before this item's own rename,
+        // so nothing is displaced for an item that never gets that far.
+        QString displaced;
         if (destination.replace) {
-            const auto removed = FileManagementFileSystemBridge::removeExistingEntry(
-                target, destination.path, kExplorerListMaxEntries);
-            if (!removed.ok) {
-                blockers->append(tr("Could not replace %1.").arg(name));
+            displaced =
+                stageReplacedOccupant(target, destination_dir, name, destination.path, blockers);
+            if (displaced.isEmpty()) {
                 continue;
             }
         }
@@ -3701,13 +3992,14 @@ int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTar
         // (directories included) and QFile::rename locally, no data copy.
         const auto result =
             FileManagementFileSystemBridge::renameEntry(target, item.path, destination.path);
-        if (result.ok) {
-            ++moved;
-            m_last_mutation = result;
-            m_transfer_journal.append({item.path, destination.path, item.directory});
-        } else {
+        settleDisplacedOccupant(target, displaced, destination.path, result.ok, blockers);
+        if (!result.ok) {
             blockers->append(result.blockers);
+            continue;
         }
+        ++moved;
+        m_last_mutation = result;
+        m_transfer_journal.append({item.path, destination.path, item.directory});
     }
     return moved;
 }
@@ -4011,12 +4303,35 @@ void FileManagementExplorerPanel::applyHistoryTransferItem(const HistoryTransfer
                                                            const QString& from_path,
                                                            const QString& to_path,
                                                            QStringList* blockers) {
+    // The replay destination must be PROVEN vacant: the historical path may hold
+    // data the user created after the original operation, and the transfer legs
+    // overwrite whatever is in the way.
+    const QString to_name = nameForPath(to_path, leg.to_target.local_file_system);
+    const QString to_parent = parentPathForEntry(to_path, leg.to_target.local_file_system);
+    const PasteEntryKind occupant = destinationEntryKind(leg.to_target, to_parent, to_name);
+    if (occupant == PasteEntryKind::Unknown) {
+        blockers->append(
+            tr("Could not verify whether %1 is free; the item was not replayed.").arg(to_path));
+        return;
+    }
+    if (occupant != PasteEntryKind::None) {
+        blockers->append(
+            tr("%1 is occupied by another entry; the item was not replayed.").arg(to_path));
+        return;
+    }
     FileExplorerTransferEngine engine(leg.from_target, leg.to_target, kExplorerHashMaxBytes);
     const FileExplorerTransferItem item{from_path, to_path, 0, directory};
     if (leg.move && leg.same_target) {
         std::ignore = engine.renameWithinTarget(item);
     } else if (engine.transferEntry(item) && leg.move) {
-        std::ignore = engine.deleteMovedSource(item);
+        // Same two predicates the worker applies before deleting a moved source:
+        // a capped raw read or a dropped entry means the copy did not land whole,
+        // and deleting the source then loses the only intact data.
+        if (engine.lastTransferComplete() && engine.lastTransferLandedAsRequested()) {
+            std::ignore = engine.deleteMovedSource(item);
+        } else {
+            blockers->append(tr("%1 did not copy completely; the source was kept.").arg(from_path));
+        }
     }
     blockers->append(engine.blockers());
     if (!engine.warnings().isEmpty()) {
@@ -4099,7 +4414,7 @@ void FileManagementExplorerPanel::historyRemoveVerifiedEntry(const FileManagemen
 // count for a copy. A same-named entry the user put there since is not the
 // produced item and must not be recycled or permanently deleted. An
 // already-vacant path needs nothing.
-void FileManagementExplorerPanel::historyDeleteOneEntry(const FileManagementTarget& target,
+bool FileManagementExplorerPanel::historyDeleteOneEntry(const FileManagementTarget& target,
                                                         const FileManagementTarget& source_target,
                                                         const FileExplorerHistoryItem& item,
                                                         const bool undo_of_create,
@@ -4113,15 +4428,19 @@ void FileManagementExplorerPanel::historyDeleteOneEntry(const FileManagementTarg
     const auto verdict =
         fileExplorerHistoryDeleteVerdict(occupantFor(kind), item.directory, observed, expected);
     if (verdict == FileExplorerHistoryDeleteVerdict::Skip) {
-        return;
+        return false;
     }
     if (verdict == FileExplorerHistoryDeleteVerdict::Block) {
         blockers->append(
             tr("%1 no longer matches the entry the operation produced; it was not deleted.")
                 .arg(item.destination_path));
-        return;
+        return false;
     }
+    // historyRemoveVerifiedEntry records a blocker for every failure, so a run
+    // that added none is the only proof the entry actually went away.
+    const qsizetype before = blockers->size();
     historyRemoveVerifiedEntry(target, item, blockers);
+    return blockers->size() == before;
 }
 
 // Deletes the entries a Copy or CreateNew produced: local paths recycle
@@ -4139,8 +4458,11 @@ bool FileManagementExplorerPanel::executeHistoryDelete(const FileExplorerStorage
     }
     QStringList removed;
     for (const FileExplorerHistoryItem& item : history.items) {
-        historyDeleteOneEntry(target, source_target, item, undo_of_create, blockers);
-        removed.append(item.destination_path);
+        // Only what was really deleted goes on the card; a skipped or blocked
+        // entry reported as removed is a false record of a destructive act.
+        if (historyDeleteOneEntry(target, source_target, item, undo_of_create, blockers)) {
+            removed.append(item.destination_path);
+        }
     }
     // Files: the undo-delete posts a Delete-family card (Recycle on local
     // volumes, permanent Delete on raw targets).
@@ -4332,6 +4654,7 @@ void FileManagementExplorerPanel::crossPaneCopySelection() {
     completion.failure_title = tr("Copy to Other Pane");
     completion.requested_count = file_count;
     completion.refresh_other_pane = true;
+    completion.preflight_blocked = !blockers.isEmpty();
     startTransferWorker(request, completion);
 }
 
@@ -5218,15 +5541,25 @@ void FileManagementExplorerPanel::openTerminalHere() {
     // (possibly attacker-writable) directory. Use the System32-qualified shell, and skip the
     // leg entirely when it cannot be resolved rather than fall back to the bare name.
     //
-    // wt.exe is deliberately left unqualified: Windows Terminal is a Store app reached through
-    // an app-execution alias under %LOCALAPPDATA%\Microsoft\WindowsApps, so it has no fixed
-    // absolute path to pin. Its failure simply falls through to the qualified cmd.exe leg.
+    // /D suppresses the Command Processor AutoRun registry command, which is writable by
+    // the user (HKCU) and would otherwise run inside this elevated process.
+    //
+    // Windows Terminal is a Store app reached through an app-execution alias under
+    // %LOCALAPPDATA%\Microsoft\WindowsApps; that alias path IS pinned here, because an
+    // unqualified "wt.exe" is resolved by the CreateProcess search order, which prefers the
+    // application directory and the process working directory over the system ones. A
+    // missing alias skips the leg and falls through to the qualified cmd.exe one.
     const QString shell = sak::system32Path(QStringLiteral("cmd.exe"));
+    const QString terminal =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation))
+            .filePath(QStringLiteral("Microsoft/WindowsApps/wt.exe"));
+    const bool terminal_available = QFileInfo::exists(terminal);
     for (const QString& directory : directories) {
         const QString native = QDir::toNativeSeparators(directory);
-        if (!QProcess::startDetached(QStringLiteral("wt.exe"), {QStringLiteral("-d"), native}) &&
+        if ((!terminal_available ||
+             !QProcess::startDetached(terminal, {QStringLiteral("-d"), native})) &&
             !shell.isEmpty()) {
-            QProcess::startDetached(shell, {}, native);
+            QProcess::startDetached(shell, {QStringLiteral("/D")}, native);
         }
         logMessage(tr("Open in Terminal: %1").arg(native));
     }
@@ -5276,13 +5609,21 @@ void FileManagementExplorerPanel::compressSelectionToZip() {
         return;
     }
     const FileManagementTarget target = currentTarget();
+    // availableChildName yields nothing when no free name could be proven; packing
+    // into an unverified name would overwrite whatever already holds it.
+    const QString zip_name = availableChildName(
+        target, m_current_path, selectionArchiveBaseName() + QStringLiteral(".zip"));
+    if (zip_name.isEmpty()) {
+        sak::showWarningLogged(this,
+                               tr("Compress"),
+                               tr("Could not find a free archive name in this folder."));
+        return;
+    }
     FileExplorerArchiveRequest request;
     request.compress = true;
     request.target = target;
     request.directory = m_current_path;
-    request.zip_name = availableChildName(target,
-                                          m_current_path,
-                                          selectionArchiveBaseName() + QStringLiteral(".zip"));
+    request.zip_name = zip_name;
     request.raw_read_cap = kExplorerHashMaxBytes;
     const FileExplorerSelection selection = currentSelection();
     for (const FileManagementEntry& entry : selection.entries) {
@@ -5617,6 +5958,41 @@ void FileManagementExplorerPanel::removeEmptiedSubfolder(const FileManagementTar
     }
 }
 
+// A junction or a directory symlink is reported as a directory by the listing.
+// Recursing through one would move -- and then remove -- content that lives
+// OUTSIDE the selected folder, so flatten stops at one instead of following it.
+bool FileManagementExplorerPanel::entryLinksOutsideFolder(const FileManagementTarget& target,
+                                                          const QString& path) {
+    if (!target.local_file_system) {
+        return false;
+    }
+    const QFileInfo link_info(path);
+    return link_info.isSymLink() || link_info.isJunction();
+}
+
+// Move one leaf up into the flatten root, reporting whether it landed. A special
+// entry is refused outright and a name collision is skipped the way Files skips
+// it, so neither counts toward the moved tally.
+bool FileManagementExplorerPanel::flattenEntryIntoRoot(const FileManagementTarget& target,
+                                                       const QString& root,
+                                                       const FileManagementEntry& entry,
+                                                       QStringList* blockers) {
+    if (!entry.regular_file) {
+        blockers->append(tr("Skipped special entry %1.").arg(entry.name));
+        return false;
+    }
+    if (destinationOccupied(target, root, entry.name)) {
+        return false;  // Files skips name collisions
+    }
+    const auto result = FileManagementFileSystemBridge::renameEntry(
+        target, entry.path, childPathFor(root, entry.name, target.local_file_system));
+    if (!result.ok) {
+        blockers->append(result.blockers);
+        return false;
+    }
+    return true;
+}
+
 int FileManagementExplorerPanel::flattenFolderTree(const FileManagementTarget& target,
                                                    const QString& root,
                                                    const QString& current,
@@ -5636,6 +6012,10 @@ int FileManagementExplorerPanel::flattenFolderTree(const FileManagementTarget& t
     int moved = 0;
     for (const FileManagementEntry& entry : listing.entries) {
         if (entry.directory) {
+            if (entryLinksOutsideFolder(target, entry.path)) {
+                blockers->append(tr("Skipped %1: it links outside the folder.").arg(entry.name));
+                continue;
+            }
             moved += flattenFolderTree(target, root, entry.path, depth + 1, blockers);
             removeEmptiedSubfolder(target, entry.path, blockers);
             continue;
@@ -5643,15 +6023,8 @@ int FileManagementExplorerPanel::flattenFolderTree(const FileManagementTarget& t
         if (current == root) {
             continue;  // already at the destination level
         }
-        if (destinationOccupied(target, root, entry.name)) {
-            continue;  // Files skips name collisions
-        }
-        const auto result = FileManagementFileSystemBridge::renameEntry(
-            target, entry.path, childPathFor(root, entry.name, target.local_file_system));
-        if (result.ok) {
+        if (flattenEntryIntoRoot(target, root, entry, blockers)) {
             ++moved;
-        } else {
-            blockers->append(result.blockers);
         }
     }
     return moved;
@@ -5795,16 +6168,32 @@ void FileManagementExplorerPanel::startSearchWorker(
     config.max_results = max_results;
     config.max_file_size = kExplorerPreviewMaxBytes;
     m_search_worker = new AdvancedSearchWorker(config, this);
+    // Results are interpreted against whatever target is current when they land,
+    // so a run whose target is no longer selected is dropped instead of filling
+    // the model (and the openable rows) with another volume's paths.
+    const QString search_target_id =
+        FileExplorerTargetId::fromTarget(config.file_system_target).value;
     connect(m_search_worker,
             &AdvancedSearchWorker::resultsReady,
             this,
-            [handler = std::move(on_matches)](const QVector<SearchMatch>& matches) {
+            [this, search_target_id, handler = std::move(on_matches)](
+                const QVector<SearchMatch>& matches) {
+                if (FileExplorerTargetId::fromTarget(currentTarget()).value != search_target_id) {
+                    return;
+                }
                 handler(matches);
             });
     if (on_finished) {
-        connect(m_search_worker, &QThread::finished, this, [handler = std::move(on_finished)]() {
-            handler();
-        });
+        connect(m_search_worker,
+                &QThread::finished,
+                this,
+                [this, search_target_id, handler = std::move(on_finished)]() {
+                    if (FileExplorerTargetId::fromTarget(currentTarget()).value !=
+                        search_target_id) {
+                        return;
+                    }
+                    handler();
+                });
     }
     m_search_worker->start();
 }
@@ -6799,6 +7188,11 @@ void FileManagementExplorerPanel::activatePane(int index) {
     installIconProvider(m_item_model);
     m_status_label = m_pane->statusLabel();
     m_current_path = m_pane_state.location.path;
+    // The pane state carries its own target. Without re-pointing the current
+    // target index here, the newly active pane's paths would be resolved against
+    // the OTHER pane's target; an id that no longer resolves fails closed to no
+    // target, which blocks every write until a listing re-establishes one.
+    m_current_target_index = targetIndexForId(m_pane_state.location.target_id.value);
     if (m_path_edit) {
         m_path_edit->setText(m_current_path);
     }
@@ -6974,11 +7368,27 @@ void FileManagementExplorerPanel::onNewFolderClicked() {
     }
     // createDirectory (mkpath) succeeds on an already-existing folder, which
     // would journal a CreateNew whose undo then recycles the pre-existing
-    // folder and its contents; refuse a create over an existing entry.
-    if (destinationOccupied(target, m_current_path, name.trimmed())) {
+    // folder and its contents; refuse a create over an existing entry, and
+    // refuse just as hard when the destination could not be read at all.
+    const PasteEntryKind occupant = destinationEntryKind(target, m_current_path, name.trimmed());
+    if (occupant == PasteEntryKind::Unknown) {
+        sak::showWarningLogged(this,
+                               tr("New Folder"),
+                               tr("Could not verify whether %1 already exists here; nothing "
+                                  "was created.")
+                                   .arg(name.trimmed()));
+        return;
+    }
+    if (occupant != PasteEntryKind::None) {
         sak::showWarningLogged(this,
                                tr("New Folder"),
                                tr("An item named %1 already exists here.").arg(name.trimmed()));
+        return;
+    }
+    // The identity check above ran BEFORE a modal prompt; re-assert it so a
+    // target swapped underneath the dialog cannot receive this write.
+    if (!targetStillSelected(target, &identity_blocker)) {
+        sak::showWarningLogged(this, tr("New Folder"), identity_blocker);
         return;
     }
     const auto result = FileManagementFileSystemBridge::createDirectory(target, path);
@@ -7019,11 +7429,27 @@ void FileManagementExplorerPanel::onCreateFileClicked() {
                                tr("Enter a file name without path separators."));
         return;
     }
-    // writeFile would overwrite an existing entry; creating must not.
-    if (destinationOccupied(target, m_current_path, name.trimmed())) {
+    // writeFile would overwrite an existing entry; creating must not - and an
+    // unverifiable destination is not proof of vacancy either.
+    const PasteEntryKind occupant = destinationEntryKind(target, m_current_path, name.trimmed());
+    if (occupant == PasteEntryKind::Unknown) {
+        sak::showWarningLogged(this,
+                               tr("New File"),
+                               tr("Could not verify whether %1 already exists here; nothing "
+                                  "was created.")
+                                   .arg(name.trimmed()));
+        return;
+    }
+    if (occupant != PasteEntryKind::None) {
         sak::showWarningLogged(this,
                                tr("New File"),
                                tr("An item named %1 already exists here.").arg(name.trimmed()));
+        return;
+    }
+    // The identity check above ran BEFORE a modal prompt; re-assert it so a
+    // target swapped underneath the dialog cannot receive this write.
+    if (!targetStillSelected(target, &identity_blocker)) {
+        sak::showWarningLogged(this, tr("New File"), identity_blocker);
         return;
     }
     const auto result = FileManagementFileSystemBridge::writeFile(target, path, QByteArray());
@@ -7074,6 +7500,12 @@ void FileManagementExplorerPanel::onWriteFileClicked() {
         sak::showWarningLogged(this,
                                tr("Write File"),
                                tr("Enter a file name without path separators."));
+        return;
+    }
+    // Two modal dialogs ran since the identity check; re-assert it so a target
+    // swapped underneath them cannot receive this write.
+    if (!targetStillSelected(target, &identity_blocker)) {
+        sak::showWarningLogged(this, tr("Write File"), identity_blocker);
         return;
     }
     const auto result =
@@ -7189,6 +7621,13 @@ void FileManagementExplorerPanel::deleteSelectionWithConfirmation(const bool per
                                 QMessageBox::Yes | QMessageBox::No,
                                 QMessageBox::No);
     if (response != QMessageBox::Yes) {
+        return;
+    }
+    // The confirmation is modal and the entry paths below are re-resolved by
+    // name on whatever target is current; re-assert the identity the user was
+    // shown before scheduling a permanent delete against it.
+    if (!targetStillSelected(target, &identity_blocker)) {
+        sak::showWarningLogged(this, tr("Delete Entry"), identity_blocker);
         return;
     }
     // Files posts the Delete-family card and runs the removal on the worker

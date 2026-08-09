@@ -682,7 +682,18 @@ void AdvancedUninstallPanel::onForcedUninstallClicked() {
 
 void AdvancedUninstallPanel::onBatchUninstallClicked() {
     // Collect checked programs
-    auto programs = selectedPrograms();
+    bool all_resolved = true;
+    auto programs = selectedPrograms(&all_resolved);
+    if (!all_resolved) {
+        // Fail closed: queueing only the rows that still resolve would uninstall a SUBSET of the
+        // checked programs without telling anyone which ones were dropped.
+        sak::showWarningLogged(
+            this,
+            tr("Selection Out Of Date"),
+            tr("One or more checked programs could not be resolved from the current list. "
+               "Refresh and check them again -- no batch was queued."));
+        return;
+    }
     if (programs.isEmpty()) {
         Q_EMIT statusMessage(tr("No programs checked for batch uninstall."),
                              sak::kTimerStatusMessageMs);
@@ -1072,7 +1083,18 @@ void AdvancedUninstallPanel::onDeselectAll() {
 }
 
 void AdvancedUninstallPanel::onDeleteSelectedLeftovers() {
-    auto leftovers = selectedLeftovers();
+    bool all_resolved = true;
+    auto leftovers = selectedLeftovers(&all_resolved);
+    if (!all_resolved) {
+        // Fail closed: deleting only the rows that still resolve would act on part of the
+        // selection the user confirmed, and the rest would vanish silently.
+        sak::showWarningLogged(
+            this,
+            tr("Selection Out Of Date"),
+            tr("One or more checked leftover items could not be resolved from the current scan "
+               "results. Re-scan and check them again -- nothing was deleted."));
+        return;
+    }
     if (leftovers.isEmpty()) {
         return;
     }
@@ -1490,38 +1512,47 @@ ProgramInfo AdvancedUninstallPanel::selectedProgram() const {
     return {};
 }
 
-QVector<ProgramInfo> AdvancedUninstallPanel::selectedPrograms() const {
+QVector<ProgramInfo> AdvancedUninstallPanel::selectedPrograms(bool* all_resolved) const {
     QVector<ProgramInfo> result;
+    if (all_resolved != nullptr) {
+        *all_resolved = true;
+    }
     for (int row = 0; row < m_program_table->rowCount(); ++row) {
         auto* checkItem = m_program_table->item(row, kColCheck);
         if (checkItem && checkItem->checkState() == Qt::Checked) {
+            // A CHECKED row that cannot be resolved back to a program is reported, never
+            // quietly skipped: dropping it would run the batch against a subset of what the
+            // user checked while the UI still showed the full selection.
             auto* nameItem = m_program_table->item(row, kColName);
-            if (!nameItem) {
-                continue;
-            }
-            int idx = originalRowIndex(nameItem);
+            int idx = nameItem ? originalRowIndex(nameItem) : -1;
             if (idx >= 0 && idx < m_filteredPrograms.size()) {
                 result.append(m_filteredPrograms[idx]);
+            } else if (all_resolved != nullptr) {
+                *all_resolved = false;
             }
         }
     }
     return result;
 }
 
-QVector<LeftoverItem> AdvancedUninstallPanel::selectedLeftovers() const {
+QVector<LeftoverItem> AdvancedUninstallPanel::selectedLeftovers(bool* all_resolved) const {
     QVector<LeftoverItem> result;
+    if (all_resolved != nullptr) {
+        *all_resolved = true;
+    }
     for (int row = 0; row < m_leftover_table->rowCount(); ++row) {
         auto* checkItem = m_leftover_table->item(row, kLeftoverColCheck);
         if (checkItem && checkItem->checkState() == Qt::Checked) {
+            // Same all-or-nothing contract as selectedPrograms: an unresolvable checked row is
+            // surfaced so the deletion can refuse rather than act on part of the selection.
             auto* typeItem = m_leftover_table->item(row, kLeftoverColType);
-            if (!typeItem) {
-                continue;
-            }
-            int idx = originalRowIndex(typeItem);
+            int idx = typeItem ? originalRowIndex(typeItem) : -1;
             if (idx >= 0 && idx < m_currentLeftovers.size()) {
                 auto item = m_currentLeftovers[idx];
                 item.selected = true;
                 result.append(item);
+            } else if (all_resolved != nullptr) {
+                *all_resolved = false;
             }
         }
     }

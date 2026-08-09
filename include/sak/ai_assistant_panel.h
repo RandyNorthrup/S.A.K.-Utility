@@ -694,7 +694,10 @@ private:
     [[nodiscard]] QStringList runDetailsToolHealthLines() const;
     [[nodiscard]] QStringList runDetailsProviderHealthLines() const;
     [[nodiscard]] QString runDetailsHealthRecordLine(const QJsonObject& record) const;
-    [[nodiscard]] QVector<ai::AiActivityEvent> filteredRunDetailsActivities() const;
+    // Reports a read failure through @p error_message so an unreadable activity log is
+    // surfaced instead of rendering as an empty one.
+    [[nodiscard]] QVector<ai::AiActivityEvent> filteredRunDetailsActivities(
+        QString* error_message = nullptr) const;
     [[nodiscard]] QString runDetailsActivityLine(const ai::AiActivityEvent& activity) const;
     [[nodiscard]] QString runDetailsHtml() const;
     void showRunDetails();

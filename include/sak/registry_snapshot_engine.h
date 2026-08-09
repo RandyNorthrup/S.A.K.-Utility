@@ -36,10 +36,20 @@ public:
     RegistrySnapshotEngine& operator=(RegistrySnapshotEngine&&) = default;
 
     /// @brief Capture a snapshot of registry keys under monitored paths
+    ///
+    /// The walk is deliberately bounded, and the bounds are part of the contract:
+    /// kDefaultMaxDepth levels below each monitored root, a per-key child budget, a total
+    /// key budget, and HKLM\\SOFTWARE\\Classes excluded outright. Keys below the depth cap
+    /// are out of scope for leftover detection rather than a failure; hitting a breadth or
+    /// total budget IS a failure, because real keys were then dropped. Registry symbolic
+    /// links (REG_LINK) are refused, never followed.
+    ///
     /// @param reliable Optional out-param. Set FALSE when any monitored subtree could
-    ///        not be fully enumerated (open/query/enum failure) so a PARTIAL snapshot
-    ///        is never consumed as an authoritative, complete one. TRUE means every
-    ///        reachable key was captured. Null preserves the caller not caring.
+    ///        not be fully enumerated (open/query/enum failure, a refused REG_LINK, or a
+    ///        breadth budget) so a PARTIAL snapshot is never consumed as an authoritative,
+    ///        complete one. TRUE means every key within the bounds above was captured.
+    ///        Null preserves the caller not caring -- any caller that acts on the diff
+    ///        must pass it and honor it.
     /// @return Set of full key paths (e.g., "HKLM\\SOFTWARE\\CompanyName\\Product")
     [[nodiscard]] static QSet<QString> captureSnapshot(bool* reliable = nullptr);
 

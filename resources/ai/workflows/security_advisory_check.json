@@ -20,14 +20,14 @@
   ],
   "phases": [
     {"id": "scope", "type": "overseer", "prompt": "Clarify product name, version, platform, and advisory scope.", "completion": "Search target is precise."},
-    {"id": "primary_sources", "type": "delegate", "agent": "research_agent", "prompt": "Find official vendor, Microsoft, NVD/CVE, CISA, release note, or security bulletin sources.", "expected_output": "security_sources", "risk": "web_read_only", "completion": "Primary sources are found or absence is stated."},
-    {"id": "assess", "type": "delegate", "agent": "critic_agent", "prompt": "Check citation quality, affected version match, severity, mitigation, and whether claims exceed source evidence.", "expected_output": "citation_review", "risk": "none", "completion": "Claims are source-backed."},
+    {"id": "primary_sources", "type": "delegate", "agent": "research_agent", "prompt": "Find official vendor, Microsoft, NVD/CVE, CISA, release note, or security bulletin sources. Report only what a retrieved source states.", "expected_output": "security_sources", "risk": "web_read_only", "completion": "Primary sources are found, or the run states that no primary source was found and the outcome is unverified."},
+    {"id": "assess", "type": "delegate", "agent": "critic_agent", "prompt": "Check citation quality, affected version match, severity, mitigation, and whether claims exceed source evidence.", "expected_output": "citation_review", "risk": "none", "completion": "Every claim is backed by a cited primary source, or it is labelled unverified."},
     {"id": "report", "type": "overseer", "prompt": "Write a technician-readable advisory brief with target scope, evidence, actions/tools used, citations/artifacts, affected versions, severity, mitigation, verification status, cleanup status, confidence, residual risk, and follow-up.", "completion": "User can decide mitigation."},
     {"id": "cleanup", "type": "cleanup", "prompt": "Preserve citations, report, and research notes; remove only temporary scratch files created by this workflow.", "completion": "Cleanup status is recorded."}
   ],
   "acceptance_criteria": [
-    "Primary sources are preferred.",
-    "Affected versions are explicit.",
+    "Every advisory claim cites a primary source (vendor, Microsoft, NVD/CVE, CISA); a claim without one is reported as unverified, never as confirmed.",
+    "Affected versions are explicit and matched against the target version; an unproven match is reported as unverified.",
     "Mitigation and urgency are clear.",
     "Unconfirmed forum claims are separated from official guidance."
   ],

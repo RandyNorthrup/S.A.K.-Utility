@@ -106,6 +106,28 @@ void setEnumerationOk(bool* enumerationOk, bool value) {
     }
 }
 
+/// @brief Log the processes the Restart Manager is about to FORCE-TERMINATE.
+///
+/// RmShutdown(RmForceShutdown) kills every holder without giving it a chance to save, so
+/// the technician log must at least name them. A list shorter than the reported total is
+/// declared partial rather than passed off as the complete set.
+void logRestartManagerHolders(const RM_PROCESS_INFO* processes, UINT listed, UINT needed) {
+    for (UINT i = 0; i < listed; ++i) {
+        sak::logWarning(QString("Restart Manager will force-close '%1' (PID %2), which holds a "
+                                "handle on the target drive")
+                            .arg(QString::fromWCharArray(processes[i].strAppName))
+                            .arg(processes[i].Process.dwProcessId)
+                            .toStdString());
+    }
+    if (needed > listed) {
+        sak::logWarning(QString("Restart Manager reported %1 holder process(es); only %2 could be "
+                                "listed before the force-close")
+                            .arg(needed)
+                            .arg(listed)
+                            .toStdString());
+    }
+}
+
 }  // anonymous namespace
 
 DriveUnmounter::DriveUnmounter(QObject* parent) : QObject(parent) {}
@@ -653,22 +675,35 @@ bool DriveUnmounter::closeAllHandles(int driveNumber) {
         return false;
     }
 
-    QStringList mountPoints = findVolumesForDrive(driveNumber);
+    bool enumerationOk = true;
+    QStringList mountPoints = findVolumesForDrive(driveNumber, &enumerationOk);
+    if (!enumerationOk) {
+        // An incomplete list would leave real holders unregistered and the pass would
+        // still report "nothing left holding a handle". Report the truth instead.
+        sak::logWarning(QString("Volume enumeration for the Restart Manager pass on drive %1 was "
+                                "incomplete")
+                            .arg(driveNumber)
+                            .toStdString());
+        RmEndSession(dwSession);
+        return false;
+    }
     const bool rmOk = shutdownHandlesViaRestartManager(dwSession, mountPoints);
 
     RmEndSession(dwSession);
     return rmOk;
 }
 
-QStringList DriveUnmounter::findVolumesForDrive(int driveNumber) const {
+QStringList DriveUnmounter::findVolumesForDrive(int driveNumber, bool* enumerationOk) const {
     // closeAllHandles is the only caller and passes the number unmountDrive validated. The
     // comparison below must never see a negative one: it would alias kVolumeUnopenable (-1).
     Q_ASSERT(driveNumber >= 0);
     QStringList mountPoints;
+    setEnumerationOk(enumerationOk, true);
     wchar_t volumeName[MAX_PATH];
     HANDLE hFind = FindFirstVolumeW(volumeName, MAX_PATH);
 
     if (hFind == INVALID_HANDLE_VALUE) {
+        setEnumerationOk(enumerationOk, false);
         return mountPoints;
     }
 
@@ -680,11 +715,24 @@ QStringList DriveUnmounter::findVolumesForDrive(int driveNumber) const {
         if (len > 0 && volumeName[len - 1] == L'\\') {
             volumeName[len - 1] = L'\0';
         }
-        if (queryVolumeDriveNumber(volumeName) != driveNumber) {
+        const int volumeDrive = queryVolumeDriveNumber(volumeName);
+        if (volumeDrive == kVolumeProbeFailed) {
+            // Opened, but its physical-disk identity could not be read: it may well sit on
+            // the target, so the resource list handed to the Restart Manager is short.
+            setEnumerationOk(enumerationOk, false);
+            continue;
+        }
+        if (volumeDrive != driveNumber) {
             continue;
         }
         mountPoints.append(QString::fromWCharArray(volumeName));
     } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
+
+    // Only ERROR_NO_MORE_FILES is a clean end of enumeration; any other error means the
+    // list may be short (same fail-closed rule as getVolumesOnDrive).
+    if (GetLastError() != ERROR_NO_MORE_FILES) {
+        setEnumerationOk(enumerationOk, false);
+    }
 
     FindVolumeClose(hFind);
     return mountPoints;
@@ -709,10 +757,13 @@ bool DriveUnmounter::shutdownHandlesViaRestartManager(DWORD dwSession,
         return false;
     }
 
-    DWORD dwReason;
+    DWORD dwReason = 0;
     UINT nProcInfoNeeded = 0;
-    UINT nProcInfo = 0;
-    RM_PROCESS_INFO rgpi[kRestartManagerProcessCapacity];
+    // In/out: on input the CAPACITY of rgpi, on output how many entries were filled.
+    // Passing 0 here (as this did) leaves the array untouched, so the holder processes
+    // the force-shutdown below is about to kill could never be named.
+    UINT nProcInfo = static_cast<UINT>(kRestartManagerProcessCapacity);
+    RM_PROCESS_INFO rgpi[kRestartManagerProcessCapacity] = {};
 
     dwError = RmGetList(dwSession, &nProcInfoNeeded, &nProcInfo, rgpi, &dwReason);
 
@@ -723,6 +774,9 @@ bool DriveUnmounter::shutdownHandlesViaRestartManager(DWORD dwSession,
 
     sak::logInfo(
         QString("Found %1 processes with open handles").arg(nProcInfoNeeded).toStdString());
+    // rgpi is populated only when the whole list fit; ERROR_MORE_DATA means there were
+    // more holders than the fixed capacity, and then nothing was copied.
+    logRestartManagerHolders(rgpi, dwError == ERROR_SUCCESS ? nProcInfo : 0, nProcInfoNeeded);
     dwError = RmShutdown(dwSession, RmForceShutdown, nullptr);
     if (dwError == ERROR_SUCCESS) {
         sak::logInfo("Successfully closed all file handles");

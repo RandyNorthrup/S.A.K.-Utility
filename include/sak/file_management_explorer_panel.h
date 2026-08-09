@@ -305,6 +305,20 @@ private:
                                 const QString& destination_dir,
                                 PasteCollisionPolicy* policy,
                                 QStringList* blockers);
+    /// Move a Replace-resolved occupant aside and report where it went; empty
+    /// means it could not be staged and the reason was appended to @p blockers.
+    [[nodiscard]] QString stageReplacedOccupant(const FileManagementTarget& target,
+                                                const QString& destination_dir,
+                                                const QString& name,
+                                                const QString& occupied_path,
+                                                QStringList* blockers) const;
+    /// Retire the staged occupant once the replacing rename landed, or roll it
+    /// back into place when that rename failed.
+    static void settleDisplacedOccupant(const FileManagementTarget& target,
+                                        const QString& displaced,
+                                        const QString& occupied_path,
+                                        bool renamed,
+                                        QStringList* blockers);
     PasteCollisionChoice resolvePasteCollision(const QString& name,
                                                bool multiple,
                                                PasteCollisionPolicy* policy);
@@ -326,6 +340,15 @@ private:
     [[nodiscard]] QString availableChildName(const FileManagementTarget& target,
                                              const QString& directory,
                                              const QString& name) const;
+    /// destinationEntryKind against the host file system, where a name that
+    /// cannot be stat'ed cleanly is Unknown rather than free.
+    [[nodiscard]] static PasteEntryKind localDestinationEntryKind(const QString& directory,
+                                                                  const QString& name);
+    /// destinationEntryKind against a raw volume, answered from a fresh listing
+    /// that is only authoritative when it succeeded and was not truncated.
+    [[nodiscard]] static PasteEntryKind rawDestinationEntryKind(const FileManagementTarget& target,
+                                                                const QString& directory,
+                                                                const QString& name);
     [[nodiscard]] PasteEntryKind destinationEntryKind(const FileManagementTarget& target,
                                                       const QString& directory,
                                                       const QString& name) const;
@@ -357,6 +380,22 @@ private:
     [[nodiscard]] bool preparePasteDestination(const PasteSources& sources);
     void executePaste(const PasteSources& sources, const QString& destination_dir);
     [[nodiscard]] bool confirmTypedRawImport(const FileManagementTarget& target, int file_count);
+    /// Re-assert, right before a mutation, that the target captured before a
+    /// modal prompt is still the selected one: a dialog stays open for as long
+    /// as the user leaves it, and every write below re-resolves its paths
+    /// against whatever target is current when it runs.
+    [[nodiscard]] bool targetStillSelected(const FileManagementTarget& target,
+                                           QString* blocker) const;
+    /// Typed confirmation before a move that REMOVES entries from raw media
+    /// (a same-target raw move, or a move whose source is a raw target): the
+    /// source delete runs through the certified writer and is irreversible.
+    [[nodiscard]] bool confirmTypedRawMove(const FileManagementTarget& target, int file_count);
+    /// Both typed acknowledgements a paste can owe (raw import, raw move), taken
+    /// before any of the batch starts. False means the user declined one of them.
+    [[nodiscard]] bool confirmPasteWrites(const FileManagementTarget& target,
+                                          const FileManagementTarget& source_target,
+                                          const PasteSources& sources,
+                                          int requested);
     [[nodiscard]] static QList<PasteItem> pasteItemsFor(const PasteSources& sources);
     /// Shared context for one paste batch: the transfer endpoints plus flags
     /// computed once and applied to every item.
@@ -370,6 +409,11 @@ private:
         /// same raw target); only then can a folder contain its own destination.
         bool same_namespace{false};
     };
+    /// Non-empty when the item is a folder that would land inside its own
+    /// subtree; only a shared namespace can express that containment.
+    [[nodiscard]] static QString pasteSelfContainmentBlocker(const PasteBatch& batch,
+                                                             const PasteItem& item,
+                                                             const QString& name);
     /// GUI-thread collision resolution before the worker starts (Files shows
     /// its conflict dialog up front): subfolder guards, same-folder duplicate
     /// naming, and the replace/skip/rename prompt.
@@ -404,7 +448,30 @@ private:
         bool record_history{true};
         /// Cross-pane transfers: reload the other pane's listing on success.
         bool refresh_other_pane{false};
+        /// GUI-thread preflight already rejected at least one requested item, so
+        /// a worker run that raises no blockers of its own is still not a clean
+        /// success and must not post a Success terminal card.
+        bool preflight_blocked{false};
+        /// Message from the worker's failed() signal (empty when it never fired).
+        /// An internal abort raises no per-item blocker, so without this a failed
+        /// run would report Success.
+        QString worker_failure;
     };
+    /// Completion record for one paste batch; move-vs-copy is the only thing
+    /// that varies between the two.
+    [[nodiscard]] static TransferCompletion pasteTransferCompletion(const PasteBatch& batch,
+                                                                    const PasteSources& sources,
+                                                                    int requested,
+                                                                    bool preflight_blocked);
+    /// The deduplicated raw target ids a transfer will mutate; local and
+    /// identity-less endpoints lock nothing and are not tracked.
+    [[nodiscard]] static QStringList rawTargetIdsFor(const FileExplorerTransferRequest& request);
+    /// Non-empty when one of those ids already has a worker on it, which is the
+    /// refusal that keeps two workers off the same raw volume.
+    [[nodiscard]] QString busyRawTargetBlocker(const QStringList& raw_ids) const;
+    /// The in-progress half of the Files two-card pattern.
+    [[nodiscard]] static FileExplorerStatusCardRequest inProgressTransferCard(
+        const FileExplorerTransferRequest& request, const TransferCompletion& completion);
     /// Posts the in-progress status-center card, wires progress/cancel, and
     /// starts the transfer worker (Files FilesystemHelpers + StatusCenter).
     void startTransferWorker(const FileExplorerTransferRequest& request,
@@ -462,6 +529,16 @@ private:
                                int status_center_visibility);
     /// Files StatusCenterVisibility == DuringOngoingFileOperations.
     [[nodiscard]] bool statusCenterDuringOperationsOnly() const;
+    /// True when a listed directory is a junction or a directory symlink, whose
+    /// contents live outside the folder being flattened.
+    [[nodiscard]] static bool entryLinksOutsideFolder(const FileManagementTarget& target,
+                                                      const QString& path);
+    /// Moves one leaf up into the flatten root; false when it was refused as a
+    /// special entry, skipped as a collision, or failed to rename.
+    bool flattenEntryIntoRoot(const FileManagementTarget& target,
+                              const QString& root,
+                              const FileManagementEntry& entry,
+                              QStringList* blockers);
     int flattenFolderTree(const FileManagementTarget& target,
                           const QString& root,
                           const QString& current,
@@ -512,11 +589,13 @@ private:
                             QStringList* blockers);
     /// One undo-delete leg. @p source_target is the Copy source used to
     /// re-verify identity (unused for a create, whose identity is emptiness).
-    void historyDeleteOneEntry(const FileManagementTarget& target,
-                               const FileManagementTarget& source_target,
-                               const FileExplorerHistoryItem& item,
-                               bool undo_of_create,
-                               QStringList* blockers);
+    /// Returns true only when the entry was actually removed, so the caller
+    /// never reports a skipped or blocked path as deleted.
+    [[nodiscard]] bool historyDeleteOneEntry(const FileManagementTarget& target,
+                                             const FileManagementTarget& source_target,
+                                             const FileExplorerHistoryItem& item,
+                                             bool undo_of_create,
+                                             QStringList* blockers);
     /// Files/child count for a file/directory entry, or -1 when it is absent,
     /// the wrong kind, or the listing is not authoritative (fail closed).
     [[nodiscard]] qint64 historyEntryMeasure(const FileManagementTarget& target,
@@ -796,6 +875,10 @@ private:
     // while thread is still running" abort). These are MUTATING (disk writes), unlike
     // m_search_worker.
     QSet<WorkerBase*> m_active_io_workers;
+    // Raw target ids with a mutation worker in flight. Two workers rewriting one
+    // raw APFS/HFS+ volume from independently read metadata would corrupt it, so a
+    // second transfer against a busy raw target is refused instead of queued.
+    QSet<QString> m_busy_raw_target_ids;
     // Entry name to select once the next listing arrives (open-search-result flow).
     QString m_pending_select_name;
     // Inline search-mode plumbing: 200 ms suggestion debounce (Files), the

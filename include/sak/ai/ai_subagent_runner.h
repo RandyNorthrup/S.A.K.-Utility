@@ -98,7 +98,11 @@ struct AiSubagentToolCall {
 };
 
 /// @brief The output of executing one subagent tool call, fed back to the model
-/// to continue the turn. `output_json` is the JSON string the model receives.
+/// to continue the turn. `output_json` is the JSON string the model receives; an
+/// executor that refused or failed the call reports that inside `output_json`.
+/// The runner verifies before forwarding it that `call_id` matches the call it
+/// dispatched and that `output_json` parses as JSON, and fails the turn closed
+/// otherwise.
 struct AiSubagentToolOutput {
     QString call_id;
     QString output_json;
@@ -181,6 +185,11 @@ struct AiSubagentRunnerOptions {
 /// AiSubagentResult, and respects a hierarchical CancellationToken. The runner
 /// does not own a worker thread; callers schedule it on whatever executor
 /// fits.
+///
+/// NOT thread-safe: configure one runner (options, factory, tool executor) and
+/// then call run() on it from one thread at a time; the setters must not race a
+/// run(). The injected model client and tool executor are non-owning and must
+/// outlive every run() call made through this runner.
 class AiSubagentRunner {
 public:
     explicit AiSubagentRunner(IAiModelClient* model_client);
@@ -189,8 +198,10 @@ public:
     [[nodiscard]] AiSubagentRunnerOptions options() const { return m_options; }
     void setModelClientFactory(AiModelClientFactory factory);
     /// @brief Sets the executor used to run tool calls the model requests. When
-    /// null (the default) the subagent stays single-shot: any tool calls the
-    /// model returns are ignored and the turn is parsed as-is.
+    /// null (the default) the subagent stays single-shot, and a turn that asks
+    /// for tool calls cannot be honored: the runner fails that turn closed rather
+    /// than dropping the pending calls and parsing the unfinished turn as a final
+    /// answer. The same applies when the task's policy is NoLocalExecution.
     void setToolExecutor(IAiSubagentToolExecutor* executor);
 
     [[nodiscard]] AiSubagentResult run(const AiSubagentTask& task,

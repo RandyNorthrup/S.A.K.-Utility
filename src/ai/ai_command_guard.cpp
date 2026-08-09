@@ -31,12 +31,19 @@ bool commandContainsBroadRegistryRecursion(const QString& command) {
     static const QRegularExpression registry_root_regex(
         QStringLiteral(R"((hklm|hkcu):\\software(?:['"`\s,;)]|$))"),
         QRegularExpression::CaseInsensitiveOption);
+    // The narrow-scope exception only counts when it is part of an actual registry path
+    // in the command. Matching it anywhere in the combined text failed open: a trailing
+    // comment or a dummy argument naming the uninstall/vendor key unblocked an otherwise
+    // broad recursive scan of the whole SOFTWARE hive.
+    static const QRegularExpression narrow_scope_regex(
+        QStringLiteral(R"((hklm|hkcu):\\software\\[^\s'"`;,)]*)"
+                       R"((?:currentversion\\uninstall|superantispyware\.com))"),
+        QRegularExpression::CaseInsensitiveOption);
     if (!command.contains(QStringLiteral("-recurse")) ||
         !registry_root_regex.match(command).hasMatch()) {
         return false;
     }
-    return !command.contains(QStringLiteral("currentversion\\uninstall")) &&
-           !command.contains(QStringLiteral("superantispyware.com"));
+    return !narrow_scope_regex.match(command).hasMatch();
 }
 
 bool commandContainsPowerShellPidMutation(const QString& command) {
@@ -47,10 +54,15 @@ bool commandContainsPowerShellPidMutation(const QString& command) {
 }
 
 bool commandContainsChecksumBypass(const QString& command) {
-    return command.contains(QStringLiteral("--ignore-checksums")) ||
-           command.contains(QStringLiteral("--ignorechecksum")) ||
-           command.contains(QStringLiteral("ignore-checksums")) ||
-           command.contains(QStringLiteral("ignorechecksum"));
+    // Substring matches, not switch parsing: the singular spellings also catch the plural
+    // switches, the "--" prefixed forms, and the ChocolateyIgnoreChecksums /
+    // ChocolateyAllowEmptyChecksums environment and config spellings of the same bypass.
+    return command.contains(QStringLiteral("ignore-checksums")) ||
+           command.contains(QStringLiteral("ignorechecksum")) ||
+           command.contains(QStringLiteral("allow-empty-checksum")) ||
+           command.contains(QStringLiteral("allowemptychecksum")) ||
+           command.contains(QStringLiteral("skip-checksum")) ||
+           command.contains(QStringLiteral("skipchecksum"));
 }
 
 bool commandContainsCachedPackageInstallerRun(const QString& command) {
@@ -62,12 +74,11 @@ bool commandContainsCachedPackageInstallerRun(const QString& command) {
         command.contains(QStringLiteral("/data/temp/chocolatey/")) ||
         command.contains(QStringLiteral("\\chocolatey\\lib-bad\\")) ||
         command.contains(QStringLiteral("/chocolatey/lib-bad/"));
-    if (!package_cache_path || !installer_extension_regex.match(command).hasMatch()) {
-        return false;
-    }
-    return command.contains(QStringLiteral("start-process")) ||
-           command.contains(QStringLiteral("invoke-item")) ||
-           command.contains(QStringLiteral("cmd /c")) || command.contains(QStringLiteral("& "));
+    // Any reference to a package-cache installer needs approval. Requiring one of a fixed
+    // set of launch verbs failed open: request.program can name the installer directly,
+    // and "msiexec /i", &"path" without a space, a tab-separated call operator or an
+    // environment-variable path all launch it without matching any of those verbs.
+    return package_cache_path && installer_extension_regex.match(command).hasMatch();
 }
 
 }  // namespace
@@ -113,6 +124,7 @@ AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request, const
     if (result.block_error.isEmpty()) {
         result.approval_reason = commandGuardApprovalReason(request, preview);
     }
+    result.evaluated = true;
     return result;
 }
 

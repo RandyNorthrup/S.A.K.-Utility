@@ -6,15 +6,34 @@
 #include "sak/layout_constants.h"
 
 #include <QMutexLocker>
+#include <QRandomGenerator>
+
+#include <limits>
 
 namespace sak::ai {
 
 namespace {
 constexpr int kLeaseIdWidth = 4;
+// Unguessable half of the lease id. The counter alone is predictable, so any code holding the
+// manager could release a lease it does not own by counting; a random token makes an id something
+// only its holder can present.
+constexpr int kLeaseTokenBase = 16;
+constexpr int kLeaseTokenWidth = 16;
+constexpr qint64 kLeaseMillisPerSecond = 1000;
+
+// TTL in milliseconds, saturated rather than overflowed: the ceiling is far beyond any real hold
+// and a wrapped deadline would read as "already expired" and reclaim a live lease immediately.
+qint64 leaseTtlMillis(qint64 ttl_seconds) {
+    constexpr qint64 kMaxTtlMs = std::numeric_limits<qint64>::max() / 2;
+    return ttl_seconds > kMaxTtlMs / kLeaseMillisPerSecond ? kMaxTtlMs
+                                                           : ttl_seconds * kLeaseMillisPerSecond;
 }
+}  // namespace
 
 AiLeaseManager::AiLeaseManager(qint64 ttl_seconds)
-    : m_ttl_seconds(ttl_seconds > 0 ? ttl_seconds : kDefaultLeaseTtlSeconds) {}
+    : m_ttl_seconds(ttl_seconds > 0 ? ttl_seconds : kDefaultLeaseTtlSeconds) {
+    m_clock.start();
+}
 
 AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
                                                       const QStringList& tool_scope,
@@ -33,13 +52,19 @@ AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
         return result;
     }
     Lease lease;
-    lease.lease_id =
-        QStringLiteral("lease_%1").arg(m_next_id++, kLeaseIdWidth, kDecimalBase, QLatin1Char('0'));
+    // Counter for readability in logs, random token so the id cannot be guessed or replayed.
+    lease.lease_id = QStringLiteral("lease_%1_%2")
+                         .arg(m_next_id++, kLeaseIdWidth, kDecimalBase, QLatin1Char('0'))
+                         .arg(QRandomGenerator::global()->generate64(),
+                              kLeaseTokenWidth,
+                              kLeaseTokenBase,
+                              QLatin1Char('0'));
     lease.agent_id = agent_id;
     lease.tool_scope = tool_scope;
     lease.risk_level = risk_level;
     lease.acquired_at_utc = now;
     lease.expires_at_utc = now.addSecs(m_ttl_seconds);
+    lease.monotonic_expiry_ms = m_clock.elapsed() + leaseTtlMillis(m_ttl_seconds);
     lease.exclusive = exclusive;
     m_active.insert(lease.lease_id, lease);
     result.granted = true;
@@ -47,9 +72,14 @@ AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
     return result;
 }
 
-void AiLeaseManager::release(const QString& lease_id) {
+bool AiLeaseManager::release(const QString& lease_id) {
     QMutexLocker lock(&m_mutex);
-    m_active.remove(lease_id);
+    // Report whether a lease was actually held: a release for an id this manager does not hold
+    // (already reclaimed as expired, or simply wrong) is not the same event as a real release and
+    // must not be reported as one.
+    // QHash::remove already answers the question as a bool in Qt 6; comparing it against 0
+    // mixes bool with int, which this build treats as an error.
+    return m_active.remove(lease_id);
 }
 
 QStringList AiLeaseManager::reclaimExpired(const QDateTime& now_utc) {
@@ -59,10 +89,19 @@ QStringList AiLeaseManager::reclaimExpired(const QDateTime& now_utc) {
 
 QStringList AiLeaseManager::reclaimExpiredLocked(const QDateTime& now_utc) {
     QStringList reclaimed;
+    const qint64 elapsed_ms = m_clock.isValid() ? m_clock.elapsed() : 0;
     for (auto it = m_active.begin(); it != m_active.end();) {
+        const Lease& lease = it.value();
         // A null expiry (should not happen for leases minted here) is treated as
         // non-expiring so we never reclaim a lease we cannot reason about.
-        if (it.value().expires_at_utc.isValid() && it.value().expires_at_utc <= now_utc) {
+        const bool wall_expired = lease.expires_at_utc.isValid() && lease.expires_at_utc <= now_utc;
+        // Steady-clock backstop: a wall clock moved BACKWARD (NTP correction, a user changing the
+        // date) pushes expires_at_utc out of reach and would wedge every future mutating action
+        // behind an abandoned lease until the app restarts. This branch measures real elapsed
+        // time only, so it can never reclaim a lease before its TTL has genuinely passed.
+        const bool steady_expired = lease.monotonic_expiry_ms > 0 &&
+                                    elapsed_ms >= lease.monotonic_expiry_ms;
+        if (wall_expired || steady_expired) {
             reclaimed.append(it.key());
             it = m_active.erase(it);
         } else {

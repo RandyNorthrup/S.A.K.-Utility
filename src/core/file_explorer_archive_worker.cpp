@@ -19,13 +19,68 @@ namespace {
 // Matches the panel's listing bound for the collision probe.
 constexpr int kArchiveListMaxEntries = 10'000;
 
+// A name that must land as a SINGLE child of the destination folder. QDir::filePath() returns an
+// ABSOLUTE name unchanged and a ".." component walks out of the folder, so an unvalidated name --
+// a request field, or an entry name read back out of an archive through a foreign filesystem --
+// would place the zip, the wrap folder or an extracted entry outside the destination the user
+// chose. A colon is a drive letter or an NTFS alternate data stream.
+bool isSafeChildName(const QString& name) {
+    if (name.isEmpty() || name == QLatin1String(".") || name == QLatin1String("..")) {
+        return false;
+    }
+    if (QDir::isAbsolutePath(name)) {
+        return false;
+    }
+    for (const QChar ch : name) {
+        if (ch == QLatin1Char('/') || ch == QLatin1Char('\\') || ch == QLatin1Char(':')) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 FileExplorerArchiveWorker::FileExplorerArchiveWorker(FileExplorerArchiveRequest request,
                                                      QObject* parent)
     : WorkerBase(parent), m_request(std::move(request)) {}
 
+// Every field screened here previously had a working default: a blank directory makes
+// childPath()/QDir resolve against the PROCESS working directory (clobbering a same-named file
+// next to the executable), an unsafe zip name escapes the destination folder, and an empty
+// payload list ran to completion as a zero-work success with no blocker to say so.
+bool FileExplorerArchiveWorker::requestIsWellFormed() {
+    if (m_request.directory.isEmpty()) {
+        m_blockers.append(
+            QStringLiteral("No destination folder was given for this archive batch."));
+        return false;
+    }
+    if (m_request.compress) {
+        if (!isSafeChildName(m_request.zip_name)) {
+            m_blockers.append(QStringLiteral("Refusing to write the archive: %1 is not a valid "
+                                             "name inside the destination folder.")
+                                  .arg(m_request.zip_name));
+            return false;
+        }
+        if (m_request.sources.isEmpty()) {
+            m_blockers.append(QStringLiteral("Nothing was selected to compress."));
+            return false;
+        }
+        return true;
+    }
+    if (m_request.archives.isEmpty()) {
+        m_blockers.append(QStringLiteral("No archive was selected to extract."));
+        return false;
+    }
+    return true;
+}
+
 auto FileExplorerArchiveWorker::execute() -> std::expected<void, sak::error_code> {
+    // Blockers are this class's failure channel (the panel builds the terminal card from
+    // blockers().isEmpty()), so a refused request reports through them and does no work.
+    if (!requestIsWellFormed()) {
+        return {};
+    }
     if (m_request.compress) {
         runCompress();
     } else {
@@ -131,39 +186,72 @@ bool FileExplorerArchiveWorker::extractOne(const FileExplorerArchiveExtractItem&
     if (host_zip.isEmpty()) {
         return false;
     }
-    // Files DecompressArchiveDialog leg: the chosen host folder is final.
     if (!archive.dialog_destination.isEmpty()) {
-        const auto result = FileExplorerArchiveService::extractZip(host_zip,
-                                                                   archive.dialog_destination);
-        m_blockers.append(result.blockers);
-        m_warnings.append(result.warnings);
-        return result.ok;
+        return extractToDialogDestination(archive, host_zip);
     }
-    // Files smart rule: a single top-level folder extracts in place (no
-    // redundant wrapper); anything else wraps in "{archive stem}".
     const QString stem = QFileInfo(archive.name).completeBaseName();
-    const bool wrap = m_request.wrap_mode == FileExplorerArchiveWrapMode::Wrap ||
-                      (m_request.wrap_mode == FileExplorerArchiveWrapMode::Smart &&
-                       !FileExplorerArchiveService::hasSingleTopLevelRoot(host_zip, nullptr));
-    if (local) {
-        QString destination = m_request.directory;
-        if (wrap) {
-            const QString child = availableChildName(stem);
-            if (child.isEmpty()) {
-                m_blockers.append(
-                    QStringLiteral("Could not find an unused name for %1; all numbered "
-                                   "variants are in use.")
-                        .arg(stem));
-                return false;
-            }
-            destination = childPath(child);
-        }
-        const auto result = FileExplorerArchiveService::extractZip(host_zip, destination);
-        m_blockers.append(result.blockers);
-        m_warnings.append(result.warnings);
-        return result.ok;
+    const bool wrap = wrapsInStemFolder(host_zip);
+    // The wrap folder is named from the archive's own display name, which on a raw target comes
+    // off a foreign filesystem. A name that does not yield a plain child ("..", a separator, an
+    // extension-only name whose stem is empty) would wrap outside the destination folder.
+    if (wrap && !isSafeChildName(stem)) {
+        m_blockers.append(QStringLiteral("Refusing to extract %1: its name does not yield a valid "
+                                         "folder name inside the destination.")
+                              .arg(archive.name));
+        return false;
     }
-    return extractRawArchive(host_zip, wrap ? stem : QString());
+    const QString wrap_name = wrap ? stem : QString();
+    return local ? extractLocalArchive(host_zip, wrap_name)
+                 : extractRawArchive(host_zip, wrap_name);
+}
+
+// Files DecompressArchiveDialog leg: the chosen host folder is final, so it has to actually be
+// one. A relative destination would resolve against the PROCESS working directory instead of the
+// folder the chooser returned, so refuse it rather than extracting somewhere else.
+bool FileExplorerArchiveWorker::extractToDialogDestination(
+    const FileExplorerArchiveExtractItem& archive, const QString& host_zip) {
+    if (!QDir::isAbsolutePath(archive.dialog_destination) ||
+        !QFileInfo(archive.dialog_destination).isDir()) {
+        m_blockers.append(QStringLiteral("Refusing to extract %1: %2 is not an existing "
+                                         "destination folder.")
+                              .arg(archive.name, archive.dialog_destination));
+        return false;
+    }
+    const auto result = FileExplorerArchiveService::extractZip(host_zip,
+                                                               archive.dialog_destination);
+    m_blockers.append(result.blockers);
+    m_warnings.append(result.warnings);
+    return result.ok;
+}
+
+// Files smart rule: a single top-level folder extracts in place (no
+// redundant wrapper); anything else wraps in "{archive stem}".
+bool FileExplorerArchiveWorker::wrapsInStemFolder(const QString& host_zip) const {
+    return m_request.wrap_mode == FileExplorerArchiveWrapMode::Wrap ||
+           (m_request.wrap_mode == FileExplorerArchiveWrapMode::Smart &&
+            !FileExplorerArchiveService::hasSingleTopLevelRoot(host_zip, nullptr));
+}
+
+// Local destination: the extractor writes straight into the chosen folder. A wrap folder has to
+// have an unused name resolved first -- childPath("") is the destination itself, so extracting
+// there would unpack over the current folder instead of into a child of it.
+bool FileExplorerArchiveWorker::extractLocalArchive(const QString& host_zip,
+                                                    const QString& wrap_name) {
+    QString destination = m_request.directory;
+    if (!wrap_name.isEmpty()) {
+        const QString child = availableChildName(wrap_name);
+        if (child.isEmpty()) {
+            m_blockers.append(QStringLiteral("Could not find an unused name for %1; all numbered "
+                                             "variants are in use.")
+                                  .arg(wrap_name));
+            return false;
+        }
+        destination = childPath(child);
+    }
+    const auto result = FileExplorerArchiveService::extractZip(host_zip, destination);
+    m_blockers.append(result.blockers);
+    m_warnings.append(result.warnings);
+    return result.ok;
 }
 
 // Raw destination: extract to a scratch folder, then import through the
@@ -207,6 +295,16 @@ bool FileExplorerArchiveWorker::deliverFlattened(const QString& host_out_dir) {
     const QFileInfoList infos =
         QDir(host_out_dir).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
     for (const QFileInfo& info : infos) {
+        // The entry names come out of an attacker-supplied archive. Anything that is not a plain
+        // child name would be delivered outside the current folder by childPath().
+        if (!isSafeChildName(info.fileName())) {
+            m_blockers.append(
+                QStringLiteral("Refusing to deliver %1: it is not a valid name inside the "
+                               "destination folder.")
+                    .arg(info.fileName()));
+            all_ok = false;
+            continue;
+        }
         const QString name = availableChildName(info.fileName());
         if (name.isEmpty()) {
             // Every numbered variant is taken (or the destination listing failed):

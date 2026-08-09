@@ -110,14 +110,16 @@ int affirmativeRank(const QString& name_lower) {
     return -1;
 }
 
-// element_index of the first button whose lower-cased name contains `needle`, or -1.
-int buttonMatching(const QVector<DialogButton>& buttons, const QString& needle) {
+// Every candidate whose lower-cased name contains `needle`.
+QVector<DialogButton> buttonsContaining(const QVector<DialogButton>& buttons,
+                                        const QString& needle) {
+    QVector<DialogButton> matches;
     for (const DialogButton& button : buttons) {
         if (button.name.toLower().contains(needle)) {
-            return button.element_index;
+            matches.append(button);
         }
     }
-    return -1;
+    return matches;
 }
 
 // element_index of the best-ranked affirmative button, or -1 when none of them is affirmative.
@@ -143,6 +145,32 @@ QString buttonListText(const QVector<DialogButton>& buttons) {
     return names.join(QStringLiteral(", "));
 }
 
+// element_index of the button an explicit caption names, or -1 with `why` set. An EXACT
+// (case-insensitive) caption wins outright; otherwise the containing match must be UNIQUE --
+// a needle that matches several captions ("save" against Save / Do Not Save) is an ambiguous
+// request and is refused rather than resolved by walk order (fail closed).
+int explicitButtonChoice(const QVector<DialogButton>& buttons,
+                         const QString& explicit_button,
+                         QString& why) {
+    const QString needle = explicit_button.toLower();
+    for (const DialogButton& button : buttons) {
+        if (button.name.toLower() == needle) {
+            return button.element_index;
+        }
+    }
+    const QVector<DialogButton> matches = buttonsContaining(buttons, needle);
+    if (matches.isEmpty()) {
+        why = QStringLiteral("No enabled button matches '%1'.").arg(explicit_button);
+        return -1;
+    }
+    if (matches.size() > 1) {
+        why = QStringLiteral("'%1' matches more than one button (%2); pass the exact caption.")
+                  .arg(explicit_button, buttonListText(matches));
+        return -1;
+    }
+    return matches.first().element_index;
+}
+
 }  // namespace
 
 int chooseDialogButton(const QVector<DialogButton>& buttons,
@@ -152,19 +180,35 @@ int chooseDialogButton(const QVector<DialogButton>& buttons,
         why = QStringLiteral("The window has no enabled button to invoke.");
         return -1;
     }
-    if (!explicit_button.isEmpty()) {
-        const int index = buttonMatching(buttons, explicit_button.toLower());
-        if (index < 0) {
-            why = QStringLiteral("No enabled button matches '%1'.").arg(explicit_button);
+    // A candidate must carry the caller's own handle back to a live element. A negative index is
+    // malformed input (a default-constructed DialogButton), and returning it would hand the caller
+    // an index it cannot dereference -- refuse the whole choice instead.
+    for (const DialogButton& button : buttons) {
+        if (button.element_index < 0) {
+            why = QStringLiteral("A dialog button candidate carries no valid element index.");
+            return -1;
         }
-        return index;
+    }
+    if (!explicit_button.isEmpty()) {
+        return explicitButtonChoice(buttons, explicit_button, why);
     }
     const int affirmative = bestAffirmativeButton(buttons);
     if (affirmative >= 0) {
         return affirmative;
     }
     if (buttons.size() == 1) {
-        return buttons.first().element_index;  // single-button dialog: unambiguous even if nameless
+        // Single-button dialog: unambiguous even if nameless (the custom-drawn OK case). But a
+        // lone DESTRUCTIVE or negative caption ("Delete", "Quit") is never auto-pressed just for
+        // being alone -- the caller must name it through explicit_button.
+        const DialogButton& lone = buttons.first();
+        if (!hasDestructiveWord(captionTokens(lone.name.toLower()))) {
+            return lone.element_index;
+        }
+        why = QStringLiteral(
+                  "The only button ('%1') is destructive or negative; pass 'button' to invoke it "
+                  "deliberately.")
+                  .arg(lone.name);
+        return -1;
     }
     why = QStringLiteral("No affirmative button found; pass 'button' to pick one of: %1")
               .arg(buttonListText(buttons));

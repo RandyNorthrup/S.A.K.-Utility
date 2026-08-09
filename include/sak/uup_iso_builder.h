@@ -113,9 +113,11 @@ public:
     Phase currentPhase() const { return m_phase; }
 
     /**
-     * @brief Names of expected files that are absent or shorter than their
-     *        API-declared size in @p downloadDir. Empty means the download set
-     *        is complete. Used to reject a partial aria2c result (exit code 7)
+     * @brief Names of expected files that are not present in @p downloadDir as a
+     *        real regular file (never a directory, symlink, or junction) whose
+     *        size matches the API-declared size exactly when one was declared; an
+     *        unnamed expected entry is always reported. Empty means the download
+     *        set is complete. Used to reject a partial aria2c result (exit code 7)
      *        before conversion. Unit-testable.
      */
     [[nodiscard]] static QStringList missingFiles(const QList<UupDumpApi::FileInfo>& expected,
@@ -124,7 +126,10 @@ public:
     /**
      * @brief Move a freshly built ISO from @p tempPath onto @p finalPath,
      *        replacing any prior ISO only now (convert-then-replace, so a failed
-     *        conversion never destroys an existing good ISO). Unit-testable.
+     *        conversion never destroys an existing good ISO). Refuses (false) unless
+     *        @p tempPath is a real regular file and @p finalPath is absent or a real
+     *        regular file, so a planted link is never renamed in place of an image.
+     *        Unit-testable.
      */
     [[nodiscard]] static bool replaceFinalIso(const QString& tempPath, const QString& finalPath);
 

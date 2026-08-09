@@ -179,8 +179,12 @@ private:
     void logMessage(const QString& message);
     void setOperationRunning(bool running);
     [[nodiscard]] ProgramInfo selectedProgram() const;
-    [[nodiscard]] QVector<ProgramInfo> selectedPrograms() const;
-    [[nodiscard]] QVector<LeftoverItem> selectedLeftovers() const;
+    /// The checked programs. When @p all_resolved is non-null it is set to false if any CHECKED
+    /// row could not be resolved back to a program, so a destructive batch is never run against a
+    /// silently reduced subset of what the user checked.
+    [[nodiscard]] QVector<ProgramInfo> selectedPrograms(bool* all_resolved = nullptr) const;
+    /// The checked leftover items, with the same all-or-nothing contract as @ref selectedPrograms.
+    [[nodiscard]] QVector<LeftoverItem> selectedLeftovers(bool* all_resolved = nullptr) const;
     void updateStatusCounts();
 
     // -- Controller --

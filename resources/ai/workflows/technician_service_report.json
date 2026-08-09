@@ -8,7 +8,7 @@
   "starter_prompt": "Create a technician service report from this AI session.",
   "required_inputs": [],
   "required_software": [
-    {"id": "report_button", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"}
+    {"id": "report_button", "kind": "bundled_tool", "required": true, "install_policy": "built_in_only"}
   ],
   "instructions": ["instructions/reporting_standard.md", "instructions/evidence_policy.md"],
   "skills": ["skills/customer-handoff-report.md", "skills/artifact-verification.md", "skills/cleanup-after-job.md"],
@@ -18,10 +18,10 @@
   ],
   "phases": [
     {"id": "collect_session", "type": "overseer", "prompt": "Collect session transcript, commands, artifacts, citations, token/tool summary, and user goal.", "completion": "Session evidence is ready."},
-    {"id": "draft_report", "type": "delegate", "agent": "report_agent", "prompt": "Draft a technician-readable service report with issue, context, evidence, actions/tools used, verification, artifacts, cleanup status, residual risk, and follow-up.", "expected_output": "service_report", "risk": "none", "completion": "Report draft is complete."},
-    {"id": "redaction_review", "type": "delegate", "agent": "critic_agent", "prompt": "Check for secrets, personal data, unsupported claims, missing evidence, and unclear next steps.", "expected_output": "report_review", "risk": "none", "completion": "Report is safe to share or gaps are listed."},
-    {"id": "finalize", "type": "overseer", "prompt": "Finalize report and add it to artifacts.", "completion": "Report artifact exists and is referenced."},
-    {"id": "cleanup", "type": "cleanup", "prompt": "Preserve final report and supporting evidence; remove only temporary draft scratch files created by this workflow.", "completion": "Cleanup status is recorded."}
+    {"id": "draft_report", "type": "delegate", "agent": "report_agent", "prompt": "Draft a technician-readable service report with issue, context, evidence, actions/tools used, verification, artifacts, cleanup status, residual risk, and follow-up. Use only evidence present in this run context: when session evidence is missing, say so explicitly and never invent commands, results, or artifacts. Redact secrets, credentials, keys, tokens, and unnecessary personal data as you write, because a cancelled run preserves this draft.", "expected_output": "service_report", "risk": "none", "completion": "Report draft is complete, carries no raw secrets, and marks every gap in the evidence it was given."},
+    {"id": "redaction_review", "type": "delegate", "agent": "critic_agent", "prompt": "Check for secrets, personal data, unsupported claims, missing evidence, and unclear next steps. Fail this review when a secret, a personal-data leak, or a claim without evidence is still present.", "expected_output": "report_review", "risk": "none", "completion": "Report is cleared for sharing, or the blocking secrets/unsupported claims are listed and the report is not finalized."},
+    {"id": "finalize", "type": "overseer", "condition": "redaction_review_succeeded", "prompt": "Finalize report and add it to artifacts.", "completion": "Report artifact exists and is referenced."},
+    {"id": "cleanup", "type": "cleanup", "always_run": true, "prompt": "Preserve final report and supporting evidence; remove only temporary draft scratch files created by this workflow.", "completion": "Cleanup status is recorded."}
   ],
   "acceptance_criteria": [
     "Report includes evidence and actions.",

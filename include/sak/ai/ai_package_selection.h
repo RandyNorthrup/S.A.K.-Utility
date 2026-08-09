@@ -12,6 +12,13 @@ namespace sak::ai {
 
 inline constexpr int kDefaultPackageCandidateLimit = 5;
 
+/// Hard input bounds for selectPackageForWorkflow. candidate_limit caps only the REPORTED
+/// candidates; these cap the work (and the retained source objects) an attacker-controlled
+/// search response can force. Over-sized input is REJECTED, never silently truncated -- a
+/// truncated scan could drop the package the user asked for and select a different one.
+inline constexpr qsizetype kMaxPackageQueryChars = 256;
+inline constexpr qsizetype kMaxPackagesConsidered = 500;
+
 struct AiPackageCandidate {
     QString package_id;
     QString version;
@@ -35,6 +42,10 @@ struct AiPackageSelectionResult {
     [[nodiscard]] QJsonObject toJson() const;
 };
 
+/// Case-folds a human package name/id and spells out symbols (++ # &) for comparison.
+/// LOSSY BY CONSTRUCTION: the remaining punctuation is removed, so "foo-bar" and "foobar"
+/// share a key. Selection therefore never treats a key match as authority on its own --
+/// two candidates sharing a key are reported ambiguous for a human to resolve.
 [[nodiscard]] QString normalizePackageQueryKey(const QString& value);
 
 [[nodiscard]] AiPackageSelectionResult selectPackageForWorkflow(

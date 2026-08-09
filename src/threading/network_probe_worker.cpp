@@ -41,13 +41,14 @@ NetworkProbeWorker::~NetworkProbeWorker() {
     // stack-local engine handles, so the cost is at worst a stranded resolver/loader lock;
     // bounding teardown is judged better than an unbounded hang on an unresponsive resolver.
     if (isRunning()) {
-        requestStop();
         m_tester.cancel();
         m_scanner.cancel();
-        if (!wait(kTimeoutThreadShutdownMs)) {
-            terminate();
-            wait(kTimeoutThreadTerminateMs);
-        }
+        // stopAndJoin() is the base's bounded, FAIL-CLOSED join: requestStop -> wait ->
+        // terminate -> wait, and std::abort() if even the post-terminate wait fails.
+        // Doing that sequence by hand here and IGNORING the second wait (as this dtor
+        // used to) returned into the very use-after-free the join exists to prevent:
+        // the engines and result members below are destroyed the moment this body ends.
+        stopAndJoin();
     }
 }
 
@@ -58,6 +59,15 @@ void NetworkProbeWorker::cancelExecution() {
 }
 
 auto NetworkProbeWorker::execute() -> std::expected<void, sak::error_code> {
+    // A cancel that lands BEFORE the engine is entered would otherwise be lost: every
+    // engine entry point resets its OWN cancel atomic (ConnectivityTester::ping/traceroute/
+    // mtr and PortScanner::scan all store(false) on entry), so the flag cancelExecution()
+    // set is cleared and the full probe runs against the target anyway. The WorkerBase stop
+    // flag cannot be reset that way, so it is the authoritative one to check here. run()
+    // sees the same flag and emits cancelled() rather than finished().
+    if (stopRequested()) {
+        return {};
+    }
     switch (m_kind) {
     case Kind::Ping:
         runPing();

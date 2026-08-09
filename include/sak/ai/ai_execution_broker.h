@@ -34,6 +34,10 @@ struct AiCommandRequest {
     int timeout_seconds{kAiCommandDefaultTimeoutSeconds};
     bool requires_admin{false};
     int max_output_bytes{kAiCommandDefaultMaxOutputBytes};
+    /// Typed rejection channel for the JSON parsers. Non-empty means the request was
+    /// malformed or out of domain; every entry point refuses it with this exact message
+    /// instead of executing a request that was repaired with defaults.
+    QString validation_error;
 };
 
 struct AiCommandResult {
@@ -47,6 +51,9 @@ struct AiCommandResult {
     QString stdout_text;
     QString stderr_text;
     QString error_message;
+    /// True when stdout/stderr were capped: the text above is NOT the complete output, so
+    /// a consumer must not read it as the whole run.
+    bool output_truncated{false};
 
     [[nodiscard]] QJsonObject toJson() const;
     [[nodiscard]] QString toJsonString() const;
@@ -116,6 +123,8 @@ Q_SIGNALS:
     void finished(const QString& command_id, const sak::ai::AiCommandResult& result);
 
 private:
+    bool runElevatedRequest(const AiCommandRequest& request);
+    void connectProcessSignals();
     bool launchProcess(const ProcessLaunchRequest& request);
 #ifdef _WIN32
     void assignProcessToJob();
@@ -127,10 +136,12 @@ private:
     void emitDeferredStandaloneFinish(const QString& command_id, AiCommandResult result);
     void onReadyReadStdout();
     void onReadyReadStderr();
+    void fillCappedOutput(AiCommandResult& result);
     void onProcessFinished(int exit_code, int exit_status);
     void onProcessError(int error);
+    void completeAsTimedOut();
     void onTimeoutTick();
-    void appendCapped(QString& target, const QString& chunk) const;
+    void appendCapped(QString& target, const QString& chunk);
 
     ElevatedRunner m_elevated_runner;
     ElevatedCancel m_elevated_cancel;
@@ -145,6 +156,12 @@ private:
     QElapsedTimer m_timer;
     QString m_stdout_buffer;
     QString m_stderr_buffer;
+    /// Bytes dropped from the head of the rolling buffers, so a capped run is never
+    /// reported as complete output.
+    qint64 m_output_dropped_bytes{0};
+    /// Bumped once per start* call. A deferred pre-launch failure carries the generation it
+    /// belongs to and refuses to touch broker state once a newer request owns it.
+    quint64 m_request_generation{0};
     bool m_running{false};
     bool m_cancel_requested{false};
     bool m_finished_emitted{false};

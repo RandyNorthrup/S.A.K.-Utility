@@ -10,6 +10,14 @@
 
 namespace sak {
 
+namespace {
+/// The zlib and bzip2 output capacities are 32-bit (avail_out is a uInt), so
+/// setOutput() TRUNCATES anything larger while read() would still credit the whole
+/// request as produced -- gigabytes of never-written buffer reported as decompressed
+/// bytes. Refuse such a request instead of silently clamping it.
+constexpr qint64 kMaxSingleReadBytes = 0xFF'FF'FF'FFLL;
+}  // namespace
+
 StreamingDecompressor::StreamingDecompressor(QObject* parent) : QObject(parent) {}
 
 StreamingDecompressor::~StreamingDecompressor() {
@@ -35,6 +43,7 @@ bool StreamingDecompressor::open(const QString& filePath) {
     m_decompressedBytesProduced = 0;
     m_eof = false;
     m_input_exhausted = false;
+    m_failed = false;
     m_initialized = true;
 
     logInfo("Opened {} file: {}", formatName().toStdString(), filePath.toStdString());
@@ -51,6 +60,7 @@ void StreamingDecompressor::close() {
     }
     m_eof = false;
     m_input_exhausted = false;
+    m_failed = false;
 }
 
 bool StreamingDecompressor::isOpen() const {
@@ -61,9 +71,17 @@ qint64 StreamingDecompressor::read(char* data, qint64 maxSize) {
     // setOutput() hands the buffer straight to the decoder, so a null buffer or a
     // negative size (which would widen to an enormous size_t) has to be refused
     // here; there is no later check between this point and the decoder writing.
-    if (data == nullptr || maxSize < 0) {
-        m_lastError = QStringLiteral("Invalid read buffer");
+    if (data == nullptr || maxSize <= 0 || maxSize > kMaxSingleReadBytes) {
+        m_lastError = QStringLiteral(
+            "Invalid read request: the buffer is null, the size is not positive, or it "
+            "exceeds the decoder's 32-bit output limit");
         logError(m_lastError.toStdString());
+        return -1;
+    }
+    if (m_failed) {
+        // Terminal: an earlier read hit a decode/read error or a truncated stream, which
+        // leaves the library stream in an undefined state. Refuse rather than decode
+        // against it -- and never return the 0 a caller would read as a clean EOF.
         return -1;
     }
     if (!isOpen()) {
@@ -77,6 +95,7 @@ qint64 StreamingDecompressor::read(char* data, qint64 maxSize) {
     setOutput(data, static_cast<size_t>(maxSize));
 
     if (!pumpDecoder()) {
+        m_failed = true;
         return -1;
     }
 

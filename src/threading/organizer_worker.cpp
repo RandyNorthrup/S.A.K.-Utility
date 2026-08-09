@@ -6,6 +6,7 @@
 
 #include "sak/organizer_worker.h"
 
+#include "sak/app_organizer_helpers.h"
 #include "sak/input_validator.h"
 #include "sak/logger.h"
 
@@ -17,7 +18,69 @@
 
 namespace {
 constexpr qsizetype kInitialFileReserveCount = 256;
+
+// The three policies handleCollision() actually implements. Anything else is a malformed
+// configuration: coercing it into the "rename" default would silently apply a policy the caller
+// never asked for (an "overwite" typo would quietly rename instead of overwriting).
+bool isKnownCollisionStrategy(const QString& strategy) {
+    return strategy == QLatin1String("rename") || strategy == QLatin1String("skip") ||
+           strategy == QLatin1String("overwrite");
 }
+
+// Fail closed on a configuration that cannot be applied as asked, BEFORE anything is scanned or
+// moved. Each of these was previously coerced into a working default: an unknown collision
+// strategy became "rename"; a category name became a path component that std::filesystem's
+// operator/ resolves OUTSIDE the target (an absolute name REPLACES the target, ".." walks out of
+// it, an empty one collapses the destination onto the source and renames the file in place); an
+// empty mapping ran to an empty "success"; and a negative preview cap silently meant "unlimited".
+// The AI organize/preview ops screen a model-supplied mapping the same way (app_organizer_helpers
+// .h) -- this is the independent worker-side layer that covers every other caller too.
+std::expected<void, sak::error_code> validateOrganizerConfig(
+    const OrganizerWorker::Config& config) {
+    if (config.category_mapping.isEmpty()) {
+        sak::logError("Organizer refused: the category mapping is empty");
+        return std::unexpected(sak::error_code::invalid_configuration);
+    }
+    for (auto it = config.category_mapping.begin(); it != config.category_mapping.end(); ++it) {
+        if (it.key().isEmpty() || !sak::isSafeCategoryName(it.key())) {
+            sak::logError("Organizer refused: category '{}' is not a valid subfolder name",
+                          it.key().toStdString());
+            return std::unexpected(sak::error_code::invalid_configuration);
+        }
+    }
+    if (!isKnownCollisionStrategy(config.collision_strategy)) {
+        sak::logError("Organizer refused: unknown collision strategy '{}'",
+                      config.collision_strategy.toStdString());
+        return std::unexpected(sak::error_code::invalid_configuration);
+    }
+    if (config.max_preview_files < 0) {
+        sak::logError("Organizer refused: negative preview cap {}", config.max_preview_files);
+        return std::unexpected(sak::error_code::invalid_configuration);
+    }
+    return {};
+}
+
+// Decide whether the target directory can serve THIS run. A preview is a pure dry run that writes
+// NOTHING, so it must not require write access -- otherwise a read-only inspection fails on
+// directories the user can fully read (notably folders carrying FILE_ATTRIBUTE_READONLY, which
+// Windows sets on many ordinary user folders and does not actually enforce for directories). An
+// apply still requires write permission.
+std::expected<void, sak::error_code> validateTargetDirectory(
+    const OrganizerWorker::Config& config) {
+    sak::path_validation_config dir_cfg;
+    dir_cfg.must_exist = true;
+    dir_cfg.must_be_directory = true;
+    dir_cfg.check_read_permission = true;
+    dir_cfg.check_write_permission = !config.preview_mode;
+    auto dir_result = sak::input_validator::validatePath(
+        std::filesystem::path(config.target_directory.toStdString()), dir_cfg);
+    if (!dir_result) {
+        sak::logError("Target directory validation failed: {}", dir_result.error_message);
+        return std::unexpected(sak::error_code::invalid_path);
+    }
+    return {};
+}
+}  // namespace
 
 // An empty target_directory is not asserted here: execute() validates the path (must_exist +
 // must_be_directory) and fails the run with invalid_path, which is the contract.
@@ -29,21 +92,15 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
     m_moved_count = 0;
     m_plan_truncated = false;
 
-    // Validate target directory path. A preview is a pure dry run that writes NOTHING, so it must
-    // not require write access -- otherwise a read-only inspection fails on directories the user
-    // can fully read (notably folders carrying FILE_ATTRIBUTE_READONLY, which Windows sets on many
-    // ordinary user folders and does not actually enforce for directories). An apply still requires
-    // write permission.
-    sak::path_validation_config dir_cfg;
-    dir_cfg.must_exist = true;
-    dir_cfg.must_be_directory = true;
-    dir_cfg.check_read_permission = true;
-    dir_cfg.check_write_permission = !m_config.preview_mode;
-    auto dir_result = sak::input_validator::validatePath(
-        std::filesystem::path(m_config.target_directory.toStdString()), dir_cfg);
-    if (!dir_result) {
-        sak::logError("Target directory validation failed: {}", dir_result.error_message);
-        return std::unexpected(sak::error_code::invalid_path);
+    // Refuse a malformed configuration before touching the filesystem (see
+    // validateOrganizerConfig): every field it screens used to fall back to a working default.
+    if (const auto config_ok = validateOrganizerConfig(m_config); !config_ok) {
+        return std::unexpected(config_ok.error());
+    }
+
+    // An apply needs a writable target; a preview deliberately does not.
+    if (const auto dir_ok = validateTargetDirectory(m_config); !dir_ok) {
+        return std::unexpected(dir_ok.error());
     }
 
     // Scan directory for files

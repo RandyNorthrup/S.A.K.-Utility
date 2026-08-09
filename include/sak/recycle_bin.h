@@ -19,11 +19,17 @@ namespace sak {
 [[nodiscard]] bool pathVolumeHasRecycleBin(const QString& path);
 
 /// Move @p path (a file or a whole directory tree) to the Windows Recycle Bin.
+/// @p path is resolved to an ABSOLUTE path first: SHFileOperationW ignores
+/// FOF_ALLOWUNDO when pFrom is not fully qualified (the item would be destroyed
+/// PERMANENTLY while this reported a recoverable recycle), and a relative spelling
+/// also races the process-wide current directory.
 /// Returns false when the shell refused or aborted the operation, and ALSO when
 /// @ref pathVolumeHasRecycleBin is false: on such a volume the shell would delete
 /// the item permanently, and a recycle request must never quietly become an
 /// unrecoverable delete. Callers surface that refusal so the user can ask for an
-/// explicit permanent delete instead.
-[[nodiscard]] bool sendPathToRecycleBin(const QString& path);
+/// explicit permanent delete instead. When @p error is non-null it receives the
+/// real reason for a false return (rejected input, unresolvable path, no Recycle
+/// Bin on the volume, or the shell's own error code) instead of a bare false.
+[[nodiscard]] bool sendPathToRecycleBin(const QString& path, QString* error = nullptr);
 
 }  // namespace sak

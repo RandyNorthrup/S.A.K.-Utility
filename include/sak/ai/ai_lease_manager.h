@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QMutex>
 #include <QString>
@@ -38,6 +39,12 @@ public:
         // Wall-clock instant after which the lease is treated as abandoned and
         // may be reclaimed (acquired_at_utc + TTL).
         QDateTime expires_at_utc;
+        // The same deadline on the manager's own STEADY clock, in milliseconds since the manager
+        // was constructed. expires_at_utc is wall-clock and therefore adjustable: a clock moved
+        // backward pushes it out of reach and would wedge every future mutating action behind an
+        // abandoned lease forever. This one only ever measures real elapsed time, so it can close
+        // that wedge without ever reclaiming a lease early.
+        qint64 monotonic_expiry_ms{0};
         bool exclusive{false};
     };
 
@@ -56,7 +63,11 @@ public:
                                         const QStringList& tool_scope,
                                         const QString& risk_level,
                                         bool exclusive);
-    void release(const QString& lease_id);
+    // Releases @p lease_id. Returns false when no such lease was held -- a wrong, blank or stale
+    // id (one the TTL sweep already reclaimed) must be distinguishable from a real release rather
+    // than reported as one. Lease ids carry an unguessable token so a release cannot be aimed at
+    // another agent's lease by counting.
+    bool release(const QString& lease_id);
 
     // Releases every lease whose expires_at_utc <= now_utc and returns the
     // reclaimed ids. acquire() calls this first; a periodic sweeper may call it
@@ -75,6 +86,8 @@ private:
     QHash<QString, Lease> m_active;
     quint64 m_next_id{1};
     qint64 m_ttl_seconds;
+    // Steady clock started at construction; the source of Lease::monotonic_expiry_ms.
+    QElapsedTimer m_clock;
 };
 
 }  // namespace sak::ai

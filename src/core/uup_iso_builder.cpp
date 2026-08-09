@@ -229,6 +229,17 @@ void UupIsoBuilder::cancel() {
         m_converterProcess->kill();
     }
 
+    // A killed process still delivers finished()/errorOccurred() from the event loop
+    // later. startBuild() clears m_cancelled, so a late signal belonging to THIS run
+    // would otherwise be handled as if it belonged to the NEXT one -- failing or
+    // finalizing a healthy restarted build. Cut both processes loose from this object.
+    if (m_aria2Process) {
+        m_aria2Process->disconnect(this);
+    }
+    if (m_converterProcess) {
+        m_converterProcess->disconnect(this);
+    }
+
     if (m_phase != Phase::Idle && m_phase != Phase::Completed) {
         m_phase = Phase::Failed;
         Q_EMIT phaseChanged(Phase::Failed, "Build cancelled by user");
@@ -343,6 +354,18 @@ void UupIsoBuilder::prepareWorkspace() {
     if (!workDir.mkpath("UUPs")) {
         m_phase = Phase::Failed;
         Q_EMIT buildError("Failed to create UUPs subdirectory in work directory");
+        return;
+    }
+
+    // mkpath() succeeds against an EXISTING junction (it resolves as a directory), so the
+    // check above is re-run on the settled paths: a redirection planted between the check
+    // and the create would otherwise aim the elevated download/cleanup out of TEMP.
+    if (isReparsePoint(m_workDir) || isReparsePoint(workDir.filePath("UUPs"))) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError(
+            QString("Work directory became a reparse point while being created; refusing to "
+                    "use it: %1")
+                .arg(m_workDir));
         return;
     }
 
@@ -906,6 +929,17 @@ bool UupIsoBuilder::ensureCleanConversionTempDir(const QString& conversionTempDi
         Q_EMIT buildError("Failed to create conversion temp directory: " + conversionTempDir);
         return false;
     }
+    // mkpath() accepts an existing junction as "already a directory", so re-check after
+    // the create: a redirection planted between the check above and this line would send
+    // the elevated converter's temp writes outside the workspace.
+    if (isReparsePoint(conversionTempDir)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError(
+            "Conversion temp directory became a reparse point while being "
+            "created; refusing to use it: " +
+            conversionTempDir);
+        return false;
+    }
     return true;
 }
 
@@ -1196,9 +1230,18 @@ QStringList UupIsoBuilder::missingFiles(const QList<UupDumpApi::FileInfo>& expec
     QStringList missing;
     const QDir dir(downloadDir);
     for (const auto& file : expected) {
+        // An unnamed expected entry cannot be checked at all, so it can never be counted
+        // as present (fail closed on malformed API metadata).
+        if (file.fileName.isEmpty()) {
+            missing.append(QStringLiteral("<unnamed UUP file entry>"));
+            continue;
+        }
         const QFileInfo info(dir.filePath(file.fileName));
-        // Absent, or shorter than the API-declared size (a truncated partial).
-        if (!info.exists() || (file.size > 0 && info.size() < file.size)) {
+        // Must be a real regular file (a directory or a planted link is not the payload),
+        // and must match the API-declared size EXACTLY when one was declared: a short file
+        // is a truncated partial, a long one is not the artifact aria2 was told to fetch.
+        if (!info.exists() || !info.isFile() || info.isSymLink() || info.isJunction() ||
+            (file.size > 0 && info.size() != file.size)) {
             missing.append(file.fileName);
         }
     }
@@ -1206,6 +1249,18 @@ QStringList UupIsoBuilder::missingFiles(const QList<UupDumpApi::FileInfo>& expec
 }
 
 bool UupIsoBuilder::replaceFinalIso(const QString& tempPath, const QString& finalPath) {
+    // Only a real regular file may be promoted, and only a real regular file may be
+    // replaced: a link/junction at either end would rename the redirection instead of the
+    // image (and would publish an attacker-chosen target as the finished ISO).
+    const QFileInfo tempInfo(tempPath);
+    if (!tempInfo.isFile() || tempInfo.isSymLink() || tempInfo.isJunction()) {
+        return false;
+    }
+    const QFileInfo finalInfo(finalPath);
+    if (finalInfo.exists() &&
+        (!finalInfo.isFile() || finalInfo.isSymLink() || finalInfo.isJunction())) {
+        return false;
+    }
     if (!QFile::exists(finalPath)) {
         return QFile::rename(tempPath, finalPath);
     }
@@ -1286,6 +1341,18 @@ void UupIsoBuilder::finalizeSuccessfulConversion() {
     if (!builtInfo.exists() || builtInfo.size() <= 0) {
         m_phase = Phase::Failed;
         Q_EMIT buildError(classifyConverterFailure());
+        return;
+    }
+
+    // clearStalePartialIso() checked this path before the converter ran; re-check the
+    // settled output, because a link planted at the predictable .partial name while the
+    // converter worked would otherwise be promoted as the finished image.
+    if (!builtInfo.isFile() || builtInfo.isSymLink() || builtInfo.isJunction()) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError(
+            "The converter output is not a regular file (reparse point or "
+            "directory); refusing to promote it: " +
+            m_converterOutputPath);
         return;
     }
 

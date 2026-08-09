@@ -75,10 +75,22 @@ function Copy-DirectoryExcludingBuildScratch([string]$SourceDirectory, [string]$
         New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
 
         Get-ChildItem -LiteralPath $current -File -Force | ForEach-Object {
+            if ($_.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+                throw "$Description contains a file reparse point: $($_.FullName)"
+            }
             Copy-Item -LiteralPath $_.FullName -Destination $targetDirectory -Force
         }
 
         Get-ChildItem -LiteralPath $current -Directory -Force | ForEach-Object {
+            # A junction or symlink here would copy files from outside the source tree, or
+            # loop forever through a cycle. A build output has no legitimate reparse
+            # points, so refuse instead of silently skipping (or following) one.
+            if ($_.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+                throw "$Description contains a directory reparse point: $($_.FullName)"
+            }
+            if (-not $_.FullName.StartsWith($sourceRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "$Description child escaped the source tree: $($_.FullName)"
+            }
             if ($_.Name -ne "_build") {
                 $stack.Push($_.FullName)
             }
@@ -88,9 +100,34 @@ function Copy-DirectoryExcludingBuildScratch([string]$SourceDirectory, [string]$
     Write-Host "  Bundled: $Description"
 }
 
-function Remove-PathIfExists([string]$Path) {
-    if (Test-Path -LiteralPath $Path) {
-        Remove-Item -LiteralPath $Path -Recurse -Force
+# $ExpectedType is required at every call site. A staged path that exists with the wrong
+# item type (a directory where the ZIP or checksum file is expected, or the reverse) means
+# the layout is not what this script believes it is -- refuse rather than recursively
+# deleting whatever happens to be sitting there.
+function Remove-PathIfExists([string]$Path, [string]$ExpectedType) {
+    if (@("Leaf", "Container") -notcontains $ExpectedType) {
+        throw "Remove-PathIfExists needs ExpectedType 'Leaf' or 'Container': $ExpectedType"
+    }
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType $ExpectedType)) {
+        throw "Refusing to remove '$Path': expected a $ExpectedType"
+    }
+    Remove-Item -LiteralPath $Path -Recurse -Force
+}
+
+# $ErrorActionPreference does not fail this script on a nonzero exit code coming out of a
+# child script or the native tools it drives, so a failed runtime bundle or a failed
+# dependency verification would otherwise fall through to "Package staged successfully".
+function Invoke-RequiredScript([string]$ScriptPath, [string[]]$ScriptArguments) {
+    if (-not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
+        throw "Required script missing: $ScriptPath"
+    }
+    $global:LASTEXITCODE = 0
+    & $ScriptPath @ScriptArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$([System.IO.Path]::GetFileName($ScriptPath)) failed with exit code $LASTEXITCODE"
     }
 }
 
@@ -100,16 +137,26 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 $repoRootPath = Resolve-RequiredPath $RepoRoot "Repository root"
 
+# $PackageName names one folder directly under the build root and is fed to a recursive
+# delete below. Anything but a single plain path segment -- a traversal segment, a
+# separator, a drive or a root -- could aim that delete outside $buildRoot, so reject it
+# here instead of canonicalizing something surprising into place.
+if ($PackageName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+    throw "PackageName must be a single plain name (letters, digits, '.', '_', '-'; no separators): $PackageName"
+}
+
 $packageRoot = Join-Path $buildRoot $PackageName
 $zipPath = Join-Path $buildRoot "$PackageName-Windows-x64.zip"
 $checksumPath = Join-Path $buildRoot "SHA256SUMS.txt"
 
-if (Test-Path -LiteralPath $packageRoot) {
-    Remove-Item -LiteralPath $packageRoot -Recurse -Force
-}
-Remove-PathIfExists $zipPath
-Remove-PathIfExists $checksumPath
+Remove-PathIfExists $packageRoot "Container"
+Remove-PathIfExists $zipPath "Leaf"
+Remove-PathIfExists $checksumPath "Leaf"
 New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+$packageRoot = (Resolve-Path -LiteralPath $packageRoot).Path
+if (-not $packageRoot.StartsWith($buildRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Staging root escaped the build directory: $packageRoot"
+}
 
 Write-Host "Staging portable release: $packageRoot"
 
@@ -133,12 +180,12 @@ foreach ($dir in $pluginDirs) {
     $source = Join-Path $buildRoot $dir
     if (Test-Path -LiteralPath $source -PathType Container) {
         Copy-Item -LiteralPath $source -Destination $packageRoot -Recurse -Force
-        $count = (Get-ChildItem -LiteralPath $source -Filter "*.dll" -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count
+        $count = (Get-ChildItem -LiteralPath $source -Filter "*.dll" -Recurse -ErrorAction Stop | Measure-Object).Count
         Write-Host "  Bundled: $dir/ ($count plugins)"
     }
 }
 
-$qtDlls = Get-ChildItem -LiteralPath $buildRoot -Filter "Qt6*.dll" -File -ErrorAction SilentlyContinue |
+$qtDlls = Get-ChildItem -LiteralPath $buildRoot -Filter "Qt6*.dll" -File -ErrorAction Stop |
     Where-Object { $_.Name -ne "Qt6Test.dll" }
 foreach ($dll in $qtDlls) {
     Copy-Item -LiteralPath $dll.FullName -Destination $packageRoot -Force
@@ -150,14 +197,15 @@ foreach ($dllName in @("opengl32sw.dll", "D3Dcompiler_47.dll")) {
 }
 
 foreach ($pattern in @("vcruntime*.dll", "msvcp*.dll", "concrt*.dll")) {
-    Get-ChildItem -LiteralPath $buildRoot -Filter $pattern -File -ErrorAction SilentlyContinue |
+    Get-ChildItem -LiteralPath $buildRoot -Filter $pattern -File -ErrorAction Stop |
         ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination $packageRoot -Force
             Write-Host "  Bundled: $($_.Name)"
         }
 }
 
-& (Join-Path $repoRootPath "scripts/bundle_vcpkg_runtime.ps1") -DestinationPath $packageRoot
+Invoke-RequiredScript (Join-Path $repoRootPath "scripts/bundle_vcpkg_runtime.ps1") `
+    @("-DestinationPath", $packageRoot)
 
 $toolsSource = Join-Path $buildRoot "tools"
 if (-not (Test-Path -LiteralPath $toolsSource -PathType Container)) {
@@ -166,15 +214,17 @@ if (-not (Test-Path -LiteralPath $toolsSource -PathType Container)) {
 Copy-DirectoryExcludingBuildScratch $toolsSource (Join-Path $packageRoot "tools") "tools/"
 
 $toolsRoot = Join-Path $packageRoot "tools"
-Remove-PathIfExists (Join-Path $toolsRoot "mcp/_build")
-Remove-PathIfExists (Join-Path $toolsRoot "filesystem/_build")
-Get-ChildItem -LiteralPath $toolsRoot -Recurse -Filter "*.local.json" -ErrorAction SilentlyContinue |
+Remove-PathIfExists (Join-Path $toolsRoot "mcp/_build") "Container"
+Remove-PathIfExists (Join-Path $toolsRoot "filesystem/_build") "Container"
+# A suppressed enumeration error here would read as "no machine-local configs found" and
+# ship them; let the failure surface instead.
+Get-ChildItem -LiteralPath $toolsRoot -Recurse -Filter "*.local.json" -ErrorAction Stop |
     Remove-Item -Force
 
 $chocoPath = Join-Path $toolsRoot "chocolatey"
 if (Test-Path -LiteralPath $chocoPath -PathType Container) {
     foreach ($sub in @("lib-bad", "cache", "temp")) {
-        Remove-PathIfExists (Join-Path $chocoPath $sub)
+        Remove-PathIfExists (Join-Path $chocoPath $sub) "Container"
     }
     foreach ($sub in @("lib", ".chocolatey", "logs")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $chocoPath $sub) | Out-Null
@@ -189,7 +239,7 @@ Copy-RequiredDirectoryContents `
     (Join-Path $buildRoot "data/ai/app_manifests") `
     (Join-Path $packageRoot "data/ai/app_manifests") `
     "data/ai/app_manifests"
-Get-ChildItem -LiteralPath (Join-Path $packageRoot "data/ai") -Recurse -Filter "*.local.json" -ErrorAction SilentlyContinue |
+Get-ChildItem -LiteralPath (Join-Path $packageRoot "data/ai") -Recurse -Filter "*.local.json" -ErrorAction Stop |
     Remove-Item -Force
 
 Copy-RequiredFile (Join-Path $repoRootPath "README.md") $packageRoot
@@ -199,7 +249,7 @@ Copy-RequiredFile (Join-Path $repoRootPath "THIRD_PARTY_LICENSES.md") $packageRo
 New-Item -ItemType File -Path (Join-Path $packageRoot "portable.ini") -Force | Out-Null
 
 foreach ($relativePath in @("data/ai_sessions", "data/temp", "data/logs", "_logs")) {
-    Remove-PathIfExists (Join-Path $packageRoot $relativePath)
+    Remove-PathIfExists (Join-Path $packageRoot $relativePath) "Container"
 }
 
 $critical = @(
@@ -220,12 +270,32 @@ if ($missing) {
     throw "Critical files missing from staged package: $($missing -join ', ')"
 }
 
-$localFiles = Get-ChildItem -LiteralPath $packageRoot -Recurse -Filter "*.local.json" -ErrorAction SilentlyContinue
+# Existence is not integrity: a zero-byte or truncated manifest passes a Test-Path check
+# and then fails at runtime on the technician's machine. Parse the critical configs here.
+foreach ($criticalJson in ($critical | Where-Object { $_.EndsWith(".json") })) {
+    $criticalJsonPath = Join-Path $packageRoot $criticalJson
+    $criticalJsonText = Get-Content -LiteralPath $criticalJsonPath -Raw -ErrorAction Stop
+    if ([string]::IsNullOrWhiteSpace($criticalJsonText)) {
+        throw "Critical config is empty in staged package: $criticalJson"
+    }
+    try {
+        $criticalJsonObject = $criticalJsonText | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "Critical config is not valid JSON in staged package: $criticalJson ($($_.Exception.Message))"
+    }
+    if ($null -eq $criticalJsonObject) {
+        throw "Critical config parsed to nothing in staged package: $criticalJson"
+    }
+}
+
+$localFiles = Get-ChildItem -LiteralPath $packageRoot -Recurse -Filter "*.local.json" -ErrorAction Stop
 if ($localFiles) {
     throw "Local provider/app config leaked into package: $($localFiles[0].FullName)"
 }
 
-& (Join-Path $repoRootPath "scripts/verify_windows_runtime_dependencies.ps1") -RootDir $packageRoot -PrimaryExe "sak_utility.exe"
+Invoke-RequiredScript (Join-Path $repoRootPath "scripts/verify_windows_runtime_dependencies.ps1") `
+    @("-RootDir", $packageRoot, "-PrimaryExe", "sak_utility.exe")
 
 $files = Get-ChildItem -LiteralPath $packageRoot -Recurse -File
 $totalSize = ($files | Measure-Object -Property Length -Sum).Sum

@@ -46,6 +46,29 @@ bool resolveReadOnlyProfile(const QString& raw) {
     return true;
 }
 
+// Resolve output redaction from its env token, on the same fail-closed rule as the profile above:
+// an UNSET/empty token keeps the documented no-redaction default (a server started outside the
+// gateway, and every pure unit test); "true"/"false" mean what they say; and ANY OTHER non-empty
+// token is an operator typo that MUST fail CLOSED to redaction rather than silently shipping raw
+// tool output to the model.
+bool resolveRedactSensitiveOutput(const QString& raw) {
+    const QString token = raw.trimmed().toLower();
+    if (token.isEmpty()) {
+        return false;  // unset: the documented, intended no-redaction default
+    }
+    if (token == QLatin1String("true")) {
+        return true;
+    }
+    if (token == QLatin1String("false")) {
+        return false;
+    }
+    qWarning(
+        "WIN32_MCP_REDACT_SENSITIVE_OUTPUT='%s' is not a recognized value; failing closed to "
+        "redacting.",
+        qUtf8Printable(raw));
+    return true;
+}
+
 QJsonObject resultResponse(const QJsonValue& id, const QJsonObject& result) {
     return QJsonObject{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
                        {QStringLiteral("id"), id},
@@ -257,9 +280,8 @@ Win32McpServerPolicy Win32McpServerPolicy::fromEnvironment() {
     Win32McpServerPolicy policy;
     policy.read_only_profile =
         resolveReadOnlyProfile(env.value(QStringLiteral("WIN32_MCP_SECURITY_PROFILE")));
-    policy.redact_sensitive_output =
-        env.value(QStringLiteral("WIN32_MCP_REDACT_SENSITIVE_OUTPUT")).trimmed().toLower() ==
-        QLatin1String("true");
+    policy.redact_sensitive_output = resolveRedactSensitiveOutput(
+        env.value(QStringLiteral("WIN32_MCP_REDACT_SENSITIVE_OUTPUT")));
     return policy;
 }
 

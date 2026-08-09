@@ -27,7 +27,11 @@ class ElevationBroker;
  * - Logging and error handling
  * - Progress aggregation
  *
- * Thread-Safety: Thread-safe for action submission
+ * Thread-Safety: NOT internally synchronized. Every member below (the owned action vector,
+ * the lookup hash, both queues, the current-action pointers and the worker-thread pointers)
+ * is plain data owned by the controller's own thread; the workers only run QuickAction code
+ * that was moved onto them. Call the public slots from another thread ONLY through a queued
+ * connection or QMetaObject::invokeMethod, so the body still runs on the controller's thread.
  */
 class QuickActionController : public QObject {
     Q_OBJECT
@@ -151,7 +155,10 @@ public Q_SLOTS:
     /**
      * @brief Execute action asynchronously
      * @param action_name Action identifier
-     * @param require_confirmation If true, emit signal for confirmation first
+     * @param require_confirmation When true the request is REFUSED and logged: this
+     *        controller owns no confirmation channel (no confirmation signal, no approval
+     *        token), so it fails closed rather than run a still-unconfirmed action. Obtain
+     *        the user's confirmation in the caller, then request with false.
      */
     void executeAction(const QString& action_name, bool require_confirmation = true);
 

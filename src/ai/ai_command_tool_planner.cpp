@@ -15,6 +15,9 @@ namespace sak::ai {
 
 namespace {
 
+// Cap on how much of a rejected tool name is echoed back in the refusal message.
+constexpr int kToolNameErrorMaxChars = 64;
+
 bool isControlChar(QChar ch) {
     return ch.unicode() < 0x20 || ch.unicode() == 0x7f;
 }
@@ -88,6 +91,13 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
                                                   AiToolPolicy policy,
                                                   Options options) {
     AiCommandToolPlan plan;
+    // The command tools are a CLOSED set of EXACT names. The router (and every policy
+    // helper) matches tool names case- and whitespace-insensitively, so a variant such as
+    // "RUN_POWERSHELL" is authorized as a shell tool; letting it fall through to the
+    // process branch here would parse and launch a model-supplied executable instead of
+    // the shell that was authorized. Anything that is not one of the three canonical
+    // names is refused outright.
+    bool direct_process = false;
     if (tool_name == QLatin1String("run_powershell")) {
         plan.request = ExecutionBroker::requestFromJson(args);
         plan.shell_label = QStringLiteral("PowerShell");
@@ -96,14 +106,40 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
         plan.request = ExecutionBroker::requestFromJson(args);
         plan.shell_label = QStringLiteral("cmd.exe");
         plan.preview = plan.request.command;
-    } else {
+    } else if (tool_name == QLatin1String("run_process")) {
+        direct_process = true;
         plan.request = ExecutionBroker::processRequestFromJson(args);
         plan.shell_label = QStringLiteral("Process");
         plan.preview = buildProcessPreview(plan.request.program, plan.request.arguments);
+    } else {
+        plan.shell_label = QStringLiteral("Process");
+        plan.risky_change = true;
+        plan.request.validation_error =
+            QStringLiteral("Unsupported command tool: %1")
+                .arg(sanitizeForPreview(tool_name.left(kToolNameErrorMaxChars)));
+        plan.guard_block_error = plan.request.validation_error;
+        plan.policy_request.tool_name = tool_name;
+        return plan;  // policy_decision stays default-denied.
     }
 
     plan.request.max_output_bytes = options.max_output_bytes;
-    plan.risky_change = isPotentiallyDestructiveCommand(plan.request, plan.preview);
+    // A direct process launch is an arbitrary executable: its effect lives in the binary,
+    // not in any text the risk classifier can read, so a launch can never be PROVEN
+    // non-destructive. Fail closed and treat every direct launch as a risky change; the
+    // shell branches keep their text classification.
+    plan.risky_change = direct_process ||
+                        isPotentiallyDestructiveCommand(plan.request, plan.preview);
+
+    // Malformed / wrong-typed / out-of-domain arguments are rejected HERE rather than
+    // repaired into defaults and carried through the confirmation, lease, and launch path
+    // only to be refused at the broker's entry point.
+    if (!plan.request.validation_error.isEmpty()) {
+        plan.guard_block_error = plan.request.validation_error;
+        plan.policy_request.tool_name = tool_name;
+        plan.policy_request.command_preview = plan.preview;
+        plan.policy_request.requires_admin = plan.request.requires_admin;
+        return plan;  // policy_decision stays default-denied.
+    }
 
     const AiCommandGuardResult guard = evaluateCommandGuard(plan.request, plan.preview);
     plan.guard_block_error = guard.block_error;

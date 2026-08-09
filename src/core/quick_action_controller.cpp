@@ -3,6 +3,7 @@
 
 #include "sak/quick_action_controller.h"
 
+#include "sak/app_action_guards.h"
 #include "sak/app_paths.h"
 #include "sak/elevation_broker.h"
 #include "sak/elevation_manager.h"
@@ -131,7 +132,29 @@ void QuickActionController::setLoggingEnabled(bool enabled) {
 }
 
 void QuickActionController::setBackupLocation(const QString& backup_location) {
-    m_backup_location = backup_location;
+    const QString candidate = backup_location.trimmed();
+    if (candidate.isEmpty()) {
+        // Explicit reset: buildElevatedActionPayload then uses the built-in default.
+        m_backup_location.clear();
+        return;
+    }
+
+    // Fail closed: this string is handed to the ELEVATED helper as the BitLocker key backup
+    // destination. A relative path (resolved against a mutable CWD), a UNC/device literal or
+    // a path reached through a symlink/junction is REFUSED here rather than stored and then
+    // written to with administrator rights. The setter cannot report failure, so refusing
+    // (and saying so on logMessage) is the only fail-closed answer.
+    if (!QDir::isAbsolutePath(candidate) || isNetworkOrDevicePath(candidate) ||
+        pathReparseUnsafe(candidate)) {
+        sak::logWarning("Rejected quick-action backup location: {}", candidate.toStdString());
+        Q_EMIT logMessage(
+            QStringLiteral(
+                "Rejected backup location (needs an absolute local path with no links): %1")
+                .arg(candidate));
+        return;
+    }
+
+    m_backup_location = candidate;
 }
 
 QString QuickActionController::registerAction(std::unique_ptr<QuickAction> action) {
@@ -230,6 +253,18 @@ void QuickActionController::scanAction(const QString& action_name) {
 }
 
 void QuickActionController::executeAction(const QString& action_name, bool require_confirmation) {
+    // Fail closed: this controller has no confirmation channel, so a request that still needs
+    // confirmation must NOT run. Ignoring the flag (as this did) executed a destructive action
+    // unconfirmed. The caller confirms with the user and re-requests with false. Checked
+    // BEFORE the elevation branch so an admin action cannot slip past it either.
+    if (require_confirmation) {
+        Q_EMIT logMessage(
+            QStringLiteral("Refused unconfirmed execution request for '%1': confirm the action "
+                           "first, then request execution with require_confirmation = false")
+                .arg(action_name));
+        return;
+    }
+
     QuickAction* action = getAction(action_name);
     if (!action) {
         Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
@@ -249,9 +284,6 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
         Q_EMIT logMessage(QString("Action queued: %1").arg(action_name));
         return;
     }
-
-    // Confirmation handled by panel if required
-    Q_UNUSED(require_confirmation)
 
     startExecutionWorker(action);
 }

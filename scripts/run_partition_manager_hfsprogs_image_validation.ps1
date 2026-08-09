@@ -50,9 +50,16 @@ function New-ImageFile([string]$Path, [int64]$LengthBytes) {
 }
 
 function Resolve-ToolPath([string]$Root, [string]$RelativePath) {
-    $sourcePath = Join-Path (Join-Path $Root "tools\filesystem") $RelativePath
+    $bundleRoot = Join-Path $Root "tools\filesystem"
+    $sourcePath = Join-Path $bundleRoot $RelativePath
     if (Test-Path -LiteralPath $sourcePath -PathType Leaf) {
         return (Resolve-Path -LiteralPath $sourcePath).Path
+    }
+    # Fail closed: a bundle that EXISTS but is missing this tool must never silently downgrade
+    # to a build-output copy -- the gate would then certify a different artifact than the one
+    # that ships. The build\Release location stays available only for a tree with no bundle yet.
+    if (Test-Path -LiteralPath $bundleRoot -PathType Container) {
+        throw "Bundled filesystem tool missing from tools\filesystem: $RelativePath"
     }
     $buildPath = Join-Path (Join-Path $Root "build\Release\tools\filesystem") $RelativePath
     if (Test-Path -LiteralPath $buildPath -PathType Leaf) {
@@ -177,6 +184,11 @@ function Invoke-HfsImageCase(
         $case.repair_retry = Invoke-CapturedProcess -FilePath $FsckHfs -Arguments @("-p", "-f", $ImagePath) -AllowedExitCodes @(0)
         $case.post_repair_check_read_only = Invoke-CapturedProcess -FilePath $FsckHfs -Arguments @("-n", "-f", $ImagePath) -AllowedExitCodes @(0)
     }
+    # State the invariant instead of leaving it to the allowed-exit-code tables above: the
+    # HFSX tolerance of exit 8 covers the KNOWN newfs quirk on the earlier steps only, and a
+    # case may never be marked Passed unless the final read-only check came back clean.
+    Assert-Condition -Condition ($case.post_repair_check_read_only.exit_code -eq 0) `
+        -Message "$CaseName post-repair consistency check did not reach a clean exit code"
     $case.probe = Invoke-CapturedProcess -FilePath $ProbeCertifier -Arguments @(
         "--input", $ImagePath,
         "--output", $ReportPath,
@@ -185,9 +197,12 @@ function Invoke-HfsImageCase(
     ) -AllowedExitCodes @(0)
 
     $probeReport = Read-Json -Path $ReportPath
-    Assert-Condition -Condition ($probeReport.detected_file_system -eq $ExpectedFileSystem) `
+    # Fail closed on the EXACT string. A PowerShell collection comparison such as
+    # @("HFS+","bogus") -eq "HFS+" returns the matching element, which [bool]$Condition then
+    # coerces to $true -- so malformed or wrong-typed probe evidence would satisfy this gate.
+    Assert-Condition -Condition (($probeReport.detected_file_system -is [string]) -and ($probeReport.detected_file_system -ceq $ExpectedFileSystem)) `
         -Message "$CaseName probe detected '$($probeReport.detected_file_system)', expected '$ExpectedFileSystem'"
-    Assert-Condition -Condition ($probeReport.hfs_check.status -eq "Passed") `
+    Assert-Condition -Condition (($null -ne $probeReport.hfs_check) -and ($probeReport.hfs_check.status -is [string]) -and ($probeReport.hfs_check.status -ceq "Passed")) `
         -Message "$CaseName HFS consistency proof did not pass"
 
     $case.detected_file_system = $probeReport.detected_file_system
@@ -196,8 +211,27 @@ function Invoke-HfsImageCase(
 }
 
 $repo = (Resolve-Path -LiteralPath $ProjectRoot).Path
-$outputRootPath = Join-Path $repo $OutputRoot
+# Fail closed: pin the tool tree to THIS script's own repository. Without it a caller-supplied
+# -ProjectRoot could name any directory that merely mimics the layout, and this gate would run
+# -- and then hash-attest -- three attacker-chosen executables.
+Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) `
+    -Message "Cannot verify the project root: this script's own path is unknown."
+$repoPrefix = $repo.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+Assert-Condition -Condition ($PSCommandPath.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) `
+    -Message "ProjectRoot '$repo' does not contain this script; refusing to run tools from an unrelated tree."
+
+# The output root is deleted -Recurse -Force below, so it must canonically be a STRICT
+# descendant of the project root: "." or ".." would otherwise delete the repository or its
+# parent, and a junction here would delete through the link.
+$outputRootPath = [System.IO.Path]::GetFullPath((Join-Path $repo $OutputRoot))
+Assert-Condition -Condition ($outputRootPath.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) `
+    -Message "OutputRoot must stay inside the project root: $OutputRoot"
 if (Test-Path -LiteralPath $outputRootPath) {
+    $existingOutputRoot = Get-Item -LiteralPath $outputRootPath -Force
+    Assert-Condition -Condition ($existingOutputRoot.PSIsContainer) `
+        -Message "OutputRoot exists and is not a directory: $outputRootPath"
+    Assert-Condition -Condition (-not ($existingOutputRoot.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) `
+        -Message "OutputRoot is a reparse point; refusing to delete through a link: $outputRootPath"
     Remove-Item -LiteralPath $outputRootPath -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $outputRootPath | Out-Null

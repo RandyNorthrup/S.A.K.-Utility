@@ -82,6 +82,10 @@ protected:
     auto execute() -> std::expected<void, sak::error_code> override;
 
 private:
+    // Fail closed on an incompletely specified batch before anything is staged or written: a
+    // blank directory, an unsafe zip name, or an empty payload list is refused with a blocker
+    // instead of being run as a zero-work success. See the .cpp for what each default did.
+    [[nodiscard]] bool requestIsWellFormed();
     void runCompress();
     [[nodiscard]] QStringList collectCompressSources(const QString& staging_dir);
     // Stage all sources, then fail closed (empty result + blocker) if any could
@@ -90,6 +94,13 @@ private:
     void runExtract();
     [[nodiscard]] bool extractOne(const FileExplorerArchiveExtractItem& archive,
                                   const QString& staging_dir);
+    // Refuses a dialog destination that is not an existing absolute host folder, so the
+    // extraction can never land against the process working directory.
+    [[nodiscard]] bool extractToDialogDestination(const FileExplorerArchiveExtractItem& archive,
+                                                  const QString& host_zip);
+    // True when the archive gets its own "{stem}" folder rather than extracting in place.
+    [[nodiscard]] bool wrapsInStemFolder(const QString& host_zip) const;
+    [[nodiscard]] bool extractLocalArchive(const QString& host_zip, const QString& wrap_name);
     [[nodiscard]] bool extractRawArchive(const QString& host_zip, const QString& wrap_name);
     [[nodiscard]] bool deliverTree(const QString& host_out_dir, const QString& wrap_name);
     [[nodiscard]] bool deliverFlattened(const QString& host_out_dir);

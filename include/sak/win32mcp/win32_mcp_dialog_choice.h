@@ -19,12 +19,14 @@ struct DialogButton {
 };
 
 // One control from a UIA walk, as seen by collectButtons. `role` is the friendly control-type name
-// (only "button" is a candidate); enabled/offscreen gate whether it can be invoked.
+// (only "button" is a candidate); enabled/offscreen gate whether it can be invoked. BOTH gates
+// default to the NON-invokable state: a walk that could not read a property must never leave a
+// candidate looking pressable, so the reader has to state enabled/on-screen explicitly.
 struct ButtonNode {
     QString role;
     QString name;
-    bool enabled{true};
-    bool offscreen{false};
+    bool enabled{false};
+    bool offscreen{true};
 };
 
 // Select the invokable candidates from a walked control list: the enabled, on-screen buttons, each
@@ -35,16 +37,21 @@ QVector<DialogButton> collectButtons(const QVector<ButtonNode>& nodes);
 // Choose which button dismiss_dialog should invoke, given the enabled/on-screen candidates.
 //
 // Selection order:
-//   1. explicit_button non-empty  -> first candidate whose name contains it (case-insensitive).
+//   1. explicit_button non-empty  -> the candidate whose name equals it (case-insensitive), else
+//                                    the ONE candidate whose name contains it; two or more
+//                                    containing candidates is ambiguous and is refused.
 //   2. otherwise                  -> the best-ranked affirmative caption (OK/Close/Continue/...),
 //                                    exact match beating a substring match; NEVER Cancel/No/Quit/
 //                                    Delete or any caption not on the affirmative list.
 //   3. otherwise, a single candidate -> that lone button (an unambiguous one-button dialog, invoked
-//                                    even when it is nameless -- the custom-drawn OK case).
+//                                    even when it is nameless -- the custom-drawn OK case), UNLESS
+//                                    its caption carries a destructive or negative verb, which must
+//                                    be named through explicit_button rather than auto-pressed.
 //
 // Returns the winning candidate's element_index, or -1 with `why` set to a caller-surfaceable
-// explanation (empty candidate set, no explicit match, or an ambiguous set with no affirmative --
-// in which case `why` lists the candidate captions so the caller can retry with explicit_button).
+// explanation (empty candidate set, a candidate carrying no valid element_index, no explicit match
+// or an ambiguous one, a lone destructive button, or an ambiguous set with no affirmative -- in
+// which case `why` lists the candidate captions so the caller can retry with explicit_button).
 int chooseDialogButton(const QVector<DialogButton>& buttons,
                        const QString& explicit_button,
                        QString& why);

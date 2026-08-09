@@ -43,9 +43,23 @@ namespace sak {
 /// any following stat, and a reparse point is refused (fail closed -- an on-box symlink target is
 /// still refused, but a headless op has no need to follow one).
 [[nodiscard]] inline bool pathIsReparsePoint(const QFileInfo& info) {
-    return info.isSymLink() || info.isJunction();
+    // QFileInfo CACHES its metadata at the first query, so a caller-supplied info can answer
+    // from a snapshot taken before the path was swapped for a link. Re-stat a copy so this
+    // screen always reads the CURRENT attributes (refreshing a never-queried QFileInfo costs
+    // nothing -- it only drops a cache that has not been filled yet).
+    QFileInfo fresh(info);
+    fresh.refresh();
+    return fresh.isSymLink() || fresh.isJunction();
 }
+/// True if @p path must be REFUSED: it is a reparse point, or it is a literal that cannot be
+/// screened safely at all (empty/blank, or UNC/device). The literal rejection happens BEFORE
+/// the QFileInfo query on purpose: even an attribute read on \\host\share performs the
+/// SMB/NTLM handshake this module exists to prevent, so no caller may reach the filesystem
+/// through this helper with such a path, whether or not it screened the literal itself.
 [[nodiscard]] inline bool pathIsReparsePoint(const QString& path) {
+    if (path.trimmed().isEmpty() || isNetworkOrDevicePath(path)) {
+        return true;
+    }
     return pathIsReparsePoint(QFileInfo(path));
 }
 
@@ -66,7 +80,18 @@ namespace sak {
 /// ".." without following links, so a cleaned ancestor set matches what CreateFile will actually
 /// traverse).
 [[nodiscard]] inline bool pathHasReparsePointAncestor(const QString& path) {
+    // Fail closed on a literal that cannot be screened, BEFORE any filesystem query: an empty
+    // path has no ancestors to prove clean (reporting it "safe" would be fail-open), and a
+    // UNC/device literal would make the walk below stat \\host\share itself.
+    if (path.trimmed().isEmpty() || isNetworkOrDevicePath(path)) {
+        return true;
+    }
     const QString absolute = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    // A relative input resolves through the process CWD, which can itself be a UNC root --
+    // re-screen the RESOLVED form before the attribute walk traverses it.
+    if (absolute.isEmpty() || isNetworkOrDevicePath(absolute)) {
+        return true;
+    }
     const QStringList parts = absolute.split(QLatin1Char('/'), Qt::SkipEmptyParts);
     const bool absoluteRoot = absolute.startsWith(QLatin1Char('/'));
     QString prefix;
@@ -100,7 +125,14 @@ namespace sak {
 /// (it reads each ancestor's own attribute root->leaf without following) so a bad ancestor is
 /// refused WITHOUT ever statting the leaf; the leaf stat runs only once every ancestor is proven
 /// clean, so it traverses only safe components.
+///
+/// This is also the single entrypoint that performs the LITERAL rejection (empty/blank,
+/// UNC/device) before any filesystem query, so a caller that reaches here without screening
+/// the literal itself still cannot trigger a UNC stat.
 [[nodiscard]] inline bool pathReparseUnsafe(const QString& path) {
+    if (path.trimmed().isEmpty() || isNetworkOrDevicePath(path)) {
+        return true;
+    }
     return pathHasReparsePointAncestor(path) || pathIsReparsePoint(path);
 }
 
