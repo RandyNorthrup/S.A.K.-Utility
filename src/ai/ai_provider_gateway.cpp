@@ -669,7 +669,7 @@ QJsonObject jsonFailure(QString* error_message, const QString& reason) {
 
 // Non-empty when a call plan cannot be executed as given. Checked on every call because a
 // plan is a plain struct that a caller could have assembled by hand.
-QString win32McpPlanError(const Win32McpCallPlan& plan) {
+QString win32McpPlanError(const AiProviderGateway::Win32McpCallPlan& plan) {
     if (plan.provider.isEmpty() || plan.tool_name.trimmed().isEmpty()) {
         return QStringLiteral("Win32 MCP call plan is incomplete");
     }
