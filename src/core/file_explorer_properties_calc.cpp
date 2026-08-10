@@ -71,12 +71,22 @@ TreeSizeResult treeSize(const DirectoryLister& list,
     // mistaken for a truncated one: only MORE entries than the cap means the
     // listing was cut short. Previously an exact-cap directory was always marked
     // incomplete even when it was whole (B8-24).
-    const int probe_cap = max_entries_per_directory > 0 ? max_entries_per_directory + 1
-                                                        : max_entries_per_directory;
+    // Guard the +1 against signed-int overflow (UB) when the cap is INT_MAX.
+    const bool has_entry_cap = max_entries_per_directory > 0;
+    const bool cap_has_headroom = max_entries_per_directory < std::numeric_limits<int>::max();
+    const int probe_cap = (has_entry_cap && cap_has_headroom) ? max_entries_per_directory + 1
+                                                              : max_entries_per_directory;
     const FileManagementListResult listing = list(path, probe_cap);
     if (!listing.ok) {
         result.complete = false;
         return result;
+    }
+    if (!listing.blockers.isEmpty() || !listing.warnings.isEmpty()) {
+        // An ok listing that still surfaced a blocker or warning enumerated only part of
+        // the directory (a skipped/undecodable entry on a foreign file system, a
+        // truncated read). The byte total is then a lower bound, so mark it incomplete
+        // rather than report a partial count as clean.
+        result.complete = false;
     }
     if (max_entries_per_directory > 0 && listing.entries.size() > max_entries_per_directory) {
         result.complete = false;

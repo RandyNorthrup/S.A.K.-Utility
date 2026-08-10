@@ -28,6 +28,10 @@ namespace sak {
 
 namespace {
 constexpr double kAutoSelectConfidenceThreshold = 0.8;
+// Hard cap on a report JSON read from disk before it is parsed wholesale into a
+// DOM. Even thousands of apps are a few MiB, so 16 MiB is generous while bounding
+// a hostile/oversized file (self-DoS via readAll on an attacker-planted report).
+constexpr qint64 kMaxImportBytes = 16LL * 1024 * 1024;
 constexpr int kConfidenceCsvPrecision = 2;
 constexpr int kMatchRateDisplayPrecision = 1;
 constexpr int kConfidencePercentPrecision = 0;
@@ -316,6 +320,13 @@ bool MigrationReport::importFromJson(const QString& file_path) {
         return false;
     }
 
+    const qint64 size = file.size();
+    if (size < 0 || size > kMaxImportBytes) {
+        sak::logWarning("[MigrationReport] Report file too large or unreadable: {}",
+                        file_path.toStdString());
+        return false;
+    }
+
     QByteArray data = file.readAll();
     file.close();
 
@@ -353,10 +364,16 @@ bool MigrationReport::importFromJson(const QString& file_path) {
 
     std::vector<MigrationEntry> parsed;
     const QJsonArray entries = root["entries"].toArray();
-    std::transform(entries.begin(),
-                   entries.end(),
-                   std::back_inserter(parsed),
-                   [](const QJsonValue& val) { return parseEntryFromJson(val.toObject()); });
+    parsed.reserve(static_cast<size_t>(entries.size()));
+    for (const QJsonValue& val : entries) {
+        // A non-object entry is malformed. Reject the whole import (fail closed)
+        // rather than silently committing a blank record from val.toObject() == {}.
+        if (!val.isObject()) {
+            sak::logWarning("[MigrationReport] Non-object entry in 'entries'; import rejected");
+            return false;
+        }
+        parsed.push_back(parseEntryFromJson(val.toObject()));
+    }
 
     // Atomic commit: the report is only updated once everything parsed cleanly.
     m_metadata = meta;
@@ -481,7 +498,8 @@ QString MigrationReport::escapeCsvField(const QString& field) {
     if (!value.isEmpty() && QString("=+-@\t\r").contains(value.at(0))) {
         value.prepend('\'');
     }
-    if (value.contains(',') || value.contains('"') || value.contains('\n') || value != field) {
+    if (value.contains(',') || value.contains('"') || value.contains('\n') ||
+        value.contains('\r') || value != field) {
         QString escaped = value;
         escaped.replace("\"", "\"\"");
         return "\"" + escaped + "\"";

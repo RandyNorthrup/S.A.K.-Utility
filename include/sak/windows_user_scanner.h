@@ -22,13 +22,16 @@ public:
     explicit WindowsUserScanner(QObject* parent = nullptr);
 
     /**
-     * @brief Scan system for all user profiles
+     * @brief Scan the system for local Windows user profiles (NetUserEnum normal SAM accounts).
+     *        Cached domain/Entra-only accounts and orphaned profiles without a local account are
+     *        NOT enumerated, so a genuine local result is not a claim of every profile on disk.
      * @return List of detected user profiles
      */
     QVector<UserProfile> scanUsers();
 
     /**
-     * @brief Scan system for all user profiles, reporting whether the enumeration succeeded
+     * @brief Scan the system for local Windows user profiles (NetUserEnum normal SAM accounts),
+     *        reporting whether the enumeration succeeded
      * @param queryOk Set false if the underlying NetUserEnum call failed (e.g. access denied
      *                without elevation); true for a genuine result (including a genuine empty
      *                one). Lets a caller tell "no users" from "could not read users".
@@ -68,7 +71,9 @@ public:
     /// @brief Sum of file sizes directly under @p folderPath (recursive), capped
     ///        at @p fileLimit files. Unlike estimateProfileSize (which expects a
     ///        profile ROOT and scans its standard subfolders), this sizes a single
-    ///        folder -- so a per-folder selection reports its real size, not 0.
+    ///        folder -- so a per-folder selection reports a real size, not 0. NOTE:
+    ///        the walk stops after @p fileLimit files, so a folder with more files
+    ///        than that reports a LOWER-BOUND size, not the exact total.
     ///        Unit-testable.
     [[nodiscard]] static qint64 sumFolderFileSizes(const QString& folderPath, int fileLimit);
 

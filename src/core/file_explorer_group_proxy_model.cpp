@@ -60,6 +60,14 @@ FileExplorerGroupProxyModel::FileExplorerGroupProxyModel(QObject* parent)
     : QAbstractProxyModel(parent) {}
 
 void FileExplorerGroupProxyModel::setSourceModel(QAbstractItemModel* source_model) {
+    if (source_model == sourceModel()) {
+        // Re-setting the identical source is a no-op. Falling through would
+        // blanket-disconnect our slots and then QAbstractProxyModel::setSourceModel
+        // would early-return on the unchanged pointer WITHOUT restoring its own
+        // internal source connections, leaving a source whose later destruction is
+        // no longer tracked -- a dangling sourceModel() pointer.
+        return;
+    }
     beginResetModel();
     if (sourceModel()) {
         disconnect(sourceModel(), nullptr, this, nullptr);
@@ -75,7 +83,9 @@ void FileExplorerGroupProxyModel::setSourceModel(QAbstractItemModel* source_mode
 void FileExplorerGroupProxyModel::connectSourceSignals(QAbstractItemModel* source_model) {
     // Structure changes regroup via a full reset: group membership can move
     // arbitrarily, and the explorer reloads listings through model resets
-    // anyway, so surgical row moves would add complexity without a consumer.
+    // anyway, so a surgical (in-place) row move would add complexity without a
+    // consumer -- a source row move is instead routed through the same reset
+    // bracket as inserts/removes rather than left unhandled (stale mapping).
     // Every "about to change" routes through beginSourceReset and its "done"
     // through endSourceReset, which depth-guard the bracket so overlapping
     // source signals cannot nest beginResetModel (which Qt forbids).
@@ -101,6 +111,14 @@ void FileExplorerGroupProxyModel::connectSourceSignals(QAbstractItemModel* sourc
             &FileExplorerGroupProxyModel::beginSourceReset);
     connect(source_model,
             &QAbstractItemModel::rowsRemoved,
+            this,
+            &FileExplorerGroupProxyModel::endSourceReset);
+    connect(source_model,
+            &QAbstractItemModel::rowsAboutToBeMoved,
+            this,
+            &FileExplorerGroupProxyModel::beginSourceReset);
+    connect(source_model,
+            &QAbstractItemModel::rowsMoved,
             this,
             &FileExplorerGroupProxyModel::endSourceReset);
     connect(source_model,
@@ -234,9 +252,17 @@ void FileExplorerGroupProxyModel::onSourceLayoutChanged() {
     // The sort proxy re-sorted: regroup, then remap every held persistent index
     // (selection, current, open editors) to where its item now lives.
     rebuildGroups();
+    // Remap as ONE batch. Calling changePersistentIndex() per slot can corrupt a
+    // colliding permutation: an early call may move an index onto a slot that a
+    // later call still treats as its source, retargeting the wrong item.
+    // changePersistentIndexList() applies the whole mapping atomically, the way
+    // QSortFilterProxyModel does.
+    QModelIndexList remapped;
+    remapped.reserve(m_layout_proxy_indexes.size());
     for (int slot = 0; slot < m_layout_proxy_indexes.size(); ++slot) {
-        changePersistentIndex(m_layout_proxy_indexes.at(slot), remappedLayoutIndex(slot));
+        remapped.append(remappedLayoutIndex(slot));
     }
+    changePersistentIndexList(m_layout_proxy_indexes, remapped);
     m_layout_proxy_indexes.clear();
     m_layout_anchors.clear();
     Q_EMIT layoutChanged();
@@ -356,6 +382,12 @@ QModelIndex FileExplorerGroupProxyModel::mapToSource(const QModelIndex& proxy_in
 
 QModelIndex FileExplorerGroupProxyModel::mapFromSource(const QModelIndex& source_index) const {
     if (!source_index.isValid()) {
+        return {};
+    }
+    // Fail closed on an index that does not belong to the current source model: a
+    // foreign or post-reset index shares nothing but a row number with our rows,
+    // and mapping it by row alone would fabricate a proxy index onto the wrong row.
+    if (source_index.model() != sourceModel()) {
         return {};
     }
     if (!grouped()) {

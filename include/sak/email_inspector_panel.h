@@ -164,6 +164,11 @@ private:
     [[nodiscard]] static int folderSortOrder(const QString& name, const QString& container_class);
     [[nodiscard]] static QIcon folderIcon(const QString& name);
     [[nodiscard]] static bool isHiddenFolder(const QString& name, const QString& container_class);
+    /// The top-level folders to display, in tree order: hidden (non-mail) folders removed,
+    /// the rest sorted by folder priority then case-insensitive name. Returned pointers
+    /// alias into @p source, which must outlive them.
+    [[nodiscard]] static QVector<const sak::PstFolder*> sortedVisibleFolders(
+        const QVector<sak::PstFolder>& source);
     void collectSpecialFolderIds(const sak::PstFolder& folder);
     void populateItemList(const QVector<sak::PstItemSummary>& items);
     void setAllItemListChecks(bool checked);
@@ -285,6 +290,14 @@ private:
 
     // -- State -----------------------------------------------------------
     bool m_dialog_active{false};
+    /// True while an MBOX store is open. MBOX has a single synthetic root folder whose
+    /// id is 0, and 0 is otherwise the "no folder selected" sentinel; this flag lets the
+    /// paging path tell the two apart so clicking the MBOX Inbox actually loads messages.
+    bool m_mbox_active{false};
+    /// Remaining QTreeWidgetItem budget while building the folder tree from an untrusted
+    /// PST/OST hierarchy. Reset per load; folders past it are not materialized (a hostile
+    /// store cannot exhaust memory by declaring an unbounded folder breadth/depth).
+    int m_folder_tree_budget{0};
     uint64_t m_current_folder_id{0};
     /// Identity of the message the detail view actually holds: committed from the
     /// id the detail response itself carried, never from the most recently clicked

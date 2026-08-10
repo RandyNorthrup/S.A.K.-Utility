@@ -43,6 +43,7 @@ private Q_SLOTS:
     void onExportCsvClicked();
     void onItemsLoaded(uint64_t folder_id, QVector<sak::PstItemSummary> items, int total);
     void onDetailLoaded(sak::PstItemDetail detail);
+    void onControllerError(const QString& error);
 
 private:
     void setupUi();
@@ -74,6 +75,9 @@ private:
     // Data
     QVector<sak::PstItemSummary> m_all_contacts;
     int m_folders_loaded{0};
+    // Set when a folder was capped, or the global contact ceiling was hit, so the
+    // "N contacts" status can honestly signal that the list was truncated.
+    bool m_truncated{false};
 };
 
 }  // namespace sak

@@ -21,6 +21,13 @@
 
 namespace sak {
 
+namespace {
+/// @brief Hard cap on a package-list JSON file read from disk. A list holds at most
+/// kMaxPackageListEntries small entries, so a few hundred KiB is realistic; 8 MiB
+/// bounds a hostile/corrupt file before it is read wholesale into memory.
+constexpr qint64 kMaxPackageListFileBytes = 8LL * 1024 * 1024;
+}  // namespace
+
 // ============================================================================
 // Preset Lists
 // ============================================================================
@@ -71,6 +78,10 @@ bool PackageListManager::addPackage(PackageList& list,
                                     const QString& package_id,
                                     const QString& version,
                                     const QString& notes) {
+    if (package_id.trimmed().isEmpty()) {
+        sak::logWarning("[PackageListManager] Rejected package with empty id");
+        return false;
+    }
     if (list.entries.size() >= offline::kMaxPackageListEntries) {
         sak::logWarning("[PackageListManager] List full: {} entries",
                         static_cast<int>(list.entries.size()));
@@ -187,13 +198,32 @@ PackageList PackageListManager::loadFromFile(const QString& file_path) {
         return list;
     }
 
-    QJsonParseError parse_error;
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
+    const qint64 size = file.size();
+    if (size < 0 || size > kMaxPackageListFileBytes) {
+        sak::logError("[PackageListManager] File too large or unreadable: {}",
+                      file_path.toStdString());
+        return list;
+    }
+
+    const QByteArray raw = file.readAll();
+    if (file.error() != QFileDevice::NoError) {
+        sak::logError("[PackageListManager] Read error: {}", file_path.toStdString());
+        return list;
+    }
     file.close();
+
+    QJsonParseError parse_error;
+    QJsonDocument doc = QJsonDocument::fromJson(raw, &parse_error);
 
     if (parse_error.error != QJsonParseError::NoError) {
         sak::logError("[PackageListManager] JSON parse error: {}",
                       parse_error.errorString().toStdString());
+        return list;
+    }
+
+    if (!doc.isObject()) {
+        sak::logError("[PackageListManager] Root is not a JSON object: {}",
+                      file_path.toStdString());
         return list;
     }
 
@@ -205,9 +235,18 @@ PackageList PackageListManager::loadFromFile(const QString& file_path) {
 
     QJsonArray packages = root["packages"].toArray();
     for (const auto& val : packages) {
+        if (list.entries.size() >= offline::kMaxPackageListEntries) {
+            sak::logWarning("[PackageListManager] Entry cap reached ({}); extra packages ignored",
+                            offline::kMaxPackageListEntries);
+            break;
+        }
         QJsonObject pkg = val.toObject();
+        const QString package_id = pkg["package_id"].toString();
+        if (package_id.trimmed().isEmpty()) {
+            continue;  // a package with no id is unusable downstream; skip it (fail closed)
+        }
         PackageListEntry entry;
-        entry.package_id = pkg["package_id"].toString();
+        entry.package_id = package_id;
         entry.version = pkg["version"].toString();
         entry.notes = pkg["notes"].toString();
         entry.pinned = pkg["pinned"].toBool();

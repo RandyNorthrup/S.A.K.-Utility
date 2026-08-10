@@ -7,10 +7,32 @@
 #include "sak/nuget_version_range.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace sak {
 
 namespace {
+
+/// @brief NuGet caps a release at four components (Major.Minor.Patch.Revision).
+constexpr int kMaxReleaseComponents = 4;
+
+/// @brief A SemVer/NuGet identifier is a non-empty run of ASCII [0-9A-Za-z-].
+///        Any other byte (an underscore, '?', a non-ASCII code unit) makes the tag
+///        malformed, so the version must be rejected rather than mis-compared.
+bool isValidVersionIdentifier(const QString& id) {
+    if (id.isEmpty()) {
+        return false;
+    }
+    for (const QChar c : id) {
+        const bool ok = (c >= QLatin1Char('0') && c <= QLatin1Char('9')) ||
+                        (c >= QLatin1Char('A') && c <= QLatin1Char('Z')) ||
+                        (c >= QLatin1Char('a') && c <= QLatin1Char('z')) || c == QLatin1Char('-');
+        if (!ok) {
+            return false;
+        }
+    }
+    return true;
+}
 
 /// @brief Split "release[-prerelease][+build]" into (release, prerelease),
 ///        discarding build metadata. Returns false if the release part is empty.
@@ -19,9 +41,17 @@ bool splitVersionText(const QString& text, QString& release_out, QString& prerel
     if (core.isEmpty()) {
         return false;
     }
-    // Build metadata ("+abc") is ignored for precedence -- strip it first.
+    // Build metadata ("+abc") is ignored for precedence -- strip it first. It must
+    // still be well-formed (dot-separated ASCII identifiers); "1.0+", "1.0+a..b" and
+    // "1.0+a+b" are malformed versions, not a plain release.
     const int plus = core.indexOf(QLatin1Char('+'));
     if (plus >= 0) {
+        const QStringList meta_ids = core.mid(plus + 1).split(QLatin1Char('.'), Qt::KeepEmptyParts);
+        for (const QString& id : meta_ids) {
+            if (!isValidVersionIdentifier(id)) {
+                return false;
+            }
+        }
         core.truncate(plus);
     }
     const int dash = core.indexOf(QLatin1Char('-'));
@@ -81,13 +111,18 @@ int compareNumericIdentifiers(const QString& a, const QString& b) {
 ///        non-numeric segment (an unusual version is incomparable, not misread).
 bool parseReleaseComponents(const QString& release, QVector<long long>& out) {
     const QStringList segments = release.split(QLatin1Char('.'));
+    if (segments.size() > kMaxReleaseComponents) {
+        return false;  // NuGet allows at most four release components
+    }
     for (const QString& segment : segments) {
         if (segment.isEmpty()) {
             return false;
         }
         bool ok = false;
         const long long value = segment.toLongLong(&ok);
-        if (!ok || value < 0) {
+        // Each release component is a non-negative 32-bit integer in NuGet; a wider
+        // value is a malformed feed token, not a version, so reject it.
+        if (!ok || value < 0 || value > std::numeric_limits<int>::max()) {
             return false;
         }
         out.append(value);
@@ -102,7 +137,9 @@ bool parseReleaseComponents(const QString& release, QVector<long long>& out) {
 std::optional<QStringList> splitPrerelease(const QString& prerelease) {
     const QStringList ids = prerelease.split(QLatin1Char('.'), Qt::KeepEmptyParts);
     for (const QString& id : ids) {
-        if (id.isEmpty()) {
+        // Reject an empty identifier (a garbled ".."/leading-dot/trailing-dot) AND
+        // any identifier bearing a byte outside [0-9A-Za-z-] (e.g. "alpha_1", "?").
+        if (!isValidVersionIdentifier(id)) {
             return std::nullopt;
         }
     }
@@ -186,6 +223,12 @@ int NuGetVersion::comparePrerelease(const QStringList& a, const QStringList& b) 
 }
 
 int NuGetVersion::compare(const NuGetVersion& other) const {
+    // A default-constructed (invalid) version must not compare EQUAL to a parsed
+    // "0" -- order it strictly below any valid version instead of coercing absent
+    // state into a real value. (Callers still gate on isValid(); this is defense.)
+    if (m_valid != other.m_valid) {
+        return m_valid ? 1 : -1;
+    }
     const int release_cmp = compareRelease(m_release, other.m_release);
     if (release_cmp != 0) {
         return release_cmp;

@@ -181,9 +181,10 @@ public:
      * refresh timer -- it is safe to call while a GUI DriveScanner is live and from a
      * worker thread. Shares the exact per-drive query path used by the GUI scan.
      * @param enumeration_ok Set true when the OS physical-drive device list was read
-     *        successfully; false when that query failed and the result is a best-effort
-     *        probe of drive 0 only (so the list may be incomplete). Lets a caller report
-     *        an empty/partial result honestly instead of as a definitive "no drives".
+     *        successfully; false when that query failed, or when a per-drive query failed
+     *        this pass. A false result is then empty or partial -- never a guessed probe of
+     *        a fixed drive number (drive 0 is not assumed) -- so a caller can report it
+     *        honestly instead of as a definitive "no drives".
      * @return All valid physical drives detected.
      */
     [[nodiscard]] static QList<sak::DriveInfo> enumerateDrivesOnce(bool& enumeration_ok);

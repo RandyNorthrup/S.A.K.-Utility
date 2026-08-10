@@ -89,7 +89,11 @@ QMap<QString, QString> computeHashes(const FileManagementTarget& target,
         }
         return hashes;
     }
-    const bool truncated = hashInputTruncated(fullSize, kPropertiesHashMaxBytes);
+    // Truncation is decided by the bytes actually read, not just the entry's claimed size:
+    // if the capped read came back full, the digest covers a prefix and must never be
+    // labelled whole-file, even when (untrusted) metadata under-reports the real length.
+    const bool truncated = hashInputTruncated(fullSize, kPropertiesHashMaxBytes) ||
+                           static_cast<uint64_t>(read.data.size()) >= kPropertiesHashMaxBytes;
     static const QMap<QString, QCryptographicHash::Algorithm> kQtAlgorithms = {
         {QStringLiteral("MD5"), QCryptographicHash::Md5},
         {QStringLiteral("SHA-1"), QCryptographicHash::Sha1},
@@ -183,7 +187,10 @@ FileExplorerPropertiesDialog::~FileExplorerPropertiesDialog() {
 }
 
 QString FileExplorerPropertiesDialog::editedName() const {
-    return m_name_edit ? m_name_edit->text().trimmed() : QString();
+    // Return the field verbatim: trimming here would make a name that legitimately carries
+    // leading/trailing whitespace (raw ext4/HFS+/APFS images permit it) differ from
+    // originalName() with no edit, silently coercing a rename of real data.
+    return m_name_edit ? m_name_edit->text() : QString();
 }
 
 QString FileExplorerPropertiesDialog::originalName() const {

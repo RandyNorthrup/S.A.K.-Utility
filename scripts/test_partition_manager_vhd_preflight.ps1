@@ -113,7 +113,17 @@ try {
         }
     }
 
-    $usedLetters = @(Get-Volume -ErrorAction SilentlyContinue |
+    # Fail closed if the volume set cannot be enumerated: an empty result would
+    # mark every candidate letter free and let a destructive run assign a letter
+    # that is actually occupied.
+    try {
+        $volumes = @(Get-Volume -ErrorAction Stop)
+    }
+    catch {
+        $volumes = @()
+        Add-Blocker -Blockers $blockers -Message "Could not enumerate volumes to confirm free drive letters: $($_.Exception.Message)"
+    }
+    $usedLetters = @($volumes |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_.DriveLetter) } |
         ForEach-Object { $_.DriveLetter.ToString().ToUpperInvariant() })
     $freeLetters = @($CandidateDriveLetters | Where-Object { $usedLetters -notcontains $_ })
@@ -134,17 +144,23 @@ try {
 
     $driveInfo = $null
     $freeBytes = 0L
+    $freeSpaceKnown = $false
     try {
         $fullOutputParent = [System.IO.Path]::GetFullPath($outputParent)
         $driveInfo = [System.IO.DriveInfo]::new(([System.IO.Path]::GetPathRoot($fullOutputParent)))
         $freeBytes = [int64]$driveInfo.AvailableFreeSpace
+        $freeSpaceKnown = $true
     }
     catch {
-        Add-Warning -Warnings $warnings -Message "Could not determine free space for output root: $resolvedOutputRoot"
+        # Fail closed: undetermined free space must not read as "enough". The old
+        # bare warning left ready_for_vhd_certification true with $freeBytes 0.
+        Add-Blocker -Blockers $blockers -Message "Could not determine free space for output root: $resolvedOutputRoot"
     }
 
     $estimatedBytes = [int64]([Math]::Max($VhdSizeMB, $MinimumVhdSizeMB)) * 1MB * 4
-    if ($freeBytes -gt 0 -and $freeBytes -lt $estimatedBytes) {
+    # Known-and-insufficient (a genuine zero included) blocks; unknown is already
+    # blocked above. The old -gt 0 guard skipped the comparison for both cases.
+    if ($freeSpaceKnown -and $freeBytes -lt $estimatedBytes) {
         Add-Blocker -Blockers $blockers -Message "Output volume free space is below conservative VHD matrix estimate."
     }
 

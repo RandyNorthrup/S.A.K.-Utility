@@ -18,7 +18,7 @@
   "agents": [
     {"id": "identification_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 8000},
     {"id": "package_agent", "model_policy": "fast_reasoning", "tool_policy": "package_tools_only", "token_budget": 6000},
-    {"id": "cleanup_agent", "model_policy": "fast_reasoning", "tool_policy": "mutating_requires_lease", "token_budget": 7000},
+    {"id": "cleanup_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 7000},
     {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 5000}
   ],
   "phases": [

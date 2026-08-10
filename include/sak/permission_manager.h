@@ -35,7 +35,7 @@ public:
      * @param path File or folder path
      * @return true if successful
      */
-    bool stripPermissions(const QString& path);
+    [[nodiscard]] bool stripPermissions(const QString& path);
 
     /**
      * @brief Take ownership of file/folder for destination user
@@ -43,7 +43,7 @@ public:
      * @param userSID SID of destination user
      * @return true if successful
      */
-    bool takeOwnership(const QString& path, const QString& userSID);
+    [[nodiscard]] bool takeOwnership(const QString& path, const QString& userSID);
 
     /**
      * @brief Set standard user permissions
@@ -51,7 +51,7 @@ public:
      * @param userSID SID of user to grant permissions
      * @return true if successful
      */
-    bool setStandardUserPermissions(const QString& path, const QString& userSID);
+    [[nodiscard]] bool setStandardUserPermissions(const QString& path, const QString& userSID);
 
     /**
      * @brief Get current file owner
@@ -73,7 +73,7 @@ public:
      * @param sddl SDDL string
      * @return true if applied
      */
-    bool setSecurityDescriptorSddl(const QString& path, const QString& sddl);
+    [[nodiscard]] bool setSecurityDescriptorSddl(const QString& path, const QString& sddl);
 
     // ======================================================================
     // Elevation-Aware Overloads (std::expected)

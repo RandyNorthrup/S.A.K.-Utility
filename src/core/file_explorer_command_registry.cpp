@@ -856,7 +856,15 @@ FileExplorerCommandState featureGateState(const FileExplorerCommandId id,
 
 FileExplorerCommandState FileExplorerCommandRegistry::state(
     const FileExplorerCommandId id, const FileExplorerCommandContext& context) {
-    const FileExplorerCommand entry = command(id);
+    const QVector<FileExplorerCommand> registry = commands();
+    const auto entry_it = std::ranges::find(registry, id, &FileExplorerCommand::id);
+    if (entry_it == registry.end()) {
+        // Fail closed: an id absent from the registry (a new or out-of-range enum
+        // value never wired here) must not resolve to command()'s fabricated,
+        // all-safety-flags-false entry and fall through the gates to "enabled".
+        return disabledState(command(id), QStringLiteral("Unknown File Explorer command."));
+    }
+    const FileExplorerCommand entry = *entry_it;
     if (const auto availability = buildAvailabilityState(id, context, entry)) {
         return *availability;
     }

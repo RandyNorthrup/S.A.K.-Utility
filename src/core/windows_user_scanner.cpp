@@ -83,6 +83,9 @@ bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
             // caller's queryOk already flips false, but the concrete status was being lost.
             sak::logError("NetUserEnum failed; user enumeration incomplete (status {})",
                           QString::number(status).toStdString());
+            // Fail closed: drop any profiles gathered from earlier pages so a caller that
+            // ignores queryOk cannot mistake a partial (failed) enumeration for a complete one.
+            profiles.clear();
             return false;
         }
         for (DWORD i = 0; i < entriesRead; ++i) {

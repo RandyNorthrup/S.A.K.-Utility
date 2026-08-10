@@ -1658,6 +1658,23 @@ void EmailInspectorPanel::onExportProgress(int done, int total, qint64 /*bytes*/
 
 void EmailInspectorPanel::onExportComplete(sak::EmailExportResult result) {
     m_progress_bar->setVisible(false);
+    if (result.items_failed > 0 || !result.errors.isEmpty()) {
+        // A partial or failed export must not read as a clean success. Surface the failed
+        // count and every recorded error instead of the flat "Export complete".
+        m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
+        updateStatusBar(tr("Export INCOMPLETE: %1 exported, %2 failed (to %3)")
+                            .arg(result.items_exported)
+                            .arg(result.items_failed)
+                            .arg(result.export_path));
+        Q_EMIT logOutput(tr("Export INCOMPLETE: %1 exported, %2 failed (%3 bytes)")
+                             .arg(result.items_exported)
+                             .arg(result.items_failed)
+                             .arg(formatBytes(result.total_bytes)));
+        for (const QString& err : result.errors) {
+            Q_EMIT logOutput(tr("  Export error: %1").arg(err));
+        }
+        return;
+    }
     updateStatusBar(
         tr("Export complete: %1 items to %2").arg(result.items_exported).arg(result.export_path));
     Q_EMIT logOutput(tr("Exported %1 items (%2 bytes)")
@@ -1691,7 +1708,10 @@ void EmailInspectorPanel::onMboxOpened(int message_count) {
     m_calendar_button->setEnabled(false);
     m_attachments_button->setEnabled(true);
 
-    // For MBOX, create a single root folder item
+    // For MBOX, create a single root folder item. Its folder id is 0, which the PST
+    // paging path treats as "no folder selected"; m_mbox_active tells reloadCurrentPage
+    // that 0 is a real, loadable folder here so clicking the Inbox loads messages.
+    m_mbox_active = true;
     m_folder_tree->clear();
     auto* root = new QTreeWidgetItem(m_folder_tree);
     root->setText(0, tr("Inbox (%1 messages)").arg(message_count));
@@ -1706,12 +1726,17 @@ void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> message
     m_item_list->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_item_list);
 
-    // Filter blank messages
+    m_current_total = total;
+
+    // Filter only messages with no subject, no sender AND no attachments -- empty MBOX
+    // delimiters. A message that carries attachments (or a subject/sender) is real
+    // forensic content and stays visible even when the remaining headers are blank.
     QVector<int> visible_indices;
     visible_indices.reserve(messages.size());
     for (int idx = 0; idx < messages.size(); ++idx) {
         const auto& msg = messages.at(idx);
-        if (!msg.subject.trimmed().isEmpty() || !msg.from.trimmed().isEmpty()) {
+        if (!msg.subject.trimmed().isEmpty() || !msg.from.trimmed().isEmpty() ||
+            msg.has_attachments) {
             visible_indices.append(idx);
         }
     }
@@ -1749,56 +1774,65 @@ void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> message
     m_item_list->setUpdatesEnabled(true);
     m_item_list->setSortingEnabled(true);
     updateItemListHeaderCheckState();
-    int filtered = total - count;
+    // Blanks removed from THIS page only. `total` counts the whole store across every
+    // page, so total-count would mislabel every other page's messages as "blank filtered".
+    const int filtered = static_cast<int>(messages.size()) - count;
     QString label = tr("%1 messages (showing %2)").arg(total).arg(count);
     if (filtered > 0) {
         label += tr("  [%1 blank filtered]").arg(filtered);
     }
     m_item_count_label->setText(label);
+    updatePageControls();
 }
 
 void EmailInspectorPanel::onMboxMessageDetailLoaded(sak::MboxMessageDetail detail) {
-    // Display in content tab respecting HTML/plain text toggle.
-    // No cross-format fallback: if the requested format is absent, the pane
-    // is cleared so the missing data is visible rather than hidden.
-    if (m_show_html) {
-        if (detail.body_html.isEmpty()) {
-            m_content_browser->clear();
-        } else {
-            QString wrapped = QString::fromLatin1(ui::kHtmlEmailPreviewDocument)
-                                  .arg(ui::kHtmlPreviewBodyFontPx)
-                                  .arg(ui::kHtmlPreviewBodyPaddingPx)
-                                  .arg(buildPreviewHtml(detail.body_html));
-            m_content_browser->setHtml(wrapped);
-        }
-    } else {
-        if (detail.body_plain.isEmpty()) {
-            m_content_browser->clear();
-        } else {
-            m_content_browser->setPlainText(detail.body_plain);
-        }
+    if (m_dialog_active) {
+        return;
     }
+    // New message -- the per-message inline/remote image caches and any pending coalesced
+    // redraw belong to the PREVIOUS message. Without clearing them a matching Content-Id or
+    // URL would render bytes from the message just closed.
+    m_inline_images.clear();
+    m_remote_images.clear();
+    m_redraw_timer->stop();
 
-    // Display headers
-    m_headers_browser->setPlainText(detail.raw_headers);
-
-    // Commit the state the attachment-save handlers read. Without this the MBOX
-    // flow left m_current_detail / m_current_item_id at their stale PST values,
-    // so Save Attachment(s) acted on a previously-selected PST message.
+    // Commit the identity the response carries (attachment saves read it) and keep the full
+    // body + headers in m_current_detail so the HTML/Images toggles -- which re-render from
+    // m_current_detail -- do not lose the body, exactly as the PST path does. Without this
+    // the MBOX flow left m_current_detail at stale PST values, so Save Attachment(s) and the
+    // toggles acted on a previously-selected PST message.
     m_current_item_id = static_cast<uint64_t>(detail.message_index);
     sak::PstItemDetail normalized;
     normalized.node_id = *m_current_item_id;
+    normalized.item_type = sak::EmailItemType::Email;
+    normalized.subject = detail.subject;
+    normalized.body_plain = detail.body_plain;
+    normalized.body_html = detail.body_html;
+    normalized.transport_headers = detail.raw_headers;
     normalized.attachments = detail.attachments;
     m_current_detail = normalized;
 
-    // MBOX carries no MAPI properties. Anything left in the properties tab
-    // describes a previously opened PST message, so clear it rather than leave it
-    // under this message's identity.
+    displayItemDetail(m_current_detail);
+    displayAttachments(detail.attachments);
+
+    // MBOX carries no MAPI properties. Clear the properties tab rather than leave it under a
+    // previously opened PST message's identity.
     m_properties_item_id.reset();
     displayProperties({});
 
-    // Attachments
-    displayAttachments(detail.attachments);
+    // Request inline CID image attachments (mirrors the PST path) so cid: images render once
+    // their bytes arrive; always requested regardless of the HTML toggle so flipping it later
+    // needs no re-fetch.
+    if (!detail.body_html.isEmpty()) {
+        for (const auto& attachment : detail.attachments) {
+            if (!attachment.content_id.isEmpty()) {
+                m_controller->loadAttachmentContent(*m_current_item_id, attachment.index);
+            }
+        }
+        if (m_show_images) {
+            fetchRemoteImages(detail.body_html);
+        }
+    }
 }
 
 // ============================================================================
@@ -1813,22 +1847,19 @@ void EmailInspectorPanel::setOperationRunning(bool running) {
     }
 }
 
-void EmailInspectorPanel::populateFolderTree(const sak::PstFolderTree& tree) {
-    m_folder_tree->clear();
-    m_contact_folder_ids.clear();
-    m_calendar_folder_ids.clear();
+namespace {
+// Upper bound on folder-tree items built from an untrusted PST/OST hierarchy. A real
+// mailbox has at most a few hundred folders; the cap only trips on a hostile store
+// declaring an unbounded breadth/depth, and stops it from exhausting UI-thread memory.
+constexpr int kMaxFolderTreeNodes = 50'000;
+}  // namespace
 
-    // Find IPM_SUBTREE to show user-facing folders at the top level.
-    const sak::PstFolder* ipm = findIpmSubtree(tree);
-
-    const auto& source = (ipm != nullptr && !ipm->children.isEmpty()) ? ipm->children : tree;
-
-    // Collect contacts/calendar folder IDs before filtering
-    for (const auto& folder : source) {
-        collectSpecialFolderIds(folder);
-    }
-
-    // Sort folders by display priority
+// static
+// The visible top-level folders in display order: hidden (non-mail) folders dropped, the
+// rest sorted by folder priority then case-insensitive name. Returned pointers alias into
+// `source`, which must outlive them.
+QVector<const sak::PstFolder*> EmailInspectorPanel::sortedVisibleFolders(
+    const QVector<sak::PstFolder>& source) {
     QVector<const sak::PstFolder*> sorted;
     sorted.reserve(source.size());
     for (const auto& folder : source) {
@@ -1846,9 +1877,36 @@ void EmailInspectorPanel::populateFolderTree(const sak::PstFolderTree& tree) {
                   }
                   return lhs->display_name.compare(rhs->display_name, Qt::CaseInsensitive) < 0;
               });
+    return sorted;
+}
+
+void EmailInspectorPanel::populateFolderTree(const sak::PstFolderTree& tree) {
+    // A PST/OST folder tree is being built, so an MBOX is not open.
+    m_mbox_active = false;
+    m_folder_tree_budget = kMaxFolderTreeNodes;
+    m_folder_tree->clear();
+    m_contact_folder_ids.clear();
+    m_calendar_folder_ids.clear();
+
+    // Find IPM_SUBTREE to show user-facing folders at the top level.
+    const sak::PstFolder* ipm = findIpmSubtree(tree);
+
+    const auto& source = (ipm != nullptr && !ipm->children.isEmpty()) ? ipm->children : tree;
+
+    // Collect contacts/calendar folder IDs before filtering
+    for (const auto& folder : source) {
+        collectSpecialFolderIds(folder);
+    }
+
+    // Folders to show at the top level, hidden ones dropped and the rest in display order.
+    const QVector<const sak::PstFolder*> sorted = sortedVisibleFolders(source);
 
     for (const auto* folder : sorted) {
+        if (m_folder_tree_budget <= 0) {
+            break;
+        }
         auto* item = new QTreeWidgetItem(m_folder_tree);
+        --m_folder_tree_budget;
         item->setIcon(0, folderIcon(folder->display_name));
         item->setText(
             0, QStringLiteral("%1 (%2)").arg(folder->display_name).arg(folder->content_count));
@@ -1857,6 +1915,9 @@ void EmailInspectorPanel::populateFolderTree(const sak::PstFolderTree& tree) {
             addFolderToTree(item, child);
         }
     }
+    if (m_folder_tree_budget <= 0) {
+        logMessage(tr("Folder tree truncated: too many folders in this store"));
+    }
     m_folder_tree->expandToDepth(0);
 }
 
@@ -1864,7 +1925,11 @@ void EmailInspectorPanel::addFolderToTree(QTreeWidgetItem* parent, const sak::Ps
     if (isHiddenFolder(folder.display_name, folder.container_class)) {
         return;
     }
+    if (m_folder_tree_budget <= 0) {
+        return;
+    }
     auto* item = new QTreeWidgetItem(parent);
+    --m_folder_tree_budget;
     item->setIcon(0, folderIcon(folder.display_name));
     item->setText(0, QStringLiteral("%1 (%2)").arg(folder.display_name).arg(folder.content_count));
     item->setData(0, Qt::UserRole, QVariant::fromValue(folder.node_id));
@@ -2095,7 +2160,18 @@ QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
     // first, with the SAME sanitizer the HTML and PDF export writers use -- one authority, not a
     // second dialect -- so script blocks, inline event handlers, javascript:/vbscript: URIs and
     // framing/loading tags (iframe/object/embed/link/meta/...) never reach the document.
-    const QString safe_html = sanitizeEmailBodyHtml(body_html);
+    //
+    // Bound the untrusted body first: a pathologically large PST/MBOX body would otherwise
+    // drive several full-size allocations and a long global-regex pass on the UI thread.
+    // Truncate with a visible notice rather than process an unbounded blob (fail closed
+    // against UI-thread DoS).
+    constexpr int kMaxPreviewHtmlChars = 4 * 1024 * 1024;
+    QString bounded_body = body_html;
+    if (bounded_body.size() > kMaxPreviewHtmlChars) {
+        bounded_body.truncate(kMaxPreviewHtmlChars);
+        bounded_body += QStringLiteral("<p>[preview truncated]</p>");
+    }
+    const QString safe_html = sanitizeEmailBodyHtml(bounded_body);
 
     // Then inline every image `src` we can resolve offline -- both `cid:`
     // attachment references and any already-downloaded http(s) URLs.  The
@@ -2443,7 +2519,10 @@ void EmailInspectorPanel::applyPageSize() {
 }
 
 void EmailInspectorPanel::reloadCurrentPage() {
-    if (m_current_folder_id == 0) {
+    // Folder id 0 means "no folder selected" for a PST/OST store, but it is the MBOX
+    // root's real id. Only bail on 0 when no MBOX is open, otherwise the MBOX message
+    // list can never load.
+    if (m_current_folder_id == 0 && !m_mbox_active) {
         return;
     }
     const int page_size = currentPageSize();

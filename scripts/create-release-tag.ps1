@@ -12,6 +12,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Anchor every git call to the repository this script ships in, not the caller's
+# current directory, so an absolute invocation from another checkout cannot tag
+# the wrong repository.
+$projectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+
 # Validate version format (supports X.Y.Z and X.Y.Z.W)
 if ($Version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
     Write-Error "Invalid version format. Expected: X.Y.Z or X.Y.Z.W (e.g., 0.9.0 or 0.9.0.3)"
@@ -25,28 +30,36 @@ Write-Host "Message: $Message" -ForegroundColor Cyan
 Write-Host ""
 
 # Check if tag already exists
-$existingTag = git tag -l $tag
+$existingTag = git -C $projectRoot tag -l $tag
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "git tag -l failed (exit $LASTEXITCODE); cannot confirm whether $tag already exists."
+    exit 1
+}
 if ($existingTag) {
     Write-Error "Tag $tag already exists!"
     exit 1
 }
 
 # Check for uncommitted changes
-$status = git status --porcelain
+$status = git -C $projectRoot status --porcelain
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "git status failed (exit $LASTEXITCODE); cannot confirm the working tree is clean."
+    exit 1
+}
 if ($status) {
     Write-Warning "You have uncommitted changes:"
-    git status --short
+    git -C $projectRoot status --short
     Write-Host ""
     $response = Read-Host "Continue anyway? (y/n)"
     if ($response -ne 'y') {
         Write-Host "Aborted." -ForegroundColor Yellow
-        exit 0
+        exit 1
     }
 }
 
 # Create annotated tag
 Write-Host "Creating annotated tag..." -ForegroundColor Green
-git tag -a $tag -m "$Message"
+git -C $projectRoot tag -a $tag -m "$Message"
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "Tag created successfully!" -ForegroundColor Green

@@ -165,7 +165,7 @@ struct SmartAttribute {
 /// @brief NVMe-specific health log data
 struct NvmeHealthInfo {
     uint8_t percentage_used{0};   ///< Endurance used (0-100+)
-    uint64_t data_units_read{0};  ///< 512-byte units
+    uint64_t data_units_read{0};  ///< NVMe data units read: 1 = 1000 x 512-byte units
     uint64_t data_units_written{0};
     uint64_t power_on_hours{0};
     uint32_t unsafe_shutdowns{0};

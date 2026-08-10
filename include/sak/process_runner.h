@@ -13,7 +13,11 @@ namespace sak {
 
 /// @brief Result of an external process execution including exit code, output, and status flags
 struct ProcessResult {
-    int exit_code{0};
+    /// @brief Process exit code. Defaults to -1 (fail closed) so a ProcessResult that
+    ///        was never actually run cannot report success: succeeded() requires
+    ///        exit_code == 0, and every real run assigns the child's true exit code.
+    int exit_code{-1};
+    /// @brief QProcess::ExitStatus as an int: 0 == NormalExit, 1 == CrashExit.
     int exit_status{0};
     bool timed_out{false};
     bool cancelled{false};
@@ -24,18 +28,23 @@ struct ProcessResult {
     ///        output was dropped from std_out/std_err (memory-exhaustion guard).
     bool output_truncated{false};
 
-    /// @brief Check if the process completed successfully (no timeout, exit code 0)
-    /// @note Does NOT consider cancellation -- see completedSuccessfully().
-    [[nodiscard]] bool succeeded() const noexcept { return !timed_out && exit_code == 0; }
+    /// @brief Check if the process completed successfully (no timeout, a normal
+    ///        (non-crash) exit, and exit code 0).
+    /// @note Does NOT consider cancellation -- see completedSuccessfully(). A crash
+    ///       that still leaves exit_code 0 is rejected via exit_status (0 ==
+    ///       QProcess::NormalExit), so a crashed child never passes as a success.
+    [[nodiscard]] bool succeeded() const noexcept {
+        return !timed_out && exit_status == 0 && exit_code == 0;
+    }
 
     /// @brief Check if the process ran fully to a clean finish: not timed out,
-    ///        NOT cancelled, and exit code 0.
+    ///        NOT cancelled, a normal (non-crash) exit, and exit code 0.
     /// @note Stricter than succeeded(): a cancelled process (which may still
     ///       report exit_code 0 depending on how it was torn down) is NOT a
     ///       success. Use this when reporting an operation's outcome so a
     ///       cancelled/aborted run is never reported as having succeeded.
     [[nodiscard]] bool completedSuccessfully() const noexcept {
-        return !timed_out && !cancelled && exit_code == 0;
+        return !timed_out && !cancelled && exit_status == 0 && exit_code == 0;
     }
 };
 

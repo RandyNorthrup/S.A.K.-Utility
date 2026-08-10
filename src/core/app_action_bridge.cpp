@@ -13,6 +13,7 @@
 
 #include <QEventLoop>
 #include <QJsonObject>
+#include <QPointer>
 #include <QTimer>
 
 namespace sak {
@@ -80,6 +81,13 @@ bool AsyncActionInvocation::isDone() const {
 }
 
 AppActionResult AsyncActionInvocation::run(const std::function<void()>& start) {
+    // Fail closed on reuse: a terminal result was already recorded, so a second run()
+    // would launch a fresh operation, skip the loop (m_done is still set) and return
+    // the stale prior result while the new op runs unobserved. Each operation needs its
+    // own invocation -- reject rather than start() a duplicate nobody waits on.
+    if (m_done) {
+        return {false, QStringLiteral("AsyncActionInvocation already used"), {}};
+    }
     // Timer is owned by m_ctx (caller-thread affinity), so it fires on this thread
     // via the local loop even though the controller emits from a worker thread.
     QTimer::singleShot(m_timeout_ms, &m_ctx, [this]() {
@@ -195,7 +203,10 @@ int registerQuickActionsInto(QuickActionController& controller, AppActionRegistr
         descriptor.mutating = true;
         descriptor.requires_admin = action->requiresAdmin();
 
-        QuickActionController* controller_ptr = &controller;
+        // QPointer so a controller destroyed before this stored thunk is ever invoked
+        // fails closed (runQuickActionSync returns "No action controller") instead of
+        // dereferencing a dangling raw pointer.
+        QPointer<QuickActionController> controller_ptr = &controller;
         AppActionInvoke invoke = [controller_ptr, name](const QJsonObject&) {
             return runQuickActionSync(controller_ptr, name);
         };

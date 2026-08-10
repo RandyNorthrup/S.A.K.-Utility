@@ -44,8 +44,9 @@ struct FileRecoveryScanResult {
     uint64_t bytes_read{0};
     bool source_opened_read_only{false};
     /// True if the carve stopped before scanning everything -- the caller's cancel flag (deadline),
-    /// the forward-scan work budget (a hostile image), or the candidate cap. When true the
-    /// candidate list is a partial result -- callers must not report the scan as complete.
+    /// the forward-scan work budget (a hostile image), the candidate cap, the byte-scan cap
+    /// stopping before EOF, or a mid-scan read error. When true the candidate list is a partial
+    /// result -- callers must not report the scan as complete.
     bool scan_cancelled{false};
 };
 

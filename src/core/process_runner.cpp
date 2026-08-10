@@ -253,8 +253,22 @@ ProcessResult runPowerShell(const QString& script,
     return runProcess(powershell, args, timeout_ms, should_cancel);
 }
 
+#ifdef Q_OS_WIN
+// Reject anything that is not a bare, System32/Windows-relative name (subdirectories with
+// forward slashes -- "WindowsPowerShell/v1.0/powershell.exe" -- are fine). An empty name, a
+// ".." traversal, or an already-absolute/rooted path could escape the resolved system
+// directory once joined, so refuse it and let the caller fail closed on the empty return.
+static bool isContainedRelativeExe(const QString& relativeExe) {
+    return !relativeExe.isEmpty() && !relativeExe.contains(QStringLiteral("..")) &&
+           !QDir::isAbsolutePath(relativeExe);
+}
+#endif
+
 QString system32Path(const QString& relativeExe) {
 #ifdef Q_OS_WIN
+    if (!isContainedRelativeExe(relativeExe)) {
+        return {};  // fail closed: an un-contained name must not be joined under System32
+    }
     wchar_t buffer[MAX_PATH];
     const UINT len = GetSystemDirectoryW(buffer, MAX_PATH);
     if (len == 0 || len >= MAX_PATH) {
@@ -269,6 +283,9 @@ QString system32Path(const QString& relativeExe) {
 
 QString windowsDirPath(const QString& relativeExe) {
 #ifdef Q_OS_WIN
+    if (!isContainedRelativeExe(relativeExe)) {
+        return {};  // fail closed: an un-contained name must not be joined under %WINDIR%
+    }
     wchar_t buffer[MAX_PATH];
     const UINT len = GetWindowsDirectoryW(buffer, MAX_PATH);
     if (len == 0 || len >= MAX_PATH) {

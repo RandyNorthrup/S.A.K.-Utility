@@ -33,6 +33,9 @@ function Get-ScenarioSpec {
     if ($matches.Count -eq 0) {
         throw "Certification matrix missing scenario: $Id"
     }
+    if ($matches.Count -gt 1) {
+        throw "Certification matrix has duplicate scenario ID (self-test would silently select the first): $Id"
+    }
     return $matches[0]
 }
 
@@ -285,6 +288,15 @@ function Assert-ToolFails {
     catch {
         if ($_.Exception.Message -eq "$Name did not fail") {
             throw
+        }
+        # A negative test must fail because the tool REJECTED bad input, not
+        # because it could not be found, could not bind its parameters, or could
+        # not be parsed. Those pass the assertion without ever reaching the
+        # validation under test, so re-surface them as real failures.
+        if (($_.Exception -is [System.Management.Automation.CommandNotFoundException]) -or
+            ($_.Exception -is [System.Management.Automation.ParameterBindingException]) -or
+            ($_.Exception -is [System.Management.Automation.ParseException])) {
+            throw "$Name failed before reaching its validation ($($_.Exception.GetType().Name)): $($_.Exception.Message)"
         }
     }
 }

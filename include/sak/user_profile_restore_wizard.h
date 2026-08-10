@@ -160,6 +160,9 @@ public:
     /// skips app-data trees the user unchecked. Reconstructed from the tree (name,
     /// relative_path, checkstate) -- no display-only selection is discarded.
     bool validatePage() override;
+    /// Reset the one-time load state on a Back navigation so a later backup change
+    /// on the welcome page cannot leave this page showing a previous backup's data.
+    void cleanupPage() override;
 
 private Q_SLOTS:
     void onSelectAll();
@@ -190,6 +193,9 @@ public:
     explicit UserProfileRestoreAppRestorePage(QWidget* parent = nullptr);
     void initializePage() override;
     bool isComplete() const override;
+    /// Reset the one-time load state on a Back navigation so a later backup change
+    /// cannot offer a previous backup's app list. No-op while an install is running.
+    void cleanupPage() override;
 
 private Q_SLOTS:
     void onSelectAll();
@@ -240,6 +246,9 @@ public:
     /// the wizard so the restore worker re-imports exactly the selected WiFi
     /// profiles via netsh.
     bool validatePage() override;
+    /// Reset the one-time load state (and retained xml_data) on a Back navigation so
+    /// a later backup change cannot re-import a previous backup's WiFi profiles.
+    void cleanupPage() override;
 
 private Q_SLOTS:
     void onSelectAll();
@@ -276,6 +285,10 @@ public:
     /// the wizard so the restore worker applies exactly the selected configs via
     /// netsh.
     bool validatePage() override;
+    /// Reset the one-time load state (and retained IP/DNS fields) on a Back
+    /// navigation so a later backup change cannot re-apply a previous backup's
+    /// adapter settings.
+    void cleanupPage() override;
 
 private Q_SLOTS:
     void onSelectAll();

@@ -23,7 +23,10 @@ public:
     explicit ResetNetworkAction(QObject* parent = nullptr);
 
     QString name() const override { return "Reset Network Settings"; }
-    QString description() const override { return "Reset TCP/IP, DNS, and Winsock"; }
+    QString description() const override {
+        return "Reset TCP/IP, DNS, Winsock and Windows Firewall rules, and restart network "
+               "adapters";
+    }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::Maintenance; }
     bool requiresAdmin() const override { return true; }

@@ -15,6 +15,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonObject>
 #include <QTextStream>
 
@@ -74,9 +75,23 @@ QuickAction::ExecutionResult makeElevatedActionResult(
     result.success = broker_result->success;
     result.message = broker_result->data[QString::fromLatin1(kMessageResultKey)].toString();
     result.log = broker_result->data[QString::fromLatin1(kLogResultKey)].toString();
-    status = static_cast<QuickAction::ActionStatus>(
-        broker_result->data[QString::fromLatin1(kStatusResultKey)].toInt(
-            static_cast<int>(QuickAction::ActionStatus::Failed)));
+
+    // Decode the status defensively: never cast an out-of-range integer to the enum, and
+    // never surface a status that contradicts the authoritative success flag. A malformed
+    // helper response therefore cannot yield an invalid enum value or a success/failure
+    // mismatch.
+    int status_int = broker_result->data[QString::fromLatin1(kStatusResultKey)].toInt(
+        static_cast<int>(QuickAction::ActionStatus::Failed));
+    if (status_int < static_cast<int>(QuickAction::ActionStatus::Idle) ||
+        status_int > static_cast<int>(QuickAction::ActionStatus::Cancelled)) {
+        status_int = static_cast<int>(QuickAction::ActionStatus::Failed);
+    }
+    status = static_cast<QuickAction::ActionStatus>(status_int);
+    if (result.success) {
+        status = QuickAction::ActionStatus::Success;
+    } else if (status == QuickAction::ActionStatus::Success) {
+        status = QuickAction::ActionStatus::Failed;
+    }
 
     if (!broker_result->success && result.message.isEmpty()) {
         result.message = broker_result->error_message;
@@ -101,6 +116,13 @@ QuickActionController::~QuickActionController() {
     }
     if (m_current_execution_action) {
         m_current_execution_action->cancel();
+    }
+    // Reach any in-flight ELEVATED task too: cancelling the action only sets its flag,
+    // which the helper process never sees. cancelCurrentTask() is safe to call while
+    // executeTask() blocks on the worker, and lets that blocking call return so the join
+    // below does not wait out the helper's full inactivity timeout.
+    if (m_broker) {
+        m_broker->cancelCurrentTask();
     }
 
     // Join before freeing. The owned QuickActions (m_actions) are destroyed right
@@ -235,6 +257,19 @@ void QuickActionController::scanAction(const QString& action_name) {
         return;
     }
 
+    // Fail closed: never scan an action that is currently executing. On the non-elevated
+    // path it lives on the execution worker thread, so moving it to the scan thread from
+    // here would fail and leave it wedged. Skip it, but keep the scan queue moving so a
+    // scanAllActions() sweep does not stall on the running action.
+    if (action == m_current_execution_action) {
+        Q_EMIT logMessage(QString("Skipped scan of '%1' while it is executing").arg(action_name));
+        if (!m_current_scan_action && !m_scan_queue.isEmpty()) {
+            const QString next_action = m_scan_queue.dequeue();
+            scanAction(next_action);
+        }
+        return;
+    }
+
     // Check admin requirements - but allow scan to proceed
     // Scan can determine if action is applicable regardless of admin status
     // Admin check will happen again before execution
@@ -268,6 +303,15 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
     QuickAction* action = getAction(action_name);
     if (!action) {
         Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
+        return;
+    }
+
+    // Fail closed: an action currently on the scan worker thread cannot also be moved to
+    // the execution thread -- a second moveToThread() from the wrong thread would fail and
+    // wedge the action. Refuse to start execution while it is still scanning.
+    if (action == m_current_scan_action) {
+        Q_EMIT logMessage(
+            QString("Cannot execute '%1' while it is still scanning").arg(action_name));
         return;
     }
 
@@ -308,42 +352,46 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
 
     const QJsonObject payload = buildElevatedActionPayload(action_name, m_backup_location);
 
+    // Own the broker on the controller thread (via the m_broker member that existed for
+    // exactly this) so cancelCurrentAction()/the destructor can reach an in-flight task.
+    // The broker is designed for executeTask() on a worker while cancelCurrentTask() runs
+    // on the controller thread. Single-flight is guaranteed by the m_current_execution_action
+    // guard above, so m_broker is null here; it is released in onExecutionComplete().
+    m_broker = new ElevationBroker(this);
+    connect(
+        m_broker,
+        &ElevationBroker::progressUpdated,
+        this,
+        [this](int percent, const QString& status) {
+            if (m_current_execution_action) {
+                Q_EMIT actionExecutionProgress(m_current_execution_action, status, percent);
+            }
+        },
+        Qt::QueuedConnection);
+
     m_execution_thread = new QThread(this);
     auto* thread = m_execution_thread;
     auto* context = new QObject();
     context->moveToThread(thread);
-    connect(
-        thread,
-        &QThread::started,
-        context,
-        [this, thread, context, action, action_name, payload]() {
-            ElevationBroker broker;
-            connect(
-                &broker,
-                &ElevationBroker::progressUpdated,
-                this,
-                [this](int percent, const QString& status) {
-                    if (m_current_execution_action) {
-                        Q_EMIT actionExecutionProgress(m_current_execution_action, status, percent);
-                    }
-                },
-                Qt::QueuedConnection);
+    connect(thread,
+            &QThread::started,
+            context,
+            [this, thread, context, action, action_name, payload]() {
+                QuickAction::ExecutionResult result;
+                QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
+                result = makeElevatedActionResult(
+                    m_broker->executeTask(action_name, action_name, payload), status);
 
-            QuickAction::ExecutionResult result;
-            QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
-            result = makeElevatedActionResult(broker.executeTask(action_name, action_name, payload),
-                                              status);
-
-            QMetaObject::invokeMethod(
-                this,
-                [this, action, result, status]() {
-                    action->applyExecutionResult(result, status);
-                    onExecutionComplete();
-                },
-                Qt::QueuedConnection);
-            context->deleteLater();
-            thread->quit();
-        });
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, action, result, status]() {
+                        action->applyExecutionResult(result, status);
+                        onExecutionComplete();
+                    },
+                    Qt::QueuedConnection);
+                context->deleteLater();
+                thread->quit();
+            });
     thread->start();
 }
 
@@ -367,6 +415,11 @@ void QuickActionController::cancelCurrentAction() {
     }
     if (m_current_execution_action) {
         m_current_execution_action->cancel();
+        // An elevated action runs inside the helper process; the action's own cancel flag
+        // never reaches it. Signal the broker so the privileged task actually stops.
+        if (m_broker) {
+            m_broker->cancelCurrentTask();
+        }
         logOperation(m_current_execution_action, "Execution cancelled by user");
     }
 }
@@ -379,21 +432,24 @@ void QuickActionController::onScanComplete() {
     QuickAction* action = m_current_scan_action;
     m_current_scan_action = nullptr;
 
-    Q_EMIT actionScanComplete(action);
-    logOperation(action, QString("Scan complete: %1").arg(action->lastScanResult().summary));
-
-    // Cleanup thread
-    if (m_scan_thread) {
-        m_scan_thread->quit();
+    // Detach and join the worker thread BEFORE emitting the public completion signal. A
+    // slot on actionScanComplete may re-enter and start a new scan; nulling the member
+    // first means that reentrant run's fresh m_scan_thread is not torn down here, and the
+    // old thread pointer cannot be overwritten before it has been joined.
+    if (QThread* thread = m_scan_thread) {
+        m_scan_thread = nullptr;
+        thread->quit();
         // SAK-ALLOW-BLOCKING: load-bearing, not just teardown hygiene. The thread's finished
         // handler moves `action` back to the app thread, and the next queued scan calls
         // action->moveToThread() -- which is only legal once that has happened. Dropping this
         // join would move an object that still lives on a running thread. The action has
         // already emitted its completion signal, so only its return path remains.
-        m_scan_thread->wait();
-        m_scan_thread->deleteLater();
-        m_scan_thread = nullptr;
+        thread->wait();
+        thread->deleteLater();
     }
+
+    Q_EMIT actionScanComplete(action);
+    logOperation(action, QString("Scan complete: %1").arg(action->lastScanResult().summary));
 
     // Process scan queue
     if (!m_scan_queue.isEmpty()) {
@@ -410,6 +466,27 @@ void QuickActionController::onExecutionComplete() {
     QuickAction* action = m_current_execution_action;
     m_current_execution_action = nullptr;
 
+    // Release the elevated broker (only set on an elevated run). It is created and
+    // destroyed on this controller thread, and the worker has already returned from
+    // executeTask() by the time this completion handler runs.
+    if (m_broker) {
+        m_broker->deleteLater();
+        m_broker = nullptr;
+    }
+
+    // Detach and join the worker thread BEFORE emitting the public completion signal, for
+    // the same reentrancy reason as onScanComplete(): a slot on actionExecutionComplete may
+    // start a new run, and that fresh m_execution_thread must not be torn down here.
+    if (QThread* thread = m_execution_thread) {
+        m_execution_thread = nullptr;
+        thread->quit();
+        // SAK-ALLOW-BLOCKING: same load-bearing contract as onScanComplete() -- the next
+        // queued action calls action->moveToThread(), which is only legal once this thread's
+        // finished handler has moved the action back to the app thread.
+        thread->wait();
+        thread->deleteLater();
+    }
+
     Q_EMIT actionExecutionComplete(action);
 
     const auto& result = action->lastExecutionResult();
@@ -420,17 +497,6 @@ void QuickActionController::onExecutionComplete() {
                                            .arg(duration_sec)
                                      : QString("Execution failed: %1").arg(result.message);
     logOperation(action, log_msg);
-
-    // Cleanup thread
-    if (m_execution_thread) {
-        m_execution_thread->quit();
-        // SAK-ALLOW-BLOCKING: same load-bearing contract as onScanComplete() -- the next
-        // queued action calls action->moveToThread(), which is only legal once this thread's
-        // finished handler has moved the action back to the app thread.
-        m_execution_thread->wait();
-        m_execution_thread->deleteLater();
-        m_execution_thread = nullptr;
-    }
 
     // Process queue
     if (!m_action_queue.isEmpty()) {
@@ -516,6 +582,14 @@ void QuickActionController::logOperation(QuickAction* action, const QString& mes
     QString log_entry = QString("[%1] %2: %3").arg(timestamp, action->name(), message);
 
     Q_EMIT logMessage(log_entry);
+
+    // Fail closed: if the log file has been replaced with a reparse point (junction/
+    // symlink), do NOT append into a redirected target -- a possibly-elevated process must
+    // not be tricked into writing elsewhere. The in-memory logMessage signal above still
+    // delivered the line.
+    if (QFileInfo(m_log_file_path).isSymLink()) {
+        return;
+    }
 
     // Write to file
     QFile log_file(m_log_file_path);

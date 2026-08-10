@@ -72,17 +72,23 @@ $markerPattern = 'SAK-ALLOW-BLOCKING:'
 function Invoke-Rg {
     param([string[]]$RgArgs)
 
-    $rg = Get-Command rg -ErrorAction SilentlyContinue
+    # Application only, invoked by resolved path: an alias, function or script
+    # named rg could emit nothing and leave a stale 0/1 in $LASTEXITCODE, passing
+    # the gate without ever searching. Pin the real native executable.
+    $rg = @(Get-Command rg -CommandType Application -ErrorAction SilentlyContinue)[0]
     if (-not $rg) {
-        throw "Required tool missing: rg"
+        throw "Required tool missing: rg (native executable)"
     }
 
     # Keep stderr: a non-zero rg failure has to report WHY, not just its code.
     $errFile = [System.IO.Path]::GetTempFileName()
     try {
-        $output = & rg @RgArgs 2> $errFile
+        $output = & $rg.Source @RgArgs 2> $errFile
         $code = $LASTEXITCODE
-        if ($code -gt 1) {
+        # Only 0 (matched) and 1 (no match) are success. Anything else - a crash
+        # (negative NTSTATUS exit), an unreadable path, a killed process - must
+        # fail closed, never be read as "no blocking patterns found".
+        if ($code -ne 0 -and $code -ne 1) {
             $stderr = (Get-Content -LiteralPath $errFile -Raw)
             throw "rg failed with exit code ${code}: rg $($RgArgs -join ' ')`n$stderr"
         }

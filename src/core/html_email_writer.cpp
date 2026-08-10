@@ -93,7 +93,12 @@ QString embedInlineImages(const PstItemDetail& item,
         if (!cid.isEmpty()) {
             body_html.replace(QStringLiteral("cid:") + cid, data_uri);
         }
-        body_html.replace(QStringLiteral("cid:") + name, data_uri);
+        // An empty attachment name makes the key exactly "cid:", turning this into a
+        // replace-ALL that overwrites every other inline reference with this image;
+        // skip the filename fallback when there is no name to key on.
+        if (!name.isEmpty()) {
+            body_html.replace(QStringLiteral("cid:") + name, data_uri);
+        }
     }
     return body_html;
 }
@@ -124,10 +129,17 @@ HtmlEmailWriter::HtmlEmailWriter(const QString& output_dir,
 // Public API
 // ============================================================================
 
-std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
-    const PstItemDetail& item,
-    const QVector<QPair<QString, QByteArray>>& attachment_data,
-    const QString& subfolder_path) {
+std::expected<QString, error_code> HtmlEmailWriter::resolveMessageDirectory(
+    const QString& subfolder_path) const {
+    // Fail closed on an unusable output root: an empty or non-absolute root would
+    // resolve against the process CWD or a drive root and, running elevated, drop
+    // exported messages in an unintended place. A directory picker always yields an
+    // absolute path, so this only ever rejects a malformed/missing root.
+    if (m_output_dir.trimmed().isEmpty() || !QFileInfo(m_output_dir).isAbsolute()) {
+        logError("HtmlEmailWriter: output dir empty or not absolute: {}",
+                 m_output_dir.toStdString());
+        return std::unexpected(error_code::write_error);
+    }
     QString dir_path = m_output_dir;
     if (m_preserve_folders && !subfolder_path.isEmpty()) {
         dir_path += QStringLiteral("/") + subfolder_path;
@@ -138,6 +150,18 @@ std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
         }
     }
     QDir().mkpath(dir_path);
+    return dir_path;
+}
+
+std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
+    const PstItemDetail& item,
+    const QVector<QPair<QString, QByteArray>>& attachment_data,
+    const QString& subfolder_path) {
+    const std::expected<QString, error_code> dir_result = resolveMessageDirectory(subfolder_path);
+    if (!dir_result) {
+        return std::unexpected(dir_result.error());
+    }
+    const QString dir_path = *dir_result;
 
     QString filename = sanitizeFilename(item.subject, item.date);
 

@@ -471,8 +471,12 @@ QByteArray readScanData(QFile* image,
                         FileRecoveryScanResult* result) {
     const uint64_t scanBytes = scanByteLimit(imageSize, options);
     if (scanBytes < imageSize) {
+        // The byte cap stopped the read before EOF, so any candidate list carved from it is a
+        // partial view of the source. Flag it (like the candidate-limit and work-budget bounds)
+        // so a caller that only checks scan_cancelled never reports a capped scan as complete.
         result->warnings.append(
             QStringLiteral("Scan limited to first %1 byte(s)").arg(QString::number(scanBytes)));
+        result->scan_cancelled = true;
     }
 
     // Fill up to scanBytes over repeated reads: a single QFile::read can short-read a device, and
@@ -487,8 +491,11 @@ QByteArray readScanData(QFile* image,
         const QByteArray chunk = image->read(want);
         if (chunk.isEmpty()) {
             if (image->error() != QFileDevice::NoError) {
+                // A genuine read error truncated the scan; the carve is partial. Flag it so the
+                // shortfall is never read as a complete, authoritative scan of the source.
                 result->warnings.append(
                     QStringLiteral("Read error during scan; results are partial"));
+                result->scan_cancelled = true;
             }
             break;
         }

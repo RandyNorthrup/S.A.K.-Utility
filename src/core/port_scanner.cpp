@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <future>
 #include <memory>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -25,6 +26,18 @@ namespace {
 constexpr int kBannerGrabTimeout = netdiag::kBannerGrabTimeoutMs;
 constexpr int kBannerMaxRead = netdiag::kBannerMaxBytes;
 constexpr int kMaxScanConcurrency = 256;  // upper bound on ports probed at once
+// A per-connect timeout must be a positive, bounded QTimer interval: a value <= 0 makes
+// the connect timer never fire (so a filtered host hangs runTcpProbe's wait forever) and
+// INT_MAX would block a probe for ~25 days. Clamp the untrusted config value fail-closed.
+constexpr int kMinPortScanTimeoutMs = 1;
+constexpr int kMaxPortScanTimeoutMs = 60'000;
+// Grace beyond a probe's own connect+banner timeouts before its blocking wait gives up;
+// only a genuine QThread start failure can consume it (matches the ai-client semaphore
+// grace). Kept generous so no normal probe is ever cut short.
+constexpr int kProbeThreadStartGraceMs = 30'000;
+// A real hostname is <= 253 bytes and an IPv6 literal ~45; reject anything longer rather
+// than hand an unbounded string to connectToHost / the HTTP Host header.
+constexpr int kMaxTargetLength = 255;
 constexpr auto kHttpHeadProbe = "HEAD / HTTP/1.0\r\nHost: ";
 constexpr auto kHttpHeaderTerminator = "\r\n\r\n";
 
@@ -184,10 +197,20 @@ TcpProbeResult runTcpProbe(const QString& target,
     });
 
     thread.start();
-    done.acquire();
+    // Bound the wait. On every normal path the probe releases `done` from its own
+    // connect/banner timers (the connect timer's interval is clamped positive by the
+    // caller, so it always fires within connectTimeoutMs). Only a genuine QThread start
+    // failure -- started() never runs, so nothing ever releases `done` -- can leave it
+    // unsignalled, and an unconditional acquire would then hang this scan thread forever.
+    // Fail closed: give up after a budget that already exceeds the probe's own timeouts.
+    const int waitBudgetMs = connectTimeoutMs + 2 * bannerTimeoutMs + kProbeThreadStartGraceMs;
+    if (!done.tryAcquire(1, waitBudgetMs)) {
+        result.timed_out = true;
+        result.error_message = QStringLiteral("Probe thread did not start");
+    }
     // SAK-ALLOW-BLOCKING: `thread` is a stack local destroyed on return, and ~QThread on
-    // a live thread aborts the process, so this join is not optional. The probe has
-    // already released `done`, so nothing is left to run.
+    // a live thread aborts the process, so this join is not optional. A started probe
+    // always quits via finishTcpProbe; a thread that never started returns immediately.
     thread.wait();
     return result;
 }
@@ -319,19 +342,33 @@ void PortScanner::cancel() {
     m_cancelled.store(true);
 }
 
-void PortScanner::scan(const ScanConfig& config) {
-    m_cancelled.store(false);
-
-    if (config.target.isEmpty()) {
-        Q_EMIT errorOccurred(QStringLiteral("Target cannot be empty"));
-        Q_EMIT scanComplete({});
-        return;
+namespace {
+// Validate the untrusted scan target, returning the human-readable rejection reason and an
+// empty string when the target is safe to hand to connectToHost / the HTTP Host header.
+QString validateScanTarget(const QString& target) {
+    if (target.isEmpty()) {
+        return QStringLiteral("Target cannot be empty");
     }
+    if (target.size() > kMaxTargetLength) {
+        return QStringLiteral("Target is too long");
+    }
+    // The target is echoed verbatim into the HTTP banner-probe Host header and handed to
+    // connectToHost. A control character (CR/LF/NUL/...) in an attacker- or AI-supplied
+    // target would inject additional request headers; a real hostname or IP contains none,
+    // so reject the whole request rather than sanitize-and-send.
+    for (const QChar ch : target) {
+        if (ch.unicode() < 0x20 || ch.unicode() == 0x7F) {
+            return QStringLiteral("Target contains invalid control characters");
+        }
+    }
+    return {};
+}
 
-    // Build the port set: explicit ports plus any range, de-duplicated with the invalid
-    // port 0 dropped. A hostile ScanConfig can carry a huge duplicate-heavy ports vector;
-    // the QSet bounds the real work to at most the 65535 valid TCP ports (fail closed
-    // against amplification) while keeping membership checks O(1) rather than O(n^2).
+// Build the port set: explicit ports plus any range, de-duplicated with the invalid
+// port 0 dropped. A hostile ScanConfig can carry a huge duplicate-heavy ports vector;
+// the QSet bounds the real work to at most the 65535 valid TCP ports (fail closed
+// against amplification) while keeping membership checks O(1) rather than O(n^2).
+QVector<uint16_t> collectScanPorts(const PortScanner::ScanConfig& config) {
     QVector<uint16_t> ports;
     QSet<uint16_t> seen;
     // Reserve for the unique-port ceiling, never the (possibly huge) input count, so a
@@ -353,7 +390,21 @@ void PortScanner::scan(const ScanConfig& config) {
             }
         }
     }
+    return ports;
+}
+}  // namespace
 
+void PortScanner::scan(const ScanConfig& config) {
+    m_cancelled.store(false);
+
+    const QString targetError = validateScanTarget(config.target);
+    if (!targetError.isEmpty()) {
+        Q_EMIT errorOccurred(targetError);
+        Q_EMIT scanComplete({});
+        return;
+    }
+
+    const QVector<uint16_t> ports = collectScanPorts(config);
     if (ports.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("No ports specified for scanning"));
         Q_EMIT scanComplete({});
@@ -385,9 +436,19 @@ QVector<PortScanResult> PortScanner::scanPortsConcurrently(const ScanConfig& con
         batch.reserve(static_cast<size_t>(end - start));
         for (int i = start; i < end; ++i) {
             const uint16_t port = ports[i];
-            batch.push_back(std::async(std::launch::async, [this, &config, port]() {
-                return scanPort(config.target, port, config.timeoutMs, config.grabBanners);
-            }));
+            try {
+                batch.push_back(std::async(std::launch::async, [this, &config, port]() {
+                    return scanPort(config.target, port, config.timeoutMs, config.grabBanners);
+                }));
+            } catch (const std::system_error&) {
+                // Thread creation failed under load. std::async is the only throw source
+                // here (scanPort itself fails closed via runTcpProbe's bounded wait), so
+                // degrade to a deferred task that runs synchronously at get() time rather
+                // than let the exception escape and terminate the scan thread.
+                batch.push_back(std::async(std::launch::deferred, [this, &config, port]() {
+                    return scanPort(config.target, port, config.timeoutMs, config.grabBanners);
+                }));
+            }
         }
 
         for (auto& fut : batch) {
@@ -411,8 +472,12 @@ PortScanResult PortScanner::scanPort(const QString& target,
     result.port = port;
     result.scanTimestamp = QDateTime::currentDateTime();
 
+    // Clamp the untrusted per-connect timeout to a positive, bounded QTimer interval so the
+    // connect timer always fires (no infinite wait) and cannot block for weeks.
+    const int connectTimeoutMs =
+        std::clamp(timeoutMs, kMinPortScanTimeoutMs, kMaxPortScanTimeoutMs);
     const TcpProbeResult probe =
-        runTcpProbe(target, port, timeoutMs, grabBanner, kBannerGrabTimeout);
+        runTcpProbe(target, port, connectTimeoutMs, grabBanner, kBannerGrabTimeout);
 
     result.responseTimeMs = probe.response_time_ms;
 

@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_package_tool_planner.h"
 
+#include <QJsonValue>
+
 #include <algorithm>
 
 namespace sak::ai {
@@ -17,11 +19,23 @@ bool isAllowedPackageChar(QChar ch) {
            ch == QLatin1Char('_') || ch == QLatin1Char('+');
 }
 
-// A package id is valid only if it is non-empty and every character is allowed.
-// Used to REJECT (never rewrite) ids with disallowed characters.
+// A package id is valid only if it is non-empty, not option-like (a leading '-' would
+// be parsed by Chocolatey as an option, e.g. -s / --force), and every character is
+// allowed. Used to REJECT (never rewrite) ids with disallowed characters.
 bool packageTokenIsValid(const QString& trimmed) {
-    return !trimmed.isEmpty() &&
+    return !trimmed.isEmpty() && !trimmed.startsWith(QLatin1Char('-')) &&
            std::all_of(trimmed.cbegin(), trimmed.cend(), isAllowedPackageChar);
+}
+
+// Fail closed: a version that is PRESENT but not a string must be rejected rather
+// than silently collapsing to "" (== install "latest"), which could install an
+// unintended build. An absent/null version legitimately means "latest". Returns a
+// non-empty error string on rejection, and an empty string when the value is allowed.
+QString packageVersionError(const QJsonValue& version_val) {
+    if (!version_val.isUndefined() && !version_val.isNull() && !version_val.isString()) {
+        return QStringLiteral("Invalid version: expected a string");
+    }
+    return {};
 }
 }  // namespace
 
@@ -45,7 +59,6 @@ AiPackageToolPlan AiPackageToolPlanner::buildPlan(const QJsonObject& args) {
     plan.operation = args.value(QStringLiteral("operation")).toString().trimmed().toLower();
     plan.query = args.value(QStringLiteral("query")).toString().trimmed();
     const QString raw_package_id = args.value(QStringLiteral("package_id")).toString().trimmed();
-    plan.version = args.value(QStringLiteral("version")).toString().trimmed();
     plan.timeout_seconds = std::clamp(
         args.value(QStringLiteral("timeout_seconds")).toInt(kPackageToolDefaultTimeoutSeconds),
         kPackageToolMinTimeoutSeconds,
@@ -53,6 +66,19 @@ AiPackageToolPlan AiPackageToolPlanner::buildPlan(const QJsonObject& args) {
 
     if (plan.operation.isEmpty()) {
         plan.error_message = QStringLiteral("Package manager requires operation");
+        return plan;
+    }
+    const QJsonValue version_val = args.value(QStringLiteral("version"));
+    const QString version_error = packageVersionError(version_val);
+    if (!version_error.isEmpty()) {
+        plan.error_message = version_error;
+        return plan;
+    }
+    plan.version = version_val.toString().trimmed();
+    // Fail closed: a query beginning with '-' would be parsed by Chocolatey as an
+    // option (e.g. --source=https://attacker), not a search term -- argument injection.
+    if (plan.query.startsWith(QLatin1Char('-'))) {
+        plan.error_message = QStringLiteral("Invalid search query: %1").arg(plan.query);
         return plan;
     }
     // Fail closed: an id with disallowed characters is REJECTED, never silently

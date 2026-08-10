@@ -289,7 +289,13 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
         return std::unexpected(sak::error_code::elevation_failed);
     }
 
-    m_helper_process = sei.hProcess;
+    {
+        // Publish the launched-helper handle under m_send_mutex -- the same lock cleanup()
+        // nulls+closes it under, and isHelperAlive() reads it under -- so a concurrent GUI/AI
+        // shutdown() can never race this write of the raw HANDLE.
+        std::lock_guard<std::mutex> lock(m_send_mutex);
+        m_helper_process = sei.hProcess;
+    }
     sak::logInfo("ElevationBroker: helper launched successfully");
     return {};
 #else
@@ -345,11 +351,17 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
             return std::unexpected(sak::error_code::helper_connection_failed);
         }
 
-        // Check if helper process is still alive
-        DWORD exit_code = 0;
-        if (GetExitCodeProcess(m_helper_process, &exit_code) && exit_code != STILL_ACTIVE) {
-            sak::logError("ElevationBroker: helper exited with code {}", exit_code);
-            return std::unexpected(sak::error_code::helper_crashed);
+        // Check if helper process is still alive. Read the raw handle under m_send_mutex (the
+        // same lock cleanup() nulls+closes it under) so a concurrent shutdown() cannot race
+        // this read; a nulled handle short-circuits to "not crashed" and the loop retries.
+        {
+            std::lock_guard<std::mutex> lock(m_send_mutex);
+            DWORD exit_code = 0;
+            if (m_helper_process != nullptr && GetExitCodeProcess(m_helper_process, &exit_code) &&
+                exit_code != STILL_ACTIVE) {
+                sak::logError("ElevationBroker: helper exited with code {}", exit_code);
+                return std::unexpected(sak::error_code::helper_crashed);
+            }
         }
 
         QThread::msleep(kRetryIntervalMs);
@@ -370,7 +382,14 @@ auto ElevationBroker::verifyPipeServer(HANDLE handle) -> std::expected<void, sak
         sak::logError("ElevationBroker: GetNamedPipeServerProcessId failed: {}", GetLastError());
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
-    const qint64 expected_pid = static_cast<qint64>(GetProcessId(m_helper_process));
+    qint64 expected_pid = 0;
+    {
+        // Read the raw helper handle under m_send_mutex (the lock cleanup() nulls it under) so a
+        // concurrent shutdown() cannot race this read; a nulled handle yields PID 0, which
+        // serverPidMatchesHelper() rejects fail-closed.
+        std::lock_guard<std::mutex> lock(m_send_mutex);
+        expected_pid = static_cast<qint64>(GetProcessId(m_helper_process));
+    }
     if (!serverPidMatchesHelper(expected_pid, static_cast<qint64>(server_pid))) {
         sak::logError("ElevationBroker: pipe server PID {} does not match launched helper PID {}",
                       server_pid,

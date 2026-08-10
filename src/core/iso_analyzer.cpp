@@ -725,6 +725,15 @@ QString IsoAnalyzer::readFixedAscii(const char* data, int length) {
     Q_ASSERT(data);
     Q_ASSERT(length > 0);
 
+    // Fail closed if the private contract is ever violated: QString::fromLatin1(data, <0)
+    // reinterprets a negative length as "read until NUL", which would run off the fixed
+    // sector field. Callers pass compile-time-constant positive lengths, so this is
+    // defensive only, but it removes the out-of-bounds read the header's raw-pointer
+    // signature cannot otherwise preclude.
+    if (data == nullptr || length <= 0) {
+        return {};
+    }
+
     // Copy the fixed-width field and trim trailing spaces/nulls
     QString result = QString::fromLatin1(data, length).trimmed();
 

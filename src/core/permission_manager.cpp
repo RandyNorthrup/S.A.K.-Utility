@@ -60,6 +60,23 @@ constexpr DWORD kReparseRefused = 0x20'00'00'01u;
 // redirected the open onto another tree (the no-follow flag only guards the final
 // component). Refused fail-closed so an elevated change cannot be misdirected.
 constexpr DWORD kPathRedirected = 0x20'00'00'02u;
+// Local sentinel: the target has more than one hard link, so an ACL/owner change on
+// this name would silently mutate the security of the SHARED underlying file that
+// another link also names. Refused fail-closed for the same reason as a reparse point
+// -- an elevated change must not be redirected onto an unintended object.
+constexpr DWORD kHardLinkRefused = 0x20'00'00'03u;
+// Local sentinel: the parsed security descriptor carries a SACL (audit / mandatory
+// integrity label). This code applies only owner/group/DACL, so a SACL is refused
+// rather than silently dropped while the rest of the descriptor is applied.
+constexpr DWORD kSaclUnsupported = 0x20'00'00'04u;
+
+// A QString carrying an embedded NUL truncates to its prefix the moment it is handed
+// to a NUL-terminated Win32 string, so a valid prefix would be honored while the rest
+// is silently discarded. Refuse fail-closed anywhere untrusted path/SID/SDDL text is
+// consumed.
+bool hasEmbeddedNul(const QString& s) {
+    return s.contains(QChar(u'\0'));
+}
 
 // The set of security fields to apply. Bundled into one struct so
 // applySecurityNoFollow stays within the parameter budget while still carrying
@@ -137,6 +154,14 @@ bool handleMatchesRequestedPath(HANDLE h, const QString& path) {
 // by-name SetNamedSecurityInfoW would expose; verifying the handle's resolved
 // path additionally closes an ANCESTOR-directory junction swap. FAIL CLOSED.
 DWORD applySecurityNoFollow(const QString& path, DWORD access, const SecurityChange& change) {
+    if (hasEmbeddedNul(path)) {
+        return ERROR_INVALID_NAME;
+    }
+    if (!QFileInfo(path).isAbsolute()) {
+        // A relative or drive-relative path resolves through the mutable process current
+        // directory; an elevated change must never target a CWD-dependent path.
+        return ERROR_INVALID_NAME;
+    }
     HANDLE h = CreateFileW(const_cast<LPWSTR>(path.toStdWString().c_str()),
                            access,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -156,6 +181,12 @@ DWORD applySecurityNoFollow(const QString& path, DWORD access, const SecurityCha
     if (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
         CloseHandle(h);
         return kReparseRefused;
+    }
+    if (info.nNumberOfLinks > 1) {
+        // A hard link makes this name and another one the SAME underlying file; an ACL/
+        // owner change here would also re-permission whatever else the file is linked as.
+        CloseHandle(h);
+        return kHardLinkRefused;
     }
     if (!handleMatchesRequestedPath(h, path)) {
         CloseHandle(h);
@@ -188,6 +219,10 @@ std::expected<void, sak::error_code> interpretSecurityResult(DWORD result,
         lastError = "Refused: path resolves through a redirected junction/symlink ancestor";
         return std::unexpected(sak::error_code::permission_update_failed);
     }
+    if (result == kHardLinkRefused) {
+        lastError = "Refused: target has multiple hard links (shared underlying file)";
+        return std::unexpected(sak::error_code::permission_update_failed);
+    }
     if (result == ERROR_ACCESS_DENIED) {
         lastError = "Access denied - administrator privileges required";
         return std::unexpected(sak::error_code::elevation_required);
@@ -210,22 +245,33 @@ DWORD accessForSecurityInfo(SECURITY_INFORMATION si) {
 
 // Adds the DACL fields (present flag + protected/unprotected) the descriptor
 // specifies to @p change and @p si. Split out to keep applyParsedSecurityDescriptor
-// within complexity limits.
-void collectParsedDacl(PSECURITY_DESCRIPTOR pSD, SECURITY_INFORMATION& si, SecurityChange& change) {
+// within complexity limits. FAIL CLOSED: returns false on a genuine accessor error,
+// or on an explicit present-but-NULL DACL (which would grant EVERYONE full control) --
+// either must abort the apply rather than proceed with a guessed/absent DACL.
+bool collectParsedDacl(PSECURITY_DESCRIPTOR pSD, SECURITY_INFORMATION& si, SecurityChange& change) {
     BOOL daclPresent = FALSE;
     BOOL daclDefaulted = FALSE;
-    if (!GetSecurityDescriptorDacl(pSD, &daclPresent, &change.dacl, &daclDefaulted) ||
-        !daclPresent) {
+    if (!GetSecurityDescriptorDacl(pSD, &daclPresent, &change.dacl, &daclDefaulted)) {
+        return false;
+    }
+    if (!daclPresent) {
+        // No DACL specified: leave the object's DACL untouched (do not set the bit).
         change.dacl = nullptr;
-        return;
+        return true;
+    }
+    if (change.dacl == nullptr) {
+        // A present NULL DACL grants everyone full control; never apply one.
+        return false;
     }
     si |= DACL_SECURITY_INFORMATION;
     SECURITY_DESCRIPTOR_CONTROL control = 0;
     DWORD revision = 0;
-    if (GetSecurityDescriptorControl(pSD, &control, &revision)) {
-        si |= (control & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION
-                                            : UNPROTECTED_DACL_SECURITY_INFORMATION;
+    if (!GetSecurityDescriptorControl(pSD, &control, &revision)) {
+        return false;
     }
+    si |= (control & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION
+                                        : UNPROTECTED_DACL_SECURITY_INFORMATION;
+    return true;
 }
 
 // Applies ONLY the fields the parsed security descriptor actually specifies
@@ -238,29 +284,69 @@ DWORD applyParsedSecurityDescriptor(const QString& path, PSECURITY_DESCRIPTOR pS
     SECURITY_INFORMATION si = 0;
     SecurityChange change{};
 
+    // Refuse a descriptor that carries a SACL (audit / mandatory-integrity label):
+    // this path applies only owner/group/DACL, so a SACL must be rejected rather than
+    // silently dropped while the rest of the descriptor is applied. A FALSE control
+    // query on a freshly-parsed descriptor is an accessor error -> fail closed.
+    SECURITY_DESCRIPTOR_CONTROL sdControl = 0;
+    DWORD sdRevision = 0;
+    if (!GetSecurityDescriptorControl(pSD, &sdControl, &sdRevision)) {
+        return ERROR_INVALID_SECURITY_DESCR;
+    }
+    if (sdControl & SE_SACL_PRESENT) {
+        return kSaclUnsupported;
+    }
+
     BOOL ownerDefaulted = FALSE;
-    if (GetSecurityDescriptorOwner(pSD, &change.owner, &ownerDefaulted) &&
-        change.owner != nullptr) {
+    if (!GetSecurityDescriptorOwner(pSD, &change.owner, &ownerDefaulted)) {
+        return ERROR_INVALID_SECURITY_DESCR;  // accessor error -> fail closed
+    }
+    if (change.owner != nullptr) {
         si |= OWNER_SECURITY_INFORMATION;
-    } else {
-        change.owner = nullptr;
     }
 
     BOOL groupDefaulted = FALSE;
-    if (GetSecurityDescriptorGroup(pSD, &change.group, &groupDefaulted) &&
-        change.group != nullptr) {
+    if (!GetSecurityDescriptorGroup(pSD, &change.group, &groupDefaulted)) {
+        return ERROR_INVALID_SECURITY_DESCR;  // accessor error -> fail closed
+    }
+    if (change.group != nullptr) {
         si |= GROUP_SECURITY_INFORMATION;
-    } else {
-        change.group = nullptr;
     }
 
-    collectParsedDacl(pSD, si, change);
+    if (!collectParsedDacl(pSD, si, change)) {
+        return ERROR_INVALID_SECURITY_DESCR;  // accessor error or present NULL DACL
+    }
 
     if (si == 0) {
         return ERROR_INVALID_SECURITY_DESCR;
     }
     change.si = si;
     return applySecurityNoFollow(path, accessForSecurityInfo(si), change);
+}
+
+// Maps an applyParsedSecurityDescriptor result to the m_lastError text that
+// setSecurityDescriptorSddl surfaces. An empty return means the apply succeeded;
+// any non-empty string is a refusal/failure the caller must report fail-closed.
+QString sddlApplyFailureMessage(DWORD result) {
+    if (result == ERROR_INVALID_SECURITY_DESCR) {
+        return "SDDL specifies neither an owner nor a valid DACL";
+    }
+    if (result == kReparseRefused) {
+        return "Refused: target is a reparse point (junction/symlink)";
+    }
+    if (result == kPathRedirected) {
+        return "Refused: path resolves through a redirected junction/symlink ancestor";
+    }
+    if (result == kHardLinkRefused) {
+        return "Refused: target has multiple hard links (shared underlying file)";
+    }
+    if (result == kSaclUnsupported) {
+        return "Refused: SDDL carries a SACL (audit/integrity label), which is not applied";
+    }
+    if (result != ERROR_SUCCESS) {
+        return QString("Failed to apply SDDL: %1").arg(result);
+    }
+    return QString();
 }
 }  // namespace
 #endif
@@ -270,9 +356,18 @@ PermissionManager::PermissionManager() {
     // Enable privileges lazily -- only succeeds when running elevated.
     // Non-elevated callers will get clear errors from methods that need them.
     if (ElevationManager::isElevated()) {
-        enablePrivilege(SE_BACKUP_NAME);
-        enablePrivilege(SE_RESTORE_NAME);
-        enablePrivilege(SE_TAKE_OWNERSHIP_NAME);
+        // Attempt all three independently (no short-circuit) and surface a failure to
+        // enable any of them rather than silently ignoring it. A missing privilege is
+        // not fatal here -- the operation that needs it still fails closed with a real
+        // Win32 error -- but a swallowed enablement failure hides why that happens.
+        const bool okBackup = enablePrivilege(SE_BACKUP_NAME);
+        const bool okRestore = enablePrivilege(SE_RESTORE_NAME);
+        const bool okTakeOwnership = enablePrivilege(SE_TAKE_OWNERSHIP_NAME);
+        if (!okBackup || !okRestore || !okTakeOwnership) {
+            sak::logWarning(
+                "PermissionManager: could not enable all backup/restore/take-ownership "
+                "privileges; ACL operations that need them will fail closed with access denied");
+        }
     }
 #endif
 }
@@ -308,6 +403,9 @@ bool PermissionManager::setStandardUserPermissions(const QString& path, const QS
 
 QString PermissionManager::getOwner(const QString& path) {
 #ifdef Q_OS_WIN
+    if (hasEmbeddedNul(path)) {
+        return QString();
+    }
     PSID pOwnerSid = nullptr;
     PSECURITY_DESCRIPTOR pSD = nullptr;
 
@@ -340,6 +438,10 @@ QString PermissionManager::getOwner(const QString& path) {
 
 QString PermissionManager::getSecurityDescriptorSddl(const QString& path) {
 #ifdef Q_OS_WIN
+    if (hasEmbeddedNul(path)) {
+        m_lastError = "Refused: path contains an embedded NUL";
+        return QString();
+    }
     PSECURITY_DESCRIPTOR pSD = nullptr;
     DWORD result = GetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
                                          SE_FILE_OBJECT,
@@ -385,6 +487,11 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
         return false;
     }
 
+    if (hasEmbeddedNul(path) || hasEmbeddedNul(sddl)) {
+        m_lastError = "Refused: path or SDDL contains an embedded NUL";
+        return false;
+    }
+
     PSECURITY_DESCRIPTOR pSD = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
             const_cast<LPWSTR>(sddl.toStdWString().c_str()), SDDL_REVISION_1, &pSD, nullptr)) {
@@ -398,20 +505,9 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
     const DWORD result = applyParsedSecurityDescriptor(path, pSD);
     LocalFree(pSD);
 
-    if (result == ERROR_INVALID_SECURITY_DESCR) {
-        m_lastError = "SDDL specifies neither an owner nor a valid DACL";
-        return false;
-    }
-    if (result == kReparseRefused) {
-        m_lastError = "Refused: target is a reparse point (junction/symlink)";
-        return false;
-    }
-    if (result == kPathRedirected) {
-        m_lastError = "Refused: path resolves through a redirected junction/symlink ancestor";
-        return false;
-    }
-    if (result != ERROR_SUCCESS) {
-        m_lastError = QString("Failed to apply SDDL: %1").arg(result);
+    const QString failure = sddlApplyFailureMessage(result);
+    if (!failure.isEmpty()) {
+        m_lastError = failure;
         return false;
     }
 
@@ -465,6 +561,11 @@ auto PermissionManager::tryTakeOwnership(const QString& path, const QString& use
         return std::unexpected(sak::error_code::elevation_required);
     }
 
+    if (hasEmbeddedNul(userSID)) {
+        m_lastError = "Invalid SID: embedded NUL";
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+
     PSID pSid = nullptr;
     if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
         m_lastError = QString("Invalid SID: %1").arg(GetLastError());
@@ -484,6 +585,11 @@ auto PermissionManager::tryTakeOwnership(const QString& path, const QString& use
 auto PermissionManager::trySetStandardUserPermissions(const QString& path, const QString& userSID)
     -> std::expected<void, sak::error_code> {
 #ifdef Q_OS_WIN
+    if (hasEmbeddedNul(userSID)) {
+        m_lastError = "Invalid SID: embedded NUL";
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+
     PSID pSid = nullptr;
     if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
         m_lastError = QString("Invalid SID: %1").arg(GetLastError());

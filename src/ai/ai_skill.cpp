@@ -11,6 +11,11 @@ namespace sak::ai {
 
 namespace {
 
+// Skill markdown is small authored content. Fail closed above a generous ceiling
+// so an implausibly large file cannot drive unbounded allocation or narrow the
+// qsizetype line/column counts used as int indices during parsing.
+constexpr qsizetype kMaxSkillBytes = 8 * 1024 * 1024;
+
 QStringList splitTriggers(const QString& value) {
     QStringList triggers;
     const auto parts = value.split(QRegularExpression(QStringLiteral("[;,]")), Qt::SkipEmptyParts);
@@ -137,6 +142,12 @@ Skill Skill::fromMarkdown(const QByteArray& bytes, const QString& path) {
     Skill skill;
     skill.source_path = path;
     skill.id = QFileInfo(path).completeBaseName().trimmed();
+
+    if (bytes.size() > kMaxSkillBytes) {
+        // Over the ceiling: return with an empty body so isValid() rejects it,
+        // rather than parse an oversized file into the int-indexed line loops.
+        return skill;
+    }
 
     QString text = QString::fromUtf8(bytes);
     // Strip a leading UTF-8 BOM (U+FEFF): QString::fromUtf8 keeps it, and it is not

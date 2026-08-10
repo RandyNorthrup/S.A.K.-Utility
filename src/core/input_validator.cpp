@@ -447,6 +447,11 @@ validation_result input_validator::validatePathSyntax(const std::filesystem::pat
 
 validation_result input_validator::validatePath(const std::filesystem::path& path,
                                                 const path_validation_config& config) {
+    // Fail closed on an empty path: a blank target is not a valid path and must never
+    // pass validation, where a later step could resolve it to the current directory.
+    if (path.empty()) {
+        return failure(error_code::invalid_path, "Path is empty");
+    }
     auto syntax_result = validatePathSyntax(path, config);
     if (!syntax_result) {
         return syntax_result;
@@ -458,7 +463,13 @@ validation_result input_validator::validatePath(const std::filesystem::path& pat
     }
 
     std::error_code ec;
-    if (std::filesystem::exists(path, ec)) {
+    const bool path_exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        // A stat that genuinely FAILS (not a plain absence) leaves existence unresolved.
+        // Fail closed rather than skip the permission check and fall through to success.
+        return failure(error_code::filesystem_error, "Cannot determine whether path exists");
+    }
+    if (path_exists) {
         auto perm_result = validatePathPermissions(path, config);
         if (!perm_result) {
             return perm_result;

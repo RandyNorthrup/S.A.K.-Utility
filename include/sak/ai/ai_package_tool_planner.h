@@ -21,7 +21,13 @@ struct AiPackageToolPlan {
     bool change_operation = false;
     QString error_message;
 
-    [[nodiscard]] bool ok() const { return error_message.isEmpty(); }
+    // Fail closed: a plan is usable only when it carries no error AND resolves to
+    // exactly one recognized operation class. A default-constructed or otherwise
+    // unclassified plan (blank operation, no class) is therefore NOT ok(), so an
+    // accidental default return can never expose a blank/stale execution target.
+    [[nodiscard]] bool ok() const {
+        return error_message.isEmpty() && (query_operation || read_operation || change_operation);
+    }
 };
 
 class AiPackageToolPlanner {

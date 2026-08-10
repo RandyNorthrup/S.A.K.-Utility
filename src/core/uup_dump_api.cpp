@@ -25,7 +25,13 @@
 #include <QSslConfiguration>
 #include <QUrlQuery>
 
+#include <cmath>
+#include <limits>
+
 constexpr int kGbDisplayPrecision = 2;
+// The UUP dump JSON endpoints return small documents; a peer that streams past this
+// ceiling is aborted rather than buffered into memory by readAll().
+constexpr qint64 kMaxApiResponseBytes = 32LL * 1024 * 1024;
 
 // --- Construction / Destruction ----------------------------------------------
 
@@ -184,6 +190,33 @@ QList<UupDumpApi::ReleaseChannel> UupDumpApi::allChannels() {
 
 // --- Reply Handlers ---------------------------------------------------------
 
+std::optional<UupDumpApi::BuildInfo> UupDumpApi::parseBuildEntry(const QString& key,
+                                                                 const QJsonObject& buildObj) {
+    BuildInfo info;
+    // The uuid is inside the build object; the key is only a numeric array index. This
+    // used to fall back to the key when the uuid was missing, which handed callers a
+    // build id that identifies nothing - every later get.php request built from it asks
+    // the API for an index. Skip the entry instead: a build we cannot address is not a
+    // build we can offer.
+    info.uuid = buildObj["uuid"].toString();
+    if (info.uuid.isEmpty()) {
+        sak::logWarning("UUP dump: skipping build entry '{}' with no uuid", key.toStdString());
+        return std::nullopt;
+    }
+    info.title = buildObj["title"].toString();
+    info.build = buildObj["build"].toString();
+    info.arch = buildObj["arch"].toString();
+    // A wrong-typed or out-of-range "created" must not invoke double->qint64 UB: a value
+    // that is not a finite, in-range timestamp sorts as oldest (0) instead of corrupting.
+    const double created = buildObj["created"].toDouble();
+    info.created = (std::isfinite(created) &&
+                    created >= static_cast<double>(std::numeric_limits<qint64>::min()) &&
+                    created < static_cast<double>(std::numeric_limits<qint64>::max()))
+                       ? static_cast<qint64>(created)
+                       : 0;
+    return info;
+}
+
 void UupDumpApi::onBuildsFetchReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) {
@@ -223,30 +256,24 @@ void UupDumpApi::onBuildsFetchReply() {
     QList<BuildInfo> builds;
 
     for (auto it = buildsObj.begin(); it != buildsObj.end(); ++it) {
-        QJsonObject buildObj = it.value().toObject();
-        BuildInfo info;
-        // The uuid is inside the build object; the key is only a numeric array index. This
-        // used to fall back to the key when the uuid was missing, which handed callers a
-        // build id that identifies nothing - every later get.php request built from it asks
-        // the API for an index. Skip the entry instead: a build we cannot address is not a
-        // build we can offer.
-        info.uuid = buildObj["uuid"].toString();
-        if (info.uuid.isEmpty()) {
-            sak::logWarning("UUP dump: skipping build entry '{}' with no uuid",
-                            it.key().toStdString());
-            continue;
+        if (auto info = parseBuildEntry(it.key(), it.value().toObject())) {
+            builds.append(*info);
         }
-        info.title = buildObj["title"].toString();
-        info.build = buildObj["build"].toString();
-        info.arch = buildObj["arch"].toString();
-        info.created = static_cast<qint64>(buildObj["created"].toDouble());
-        builds.append(info);
     }
 
     // Sort by creation date (newest first)
     std::sort(builds.begin(), builds.end(), [](const BuildInfo& a, const BuildInfo& b) {
         return a.created > b.created;
     });
+
+    // An empty set is not a successful result: a garbage or unexpected response yields no
+    // usable build, so fail closed the way the language/edition handlers do rather than
+    // emitting an empty success.
+    if (builds.isEmpty()) {
+        sak::logWarning("API returned no usable builds");
+        Q_EMIT apiError("No builds available for this architecture/channel.");
+        return;
+    }
 
     sak::logInfo(QString("Fetched %1 available builds").arg(builds.size()).toStdString());
     Q_EMIT buildsFetched(builds);
@@ -420,9 +447,24 @@ bool UupDumpApi::collectValidFiles(const QJsonObject& filesObj, QList<FileInfo>&
     for (auto it = filesObj.begin(); it != filesObj.end(); ++it) {
         auto maybeInfo = parseAndValidateFileEntry(it.key(), it.value().toObject());
         if (maybeInfo.has_value()) {
+            const qint64 entrySize = maybeInfo.value().size;
             out.append(maybeInfo.value());
-            totalSize += maybeInfo.value().size;
+            // Saturate rather than let attacker-controlled positive sizes overflow signed
+            // qint64 (UB); the running total is only used for the GB log line below.
+            totalSize = (entrySize > std::numeric_limits<qint64>::max() - totalSize)
+                            ? std::numeric_limits<qint64>::max()
+                            : totalSize + entrySize;
         }
+    }
+
+    // An empty or all-rejected file object is not a buildable set: a missing/wrong-typed
+    // response.files must fail closed, not report success with nothing to build.
+    if (out.isEmpty()) {
+        const QString errorMsg =
+            "UUP file set is empty or contained no usable entries. Refusing to build.";
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return false;
     }
 
     // A UUP ISO needs every listed file; silently dropping unsafe/unverifiable
@@ -521,28 +563,15 @@ bool UupDumpApi::isSafeAria2FileEntry(const FileInfo& info) {
            !hasAria2ControlChar(info.sha1);
 }
 
-std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
-    const QString& key, const QJsonObject& fileObj) {
-    FileInfo info;
-    info.fileName = key;
-    info.sha1 = fileObj["sha1"].toString();
-    info.size = fileObj["size"].toString().toLongLong();
-    info.url = fileObj["url"].toString();
-    info.uuid = fileObj["uuid"].toString();
-    info.expire = fileObj["expire"].toString();
-
-    // Reject entries that could inject aria2 directives or escape the download dir when
-    // serialized into the aria2 input file (traversal in fileName, CR/LF/TAB in any field).
-    if (!isSafeAria2FileEntry(info)) {
-        sak::logWarning("Rejected unsafe file entry from API: " + info.fileName.toStdString());
-        return std::nullopt;
-    }
-
+// The download URL must parse, be HTTPS (or plain HTTP only for Microsoft's UUP CDN, which serves
+// no HTTPS but is SHA-1 integrity-checked), and be non-empty. Logs the specific reason; a false
+// here trips the incomplete-set refusal rather than shipping an unfetchable entry.
+bool UupDumpApi::isAcceptableDownloadUrl(const FileInfo& info) {
     // Validate download URL scheme
     QUrl downloadUrl(info.url);
     if (!downloadUrl.isValid()) {
         sak::logWarning("Rejected invalid download URL for: " + info.fileName.toStdString());
-        return std::nullopt;
+        return false;
     }
 
     QString scheme = downloadUrl.scheme().toLower();
@@ -553,11 +582,43 @@ std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
         sak::logDebug("Allowing HTTP Microsoft CDN URL for: " + info.fileName.toStdString());
     } else if (scheme != "https") {
         sak::logWarning("Rejected non-HTTPS download URL for: " + info.fileName.toStdString());
-        return std::nullopt;
+        return false;
     }
 
     // Only include files with valid download URLs
     if (info.url.isEmpty() || info.url == "null") {
+        return false;
+    }
+    return true;
+}
+
+std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
+    const QString& key, const QJsonObject& fileObj) {
+    FileInfo info;
+    info.fileName = key;
+    info.sha1 = fileObj["sha1"].toString();
+    bool sizeOk = false;
+    info.size = fileObj["size"].toString().toLongLong(&sizeOk);
+    info.url = fileObj["url"].toString();
+    info.uuid = fileObj["uuid"].toString();
+    info.expire = fileObj["expire"].toString();
+
+    // A missing, non-numeric, overflowed, or negative size is not a valid file record: reject
+    // it (which then trips the incomplete-set refusal) instead of accepting a coerced 0.
+    if (!sizeOk || info.size < 0) {
+        sak::logWarning("Rejected file entry with missing/invalid size: " +
+                        info.fileName.toStdString());
+        return std::nullopt;
+    }
+
+    // Reject entries that could inject aria2 directives or escape the download dir when
+    // serialized into the aria2 input file (traversal in fileName, CR/LF/TAB in any field).
+    if (!isSafeAria2FileEntry(info)) {
+        sak::logWarning("Rejected unsafe file entry from API: " + info.fileName.toStdString());
+        return std::nullopt;
+    }
+
+    if (!isAcceptableDownloadUrl(info)) {
         return std::nullopt;
     }
 
@@ -597,6 +658,13 @@ QNetworkReply* UupDumpApi::sendApiRequest(const QString& endpoint,
     sak::logInfo(QString("API request: %1").arg(url.toString()).toStdString());
 
     QNetworkReply* reply = m_networkManager->get(request);
+    // Fail closed on an oversized response: abort once the peer streams past the ceiling so
+    // the reply handlers' readAll() can never buffer an unbounded body into memory.
+    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64 total) {
+        if (received > kMaxApiResponseBytes || total > kMaxApiResponseBytes) {
+            reply->abort();
+        }
+    });
     m_pendingReplies.append(reply);
     return reply;
 }

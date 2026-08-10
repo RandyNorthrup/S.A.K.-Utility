@@ -68,6 +68,15 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($ChecklistPath)) {
         $resolvedChecklistPath = Resolve-ProjectPath -Path $ChecklistPath
         Ensure-WriteTarget -Path $resolvedChecklistPath -Kind "External evidence checklist"
+
+        # Fail closed on a self-collision: if both paths resolve to one file the
+        # checklist write would silently clobber the manifest, and both would be
+        # reported created. An up-front collision check absent both files pass.
+        $fullOutput = [System.IO.Path]::GetFullPath($resolvedOutputPath)
+        $fullChecklist = [System.IO.Path]::GetFullPath($resolvedChecklistPath)
+        if ($fullOutput.Equals($fullChecklist, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "OutputPath and ChecklistPath resolve to the same file: $fullOutput. Choose distinct paths."
+        }
     }
 
     $resolvedEvidenceRoot = ""

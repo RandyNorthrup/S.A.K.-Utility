@@ -14,6 +14,7 @@
 #include <QMutexLocker>
 #include <QUuid>
 
+#include <cmath>
 #include <utility>
 
 namespace sak::ai {
@@ -34,8 +35,14 @@ constexpr int kMaxRolledJsonlFiles = 3;
 constexpr qsizetype kMaxReplayMetadataStringChars = 4096;
 constexpr qint64 kMaxReplayMetadataBytes = 64LL * 1024LL;
 constexpr int kMaxRedactedArrayItems = 200;
+constexpr int kMaxRedactedObjectMembers = 200;
 constexpr int kMaxJsonRedactionDepth = 8;
 constexpr qsizetype kTraceIdSuffixChars = 12;
+// Bounds for loading a (possibly attacker-tampered) JSONL file: one line can never balloon
+// memory past this, and the loader stops and reports once the aggregate exceeds this, so a
+// swapped-in giant file cannot force unbounded readLine()/QVector growth.
+constexpr qint64 kMaxJsonlLineBytes = 4LL * 1024LL * 1024LL;
+constexpr qint64 kMaxJsonlLoadBytes = 128LL * 1024LL * 1024LL;
 
 QString nowIso() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -43,6 +50,18 @@ QString nowIso() {
 
 QDateTime parseDate(const QJsonObject& obj, const QString& key) {
     return QDateTime::fromString(obj.value(key).toString(), Qt::ISODateWithMs);
+}
+
+// A JSON number can be non-finite or outside qint64 range; casting such a double straight to
+// qint64 is undefined behavior. Clamp to a valid, non-negative range and fail safe.
+qint64 safeDurationMs(const QJsonValue& value) {
+    const double raw = value.toDouble(0.0);
+    if (!std::isfinite(raw) || raw <= 0.0) {
+        return 0;
+    }
+    constexpr double kMaxSafeDuration = 9.0e18;  // < INT64_MAX and exactly representable
+    return raw >= kMaxSafeDuration ? static_cast<qint64>(kMaxSafeDuration)
+                                   : static_cast<qint64>(raw);
 }
 
 QJsonObject tokenUsageToJson(const TokenUsage& usage) {
@@ -105,8 +124,14 @@ QJsonValue redactAndCapJson(const QJsonValue& value, const QString& key = {}, in
 
 QJsonObject redactObject(const QJsonObject& object, int depth) {
     QJsonObject out;
+    int members = 0;
     for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
+        if (members >= kMaxRedactedObjectMembers) {
+            out.insert(QStringLiteral("__truncated__"), QStringLiteral("[truncated-object]"));
+            break;
+        }
         out.insert(it.key(), redactAndCapJson(it.value(), it.key(), depth + 1));
+        ++members;
     }
     return out;
 }
@@ -284,8 +309,7 @@ AiTraceEvent AiTraceEvent::fromJson(const QJsonObject& object) {
     event.kind = object.value(QStringLiteral("kind")).toString();
     event.name = object.value(QStringLiteral("name")).toString();
     event.status = object.value(QStringLiteral("status")).toString();
-    event.duration_ms =
-        static_cast<qint64>(object.value(QStringLiteral("duration_ms")).toDouble(0.0));
+    event.duration_ms = safeDurationMs(object.value(QStringLiteral("duration_ms")));
     event.token_usage =
         TokenUsageTracker::fromJson(object.value(QStringLiteral("token_usage")).toObject());
     event.metadata = object.value(QStringLiteral("metadata")).toObject();
@@ -307,14 +331,17 @@ QJsonObject AiActivityEvent::toJson() const {
     obj[QStringLiteral("phase_id")] = phase_id;
     obj[QStringLiteral("agent_id")] = agent_id;
     obj[QStringLiteral("state")] = state;
-    obj[QStringLiteral("summary")] = summary;
+    // Free-text fields carry model/tool output where secrets realistically appear, and are
+    // otherwise length-unbounded; route them through the same redact+cap as metadata so a
+    // token or a huge blob cannot land verbatim in the audit line.
+    obj[QStringLiteral("summary")] = redactString(summary);
     obj[QStringLiteral("tool_name")] = tool_name;
     obj[QStringLiteral("token_usage")] = tokenUsageToJson(token_usage);
     obj[QStringLiteral("artifact_refs")] = stringListToJson(artifact_refs);
     obj[QStringLiteral("evidence_refs")] = stringListToJson(evidence_refs);
-    obj[QStringLiteral("question_for_human")] = question_for_human;
-    obj[QStringLiteral("recovery_action")] = recovery_action;
-    obj[QStringLiteral("error")] = error;
+    obj[QStringLiteral("question_for_human")] = redactString(question_for_human);
+    obj[QStringLiteral("recovery_action")] = redactString(recovery_action);
+    obj[QStringLiteral("error")] = redactString(error);
     // Same redaction as trace.jsonl / turn_replay.jsonl (see AiTraceEvent::toJson).
     obj[QStringLiteral("metadata")] = redactedReplayMetadata(metadata);
     return obj;
@@ -348,18 +375,24 @@ AiActivityEvent AiActivityEvent::fromJson(const QJsonObject& object) {
 TraceStore::TraceStore(QString session_dir) : m_session_dir(std::move(session_dir)) {}
 
 void TraceStore::setSessionDirectory(const QString& session_dir) {
+    // Same mutex the locked append/load hold, so a config change from one thread cannot race
+    // (C++ data race UB) a JSONL write/read in flight on an AI worker thread.
+    const QMutexLocker locker(&m_io_mutex);
     m_session_dir = session_dir;
 }
 
 void TraceStore::setMaxJsonlBytes(qint64 max_bytes) {
+    const QMutexLocker locker(&m_io_mutex);
     m_max_jsonl_bytes = max_bytes > 0 ? max_bytes : 0;
 }
 
 qint64 TraceStore::maxJsonlBytes() const {
+    const QMutexLocker locker(&m_io_mutex);
     return m_max_jsonl_bytes;
 }
 
 QString TraceStore::sessionDirectory() const {
+    const QMutexLocker locker(&m_io_mutex);
     return m_session_dir;
 }
 
@@ -420,9 +453,19 @@ QVector<AiTraceEvent> TraceStore::loadEvents(QString* error_message) const {
         return events;
     }
 
+    qint64 loaded_bytes = 0;
     while (!file.atEnd()) {
+        const QByteArray raw_line = file.readLine(kMaxJsonlLineBytes);
+        loaded_bytes += raw_line.size();
+        if (loaded_bytes > kMaxJsonlLoadBytes) {
+            if (error_message) {
+                *error_message = QStringLiteral("Trace file exceeds the %1-byte load cap")
+                                     .arg(kMaxJsonlLoadBytes);
+            }
+            break;
+        }
         QJsonParseError parse_error;
-        const auto doc = QJsonDocument::fromJson(file.readLine().trimmed(), &parse_error);
+        const auto doc = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
         if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
             continue;
         }
@@ -467,9 +510,19 @@ QVector<AiActivityEvent> TraceStore::loadActivityEvents(QString* error_message) 
         return events;
     }
 
+    qint64 loaded_bytes = 0;
     while (!file.atEnd()) {
+        const QByteArray raw_line = file.readLine(kMaxJsonlLineBytes);
+        loaded_bytes += raw_line.size();
+        if (loaded_bytes > kMaxJsonlLoadBytes) {
+            if (error_message) {
+                *error_message = QStringLiteral("Activity file exceeds the %1-byte load cap")
+                                     .arg(kMaxJsonlLoadBytes);
+            }
+            break;
+        }
         QJsonParseError parse_error;
-        const auto doc = QJsonDocument::fromJson(file.readLine().trimmed(), &parse_error);
+        const auto doc = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
         if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
             continue;
         }

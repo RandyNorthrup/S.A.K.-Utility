@@ -208,8 +208,20 @@ private:
     [[nodiscard]] QStringList parseEditionList(const QJsonValue& edListVal) const;
     QString buildSearchQuery(const QString& arch, ReleaseChannel channel) const;
 
+    /// @brief Parse and validate a single build entry from the API response.
+    /// @return BuildInfo if usable, std::nullopt if the entry carries no uuid (a
+    ///         build we cannot address and so must not offer). An out-of-range
+    ///         "created" is clamped to 0 rather than invoking double->qint64 UB.
+    std::optional<BuildInfo> parseBuildEntry(const QString& key, const QJsonObject& buildObj);
+
     /// @brief Extract langFancyNames from API response into a display-name map
     QMap<QString, QString> parseLangFancyNames(const QJsonObject& response);
+
+    /// @brief True iff @p info's download URL parses, is HTTPS (or plain HTTP only
+    ///        for Microsoft's SHA-1-integrity-checked UUP CDN), and is non-empty.
+    ///        Logs the specific rejection reason. A false trips the incomplete-set
+    ///        refusal rather than shipping an unfetchable entry.
+    [[nodiscard]] bool isAcceptableDownloadUrl(const FileInfo& info);
 
     /// @brief Parse and validate a single file entry from the API response
     /// @return FileInfo if valid, std::nullopt if rejected

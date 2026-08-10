@@ -37,6 +37,23 @@ enum ContactColumn {
     ColCount
 };
 
+namespace {
+// Hard ceilings so a hostile PST/OST (untrusted on-disk bytes) cannot exhaust memory
+// through the address book. Real contact folders are far smaller than these.
+constexpr int kMaxContactsPerFolder = 2000;
+constexpr int kMaxTotalContacts = 100'000;
+constexpr int kMaxContactFieldChars = 100'000;
+
+// Bound a free-form contact field before it is HTML-escaped and rendered, so a single
+// oversized property cannot force multiple full-size allocations in the UI process.
+QString clampContactField(const QString& value) {
+    if (value.size() <= kMaxContactFieldChars) {
+        return value;
+    }
+    return value.left(kMaxContactFieldChars) + QStringLiteral("...");
+}
+}  // namespace
+
 // ============================================================================
 // Construction
 // ============================================================================
@@ -171,6 +188,7 @@ void EmailContactsDialog::loadContacts() {
 
     m_status_label->setText(tr("Loading contacts..."));
     m_folders_loaded = 0;
+    m_truncated = false;
     m_all_contacts.clear();
 
     // Connect to controller to receive folder items
@@ -182,8 +200,12 @@ void EmailContactsDialog::loadContacts() {
             &::EmailInspectorController::itemDetailLoaded,
             this,
             &EmailContactsDialog::onDetailLoaded);
+    // Surface a load/export failure instead of leaving "Loading contacts..." forever.
+    connect(m_controller,
+            &::EmailInspectorController::errorOccurred,
+            this,
+            &EmailContactsDialog::onControllerError);
 
-    constexpr int kMaxContactsPerFolder = 2000;
     for (uint64_t folder_id : m_folder_ids) {
         m_controller->loadFolderItems(folder_id, 0, kMaxContactsPerFolder);
     }
@@ -247,16 +269,30 @@ void EmailContactsDialog::onExportCsvClicked() {
 
 void EmailContactsDialog::onItemsLoaded(uint64_t /*folder_id*/,
                                         QVector<sak::PstItemSummary> items,
-                                        int /*total*/) {
+                                        int total) {
+    // A folder reporting more items than it returned was capped at the per-folder
+    // limit; record that so the subset is never presented as the complete set.
+    if (total > items.size()) {
+        m_truncated = true;
+    }
     for (const auto& item : items) {
         if (item.item_type == EmailItemType::Contact || item.item_type == EmailItemType::DistList) {
+            if (m_all_contacts.size() >= kMaxTotalContacts) {
+                m_truncated = true;
+                break;
+            }
             m_all_contacts.append(item);
         }
     }
     ++m_folders_loaded;
     if (m_folders_loaded >= m_folder_ids.size()) {
         filterContacts(m_search_edit->text());
-        m_status_label->setText(tr("%1 contacts").arg(m_all_contacts.size()));
+        QString status = tr("%1 contacts").arg(m_all_contacts.size());
+        if (m_truncated) {
+            status += QLatin1Char(' ');
+            status += tr("(list truncated to bound memory)");
+        }
+        m_status_label->setText(status);
     }
 }
 
@@ -264,6 +300,11 @@ void EmailContactsDialog::onDetailLoaded(sak::PstItemDetail detail) {
     if (detail.item_type == EmailItemType::Contact || detail.item_type == EmailItemType::DistList) {
         displayContactDetail(detail);
     }
+}
+
+void EmailContactsDialog::onControllerError(const QString& error) {
+    // Fail closed on the UI: never leave the dialog stuck on "Loading contacts...".
+    m_status_label->setText(tr("Failed to load contacts: %1").arg(error));
 }
 
 // ============================================================================
@@ -313,16 +354,17 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
                        .arg(ui::kHtmlDetailPaddingPx)
                        .arg(ui::htmlColor(ui::kColorTextHeading))
                        .arg(ui::kSpacingMedium)
-                       .arg(detail.given_name.toHtmlEscaped())
-                       .arg(detail.surname.toHtmlEscaped());
+                       .arg(clampContactField(detail.given_name).toHtmlEscaped())
+                       .arg(clampContactField(detail.surname).toHtmlEscaped());
 
     if (!detail.job_title.isEmpty() || !detail.company_name.isEmpty()) {
         html += QString::fromLatin1(ui::kHtmlParagraphColorMarginOpen)
                     .arg(ui::htmlColor(ui::kColorTextSecondary))
                     .arg(ui::kCssPaddingTinyPx)
-                    .arg(detail.job_title.toHtmlEscaped());
+                    .arg(clampContactField(detail.job_title).toHtmlEscaped());
         if (!detail.company_name.isEmpty()) {
-            html += QStringLiteral(" at <b>%1</b>").arg(detail.company_name.toHtmlEscaped());
+            html += QStringLiteral(" at <b>%1</b>")
+                        .arg(clampContactField(detail.company_name).toHtmlEscaped());
         }
         html += QStringLiteral("</p>");
     }
@@ -333,25 +375,28 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
 
     // Email
     if (!detail.email_address.isEmpty()) {
-        html += QStringLiteral("<p><b>Email:</b> %1</p>").arg(detail.email_address.toHtmlEscaped());
+        html += QStringLiteral("<p><b>Email:</b> %1</p>")
+                    .arg(clampContactField(detail.email_address).toHtmlEscaped());
     }
 
     // Phones
     if (!detail.business_phone.isEmpty()) {
-        html +=
-            QStringLiteral("<p><b>Business:</b> %1</p>").arg(detail.business_phone.toHtmlEscaped());
+        html += QStringLiteral("<p><b>Business:</b> %1</p>")
+                    .arg(clampContactField(detail.business_phone).toHtmlEscaped());
     }
     if (!detail.mobile_phone.isEmpty()) {
-        html += QStringLiteral("<p><b>Mobile:</b> %1</p>").arg(detail.mobile_phone.toHtmlEscaped());
+        html += QStringLiteral("<p><b>Mobile:</b> %1</p>")
+                    .arg(clampContactField(detail.mobile_phone).toHtmlEscaped());
     }
     if (!detail.home_phone.isEmpty()) {
-        html += QStringLiteral("<p><b>Home:</b> %1</p>").arg(detail.home_phone.toHtmlEscaped());
+        html += QStringLiteral("<p><b>Home:</b> %1</p>")
+                    .arg(clampContactField(detail.home_phone).toHtmlEscaped());
     }
 
     // Subject (often the full display name)
     if (!detail.subject.isEmpty()) {
-        html +=
-            QStringLiteral("<p><b>Display Name:</b> %1</p>").arg(detail.subject.toHtmlEscaped());
+        html += QStringLiteral("<p><b>Display Name:</b> %1</p>")
+                    .arg(clampContactField(detail.subject).toHtmlEscaped());
     }
 
     // Notes / body
@@ -360,7 +405,7 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
                     .arg(ui::kCssBorderWidthDefaultPx)
                     .arg(ui::htmlColor(ui::kColorBorderDefault))
                     .arg(ui::htmlColor(ui::kColorTextBody))
-                    .arg(detail.body_plain.toHtmlEscaped());
+                    .arg(clampContactField(detail.body_plain).toHtmlEscaped());
     }
 
     html += QStringLiteral("</div>");

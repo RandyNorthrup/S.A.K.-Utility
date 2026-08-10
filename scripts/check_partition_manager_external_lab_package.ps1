@@ -180,6 +180,14 @@ try {
 
     $manifestIds = @($manifest.results | ForEach-Object { $_.id })
     $matrixIds = @($matrix.external_gates | ForEach-Object { $_.id })
+    # Fail closed on the degenerate "everything is empty" case: with zero gates the count
+    # check (0 -eq 0) and both loops trivially pass, and the gate would report success while
+    # verifying nothing.
+    Assert-Condition -Condition ($matrixIds.Count -gt 0) -Message "Certification matrix declares no external_gates; nothing to verify"
+    # Duplicate IDs would let a missing gate hide behind a repeated one under the count/contains
+    # checks, so require both sides to be sets of unique IDs.
+    Assert-Condition -Condition ((@($matrixIds | Sort-Object -Unique)).Count -eq $matrixIds.Count) -Message "Certification matrix external_gates contain duplicate IDs"
+    Assert-Condition -Condition ((@($manifestIds | Sort-Object -Unique)).Count -eq $manifestIds.Count) -Message "External manifest results contain duplicate IDs"
     Assert-Condition -Condition ($manifestIds.Count -eq $matrixIds.Count) -Message "External manifest gate count mismatch: expected $($matrixIds.Count), found $($manifestIds.Count)"
     foreach ($id in $matrixIds) {
         Assert-Condition -Condition ($manifestIds -contains $id) -Message "External manifest missing gate: $id"
@@ -192,6 +200,12 @@ try {
         "- Manifest: $resolvedManifestPath"
     ) | Sort-Object -Unique
     foreach ($gate in @($matrix.external_gates)) {
+        # The gate ID becomes a path segment under the evidence root. Reject anything that is
+        # not a single safe segment ('.', '..', separators, or other characters) so a crafted
+        # matrix cannot make the checker validate content outside the selected evidence root.
+        if ($gate.id -notmatch '^[A-Za-z0-9._-]+$' -or $gate.id -eq '.' -or $gate.id -eq '..') {
+            throw "External gate ID is not a safe path segment: $($gate.id)"
+        }
         $gateDirectory = Join-Path $resolvedEvidenceRoot $gate.id
         Assert-Condition -Condition (Test-Path -LiteralPath $gateDirectory -PathType Container) -Message "External lab package gate directory missing: $($gate.id)"
 

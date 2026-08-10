@@ -780,6 +780,27 @@ void UserProfileRestoreAppDataPage::initializePage() {
     }
 }
 
+void UserProfileRestoreAppDataPage::cleanupPage() {
+    // A Back navigation can precede the user selecting a DIFFERENT backup on the
+    // welcome page. Drop the one-time load state and clear the populated rows so the
+    // next forward visit reloads from the current verified manifest and never
+    // persists a previous backup's app-data selections into the restore. Fail closed.
+    m_loaded = false;
+    if (m_appDataTree != nullptr) {
+        m_appDataTree->blockSignals(true);
+        m_appDataTree->clear();
+        m_appDataTree->blockSignals(false);
+        m_appDataTree->setEnabled(false);
+    }
+    if (m_selectAllButton != nullptr) {
+        m_selectAllButton->setEnabled(false);
+    }
+    if (m_selectNoneButton != nullptr) {
+        m_selectNoneButton->setEnabled(false);
+    }
+    QWizardPage::cleanupPage();
+}
+
 bool UserProfileRestoreAppDataPage::isComplete() const {
     return true;  // Always complete -- app data restore is optional
 }
@@ -1052,6 +1073,28 @@ void UserProfileRestoreNetworksPage::initializePage() {
     }
 }
 
+void UserProfileRestoreNetworksPage::cleanupPage() {
+    // See UserProfileRestoreAppDataPage::cleanupPage. A Back navigation may precede
+    // choosing a different backup, so drop the one-time load state (including the
+    // retained xml_data) and clear the tree. Fail closed against stale profiles that
+    // would otherwise be re-imported via an elevated netsh wlan add profile.
+    m_loaded = false;
+    m_profiles.clear();
+    if (m_networkTree != nullptr) {
+        m_networkTree->blockSignals(true);
+        m_networkTree->clear();
+        m_networkTree->blockSignals(false);
+        m_networkTree->setEnabled(false);
+    }
+    if (m_selectAllButton != nullptr) {
+        m_selectAllButton->setEnabled(false);
+    }
+    if (m_selectNoneButton != nullptr) {
+        m_selectNoneButton->setEnabled(false);
+    }
+    QWizardPage::cleanupPage();
+}
+
 bool UserProfileRestoreNetworksPage::isComplete() const {
     return true;  // Always complete -- network restore is optional
 }
@@ -1249,6 +1292,25 @@ void UserProfileRestoreEthernetPage::initializePage() {
     if (!m_loaded) {
         loadEthernetConfigs();
     }
+}
+
+void UserProfileRestoreEthernetPage::cleanupPage() {
+    // See UserProfileRestoreAppDataPage::cleanupPage. Drop the one-time load state
+    // and the retained IP/DNS fields on Back so a later backup change cannot re-apply
+    // a previous backup's adapter settings via an elevated netsh interface ip set.
+    m_loaded = false;
+    m_configs.clear();
+    if (m_ethernetTable != nullptr) {
+        m_ethernetTable->setRowCount(0);
+        m_ethernetTable->setEnabled(false);
+    }
+    if (m_selectAllButton != nullptr) {
+        m_selectAllButton->setEnabled(false);
+    }
+    if (m_selectNoneButton != nullptr) {
+        m_selectNoneButton->setEnabled(false);
+    }
+    QWizardPage::cleanupPage();
 }
 
 bool UserProfileRestoreEthernetPage::isComplete() const {
@@ -1628,6 +1690,36 @@ void UserProfileRestoreAppRestorePage::initializePage() {
     if (!m_loaded) {
         loadApps();
     }
+}
+
+void UserProfileRestoreAppRestorePage::cleanupPage() {
+    // A Back navigation may precede a backup change on the welcome page. Drop the
+    // one-time load state and the loaded app list so the next forward visit reloads
+    // installed_apps.json from the CURRENT backup path -- never offering a previous
+    // backup's apps for install. Skip while an install is in flight: the detached
+    // task still posts progress to this page's widgets. Fail closed.
+    if (m_installing) {
+        QWizardPage::cleanupPage();
+        return;
+    }
+    m_loaded = false;
+    m_apps.clear();
+    if (m_appTree != nullptr) {
+        m_appTree->blockSignals(true);
+        m_appTree->clear();
+        m_appTree->blockSignals(false);
+        m_appTree->setEnabled(false);
+    }
+    if (m_selectAllButton != nullptr) {
+        m_selectAllButton->setEnabled(false);
+    }
+    if (m_selectNoneButton != nullptr) {
+        m_selectNoneButton->setEnabled(false);
+    }
+    if (m_installButton != nullptr) {
+        m_installButton->setEnabled(false);
+    }
+    QWizardPage::cleanupPage();
 }
 
 bool UserProfileRestoreAppRestorePage::isComplete() const {

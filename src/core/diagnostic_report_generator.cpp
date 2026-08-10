@@ -51,7 +51,7 @@ QString csvEscape(const QString& value) {
         sanitized.prepend(QLatin1Char('\''));
     }
     if (sanitized.contains(QLatin1Char(',')) || sanitized.contains(QLatin1Char('"')) ||
-        sanitized.contains(QLatin1Char('\n'))) {
+        sanitized.contains(QLatin1Char('\n')) || sanitized.contains(QLatin1Char('\r'))) {
         sanitized.replace(QLatin1Char('"'), QStringLiteral("\"\""));
         return QLatin1Char('"') + sanitized + QLatin1Char('"');
     }
@@ -580,7 +580,7 @@ QString DiagnosticReportGenerator::buildHardwareSection() const {
                     .arg(mod.slot)
                     .arg(mod.manufacturer.toHtmlEscaped())
                     .arg(formatBytes(mod.capacity_bytes))
-                    .arg(mod.memory_type)
+                    .arg(mod.memory_type.toHtmlEscaped())
                     .arg(mod.speed_mhz);
     });
 
@@ -589,8 +589,8 @@ QString DiagnosticReportGenerator::buildHardwareSection() const {
         html += QString("<tr><td>%1</td><td>%2 (%3, %4)</td></tr>\n")
                     .arg(dev.model.toHtmlEscaped())
                     .arg(formatBytes(dev.size_bytes))
-                    .arg(dev.interface_type)
-                    .arg(dev.media_type);
+                    .arg(dev.interface_type.toHtmlEscaped())
+                    .arg(dev.media_type.toHtmlEscaped());
     });
 
     html += "<tr><th colspan=\"2\">GPU</th></tr>\n";
@@ -598,13 +598,13 @@ QString DiagnosticReportGenerator::buildHardwareSection() const {
         html += QString("<tr><td>%1</td><td>%2 VRAM, Driver %3</td></tr>\n")
                     .arg(gpu.name.toHtmlEscaped())
                     .arg(formatBytes(gpu.vram_bytes))
-                    .arg(gpu.driver_version);
+                    .arg(gpu.driver_version.toHtmlEscaped());
     });
 
     html += "<tr><th colspan=\"2\">System</th></tr>\n";
     html += QString("<tr><td>OS</td><td>%1 (Build %2)</td></tr>\n")
                 .arg(inv.os_name.toHtmlEscaped())
-                .arg(inv.os_build);
+                .arg(inv.os_build.toHtmlEscaped());
     html += QString("<tr><td>Motherboard</td><td>%1 %2</td></tr>\n")
                 .arg(inv.motherboard.manufacturer.toHtmlEscaped())
                 .arg(inv.motherboard.product.toHtmlEscaped());

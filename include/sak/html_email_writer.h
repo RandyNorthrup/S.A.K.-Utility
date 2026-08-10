@@ -36,6 +36,12 @@ public:
     [[nodiscard]] qint64 totalBytesWritten() const { return m_bytes_written; }
 
 private:
+    /// Resolve the destination directory for one message and create it, or fail closed.
+    /// Rejects an empty or non-absolute output root, and a subfolder_path that escapes the
+    /// output dir; on success the returned directory exists on disk.
+    [[nodiscard]] std::expected<QString, error_code> resolveMessageDirectory(
+        const QString& subfolder_path) const;
+
     [[nodiscard]] QString buildHtmlPage(
         const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const;
 

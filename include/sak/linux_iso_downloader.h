@@ -194,7 +194,9 @@ private:
     ///        non-HTTPS checksum URL can be tampered with on the same leg as the artifact.
     ///        Returns false and reports the failure when the download must not proceed.
     bool requirePinnedChecksum(const QString& distroName);
-    void onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam);
+    void onChecksumReplyFinished(QNetworkReply* reply,
+                                 QNetworkAccessManager* nam,
+                                 quint64 generation);
     /// @brief Launch the background file-hash + gen-tagged verify watcher.
     void launchChecksumHash(QCryptographicHash::Algorithm algorithm, const QString& expectedHash);
     QString parseExpectedHash(const QString& checksumData, const QString& expectedFileName) const;
@@ -227,5 +229,9 @@ private:
     std::atomic<quint64> m_operationGeneration{0};
     QFuture<QString>
         m_hashFuture;  // background checksum hash; joined in the dtor (see cancel note)
+    // Cancel flag for the current background hash task. Captured by value into the task so
+    // the task never dereferences `this`; flipped by cancel() and superseded on relaunch so
+    // an overlapping/stale hash cannot use-after-free or read revived state.
+    std::shared_ptr<std::atomic<bool>> m_hashCancel;
     LinuxDistroCatalog::SourceType m_sourceType = LinuxDistroCatalog::SourceType::DirectURL;
 };

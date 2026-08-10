@@ -54,15 +54,18 @@ HANDLE createServerPipe(const QString& pipe_name, SECURITY_ATTRIBUTES& attribute
     // FILE_FLAG_FIRST_PIPE_INSTANCE so creation fails with ERROR_ALREADY_EXISTS if a pipe of this
     // name is already open: an attacker who pre-created the (per-session-nonce) name to impersonate
     // the server cannot make us silently attach to their instance -- we fail closed instead.
-    return CreateNamedPipeW(wide_name.c_str(),
-                            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
-                                FILE_FLAG_FIRST_PIPE_INSTANCE,
-                            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                            1,
-                            static_cast<DWORD>(kPipeMaxPayload),
-                            static_cast<DWORD>(kPipeMaxPayload),
-                            0,
-                            &attributes);
+    // PIPE_REJECT_REMOTE_CLIENTS refuses any connection arriving over the network: this privileged
+    // IPC is local-only and the pipe DACL admits Builtin Users, so a remote peer must never reach
+    // it.
+    return CreateNamedPipeW(
+        wide_name.c_str(),
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+        1,
+        static_cast<DWORD>(kPipeMaxPayload),
+        static_cast<DWORD>(kPipeMaxPayload),
+        0,
+        &attributes);
 }
 
 bool waitForPipeClient(HANDLE pipe_handle) {
@@ -260,7 +263,16 @@ auto ElevatedPipeServer::readMessage() -> std::expected<PipeMessage, sak::error_
         }
     }
 
-    return parsePayload(type, payload);
+    PipeMessage message = parsePayload(type, payload);
+    if (!message.valid) {
+        // parsePayload already enforces the per-type field schema and refuses an
+        // unknown/out-of-range type; surface that as a read failure so a malformed
+        // frame can never occupy a successful result the caller would then process.
+        sak::logError("ElevatedPipeServer: rejecting malformed message (type={})",
+                      static_cast<int>(type));
+        return std::unexpected(sak::error_code::helper_connection_failed);
+    }
+    return message;
 }
 
 bool ElevatedPipeServer::isConnected() const {
@@ -318,12 +330,32 @@ bool ElevatedPipeServer::sendRaw(const QByteArray& data) {
     if (m_pipe_handle == INVALID_HANDLE_VALUE) {
         return false;
     }
+    // A framed message is [kPipeHeaderSize header][<= kPipeMaxPayload payload]. An
+    // empty buffer means frameMessage() tripped its own over-cap guard (build*
+    // returned {}), and anything past the ceiling would truncate through the DWORD
+    // size below. Refuse WITHOUT writing so the byte stream stays synchronized.
+    if (data.size() < kPipeHeaderSize ||
+        data.size() > static_cast<qsizetype>(kPipeHeaderSize) + kPipeMaxPayload) {
+        sak::logError("ElevatedPipeServer: refusing to send malformed frame of {} bytes",
+                      static_cast<long long>(data.size()));
+        return false;
+    }
     const int written = overlappedPipeIo(m_pipe_handle,
                                          true,
                                          const_cast<char*>(data.constData()),
                                          static_cast<DWORD>(data.size()),
                                          kPipeIoTimeoutMs);
-    return written == data.size();
+    if (written != data.size()) {
+        // A short or failed write leaves a partial frame in the byte-stream pipe;
+        // any later frame would be read against those stray bytes and desynchronize
+        // the protocol. Fail closed by tearing the connection down.
+        sak::logError("ElevatedPipeServer: sendRaw wrote {} of {} bytes; closing pipe",
+                      written,
+                      static_cast<long long>(data.size()));
+        stop();
+        return false;
+    }
+    return true;
 #else
     (void)data;
     return false;

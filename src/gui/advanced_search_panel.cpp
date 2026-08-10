@@ -753,7 +753,16 @@ void AdvancedSearchPanel::connectSearchBarSignals() {
         const auto inventory = StorageInventoryWorker::scanCurrentSystem();
         setEnabled(true);
         populateSearchTargets(FileManagementFileSystemBridge::targetsFromInventory(inventory));
-        Q_EMIT statusMessage(tr("Search targets scanned"), sak::kTimerStatusDefaultMs);
+        if (inventory.hasPartitionEnumerationFailure() || !inventory.warnings.isEmpty()) {
+            // Enumeration was not faithful (a disk's partitions failed to enumerate, or the
+            // scan recorded warnings), so the target list is incomplete. Report it as such
+            // instead of a clean "scanned" that hides the missing volumes.
+            Q_EMIT statusMessage(
+                tr("Search targets scanned with warnings; some disks may be missing"),
+                sak::kTimerStatusDefaultMs);
+        } else {
+            Q_EMIT statusMessage(tr("Search targets scanned"), sak::kTimerStatusDefaultMs);
+        }
     });
     connect(m_target_manual_button,
             &QPushButton::clicked,
@@ -1307,9 +1316,10 @@ QTreeWidgetItem* AdvancedSearchPanel::findOrCreateFileItem(
     for (int i = 0; i < m_results_tree->topLevelItemCount(); ++i) {
         auto* item = m_results_tree->topLevelItem(i);
         if (item->data(0, Qt::UserRole).toString() == filePath) {
-            while (item->childCount() > 0) {
-                delete item->takeChild(0);
-            }
+            // Keep the children already materialized for this file: onResultsReceived
+            // appends only the newly-arrived matches. Deleting and rebuilding every child
+            // on each batch is quadratic in a file's total match count, which lets a file
+            // with many matches freeze the UI thread.
             item->setText(0, QString("%1  (%2)").arg(filePath).arg(fileMatches.size()));
             return item;
         }
@@ -1327,21 +1337,30 @@ void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches) {
         return;
     }
 
+    // Record, per affected file, how many matches were already present before this batch
+    // so only the newly-arrived matches are materialized as child items below. The child's
+    // stored index (UserRole+1) stays equal to the match's position in m_all_results, which
+    // navigateToMatch/onResultItemClicked rely on.
+    QMap<QString, int> baseCount;
+    QVector<QString> order;
     for (const auto& match : matches) {
+        if (!baseCount.contains(match.file_path)) {
+            const auto existing = m_all_results.constFind(match.file_path);
+            baseCount.insert(match.file_path,
+                             existing == m_all_results.constEnd()
+                                 ? 0
+                                 : static_cast<int>(existing.value().size()));
+            order.append(match.file_path);
+        }
         m_all_results[match.file_path].append(match);
     }
 
-    QSet<QString> affectedFiles;
-    for (const auto& match : matches) {
-        affectedFiles.insert(match.file_path);
-    }
-
     m_results_tree->setUpdatesEnabled(false);
-    for (const auto& filePath : affectedFiles) {
+    for (const auto& filePath : order) {
         const auto& fileMatches = m_all_results[filePath];
         auto* fileItem = findOrCreateFileItem(filePath, fileMatches);
 
-        for (int i = 0; i < fileMatches.size(); ++i) {
+        for (int i = baseCount.value(filePath); i < fileMatches.size(); ++i) {
             const auto& m = fileMatches[i];
             auto* matchItem = new QTreeWidgetItem(fileItem);
             const QString truncated = m.line_content.left(80).trimmed();

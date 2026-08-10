@@ -58,7 +58,9 @@ private:
     struct ParsedDriveState {
         QString drive_letter;
         QString status;
+        QString error;               ///< Real exception text from a failed scan, if reported.
         bool has_corrupt = false;
+        bool corrupt_known = false;  ///< True once a definitive Detected/NotFound verdict is seen.
         bool scan_success = false;
     };
 

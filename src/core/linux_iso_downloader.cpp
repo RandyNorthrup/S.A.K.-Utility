@@ -45,6 +45,9 @@ constexpr qsizetype kSha1HexLength = 40;
 constexpr int kChecksumComputingProgress = 97;
 constexpr int kChecksumVerifyingProgress = 95;
 constexpr qint64 kChecksumReadBufferSize = 8 * sak::kBytesPerMB;
+// A checksum file (or a release note carrying the digest) is small; a peer that
+// streams past this ceiling is refused rather than buffered into memory.
+constexpr qint64 kMaxChecksumBytes = 16 * sak::kBytesPerMB;
 
 QString formatSize(qint64 bytes) {
     return sak::formatBytes(bytes);
@@ -639,7 +642,9 @@ QString LinuxISODownloader::parseExpectedHash(const QString& checksumData,
     return {};
 }
 
-void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam) {
+void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply,
+                                                 QNetworkAccessManager* nam,
+                                                 quint64 generation) {
     // Only verifyChecksum reaches here, with the manager it just allocated and the reply
     // QNetworkAccessManager::get returned for it; neither can be null.
     Q_ASSERT(reply);
@@ -647,8 +652,8 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
     reply->deleteLater();
     nam->deleteLater();
 
-    if (m_cancelled) {
-        return;  // a cancelled verify emits no terminal signal
+    if (!shouldApplyVerifyResult(m_cancelled, generation, m_operationGeneration.load())) {
+        return;  // cancelled, or superseded by a newer download; emit no terminal signal
     }
 
     if (reply->error() != QNetworkReply::NoError) {
@@ -704,7 +709,18 @@ void LinuxISODownloader::launchChecksumHash(QCryptographicHash::Algorithm algori
             onChecksumVerified(actualHash == expectedHash, expectedHash, actualHash);
         });
 
-    m_hashFuture = QtConcurrent::run([this, algorithm, hashPath]() -> QString {
+    // Give this hash its OWN cancel flag and signal any prior hash to stop first. The
+    // background task captures the flag and path BY VALUE and never dereferences `this`,
+    // so an overlapping or superseded task (a cancel + restart can leave one running)
+    // can never use-after-free the downloader, and resetting m_cancelled for a new
+    // download cannot revive an old hash.
+    if (m_hashCancel) {
+        m_hashCancel->store(true);
+    }
+    m_hashCancel = std::make_shared<std::atomic<bool>>(false);
+    const std::shared_ptr<std::atomic<bool>> cancelFlag = m_hashCancel;
+
+    m_hashFuture = QtConcurrent::run([algorithm, hashPath, cancelFlag]() -> QString {
         QFile file(hashPath);
         if (!file.open(QIODevice::ReadOnly)) {
             return QString();
@@ -713,7 +729,7 @@ void LinuxISODownloader::launchChecksumHash(QCryptographicHash::Algorithm algori
         QCryptographicHash hash(algorithm);
         const qint64 bufferSize = kChecksumReadBufferSize;
         while (!file.atEnd()) {
-            if (m_cancelled.load()) {
+            if (cancelFlag->load()) {
                 return QString();  // abort a long hash promptly on cancel
             }
             hash.addData(file.read(bufferSize));
@@ -741,9 +757,21 @@ void LinuxISODownloader::verifyChecksum() {
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
 
+    // Tag this fetch with the current operation generation so a reply that outlives a
+    // cancel + restart is discarded instead of verifying the new download against the old
+    // checksum file (which could fail it, or worse delete the new file).
+    const quint64 generation = m_operationGeneration.load();
+
     auto* reply = nam->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, nam]() {
-        onChecksumReplyFinished(reply, nam);
+    // Fail closed on an oversized checksum response: abort once the peer streams past the
+    // ceiling so readAll() below can never buffer an unbounded body into memory.
+    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64 total) {
+        if (received > kMaxChecksumBytes || total > kMaxChecksumBytes) {
+            reply->abort();
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, nam, generation]() {
+        onChecksumReplyFinished(reply, nam, generation);
     });
 }
 
@@ -797,7 +825,10 @@ void LinuxISODownloader::cancel() {
     Q_ASSERT(m_progressTimer);
     Q_ASSERT(m_catalog);
     m_cancelled = true;
-    ++m_operationGeneration;  // invalidate any background hash still running
+    ++m_operationGeneration;        // invalidate any background hash still running
+    if (m_hashCancel) {
+        m_hashCancel->store(true);  // signal the self-contained hash task to stop
+    }
     m_progressTimer->stop();
     m_catalog->cancelAll();
 

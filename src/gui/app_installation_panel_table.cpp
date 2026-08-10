@@ -22,7 +22,28 @@ using sak::ChocolateyManager;
 
 namespace {
 constexpr int kQueueSaveStatusMessageMs = sak::kTimerStatusMessageMs;
+
+bool isAllowedQueuePackageChar(QChar ch) {
+    return ch.isLetterOrNumber() || ch == QLatin1Char('.') || ch == QLatin1Char('-') ||
+           ch == QLatin1Char('_') || ch == QLatin1Char('+');
 }
+
+// A queue package id is valid only if it is non-empty, not option-like (a leading '-'
+// would be parsed by Chocolatey as a flag such as --force), and composed solely of
+// allowed characters. A malformed id is REJECTED (skipped), never rewritten, so it can
+// never reach the privileged install queue.
+bool queuePackageIdIsValid(const QString& id) {
+    return !id.isEmpty() && !id.startsWith(QLatin1Char('-')) &&
+           std::all_of(id.cbegin(), id.cend(), isAllowedQueuePackageChar);
+}
+
+// A version is optional; when present it must contain only allowed characters so a
+// malformed token cannot flow into an install command.
+bool queueVersionIsValid(const QString& version) {
+    return version.isEmpty() ||
+           std::all_of(version.cbegin(), version.cend(), isAllowedQueuePackageChar);
+}
+}  // namespace
 
 // Results table columns (shared by online and offline)
 enum ResultColumn {
@@ -261,8 +282,15 @@ void AppInstallationPanel::saveQueueToFile() {
         return;
     }
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
-    if (file.write(json_bytes) != json_bytes.size()) {
+    // Fail closed: a short write or a failed flush leaves a truncated/corrupt file on
+    // disk. Surface it as a save failure instead of reporting a clean "Saved".
+    if (file.write(json_bytes) != json_bytes.size() || !file.flush()) {
         sak::logWarning("Incomplete write to file: {}", filePath.toStdString());
+        file.close();
+        sak::showWarningLogged(this,
+                               tr("Save Failed"),
+                               tr("Could not write the full app list to file:\n%1").arg(filePath));
+        return;
     }
     file.close();
 
@@ -307,6 +335,21 @@ bool AppInstallationPanel::parseQueueFile(const QString& filePath, QJsonArray& o
         return false;
     }
 
+    // Bound the read: the queue file is user-selected and otherwise fed whole into
+    // readAll()/JSON parse. Reject an oversized or unreadable-size file so a hostile or
+    // corrupt path cannot exhaust memory. A real app list is a few KB.
+    constexpr qint64 kMaxQueueFileBytes = 8LL * 1024 * 1024;
+    const qint64 file_size = file.size();
+    if (file_size < 0 || file_size > kMaxQueueFileBytes) {
+        sak::logWarning(
+            ("Load Failed: App list file too large or unreadable: " + filePath).toStdString());
+        sak::showWarningLogged(this,
+                               tr("Load Failed"),
+                               tr("App list file is too large or unreadable:\n%1").arg(filePath));
+        file.close();
+        return false;
+    }
+
     QJsonParseError parseError;
     QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
     file.close();
@@ -339,7 +382,15 @@ void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added,
         }
         QJsonObject obj = val.toObject();
         QString pkgId = obj["package_id"].toString().trimmed();
-        if (pkgId.isEmpty()) {
+        // Fail closed on a malformed/option-like id or version rather than letting it
+        // reach the privileged install queue; count it as skipped so a partial import
+        // is never reported as a clean load.
+        if (!queuePackageIdIsValid(pkgId)) {
+            skipped++;
+            continue;
+        }
+        const QString version = obj["version"].toString();
+        if (!queueVersionIsValid(version)) {
             skipped++;
             continue;
         }
@@ -355,7 +406,7 @@ void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added,
 
         QueueEntry entry;
         entry.package_id = pkgId;
-        entry.version = obj["version"].toString();
+        entry.version = version;
         entry.publisher = obj["publisher"].toString();
         m_installQueue.append(entry);
         added++;
