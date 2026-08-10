@@ -4151,19 +4151,39 @@ QByteArray buildFrozenSnapshotSuperblock(const QByteArray& liveVolSb,
 // memcmp's it against this block - so the set need NOT be a contiguous prefix. The
 // crash-safe per-object 3-slot ring layout points chunk bitmaps at non-adjacent IP
 // slots, which this builder marks exactly.
-QByteArray buildIpBitmapBlockFromUsedSet(uint32_t blockSize,
-                                         const QVector<uint64_t>& usedIpBlocks) {
+bool buildIpBitmapBlockFromUsedSet(uint32_t blockSize,
+                                   const QVector<uint64_t>& usedIpBlocks,
+                                   QByteArray* out,
+                                   QStringList* blockers) {
     QByteArray block(static_cast<qsizetype>(blockSize), '\0');
     // A used-set index is derived from on-disk cib/spaceman addresses (e.g. block - ip_base,
-    // which underflows to ~2^64 when a defaulted/zero cib address slips below ip_base). A bit
-    // >= blockSize*8 would index QByteArray::operator[] past this 4096-byte block -- a
-    // Q_ASSERT-only, release-build out-of-bounds heap write. Skip any such index: the resulting
-    // bitmap is inconsistent (and the commit fails downstream) rather than corrupting the heap.
+    // which underflows to ~2^64 when a defaulted/zero cib address slips below ip_base). This
+    // builder materializes only the FIRST ip-bitmap block, so a bit >= blockSize*8 cannot be
+    // represented here. Silently dropping it would leave a live IP block unmarked in the
+    // published bitmap (a later commit could then reallocate over live data), so fail closed and
+    // abort the whole commit. A valid volume front-packs its IP metadata below one block, so this
+    // never fires on real input (a genuine multi-block ip_bm_size layout is not yet distributed).
     const uint64_t bitCapacity = static_cast<uint64_t>(blockSize) * 8;
     for (uint64_t bit : usedIpBlocks) {
         if (bit >= bitCapacity) {
-            continue;
+            blockers->append(
+                QStringLiteral("APFS commit: internal-pool bitmap index out of range"));
+            return false;
         }
+        block[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
+    }
+    *out = block;
+    return true;
+}
+
+// A blockSize-byte allocation bitmap marking the contiguous run [0, count) used, bounded to the
+// block's bit capacity. GENESIS/format callers only: `count` is a freshly-computed, in-range
+// layout value (the bound is a memory-safety backstop that never trims valid input). The
+// untrusted commit path uses the fail-closed buildIpBitmapBlockFromUsedSet overload instead.
+QByteArray contiguousBitmapPrefix(uint32_t blockSize, uint64_t count) {
+    QByteArray block(static_cast<qsizetype>(blockSize), '\0');
+    const uint64_t bitCapacity = static_cast<uint64_t>(blockSize) * 8;
+    for (uint64_t bit = 0; bit < count && bit < bitCapacity; ++bit) {
         block[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
     }
     return block;
@@ -4188,10 +4208,11 @@ QByteArray buildIpBitmapBlock(uint32_t blockSize, uint64_t usedBlocks) {
     // IP-region blocks used. The ghost checkpoint marks its own cib(s)+bitmap slot
     // (single-CIB: 2 blocks -> 0x3); the live checkpoint additionally marks the
     // ghost pair it still references via the IP free-queue (single-CIB: 4 ->
-    // 0xF). Multi-CIB scales the slot to cib_count cibs + one chunk-0 bitmap, so
-    // the run can span several bytes. Delegates to the exact-set builder with the
-    // prefix {0..usedBlocks-1} (byte-identical to the hand-rolled loop it replaced).
-    return buildIpBitmapBlockFromUsedSet(blockSize, ipBitmapPrefixSet(usedBlocks));
+    // 0xF). Multi-CIB scales the slot to cib_count cibs + one chunk-0 bitmap, so the run can span
+    // several bytes. This is the GENESIS format path: usedBlocks is a trusted, freshly-computed
+    // layout value the format keeps inside the first bitmap block, so the contiguous-prefix
+    // builder applies (the untrusted commit path uses the fail-closed used-set overload).
+    return contiguousBitmapPrefix(blockSize, usedBlocks);
 }
 
 struct ApfsSpacemanParams {
@@ -4631,26 +4652,35 @@ QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* b
 // run [startBlock, startBlock + runBlocks) as used. A relocated internal pool lands at the start
 // of its chunk when the source is chunk-aligned (startBlock 0), but mid-chunk when the source has
 // a partial last chunk (the pool sits at newIpBase's in-chunk offset).
-QByteArray buildChunkRangeBitmapBlock(uint32_t blockSize, uint64_t startBlock, uint64_t runBlocks) {
-    QByteArray block(static_cast<qsizetype>(blockSize), '\0');
+std::optional<QByteArray> buildChunkRangeBitmapBlock(uint32_t blockSize,
+                                                     uint64_t startBlock,
+                                                     uint64_t runBlocks,
+                                                     QStringList* blockers) {
     // startBlock (an on-disk-derived in-chunk pool offset) + runBlocks (a derived pool block
-    // count) can exceed one chunk's 32768 bits when the two are not reconciled (a forged
-    // sm_ip_base straddling a chunk). An index >= blockSize*8 would write past this 4096-byte
-    // block through QByteArray::operator[] (Q_ASSERT-only -> release-build heap overflow).
-    // Clamp the run to the block's bit capacity, and guard the endpoint against wrap.
-    const uint64_t bitCapacity = static_cast<uint64_t>(blockSize) * 8;
-    for (uint64_t index = startBlock; index < startBlock + runBlocks && index >= startBlock;
-         ++index) {
-        if (index >= bitCapacity) {
-            break;
-        }
+    // count) must fit one chunk's bit capacity (blockSize*8). A forged sm_ip_base straddling a
+    // chunk would push the run past this 4096-byte block; fail closed rather than silently
+    // truncate the bitmap and write a wrong allocation state to a real disk. A valid single-chunk
+    // pool always satisfies startBlock + runBlocks <= blockSize*8 (a multi-chunk pool takes the
+    // multi-chunk allocator instead).
+    const uint64_t bits = static_cast<uint64_t>(blockSize) * 8;
+    if (startBlock >= bits || runBlocks > bits || startBlock > bits - runBlocks) {
+        blockers->append(
+            QStringLiteral("APFS commit: chunk allocation-bitmap run exceeds one chunk"));
+        return std::nullopt;
+    }
+    QByteArray block(static_cast<qsizetype>(blockSize), '\0');
+    for (uint64_t index = startBlock; index < startBlock + runBlocks; ++index) {
         block[static_cast<qsizetype>(index / 8)] |= static_cast<char>(1 << (index % 8));
     }
     return block;
 }
 
 QByteArray buildChunkBitmapBlock(uint32_t blockSize, uint64_t reservedBlocks) {
-    return buildChunkRangeBitmapBlock(blockSize, 0, reservedBlocks);
+    // GENESIS format path: startBlock 0 and a trusted reservedBlocks that chunkReservedBlocks
+    // clamps to one chunk, so the run never exceeds the block. The contiguous-prefix builder's
+    // capacity bound is a memory-safety backstop; the untrusted commit path uses the fail-closed
+    // buildChunkRangeBitmapBlock overload instead.
+    return contiguousBitmapPrefix(blockSize, reservedBlocks);
 }
 
 struct ApfsCibAddrParams {
@@ -5327,9 +5357,11 @@ bool relocateIpBitmapRing(QByteArray* spaceman,
     }
     writeLe64(spaceman, kApfsSpacemanIpBmBaseOffset, base);
     for (uint64_t i = 0; i < bmapCount; ++i) {
-        const QByteArray bmp =
-            i == bmSize ? buildIpBitmapBlockFromUsedSet(ctx.geometry.blockSize, ctx.ipUsedSet)
-                        : QByteArray(static_cast<qsizetype>(ctx.geometry.blockSize), '\0');
+        QByteArray bmp(static_cast<qsizetype>(ctx.geometry.blockSize), '\0');
+        if (i == bmSize &&
+            !buildIpBitmapBlockFromUsedSet(ctx.geometry.blockSize, ctx.ipUsedSet, &bmp, blockers)) {
+            return false;
+        }
         if (!writeApfsRepairBlock(ctx.image, ctx.geometry, base + i, bmp, blockers)) {
             return false;
         }
@@ -5446,9 +5478,11 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
     // bits for the certified tiers) fits the first bitmap block; the remaining bmSize-1
     // copies are all-zero.
     for (uint64_t i = 0; i < bmSize; ++i) {
-        const QByteArray bmp =
-            i == 0 ? buildIpBitmapBlockFromUsedSet(ctx.geometry.blockSize, ctx.ipUsedSet)
-                   : QByteArray(static_cast<qsizetype>(ctx.geometry.blockSize), '\0');
+        QByteArray bmp(static_cast<qsizetype>(ctx.geometry.blockSize), '\0');
+        if (i == 0 &&
+            !buildIpBitmapBlockFromUsedSet(ctx.geometry.blockSize, ctx.ipUsedSet, &bmp, blockers)) {
+            return false;
+        }
         if (!writeApfsRepairBlock(ctx.image, ctx.geometry, base + newSlots.at(i), bmp, blockers)) {
             return false;
         }
@@ -7623,6 +7657,19 @@ std::optional<QByteArray> readChunkAllocationBitmap(QIODevice* image,
         blockers->append(QStringLiteral("APFS chunk %1 is outside the chunk-info block (%2 bytes)")
                              .arg(chunkIndex)
                              .arg(cib.size()));
+        return std::nullopt;
+    }
+    // The cib physically holds room for ~126 entry slots, but its own ci_entry_count (chunk-info
+    // count at 0x24) may describe fewer chunks. A chunkIndex within the block yet >= that count
+    // reads a zero-padded/garbage slot whose ci_bitmap_addr == 0 is indistinguishable from the
+    // legitimate implicit-all-free encoding, so the allocator would hand out an out-of-range
+    // chunk as if it were entirely free. Fail closed; a valid chunk index is always < the count.
+    const uint32_t chunkInfoCount = le32(cib, kApfsChunkInfoCountOffset);
+    if (chunkIndex >= chunkInfoCount) {
+        blockers->append(
+            QStringLiteral("APFS chunk %1 exceeds the chunk-info block's entry count %2")
+                .arg(chunkIndex)
+                .arg(chunkInfoCount));
         return std::nullopt;
     }
     const uint64_t bitmapAddr = le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
@@ -11636,11 +11683,13 @@ QSet<uint64_t> reservedIpRegionBlocks(const ApfsIpFreePoolGeometry& geo) {
 // untouched, the new free-pool slot when S4b copied it on write). On a cib-0-only
 // single-commit spill this equals the retired {0..count-1} prefix (cibKAddrs all genesis ==
 // the immutable prefix, no ghosts move), so byte-identity holds.
-QVector<uint64_t> buildSpillIpUsedSet(const ApfsFsCommitContext& ctx,
-                                      const ApfsIpFreePoolGeometry& geo,
-                                      const ApfsIpRotation& rotation,
-                                      const QVector<QPair<uint64_t, uint64_t>>& liveChunkSlots,
-                                      const QVector<uint64_t>& extraUsed) {
+std::optional<QVector<uint64_t>> buildSpillIpUsedSet(
+    const ApfsFsCommitContext& ctx,
+    const ApfsIpRotation& rotation,
+    const QVector<QPair<uint64_t, uint64_t>>& liveChunkSlots,
+    const QVector<uint64_t>& extraUsed,
+    QStringList* blockers) {
+    const ApfsIpFreePoolGeometry geo = computeIpFreePoolGeometry(ctx);
     QSet<uint64_t> used;
     // The fixed part of the immutable prefix: immutable cabs + extra chunk bitmaps, which
     // sit after the (cibCount-1) immutable-cib genesis slots and never move. The cib
@@ -11661,6 +11710,15 @@ QVector<uint64_t> buildSpillIpUsedSet(const ApfsFsCommitContext& ctx,
     QVector<uint64_t> relative;
     relative.reserve(used.size());
     for (uint64_t block : used) {
+        // Prove pool membership before the subtraction: a defaulted/short cib address (block 0) or
+        // any block below ip_base underflows block - ip_base to ~2^64, and an address past the
+        // pool overruns the ip bitmap. Fail closed rather than publish an inconsistent bitmap; a
+        // valid used block always lies inside [ip_base, ip_base + ip_block_count).
+        if (block < geo.ipBase || block - geo.ipBase >= geo.ipBlockCount) {
+            blockers->append(QStringLiteral(
+                "APFS in-place commit: internal-pool used-set block is outside the pool"));
+            return std::nullopt;
+        }
         relative.append(block - geo.ipBase);
     }
     std::sort(relative.begin(), relative.end());
@@ -11669,8 +11727,10 @@ QVector<uint64_t> buildSpillIpUsedSet(const ApfsFsCommitContext& ctx,
 
 // The post-commit on-disk address of each cib k>0: its live (genesis or prior-COW)
 // address from ctx.liveCibAddrs, overridden by this commit's cib-COW repoint when present.
-QVector<uint64_t> postCommitCibKAddrs(const ApfsFsCommitContext& ctx,
-                                      const QVector<QPair<uint64_t, uint64_t>>& cibRepoints) {
+std::optional<QVector<uint64_t>> postCommitCibKAddrs(
+    const ApfsFsCommitContext& ctx,
+    const QVector<QPair<uint64_t, uint64_t>>& cibRepoints,
+    QStringList* blockers) {
     QVector<uint64_t> addrs;
     for (uint64_t k = 1; k < ctx.layout.cibCount; ++k) {
         uint64_t addr = ctx.liveCibAddrs.value(static_cast<qsizetype>(k), 0);
@@ -11678,6 +11738,14 @@ QVector<uint64_t> postCommitCibKAddrs(const ApfsFsCommitContext& ctx,
             if (repoint.first == k) {
                 addr = repoint.second;
             }
+        }
+        // A missing/short cib array entry defaults to 0; block 0 is the nx_superblock, never a
+        // real cib address. Abort instead of silently marking (or dropping) the wrong IP block.
+        if (addr == 0) {
+            blockers->append(
+                QStringLiteral("APFS in-place commit: no live address for internal-pool cib %1")
+                    .arg(k));
+            return std::nullopt;
         }
         addrs.append(addr);
     }
@@ -11802,10 +11870,18 @@ bool planSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
     }
     QVector<uint64_t> extraUsed =
         ipFreeQueueGhostBlocks(rotation, ctx.layout.ipGroupStride, plan->freedOldSlots);
-    extraUsed += postCommitCibKAddrs(ctx, plan->cibRepoints);
+    const auto cibKAddrs = postCommitCibKAddrs(ctx, plan->cibRepoints, blockers);
+    if (!cibKAddrs) {
+        return false;
+    }
+    extraUsed += *cibKAddrs;
     const QVector<QPair<uint64_t, uint64_t>> liveSlots =
         finalLiveChunkSlots(ctx, liveSpilled, plan->chunkSlots, blockers);
-    plan->ipUsedSet = buildSpillIpUsedSet(ctx, geo, rotation, liveSlots, extraUsed);
+    const auto usedSet = buildSpillIpUsedSet(ctx, rotation, liveSlots, extraUsed, blockers);
+    if (!usedSet) {
+        return false;
+    }
+    plan->ipUsedSet = *usedSet;
     return true;
 }
 
@@ -14004,6 +14080,74 @@ struct ApfsMultiChunkLayout {
     uint64_t nextFreeSlot{0};  // first block past every slot layout allocated (immutable-cib base)
 };
 
+// A source data chunk that already carries a materialized allocation bitmap (a prior commit set
+// its cib entry's ci_bitmap_addr non-zero); a fresh chunk starts implicit-all-free (0).
+bool srcChunkHasBitmap(const QVector<ApfsSourceChunkState>& src, uint64_t k) {
+    return k < static_cast<uint64_t>(src.size()) && src.at(k).bitmapAddr != 0;
+}
+
+// Fail closed if any IP-relative used-set index exceeds the internal-pool bitmap's full span
+// (blockSize*8 * ip_bm_size). Such an index is an underflow/oversized producer value (e.g.
+// slot - base when a slot slipped below the pool base); a valid resize front-packs its metadata
+// well inside this. The ring writers materialize only the first bitmap block, so any surviving
+// index >= blockSize*8 additionally aborts at the shared sink (a genuine multi-block distribution
+// is not yet implemented, so a > ~512 TiB layout is refused here rather than silently truncated).
+bool ipUsedSetWithinSpan(uint32_t blockSize,
+                         const ApfsChunkAddingGrowPlan& plan,
+                         const QVector<uint64_t>& usedSet,
+                         QStringList* blockers) {
+    const uint64_t cibs = cibCountForChunks(plan.newChunkCount);
+    const uint64_t spanBits = static_cast<uint64_t>(blockSize) * 8 *
+                              ipBitmapSizeBlocks(plan.newChunkCount, cibs, cabCountForCibs(cibs));
+    for (uint64_t rel : usedSet) {
+        if (rel >= spanBits) {
+            blockers->append(
+                QStringLiteral("APFS resize: internal-pool used-set index exceeds ip-bitmap span"));
+            return false;
+        }
+    }
+    return true;
+}
+
+// Placement of a relocated internal pool inside the device: the block size, the pool base (used-
+// set indices are pool-relative to it), the ip footprint base (one ring below the pool when the
+// ring relocates, else the pool base), and the pool end.
+struct ApfsGrowPoolPlacement {
+    uint32_t bs{0};
+    uint64_t base{0};
+    uint64_t usedBase{0};
+    uint64_t poolEnd{0};
+};
+
+// Lay the relocated pool's per-chunk allocation bitmaps into free pool slots (the pool may span
+// several chunks when ip_bm_size > 1, each bitmapped for its portion) and record each slot in the
+// used-set. Fails closed if a chunk run exceeds one chunk's bit capacity (a forged straddling
+// pool). Byte-identical to the inline loop it replaces.
+bool layoutGrowPoolBitmaps(const ApfsGrowPoolPlacement& p,
+                           uint64_t* nextSlot,
+                           QHash<uint64_t, uint64_t>* poolChunkBmp,
+                           ApfsMultiChunkLayout* out,
+                           QStringList* blockers) {
+    const uint64_t poolChunk = p.usedBase / kApfsSpacemanBlocksPerChunk;
+    const uint64_t poolSpan =
+        (p.poolEnd - poolChunk * kApfsSpacemanBlocksPerChunk + kApfsSpacemanBlocksPerChunk - 1) /
+        kApfsSpacemanBlocksPerChunk;
+    for (uint64_t i = 0; i < poolSpan; ++i) {
+        const uint64_t chunkStart = (poolChunk + i) * kApfsSpacemanBlocksPerChunk;
+        const uint64_t lo = qMax(p.usedBase, chunkStart);
+        const uint64_t hi = qMin(p.poolEnd, chunkStart + kApfsSpacemanBlocksPerChunk);
+        const uint64_t slot = (*nextSlot)++;
+        const auto bmp = buildChunkRangeBitmapBlock(p.bs, lo - chunkStart, hi - lo, blockers);
+        if (!bmp) {
+            return false;
+        }
+        out->writes.append({slot, *bmp});
+        poolChunkBmp->insert(poolChunk + i, slot);
+        out->ipUsedSet.append(slot - p.base);
+    }
+    return true;
+}
+
 bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
                           const ApfsChunkAddingGrowPlan& plan,
                           const QVector<ApfsSourceChunkState>& src,
@@ -14017,26 +14161,12 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
     // The pool-relative slot layout stays relative to newIpBase (the ring is outside the
     // ip-bitmap).
     const uint64_t usedBase = plan.newIpBmBase != 0 ? plan.newIpBmBase : base;
-    // First footprint chunk = where it is placed (a grow pins it at the chunk-aligned old device
-    // end; a multi-chunk-pool shrink puts it in a free surviving chunk run). It may span several
-    // chunks (ip_bm_size > 1), each bitmapped for its portion; the first chunk's offset is 0
-    // (chunk- aligned source) or a partial-source tail (single-chunk pool only, per the shape
-    // validator).
-    const uint64_t poolChunk = usedBase / kApfsSpacemanBlocksPerChunk;
-    const uint64_t poolSpan =
-        (poolEnd - poolChunk * kApfsSpacemanBlocksPerChunk + kApfsSpacemanBlocksPerChunk - 1) /
-        kApfsSpacemanBlocksPerChunk;
     uint64_t nextSlot = base + 8;  // freePoolBase (first block past the cib rotation ring)
     QHash<uint64_t, uint64_t> poolChunkBmp;
     out->ipUsedSet = {0, 1, 2, 3};
-    for (uint64_t i = 0; i < poolSpan; ++i) {
-        const uint64_t chunkStart = (poolChunk + i) * kApfsSpacemanBlocksPerChunk;
-        const uint64_t lo = qMax(usedBase, chunkStart);
-        const uint64_t hi = qMin(poolEnd, chunkStart + kApfsSpacemanBlocksPerChunk);
-        const uint64_t slot = nextSlot++;
-        out->writes.append({slot, buildChunkRangeBitmapBlock(bs, lo - chunkStart, hi - lo)});
-        poolChunkBmp.insert(poolChunk + i, slot);
-        out->ipUsedSet.append(slot - base);
+    if (!layoutGrowPoolBitmaps(
+            {bs, base, usedBase, poolEnd}, &nextSlot, &poolChunkBmp, out, blockers)) {
+        return false;
     }
     for (uint64_t k = 0; k < plan.newChunkCount; ++k) {
         const uint64_t addr = k * kApfsSpacemanBlocksPerChunk;
@@ -14053,7 +14183,7 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
             e.bitmapAddr = poolChunkBmp.value(k);
             e.freeCount = blocks - static_cast<uint32_t>(poolInChunk);
             e.xid = plan.newXid;
-        } else if (k < static_cast<uint64_t>(src.size()) && src.at(k).bitmapAddr != 0) {
+        } else if (srcChunkHasBitmap(src, k)) {
             QByteArray bm(bs, '\0');
             if (!readApfsRepairBlock(
                     ctx->image, ctx->geometry, src.at(k).bitmapAddr, &bm, blockers)) {
@@ -14069,6 +14199,9 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
         out->entries.append(e);
     }
     out->nextFreeSlot = nextSlot;  // immutable cibs (multi-CIB grow) allocate from here
+    if (!ipUsedSetWithinSpan(bs, plan, out->ipUsedSet, blockers)) {
+        return false;
+    }
     std::sort(out->ipUsedSet.begin(), out->ipUsedSet.end());
     return true;
 }
@@ -14638,6 +14771,15 @@ QVector<ApfsExplicitChunkEntry> shrinkSurvivingPoolEntries(const ApfsChunkAdding
     return entries;
 }
 
+// The surviving old pool must fit entirely inside its single chunk: its in-chunk offset plus block
+// count cannot cross the 32768-block chunk boundary. A forged sm_ip_base straddling a chunk would
+// build a truncated pool bitmap; a legitimately multi-chunk pool takes the multi-chunk allocator,
+// never this path, so a valid volume never straddles here.
+bool survivingPoolStraddlesChunk(uint64_t poolOffset, uint64_t poolBlocks) {
+    return poolOffset > kApfsSpacemanBlocksPerChunk ||
+           poolBlocks > kApfsSpacemanBlocksPerChunk - poolOffset;
+}
+
 // Build + write the shrink allocator when the superseded pool sits in a SURVIVING high chunk. The
 // new pool relocates to chunk 0 (exactly like buildGrownAllocatorSubtree), but the surviving pool
 // chunk needs its own bitmap (the old pool stays marked used, riding the main fq), so the cib is
@@ -14668,7 +14810,16 @@ bool buildShrinkSurvivingPoolAllocator(ApfsFsCommitContext* ctx,
     // The surviving pool chunk keeps the old pool used at its in-chunk offset.
     const uint64_t poolOffset = plan.oldIpBase -
                                 plan.survivingPoolChunk * kApfsSpacemanBlocksPerChunk;
-    const QByteArray poolBitmap = buildChunkRangeBitmapBlock(bs, poolOffset, plan.oldIpBlockCount);
+    if (survivingPoolStraddlesChunk(poolOffset, plan.oldIpBlockCount)) {
+        blockers->append(
+            QStringLiteral("APFS shrink: surviving-pool bitmap run straddles a chunk boundary"));
+        return false;
+    }
+    const auto poolBitmap =
+        buildChunkRangeBitmapBlock(bs, poolOffset, plan.oldIpBlockCount, blockers);
+    if (!poolBitmap) {
+        return false;
+    }
     const QVector<ApfsExplicitChunkEntry> entries =
         shrinkSurvivingPoolEntries(plan, chunk0Used, liveBmp, poolBmp);
     // cib 0 (chunks 0..125) rotates ghost/live; cibs 1..N-1 are immutable at base+9 onward (past
@@ -14682,7 +14833,7 @@ bool buildShrinkSurvivingPoolAllocator(ApfsFsCommitContext* ctx,
     QVector<QPair<uint64_t, QByteArray>> writes = {
         {ghostBmp, chunk0Bitmap},
         {liveBmp, chunk0Bitmap},
-        {poolBmp, poolBitmap},
+        {poolBmp, *poolBitmap},
         {ghostCib, buildExplicitChunkInfoBlock({bs, ghostCib, plan.newXid, 0}, ghost0, blockers)},
         {liveCib, buildExplicitChunkInfoBlock({bs, liveCib, plan.newXid, 0}, live0, blockers)}};
     out->ipUsedSet = {0, 1, 2, 3, poolBmp - base};
@@ -15374,7 +15525,7 @@ bool layoutDataShrink(ApfsFsCommitContext* ctx,
             // Chunk 0 carries data + the relocated pool; the caller sets freeCount from chunk0Used.
             e.bitmapAddr = base + 3;  // liveBmp
             e.xid = plan.newXid;
-        } else if (k < static_cast<uint64_t>(src.size()) && src.at(k).bitmapAddr != 0) {
+        } else if (srcChunkHasBitmap(src, k)) {
             QByteArray bm(bs, '\0');
             if (!readApfsRepairBlock(
                     ctx->image, ctx->geometry, src.at(k).bitmapAddr, &bm, blockers)) {
@@ -15390,6 +15541,9 @@ bool layoutDataShrink(ApfsFsCommitContext* ctx,
         out->entries.append(e);
     }
     out->nextFreeSlot = nextSlot;
+    if (!ipUsedSetWithinSpan(bs, plan, out->ipUsedSet, blockers)) {
+        return false;
+    }
     return true;
 }
 
