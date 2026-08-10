@@ -27,6 +27,22 @@ may reshape the fixes), (2) import metadata fidelity, (3) foreign multi-chunk in
       Re-certified on a real Apple container (fsck_apfs OK pre-mount; apfsck clean
       256->512 and 256->1024); Release ctest 225/225.
 
+- [x] RAW-DEVICE grow certified on PHYSICAL hardware (2026-08-10, PhysicalDrive3,
+      28.9GB disposable USB, elevated). commitRawResize is a distinct entry point from
+      the image cert: openRawInPlaceCommitTarget + deviceAlreadySized=true +
+      flushCommitTargetThenClose over sector I/O, none of it exercised by
+      commitImageOnlyResize. Certified end to end: raw-copied a generated 256MiB
+      (2-chunk) container to device offset 0 with a zeroed tail to 512MiB, then
+      commit-raw-resize grew it in place 256->512MiB (4 chunks) directly on
+      \\.\PhysicalDrive3 (ok, blockers=[], xid 2->3), read the grown 512MiB back off
+      the raw device, and verified: apfsck -cw clean AND Apple-kernel fsck_apfs -n
+      ("The container /dev/rdisk4 appears to be OK", checkpoint xid 3, space manager +
+      free-queue trees + object map + volume all clean). The device seed is a raw byte
+      copy because CLI format-raw is hard-gated behind structured cert evidence +
+      hardware proof (by design); the grow reads geometry from the on-device NXSB, so
+      how the container arrived does not matter. This closes the raw-device I/O path
+      for the ea3ee59 grow fix.
+
 --------------------------------------------------------------------------------
 ## WORKSTREAM 1 -- broaden the live cert (find remaining real-Apple defects)
 
