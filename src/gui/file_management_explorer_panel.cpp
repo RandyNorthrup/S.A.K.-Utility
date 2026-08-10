@@ -973,7 +973,8 @@ void FileManagementExplorerPanel::buildTabBar(QVBoxLayout* center_layout) {
     auto* row = new QWidget(this);
     row->setObjectName(QStringLiteral("fileExplorerTabRow"));
     auto* row_layout = new QHBoxLayout(row);
-    row_layout->setContentsMargins(0, 0, 0, 0);
+    row_layout->setContentsMargins(
+        ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     row_layout->setSpacing(ui::kSpacingTight);
 
     // Files TabBar.xaml TabStripHeader: a 30x30 tab-actions button LEFT of

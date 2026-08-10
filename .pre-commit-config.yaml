@@ -173,14 +173,27 @@ repos:
         pass_filenames: false
 
       # -------------------------------------------------------------------
-      # NOTE: three further gate scripts exist and are NOT yet listed here
+      # 6d. GUI magic numbers - layout/sizing calls must use named metrics
+      #     Debt reached zero (the residual 18 raw literals were folded into
+      #     the sak::ui margin/spacing tokens and per-file Files-xaml metric
+      #     constants), so this one is wired.
+      # -------------------------------------------------------------------
+      - id: gui-magic-numbers
+        name: "GUI magic-number check"
+        description: "Layout/sizing calls must reference named metric constants"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_gui_magic_numbers.ps1
+        language: system
+        pass_filenames: false
+
+      # -------------------------------------------------------------------
+      # NOTE: two further gate scripts exist and are NOT yet listed here
       # because they currently report real debt, and a failing hook would
       # block the very commits that fix it. They are wired the moment their
       # debt reaches zero. Tracked as R5-G9 in
       # docs/CODEX_REVIEW_5_REMEDIATION.md with measured counts:
       #   check_magic_numbers.py             452 violations
       #   check_gui_stylesheet_literals.ps1   74 violations
-      #   check_gui_magic_numbers.ps1         18 violations
       # -------------------------------------------------------------------
 
       # -------------------------------------------------------------------

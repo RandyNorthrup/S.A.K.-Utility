@@ -39,8 +39,9 @@ FileExplorerBreadcrumb::FileExplorerBreadcrumb(QWidget* parent) : QWidget(parent
     setToolTip(tr("Click a segment to navigate; click the empty area to type a path"));
     setCursor(Qt::IBeamCursor);
     m_layout = new QHBoxLayout(this);
-    m_layout->setContentsMargins(ui::kMarginSmall, 2, ui::kMarginSmall, 2);
-    m_layout->setSpacing(0);
+    m_layout->setContentsMargins(
+        ui::kMarginSmall, ui::kMarginTiny, ui::kMarginSmall, ui::kMarginTiny);
+    m_layout->setSpacing(ui::kSpacingNone);
     m_layout->addStretch(1);
 }
 

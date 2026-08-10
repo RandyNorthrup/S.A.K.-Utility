@@ -55,7 +55,8 @@ FileExplorerOmnibar::FileExplorerOmnibar(QWidget* parent) : QWidget(parent) {
     // buttons (NavigationToolbar.xaml root Grid + AddressToolbarButtonStyle).
     setFixedHeight(kAddressBarHeight);
     auto* row = new QHBoxLayout(this);
-    row->setContentsMargins(kAddressBarSidePadding, 0, kAddressBarSidePadding, 0);
+    row->setContentsMargins(
+        kAddressBarSidePadding, ui::kMarginNone, kAddressBarSidePadding, ui::kMarginNone);
     row->setSpacing(kAddressBarSpacing);
 
     createNavigationButtons(row);
@@ -277,7 +278,8 @@ void FileExplorerOmnibar::ensureSuggestionPopup() {
     m_suggestion_frame->setFrameShape(QFrame::StyledPanel);
     m_suggestion_frame->setAutoFillBackground(true);
     auto* layout = new QVBoxLayout(m_suggestion_frame);
-    layout->setContentsMargins(1, 1, 1, 1);
+    layout->setContentsMargins(
+        ui::kMarginHairline, ui::kMarginHairline, ui::kMarginHairline, ui::kMarginHairline);
     m_suggestion_list = new QListWidget(m_suggestion_frame);
     m_suggestion_list->setObjectName(QStringLiteral("fileExplorerOmnibarSuggestions"));
     m_suggestion_list->setAccessibleName(tr("Omnibar suggestions"));

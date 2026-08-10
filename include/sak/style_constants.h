@@ -25,6 +25,8 @@ namespace sak::ui {
 // -- Spacing & Margins -------------------------------------------------------
 
 constexpr int kMarginNone = 0;       ///< No margin (flush layouts)
+constexpr int kMarginHairline = 1;   ///< 1px inset (framed pop-up borders)
+constexpr int kMarginTiny = 2;       ///< 2px inset (compact breadcrumb rows)
 constexpr int kMarginTight = 6;      ///< Tight margin (compact widgets)
 constexpr int kMarginSmall = 8;      ///< Small margin (compact panels)
 constexpr int kMarginMedium = 12;    ///< Standard panel margin (most panels)

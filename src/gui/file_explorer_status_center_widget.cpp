@@ -5,6 +5,7 @@
 
 #include "sak/color_constants.h"
 #include "sak/file_explorer_icon_registry.h"
+#include "sak/style_constants.h"
 
 #include <QLabel>
 #include <QMenu>
@@ -27,6 +28,8 @@ constexpr int kCardIconCircle = 32;
 constexpr int kCardGlyphSize = 16;
 constexpr int kCardButtonSize = 32;
 constexpr int kGraphHeight = 88;
+constexpr int kProgressBarHeight = 6;  ///< Files card ProgressBar height
+constexpr int kGraphInset = 4;         ///< Files graph-frame content margin
 constexpr int kFlyoutWidth = 400;
 constexpr int kFlyoutMinHeight = 120;
 constexpr int kFlyoutMaxHeight = 500;
@@ -156,7 +159,7 @@ FileExplorerStatusCardWidget::FileExplorerStatusCardWidget(FileExplorerStatusCen
     setFrameShape(QFrame::StyledPanel);
     auto* column = new QVBoxLayout(this);
     column->setContentsMargins(kCardPadding, kCardPadding, kCardPadding, kCardPadding);
-    column->setSpacing(4);
+    column->setSpacing(ui::kSpacingTight);
     buildHeaderRow(column);
     buildProgressRows(column);
     connect(
@@ -198,15 +201,15 @@ void FileExplorerStatusCardWidget::buildHeaderRow(QVBoxLayout* column) {
 
 void FileExplorerStatusCardWidget::buildProgressRows(QVBoxLayout* column) {
     auto* grid = new QHBoxLayout();
-    grid->setSpacing(4);
+    grid->setSpacing(ui::kSpacingTight);
     auto* content = new QVBoxLayout();
-    content->setSpacing(4);
+    content->setSpacing(ui::kSpacingTight);
 
     m_progress_bar = new QProgressBar(this);
     m_progress_bar->setObjectName(QStringLiteral("fileExplorerStatusCardProgressBar"));
     m_progress_bar->setRange(0, 100);
     m_progress_bar->setTextVisible(false);
-    m_progress_bar->setFixedHeight(6);
+    m_progress_bar->setFixedHeight(kProgressBarHeight);
     content->addWidget(m_progress_bar);
 
     // Files MainGraphCartesianChartClipGrid: the expanded speed graph with the
@@ -215,7 +218,7 @@ void FileExplorerStatusCardWidget::buildProgressRows(QVBoxLayout* column) {
     m_graph_frame->setObjectName(QStringLiteral("fileExplorerStatusCardGraphFrame"));
     m_graph_frame->setFrameShape(QFrame::StyledPanel);
     auto* graph_column = new QVBoxLayout(m_graph_frame);
-    graph_column->setContentsMargins(4, 4, 4, 4);
+    graph_column->setContentsMargins(kGraphInset, kGraphInset, kGraphInset, kGraphInset);
     m_speed_label = new QLabel(m_graph_frame);
     m_speed_label->setObjectName(QStringLiteral("fileExplorerStatusCardSpeed"));
     graph_column->addWidget(m_speed_label);
@@ -367,9 +370,10 @@ void FileExplorerStatusCenterFlyout::buildCardList(QVBoxLayout* column) {
     m_scroll->setFrameShape(QFrame::NoFrame);
     m_card_container = new QWidget(m_scroll);
     m_card_layout = new QVBoxLayout(m_card_container);
-    m_card_layout->setContentsMargins(0, 0, 0, 0);
+    m_card_layout->setContentsMargins(
+        ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     // Files item margin 0,2.
-    m_card_layout->setSpacing(4);
+    m_card_layout->setSpacing(ui::kSpacingTight);
     m_card_layout->addStretch(1);
     m_scroll->setWidget(m_card_container);
     column->addWidget(m_scroll, 1);

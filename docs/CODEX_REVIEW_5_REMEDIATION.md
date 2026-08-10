@@ -2285,8 +2285,8 @@ This is the same failure mode as clang-tidy: a gate that exists on disk reads as
 coverage but provides none.
 
 - [ ] **R5-G8-1** run scripts/check_magic_numbers.py (magic-number literals in C++), fix every finding, then wire it into pre-commit and CI
-- [ ] **R5-G8-2** run scripts/check_gui_magic_numbers.ps1 (magic numbers in GUI code), fix every finding, then wire it into pre-commit and CI
-- [ ] **R5-G8-3** run scripts/check_gui_style_tokens.ps1 (GUI style-token compliance), fix every finding, then wire it into pre-commit and CI
+- [x] **R5-G8-2** run scripts/check_gui_magic_numbers.ps1 (magic numbers in GUI code), fix every finding, then wire it into pre-commit and CI -- DONE: 18 raw literals folded into sak::ui margin/spacing tokens + per-file Files-xaml metric constants; hook 6d wired
+- [x] **R5-G8-3** run scripts/check_gui_style_tokens.ps1 (GUI style-token compliance), fix every finding, then wire it into pre-commit and CI -- DONE (2bee958): the lone residual was a QColor::rgba() method read, not a raw token; matcher fixed, hook 6c wired
 - [ ] **R5-G8-4** run scripts/check_gui_stylesheet_literals.ps1 (inline stylesheet literals that override the root QSS), fix every finding, then wire it into pre-commit and CI
 - [ ] **R5-G8-5** run scripts/check_accessibility_patterns.ps1 (accessibility patterns), fix every finding, then wire it into pre-commit and CI
 - [ ] **R5-G8-6** run scripts/check_logged_message_boxes.ps1 (message boxes that must also be logged), fix every finding, then wire it into pre-commit and CI
@@ -2313,25 +2313,27 @@ not estimates. Enterprise target: every gate green, no suppression, no exclusion
 |---|---|---|
 | check_magic_numbers.py | FAIL | 452 |
 | check_gui_stylesheet_literals.ps1 | FAIL | 73 |
-| check_gui_magic_numbers.ps1 | FAIL | 18 |
-| check_blocking_patterns.ps1 | FAIL | 10 |
+| check_gui_magic_numbers.ps1 | PASS (wired hook 6d) | 0 (was 18) |
+| check_blocking_patterns.ps1 | PASS (wired hook 6b) | 0 (was 10) |
 | check_accessibility_patterns.ps1 | FAIL | 2 of 1967 widgets |
-| check_gui_style_tokens.ps1 | FAIL | 1 |
+| check_gui_style_tokens.ps1 | PASS (wired hook 6c) | 0 (was 1) |
 | check_logged_message_boxes.ps1 | PASS | 0 |
 
-Total measured style and quality debt: 556 violations.
+Original measured style and quality debt: 556 violations.
+Remaining after this campaign: 452 (magic_numbers.py) + 73 (stylesheet_literals)
++ 2 (accessibility) = 527; the 29 GUI-token/blocking violations are cleared and wired.
 
 - [ ] R5-G9-1 452 magic-number literals -> named constants
 - [ ] R5-G9-2 73 raw stylesheet literals -> the style-token system (concentrated in
       src/gui/file_explorer_style.cpp)
-- [ ] R5-G9-3 18 raw GUI layout/sizing literals -> layout tokens
+- [x] R5-G9-3 18 raw GUI layout/sizing literals -> layout tokens (DONE, hook 6d wired)
 - [ ] R5-G9-4 10 blocking-pattern violations: nested event loops and processEvents
       pumping in src/gui/ai_assistant_panel.cpp, src/gui/splash_screen.cpp,
       src/core/app_action_bridge.cpp, include/sak/app_action_service.h. This is the
       class that causes re-entrancy and use-after-free during teardown, and it
       overlaps the GUI worker-lifetime findings in Phase 1.
 - [ ] R5-G9-5 2 widgets missing accessible names (runtime audit over 1967 widgets)
-- [ ] R5-G9-6 1 raw color token outside the theme constants
+- [x] R5-G9-6 1 raw color token outside the theme constants (DONE, hook 6c wired)
 - [ ] R5-G9-7 Third-party license compliance gate runs in CI only; add to pre-commit
 
 ### G11 - the gates could not even run (tooling fail-open)

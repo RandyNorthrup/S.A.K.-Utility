@@ -4,6 +4,7 @@
 #include "sak/file_explorer_details_pane.h"
 
 #include "sak/layout_constants.h"
+#include "sak/style_constants.h"
 
 #include <QButtonGroup>
 #include <QHBoxLayout>
@@ -36,12 +37,13 @@ FileExplorerDetailsPane::FileExplorerDetailsPane(QWidget* parent) : QWidget(pare
     setMaximumWidth(kFileExplorerDetailsPaneMaxW);
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(0);
+    root->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
+    root->setSpacing(ui::kSpacingNone);
     root->addWidget(buildTabPill(), 0, Qt::AlignHCenter);
 
     m_body_layout = new QBoxLayout(QBoxLayout::TopToBottom);
-    m_body_layout->setContentsMargins(0, 0, 0, 0);
+    m_body_layout->setContentsMargins(
+        ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     m_body_layout->addWidget(buildPreviewRegion(), kInfoPanePreviewStretch);
     m_details_scroll = buildDetailsScroller();
     m_body_layout->addWidget(m_details_scroll, kInfoPaneDetailsStretch);
@@ -62,7 +64,7 @@ QWidget* FileExplorerDetailsPane::buildTabPill() {
     auto* layout = new QHBoxLayout(pill);
     layout->setContentsMargins(
         kInfoPanePillMargin, kInfoPanePillMargin, kInfoPanePillMargin, kInfoPanePillMargin);
-    layout->setSpacing(0);
+    layout->setSpacing(ui::kSpacingNone);
 
     m_details_tab_button = new QPushButton(tr("Details"), pill);
     m_details_tab_button->setObjectName(QStringLiteral("fileExplorerInfoPaneDetailsTab"));
@@ -91,7 +93,7 @@ QWidget* FileExplorerDetailsPane::buildTabPill() {
 QWidget* FileExplorerDetailsPane::buildPreviewRegion() {
     auto* container = new QWidget(this);
     auto* layout = new QVBoxLayout(container);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
 
     m_preview_caption = new QLabel(container);
     m_preview_caption->setObjectName(QStringLiteral("fileExplorerPreviewCaption"));
@@ -132,7 +134,7 @@ QScrollArea* FileExplorerDetailsPane::buildDetailsScroller() {
 
     auto* content = new QWidget(scroll);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
 
     m_properties_text = makeDetailsText(tr("Explorer item properties"));
     m_properties_text->setObjectName(QStringLiteral("fileExplorerPropertiesText"));
