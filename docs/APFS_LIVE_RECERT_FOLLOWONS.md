@@ -30,23 +30,34 @@ may reshape the fixes), (2) import metadata fidelity, (3) foreign multi-chunk in
 --------------------------------------------------------------------------------
 ## WORKSTREAM 1 -- broaden the live cert (find remaining real-Apple defects)
 
-Status: IN PROGRESS. Exercise every wave A-G path against genuine Apple metadata that the
-first pass did not cover. Fix whatever it finds (each fix gated + live re-certified).
+Status: DONE 2026-08-10. Exercised every wave A-G path against genuine Apple metadata that
+the first pass did not cover. ONE real defect found (the grow bug, already fixed above); no
+others. All clean on real Apple containers (apfsck kernel-free oracle + Apple kernel fsck).
 
-- [ ] Apple snapshot-bearing container: harvest a real Apple volume WITH a snapshot, then
-      list-image / import / resize it (wave B snap-meta tree walk + wave C object auth on
-      the snapshot chain). Snapshot creation on an external volume is the hard part
-      (tmutil localsnapshot targets the boot set; fs_snapshot_create needs an entitlement
-      / SIP posture -- see macos-vm-validation-resources.md). Try; if unreachable on the
-      VM, note it and reach for the physical Mac.
-- [ ] Chained mutations on a real Apple container: insert -> grow -> shrink -> patch, each
-      output re-fed as the next input, fsck clean at every step.
-- [ ] Deeper / larger real Apple trees (many files, nested dirs) -> wave B tree-walk node
-      budget + wave C on a bigger object set. list-image walks nested; import is flat-only.
-- [ ] Multi-volume real Apple container (additional_volume_names) if reachable.
+- [x] Snapshot ops: harvesting an APPLE-created snapshot on an external volume is blocked --
+      the VM has SIP ENABLED (csrutil status: enabled), so fs_snapshot_create is unavailable
+      and tmutil localsnapshot only snapshots the boot set. Instead certified the stronger
+      direction: S.A.K. commit-image-snapshot-create/-delete/-revert on a REAL single-chunk
+      Apple container, then Apple's kernel fsck_apfs walked each snapshot by name+xid clean:
+      snapAB "snapshot 1 of 2 (sakA, xid 6)" + "2 of 2 (sakB, xid 7)" container OK; snapDel
+      "1 of 1 (sakB)" (sakA correctly gone); snapRev both present, OK. (Reading an
+      APPLE-created snapshot still wants a SIP-off Mac -- carried as a residual.)
+- [x] Chained mutations: resize pipeline on a real multi-chunk Apple container
+      (grow 256->512 -> shrink 512->256 -> grow 256->768 -> shrink 768->256) and a COW
+      pipeline on a real single-chunk Apple container (patch -> insert -> write -> delete),
+      each output re-fed -- apfsck clean at EVERY step.
+- [x] Deeper / larger tree: a real Apple container with 800 root files + a depth-3 nested
+      dir -- list-image returned all 801 entries, no blockers, no wave B node-budget trip.
+- [x] Multi-volume: a real 1 GiB Apple container with two volumes (VOL1 + VOL2 via diskutil
+      apfs addVolume; a 256 MiB container caps at 1 volume, nx_max_file_systems=ceil/512MiB).
+      list-image + import-image correctly resolve the first volume (wave C target-volume oid)
+      and re-emit apfsck-clean.
 
-Confirmed already this pass (not defects): flat multi-chunk import re-emit is apfsck-clean;
-in-place COW on a real MULTI-chunk internal pool correctly fail-closes at F16 (see WS3).
+Confirmed already (not defects): flat multi-chunk import re-emit is apfsck-clean; in-place
+COW on a real MULTI-chunk internal pool correctly fail-closes at F16 (see WS3).
+
+Residual carried to WS1-followups: reading an APPLE-created snapshot chain (needs a SIP-off
+Mac to harvest one); the physical MacBook rig (10.10.11.38) or a VM SIP-disable is the path.
 
 --------------------------------------------------------------------------------
 ## WORKSTREAM 2 -- import metadata fidelity (wave G / F1 completion)
