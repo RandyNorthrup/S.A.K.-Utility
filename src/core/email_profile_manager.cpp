@@ -101,6 +101,10 @@ constexpr int kRegImportTimeoutMs = 10'000;
 constexpr int kRegistryPathMinimumBytes = 4;
 constexpr qsizetype kMapiPropertyLeafNameLength = 8;
 constexpr qsizetype kMapiPropertyTypePrefixLength = 4;
+/// Cap on total data files a single Thunderbird discovery may collect. The recursion is
+/// already depth-limited, but a very wide/hostile profile tree (or a tampered absolute
+/// profiles.ini Path) could otherwise grow the result vector without bound and exhaust memory.
+constexpr int kMaxThunderbirdDataFiles = 10'000;
 
 /// Resolve a manifest-supplied file name strictly inside `dir`. Returns the
 /// absolute path only when `name` is a bare basename (no directory component,
@@ -1042,11 +1046,31 @@ bool EmailProfileManager::exportRegistryKey(const QString& key_path, const QStri
         sak::logWarning("Registry export: cannot resolve the System32 reg.exe path");
         return false;
     }
+    // Export into a private, unpredictably-named staging dir first, then place the file at the
+    // caller's collision-free destination with a NON-overwriting copy. The backup dir may be
+    // attacker-writable; exporting straight there with reg.exe /y would let a process that wins the
+    // race between uniqueRegistryBackupDestination's existence check and this write substitute a
+    // file or reparse target at the name. A planted file/junction now makes QFile::copy fail (it
+    // never overwrites), so we fail closed instead of redirecting the export elsewhere.
+    QTemporaryDir staging;
+    if (!staging.isValid()) {
+        sak::logWarning("Registry export: could not create a private staging directory");
+        return false;
+    }
+    const QString staged = staging.path() + QStringLiteral("/export.reg");
     const auto result =
         sak::runProcess(reg_exe,
-                        {QStringLiteral("export"), key_path, output_file, QStringLiteral("/y")},
+                        {QStringLiteral("export"), key_path, staged, QStringLiteral("/y")},
                         kRegExportTimeoutMs);
-    return result.succeeded();
+    if (!result.succeeded()) {
+        return false;
+    }
+    if (QFile::exists(output_file) || !QFile::copy(staged, output_file)) {
+        sak::logWarning("Registry export: could not place staged .reg at {}",
+                        output_file.toStdString());
+        return false;
+    }
+    return true;
 }
 
 QString EmailProfileManager::decodeRegFile(const QByteArray& bytes) {
@@ -1110,6 +1134,18 @@ bool EmailProfileManager::importRegistryKey(const QString& reg_file) {
     }
     const QByteArray bytes = f.readAll();
     f.close();
+
+    // reg.exe export always writes UTF-16LE with a BOM (0xFF 0xFE). Require that exact encoding so
+    // our confinement scan decodes the bytes the SAME way reg.exe will on import. A non-BOM
+    // (REGEDIT4/ANSI) file would be read as UTF-8 by decodeRegFile but as ANSI by reg.exe, and a
+    // high-bit byte could hide a disallowed key from the scan that the import would still apply.
+    // Our own exportRegistryKey never produces a non-BOM file, so this rejects only crafted input.
+    if (bytes.size() < 2 || static_cast<unsigned char>(bytes[0]) != 0xFF ||
+        static_cast<unsigned char>(bytes[1]) != 0xFE) {
+        sak::logWarning("Refused .reg import (not UTF-16LE-with-BOM as reg.exe export writes): {}",
+                        reg_file.toStdString());
+        return false;
+    }
 
     // A backup is untrusted input. reg.exe import will write EVERY key in the file, so before we
     // run it, confirm the .reg touches only the Outlook profile subtree. Otherwise a crafted backup
@@ -1253,7 +1289,9 @@ void EmailProfileManager::scanThunderbirdDirRecursive(const QDir& dir,
                                                       QVector<sak::EmailDataFile>& files,
                                                       int depth,
                                                       int max_depth) {
-    if (depth >= max_depth || m_cancelled.load()) {
+    // Fail closed against memory exhaustion: once the collected-file budget is reached, stop
+    // descending and stop collecting rather than growing the vector without bound.
+    if (depth >= max_depth || m_cancelled.load() || files.size() >= kMaxThunderbirdDataFiles) {
         return;
     }
 
@@ -1261,7 +1299,7 @@ void EmailProfileManager::scanThunderbirdDirRecursive(const QDir& dir,
     QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
 
     for (const auto& entry : entries) {
-        if (m_cancelled.load()) {
+        if (m_cancelled.load() || files.size() >= kMaxThunderbirdDataFiles) {
             break;
         }
 

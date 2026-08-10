@@ -3624,10 +3624,27 @@ AppActionResult generateWifiSetupScript(const QJsonObject& args) {
                 QStringLiteral("generate_wifi_setup_script requires a non-empty 'ssid'"),
                 {}};
     }
+    // Bound the untrusted, model-supplied strings so an absurd argument cannot drive the
+    // copy/XML-escape/UTF-8/Base64 pipeline into memory or output exhaustion. The ceilings sit
+    // well above every legal value (an 802.11 SSID is <= 32 octets; a WPA2 passphrase <= 63
+    // characters / 64 hex), so no real network is rejected.
+    constexpr int kMaxSsidChars = 256;
+    constexpr int kMaxWifiPasswordChars = 256;
+    if (ssid.size() > kMaxSsidChars) {
+        return {false,
+                QStringLiteral("ssid is too long (max %1 characters)").arg(kMaxSsidChars),
+                {}};
+    }
     if (const std::optional<AppActionResult> error = wifiScriptArgsError(args)) {
         return *error;
     }
     const QString password = args.value(QStringLiteral("password")).toString();
+    if (password.size() > kMaxWifiPasswordChars) {
+        return {
+            false,
+            QStringLiteral("password is too long (max %1 characters)").arg(kMaxWifiPasswordChars),
+            {}};
+    }
     const QString security = args.value(QStringLiteral("security")).toString();
     const bool hidden = args.value(QStringLiteral("hidden")).toBool(false);
 
@@ -3985,7 +4002,14 @@ AppActionResult dnsQuery(const QJsonObject& args) {
     if (hostname.isEmpty()) {
         return {false, QStringLiteral("dns_query requires a 'hostname' argument"), {}};
     }
-    QString record_type = args.value(QStringLiteral("record_type")).toString().trimmed();
+    if (args.contains(QStringLiteral("record_type")) &&
+        !args.value(QStringLiteral("record_type")).isString()) {
+        return {false, QStringLiteral("record_type must be a string (e.g. A, AAAA, MX, TXT)"), {}};
+    }
+    // Canonicalize to upper case: the engine validates the type case-insensitively but MAPS it
+    // case-sensitively, so a lowercase "aaaa" would otherwise pass validation yet silently
+    // resolve as an A query. Empty/omitted defaults to A (the documented default).
+    QString record_type = args.value(QStringLiteral("record_type")).toString().trimmed().toUpper();
     if (record_type.isEmpty()) {
         record_type = QStringLiteral("A");
     }
@@ -4007,7 +4031,11 @@ AppActionResult dnsQuery(const QJsonObject& args) {
                      &tool,
                      [&hard_error](const QString& error) { hard_error = error; });
     tool.query(hostname, record_type, dns_server);
-    if (!captured) {
+    // Fail closed on a hard engine error (e.g. an unsupported record type emits errorOccurred
+    // AND queryComplete): a set hard_error must not be masked by captured==true. A normal
+    // failed lookup (NXDOMAIN) arrives via queryComplete with result.success=false and leaves
+    // hard_error empty, so it still reports as a successful op below.
+    if (!captured || !hard_error.isEmpty()) {
         return {false,
                 hard_error.isEmpty() ? QStringLiteral("DNS query did not complete") : hard_error,
                 {}};

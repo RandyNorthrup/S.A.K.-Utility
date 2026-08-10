@@ -15,6 +15,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
+#include <limits>
 #include <numeric>
 
 constexpr int kGbDisplayPrecision = 2;
@@ -101,6 +102,17 @@ void WindowsISODownloader::startDownload(const QString& updateId,
         return;
     }
 
+    // Every parameter is required. A blank updateId/lang/edition would let the downstream API
+    // or builder fall back to auto-detection and fetch or build unintended content; a blank
+    // savePath has no valid target. Fail closed rather than proceed with an incomplete request.
+    if (updateId.trimmed().isEmpty() || lang.trimmed().isEmpty() || edition.trimmed().isEmpty() ||
+        savePath.trimmed().isEmpty()) {
+        Q_EMIT downloadError(
+            "Download parameters are incomplete: build, language, edition, and "
+            "save path are all required.");
+        return;
+    }
+
     m_pendingSavePath = savePath;
     m_pendingEdition = edition;
     m_pendingLang = lang;
@@ -132,11 +144,28 @@ void WindowsISODownloader::onFilesFetched(const QString& updateName,
         return;
     }
 
-    // Calculate total download size
-    qint64 totalBytes =
-        std::accumulate(files.begin(), files.end(), qint64{0}, [](qint64 acc, const auto& file) {
-            return acc + file.size;
-        });
+    // Snapshot the pending parameters before emitting any signal below. These signals run
+    // connected slots synchronously; one that re-enters startDownload()/cancel() must not be
+    // able to repoint the members and pair this file set with a different target mid-build.
+    const QString savePath = m_pendingSavePath;
+    const QString edition = m_pendingEdition;
+    const QString lang = m_pendingLang;
+    const QString updateId = m_pendingUpdateId;
+
+    // Sum the per-file sizes with an explicit overflow/negative guard. The list comes from the
+    // UUP dump API (an untrusted network response), so a hostile or corrupt entry could carry a
+    // negative size or drive the signed running total past INT64_MAX (undefined behavior). Fail
+    // closed on either rather than feed a bogus total into the builder.
+    qint64 totalBytes = 0;
+    for (const auto& file : files) {
+        if (file.size < 0 || totalBytes > std::numeric_limits<qint64>::max() - file.size) {
+            Q_EMIT downloadError(
+                "Download metadata reported an invalid file size and was "
+                "rejected.");
+            return;
+        }
+        totalBytes += file.size;
+    }
 
     sak::logInfo("Starting UUP download: " + std::to_string(files.size()) + " files, " +
                  std::to_string(totalBytes / sak::kBytesPerMB) + " MB");
@@ -146,8 +175,7 @@ void WindowsISODownloader::onFilesFetched(const QString& updateName,
                              .arg(files.size())
                              .arg(totalBytes / sak::kBytesPerGBf, 0, 'f', kGbDisplayPrecision));
 
-    m_builder->startBuild(
-        files, m_pendingSavePath, m_pendingEdition, m_pendingLang, m_pendingUpdateId);
+    m_builder->startBuild(files, savePath, edition, lang, updateId);
 }
 
 void WindowsISODownloader::onApiError(const QString& error) {

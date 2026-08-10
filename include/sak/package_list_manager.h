@@ -59,7 +59,8 @@ public:
     static bool addPackage(PackageList& list,
                            const QString& package_id,
                            const QString& version = QString(),
-                           const QString& notes = QString());
+                           const QString& notes = QString(),
+                           bool pinned = false);
 
     /// @brief Remove a package from a list by ID
     /// @return true if removed, false if not found

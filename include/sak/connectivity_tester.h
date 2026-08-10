@@ -100,6 +100,12 @@ private:
                                          int packetSize,
                                          int ttl);
 
+    /// @brief Sweep the hops of one MTR cycle, updating per-hop stats in place
+    void runMtrCycle(const QString& targetIP,
+                     const MtrConfig& config,
+                     QVector<MtrHopStats>& hopStats,
+                     int& maxDiscoveredHop);
+
     /// @brief Probe a single hop for traceroute
     [[nodiscard]] TracerouteHop probeHop(
         const QString& targetIP, int ttl, int timeoutMs, int probes, bool resolveHostnames);

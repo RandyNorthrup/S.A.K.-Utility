@@ -74,9 +74,19 @@ function Resolve-StatusPath {
         $arguments.ExternalEvidenceManifest = $effectiveExternalEvidenceManifest
     }
 
+    # Delete any prior status file first so a generator run that exits without writing
+    # (or that leaves an older file in place) cannot make the checker consume a stale
+    # claim level. The existence check afterward fails closed if nothing was written.
+    if (Test-Path -LiteralPath $statusOutputPath) {
+        Remove-Item -LiteralPath $statusOutputPath -Force
+    }
+
     & (Join-Path $ProjectRoot "scripts\get_partition_manager_certification_status.ps1") @arguments
     if (-not $?) {
         throw "Could not compute Partition Manager certification status"
+    }
+    if (-not (Test-Path -LiteralPath $statusOutputPath -PathType Leaf)) {
+        throw "Partition Manager certification status was not generated at $statusOutputPath"
     }
     return $statusOutputPath
 }
@@ -90,8 +100,17 @@ function Get-ClaimLines {
     )
 
     $claimLines = @()
+    $rootBoundary = [System.IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/') +
+        [System.IO.Path]::DirectorySeparatorChar
     foreach ($relativePath in $Files) {
         $path = Join-Path $ProjectRoot $relativePath
+        # Fail closed on a claim file that escapes the repo root (e.g. a "..\" override):
+        # an out-of-tree file could satisfy the caveat scan while the real release docs
+        # go unchecked.
+        $fullPath = [System.IO.Path]::GetFullPath($path)
+        if (-not $fullPath.StartsWith($rootBoundary, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Partition Manager claim file escapes repository root: $relativePath"
+        }
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Partition Manager claim file missing: $relativePath"
         }
@@ -129,7 +148,11 @@ function Assert-NoUnsupportedClaims {
     )
 
     $forbiddenPatterns = @()
-    if ($ClaimLevel -eq "CodeCompleteOnly") {
+    # VHD-certified wording is only supportable once the VHD scenarios pass (claim level
+    # VhdDataDiskCertified, or the higher HardwareCertified). Forbid it at every other
+    # level -- CodeCompleteOnly, FailedEvidence, or anything unexpected -- so a non-VHD
+    # status can never sit beside a VHD-certified claim (fail closed).
+    if ($ClaimLevel -ne "VhdDataDiskCertified" -and $ClaimLevel -ne "HardwareCertified") {
         $forbiddenPatterns += "(?i)\bVhdDataDiskCertified\b"
         $forbiddenPatterns += "(?i)\bVHD[- ]certified\b"
     }
@@ -171,7 +194,10 @@ function Assert-RequiredCaveats {
             "hardware certification remains blocked",
             "claims still wait on the full external VM/hardware/lab matrix",
             "remaining 12 external VM/hardware/lab gates",
-            "External VM/hardware/lab gates remain incomplete"
+            "External VM/hardware/lab gates remain incomplete",
+            "destructive certification remains partial",
+            "VHD or VM/hardware/lab evidence is incomplete",
+            "Do not mark the Partition Manager destructive paths fully certified until those reports exist"
         )
         foreach ($phrase in $forbidden) {
             $normalizedPhrase = $phrase -replace "\s+", " "
@@ -212,6 +238,14 @@ try {
     }
     if ([string]::IsNullOrWhiteSpace($status.claim_level)) {
         throw "Partition Manager certification status missing claim_level"
+    }
+    # Fail closed on an unrecognized or wrong-typed claim_level (an array/number, or a
+    # forged value): an unknown level would otherwise slip past the enum-specific
+    # forbidden-claim and caveat checks below. These are the exact levels emitted by
+    # get_partition_manager_certification_status.ps1.
+    $knownClaimLevels = @("FailedEvidence", "CodeCompleteOnly", "VhdDataDiskCertified", "HardwareCertified")
+    if ($status.claim_level -isnot [string] -or $knownClaimLevels -notcontains $status.claim_level) {
+        throw "Partition Manager certification status has an unrecognized claim_level: $($status.claim_level)"
     }
 
     $claimLines = @(Get-ClaimLines -ProjectRoot $projectRoot -Files $ClaimFiles)

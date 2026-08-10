@@ -301,10 +301,22 @@ void DiagnosticController::runFullSuite(const StressTestConfig& stress_config,
         logWarning("Full suite already running -- ignoring request");
         return;
     }
+    // Exclusivity: the suite adopts a worker's completion purely by SuiteState, so a
+    // standalone scan/benchmark overlapping the suite could have its (wrong-config or
+    // stale) result adopted as a suite step. Refuse to start while any operation runs.
+    if (m_hw_scan_future.isRunning() || m_smart_analysis_future.isRunning() ||
+        m_cpu_benchmark->isRunning() || m_disk_benchmark->isRunning() ||
+        m_memory_benchmark->isRunning() || m_stress_test->isRunning()) {
+        logWarning("A diagnostic operation is already running -- refusing to start full suite");
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot start the full suite while another operation is running"));
+        return;
+    }
 
     logInfo("Starting full diagnostic suite");
     m_running_suite = true;
     m_report_data = DiagnosticReportData{};
+    m_has_results = false;
     m_suite_failures.clear();
     m_suite_stress_config = stress_config;
     m_suite_disk_config = disk_config;
@@ -341,10 +353,22 @@ void DiagnosticController::cancelCurrent() {
     // Check each wait(): a worker that does not stop within the timeout is still
     // running, and proceeding to teardown while it holds raw pointers into this
     // controller risks a use-after-free. Surface it instead of ignoring it.
-    stopWorkerAndWait(m_cpu_benchmark.get(), "CPU benchmark");
-    stopWorkerAndWait(m_disk_benchmark.get(), "Disk benchmark");
-    stopWorkerAndWait(m_memory_benchmark.get(), "Memory benchmark");
-    stopWorkerAndWait(m_stress_test.get(), "Stress test");
+    bool all_stopped = true;
+    all_stopped &= stopWorkerAndWait(m_cpu_benchmark.get(), "CPU benchmark");
+    all_stopped &= stopWorkerAndWait(m_disk_benchmark.get(), "Disk benchmark");
+    all_stopped &= stopWorkerAndWait(m_memory_benchmark.get(), "Memory benchmark");
+    all_stopped &= stopWorkerAndWait(m_stress_test.get(), "Stress test");
+
+    if (!all_stopped) {
+        // A worker that missed its shutdown wait is still running and still holds raw
+        // pointers into this controller. Do not silently report a clean cancellation --
+        // surface it. No signal is emitted here because cancelCurrent also runs from the
+        // destructor; runFullSuite's exclusivity guard and each run* isRunning() check
+        // already prevent conflicting new work while such a worker winds down.
+        logError(
+            "Diagnostic cancellation incomplete -- one or more workers did not stop; "
+            "the operation may still be running");
+    }
 
     m_running_suite = false;
     m_skipping_step = false;
@@ -440,11 +464,25 @@ void DiagnosticController::stopThermalMonitoring() {
 // ============================================================================
 
 QStringList DiagnosticController::requestedReportFormats(const QString& formats) {
+    // Exact, comma-separated token matching. Substring matching accepted malformed specs
+    // ("xhtml" -> html, "notjson" -> json) and silently dropped unsupported tokens
+    // ("html,pdf" -> html); an unknown token now fails closed (empty result) so
+    // generateReport refuses rather than reporting a partial/coerced success.
+    static const QStringList known{QStringLiteral("html"),
+                                   QStringLiteral("json"),
+                                   QStringLiteral("csv")};
     QStringList requested;
-    for (const auto& fmt :
-         {QStringLiteral("html"), QStringLiteral("json"), QStringLiteral("csv")}) {
-        if (formats.contains(fmt, Qt::CaseInsensitive)) {
-            requested.append(fmt);
+    const QStringList tokens = formats.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const QString& raw : tokens) {
+        const QString token = raw.trimmed().toLower();
+        if (token.isEmpty()) {
+            continue;
+        }
+        if (!known.contains(token)) {
+            return {};
+        }
+        if (!requested.contains(token)) {
+            requested.append(token);
         }
     }
     return requested;
@@ -458,18 +496,41 @@ QString DiagnosticController::uniqueReportBaseName(const QString& output_dir,
         .arg(counter);
 }
 
+QString DiagnosticController::reportPreconditionError(const QStringList& requested,
+                                                      const QString& dir,
+                                                      const QString& formats) const {
+    // Require at least one real output. Previously a spec naming no known format
+    // wrote nothing yet still reported success.
+    if (requested.isEmpty()) {
+        logError("Report generation requested with no valid format: '{}'", formats.toStdString());
+        return QString("No report format requested (expected html/json/csv): '%1'").arg(formats);
+    }
+    if (dir.isEmpty()) {
+        // A blank directory would resolve report paths to "/SAK_Diagnostic_..." -- an
+        // unintended (filesystem-root or relative) target. Fail closed.
+        logError("Report generation requested with an empty output directory");
+        return QStringLiteral("Report output directory is empty");
+    }
+    if (!m_has_results) {
+        // Aggregation resets status to AllPassed over an empty data set, so a controller
+        // that has run no diagnostics would emit a valid-looking "passed" report. Refuse.
+        logError("Report generation requested before any diagnostic produced a result");
+        return QStringLiteral(
+            "No diagnostic results to report -- run a scan or the full suite first");
+    }
+    return {};
+}
+
 void DiagnosticController::generateReport(const QString& output_dir,
                                           const QString& technician,
                                           const QString& ticket,
                                           const QString& notes,
                                           const QString& formats) {
-    // Require at least one real output. Previously a spec naming no known format
-    // wrote nothing yet still reported success.
     const QStringList requested = requestedReportFormats(formats);
-    if (requested.isEmpty()) {
-        logError("Report generation requested with no valid format: '{}'", formats.toStdString());
-        Q_EMIT errorOccurred(
-            QString("No report format requested (expected html/json/csv): '%1'").arg(formats));
+    const QString dir = output_dir.trimmed();
+    const QString precondition_error = reportPreconditionError(requested, dir, formats);
+    if (!precondition_error.isEmpty()) {
+        Q_EMIT errorOccurred(precondition_error);
         return;
     }
 
@@ -482,15 +543,18 @@ void DiagnosticController::generateReport(const QString& output_dir,
 
     m_report_generator->setReportData(m_report_data);
 
-    if (!QDir().mkpath(output_dir)) {
-        sak::logWarning("Failed to create report output directory: {}", output_dir.toStdString());
+    if (!QDir().mkpath(dir)) {
+        // Without a real output directory the writers below would fail or land reports
+        // somewhere unintended. Fail closed instead of warning and proceeding.
+        logError("Failed to create report output directory: {}", dir.toStdString());
+        Q_EMIT errorOccurred(QString("Failed to create report output directory: %1").arg(dir));
+        return;
     }
     // Millisecond timestamp + a monotonic counter so reports generated in quick
     // succession never collide on a second-resolution name.
     static std::atomic<quint64> s_report_counter{0};
-    const QString base_name = uniqueReportBaseName(output_dir,
-                                                   m_report_data.report_timestamp,
-                                                   s_report_counter.fetch_add(1));
+    const QString base_name =
+        uniqueReportBaseName(dir, m_report_data.report_timestamp, s_report_counter.fetch_add(1));
 
     bool success = true;
     if (requested.contains("html")) {
@@ -504,11 +568,11 @@ void DiagnosticController::generateReport(const QString& output_dir,
     }
 
     if (success) {
-        logInfo("Reports generated in {}", output_dir.toStdString());
-        Q_EMIT reportsGenerated(output_dir);
+        logInfo("Reports generated in {}", dir.toStdString());
+        Q_EMIT reportsGenerated(dir);
     } else {
-        logError("Report generation failed for {}", output_dir.toStdString());
-        Q_EMIT errorOccurred(QString("Report generation failed in %1").arg(output_dir));
+        logError("Report generation failed for {}", dir.toStdString());
+        Q_EMIT errorOccurred(QString("Report generation failed in %1").arg(dir));
     }
 }
 
@@ -517,36 +581,42 @@ void DiagnosticController::generateReport(const QString& output_dir,
 // ============================================================================
 
 void DiagnosticController::onHardwareScanComplete(const HardwareInventory& inventory) {
+    m_has_results = true;
     m_report_data.inventory = inventory;
     Q_EMIT hardwareScanComplete(inventory);
     advanceSuiteStep(SuiteState::HardwareScan);
 }
 
 void DiagnosticController::onSmartAnalysisComplete(const QVector<SmartReport>& reports) {
+    m_has_results = true;
     m_report_data.smart_reports = reports;
     Q_EMIT smartAnalysisComplete(reports);
     advanceSuiteStep(SuiteState::SmartAnalysis);
 }
 
 void DiagnosticController::onCpuBenchmarkComplete(const CpuBenchmarkResult& result) {
+    m_has_results = true;
     m_report_data.cpu_benchmark = result;
     Q_EMIT cpuBenchmarkComplete(result);
     advanceSuiteStep(SuiteState::CpuBenchmark);
 }
 
 void DiagnosticController::onDiskBenchmarkComplete(const DiskBenchmarkResult& result) {
+    m_has_results = true;
     m_report_data.disk_benchmark = result;
     Q_EMIT diskBenchmarkComplete(result);
     advanceSuiteStep(SuiteState::DiskBenchmark);
 }
 
 void DiagnosticController::onMemoryBenchmarkComplete(const MemoryBenchmarkResult& result) {
+    m_has_results = true;
     m_report_data.memory_benchmark = result;
     Q_EMIT memoryBenchmarkComplete(result);
     advanceSuiteStep(SuiteState::MemoryBenchmark);
 }
 
 void DiagnosticController::onStressTestComplete(const StressTestResult& result) {
+    m_has_results = true;
     m_report_data.stress_test = result;
     Q_EMIT stressTestComplete(result);
     advanceSuiteStep(SuiteState::StressTest);

@@ -82,6 +82,17 @@ AttachmentSaveResult saveAttachmentToPath(const QString& path, const QByteArray&
 AttachmentSaveResult saveAttachmentToDirectory(const QString& dir,
                                                const QString& filename,
                                                const QByteArray& data) {
+    if (dir.isEmpty()) {
+        // An empty dir would produce a root-relative "/<name>" target. Refuse rather than
+        // write to a guessed location.
+        return {false, {}, QStringLiteral("No attachment directory specified")};
+    }
+    if (data.isNull()) {
+        // A null (absent) payload means the content was never delivered. Saving a zero-byte
+        // file and reporting success would hide that failure. A genuinely empty attachment
+        // arrives as a non-null zero-length QByteArray and is still saved.
+        return {false, {}, QStringLiteral("No attachment content to save")};
+    }
     QString safe_name = sanitizeAttachmentFilename(filename);
     QString file_path = dir + QStringLiteral("/") + safe_name;
 
@@ -164,6 +175,10 @@ void AttachmentBatchSave::recordError() {
     // attachments browser test isActive(), and runPstAttachmentSaves() only
     // reaches this after begin() returned true.
     Q_ASSERT(isActive());
+    if (!isActive()) {
+        // Release-build fail-closed: never count a failure against a batch that is not running.
+        return;
+    }
     ++m_failed;
 }
 

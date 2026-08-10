@@ -308,6 +308,12 @@ private:
     std::atomic<bool> m_cancelled{false};
     int m_maxConcurrent = kMaxConcurrentTransfers;
     int m_activeJobs = 0;
+    /// @brief Count of SELECTED entries rejected during queue construction (no choco
+    ///        package, unavailable, or a version lock with no version). They never
+    ///        become jobs, so getStats() folds them into total/skipped -- otherwise a
+    ///        completed migration silently omits requested work it declined to queue.
+    ///        Guarded by m_mutex.
+    int m_queueRejectedSkips = 0;
 };
 
 }  // namespace sak

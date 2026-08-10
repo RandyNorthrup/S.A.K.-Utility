@@ -58,6 +58,11 @@ function Assert-Feature {
         [hashtable]$Feature
     )
 
+    # A missing or misspelled 'evidence' key would make the foreach iterate zero times and the
+    # feature pass with no checks at all. Fail closed instead of silently verifying nothing.
+    if (($null -eq $Feature.evidence) -or (@($Feature.evidence).Count -eq 0)) {
+        throw "Partition Manager feature '$($Feature.id)' has no evidence groups"
+    }
     foreach ($group in $Feature.evidence) {
         Assert-Contains `
             -RelativePath $group.path `
@@ -444,6 +449,15 @@ $features = @(
         )
     }
 )
+
+# Pin the number of parity features this gate covers. Dropping (or duplicating) a feature block
+# above changes $features.Count; without this check a removed feature would still yield a passing
+# run over the reduced set. Update this count deliberately when features are added or removed.
+$expectedFeatureCount = 12
+if ($features.Count -ne $expectedFeatureCount) {
+    throw ("Partition Manager feature matrix expected $expectedFeatureCount feature groups but " +
+        "found $($features.Count); a feature was added or removed without updating this gate.")
+}
 
 Push-Location $ProjectRoot
 try {

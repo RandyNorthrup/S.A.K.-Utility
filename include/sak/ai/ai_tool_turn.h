@@ -7,6 +7,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QString>
 #include <QVector>
 
@@ -66,6 +67,13 @@ private:
     [[nodiscard]] static bool decodeOutputs(const QJsonArray& outputs_json,
                                             QVector<OpenAIFunctionOutput>* outputs,
                                             QString* error_message);
+    [[nodiscard]] static bool snapshotOutputsIsArray(const QJsonValue& outputs_value,
+                                                     QString* error_message);
+    [[nodiscard]] static bool validateSnapshotOutputsMatchCalls(
+        const QVector<OpenAIFunctionOutput>& outputs,
+        const QVector<OpenAIFunctionCall>& calls,
+        int call_index,
+        QString* error_message);
 
     QString m_response_id;
     QVector<OpenAIFunctionCall> m_calls;

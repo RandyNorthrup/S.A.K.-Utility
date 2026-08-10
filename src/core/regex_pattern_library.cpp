@@ -20,14 +20,28 @@
 
 namespace sak {
 
+namespace {
+// A custom-patterns file is a short JSON array; reject anything implausibly large
+// BEFORE readAll() so a tampered or oversized file cannot exhaust memory.
+constexpr qint64 kMaxCustomPatternsBytes = 4LL * 1024 * 1024;  // 4 MiB
+}  // namespace
+
 // -- Construction ------------------------------------------------------------
 
 RegexPatternLibrary::RegexPatternLibrary(QObject* parent) : QObject(parent) {
     initBuiltinPatterns();
 
     const QString dataDir = sak::app_paths::configDirectory();
-    if (!QDir().mkpath(dataDir)) {
-        sak::logWarning("Failed to create app config directory: {}", dataDir.toStdString());
+    // Fail closed: without a concrete, creatable config directory we must NOT fall
+    // back to a CWD-relative "custom_regex_patterns.json" -- an elevated process would
+    // then read and write an attacker-influenceable path. Leave m_storage_file empty
+    // so persistence is disabled; the built-in patterns still work and custom
+    // add/save refuse rather than persist to a guessed target.
+    if (dataDir.isEmpty() || !QDir().mkpath(dataDir)) {
+        sak::logError(
+            "RegexPatternLibrary: no usable config directory; custom pattern "
+            "persistence disabled");
+        return;
     }
     m_storage_file = QDir(dataDir).filePath(QStringLiteral("custom_regex_patterns.json"));
 
@@ -77,6 +91,13 @@ QVector<RegexPatternInfo> RegexPatternLibrary::customPatterns() const {
 void RegexPatternLibrary::addCustomPattern(const QString& key,
                                            const QString& label,
                                            const QString& pattern) {
+    // Reject an empty key or pattern: an empty pattern is a valid regex that matches
+    // the empty string at every position, and a saved empty key/pattern is silently
+    // dropped on reload -- so accept only entries that round-trip.
+    if (key.isEmpty() || pattern.isEmpty()) {
+        logWarning("RegexPatternLibrary: empty key or pattern rejected");
+        return;
+    }
     // Check for duplicate keys in both built-in and custom patterns
     if (std::any_of(m_builtin_patterns.begin(), m_builtin_patterns.end(), [&key](const auto& p) {
             return p.key == key;
@@ -109,18 +130,30 @@ void RegexPatternLibrary::addCustomPattern(const QString& key,
     info.enabled = false;
 
     m_custom_patterns.append(info);
-    saveCustomPatterns();
+    if (!saveCustomPatterns()) {
+        // Keep memory and disk consistent: if the change cannot be persisted, do not
+        // report it as applied (no patternsChanged) -- otherwise it would silently
+        // vanish on the next restart.
+        m_custom_patterns.removeLast();
+        return;
+    }
     Q_EMIT patternsChanged();
 }
 
 void RegexPatternLibrary::removeCustomPattern(const QString& key) {
+    QVector<RegexPatternInfo> previous = m_custom_patterns;  // snapshot for rollback
     auto it = std::remove_if(m_custom_patterns.begin(),
                              m_custom_patterns.end(),
                              [&key](const RegexPatternInfo& p) { return p.key == key; });
 
     if (it != m_custom_patterns.end()) {
         m_custom_patterns.erase(it, m_custom_patterns.end());
-        saveCustomPatterns();
+        if (!saveCustomPatterns()) {
+            // A failed persist must not leave memory diverged from disk (the removal
+            // would silently reappear on restart); restore and report nothing changed.
+            m_custom_patterns = previous;
+            return;
+        }
         Q_EMIT patternsChanged();
     }
 }
@@ -128,6 +161,12 @@ void RegexPatternLibrary::removeCustomPattern(const QString& key) {
 void RegexPatternLibrary::updateCustomPattern(const QString& key,
                                               const QString& label,
                                               const QString& pattern) {
+    // Reject an empty key or pattern for the same reason add does: an empty pattern
+    // matches everywhere and would not round-trip through storage.
+    if (key.isEmpty() || pattern.isEmpty()) {
+        logWarning("RegexPatternLibrary: empty key or pattern rejected for update");
+        return;
+    }
     // Validate regex before accepting update
     QRegularExpression testRegex(pattern);
     if (!testRegex.isValid()) {
@@ -141,9 +180,15 @@ void RegexPatternLibrary::updateCustomPattern(const QString& key,
                            m_custom_patterns.end(),
                            [&key](const auto& p) { return p.key == key; });
     if (it != m_custom_patterns.end()) {
+        const RegexPatternInfo previous = *it;  // snapshot for rollback
         it->label = label;
         it->pattern = pattern;
-        saveCustomPatterns();
+        if (!saveCustomPatterns()) {
+            // Do not leave the in-memory update unpersisted (it would revert on
+            // restart); restore the prior value and report nothing changed.
+            *it = previous;
+            return;
+        }
         Q_EMIT patternsChanged();
         return;
     }
@@ -218,6 +263,9 @@ void RegexPatternLibrary::loadCustomPatterns() {
     // No precondition on m_custom_patterns: this function is the populator, and a
     // fresh profile legitimately has zero saved custom patterns. (A prior inverted
     // Q_ASSERT(!empty) here aborted every debug-build construction of the library.)
+    if (m_storage_file.isEmpty()) {
+        return;  // persistence disabled (no usable config dir) -- fail closed
+    }
     QFile file(m_storage_file);
     if (!file.exists()) {
         return;
@@ -226,6 +274,17 @@ void RegexPatternLibrary::loadCustomPatterns() {
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         logWarning("RegexPatternLibrary: failed to open '{}' for reading",
                    m_storage_file.toStdString());
+        return;
+    }
+
+    // Bound the read: a custom-patterns file is small, so an implausibly large (or
+    // unreadable-size) file is corrupt or hostile -- reject it BEFORE readAll()
+    // instead of allocating from its self-reported size.
+    const qint64 file_size = file.size();
+    if (file_size < 0 || file_size > kMaxCustomPatternsBytes) {
+        logWarning("RegexPatternLibrary: '{}' size {} is out of bounds; not loaded",
+                   m_storage_file.toStdString(),
+                   static_cast<long long>(file_size));
         return;
     }
 
@@ -241,10 +300,22 @@ void RegexPatternLibrary::loadCustomPatterns() {
         return;
     }
 
+    // The file must be a JSON array of pattern objects. A wrong root type is not an
+    // empty library -- surface it rather than silently treating it as zero patterns.
+    if (!doc.isArray()) {
+        logWarning("RegexPatternLibrary: '{}' is not a JSON array; not loaded",
+                   m_storage_file.toStdString());
+        return;
+    }
+
     const QJsonArray arr = doc.array();
     m_custom_patterns.clear();
 
     for (const auto& val : arr) {
+        if (!val.isObject()) {
+            logWarning("RegexPatternLibrary: skipping non-object custom-pattern entry");
+            continue;
+        }
         const QJsonObject obj = val.toObject();
         RegexPatternInfo info;
         info.key = obj["key"].toString();
@@ -252,17 +323,48 @@ void RegexPatternLibrary::loadCustomPatterns() {
         info.pattern = obj["pattern"].toString();
         info.enabled = false;  // Always start disabled
 
-        if (!info.key.isEmpty() && !info.pattern.isEmpty()) {
-            m_custom_patterns.append(info);
+        // Enforce the SAME invariants addCustomPattern() enforces, so a hand-edited or
+        // tampered file cannot inject patterns the in-memory API would reject:
+        // non-empty key+pattern, no built-in/custom key collision, and valid regex.
+        if (info.key.isEmpty() || info.pattern.isEmpty()) {
+            logWarning("RegexPatternLibrary: skipping custom pattern with empty key or pattern");
+            continue;
         }
+        if (std::any_of(m_builtin_patterns.begin(),
+                        m_builtin_patterns.end(),
+                        [&info](const auto& p) { return p.key == info.key; })) {
+            logWarning(
+                "RegexPatternLibrary: skipping custom pattern '{}' (conflicts with built-in)",
+                info.key.toStdString());
+            continue;
+        }
+        if (std::any_of(m_custom_patterns.begin(), m_custom_patterns.end(), [&info](const auto& p) {
+                return p.key == info.key;
+            })) {
+            logWarning("RegexPatternLibrary: skipping duplicate custom pattern key '{}'",
+                       info.key.toStdString());
+            continue;
+        }
+        const QRegularExpression testRegex(info.pattern);
+        if (!testRegex.isValid()) {
+            logWarning("RegexPatternLibrary: skipping custom pattern '{}' with invalid regex: {}",
+                       info.key.toStdString(),
+                       testRegex.errorString().toStdString());
+            continue;
+        }
+
+        m_custom_patterns.append(info);
     }
 
     logInfo("RegexPatternLibrary: loaded {} custom patterns", m_custom_patterns.size());
 }
 
-void RegexPatternLibrary::saveCustomPatterns() {
+bool RegexPatternLibrary::saveCustomPatterns() {
     // Persisting an empty list is valid (the user may have deleted every custom
     // pattern), so there is no non-empty precondition here.
+    if (m_storage_file.isEmpty()) {
+        return false;  // persistence disabled -- fail closed, never invent a path
+    }
     QJsonArray arr;
 
     for (const auto& p : m_custom_patterns) {
@@ -282,22 +384,23 @@ void RegexPatternLibrary::saveCustomPatterns() {
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         logError("RegexPatternLibrary: failed to open '{}' for writing",
                  m_storage_file.toStdString());
-        return;
+        return false;
     }
 
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
     if (file.write(json_bytes) != json_bytes.size()) {
         logError("RegexPatternLibrary: incomplete write of custom patterns");
         file.cancelWriting();
-        return;
+        return false;
     }
     if (!file.commit()) {
         logError("RegexPatternLibrary: failed to commit custom patterns to '{}'",
                  m_storage_file.toStdString());
-        return;
+        return false;
     }
 
     logInfo("RegexPatternLibrary: saved {} custom patterns", m_custom_patterns.size());
+    return true;
 }
 
 }  // namespace sak

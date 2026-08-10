@@ -18,6 +18,10 @@ namespace {
 
 constexpr auto kHumanGatesFile = "human_gates.jsonl";
 constexpr qsizetype kGeneratedGateIdChars = 12;
+// A human-gate log holds a handful of small JSONL records. A file larger than this is
+// corruption or a resource-exhaustion attempt against the elevated app; refuse to read it
+// wholesale rather than risk an unbounded allocation.
+constexpr qint64 kMaxGateLogBytes = 32LL * 1024 * 1024;
 
 bool appendJsonLine(const QString& path, const QJsonObject& object, QString* error_message) {
     const QFileInfo info(path);
@@ -49,6 +53,35 @@ bool appendJsonLine(const QString& path, const QJsonObject& object, QString* err
         return false;
     }
     return true;
+}
+
+// Assign the caller's optional error sink in one statement, so each failure path stays a
+// single line instead of a repeated guarded branch that inflates the decision count.
+void setGateError(QString* error_message, const QString& message) {
+    if (error_message) {
+        *error_message = message;
+    }
+}
+
+// Parse every non-blank JSONL record from an already-open, size-checked log. A corrupt record
+// is not silently dropped: it is counted so the caller learns the load was incomplete instead
+// of trusting a truncated gate history.
+QVector<AiHumanGate> parseGateLog(QFile& file, qint64& malformed_lines) {
+    QVector<AiHumanGate> gates;
+    while (!file.atEnd()) {
+        const QByteArray trimmed = file.readLine().trimmed();
+        if (trimmed.isEmpty()) {
+            continue;
+        }
+        QJsonParseError parse_error{};
+        const auto doc = QJsonDocument::fromJson(trimmed, &parse_error);
+        if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
+            ++malformed_lines;
+            continue;
+        }
+        gates.append(AiHumanGate::fromJson(doc.object()));
+    }
+    return gates;
 }
 
 }  // namespace
@@ -91,24 +124,40 @@ bool AiHumanGateStore::appendGate(AiHumanGate gate, QString* error_message) cons
 
 QVector<AiHumanGate> AiHumanGateStore::loadGates(QString* error_message) const {
     QVector<AiHumanGate> gates;
+    if (m_session_dir.isEmpty()) {
+        // A store with no session directory cannot be read; surface it rather than returning
+        // an empty set that is indistinguishable from a legitimately empty log.
+        setGateError(error_message, QStringLiteral("Human-gate store has no session directory"));
+        return gates;
+    }
     QFile file(gateLogPath());
     if (!file.exists()) {
         return gates;
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message) {
-            *error_message =
-                QStringLiteral("Could not read human-gate log: %1").arg(file.errorString());
-        }
+        setGateError(error_message,
+                     QStringLiteral("Could not read human-gate log: %1").arg(file.errorString()));
         return gates;
     }
-    while (!file.atEnd()) {
-        QJsonParseError parse_error{};
-        const auto doc = QJsonDocument::fromJson(file.readLine().trimmed(), &parse_error);
-        if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-            continue;
-        }
-        gates.append(AiHumanGate::fromJson(doc.object()));
+    if (file.size() > kMaxGateLogBytes) {
+        setGateError(
+            error_message,
+            QStringLiteral("Human-gate log is too large to read: %1 bytes").arg(file.size()));
+        return gates;
+    }
+    qint64 malformed_lines = 0;
+    gates = parseGateLog(file, malformed_lines);
+    if (file.error() != QFileDevice::NoError) {
+        // A mid-stream I/O failure means the returned set is incomplete; do not present a
+        // truncated read as a complete, authoritative gate history.
+        setGateError(error_message,
+                     QStringLiteral("Human-gate log read failed: %1").arg(file.errorString()));
+        return gates;
+    }
+    if (malformed_lines > 0) {
+        setGateError(
+            error_message,
+            QStringLiteral("Human-gate log has %1 unreadable record(s)").arg(malformed_lines));
     }
     return gates;
 }

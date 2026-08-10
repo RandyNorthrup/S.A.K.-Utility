@@ -14,6 +14,8 @@
 
 #include <QElapsedTimer>
 
+#include <limits>
+
 // ============================================================================
 // Construction
 // ============================================================================
@@ -76,7 +78,13 @@ void EmailSearchWorker::search(PstParser* parser, const sak::EmailSearchCriteria
 
     SearchState state;
     for (const auto& entry : folders) {
-        state.total_items += entry.folder.content_count;
+        // Saturate: content_count comes from untrusted PST bytes, and a single crafted folder
+        // (or many folders summed) can exceed INT_MAX. Accumulating that into a signed int is
+        // undefined behavior; clamp to INT_MAX so the progress denominator stays well-formed.
+        const qint64 sum = static_cast<qint64>(state.total_items) +
+                           static_cast<qint64>(entry.folder.content_count);
+        state.total_items =
+            static_cast<int>(std::min<qint64>(sum, std::numeric_limits<int>::max()));
     }
     Q_EMIT progressUpdated(0, state.total_items);
 
@@ -112,6 +120,15 @@ void EmailSearchWorker::searchSingleFolder(PstParser* parser,
         }
         if (page.size() < sak::email::kMaxItemsPerLoad) {
             break;
+        }
+        // Fail closed against a folder that keeps returning full pages forever: advancing the
+        // offset past INT_MAX is signed-overflow UB and could wrap it negative into an infinite
+        // re-read loop. A real folder ends with a short page long before this bound.
+        if (offset > std::numeric_limits<int>::max() - sak::email::kMaxItemsPerLoad) {
+            Q_EMIT errorOccurred(QStringLiteral("Folder '%1' returned an implausibly large item "
+                                                "count during search; stopping enumeration")
+                                     .arg(folder_path));
+            return;
         }
     }
 }
@@ -171,31 +188,68 @@ void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCri
     m_cancelled.store(false, std::memory_order_relaxed);
     QElapsedTimer timer;
     timer.start();
-    int total_hits = 0;
-    int total_items = parser->messageCount();
 
-    Q_EMIT progressUpdated(0, total_items);
+    SearchState state;
+    // messageCount() reflects the parser's message index, which MboxParser builds lazily on
+    // the first readMessages() call -- so it reports 0 on a freshly opened mailbox and must
+    // NOT be used to bound the paging loop (doing so searched nothing). The loop instead pages
+    // until an offset past the end returns an empty window; total_items is refreshed from the
+    // now-built index after the first read purely for the progress denominator.
+    Q_EMIT progressUpdated(0, state.total_items);
 
-    auto messages = parser->readMessages(0, total_items);
-    if (!messages) {
-        Q_EMIT errorOccurred(QStringLiteral("Failed to read MBOX messages"));
-        // searchComplete must be emitted on EVERY termination path. The null-parser guard
-        // above already does it; this one did not, so a caller that gates on completion
-        // (the panel re-enables its Search button there) waited forever after a read
-        // failure it had already been told about.
-        Q_EMIT searchComplete(0, 0);
-        return;
+    // Page the read in kMaxItemsPerLoad-sized windows instead of pulling the WHOLE mailbox
+    // into one QVector: an attacker-sized message count would otherwise force a
+    // mailbox-sized allocation before any filter or result cap applied. The stride is fixed
+    // (never page.size()) because readMessages() skips unreadable messages, so a short page
+    // does not mean the mailbox ended -- mirrors email_export_worker's paging.
+    for (int offset = 0;; offset += sak::email::kMaxItemsPerLoad) {
+        auto messages = parser->readMessages(offset, sak::email::kMaxItemsPerLoad);
+        if (!messages) {
+            Q_EMIT errorOccurred(QStringLiteral("Failed to read MBOX messages"));
+            // searchComplete must be emitted on EVERY termination path. The null-parser guard
+            // above already does it; a caller that gates on completion (the panel re-enables its
+            // Search button there) must not wait forever after a read failure it was told about.
+            Q_EMIT searchComplete(0, 0);
+            return;
+        }
+        if (offset == 0) {
+            // The index is built now; use the real count for a meaningful progress bar.
+            state.total_items = parser->messageCount();
+            Q_EMIT progressUpdated(0, state.total_items);
+        }
+        // An offset at or past the end yields an empty window: the mailbox is exhausted.
+        // readMessages clamps offset to the message count, so offset only ever advances and
+        // this terminates.
+        if (messages->isEmpty()) {
+            break;
+        }
+        if (!searchMessagePage(parser, criteria, *messages, state)) {
+            break;  // cancelled or result cap reached
+        }
+        // Fail closed against a mailbox whose index somehow never exhausts: past INT_MAX the
+        // offset increment is signed-overflow UB. A real mailbox ends long before this.
+        if (offset > std::numeric_limits<int>::max() - sak::email::kMaxItemsPerLoad) {
+            break;
+        }
     }
 
-    for (int msg_idx = 0; msg_idx < messages->size(); ++msg_idx) {
-        if (m_cancelled.load(std::memory_order_relaxed)) {
-            break;
-        }
-        if (total_hits >= sak::email::kMaxSearchResults) {
-            break;
-        }
+    double elapsed = timer.elapsed() / sak::kMillisecondsPerSecondF;
+    Q_EMIT searchComplete(state.total_hits, elapsed);
+}
 
-        const auto& msg = (*messages)[msg_idx];
+bool EmailSearchWorker::searchMessagePage(MboxParser* parser,
+                                          const sak::EmailSearchCriteria& criteria,
+                                          const QVector<sak::MboxMessage>& page,
+                                          SearchState& state) {
+    for (const auto& msg : page) {
+        if (m_cancelled.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        if (state.total_hits >= sak::email::kMaxSearchResults) {
+            return false;
+        }
+        ++state.items_searched;
+
         if (!passesMboxFilters(msg, criteria)) {
             continue;
         }
@@ -216,16 +270,14 @@ void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCri
             hit.folder_path = QStringLiteral("MBOX");
 
             Q_EMIT searchHit(hit);
-            ++total_hits;
+            ++state.total_hits;
         }
 
-        if (msg_idx % kSearchProgressInterval == 0) {
-            Q_EMIT progressUpdated(msg_idx, total_items);
+        if (state.items_searched % kSearchProgressInterval == 0) {
+            Q_EMIT progressUpdated(state.items_searched, state.total_items);
         }
     }
-
-    double elapsed = timer.elapsed() / sak::kMillisecondsPerSecondF;
-    Q_EMIT searchComplete(total_hits, elapsed);
+    return true;
 }
 
 // ============================================================================

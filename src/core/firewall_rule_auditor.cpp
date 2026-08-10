@@ -14,6 +14,8 @@
 #include <QSet>
 
 #include <algorithm>
+#include <bitset>
+#include <limits>
 #include <optional>
 
 #include <winsock2.h>
@@ -30,6 +32,11 @@ namespace sak {
 
 namespace {
 constexpr int kMaxPortValue = 65'535;
+// A real Windows firewall LocalPorts/RemotePorts lists a handful of ports/ranges. An
+// expression with more comma-separated tokens than this is pathological; the port helpers
+// fail SAFE (assume overlap/coverage) past the cap instead of expanding it, so a hostile
+// rule cannot amplify the O(n^2) rule-pair scan into a CPU/memory exhaustion.
+constexpr int kMaxPortTokens = 256;
 constexpr long kProtocolTcp = 6;
 constexpr long kProtocolUdp = 17;
 constexpr long kProtocolIcmpV6 = 58;
@@ -58,7 +65,14 @@ struct ComInitializer {
     if (bstr == nullptr) {
         return {};
     }
-    return QString::fromWCharArray(bstr, static_cast<int>(SysStringLen(bstr)));
+    // SysStringLen returns an unsigned UINT; a length above INT_MAX would wrap to a negative
+    // value in the int that QString::fromWCharArray takes. Clamp fail-closed so a pathological
+    // BSTR truncates to a valid length rather than being read with a negative size.
+    const UINT len = SysStringLen(bstr);
+    const int safe_len = len > static_cast<UINT>(std::numeric_limits<int>::max())
+                             ? std::numeric_limits<int>::max()
+                             : static_cast<int>(len);
+    return QString::fromWCharArray(bstr, safe_len);
 }
 
 template <typename T>
@@ -106,16 +120,23 @@ struct VariantHolder {
 };
 
 void populateRuleIdentity(INetFwRule* pRule, FirewallRule& rule) {
+    // Name and description identify the rule in conflict/gap reports. A failed getter leaves
+    // them blank, which would present the rule as unnamed fact, so flag the rule incomplete
+    // like every other populate helper (B9-10) rather than silently trusting the blank.
     BSTR name = nullptr;
     if (SUCCEEDED(pRule->get_Name(&name))) {
         rule.name = bstrToQString(name);
         SysFreeString(name);
+    } else {
+        rule.complete = false;
     }
 
     BSTR desc = nullptr;
     if (SUCCEEDED(pRule->get_Description(&desc))) {
         rule.description = bstrToQString(desc);
         SysFreeString(desc);
+    } else {
+        rule.complete = false;
     }
 }
 
@@ -147,7 +168,11 @@ void populateRuleDirectionActionAndProtocol(INetFwRule* pRule, FirewallRule& rul
     // incomplete rather than silently trusting the default (B9-10).
     VARIANT_BOOL enabled = VARIANT_FALSE;
     if (SUCCEEDED(pRule->get_Enabled(&enabled))) {
-        rule.enabled = (enabled == VARIANT_TRUE);
+        // Fail SAFE for a security audit: treat any non-FALSE VARIANT_BOOL as enabled, so a
+        // noncanonical TRUE (anything other than VARIANT_TRUE == -1) is still analyzed rather
+        // than silently coerced to disabled -- which would hide an active rule from the
+        // conflict/gap checks that skip disabled rules.
+        rule.enabled = (enabled != VARIANT_FALSE);
     } else {
         rule.complete = false;
     }
@@ -311,9 +336,9 @@ bool tryParsePortRange(const QString& s, int& start, int& end) {
     return true;
 }
 
-void appendPortRange(QVector<uint16_t>& ports, int start, int end) {
+void markPortRange(std::bitset<kMaxPortValue + 1>& seen, int start, int end) {
     for (int p = start; p <= end; ++p) {
-        ports.append(static_cast<uint16_t>(p));
+        seen.set(static_cast<std::size_t>(p));
     }
 }
 
@@ -350,6 +375,31 @@ void appendPortRange(QVector<uint16_t>& ports, int start, int end) {
             return true;
         }
     }
+    return false;
+}
+
+// True when the pair cannot be proven disjoint before parsing and portsOverlap must fail SAFE
+// to "overlap" without expanding either expression. Split out of portsOverlap so that function
+// stays within the complexity budget (B9-11).
+[[nodiscard]] bool portExprPairMustFailSafeToOverlap(const QString& a, const QString& b) {
+    // Fail SAFE on a pathologically long expression: a conflict detector must not be turned
+    // into a DoS by a rule carrying thousands of port tokens, and it must never hide a
+    // conflict, so treat an over-cap expression as overlapping rather than expanding it (B9-11).
+    if (a.count(QLatin1Char(',')) >= kMaxPortTokens ||
+        b.count(QLatin1Char(',')) >= kMaxPortTokens) {
+        return true;
+    }
+
+    // A MIXED named/numeric expression (e.g. "80,RPC" vs "443,RPC") parses to
+    // disjoint numeric sets but shares the named scope, which parsePorts drops. If
+    // either side carries an unrecognized token we cannot prove disjointness, so
+    // fail SAFE to overlap. The all-tokens-unknown case is also covered here, so
+    // the post-parse isEmpty() fail-safe in portsOverlap only remains for defensive
+    // belt-and-suspenders (e.g. an expression of only separators) (B9-11).
+    if (portExprHasUnknownToken(a) || portExprHasUnknownToken(b)) {
+        return true;
+    }
+
     return false;
 }
 }  // namespace
@@ -598,6 +648,17 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
         }
         var.reset();
         next_hr = (*enumerator)->Next(1, &var.var, &fetched);
+    }
+
+    if (m_cancelled.load()) {
+        // A cooperative cancel breaks the loop with a SUCCEEDED next_hr, so
+        // handleEnumerationBreak would not catch it. Mark the enumeration NOT ok and return
+        // empty: otherwise a later standalone detectConflicts()/analyzeGaps() (which gate only
+        // on m_enumerationOk) would analyze this TRUNCATED rule set as a complete audit
+        // (fail-open). enumerateRules()/fullAudit() already suppress their own emit on cancel;
+        // this closes the separate standalone-analysis path.
+        m_enumerationOk = false;
+        return {};
     }
 
     if (handleEnumerationBreak(next_hr, dropped)) {
@@ -870,6 +931,11 @@ QVector<uint16_t> FirewallRuleAuditor::parsePorts(const QString& portStr) {
         return ports;
     }
 
+    // Bound expansion against a hostile LocalPorts (e.g. "0-65535" repeated many times): there
+    // are only 65536 possible ports, so a presence bitset dedups and hard-caps memory to a few
+    // KB regardless of the expression's size. Callers (portsOverlap/localPortsCoverPort) apply
+    // the kMaxPortTokens cap that bounds the CPU of the range loops feeding this.
+    std::bitset<kMaxPortValue + 1> seen;
     const auto parts = portStr.split(QLatin1Char(','), Qt::SkipEmptyParts);
     for (const auto& part : parts) {
         const auto trimmed = part.trimmed();
@@ -880,16 +946,21 @@ QVector<uint16_t> FirewallRuleAuditor::parsePorts(const QString& portStr) {
         int start = 0;
         int end = 0;
         if (tryParsePortRange(trimmed, start, end)) {
-            appendPortRange(ports, start, end);
+            markPortRange(seen, start, end);
             continue;
         }
 
         uint16_t port = 0;
         if (tryParsePortValue(trimmed, port)) {
-            ports.append(port);
+            seen.set(port);
         }
     }
 
+    for (int p = 0; p <= kMaxPortValue; ++p) {
+        if (seen.test(static_cast<std::size_t>(p))) {
+            ports.append(static_cast<uint16_t>(p));
+        }
+    }
     return ports;
 }
 
@@ -901,6 +972,11 @@ bool FirewallRuleAuditor::localPortsCoverPort(const QString& localPorts, uint16_
     if (localPorts.isEmpty() || localPorts == QStringLiteral("*")) {
         return true;
     }
+    // Fail SAFE past the token cap: for a gap check, assume a pathologically long expression
+    // DOES cover the port (flag the exposure) rather than expanding it into a DoS (B9-12).
+    if (localPorts.count(QLatin1Char(',')) >= kMaxPortTokens) {
+        return true;
+    }
     return parsePorts(localPorts).contains(port);
 }
 
@@ -910,13 +986,10 @@ bool FirewallRuleAuditor::portsOverlap(const QString& a, const QString& b) {
         return true;
     }
 
-    // A MIXED named/numeric expression (e.g. "80,RPC" vs "443,RPC") parses to
-    // disjoint numeric sets but shares the named scope, which parsePorts drops. If
-    // either side carries an unrecognized token we cannot prove disjointness, so
-    // fail SAFE to overlap. The all-tokens-unknown case is also covered here, so
-    // the isEmpty() fail-safe below only remains for defensive belt-and-suspenders
-    // (e.g. an expression of only separators) (B9-11).
-    if (portExprHasUnknownToken(a) || portExprHasUnknownToken(b)) {
+    // Before parsing, an over-cap expression (DoS) or a partly-named one (whose named scope
+    // parsePorts drops) cannot be proven disjoint, so fail SAFE to overlap without expanding
+    // it (B9-11).
+    if (portExprPairMustFailSafeToOverlap(a, b)) {
         return true;
     }
 

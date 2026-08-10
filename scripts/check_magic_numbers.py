@@ -54,6 +54,8 @@ NUMERIC_LITERAL_RE = re.compile(
     (?:
         0[xX][0-9A-Fa-f']+
         |
+        0[bB][01']+
+        |
         \d[\d']*(?:\.\d[\d']*)?(?:[eE][+-]?\d[\d']*)?
     )
     (?:[uUlLfF]{0,3})
@@ -64,6 +66,7 @@ RAW_STRING_START_RE = re.compile(r'R"([A-Za-z0-9_]*)\(')
 CONSTANT_DECL_RE = re.compile(r"\b(?:inline\s+)?(?:static\s+)?(?:constexpr|consteval|constinit|const)\b")
 K_NAMED_CONSTANT_RE = re.compile(r"\bk[A-Z][A-Za-z0-9_]*\b")
 ENUM_RE = re.compile(r"\benum\b")
+STATIC_ASSERT_RE = re.compile(r"\bstatic_assert\b")
 
 
 def is_numeric_separator_context(previous: str, next_char: str) -> bool:
@@ -195,7 +198,11 @@ def is_constant_or_enum_context(code: str, state: SkipState) -> bool:
         return True
     if stripped.startswith("#"):
         return True
-    if "static_assert" in stripped or stripped.startswith("using ") or stripped.startswith("typedef "):
+    if (
+        STATIC_ASSERT_RE.search(stripped)
+        or stripped.startswith("using ")
+        or stripped.startswith("typedef ")
+    ):
         return True
 
     if state.enum_depth > 0:
@@ -206,8 +213,16 @@ def is_constant_or_enum_context(code: str, state: SkipState) -> bool:
         return True
 
     if ENUM_RE.search(stripped):
-        state.enum_depth = max(code.count("{") - code.count("}"), 0)
-        return True
+        # `enum` used as an elaborated-type-specifier that opens a scope (e.g.
+        # `void f(enum Mode m) {` or `enum State next() {`) is NOT an enum body: the brace
+        # belongs to a function. Only treat it as an enum definition when no parenthesis
+        # precedes the opening brace, so a real function body is still scanned.
+        brace = code.find("{")
+        paren = code.find("(")
+        elaborated_use = paren >= 0 and (brace < 0 or paren < brace)
+        if not elaborated_use:
+            state.enum_depth = max(code.count("{") - code.count("}"), 0)
+            return True
     if is_const_variable_context(stripped):
         state.constant_depth = update_depth(0, code)
         return True
@@ -226,9 +241,14 @@ def scan_file(path: Path) -> list[Violation]:
     violations: list[Violation] = []
     lex_state = LexState()
     skip_state = SkipState()
-    for line_number, line in enumerate(
-        path.read_text(encoding="utf-8-sig", errors="ignore").splitlines(), start=1
-    ):
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="strict")
+    except (UnicodeDecodeError, OSError) as exc:
+        # A file we cannot decode or read may hide numeric literals behind the lost bytes;
+        # fail closed by reporting it instead of silently skipping its contents.
+        return [Violation(path, 1, "unreadable-source", f"{type(exc).__name__}: {exc}")]
+    line_number = 0
+    for line_number, line in enumerate(text.splitlines(), start=1):
         code = strip_non_code(line, lex_state)
         if is_constant_or_enum_context(code, skip_state):
             continue
@@ -237,21 +257,50 @@ def scan_file(path: Path) -> list[Violation]:
             if literal in ALLOWED_LITERALS:
                 continue
             violations.append(Violation(path, line_number, literal, line.strip()))
+    # An unterminated block comment or raw string is a malformed source file whose lexical
+    # state would otherwise suppress every following line; surface it rather than returning a
+    # clean result for a file the compiler would reject.
+    if lex_state.in_block_comment:
+        violations.append(
+            Violation(path, line_number, "unterminated-block-comment",
+                      "block comment not closed at end of file")
+        )
+    elif lex_state.raw_string_delimiter is not None:
+        violations.append(
+            Violation(path, line_number, "unterminated-raw-string",
+                      "raw string literal not closed at end of file")
+        )
     return violations
 
 
-def scan(root: Path, scan_roots: list[str]) -> list[Violation]:
+def scan(root: Path, scan_roots: list[str]) -> tuple[list[Violation], int, int]:
     violations: list[Violation] = []
+    scanned_files = 0
+    roots_found = 0
     for scan_root in scan_roots:
         current_root = root / scan_root
-        if not current_root.exists():
+        if not current_root.is_dir():
             continue
+        roots_found += 1
         for path in current_root.rglob("*"):
-            if path.is_file() and should_scan(path):
-                if repo_path(path, root) in EXEMPT_FILES:
-                    continue
-                violations.extend(scan_file(path))
-    return violations
+            if not path.is_file():
+                continue
+            try:
+                # Exclusions and the exempt list are matched on the repo-relative path, not
+                # the absolute one: a checkout that lives beneath an ancestor named "build"
+                # or "external" must not have every source file silently excluded.
+                relative = path.resolve().relative_to(root)
+            except ValueError:
+                # A symlink/junction escaping the repository root is not part of this
+                # checkout; skip it rather than scan foreign bytes.
+                continue
+            if not should_scan(relative):
+                continue
+            if relative.as_posix() in EXEMPT_FILES:
+                continue
+            scanned_files += 1
+            violations.extend(scan_file(path))
+    return violations, scanned_files, roots_found
 
 
 def main() -> int:
@@ -270,7 +319,19 @@ def main() -> int:
     if args.include_tests:
         scan_roots.append("tests")
 
-    violations = scan(root, scan_roots)
+    violations, scanned_files, roots_found = scan(root, scan_roots)
+    if roots_found == 0:
+        print(
+            f"Magic-number check failed: none of the source roots {list(scan_roots)} exist "
+            f"under {root}. Run from the repository root or pass a correct --root."
+        )
+        return 1
+    if scanned_files == 0:
+        print(
+            f"Magic-number check failed: zero source files scanned under {root}. This usually "
+            "means a wrong --root or an excluded ancestor directory."
+        )
+        return 1
     if violations:
         print(f"Magic-number check failed: {len(violations)} violation(s).")
         for violation in violations[: args.max_report]:

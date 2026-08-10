@@ -681,6 +681,11 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
 
 void PackageMatcher::addMapping(const QString& app_name, const QString& choco_package) {
     QString normalized = normalizeAppName(app_name);
+    if (normalized.isEmpty() || choco_package.isEmpty()) {
+        // Never store a blank mapping: it would surface as an empty suggestion and cannot map
+        // anything. Matches importMappings(), which already skips blank entries. Fail closed.
+        return;
+    }
     m_exact_mappings[normalized] = choco_package;
 }
 

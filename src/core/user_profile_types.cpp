@@ -391,7 +391,14 @@ bool BackupManifest::saveToFile(const QString& path) const {
 BackupManifest BackupManifest::loadFromFile(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return BackupManifest();
+        // Fail closed: a missing/unreadable manifest must not masquerade as a valid
+        // default manifest. The default ctor seeds version "1.0", which passes a
+        // caller's version.isEmpty() validity gate; clear it so an open failure is
+        // rejected exactly as a malformed-JSON parse already is (fromJson of an empty
+        // object leaves version empty).
+        BackupManifest invalid;
+        invalid.version.clear();
+        return invalid;
     }
 
     QByteArray data = file.readAll();

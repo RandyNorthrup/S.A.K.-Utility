@@ -169,6 +169,9 @@ QVector<QPair<int, QString>> AppInstallationWorker::buildJobQueue() {
         m_jobs.append(makeJob(static_cast<int>(i), entry));
         m_jobQueue.enqueue(m_jobs.size() - 1);
     }
+    // These selected-but-rejected entries never become jobs; remember how many so
+    // getStats() can account for them in the final totals.
+    m_queueRejectedSkips = static_cast<int>(skipped.size());
     return skipped;
 }
 
@@ -297,6 +300,12 @@ AppInstallationWorker::Stats AppInstallationWorker::getStats() const {
         }
     }
 
+    // Selected entries rejected at queue construction never became jobs; fold them
+    // into the totals so a completed migration accounts for ALL requested selected
+    // work, not just the installable subset that reached the queue.
+    stats.total += m_queueRejectedSkips;
+    stats.skipped += m_queueRejectedSkips;
+
     return stats;
 }
 
@@ -337,13 +346,33 @@ void AppInstallationWorker::processQueue() {
         }
 
         MigrationJob job;
+        bool cancelled_in_flight = false;
         {
             QMutexLocker locker(&m_mutex);
             if (jobIndex < 0 || jobIndex >= m_jobs.size()) {
                 m_activeJobs--;
                 continue;
             }
-            job = m_jobs[jobIndex];
+            // A cancel() can land AFTER this job left the queue (dequeued just above)
+            // but BEFORE the privileged install starts. cancel() only marks jobs still
+            // IN the queue, so this one would otherwise install on a cancelled run.
+            // Fail closed: mark it cancelled and release the slot without installing.
+            if (m_cancelled) {
+                m_activeJobs--;
+                m_jobs[jobIndex].status = MigrationStatus::Cancelled;
+                if (m_report) {
+                    m_report->getEntry(m_jobs[jobIndex].entryIndex).status = "cancelled";
+                }
+                job = m_jobs[jobIndex];
+                cancelled_in_flight = true;
+            } else {
+                job = m_jobs[jobIndex];
+            }
+        }
+        if (cancelled_in_flight) {
+            // Emit outside the lock - handlers may call getStats().
+            Q_EMIT jobStatusChanged(job.entryIndex, job);
+            continue;
         }
 
         bool success = installPackage(jobIndex, job);

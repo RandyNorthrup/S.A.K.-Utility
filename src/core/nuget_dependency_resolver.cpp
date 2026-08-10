@@ -136,6 +136,11 @@ void NuGetDependencyResolver::addRoot(const QString& root_id, const QString& roo
         return;
     }
     m_visited.insert(lower);
+    // A root added after a previous drain re-opens resolution. m_validated latches
+    // true the first time the queue empties, which would otherwise let the final
+    // constraint pass be skipped for this new root's subtree; clear it so
+    // maybeValidateOnDrain() runs again when the queue drains next.
+    m_validated = false;
 
     QueueItem root;
     root.id = root_id;
@@ -365,6 +370,19 @@ void NuGetDependencyResolver::enqueueDependencies(const FeedPackageVersion& sele
         const QString lower = dep.id.toLower();
         if (m_visited.contains(lower)) {
             continue;  // already scheduled -- keeps a cyclic graph from looping
+        }
+        // Bound total scheduled work: never let resolved + pending exceed the package
+        // cap. A hostile or oversized feed can declare an enormous dependency fan-out,
+        // and without this the queue (and m_visited) would grow unbounded before the
+        // resolve-time cap ever fired. Deeper edges beyond the cap are surfaced, not
+        // silently dropped. Ids past the cap could never resolve anyway (the resolve
+        // cap drops them), so a fully resolvable closure is never truncated here.
+        if (m_resolved.size() + m_queue.size() >= m_max_packages) {
+            m_errors.append(
+                QStringLiteral("Dependency closure exceeded %1 packages; dropped %2 and later deps")
+                    .arg(m_max_packages)
+                    .arg(dep.id));
+            break;
         }
         m_visited.insert(lower);
         QueueItem child;

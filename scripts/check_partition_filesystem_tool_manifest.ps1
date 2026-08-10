@@ -88,6 +88,8 @@ function Assert-StringField {
 
     $property = $Object.PSObject.Properties[$Field]
     Assert-Condition -Condition ($null -ne $property) -Message "Tool '$ToolId' missing '$Field'"
+    Assert-Condition -Condition ($property.Value -is [string]) `
+        -Message "Tool '$ToolId' '$Field' must be a string"
     Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace([string]$property.Value)) `
         -Message "Tool '$ToolId' has blank '$Field'"
 }
@@ -101,11 +103,17 @@ function Assert-StringArrayField {
 
     $property = $Object.PSObject.Properties[$Field]
     Assert-Condition -Condition ($null -ne $property) -Message "Tool '$ToolId' missing '$Field'"
-    $values = @($property.Value) | ForEach-Object { [string]$_ } | Where-Object {
-        -not [string]::IsNullOrWhiteSpace($_)
-    }
-    Assert-Condition -Condition ($values.Count -gt 0) `
+    Assert-Condition -Condition ($property.Value -is [array]) `
+        -Message "Tool '$ToolId' '$Field' must be an array"
+    $members = @($property.Value)
+    Assert-Condition -Condition ($members.Count -gt 0) `
         -Message "Tool '$ToolId' must list at least one '$Field' value"
+    foreach ($member in $members) {
+        Assert-Condition -Condition ($member -is [string]) `
+            -Message "Tool '$ToolId' '$Field' has a non-string value"
+        Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($member)) `
+            -Message "Tool '$ToolId' '$Field' has a blank value"
+    }
 }
 
 function Assert-SafeRelativeToolPath {
@@ -132,6 +140,12 @@ function Assert-SafeRelativeToolPath {
         -Message "Tool '$ToolId' $Description path escapes tools root"
     Assert-Condition -Condition (Test-Path -LiteralPath $binaryFull -PathType Leaf) `
         -Message "Tool '$ToolId' $Description is missing: $RelativePath"
+    # Lexical containment (GetFullPath + StartsWith) does not resolve reparse points, so a symlink
+    # or junction whose text stays under the tools root could still target bytes outside it. Reject
+    # any reparse-point leaf so the hash is only ever taken over a real bundled file.
+    $attributes = [System.IO.File]::GetAttributes($binaryFull)
+    Assert-Condition -Condition ((($attributes -band [System.IO.FileAttributes]::ReparsePoint)) -eq 0) `
+        -Message "Tool '$ToolId' $Description path is a reparse point (symlink/junction): $RelativePath"
     return $binaryFull
 }
 
@@ -141,8 +155,9 @@ Assert-Condition -Condition (Test-Path -LiteralPath $resolvedManifest -PathType 
 
 $toolsRoot = Split-Path -Parent $resolvedManifest
 $manifest = Get-Content -LiteralPath $resolvedManifest -Raw | ConvertFrom-Json
-Assert-Condition -Condition ($manifest.schema_version -eq 1) `
-    -Message "Filesystem tool manifest schema_version must be 1"
+Assert-Condition -Condition (($manifest.schema_version -is [ValueType]) -and `
+        ($manifest.schema_version -isnot [bool]) -and ($manifest.schema_version -eq 1)) `
+    -Message "Filesystem tool manifest schema_version must be the number 1"
 Assert-Condition -Condition ($null -ne $manifest.PSObject.Properties["tools"]) `
     -Message "Filesystem tool manifest must contain a tools array"
 
@@ -208,7 +223,7 @@ $toolsRootFull = [System.IO.Path]::GetFullPath($toolsRoot).TrimEnd(
     [System.IO.Path]::DirectorySeparatorChar,
     [System.IO.Path]::AltDirectorySeparatorChar
 ) + [System.IO.Path]::DirectorySeparatorChar
-Get-ChildItem -LiteralPath $toolsRoot -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+Get-ChildItem -LiteralPath $toolsRoot -Recurse -File -Force -ErrorAction Stop | ForEach-Object {
     $fullPath = [System.IO.Path]::GetFullPath($_.FullName)
     $relativePath = $fullPath.Substring($toolsRootFull.Length).Replace("\", "/")
     $isAllowedRootFile = ($relativePath -notmatch "/") -and ($allowedRootFiles -contains $_.Name)

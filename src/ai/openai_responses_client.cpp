@@ -34,6 +34,12 @@ constexpr int kPackageToolTimeoutMaxSeconds = 7200;
 constexpr int kSessionSearchMaxResults = kPercentMax;
 constexpr qsizetype kMinimumOpenAiApiKeyLength = 20;
 
+// Hard cap on an OpenAI HTTP response body before it is parsed and copied (JSON DOM,
+// raw_json, joined output). A Responses/models JSON document is at most a few MiB;
+// 64 MiB is generous while bounding a hostile or oversized endpoint (e.g. a MITM or
+// redirected peer) from amplifying memory through repeated copies. Fails closed.
+constexpr qsizetype kMaxResponseBodyBytes = 64LL * 1024 * 1024;
+
 [[nodiscard]] QString firstNonEmptyError(const QString& first, const QString& fallback) {
     return first.trimmed().isEmpty() ? fallback : first;
 }
@@ -57,6 +63,13 @@ constexpr qsizetype kMinimumOpenAiApiKeyLength = 20;
             const QString text = item.value(QStringLiteral("text")).toString();
             if (!text.isEmpty()) {
                 parts.append(text);
+            }
+        } else if (type == QLatin1String("refusal")) {
+            // Surface a model refusal as visible output rather than dropping it, which
+            // would otherwise degrade into a misleading "no output text" error.
+            const QString refusal = item.value(QStringLiteral("refusal")).toString();
+            if (!refusal.isEmpty()) {
+                parts.append(refusal);
             }
         }
     }
@@ -89,6 +102,12 @@ void collectCitationsFromValue(const QJsonValue& value, QVector<OpenAIUrlCitatio
 }
 
 std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* error_message) {
+    if (data.size() > kMaxResponseBodyBytes) {
+        if (error_message) {
+            *error_message = QStringLiteral("OpenAI response body exceeds the size limit");
+        }
+        return std::nullopt;
+    }
     QJsonParseError parse_error;
     const auto doc = QJsonDocument::fromJson(data, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
@@ -135,11 +154,35 @@ std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* e
                             : QStringLiteral("OpenAI response failed: %1").arg(reason);
 }
 
-// Non-empty when the response reached a terminal non-success state (incomplete or failed)
-// that must fail closed instead of being read as a usable answer.
+// Non-empty when the response reached any non-success state that must fail closed
+// instead of being read as a usable answer.
 [[nodiscard]] QString terminalResponseError(const QJsonObject& root) {
     const QString incomplete = incompleteResponseError(root);
-    return incomplete.isEmpty() ? failedResponseError(root) : incomplete;
+    if (!incomplete.isEmpty()) {
+        return incomplete;
+    }
+    const QString failed = failedResponseError(root);
+    if (!failed.isEmpty()) {
+        return failed;
+    }
+    // Fail closed on any other non-success status. The synchronous /v1/responses
+    // endpoint returns a terminal response object; a status that is present but not
+    // "completed" (cancelled, in_progress, queued, or an unrecognized/wrong-typed
+    // value) carries no output that can be trusted, so it must not be read as an
+    // answer. A response with no status field (never produced by the live endpoint,
+    // but used by unit fixtures) is left to the normal output/empty checks.
+    const QJsonValue status_value = root.value(QStringLiteral("status"));
+    if (status_value.isUndefined() || status_value.isNull()) {
+        return {};
+    }
+    if (!status_value.isString()) {
+        return QStringLiteral("OpenAI response status was not a string");
+    }
+    const QString status = status_value.toString();
+    if (status != QStringLiteral("completed")) {
+        return QStringLiteral("OpenAI response is not complete (status: %1)").arg(status);
+    }
+    return {};
 }
 
 void appendFunctionCallFromOutputItem(OpenAIResponseResult* result, const QJsonObject& item) {
@@ -767,7 +810,11 @@ void appendResponseTools(QJsonObject* root, const OpenAIResponseRequest& request
 }  // namespace
 
 OpenAIResponsesClient::OpenAIResponsesClient(QObject* parent) : QObject(parent) {
-    m_network_manager.setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
+    // Fail closed on redirects: only follow a redirect that stays on the same origin as
+    // api.openai.com. A cross-origin redirect from an untrusted/MITM peer could otherwise
+    // carry the Authorization bearer token and the prompt/attachment payload to another
+    // host. The OpenAI JSON endpoints do not redirect cross-origin.
+    m_network_manager.setRedirectPolicy(QNetworkRequest::SameOriginRedirectPolicy);
 }
 
 OpenAIResponsesClient::~OpenAIResponsesClient() {
@@ -900,13 +947,18 @@ OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray
         result.output_text = root->value(QStringLiteral("output_text")).toString();
     }
 
-    // A status of "incomplete" (e.g. max_output_tokens) can carry a truncated tool call
-    // with invalid JSON arguments; treating it as complete would let a partial/dangerous
-    // call (e.g. a half-formed delete path) reach dispatch. Fail closed instead.
+    // A non-success status (e.g. "incomplete" from max_output_tokens) can carry a
+    // truncated tool call with invalid JSON arguments; treating it as complete would let
+    // a partial/dangerous call (e.g. a half-formed delete path) reach dispatch. Fail
+    // closed and drop any partial output/calls, regardless of whether the caller asked
+    // for an error string, so a nullptr error_message can never turn a terminal-error
+    // response into a usable partial result.
     const QString terminal = terminalResponseError(*root);
-    if (!terminal.isEmpty() && error_message) {
-        *error_message = terminal;
-        return result;
+    if (!terminal.isEmpty()) {
+        if (error_message) {
+            *error_message = terminal;
+        }
+        return {};
     }
 
     if (result.output_text.trimmed().isEmpty() && result.function_calls.isEmpty() &&
@@ -916,32 +968,64 @@ OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray
     return result;
 }
 
-QStringList OpenAIResponsesClient::parseModelsList(const QByteArray& data, QString* error_message) {
+namespace {
+
+// Report a models-list failure through the optional out-parameter and fail closed.
+[[nodiscard]] std::optional<QJsonArray> modelsListError(QString* error_message,
+                                                        const QString& text) {
     if (error_message) {
-        error_message->clear();
+        *error_message = text;
+    }
+    return std::nullopt;
+}
+
+// Validate a models-list body and return its "data" array, or std::nullopt with a
+// non-empty error describing why the enumeration cannot be trusted: an oversized body,
+// malformed JSON, an API error envelope, or a missing/wrong-typed "data".
+[[nodiscard]] std::optional<QJsonArray> modelsListDataArray(const QByteArray& data,
+                                                            QString* error_message) {
+    if (data.size() > kMaxResponseBodyBytes) {
+        return modelsListError(error_message,
+                               QStringLiteral("OpenAI model list body exceeds the size limit"));
     }
 
     QJsonParseError parse_error;
     const auto doc = QJsonDocument::fromJson(data, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (error_message) {
-            *error_message = firstNonEmptyError(parse_error.errorString(),
-                                                QStringLiteral("Invalid model list JSON"));
-        }
-        return {};
+        return modelsListError(error_message,
+                               firstNonEmptyError(parse_error.errorString(),
+                                                  QStringLiteral("Invalid model list JSON")));
     }
 
-    const QString api_error = extractApiError(data);
+    const QString api_error = OpenAIResponsesClient::extractApiError(data);
     if (!api_error.isEmpty()) {
-        if (error_message) {
-            *error_message = api_error;
-        }
+        return modelsListError(error_message, api_error);
+    }
+
+    // Fail closed on a malformed envelope: a missing or wrong-typed "data" must not be
+    // silently reported as a successful (empty) model enumeration.
+    const QJsonValue data_value = doc.object().value(QStringLiteral("data"));
+    if (!data_value.isArray()) {
+        return modelsListError(error_message,
+                               QStringLiteral("OpenAI model list is missing a data array"));
+    }
+    return data_value.toArray();
+}
+
+}  // namespace
+
+QStringList OpenAIResponsesClient::parseModelsList(const QByteArray& data, QString* error_message) {
+    if (error_message) {
+        error_message->clear();
+    }
+
+    const auto data_array = modelsListDataArray(data, error_message);
+    if (!data_array.has_value()) {
         return {};
     }
 
     QStringList models;
-    const auto data_array = doc.object().value(QStringLiteral("data")).toArray();
-    for (const auto& value : data_array) {
+    for (const auto& value : *data_array) {
         const QString id = value.toObject().value(QStringLiteral("id")).toString();
         if (!id.isEmpty()) {
             models.append(id);
@@ -954,24 +1038,54 @@ QStringList OpenAIResponsesClient::parseModelsList(const QByteArray& data, QStri
     return models;
 }
 
+namespace {
+
+// Format the error message carried by a non-empty OpenAI error object.
+[[nodiscard]] QString describeApiErrorObject(const QJsonObject& error) {
+    const QString message = error.value(QStringLiteral("message")).toString();
+    const QString type = error.value(QStringLiteral("type")).toString();
+    if (!message.isEmpty() && !type.isEmpty()) {
+        return QStringLiteral("%1: %2").arg(type, message);
+    }
+    if (!message.isEmpty()) {
+        return message;
+    }
+    // An error object carrying a type/code but no human-readable message must still fail
+    // closed, not be read as a successful response with no error.
+    const QString code = error.value(QStringLiteral("code")).toString();
+    if (!type.isEmpty() || !code.isEmpty()) {
+        return QStringLiteral("OpenAI API error: %1").arg(type.isEmpty() ? code : type);
+    }
+    return QStringLiteral("OpenAI API returned an error");
+}
+
+}  // namespace
+
 QString OpenAIResponsesClient::extractApiError(const QByteArray& data) {
+    if (data.size() > kMaxResponseBodyBytes) {
+        return {};
+    }
     QJsonParseError parse_error;
     const auto doc = QJsonDocument::fromJson(data, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
         return {};
     }
 
-    const auto error = doc.object().value(QStringLiteral("error")).toObject();
+    const QJsonValue error_value = doc.object().value(QStringLiteral("error"));
+    // Absent or explicit null: no error. Anything else present is an error signal that
+    // must fail closed rather than be read as success, even when malformed.
+    if (error_value.isUndefined() || error_value.isNull()) {
+        return {};
+    }
+    if (!error_value.isObject()) {
+        return QStringLiteral("OpenAI API returned an error");
+    }
+
+    const QJsonObject error = error_value.toObject();
     if (error.isEmpty()) {
         return {};
     }
-
-    const QString message = error.value(QStringLiteral("message")).toString();
-    const QString type = error.value(QStringLiteral("type")).toString();
-    if (!message.isEmpty() && !type.isEmpty()) {
-        return QStringLiteral("%1: %2").arg(type, message);
-    }
-    return message;
+    return describeApiErrorObject(error);
 }
 
 qint64 OpenAIResponsesClient::parseInputTokenCountObject(const QByteArray& data,
@@ -1022,7 +1136,7 @@ QNetworkRequest OpenAIResponsesClient::buildRequest(const QString& path,
     request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(api_key).toUtf8());
     request.setTransferTimeout(kOpenAiTimeoutMs);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
+                         QNetworkRequest::SameOriginRedirectPolicy);
 
     QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
     ssl.setProtocol(QSsl::TlsV1_2OrLater);

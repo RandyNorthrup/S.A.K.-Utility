@@ -12,8 +12,10 @@
 
 param(
     [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
     [string]$RootDir,
 
+    [ValidateNotNullOrEmpty()]
     [string]$PrimaryExe = "sak_utility.exe"
 )
 
@@ -100,32 +102,108 @@ function Test-IsSystemDll {
     return $systemDlls -contains $lower
 }
 
+function Get-PeMachine {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Returns the PE machine word (e.g. 0x8664 for x64), or $null when the file is not a
+    # readable PE image. Reads only the header bytes, so large DLLs stay cheap.
+    $stream = $null
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+    } catch {
+        return $null
+    }
+    try {
+        $reader = New-Object System.IO.BinaryReader($stream)
+        $dosHeader = $reader.ReadBytes(64)
+        if ($dosHeader.Length -lt 64 -or $dosHeader[0] -ne 0x4D -or $dosHeader[1] -ne 0x5A) {
+            return $null  # missing the 'MZ' signature
+        }
+        $peOffset = [System.BitConverter]::ToInt32($dosHeader, 60)  # e_lfanew lives at 0x3C
+        if ($peOffset -lt 0 -or ($peOffset + 6) -gt $stream.Length) {
+            return $null
+        }
+        $stream.Position = $peOffset
+        $peHeader = $reader.ReadBytes(6)
+        if ($peHeader.Length -lt 6 -or $peHeader[0] -ne 0x50 -or $peHeader[1] -ne 0x45 -or
+            $peHeader[2] -ne 0 -or $peHeader[3] -ne 0) {
+            return $null  # missing the 'PE\0\0' signature
+        }
+        return ($peHeader[4] -bor ($peHeader[5] -shl 8))  # IMAGE_FILE_HEADER.Machine
+    } catch {
+        return $null
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 $root = Resolve-Path -LiteralPath $RootDir
+# PrimaryExe must name an artifact INSIDE the package root. Reject an absolute path or a
+# parent-traversal so a crafted value cannot verify an executable outside the package.
+if ([System.IO.Path]::IsPathRooted($PrimaryExe) -or $PrimaryExe -match '\.\.[\\/]') {
+    throw "PrimaryExe must be a package-relative name without '..' or a drive letter: $PrimaryExe"
+}
 $exePath = Join-Path $root.Path $PrimaryExe
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "Primary executable not found: $exePath"
+}
+$resolvedExe = (Resolve-Path -LiteralPath $exePath).Path
+if (-not $resolvedExe.StartsWith($root.Path, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Primary executable resolves outside the package root: $resolvedExe"
+}
+$exeMachine = Get-PeMachine -Path $resolvedExe
+if ($null -eq $exeMachine) {
+    throw "Primary executable is not a readable PE image: $resolvedExe"
 }
 
 $dumpbin = Find-Dumpbin
 Write-Host "Verifying runtime dependencies for $PrimaryExe"
 Write-Host "Using dumpbin: $dumpbin"
 
-$output = & $dumpbin /DEPENDENTS $exePath 2>&1
+$output = & $dumpbin /DEPENDENTS $resolvedExe 2>&1
 if ($LASTEXITCODE -ne 0) {
     $text = $output | Out-String
-    throw "dumpbin failed for $exePath`n$text"
+    throw "dumpbin failed for $resolvedExe`n$text"
 }
 
+# Parse only WITHIN dumpbin's dependency blocks (regular AND delay-load), rather than scanning
+# every line for anything DLL-shaped. Inside a block, accept any legal bare filename (spaces
+# and Unicode allowed; path separators are not), and treat a non-blank line that is not a DLL
+# name as a format change -> FAIL CLOSED instead of silently dropping a real dependency.
 $dependencies = @()
+$inSection = $false
+$sawDepInSection = $false
 foreach ($line in $output) {
-    if ($line -match '^\s*([A-Za-z0-9_.+-]+\.dll)\s*$') {
-        $dependencies += $matches[1]
+    if ($line -match 'Image has the following( delay load)? dependencies:') {
+        $inSection = $true
+        $sawDepInSection = $false
+        continue
     }
+    if (-not $inSection) {
+        continue
+    }
+    if ($line -match '^\s*$') {
+        if ($sawDepInSection) {
+            $inSection = $false
+        }
+        continue
+    }
+    if ($line -imatch '^\s+([^\\/:*?"<>|\r\n]+\.dll)\s*$') {
+        $dependencies += $matches[1].Trim()
+        $sawDepInSection = $true
+        continue
+    }
+    throw "Unexpected line in dumpbin dependency section (format may have changed): $line"
 }
 
 $dependencies = $dependencies | Sort-Object -Unique
+# A real PE executable always imports at least one DLL (kernel32). Zero parsed dependencies
+# means the parse recognized nothing -- fail closed rather than declare a vacuous pass.
+if ($dependencies.Count -eq 0) {
+    throw "No imported DLLs were parsed from dumpbin output for $resolvedExe (unexpected format or empty result)"
+}
 $missing = @()
-$exeDir = Split-Path -Parent $exePath
+$exeDir = Split-Path -Parent $resolvedExe
 
 foreach ($dll in $dependencies) {
     if (Test-IsSystemDll $dll) {
@@ -134,11 +212,28 @@ foreach ($dll in $dependencies) {
 
     $nextToExe = Join-Path $exeDir $dll
     $inRoot = Join-Path $root.Path $dll
-    if ((Test-Path -LiteralPath $nextToExe -PathType Leaf) -or
-        (Test-Path -LiteralPath $inRoot -PathType Leaf)) {
-        Write-Host "OK  $dll"
-    } else {
+    $found = $null
+    if (Test-Path -LiteralPath $nextToExe -PathType Leaf) {
+        $found = $nextToExe
+    } elseif (Test-Path -LiteralPath $inRoot -PathType Leaf) {
+        $found = $inRoot
+    }
+
+    if ($null -eq $found) {
         $missing += $dll
+        continue
+    }
+
+    # Existence alone is not enough: an empty, truncated, non-PE, or wrong-architecture file
+    # with the right name would satisfy a bare existence check yet fail to load at runtime.
+    # Require a real PE image whose machine matches the primary executable.
+    $machine = Get-PeMachine -Path $found
+    if ($null -eq $machine) {
+        $missing += "$dll (present but not a valid PE image)"
+    } elseif ($machine -ne $exeMachine) {
+        $missing += ("$dll (present but wrong architecture: 0x{0:X} vs 0x{1:X})" -f $machine, $exeMachine)
+    } else {
+        Write-Host "OK  $dll"
     }
 }
 

@@ -109,7 +109,14 @@ function Get-GitHeadQuiet {
         $git = Get-Command git -ErrorAction Stop
         $head = & $git.Source -C $Root rev-parse --short HEAD 2>$null
         if ($LASTEXITCODE -eq 0) {
-            return ($head | Select-Object -First 1)
+            $short = ($head | Select-Object -First 1)
+            # Record whether the working tree is dirty so a report cannot claim a clean
+            # source identity while uncommitted changes were what was actually exercised.
+            $porcelain = & $git.Source -C $Root status --porcelain 2>$null
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(($porcelain -join "`n"))) {
+                return "$short-dirty"
+            }
+            return $short
         }
     }
     catch {
@@ -155,7 +162,6 @@ function Invoke-LoggedCommand {
             RedirectStandardOutput = $stdout
             RedirectStandardError = $stderr
             WindowStyle = "Hidden"
-            Wait = $true
             PassThru = $true
         }
         if ($Arguments.Count -gt 0) {
@@ -163,11 +169,29 @@ function Invoke-LoggedCommand {
         }
         $process = Start-Process @startArgs
 
+        # Honor the timeout: -Wait would block indefinitely, so wait explicitly and
+        # terminate a child that overruns rather than hanging the gate and report forever.
+        $timedOut = $false
+        if ($TimeoutSeconds -gt 0) {
+            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+                $timedOut = $true
+                try { $process.Kill($true) } catch { try { $process.Kill() } catch { } }
+                $process.WaitForExit(5000) | Out-Null
+            }
+        }
+        else {
+            $process.WaitForExit()
+        }
+
         $process.Refresh()
         $outText = if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout -Raw } else { "" }
         $errText = if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr -Raw } else { "" }
         "STDOUT:`n$outText" | Add-Content -LiteralPath $LogPath -Encoding UTF8
         "STDERR:`n$errText" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        if ($timedOut) {
+            "TIMEOUT: command exceeded $TimeoutSeconds s and was terminated" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+            return New-StepResult -Name $Name -Status "failed" -Command $commandText -OutputPath $LogPath -ExitCode 124 -ErrorText "Command timed out after $TimeoutSeconds seconds"
+        }
         $exitCode = if ($null -eq $process.ExitCode) { 1 } else { [int]$process.ExitCode }
         if ($exitCode -ne 0) {
             return New-StepResult -Name $Name -Status "failed" -Command $commandText -OutputPath $LogPath -ExitCode $exitCode -ErrorText "Command exited with code $exitCode"
@@ -294,6 +318,14 @@ try {
             $ctestEnv["OPENAI_API_KEY"] = $openAiKey
         }
     }
+    else {
+        # Fail closed: without the -AllowLiveModelSmoke opt-in, ensure an inherited ambient
+        # opt-in variable cannot leak live network/API execution into the child while the
+        # report records live_model_smoke_requested=false. Setting these to $null clears
+        # them for the child (see Invoke-LoggedCommand's environment handling).
+        $ctestEnv["SAK_RUN_OPENAI_LIVE_TESTS"] = $null
+        $ctestEnv["SAK_AI_REAL_MODEL_TEST"] = $null
+    }
     if ($SkipCTest) {
         $steps.Add((New-StepResult -Name "ai_ctest_slice" -Status "skipped"))
     }
@@ -302,7 +334,7 @@ try {
         $steps.Add((Invoke-LoggedCommand `
             -Name "ai_ctest_slice" `
             -FilePath "ctest" `
-            -Arguments @("--test-dir", $buildRootPath, "-C", $Configuration, "-R", $ctestRegex, "--output-on-failure") `
+            -Arguments @("--test-dir", $buildRootPath, "-C", $Configuration, "-R", $ctestRegex, "--no-tests=error", "--output-on-failure") `
             -WorkingDirectory $projectRootPath `
             -Environment $ctestEnv `
             -LogPath (Join-Path $logRoot "ai_ctest_slice.log")))
@@ -342,27 +374,56 @@ try {
     else {
         $auditOut = Join-Path $runRoot "accessibility-audit-status.txt"
         $exe = Join-Path $packageRootPath "sak_utility.exe"
-        $steps.Add((Invoke-LoggedCommand `
+        $auditStep = Invoke-LoggedCommand `
             -Name "accessibility_audit" `
             -FilePath $exe `
             -Arguments @("--accessibility-audit", "--accessibility-audit-output=$auditOut", "--no-splash") `
             -WorkingDirectory $packageRootPath `
             -LogPath (Join-Path $logRoot "accessibility_audit.log") `
-            -TimeoutSeconds 90))
+            -TimeoutSeconds 90
+        if ($auditStep.status -eq "passed") {
+            # Exit 0 is necessary but not sufficient: confirm the audit actually wrote its
+            # status artifact and reported OK (SAK_ACCESSIBILITY_AUDIT_OK). Fail closed if
+            # the artifact is missing, empty, or does not report a clean pass.
+            $auditOk = $false
+            if (Test-PathQuiet -Path $auditOut -PathType Leaf) {
+                $firstLine = (Get-Content -LiteralPath $auditOut -TotalCount 1 -ErrorAction SilentlyContinue | Select-Object -First 1)
+                if (-not [string]::IsNullOrWhiteSpace($firstLine) -and $firstLine.StartsWith("SAK_ACCESSIBILITY_AUDIT_OK")) {
+                    $auditOk = $true
+                }
+            }
+            if (-not $auditOk) {
+                $auditStep.status = "failed"
+                $auditStep.error = "Accessibility audit status artifact missing or not OK: $auditOut"
+                $auditStep.output_path = $auditOut
+            }
+        }
+        $steps.Add($auditStep)
     }
 
-    $steps.Add((Invoke-LoggedCommand `
+    $checklistStep = Invoke-LoggedCommand `
         -Name "manual_smoke_checklist" `
         -FilePath "powershell.exe" `
         -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $projectRootPath "scripts\ai_smoke_checklist.ps1")) `
         -WorkingDirectory $projectRootPath `
-        -LogPath (Join-Path $logRoot "manual_smoke_checklist.log")))
+        -LogPath (Join-Path $logRoot "manual_smoke_checklist.log")
+    if ($checklistStep.status -eq "passed") {
+        # This step only PRINTS the manual checklist; a human still has to perform and sign
+        # off the gates. Reporting a certifying "passed" from process exit alone would
+        # overstate. Record it as informational (non-failing, but not a pass) instead.
+        $checklistStep.status = "informational"
+        $checklistStep.error = "Checklist printed for manual follow-up; not an automated pass."
+    }
+    $steps.Add($checklistStep)
 }
 finally {
     Pop-Location
 }
 
-$failed = @($steps | Where-Object { $_.status -eq "failed" })
+# Fail closed: only an explicit "passed", "skipped" (operator opt-out) or "informational"
+# (a printed, human-owned step) counts as non-failing. Any other value -- "failed", or a
+# status a future code path forgot to set -- flips the overall gate to failed.
+$failed = @($steps | Where-Object { $_.status -ne "passed" -and $_.status -ne "skipped" -and $_.status -ne "informational" })
 $status = if ($failed.Count -eq 0) { "passed" } else { "failed" }
 $report = [ordered]@{
     schema = "sak.ai.vm_smoke.v1"

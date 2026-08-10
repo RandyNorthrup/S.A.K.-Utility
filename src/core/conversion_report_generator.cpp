@@ -12,7 +12,10 @@
 
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QTextStream>
+
+#include <limits>
 
 namespace sak {
 
@@ -29,23 +32,47 @@ constexpr int kGigabyteDisplayPrecision = 2;
 
 QString ConversionReportGenerator::generateHtmlReport(const OstConversionBatchResult& batch,
                                                       const QString& output_directory) {
+    if (output_directory.trimmed().isEmpty()) {
+        logError("ConversionReport: refusing to write report to a blank output directory");
+        return {};
+    }
     QString html = buildReportHtml(batch);
     QString report_path = output_directory + QStringLiteral("/conversion_report.html");
 
     QDir dir(output_directory);
-    if (!dir.exists()) {
-        dir.mkpath(QStringLiteral("."));
-    }
-
-    QFile file(report_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        logError("ConversionReport: failed to write report to {}", report_path.toStdString());
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        logError("ConversionReport: failed to create output directory {}",
+                 output_directory.toStdString());
         return {};
     }
 
-    QTextStream out(&file);
-    out << html;
-    file.close();
+    // QSaveFile writes to a temporary sibling and atomically renames on commit(), so a
+    // short or failed write can never truncate a previously good report.
+    QSaveFile file(report_path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        logError("ConversionReport: failed to open report {} for writing: {}",
+                 report_path.toStdString(),
+                 file.errorString().toStdString());
+        return {};
+    }
+
+    {
+        QTextStream out(&file);
+        out << html;
+        out.flush();
+        if (out.status() != QTextStream::Ok) {
+            logError("ConversionReport: stream error writing report {}", report_path.toStdString());
+            file.cancelWriting();
+            return {};
+        }
+    }
+
+    if (!file.commit()) {
+        logError("ConversionReport: failed to finalize report {}: {}",
+                 report_path.toStdString(),
+                 file.errorString().toStdString());
+        return {};
+    }
 
     logInfo("ConversionReport: report saved to {}", report_path.toStdString());
     return report_path;
@@ -57,7 +84,7 @@ QString ConversionReportGenerator::csvSafeCell(const QString& value) {
     // Formula-injection guard: email subjects/senders/message-ids are attacker-controlled. A cell
     // a spreadsheet would evaluate as a formula (leading = + - @, or a leading tab/CR that some
     // parsers strip to reveal one) gets a single-quote prefix so Excel/Calc treat it as text.
-    static const QString kFormulaLeads = QStringLiteral("=+-@\t\r");
+    static const QString kFormulaLeads = QStringLiteral("=+-@\t\r\n");
     if (!cell.isEmpty() && kFormulaLeads.contains(cell.at(0))) {
         cell.prepend(QLatin1Char('\''));
     }
@@ -79,8 +106,17 @@ int ConversionReportGenerator::writeCsvDataRows(
     const QVector<PstItemDetail>& items,
     const QVector<QVector<MapiProperty>>& all_properties,
     const QList<QString>& sorted_names) {
-    int count = qMin(items.size(), all_properties.size());
-    for (int i = 0; i < count; ++i) {
+    if (items.size() != all_properties.size()) {
+        // items[i] and all_properties[i] are parallel; a size mismatch means the manifest
+        // request is inconsistent. Surface it rather than silently emitting a truncated
+        // manifest for the common prefix.
+        logError(
+            "ConversionReport: CSV item/property count mismatch ({} items vs {} property sets)",
+            std::to_string(items.size()),
+            std::to_string(all_properties.size()));
+    }
+    const qsizetype count = qMin(items.size(), all_properties.size());
+    for (qsizetype i = 0; i < count; ++i) {
         const auto& item = items[i];
 
         out << item.node_id << "," << csvSafeCell(item.subject) << ","
@@ -100,32 +136,18 @@ int ConversionReportGenerator::writeCsvDataRows(
         out << "\n";
     }
 
-    return count;
+    return static_cast<int>(qMin<qsizetype>(count, std::numeric_limits<int>::max()));
 }
 
-QString ConversionReportGenerator::generateCsvManifest(
-    const QVector<PstItemDetail>& items,
-    const QVector<QVector<MapiProperty>>& all_properties,
-    const QString& output_directory) {
-    QString csv_path = output_directory + QStringLiteral("/properties_manifest.csv");
-
-    QDir dir(output_directory);
-    if (!dir.exists()) {
-        dir.mkpath(QStringLiteral("."));
-    }
-
-    QFile file(csv_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        logError("ConversionReport: failed to write CSV to {}", csv_path.toStdString());
-        return {};
-    }
-
-    QTextStream out(&file);
-
-    // Header row
-    out << "NodeId,Subject,SenderName,SenderEmail,Date,MessageClass";
-
-    // Collect all unique property names across all items
+namespace {
+// The sorted, bounded set of property names that become pivot columns for the manifest.
+//
+// Bound the pivot width: a hostile mail file can declare an unbounded number of distinct
+// property names, and each becomes a column emitted for every item (O(items x names)).
+// Legitimate manifests use far fewer; cap fail-closed so a crafted store cannot force
+// quadratic CPU/disk use.
+QList<QString> collectManifestPropertyColumns(
+    const QVector<QVector<MapiProperty>>& all_properties) {
     QSet<QString> prop_names;
     for (const auto& props : all_properties) {
         for (const auto& prop : props) {
@@ -135,14 +157,73 @@ QString ConversionReportGenerator::generateCsvManifest(
     QList<QString> sorted_names = prop_names.values();
     std::sort(sorted_names.begin(), sorted_names.end());
 
-    for (const auto& name : sorted_names) {
-        out << "," << csvSafeCell(name);  // property names come from data -> escape them too
+    constexpr qsizetype kMaxPropertyColumns = 4096;
+    if (sorted_names.size() > kMaxPropertyColumns) {
+        logWarning(
+            "ConversionReport: {} distinct property names exceeds column cap {} -- truncating",
+            std::to_string(sorted_names.size()),
+            std::to_string(kMaxPropertyColumns));
+        sorted_names = sorted_names.mid(0, kMaxPropertyColumns);
     }
-    out << "\n";
+    return sorted_names;
+}
+}  // namespace
 
-    int count = writeCsvDataRows(out, items, all_properties, sorted_names);
+QString ConversionReportGenerator::generateCsvManifest(
+    const QVector<PstItemDetail>& items,
+    const QVector<QVector<MapiProperty>>& all_properties,
+    const QString& output_directory) {
+    if (output_directory.trimmed().isEmpty()) {
+        logError("ConversionReport: refusing to write CSV to a blank output directory");
+        return {};
+    }
+    QString csv_path = output_directory + QStringLiteral("/properties_manifest.csv");
 
-    file.close();
+    QDir dir(output_directory);
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        logError("ConversionReport: failed to create output directory {}",
+                 output_directory.toStdString());
+        return {};
+    }
+
+    // Atomic write: a short/failed write never truncates a previously good manifest.
+    QSaveFile file(csv_path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        logError("ConversionReport: failed to open CSV {} for writing: {}",
+                 csv_path.toStdString(),
+                 file.errorString().toStdString());
+        return {};
+    }
+
+    int count = 0;
+    {
+        QTextStream out(&file);
+
+        // Header row
+        out << "NodeId,Subject,SenderName,SenderEmail,Date,MessageClass";
+
+        const QList<QString> sorted_names = collectManifestPropertyColumns(all_properties);
+        for (const auto& name : sorted_names) {
+            out << "," << csvSafeCell(name);  // property names come from data -> escape them too
+        }
+        out << "\n";
+
+        count = writeCsvDataRows(out, items, all_properties, sorted_names);
+
+        out.flush();
+        if (out.status() != QTextStream::Ok) {
+            logError("ConversionReport: stream error writing CSV {}", csv_path.toStdString());
+            file.cancelWriting();
+            return {};
+        }
+    }
+
+    if (!file.commit()) {
+        logError("ConversionReport: failed to finalize CSV {}: {}",
+                 csv_path.toStdString(),
+                 file.errorString().toStdString());
+        return {};
+    }
 
     logInfo("ConversionReport: CSV manifest saved -- {} items", std::to_string(count));
     return csv_path;
@@ -177,6 +258,23 @@ QString ConversionReportGenerator::buildSummaryStatsHtml(const OstConversionBatc
     return html;
 }
 
+namespace {
+// The CSS status class for one file-result row.
+QString fileResultRowStatusClass(const OstConversionResult& result) {
+    if (result.items_failed > 0 && result.items_converted == 0) {
+        // A truncated deleted-item scan left items OUT of this output, so the row must not
+        // read as a clean run just because nothing that WAS enumerated failed to write.
+        return QStringLiteral("error");
+    }
+    if (result.items_failed > 0 || !result.recovery_complete || !result.errors.isEmpty()) {
+        // A file with logged errors is not a clean success even when no item was
+        // individually marked failed (e.g. a checksum/open/finalization error).
+        return QStringLiteral("warn");
+    }
+    return QStringLiteral("success");
+}
+}  // namespace
+
 QString ConversionReportGenerator::buildFileResultsTableHtml(
     const OstConversionBatchResult& batch) {
     QString html;
@@ -198,16 +296,7 @@ QString ConversionReportGenerator::buildFileResultsTableHtml(
             file_dur = result.started.msecsTo(result.finished);
         }
 
-        QString status_class;
-        if (result.items_failed > 0 && result.items_converted == 0) {
-            status_class = QStringLiteral("error");
-            // A truncated deleted-item scan left items OUT of this output, so the row must not
-            // read as a clean run just because nothing that WAS enumerated failed to write.
-        } else if (result.items_failed > 0 || !result.recovery_complete) {
-            status_class = QStringLiteral("warn");
-        } else {
-            status_class = QStringLiteral("success");
-        }
+        const QString status_class = fileResultRowStatusClass(result);
 
         html += QStringLiteral(
                     "<tr><td>%1</td>"
@@ -256,12 +345,18 @@ QString ConversionReportGenerator::buildErrorLogHtml(const OstConversionBatchRes
 
     constexpr int kMaxReportErrors = 500;
     int error_count = 0;
+    bool truncated = false;
     for (const auto& result : batch.file_results) {
+        if (truncated) {
+            break;
+        }
         for (const auto& err : result.errors) {
             if (error_count >= kMaxReportErrors) {
-                html += QStringLiteral(
-                    "<tr><td colspan='2' class='warn'>"
-                    "... truncated (more errors omitted)</td></tr>");
+                // More errors remain than we will render. Flag it so the truncation notice
+                // is emitted exactly once below: the previous inner+outer break could exit
+                // at an exact-cap boundary WITHOUT emitting it, silently dropping later
+                // results' errors.
+                truncated = true;
                 break;
             }
             html += QStringLiteral("<tr><td>%1</td><td class='error'>%2</td></tr>")
@@ -269,9 +364,11 @@ QString ConversionReportGenerator::buildErrorLogHtml(const OstConversionBatchRes
                         .arg(err.toHtmlEscaped());
             ++error_count;
         }
-        if (error_count >= kMaxReportErrors) {
-            break;
-        }
+    }
+    if (truncated) {
+        html += QStringLiteral(
+            "<tr><td colspan='2' class='warn'>"
+            "... truncated (more errors omitted)</td></tr>");
     }
 
     html += QStringLiteral("</table>");

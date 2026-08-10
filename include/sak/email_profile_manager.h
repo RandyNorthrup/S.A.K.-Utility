@@ -67,7 +67,10 @@ private:
     /// and resetting the first operation's cancel flag.
     std::atomic<bool> m_operation_active{false};
     /// Set true at the start of each discoverProfiles(); cleared on any read error.
-    bool m_discovery_reliable{true};
+    /// Defaults to false so a read BEFORE any discovery reports "not established"
+    /// rather than a masked "reliable"; atomic because discoveryReliable() reads it
+    /// without the single-flight guard.
+    std::atomic<bool> m_discovery_reliable{false};
     QVector<sak::EmailClientProfile> m_profiles;
 
     /// Original data-file path -> the actual on-disk backup basename that was

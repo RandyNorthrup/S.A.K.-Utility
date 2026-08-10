@@ -226,6 +226,26 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
         return {};
     }
 
+    // Fail closed on a cancelled run, a crash-exit, or a truncated capture: any of
+    // these can leave std_out holding a partial JSON document whose fatal-exit bits
+    // (0-2) happen to be clear. Handing a truncated/aborted payload to the parser as
+    // if it were a complete reading is exactly the fail-open this must not do.
+    if (result.cancelled) {
+        logInfo("smartctl cancelled for drive {}", disk_number);
+        return {};
+    }
+    if (result.output_truncated) {
+        logError("smartctl output truncated for drive {} -- refusing partial SMART data",
+                 disk_number);
+        return {};
+    }
+    if (result.exit_status != 0) {
+        logError("smartctl crash-exited for drive {} (exit_status {})",
+                 disk_number,
+                 result.exit_status);
+        return {};
+    }
+
     // smartctl exit codes are bitmasks:
     //   Bit 0: Command line parse error
     //   Bit 1: Device open failed
@@ -329,6 +349,14 @@ void SmartDiskAnalyzer::parseSataAttributes(const QJsonObject& ata_smart_obj, Sm
 
         SmartAttribute attr;
         attr.id = static_cast<uint8_t>(attr_obj.value("id").toInt());
+        // A null or empty table entry (`table:[null]` / `table:[{}]`) parses to id 0.
+        // No real ATA SMART attribute uses id 0, and appending such a phantom would
+        // give assessHealth() an in-threshold attribute -- enough to satisfy
+        // reportHasAssessableData() and let a data-less payload read as Healthy. Skip
+        // it so the report stays fail-closed (no assessable data -> Unknown).
+        if (attr.id == 0) {
+            continue;
+        }
         attr.name = attr_obj.value("name").toString();
         attr.current_value = static_cast<uint8_t>(attr_obj.value("value").toInt());
         attr.worst_value = static_cast<uint8_t>(attr_obj.value("worst").toInt());
@@ -364,9 +392,16 @@ void SmartDiskAnalyzer::parseSataAttributes(const QJsonObject& ata_smart_obj, Sm
 }
 
 void SmartDiskAnalyzer::parseNvmeHealth(const QJsonObject& nvme_obj, SmartReport& report) {
-    // An empty/absent object is valid (a non-NVMe or minimal drive): every field
-    // below falls back to its default. Do not assert non-empty (debug-crash on
-    // malformed input); degrade gracefully instead.
+    // Fail closed on a null/empty log. `nvme_smart_health_information_log: null`
+    // (or `{}`) parses to an empty object here; building an all-zero record from it
+    // would set report.nvme_health, satisfy reportHasAssessableData(), and let a
+    // data-less payload read as Healthy -- and it would clobber a good top-level
+    // temperature/power-on reading with zero. A real NVMe log is never empty; an
+    // empty one is malformed input, not a minimal drive, so degrade to no NVMe data
+    // (Unknown) rather than a phantom clean record. Never crashes on malformed input.
+    if (nvme_obj.isEmpty()) {
+        return;
+    }
     NvmeHealthInfo nvme;
 
     nvme.percentage_used = static_cast<uint8_t>(nvme_obj.value("percentage_used").toInt());
@@ -384,8 +419,16 @@ void SmartDiskAnalyzer::parseNvmeHealth(const QJsonObject& nvme_obj, SmartReport
 
     report.nvme_health = nvme;
     report.wear_level_percent = static_cast<double>(nvme.percentage_used);
-    report.power_on_hours = static_cast<int64_t>(nvme.power_on_hours);
-    report.temperature_celsius = static_cast<double>(nvme.temperature);
+    // Only override the top-level power-on/temperature when the log actually carried
+    // them. A partial log missing one of these members must not overwrite a valid
+    // reading (parsed from "power_on_time"/"temperature") with a default zero, which
+    // would suppress the age/temperature warnings.
+    if (nvme_obj.contains("power_on_hours")) {
+        report.power_on_hours = static_cast<int64_t>(nvme.power_on_hours);
+    }
+    if (nvme_obj.contains("temperature")) {
+        report.temperature_celsius = static_cast<double>(nvme.temperature);
+    }
 }
 
 SmartHealthStatus SmartDiskAnalyzer::checkAttributeAgainstThresholds(

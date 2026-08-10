@@ -135,4 +135,11 @@ private:
                                       const QString& folder_path,
                                       const QVector<sak::PstItemSummary>& page,
                                       SearchState& state);
+
+    /// Search one page of MBOX messages. Returns false when the search should stop
+    /// (cancelled or the result cap was reached), mirroring searchItemPage.
+    [[nodiscard]] bool searchMessagePage(MboxParser* parser,
+                                         const sak::EmailSearchCriteria& criteria,
+                                         const QVector<sak::MboxMessage>& page,
+                                         SearchState& state);
 };

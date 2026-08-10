@@ -68,8 +68,11 @@ public:
     /// @brief Load custom patterns from persistent storage
     void loadCustomPatterns();
 
-    /// @brief Save custom patterns to persistent storage
-    void saveCustomPatterns();
+    /// @brief Save custom patterns to persistent storage. Returns true only when the
+    ///        list was durably committed; false on any I/O failure or when persistence
+    ///        is disabled (no usable config dir), so callers can fail closed rather
+    ///        than leave memory diverged from disk.
+    bool saveCustomPatterns();
 
 Q_SIGNALS:
     /// @brief Emitted when patterns are modified (add, remove, enable, disable)

@@ -29,6 +29,7 @@ logger::~logger() {
 
 auto logger::initialize(const std::filesystem::path& log_dir, std::string_view prefix)
     -> std::expected<void, error_code> {
+    std::string init_log_path;
     {
         std::lock_guard lock(m_mutex);
 
@@ -64,10 +65,13 @@ auto logger::initialize(const std::filesystem::path& log_dir, std::string_view p
 
         m_initialized.store(true, std::memory_order_release);
         m_bytes_written.store(0, std::memory_order_relaxed);
+        init_log_path = m_log_file.string();
     }
 
-    // Write initialization message (outside lock -- writeEntryToFile acquires it)
-    logInfo("Logger initialized: {}", m_log_file.string());
+    // Write initialization message (outside lock -- writeEntryToFile acquires it). Use the
+    // path captured UNDER the lock, never the shared m_log_file member: reading it unlocked
+    // here races a concurrent initialize() that may be mutating it (torn read of a path).
+    logInfo("Logger initialized: {}", init_log_path);
 
     return {};
 }
@@ -104,9 +108,15 @@ void logger::logInternal(log_level level,
                          std::string_view message,
                          const std::source_location& loc) noexcept {
     if (!isInitialized()) {
-        // Fallback to console if not initialized
+        // Fallback to console if not initialized. std::println can throw (bad_alloc, I/O
+        // failure); this runs BEFORE the try below in a noexcept function, so an escaping
+        // exception would terminate the process. Guard it.
         if (m_console_output.load(std::memory_order_relaxed)) {
-            std::println(std::cerr, "[{}] {}", to_string(level), message);
+            try {
+                std::println(std::cerr, "[{}] {}", to_string(level), message);
+            } catch (...) {
+                std::fprintf(stderr, "SAK Logger: console write failed\n");
+            }
         }
         return;
     }
@@ -186,11 +196,18 @@ void logger::writeEntryToConsole(std::string_view log_entry, log_level level) no
         return;
     }
 
-    if (level >= log_level::error) {
-        std::print(std::cerr, "{}", log_entry);
-        return;
+    // This function is noexcept but std::print can throw (bad_alloc, I/O failure). Without
+    // this guard an escaping exception would cross the noexcept boundary and terminate the
+    // process just because a console write failed -- catch and note instead.
+    try {
+        if (level >= log_level::error) {
+            std::print(std::cerr, "{}", log_entry);
+        } else {
+            std::print("{}", log_entry);
+        }
+    } catch (...) {
+        std::fprintf(stderr, "SAK Logger: console write failed\n");
     }
-    std::print("{}", log_entry);
 }
 
 auto logger::ensureLogDirectory(const std::filesystem::path& dir)
@@ -278,6 +295,13 @@ void logger::rotateLog() noexcept {
 
         m_file_stream.open(m_log_file, std::ios::out | std::ios::app);
         m_bytes_written.store(0, std::memory_order_relaxed);
+        // Fail loud, not silent: if the post-rotation file could not be reopened, file
+        // logging is now disabled while isInitialized() still reports true, and every later
+        // entry would be dropped by writeEntryToFile's is_open() guard with no trace. Surface
+        // it once via the write-failure notice.
+        if (!m_file_stream.is_open()) {
+            noteWriteFailure();
+        }
 
     } catch (const std::exception& e) {
         // Logger cannot use logError (infinite recursion), fall back to stderr
@@ -313,8 +337,10 @@ void logger::log(log_level level,
         return;
     }
 
-    // For no-args, just log the format string directly
-    logInternal(level, std::string(format), loc);
+    // For no-args, log the format string_view directly. Constructing a std::string here (an
+    // allocation) inside this noexcept function, outside any try, would terminate the process
+    // on bad_alloc; logInternal reads the view synchronously, so no owning copy is needed.
+    logInternal(level, format, loc);
 }
 
 }  // namespace sak

@@ -118,6 +118,34 @@ void applyTtlExpiredEcho(PingReply& reply, const ICMP_ECHO_REPLY& echoReply) {
     reply.errorMessage = QStringLiteral("TTL expired");
 }
 
+// Translate a completed IcmpSendEcho into a PingReply. A zero numReplies is ambiguous -- a real
+// timeout or a local API failure -- so the already-captured sendError, not the zero itself,
+// decides which is reported.
+void settleEchoOutcome(
+    PingReply& reply, char* replyBuffer, DWORD numReplies, DWORD sendError, double elapsedMs) {
+    if (numReplies > 0) {
+        auto* echoReply = reinterpret_cast<PICMP_ECHO_REPLY>(replyBuffer);
+
+        if (echoReply->Status == IP_SUCCESS) {
+            applySuccessfulEcho(reply, *echoReply);
+        } else if (isTtlExpiredStatus(echoReply->Status)) {
+            applyTtlExpiredEcho(reply, *echoReply);
+        } else {
+            reply.success = false;
+            reply.errorMessage = QStringLiteral("ICMP error status %1").arg(echoReply->Status);
+        }
+    } else {
+        reply.success = false;
+        reply.rttMs = elapsedMs;
+        // A genuine timeout keeps its "Request timed out" label (probeHop/updateHopStats do not
+        // key on it, only on "TTL expired"); any other zero-return is a real API failure and is
+        // surfaced as such instead of being falsified as a timeout.
+        reply.errorMessage = (sendError == IP_REQ_TIMED_OUT || sendError == 0)
+                                 ? QStringLiteral("Request timed out")
+                                 : QStringLiteral("ICMP echo failed (error %1)").arg(sendError);
+    }
+}
+
 [[nodiscard]] QVector<MtrHopStats> initHopStats(int maxHops) {
     QVector<MtrHopStats> hopStats(maxHops);
     for (int i = 0; i < maxHops; ++i) {
@@ -289,7 +317,10 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
 
     HANDLE hIcmp = IcmpCreateFile();
     if (hIcmp == INVALID_HANDLE_VALUE) {
-        reply.errorMessage = QStringLiteral("Failed to create ICMP handle");
+        // Fail closed with the real cause: a discarded GetLastError would leave a local API
+        // failure indistinguishable from a network timeout downstream.
+        reply.errorMessage =
+            QStringLiteral("Failed to create ICMP handle (error %1)").arg(GetLastError());
         return reply;
     }
 
@@ -326,27 +357,17 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
                                           replySize,
                                           static_cast<DWORD>(timeoutMs));
 
+    // Capture the extended error IMMEDIATELY: a zero return can mean IP_REQ_TIMED_OUT OR a
+    // real failure (bad parameter, buffer too small, allocation failure). Reading it here,
+    // before any other call can reset the thread's last-error, lets us tell them apart.
+    const DWORD sendError = (numReplies == 0) ? GetLastError() : 0;
+
     const auto end = std::chrono::high_resolution_clock::now();
 
     IcmpCloseHandle(hIcmp);
 
-    if (numReplies > 0) {
-        auto* echoReply = reinterpret_cast<PICMP_ECHO_REPLY>(replyBuffer.get());
-
-        if (echoReply->Status == IP_SUCCESS) {
-            applySuccessfulEcho(reply, *echoReply);
-        } else if (isTtlExpiredStatus(echoReply->Status)) {
-            applyTtlExpiredEcho(reply, *echoReply);
-        } else {
-            reply.success = false;
-            reply.errorMessage = QStringLiteral("ICMP error status %1").arg(echoReply->Status);
-        }
-    } else {
-        reply.success = false;
-        const double elapsed = std::chrono::duration<double, std::milli>(end - start).count();
-        reply.rttMs = elapsed;
-        reply.errorMessage = QStringLiteral("Request timed out");
-    }
+    const double elapsedMs = std::chrono::duration<double, std::milli>(end - start).count();
+    settleEchoOutcome(reply, replyBuffer.get(), numReplies, sendError, elapsedMs);
 
     return reply;
 }
@@ -512,6 +533,26 @@ void ConnectivityTester::traceroute(const TracerouteConfig& rawConfig) {
     Q_EMIT tracerouteComplete(result);
 }
 
+void ConnectivityTester::runMtrCycle(const QString& targetIP,
+                                     const MtrConfig& config,
+                                     QVector<MtrHopStats>& hopStats,
+                                     int& maxDiscoveredHop) {
+    for (int ttl = 1; ttl <= config.maxHops; ++ttl) {
+        if (m_cancelled.load()) {
+            break;
+        }
+
+        PingReply reply =
+            sendIcmpEcho(targetIP, config.timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
+
+        updateHopStats(hopStats[ttl - 1], reply, ttl, maxDiscoveredHop);
+
+        if (reply.success && reply.replyFrom == targetIP) {
+            break;
+        }
+    }
+}
+
 void ConnectivityTester::mtr(const MtrConfig& rawConfig) {
     m_cancelled.store(false);
     const MtrConfig config = sanitizeConfig(rawConfig);
@@ -535,22 +576,13 @@ void ConnectivityTester::mtr(const MtrConfig& rawConfig) {
             break;
         }
 
-        for (int ttl = 1; ttl <= config.maxHops; ++ttl) {
-            if (m_cancelled.load()) {
-                break;
-            }
+        runMtrCycle(targetIP, config, hopStats, maxDiscoveredHop);
 
-            PingReply reply =
-                sendIcmpEcho(targetIP, config.timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
-
-            updateHopStats(hopStats[ttl - 1], reply, ttl, maxDiscoveredHop);
-
-            if (reply.success && reply.replyFrom == targetIP) {
-                break;
-            }
+        // Do not publish an update for a cycle that cancellation cut short mid-way: it would
+        // report cycle+1 as a completed cycle when its hop sweep was interrupted.
+        if (!m_cancelled.load()) {
+            Q_EMIT mtrUpdate(visibleHopStats(hopStats, maxDiscoveredHop), cycle + 1);
         }
-
-        Q_EMIT mtrUpdate(visibleHopStats(hopStats, maxDiscoveredHop), cycle + 1);
 
         if (!m_cancelled.load() && cycle < config.cycles - 1) {
             QThread::msleep(static_cast<unsigned long>(config.intervalMs));

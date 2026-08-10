@@ -269,7 +269,9 @@ struct BackupManifest {
     /// True if manifest_checksum matches the recomputed digest. An empty stored
     /// checksum (a legacy backup made before this field was populated) is treated
     /// as unverifiable-but-acceptable and returns true; a NON-empty checksum that
-    /// does not match returns false (corruption/tamper -> caller fails closed).
+    /// does not match returns false (corruption -> caller fails closed). The digest
+    /// is stored inline and unkeyed, so it detects accidental corruption or a payload
+    /// changed without the manifest, not an attacker who rewrites both.
     [[nodiscard]] bool verifyManifestChecksum() const;
 
     /// Pure digest helper: SHA-256 hex of the given object after removing the

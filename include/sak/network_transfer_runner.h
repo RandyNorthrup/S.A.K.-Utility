@@ -33,8 +33,9 @@ struct NetworkTransferRequest {
     /// synchronous runNetworkTransfer() call forever. Such a request is rejected outright.
     int timeout_ms{kDefaultNetworkTransferTimeoutMs};
     /// Abort once the response body exceeds this many bytes, bounding the in-memory
-    /// buffer so a hostile/oversized remote response cannot exhaust memory. 0 = no
-    /// limit (for callers that legitimately stream large, size-bounded downloads).
+    /// buffer so a hostile/oversized remote response cannot exhaust memory. A value <= 0
+    /// is NOT unlimited: runNetworkTransfer clamps it to a 512 MiB safety cap so an
+    /// omitted limit can never permit unbounded buffering.
     qint64 max_response_bytes{0};
 };
 

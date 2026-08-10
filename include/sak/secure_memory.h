@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -53,6 +54,10 @@ public:
     /// @param data Span to wipe
     template <typename T>
     static void wipe(std::span<T> data) noexcept {
+        // Overwriting the object representation of a non-trivial T is undefined behavior; the
+        // byte-wise zeroing here is well-defined only for a trivially-copyable element type.
+        static_assert(std::is_trivially_copyable_v<T>,
+                      "secure_wiper::wipe requires a trivially-copyable element type");
         wipe(data.data(), data.size_bytes());
     }
 };
@@ -194,6 +199,12 @@ private:
 /// @tparam T Element type
 template <typename T>
 class secure_memory_guard {
+    // The guarded region is wiped byte-wise over m_size * sizeof(T) bytes, which is well-defined
+    // only for a trivially-copyable element type; zeroing the object representation of a
+    // non-trivial T corrupts live object state before its real destructor runs.
+    static_assert(std::is_trivially_copyable_v<T>,
+                  "secure_memory_guard requires a trivially-copyable element type");
+
 public:
     /// @brief Construct guard for memory region
     /// @param ptr Pointer to memory to guard
@@ -252,6 +263,13 @@ template <typename T>
         return false;
     }
 
+    // Refuse to compare when the byte-count multiplication below would wrap: a wrapped count
+    // would compare only a prefix and could report differing buffers as equal. Mirrors the
+    // overflow guard in secure_allocator::allocate().
+    if (a.size() > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
+        return false;
+    }
+
     // Constant-time comparison
     volatile unsigned char result = 0;
     const auto* ptr_a = reinterpret_cast<const unsigned char*>(a.data());
@@ -294,6 +312,11 @@ template <typename T>
 /// @return True if successful
 template <typename T>
 [[nodiscard]] bool generateSecureRandom(std::span<T> data) noexcept {
+    // Filling the object representation of a non-trivial T with random bytes produces invalid
+    // objects (e.g. a std::string with a randomized internal pointer corrupts the heap on
+    // destruction); constrain to trivially-copyable element types.
+    static_assert(std::is_trivially_copyable_v<T>,
+                  "generateSecureRandom requires a trivially-copyable element type");
     return generateSecureRandom(data.data(), data.size_bytes());
 }
 

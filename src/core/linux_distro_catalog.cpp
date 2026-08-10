@@ -42,6 +42,11 @@ constexpr double kKaliSizeGiB = 4.4;
 constexpr double kSystemRescueSizeGiB = 1.3;
 constexpr qint64 kVentoySizeMiB = 196;
 
+// Upper bound on an untrusted GitHub releases/latest JSON body. A real response is a few
+// hundred KiB at most; anything past this cap is aborted/rejected rather than buffered and
+// parsed unbounded (fail closed on a hostile or MITM'd response).
+constexpr qint64 kMaxGitHubReleaseBytes = 8LL * 1024 * 1024;
+
 qint64 sizeFromGiB(double gib) {
     return static_cast<qint64>(gib * sak::kBytesPerGBf);
 }
@@ -506,7 +511,10 @@ QString LinuxDistroCatalog::resolveFileName(const DistroInfo& distro) const {
         if (!distro.fileName.isEmpty()) {
             return substituteVersion(distro.fileName, distro.version);
         }
-        return distro.id + ".iso";
+        // No resolved asset and no static template: do not fabricate an "<id>.iso" guess.
+        // The download is already refused (resolveDownloadUrl returns empty here), so fail
+        // closed with an empty name rather than inventing one.
+        return {};
     }
 
     return substituteVersion(distro.fileName, distro.version);
@@ -554,6 +562,14 @@ void LinuxDistroCatalog::checkLatestVersion(const QString& distroId) {
     m_pendingReplies.append(reply);
 
     connect(reply, &QNetworkReply::finished, this, &LinuxDistroCatalog::onGitHubReleaseReply);
+    // Bound the untrusted response as it arrives: abort once it runs past the cap instead of
+    // letting the reply buffer an arbitrarily large body. abort() delivers finished() with an
+    // error, which onGitHubReleaseReply reports as a failed version check (fail closed).
+    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64) {
+        if (received > kMaxGitHubReleaseBytes) {
+            reply->abort();
+        }
+    });
 
     sak::logInfo("Checking latest version for " + distroId.toStdString() + " via GitHub API");
 }
@@ -577,6 +593,12 @@ void LinuxDistroCatalog::onGitHubReleaseReply() {
     }
 
     QByteArray data = reply->readAll();
+    if (data.size() > kMaxGitHubReleaseBytes) {
+        QString error = QStringLiteral("GitHub API response exceeds size cap");
+        sak::logWarning(error.toStdString());
+        Q_EMIT versionCheckFailed(distroId, error);
+        return;
+    }
     QJsonParseError parseError;
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
@@ -606,9 +628,10 @@ void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId, const QJson
         return;
     }
 
-    // Update version (strip leading 'v' if present for display)
-    distro.version = tagName;
-
+    // Resolve the asset BEFORE advancing the version. resolveGitHubAsset returns false without
+    // mutating anything when no asset matches, so a failed resolution leaves the entry wholly
+    // unchanged. Committing the version first would pair the new version with a prior release's
+    // cached asset URL/size/checksum (partial-mutation / stale-asset).
     QJsonArray assets = release["assets"].toArray();
     QString matchedName;
     if (!resolveGitHubAsset(distroId, distro, assets, matchedName)) {
@@ -618,6 +641,8 @@ void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId, const QJson
         return;
     }
 
+    // A matching asset is now pinned; commit the new version.
+    distro.version = tagName;
     bool changed = (oldVersion != distro.version);
     sak::logInfo("Version check for " + distroId.toStdString() + ": " + tagName.toStdString() +
                  (changed ? " (UPDATED)" : " (unchanged)") +
@@ -650,6 +675,14 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
         return false;
     }
 
+    // The asset is downloaded and written to bootable media, so refuse anything that is not an
+    // HTTPS URL: an http:// or malformed browser_download_url from a tampered/MITM'd API
+    // response must never be cached as an official asset. Fail closed on a bad scheme.
+    if (QUrl(matchedUrl).scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) != 0) {
+        sak::logWarning("Rejected non-HTTPS asset URL for " + distroId.toStdString());
+        return false;
+    }
+
     // Cache the resolved URL and size
     m_githubAssetUrls[distroId] = matchedUrl;
     m_githubAssetSizes[distroId] = matchedSize;
@@ -657,24 +690,41 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
         distro.approximateSize = matchedSize;
     }
 
-    // Look for checksum sidecar (e.g., .sha256, .sha1)
-    cacheChecksumSidecar(distroId, matchedName, assets);
+    // Look for a checksum sidecar for the declared algorithm (.sha256 / .sha1)
+    cacheChecksumSidecar(distroId, matchedName, distro.checksumType, assets);
 
     return true;
 }
 
 void LinuxDistroCatalog::cacheChecksumSidecar(const QString& distroId,
                                               const QString& matchedName,
+                                              const QString& checksumType,
                                               const QJsonArray& assets) {
     // A newly resolved release may ship no checksum sidecar. Drop any URL cached
     // for a PRIOR release first, so we never verify the new asset against an old
     // release's checksum (stale-checksum false verification / spurious mismatch).
     m_githubAssetUrls.remove(distroId + "_checksum");
+
+    // Only accept the sidecar for the algorithm this entry declares. Accepting either
+    // .sha256 or .sha1 regardless of checksumType let a differently-hashed sidecar be pinned
+    // while verification computes the declared algorithm (algorithm confusion). With no
+    // matching sidecar the download stays refused by requirePinnedChecksum (fail closed).
+    if (checksumType.isEmpty()) {
+        return;
+    }
+    const QString sidecarName = matchedName + "." + checksumType.toLower();
     for (const auto& assetVal : assets) {
         QJsonObject asset = assetVal.toObject();
         QString name = asset["name"].toString();
-        if (name == matchedName + ".sha256" || name == matchedName + ".sha1") {
-            m_githubAssetUrls[distroId + "_checksum"] = asset["browser_download_url"].toString();
+        if (name == sidecarName) {
+            const QString url = asset["browser_download_url"].toString();
+            // Reject a non-HTTPS or malformed sidecar URL rather than caching it.
+            if (QUrl(url).scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) != 0) {
+                sak::logWarning("Rejected non-HTTPS checksum sidecar URL for " +
+                                distroId.toStdString());
+                return;
+            }
+            m_githubAssetUrls[distroId + "_checksum"] = url;
             break;
         }
     }

@@ -18,6 +18,8 @@
 #include <QSet>
 #include <QTimer>
 
+#include <limits>
+
 #ifdef Q_OS_WIN
 #include <shellapi.h>
 #pragma comment(lib, "Shell32.lib")
@@ -51,6 +53,16 @@ constexpr int kQuotedPathTrimChars = 2;
     return exePath;
 }
 
+// A registry-supplied program path is untrusted (HKLM needs admin, but HKCU is user-writable).
+// Reject UNC and Win32 device/extended namespaces (\\server\share, \\.\dev, \\?\...) before
+// touching the filesystem: walking or stat-ing such a path can trigger SMB authentication as the
+// (often elevated) caller and unbounded remote I/O, letting an attacker-writable Uninstall value
+// coerce network access. Ordinary local install paths begin with a drive letter, so this only
+// skips remote/device targets -- their size/icon/existence are simply not probed.
+[[nodiscard]] bool isRemoteOrDevicePath(const QString& path) {
+    return path.startsWith(QLatin1String("\\\\")) || path.startsWith(QLatin1String("//"));
+}
+
 [[nodiscard]] QJsonArray jsonDocToArray(const QJsonDocument& doc) {
     if (doc.isArray()) {
         return doc.array();
@@ -62,7 +74,11 @@ constexpr int kQuotedPathTrimChars = 2;
 }
 
 const auto kUwpPackagesCommand = QStringLiteral(
-    "Get-AppxPackage | Select-Object Name, PackageFamilyName, "
+    // -ErrorAction Stop: a per-user package-enumeration error must FAIL the scan (non-zero exit)
+    // rather than emit valid JSON for only the packages that did enumerate. Reporting that partial
+    // set as complete is a fail-open; a failed scan instead warns (enumerateAll) or safely refuses
+    // a headless match (enumerateUwpPackagesSync).
+    "Get-AppxPackage -ErrorAction Stop | Select-Object Name, PackageFamilyName, "
     "PackageFullName, Publisher, Version, InstallLocation, "
     "IsFramework, SignatureKind | ConvertTo-Json -Compress");
 }  // namespace
@@ -197,6 +213,21 @@ QVector<ProgramInfo> ProgramEnumerator::programs() const {
     return m_cachedPrograms;
 }
 
+void ProgramEnumerator::resolveProgramIcon(ProgramInfo& program, bool locationIsLocal) {
+    if (!program.displayIcon.isEmpty()) {
+        program.cachedImage = extractIcon(program.displayIcon);
+    }
+
+    // No usable displayIcon: fall back to the first .exe in a LOCAL install dir only
+    // (locationIsLocal is already false for the remote/device paths we must never scan).
+    if (program.cachedImage.isNull() && locationIsLocal) {
+        QDir dir(program.installLocation);
+        const auto exes = dir.entryList({"*.exe"}, QDir::Files, QDir::Name);
+        const QString exe = exes.value(0);
+        program.cachedImage = exe.isEmpty() ? QImage{} : extractIcon(dir.filePath(exe));
+    }
+}
+
 bool ProgramEnumerator::enrichWithIconsAndSizes(QVector<ProgramInfo>& programs) {
     // An empty program list is a legitimate enumeration result (locked-down
     // machine, or all scans returned nothing); the loop below handles it. Do NOT
@@ -208,18 +239,14 @@ bool ProgramEnumerator::enrichWithIconsAndSizes(QVector<ProgramInfo>& programs) 
         }
         auto& prog = programs[i];
 
-        if (!prog.displayIcon.isEmpty()) {
-            prog.cachedImage = extractIcon(prog.displayIcon);
-        }
+        // A remote/device installLocation must never be scanned or stat-ed (SMB auth / remote I/O
+        // from an attacker-writable value); fall back to the estimated size instead.
+        const bool locationIsLocal = !prog.installLocation.isEmpty() &&
+                                     !isRemoteOrDevicePath(prog.installLocation);
 
-        if (prog.cachedImage.isNull() && !prog.installLocation.isEmpty()) {
-            QDir dir(prog.installLocation);
-            const auto exes = dir.entryList({"*.exe"}, QDir::Files, QDir::Name);
-            const QString exe = exes.value(0);
-            prog.cachedImage = exe.isEmpty() ? QImage{} : extractIcon(dir.filePath(exe));
-        }
+        resolveProgramIcon(prog, locationIsLocal);
 
-        if (!prog.installLocation.isEmpty() && QDir(prog.installLocation).exists()) {
+        if (locationIsLocal && QDir(prog.installLocation).exists()) {
             prog.actualSizeBytes = calculateDirSize(prog.installLocation);
         } else if (prog.estimatedSizeKB > 0) {
             prog.actualSizeBytes = prog.estimatedSizeKB * kBytesPerKB;
@@ -236,7 +263,11 @@ void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs) {
             continue;  // UWP apps are always "installed"
         }
 
+        // Never probe a remote/device install path for existence: that stat would trigger SMB
+        // auth / remote I/O as the elevated caller from an attacker-writable Uninstall value. An
+        // unverifiable location is left un-orphaned rather than driving network access.
         const bool installMissing = !prog.installLocation.isEmpty() &&
+                                    !isRemoteOrDevicePath(prog.installLocation) &&
                                     !QDir(prog.installLocation).exists();
         if (installMissing) {
             prog.isOrphaned = true;
@@ -250,6 +281,12 @@ void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs) {
         }
 
         if (exePath.contains("msiexec", Qt::CaseInsensitive)) {
+            prog.isOrphaned = false;
+            continue;
+        }
+
+        if (isRemoteOrDevicePath(exePath)) {
+            // Cannot verify a remote/device target without remote I/O; do not claim it orphaned.
             prog.isOrphaned = false;
             continue;
         }
@@ -321,13 +358,28 @@ qint64 ProgramEnumerator::calculateDirSize(const QString& path) {
         // in Release.
         return 0;
     }
+    if (isRemoteOrDevicePath(path)) {
+        // Never walk a UNC/device tree: it would trigger SMB auth / unbounded remote I/O as the
+        // (often elevated) caller from an attacker-writable Uninstall value.
+        return 0;
+    }
     qint64 total = 0;
     QDirIterator it(path,
                     QDir::Files | QDir::Hidden | QDir::NoSymLinks,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
+        if (m_cancelRequested.load(std::memory_order_acquire)) {
+            break;  // honor cancellation instead of walking an arbitrarily large/deep tree
+        }
         it.next();
-        total += it.fileInfo().size();
+        const qint64 sz = it.fileInfo().size();
+        // Saturate rather than let the signed accumulation overflow (undefined behavior): a
+        // crafted tree of large sparse files could otherwise sum past INT64_MAX.
+        if (sz > 0 && total > std::numeric_limits<qint64>::max() - sz) {
+            total = std::numeric_limits<qint64>::max();
+            break;
+        }
+        total += sz;
     }
     return total;
 }
@@ -479,11 +531,24 @@ QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName) {
         return {};
     }
 
+    // Bound the allocation: DisplayName/paths are tiny, but the size comes from an
+    // attacker-writable value, so a hostile multi-hundred-MB REG_SZ must not force an unbounded
+    // allocation (OOM). Reject anything past a generous ceiling.
+    constexpr DWORD kMaxRegStringBytes = 1u << 20;  // 1 MiB
+    if (size > kMaxRegStringBytes) {
+        return {};
+    }
+
     // Allocate buffer
     std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1, L'\0');
+    DWORD type2 = 0;
+    DWORD size2 = size;
     rc = RegQueryValueExW(
-        key, valueName, nullptr, nullptr, reinterpret_cast<LPBYTE>(buffer.data()), &size);
-    if (rc != ERROR_SUCCESS) {
+        key, valueName, nullptr, &type2, reinterpret_cast<LPBYTE>(buffer.data()), &size2);
+    // Re-validate the type on the second read: the value can be swapped between the two queries,
+    // and a same-sized non-string replacement would otherwise be read as UTF-16. A grown value
+    // makes this call return ERROR_MORE_DATA (rc != SUCCESS), which is also rejected.
+    if (rc != ERROR_SUCCESS || (type2 != REG_SZ && type2 != REG_EXPAND_SZ) || size2 > size) {
         return {};
     }
 
@@ -499,7 +564,9 @@ DWORD ProgramEnumerator::readRegDword(HKEY key, const wchar_t* valueName) {
 
     LONG rc =
         RegQueryValueExW(key, valueName, nullptr, &type, reinterpret_cast<LPBYTE>(&value), &size);
-    if (rc != ERROR_SUCCESS || type != REG_DWORD) {
+    // Require the exact 4-byte REG_DWORD width: a wrong-typed or short value must read as 0, not
+    // as a partially-written DWORD.
+    if (rc != ERROR_SUCCESS || type != REG_DWORD || size != sizeof(DWORD)) {
         return 0;
     }
     return value;
@@ -653,6 +720,12 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
     // Strip quotes
     if (icon_path.startsWith('"') && icon_path.endsWith('"')) {
         icon_path = icon_path.mid(1, icon_path.length() - kQuotedPathTrimChars);
+    }
+
+    if (isRemoteOrDevicePath(icon_path)) {
+        // Never resolve an icon from a UNC/device path (SMB auth / remote I/O from an
+        // attacker-writable DisplayIcon value).
+        return {};
     }
 
     SHFILEINFOW sfi{};

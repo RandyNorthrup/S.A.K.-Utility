@@ -15,6 +15,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <limits>
 
 namespace sak {
 
@@ -31,6 +32,7 @@ constexpr int kMaximumPreviewFileSizeMb = 500;
 constexpr int kMaximumSearchFileSizeMb = 1000;
 constexpr int kMaximumCacheSize = 1000;
 constexpr int kMaximumContextLines = 10;
+constexpr int kMaxHistoryEntryLength = 2048;
 
 }  // namespace
 
@@ -118,7 +120,19 @@ void AdvancedSearchController::cleanupWorker() {
         if (m_worker->isRunning()) {
             m_worker->requestStop();
             if (!m_worker->wait(kWorkerStopTimeoutMs)) {
-                logError("AdvancedSearchController: worker did not stop within 5s");
+                // Fail closed: never reset() a still-running worker -- destroying a running
+                // QThread aborts the process. Block until the cooperative stop is honored. The
+                // worker checks its stop flag between files, so this returns once the in-flight
+                // file finishes rather than proceeding to tear down a live thread.
+                logError(
+                    "AdvancedSearchController: worker did not stop within 5s; "
+                    "waiting for clean teardown before reset");
+                // SAK-ALLOW-BLOCKING: destroying a still-running QThread aborts the whole
+                // process, so reset() below MUST NOT run until the worker thread has actually
+                // exited. requestStop() was already sent and the worker honors it between
+                // files, so this unbounded wait resolves once the in-flight file finishes; it
+                // is a mandatory teardown barrier, not an event-loop stall.
+                m_worker->wait();
             }
         }
         m_worker.reset();
@@ -249,12 +263,18 @@ void AdvancedSearchController::onWorkerProgress(int current, int total, const QS
 }
 
 void AdvancedSearchController::onResultsReady(QVector<sak::SearchMatch> matches) {
-    m_total_matches += matches.size();
+    // Saturate rather than let the qsizetype batch size narrow into (or overflow) the int
+    // total; a wrong-but-huge total must never be announced as an authoritative count.
+    const qint64 sum = static_cast<qint64>(m_total_matches) + matches.size();
+    m_total_matches = static_cast<int>(std::min<qint64>(sum, std::numeric_limits<int>::max()));
     Q_EMIT resultsReceived(std::move(matches));
 }
 
 void AdvancedSearchController::onFileSearched(const QString& filePath, int matchCount) {
-    m_total_files++;
+    // Saturate at INT_MAX: incrementing past it would be signed-overflow UB.
+    if (m_total_files < std::numeric_limits<int>::max()) {
+        ++m_total_files;
+    }
     Q_EMIT fileSearched(filePath, matchCount);
 }
 
@@ -289,6 +309,20 @@ QStringList AdvancedSearchController::searchHistory() const {
 
 void AdvancedSearchController::setPreferences(const SearchPreferences& prefs) {
     m_preferences = prefs;
+    // Fail closed: a caller must not be able to install out-of-range limits. A negative
+    // max_results reads downstream as "unlimited"; an over-huge file-size ceiling defeats the
+    // bound entirely. Clamp to the SAME ranges loadPreferences() enforces so the in-session
+    // preferences can never be looser than what a reload would produce.
+    m_preferences.max_results = std::max(0, m_preferences.max_results);
+    m_preferences.max_preview_file_size_mb = std::clamp(m_preferences.max_preview_file_size_mb,
+                                                        kMinimumPreferenceValue,
+                                                        kMaximumPreviewFileSizeMb);
+    m_preferences.max_search_file_size_mb = std::clamp(m_preferences.max_search_file_size_mb,
+                                                       kMinimumPreferenceValue,
+                                                       kMaximumSearchFileSizeMb);
+    m_preferences.max_cache_size =
+        std::clamp(m_preferences.max_cache_size, kMinimumPreferenceValue, kMaximumCacheSize);
+    m_preferences.context_lines = std::clamp(m_preferences.context_lines, 0, kMaximumContextLines);
     savePreferences();
 }
 
@@ -317,10 +351,26 @@ void AdvancedSearchController::loadPreferences() {
                    0,
                    kMaximumContextLines);
 
-    // Load search history
+    // Load search history, enforcing the SAME invariants addToHistory() maintains. The config
+    // store is attacker-writable, so it must not be able to smuggle in an unbounded list or
+    // over-long entries: drop blanks and duplicates, bound each entry's length, and cap the
+    // count at kMaxHistorySize.
     const QStringList history =
         cfg.getValue("advsearch/search_history", QStringList()).toStringList();
-    m_search_history = history;
+    QStringList sanitized;
+    for (const QString& entry : history) {
+        if (entry.trimmed().isEmpty() || entry.size() > kMaxHistoryEntryLength) {
+            continue;
+        }
+        if (sanitized.contains(entry)) {
+            continue;
+        }
+        sanitized.append(entry);
+        if (sanitized.size() >= kMaxHistorySize) {
+            break;
+        }
+    }
+    m_search_history = sanitized;
 }
 
 void AdvancedSearchController::savePreferences() {

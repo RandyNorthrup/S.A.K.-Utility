@@ -456,6 +456,11 @@ static QString formatSysTimeValue(const QByteArray& raw) {
         return QStringLiteral("<invalid>");
     }
     int64_t ft = localReadLE<int64_t>(raw, 0);
+    // Guard the signed subtraction below: a hostile value near INT64_MIN would underflow
+    // (undefined behavior). Such a value is not a real FILETIME (100ns ticks since 1601).
+    if (ft < INT64_MIN + kFileTimeEpochDiff) {
+        return QStringLiteral("<invalid>");
+    }
     int64_t unix_ms = (ft - kFileTimeEpochDiff) / kFileTimeTicksPerMillisecond;
     return QDateTime::fromMSecsSinceEpoch(unix_ms, QTimeZone::UTC).toString(Qt::ISODate);
 }
@@ -826,8 +831,11 @@ static std::expected<PstParser::TcInfo, error_code> parseTcInfo(const QByteArray
     info.columns.reserve(col_count);
     for (int col_idx = 0; col_idx < col_count; ++col_idx) {
         int base = kTcinfoHeaderSize + (col_idx * kTcColumnDescriptorSize);
+        // Fail closed: a declared column whose descriptor runs past the TCINFO buffer means the
+        // header's column count is inconsistent with the (CRC-authenticated) heap allocation.
+        // Returning the columns parsed so far would surface a partial schema as a complete table.
         if (base + kTcColumnDescriptorSize > tc_raw.size()) {
-            break;
+            return std::unexpected(error_code::pst_table_context_error);
         }
         PstParser::TcColDesc col;
         col.prop_type = localReadLE<uint16_t>(tc_raw, base);
@@ -1157,10 +1165,15 @@ std::expected<QByteArray, error_code> PstParser::extractAttachmentFromSubnode(
     ctx.heap_data = std::move(*data_result);
 
     if (subnode.subnode_bid != 0) {
+        // Fail closed on a sub-node BTree failure: continuing with an empty subnode map makes
+        // every HNID that points into a sub-node (often the attachment payload itself) resolve to
+        // empty, so a corrupt subnode would otherwise yield truncated/empty attachment bytes
+        // returned as success.
         auto sn = readSubNodeBTree(subnode.subnode_bid);
-        if (sn) {
-            ctx.subnode_map = std::move(*sn);
+        if (!sn) {
+            return std::unexpected(sn.error());
         }
+        ctx.subnode_map = std::move(*sn);
     }
 
     auto bth = collectBthLeafData(ctx, kPcSignature);
@@ -1205,13 +1218,14 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t mes
         if (sub_type != sak::email::kNidTypeAttachment) {
             continue;
         }
-        // Count with the SAME success gate as readAttachments (which only advances
-        // its exposed index when readSingleAttachment succeeds). The callers hold
-        // that compacted index, so a subnode readAttachments skipped as unparsable
-        // must be skipped here too -- otherwise a failed earlier attachment shifts
-        // the indices and the wrong attachment's bytes are returned.
-        if (!readSingleAttachment(sub_it.value(), found_count)) {
-            continue;
+        // Use the SAME gate as readAttachments, which now FAILS CLOSED on an
+        // unparsable attachment instead of compacting past it. The caller's index was
+        // assigned there under this same gate, so failing here (rather than skipping)
+        // keeps index i mapped to the same sub-node and never returns a different
+        // attachment's bytes.
+        auto probe = readSingleAttachment(sub_it.value(), found_count);
+        if (!probe) {
+            return std::unexpected(probe.error());
         }
         if (found_count == attachment_index) {
             return extractAttachmentFromSubnode(sub_it.value());
@@ -1787,12 +1801,13 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
         if (!child_data) {
             return std::unexpected(child_data.error());
         }
-        result.append(*child_data);
-        // Cap the assembled size so the cumulative int offsets below cannot overflow and a
-        // hostile tree cannot balloon memory: fail closed once past the sane ceiling.
-        if (result.size() > kMaxAssembledDataTreeSize) {
+        // Cap the assembled size BEFORE appending so a near-limit result plus a near-limit child
+        // cannot momentarily allocate ~2x the ceiling; fail closed once the sum would exceed it.
+        // This also keeps the cumulative int offsets below from overflowing.
+        if (static_cast<int64_t>(result.size()) + child_data->size() > kMaxAssembledDataTreeSize) {
             return std::unexpected(error_code::pst_corrupted_btree);
         }
+        result.append(*child_data);
         if (block_offsets) {
             for (int child_off : child_offsets) {
                 block_offsets->append(base_offset + child_off);
@@ -1818,12 +1833,13 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
         if (!child_data) {
             return std::unexpected(child_data.error());
         }
-        result.append(*child_data);
-        // Cap the assembled size (see readXblockChildren): keeps cumulative int offsets safe and
-        // bounds memory against a fan-out bomb; fail closed past the ceiling.
-        if (result.size() > kMaxAssembledDataTreeSize) {
+        // Cap the assembled size BEFORE appending (see readXblockChildren): a near-limit result
+        // plus a near-limit child must not momentarily allocate ~2x the ceiling. Fail closed once
+        // the sum would exceed it; this also keeps the cumulative int offsets below safe.
+        if (static_cast<int64_t>(result.size()) + child_data->size() > kMaxAssembledDataTreeSize) {
             return std::unexpected(error_code::pst_corrupted_btree);
         }
+        result.append(*child_data);
         if (block_offsets) {
             for (int child_off : child_offsets) {
                 block_offsets->append(base_offset + child_off);
@@ -2273,6 +2289,14 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& ma
     // it references (in their natural order).
     QVector<uint32_t> live_row_indices = collectTcLiveRowIndices(tc, ctx);
     if (live_row_indices.isEmpty()) {
+        // A present-but-unreadable TCROWID BTH (hid_row_index != 0 yet no live rows
+        // parsed) is corruption, not a genuinely index-less table: fail closed to no
+        // rows rather than enumerating every physical matrix slot, which would surface
+        // stale/deleted/padding slots as if they were live rows. Fall back to contiguous
+        // enumeration only when the table truly carries no row-index BTH.
+        if (tc.hid_row_index != 0) {
+            return {};
+        }
         live_row_indices = fallbackTcRowIndices(block_count, rows_per_block);
     }
 
@@ -3177,10 +3201,14 @@ std::expected<sak::PstAttachmentInfo, error_code> PstParser::readSingleAttachmen
     ctx.heap_data = std::move(*att_data);
 
     if (subnode.subnode_bid != 0) {
+        // Fail closed on a sub-node BTree failure to match this function's documented contract
+        // (it is the index-alignment gate for readAttachmentData): swallowing it would report an
+        // embedded-message attachment as parsed while its subnode-resolved fields silently vanish.
         auto sn = readSubNodeBTree(subnode.subnode_bid);
-        if (sn) {
-            ctx.subnode_map = std::move(*sn);
+        if (!sn) {
+            return std::unexpected(sn.error());
         }
+        ctx.subnode_map = std::move(*sn);
     }
 
     auto bth = collectBthLeafData(ctx, kPcSignature);
@@ -3260,11 +3288,17 @@ std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttach
             continue;
         }
 
+        // Fail closed on an unparsable attachment sub-node rather than silently
+        // dropping it: a compacted list would report fewer attachments than the
+        // message actually carries yet look complete (data loss the caller cannot
+        // detect). This matches readMessage, which propagates an attachment-read
+        // failure instead of presenting a message as attachment-free.
         auto att = readSingleAttachment(sub_it.value(), att_index);
-        if (att) {
-            attachments.append(std::move(*att));
-            ++att_index;
+        if (!att) {
+            return std::unexpected(att.error());
         }
+        attachments.append(std::move(*att));
+        ++att_index;
     }
 
     return attachments;

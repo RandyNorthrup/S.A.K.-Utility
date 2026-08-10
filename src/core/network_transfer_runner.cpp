@@ -13,6 +13,7 @@
 #include <QThread>
 #include <QTimer>
 
+#include <limits>
 #include <utility>
 
 namespace sak {
@@ -47,6 +48,12 @@ public:
         auto* manager = new QNetworkAccessManager(this);
         manager->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
         QNetworkReply* reply = createReply(manager, networkRequest());
+        // Bound QNetworkReply's internal read buffer to the response cap so a hostile or
+        // oversized body applies backpressure at the socket instead of buffering without limit.
+        // max_response_bytes is always positive here (runNetworkTransfer clamps a missing cap).
+        const qint64 buffer_cap = m_request.max_response_bytes;
+        reply->setReadBufferSize(buffer_cap < std::numeric_limits<qint64>::max() ? buffer_cap + 1
+                                                                                 : buffer_cap);
         auto* timeout_timer = createTimeoutTimer(reply);
         auto* cancel_timer = createCancelTimer(reply);
         connectProgress(reply);
@@ -160,8 +167,17 @@ private:
     }
 
     bool transferSucceeded(QNetworkReply* reply) const {
-        return !m_sinks.result->timed_out && !m_sinks.result->cancelled &&
-               reply->error() == QNetworkReply::NoError;
+        if (m_sinks.result->timed_out || m_sinks.result->cancelled ||
+            reply->error() != QNetworkReply::NoError) {
+            return false;
+        }
+        // A reply can complete with NoError yet carry a non-success HTTP status (a bare 304,
+        // or a 3xx the redirect policy declined to follow). Only a 2xx is an authoritative,
+        // complete body; anything else fails closed instead of surfacing a stale or empty
+        // response as success. The scheme is restricted to http/https, so http_status is always
+        // a real HTTP code once the reply has finished.
+        const int status = m_sinks.result->http_status;
+        return status >= 200 && status < 300;
     }
 
     NetworkTransferRequest m_request;
@@ -182,6 +198,19 @@ NetworkTransferResult runNetworkTransfer(const NetworkTransferRequest& request,
         return result;
     }
 
+    // Restrict to http/https. QNetworkAccessManager also serves file:, qrc:, ftp: and data:
+    // schemes, so an unrestricted URL fed from config or an AI-planned call could read a local
+    // file (file:///...) or hit an unintended handler. Fail closed on anything else; every real
+    // caller performs an HTTP(S) transfer. Host-level SSRF policy (loopback/private ranges) is
+    // deliberately NOT enforced here: LAN callers rely on it and QUrl cannot resolve intent.
+    const QString scheme = request.url.scheme();
+    if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https")) {
+        result.error_message = QStringLiteral(
+            "Unsupported URL scheme: only http and https are "
+            "allowed");
+        return result;
+    }
+
     // A non-positive timeout DISABLES Qt's transfer timeout and leaves the deadline timer
     // unarmed, so a hostile/slow-loris server would block this synchronous call forever when
     // no should_cancel callback is supplied. Reject it instead of substituting a default: the
@@ -197,6 +226,15 @@ NetworkTransferResult runNetworkTransfer(const NetworkTransferRequest& request,
     NetworkTransferRequest bounded = request;
     if (bounded.max_response_bytes <= 0) {
         bounded.max_response_bytes = kDefaultMaxResponseBytes;
+    }
+
+    // Observe an already-set cancellation BEFORE the request is issued. The worker's cancel
+    // timer only polls after the reply is created, so without this a request cancelled up front
+    // (a POST with remote side effects, in particular) would still be transmitted once.
+    if (should_cancel && should_cancel()) {
+        result.cancelled = true;
+        result.error_message = QStringLiteral("Network transfer cancelled");
+        return result;
     }
 
     QThread thread;

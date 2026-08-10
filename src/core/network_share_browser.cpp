@@ -10,6 +10,7 @@
 #include "sak/network_share_browser.h"
 
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QHostAddress>
@@ -29,6 +30,49 @@ namespace sak {
 namespace {
 constexpr int kShareInfoLevel = 1;  // SHARE_INFO_1 level
 constexpr DWORD kShareTypeMask = 0x00'00'FF'FF;
+
+// NetShareEnum is a blocking remote call whose result set is attacker-influenced. Bound the
+// resume-handle loop and the accumulated share count so a server that keeps returning
+// ERROR_MORE_DATA (or an implausibly huge share table) can neither spin forever nor exhaust
+// memory; exceeding either bound fails the whole enumeration closed.
+constexpr int kMaxEnumPages = 1024;
+constexpr int kMaxTotalShares = 100'000;
+
+// A share name delivered by a remote SMB server is untrusted. A legitimate share name is a
+// single path component; one carrying a separator or traversal component would redirect a
+// "\\host\name" probe away from the share root (writing/deleting under a different path).
+[[nodiscard]] bool isSafeShareName(const QString& name) {
+    if (name.isEmpty() || name == QLatin1String(".") || name == QLatin1String("..")) {
+        return false;
+    }
+    for (const QChar ch : name) {
+        const char16_t code = ch.unicode();
+        if (code < 0x20 || code == u'\\' || code == u'/' || code == u':') {
+            return false;
+        }
+    }
+    return true;
+}
+
+// A caller-supplied access-test target must be a real UNC share path ("\\server\share",
+// optionally with a subpath) -- never a local path, a device path, or a bare string that could
+// steer the write/delete probe at an unintended local object.
+[[nodiscard]] bool isValidUncSharePath(const QString& path) {
+    if (!path.startsWith(QLatin1String("\\\\"))) {
+        return false;
+    }
+    for (const QChar ch : path) {
+        if (ch.unicode() < 0x20) {  // control characters, including an embedded NUL
+            return false;
+        }
+    }
+    const QString rest = path.mid(2);
+    const int sep = rest.indexOf(QLatin1Char('\\'));
+    if (sep <= 0) {  // need a non-empty server followed by a share separator
+        return false;
+    }
+    return !rest.mid(sep + 1).isEmpty();  // and a non-empty share component
+}
 
 [[nodiscard]] NetworkShareInfo::ShareType mapShareType(DWORD type) {
     switch (type & kShareTypeMask) {
@@ -92,7 +136,8 @@ struct ShareServer {
 
 // A non-special disk share is the only kind whose read/write access is worth probing.
 [[nodiscard]] bool isProbeableDiskShare(const NetworkShareInfo& info) {
-    return info.type == NetworkShareInfo::ShareType::Disk && !isSpecialShare(info.shareName);
+    return info.type == NetworkShareInfo::ShareType::Disk && !isSpecialShare(info.shareName) &&
+           isSafeShareName(info.shareName);
 }
 }  // namespace
 
@@ -164,6 +209,13 @@ void NetworkShareBrowser::testAccess(const QString& uncPath) {
         Q_EMIT errorOccurred(QStringLiteral("UNC path cannot be empty"));
         return;
     }
+    if (!isValidUncSharePath(uncPath)) {
+        // Fail closed: testReadWriteAccess writes and deletes a file at this path, so only a real
+        // UNC share path may reach it -- never a local/device path, a bare string, or one carrying
+        // control characters -- so a malformed target cannot mutate an unintended object.
+        Q_EMIT errorOccurred(QStringLiteral("Not a valid UNC share path: %1").arg(uncPath));
+        return;
+    }
 
     auto [canRead, canWrite] = testReadWriteAccess(uncPath);
     Q_EMIT accessTestComplete(uncPath, canRead, canWrite);
@@ -188,6 +240,7 @@ QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(const QString& ho
     // Loop on ERROR_MORE_DATA using resumeHandle: a single call can return only a
     // partial set, and treating that partial buffer as the complete enumeration would
     // silently drop shares. Keep pulling until a terminal NERR_Success (or cancel).
+    int pageCount = 0;
     do {
         PSHARE_INFO_1 shareInfo = nullptr;
         DWORD entriesRead = 0;
@@ -209,6 +262,16 @@ QVector<NetworkShareInfo> NetworkShareBrowser::enumerateShares(const QString& ho
         if (shareInfo != nullptr) {
             appendSharesFromBuffer(shareInfo, entriesRead, server.displayHost, testAccess, shares);
             NetApiBufferFree(shareInfo);
+        }
+
+        if (++pageCount >= kMaxEnumPages || shares.size() >= kMaxTotalShares) {
+            // Fail closed: a server that never terminates the ERROR_MORE_DATA loop (or an
+            // implausibly large share table) must not spin this loop or exhaust memory. Leave
+            // ok=false so the partial list is reported as a failed, not complete, enumeration.
+            Q_EMIT errorOccurred(
+                QStringLiteral("Share enumeration on %1 exceeded safe limits; stopping")
+                    .arg(server.displayHost));
+            return shares;
         }
     } while (status == ERROR_MORE_DATA && !m_cancelled.load());
 
@@ -262,9 +325,11 @@ QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPat
     if (dir.exists()) {
         canRead = true;
 
-        // Try listing contents as another read test
-        const auto entries = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot);
-        (void)entries;
+        // Bounded read probe: confirm the root is enumerable WITHOUT materializing a (possibly
+        // hostile or huge) full directory listing. Touching just the first entry exercises real
+        // read access; entryInfoList() would stat and copy the entire directory first.
+        QDirIterator it(uncPath, QDir::AllEntries | QDir::NoDotAndDotDot);
+        (void)it.hasNext();
     }
 
     // Test write access by creating a temporary file

@@ -77,7 +77,8 @@ PackageList PackageListManager::createList(const QString& name, const QString& d
 bool PackageListManager::addPackage(PackageList& list,
                                     const QString& package_id,
                                     const QString& version,
-                                    const QString& notes) {
+                                    const QString& notes,
+                                    bool pinned) {
     if (package_id.trimmed().isEmpty()) {
         sak::logWarning("[PackageListManager] Rejected package with empty id");
         return false;
@@ -102,6 +103,7 @@ bool PackageListManager::addPackage(PackageList& list,
     entry.package_id = package_id;
     entry.version = version;
     entry.notes = notes;
+    entry.pinned = pinned;
     list.entries.append(entry);
 
     list.modified_date = QDateTime::currentDateTime().toString(Qt::ISODate);
@@ -126,7 +128,9 @@ bool PackageListManager::removePackage(PackageList& list, const QString& package
 int PackageListManager::mergeLists(PackageList& target, const PackageList& source) {
     int added = 0;
     for (const auto& entry : source.entries) {
-        if (addPackage(target, entry.package_id, entry.version, entry.notes)) {
+        // Preserve the pinned flag: dropping it here would let a pinned source entry merge in
+        // as unpinned, silently losing the caller's intent to hold that package at its version.
+        if (addPackage(target, entry.package_id, entry.version, entry.notes, entry.pinned)) {
             added++;
         }
     }

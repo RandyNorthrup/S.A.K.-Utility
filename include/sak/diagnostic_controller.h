@@ -287,6 +287,19 @@ private:
     /// @note Shared by the stress-test and stress-skipped suite-end paths.
     void finalizeSuiteAndComplete();
 
+    /// @brief Check the fail-closed preconditions for generateReport.
+    /// @param requested the report formats parsed from the spec.
+    /// @param dir the trimmed output directory.
+    /// @param formats the original spec (for the diagnostic on an empty result).
+    /// @return an empty string when a report may be generated; otherwise the
+    ///         user-facing reason (already logged) the caller emits and aborts on.
+    /// @note Refuses a spec that names no known format, an empty directory, and a
+    ///       controller that has produced no result (which would aggregate to a
+    ///       valid-looking "passed" report over an empty data set).
+    [[nodiscard]] QString reportPreconditionError(const QStringList& requested,
+                                                  const QString& dir,
+                                                  const QString& formats) const;
+
     /// @brief Aggregate all data and determine overall status
     void aggregateResults();
     void aggregateSmartHealth();
@@ -307,6 +320,12 @@ private:
     std::atomic<bool> m_running_suite{false};
     std::atomic<bool> m_skipping_step{false};  ///< Guards skipCurrentStep from double-advance
     DiagnosticReportData m_report_data;
+
+    /// @brief Set once any diagnostic completion has populated m_report_data. A fresh
+    ///        controller aggregates to AllPassed over an empty data set, so generateReport
+    ///        refuses to emit a valid-looking "passed" report before any scan/benchmark
+    ///        has produced a result.
+    std::atomic<bool> m_has_results{false};
 
     /// @brief Names of suite steps that failed to complete this run. A failed
     ///        benchmark records no result, so aggregateResults uses this to

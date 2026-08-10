@@ -96,8 +96,9 @@ public:
 
     /// Read attachment metadata (names, sizes) for a message, synchronous. Index-aligned with
     /// readAttachmentData: both walk the message's attachment sub-nodes with the same
-    /// readSingleAttachment success gate + compacted index, so entry i pairs with
-    /// readAttachmentData(message_node_id, i).
+    /// readSingleAttachment gate, which FAILS CLOSED on an unparsable attachment rather than
+    /// compacting past it, so entry i pairs with readAttachmentData(message_node_id, i) and a
+    /// corrupt attachment is surfaced instead of silently shortening the list.
     [[nodiscard]] std::expected<QVector<sak::PstAttachmentInfo>, sak::error_code> readAttachments(
         uint64_t message_nid);
 

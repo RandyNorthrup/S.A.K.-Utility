@@ -55,13 +55,14 @@ void TestProgramEnumerator::programs_emptyInitially() {
 }
 
 void TestProgramEnumerator::calculateDirSize_emptyPath() {
-    const auto size = ProgramEnumerator::calculateDirSize(QString());
+    ProgramEnumerator enumerator;
+    const auto size = enumerator.calculateDirSize(QString());
     QCOMPARE(size, 0);
 }
 
 void TestProgramEnumerator::calculateDirSize_nonExistent() {
-    const auto size =
-        ProgramEnumerator::calculateDirSize(QStringLiteral("C:\\NonExistent_Path_12345"));
+    ProgramEnumerator enumerator;
+    const auto size = enumerator.calculateDirSize(QStringLiteral("C:\\NonExistent_Path_12345"));
     QCOMPARE(size, 0);
 }
 
@@ -78,7 +79,8 @@ void TestProgramEnumerator::calculateDirSize_realDirectory() {
         file.close();
     }
 
-    const qint64 size = ProgramEnumerator::calculateDirSize(temp_dir.path());
+    ProgramEnumerator enumerator;
+    const qint64 size = enumerator.calculateDirSize(temp_dir.path());
     QCOMPARE(size, static_cast<qint64>(kFileCount * kBytesPerFile));
 }
 

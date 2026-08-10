@@ -75,7 +75,9 @@ public:
     void markBloatware(QVector<ProgramInfo>& programs);
 
     /// @brief Calculate actual disk usage for a program's install directory
-    [[nodiscard]] static qint64 calculateDirSize(const QString& path);
+    // Non-static: the directory walk honors m_cancelRequested so a hostile/deep install
+    // tree cannot make it run unbounded.
+    [[nodiscard]] qint64 calculateDirSize(const QString& path);
 
 Q_SIGNALS:
     void enumerationStarted();
@@ -130,6 +132,11 @@ private:
 
     /// @brief Deduplicate programs from multiple sources
     void deduplicatePrograms(QVector<ProgramInfo>& programs);
+
+    /// @brief Resolve one program's icon in place: prefer its declared displayIcon, else the
+    ///        first .exe in a LOCAL install location. @p locationIsLocal is false for remote/device
+    ///        install paths, which must never be scanned (SMB auth / remote I/O).
+    void resolveProgramIcon(ProgramInfo& program, bool locationIsLocal);
 
     /// @brief Extract icons and calculate sizes for enumerated programs
     [[nodiscard]] bool enrichWithIconsAndSizes(QVector<ProgramInfo>& programs);

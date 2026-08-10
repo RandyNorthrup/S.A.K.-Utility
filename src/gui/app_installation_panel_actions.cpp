@@ -38,6 +38,22 @@ enum ResultColumn {
 
 constexpr int kPackageSearchResultLimit = 50;
 
+namespace {
+// Neutralize a locally-produced (choco stderr) error string before it is logged or
+// shown: QString::simplified() collapses embedded newlines/control whitespace that could
+// otherwise forge log lines, and the length is bounded so a runaway message cannot bloat
+// a log line or a table cell. Fails closed toward a short, single-line message.
+[[nodiscard]] QString sanitizeErrorForDisplay(const QString& raw) {
+    constexpr int kMaxErrorChars = 500;
+    QString cleaned = raw.simplified();
+    if (cleaned.size() > kMaxErrorChars) {
+        cleaned.truncate(kMaxErrorChars);
+        cleaned.append(QStringLiteral("..."));
+    }
+    return cleaned;
+}
+}  // namespace
+
 // ============================================================================
 // Search
 // ============================================================================
@@ -103,14 +119,15 @@ void AppInstallationPanel::onSearchCompleted(bool success,
     }
 
     // Show failure in the results table
+    const QString safe_error = sanitizeErrorForDisplay(errorMessage);
     m_onlineResultsModel->setRowCount(0);
     m_onlineResultsModel->setRowCount(1);
-    auto* item = new QStandardItem(tr("Search failed: %1").arg(errorMessage));
+    auto* item = new QStandardItem(tr("Search failed: %1").arg(safe_error));
     item->setEnabled(false);
     m_onlineResultsModel->setItem(0, RColPackage, item);
 
-    sak::logWarning("[AppInstallationPanel] Search failed: {}", errorMessage.toStdString());
-    Q_EMIT logOutput(QString("Search failed: %1").arg(errorMessage));
+    sak::logWarning("[AppInstallationPanel] Search failed: {}", safe_error.toStdString());
+    Q_EMIT logOutput(QString("Search failed: %1").arg(safe_error));
     Q_EMIT statusMessage(tr("Search failed"), kTimerStatusMessageMs);
 }
 
@@ -431,13 +448,14 @@ void AppInstallationPanel::onOfflineSearchCompleted(bool success,
     m_offlineResultsModel->setRowCount(0);
 
     if (!success) {
+        const QString safe_error = sanitizeErrorForDisplay(error_message);
         sak::logWarning("[AppInstallationPanel] Offline search failed: {}",
-                        error_message.toStdString());
+                        safe_error.toStdString());
         m_offlineResultsModel->setRowCount(1);
-        auto* item = new QStandardItem(tr("Search failed: %1").arg(error_message));
+        auto* item = new QStandardItem(tr("Search failed: %1").arg(safe_error));
         item->setEnabled(false);
         m_offlineResultsModel->setItem(0, RColPackage, item);
-        Q_EMIT logOutput(QString("Search failed: %1").arg(error_message));
+        Q_EMIT logOutput(QString("Search failed: %1").arg(safe_error));
         return;
     }
 
@@ -452,9 +470,16 @@ void AppInstallationPanel::onOfflineSearchCompleted(bool success,
         return;
     }
 
-    m_offlineResultsModel->setRowCount(static_cast<int>(packages.size()));
-    int row = 0;
-    for (const auto& pkg : packages) {
+    // Never display more than the limit that was requested from choco
+    // (offline::kSearchResultsDefault). Capping here fails closed against an over-long
+    // parse result and removes the unchecked size_t->int narrowing on setRowCount.
+    const int limit = offline::kSearchResultsDefault;
+    const int display_count = packages.size() > static_cast<decltype(packages.size())>(limit)
+                                  ? limit
+                                  : static_cast<int>(packages.size());
+    m_offlineResultsModel->setRowCount(display_count);
+    for (int row = 0; row < display_count; ++row) {
+        const auto& pkg = packages[static_cast<decltype(packages.size())>(row)];
         auto* pkgItem = new QStandardItem(pkg.package_id);
         pkgItem->setIcon(publisherIcon(pkg.package_id));
         m_offlineResultsModel->setItem(row, RColPackage, pkgItem);
@@ -463,12 +488,10 @@ void AppInstallationPanel::onOfflineSearchCompleted(bool success,
 
         QString pub = lookupPublisher(pkg.package_id);
         m_offlineResultsModel->setItem(row, RColPublisher, new QStandardItem(pub));
-
-        row++;
     }
 
     m_offlineResultsTable->scrollToTop();
-    Q_EMIT logOutput(QString("Found %1 package(s)").arg(packages.size()));
+    Q_EMIT logOutput(QString("Found %1 package(s)").arg(display_count));
 }
 
 void AppInstallationPanel::onAddToOfflineList() {
@@ -700,11 +723,32 @@ void AppInstallationPanel::onSaveOfflineList() {
     }
 
     auto list = PackageListManager::createList("Custom List", "User-created package list");
-    for (int row = 0; row < m_offlineListWidget->count(); ++row) {
+    const int widget_count = m_offlineListWidget->count();
+    int accepted = 0;
+    for (int row = 0; row < widget_count; ++row) {
         auto* item = m_offlineListWidget->item(row);
-        PackageListManager::addPackage(list,
-                                       item->data(Qt::UserRole).toString(),
-                                       item->data(Qt::UserRole + 1).toString());
+        if (PackageListManager::addPackage(list,
+                                           item->data(Qt::UserRole).toString(),
+                                           item->data(Qt::UserRole + 1).toString())) {
+            ++accepted;
+        }
+    }
+
+    // Fail closed: if addPackage dropped any entry (capacity/duplicate/empty id), do not
+    // write a file that reports success while silently omitting packages the user
+    // believes are captured. Nothing is written when the list is incomplete.
+    if (accepted < widget_count) {
+        sak::logError("[AppInstallationPanel] Package list incomplete: {} of {} entries accepted",
+                      accepted,
+                      widget_count);
+        sak::showWarningLogged(
+            this,
+            tr("Save Failed"),
+            tr("The package list could not be saved completely (%1 of %2 entries were rejected). "
+               "Nothing was written.")
+                .arg(widget_count - accepted)
+                .arg(widget_count));
+        return;
     }
 
     if (PackageListManager::saveToFile(list, file_path)) {

@@ -181,9 +181,12 @@ private:
                             const QJsonArray& assets,
                             QString& matchedName);
 
-    /// @brief Cache checksum sidecar URL (.sha256/.sha1) if present in assets
+    /// @brief Cache checksum sidecar URL if a sidecar matching @p checksumType is present
+    ///        in @p assets. Only the extension for the declared algorithm is accepted, so a
+    ///        release that ships a different-algorithm sidecar cannot be pinned by mistake.
     void cacheChecksumSidecar(const QString& distroId,
                               const QString& matchedName,
+                              const QString& checksumType,
                               const QJsonArray& assets);
 
     QList<DistroInfo> m_distros;

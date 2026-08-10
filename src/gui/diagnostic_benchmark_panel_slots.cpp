@@ -291,6 +291,14 @@ void DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked() {
 
     DiskBenchmarkConfig config;
     config.drive_path = m_disk_drive_combo->currentData().toString();
+    // Fail closed: never launch disk I/O against an empty target. The combo is
+    // populated only with real drive-letter roots, so this should not fire, but a
+    // missing or wrong-typed selection must be rejected rather than writing to "".
+    if (config.drive_path.isEmpty()) {
+        logMessage("Selected drive has no valid path -- run Hardware Scan first");
+        Q_EMIT statusMessage("Invalid drive selection", sak::kTimerStatusMessageMs);
+        return;
+    }
     config.test_file_size_mb = kDefaultDiskTestFileSizeMb;
 
     logMessage(QString("Starting disk benchmark on %1...").arg(config.drive_path));
@@ -387,6 +395,14 @@ void DiagnosticBenchmarkPanel::onStartStressTestClicked() {
     config.stress_gpu = m_stress_gpu_check->isChecked();
     config.duration_minutes = m_stress_duration_spin->value();
     config.thermal_limit_celsius = m_stress_thermal_limit_spin->value();
+
+    // Bind disk stress to the user-selected drive (mirrors the full-suite path).
+    // Without this the worker keeps StressTestConfig's default target (the system
+    // volume) and stresses the wrong disk while the UI shows the drive the
+    // technician actually picked.
+    if (m_disk_drive_combo->count() > 0) {
+        config.disk_test_drive = m_disk_drive_combo->currentData().toString();
+    }
 
     if (!config.stress_cpu && !config.stress_memory && !config.stress_disk && !config.stress_gpu) {
         sak::logWarning("Stress test started with no components selected");
@@ -650,63 +666,76 @@ void DiagnosticBenchmarkPanel::onSuiteComplete() {
 // Slot: Thermal Monitor
 // ============================================================================
 
+namespace {
+// Keep the hottest reading seen so far for a sensor class. The first sighting
+// always wins (found is still false) so the zero-initialized accumulator never
+// masks a genuine reading, and thereafter only a hotter value replaces it.
+void keepHottest(bool& found, int& hottest, int candidate) {
+    if (!found || candidate > hottest) {
+        hottest = candidate;
+    }
+    found = true;
+}
+}  // namespace
+
 void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalReading>& readings) {
     Q_ASSERT(m_thermal_cpu_label);
     Q_ASSERT(m_thermal_cpu_bar);
 
-    // Track which sensors reported data this poll cycle
+    // A poll cycle can carry several sensors of one class (multiple disks, multiple
+    // GPUs). Keep the HOTTEST reading per class -- a last-writer-wins assignment
+    // would let a cooler final disk mask an earlier critically hot one and hide a
+    // thermal fault.
     bool cpu_found = false;
     bool gpu_found = false;
     bool disk_found = false;
+    int cpu_temp = 0;
+    int gpu_temp = 0;
+    int disk_temp = 0;
 
     for (const auto& reading : readings) {
         const int temp = static_cast<int>(reading.temperature_celsius);
+        if (reading.component.contains("CPU", Qt::CaseInsensitive)) {
+            keepHottest(cpu_found, cpu_temp, temp);
+        } else if (reading.component.contains("GPU", Qt::CaseInsensitive)) {
+            keepHottest(gpu_found, gpu_temp, temp);
+        } else if (reading.component.contains("Disk", Qt::CaseInsensitive)) {
+            keepHottest(disk_found, disk_temp, temp);
+        }
+    }
 
-        // Color code by thermal warning thresholds.
+    // Color code by thermal warning thresholds.
+    const auto tempHtml = [](int temp) {
         QString color = sak::ui::kStatusColorSuccess;
         if (temp >= kTemperatureCriticalCelsius) {
             color = sak::ui::kStatusColorError;
         } else if (temp >= kTemperatureWarningCelsius) {
             color = sak::ui::kColorWarning;
         }
+        return QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
+            .arg(color)
+            .arg(sak::ui::kFontWeightSemibold)
+            .arg(QStringLiteral("%1 \u00B0C").arg(temp));
+    };
 
-        const QString temp_text = QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
-                                      .arg(color)
-                                      .arg(sak::ui::kFontWeightSemibold)
-                                      .arg(QStringLiteral("%1 \u00B0C").arg(temp));
-
-        if (reading.component.contains("CPU", Qt::CaseInsensitive)) {
-            m_thermal_cpu_label->setText(temp_text);
-            m_thermal_cpu_bar->setValue(temp);
-            cpu_found = true;
-        } else if (reading.component.contains("GPU", Qt::CaseInsensitive)) {
-            m_thermal_gpu_label->setText(temp_text);
-            m_thermal_gpu_bar->setValue(temp);
-            gpu_found = true;
-        } else if (reading.component.contains("Disk", Qt::CaseInsensitive)) {
-            m_thermal_disk_label->setText(temp_text);
-            m_thermal_disk_bar->setValue(temp);
-            disk_found = true;
-        }
-    }
-
-    // Show "N/A" for sensors that returned no data
+    // Show "N/A" for sensors that returned no data.
     const QString not_available = QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
                                       .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
                                       .arg(sak::ui::kFontWeightSemibold)
                                       .arg(QStringLiteral("N/A"));
-    if (!cpu_found) {
-        m_thermal_cpu_label->setText(not_available);
-        m_thermal_cpu_bar->setValue(0);
-    }
-    if (!gpu_found) {
-        m_thermal_gpu_label->setText(not_available);
-        m_thermal_gpu_bar->setValue(0);
-    }
-    if (!disk_found) {
-        m_thermal_disk_label->setText(not_available);
-        m_thermal_disk_bar->setValue(0);
-    }
+
+    const auto render = [&](QLabel* label, QProgressBar* bar, bool found, int temp) {
+        if (found) {
+            label->setText(tempHtml(temp));
+            bar->setValue(temp);
+        } else {
+            label->setText(not_available);
+            bar->setValue(0);
+        }
+    };
+    render(m_thermal_cpu_label, m_thermal_cpu_bar, cpu_found, cpu_temp);
+    render(m_thermal_gpu_label, m_thermal_gpu_bar, gpu_found, gpu_temp);
+    render(m_thermal_disk_label, m_thermal_disk_bar, disk_found, disk_temp);
 }
 
 // ============================================================================
