@@ -1712,6 +1712,87 @@ first attempt failed the build -- a mutant that does not build proves nothing (R
       -- alongside the case the one-extra-byte probe exists to distinguish, a genuinely
       complete file at exactly the cap, which must NOT become a false positive.
 
+### Fix wave 3 - APFS writer residual, the 55-finding file re-adjudicated (2026-08-09)
+
+src/core/partition_apfs_writer.cpp is the single largest per-file finding cluster in the ledger
+(55 briefs, table above) and the per-file sweep had left it as "outside the APFS writer" work
+after Fix wave 2 closed the two non-APFS CRITICALs. This wave takes it on directly.
+
+Because the raw briefs cite an earlier tree state and the file has been hardened across many
+prior commits, the findings were RE-ADJUDICATED against the CURRENT working tree before any fix:
+8 read-only auditors (high effort) each took a pack of findings, grepped the live functions, and
+classified each as FIXED / PARTIAL / OPEN / FALSE_POSITIVE with a cited guard or a cited live
+defect. 56 findings adjudicated:
+
+| Verdict | Count | Meaning |
+|---|---|---|
+| FIXED | 18 | prior campaign commits already guard the exact failure (cited) |
+| PARTIAL | 13 | memory-safety half fixed; the fail-closed half still silently clamps |
+| OPEN | 25 | live defect, cited line + minimal fix |
+| FALSE_POSITIVE | 0 | (consistent with the "Codex findings are accurate" rule) |
+
+38 findings (25 OPEN + 13 PARTIAL) therefore needed code. They are fixed in gated waves; each
+wave is a full Release build + 225-test ctest + all pre-commit hooks (clang-format, lizard,
+cppcheck) before commit, and every security diff is hand-reviewed. IDs are the re-adjudication's
+F-numbers; the adjudication and per-finding evidence are archived in the campaign scratchpad
+(apfs_adjudication.json).
+
+- [x] Wave A / F9 [CRITICAL] COMMITTED 3de3d61. advanceIpBitmapRing validated the internal-pool
+      bitmap ring GEOMETRY but not its SLOT INDICES: the free-head/free-tail and each inline
+      bmAddr slot are raw le16 up to 0xFFFF, and setRing(slot) writes at ringOff + slot*2, so a
+      crafted slot >= bmCount drove a writeLe16 up to ringOff + 0x1FFFE past the spaceman object
+      (heap OOB write). Now every ring slot index is bounded to bmCount fail-closed; the rotation
+      loops were extracted into rotateIpBitmapRingSlots to hold the complexity gate.
+- [x] Wave B / F11, F14 (TOC half), F15 COMMITTED a44d82a. The three live tree walks (volume
+      object map, extent-ref tree, fs-tree) had a depth budget but no visited set and no node
+      budget, so a crafted fan-out or in-range cycle exhausts memory/IO before the depth budget
+      helps. Added a shared visited set + node budget carried by pointer through each descent
+      (chargeTreeWalkNode) and a non-zero/< blockCount child-pointer check (treeChildInRange).
+      collectExtentRefLeafOwners now fails closed on a leaf record whose TOC key/value offset
+      falls outside the node (F14 TOC half). Pure DoS/OOB hardening -- a valid tree never trips.
+- [x] Wave C / F12, F13, F14 (checksum half), F26, F32, F33, F46 COMMITTED 73198b7. Every live
+      on-disk object a commit adopts (container omap, target volume superblock, volume omap,
+      extent-ref tree, cib/cab allocation blocks, free-queue leaves) is now authenticated
+      (Fletcher checksum + low-16 o_type + o_subtype + o_oid, the low-16 compare tolerating the
+      storage-class flag bits a real Apple object carries) before its fields are used. F13 also
+      selects the target volume superblock by its REAL oid (nx_fs_oid[0]) and fails closed when
+      the container omap has no record for it, instead of adopting a guessed superblock. Every
+      expected constant was read from the matching builder in this file so a genuine object
+      (generated OR real Apple) is never falsely rejected; the generated-container round-trip
+      tests exercise every path.
+- [x] Wave D / F24, F27, F28, F49 COMMITTED a875d9b. Free-queue commit path no longer silently
+      swallows malformed/missing state: a zero/unresolvable main-queue root, a nonzero ephemeral
+      oid absent from the checkpoint map, a level>=2 root whose index children would be mis-read
+      as leaves, and a block-0 / duplicate freed chain member all now fail closed or dedup so the
+      queued free count matches the coalesced runs.
+- [~] F25 (free-queue reserved-region exclusion) DEFERRED WITH RATIONALE. The first
+      implementation rejected any free-queue run naming a checkpoint-ring or internal-pool block,
+      built from the PRE-commit geometry. That false-closed legitimate operation: during a
+      grow/shrink the writer RELOCATES the internal pool and checkpoint metadata, so old-pool
+      blocks are correctly freed and re-queued (caught by the resize round-trip tests --
+      "run {paddr=191,length=2} names a reserved container region"). A false-close is worse than
+      the residual gap, so it was reverted. A correct guard needs post-commit geometry, or must be
+      applied only on the pure read/adopt path (a foreign queue with no relocation in flight);
+      recorded for a dedicated pass rather than shipped broken. This is the same "a verifier
+      CONFIRMED can still be a real-code over-reach only a full build+ctest reveals" lesson from R2.
+- [x] Wave E1 / F3, F4, F6, F17, F42, F48, F50 COMMITTED 4e76c6c. The bitmap-builder
+      memory-safety half was already in (an out-of-range bit index is skipped, no OOB write); this
+      completes the fail-closed half so a genuinely out-of-range used-set / chunk-range index
+      aborts the commit with a blocker instead of writing a silently-truncated bitmap. Each guard
+      is unreachable on a valid volume (IP metadata is front-packed below one block's bit
+      capacity); the resize/spill round-trip tests pass unchanged.
+- [ ] Wave E2 / F16, F34, F36, F37, F38, F41, F43, F44 (spaceman slot / geometry / foreign
+      alloc + reclaim fail-closed): PENDING. Higher false-close risk (touches the same foreign /
+      resize paths as F25), so gated and hand-reviewed with extra care.
+- [ ] Wave F / F47, F51, F52, F53 (resize straddle / free-count underflow): PENDING.
+- [ ] Wave G / F1, F29, F55, F56 (preserve + create-or-replace data loss): PENDING.
+
+Known residual flagged, not silently dropped: the IP-bitmap sink still materializes only block 0
+of a multi-block ip_bm_size layout. Wave E1 makes that REFUSE (fail closed) rather than silently
+truncate, but a genuine multi-block distribution (a > ~512 TiB container with > 32768 packed
+cib/cab metadata slots) is the still-open completeness work; it is unreachable by any current
+test or certified tier (the 16 TiB CAB-tier cert front-packs ~1038 indices, far below 32768).
+
 ### Fix wave 1 - browser control (COMMITTED b2d3e96, 2026-08-05)
 
 87 findings against browser/. The four HIGH were fixed by hand rather than delegated,
