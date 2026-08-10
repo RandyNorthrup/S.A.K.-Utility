@@ -83,28 +83,52 @@ byte-identical (full Release ctest 225/225).
       host apfsck clean for the single- and multi-chunk imports.
 
 --------------------------------------------------------------------------------
-## WORKSTREAM 3 -- foreign multi-chunk in-place COW
+## WORKSTREAM 3 -- foreign multi-chunk in-place COW + grow increments
 
-Status: DESIGN, not started. In-place COW file mutation (patch/insert/write/delete) on a
-real MULTI-chunk Apple internal pool currently fail-closes at nextIpSlot ("live internal-
-pool cib address is not a valid rotation slot"). That refusal is CORRECT today: Apple's real
-multi-chunk IP geometry (16-slot bitmap ring + cib at ip_base+8) is not the S.A.K.-generated
-3-slot rotation model, and the pre-F16 unguarded code would have rotated the cib into a wrong
-block (silent corruption). Single-chunk real Apple in-place COW is fully certified; resize
-and import-image already handle real multi-chunk containers.
+- [x] WS3a HONEST MESSAGE (commit 3789c41): the nextIpSlot refusal now names both real
+      causes -- "in-place file mutation of a real multi-chunk Apple internal pool is not yet
+      supported (use import-image or resize); on a S.A.K.-generated container this indicates
+      checkpoint corruption" -- instead of the bare "not a valid rotation slot". No behavior
+      change; still fails closed. Verified it fires with the new text on a real multi-chunk
+      Apple container.
+- [x] WS3b FULL SINGLE-CHUNK GROW (commit 3789c41): a container at exactly one full chunk
+      (32768 blocks / 128 MiB) could not grow (the chunk-adding path wants a chunk-0 tail a
+      full chunk does not have). Now routed through the multi-chunk-source path (pool in the
+      first grown chunk). Certified on a real Apple 128 MiB container: grows to 256/384/512
+      MiB are apfsck-clean and fsck_apfs "container appears to be OK" on the macOS kernel with
+      all files sha-preserved. Sub-chunk sources unchanged; 225/225.
 
-Plan:
-- [ ] Route the in-place COW file-mutation finalize through the foreignOverflow rotation
-      machinery that resize already uses (allocate rotation slots from real free IP blocks,
-      drive the real ip_bm ring) instead of the generated 3-slot nextIpSlot model.
-- [ ] Until then keep the refusal, but make the nextIpSlot message distinguish "unsupported
-      real multi-chunk internal pool" from a genuine generated-container corruption (the same
-      guard fires for both today).
-- [ ] Also: single-chunk-source GROW to exactly 2 chunks where the pool would land in the
-      last/only grown chunk fails closed ("placing it in the last chunk is a later
-      increment"). Implement that grow increment. (Larger single-chunk grows and all
-      multi-chunk-source grows already work.)
-- [ ] Live re-cert every path on real Apple containers.
+- [ ] WS3c FOREIGN MULTI-CHUNK IN-PLACE COW -- DEFERRED WITH DESIGN (corruption-critical,
+      dedicated pass). In-place COW file mutation (patch/insert/write/delete) on a real
+      MULTI-chunk Apple internal pool fails closed at nextIpSlot (correctly, per WS3a). The
+      refusal is safe; the feature is the work.
+      WHY IT IS A DEDICATED PASS, not a quick reuse: the resize foreignOverflow machinery is
+      OVERFLOW-specific -- it is entered only when a mutation SPILLS past chunk 0 (the boundary
+      chunk allocation at partition_apfs_writer.cpp configureOverflowAllocation, which sets
+      ctx->foreignOverflow). A small file mutation on a multi-chunk container never spills, so
+      it takes the GENERAL ring rotation (computeIpRotation -> nextIpSlot -> advanceCheckpoint),
+      which is hard-coded to the S.A.K.-generated 3-slot co-located ring (cib0Base + k*stride,
+      kIpSlotCount=3). Apple's real multi-chunk pool instead uses a 16-slot ip_bm ring
+      (ip_bm_base) with the cib at ip_base+8 -- a different structure the generated model cannot
+      represent. Teaching the GENERAL rotation to detect a foreign IP layout and drive the real
+      ip_bm ring (allocate the new cib/bitmap from real free IP blocks, advance the real ring
+      slot, build the used-set from the live IP bitmap) for EVERY in-place commit is the real
+      work -- comparable in scope + risk to the original wave E2 foreignOverflow effort, and it
+      must be certified byte-for-byte against real Apple containers before it can ship (a wrong
+      rotation silently corrupts live Apple metadata). Supported alternatives for real
+      multi-chunk Apple mutation today: import-image (flat root files) and resize.
+      DESIGN SKETCH: (1) in loadFsCommitContext, run the foreign-IP probe (foreignIpGeometryInRange
+      / the spaceman ip_base+ip_bm_base read) unconditionally, not just on the overflow path, and
+      set a ctx.foreignIp flag + the real ring geometry. (2) generalize computeIpRotation: when
+      ctx.foreignIp, compute the next real ring slot from ip_bm_free_head/tail + the live slot
+      (probe-layout already decodes these) instead of nextIpSlot's 3-slot model. (3) allocate the
+      new cib / chunk-0 bitmap from real free IP blocks (ip_base+ip_block_count onward) and build
+      the IP used-set from the live IP bitmap. (4) cert on the rig: patch/insert/write/delete on
+      real 256 MiB + multi-CIB Apple containers, apfsck + Apple kernel fsck clean, chained.
+- [ ] WS3c-2 (smaller follow-on): shrink is the inverse; audit whether a real multi-chunk
+      Apple SHRINK hits the same general-rotation limitation (resize shrink certified clean on
+      the generated + the first-pass real container, but the foreign-IP shrink ring path should
+      be re-confirmed once WS3c lands).
 
 --------------------------------------------------------------------------------
 ## WORKSTREAM 4 -- infra / gate backlog (no live rig needed; last)
