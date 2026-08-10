@@ -1831,11 +1831,32 @@ Residuals flagged, not silently dropped (see the campaign scratchpad apfs_deferr
    (F1 scoped to the file payload); the F55/F56 preflight-to-reopen TOCTOU window is closed only by
    the writer's own "ended early" after the delete (holding the handle open is the larger fix).
 
-LIVE RE-CERT (recommended final validation): the 225-test gate exercises only S.A.K.-GENERATED
-containers, while every wave here hardens the REAL-Apple-volume paths (object authentication, tree
-bounds, free-queue, spaceman/foreign alloc, resize, inode-metadata preservation). A re-cert against
-a real Apple volume on the macOS VM / physical MacBook would confirm no new fail-closed guard
-false-rejects genuine Apple metadata -- the exact over-reach class the unit gate cannot catch.
+LIVE RE-CERT -- DONE 2026-08-10 (macOS VM, macOS 26.6, apfs_kext 2811.160.7). Harvested GENUINE
+Apple containers (hdiutil create -layout NONE -fs APFS -> bare NXSB-at-block-0 container),
+populated by real kernel mount, ran the R5 CLI against them on Windows, and shipped every output
+back for real apfs_kext mount + fsck_apfs (plus host apfsck as a kernel-free oracle). Verdict: NO
+wave A-G fail-closed guard false-rejects genuine Apple metadata on any supported path. Certified
+CLEAN on real Apple containers (kernel mount + read-back sha-match + container fsck_apfs "appears to
+be OK"): list-image walk, import-image + add, in-place COW patch/insert/write/delete (single-chunk),
+and resize SHRINK 256->128 MiB (the F51 zone). Two findings, neither a wave over-reach:
+
+1. GROW on a real MULTI-chunk Apple container produced a chunk-0 ci_free_count 2 too low (fsck_apfs
+   "ci_free_count is not valid" / apfsck "wrong count of free blocks"); data intact, Space
+   Verification failed. Root cause was PRE-EXISTING (layoutMultiChunkGrow, 2026-07-03) and
+   independent of waves A-G: a multi-chunk-source grow frees aged main-free-queue runs back into
+   chunk 0's bitmap but seeded chunk-0's cib free count from the SOURCE count, ignoring them.
+   Invisible to the generated gate (generated grows carry no chunk-0 reclaim). FIXED (commit
+   ea3ee59) by recomputing chunk-0 free count from the just-built bitmap popcount (a no-op on the
+   generated path -> byte-identical -> 225/225). Re-certified: 256->512 grow now fsck_apfs
+   "container appears to be OK" pre-mount on S.A.K.'s exact bytes with files sha-preserved; host
+   apfsck clean for 256->512 and 256->1024.
+2. In-place COW file mutation on a real MULTI-chunk Apple internal pool fails closed at F16
+   (nextIpSlot "not a valid rotation slot"). This is CORRECT: Apple's real multi-chunk IP geometry
+   (16-slot bitmap ring + cib at ip_base+8) cannot be represented by the generated 3-slot rotation
+   model, and pre-F16 the unguarded code would have rotated the cib into a wrong block (silent
+   corruption). Resize and import-image already handle real multi-chunk containers; extending the
+   in-place COW path to them is a logged feature follow-on (apfs_deferred_residuals.md), not a
+   defect. Single-chunk real Apple in-place COW is fully certified.
 
 ### Fix wave 1 - browser control (COMMITTED b2d3e96, 2026-08-05)
 
