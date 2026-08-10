@@ -862,12 +862,24 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
     const ToolPolicyContext context = policyContext(request);
     AiToolPolicyDecision decision = evaluateKnownPolicy(policy, request, context);
     if (context.catastrophic && decision.allowed) {
-        // Force the full mutating treatment regardless of which policy allowed it;
-        // the panel additionally requires an explicit human gate for these.
+        // Force the full mutating treatment regardless of which policy allowed it.
         decision.catastrophic_change = true;
         decision.risky_change = true;
         decision.requires_lease = true;
         decision.restore_point_recommended = true;
+        // Machine-enforce the human gate: a catastrophic/irreversible op (disk format,
+        // partition wipe, boot-config edit, shadow-copy/backup delete, hive delete,
+        // recursive system-dir wipe) is NOT allowed to dispatch until an explicit human
+        // confirmation is recorded on the request. Callers detect catastrophic_change,
+        // obtain the confirmation, set request.human_confirmed, and re-dispatch. Leaving
+        // it to a caller convention meant any path that skipped the panel's confirm --
+        // a direct dispatch, a future caller -- could run a wipe unattended (the gap this
+        // finding closes). catastrophic_change stays set so the gate still knows to prompt.
+        if (!request.human_confirmed) {
+            decision.allowed = false;
+            decision.reason = QStringLiteral(
+                "Catastrophic operation blocked: an explicit human confirmation is required");
+        }
     }
     return decision;
 }

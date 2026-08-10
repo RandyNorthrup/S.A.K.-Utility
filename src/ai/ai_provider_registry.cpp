@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QtGlobal>
 
 #include <utility>
 
@@ -19,6 +20,28 @@ constexpr auto kProvidersResource = ":/ai/providers/providers.json";
 constexpr auto kProviderFile = "data/ai/providers/providers.json";
 constexpr auto kAppManifestResourceRoot = ":/ai/app_manifests";
 constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
+
+// Out-of-band authorization to honor an on-disk AI policy file (providers.json or an app
+// manifest) IN PLACE OF the embedded Qt resource. The embedded resource is compiled into the
+// executable and cannot be altered without replacing the binary; the on-disk copy staged under
+// the application data directory can be rewritten by anyone able to write that directory. A
+// rewritten providers.json redirects an HTTP docs endpoint to an attacker host, injects
+// environment into the (elevated) MCP child process, or widens the tool allowlist; a rewritten
+// app manifest supplies an executable powershell/cli "command" that app_run_action will run --
+// none of which the embedded manifest would permit. The downstream gateway blunts SOME of these
+// (command-within-appdir, https-only endpoint, protected-env rejection, command guard) but not
+// endpoint host redirection or arbitrary non-protected env, so the trust decision must fail
+// closed HERE: the disk copy is authoritative ONLY when the human operator has set this
+// environment variable, which a file-drop attacker (who controls bytes on disk, not the
+// launching process environment) cannot reach. Unset -> embedded resource only. Mirrors the
+// SAK_LEFTOVER_TECHNICIAN_OVERRIDE out-of-band control in app_mutating_actions.cpp. The disk copy,
+// when opted in, still passes every existing downstream gate -- this is an added front door,
+// not a replacement for them.
+[[nodiscard]] bool diskPolicyOverrideAuthorized() {
+    const QString value = qEnvironmentVariable("SAK_AI_POLICY_DISK_OVERRIDE").trimmed().toLower();
+    return value == QLatin1String("1") || value == QLatin1String("true") ||
+           value == QLatin1String("yes") || value == QLatin1String("on");
+}
 
 [[nodiscard]] QString normalizedId(const QString& value) {
     QString id = value.trimmed().toLower();
@@ -147,6 +170,30 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
     }
 
     return status;
+}
+
+// The effective backing file for one cached config read: its path (on-disk copy or embedded
+// resource), the on-disk modification time used for cache invalidation, and which of the two won.
+struct ResolvedConfigSource {
+    QString path;
+    QDateTime last_modified_utc;
+    bool file_exists{false};
+};
+
+// Decide which file answers a config read and capture its modification time. The embedded Qt
+// resource is the tamper-proof authority. The on-disk copy under the application directory is
+// honored only when a human operator has opted in out of band (see diskPolicyOverrideAuthorized);
+// without that opt-in a manifest dropped beside the exe is ignored and the embedded resource
+// loads, so a file-drop attacker cannot silently override AI provider/app policy. When the opt-in
+// is absent, treat the disk file as if it did not exist -- an app manifest with no embedded
+// counterpart then fails closed as "unavailable". Only the disk copy carries a meaningful mtime;
+// the resource reports none, so its slot stays null and the freshness check never keys on it.
+[[nodiscard]] ResolvedConfigSource resolveConfigSource(const QString& file_path,
+                                                       const QString& resource_path) {
+    const bool file_exists = diskPolicyOverrideAuthorized() && QFileInfo::exists(file_path);
+    return {file_exists ? file_path : resource_path,
+            file_exists ? QFileInfo(file_path).lastModified().toUTC() : QDateTime{},
+            file_exists};
 }
 
 }  // namespace
@@ -289,26 +336,23 @@ QJsonObject AiProviderRegistry::readCachedJsonObject(const QString& file_path,
     if (!cache) {
         return {};
     }
-    const bool file_exists = QFileInfo::exists(file_path);
-    const QString path = file_exists ? file_path : resource_path;
-    const QDateTime last_modified = file_exists ? QFileInfo(file_path).lastModified().toUTC()
-                                                : QDateTime{};
+    const ResolvedConfigSource source = resolveConfigSource(file_path, resource_path);
 
-    if (cache->valid && cache->path == path &&
-        (!file_exists || cache->last_modified_utc == last_modified)) {
+    if (cache->valid && cache->path == source.path &&
+        (!source.file_exists || cache->last_modified_utc == source.last_modified_utc)) {
         if (error_message) {
             error_message->clear();
         }
         return cache->object;
     }
 
-    QJsonObject object = readJsonObject(path, error_message);
+    QJsonObject object = readJsonObject(source.path, error_message);
     if (object.isEmpty()) {
         cache->valid = false;
         return {};
     }
-    cache->path = path;
-    cache->last_modified_utc = last_modified;
+    cache->path = source.path;
+    cache->last_modified_utc = source.last_modified_utc;
     cache->object = object;
     cache->valid = true;
     return object;

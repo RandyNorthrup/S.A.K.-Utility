@@ -199,10 +199,11 @@ AiToolDispatcher::DispatchOutcome AiToolDispatcher::dispatch(AiToolPolicy policy
     }
 
     invokeHandler(handler, request, arguments, &outcome);
+    // Release BEFORE recording health: a release that reports the lease was already gone means
+    // the TTL sweep reclaimed it mid-op, which fails the result closed -- and the health ledger
+    // must then record that corrected failure, not the handler's (now untrustworthy) success.
+    releaseLeaseForDispatch(&outcome, request, lease_id);
     recordHealthForResult(outcome);
-    if (!lease_id.isEmpty() && m_lease_manager) {
-        m_lease_manager->release(lease_id);
-    }
     return outcome;
 }
 
@@ -310,6 +311,38 @@ bool AiToolDispatcher::acquireLeaseForDispatch(DispatchOutcome* outcome,
     outcome->lease_denied = true;
     outcome->result = leaseDeniedResult(request, acquire.reason);
     return false;
+}
+
+void AiToolDispatcher::releaseLeaseForDispatch(DispatchOutcome* outcome,
+                                               const AiToolCallRequest& request,
+                                               const QString& lease_id) const {
+    if (lease_id.isEmpty() || !m_lease_manager) {
+        return;
+    }
+    if (m_lease_manager->release(lease_id)) {
+        // Normal path: the lease this dispatch acquired was still held and is now released.
+        return;
+    }
+    // release() reports false only when the id is no longer held. A lease id minted for this
+    // dispatch carries an unguessable token no other agent can present, so the only way it can
+    // vanish while THIS handler was running is the manager's TTL sweep reclaiming it as
+    // "abandoned" -- the exact hazard behind this finding: a still-executing handler is not
+    // proof the holder stopped, yet the TTL treated it as such and freed the lease. A second
+    // agent may have acquired a fresh lease and mutated concurrently, so the exclusive-mutation
+    // guarantee was broken for THIS call. Fail closed: never report a mutation whose exclusivity
+    // was violated mid-flight as a clean success. Preserve any handler diagnostics but stamp the
+    // breach over the top so triage and the health circuit breaker both see the real failure.
+    outcome->lease_reclaimed_midop = true;
+    outcome->result[QStringLiteral("success")] = false;
+    outcome->result[QStringLiteral("lease_reclaimed_midop")] = true;
+    outcome->result[QStringLiteral("failure_class")] = QStringLiteral("lease_reclaimed_midop");
+    outcome->result[QStringLiteral("tool_name")] = request.tool_name;
+    outcome->result[QStringLiteral("operation")] = request.operation;
+    outcome->result[QStringLiteral("error_message")] =
+        QStringLiteral(
+            "Mutating lease '%1' was reclaimed by TTL while the handler was still "
+            "running; exclusive access could not be guaranteed for this call")
+            .arg(lease_id);
 }
 
 void AiToolDispatcher::recordHealthForResult(const DispatchOutcome& outcome) const {

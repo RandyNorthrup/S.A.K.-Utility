@@ -38,6 +38,11 @@ public:
         bool lease_denied{false};
         bool availability_denied{false};
         bool health_suppressed{false};
+        // Set when this dispatch's own mutating lease was reclaimed by the manager's TTL sweep
+        // WHILE the handler was still running -- proof the exclusive-mutation guarantee was
+        // broken mid-op (another agent could have acquired a fresh lease and mutated at the same
+        // time), so the result is forced to a failure rather than reported as a clean success.
+        bool lease_reclaimed_midop{false};
         QString lease_id;
         QString health_key;
         qint64 latency_ms{0};
@@ -85,6 +90,9 @@ private:
                                                const AiToolCallRequest& request,
                                                const QString& agent_id,
                                                QString* lease_id) const;
+    void releaseLeaseForDispatch(DispatchOutcome* outcome,
+                                 const AiToolCallRequest& request,
+                                 const QString& lease_id) const;
     void invokeHandler(const Handler& handler,
                        const AiToolCallRequest& request,
                        const QJsonObject& arguments,

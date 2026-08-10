@@ -30,6 +30,8 @@ class AiProviderGatewayTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void initTestCase();
+    void cleanupTestCase();
     void docsQueryRequiresProviderId();
     void docsQueryRejectsNonHttpProvider();
     void docsQueryRejectsToolMissingFromProviderManifest();
@@ -48,6 +50,18 @@ private Q_SLOTS:
     void checkAvailabilityAcceptsReadOnlyWin32Tool();
     void mutatingToolsAreNeverReadOnly();
 };
+
+// The registry loads the embedded resource by default and honors an on-disk providers.json only
+// under an out-of-band operator opt-in. Every gateway test here builds its provider set by writing
+// a temp providers.json, so opt in for the whole suite; the fail-closed default is covered in
+// test_ai_provider_registry.
+void AiProviderGatewayTests::initTestCase() {
+    qputenv("SAK_AI_POLICY_DISK_OVERRIDE", "1");
+}
+
+void AiProviderGatewayTests::cleanupTestCase() {
+    qunsetenv("SAK_AI_POLICY_DISK_OVERRIDE");
+}
 
 void AiProviderGatewayTests::mutatingToolsAreNeverReadOnly() {
     // The fail-closed default (requires_confirmation unless read_only||high_risk) only protects a
@@ -174,8 +188,11 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_group_tabs")));
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_ungroup_tabs")));
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_drag")));
-    // Hover only moves the pointer to reveal content; treated as read-only (ungated).
-    QVERIFY(sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_hover")));
+    // Hover moves the pointer and dispatches hover events -- it MUTATES UI state, so the win32
+    // server excludes it from its read-only allowlist and refuses it under the read_only profile.
+    // It must therefore not be read-only here either (that would report it safe yet send a profile
+    // the server rejects); the fail-closed default gives it the interactive/confirm tier.
+    QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_hover")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_hover")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(QStringLiteral("browser_select")));
     QVERIFY(!sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_snapshot")));
@@ -254,16 +271,22 @@ void AiProviderGatewayTests::classifiesDesktopInputAndCloseToolRisk() {
 }
 
 void AiProviderGatewayTests::classifiesBatch3BrowserTools() {
-    // Batch 3 inspection tools are pure reads (or pointer-adjacent focus/reveal): read-only,
-    // ungated, and never in the input tier.
+    // Batch 3 inspection tools are pure reads: read-only, ungated, and never in the input tier.
     for (const QString& ro : {QStringLiteral("browser_wait_for"),
                               QStringLiteral("browser_get_value"),
                               QStringLiteral("browser_get_attribute"),
-                              QStringLiteral("browser_box"),
-                              QStringLiteral("browser_focus"),
-                              QStringLiteral("browser_reveal")}) {
+                              QStringLiteral("browser_box")}) {
         QVERIFY2(sak::ai::AiProviderGateway::isWin32ReadOnlyTool(ro), qPrintable(ro));
         QVERIFY2(!sak::ai::AiProviderGateway::isWin32InputTool(ro), qPrintable(ro));
+    }
+    // browser_focus/reveal are NOT pure reads: focusing an element and scrolling it into view
+    // mutate UI state, so the win32 server drops them from its read-only allowlist and refuses
+    // them under the read_only profile. They must be neither read-only (which would send that
+    // rejected profile while reporting them safe) nor input-tier; the fail-closed default in
+    // populateWin32Plan then gives them the interactive profile and a per-call human confirmation.
+    for (const QString& mid : {QStringLiteral("browser_focus"), QStringLiteral("browser_reveal")}) {
+        QVERIFY2(!sak::ai::AiProviderGateway::isWin32ReadOnlyTool(mid), qPrintable(mid));
+        QVERIFY2(!sak::ai::AiProviderGateway::isWin32InputTool(mid), qPrintable(mid));
     }
     // js_click is a click: hard-confirm input tier, never read-only.
     QVERIFY(sak::ai::AiProviderGateway::isWin32InputTool(QStringLiteral("browser_js_click")));

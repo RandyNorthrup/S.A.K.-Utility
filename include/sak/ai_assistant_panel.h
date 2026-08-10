@@ -834,8 +834,11 @@ private:
     [[nodiscard]] bool prepareWorkflowOfflineTool(const ai::WorkflowPhase& phase,
                                                   const ai::AiWorkflowPhaseContext& context,
                                                   WorkflowToolDispatchPlan* plan);
+    // Takes the plan by non-const reference so it can record the human's explicit
+    // confirmation (plan.request.human_confirmed) for a catastrophic phase, which the
+    // machine gate in evaluateToolPolicy then requires when dispatch re-evaluates.
     [[nodiscard]] bool authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase,
-                                                  const WorkflowToolDispatchPlan& plan);
+                                                  WorkflowToolDispatchPlan& plan);
 
     class PanelToolExecutor;
 

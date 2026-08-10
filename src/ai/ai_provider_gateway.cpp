@@ -1009,16 +1009,19 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
 }
 
 bool AiProviderGateway::isWin32ReadOnlyTool(const QString& tool_name) {
+    // KEEP IN SYNC with win32McpToolIsReadOnly (win32_mcp_dispatch.cpp): the server enforces
+    // this same allowlist independently and REFUSES anything off it under the read_only profile.
+    // browser_focus/hover/reveal are deliberately NOT here -- they mutate UI state (move focus,
+    // dispatch hover, scroll into view), so the server rejects them under read_only. Listing them
+    // here would send read_only AND report them safe, yet the call would fail; instead they fall
+    // to the fail-closed default in populateWin32Plan (interactive profile + human confirmation).
     static const QSet<QString> read_only{
         QStringLiteral("assert_text_visible"),
         QStringLiteral("browser_box"),
         QStringLiteral("browser_extension_status"),
-        QStringLiteral("browser_focus"),
         QStringLiteral("browser_get_attribute"),
         QStringLiteral("browser_get_value"),
-        QStringLiteral("browser_hover"),
         QStringLiteral("browser_read"),
-        QStringLiteral("browser_reveal"),
         QStringLiteral("browser_screenshot"),
         QStringLiteral("browser_snapshot"),
         QStringLiteral("browser_tabs"),

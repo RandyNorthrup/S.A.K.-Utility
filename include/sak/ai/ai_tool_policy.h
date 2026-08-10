@@ -22,6 +22,13 @@ struct AiToolCallRequest {
     QString command_preview;
     QString user_message;
     bool requires_admin{false};
+    // Set ONLY after a human has explicitly confirmed this specific catastrophic/
+    // irreversible operation. evaluateToolPolicy refuses to allow a catastrophic change
+    // while this is false, so the mandatory confirmation is machine-enforced by the policy
+    // layer rather than left to a caller convention: a code path that dispatches a
+    // catastrophic tool without first obtaining (and recording) the human confirmation is
+    // blocked. Non-catastrophic calls ignore this field.
+    bool human_confirmed{false};
 };
 
 struct AiToolPolicyDecision {

@@ -41,6 +41,7 @@
       "type": "tool_action",
       "tool": "run_powershell",
       "operation": "repair",
+      "condition": "approval_gate_succeeded",
       "arguments": {
         "command": "$ErrorActionPreference='Continue'; Write-Output 'Restarting Windows Search after approval.'; Restart-Service WSearch -Force -ErrorAction Stop; $svc = Get-Service WSearch; $svc | Select-Object Name,Status,StartType | Format-List; if ($svc.Status -ne 'Running') { throw ('Windows Search did not reach Running state after restart: ' + $svc.Status) }",
         "timeout_seconds": 120,

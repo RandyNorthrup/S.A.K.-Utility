@@ -4,9 +4,13 @@
 #include "sak/ai/ai_command_tool_planner.h"
 
 #include "sak/ai/ai_command_guard.h"
+#include "sak/process_runner.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QLatin1Char>
 #include <QLatin1String>
+#include <QStandardPaths>
 #include <QStringList>
 
 #include <algorithm>
@@ -74,6 +78,71 @@ QString quoteArgForPreview(const QString& value) {
     return sanitized;
 }
 
+// Resolve a bare program name (no path separator) to an absolute path. System32 wins first,
+// then only the ABSOLUTE entries of PATH (never "." or a relative entry, which resolve
+// against the working directory). Empty return -> caller fails closed. This mirrors the
+// execution broker's launch-time resolver so the plan-time preview names the SAME binary
+// the broker would run, closing the window where the approved name and the launched target
+// could differ.
+[[nodiscard]] QString resolveBareProgram(const QString& name) {
+#ifdef Q_OS_WIN
+    const QString system32 = sak::system32Path(name);
+    if (!system32.isEmpty() && QFileInfo(system32).isFile()) {
+        return system32;
+    }
+#endif
+    QStringList search;
+    const QStringList entries = qEnvironmentVariable("PATH").split(QDir::listSeparator(),
+                                                                   Qt::SkipEmptyParts);
+    for (const QString& entry : entries) {
+        const QString entry_trimmed = entry.trimmed();
+        if (entry_trimmed.isEmpty() || !QDir::isAbsolutePath(entry_trimmed)) {
+            continue;
+        }
+        search.append(entry_trimmed);
+    }
+    if (search.isEmpty()) {
+        return {};
+    }
+    return QStandardPaths::findExecutable(name, search);
+}
+
+// Rewrite an AI-supplied run_process program into an ABSOLUTE, verified path AT PLAN TIME so
+// the human approval preview shows exactly which binary will launch, and so the broker never
+// has to resolve a bare name against the process search order AFTER the user has approved.
+// Returns a non-empty error (leaving @p program untouched) so buildPlan() fails closed.
+//
+// CreateProcess searches the CURRENT DIRECTORY ahead of PATH, so a bare name -- or any
+// relative path -- lets a binary planted in the working directory win. An absolute path is
+// kept as given (its existence is proven when the broker launches it, exactly as today); a
+// bare name is resolved via System32 then absolute PATH; a relative path with separators has
+// no defensible base directory and is refused rather than launched CWD-relative.
+[[nodiscard]] QString resolveProcessProgram(QString& program) {
+    const QString trimmed = program.trimmed();
+    if (trimmed.isEmpty()) {
+        return QStringLiteral("program must not be empty");
+    }
+    if (QDir::isAbsolutePath(trimmed)) {
+        program = trimmed;
+        return {};
+    }
+    if (trimmed.contains(QLatin1Char('/')) || trimmed.contains(QLatin1Char('\\'))) {
+        return QStringLiteral(
+                   "program must be an absolute path or a bare executable name, not a "
+                   "working-directory-relative path: %1")
+            .arg(sanitizeForPreview(trimmed.left(kToolNameErrorMaxChars)));
+    }
+    const QString resolved = resolveBareProgram(trimmed);
+    if (resolved.isEmpty()) {
+        return QStringLiteral(
+                   "Cannot resolve program '%1' to an absolute path; refusing to launch a bare "
+                   "name")
+            .arg(sanitizeForPreview(trimmed.left(kToolNameErrorMaxChars)));
+    }
+    program = resolved;
+    return {};
+}
+
 QString buildProcessPreview(const QString& program, const QStringList& arguments) {
     QStringList parts;
     parts.reserve(arguments.size() + 1);
@@ -82,6 +151,22 @@ QString buildProcessPreview(const QString& program, const QStringList& arguments
         parts << quoteArgForPreview(arg);
     }
     return parts.join(QLatin1Char(' '));
+}
+
+// Resolve the request's program to an absolute, verified path BEFORE the preview is built so
+// the human approval shows exactly which binary will launch and the broker receives an
+// already-absolute path -- never a bare name it would resolve against the process search
+// order only after the user approved. Skips when argument parsing already failed; that error
+// is surfaced unchanged by buildPlan's validation_error branch. Fails the request closed by
+// recording the resolver's error.
+void resolveRequestProcessProgram(AiCommandRequest& request) {
+    if (!request.validation_error.isEmpty()) {
+        return;
+    }
+    const QString resolve_error = resolveProcessProgram(request.program);
+    if (!resolve_error.isEmpty()) {
+        request.validation_error = resolve_error;
+    }
 }
 
 }  // namespace
@@ -110,6 +195,7 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
         direct_process = true;
         plan.request = ExecutionBroker::processRequestFromJson(args);
         plan.shell_label = QStringLiteral("Process");
+        resolveRequestProcessProgram(plan.request);
         plan.preview = buildProcessPreview(plan.request.program, plan.request.arguments);
     } else {
         plan.shell_label = QStringLiteral("Process");

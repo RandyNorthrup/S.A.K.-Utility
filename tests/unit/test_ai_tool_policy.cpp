@@ -555,11 +555,23 @@ void AiToolPolicyTests::catastrophicCommandsForceRiskyAndFlag() {
     QVERIFY2(sak::ai::commandLooksCatastrophic(command), qPrintable(command));
     QVERIFY2(sak::ai::commandLooksRiskyChange(command), qPrintable(command));
 
-    // When allowed under a mutating policy, catastrophic ops must carry the full
-    // risk treatment plus the catastrophic flag the panel gates on.
+    // A catastrophic op is REFUSED at the policy layer until a human explicitly confirms it:
+    // without the human_confirmed token the decision is not allowed, yet still carries the
+    // catastrophic flag (so the gate knows to prompt) plus the full risk treatment.
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("run_powershell");
     request.command_preview = command;
+    const auto blocked = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease,
+                                                     request);
+    QVERIFY2(!blocked.allowed, qPrintable(command));
+    QVERIFY2(blocked.catastrophic_change, qPrintable(command));
+    QVERIFY2(blocked.risky_change, qPrintable(command));
+    QVERIFY2(blocked.requires_lease, qPrintable(command));
+    QVERIFY2(blocked.restore_point_recommended, qPrintable(command));
+
+    // With the human confirmation recorded, the same catastrophic op is allowed and keeps
+    // the full risk treatment plus the catastrophic flag the panel gates on.
+    request.human_confirmed = true;
     const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease,
                                                       request);
     QVERIFY2(decision.allowed, qPrintable(command));
@@ -604,6 +616,17 @@ void AiToolPolicyTests::obfuscatedShellCommandsForceCatastrophic() {
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("run_powershell");
     request.command_preview = command;
+    // Blocked until a human confirms it, but flagged catastrophic so the gate prompts (never
+    // downgraded to a mere restore-point offer).
+    const auto blocked = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease,
+                                                     request);
+    QVERIFY2(!blocked.allowed, qPrintable(command));
+    QVERIFY2(blocked.catastrophic_change, qPrintable(command));
+    QVERIFY2(blocked.risky_change, qPrintable(command));
+    QVERIFY2(blocked.requires_lease, qPrintable(command));
+
+    // Recording the human confirmation lets the same obfuscated-catastrophic op run.
+    request.human_confirmed = true;
     const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease,
                                                       request);
     QVERIFY2(decision.allowed, qPrintable(command));

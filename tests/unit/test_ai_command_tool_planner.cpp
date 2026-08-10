@@ -3,6 +3,7 @@
 
 #include "sak/ai/ai_command_tool_planner.h"
 
+#include <QDir>
 #include <QJsonArray>
 #include <QtTest/QtTest>
 
@@ -12,6 +13,8 @@ class AiCommandToolPlannerTests : public QObject {
 private Q_SLOTS:
     void buildsPowerShellPlanWithPolicy();
     void buildsProcessPlanWithProgramPreview();
+    void rejectsRelativeProcessProgram();
+    void rejectsUnresolvableProcessProgram();
     void processPreviewQuotesAmbiguousArgs();
     void marksRiskyCommandAndPolicyDenial();
     void carriesPidMutationGuardBlock();
@@ -39,7 +42,8 @@ void AiCommandToolPlannerTests::buildsPowerShellPlanWithPolicy() {
 
 void AiCommandToolPlannerTests::buildsProcessPlanWithProgramPreview() {
     QJsonObject args;
-    args[QStringLiteral("program")] = QStringLiteral("notepad.exe");
+    // A bare name (cmd.exe is present under System32 on every Windows install).
+    args[QStringLiteral("program")] = QStringLiteral("cmd.exe");
     args[QStringLiteral("arguments")] = QJsonArray{QStringLiteral("a.txt")};
 
     const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("run_process"),
@@ -47,13 +51,54 @@ void AiCommandToolPlannerTests::buildsProcessPlanWithProgramPreview() {
                                                                sak::ai::AiToolPolicy::ReadOnlyPc);
 
     QCOMPARE(plan.shell_label, QStringLiteral("Process"));
-    QCOMPARE(plan.request.program, QStringLiteral("notepad.exe"));
     QCOMPARE(plan.request.arguments, QStringList{QStringLiteral("a.txt")});
-    QVERIFY(plan.preview.contains(QStringLiteral("notepad.exe")));
+#ifndef Q_OS_WIN
+    QSKIP("bare-name resolution to an absolute path is Windows-specific");
+#else
+    // F43: the bare program name is resolved to an absolute, verified path AT PLAN TIME, and
+    // both the stored request AND the preview (the text the human approves) name that resolved
+    // binary -- not the bare string the broker would otherwise resolve against the process
+    // search order only AFTER the user approved.
+    QVERIFY(plan.guard_block_error.isEmpty());
+    QVERIFY2(QDir::isAbsolutePath(plan.request.program), qPrintable(plan.request.program));
+    QVERIFY2(plan.request.program.endsWith(QStringLiteral("cmd.exe"), Qt::CaseInsensitive),
+             qPrintable(plan.request.program));
+    QVERIFY(plan.preview.contains(QStringLiteral("cmd.exe"), Qt::CaseInsensitive));
     QVERIFY(plan.preview.contains(QStringLiteral("a.txt")));
-    // ReadOnlyPc now uses a read-only-diagnostic ALLOWLIST (not a mutation blacklist):
-    // notepad.exe is not a read-only command, so the plan is correctly refused. The
-    // plan itself is still built (request + preview populated) for display.
+    // A direct process launch can never be proven safe from its command line, so ReadOnlyPc
+    // refuses it even after the program resolves cleanly. The plan is still built (request +
+    // preview populated) for display.
+    QVERIFY(!plan.policy_decision.allowed);
+#endif
+}
+
+void AiCommandToolPlannerTests::rejectsRelativeProcessProgram() {
+    QJsonObject args;
+    // A working-directory-relative path has no defensible base and would launch CWD-relative;
+    // it must be refused at plan time rather than resolved against the current directory.
+    args[QStringLiteral("program")] = QStringLiteral("sub/planted.exe");
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("run_process"),
+                                                               args,
+                                                               sak::ai::AiToolPolicy::ReadOnlyPc);
+
+    QVERIFY(!plan.request.validation_error.isEmpty());
+    QVERIFY(plan.guard_block_error.contains(QStringLiteral("relative")));
+    QVERIFY(!plan.policy_decision.allowed);
+}
+
+void AiCommandToolPlannerTests::rejectsUnresolvableProcessProgram() {
+    QJsonObject args;
+    // A bare name that resolves nowhere under System32 or the absolute PATH entries fails
+    // closed instead of being handed to the broker to resolve after approval.
+    args[QStringLiteral("program")] = QStringLiteral("definitely-not-a-real-sak-test-binary.exe");
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("run_process"),
+                                                               args,
+                                                               sak::ai::AiToolPolicy::ReadOnlyPc);
+
+    QVERIFY(!plan.request.validation_error.isEmpty());
+    QVERIFY(plan.guard_block_error.contains(QStringLiteral("Cannot resolve")));
     QVERIFY(!plan.policy_decision.allowed);
 }
 

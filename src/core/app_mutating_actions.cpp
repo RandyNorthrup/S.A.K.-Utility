@@ -954,11 +954,9 @@ QJsonObject savePstAttachmentsParamsSchema() {
 // read-only organizer.preview_organize op (app_organizer_helpers.h) so the preview and the
 // apply categorize + containment-check a model-supplied mapping identically.
 
-// Validate the target directory + collision strategy. Returns an error result to
-// short-circuit on, or nullopt when the inputs are acceptable.
-std::optional<AppActionResult> validateOrganizeInputs(const QString& target,
-                                                      const QString& collision_strategy,
-                                                      const QMap<QString, QStringList>& mapping) {
+// Validate the target directory itself: present, on-box, not a reparse point, an existing
+// directory. Returns an error result to short-circuit on, or nullopt when it is acceptable.
+std::optional<AppActionResult> validateOrganizeTarget(const QString& target) {
     if (target.isEmpty()) {
         return AppActionResult{false,
                                QStringLiteral("organize_directory requires a 'target_directory'"),
@@ -988,6 +986,14 @@ std::optional<AppActionResult> validateOrganizeInputs(const QString& target,
             QStringLiteral("target_directory is not an existing directory: %1").arg(target),
             {}};
     }
+    return std::nullopt;
+}
+
+// Validate the category mapping: non-empty, every category a safe subfolder NAME, and no
+// category folder that already exists on disk as a reparse point. Returns an error result to
+// short-circuit on, or nullopt when the mapping is acceptable.
+std::optional<AppActionResult> validateOrganizeCategories(
+    const QString& target, const QMap<QString, QStringList>& mapping) {
     if (mapping.isEmpty()) {
         return AppActionResult{false,
                                QStringLiteral(
@@ -1003,6 +1009,33 @@ std::optional<AppActionResult> validateOrganizeInputs(const QString& target,
                 .arg(unsafe),
             {}};
     }
+    // A safe category NAME (checked above) still names a directory that may ALREADY EXIST on disk
+    // as a pre-planted junction/symlink: target\<category> -> \\host\share or C:\elsewhere. The
+    // worker moves each categorized file into target\<category>\file, and create_directories()/
+    // rename() FOLLOW that reparse point, so a matching junction silently relocates every file in
+    // the category off the target tree -- and a UNC target performs the SMB/NTLM handshake this
+    // module exists to prevent. Screening only the target itself (above) does not cover it. So
+    // screen each resolved category directory the same way, before any move is planned. A category
+    // folder that does not yet exist is NOT a reparse point, so the common create-it-fresh case
+    // passes untouched; only an existing symlink/junction (or one under a reparse ancestor) is
+    // refused.
+    for (auto it = mapping.begin(); it != mapping.end(); ++it) {
+        const QString category_dir = target + QLatin1Char('/') + it.key();
+        if (pathReparseUnsafe(category_dir)) {
+            return AppActionResult{
+                false,
+                QStringLiteral("category folder must not be an existing symlink or junction (or "
+                               "under one): %1")
+                    .arg(category_dir),
+                {}};
+        }
+    }
+    return std::nullopt;
+}
+
+// Validate the collision strategy. Returns an error result to short-circuit on, or nullopt when
+// it is acceptable.
+std::optional<AppActionResult> validateOrganizeCollision(const QString& collision_strategy) {
     // "overwrite" would let the move silently replace an existing file in the target
     // category folder (data loss). A headless run only ever relocates or renames, so
     // the destructive-but-recoverable classification stays honest.
@@ -1014,6 +1047,23 @@ std::optional<AppActionResult> validateOrganizeInputs(const QString& target,
                            "is not allowed for a headless organize")
                 .arg(collision_strategy),
             {}};
+    }
+    return std::nullopt;
+}
+
+// Validate the target directory + collision strategy. Returns an error result to
+// short-circuit on, or nullopt when the inputs are acceptable.
+std::optional<AppActionResult> validateOrganizeInputs(const QString& target,
+                                                      const QString& collision_strategy,
+                                                      const QMap<QString, QStringList>& mapping) {
+    if (std::optional<AppActionResult> error = validateOrganizeTarget(target)) {
+        return error;
+    }
+    if (std::optional<AppActionResult> error = validateOrganizeCategories(target, mapping)) {
+        return error;
+    }
+    if (std::optional<AppActionResult> error = validateOrganizeCollision(collision_strategy)) {
+        return error;
     }
     return std::nullopt;
 }

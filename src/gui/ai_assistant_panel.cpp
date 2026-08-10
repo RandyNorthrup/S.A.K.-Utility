@@ -6032,7 +6032,12 @@ QString AiAssistantPanel::toolLoopCapSummary() const {
 bool AiAssistantPanel::authorizeCommandToolCall(const PendingToolCallContext& context,
                                                 const ai::AiCommandToolPlan& plan,
                                                 ai::OpenAIFunctionOutput* output) {
-    if (!plan.policy_decision.allowed) {
+    // A catastrophic command comes back allowed=false with catastrophic_change=true from the
+    // policy layer until a human confirms it -- that is the machine-enforced human gate, not
+    // a hard policy denial, so let it fall through to the mandatory catastrophic confirm in
+    // authorizeCommandForAccessMode (which prompts and, on approval, runs it). Any OTHER
+    // not-allowed decision is a real policy block that stops here.
+    if (!plan.policy_decision.allowed && !plan.policy_decision.catastrophic_change) {
         const QJsonObject blocked = ai::AiToolDispatcher::policyDeniedResult(plan.policy_request,
                                                                              plan.policy_decision);
         output->output = QString::fromUtf8(QJsonDocument(blocked).toJson(QJsonDocument::Compact));
@@ -10363,8 +10368,22 @@ bool AiAssistantPanel::prepareWorkflowOfflineTool(const ai::WorkflowPhase& phase
     return true;
 }
 
+namespace {
+
+// Decides whether a phase must pause for the confirmation gate: catastrophic always,
+// or an allowed phase flagged risky/admin/risky-change. Keyed off catastrophic_change
+// rather than `allowed` for the reason documented at the call site.
+bool workflowPhaseNeedsGate(const ai::AiToolPolicyDecision& decision,
+                            bool phase_risky,
+                            bool requires_admin) {
+    return decision.catastrophic_change ||
+           (decision.allowed && (phase_risky || requires_admin || decision.risky_change));
+}
+
+}  // namespace
+
 bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase,
-                                                  const WorkflowToolDispatchPlan& plan) {
+                                                  WorkflowToolDispatchPlan& plan) {
     const auto decision = ai::evaluateToolPolicy(plan.policy, plan.request);
     // A catastrophic/irreversible workflow phase (disk format, partition wipe,
     // boot-config edit, backup/shadow-copy deletion) must gate even if it is not
@@ -10372,10 +10391,13 @@ bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase
     // confirmation -- Unattended cannot auto-run it. This mirrors the command-tool
     // catastrophic gate in authorizeCommandForAccessMode (Wave 1b); previously a
     // catastrophic phase in Unattended got only a skippable restore-point offer.
+    //
+    // catastrophic_change is reported independently of allowed: evaluateToolPolicy now
+    // refuses to allow a catastrophic phase until plan.request.human_confirmed is set, so
+    // the gate keys off catastrophic_change (not allowed) to decide whether to prompt, and
+    // records the confirmation below so the dispatch re-evaluation permits the phase.
     const bool catastrophic = decision.catastrophic_change;
-    const bool needs_gate = decision.allowed && (plan.phase_risky || plan.request.requires_admin ||
-                                                 decision.risky_change || catastrophic);
-    if (!needs_gate) {
+    if (!workflowPhaseNeedsGate(decision, plan.phase_risky, plan.request.requires_admin)) {
         return true;
     }
     const QString label = phase.tool == QLatin1String("run_powershell")
@@ -10384,9 +10406,21 @@ bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase
     if (catastrophic || currentAccessMode() == AccessMode::AssistedFullAccess) {
         // confirmCommandWithUser also offers the restore point (re-offered for a
         // catastrophic phase even if one was already offered this session).
-        return confirmCommandWithUser(label, plan.request.command_preview, true, catastrophic);
+        if (!confirmCommandWithUser(label, plan.request.command_preview, true, catastrophic)) {
+            return false;
+        }
+        // Record the explicit human confirmation so the machine gate in evaluateToolPolicy
+        // (re-run inside dispatch) now permits this catastrophic phase. Only a catastrophic
+        // phase needs the token; a merely-risky phase is already allowed without it.
+        if (catastrophic) {
+            plan.request.human_confirmed = true;
+        }
+        return true;
     }
     if (currentAccessMode() == AccessMode::UnattendedFullAccess) {
+        // Reached only for a non-catastrophic risky phase (catastrophic took the confirm
+        // branch above): the restore-point offer is not a human confirmation and never
+        // sets human_confirmed, so a catastrophic phase can never run unconfirmed.
         return offerRestorePointIfNeeded(plan.request.command_preview, true, catastrophic);
     }
     return true;

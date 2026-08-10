@@ -117,6 +117,37 @@ int parseTargetDriveNumber(const QString& path) {
     return ok ? number : -1;
 }
 
+// Reads the physical-disk number the given OPEN device handle actually refers to
+// (IOCTL_STORAGE_GET_DEVICE_NUMBER); -1 on a query failure, a short reply, or a
+// non-disk device. Used to re-confirm, at write-handle-open time, that a
+// "\\.\PhysicalDriveN" path still opens disk N: FlashCoordinator validated this
+// earlier on a SEPARATE handle it has since closed, so a hot-plug or a DosDevice-
+// alias remap in the interim could otherwise redirect the raw write to a different
+// disk. Mirrors FlashCoordinator::queryHandleDriveNumber (same fail-closed guards).
+int handleStorageDriveNumber(HANDLE handle) {
+    STORAGE_DEVICE_NUMBER deviceNumber = {};
+    DWORD bytesReturned = 0;
+    if (!DeviceIoControl(handle,
+                         IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                         nullptr,
+                         0,
+                         &deviceNumber,
+                         sizeof(deviceNumber),
+                         &bytesReturned,
+                         nullptr)) {
+        return -1;
+    }
+    // A short "success" would leave the zero-initialized struct in place and let a
+    // zeroed DeviceNumber pass for a real answer. Require the whole record back.
+    if (bytesReturned < sizeof(deviceNumber)) {
+        return -1;
+    }
+    if (deviceNumber.DeviceType != FILE_DEVICE_DISK) {
+        return -1;
+    }
+    return static_cast<int>(deviceNumber.DeviceNumber);
+}
+
 // Defense-in-depth OS-disk self-guard: does physical drive @p driveNumber back the
 // running %WINDIR% volume? Returns true ONLY on a positive match. The authoritative
 // fail-closed guard is FlashCoordinator; this independent check just ensures a
@@ -390,6 +421,30 @@ bool FlashWorker::openDevice() {
         DWORD last_error = GetLastError();
         sak::logError(QString("CreateFile failed with error %1").arg(last_error).toStdString());
         return false;
+    }
+
+    // Re-assert device identity on THIS write handle. FlashCoordinator proved the
+    // target opened the disk its name claims, but on a SEPARATE handle it has since
+    // closed, and workers are queued and started well after that check -- between the
+    // two, a hot-plug or a DosDevice-alias remap could repoint "\\.\PhysicalDriveN" at
+    // a DIFFERENT disk, redirecting the raw write. For a physical-drive path, require
+    // the handle we are about to raw-write to really refer to disk N and fail closed on
+    // any mismatch or unreadable identity (verify, do not assume). A non-physical path
+    // names no disk number to check; refuseIfTargetIsOsDisk() fails that closed just
+    // after openDevice() returns, so its dedicated branch stays live.
+    const int parsedNumber = parseTargetDriveNumber(m_targetDevice);
+    if (parsedNumber >= 0) {
+        const int actualNumber = handleStorageDriveNumber(m_deviceHandle);
+        if (actualNumber != parsedNumber) {
+            sak::logError(QString("Refusing raw write to %1: the opened device is disk %2, not %3 "
+                                  "(hot-plug or alias remap after validation)")
+                              .arg(m_targetDevice)
+                              .arg(actualNumber)
+                              .arg(parsedNumber)
+                              .toStdString());
+            closeDevice();
+            return false;
+        }
     }
 
     if (!queryDeviceSectorSize()) {
