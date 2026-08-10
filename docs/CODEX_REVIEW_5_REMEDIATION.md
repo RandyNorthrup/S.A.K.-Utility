@@ -1781,9 +1781,16 @@ F-numbers; the adjudication and per-finding evidence are archived in the campaig
       aborts the commit with a blocker instead of writing a silently-truncated bitmap. Each guard
       is unreachable on a valid volume (IP metadata is front-packed below one block's bit
       capacity); the resize/spill round-trip tests pass unchanged.
-- [ ] Wave E2 / F16, F34, F36, F37, F38, F41, F43, F44 (spaceman slot / geometry / foreign
-      alloc + reclaim fail-closed): PENDING. Higher false-close risk (touches the same foreign /
-      resize paths as F25), so gated and hand-reviewed with extra care.
+- [x] Wave E2 / F16, F34, F36, F37, F38, F41, F43, F44 COMMITTED 7b9b74b. Fail-closed the
+      internal-pool slot arithmetic (nextIpSlot range-check), the foreign-overflow re-anchor
+      geometry, the ip_bm_size > 1 refusal (F36, matching E1's sink posture), the foreign IP
+      allocator's live-metadata exclusion, and the foreign reclaim path (bitmap-addr in-pool check,
+      per-chunk dedup, ci_free_count bound). F38/F41 (owningCibAddr / liveChunkBitmapAddr) stopped
+      the write path reading block 0 (the nx_superblock) as a chunk-info block, treating a chunk
+      with NO materialized owning cib as legitimately implicit-all-free rather than a failure. The
+      first F38 attempt over-rejected the generated multi-chunk container (its cib array carries
+      fewer live entries than chunkCount enumerates); the resize round-trip test caught it and it
+      was corrected before commit -- another false-close over-reach found only by a full build.
 - [ ] Wave F / F47, F51, F52, F53 (resize straddle / free-count underflow): PENDING.
 - [ ] Wave G / F1, F29, F55, F56 (preserve + create-or-replace data loss): PENDING.
 
