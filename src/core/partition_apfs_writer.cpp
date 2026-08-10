@@ -188,6 +188,13 @@ constexpr uint32_t kApfsObjectTypeChunkInfoBlock = kApfsObjStoragePhysical | 0x0
 // holds up to cibs_per_cab (507) cib block numbers.
 constexpr uint32_t kApfsObjectTypeCibAddrBlock = kApfsObjStoragePhysical | 0x00'00'00'06;
 constexpr uint32_t kApfsObjectSubtypeFsTree = 0x00'00'00'0E;
+constexpr uint32_t kApfsObjectSubtypeObjectMap = 0x00'00'00'0B;
+// o_type packs the object kind in its low 16 bits and the storage class (PHYSICAL /
+// EPHEMERAL / VIRTUAL) in its high bits. Authentication compares the low 16 bits so a real
+// Apple object carrying extra flag bits is not false-rejected; the storage class is checked
+// separately only where the on-disk encoding is fixed (physical trees, ephemeral free queues).
+constexpr uint32_t kApfsObjectTypeLowMask = 0x00'00'FF'FF;
+constexpr uint32_t kApfsObjectStorageMask = 0xC0'00'00'00;
 constexpr uint32_t kApfsMagicNxsb = 0x42'53'58'4E;
 constexpr uint32_t kApfsMagicApsb = 0x42'53'50'41;
 constexpr uint32_t kApfsContainerIncompatVersion2 = 0x00'00'00'02;
@@ -6342,7 +6349,11 @@ bool commitInPlaceCheckpoint(QIODevice* image,
 
 // Single-entry object-map B-tree leaf: the value paddr sits at the very end of
 // the value area (blockSize - info(40) - value(16) + paddr offset(8)).
-uint64_t readOmapSingleEntryPaddr(const QByteArray& omapTreeNode, uint32_t blockSize) {
+// [[maybe_unused]]: walkLiveFsChain's F13 fix stopped seeding chain->volSb from this guessed
+// single-entry read (it now selects the target volume by its real oid), leaving this reader
+// without a caller. Kept rather than deleted (owner authorization required to remove a helper).
+[[maybe_unused]] uint64_t readOmapSingleEntryPaddr(const QByteArray& omapTreeNode,
+                                                   uint32_t blockSize) {
     // Resolve the single record's value through the TOC value-offset rather than assuming a densely
     // packed final slot. A S.A.K./mkapfs omap packs entry 0 at voff == kApfsObjectMapValueBytes so
     // this stays byte-identical; a real macOS omap node offsets its slots (voff != 16), so the
@@ -6544,6 +6555,11 @@ QByteArray buildContainerOmapTreeBlock(uint32_t blockSize,
 }
 
 struct ApfsLiveFsChain {
+    // The REAL target volume object id = nx_fs_oid[0] of the newest superblock. The caller seeds
+    // it before walkLiveFsChain so the container-omap walk selects the target volume by its actual
+    // oid rather than the format constant (1026); the default keeps a S.A.K.-generated volume
+    // byte-identical (its nx_fs_oid[0] equals kApfsFormatVolumeOid).
+    uint64_t targetVolumeOid{kApfsFormatVolumeOid};
     uint64_t ctrOmapHdr{0};
     uint64_t ctrOmapTree{0};
     uint64_t volSb{0};
@@ -6598,6 +6614,99 @@ uint64_t liveVersionPaddr(const QVector<ApfsObjectMapEntry>& entries, uint64_t o
     return paddr;
 }
 
+// Fail-closed identity of a live-device object read. verifyObjectChecksum (Fletcher-64 over
+// the object) is universal and always safe; the type/subtype/oid comparisons only reject when a
+// non-zero expectation is supplied. The o_type is compared on its low 16 bits only, so a valid
+// Apple object carrying extra storage/flag bits is not false-rejected.
+struct ApfsObjectExpectation {
+    uint32_t type{0};      // full o_type constant; compared low-16 only; 0 skips the check
+    uint32_t subtype{0};   // o_subtype; 0 skips the check
+    uint64_t oid{0};       // o_oid; 0 skips the check
+    const char* name{""};  // object name woven into the fail-closed blocker
+};
+
+[[nodiscard]] bool authenticateApfsObject(const QByteArray& block,
+                                          const ApfsObjectExpectation& expect,
+                                          QStringList* blockers) {
+    if (!PartitionApfsWriter::verifyObjectChecksum(block)) {
+        blockers->append(QStringLiteral("APFS in-place commit: the %1 object checksum is invalid")
+                             .arg(QLatin1String(expect.name)));
+        return false;
+    }
+    if (expect.type != 0 && (le32(block, kApfsObjectTypeOffset) & kApfsObjectTypeLowMask) !=
+                                (expect.type & kApfsObjectTypeLowMask)) {
+        blockers->append(QStringLiteral("APFS in-place commit: the %1 object type is unexpected")
+                             .arg(QLatin1String(expect.name)));
+        return false;
+    }
+    if (expect.subtype != 0 && le32(block, kApfsObjectSubtypeOffset) != expect.subtype) {
+        blockers->append(QStringLiteral("APFS in-place commit: the %1 object subtype is unexpected")
+                             .arg(QLatin1String(expect.name)));
+        return false;
+    }
+    if (expect.oid != 0 && le64(block, kApfsObjectOidOffset) != expect.oid) {
+        blockers->append(QStringLiteral("APFS in-place commit: the %1 object id is unexpected")
+                             .arg(QLatin1String(expect.name)));
+        return false;
+    }
+    return true;
+}
+
+// Authenticate a B-tree node reached during a live tree walk: Fletcher checksum, the fixed
+// storage class (physical extent-ref tree / ephemeral free queue), the o_subtype, and that the
+// low-16 o_type is a B-tree ROOT (0x02) or non-root NODE (0x03). Chain pointers that always name
+// a tree ROOT use authenticateApfsObject with the exact BTREE_PHYSICAL type instead.
+[[nodiscard]] bool authenticateApfsBtreeNode(const QByteArray& block,
+                                             uint32_t storageClass,
+                                             uint32_t subtype,
+                                             const char* name,
+                                             QStringList* blockers) {
+    if (!PartitionApfsWriter::verifyObjectChecksum(block)) {
+        blockers->append(QStringLiteral("APFS in-place commit: the %1 checksum is invalid")
+                             .arg(QLatin1String(name)));
+        return false;
+    }
+    const uint32_t type = le32(block, kApfsObjectTypeOffset);
+    const uint32_t low = type & kApfsObjectTypeLowMask;
+    if ((type & kApfsObjectStorageMask) != storageClass ||
+        (low != kApfsObjectTypeBtree && low != kApfsObjectTypeBtreeNode)) {
+        blockers->append(QStringLiteral("APFS in-place commit: the %1 is not a valid B-tree node")
+                             .arg(QLatin1String(name)));
+        return false;
+    }
+    if (le32(block, kApfsObjectSubtypeOffset) != subtype) {
+        blockers->append(QStringLiteral("APFS in-place commit: the %1 has an unexpected subtype")
+                             .arg(QLatin1String(name)));
+        return false;
+    }
+    return true;
+}
+
+// Authenticate a volume superblock read live: Fletcher checksum, o_type == APFS (low 16 bits),
+// the APSB magic, and (when known) o_oid. Shared by walkLiveFsChain (which knows the target oid)
+// and the commit-time sealed-volume gate (which re-reads volSb without the oid).
+[[nodiscard]] bool authenticateApfsVolumeSuperblock(const QByteArray& volSb,
+                                                    uint64_t expectedOid,
+                                                    QStringList* blockers) {
+    if (!PartitionApfsWriter::verifyObjectChecksum(volSb)) {
+        blockers->append(
+            QStringLiteral("APFS in-place commit: the volume superblock checksum is invalid"));
+        return false;
+    }
+    if ((le32(volSb, kApfsObjectTypeOffset) & kApfsObjectTypeLowMask) != kApfsObjectTypeFs ||
+        le32(volSb, kApfsObjectMagicOffset) != kApfsMagicApsb) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit: the volume superblock is not an APFS volume (bad type/magic)"));
+        return false;
+    }
+    if (expectedOid != 0 && le64(volSb, kApfsObjectOidOffset) != expectedOid) {
+        blockers->append(
+            QStringLiteral("APFS in-place commit: the volume superblock object id is unexpected"));
+        return false;
+    }
+    return true;
+}
+
 // Resolve the live volume object-map tree from its already-read root node: fill
 // chain->volOmapTreeNodes with every node paddr and chain->rootTree with the LIVE fs-tree
 // root (oid 1028 at its largest xid -- a snapshotted volume's omap is versioned). Single-node
@@ -6626,7 +6735,12 @@ bool resolveLiveVolOmapTree(QIODevice* image,
         QVector<ApfsObjectMapEntry> leafEntries;
         for (const uint64_t paddr : chain->volOmapTreeNodes) {
             QByteArray node(geometry.blockSize, '\0');
-            if (!readApfsRepairBlock(image, geometry, paddr, &node, blockers)) {
+            if (!readApfsRepairBlock(image, geometry, paddr, &node, blockers) ||
+                !authenticateApfsBtreeNode(node,
+                                           kApfsObjStoragePhysical,
+                                           kApfsObjectSubtypeObjectMap,
+                                           "live volume omap tree node",
+                                           blockers)) {
                 return false;
             }
             if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
@@ -6645,48 +6759,94 @@ bool resolveLiveVolOmapTree(QIODevice* image,
     return true;
 }
 
-// Walk the container object map -> volume superblock -> volume object map ->
-// root file-system tree, recording the physical block of every node so the
-// commit can copy-on-write the whole chain.
-bool walkLiveFsChain(QIODevice* image,
-                     const ApfsRepairGeometry& geometry,
-                     uint64_t containerOmapHdr,
-                     ApfsLiveFsChain* chain,
-                     QStringList* blockers) {
+// Read + authenticate the container object map and select the target volume superblock by its
+// REAL oid (chain->targetVolumeOid = nx_fs_oid[0]). Fails closed if the container omap has no
+// record for that oid rather than adopting a guessed superblock. Every other volume's record is
+// preserved verbatim (A4/A8 multi-volume) so its superblock is not orphaned by the commit.
+bool resolveLiveContainerToVolSb(QIODevice* image,
+                                 const ApfsRepairGeometry& geometry,
+                                 uint64_t containerOmapHdr,
+                                 ApfsLiveFsChain* chain,
+                                 QStringList* blockers) {
     chain->ctrOmapHdr = containerOmapHdr;
     QByteArray node(geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(image, geometry, chain->ctrOmapHdr, &node, blockers)) {
+    if (!readApfsRepairBlock(image, geometry, chain->ctrOmapHdr, &node, blockers) ||
+        !authenticateApfsObject(
+            node, {kApfsObjectTypeObjectMap, 0, 0, "live container omap header"}, blockers)) {
         return false;
     }
     chain->ctrOmapTree = le64(node, kApfsOmapTreeOidOffset);
-    if (!readApfsRepairBlock(image, geometry, chain->ctrOmapTree, &node, blockers)) {
+    if (!readApfsRepairBlock(image, geometry, chain->ctrOmapTree, &node, blockers) ||
+        !authenticateApfsObject(node,
+                                {kApfsObjectTypeBtreePhysical,
+                                 kApfsObjectSubtypeObjectMap,
+                                 0,
+                                 "live container omap tree"},
+                                blockers)) {
         return false;
     }
-    chain->volSb = readOmapSingleEntryPaddr(node, geometry.blockSize);
-    // Multi-volume (A4/A8): COW targets kApfsFormatVolumeOid; record every other
-    // volume's container-omap entry so the commit re-publishes them unchanged.
+    chain->volSb = 0;
     chain->containerOmapOthers.clear();
     for (const ApfsObjectMapEntry& entry : readOmapLeafEntries(node, geometry.blockSize)) {
-        if (entry.oid == kApfsFormatVolumeOid) {
+        if (entry.oid == chain->targetVolumeOid) {
             chain->volSb = entry.physicalBlock;
         } else {
             chain->containerOmapOthers.append(entry);
         }
     }
-    if (!readApfsRepairBlock(image, geometry, chain->volSb, &node, blockers)) {
+    if (chain->volSb == 0) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit: the container object map has no record for the target "
+            "volume object id"));
+        return false;
+    }
+    return true;
+}
+
+// Read + authenticate the volume superblock (F12/F13/F33 identity), then its object map header
+// and tree root, recording every physical node so the commit can copy-on-write the whole chain.
+bool resolveLiveVolSbChain(QIODevice* image,
+                           const ApfsRepairGeometry& geometry,
+                           ApfsLiveFsChain* chain,
+                           QStringList* blockers) {
+    QByteArray node(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, chain->volSb, &node, blockers) ||
+        !authenticateApfsVolumeSuperblock(node, chain->targetVolumeOid, blockers)) {
         return false;
     }
     chain->volOmapHdr = le64(node, kApfsVolumeOmapOidOffset);
     chain->rootTreeOid = le64(node, kApfsVolumeRootTreeOidOffset);
     chain->extentRef = le64(node, kApfsVolumeExtentRefTreeOidOffset);
-    if (!readApfsRepairBlock(image, geometry, chain->volOmapHdr, &node, blockers)) {
+    if (!readApfsRepairBlock(image, geometry, chain->volOmapHdr, &node, blockers) ||
+        !authenticateApfsObject(
+            node, {kApfsObjectTypeObjectMap, 0, 0, "live volume omap header"}, blockers)) {
         return false;
     }
     chain->volOmapTree = le64(node, kApfsOmapTreeOidOffset);
-    if (!readApfsRepairBlock(image, geometry, chain->volOmapTree, &node, blockers)) {
+    if (!readApfsRepairBlock(image, geometry, chain->volOmapTree, &node, blockers) ||
+        !authenticateApfsObject(
+            node,
+            {kApfsObjectTypeBtreePhysical, kApfsObjectSubtypeObjectMap, 0, "live volume omap tree"},
+            blockers)) {
         return false;
     }
     return resolveLiveVolOmapTree(image, geometry, node, chain, blockers);
+}
+
+// Walk the container object map -> volume superblock -> volume object map ->
+// root file-system tree, recording the physical block of every node so the
+// commit can copy-on-write the whole chain. Every adopted link is authenticated
+// (Fletcher checksum + object type/subtype/oid) so a crafted or stale pointer
+// cannot substitute an arbitrary block into the live chain.
+bool walkLiveFsChain(QIODevice* image,
+                     const ApfsRepairGeometry& geometry,
+                     uint64_t containerOmapHdr,
+                     ApfsLiveFsChain* chain,
+                     QStringList* blockers) {
+    if (!resolveLiveContainerToVolSb(image, geometry, containerOmapHdr, chain, blockers)) {
+        return false;
+    }
+    return resolveLiveVolSbChain(image, geometry, chain, blockers);
 }
 
 // P1 (foreign-volume in-place): the REAL on-disk container layout parsed straight from a
@@ -6953,31 +7113,14 @@ QVector<uint64_t> extentRefIndexChildPaddrs(const QByteArray& node, uint32_t blo
     return true;
 }
 
-// Recursively visit the extent-ref tree rooted at `paddr`. The inverse of
-// buildExtentRefTreeNodes: a level-0 node is a leaf (collect its owners), a level>0 node is
-// an index whose values are child paddrs (recurse). Fail-closed on a zero child pointer or
-// past the depth budget.
-bool walkExtentRefTree(const ApfsExtentRefWalk& walk, uint64_t paddr, QStringList* blockers) {
-    if (paddr == 0) {
-        return true;
-    }
-    if (walk.depthBudget <= 0) {
-        blockers->append(QStringLiteral("APFS extent-ref tree exceeds the maximum walk depth"));
-        return false;
-    }
-    QByteArray node(walk.geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(walk.image, walk.geometry, paddr, &node, blockers)) {
-        return false;
-    }
-    if (!chargeTreeWalkNode(walk.visited, walk.nodeBudget, paddr, "extent-ref tree", blockers)) {
-        return false;
-    }
-    if (walk.nodes != nullptr) {
-        walk.nodes->append(paddr);
-    }
-    if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
-        return collectExtentRefLeafOwners(node, walk, blockers);
-    }
+bool walkExtentRefTree(const ApfsExtentRefWalk& walk, uint64_t paddr, QStringList* blockers);
+
+// Recurse into every child of an already-authenticated extent-ref INDEX node. Extracted from
+// walkExtentRefTree to keep that function within the complexity gate once per-node authentication
+// was added; behaviour-preserving.
+bool recurseExtentRefChildren(const QByteArray& node,
+                              const ApfsExtentRefWalk& walk,
+                              QStringList* blockers) {
     ApfsExtentRefWalk child = walk;
     child.depthBudget = walk.depthBudget - 1;
     for (const uint64_t childPaddr : extentRefIndexChildPaddrs(node, walk.geometry.blockSize)) {
@@ -6989,6 +7132,40 @@ bool walkExtentRefTree(const ApfsExtentRefWalk& walk, uint64_t paddr, QStringLis
         }
     }
     return true;
+}
+
+// Recursively visit the extent-ref tree rooted at `paddr`. The inverse of
+// buildExtentRefTreeNodes: a level-0 node is a leaf (collect its owners), a level>0 node is
+// an index whose values are child paddrs (recurse). Each node is authenticated (Fletcher
+// checksum + physical B-tree node of the blockref/extent-ref subtype) before it is trusted.
+// Fail-closed on a bad checksum/type, a zero child pointer, or past the depth budget.
+bool walkExtentRefTree(const ApfsExtentRefWalk& walk, uint64_t paddr, QStringList* blockers) {
+    if (paddr == 0) {
+        return true;
+    }
+    if (walk.depthBudget <= 0) {
+        blockers->append(QStringLiteral("APFS extent-ref tree exceeds the maximum walk depth"));
+        return false;
+    }
+    QByteArray node(walk.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(walk.image, walk.geometry, paddr, &node, blockers) ||
+        !authenticateApfsBtreeNode(node,
+                                   kApfsObjStoragePhysical,
+                                   kApfsObjectSubtypeExtentRef,
+                                   "live extent-ref tree node",
+                                   blockers)) {
+        return false;
+    }
+    if (!chargeTreeWalkNode(walk.visited, walk.nodeBudget, paddr, "extent-ref tree", blockers)) {
+        return false;
+    }
+    if (walk.nodes != nullptr) {
+        walk.nodes->append(paddr);
+    }
+    if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
+        return collectExtentRefLeafOwners(node, walk, blockers);
+    }
+    return recurseExtentRefChildren(node, walk, blockers);
 }
 
 // Map each owning file id to its data extent's start block by reading the extent-ref tree,
@@ -9311,6 +9488,15 @@ QVector<ApfsFreeQueueEntry> parseFreeQueueEntries(QIODevice* image,
     if (paddr == 0 || !readApfsRepairBlock(image, geometry, paddr, &node, blockers)) {
         return entries;
     }
+    // Authenticate the leaf before decoding it: an unchecked read would let a crafted or
+    // stale block be parsed as free-queue runs, reclaiming still-live blocks into the bitmap.
+    if (!authenticateApfsBtreeNode(node,
+                                   kApfsObjStorageEphemeral,
+                                   kApfsObjectSubtypeFreeQueue,
+                                   "live free-queue leaf",
+                                   blockers)) {
+        return {};
+    }
     // Free-queue run values pack backward from the value-area end: blockSize on a non-root
     // leaf (a multi-node tree's leaf) but blockSize - btree_info on the lone root-leaf. Using
     // the fixed blockSize - 40 for a non-root leaf reads its lengths 40 bytes off. Derive the
@@ -10105,6 +10291,56 @@ struct ApfsFsCommitContext {
     uint64_t ipBlockCount{0};  // sm_ip_block_count (IP-relative bit range)
 };
 
+// Fail closed unless `block` lies inside the live internal pool [ipBase, ipBase+ipBlockCount) -
+// the region that structurally holds the cib/cab/bitmap metadata. A degenerate pool geometry
+// (ipBlockCount == 0) is itself rejected. Guards a crafted ci_bitmap_addr / cib address that is a
+// valid in-container block but outside the pool.
+[[nodiscard]] bool requireInternalPoolBlock(uint64_t block,
+                                            uint64_t ipBase,
+                                            uint64_t ipBlockCount,
+                                            const char* name,
+                                            QStringList* blockers) {
+    if (ipBlockCount == 0 || block < ipBase || block - ipBase >= ipBlockCount) {
+        blockers->append(QStringLiteral("APFS in-place commit: the %1 is outside the internal pool")
+                             .arg(QLatin1String(name)));
+        return false;
+    }
+    return true;
+}
+
+// Resolve ctx->liveCib from the spaceman addr[0] (dereferencing the CAB tier) and read the live
+// cib into `cib`, authenticating the cab (SPACEMAN_CAB) and cib (CHUNK_INFO_BLOCK) objects so a
+// crafted/stale address cannot substitute an arbitrary block for the allocator's live cib.
+bool loadLiveCibBlock(ApfsFsCommitContext* ctx,
+                      uint64_t addr0,
+                      QByteArray* cib,
+                      QStringList* blockers) {
+    if (ctx->layout.cabCount > 0) {
+        // CAB tier: the spaceman's addr[0] is cab 0, not cib 0. Dereference its first
+        // entry (cab_cib_addr[0]) to the live cib 0 the rotation operates on; keep cab 0
+        // so the commit can re-emit it pointing at the rotated cib 0.
+        ctx->liveCab0 = addr0;
+        QByteArray cab(ctx->geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(ctx->image, ctx->geometry, addr0, &cab, blockers) ||
+            !authenticateApfsObject(
+                cab, {kApfsObjectTypeCibAddrBlock, 0, addr0, "live cib-address block"}, blockers)) {
+            return false;
+        }
+        ctx->liveCib = le64(cab, kApfsCibAddrEntriesOffset);
+    } else {
+        ctx->liveCib = addr0;
+    }
+    if (ctx->liveCib == 0 ||
+        !readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveCib, cib, blockers) ||
+        !authenticateApfsObject(
+            *cib,
+            {kApfsObjectTypeChunkInfoBlock, 0, ctx->liveCib, "live chunk-info block"},
+            blockers)) {
+        return false;
+    }
+    return true;
+}
+
 // Resolve the live chunk-info block (the spaceman cib_addr) and its bitmap. As
 // the crash-safe commit rotates the cib/bitmap through the IP slots, these are
 // no longer the fixed genesis 187/188 - allocation must read the live bitmap or
@@ -10116,31 +10352,22 @@ bool loadLiveAllocationSlot(ApfsFsCommitContext* ctx, QStringList* blockers) {
     }
     // Adopt the live spaceman's actual free-queue tree oids so the fs-commit finalize resolves the
     // real main free-queue on a foreign (real-Apple/mkapfs) volume. Byte-identical on generated
-    // volumes (their oids equal the format constants). Leaves the defaults on a spaceman-less read.
+    // volumes (their oids equal the format constants). Also capture the internal-pool geometry so
+    // the live cib/bitmap can be bounded to the pool that structurally holds them.
+    uint64_t ipBase = 0;
+    uint64_t ipBlockCount = 0;
     {
         const QByteArray sm =
             readLiveSpacemanObject(ctx->image, ctx->geometry, ctx->nxsb, blockers);
         if (!sm.isEmpty()) {
             ctx->chain.ipFqTreeOid = le64(sm, kApfsSpacemanFqIpCountOffset + 8);
             ctx->chain.mainFqTreeOid = le64(sm, kApfsSpacemanFqMainCountOffset + 8);
+            ipBase = le64(sm, kApfsSpacemanIpBaseOffset);
+            ipBlockCount = le64(sm, kApfsSpacemanIpBlockCountOffset);
         }
-    }
-    if (ctx->layout.cabCount > 0) {
-        // CAB tier: the spaceman's addr[0] is cab 0, not cib 0. Dereference its first
-        // entry (cab_cib_addr[0]) to the live cib 0 the rotation operates on; keep cab 0
-        // so the commit can re-emit it pointing at the rotated cib 0.
-        ctx->liveCab0 = addr0;
-        QByteArray cab(ctx->geometry.blockSize, '\0');
-        if (!readApfsRepairBlock(ctx->image, ctx->geometry, addr0, &cab, blockers)) {
-            return false;
-        }
-        ctx->liveCib = le64(cab, kApfsCibAddrEntriesOffset);
-    } else {
-        ctx->liveCib = addr0;
     }
     QByteArray cib(ctx->geometry.blockSize, '\0');
-    if (ctx->liveCib == 0 ||
-        !readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveCib, &cib, blockers)) {
+    if (!loadLiveCibBlock(ctx, addr0, &cib, blockers)) {
         return false;
     }
     ctx->liveBitmap = le64(cib, kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset);
@@ -10148,10 +10375,15 @@ bool loadLiveAllocationSlot(ApfsFsCommitContext* ctx, QStringList* blockers) {
     // chunk's ci_bitmap_addr elsewhere, the LIVE bitmap the allocator reads and rewrites must name
     // a real block: 0 would make the allocator parse block 0 (the nx_superblock, mostly zeros) as
     // the allocation bitmap and hand out live metadata as "free". Fail closed on 0 /
-    // out-of-container.
+    // out-of-container, then require both the cib and the bitmap to sit inside the internal pool.
     if (ctx->liveBitmap == 0 || ctx->liveBitmap >= ctx->geometry.blockCount) {
         blockers->append(
             QStringLiteral("APFS in-place commit: live chunk-0 bitmap address is invalid"));
+        return false;
+    }
+    if (!requireInternalPoolBlock(ctx->liveCib, ipBase, ipBlockCount, "live cib", blockers) ||
+        !requireInternalPoolBlock(
+            ctx->liveBitmap, ipBase, ipBlockCount, "live chunk-0 bitmap", blockers)) {
         return false;
     }
     // S4b: read the whole live cib-address array so a spill into a chunk cib k>0 owns can
@@ -10181,8 +10413,18 @@ bool appendSealedVolumeBlocker(QIODevice* image,
                                const ApfsRepairGeometry& geometry,
                                uint64_t volSbBlock,
                                QStringList* blockers) {
+    // Authenticate the block as a real APFS volume superblock (non-zero address, checksum, FS
+    // type, APSB magic) before trusting its incompatible-features flags: without this a mis-
+    // pointed data block whose 0x38 flag byte happens to clear the sealed/case bits would sail
+    // through as "safe to mutate" and its omap/root/extentref oids would be written back.
+    if (volSbBlock == 0) {
+        blockers->append(
+            QStringLiteral("APFS in-place commit: the volume superblock address is zero"));
+        return false;
+    }
     QByteArray volSb(geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(image, geometry, volSbBlock, &volSb, blockers)) {
+    if (!readApfsRepairBlock(image, geometry, volSbBlock, &volSb, blockers) ||
+        !authenticateApfsVolumeSuperblock(volSb, 0, blockers)) {
         return false;
     }
     const uint64_t incompatible = le64(volSb, kApfsVolumeIncompatibleFeaturesOffset);
@@ -10367,6 +10609,10 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
     // xp_desc ring while block 0 lags. COW must start from the newest checkpoint or it corrupts.
     ctx->nxsb = newestCheckpointSuperblock(image, ctx->geometry, ctx->nxsb, blockers);
     ctx->live = readLiveCheckpoint(ctx->nxsb);
+    // Drive the container-omap walk by the REAL target volume oid (nx_fs_oid[0]) so a container
+    // whose target volume does not use the format constant is still matched, and a container with
+    // no record for it fails closed instead of adopting a guessed superblock.
+    ctx->chain.targetVolumeOid = le64(ctx->nxsb, kApfsNxFsOidArrayOffset);
     if (!walkLiveFsChain(
             image, ctx->geometry, le64(ctx->nxsb, kApfsNxOmapOidOffset), &ctx->chain, blockers)) {
         return false;
@@ -13540,10 +13786,57 @@ struct ApfsSourceChunkState {
     uint32_t freeCount{0};
 };
 
+// Fail-closed validation of one source chunk-info ENTRY: its ci_addr must equal
+// chunkIndex*blocks_per_chunk and its ci_free_count must not exceed the chunk's block count.
+// (The cib BLOCK's checksum/type/oid are authenticated once per cib load by authenticateApfsObject
+// at the reader; this catches a corrupt entry inside an otherwise-valid cib.)
+[[nodiscard]] bool validateSourceChunkEntry(const QByteArray& cib,
+                                            qsizetype entry,
+                                            uint64_t chunkIndex,
+                                            QStringList* blockers) {
+    const uint64_t ciAddr = le64(cib, entry + kApfsChunkInfoEntryAddrOffset);
+    const uint32_t ciBlocks = le32(cib, entry + kApfsChunkInfoEntryBlockCountOffset);
+    const uint32_t ciFree = le32(cib, entry + kApfsChunkInfoEntryFreeCountOffset);
+    if (ciAddr != chunkIndex * kApfsSpacemanBlocksPerChunk || ciFree > ciBlocks) {
+        blockers->append(QStringLiteral("APFS resize: source chunk-info entry %1 is inconsistent")
+                             .arg(chunkIndex));
+        return false;
+    }
+    return true;
+}
+
+// Append one authenticated CAB's cib addresses to `out`, fail-closed on an out-of-range count or a
+// zero/off-device address. Extracted from readSourceCibAddrs to keep it within the complexity gate.
+bool appendCabCibAddrs(const QByteArray& cab,
+                       uint64_t cibCount,
+                       uint64_t blockCount,
+                       QVector<uint64_t>* out,
+                       QStringList* blockers) {
+    // cab_cib_count is a raw on-disk uint32. A CAB holds at most kApfsSpacemanCibsPerCab (507)
+    // cib addresses, and the total across CABs must be exactly cibCount. An unbounded count
+    // (e.g. 0xFFFFFFFF) would append ~4.3 billion entries before the size cross-check downstream
+    // runs, and entries past the block decode as address 0. Fail closed on an out-of-range count
+    // or a zero/off-device address.
+    const uint64_t inCab = le32(cab, kApfsCibAddrCibCountOffset);
+    if (inCab > kApfsSpacemanCibsPerCab || static_cast<uint64_t>(out->size()) + inCab > cibCount) {
+        blockers->append(QStringLiteral("APFS resize: a CAB's cib count is out of range"));
+        return false;
+    }
+    for (uint64_t i = 0; i < inCab; ++i) {
+        const uint64_t addr = le64(cab, kApfsCibAddrEntriesOffset + static_cast<qsizetype>(i) * 8);
+        if (addr == 0 || addr >= blockCount) {
+            blockers->append(QStringLiteral("APFS resize: a CAB cib address is out of range"));
+            return false;
+        }
+        out->append(addr);
+    }
+    return true;
+}
+
 // Resolve the source's full ordered cib-address list. Below the CAB tier the spaceman device array
 // lists cibs directly (single-CIB uses the already-resolved live cib 0). On the CAB tier (> 507
-// cibs) the device array lists cab blocks, so each cab is dereferenced to its cab_cib_addr[] run
-// and the results concatenated to the flat cib list the per-chunk reader indexes by k/126.
+// cibs) the device array lists cab blocks, so each cab is authenticated (SPACEMAN_CAB object) and
+// dereferenced to its cab_cib_addr[] run, concatenated to the flat cib list the reader indexes.
 QVector<uint64_t> readSourceCibAddrs(ApfsFsCommitContext* ctx,
                                      uint64_t cibCount,
                                      uint64_t cabCount,
@@ -13559,32 +13852,16 @@ QVector<uint64_t> readSourceCibAddrs(ApfsFsCommitContext* ctx,
     QVector<uint64_t> cibAddrs;
     QByteArray cab(ctx->geometry.blockSize, '\0');
     for (uint64_t c = 0; c < static_cast<uint64_t>(cabAddrs.size()); ++c) {
-        if (!readApfsRepairBlock(ctx->image,
-                                 ctx->geometry,
-                                 cabAddrs.at(static_cast<qsizetype>(c)),
-                                 &cab,
-                                 blockers)) {
+        const uint64_t cabAddr = cabAddrs.at(static_cast<qsizetype>(c));
+        if (!readApfsRepairBlock(ctx->image, ctx->geometry, cabAddr, &cab, blockers) ||
+            !authenticateApfsObject(
+                cab,
+                {kApfsObjectTypeCibAddrBlock, 0, cabAddr, "source cib-address block"},
+                blockers)) {
             return {};
         }
-        const uint64_t inCab = le32(cab, kApfsCibAddrCibCountOffset);
-        // cab_cib_count is a raw on-disk uint32. A CAB holds at most kApfsSpacemanCibsPerCab (507)
-        // cib addresses, and the total across CABs must be exactly cibCount. An unbounded count
-        // (e.g. 0xFFFFFFFF) would append ~4.3 billion entries (~34 GB) before the size cross-check
-        // downstream runs, and entries past the block decode as address 0 (block 0, the
-        // nx_superblock). Fail closed on an out-of-range count or a zero/off-device address.
-        if (inCab > kApfsSpacemanCibsPerCab ||
-            static_cast<uint64_t>(cibAddrs.size()) + inCab > cibCount) {
-            blockers->append(QStringLiteral("APFS resize: a CAB's cib count is out of range"));
+        if (!appendCabCibAddrs(cab, cibCount, ctx->geometry.blockCount, &cibAddrs, blockers)) {
             return {};
-        }
-        for (uint64_t i = 0; i < inCab; ++i) {
-            const uint64_t addr = le64(cab,
-                                       kApfsCibAddrEntriesOffset + static_cast<qsizetype>(i) * 8);
-            if (addr == 0 || addr >= ctx->geometry.blockCount) {
-                blockers->append(QStringLiteral("APFS resize: a CAB cib address is out of range"));
-                return {};
-            }
-            cibAddrs.append(addr);
         }
     }
     return cibAddrs;
@@ -13611,11 +13888,14 @@ bool readMultiChunkGrowSource(ApfsFsCommitContext* ctx,
     for (uint64_t k = 0; k < oldChunks; ++k) {
         const uint64_t ci = k / kApfsSpacemanChunksPerCib;
         if (ci != loadedCib) {
-            if (!readApfsRepairBlock(ctx->image,
-                                     ctx->geometry,
-                                     cibAddrs.at(static_cast<qsizetype>(ci)),
-                                     &cib,
-                                     blockers)) {
+            const uint64_t cibAddr = cibAddrs.at(static_cast<qsizetype>(ci));
+            // Authenticate the source cib once per load (checksum + CHUNK_INFO_BLOCK type +
+            // oid==self) so a corrupt/wrong block cannot supply this commit's chunk states.
+            if (!readApfsRepairBlock(ctx->image, ctx->geometry, cibAddr, &cib, blockers) ||
+                !authenticateApfsObject(
+                    cib,
+                    {kApfsObjectTypeChunkInfoBlock, 0, cibAddr, "source chunk-info block"},
+                    blockers)) {
                 return false;
             }
             loadedCib = ci;
@@ -13623,6 +13903,9 @@ bool readMultiChunkGrowSource(ApfsFsCommitContext* ctx,
         const qsizetype e = kApfsChunkInfoEntriesOffset +
                             static_cast<qsizetype>(k % kApfsSpacemanChunksPerCib) *
                                 kApfsChunkInfoEntryStride;
+        if (!validateSourceChunkEntry(cib, e, k, blockers)) {
+            return false;
+        }
         chunks->append({le64(cib, e + kApfsChunkInfoEntryBitmapAddrOffset),
                         le32(cib, e + kApfsChunkInfoEntryFreeCountOffset)});
     }
@@ -14710,6 +14993,28 @@ ApfsShrinkScope buildShrinkScope(ApfsFsCommitContext* ctx,
             ringBlocks};
 }
 
+// A source chunk whose ci_bitmap_addr is 0 is only legitimately "implicit all-free" when its
+// ci_free_count equals its block count. The shrink scan skips such a chunk (treats it as free), so
+// it must cross-check the free count here: a corrupt/zeroed ci_bitmap_addr word would otherwise
+// make the shrink silently discard a chunk full of live data. blockCount is the SOURCE (pre-resize)
+// device size, so the chunk's block count is min(blocks_per_chunk, blockCount - chunk_addr).
+[[nodiscard]] bool requireImplicitFreeChunk(const ApfsFsCommitContext* ctx,
+                                            uint64_t k,
+                                            uint32_t freeCount,
+                                            QStringList* blockers) {
+    const uint64_t chunkAddr = k * kApfsSpacemanBlocksPerChunk;
+    const uint64_t chunkBlocks = qMin<uint64_t>(kApfsSpacemanBlocksPerChunk,
+                                                ctx->geometry.blockCount - chunkAddr);
+    if (freeCount != chunkBlocks) {
+        blockers->append(
+            QStringLiteral(
+                "APFS resize-shrink: chunk %1 reports no allocation bitmap but is not fully free")
+                .arg(k));
+        return false;
+    }
+    return true;
+}
+
 bool validateShrinkScope(ApfsFsCommitContext* ctx,
                          uint64_t newBlockCount,
                          uint64_t oldChunks,
@@ -14723,8 +15028,14 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
     }
     const ApfsShrinkScope scope = buildShrinkScope(ctx, oldChunks, newBlockCount);
     for (uint64_t k = 1; k < oldChunks; ++k) {
-        const uint64_t bitmapAddr = src->at(static_cast<qsizetype>(k)).bitmapAddr;
-        if (bitmapAddr != 0 && !shrinkChunkInScope(ctx, k, bitmapAddr, scope, blockers)) {
+        const ApfsSourceChunkState& chunk = src->at(static_cast<qsizetype>(k));
+        if (chunk.bitmapAddr == 0) {
+            if (!requireImplicitFreeChunk(ctx, k, chunk.freeCount, blockers)) {
+                return false;
+            }
+            continue;
+        }
+        if (!shrinkChunkInScope(ctx, k, chunk.bitmapAddr, scope, blockers)) {
             return false;
         }
     }
@@ -24588,6 +24899,7 @@ int PartitionApfsWriter::readGeneratedVolumeOmapTreeLevel(const QString& image_p
         return -1;
     }
     ApfsLiveFsChain chain;
+    chain.targetVolumeOid = le64(nxsb, kApfsNxFsOidArrayOffset);
     if (!walkLiveFsChain(&image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, &blockers)) {
         return -1;
     }
@@ -24615,6 +24927,7 @@ int PartitionApfsWriter::readGeneratedExtentRefTreeLevel(const QString& image_pa
         return -1;
     }
     ApfsLiveFsChain chain;
+    chain.targetVolumeOid = le64(nxsb, kApfsNxFsOidArrayOffset);
     if (!walkLiveFsChain(&image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, &blockers)) {
         return -1;
     }
