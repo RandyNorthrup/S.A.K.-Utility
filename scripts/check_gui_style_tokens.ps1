@@ -58,7 +58,10 @@ try {
         throw "GUI style-token check found no .cpp/.h files under src/gui or include/sak in $repo; refusing to report success on an empty scan."
     }
 
-    $rawColorPattern = '#[0-9A-Fa-f]{3,8}\b|rgba?\s*\('
+    # A raw hex color, or a CSS/QColor rgb()/rgba() color CONSTRUCTION. The negative lookbehind
+    # excludes a METHOD or static call -- `color.rgba()` / `QColor::rgba()` reads an existing
+    # (already-themed) color's value (e.g. to fold into a pixmap cache key) and is not a raw token.
+    $rawColorPattern = '#[0-9A-Fa-f]{3,8}\b|(?<![.:])rgba?\s*\('
     $violations = New-Object System.Collections.Generic.List[string]
 
     foreach ($file in $files) {
