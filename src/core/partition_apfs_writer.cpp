@@ -5352,6 +5352,63 @@ QString ipBitmapRingGeometryError(const QByteArray& spaceman) {
     return QString();
 }
 
+// Rotate the internal-pool bitmap ring by one commit: allocate bmSize fresh slots off the
+// free-list head for the new ip-bitmap copy (marking each in-use) and release the old active
+// slots (the live bitmap copy) onto the free-list tail, then publish the new free-head/free-tail.
+// The slot indices are attacker-influenced on-disk state (the free-head/free-tail and each inline
+// bmAddr entry are raw le16 up to 0xFFFF); ipBitmapRingGeometryError has bounded ringOff +
+// bmCount*2 to the object, so any slot < bmCount keeps every setRing/writeLe16 in range. Fail
+// closed on any slot >= bmCount rather than wrap or clamp. Fills *newSlots with the freshly
+// allocated slots.
+bool rotateIpBitmapRingSlots(QByteArray* spaceman,
+                             QVector<uint16_t>* newSlots,
+                             QStringList* blockers) {
+    const uint64_t bmSize = le32(*spaceman, kApfsSpacemanIpBmSizeOffset);
+    const uint64_t bmCount = le32(*spaceman, kApfsSpacemanIpBmBlockCountOffset);
+    const qsizetype bmAddrOff = le32(*spaceman, kApfsSpacemanIpBitmapOffsetField);
+    const qsizetype ringOff = le32(*spaceman, kApfsSpacemanIpBmFreeNextOffsetField);
+    const auto ringNext = [&](uint16_t i) {
+        return le16(*spaceman, ringOff + i * 2);
+    };
+    const auto setRing = [&](uint16_t i, uint16_t v) {
+        writeLe16(spaceman, ringOff + i * 2, v);
+    };
+    const auto ringSlotOutOfRange = [&](uint16_t slot) {
+        if (slot >= bmCount) {
+            blockers->append(QStringLiteral(
+                "APFS commit: internal-pool bitmap ring slot index is out of range"));
+            return true;
+        }
+        return false;
+    };
+    uint16_t head = le16(*spaceman, kApfsSpacemanIpBmFreeHeadOffset);
+    for (uint64_t i = 0; i < bmSize; ++i) {
+        if (ringSlotOutOfRange(head)) {
+            return false;
+        }
+        newSlots->append(head);
+        const uint16_t next = ringNext(head);
+        setRing(head, kApfsSpacemanIpBmRingInUse);
+        head = next;
+    }
+    uint16_t tail = le16(*spaceman, kApfsSpacemanIpBmFreeTailOffset);
+    for (uint64_t i = 0; i < bmSize; ++i) {
+        if (ringSlotOutOfRange(tail)) {
+            return false;
+        }
+        const uint16_t oldActive = le16(*spaceman, bmAddrOff + static_cast<qsizetype>(i) * 2);
+        setRing(tail, oldActive);
+        tail = oldActive;
+    }
+    if (ringSlotOutOfRange(tail)) {
+        return false;
+    }
+    setRing(tail, kApfsSpacemanIpBmRingInUse);
+    writeLe16(spaceman, kApfsSpacemanIpBmFreeHeadOffset, head);
+    writeLe16(spaceman, kApfsSpacemanIpBmFreeTailOffset, tail);
+    return true;
+}
+
 bool advanceIpBitmapRing(QByteArray* spaceman,
                          const ApfsCheckpointCommitContext& ctx,
                          QStringList* blockers) {
@@ -5363,38 +5420,17 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
     // byte-identical; a foreign spaceman supplies its own array positions.
     const qsizetype xidOff = le32(*spaceman, kApfsSpacemanIpBmXidOffsetField);
     const qsizetype bmAddrOff = le32(*spaceman, kApfsSpacemanIpBitmapOffsetField);
-    const qsizetype ringOff = le32(*spaceman, kApfsSpacemanIpBmFreeNextOffsetField);
     if (const QString err = ipBitmapRingGeometryError(*spaceman); !err.isEmpty()) {
         blockers->append(err);
         return false;
     }
-    const auto ringNext = [&](uint16_t i) {
-        return le16(*spaceman, ringOff + i * 2);
-    };
-    const auto setRing = [&](uint16_t i, uint16_t v) {
-        writeLe16(spaceman, ringOff + i * 2, v);
-    };
-    // Allocate bmSize fresh slots off the free-list head for the new ip-bitmap copy,
-    // marking each in-use; the old active slots (the live bitmap copy) are released
-    // back onto the free-list tail. With bmSize == 1 this is byte-identical to the
-    // certified single-block ring advance.
+    // Allocate bmSize fresh slots off the free-list head and release the old active slots onto
+    // the tail (fail-closed on any out-of-range ring slot index). With bmSize == 1 this is
+    // byte-identical to the certified single-block ring advance.
     QVector<uint16_t> newSlots;
-    uint16_t head = le16(*spaceman, kApfsSpacemanIpBmFreeHeadOffset);
-    for (uint64_t i = 0; i < bmSize; ++i) {
-        newSlots.append(head);
-        const uint16_t next = ringNext(head);
-        setRing(head, kApfsSpacemanIpBmRingInUse);
-        head = next;
+    if (!rotateIpBitmapRingSlots(spaceman, &newSlots, blockers)) {
+        return false;
     }
-    uint16_t tail = le16(*spaceman, kApfsSpacemanIpBmFreeTailOffset);
-    for (uint64_t i = 0; i < bmSize; ++i) {
-        const uint16_t oldActive = le16(*spaceman, bmAddrOff + static_cast<qsizetype>(i) * 2);
-        setRing(tail, oldActive);
-        tail = oldActive;
-    }
-    setRing(tail, kApfsSpacemanIpBmRingInUse);
-    writeLe16(spaceman, kApfsSpacemanIpBmFreeHeadOffset, head);
-    writeLe16(spaceman, kApfsSpacemanIpBmFreeTailOffset, tail);
     for (uint64_t i = 0; i < bmSize; ++i) {
         writeLe16(spaceman, bmAddrOff + static_cast<qsizetype>(i) * 2, newSlots.at(i));
         writeLe64(spaceman, xidOff + static_cast<qsizetype>(i) * 8, ctx.newXid);
