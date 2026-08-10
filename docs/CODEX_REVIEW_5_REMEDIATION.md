@@ -1791,14 +1791,51 @@ F-numbers; the adjudication and per-finding evidence are archived in the campaig
       first F38 attempt over-rejected the generated multi-chunk container (its cib array carries
       fewer live entries than chunkCount enumerates); the resize round-trip test caught it and it
       was corrected before commit -- another false-close over-reach found only by a full build.
-- [ ] Wave F / F47, F51, F52, F53 (resize straddle / free-count underflow): PENDING.
-- [ ] Wave G / F1, F29, F55, F56 (preserve + create-or-replace data loss): PENDING.
+- [x] Wave F / F47, F51, F52, F53 COMMITTED dc98991. Fail-closed the multi-chunk grow (the
+      relocated pool must fit newBlockCount; ci_free_count cannot underflow) and the in-place shrink
+      (geometry read errors surfaced not discarded; pool/ring classified by full extent not start
+      address; a straddling range fails closed). F51 carries a surviving pool chunk that also holds
+      user data through buildDataShrinkAllocator (real bitmap forward) instead of a pool-only rebuild
+      that froze the data -- and an earlier fail-closed attempt at F51 was itself a false-close (it
+      rejected that legitimate shrink), caught by the round-trip test and corrected before commit.
+      That is THREE resize/foreign over-reaches (F25, F38, F51) the gate caught in this campaign.
+- [x] Wave G / F1, F29, F55, F56 COMMITTED 49c092a. F1 preserves a foreign FILE inode's real
+      owner/group/mode/four-timestamps/bsd_flags (recovered from the source inode and written
+      verbatim) instead of republishing it as root:wheel 0644 with fabricated times -- implemented
+      as the real feature, byte-identical on the generated path via a recovered.valid=false
+      sentinel. F29 fails closed on a preserved plain file that would synthesize a block-0 extent.
+      F55/F56 preflight the create-or-replace stream source (open + size) immediately before the
+      destructive delete leg, so a missing/short/zero-size source no longer deletes the existing
+      file and never lands the replacement.
 
-Known residual flagged, not silently dropped: the IP-bitmap sink still materializes only block 0
-of a multi-block ip_bm_size layout. Wave E1 makes that REFUSE (fail closed) rather than silently
-truncate, but a genuine multi-block distribution (a > ~512 TiB container with > 32768 packed
-cib/cab metadata slots) is the still-open completeness work; it is unreachable by any current
-test or certified tier (the 16 TiB CAB-tier cert front-packs ~1038 indices, far below 32768).
+CAMPAIGN COMPLETE: of the 56 re-adjudicated findings, 18 were already fixed by prior campaign
+commits and 37 are fixed across waves A-G (3de3d61 / a44d82a / 73198b7 / a875d9b / 4e76c6c /
+7b9b74b / dc98991 / 49c092a), each gated at full Release ctest 225/225. F25 is the single
+deferred-with-rationale item (its first implementation false-closed legitimate pool relocation).
+Zero false positives across all 56 -- consistent with the "Codex findings are accurate" rule.
+
+Three fail-closed OVER-REACHES were introduced and then caught by the generated-container
+round-trip tests before shipping (F25 free-queue reserved-region, F38 owningCibAddr short cib
+array, F51 surviving-pool-with-data): the recurring lesson that a verifier CONFIRMED can still be
+a real-code over-reach only a full build+ctest reveals.
+
+Residuals flagged, not silently dropped (see the campaign scratchpad apfs_deferred_residuals.md):
+1. F25 (free-queue reserved-region) -- deferred; needs post-commit geometry or read/adopt-path-only
+   application so it does not reject legitimately-relocated pool blocks.
+2. The IP-bitmap sink still materializes only block 0 of a multi-block ip_bm_size layout. Waves
+   E1/E2 make that REFUSE (fail closed) rather than silently truncate, but a genuine multi-block
+   distribution (a > ~512 TiB container with > 32768 packed cib/cab metadata slots) is the still-open
+   completeness work; unreachable by any current test or certified tier (the 16 TiB CAB-tier cert
+   front-packs ~1038 indices, far below 32768).
+3. F1 extensions -- directory inodes and the A2 byte-range patch path still emit generated metadata
+   (F1 scoped to the file payload); the F55/F56 preflight-to-reopen TOCTOU window is closed only by
+   the writer's own "ended early" after the delete (holding the handle open is the larger fix).
+
+LIVE RE-CERT (recommended final validation): the 225-test gate exercises only S.A.K.-GENERATED
+containers, while every wave here hardens the REAL-Apple-volume paths (object authentication, tree
+bounds, free-queue, spaceman/foreign alloc, resize, inode-metadata preservation). A re-cert against
+a real Apple volume on the macOS VM / physical MacBook would confirm no new fail-closed guard
+false-rejects genuine Apple metadata -- the exact over-reach class the unit gate cannot catch.
 
 ### Fix wave 1 - browser control (COMMITTED b2d3e96, 2026-08-05)
 
