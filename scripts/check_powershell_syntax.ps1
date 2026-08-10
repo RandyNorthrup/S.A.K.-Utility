@@ -17,6 +17,12 @@ Set-Location $ProjectRoot
 
 if (-not $Files -or $Files.Count -eq 0) {
     $Files = git ls-files "*.ps1"
+    if ($LASTEXITCODE -ne 0) {
+        throw "git ls-files failed (exit $LASTEXITCODE); cannot enumerate PowerShell scripts."
+    }
+    if (-not $Files -or @($Files).Count -eq 0) {
+        throw "git ls-files returned no .ps1 files; refusing to pass without scanning anything."
+    }
 }
 
 $failures = @()

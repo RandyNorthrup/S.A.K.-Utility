@@ -26,6 +26,14 @@ namespace sak {
 namespace {
 
 #ifdef _WIN32
+/// @brief Guard against silent 32-bit truncation of a length. BCrypt's one-shot length
+/// parameters are ULONG (32-bit); a QByteArray larger than that would narrow to its low 32
+/// bits, so the cipher/HMAC would cover only a prefix while still reporting success. Any
+/// over-size input must fail closed instead. 0xFFFFFFFF == ULONG_MAX.
+bool bcrypt_length_ok(qsizetype n) {
+    return static_cast<quint64>(n) <= 0xFF'FF'FF'FFULL;
+}
+
 /// @brief Generate cryptographic random bytes
 QByteArray generate_random_bytes(int size) {
     if (size <= 0) {
@@ -65,6 +73,12 @@ QByteArray derive_key(const QString& password,
     }
 
     QByteArray pwd_bytes = password.toUtf8();
+    if (!bcrypt_length_ok(pwd_bytes.size()) || !bcrypt_length_ok(salt.size())) {
+        sak::logError("BCrypt: password or salt length exceeds the 32-bit BCrypt limit");
+        sak::secure_wiper::wipe(pwd_bytes.data(), pwd_bytes.size());
+        BCryptCloseAlgorithmProvider(hAlg, 0);
+        return {};
+    }
     QByteArray derived_key(key_length, 0);
 
     NTSTATUS status =
@@ -139,6 +153,10 @@ void destroy_aes_key(BCRYPT_ALG_HANDLE hAlg, BCRYPT_KEY_HANDLE hKey) {
 
 /// @brief Compute an HMAC-SHA256 authentication tag over a message
 QByteArray compute_hmac(const QByteArray& mac_key, const QByteArray& message) {
+    if (!bcrypt_length_ok(mac_key.size()) || !bcrypt_length_ok(message.size())) {
+        sak::logError("BCrypt: HMAC input exceeds the 32-bit BCrypt length limit");
+        return {};
+    }
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     if (BCryptOpenAlgorithmProvider(
             &hAlg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) {
@@ -208,6 +226,10 @@ public:
         if (!m_hash || data.isEmpty()) {
             return m_hash != nullptr;
         }
+        if (!bcrypt_length_ok(data.size())) {
+            sak::logError("BCrypt: streaming HMAC update exceeds the 32-bit BCrypt length limit");
+            return false;
+        }
         if (BCryptHashData(m_hash,
                            reinterpret_cast<PUCHAR>(const_cast<char*>(data.data())),
                            static_cast<ULONG>(data.size()),
@@ -256,6 +278,10 @@ bool aes_encrypt_blocks(BCRYPT_KEY_HANDLE key,
                         QByteArray& iv,
                         const QByteArray& in,
                         QByteArray& out) {
+    if (!bcrypt_length_ok(in.size())) {
+        sak::logError("BCrypt: streaming AES block exceeds the 32-bit BCrypt length limit");
+        return false;
+    }
     out.resize(in.size());
     DWORD written = 0;
     if (BCryptEncrypt(key,
@@ -281,6 +307,10 @@ bool aes_decrypt_blocks(BCRYPT_KEY_HANDLE key,
                         QByteArray& iv,
                         const QByteArray& in,
                         QByteArray& out) {
+    if (!bcrypt_length_ok(in.size())) {
+        sak::logError("BCrypt: streaming AES block exceeds the 32-bit BCrypt length limit");
+        return false;
+    }
     out.resize(in.size());
     DWORD written = 0;
     if (BCryptDecrypt(key,
@@ -315,10 +345,18 @@ bool constant_time_equal(const QByteArray& a, const QByteArray& b) {
 /// @brief Reject a hostile or default-broken EncryptionParams before any crypto runs: a
 /// non-AES key size, an IV that is not one AES block, a too-small salt, or a non-positive
 /// iteration count would otherwise derive weak keys or drive BCrypt into undefined behavior.
+// Upper bounds so a hostile or defaulted-broken EncryptionParams cannot drive a
+// multi-gigabyte salt allocation (and the salt_size + iv_size int overflow that follows) or
+// an attacker-chosen PBKDF2 iteration count that pins the CPU. The defaults (salt 32,
+// iterations 100000) sit far inside these.
+constexpr int kMaxEncryptionSaltBytes = 1024;
+constexpr int kMaxPbkdf2Iterations = 100'000'000;
+
 bool valid_encryption_params(const EncryptionParams& params) {
     const bool aes_key = params.key_size == 16 || params.key_size == 24 || params.key_size == 32;
     return aes_key && params.iv_size == kAesBlockBytes && params.salt_size >= 8 &&
-           params.iterations > 0;
+           params.salt_size <= kMaxEncryptionSaltBytes && params.iterations > 0 &&
+           params.iterations <= kMaxPbkdf2Iterations;
 }
 
 /// @brief Derive separate AES and HMAC keys from a password (encrypt-then-MAC)
@@ -343,6 +381,10 @@ QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const
     // An empty plaintext is valid: CBC block padding turns it into one full padding block, which
     // decrypts back to empty. Only a missing key is a hard error here.
     if (key.isEmpty()) {
+        return {};
+    }
+    if (!bcrypt_length_ok(plaintext.size())) {
+        sak::logError("BCrypt: plaintext exceeds the 32-bit BCrypt length limit");
         return {};
     }
     BCRYPT_ALG_HANDLE hAlg = nullptr;
@@ -402,6 +444,10 @@ std::optional<QByteArray> aes_decrypt(const QByteArray& ciphertext,
                                       const QByteArray& key,
                                       const QByteArray& iv) {
     if (ciphertext.isEmpty() || key.isEmpty()) {
+        return std::nullopt;
+    }
+    if (!bcrypt_length_ok(ciphertext.size())) {
+        sak::logError("BCrypt: ciphertext exceeds the 32-bit BCrypt length limit");
         return std::nullopt;
     }
     BCRYPT_ALG_HANDLE hAlg = nullptr;
@@ -520,14 +566,16 @@ auto decryptData(const QByteArray& encrypted_data,
         return std::unexpected(error_code::invalid_argument);
     }
 
-    int header_size = params.salt_size + params.iv_size;
+    // qsizetype throughout: params are bounded, but encrypted_data is untrusted and can
+    // exceed 2 GiB, where a narrowing to int would slice the message at the wrong offset.
+    const qsizetype header_size = static_cast<qsizetype>(params.salt_size) + params.iv_size;
     if (encrypted_data.size() < header_size + kEncryptionMacBytes) {
         logError("Encrypted data too small - corrupted or invalid");
         return std::unexpected(error_code::invalid_format);
     }
 
     // Split off the trailing HMAC tag; the message it authenticates is [salt][IV][ciphertext].
-    int message_size = encrypted_data.size() - kEncryptionMacBytes;
+    const qsizetype message_size = encrypted_data.size() - kEncryptionMacBytes;
     QByteArray message = encrypted_data.left(message_size);
     QByteArray stored_tag = encrypted_data.mid(message_size);
 

@@ -217,7 +217,10 @@ function Assert-EvidenceValueRequirement {
 
     if ($null -ne $Requirement.PSObject.Properties["allowed_values"]) {
         $allowedValues = @($Requirement.allowed_values | ForEach-Object { $_.ToString() })
-        $matched = @($actualValues | Where-Object { $allowedValues -contains $_ }).Count -gt 0
+        # Require EVERY actual value to be allowed (and at least one present). Matching only one
+        # member would let an array smuggle disallowed values in alongside a single valid one.
+        $disallowed = @($actualValues | Where-Object { $allowedValues -notcontains $_ })
+        $matched = ($actualValues.Count -gt 0) -and ($disallowed.Count -eq 0)
         Assert-Condition -Condition $matched -Message "$MessagePrefix evidence value for $Key must be one of: $($allowedValues -join ', ')"
     }
 
@@ -360,7 +363,9 @@ function Assert-ReportMetadata {
         [object]$Report
     )
 
-    Assert-Condition -Condition ($Report.schema_version -eq 1) -Message "Unexpected certification report schema_version: $($Report.schema_version)"
+    # Reject a string-typed schema_version: PowerShell would coerce the string "1" equal to the
+    # integer 1. A genuine report emits a JSON number, which parses as a numeric type here.
+    Assert-Condition -Condition (($Report.schema_version -isnot [string]) -and ($Report.schema_version -eq 1)) -Message "Unexpected certification report schema_version: $($Report.schema_version)"
     Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($Report.status)) -Message "Certification report missing status"
     Assert-IsoTimestamp -Value $Report.started_utc -FieldName "started_utc"
     Assert-IsoTimestamp -Value $Report.completed_utc -FieldName "completed_utc"
@@ -409,7 +414,9 @@ function Assert-VhdEvidence {
         [object[]]$Results
     )
 
-    Assert-Condition -Condition ([bool]$Report.run_vhd_data_disk_matrix) -Message "VHD data-disk matrix was not requested"
+    # Require a real Boolean true, not a [bool] coercion: [bool] on any non-empty string
+    # (including "false" or "0") is $true, which would satisfy this strict assertion falsely.
+    Assert-Condition -Condition (($Report.run_vhd_data_disk_matrix -is [bool]) -and $Report.run_vhd_data_disk_matrix) -Message "VHD data-disk matrix was not requested"
     $notPassed = @($Results | Where-Object { $_.id -like "vhd.*" -and $_.status -ne "Passed" })
     if ($notPassed.Count -gt 0) {
         $details = ($notPassed | ForEach-Object { "$($_.id)=$($_.status)" }) -join ", "
@@ -439,6 +446,14 @@ function Assert-ExternalEvidenceManifest {
     $validExternalStatuses = @("Passed", "Pending", "Failed", "Blocked", "NotRun")
     foreach ($result in $results) {
         Assert-Condition -Condition ($validExternalStatuses -contains $result.status) -Message "Unexpected external evidence status for $($result.id): $($result.status)"
+    }
+
+    # A gate that was attempted and Failed must never verify as passed -- even without the strict
+    # flag. Unlike Pending/NotRun/Blocked (not yet attempted), Failed is a definitive failure.
+    $failedExternal = @($results | Where-Object { $_.status -eq "Failed" })
+    if ($failedExternal.Count -gt 0) {
+        $ids = ($failedExternal | ForEach-Object { $_.id }) -join ", "
+        throw "External evidence manifest has failed gate(s): $ids"
     }
 
     foreach ($id in $ExpectedExternalGateIds) {
@@ -479,7 +494,9 @@ function Assert-ExternalEvidenceReference {
 
         $exists = $false
         foreach ($candidate in $candidatePaths) {
-            if (Test-Path -LiteralPath $candidate) {
+            # -PathType Leaf: an evidence artifact must be a file, not a directory that merely
+            # happens to exist at the referenced path.
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
                 $exists = $true
                 break
             }
@@ -490,7 +507,8 @@ function Assert-ExternalEvidenceReference {
     if ($hasUrl) {
         $uri = $null
         $validUri = [System.Uri]::TryCreate($Result.evidence_url, [System.UriKind]::Absolute, [ref]$uri)
-        Assert-Condition -Condition ($validUri -and ($uri.Scheme -eq "https" -or $uri.Scheme -eq "http")) -Message "External evidence URL is invalid for $($Result.id): $($Result.evidence_url)"
+        # Require https: an insecure http evidence URL can be silently substituted in transit.
+        Assert-Condition -Condition ($validUri -and ($uri.Scheme -eq "https")) -Message "External evidence URL is invalid for $($Result.id): $($Result.evidence_url)"
     }
 }
 
@@ -507,6 +525,10 @@ try {
 
     $validReportStatuses = @("Passed", "Partial", "NotRun", "Incomplete", "Failed")
     Assert-Condition -Condition ($validReportStatuses -contains $report.status) -Message "Unexpected certification report status: $($report.status)"
+    # A report that self-declares failure must never verify as passed. A genuine failed run is
+    # already caught by Assert-NoFailedScenarios via its Failed result; this also closes the
+    # forged case where the top-level status is Failed but every result was edited to pass.
+    Assert-Condition -Condition ($report.status -ne "Failed") -Message "Certification report status is Failed"
 
     $results = @($report.results)
     Assert-Condition -Condition ($results.Count -gt 0) -Message "Certification report has no results"

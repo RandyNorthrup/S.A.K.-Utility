@@ -95,6 +95,10 @@ WifiProfileInfo readOneProfile(
         detail_ok = true;
     } else {
         detail_ok = false;
+        // The detail read failed: this record carries no security type and no re-importable
+        // XML. Do NOT leave it flagged selected, so a failed/empty profile is never backed up
+        // or exported as if it were a real one (fail closed on the incomplete record).
+        info.selected = false;
         sak::logWarning("WlanGetProfile failed for '{}'", info.profile_name.toStdString());
     }
     if (xml != nullptr) {
@@ -103,10 +107,10 @@ WifiProfileInfo readOneProfile(
     return info;
 }
 
-/// Append every profile on one WLAN interface. A per-interface list failure is skipped (other
-/// adapters still enumerate); each profile that fails its detail read increments @p
-/// detail_failures.
-void appendInterfaceProfiles(HANDLE handle,
+/// Append every profile on one WLAN interface. Returns false when the interface's profile list
+/// could not be read (its profiles are omitted, so the overall enumeration is incomplete); each
+/// profile that fails its detail read increments @p detail_failures.
+bool appendInterfaceProfiles(HANDLE handle,
                              const GUID& guid,
                              bool include_xml,
                              QVector<WifiProfileInfo>& out,
@@ -114,7 +118,11 @@ void appendInterfaceProfiles(HANDLE handle,
     WLAN_PROFILE_INFO_LIST* profile_list = nullptr;
     if (WlanGetProfileList(handle, &guid, nullptr, &profile_list) != ERROR_SUCCESS ||
         profile_list == nullptr) {
-        return;
+        // The profile list for this interface could not be read, so its profiles are omitted
+        // entirely. Report the incomplete enumeration (the caller folds this into scan_ok)
+        // instead of silently returning a partial result as a complete scan.
+        sak::logWarning("WlanGetProfileList failed for a WLAN interface -- its profiles omitted");
+        return false;
     }
     for (DWORD p = 0; p < profile_list->dwNumberOfItems; ++p) {
         bool detail_ok = false;
@@ -125,6 +133,28 @@ void appendInterfaceProfiles(HANDLE handle,
         }
     }
     WlanFreeMemory(profile_list);
+    return true;
+}
+
+/// Settle the final scan outcome once every interface has been walked: report completeness
+/// through @p scan_ok and tell the logger how many profiles could not be fully read.
+void reportScanOutcome(const WifiScanLogger& logger,
+                       bool* scan_ok,
+                       bool enumeration_complete,
+                       int detail_failures,
+                       const QVector<WifiProfileInfo>& profiles) {
+    if (scan_ok != nullptr) {
+        // Fail closed: scan_ok means "complete + authoritative", not merely "the top-level
+        // enumeration ran". A per-profile WlanGetProfile failure yields a profile with no
+        // re-importable XML, so a backup that trusted scan_ok would silently be incomplete.
+        // Report incompleteness through the same status channel the caller already checks.
+        *scan_ok = enumeration_complete && (detail_failures == 0);
+    }
+    if (detail_failures > 0 && logger) {
+        logger(QStringLiteral("%1 of %2 profiles could not be fully read")
+                   .arg(detail_failures)
+                   .arg(profiles.size()));
+    }
 }
 
 }  // namespace
@@ -159,26 +189,21 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
 
     QVector<WifiProfileInfo> profiles;
     int detail_failures = 0;
+    bool enumeration_complete = true;
     for (DWORD i = 0; i < interfaces->dwNumberOfItems; ++i) {
-        appendInterfaceProfiles(handle,
-                                interfaces->InterfaceInfo[i].InterfaceGuid,
-                                include_xml,
-                                profiles,
-                                detail_failures);
+        if (!appendInterfaceProfiles(handle,
+                                     interfaces->InterfaceInfo[i].InterfaceGuid,
+                                     include_xml,
+                                     profiles,
+                                     detail_failures)) {
+            enumeration_complete = false;
+        }
     }
 
     WlanFreeMemory(interfaces);
     WlanCloseHandle(handle, nullptr);
 
-    if (scan_ok != nullptr) {
-        *scan_ok =
-            true;  // enumeration mechanism worked (individual detail failures reported below)
-    }
-    if (detail_failures > 0 && logger) {
-        logger(QStringLiteral("%1 of %2 profiles could not be fully read")
-                   .arg(detail_failures)
-                   .arg(profiles.size()));
-    }
+    reportScanOutcome(logger, scan_ok, enumeration_complete, detail_failures, profiles);
     return profiles;
 }
 

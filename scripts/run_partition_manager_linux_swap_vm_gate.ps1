@@ -16,7 +16,7 @@ param(
     [string]$ProjectRoot = "\\vboxsvr\sakrepo",
     [string]$EvidenceRoot = "\\vboxsvr\sakrepo\artifacts\partition-manager-certification\vm-lab\external-evidence\external.linux-swap-format-vm",
     [string]$ReportPath = "",
-    [int]$DiskNumber = 1,
+    [int]$DiskNumber = 0,
     [uint64]$InitialSizeBytes = 128MB,
     [ValidateSet(4096, 8192, 16384, 65536)] [int]$PageSizeBytes = 4096,
     [string]$Label = "SAKSWAPVM",
@@ -78,12 +78,17 @@ function Invoke-NativeCommand {
     $started = Get-Date
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $exitCode = $null
+    $global:LASTEXITCODE = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        throw "$Name did not launch or returned no exit code from '$FilePath'."
     }
     $record = [pscustomobject]@{
         name = $Name
@@ -313,6 +318,10 @@ function Test-LinuxSwapHeader {
     $signature = [System.Text.Encoding]::ASCII.GetString($Header, [int]$Expected.page_size_bytes - 10, 10)
     $version = Read-UInt32Le -Buffer $Header -Offset 1024
     $lastPage = Read-UInt32Le -Buffer $Header -Offset 1028
+    $badPages = Read-UInt32Le -Buffer $Header -Offset 1032
+    $uuidBytes = New-Object byte[] 16
+    [Array]::Copy($Header, 1036, $uuidBytes, 0, 16)
+    $uuid = ConvertTo-UuidText -Bytes $uuidBytes
     $label = [System.Text.Encoding]::ASCII.GetString($Header, 1052, 16).TrimEnd([char]0)
     if ($signature -ne "SWAPSPACE2") {
         throw "Linux swap signature verification failed."
@@ -323,6 +332,12 @@ function Test-LinuxSwapHeader {
     if ([string]$lastPage -ne [string]$Expected.last_page) {
         throw "Linux swap last-page verification failed."
     }
+    if ($badPages -ne 0) {
+        throw "Linux swap bad-page count verification failed."
+    }
+    if ($uuid -ne [string]$Expected.uuid) {
+        throw "Linux swap UUID verification failed."
+    }
     if ($label -ne [string]$Expected.label) {
         throw "Linux swap label verification failed."
     }
@@ -330,6 +345,8 @@ function Test-LinuxSwapHeader {
         signature = $signature
         version = [uint32]$version
         last_page = [string]$lastPage
+        bad_pages = [string]$badPages
+        uuid = $uuid
         label = $label
     }
 }
@@ -339,7 +356,7 @@ $started = (Get-Date).ToUniversalTime().ToString("o")
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
     $ReportPath = Join-Path $EvidenceRoot "report.json"
 }
-$runRoot = Join-Path $EvidenceRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+$runRoot = Join-Path $EvidenceRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Split-Path -Parent $ReportPath) -Force | Out-Null
 
@@ -354,12 +371,15 @@ $probePath = Join-Path $runRoot "linux-swap-raw-probe-report.json"
 $status = "Failed"
 $errorText = ""
 $transcriptStarted = $false
+$transcriptError = ""
+$destructiveStarted = $false
 try {
     Start-Transcript -Path (Join-Path $runRoot "linux-swap-vm-gate.log") -Force | Out-Null
     $transcriptStarted = $true
 }
 catch {
     $transcriptStarted = $false
+    $transcriptError = ConvertTo-PlainText -Value @($_)
 }
 
 try {
@@ -369,6 +389,9 @@ try {
     if (-not $Force) {
         throw "Pass -Force after confirming DiskNumber is a disposable VM data disk."
     }
+    if (-not $PSBoundParameters.ContainsKey('DiskNumber')) {
+        throw "DiskNumber is required. This gate destroys every partition on the target disk; run Get-Disk and pass the disposable VM data disk's number explicitly."
+    }
     if (-not $AllowNonVirtualBoxGuest) {
         Assert-VirtualBoxLabGuest
     }
@@ -376,6 +399,7 @@ try {
     $certifier = Resolve-Certifier
     Assert-DisposableDisk -Number $DiskNumber
     $before = Get-DiskSnapshot -Number $DiskNumber
+    $destructiveStarted = $true
     Clear-DisposableDisk -Number $DiskNumber | Out-Null
     Initialize-Disk -Number $DiskNumber -PartitionStyle GPT
     $partition = New-Partition -DiskNumber $DiskNumber -Size $InitialSizeBytes
@@ -396,7 +420,7 @@ try {
             "--input-size-bytes", ([string][uint64]$partition.Size)
         ) | Out-Null
     $probe = Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json
-    if ($probe.status -ne "Passed") {
+    if (($probe.status -isnot [string]) -or ($probe.status -cne "Passed")) {
         throw "S.A.K. raw Linux swap probe failed."
     }
 
@@ -409,8 +433,11 @@ catch {
     $status = "Failed"
     $errorText = ConvertTo-PlainText -Value @($_)
     try {
-        if (-not $NoCleanup) {
+        if (-not $NoCleanup -and $destructiveStarted) {
             $cleanup = Clear-DisposableDisk -Number $DiskNumber
+        }
+        elseif (-not $destructiveStarted) {
+            $cleanup = "No cleanup: run refused before any disk mutation."
         }
     }
     catch {
@@ -433,6 +460,8 @@ $report = [pscustomobject]@{
     user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     virtualbox_guest = Test-IsVirtualBoxGuest
     allow_non_virtualbox_guest = [bool]$AllowNonVirtualBoxGuest
+    transcript_started = $transcriptStarted
+    transcript_error = $transcriptError
     disk_number = $DiskNumber
     partition_gpt_type = $LinuxSwapGptType
     raw_target = $rawTarget

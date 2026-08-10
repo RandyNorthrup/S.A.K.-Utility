@@ -236,7 +236,14 @@ void BrowserBridgeSession::fillResult(const QString& sent_cmd,
 
 void BrowserBridgeSession::reconcileDomEpoch(const QString& sent_cmd, const QJsonObject& frame) {
     if (!frame.contains(QStringLiteral("domEpoch"))) {
-        return;  // an older extension omits the marker: leave the check disabled
+        // Tolerate a missing marker only from an extension that has NEVER sent one. Once a
+        // baseline exists, a reply that DROPS the field is a downgrade that would silently
+        // disable external-change detection (a relayed, web-page-influenced frame could strip
+        // it to hide a navigation) -- fail closed by invalidating the refs.
+        if (have_dom_epoch_) {
+            onDetached();
+        }
+        return;
     }
     // A present marker must be a non-negative integer within the exact-integer double range.
     // A malformed value (string, negative, NaN, or beyond 2^53) cannot be trusted as a

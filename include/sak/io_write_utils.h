@@ -18,6 +18,10 @@ namespace sak {
 /// silently truncate a report, message, or attachment. This loops until all
 /// bytes are written or a write makes no progress. Returns true iff the entire
 /// payload reached the device; an empty payload is a successful no-op.
+///
+/// `true` means the bytes were accepted by @p device -- NOT that they were flushed,
+/// committed, or transmitted. A buffered device (QSaveFile, a socket) can still fail
+/// later, so the caller must flush()/commit() and check that result for durability.
 [[nodiscard]] inline bool writeFully(QIODevice& device, const QByteArray& data) {
     qint64 total = 0;
     const qint64 size = data.size();

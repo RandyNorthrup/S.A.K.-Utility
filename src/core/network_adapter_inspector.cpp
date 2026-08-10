@@ -39,8 +39,12 @@ constexpr int kIpv4OctetShift1 = 8;
 
 constexpr ULONG kGetAdapterFlags = GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS;
 
-bool tryIpv4String(const sockaddr* sa, QString& out) {
-    if (sa == nullptr || sa->sa_family != AF_INET) {
+// @p sa_len is the SOCKET_ADDRESS::iSockaddrLength that accompanies @p sa. It is validated
+// against the fixed sockaddr the family implies BEFORE the reinterpret_cast, so a short or
+// malformed record can never drive an out-of-bounds read past the supplied buffer.
+bool tryIpv4String(const sockaddr* sa, int sa_len, QString& out) {
+    if (sa == nullptr || sa_len < static_cast<int>(sizeof(sockaddr_in)) ||
+        sa->sa_family != AF_INET) {
         return false;
     }
 
@@ -51,8 +55,9 @@ bool tryIpv4String(const sockaddr* sa, QString& out) {
     return true;
 }
 
-bool tryIpv6String(const sockaddr* sa, QString& out) {
-    if (sa == nullptr || sa->sa_family != AF_INET6) {
+bool tryIpv6String(const sockaddr* sa, int sa_len, QString& out) {
+    if (sa == nullptr || sa_len < static_cast<int>(sizeof(sockaddr_in6)) ||
+        sa->sa_family != AF_INET6) {
         return false;
     }
 
@@ -122,7 +127,7 @@ void populateDhcpInfo(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo&
     }
 
     QString ip;
-    if (tryIpv4String(addr->Dhcpv4Server.lpSockaddr, ip)) {
+    if (tryIpv4String(addr->Dhcpv4Server.lpSockaddr, addr->Dhcpv4Server.iSockaddrLength, ip)) {
         info.dhcpServer = ip;
     }
 }
@@ -132,9 +137,10 @@ void populateUnicastAddresses(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdap
     Q_ASSERT(addr);
     for (auto* ua = addr->FirstUnicastAddress; ua != nullptr; ua = ua->Next) {
         const auto* sa = ua->Address.lpSockaddr;
+        const int sa_len = ua->Address.iSockaddrLength;
 
         QString ip;
-        if (tryIpv4String(sa, ip)) {
+        if (tryIpv4String(sa, sa_len, ip)) {
             info.ipv4Addresses.append(ip);
 
             const auto maskStr = subnetMaskFromPrefixLength(ua->OnLinkPrefixLength);
@@ -144,7 +150,7 @@ void populateUnicastAddresses(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdap
             continue;
         }
 
-        if (tryIpv6String(sa, ip)) {
+        if (tryIpv6String(sa, sa_len, ip)) {
             info.ipv6Addresses.append(ip);
         }
     }
@@ -153,13 +159,14 @@ void populateUnicastAddresses(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdap
 void populateGateways(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
     for (auto* gw = addr->FirstGatewayAddress; gw != nullptr; gw = gw->Next) {
         const auto* sa = gw->Address.lpSockaddr;
+        const int sa_len = gw->Address.iSockaddrLength;
 
         QString ip;
-        if (tryIpv4String(sa, ip)) {
+        if (tryIpv4String(sa, sa_len, ip)) {
             info.ipv4Gateway = ip;
             continue;
         }
-        if (tryIpv6String(sa, ip)) {
+        if (tryIpv6String(sa, sa_len, ip)) {
             info.ipv6Gateway = ip;
         }
     }
@@ -168,13 +175,14 @@ void populateGateways(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo&
 void populateDnsServers(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
     for (auto* dns = addr->FirstDnsServerAddress; dns != nullptr; dns = dns->Next) {
         const auto* sa = dns->Address.lpSockaddr;
+        const int sa_len = dns->Address.iSockaddrLength;
 
         QString ip;
-        if (tryIpv4String(sa, ip)) {
+        if (tryIpv4String(sa, sa_len, ip)) {
             info.ipv4DnsServers.append(ip);
             continue;
         }
-        if (tryIpv6String(sa, ip)) {
+        if (tryIpv6String(sa, sa_len, ip)) {
             info.ipv6DnsServers.append(ip);
         }
     }
@@ -213,8 +221,10 @@ sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr) {
         info.adapterType = QStringLiteral("Bluetooth");
     }
 
-    // MAC
-    if (addr->PhysicalAddressLength > 0) {
+    // MAC. PhysicalAddress is a fixed MAX_ADAPTER_ADDRESS_LENGTH-byte array; clamp the
+    // length against it so a malformed PhysicalAddressLength cannot read past the buffer.
+    if (addr->PhysicalAddressLength > 0 &&
+        addr->PhysicalAddressLength <= MAX_ADAPTER_ADDRESS_LENGTH) {
         info.macAddress = sak::NetworkAdapterInspector::formatMacAddress(
             addr->PhysicalAddress, addr->PhysicalAddressLength);
     }
@@ -249,7 +259,14 @@ namespace sak {
 NetworkAdapterInspector::NetworkAdapterInspector(QObject* parent) : QObject(parent) {}
 
 void NetworkAdapterInspector::scan() {
-    auto adapters = enumerateAdapters();
+    bool ok = false;
+    auto adapters = enumerateAdapters(ok);
+    if (!ok) {
+        // enumerateAdapters already emitted errorOccurred. Do NOT also emit a
+        // success-shaped scanComplete for a failed enumeration -- that would let a
+        // caller report a failed scan as a complete "0 adapters" result (fail closed).
+        return;
+    }
     Q_EMIT scanComplete(adapters);
 }
 
@@ -289,7 +306,8 @@ QString NetworkAdapterInspector::formatMacAddress(const unsigned char* addr, uns
     return mac;
 }
 
-QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters() {
+QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters(bool& ok) {
+    ok = false;
     QVector<NetworkAdapterInfo> adapters;
 
     std::unique_ptr<uint8_t[]> buffer;
@@ -307,6 +325,7 @@ QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters() {
         adapters.append(buildAdapterInfo(addr));
     }
 
+    ok = true;
     return adapters;
 }
 

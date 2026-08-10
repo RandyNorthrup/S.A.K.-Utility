@@ -804,15 +804,30 @@ void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
                 m_offlineProgressLabel->setVisible(false);
                 m_cancelOfflineButton->setVisible(false);
 
-                m_offlineStatusLabel->setText(
-                    tr("Complete: %1 succeeded, %2 failed").arg(stats.completed).arg(stats.failed));
+                // Surface skipped/cancelled/pending too: an air-gap run can skip every
+                // requires-network package, which "%1 succeeded, %2 failed" alone would
+                // misreport as a clean completion (e.g. "0 succeeded, 0 failed"). Fail
+                // closed on the wording -- only call it "Complete" when nothing was left
+                // undone.
+                const int unfinished = stats.skipped + stats.cancelled + stats.pending;
+                QString summary =
+                    tr("%1 succeeded, %2 failed").arg(stats.completed).arg(stats.failed);
+                if (stats.skipped > 0) {
+                    summary += tr(", %1 skipped").arg(stats.skipped);
+                }
+                if (stats.cancelled > 0) {
+                    summary += tr(", %1 cancelled").arg(stats.cancelled);
+                }
+                if (stats.pending > 0) {
+                    summary += tr(", %1 not attempted").arg(stats.pending);
+                }
+                const QString headline = unfinished > 0 ? tr("Incomplete: %1") : tr("Complete: %1");
+                m_offlineStatusLabel->setText(headline.arg(summary));
                 m_offlineStatusLabel->setVisible(true);
 
                 setOfflineInProgressUi(false);
 
-                Q_EMIT statusMessage(tr("Offline operation complete: %1 succeeded, %2 failed")
-                                         .arg(stats.completed)
-                                         .arg(stats.failed),
+                Q_EMIT statusMessage(tr("Offline operation: %1").arg(summary),
                                      sak::kTimerStatusDefaultMs);
             });
 

@@ -78,10 +78,13 @@ private:
     bool m_lastRefreshError = false;
     bool m_hasBaseline = false;  ///< True once a first successful refresh established a baseline
 
+    // readError receives the exact kernel table-read status (0 == NO_ERROR; otherwise the
+    // GetExtendedTcpTable/GetExtendedUdpTable result DWORD) so refreshNow can surface the real
+    // error instead of silently publishing a stale/empty snapshot. Caller pre-initializes to 0.
     [[nodiscard]] QVector<ConnectionInfo> enumerateTcpConnections(
-        const QHash<uint32_t, QString>& processNames, bool& readError);
+        const QHash<uint32_t, QString>& processNames, quint32& readError);
     [[nodiscard]] QVector<ConnectionInfo> enumerateUdpListeners(
-        const QHash<uint32_t, QString>& processNames, bool& readError);
+        const QHash<uint32_t, QString>& processNames, quint32& readError);
     /// Build a PID -> process-name map from ONE Toolhelp snapshot, so a refresh pays a single
     /// snapshot instead of one per connection (was O(connections * processes)).
     [[nodiscard]] static QHash<uint32_t, QString> snapshotProcessNames();

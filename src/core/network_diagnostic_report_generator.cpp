@@ -305,6 +305,7 @@ QString NetworkDiagnosticReportGenerator::buildPortScanSection() const {
     int openCount = 0;
     int closedCount = 0;
     int filteredCount = 0;
+    int errorCount = 0;
     for (const auto& r : m_portScanResults) {
         switch (r.state) {
         case PortScanResult::State::Open:
@@ -316,15 +317,22 @@ QString NetworkDiagnosticReportGenerator::buildPortScanSection() const {
         case PortScanResult::State::Filtered:
             ++filteredCount;
             break;
-        default:
+        case PortScanResult::State::Error:
+            ++errorCount;
             break;
         }
     }
 
-    html += QStringLiteral("<div class=\"stat-box\">Open: %1 | Closed: %2 | Filtered: %3</div>\n")
+    // Surface errored probes. A wholly-failed scan (every probe State::Error, also
+    // the default-constructed state) otherwise reads as "Open: 0 | Closed: 0 |
+    // Filtered: 0" as though every port were confirmed unreachable -- the error
+    // count is the honest signal that the scan itself did not run.
+    html += QStringLiteral(
+                "<div class=\"stat-box\">Open: %1 | Closed: %2 | Filtered: %3 | Errors: %4</div>\n")
                 .arg(openCount)
                 .arg(closedCount)
-                .arg(filteredCount);
+                .arg(filteredCount)
+                .arg(errorCount);
 
     html += QStringLiteral(
         "<table>\n<tr><th>Port</th><th>State</th><th>Service</th>"

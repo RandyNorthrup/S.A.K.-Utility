@@ -947,7 +947,16 @@ bool UserProfileRestoreWorker::verifyUserPayloadChecksum(const BackupUserData& u
         // legitimate legacy backups.
         return m_manifest.manifest_checksum.isEmpty();
     }
-    const QString actual = BackupManifest::hashDirectoryTree(m_backupPath + "/" + user.username);
+    // user.username comes from the manifest (untrusted): route it through the same
+    // containment guard the restore path uses so a traversal name cannot make
+    // hashDirectoryTree walk a tree outside the backup root (info exposure / DoS).
+    QString userPayloadPath;
+    if (!buildSafePath(m_backupPath, user.username, userPayloadPath)) {
+        Q_EMIT logMessage(
+            tr("Payload path for user '%1' escapes the backup root").arg(user.username), true);
+        return false;
+    }
+    const QString actual = BackupManifest::hashDirectoryTree(userPayloadPath);
     if (actual != user.checksum_sha256) {
         Q_EMIT logMessage(tr("Payload integrity check failed for user '%1' (checksum mismatch)")
                               .arg(user.username),

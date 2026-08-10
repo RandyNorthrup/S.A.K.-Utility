@@ -76,6 +76,10 @@ namespace {
 constexpr int kStatusIconSize = ui::kUiIconSmall;
 constexpr int kDefaultPanelStatusTimeoutMs = kTimerStatusDefaultMs;
 constexpr int kDirectTabShortcutCount = 9;
+// Per-tab cap on the retained log backing store. Untrusted file/network/AI output flows
+// into these lines, so the store is bounded and evicts the oldest rather than growing for
+// the whole session.
+constexpr int kMaxPanelLogLines = 5000;
 constexpr int kTenthTabIndex = 9;
 constexpr int kTabShortcutBaseOffset = 10;
 constexpr int kShiftTabShortcutCount = 5;
@@ -1654,7 +1658,14 @@ void MainWindow::appendLogIfActive(int tabIdx, const QString& formatted) {
         return;
     }
     Q_ASSERT(m_tab_widget);
-    m_panelLogs[tabIdx].append(formatted);
+    QStringList& lines = m_panelLogs[tabIdx];
+    lines.append(formatted);
+    // Bound the per-tab backing store: evict the oldest lines once the cap is exceeded so
+    // heavy untrusted output cannot grow this map without limit for the life of the session.
+    if (lines.size() > kMaxPanelLogLines) {
+        const qsizetype overflow = lines.size() - kMaxPanelLogLines;
+        lines.erase(lines.cbegin(), lines.cbegin() + overflow);
+    }
     if (m_tab_widget->currentIndex() == tabIdx && m_logWindow->isLogVisible()) {
         // Panel log payloads carry paths, program names and command output; QTextEdit::append()
         // would render markup inside them, so wrap the line to read literally.

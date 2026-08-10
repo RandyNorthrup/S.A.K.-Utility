@@ -25,10 +25,19 @@ namespace {
 ///        offline internalization) yet formerly reported success, so a mapped
 ///        URL that was NOT found in the script -- or a script with declared
 ///        resources but ZERO replacements -- is a hard failure, not a success.
-QString rewriteFailure(const QStringList& unreplaced, bool has_resources, bool replaced_any) {
+QString rewriteFailure(const QStringList& unreplaced,
+                       const QStringList& unmapped,
+                       bool has_resources,
+                       bool replaced_any) {
     if (!unreplaced.isEmpty()) {
         return QStringLiteral("Expected download URL(s) not found in script: %1")
             .arg(unreplaced.join(QStringLiteral(", ")));
+    }
+    if (!unmapped.isEmpty()) {
+        // A declared download URL with no internalized local file: shipping it live would fall
+        // back to the network at install time. Fail closed rather than call a partial map done.
+        return QStringLiteral("Declared download URL(s) with no internalized local file: %1")
+            .arg(unmapped.join(QStringLiteral(", ")));
     }
     if (has_resources && !replaced_any) {
         return QStringLiteral(
@@ -60,10 +69,15 @@ RewrittenScript ScriptRewriter::rewrite(const ParsedInstallScript& parsed,
 
     QString rewritten = parsed.original_script;
     QStringList unreplaced;
+    QStringList unmapped;
 
     for (const auto& resource : parsed.resources) {
         for (const QString& url : {resource.url, resource.url_64bit}) {
-            if (url.isEmpty() || !local_filenames.contains(url)) {
+            if (url.isEmpty()) {
+                continue;  // a resource may declare only a 32- or only a 64-bit URL
+            }
+            if (!local_filenames.contains(url)) {
+                unmapped.append(url);  // a declared download with no local file to point at
                 continue;
             }
             const qsizetype before = result.replacements.size();
@@ -74,8 +88,8 @@ RewrittenScript ScriptRewriter::rewrite(const ParsedInstallScript& parsed,
         }
     }
 
-    const QString failure =
-        rewriteFailure(unreplaced, !parsed.resources.isEmpty(), !result.replacements.isEmpty());
+    const QString failure = rewriteFailure(
+        unreplaced, unmapped, !parsed.resources.isEmpty(), !result.replacements.isEmpty());
     if (!failure.isEmpty()) {
         result.error_message = failure;
         sak::logError("[ScriptRewriter] {}", failure.toStdString());
@@ -140,8 +154,14 @@ ScriptRewriter::ReplacementSpan ScriptRewriter::urlReplacementSpan(const QString
                                                                    int found_pos,
                                                                    int url_len) {
     ReplacementSpan span{found_pos, url_len};
-    const int after_pos = found_pos + url_len;
-    if (found_pos > 0 && after_pos < script.length()) {
+    // An out-of-range index is not a wrapping pair to swallow; return the bare span. Compute the
+    // end position in a wide type so found_pos + url_len cannot overflow int on a multi-GB script
+    // (signed overflow is UB), and reject a negative index/length outright.
+    if (found_pos <= 0 || url_len < 0) {
+        return span;
+    }
+    const qsizetype after_pos = static_cast<qsizetype>(found_pos) + url_len;
+    if (after_pos < script.length()) {
         const QChar before = script.at(found_pos - 1);
         const QChar after = script.at(after_pos);
         const bool wrapped = (before == QLatin1Char('\'') && after == QLatin1Char('\'')) ||

@@ -39,6 +39,10 @@ constexpr double kMegabit = 1'000'000.0;
 // Upload ACK / HEAD responses carry no meaningful body; cap them small so a hostile
 // server cannot make us buffer a large reply on the control legs of the speed test.
 constexpr qint64 kSpeedTestControlResponseCap = 64 * 1024;  // 64 KB
+// iPerf3 -J output is a compact summary (start/intervals/end); even a long test stays
+// far under a megabyte. Cap the bytes before parsing so a corrupt or hostile stream
+// cannot drive an unbounded JSON allocation; oversized output fails closed (unparseable).
+constexpr qint64 kMaxIperfJsonBytes = 16 * 1024 * 1024;  // 16 MiB
 
 const auto kIperf3Exe = QStringLiteral("iperf3.exe");
 
@@ -458,6 +462,9 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
 }
 
 std::optional<BandwidthTestResult> BandwidthTester::parseIperfJson(const QByteArray& json) {
+    if (json.size() > kMaxIperfJsonBytes) {
+        return std::nullopt;  // oversized output is not a usable iPerf3 result
+    }
     QJsonParseError parseErr;
     const auto doc = QJsonDocument::fromJson(json, &parseErr);
     if (doc.isNull() || !doc.isObject()) {

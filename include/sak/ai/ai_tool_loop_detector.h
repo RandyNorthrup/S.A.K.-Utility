@@ -49,6 +49,12 @@ private:
     [[nodiscard]] static QString signatureKey(const QString& tool_name,
                                               const QString& arguments_json);
 
+    // Bounds on the untrusted (model-supplied) signature space so a runaway or
+    // adversarial model cannot exhaust memory: cap the argument body retained in a
+    // key, and cap the number of distinct signatures tracked at once.
+    static constexpr int kMaxSignatureArgChars = 4096;
+    static constexpr int kMaxTrackedSignatures = 10'000;
+
     int m_threshold;
     QHash<QString, int> m_counts;
     QString m_worst_tool;

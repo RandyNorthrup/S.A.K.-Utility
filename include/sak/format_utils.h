@@ -47,8 +47,34 @@ namespace sak {
 /// @brief Format a byte count (unsigned) into a human-readable string
 /// @param bytes Number of bytes to format
 /// @return Formatted string (e.g., "1.50 TB", "256.0 MB")
+/// @note Computed in unsigned arithmetic so a value above INT64_MAX is not
+///       narrowed to a negative qint64 (which the signed overload would then
+///       falsify as "0 bytes"); a hostile oversized size stays honest.
 [[nodiscard]] inline QString formatBytes(uint64_t bytes) {
-    return formatBytes(static_cast<qint64>(bytes));
+    if (bytes == 0) {
+        return QStringLiteral("0 bytes");
+    }
+
+    constexpr uint64_t kKB = 1024ULL;
+    constexpr uint64_t kMB = 1024ULL * 1024;
+    constexpr uint64_t kGB = 1024ULL * 1024 * 1024;
+    constexpr uint64_t kTB = 1024ULL * 1024 * 1024 * 1024;
+    constexpr int kLargeUnitPrecision = 2;
+    constexpr int kMediumUnitPrecision = 1;
+
+    if (bytes >= kTB) {
+        return QString("%1 TB").arg(static_cast<double>(bytes) / kTB, 0, 'f', kLargeUnitPrecision);
+    }
+    if (bytes >= kGB) {
+        return QString("%1 GB").arg(static_cast<double>(bytes) / kGB, 0, 'f', kLargeUnitPrecision);
+    }
+    if (bytes >= kMB) {
+        return QString("%1 MB").arg(static_cast<double>(bytes) / kMB, 0, 'f', kMediumUnitPrecision);
+    }
+    if (bytes >= kKB) {
+        return QString("%1 KB").arg(static_cast<double>(bytes) / kKB, 0, 'f', kMediumUnitPrecision);
+    }
+    return QString("%1 bytes").arg(bytes);
 }
 
 }  // namespace sak

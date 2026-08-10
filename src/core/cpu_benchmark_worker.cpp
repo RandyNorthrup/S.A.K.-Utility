@@ -119,9 +119,7 @@ auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     }
     updateDerivedMetrics();
 
-    const double st_total = m_result.prime_sieve_time_ms + m_result.matrix_multiply_time_ms +
-                            m_result.zlib_compression_time_ms + m_result.aes_encryption_time_ms;
-    if (auto result = runMultiThreadBenchmark(st_total); !result) {
+    if (auto result = runMultiThreadBenchmark(); !result) {
         return result;
     }
 
@@ -185,7 +183,7 @@ void CpuBenchmarkWorker::updateDerivedMetrics() {
     m_result.matrix_gflops = m_matrix_gflops;
 }
 
-std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark(double st_total) {
+std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark() {
     reportProgress(kProgressStepMultiThread,
                    kBenchmarkStepTotal,
                    "Running multi-threaded benchmark...");
@@ -200,9 +198,14 @@ std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark
     const int hw_threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
     const double mt_total = runMultiThreaded(hw_threads);
 
-    if (mt_total > 0.0 && hw_threads > 0) {
-        m_result.thread_scaling_efficiency = (st_total / mt_total) /
-                                             static_cast<double>(hw_threads);
+    // Scaling efficiency compares the SAME per-thread workload run once single-threaded
+    // (m_mt_single_ref_ms, measured inside runMultiThreaded) against the wall time to run
+    // hw_threads of them at once. Perfect linear scaling finishes all of them in the time
+    // of one, so efficiency = single_ref / parallel_time, clamped to [0, 1]. The old formula
+    // divided the full four-test single-thread total by the two-test parallel time, which is
+    // neither a speedup nor a scaling ratio.
+    if (mt_total > 0.0) {
+        m_result.thread_scaling_efficiency = std::clamp(m_mt_single_ref_ms / mt_total, 0.0, 1.0);
     }
 
     return {};
@@ -412,9 +415,25 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
     // Invariant: runMultiThreadBenchmark is this private helper's only caller and clamps with
     // std::max(1, hardware_concurrency()) before calling.
     Q_ASSERT_X(thread_count > 0, "runMultiThreaded", "thread_count must be positive");
-    // Run all four benchmarks in parallel across thread_count threads.
-    // Each thread executes the full benchmark suite; the total wall time is measured.
+    // The per-thread workload is a REDUCED prime sieve + matrix multiply (smaller than the
+    // single-thread suite), chosen to keep the parallel pass short. To make the scaling
+    // number valid, the SAME workload is first timed once single-threaded as a reference,
+    // then run thread_count times in parallel; runMultiThreadBenchmark compares the two
+    // matched measurements.
+    const auto per_thread_workload = [this]() {
+        (void)runPrimeSieve(kMultiThreadPrimeLimit);
+        (void)runMatrixMultiply(kMultiThreadMatrixSize);
+    };
 
+    // Single-thread reference: one unit of the identical workload.
+    QElapsedTimer ref_timer;
+    ref_timer.start();
+    per_thread_workload();
+    m_mt_single_ref_ms = ref_timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+
+    // Parallel pass: thread_count units of the same workload at once. std::async
+    // (launch::async) futures join in their destructor, so every job is complete before
+    // this frame returns and none can outlive `this`.
     QElapsedTimer timer;
     timer.start();
 
@@ -422,11 +441,7 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
     futures.reserve(static_cast<size_t>(thread_count));
 
     for (int thread_index = 0; thread_index < thread_count; ++thread_index) {
-        futures.push_back(std::async(std::launch::async, [this]() {
-            // Smaller workloads per thread to keep total duration reasonable
-            (void)runPrimeSieve(kMultiThreadPrimeLimit);
-            (void)runMatrixMultiply(kMultiThreadMatrixSize);
-        }));
+        futures.push_back(std::async(std::launch::async, per_thread_workload));
     }
 
     for (auto& future : futures) {
@@ -434,9 +449,12 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
     }
 
     const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
-    logInfo("Multi-threaded benchmark ({} threads) completed in {:.1f} ms",
-            thread_count,
-            elapsed_ms);
+    logInfo(
+        "Multi-threaded benchmark ({} threads, {:.1f} ms single-thread reference) "
+        "completed in {:.1f} ms",
+        thread_count,
+        m_mt_single_ref_ms,
+        elapsed_ms);
     return elapsed_ms;
 }
 

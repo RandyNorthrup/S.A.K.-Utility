@@ -44,6 +44,16 @@ auto ElevatedTaskDispatcher::dispatch(const QString& task_id,
         result.success = false;
         result.error_message = QString::fromStdString(ex.what());
         return result;
+    } catch (...) {
+        // A non-std exception must not escape and terminate the elevated helper:
+        // fail closed with a structured error the caller can act on.
+        sak::logError("ElevatedTaskDispatcher: task '{}' threw a non-standard exception",
+                      task_id.toStdString());
+        TaskHandlerResult result;
+        result.success = false;
+        result.error_message =
+            QStringLiteral("Task '%1' failed with an unknown exception").arg(task_id);
+        return result;
     }
 }
 

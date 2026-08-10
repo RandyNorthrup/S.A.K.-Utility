@@ -29,11 +29,13 @@ using WifiScanLogger = std::function<void(const QString&)>;
 
 /// @brief Scan all Windows WiFi profiles using the native WLAN API (wlanapi).
 /// @param logger Optional callback for progress/error messages
-/// @param scan_ok Optional out-param: set false when the profile enumeration itself failed (the
-///        WLAN service is unavailable / WlanOpenHandle or WlanEnumInterfaces errored), true
-///        otherwise. Distinguishes a genuine "0 saved profiles" from a failed scan -- without it an
-///        empty return is a fail-open honesty hole (a failed enumeration looks identical to a
-///        machine with no saved networks).
+/// @param scan_ok Optional out-param: set true only when the scan is COMPLETE and authoritative --
+///        the top-level enumeration ran (WLAN service available, WlanOpenHandle/WlanEnumInterfaces
+///        succeeded) AND every discovered profile's detail read succeeded. Set false when the
+///        enumeration itself failed OR any per-profile WlanGetProfile failed (that profile is
+///        returned without re-importable XML, so a backup trusting scan_ok would be silently
+///        incomplete). Distinguishes a genuine "0 saved profiles" from a failed/partial scan --
+///        without it an empty or short return is a fail-open honesty hole.
 /// @param include_xml When true (default, GUI backup path) each profile's re-importable
 ///        DPAPI-protected WLANProfile XML is stored in info.xml_data. When false it is parsed for
 ///        the security type and then discarded: no re-importable key material is ever retained --

@@ -17,6 +17,10 @@ namespace {
 constexpr int kMaxTitleWords = 6;
 constexpr qsizetype kUppercaseAcronymMaxChars = 6;
 constexpr qsizetype kMeaningfulWordMinChars = 2;
+// A title only ever uses the opening handful of words, so the scan window is bounded here.
+// Without it an arbitrarily large first prompt would drive every regex pass, split, and
+// per-word loop over the whole input on the caller's (often GUI) thread.
+constexpr qsizetype kMaxPromptScanChars = 4096;
 
 QString boundedTitle(QString title) {
     title = title.simplified();
@@ -33,6 +37,11 @@ QString boundedTitle(QString title) {
 }
 
 QString redactedPromptText(QString text) {
+    // Bound the work before any processing; truncating the scan window changes no
+    // normal-length title (see kMaxPromptScanChars).
+    if (text.size() > kMaxPromptScanChars) {
+        text.truncate(kMaxPromptScanChars);
+    }
     text.replace(QRegularExpression(QStringLiteral(R"(```[\s\S]*?```)")), QStringLiteral(" "));
     text.replace(QRegularExpression(QStringLiteral(R"(`[^`]*`)")), QStringLiteral(" "));
     text.replace(QRegularExpression(QStringLiteral(R"(https?://\S+|www\.\S+)"),

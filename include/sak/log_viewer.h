@@ -10,6 +10,8 @@
 #include <QTextBrowser>
 #include <QWidget>
 
+class QHBoxLayout;
+
 /**
  * @brief Log viewer widget with filtering and export
  *
@@ -79,6 +81,7 @@ public Q_SLOTS:
 
 private:
     void setupUi();
+    QHBoxLayout* createToolbar();
     void applyFilters();
     QString formatLogMessage(const QString& message, LogLevel level) const;
     QString getLevelColor(LogLevel level) const;

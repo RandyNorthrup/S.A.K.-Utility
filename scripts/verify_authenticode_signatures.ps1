@@ -11,7 +11,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path -LiteralPath $RootDir
-$files = Get-ChildItem -LiteralPath $root.Path -Recurse -File |
+# -Force so hidden/system .exe/.dll are enumerated too: without it an unsigned hidden binary
+# would be skipped and the gate would still report success (fail-open).
+$files = Get-ChildItem -LiteralPath $root.Path -Recurse -File -Force |
     Where-Object { $_.Extension -in ".exe", ".dll" }
 
 if ($files.Count -eq 0) {

@@ -17,12 +17,15 @@ namespace sak::win32mcp {
 // callers that already include windows.h and those that must not can both use it.
 
 struct CaptureRequest {
-    void* hwnd;  // non-null: PrintWindow that window; null: BitBlt the screen rect
-    long left;   // capture rect in virtual-screen coordinates
-    long top;
-    long right;
-    long bottom;
-    int max_edge;  // downscale so max(width,height) <= max_edge (engine/transport limit)
+    // Every field is initialized so a partially-assigned request never reads an indeterminate
+    // handle/coordinate. An all-zero request has an empty rect, which captureBgra rejects via
+    // validateCaptureRect -- it fails closed rather than capturing from a garbage window/region.
+    void* hwnd = nullptr;  // non-null: PrintWindow that window; null: BitBlt the screen rect
+    long left = 0;         // capture rect in virtual-screen coordinates
+    long top = 0;
+    long right = 0;
+    long bottom = 0;
+    int max_edge = 0;  // downscale so max(width,height) <= max_edge (engine/transport limit)
 };
 
 struct CaptureBits {

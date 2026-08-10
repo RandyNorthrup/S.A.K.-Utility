@@ -246,6 +246,12 @@ HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
 }  // namespace
 
 bool windowRectByTitle(const QString& needle_lower, WindowRect& out, QString& err) {
+    if (needle_lower.isEmpty()) {
+        // An empty needle substring-matches every visible window; refuse rather than let an
+        // absent/defaulted title select a guessed target. Fail closed.
+        err = QStringLiteral("No window title was provided.");
+        return false;
+    }
     FindWindowState state{needle_lower, {}};
     EnumWindows(findWindowProc, reinterpret_cast<LPARAM>(&state));
     HWND match = pickUniqueWindow(state.matches, needle_lower, err);

@@ -272,6 +272,13 @@ private:
     void addStatusCategory(QTreeWidget* tree,
                            const QString& category,
                            const QVector<QPair<QString, QString>>& items);
+    // Runs the modal static-IP entry dialog, prefilled from the adapter's current IPv4
+    // configuration. On accept, hands back the trimmed field text and returns true;
+    // returns false if the user cancelled.
+    bool promptStaticIpInput(const NetworkAdapterInfo& adapter,
+                             QString& ip,
+                             QString& mask,
+                             QString& gateway);
     void applyStaticIp(const QString& adapter_name,
                        const QString& ip,
                        const QString& mask,

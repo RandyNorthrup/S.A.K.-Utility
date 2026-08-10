@@ -66,7 +66,14 @@ QJsonObject enforceWorkflowGuard(const AiCommandRequest& request,
         return toolError(
             QStringLiteral("Sensitive workflow command confirmation callback is not configured"));
     }
-    const QString approval_preview = QStringLiteral("%1\n\n%2").arg(approval_reason, preview);
+    QString approval_preview = QStringLiteral("%1\n\n%2").arg(approval_reason, preview);
+    // The preview is independent of the command that actually runs; when it differs, also
+    // show the real (redacted) command so a benign preview cannot conceal what is being
+    // authorized. Bind the confirmation to request.command, not the free-form preview.
+    if (preview.trimmed() != request.command.trimmed()) {
+        approval_preview +=
+            QStringLiteral("\n\nCommand: %1").arg(CredentialStore::redactSecrets(request.command));
+    }
     if (callbacks.confirm(QStringLiteral("Sensitive Workflow Command"), approval_preview, true)) {
         return {};
     }

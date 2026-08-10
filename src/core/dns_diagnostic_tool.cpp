@@ -359,6 +359,14 @@ void DnsDiagnosticTool::compareServers(const QString& hostname,
         comparison.fastestTimeMs = 0.0;
     }
 
+    // Fail closed: allAgree is a positive assurance. If no server produced a
+    // successful answer (empty server list or every query failed) there is no
+    // baseline to agree on, and a run cancelled part-way never compared them all,
+    // so report no agreement rather than a misleading true (R5).
+    if (firstAnswers.isEmpty() || m_cancelled.load()) {
+        comparison.allAgree = false;
+    }
+
     Q_EMIT comparisonComplete(comparison);
 }
 

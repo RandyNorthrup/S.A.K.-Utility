@@ -20,7 +20,16 @@ QString AiToolLoopDetector::signatureKey(const QString& tool_name, const QString
     // separator that cannot appear in a tool name. A model that is truly stuck
     // re-emits byte-identical arguments; genuinely different arguments stay
     // distinct signatures and never trip the detector.
-    return tool_name.trimmed().toLower() + QChar(kSignatureSeparator) + arguments_json.trimmed();
+    const QString name = tool_name.trimmed().toLower();
+    QString args = arguments_json.trimmed();
+    // Past a cap, fold the argument body to a fixed-size length+hash digest so an
+    // enormous arguments blob cannot pin unbounded memory per key while staying
+    // distinct for genuinely different arguments (the loop heuristic is preserved).
+    if (args.size() > kMaxSignatureArgChars) {
+        args = QStringLiteral("#") + QString::number(args.size()) + QStringLiteral(":") +
+               QString::number(static_cast<qulonglong>(qHash(args)), 16);
+    }
+    return name + QChar(kSignatureSeparator) + args;
 }
 
 bool AiToolLoopDetector::observe(const QString& tool_name, const QString& arguments_json) {
@@ -28,6 +37,13 @@ bool AiToolLoopDetector::observe(const QString& tool_name, const QString& argume
         return false;
     }
     const QString key = signatureKey(tool_name, arguments_json);
+    // Cap the number of distinct tracked signatures. A brand-new signature in a
+    // saturated map cannot be part of an existing repeat loop (a real loop re-emits
+    // an already-tracked key, so it never reaches this branch), so discarding the
+    // accumulated singletons is safe for the heuristic and caps memory fail-closed.
+    if (!m_counts.contains(key) && m_counts.size() >= kMaxTrackedSignatures) {
+        m_counts.clear();
+    }
     const int count = m_counts.value(key, 0) + 1;
     m_counts.insert(key, count);
     if (count > m_worst_count) {

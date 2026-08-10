@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QLocale>
 
+#include <algorithm>
 #include <iterator>
 #include <optional>
 
@@ -22,6 +23,12 @@ namespace {
 QString trGroup(const char* text) {
     return QCoreApplication::translate("FileExplorerGrouping", text);
 }
+
+// File timestamps on a foreign volume are attacker-controlled, and QDate::year()
+// spans roughly +/-2.1 billion, so raw (year * 12) or (2 + daysTo) sort-index
+// arithmetic would overflow a signed int (UB) or narrow a qint64 wrongly. Compute
+// in the 64-bit domain and clamp every sort index into a bounded, monotonic range.
+constexpr int kMaxDateSortIndex = 1'000'000'000;
 
 // Files GroupingHelper sizeGroups table: strict greater-than thresholds
 // evaluated largest-first; the header shows the bucket name and byte range.
@@ -83,7 +90,9 @@ std::optional<FileExplorerGroupInfo> weekDateGroup(const QDate& date,
 FileExplorerGroupInfo monthAndYearDateGroup(const QDate& date,
                                             const QDate& today,
                                             const FileExplorerGroupDateUnit unit) {
-    const int month_diff = (today.year() - date.year()) * 12 + (today.month() - date.month());
+    const qint64 year_delta = static_cast<qint64>(today.year()) - date.year();
+    const qint64 month_diff =
+        std::clamp<qint64>(year_delta * 12 + (today.month() - date.month()), 0, kMaxDateSortIndex);
     if (month_diff == 0) {
         return {trGroup("Earlier this month"), 4};
     }
@@ -91,7 +100,8 @@ FileExplorerGroupInfo monthAndYearDateGroup(const QDate& date,
         return {trGroup("Last month"), 5};
     }
     if (unit == FileExplorerGroupDateUnit::Month) {
-        return {QLocale().toString(date, QStringLiteral("MMMM yyyy")), 6 + month_diff};
+        return {QLocale().toString(date, QStringLiteral("MMMM yyyy")),
+                static_cast<int>(std::min<qint64>(6 + month_diff, kMaxDateSortIndex))};
     }
     if (date.year() == today.year()) {
         return {trGroup("Earlier this year"), 6};
@@ -99,7 +109,8 @@ FileExplorerGroupInfo monthAndYearDateGroup(const QDate& date,
     if (date.year() == today.year() - 1) {
         return {trGroup("Last year"), 7};
     }
-    return {QString::number(date.year()), 8 + (today.year() - date.year())};
+    return {QString::number(date.year()),
+            static_cast<int>(std::clamp<qint64>(8 + year_delta, 0, kMaxDateSortIndex))};
 }
 
 FileExplorerGroupInfo dateGroupInfo(const QDateTime& time,
@@ -121,7 +132,8 @@ FileExplorerGroupInfo dateGroupInfo(const QDateTime& time,
         return {trGroup("Yesterday"), 1};
     }
     if (unit == FileExplorerGroupDateUnit::Day) {
-        return {QLocale().toString(date, QLocale::LongFormat), 2 + static_cast<int>(day_diff)};
+        return {QLocale().toString(date, QLocale::LongFormat),
+                2 + static_cast<int>(std::min<qint64>(day_diff, kMaxDateSortIndex))};
     }
     if (const auto week_group = weekDateGroup(date, today, day_diff)) {
         return *week_group;

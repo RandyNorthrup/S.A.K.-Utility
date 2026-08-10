@@ -282,11 +282,12 @@ void SettingsDialog::saveSettings() {
     m_applyButton->setEnabled(false);
 }
 
-void SettingsDialog::applySettings() {
+bool SettingsDialog::applySettings() {
     if (!validateSettings()) {
-        return;
+        return false;
     }
     saveSettings();
+    return true;
 }
 
 bool SettingsDialog::validateSettings() {
@@ -310,8 +311,10 @@ void SettingsDialog::onApplyClicked() {
 }
 
 void SettingsDialog::onOkClicked() {
-    if (m_settingsModified) {
-        applySettings();
+    // Only close on a fully successful apply: if validation fails, keep the dialog
+    // open so the invalid setting cannot be committed behind an "OK".
+    if (m_settingsModified && !applySettings()) {
+        return;
     }
     accept();
 }

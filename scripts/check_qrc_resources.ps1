@@ -15,6 +15,12 @@ Set-Location $ProjectRoot
 $qrcFiles = Get-ChildItem -LiteralPath $ProjectRoot -Recurse -Filter "*.qrc" -File |
     Where-Object { $_.FullName -notmatch "\\(build|_archived|\.git)\\" }
 
+# A zero-manifest result means the resource set was deleted or the scan broke; either way
+# there is nothing to validate, so pass would be vacuous -- fail closed instead.
+if (-not $qrcFiles -or @($qrcFiles).Count -eq 0) {
+    throw "No .qrc manifests found under '$ProjectRoot'; the resource set is missing or the scan is broken."
+}
+
 $missing = @()
 
 foreach ($qrc in $qrcFiles) {
@@ -25,6 +31,11 @@ foreach ($qrc in $qrcFiles) {
     foreach ($node in $fileNodes) {
         $relativePath = [string]$node.InnerText
         if ([string]::IsNullOrWhiteSpace($relativePath)) {
+            # An empty <file> entry is a malformed manifest, not something to skip silently.
+            $missing += [pscustomobject]@{
+                Manifest = Resolve-Path -LiteralPath $qrc.FullName -Relative
+                Missing = "(empty <file> entry)"
+            }
             continue
         }
 

@@ -12,8 +12,17 @@
 #include <QHBoxLayout>
 #include <QMessageBox>
 #include <QScrollBar>
+#include <QTextDocument>
 #include <QTextStream>
 #include <QVBoxLayout>
+
+namespace {
+// Bounded retention so a flood of appendLog() calls or a huge loaded log file cannot
+// grow m_all_logs without limit and exhaust memory. Trim in a batch once the hard cap
+// is exceeded so steady-state appends stay amortized O(1). Fail closed on size.
+constexpr int kMaxRetainedLogEntries = 100'000;
+constexpr int kRetainedTrimTarget = 90'000;
+}  // namespace
 
 LogViewer::LogViewer(QWidget* parent)
     : QWidget(parent)
@@ -28,15 +37,10 @@ LogViewer::LogViewer(QWidget* parent)
     setupUi();
 }
 
-void LogViewer::setupUi() {
-    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
-    constexpr int kLogFontPointSize = sak::ui::kFontSizeNote;
-    auto* main_layout = new QVBoxLayout(this);
-    main_layout->setSpacing(sak::ui::kSpacingMedium);
-    main_layout->setContentsMargins(
-        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
-
-    // Toolbar
+// Builds the toolbar control row (severity filter, search box, auto-scroll toggle,
+// clear/save buttons) and wires each control to its slot. Split out of setupUi() so
+// the widget-construction body stays within the length gate.
+QHBoxLayout* LogViewer::createToolbar() {
     auto* toolbar_layout = new QHBoxLayout();
     toolbar_layout->setSpacing(sak::ui::kSpacingMedium);
 
@@ -83,7 +87,18 @@ void LogViewer::setupUi() {
     connect(m_save_button, &QPushButton::clicked, this, &LogViewer::onSaveClicked);
     toolbar_layout->addWidget(m_save_button);
 
-    main_layout->addLayout(toolbar_layout);
+    return toolbar_layout;
+}
+
+void LogViewer::setupUi() {
+    Q_ASSERT(layout() == nullptr);  // setupUi not called twice
+    constexpr int kLogFontPointSize = sak::ui::kFontSizeNote;
+    auto* main_layout = new QVBoxLayout(this);
+    main_layout->setSpacing(sak::ui::kSpacingMedium);
+    main_layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+
+    main_layout->addLayout(createToolbar());
 
     // Text browser
     m_text_browser = new QTextBrowser(this);
@@ -91,6 +106,9 @@ void LogViewer::setupUi() {
     m_text_browser->setOpenExternalLinks(false);
     m_text_browser->setReadOnly(true);
     m_text_browser->setFont(QFont("Consolas", kLogFontPointSize));
+    // Bound the browser document so it discards the oldest blocks instead of
+    // growing without limit alongside m_all_logs.
+    m_text_browser->document()->setMaximumBlockCount(kMaxRetainedLogEntries);
     main_layout->addWidget(m_text_browser);
 
     Q_ASSERT(m_search_edit);
@@ -102,6 +120,10 @@ void LogViewer::appendLog(const QString& message, LogLevel level) {
     Q_ASSERT(m_text_browser);
     QString formatted_msg = formatLogMessage(message, level);
     m_all_logs.append(formatted_msg);
+    if (m_all_logs.size() > kMaxRetainedLogEntries) {
+        // Drop the oldest entries in a batch so retention stays bounded.
+        m_all_logs.remove(0, m_all_logs.size() - kRetainedTrimTarget);
+    }
 
     // Apply current filter
     if (m_current_filter == LogLevel::All || m_current_filter == level) {
@@ -130,7 +152,25 @@ bool LogViewer::loadLogFile(const QString& file_path) {
     clear();
 
     QTextStream in(&file);
+    int lines_loaded = 0;
     while (!in.atEnd()) {
+        if (lines_loaded >= kMaxRetainedLogEntries) {
+            // Fail closed on an oversized file: stop rather than read an unbounded
+            // number of lines into memory, and tell the user it was truncated.
+            sak::logWarning(
+                "Log file '{}' exceeds the viewer's {}-line cap; showing the "
+                "first {} lines only",
+                file_path.toStdString(),
+                kMaxRetainedLogEntries,
+                kMaxRetainedLogEntries);
+            sak::showWarningLogged(
+                this,
+                "Log Truncated",
+                QString("This log is larger than the %1-line viewer limit. Showing the "
+                        "first %1 lines only.")
+                    .arg(kMaxRetainedLogEntries));
+            break;
+        }
         QString line = in.readLine();
 
         // Try to detect log level from line content
@@ -143,6 +183,7 @@ bool LogViewer::loadLogFile(const QString& file_path) {
         }
 
         appendLog(line, level);
+        ++lines_loaded;
     }
 
     file.close();

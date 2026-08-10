@@ -43,12 +43,17 @@ function Invoke-RecordedCommand {
     $started = Get-Date
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $exitCode = $null
+    $global:LASTEXITCODE = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        throw "$Name did not launch or returned no exit code from '$FilePath'."
     }
 
     $record = [pscustomobject]@{
@@ -70,14 +75,19 @@ function Invoke-WslScript {
     param(
         [Parameter(Mandatory = $true)] [string]$Name,
         [Parameter(Mandatory = $true)] [string]$Script,
+        [string[]]$ScriptArgs = @(),
         [int[]]$AcceptedExitCodes = @(0)
     )
 
+    # The script body is base64-encoded and any caller values are passed as Bash
+    # positional parameters through argv, never string-interpolated, so an image
+    # path can never close a quote or inject a command into the root WSL session.
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Script))
+    $wslArgs = @("-d", $DistroName, "-u", "root", "--", "sh", "-lc",
+        "printf '%s' '$encoded' | base64 -d | bash -s -- `"`$@`"", "sak-wsl-script") + $ScriptArgs
     return Invoke-RecordedCommand -Name $Name `
         -FilePath "wsl.exe" `
-        -Arguments @("-d", $DistroName, "-u", "root", "--", "sh", "-lc",
-            "printf '%s' '$encoded' | base64 -d | bash") `
+        -Arguments $wslArgs `
         -AcceptedExitCodes $AcceptedExitCodes
 }
 
@@ -207,7 +217,7 @@ $EvidenceRoot = Join-Path $ProjectRoot $EvidenceRoot
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
     $ReportPath = Join-Path $EvidenceRoot "report.json"
 }
-$runRoot = Join-Path $EvidenceRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+$runRoot = Join-Path $EvidenceRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Split-Path -Parent $ReportPath) -Force | Out-Null
 
@@ -237,6 +247,13 @@ command -v swaplabel
 id
 "@ | Out-Null
 
+    $imageQualifier = Split-Path -Qualifier $imagePath
+    if ($imageQualifier -match '^[A-Za-z]:$') {
+        $imageDrive = [System.IO.DriveInfo]::new($imageQualifier + "\")
+        if ([uint64]$ImageSizeBytes -gt [uint64]$imageDrive.AvailableFreeSpace) {
+            throw "Refusing to create a $ImageSizeBytes-byte swap image: only $($imageDrive.AvailableFreeSpace) bytes free on $imageQualifier."
+        }
+    }
     Invoke-RecordedCommand -Name "create-disposable-swap-image" `
         -FilePath "fsutil.exe" `
         -Arguments @("file", "createnew", $imagePath, [string]$ImageSizeBytes) | Out-Null
@@ -244,19 +261,22 @@ id
     $imageHash = (Get-FileHash -LiteralPath $imagePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $probe = Invoke-ProbeCertifier -ImagePath $imagePath -OutputPath $probePath -Certifier $certifier
     $linuxPath = ConvertTo-WslPath -WindowsPath $imagePath
-    $blkid = Invoke-WslScript -Name "linux-blkid-swap-probe" -Script @"
+    $blkid = Invoke-WslScript -Name "linux-blkid-swap-probe" -ScriptArgs @($linuxPath) -Script @'
 set -euo pipefail
-blkid -p -o export '$linuxPath'
-"@
-    $swaplabel = Invoke-WslScript -Name "linux-swaplabel-probe" -Script @"
+blkid -p -o export "$1"
+'@
+    $swaplabel = Invoke-WslScript -Name "linux-swaplabel-probe" -ScriptArgs @($linuxPath) -Script @'
 set -euo pipefail
-swaplabel '$linuxPath'
-"@
-    if ($blkid.output -notmatch "TYPE=swap") {
+swaplabel "$1"
+'@
+    if ($blkid.output -cnotmatch "(?m)^TYPE=swap$") {
         throw "Linux blkid did not report TYPE=swap."
     }
-    if ($blkid.output -notmatch [regex]::Escape("LABEL=$($header.label)")) {
+    if ($blkid.output -cnotmatch ("(?m)^LABEL=" + [regex]::Escape($header.label) + "$")) {
         throw "Linux blkid did not report expected swap label."
+    }
+    if ($swaplabel.output.Trim() -cne [string]$header.label) {
+        throw "Linux swaplabel did not report expected swap label."
     }
     $status = "Passed"
 }

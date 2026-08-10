@@ -39,6 +39,11 @@ public:
     /// @brief Default chunk size for reading (1MB)
     static constexpr std::size_t DEFAULT_CHUNK_SIZE = 1024 * 1024;
 
+    /// @brief Upper bound for the read chunk. A larger request is clamped down so the value
+    /// passed to QFile::read cannot narrow when converted to qint64 and cannot drive an
+    /// outsized per-read allocation.
+    static constexpr std::size_t MAX_CHUNK_SIZE = 256u * 1024u * 1024u;
+
     /// @brief Constructor
     /// @param algorithm Hash algorithm to use
     /// @param chunk_size Size of chunks to read

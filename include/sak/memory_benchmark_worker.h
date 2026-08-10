@@ -74,7 +74,8 @@ private:
     [[nodiscard]] double runRandomLatency();
 
     /// @brief Run allocation stress test
-    void runAllocationStress();
+    /// @return Success, or out_of_memory if a fixed-size stress allocation fails
+    [[nodiscard]] auto runAllocationStress() -> std::expected<void, sak::error_code>;
 
     MemoryBenchmarkResult m_result;
 };

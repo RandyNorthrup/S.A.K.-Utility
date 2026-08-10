@@ -6,6 +6,7 @@
 
 #include "sak/secure_memory.h"
 
+#include <cerrno>
 #include <cstring>
 
 #ifdef _WIN32
@@ -31,7 +32,9 @@
 namespace {
 
 #ifndef _WIN32
-bool readFromDevUrandom(void* buffer, std::size_t size) noexcept {
+// Only the generic non-Windows/Linux/Apple fallback branch uses this; Linux and
+// Apple now fail closed on their platform CSPRNG instead of falling back here.
+[[maybe_unused]] bool readFromDevUrandom(void* buffer, std::size_t size) noexcept {
     FILE* urandom = fopen("/dev/urandom", "rb");
     if (!urandom) {
         return false;
@@ -67,18 +70,29 @@ bool generateSecureRandom(void* buffer, std::size_t size) noexcept {
     return BCRYPT_SUCCESS(status);
 
 #elif defined(__linux__)
-    ssize_t result = getrandom(buffer, size, 0);
-    if (result < 0) {
-        return readFromDevUrandom(buffer, size);
-    }
-    return static_cast<std::size_t>(result) == size;
-
-#elif defined(__APPLE__)
-    int result = SecRandomCopyBytes(kSecRandomDefault, size, static_cast<uint8_t*>(buffer));
-    if (result != errSecSuccess) {
-        return readFromDevUrandom(buffer, size);
+    // Fail closed: getrandom is the only accepted CSPRNG here. Retry the transient
+    // EINTR and drain partial reads (getrandom can return fewer than `size` bytes for
+    // a large request), but surface any real failure as false -- never a silent
+    // /dev/urandom fallback that would mask the getrandom error. [[no-fallbacks-fail-closed]]
+    auto* out = static_cast<unsigned char*>(buffer);
+    std::size_t filled = 0;
+    while (filled < size) {
+        const ssize_t result = getrandom(out + filled, size - filled, 0);
+        if (result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        filled += static_cast<std::size_t>(result);
     }
     return true;
+
+#elif defined(__APPLE__)
+    // Fail closed: no /dev/urandom fallback that would mask a real SecRandomCopyBytes
+    // failure. [[no-fallbacks-fail-closed]]
+    return SecRandomCopyBytes(kSecRandomDefault, size, static_cast<uint8_t*>(buffer)) ==
+           errSecSuccess;
 
 #else
     return readFromDevUrandom(buffer, size);

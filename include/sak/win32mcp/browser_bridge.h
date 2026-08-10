@@ -72,8 +72,15 @@ public:
     [[nodiscard]] QString outstandingId() const { return outstanding_id_; }
 
     /// Abandon the outstanding op (called by the I/O layer on a read timeout). A
-    /// subsequent reply carrying the retired id will no longer match.
-    void retireOutstanding() { outstanding_id_.clear(); }
+    /// subsequent reply carrying the retired id will no longer match. A timed-out op left
+    /// the browser in an UNCONFIRMED state -- a click/navigation may have mutated or navigated
+    /// the DOM before we gave up waiting -- so any ref from the last snapshot is now suspect:
+    /// invalidate it and require a fresh snapshot before acting by ref (fail closed).
+    void retireOutstanding() {
+        outstanding_id_.clear();
+        outstanding_cmd_.clear();
+        ref_index_stale_ = true;
+    }
 
     [[nodiscard]] const QJsonObject& refIndex() const { return ref_index_; }
     [[nodiscard]] bool refIndexStale() const { return ref_index_stale_; }

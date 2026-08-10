@@ -86,7 +86,7 @@ private:
     [[nodiscard]] double runMultiThreaded(int thread_count);
 
     [[nodiscard]] std::expected<void, sak::error_code> runSingleThreadBenchmarks();
-    [[nodiscard]] std::expected<void, sak::error_code> runMultiThreadBenchmark(double st_total);
+    [[nodiscard]] std::expected<void, sak::error_code> runMultiThreadBenchmark();
     void updateDerivedMetrics();
 
     /// @brief Calculate normalized scores from raw timing data
@@ -96,6 +96,9 @@ private:
     double m_zlib_throughput_mbps{0.0};
     double m_aes_throughput_mbps{0.0};
     double m_matrix_gflops{0.0};
+    /// Single-thread time (ms) for ONE unit of the multi-thread per-thread workload,
+    /// measured inside runMultiThreaded so the scaling efficiency compares matched work.
+    double m_mt_single_ref_ms{0.0};
 };
 
 }  // namespace sak

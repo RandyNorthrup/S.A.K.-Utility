@@ -32,6 +32,19 @@ if (-not (Test-Path $configPath)) {
 }
 . $configPath
 
+# Fail closed on a missing or malformed subscription id from local config. A
+# blank or non-GUID value would otherwise fall through to 'az account set' and
+# silently keep whatever subscription was previously active.
+if ([string]::IsNullOrWhiteSpace($SubscriptionId)) {
+    Write-Error "SubscriptionId is not set. Copy sign-config.template.ps1 to sign-config.ps1 and fill in your SubscriptionId."
+    exit 1
+}
+$parsedSubscriptionId = [guid]::Empty
+if (-not [guid]::TryParse($SubscriptionId, [ref]$parsedSubscriptionId)) {
+    Write-Error "SubscriptionId '$SubscriptionId' is not a valid GUID."
+    exit 1
+}
+
 # -- Configuration ------------------------------------------------
 $AccountName      = "scnetsolutions"
 $ProfileName      = "SAKUtility"
@@ -46,6 +59,15 @@ if (-not $resolvedPath) {
     exit 1
 }
 $ExePath = $resolvedPath.Path
+$exeItem = Get-Item -LiteralPath $ExePath -ErrorAction SilentlyContinue
+if (-not $exeItem -or $exeItem.PSIsContainer) {
+    Write-Error "Refusing to sign '$ExePath': not a regular file."
+    exit 1
+}
+if ($exeItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+    Write-Error "Refusing to sign '$ExePath': reparse point (symlink/junction) is not a trusted signing target."
+    exit 1
+}
 Write-Host "Signing: $ExePath"
 
 # -- Check Azure CLI ---------------------------------------------
@@ -68,6 +90,10 @@ if ($LASTEXITCODE -ne 0) {
 
 # Set subscription
 az account set --subscription $SubscriptionId
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Failed to select Azure subscription $SubscriptionId (az account set exit $LASTEXITCODE)."
+    exit 1
+}
 Write-Host "Using subscription: $SubscriptionId"
 
 # -- Locate signtool ---------------------------------------------
@@ -87,13 +113,11 @@ foreach ($pattern in $sdkPaths) {
     }
 }
 
+# No PATH fallback: signtool must come from an installed Windows SDK, otherwise an
+# attacker-planted signtool.exe earlier on PATH could be run with signing rights.
+# Fail closed when the SDK copy is absent.
 if (-not $signtool) {
-    # Try PATH
-    $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue).Source
-}
-
-if (-not $signtool) {
-    Write-Error "signtool.exe not found. Install Windows SDK: https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/"
+    Write-Error "signtool.exe not found under the Windows SDK. Install Windows SDK: https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/"
     exit 1
 }
 Write-Host "Using signtool: $signtool"
@@ -158,10 +182,17 @@ Write-Host "Signer:    $($sig.SignerCertificate.Subject)"
 Write-Host "Issuer:    $($sig.SignerCertificate.Issuer)"
 Write-Host "Timestamp: $($sig.TimeStamperCertificate.Subject)"
 
-if ($sig.Status -eq 'Valid') {
-    Write-Host ""
-    Write-Host "Code signing completed successfully!" -ForegroundColor Green
-} else {
+if ($sig.Status -ne 'Valid') {
     Write-Warning "Signature status is '$($sig.Status)' -- check Trusted Signing configuration."
     exit 1
 }
+if (-not $sig.SignerCertificate) {
+    Write-Error "Signature reports Valid but carries no signer certificate; refusing to treat as signed."
+    exit 1
+}
+if (-not $sig.TimeStamperCertificate) {
+    Write-Error "Signature is not timestamped (a trusted timestamp was requested with /tr); refusing to treat as signed."
+    exit 1
+}
+Write-Host ""
+Write-Host "Code signing completed successfully!" -ForegroundColor Green

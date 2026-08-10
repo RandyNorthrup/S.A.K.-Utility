@@ -8,6 +8,7 @@
 
 #include <QElapsedTimer>
 #include <QSemaphore>
+#include <QSet>
 #include <QTcpSocket>
 #include <QThread>
 #include <QTimer>
@@ -327,12 +328,27 @@ void PortScanner::scan(const ScanConfig& config) {
         return;
     }
 
-    // Build port list: explicit ports + range
-    QVector<uint16_t> ports = config.ports;
+    // Build the port set: explicit ports plus any range, de-duplicated with the invalid
+    // port 0 dropped. A hostile ScanConfig can carry a huge duplicate-heavy ports vector;
+    // the QSet bounds the real work to at most the 65535 valid TCP ports (fail closed
+    // against amplification) while keeping membership checks O(1) rather than O(n^2).
+    QVector<uint16_t> ports;
+    QSet<uint16_t> seen;
+    // Reserve for the unique-port ceiling, never the (possibly huge) input count, so a
+    // duplicate-heavy vector cannot drive a large hash pre-allocation.
+    constexpr qsizetype kMaxUniquePorts = 65'536;
+    seen.reserve(std::min<qsizetype>(config.ports.size(), kMaxUniquePorts));
+    for (const uint16_t port : config.ports) {
+        if (port != 0 && !seen.contains(port)) {
+            seen.insert(port);
+            ports.append(port);
+        }
+    }
     if (config.portRangeStart > 0 && config.portRangeEnd >= config.portRangeStart) {
         for (uint32_t p = config.portRangeStart; p <= config.portRangeEnd; ++p) {
             const auto port = static_cast<uint16_t>(p);
-            if (!ports.contains(port)) {
+            if (!seen.contains(port)) {
+                seen.insert(port);
                 ports.append(port);
             }
         }

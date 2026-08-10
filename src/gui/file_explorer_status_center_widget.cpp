@@ -271,8 +271,18 @@ void FileExplorerStatusCardWidget::syncProgressRows() {
     m_graph->setPoints(m_item->graphPoints());
     m_speed_label->setText(tr("Speed: %1").arg(m_item->speedText()));
     const bool footer = in_progress && !indeterminate;
-    m_message_label->setVisible(footer);
-    m_message_label->setText(m_item->message());
+    if (m_item->kind() == FileExplorerStatusItemKind::Error) {
+        // Files surfaces a failed operation's detail only as the card tooltip, which
+        // keyboard, touch, and assistive-technology users never see. Show the terminal
+        // failure detail inline instead so the error is always visible.
+        const QString detail = m_item->subHeader().isEmpty() ? m_item->message()
+                                                             : m_item->subHeader();
+        m_message_label->setText(detail);
+        m_message_label->setVisible(!detail.isEmpty());
+    } else {
+        m_message_label->setVisible(footer);
+        m_message_label->setText(m_item->message());
+    }
     m_name_label->setVisible(footer && expanded);
     m_name_label->setText(tr("Name: %1").arg(m_item->currentItemName()));
     m_more_button->setVisible(in_progress && m_item->isCancelable());

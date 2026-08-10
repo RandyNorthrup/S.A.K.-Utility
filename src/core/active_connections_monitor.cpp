@@ -106,21 +106,35 @@ void ActiveConnectionsMonitor::refreshNow() {
     const QHash<uint32_t, QString> processNames =
         m_config.resolveProcessNames ? snapshotProcessNames() : QHash<uint32_t, QString>{};
 
-    bool tcpError = false;
-    bool udpError = false;
+    quint32 tcpError = 0;
+    quint32 udpError = 0;
     if (m_config.showTcp) {
         connections.append(enumerateTcpConnections(processNames, tcpError));
     }
     if (m_config.showUdp) {
         connections.append(enumerateUdpListeners(processNames, udpError));
     }
-    m_lastRefreshError = tcpError || udpError;
+    m_lastRefreshError = (tcpError != 0) || (udpError != 0);
     if (m_lastRefreshError) {
         // A TCP/UDP table read failed, so `connections` is empty or missing a
         // whole protocol. Diffing against it would report every baseline
         // connection as closed and then wipe the baseline, and the next
         // successful refresh would re-report them all as new. Preserve the last
         // good snapshot and skip the diff on a read failure (B9-08).
+        //
+        // Fail closed: surface the exact kernel error instead of quietly
+        // re-publishing stale data as if the refresh succeeded.
+        QString detail;
+        if (tcpError != 0) {
+            detail = QStringLiteral("TCP connection table read failed (error %1)").arg(tcpError);
+        }
+        if (udpError != 0) {
+            if (!detail.isEmpty()) {
+                detail += QStringLiteral("; ");
+            }
+            detail += QStringLiteral("UDP listener table read failed (error %1)").arg(udpError);
+        }
+        Q_EMIT errorOccurred(detail);
         Q_EMIT connectionsUpdated(m_lastConnections);
         return;
     }
@@ -138,7 +152,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::getCurrentConnections() const 
 }
 
 QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections(
-    const QHash<uint32_t, QString>& processNames, bool& readError) {
+    const QHash<uint32_t, QString>& processNames, quint32& readError) {
     QVector<ConnectionInfo> connections;
 
     DWORD bufferSize = kInitialBufferSize;
@@ -154,7 +168,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections(
     }
 
     if (result != NO_ERROR) {
-        readError = true;
+        readError = static_cast<quint32>(result);
         return connections;
     }
 
@@ -189,7 +203,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections(
 }
 
 QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners(
-    const QHash<uint32_t, QString>& processNames, bool& readError) {
+    const QHash<uint32_t, QString>& processNames, quint32& readError) {
     QVector<ConnectionInfo> connections;
 
     DWORD bufferSize = kInitialBufferSize;
@@ -205,7 +219,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners(
     }
 
     if (result != NO_ERROR) {
-        readError = true;
+        readError = static_cast<quint32>(result);
         return connections;
     }
 

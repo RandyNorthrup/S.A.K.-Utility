@@ -117,6 +117,9 @@ private:
     QListWidget* m_suggestion_list{nullptr};
     FileExplorerOmnibarMode m_mode{FileExplorerOmnibarMode::Path};
     QString m_path_text_backup;
+    // The committed path captured when path-edit mode is entered, so Escape can revert an
+    // uncommitted edit (and the breadcrumb bound to it) instead of leaving the typed text.
+    QString m_path_edit_snapshot;
 };
 
 }  // namespace sak

@@ -12,6 +12,11 @@ namespace sak::ai {
 
 namespace {
 
+// A tool call's arguments are model output (untrusted). Cap the JSON before parsing so a
+// hostile oversize blob cannot drive an unbounded JSON-DOM allocation; real tool arguments
+// are a handful of small fields.
+constexpr qsizetype kMaxToolArgumentsChars = 1 << 20;  // 1 MiB
+
 QString normalizedToolName(const QString& name) {
     return name.trimmed().toLower();
 }
@@ -58,6 +63,12 @@ AiSubagentToolOutput AiSubagentToolExecutor::executeToolCall(const AiSubagentTas
         return errorOutput(call.call_id,
                            call.name,
                            QStringLiteral("No subagent tool dispatcher configured"));
+    }
+
+    if (call.arguments_json.size() > kMaxToolArgumentsChars) {
+        return errorOutput(call.call_id,
+                           call.name,
+                           QStringLiteral("Tool arguments JSON exceeds the size limit"));
     }
 
     // Empty argument strings are a valid "no arguments" call; anything non-empty

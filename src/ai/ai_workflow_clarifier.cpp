@@ -24,13 +24,37 @@ bool hasValue(const QJsonValue& value) {
     return !value.isNull() && !value.isUndefined();
 }
 
+bool containsAny(const QString& haystack, const QStringList& needles) {
+    for (const QString& needle : needles) {
+        if (haystack.contains(needle)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool isAppLikeInput(const WorkflowRequiredInput& input) {
     const QString id = input.id.trimmed().toLower();
     const QString label = input.label.trimmed().toLower();
-    return id.contains(QStringLiteral("app")) || id.contains(QStringLiteral("package")) ||
-           id.contains(QStringLiteral("product")) || id.contains(QStringLiteral("query")) ||
-           id.contains(QStringLiteral("name")) || label.contains(QStringLiteral("app")) ||
-           label.contains(QStringLiteral("package")) || label.contains(QStringLiteral("product"));
+    // The id carries two extra tokens the label does not: a "query"/"name" field names
+    // a destructive target here even when its label never says "app".
+    static const QStringList id_terms{
+        QStringLiteral("app"),
+        QStringLiteral("package"),
+        QStringLiteral("product"),
+        QStringLiteral("query"),
+        QStringLiteral("name"),
+        QStringLiteral("software"),
+        QStringLiteral("target"),
+    };
+    static const QStringList label_terms{
+        QStringLiteral("app"),
+        QStringLiteral("package"),
+        QStringLiteral("product"),
+        QStringLiteral("software"),
+        QStringLiteral("target"),
+    };
+    return containsAny(id, id_terms) || containsAny(label, label_terms);
 }
 
 QString firstTextValue(const QJsonValue& value) {
@@ -49,18 +73,8 @@ QString firstTextValue(const QJsonValue& value) {
     return {};
 }
 
-}  // namespace
-
-bool AiWorkflowClarifier::looksAmbiguousAppValue(const QString& value,
-                                                 const QString& user_message) {
-    const QString text = value.trimmed().toLower();
-    if (text.isEmpty()) {
-        return true;
-    }
-    if (text.size() < kMinimumSpecificAppValueChars) {
-        return true;
-    }
-    static const QStringList generic_terms{
+const QStringList& genericAppTerms() {
+    static const QStringList terms{
         QStringLiteral("app"),
         QStringLiteral("application"),
         QStringLiteral("program"),
@@ -73,14 +87,85 @@ bool AiWorkflowClarifier::looksAmbiguousAppValue(const QString& value,
         QStringLiteral("that"),
         QStringLiteral("this"),
     };
-    if (generic_terms.contains(text)) {
+    return terms;
+}
+
+QStringList significantWords(const QStringList& raw_words) {
+    // Vague qualifiers carry no target identity of their own ("the app", "some
+    // software", "any package", "whatever"). Strip them and any surrounding
+    // punctuation, then the value is ambiguous when nothing specific remains or
+    // every remaining word is itself a generic placeholder. An exact-token check
+    // alone lets multi-word and trailing-punctuation forms ("app.", "the app")
+    // slip through as if they were specific destructive targets.
+    static const QStringList qualifier_terms{
+        QStringLiteral("the"),
+        QStringLiteral("a"),
+        QStringLiteral("an"),
+        QStringLiteral("some"),
+        QStringLiteral("any"),
+        QStringLiteral("my"),
+        QStringLiteral("your"),
+        QStringLiteral("our"),
+        QStringLiteral("that"),
+        QStringLiteral("this"),
+        QStringLiteral("these"),
+        QStringLiteral("those"),
+        QStringLiteral("other"),
+        QStringLiteral("another"),
+        QStringLiteral("default"),
+        QStringLiteral("whatever"),
+        QStringLiteral("just"),
+    };
+    QStringList significant;
+    for (const QString& raw : raw_words) {
+        QString word = raw;
+        while (!word.isEmpty() && !word.front().isLetterOrNumber()) {
+            word.remove(0, 1);
+        }
+        while (!word.isEmpty() && !word.back().isLetterOrNumber()) {
+            word.chop(1);
+        }
+        if (word.isEmpty() || qualifier_terms.contains(word)) {
+            continue;
+        }
+        significant.append(word);
+    }
+    return significant;
+}
+
+bool allTermsGeneric(const QStringList& words) {
+    for (const QString& word : words) {
+        if (!genericAppTerms().contains(word)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
+bool AiWorkflowClarifier::looksAmbiguousAppValue(const QString& value,
+                                                 const QString& user_message) {
+    const QString text = value.trimmed().toLower();
+    if (text.isEmpty()) {
         return true;
     }
-    if (text.split(QRegularExpression(QStringLiteral(R"(\s+)")), Qt::SkipEmptyParts).size() == 1 &&
-        user_message.trimmed()
-                .split(QRegularExpression(QStringLiteral(R"(\s+)")), Qt::SkipEmptyParts)
-                .size() <= kGenericUserMessageWordLimit &&
-        generic_terms.contains(user_message.trimmed().toLower())) {
+    if (text.size() < kMinimumSpecificAppValueChars) {
+        return true;
+    }
+    const QRegularExpression whitespace(QStringLiteral(R"(\s+)"));
+    const QStringList raw_words = text.split(whitespace, Qt::SkipEmptyParts);
+    const QStringList significant = significantWords(raw_words);
+    if (significant.isEmpty()) {
+        return true;
+    }
+    if (allTermsGeneric(significant)) {
+        return true;
+    }
+    if (raw_words.size() == 1 &&
+        user_message.trimmed().split(whitespace, Qt::SkipEmptyParts).size() <=
+            kGenericUserMessageWordLimit &&
+        genericAppTerms().contains(user_message.trimmed().toLower())) {
         return true;
     }
     return false;

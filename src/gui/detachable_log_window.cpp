@@ -23,6 +23,7 @@
 #include <QScreen>
 #include <QShowEvent>
 #include <QSizePolicy>
+#include <QTextDocument>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -38,6 +39,12 @@ constexpr int kToggleTrackRadiusDivisor = 2;
 constexpr int kToggleKnobInsetPx = 2;
 constexpr int kToggleLabelGap = 6;
 constexpr int kToggleLabelTrailingPadding = 14;
+
+// Bound log retention: attacker/tool output is untrusted and can be arbitrarily
+// large. Keep only the newest kMaxLogBlocks lines, and truncate any single line to
+// kMaxLogMessageChars so one pathological message cannot exhaust memory.
+constexpr int kMaxLogBlocks = 5000;
+constexpr int kMaxLogMessageChars = 16'384;
 
 QFont toggleLabelFont(QFont font) {
     font.setPointSize(ui::kFontSizeNote);
@@ -71,6 +78,9 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
     // Log text area (uses app theme -- no custom dark style)
     m_logEdit = new QTextEdit(this);
     m_logEdit->setReadOnly(true);
+    // Cap accumulated lines so a long, high-volume elevated session cannot grow the
+    // document without bound (oldest lines drop, newest are kept).
+    m_logEdit->document()->setMaximumBlockCount(kMaxLogBlocks);
     m_logEdit->setAccessibleName(tr("Detached operation log"));
     m_logEdit->setPlaceholderText(tr("Operation log will appear here..."));
     layout->addWidget(m_logEdit);
@@ -105,13 +115,19 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
 DetachableLogWindow::~DetachableLogWindow() = default;
 
 void DetachableLogWindow::appendLog(const QString& message) {
+    // Bound a single line so one pathological message (huge tool/scan/command output)
+    // cannot blow up the document; the block cap in the constructor bounds accumulation.
+    QString bounded = message;
+    if (bounded.size() > kMaxLogMessageChars) {
+        bounded = bounded.left(kMaxLogMessageChars) + QStringLiteral(" [truncated]");
+    }
     const QString timestamp = QDateTime::currentDateTime().toString("[HH:mm:ss] ");
     const int previous_value = m_logScrollController ? m_logScrollController->scrollValue() : 0;
     const bool follow_newest = !m_logScrollController ||
                                m_logScrollController->shouldFollowNewestForAppend();
     // QTextEdit::append() promotes anything that looks like markup to rich text, and log lines
     // carry file paths, program names, command output and AI text; wrap so they read literally.
-    m_logEdit->append(sak::ui::asLiteralRichText(timestamp + message));
+    m_logEdit->append(sak::ui::asLiteralRichText(timestamp + bounded));
     if (!m_logScrollController) {
         return;
     }

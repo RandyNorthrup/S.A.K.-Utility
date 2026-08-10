@@ -86,13 +86,6 @@ function Get-PatchedUtf8Bytes {
     return $originalBytes
 }
 
-if (-not (Test-IsAdmin)) {
-    throw "APFS raw format validation must run elevated."
-}
-if (-not $Force) {
-    throw "APFS raw format validation is destructive. Re-run with -Force against expendable media."
-}
-
 if ([string]::IsNullOrWhiteSpace($CertifierPath)) {
     $CertifierPath = Resolve-RepoPath "..\build\Release\partition_filesystem_probe_certifier.exe"
 }
@@ -103,14 +96,26 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Resolve-RepoPath "..\artifacts\partition-manager-certification\vm-lab\external-evidence\external.apfs-raw-format"
 }
 
-Assert-Condition -Condition (Test-Path -LiteralPath $CertifierPath -PathType Leaf) -Message "Certifier not found: $CertifierPath"
-Assert-Condition -Condition (Test-Path -LiteralPath $ApfsWriterCliPath -PathType Leaf) -Message "APFS writer CLI not found: $ApfsWriterCliPath"
-
-$runId = "run-" + (Get-Date -Format "yyyyMMdd-HHmmss")
-$runRoot = Join-Path $OutputRoot $runId
-New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
-
+# Establish the evidence root first and immediately supersede any stale passing report, so an
+# early abort (not elevated, missing -Force, missing tools) can never leave a prior run's
+# "Passed" report.json standing as this run's result.
+New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
 $reportPath = Join-Path $OutputRoot "report.json"
+Write-Json -Path $reportPath -Value ([ordered]@{
+    status = "Running"
+    gate_id = "external.apfs-raw-format"
+    destructive = $true
+    disk_number = $DiskNumber
+    partition_number = $PartitionNumber
+    started_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+})
+
+# Collision-proof run id. One-second stamps alone let same-second or concurrent runs share a
+# directory and overwrite each other's evidence; the GUID suffix plus a non-Force (exclusive)
+# create fail closed on any collision instead.
+$runId = "run-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [Guid]::NewGuid().ToString("N").Substring(0, 8)
+$runRoot = Join-Path $OutputRoot $runId
+New-Item -ItemType Directory -Path $runRoot | Out-Null
 $formatReportPath = Join-Path $runRoot "apfs-raw-format-report.json"
 $verifyReportPath = Join-Path $runRoot "apfs-raw-verify-report.json"
 $writeReportPath = Join-Path $runRoot "apfs-raw-write-report.json"
@@ -137,6 +142,17 @@ $labelVerifyReportPath = Join-Path $runRoot "apfs-raw-volume-label-verify-report
 $deleteReportPath = Join-Path $runRoot "apfs-raw-delete-report.json"
 
 try {
+    if (-not (Test-IsAdmin)) {
+        throw "APFS raw format validation must run elevated."
+    }
+    if (-not $Force) {
+        throw "APFS raw format validation is destructive. Re-run with -Force against expendable media."
+    }
+    Assert-Condition -Condition (Test-Path -LiteralPath $CertifierPath -PathType Leaf) -Message "Certifier not found: $CertifierPath"
+    Assert-Condition -Condition (Test-Path -LiteralPath $ApfsWriterCliPath -PathType Leaf) -Message "APFS writer CLI not found: $ApfsWriterCliPath"
+    Assert-Condition -Condition ([System.IO.Path]::GetExtension($CertifierPath) -ieq ".exe") -Message "Certifier must be a native .exe (executes elevated): $CertifierPath"
+    Assert-Condition -Condition ([System.IO.Path]::GetExtension($ApfsWriterCliPath) -ieq ".exe") -Message "APFS writer CLI must be a native .exe (executes elevated): $ApfsWriterCliPath"
+
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
     Assert-Condition -Condition (-not $disk.IsBoot -and -not $disk.IsSystem) -Message "Target disk is boot/system."
     Assert-Condition -Condition (-not $disk.IsReadOnly) -Message "Target disk is read-only."
@@ -154,6 +170,19 @@ try {
     Assert-Condition -Condition ([string]$partition.GptType -eq $apfsGuid) -Message "Target partition is not an Apple APFS GPT partition."
     Assert-Condition -Condition ([uint64]$partition.Size -ge [uint64]67108864) -Message "Target partition is smaller than APFS minimum."
     Assert-Condition -Condition ([uint64]$partition.Size -le $maxGeneratedSingleChunkBytes) -Message "Target partition exceeds the certified one-spaceman-chunk APFS generated layout limit (128 MiB); repartition to a 64-128 MiB APFS test slice or implement multi-CIB spaceman support first."
+
+    # A certification proves nothing if its mutations are no-ops. Reject empty payloads and a
+    # relabel target that equals the original name before any write runs.
+    Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($VolumeName)) -Message "VolumeName must not be empty."
+    Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($RelabeledVolumeName)) -Message "RelabeledVolumeName must not be empty."
+    Assert-Condition -Condition ($RelabeledVolumeName -ne $VolumeName) -Message "RelabeledVolumeName must differ from VolumeName so the relabel proves a change."
+    Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($WriteFileName)) -Message "WriteFileName must not be empty."
+    Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($WriteFileText)) -Message "WriteFileText must not be empty."
+    Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($DirectoryName)) -Message "DirectoryName must not be empty."
+    Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($ChildFileName)) -Message "ChildFileName must not be empty."
+    Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($ChildFileText)) -Message "ChildFileText must not be empty."
+    Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($PatchFileText)) -Message "PatchFileText must not be empty."
+    Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($ChildPatchFileText)) -Message "ChildPatchFileText must not be empty."
 
     $targetPath = "\\?\GLOBALROOT\Device\Harddisk$DiskNumber\Partition$PartitionNumber"
     $formatResult = Invoke-Certifier -Path $CertifierPath -Arguments @(
@@ -419,6 +448,7 @@ try {
     Assert-Condition -Condition ($patchReport.status -eq "Passed") -Message "APFS raw patch report did not pass."
     Assert-Condition -Condition ($patchVerifyReport.status -eq "Passed") -Message "APFS raw patch verify report did not pass."
     Assert-Condition -Condition ($patchVerifyReport.apfs_read_file.sha256 -eq $expectedPatchedHash) -Message "APFS raw patch file hash did not round-trip."
+    Assert-Condition -Condition ($expectedPatchedHash -ne $expectedWriteHash) -Message "APFS raw patch produced bytes identical to the original write; the patch proves no change."
     Assert-Condition -Condition ([bool]$directoryCreateReport.ok) -Message "APFS raw directory create report did not pass."
     Assert-Condition -Condition ($directoryCreateVerifyReport.status -eq "Passed") -Message "APFS raw directory create verify report did not pass."
     Assert-Condition -Condition (@($directoryCreateVerifyReport.apfs_listing.entries).Count -eq 0) -Message "APFS raw created directory was not empty."
@@ -429,6 +459,7 @@ try {
     Assert-Condition -Condition ([bool]$childPatchReport.ok) -Message "APFS raw directory child patch report did not pass."
     Assert-Condition -Condition ($childPatchVerifyReport.status -eq "Passed") -Message "APFS raw directory child patch verify report did not pass."
     Assert-Condition -Condition ($childPatchVerifyReport.apfs_read_file.sha256 -eq $expectedPatchedChildHash) -Message "APFS raw directory child patch hash did not round-trip."
+    Assert-Condition -Condition ($expectedPatchedChildHash -ne $expectedChildHash) -Message "APFS raw child patch produced bytes identical to the original child; the patch proves no change."
     Assert-Condition -Condition (-not [bool]$nonEmptyDirectoryDeleteReport.ok) -Message "APFS raw non-empty directory delete was not blocked."
     Assert-Condition -Condition (([string]::Join(" ", @($nonEmptyDirectoryDeleteReport.blockers))).Contains("empty")) -Message "APFS raw non-empty directory delete did not report empty-directory guard."
     Assert-Condition -Condition ([bool]$childDeleteReport.ok) -Message "APFS raw directory child delete report did not pass."

@@ -49,7 +49,11 @@ Q_SIGNALS:
     void errorOccurred(QString error);
 
 private:
-    [[nodiscard]] QVector<NetworkAdapterInfo> enumerateAdapters();
+    /// @param ok Set true only when GetAdaptersAddresses succeeded; false (with an
+    ///        errorOccurred already emitted) when enumeration failed. scan() emits
+    ///        scanComplete only on success so a failed enumeration is never reported as a
+    ///        complete "0 adapters" scan.
+    [[nodiscard]] QVector<NetworkAdapterInfo> enumerateAdapters(bool& ok);
 };
 
 }  // namespace sak

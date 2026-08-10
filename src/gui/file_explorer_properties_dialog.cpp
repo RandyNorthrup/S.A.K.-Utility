@@ -194,7 +194,12 @@ void FileExplorerPropertiesDialog::buildGeneralPage() {
     auto* page = new QWidget(this);
     auto* form = new QFormLayout(page);
     const bool single = m_entries.size() == 1;
-    const FileManagementEntry& first = m_entries.first();
+    // Fail closed on an empty selection: Properties is a selection_required command so
+    // the panel opens it only with entries present, but the constructor must never hit
+    // m_entries.first() undefined behavior if a caller ever passes none. The blank
+    // fallback is never actually read -- every field below is gated on `single`.
+    static const FileManagementEntry kNoEntry{};
+    const FileManagementEntry& first = m_entries.isEmpty() ? kNoEntry : m_entries.first();
 
     // Files GeneralPage.xaml order: name, type, location, size, then the
     // timestamps; file system and the on-disk identifier are the S.A.K.

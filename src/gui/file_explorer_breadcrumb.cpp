@@ -96,6 +96,18 @@ QVector<FileExplorerBreadcrumb::Segment> splitUncSegments(const QString& path) {
 
 QVector<FileExplorerBreadcrumb::Segment> FileExplorerBreadcrumb::splitPathSegments(
     const QString& path) {
+    // Defensive ceiling: the breadcrumb builds one clickable widget per path
+    // component and one accumulated prefix string per segment, so a pathological
+    // path (e.g. a crafted foreign-filesystem image with absurd nesting) could
+    // otherwise freeze the GUI or exhaust memory. No real navigable path
+    // approaches this, so above the ceiling fall back to a single whole-path
+    // segment rather than splitting. This also keeps the segment count far below
+    // INT_MAX, so the int component indexes below cannot narrow or wrap.
+    constexpr int kMaxBreadcrumbPathChars = 32'768;
+    if (path.size() > kMaxBreadcrumbPathChars) {
+        return {Segment{path, path}};
+    }
+
     if (path.startsWith(QStringLiteral("\\\\")) || path.startsWith(QStringLiteral("//"))) {
         return splitUncSegments(path);
     }

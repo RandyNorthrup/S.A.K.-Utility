@@ -211,9 +211,17 @@ void FileExplorerOmnibar::setAddressEditMode(const bool edit) {
     if (!m_address_stack) {
         return;
     }
+    // Editing the address is a path operation. If a palette/search mode is active, leave it
+    // first (Files EditPathAction) so the address text is treated as a path and Enter
+    // navigates instead of submitting a search or running the selected command.
+    if (edit && m_mode != FileExplorerOmnibarMode::Path) {
+        setMode(FileExplorerOmnibarMode::Path);
+    }
     m_address_stack->setCurrentWidget(edit ? static_cast<QWidget*>(m_path_edit)
                                            : static_cast<QWidget*>(m_breadcrumb));
     if (edit) {
+        // Remember the committed path so an Escape-cancel can revert an uncommitted edit.
+        m_path_edit_snapshot = m_path_edit->text();
         m_path_edit->setFocus(Qt::MouseFocusReason);
         m_path_edit->selectAll();
     }
@@ -388,6 +396,10 @@ bool FileExplorerOmnibar::filterPathModeEvent(QEvent* event) {
     }
     if (event->type() == QEvent::KeyPress &&
         static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+        // Cancel the edit: restore the committed path so an uncommitted or malformed edit
+        // never becomes the displayed current location (the breadcrumb is bound to this
+        // text via textChanged, so this reverts it too). The real directory is unchanged.
+        m_path_edit->setText(m_path_edit_snapshot);
         setAddressEditMode(false);
         return true;
     }

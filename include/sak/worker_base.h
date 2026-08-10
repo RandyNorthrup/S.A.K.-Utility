@@ -131,8 +131,12 @@ protected:
 private:
     /**
      * @brief QThread run implementation
+     *
+     * final: a derived worker overrides execute(), never run(). Sealing run()
+     * stops a subclass from silently bypassing the cancellation, state-tracking,
+     * error-handling, and terminal-signal machinery this base guarantees.
      */
-    void run() override;
+    void run() final;
 
     std::atomic<bool> m_stop_requested{false};
     std::atomic<bool> m_is_running{false};

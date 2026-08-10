@@ -54,7 +54,7 @@ private:
 
     void loadSettings();
     void saveSettings();
-    void applySettings();
+    bool applySettings();
     bool validateSettings();
 
     // UI Components

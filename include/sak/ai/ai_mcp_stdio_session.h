@@ -8,6 +8,8 @@
 #include <QString>
 #include <QVector>
 
+#include <atomic>
+
 /// @file ai_mcp_stdio_session.h
 /// @brief A persistent Model Context Protocol stdio session. Unlike
 /// AiMcpStdioClient::callTool -- which spawns a fresh server process, runs the
@@ -84,7 +86,10 @@ private:
     class Worker;
     Worker* m_worker{nullptr};  // owned by m_thread (deleted on thread finish)
     class QThread* m_thread{nullptr};
-    bool m_open{false};
+    // Atomic so a concurrent isOpen() read cannot tear against an open()/close() write. Callers
+    // must still serialize the blocking calls themselves (documented above); this only hardens
+    // the flag itself.
+    std::atomic<bool> m_open{false};
 };
 
 }  // namespace sak::ai

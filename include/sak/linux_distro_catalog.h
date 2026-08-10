@@ -50,19 +50,19 @@ public:
 
     /// @brief Complete metadata for a downloadable distribution
     struct DistroInfo {
-        QString id;              ///< Unique identifier (e.g., "ubuntu-desktop")
-        QString name;            ///< Display name (e.g., "Ubuntu Desktop")
-        QString version;         ///< Current known version (e.g., "26.04")
-        QString versionLabel;    ///< Optional label (e.g., "Resolute", "LTS")
-        QString description;     ///< Short description for UI
-        Category category;       ///< Use-case category
-        SourceType sourceType;   ///< How the URL is resolved
-        QString downloadUrl;     ///< Direct URL or URL template ({version} placeholder)
-        QString checksumUrl;     ///< URL to checksum file (SHA256SUMS, .sha256, etc.)
-        QString checksumType;    ///< "sha256" or "sha1"
-        QString fileName;        ///< Expected filename (with {version} placeholder)
-        qint64 approximateSize;  ///< Approximate size in bytes (for UI display)
-        QString homepage;        ///< Project homepage URL
+        QString id;            ///< Unique identifier (e.g., "ubuntu-desktop")
+        QString name;          ///< Display name (e.g., "Ubuntu Desktop")
+        QString version;       ///< Current known version (e.g., "26.04")
+        QString versionLabel;  ///< Optional label (e.g., "Resolute", "LTS")
+        QString description;   ///< Short description for UI
+        Category category{Category::GeneralPurpose};   ///< Use-case category
+        SourceType sourceType{SourceType::DirectURL};  ///< How the URL is resolved
+        QString downloadUrl;        ///< Direct URL or URL template ({version} placeholder)
+        QString checksumUrl;        ///< URL to checksum file (SHA256SUMS, .sha256, etc.)
+        QString checksumType;       ///< "sha256" or "sha1"
+        QString fileName;           ///< Expected filename (with {version} placeholder)
+        qint64 approximateSize{0};  ///< Approximate size in bytes (for UI display)
+        QString homepage;           ///< Project homepage URL
 
         // GitHub-specific fields (only used when sourceType == GitHubRelease)
         QString githubOwner;         ///< GitHub repository owner

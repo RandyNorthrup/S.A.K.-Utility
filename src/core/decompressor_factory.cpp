@@ -111,10 +111,12 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
 }
 
 QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
-    // readMagicNumber() cannot open an empty path, so it returns the empty
-    // "unknown format" result.
-    unsigned char magic[kMagicHeaderProbeBytes];
-    if (!readMagicNumber(filePath, magic, sizeof(magic))) {
+    // readMagicNumber() cannot open an empty (or unreadable) path, so it returns a
+    // negative count and this reports the empty "unknown format" result. The buffer is
+    // zero-initialised so a signature is only ever matched against bytes actually read.
+    unsigned char magic[kMagicHeaderProbeBytes] = {};
+    const int bytesRead = readMagicNumber(filePath, magic, sizeof(magic));
+    if (bytesRead <= 0) {
         return QString();
     }
 
@@ -133,6 +135,11 @@ QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
     };
 
     for (const auto& entry : kMagicTable) {
+        // Not enough bytes were read to confirm this signature; never let the
+        // zero-filled tail complete a match on a short file.
+        if (entry.length > bytesRead) {
+            continue;
+        }
         bool match = true;
         for (int i = 0; i < entry.length; ++i) {
             if (magic[i] != entry.bytes[i]) {
@@ -148,18 +155,22 @@ QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
     return QString();
 }
 
-bool DecompressorFactory::readMagicNumber(const QString& filePath,
-                                          unsigned char* buffer,
-                                          int size) {
+int DecompressorFactory::readMagicNumber(const QString& filePath, unsigned char* buffer, int size) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        return false;
+        return -1;
     }
 
-    qint64 bytesRead = file.read(reinterpret_cast<char*>(buffer), size);
+    const qint64 bytesRead = file.read(reinterpret_cast<char*>(buffer), size);
     file.close();
 
-    return bytesRead == size;
+    // A read fault reports -1; a short read reports the count actually delivered so the
+    // caller matches signatures only against real bytes (size <= kMagicHeaderProbeBytes,
+    // so the value always fits in int).
+    if (bytesRead < 0) {
+        return -1;
+    }
+    return static_cast<int>(bytesRead);
 }
 
 }  // namespace sak

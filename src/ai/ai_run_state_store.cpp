@@ -17,6 +17,20 @@ namespace {
 
 constexpr auto kRunStateFile = "run_state.json";
 
+// A run-state snapshot is a small JSON object (phase/agent/tool counts plus a pending
+// gate). Cap the on-disk size before readAll so a corrupt or hostile oversized
+// run_state.json cannot drive an unbounded allocation; fail closed above the cap.
+constexpr qint64 kMaxRunStateBytes = 16 * 1024 * 1024;  // 16 MiB
+
+// Record a failure reason only when the caller asked for one. Folding the pending-pointer
+// guard in here keeps each failure path a single statement instead of its own branch, so a
+// function's control flow reflects the checks it makes and not the optional reporting.
+void setError(QString* error_message, const QString& text) {
+    if (error_message) {
+        *error_message = text;
+    }
+}
+
 }  // namespace
 
 AiRunStateStore::AiRunStateStore(QString session_dir) : m_session_dir(std::move(session_dir)) {}
@@ -39,9 +53,7 @@ QString AiRunStateStore::runStatePath() const {
 bool AiRunStateStore::saveSnapshot(const AiRunState& state, QString* error_message) const {
     const QString path = runStatePath();
     if (path.isEmpty()) {
-        if (error_message) {
-            *error_message = QStringLiteral("Run-state store has no session directory");
-        }
+        setError(error_message, QStringLiteral("Run-state store has no session directory"));
         return false;
     }
 
@@ -49,23 +61,17 @@ bool AiRunStateStore::saveSnapshot(const AiRunState& state, QString* error_messa
 
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        if (error_message) {
-            *error_message = file.errorString();
-        }
+        setError(error_message, file.errorString());
         return false;
     }
 
     const QByteArray payload = QJsonDocument(state.toJson()).toJson(QJsonDocument::Indented);
     if (file.write(payload) != payload.size()) {
-        if (error_message) {
-            *error_message = file.errorString();
-        }
+        setError(error_message, file.errorString());
         return false;
     }
     if (!file.commit()) {
-        if (error_message) {
-            *error_message = file.errorString();
-        }
+        setError(error_message, file.errorString());
         return false;
     }
     return true;
@@ -74,9 +80,7 @@ bool AiRunStateStore::saveSnapshot(const AiRunState& state, QString* error_messa
 AiRunState AiRunStateStore::loadSnapshot(QString* error_message) const {
     const QString path = runStatePath();
     if (path.isEmpty()) {
-        if (error_message) {
-            *error_message = QStringLiteral("Run-state store has no session directory");
-        }
+        setError(error_message, QStringLiteral("Run-state store has no session directory"));
         return {};
     }
 
@@ -85,9 +89,12 @@ AiRunState AiRunStateStore::loadSnapshot(QString* error_message) const {
         return {};
     }
     if (!file.open(QIODevice::ReadOnly)) {
-        if (error_message) {
-            *error_message = file.errorString();
-        }
+        setError(error_message, file.errorString());
+        return {};
+    }
+
+    if (file.size() > kMaxRunStateBytes) {
+        setError(error_message, QStringLiteral("Run-state snapshot exceeds the maximum size"));
         return {};
     }
 
@@ -95,9 +102,7 @@ AiRunState AiRunStateStore::loadSnapshot(QString* error_message) const {
     QJsonParseError parse_error{};
     const auto doc = QJsonDocument::fromJson(bytes, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (error_message) {
-            *error_message = parse_error.errorString();
-        }
+        setError(error_message, parse_error.errorString());
         return {};
     }
     return AiRunState::fromJson(doc.object());
@@ -106,9 +111,7 @@ AiRunState AiRunStateStore::loadSnapshot(QString* error_message) const {
 bool AiRunStateStore::clearSnapshot(QString* error_message) const {
     const QString path = runStatePath();
     if (path.isEmpty()) {
-        if (error_message) {
-            *error_message = QStringLiteral("Run-state store has no session directory");
-        }
+        setError(error_message, QStringLiteral("Run-state store has no session directory"));
         return false;
     }
     QFile file(path);
@@ -116,9 +119,7 @@ bool AiRunStateStore::clearSnapshot(QString* error_message) const {
         return true;
     }
     if (!file.remove()) {
-        if (error_message) {
-            *error_message = file.errorString();
-        }
+        setError(error_message, file.errorString());
         return false;
     }
     return true;

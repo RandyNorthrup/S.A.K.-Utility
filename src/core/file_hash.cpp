@@ -51,7 +51,11 @@ file_hasher::file_hasher(hash_algorithm algorithm, std::size_t chunk_size) noexc
     // There is deliberately no assert alongside the coercion. The coercion is the
     // contract in every configuration; an assert would abort a Debug build on the
     // exact input Release accepts, which is the behaviour the test pins down.
-    : m_algorithm(algorithm), m_chunk_size(chunk_size > 0 ? chunk_size : DEFAULT_CHUNK_SIZE) {}
+    //
+    // An over-large chunk_size is clamped to MAX_CHUNK_SIZE so file.read() can never be
+    // handed a value that narrows when converted to qint64 or allocates an outsized buffer.
+    : m_algorithm(algorithm)
+    , m_chunk_size(chunk_size == 0 ? DEFAULT_CHUNK_SIZE : std::min(chunk_size, MAX_CHUNK_SIZE)) {}
 
 auto file_hasher::calculateHash(const std::filesystem::path& file_path,
                                 hash_progress_callback progress,
@@ -263,6 +267,17 @@ bool file_hasher::hashFileInChunks(
                 logError("Read error while hashing '{}': {}",
                          file.fileName().toStdString(),
                          file.errorString().toStdString());
+                return false;
+            }
+            // Clean end-of-file. The file must have delivered exactly the byte count it
+            // reported when hashing began; a shorter (truncated) or longer (grown) total
+            // means it was mutated underneath us and the digest would cover a mixed or
+            // prefix view -- fail closed rather than report that as the file's hash.
+            if (bytes_processed != file_size) {
+                logError("File changed while hashing '{}' ({} of {} bytes) - mutated concurrently",
+                         file.fileName().toStdString(),
+                         bytes_processed,
+                         file_size);
                 return false;
             }
             break;  // clean end-of-file

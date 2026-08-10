@@ -356,6 +356,13 @@ void DiagnosticController::stopStressTest() {
     logInfo("Stopping stress test");
     if (m_stress_test->isRunning()) {
         m_stress_test->requestStop();
+        // Stopping the stress step early inside a suite omits the rest of its work.
+        // The worker emits cancelled() (not failed()), which the suite treats as an
+        // advance but not a failure, so record the omission here or the aggregate
+        // verdict would read AllPassed over a shortened run.
+        if (m_running_suite && m_suite_state == SuiteState::StressTest) {
+            m_suite_failures.append("Stress test");
+        }
     }
 }
 
@@ -371,25 +378,37 @@ void DiagnosticController::skipCurrentStep() {
 
     logInfo("Skipping current suite step: {}", static_cast<int>(m_suite_state));
 
-    // Cancel the current worker
+    // Cancel the current worker and record the omission. A skipped step ran no
+    // work and produced no result; the worker emits cancelled() (which the
+    // benchmark connections do not treat as a failure), so without recording it
+    // here aggregateResults would report AllPassed over a suite with a skipped
+    // step. Recording is conservative: in the rare race where the worker actually
+    // completes as it is skipped, the run is downgraded to Warnings rather than
+    // falsely reading AllPassed.
     switch (m_suite_state) {
     case SuiteState::HardwareScan:
         m_hardware_scanner->cancel();
+        m_suite_failures.append("Hardware scan");
         break;
     case SuiteState::SmartAnalysis:
         m_smart_analyzer->cancel();
+        m_suite_failures.append("SMART analysis");
         break;
     case SuiteState::CpuBenchmark:
         m_cpu_benchmark->requestStop();
+        m_suite_failures.append("CPU benchmark");
         break;
     case SuiteState::DiskBenchmark:
         m_disk_benchmark->requestStop();
+        m_suite_failures.append("Disk benchmark");
         break;
     case SuiteState::MemoryBenchmark:
         m_memory_benchmark->requestStop();
+        m_suite_failures.append("Memory benchmark");
         break;
     case SuiteState::StressTest:
         m_stress_test->requestStop();
+        m_suite_failures.append("Stress test");
         break;
     default:
         break;

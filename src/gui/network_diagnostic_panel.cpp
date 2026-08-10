@@ -2668,10 +2668,15 @@ void NetworkDiagnosticPanel::populateStatusStatistics(QTreeWidget* tree,
 }
 
 void NetworkDiagnosticPanel::onAdapterStatus() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (!selected) {
         return;
     }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
 
     constexpr int kStatusDialogWidth = 520;
     constexpr int kStatusDialogHeight = 600;
@@ -2775,10 +2780,15 @@ void NetworkDiagnosticPanel::onAdapterEnable() {
 }
 
 void NetworkDiagnosticPanel::onAdapterDisable() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (!selected) {
         return;
     }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
 
     auto confirm = sak::showQuestionLogged(this,
                                            tr("Disable Adapter"),
@@ -2855,10 +2865,15 @@ void NetworkDiagnosticPanel::onAdapterDiagnose() {
 }
 
 void NetworkDiagnosticPanel::onAdapterRename() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (!selected) {
         return;
     }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
 
     constexpr int kRenameDialogWidth = 400;
 
@@ -3004,19 +3019,17 @@ void NetworkDiagnosticPanel::onBridgeConnections() {
 
 // -- IP Configuration Actions --------------------------------------------
 
-void NetworkDiagnosticPanel::onSetStaticIp() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
-        return;
-    }
-
+bool NetworkDiagnosticPanel::promptStaticIpInput(const NetworkAdapterInfo& adapter,
+                                                 QString& ip,
+                                                 QString& mask,
+                                                 QString& gateway) {
     constexpr int kIpDialogWidth = 420;
     const QString ip_pattern = QStringLiteral(
         "^((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}"
         "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$");
 
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Set Static IP \xe2\x80\x94 %1").arg(adapter->name));
+    dialog.setWindowTitle(tr("Set Static IP \xe2\x80\x94 %1").arg(adapter.name));
     dialog.setMinimumWidth(kIpDialogWidth);
     auto* layout = new QVBoxLayout(&dialog);
 
@@ -3038,18 +3051,17 @@ void NetworkDiagnosticPanel::onSetStaticIp() {
         return edit;
     };
 
-    const auto current_ip = adapter->ipv4Addresses.isEmpty() ? QString()
-                                                             : adapter->ipv4Addresses.first();
-    const auto current_mask = adapter->ipv4SubnetMasks.isEmpty() ? QString()
-                                                                 : adapter->ipv4SubnetMasks.first();
+    const auto current_ip = adapter.ipv4Addresses.isEmpty() ? QString()
+                                                            : adapter.ipv4Addresses.first();
+    const auto current_mask = adapter.ipv4SubnetMasks.isEmpty() ? QString()
+                                                                : adapter.ipv4SubnetMasks.first();
 
     auto* ip_edit = make_ip_row(tr("IP Address:"), current_ip, QStringLiteral("192.168.1.100"));
     auto* mask_edit = make_ip_row(tr("Subnet Mask:"),
                                   current_mask.isEmpty() ? QStringLiteral("255.255.255.0")
                                                          : current_mask,
                                   QStringLiteral("255.255.255.0"));
-    auto* gw_edit =
-        make_ip_row(tr("Gateway:"), adapter->ipv4Gateway, QStringLiteral("192.168.1.1"));
+    auto* gw_edit = make_ip_row(tr("Gateway:"), adapter.ipv4Gateway, QStringLiteral("192.168.1.1"));
 
     auto* button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                             &dialog);
@@ -3058,12 +3070,32 @@ void NetworkDiagnosticPanel::onSetStaticIp() {
     layout->addWidget(button_box);
 
     if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    ip = ip_edit->text().trimmed();
+    mask = mask_edit->text().trimmed();
+    gateway = gw_edit->text().trimmed();
+    return true;
+}
+
+void NetworkDiagnosticPanel::onSetStaticIp() {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (!selected) {
+        return;
+    }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+
+    QString ip;
+    QString mask;
+    QString gateway;
+    if (!promptStaticIpInput(adapter_snapshot, ip, mask, gateway)) {
         return;
     }
 
-    const QString ip = ip_edit->text().trimmed();
-    const QString mask = mask_edit->text().trimmed();
-    const QString gateway = gw_edit->text().trimmed();
     if (ip.isEmpty() || mask.isEmpty()) {
         sak::showWarningLogged(this,
                                tr("Invalid Input"),
@@ -3071,7 +3103,7 @@ void NetworkDiagnosticPanel::onSetStaticIp() {
         return;
     }
 
-    applyStaticIp(adapter->name, ip, mask, gateway);
+    applyStaticIp(adapter_snapshot.name, ip, mask, gateway);
 }
 
 void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
@@ -3118,10 +3150,15 @@ void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
 }
 
 void NetworkDiagnosticPanel::onSetDnsServers() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (!selected) {
         return;
     }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
 
     constexpr int kDnsDialogWidth = 420;
     const QString ip_pattern = QStringLiteral(
@@ -3357,10 +3394,15 @@ void NetworkDiagnosticPanel::applyDnsServers(const QString& adapter_name,
 }
 
 void NetworkDiagnosticPanel::onEnableDhcp() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (!selected) {
         return;
     }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
 
     auto confirm =
         sak::showQuestionLogged(this,

@@ -25,6 +25,11 @@ constexpr int kMaxIndentDepth = 20;
 // payload; without this a hostile page reporting millions of nodes would blow up the
 // outline string + ref_index held in the long-lived process and overflow next_ref.
 constexpr int kMaxNodes = 4000;
+// Bound the total nodes SCANNED, not just emitted: a hostile capture can pad the array with
+// millions of invisible/zero-area nodes that never emit (so the emitted cap never trips) yet
+// still force O(N) work. Stop scanning past this and mark the outline truncated. Comfortably
+// larger than any real DOM (a huge page is tens of thousands of nodes).
+constexpr int kMaxScanNodes = 100'000;
 // Cap the page-controlled url/title that head the snapshot text.
 constexpr int kMaxUrlChars = 2048;
 constexpr int kMaxTitleChars = 300;
@@ -1311,7 +1316,15 @@ SnapshotView renderSnapshot(const QJsonObject& capture) {
     // consumed only to append a fixed literal note -- no injection surface.
     bool truncated = capture.value(QStringLiteral("truncated")).toBool();
     const QJsonArray nodes = capture.value(QStringLiteral("nodes")).toArray();
+    int scanned = 0;
     for (const QJsonValue& value : nodes) {
+        if (scanned >= kMaxScanNodes) {
+            // A capture padded past the scan bound: stop and tell the model the outline is partial
+            // rather than iterate an attacker-chosen node count.
+            truncated = true;
+            break;
+        }
+        ++scanned;
         const QJsonObject node = value.toObject();
         const bool interactable = node.value(QStringLiteral("interactable")).toBool();
         const QString name = escapeName(node.value(QStringLiteral("name")).toString());

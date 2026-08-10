@@ -94,6 +94,23 @@ IAiModelClient::Response modelResponseFromState(const ModelInvokeState& state,
     return response;
 }
 
+void joinWorkerAndRecordTimeout(QThread& network_thread,
+                                QSemaphore& done,
+                                ModelInvokeState& state) {
+    // Timed acquire so a failed thread start (finish() never runs) cannot deadlock forever.
+    const bool signalled = done.tryAcquire(1, kModelInvokeTimeoutMs + kSemaphoreWaitGraceMs);
+    network_thread.quit();
+    network_thread.wait();  // SAK-ALLOW-BLOCKING: stack QThread, quit() sent; join mandatory
+
+    // Record the acquire-timeout ONLY after the join. Writing `state` from this thread while
+    // a worker handler might still be writing the same fields would be a data race; once
+    // wait() returns no worker code can run, so this write is ordered after every worker
+    // write. Guard on the terminal flags so a result that landed at the boundary still wins.
+    if (!signalled && !state.got_response && !state.got_failure && !state.timed_out) {
+        state.timed_out = true;
+    }
+}
+
 }  // namespace
 
 OpenAIResponsesModelClient::OpenAIResponsesModelClient(QObject* parent) : QObject(parent) {}
@@ -105,7 +122,7 @@ void OpenAIResponsesModelClient::setEnableWebSearch(bool enabled) {
 }
 
 IAiModelClient::Response OpenAIResponsesModelClient::runResponseRequest(
-    const OpenAIResponseRequest& req, const CancellationToken& token) const {
+    const OpenAIResponseRequest& request, const CancellationToken& token) const {
     if (tokenCancelled(token)) {
         Response response;
         response.error_message = token.cancelReason();
@@ -118,7 +135,7 @@ IAiModelClient::Response OpenAIResponsesModelClient::runResponseRequest(
     QObject* worker = new QObject;
     worker->moveToThread(&network_thread);
     QObject::connect(&network_thread, &QThread::finished, worker, &QObject::deleteLater);
-    QObject::connect(&network_thread, &QThread::started, worker, [&, worker, req]() {
+    QObject::connect(&network_thread, &QThread::started, worker, [&, worker, request]() {
         auto* client = new OpenAIResponsesClient(worker);
         auto* cancel_timer = new QTimer(worker);
         auto* timeout_timer = new QTimer(worker);
@@ -162,15 +179,10 @@ IAiModelClient::Response OpenAIResponsesModelClient::runResponseRequest(
         });
         cancel_timer->start();
         timeout_timer->start(kModelInvokeTimeoutMs);
-        client->createResponse(req);
+        client->createResponse(request);
     });
     network_thread.start();
-    // Timed acquire so a failed thread start (finish() never runs) cannot deadlock forever.
-    if (!done.tryAcquire(1, kModelInvokeTimeoutMs + kSemaphoreWaitGraceMs)) {
-        state.timed_out = true;
-    }
-    network_thread.quit();
-    network_thread.wait();  // SAK-ALLOW-BLOCKING: stack QThread, quit() sent; join mandatory
+    joinWorkerAndRecordTimeout(network_thread, done, state);
 
     return modelResponseFromState(state, token);
 }

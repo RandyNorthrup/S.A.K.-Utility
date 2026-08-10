@@ -40,7 +40,16 @@ public:
                 if (std::chrono::steady_clock::now() >= deadline) {
                     State expected = State::Running;
                     if (m_state.compare_exchange_strong(expected, State::Fired)) {
-                        on_deadline();  // we won the race -> a real timeout
+                        // We won the race -> a real timeout. The callback runs on this detached
+                        // monitor thread, so an empty target (std::bad_function_call) or any
+                        // exception escaping it would reach std::terminate and crash the process.
+                        // Guard both; fired() still reports the timeout honestly for the caller.
+                        if (on_deadline) {
+                            try {
+                                on_deadline();
+                            } catch (...) {  // NOLINT: a monitor-thread throw must not terminate
+                            }
+                        }
                     }
                     return;
                 }

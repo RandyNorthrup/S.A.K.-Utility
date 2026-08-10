@@ -49,6 +49,10 @@ bool BundledToolsManager::moduleExists(const QString& moduleName) const {
 
 QString BundledToolsManager::getModuleImportCommand(const QString& moduleName) const {
     QString modulePath = psModulePath(moduleName);
+    // Escape for a PowerShell single-quoted string literal: a literal single quote is doubled
+    // ('') so an attacker-supplied module name cannot close the quote and inject a command. Do
+    // this FIRST, before any other substitution, so no earlier edit can reintroduce a bare quote.
+    modulePath.replace(QLatin1Char('\''), QStringLiteral("''"));
     // Escape backslashes for PowerShell
     modulePath.replace("\\", "\\\\");
     return QString("Import-Module '%1' -Force").arg(modulePath);

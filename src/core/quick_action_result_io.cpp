@@ -7,7 +7,38 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <cmath>
+#include <limits>
+
 namespace sak {
+
+namespace {
+
+// A result counter (bytes/files/duration) is a non-negative integer. An absent
+// counter defaults to zero (matching the historical toDouble(0)); a value that is
+// present but non-numeric, negative, non-finite, or outside the qint64 range means
+// the result file is corrupt -- fail closed rather than truncate, because casting
+// an out-of-range double straight to qint64 is undefined behavior.
+bool readResultCounter(const QJsonValue& value, qint64* out) {
+    if (value.isUndefined() || value.isNull()) {
+        *out = 0;
+        return true;
+    }
+    if (!value.isDouble()) {
+        return false;
+    }
+    const double d = value.toDouble();
+    // qint64::max() rounds UP to 2^63 as a double, so reject with >= to keep the
+    // cast in-range (a value at or above 2^63 is not representable as qint64).
+    if (!std::isfinite(d) || d < 0.0 ||
+        d >= static_cast<double>(std::numeric_limits<qint64>::max())) {
+        return false;
+    }
+    *out = static_cast<qint64>(d);
+    return true;
+}
+
+}  // namespace
 
 QString actionStatusToString(QuickAction::ActionStatus status) {
     switch (status) {
@@ -90,37 +121,85 @@ bool writeExecutionResultFile(const QString& file_path,
     return true;
 }
 
-bool readExecutionResultFile(const QString& file_path,
-                             QuickAction::ExecutionResult* result,
-                             QuickAction::ActionStatus* status,
-                             QString* error_message) {
+namespace {
+
+// Opens a persisted result file and hands back its top-level JSON object. Returns an
+// empty string on success (and fills *json); on any failure returns the caller-facing
+// error text and leaves *json untouched -- so the caller propagates one string instead
+// of repeating the open/size/parse fail-closed branches inline.
+QString loadResultJsonObject(const QString& file_path, QJsonObject* json) {
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
-        if (error_message) {
-            *error_message = QString("Failed to read result file: %1").arg(file.errorString());
-        }
-        return false;
+        return QString("Failed to read result file: %1").arg(file.errorString());
+    }
+
+    // A result file is a handful of small scalar fields; a multi-megabyte one is corrupt or
+    // hostile (this path is fed by an on-disk file). Bound it so an oversized/attacker-swapped
+    // file cannot force an unbounded allocation via readAll(); fail closed rather than slurp it.
+    constexpr qint64 kMaxResultFileBytes = 4 * 1024 * 1024;
+    if (file.size() > kMaxResultFileBytes) {
+        return QStringLiteral("Result file is too large to be a valid result.");
     }
 
     auto data = file.readAll();
     QJsonParseError parse_error;
     QJsonDocument doc = QJsonDocument::fromJson(data, &parse_error);
     if (doc.isNull() || !doc.isObject()) {
+        return QString("Invalid result file JSON: %1").arg(parse_error.errorString());
+    }
+
+    *json = doc.object();
+    return QString();
+}
+
+// Fills *result from the parsed object. Returns an empty string on success, or the
+// caller-facing error text when a counter field is corrupt. The counters go through
+// readResultCounter (which fails closed on non-numeric/negative/out-of-range values);
+// the string/bool fields use Qt's coercing accessors, matching the historical defaults.
+QString populateExecutionResult(const QJsonObject& json, QuickAction::ExecutionResult* result) {
+    qint64 bytes_processed = 0;
+    qint64 files_processed = 0;
+    qint64 duration_ms = 0;
+    if (!readResultCounter(json.value("bytes_processed"), &bytes_processed) ||
+        !readResultCounter(json.value("files_processed"), &files_processed) ||
+        !readResultCounter(json.value("duration_ms"), &duration_ms)) {
+        return QStringLiteral(
+            "Result file has an invalid numeric field (non-numeric, negative, or out of "
+            "range).");
+    }
+    result->success = json.value("success").toBool(false);
+    result->message = json.value("message").toString();
+    result->bytes_processed = bytes_processed;
+    result->files_processed = files_processed;
+    result->duration_ms = duration_ms;
+    result->output_path = json.value("output_path").toString();
+    result->log = json.value("log").toString();
+    return QString();
+}
+
+}  // namespace
+
+bool readExecutionResultFile(const QString& file_path,
+                             QuickAction::ExecutionResult* result,
+                             QuickAction::ActionStatus* status,
+                             QString* error_message) {
+    QJsonObject json;
+    const QString load_error = loadResultJsonObject(file_path, &json);
+    if (!load_error.isEmpty()) {
         if (error_message) {
-            *error_message = QString("Invalid result file JSON: %1").arg(parse_error.errorString());
+            *error_message = load_error;
         }
         return false;
     }
 
-    QJsonObject json = doc.object();
     if (result) {
-        result->success = json.value("success").toBool(false);
-        result->message = json.value("message").toString();
-        result->bytes_processed = static_cast<qint64>(json.value("bytes_processed").toDouble(0));
-        result->files_processed = static_cast<qint64>(json.value("files_processed").toDouble(0));
-        result->duration_ms = static_cast<qint64>(json.value("duration_ms").toDouble(0));
-        result->output_path = json.value("output_path").toString();
-        result->log = json.value("log").toString();
+        const QString populate_error = populateExecutionResult(json, result);
+        if (!populate_error.isEmpty()) {
+            if (error_message) {
+                *error_message = populate_error;
+            }
+            return false;
+        }
     }
 
     if (status) {

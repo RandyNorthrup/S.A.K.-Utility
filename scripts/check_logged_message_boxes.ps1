@@ -10,10 +10,19 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path -LiteralPath $Root).Path
+# Pin repository identity: a wrong -Root (or the "." default run from the wrong
+# directory) must not scan an unrelated tree, find nothing, and pass falsely.
+if (-not (Test-Path -LiteralPath (Join-Path $repo "src") -PathType Container) -or
+    -not (Test-Path -LiteralPath (Join-Path $repo "include") -PathType Container)) {
+    throw "check_logged_message_boxes: '$repo' is not a repo root (missing src/ or include/)."
+}
 Push-Location $repo
 try {
-    $matches = & rg -n "QMessageBox::(warning|critical|information|question)" src include
-    $violations = @($matches | Where-Object {
+    # --no-config / --no-ignore so a stray RIPGREP_CONFIG_PATH or ignore file cannot
+    # suppress a match and turn a real violation into a false PASS. \s* tolerates
+    # whitespace around :: so "QMessageBox :: warning" cannot slip through.
+    $hits = & rg -n --no-config --no-ignore "QMessageBox\s*::\s*(warning|critical|information|question)" src include
+    $violations = @($hits | Where-Object {
             $_ -notmatch '^include[\\/]+sak[\\/]+message_box_helpers\.h:'
         })
     if ($LASTEXITCODE -eq 0 -and $violations.Count -gt 0) {
