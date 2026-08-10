@@ -14890,6 +14890,20 @@ bool reclaimWithinChunk0(const QVector<uint64_t>& reclaimed, QStringList* blocke
     return true;
 }
 
+// Popcount of a chunk allocation bitmap: the number of USED (1) blocks it marks. A chunk's stored
+// ci_free_count MUST equal block_count - this, or fsck_apfs/apfsck reports "wrong count of free
+// blocks". Callers that fold reclaimed frees into a chunk bitmap use it to re-derive the free
+// count.
+uint64_t chunkBitmapUsedBits(const QByteArray& bitmap) {
+    uint64_t used = 0;
+    for (qsizetype i = 0; i < bitmap.size(); ++i) {
+        for (int bit = 0; bit < 8; ++bit) {
+            used += (static_cast<uint8_t>(bitmap.at(i)) >> bit) & 1U;
+        }
+    }
+    return used;
+}
+
 // Callers MUST reclaimWithinChunk0(reclaimed) first: this folds every reclaimed paddr into the
 // chunk-0 bitmap as paddr/8, which is out of bounds for a far-chunk (>= one chunk) paddr.
 uint64_t buildGrownChunk0Bitmap(const QByteArray& source,
@@ -15134,6 +15148,15 @@ bool buildMultiChunkGrownAllocator(ApfsFsCommitContext* ctx,
     ApfsMultiChunkLayout lay;
     if (!layoutMultiChunkGrow(ctx, plan, src, &lay, blockers)) {
         return false;
+    }
+    // Chunk 0's cib free_count MUST match its just-built bitmap. layoutMultiChunkGrow seeds chunk 0
+    // from the SOURCE free count, but the reclaimed runs were freed into chunk0's bitmap above, so
+    // a foreign source with aged chunk-0 reclaim would leave the cib under-counting free by
+    // reclaimed.size() (fsck_apfs/apfsck "wrong count of free blocks"). Recompute from the bitmap
+    // popcount, mirroring layoutDataShrink's caller; a no-op when no chunk-0 block was reclaimed.
+    if (!lay.entries.isEmpty()) {
+        lay.entries[0].freeCount = lay.entries.at(0).blockCount -
+                                   static_cast<uint32_t>(chunkBitmapUsedBits(chunk0));
     }
     // cib 0 (chunks 0..125) rotates crash-safely; its ghost/live copies differ only in chunk 0's
     // bitmap (ghostBmp vs liveBmp). cibs 1..N-1 describe the upper chunks and are immutable.
