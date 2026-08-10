@@ -254,17 +254,77 @@ bool FileExplorerTransferEngine::transferReplacing(const FileExplorerTransferIte
     return true;
 }
 
-bool FileExplorerTransferEngine::renameWithinTarget(const FileExplorerTransferItem& item) {
-    if (!removeReplacedDestination(item)) {
+bool FileExplorerTransferEngine::isSameTargetEntry(const FileExplorerTransferItem& item) {
+    const SplitTargetPath src = splitTargetPath(item.source_path);
+    const SplitTargetPath dst = splitTargetPath(item.destination_path);
+    return QString::compare(src.parent, dst.parent, Qt::CaseInsensitive) == 0 &&
+           QString::compare(src.name, dst.name, Qt::CaseInsensitive) == 0;
+}
+
+bool FileExplorerTransferEngine::reportFailedRename(const FileManagementMutationResult& result,
+                                                    const FileExplorerTransferItem& item,
+                                                    const bool occupant_set_aside,
+                                                    const QString& backup) {
+    if (occupant_set_aside && !renameDestination(backup, item.destination_path)) {
+        m_blockers.append(QStringLiteral("Could not rename onto %1 AND could not restore the "
+                                         "original occupant; it is kept at %2.")
+                              .arg(transferItemName(item.destination_path), backup));
         return false;
+    }
+    m_blockers.append(result.blockers);
+    return false;
+}
+
+void FileExplorerTransferEngine::dropSetAsideRenameOccupant(const FileExplorerTransferItem& item,
+                                                            const bool occupant_set_aside,
+                                                            const QString& backup) {
+    // Success: drop the set-aside occupant (best-effort -- the rename is done). Surface a
+    // failure to remove it rather than swallow it, so leftover data is never silent.
+    if (occupant_set_aside && !removeDestinationEntry(backup)) {
+        m_warnings.append(QStringLiteral("Renamed onto %1, but the previous occupant could not be "
+                                         "removed and remains at %2.")
+                              .arg(transferItemName(item.destination_path), backup));
+    }
+}
+
+bool FileExplorerTransferEngine::renameWithinTarget(const FileExplorerTransferItem& item) {
+    // Same-entry rename (an exact spelling, or a case-only difference on a
+    // case-insensitive volume where the destination resolves to the SAME file as the
+    // source): deleting a "replaced" occupant here would destroy the source itself, so
+    // never replace -- route straight to renameEntry, which performs the on-disk case
+    // change directly. If renameEntry cannot (a stuck case-only rename), it fails
+    // closed with the source intact rather than losing it.
+    const bool same_entry = isSameTargetEntry(item);
+    if (same_entry && item.source_path == item.destination_path) {
+        return true;  // exact no-op
+    }
+    // Replace: set the current occupant ASIDE to an unguessable backup name instead of
+    // deleting it up front, so a failed rename rolls it back rather than losing it
+    // (mirrors transferReplacing). The user authorised "replace D with S", never
+    // "destroy D and keep S". A same-entry rename has no true occupant to set aside.
+    QString backup;
+    bool occupant_set_aside = false;
+    if (item.replace_destination && !same_entry) {
+        backup = siblingTempPath(item.destination_path, QStringLiteral(".sak-old-"));
+        if (!destinationPathVacant(backup)) {
+            m_blockers.append(QStringLiteral("Could not claim a set-aside name beside %1, so it "
+                                             "was left in place.")
+                                  .arg(transferItemName(item.destination_path)));
+            return false;
+        }
+        // A failed set-aside means the path was vacant (occupant vanished) or the
+        // occupant is stuck; the rename below only lands on a vacant final name, so
+        // either way nothing has been destroyed.
+        occupant_set_aside = renameDestination(item.destination_path, backup);
     }
     const auto result = FileManagementFileSystemBridge::renameEntry(m_destination_target,
                                                                     item.source_path,
                                                                     item.destination_path);
     if (!result.ok) {
-        m_blockers.append(result.blockers);
+        return reportFailedRename(result, item, occupant_set_aside, backup);
     }
-    return result.ok;
+    dropSetAsideRenameOccupant(item, occupant_set_aside, backup);
+    return true;
 }
 
 bool FileExplorerTransferEngine::removeReplacedDestination(const FileExplorerTransferItem& item) {
@@ -385,6 +445,16 @@ bool FileExplorerTransferEngine::transferRawToLocal(
     // only a cap outside those semantics counts as unrequested loss.
     if (result.capped) {
         noteIncompleteTransfer(m_allow_capped_raw_reads);
+        if (!m_allow_capped_raw_reads) {
+            // Fail the item outright on an UNREQUESTED cap so no caller -- including
+            // the synchronous undo/redo path that does not re-check completeness --
+            // can treat the truncated copy as whole and delete the source. Mirrors
+            // transferRawDirectoryToLocal's capped_files guard for the single-file leg.
+            m_blockers.append(QStringLiteral("%1 exceeds the raw read window; the pasted copy is "
+                                             "truncated, so it is reported as incomplete.")
+                                  .arg(name));
+            return false;
+        }
     }
     return true;
 }

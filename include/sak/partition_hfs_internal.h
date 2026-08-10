@@ -497,13 +497,9 @@ public:
             result.blockers.append(m_blockers);
             return result;
         }
-        int extraChunks = 0;
-        if (plan->inode_removed) {
-            const auto reclaimed = writeHardlinkInodeReclaim(*plan, &result.blockers);
-            if (!reclaimed.has_value()) {
-                return result;
-            }
-            extraChunks = *reclaimed;
+        const auto extraChunks = reclaimRemovedHardlinkInode(*plan, options, &result.blockers);
+        if (!extraChunks.has_value()) {
+            return result;
         }
         if (findChild(plan->alias_record.parent_id, plan->alias_record.name).has_value()) {
             result.blockers.append(QStringLiteral("HFS+ hard-link delete read-back failed"));
@@ -512,14 +508,18 @@ public:
         if (!appendCatalogLeafAfterHash(plan->mutation.insert_node_number, &result)) {
             return result;
         }
-        result.chunks_written = *catalogChunks + extraChunks;
+        result.chunks_written = *catalogChunks + *extraChunks;
         result.warnings.append(m_warnings);
         result.warnings.append(
             plan->inode_removed
                 ? QStringLiteral("HFS+ hard link deleted; inode CNID %1 and its %2 data block(s) "
-                                 "were reclaimed (link count 0)")
+                                 "were reclaimed (link count 0) %3")
                       .arg(plan->inode_cnid)
                       .arg(plan->released_blocks)
+                      .arg(options.secure_wipe_deleted_blocks
+                               ? QStringLiteral("after zeroing the released blocks with read-back "
+                                                "verification")
+                               : QStringLiteral("without secure block wiping"))
                 : QStringLiteral("HFS+ hard link deleted; inode CNID %1 link count is now %2")
                       .arg(plan->inode_cnid)
                       .arg(plan->link_count));
@@ -1681,7 +1681,7 @@ private:
     };
 
     void appendCatalogMutationOptionBlockers(const PartitionHfsFileWriteOptions& options,
-                                             QStringList* blockers) const {
+                                             QStringList* blockers) {
         appendWriterActivationBlockers(options, blockers);
         appendWriterDeviceBlockers(blockers);
         if (options.max_write_bytes == 0) {
@@ -2409,6 +2409,35 @@ private:
             return std::nullopt;
         }
         return *bitmapChunks + *freeBlockChunks;
+    }
+
+    // Reclaim the inode once the last alias is gone: honor a requested secure wipe of its released
+    // data blocks (with read-back), then free the inode record and its allocation via
+    // writeHardlinkInodeReclaim. Returns the extra chunk count on success, or std::nullopt (with
+    // blockers appended) on failure. When the inode survives -- another alias still points at it --
+    // there is nothing to reclaim; returns 0.
+    [[nodiscard]] std::optional<int> reclaimRemovedHardlinkInode(
+        const HfsHardlinkDeletePlan& plan,
+        const PartitionHfsFileWriteOptions& options,
+        QStringList* blockers) {
+        if (!plan.inode_removed) {
+            return 0;
+        }
+        // Honor an explicitly-requested secure delete on the LAST hard link too: reclaiming the
+        // inode frees its data blocks, and without this those blocks keep their plaintext on
+        // the medium. Zero them (with read-back) before the bitmap marks them free, exactly as
+        // the single-file delete path does.
+        const auto wipeChunks = wipeReleasedExtentsIfRequested(options.secure_wipe_deleted_blocks,
+                                                               plan.released_extents,
+                                                               blockers);
+        if (!wipeChunks.has_value()) {
+            return std::nullopt;
+        }
+        const auto reclaimed = writeHardlinkInodeReclaim(plan, blockers);
+        if (!reclaimed.has_value()) {
+            return std::nullopt;
+        }
+        return *wipeChunks + *reclaimed;
     }
 
     [[nodiscard]] std::optional<HfsFileCreateAllocationPlan> prepareFileCreateAllocation(
@@ -3291,10 +3320,34 @@ private:
         selection->keys_to_remove.insert(catalogKeyToken(record.catalog_id, QString()));
         selection->records.append(record);
         if (record.directory()) {
+            // A descendant directory carrying a reserved CNID (<= the root folder id) or a CNID
+            // already in the selection is corrupt or crafted: injecting catalog_id 2 makes every
+            // top-level record match parent_id==2 and get swept into the delete (a whole-volume
+            // wipe from deleting one subfolder), and a duplicate CNID sweeps an out-of-tree
+            // folder's children. Fail closed.
+            if (record.catalog_id <= kHfsRootFolderId || folderIds->contains(record.catalog_id)) {
+                blockers->append(QStringLiteral("HFS+ folder tree delete found a directory with a "
+                                                "reserved or duplicate catalog id (%1)")
+                                     .arg(record.catalog_id));
+                return false;
+            }
             folderIds->insert(record.catalog_id);
             ++selection->removed_folders;
             appendAttributeRecordDeleteBlocker(record.catalog_id, blockers);
             return blockers->isEmpty();
+        }
+        // A hard-link alias is a regularFile(), so it would fall through to the ordinary-file
+        // branch and be removed WITHOUT decrementing the shared inode's link count, repairing the
+        // alias chain, or reclaiming the inode when its last alias goes -- leaking the inode and
+        // all its data blocks and leaving stale link fields. The folder-tree engine cannot yet do
+        // that bookkeeping, so refuse a tree containing an alias; the single-file delete path
+        // handles it.
+        if (record.hardLinkAlias()) {
+            blockers->append(QStringLiteral("HFS+ folder tree delete does not support a hard-link "
+                                            "alias inside the tree (%1); delete the alias "
+                                            "individually first")
+                                 .arg(record.name));
+            return false;
         }
         if (!record.regularFile()) {
             blockers->append(
@@ -3943,7 +3996,35 @@ private:
             if (byte.original_value == byte.updated_value) {
                 continue;
             }
-            const QByteArray payload(1, static_cast<char>(byte.updated_value));
+            // Re-read the CURRENT on-disk byte rather than trusting the plan-time snapshot: an
+            // intervening same-process node-pool growth can have SET a bit in this same byte for a
+            // freshly allocated block. This plan owns only the bits it changed (ownedMask); write
+            // those onto the live byte and preserve every other bit, so a neighbour's allocation is
+            // not cleared back to free. Fail closed if a bit this plan owns no longer holds its
+            // planned-from value on disk (a conflicting writer touched a block we are changing).
+            const auto liveByte = readForkBytes(m_volume.allocation_fork,
+                                                kHfsAllocationFileId,
+                                                kHfsDataForkType,
+                                                byte.fork_offset,
+                                                1);
+            if (!liveByte.has_value() || liveByte->size() != 1) {
+                m_blockers.append(QStringLiteral("Unable to re-read HFS+ allocation bitmap byte"));
+                return std::nullopt;
+            }
+            const quint8 current = static_cast<quint8>(liveByte->at(0));
+            const quint8 ownedMask = static_cast<quint8>(byte.original_value ^ byte.updated_value);
+            if ((current & ownedMask) != (byte.original_value & ownedMask)) {
+                m_blockers.append(
+                    QStringLiteral("HFS+ allocation bitmap byte changed after "
+                                   "planning; refusing to write a stale value"));
+                return std::nullopt;
+            }
+            const quint8 merged =
+                static_cast<quint8>((current & ~ownedMask) | (byte.updated_value & ownedMask));
+            if (merged == current) {
+                continue;
+            }
+            const QByteArray payload(1, static_cast<char>(merged));
             const auto written = writeForkBytes(m_volume.allocation_fork,
                                                 kHfsAllocationFileId,
                                                 kHfsDataForkType,
@@ -5263,6 +5344,19 @@ private:
                                  .arg(tree.label));
             return std::nullopt;
         }
+        // Fail closed if the volume header does not even claim enough free blocks:
+        // findFreeAllocation Extents scans the bitmap, not this counter, so a header whose
+        // freeBlocks understates the bitmap would otherwise let growth proceed and then underflow
+        // the counter on commit.
+        if (addBlocks > m_volume.free_blocks) {
+            blockers->append(
+                QStringLiteral("HFS+ %1 node-pool growth needs %2 free block(s) but the "
+                               "volume header reports only %3")
+                    .arg(tree.label)
+                    .arg(addBlocks)
+                    .arg(m_volume.free_blocks));
+            return std::nullopt;
+        }
         const auto newExtents = findFreeAllocationExtents(addBlocks, tree.label, blockers);
         if (!newExtents.has_value()) {
             return std::nullopt;
@@ -5323,7 +5417,9 @@ private:
             return false;
         }
         *tree.fork = plan.new_fork;
-        m_volume.free_blocks -= plan.add_blocks;
+        // writeVolumeHeaderCounter above already wrote m_volume.free_blocks = current - add_blocks
+        // (clamped), so a second manual subtraction here double-decremented in memory (and could
+        // underflow) -- persisting a free-block count add_blocks too low on the next header write.
         tree.header->total_nodes = plan.new_total_nodes;
         tree.header->free_nodes += plan.new_nodes;
         return true;
@@ -5753,10 +5849,23 @@ private:
     }
 
     [[nodiscard]] bool loadExtentsModelLevels(HfsExtentsTreeModel* model, QStringList* blockers) {
-        const bool treeIsEmpty = m_extents.tree_depth == 0 || m_extents.leaf_records == 0 ||
-                                 m_extents.first_leaf_node == 0;
-        if (treeIsEmpty) {
+        // The three header fields must AGREE. OR-ing them into an "empty" verdict treated a header
+        // that says tree_depth==0 while a real leaf chain hangs off first_leaf_node
+        // (leaf_records>0) as empty -- the mutation then materialized a fresh tree and orphaned
+        // every existing overflow-extent record. Only a fully-empty header is empty; any
+        // disagreement fails closed.
+        const bool allEmpty = m_extents.tree_depth == 0 && m_extents.leaf_records == 0 &&
+                              m_extents.first_leaf_node == 0;
+        if (allEmpty) {
             return true;
+        }
+        if (m_extents.tree_depth == 0 || m_extents.leaf_records == 0 ||
+            m_extents.first_leaf_node == 0) {
+            blockers->append(
+                QStringLiteral("HFS+ extents overflow B-tree header is inconsistent "
+                               "(tree_depth, leaf_records and first_leaf_node "
+                               "disagree)"));
+            return false;
         }
         if (m_extents.tree_depth == 1) {
             return loadExtentsDepthOneLeaf(model, blockers);
@@ -6398,8 +6507,22 @@ private:
     [[nodiscard]] bool loadAttributesModelLevels(HfsAttributesTreeModel* model,
                                                  QStringList* blockers) {
         const HfsBTreeHeader& tree = model->tree;
-        if (tree.tree_depth == 0 || tree.leaf_records == 0 || tree.first_leaf_node == 0) {
+        // The three header fields must AGREE. scanAttributeRecords walks the leaf chain from
+        // first_leaf_node without consulting tree_depth or leaf_records, so a header that reads
+        // empty via tree_depth==0 or leaf_records==0 while first_leaf_node heads a real chain would
+        // let the mutation rebuild a fresh tree and orphan every existing xattr. Only a fully-empty
+        // header is empty; any disagreement fails closed.
+        const bool allEmpty = tree.tree_depth == 0 && tree.leaf_records == 0 &&
+                              tree.first_leaf_node == 0;
+        if (allEmpty) {
             return true;
+        }
+        if (tree.tree_depth == 0 || tree.leaf_records == 0 || tree.first_leaf_node == 0) {
+            blockers->append(
+                QStringLiteral("HFS+ attributes B-tree header is inconsistent "
+                               "(tree_depth, leaf_records and first_leaf_node "
+                               "disagree)"));
+            return false;
         }
         return tree.tree_depth == 1 ? loadAttributesDepthOneLeaf(model, blockers)
                                     : loadAttributesDeepLevels(model, blockers);
@@ -7409,7 +7532,8 @@ private:
         if (!freeBlockChunks.has_value()) {
             return std::nullopt;
         }
-        m_volume.free_blocks -= plan.allocated_blocks;
+        // writeVolumeHeaderCounter above already updated m_volume.free_blocks; a second manual
+        // subtraction here double-decremented it in memory (same defect as the node-pool growth).
         return *dataChunks + *slackChunks + *bitmapChunks + *treeChunks + *freeBlockChunks;
     }
 
@@ -7789,9 +7913,20 @@ private:
             return std::nullopt;
         }
         const uint32_t jibBlock = be32(*volumeHeader, kHfsVolumeJournalInfoBlockOffset);
+        // A journaled-flagged volume whose journalInfoBlock field is 0 has no journal region
+        // allocated at all: there is no journal, hence no logged transaction that a mount could
+        // replay over our write. Treat it exactly like a needs-init journal (nothing to replay)
+        // rather than refusing -- the pending-transaction hazard this check exists for cannot
+        // arise when no journal exists. A NON-zero pointer that then fails to resolve is a real
+        // read/arithmetic failure and still fails closed below.
+        if (jibBlock == 0) {
+            HfsJournalState state;
+            state.needs_init = true;
+            return state;
+        }
         uint64_t jibOffset = 0;
-        if (jibBlock == 0 || !checkedMul(jibBlock, m_volume.block_size, &jibOffset)) {
-            blockers->append(QStringLiteral("HFS+ journal info block is unavailable"));
+        if (!checkedMul(jibBlock, m_volume.block_size, &jibOffset)) {
+            blockers->append(QStringLiteral("HFS+ journal info block offset overflowed"));
             return std::nullopt;
         }
         const auto jib = readAt(m_volume.volume_offset + jibOffset,
@@ -9008,7 +9143,7 @@ private:
 
     void appendWriterOptionBlockers(const QByteArray& data,
                                     const PartitionHfsFileWriteOptions& options,
-                                    QStringList* blockers) const {
+                                    QStringList* blockers) {
         appendWriterActivationBlockers(options, blockers);
         appendWriterDeviceBlockers(blockers);
         appendWriterPayloadBlockers(data, options, blockers);
@@ -9017,7 +9152,7 @@ private:
 
     void appendWriterOptionBlockersForSource(const HfsForkDataSource& source,
                                              const PartitionHfsFileWriteOptions& options,
-                                             QStringList* blockers) const {
+                                             QStringList* blockers) {
         appendWriterActivationBlockers(options, blockers);
         appendWriterDeviceBlockers(blockers);
         appendWriterPayloadBlockersForSize(source.size(), options, blockers);
@@ -9025,7 +9160,7 @@ private:
     }
 
     void appendTruncateOptionBlockers(const PartitionHfsFileWriteOptions& options,
-                                      QStringList* blockers) const {
+                                      QStringList* blockers) {
         appendWriterActivationBlockers(options, blockers);
         appendWriterDeviceBlockers(blockers);
         if (options.max_write_bytes == 0) {
@@ -9071,11 +9206,31 @@ private:
     }
 
     void appendWriterVolumeBlockers(const PartitionHfsFileWriteOptions& options,
-                                    QStringList* blockers) const {
-        if ((m_volume.attributes & kHfsVolumeJournaledMask) != 0 &&
-            !options.allow_journaled_volume) {
-            blockers->append(
-                QStringLiteral("HFS+ journaled volume write requires explicit journal override"));
+                                    QStringList* blockers) {
+        if ((m_volume.attributes & kHfsVolumeJournaledMask) != 0) {
+            if (!options.allow_journaled_volume) {
+                blockers->append(QStringLiteral(
+                    "HFS+ journaled volume write requires explicit journal override"));
+            } else {
+                // allow_journaled_volume is a required opt-in, NOT proof that the journal has
+                // nothing pending. On a volume that was not cleanly unmounted (start != end) macOS
+                // replays its queued transactions over the very blocks we are about to commit, at
+                // the next mount -- silently reverting the write. Prove the journal is empty; fail
+                // closed if it has pending transactions or cannot be read.
+                QStringList journalBlockers;
+                const auto state = loadJournalState(&journalBlockers);
+                if (!state.has_value()) {
+                    blockers->append(
+                        QStringLiteral("HFS+ journaled volume write refused: the "
+                                       "journal state could not be read"));
+                    blockers->append(journalBlockers);
+                } else if (!state->needs_init && state->start != state->end) {
+                    blockers->append(QStringLiteral(
+                        "HFS+ journaled volume has pending transactions (the journal is not "
+                        "empty); "
+                        "writing now would be reverted by journal replay at the next mount"));
+                }
+            }
         }
         if ((m_volume.attributes & kHfsVolumeInconsistentMask) != 0) {
             blockers->append(QStringLiteral("HFS+ inconsistent volume writes are blocked"));
@@ -9114,6 +9269,14 @@ private:
             .arg(hfsForkLabel(selector));
     }
 
+    // True when the data fork can be overwritten in place: its stored logical size matches the
+    // catalog data size, the fork is non-empty, and it actually carries extents. Any of these
+    // failing means a same-size in-place write has no safe target -- the caller reports it blocked.
+    [[nodiscard]] static bool dataForkWritableInPlace(const HfsCatalogRecord& record) {
+        return record.data_fork.logical_size == record.data_size &&
+               record.data_fork.logical_size != 0 && !record.data_fork.extents.isEmpty();
+    }
+
     void appendWriterRecordBlockers(const HfsCatalogRecord& record,
                                     const QByteArray& data,
                                     const PartitionHfsFileWriteOptions& options,
@@ -9126,8 +9289,7 @@ private:
             blockers->append(QStringLiteral(
                 "HFS+ arbitrary write currently requires exact same-size data-fork replacement"));
         }
-        if (record.data_fork.logical_size != record.data_size ||
-            record.data_fork.logical_size == 0 || record.data_fork.extents.isEmpty()) {
+        if (!dataForkWritableInPlace(record)) {
             blockers->append(QStringLiteral("HFS+ data fork is not writable in-place"));
         }
         if (!forkCoveredByInitialExtents(record.data_fork) && m_overflow_extents.isEmpty()) {
@@ -9136,6 +9298,15 @@ private:
         if (!options.allow_compressed_file_mutation &&
             fileHasAttribute(record.catalog_id, QStringLiteral("com.apple.decmpfs"))) {
             blockers->append(QStringLiteral("HFS+ compressed-file mutation is blocked"));
+        }
+        // Preflight the data-fork extents: every extent must be in range, must not be allocation
+        // block 0 (the boot blocks / volume header live there), and must not overlap metadata. A
+        // crafted catalog record could otherwise point the fork at block 0 and this same-size
+        // in-place write would land caller bytes over the volume header. Same check the growth and
+        // fork-attribute paths already run; the read-back re-reads through the SAME extents, so it
+        // cannot catch this on its own.
+        if (!writableForkExtentsForGrowth(record, HfsForkSelector::Data, blockers).has_value()) {
+            return;
         }
     }
 
@@ -9191,6 +9362,12 @@ private:
         if (!options.allow_compressed_file_mutation &&
             fileHasAttribute(record.catalog_id, QStringLiteral("com.apple.decmpfs"))) {
             blockers->append(QStringLiteral("HFS+ compressed-file mutation is blocked"));
+        }
+        // Preflight the fork's extents (in range, not allocation block 0, no metadata overlap) so a
+        // crafted record cannot redirect this allocated-block replacement over the boot blocks or
+        // volume header. Same check the growth and fork-attribute paths run.
+        if (!writableForkExtentsForGrowth(record, selector, blockers).has_value()) {
+            return;
         }
     }
 
@@ -9295,6 +9472,16 @@ private:
                                                     QStringList* blockers) {
         if (!record.regularFile()) {
             blockers->append(QStringLiteral("Selected HFS+ path is not a regular file"));
+            return;
+        }
+        // A hard-link alias IS a regularFile(), and its own fork is empty (total_blocks == 0), so
+        // the growth blockers below would sail through and stamp the newly allocated fork into the
+        // ALIAS record while every reader keeps resolving the shared inode. Refuse -- an alias
+        // write must target the inode (resolveHardLinkInode), exactly as the delete/read paths do.
+        if (record.hardLinkAlias()) {
+            blockers->append(
+                QStringLiteral("HFS+ hard-link alias write must target the shared "
+                               "inode, not the alias record"));
             return;
         }
         const auto& fork = catalogForkFor(record, selector);

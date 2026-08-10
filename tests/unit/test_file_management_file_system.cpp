@@ -1185,12 +1185,18 @@ private Q_SLOTS:
 
     // B8-02: a raw foreign-filesystem entry name must be confined to a bare host
     // filename so it cannot escape the export directory.
-    void confinedHostNameStripsTraversal() {
+    void confinedHostNameRejectsNonBareNames() {
         using B = sak::FileManagementFileSystemBridge;
+        // An already-bare foreign name passes through unchanged.
         QCOMPARE(B::confinedHostName(QStringLiteral("report.txt")), QStringLiteral("report.txt"));
-        QCOMPARE(B::confinedHostName(QStringLiteral("../../evil.sh")), QStringLiteral("evil.sh"));
-        QCOMPARE(B::confinedHostName(QStringLiteral("sub/dir/leaf")), QStringLiteral("leaf"));
-        // Names that collapse to a traversal token or empty are rejected.
+        // A name carrying ANY path structure is REJECTED, not collapsed onto its last segment:
+        // QFileInfo::fileName would reduce "../../evil.sh" to "evil.sh" (and "a\b", since a
+        // backslash is a legal byte in an APFS/HFS+ name, to "b"), which would then overwrite a
+        // real sibling of that name on the host. Fail closed instead.
+        QVERIFY(B::confinedHostName(QStringLiteral("../../evil.sh")).isEmpty());
+        QVERIFY(B::confinedHostName(QStringLiteral("sub/dir/leaf")).isEmpty());
+        QVERIFY(B::confinedHostName(QStringLiteral("a\\b")).isEmpty());
+        // Traversal tokens and empty are rejected too.
         QVERIFY(B::confinedHostName(QStringLiteral("..")).isEmpty());
         QVERIFY(B::confinedHostName(QStringLiteral(".")).isEmpty());
         QVERIFY(B::confinedHostName(QString()).isEmpty());

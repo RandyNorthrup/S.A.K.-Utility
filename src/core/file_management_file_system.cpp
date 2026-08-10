@@ -21,6 +21,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QSet>
 #include <QStorageInfo>
 #include <QtEndian>
 
@@ -209,6 +210,33 @@ FileManagementMutationResult mutationBlocked(const QString& fileSystem,
     result.path = path;
     result.blockers.append(blocker);
     return result;
+}
+
+// A raw (non-local) mutation path must already be in canonical, "/"-rooted form. displayPath()
+// COERCES a path -- it trims surrounding whitespace, rewrites "\\" to "/", and collapses "//" --
+// and every one of those bytes is a LEGAL character inside an APFS/HFS+ filename, so a coerced
+// path silently resolves to a DIFFERENT entry than the one the caller named (deleting, renaming,
+// or overwriting a sibling). Refuse a path that does not round-trip rather than retarget it. Only
+// a missing leading "/" is tolerated (it is unambiguous and displayPath adds it too). Local
+// targets operate on the ORIGINAL path, never displayPath's output, so this applies only to raw.
+std::optional<FileManagementMutationResult> rawMutationPathBlock(const FileManagementTarget& target,
+                                                                 const QString& path) {
+    if (target.local_file_system) {
+        return std::nullopt;
+    }
+    QString rooted = path;
+    if (!rooted.startsWith(QLatin1Char('/'))) {
+        rooted.prepend(QLatin1Char('/'));
+    }
+    if (rooted == displayPath(path)) {
+        return std::nullopt;
+    }
+    return mutationBlocked(
+        FileManagementFileSystemBridge::normalizedFileSystem(target.file_system),
+        path,
+        QStringLiteral("Refusing a raw path that is not canonical: a trailing space, a backslash, "
+                       "or a double slash in the name would resolve to a different entry. Pass the "
+                       "exact \"/\"-rooted path the listing reported."));
 }
 
 // Fail-closed capability gate every bridge mutation entrypoint re-checks itself.
@@ -957,10 +985,13 @@ bool isWindowsReservedDeviceName(const QString& base) {
 }  // namespace
 
 QString FileManagementFileSystemBridge::confinedHostName(const QString& raw_name) {
-    // QFileInfo::fileName drops any path components (a crafted "../../evil" or "a\b"
-    // collapses to its last segment); "."/".."/empty are then rejected (B8-02).
+    // A foreign name that is not ALREADY a bare filename is REJECTED, not collapsed onto its last
+    // segment: QFileInfo::fileName reduces "../../evil" or "a\b" (backslash is a LEGAL byte in an
+    // APFS/HFS+ name) to "evil"/"b", which then lands on -- and overwrites -- a real sibling of
+    // that name. "."/".."/empty are rejected too (B8-02).
     const QString base = QFileInfo(raw_name).fileName();
-    if (base.isEmpty() || base == QStringLiteral(".") || base == QStringLiteral("..")) {
+    if (base.isEmpty() || base != raw_name || base == QStringLiteral(".") ||
+        base == QStringLiteral("..")) {
         return QString();
     }
     // Foreign (untrusted image) entry names must additionally be hardened against
@@ -1365,7 +1396,8 @@ struct DirectoryExportContext {
 void exportEntryToHost(const DirectoryExportContext& ctx,
                        const FileManagementEntry& entry,
                        const QDir& host_dir,
-                       int depth);
+                       int depth,
+                       QSet<QString>& emitted_host_names);
 
 void exportDirectoryLevel(const DirectoryExportContext& ctx,
                           const QString& source_path,
@@ -1398,19 +1430,24 @@ void exportDirectoryLevel(const DirectoryExportContext& ctx,
                 .arg(kDirectoryExportMaxEntriesPerDirectory));
         process = kDirectoryExportMaxEntriesPerDirectory;
     }
+    // Host names already emitted at THIS level (case-folded, because the host volume is typically
+    // case-insensitive): two source entries mapping to one host name must fail closed, not silently
+    // overwrite. Scoped per level so identical names under different parents are fine.
+    QSet<QString> emitted_host_names;
     for (qsizetype index = 0; index < process; ++index) {
         if (ctx.observer.isCancelled()) {
             ctx.result.blockers.append(kFileManagementTransferCancelledBlocker);
             return;
         }
-        exportEntryToHost(ctx, listing.entries.at(index), host_dir, depth);
+        exportEntryToHost(ctx, listing.entries.at(index), host_dir, depth, emitted_host_names);
     }
 }
 
 void exportEntryToHost(const DirectoryExportContext& ctx,
                        const FileManagementEntry& entry,
                        const QDir& host_dir,
-                       const int depth) {
+                       const int depth,
+                       QSet<QString>& emitted_host_names) {
     if (entry.symlink) {
         ++ctx.result.symlinks_skipped;
         ctx.result.warnings.append(
@@ -1421,10 +1458,26 @@ void exportEntryToHost(const DirectoryExportContext& ctx,
     // it to a bare host filename so it cannot escape the export directory (B8-02).
     const QString host_name = FileManagementFileSystemBridge::confinedHostName(entry.name);
     if (host_name.isEmpty()) {
+        // Count the drop so exportDirectoryToHost's `complete` goes false; a warning alone left it
+        // true, and a move would then delete a source whose unsafe-named entry never landed (F4).
+        ++ctx.result.entries_skipped;
         ctx.result.warnings.append(
             QStringLiteral("Skipped entry with unsafe name %1.").arg(entry.path));
         return;
     }
+    // Two distinct source entries mapping to one host name -- case-only variants (README/readme)
+    // on a case-insensitive host, or a coerced name colliding with a real sibling -- would
+    // silently overwrite each other and still report the copy whole, so a move would delete both
+    // sources. Fail closed on the collision instead of overwriting.
+    const QString host_key = host_name.toLower();
+    if (emitted_host_names.contains(host_key)) {
+        ctx.result.blockers.append(
+            QStringLiteral("Two entries under %1 map to the same host name \"%2\"; the export was "
+                           "stopped rather than overwrite one with the other.")
+                .arg(host_dir.absolutePath(), host_name));
+        return;
+    }
+    emitted_host_names.insert(host_key);
     if (entry.directory) {
         if (!host_dir.mkpath(host_name)) {
             ctx.result.blockers.append(QStringLiteral("Could not create host directory %1.")
@@ -1436,6 +1489,8 @@ void exportEntryToHost(const DirectoryExportContext& ctx,
         return;
     }
     if (!entry.regular_file) {
+        // Count the drop so the export is not reported complete over a skipped entry (F4).
+        ++ctx.result.entries_skipped;
         ctx.result.warnings.append(QStringLiteral("Skipped special entry %1.").arg(entry.path));
         return;
     }
@@ -1585,6 +1640,8 @@ void importEntryFromHost(const DirectoryImportContext& ctx,
         return;
     }
     if (!info.isFile()) {
+        // Count the drop so the import is not reported complete over a skipped entry (F4).
+        ++ctx.result.entries_skipped;
         ctx.result.warnings.append(
             QStringLiteral("Skipped special entry %1.").arg(info.absoluteFilePath()));
         return;
@@ -1704,6 +1761,9 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
     if (auto blocked = mutationCapabilityBlock(target, path)) {
         return *blocked;
     }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
@@ -1753,34 +1813,47 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
         QStringLiteral("Directory create is not supported for %1").arg(displayFileSystem(fs)));
 }
 
+namespace {
+
+// Local recursive directory delete, with its own catastrophic-target refusal.
+FileManagementMutationResult deleteLocalDirectory(const FileManagementTarget& target,
+                                                  const QString& path) {
+    FileManagementMutationResult result;
+    result.file_system = target.file_system;
+    result.path = path;
+    // Refuse a catastrophic delete before touching the filesystem: an empty path
+    // makes QDir the current working directory and a root would wipe the whole
+    // volume (B8-01).
+    if (FileManagementFileSystemBridge::isUnsafeLocalDeletePath(path)) {
+        result.ok = false;
+        result.blockers.append(
+            QStringLiteral("Refusing to recursively delete an empty path or filesystem root: "
+                           "%1")
+                .arg(path));
+        return result;
+    }
+    QDir dir(path);
+    result.ok = dir.removeRecursively();
+    if (!result.ok) {
+        result.blockers.append(QStringLiteral("Unable to delete directory: %1").arg(path));
+    }
+    return result;
+}
+
+}  // namespace
+
 FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
     const FileManagementTarget& target, const QString& path) {
     if (auto blocked = mutationCapabilityBlock(target, path)) {
         return *blocked;
     }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
-        FileManagementMutationResult result;
-        result.file_system = target.file_system;
-        result.path = path;
-        // Refuse a catastrophic delete before touching the filesystem: an empty path
-        // makes QDir the current working directory and a root would wipe the whole
-        // volume (B8-01).
-        if (isUnsafeLocalDeletePath(path)) {
-            result.ok = false;
-            result.blockers.append(
-                QStringLiteral("Refusing to recursively delete an empty path or filesystem root: "
-                               "%1")
-                    .arg(path));
-            return result;
-        }
-        QDir dir(path);
-        result.ok = dir.removeRecursively();
-        if (!result.ok) {
-            result.blockers.append(QStringLiteral("Unable to delete directory: %1").arg(path));
-        }
-        return result;
+        return deleteLocalDirectory(target, path);
     }
     if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
         return fromHfsWriteResult(
@@ -1901,6 +1974,9 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
     if (auto blocked = mutationCapabilityBlock(target, path)) {
         return *blocked;
     }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     // No artificial File Management cap: each backend enforces its own real bound (APFS
@@ -1967,6 +2043,9 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPa
     if (auto blocked = mutationCapabilityBlock(target, path)) {
         return *blocked;
     }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     const QFileInfo srcInfo(host_file_path);
@@ -2013,6 +2092,9 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPa
 FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
     const FileManagementTarget& target, const QString& path) {
     if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
         return *blocked;
     }
     const QString fs = normalizedFileSystem(target.file_system);
@@ -2154,6 +2236,9 @@ FileManagementMutationResult FileManagementFileSystemBridge::removeExistingEntry
     if (auto blocked = mutationCapabilityBlock(target, path)) {
         return *blocked;
     }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
     FileManagementMutationResult result;
     result.file_system = target.file_system;
     result.path = path;
@@ -2228,6 +2313,12 @@ FileManagementMutationResult FileManagementFileSystemBridge::renameEntry(
     const QString& source_path,
     const QString& destination_path) {
     if (auto blocked = mutationCapabilityBlock(target, source_path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, source_path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, destination_path)) {
         return *blocked;
     }
     const QString fs = normalizedFileSystem(target.file_system);

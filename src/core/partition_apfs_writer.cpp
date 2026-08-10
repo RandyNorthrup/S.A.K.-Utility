@@ -114,6 +114,10 @@ constexpr uint64_t kApfsExtraVolumeBlockSpan = 6;
 constexpr uint64_t kApfsFormatStaleSignatureClearBytes = 8ULL * 1024ULL * 1024ULL;
 constexpr qsizetype kApfsFormatZeroChunkBytes = 1024 * 1024;
 constexpr uint64_t kApfsMaximumSeedFileBytes = 256ULL * 1024ULL * 1024ULL;
+// APFS caps a name at 255 UTF-8 bytes. A snapshot name is stored as a j_snap_name key
+// (10 + name + 1 bytes); beyond this cap the key can exceed a B-tree node body, which the
+// variable-kv index planner cannot converge (it would loop building an unbounded plan).
+constexpr qsizetype kApfsMaxSnapshotNameBytes = 255;
 constexpr qsizetype kApfsUuidBytes = 16;
 // A free-queue run {paddr,length} is decoded from container metadata and every block it covers
 // becomes one uint64_t address in the reclaim list, so the length sizes an allocation. "Inside
@@ -299,6 +303,9 @@ constexpr qsizetype kApfsCheckpointMapFlagsOffset = 0x20;
 constexpr qsizetype kApfsCheckpointMapCountOffset = 0x24;
 constexpr qsizetype kApfsCheckpointMapEntriesOffset = 0x28;
 constexpr qsizetype kApfsCheckpointMapEntryBytes = 40;
+// A checkpoint-mapped ephemeral object (spaceman/reaper/free-queue tree) spans at most a few
+// blocks; this ceiling stops a crafted cpm_size from growing an object read toward 4 GiB.
+constexpr uint64_t kApfsCheckpointEntryMaxSpanBlocks = 256;
 constexpr qsizetype kApfsCheckpointMapEntrySizeOffset = 8;
 constexpr qsizetype kApfsCheckpointMapEntryOidOffset = 24;
 constexpr qsizetype kApfsCheckpointMapEntryPaddrOffset = 32;
@@ -707,15 +714,32 @@ constexpr QLatin1StringView kEvidenceRollbackBoundary("rollback-boundary");
            name.contains(QLatin1Char(':'));
 }
 
+// The write mirrors of le16/le32/le64: an offset derived from a foreign/corrupt on-disk
+// field (e.g. a spaceman's inline-array offsets 0x144/0x148/0x14C, or an ip_bm_size that
+// underflows a ring loop) can widen to a value far past the object; a raw
+// bytes->data()+offset store would then be an out-of-bounds heap WRITE on a release build
+// (there is no Q_ASSERT on the raw pointer). Bounds-check exactly as the readers do so a
+// hostile offset is a no-op here rather than heap corruption; the containing commit then
+// publishes an inconsistent object that fails downstream validation instead of an
+// attacker-chosen wild write. Every legitimate (in-bounds) write is unaffected.
 void writeLe16(QByteArray* bytes, qsizetype offset, uint16_t value) {
+    if (offset < 0 || bytes->size() - offset < static_cast<qsizetype>(sizeof(uint16_t))) {
+        return;
+    }
     qToLittleEndian<uint16_t>(value, reinterpret_cast<uchar*>(bytes->data() + offset));
 }
 
 void writeLe32(QByteArray* bytes, qsizetype offset, uint32_t value) {
+    if (offset < 0 || bytes->size() - offset < static_cast<qsizetype>(sizeof(uint32_t))) {
+        return;
+    }
     qToLittleEndian<uint32_t>(value, reinterpret_cast<uchar*>(bytes->data() + offset));
 }
 
 void writeLe64(QByteArray* bytes, qsizetype offset, uint64_t value) {
+    if (offset < 0 || bytes->size() - offset < static_cast<qsizetype>(sizeof(uint64_t))) {
+        return;
+    }
     qToLittleEndian<uint64_t>(value, reinterpret_cast<uchar*>(bytes->data() + offset));
 }
 
@@ -4123,7 +4147,16 @@ QByteArray buildFrozenSnapshotSuperblock(const QByteArray& liveVolSb,
 QByteArray buildIpBitmapBlockFromUsedSet(uint32_t blockSize,
                                          const QVector<uint64_t>& usedIpBlocks) {
     QByteArray block(static_cast<qsizetype>(blockSize), '\0');
+    // A used-set index is derived from on-disk cib/spaceman addresses (e.g. block - ip_base,
+    // which underflows to ~2^64 when a defaulted/zero cib address slips below ip_base). A bit
+    // >= blockSize*8 would index QByteArray::operator[] past this 4096-byte block -- a
+    // Q_ASSERT-only, release-build out-of-bounds heap write. Skip any such index: the resulting
+    // bitmap is inconsistent (and the commit fails downstream) rather than corrupting the heap.
+    const uint64_t bitCapacity = static_cast<uint64_t>(blockSize) * 8;
     for (uint64_t bit : usedIpBlocks) {
+        if (bit >= bitCapacity) {
+            continue;
+        }
         block[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
     }
     return block;
@@ -4267,6 +4300,13 @@ ApfsFormatEphemeralLayout apfsFormatEphemeralLayout(uint32_t blockSize,
 // the rest form a linked free list (the genesis slots trail the live free list as
 // the most-recently-freed copies). apfsck requires the used count == ip_bm_size.
 void setupIpBitmapRing(QByteArray* block, uint64_t ipBmSize, bool genesis) {
+    // ip_bm_size == 0 (a corrupt/foreign spaceman) would make bmapCount - 1 wrap to
+    // 0xFFFFFFFFFFFFFFFF and the free-list loops below spin ~2^64 iterations (a hard hang).
+    // The genesis/format callers always pass ipBmSize >= 1; the relocate caller validates it
+    // before calling here, so this is a defensive no-op for every legitimate layout.
+    if (ipBmSize == 0) {
+        return;
+    }
     const uint64_t ring = spacemanFreeNextOffset(ipBmSize);
     const uint64_t bmapCount = 16 * ipBmSize;
     const auto set = [&](uint64_t i, uint16_t v) {
@@ -4586,7 +4626,17 @@ QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* b
 // a partial last chunk (the pool sits at newIpBase's in-chunk offset).
 QByteArray buildChunkRangeBitmapBlock(uint32_t blockSize, uint64_t startBlock, uint64_t runBlocks) {
     QByteArray block(static_cast<qsizetype>(blockSize), '\0');
-    for (uint64_t index = startBlock; index < startBlock + runBlocks; ++index) {
+    // startBlock (an on-disk-derived in-chunk pool offset) + runBlocks (a derived pool block
+    // count) can exceed one chunk's 32768 bits when the two are not reconciled (a forged
+    // sm_ip_base straddling a chunk). An index >= blockSize*8 would write past this 4096-byte
+    // block through QByteArray::operator[] (Q_ASSERT-only -> release-build heap overflow).
+    // Clamp the run to the block's bit capacity, and guard the endpoint against wrap.
+    const uint64_t bitCapacity = static_cast<uint64_t>(blockSize) * 8;
+    for (uint64_t index = startBlock; index < startBlock + runBlocks && index >= startBlock;
+         ++index) {
+        if (index >= bitCapacity) {
+            break;
+        }
         block[static_cast<qsizetype>(index / 8)] |= static_cast<char>(1 << (index % 8));
     }
     return block;
@@ -5047,11 +5097,31 @@ QByteArray readLiveSpacemanObject(QIODevice* image,
         return {};
     }
     const uint32_t count = le32(checkpointMap, kApfsCheckpointMapCountOffset);
+    // cpm_count is a raw on-disk uint32. A map block physically holds only
+    // (blockSize - entries_offset) / entry_bytes entries (101 at 4096); a lying count of
+    // 0xFFFFFFFF would drive up to ~4.3 billion real 4096-byte reads (a hard hang of the elevated
+    // process) since each out-of-range entry reads paddr 0 (block 0) forever. Fail closed when the
+    // count cannot fit the block (the same bound writeReemittedCheckpointMapEntries enforces).
+    const qsizetype cpmCapacity = (checkpointMap.size() - kApfsCheckpointMapEntriesOffset) /
+                                  kApfsCheckpointMapEntryBytes;
+    if (cpmCapacity <= 0 || count > static_cast<uint32_t>(cpmCapacity)) {
+        blockers->append(QStringLiteral(
+            "APFS commit: checkpoint-map entry count exceeds the map block capacity"));
+        return {};
+    }
     for (uint32_t index = 0; index < count; ++index) {
         const qsizetype entry = kApfsCheckpointMapEntriesOffset +
                                 static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
         const uint64_t paddr = le64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
         const uint64_t span = checkpointEntryBlockSpan(checkpointMap, entry, geometry.blockSize);
+        // A checkpoint-mapped ephemeral object (spaceman/reaper/free-queue tree) spans a handful of
+        // blocks; a crafted cpm_size near UINT32_MAX would grow `object` toward 4 GiB before a read
+        // finally runs off the device. Bound it to a generous ephemeral-object ceiling.
+        if (span == 0 || span > kApfsCheckpointEntryMaxSpanBlocks) {
+            blockers->append(
+                QStringLiteral("APFS commit: checkpoint-map entry object span is implausible"));
+            return {};
+        }
         QByteArray object;
         for (uint64_t b = 0; b < span; ++b) {
             QByteArray slice(geometry.blockSize, '\0');
@@ -5226,6 +5296,16 @@ bool relocateIpBitmapRing(QByteArray* spaceman,
                           const ApfsCheckpointCommitContext& ctx,
                           QStringList* blockers) {
     const uint64_t bmSize = le32(*spaceman, kApfsSpacemanIpBmSizeOffset);
+    // The on-disk ip_bm_size drives the ring loops and the setupIpBitmapRing free-list build.
+    // A zero size wraps bmapCount - 1 into a ~2^64 loop, and a size whose inline ring array does
+    // not fit the re-emitted spaceman object would (absent the write-primitive bound) be an
+    // out-of-bounds write. Fail closed before any ring work.
+    if (bmSize == 0 || static_cast<qsizetype>(spacemanFreeNextOffset(bmSize) + 16 * bmSize * 2) >
+                           spaceman->size()) {
+        blockers->append(
+            QStringLiteral("APFS commit: internal-pool bitmap size (ip_bm_size) is invalid"));
+        return false;
+    }
     const uint64_t base = ctx.newIpBmBase;
     const uint64_t bmapCount = 16 * bmSize;
     setupIpBitmapRing(spaceman, bmSize, /*genesis=*/false);
@@ -5250,6 +5330,28 @@ bool relocateIpBitmapRing(QByteArray* spaceman,
     return true;
 }
 
+// Validate the internal-pool bitmap ring's inline-array geometry against the re-emitted spaceman
+// BEFORE any writeLe16/writeLe64 (the sibling applyCibArrayRepoints guards its array the same way):
+// reject a zero/undersized ring, and require each inline array to fit the re-emitted object so a
+// corrupt offset field cannot steer a write off the end. bmCount must cover ip_bm_size (this was
+// previously only checked after every write). Returns a non-empty blocker on bad geometry, empty
+// when sound.
+QString ipBitmapRingGeometryError(const QByteArray& spaceman) {
+    const uint64_t bmSize = le32(spaceman, kApfsSpacemanIpBmSizeOffset);
+    const uint64_t bmCount = le32(spaceman, kApfsSpacemanIpBmBlockCountOffset);
+    const qsizetype xidOff = le32(spaceman, kApfsSpacemanIpBmXidOffsetField);
+    const qsizetype bmAddrOff = le32(spaceman, kApfsSpacemanIpBitmapOffsetField);
+    const qsizetype ringOff = le32(spaceman, kApfsSpacemanIpBmFreeNextOffsetField);
+    const qsizetype objSize = spaceman.size();
+    if (bmSize == 0 || bmCount < bmSize || xidOff <= 0 || bmAddrOff <= 0 || ringOff <= 0 ||
+        xidOff + static_cast<qsizetype>(bmSize * 8) > objSize ||
+        bmAddrOff + static_cast<qsizetype>(bmSize * 2) > objSize ||
+        ringOff + static_cast<qsizetype>(bmCount * 2) > objSize) {
+        return QStringLiteral("APFS commit: internal-pool bitmap ring geometry is invalid");
+    }
+    return QString();
+}
+
 bool advanceIpBitmapRing(QByteArray* spaceman,
                          const ApfsCheckpointCommitContext& ctx,
                          QStringList* blockers) {
@@ -5262,6 +5364,10 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
     const qsizetype xidOff = le32(*spaceman, kApfsSpacemanIpBmXidOffsetField);
     const qsizetype bmAddrOff = le32(*spaceman, kApfsSpacemanIpBitmapOffsetField);
     const qsizetype ringOff = le32(*spaceman, kApfsSpacemanIpBmFreeNextOffsetField);
+    if (const QString err = ipBitmapRingGeometryError(*spaceman); !err.isEmpty()) {
+        blockers->append(err);
+        return false;
+    }
     const auto ringNext = [&](uint16_t i) {
         return le16(*spaceman, ringOff + i * 2);
     };
@@ -6053,6 +6159,71 @@ void adoptLiveFreeQueueOids(ApfsCheckpointAdvanceRequest* request, const QByteAr
     request->mainFqTreeOid = le64(liveSpaceman, kApfsSpacemanFqMainCountOffset + 8);
 }
 
+// The checkpoint ring's own fields are malformed: a zero base or block-count, an index/next slot
+// outside its ring, or the ~0 sentinel transaction id. A zero descBlocks/dataBlocks would later
+// divide-by-zero in advanceNxSuperblockCheckpoint (`(newDescIndex + 2) % live.descBlocks`) -- a
+// hardware #DE that aborts the elevated process -- and an out-of-ring descIndex/descNext steers the
+// checkpoint-map + nx_superblock writes onto live filesystem data.
+bool checkpointRingFieldsInvalid(const ApfsLiveCheckpoint& live) {
+    return live.descBase == 0 || live.dataBase == 0 || live.descBlocks == 0 ||
+           live.dataBlocks == 0 || live.descIndex >= live.descBlocks ||
+           live.descNext >= live.descBlocks || live.dataIndex >= live.dataBlocks ||
+           live.dataNext >= live.dataBlocks || live.xid == ~static_cast<uint64_t>(0);
+}
+
+// The checkpoint ring's base or span reaches past the container end (descBase + descNext would then
+// land the writes off-device). Each base is tested before its span so the unsigned
+// blockCount - base never underflows.
+bool checkpointRingOutsideContainer(const ApfsLiveCheckpoint& live,
+                                    const ApfsRepairGeometry& geometry) {
+    return live.descBase > geometry.blockCount ||
+           live.descBlocks > geometry.blockCount - live.descBase ||
+           live.dataBase > geometry.blockCount ||
+           live.dataBlocks > geometry.blockCount - live.dataBase;
+}
+
+// The checkpoint ring is copied verbatim off the (possibly foreign/crafted) nx_superblock, so
+// validate it once, fail closed, before any read or write. A legitimate ring always satisfies every
+// clause. Returns a non-empty blocker on a bad ring, empty when sound.
+QString liveCheckpointGeometryError(const ApfsLiveCheckpoint& live,
+                                    const ApfsRepairGeometry& geometry) {
+    if (checkpointRingFieldsInvalid(live) || checkpointRingOutsideContainer(live, geometry)) {
+        return QStringLiteral("APFS commit: the live checkpoint ring geometry is invalid");
+    }
+    return QString();
+}
+
+// Publish the advanced checkpoint atomically: stamp the freshly built checkpoint-map into the next
+// descriptor-ring slot, apply the nx_superblock deltas, then stamp the nx_superblock and re-anchor
+// block 0. The COW chain + rotated bitmaps already live in NEW blocks, so a crash before this
+// leaves the previous checkpoint standing. Settles *result on the success path. cpmBlock/nxsbBlock
+// and newXid are re-derived from request.live exactly as the caller computed them.
+bool publishCheckpoint(ApfsCheckpointAdvanceRequest& request,
+                       uint64_t ephemeralBlocks,
+                       QByteArray* checkpointMap,
+                       ApfsInPlaceCheckpointResult* result,
+                       QStringList* blockers) {
+    const ApfsLiveCheckpoint live = request.live;
+    const ApfsRepairGeometry geometry = request.geometry;
+    const uint64_t newXid = live.xid + 1;
+    const uint64_t cpmBlock = live.descBase + live.descNext;
+    const uint64_t nxsbBlock = cpmBlock + 1;
+    writeLe64(checkpointMap, kApfsObjectOidOffset, cpmBlock);
+    writeLe64(checkpointMap, kApfsObjectXidOffset, newXid);
+    if (!stampAndWriteApfsBlock(request.image, geometry, cpmBlock, checkpointMap, blockers)) {
+        return false;
+    }
+    applyNxSuperblockCheckpointDeltas(
+        request, live, newXid, static_cast<uint32_t>(ephemeralBlocks), geometry);
+    if (!stampAndWriteApfsBlock(request.image, geometry, nxsbBlock, &request.nxsb, blockers) ||
+        !writeApfsRepairBlock(
+            request.image, geometry, kApfsFormatNxsbBlock, request.nxsb, blockers)) {
+        return false;
+    }
+    *result = {true, live.xid, newXid, cpmBlock, nxsbBlock};
+    return true;
+}
+
 bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                        ApfsInPlaceCheckpointResult* result,
                        QStringList* blockers) {
@@ -6067,6 +6238,10 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     }
     const ApfsRepairGeometry geometry = request.geometry;
     const ApfsLiveCheckpoint live = request.live;
+    if (const QString err = liveCheckpointGeometryError(live, geometry); !err.isEmpty()) {
+        blockers->append(err);
+        return false;
+    }
     QByteArray checkpointMap(geometry.blockSize, '\0');
     if (!readApfsRepairBlock(
             request.image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
@@ -6092,8 +6267,6 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
         return false;
     }
     request.dataIndexStart = dataStart;
-    const uint64_t cpmBlock = live.descBase + live.descNext;
-    const uint64_t nxsbBlock = cpmBlock + 1;
     // A chunk-adding grow re-homes the whole internal pool, so it supplies the IP free-queue's
     // one relocated ghost record directly; every rotation commit builds the rolling window.
     const QVector<ApfsFreeQueueEntry> ipFqEntries = request.explicitIpFqEntries.isEmpty()
@@ -6106,20 +6279,7 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
             ctx, mainFqNodeSet.blocks, mainFqNodeSet.leafOids, &checkpointMap, blockers)) {
         return false;
     }
-    writeLe64(&checkpointMap, kApfsObjectOidOffset, cpmBlock);
-    writeLe64(&checkpointMap, kApfsObjectXidOffset, newXid);
-    if (!stampAndWriteApfsBlock(request.image, geometry, cpmBlock, &checkpointMap, blockers)) {
-        return false;
-    }
-    applyNxSuperblockCheckpointDeltas(
-        request, live, newXid, static_cast<uint32_t>(ephemeralBlocks), geometry);
-    if (!stampAndWriteApfsBlock(request.image, geometry, nxsbBlock, &request.nxsb, blockers) ||
-        !writeApfsRepairBlock(
-            request.image, geometry, kApfsFormatNxsbBlock, request.nxsb, blockers)) {
-        return false;
-    }
-    *result = {true, live.xid, newXid, cpmBlock, nxsbBlock};
-    return true;
+    return publishCheckpoint(request, ephemeralBlocks, &checkpointMap, result, blockers);
 }
 
 // A2 increment 1: advance the container checkpoint by one transaction in place
@@ -7083,10 +7243,22 @@ bool findFreeBlocksInBitmap(const ApfsFreeBlockScan& scan,
 void flipChunkBitmapBits(QByteArray* bitmap,
                          const QVector<uint64_t>& freed,
                          const QVector<uint64_t>& allocated) {
+    // `block` is a chunk-relative index (absolute block - chunkBase). When a freed/allocated
+    // block does not actually belong to this chunk the subtraction can underflow to ~2^64 (an
+    // index of ~2^61) or exceed the chunk's bit span; either indexes QByteArray::operator[]
+    // (Q_ASSERT-only) past this bitmap block -- a release-build out-of-bounds heap write. Skip
+    // any chunk-relative index the bitmap block cannot hold.
+    const uint64_t bitCapacity = static_cast<uint64_t>(bitmap->size()) * 8;
     for (uint64_t block : freed) {
+        if (block >= bitCapacity) {
+            continue;
+        }
         (*bitmap)[static_cast<qsizetype>(block / 8)] &= static_cast<char>(~(1 << (block % 8)));
     }
     for (uint64_t block : allocated) {
+        if (block >= bitCapacity) {
+            continue;
+        }
         (*bitmap)[static_cast<qsizetype>(block / 8)] |= static_cast<char>(1 << (block % 8));
     }
 }
@@ -7275,6 +7447,40 @@ bool collectOldFsTreeNodePaddrs(QIODevice* image,
 // fragmented across several runs must be rebuilt from these records to be preserved
 // across a chained commit. Returns the runs sorted by logical block (empty for an
 // empty file - no extent records).
+// j_file_extent_val.len_and_flags packs the byte length in bits 0-55 and flags in bits
+// 56-63 (J_FILE_EXTENT_LEN_MASK). Reading the field unmasked lets a flag bit (or a crafted
+// top byte) inflate the recovered block count by up to 2^44, which downstream expands into a
+// per-block QVector to memory exhaustion.
+constexpr uint64_t kApfsFileExtentLenAndFlagsMask = 0x00'FF'FF'FF'FF'FF'FF'FFULL;
+
+// A leaf record is this file's data when its key type is FILE_EXTENT and its key object id (the low
+// bits below the type shift) is the target inode.
+bool isFileExtentRecordFor(uint64_t keyHeader, uint64_t oidMask, uint64_t fileId) {
+    return (keyHeader >> kApfsObjTypeShift) == kApfsRecordFileExtent &&
+           (keyHeader & oidMask) == fileId;
+}
+
+// paddr == 0 is the sparse-hole encoding (no physical blocks); a non-zero paddr must name real
+// blocks inside the container, and no extent (even a hole) can exceed the container. A record
+// failing either bound is corrupt on-disk data: fail closed rather than expand it into a per-block
+// free/rebuild list. Returns a non-empty blocker naming the offending record, empty when in range.
+QString fileExtentRangeError(const ApfsRepairGeometry& geometry,
+                             uint64_t fileId,
+                             uint64_t paddr,
+                             uint64_t blockCount) {
+    if (blockCount > geometry.blockCount ||
+        (paddr != 0 &&
+         (paddr >= geometry.blockCount || blockCount > geometry.blockCount - paddr))) {
+        return QStringLiteral(
+                   "APFS in-place commit: file-extent record for inode %1 is out "
+                   "of range (paddr %2, %3 blocks)")
+            .arg(fileId)
+            .arg(paddr)
+            .arg(blockCount);
+    }
+    return QString();
+}
+
 QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
                                                const ApfsRepairGeometry& geometry,
                                                const ApfsLiveFsChain& chain,
@@ -7311,18 +7517,21 @@ QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
             const uint16_t keyOffset = le16(node, toc);
             const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
             const uint64_t keyHeader = le64(node, keyAreaStart + keyOffset);
-            if ((keyHeader >> kApfsObjTypeShift) != kApfsRecordFileExtent ||
-                (keyHeader & oidMask) != fileId) {
+            if (!isFileExtentRecordFor(keyHeader, oidMask, fileId)) {
                 continue;
             }
             const uint64_t logicalBytes =
                 le64(node, keyAreaStart + keyOffset + kApfsFileExtentKeyLogicalOffset);
             const qsizetype value = valueAreaEnd - valueOffset;
-            const uint64_t lengthBytes = le64(node, value);
+            const uint64_t lengthBytes = le64(node, value) & kApfsFileExtentLenAndFlagsMask;
             const uint64_t paddr = le64(node, value + kApfsFileExtentValuePhysicalBlockOffset);
-            extents.append({logicalBytes / kSupportedApfsBlockSizeBytes,
-                            paddr,
-                            lengthBytes / kSupportedApfsBlockSizeBytes});
+            const uint64_t blockCount = lengthBytes / kSupportedApfsBlockSizeBytes;
+            if (const QString err = fileExtentRangeError(geometry, fileId, paddr, blockCount);
+                !err.isEmpty()) {
+                blockers->append(err);
+                return {};
+            }
+            extents.append({logicalBytes / kSupportedApfsBlockSizeBytes, paddr, blockCount});
         }
     }
     std::sort(extents.begin(), extents.end(), [](const ApfsDataExtent& a, const ApfsDataExtent& b) {
@@ -7705,9 +7914,20 @@ void mergeLeafFileExtentRecords(const QByteArray& node,
         if (paddr == 0 || len == 0) {
             continue;
         }
+        // paddr is the RAW j_file_extent phys_block_num (not 60-bit masked like the extent-ref
+        // records). A record whose physical run leaves the container is corrupt: skip it so
+        // paddr + len cannot wrap past 2^64, which would sort the coverage range's end below its
+        // start and silently pass the snapshot-fold coverage guard for its own blocks.
+        if (paddr >= geometry.blockCount || len > geometry.blockCount - paddr) {
+            continue;
+        }
         const uint64_t owner = keyHeader & oidMask;
         auto it = byPaddr->find(paddr);
         if (it != byPaddr->end()) {
+            // Two records sharing a physical start with different lengths (a clone whose tail was
+            // truncated) must record the LONGER span, or the coverage ground truth misses the live
+            // tail and a fold can hand still-referenced blocks back to the allocator.
+            it->blockCount = std::max(it->blockCount, len);
             it->refcnt += 1;
             it->owner = std::min(it->owner, owner);
         } else {
@@ -8867,7 +9087,12 @@ uint64_t findEphemeralPaddrByOid(QIODevice* image,
 // on a large container is a multi-GB expansion. Overflow-safe: paddr < blockCount =>
 // blockCount - paddr >= 1.
 [[nodiscard]] bool freeQueueRunInBounds(uint64_t paddr, uint64_t length, uint64_t blockCount) {
-    if (blockCount == 0 || length == 0 || paddr >= blockCount) {
+    // paddr 0 is the container superblock (nx_superblock), never a reclaimable data block. A
+    // decoded free-queue run naming it (a malformed TOC decoding to 0, or a hostile record) would
+    // otherwise be reclaimed a rollback window later and clear block 0's bit in the chunk-0 bitmap,
+    // publishing the superblock as free space. fileFreedDataBlocks already skips paddr-0 extents
+    // for the same reason; the free-queue decode path must too.
+    if (blockCount == 0 || length == 0 || paddr == 0 || paddr >= blockCount) {
         return false;
     }
     if (length > kApfsFreeQueueMaxRunBlocks) {
@@ -9385,15 +9610,29 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
         // dataExtents, so no data is allocated.
         const QVector<ApfsDataExtent> sourceExtents = recoverFileDataExtents(
             in.image, in.geometry, in.chain, in.request.cloneSourcePrivateId, blockers);
+        // A clone with no recovered extents (a read/parse failure, or an inline-decmpfs source
+        // whose payload lives in an xattr rather than j_file_extent records) would fall through
+        // to a synthesized {phys 0, ceil(size)} extent -- the clone would point at the container
+        // superblock for its whole length. Fail closed, exactly as the diverge clone path does.
+        if (sourceExtents.isEmpty()) {
+            blockers->append(QStringLiteral(
+                "APFS file-clone-commit: could not recover the source file's extents"));
+            return false;
+        }
         files->append(
+            // Carry the clone's logical size via logicalSizeOverride, NOT a zero-filled buffer of
+            // that size: the clone allocates no data blocks, so materializing an on-disk (attacker/
+            // corruption-controlled) size in RAM only risked a larger-than-RAM allocation that
+            // aborts the commit.
             {.fileName = in.request.fileName.trimmed(),
-             .data = QByteArray(static_cast<qsizetype>(in.request.cloneLogicalSize), '\0'),
+             .data = QByteArray(),
              .parentDirectoryId = in.request.newFileParentId,
              .fileId = newFileId,
              .privateId = newFileId,
              .dataExtents = sourceExtents,
              .xattrs = in.request.xattrs,
-             .extraInodeFlags = kApfsInodeFlagWasCloned | kApfsInodeFlagWasEverCloned});
+             .extraInodeFlags = kApfsInodeFlagWasCloned | kApfsInodeFlagWasEverCloned,
+             .logicalSizeOverride = in.request.cloneLogicalSize});
         return true;
     }
     appendInsertedFile(in, newFileId, files);
@@ -9757,6 +9996,16 @@ bool loadLiveAllocationSlot(ApfsFsCommitContext* ctx, QStringList* blockers) {
         return false;
     }
     ctx->liveBitmap = le64(cib, kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset);
+    // The live chunk-0 bitmap address is read straight off the (possibly foreign) cib. Unlike a
+    // chunk's ci_bitmap_addr elsewhere, the LIVE bitmap the allocator reads and rewrites must name
+    // a real block: 0 would make the allocator parse block 0 (the nx_superblock, mostly zeros) as
+    // the allocation bitmap and hand out live metadata as "free". Fail closed on 0 /
+    // out-of-container.
+    if (ctx->liveBitmap == 0 || ctx->liveBitmap >= ctx->geometry.blockCount) {
+        blockers->append(
+            QStringLiteral("APFS in-place commit: live chunk-0 bitmap address is invalid"));
+        return false;
+    }
     // S4b: read the whole live cib-address array so a spill into a chunk cib k>0 owns can
     // resolve and re-point that cib. Entry 0 mirrors liveCib (below the CAB tier the array
     // lists cibs directly; on the CAB tier it lists cabs, but S4b's cib-k COW is gated to
@@ -9910,6 +10159,50 @@ bool reanchorForeignOverflowAllocation(ApfsFsCommitContext* ctx, QStringList* bl
     return true;
 }
 
+// Resolve the commit's allocation view once the live chain is loaded: the generated layout, the
+// relocated internal pool, the old fs-tree node list, the live allocation slot, and a foreign
+// overflow-tier re-anchor, then reject a metadata-overflow container whose boundary chunk escapes
+// cib 0.
+bool resolveFsCommitAllocation(ApfsFsCommitContext* ctx,
+                               uint64_t blockCount,
+                               QStringList* blockers) {
+    ctx->layout = computeGeneratedLayout(blockCount);
+    if (!resolveRelocatedIpLayout(ctx, blockCount, blockers)) {
+        return false;
+    }
+    if (!collectOldFsTreeNodePaddrs(
+            ctx->image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
+        return false;
+    }
+    ctx->firstLeafOid = le64(ctx->nxsb, kApfsNxNextOidOffset);
+    if (!loadLiveAllocationSlot(ctx, blockers)) {
+        return false;
+    }
+    // Foreign (real macOS) overflow-tier volume: detect it (needs the live cib loaded above) and
+    // fail closed cleanly - the crash-safe internal-pool finalize is not yet generalized. No-op for
+    // generated / non-overflow (returns true).
+    if (!reanchorForeignOverflowAllocation(ctx, blockers)) {
+        return false;
+    }
+    // Metadata-overflow tier: the boundary chunk (metadataChunks - 1) must live in cib 0
+    // (index < chunks_per_cib) so the cib-0 rotation carries its updated entry; a boundary chunk in
+    // an immutable cib would need that cib to rotate too. This is an OUT-OF-RANGE robustness guard,
+    // not a reachable limitation: the reserved prefix grows ~1 chunk per ~1.3 TiB (an 8 TiB
+    // container measures allocChunk 6, ip_block_count 198177), so the boundary chunk only leaves
+    // cib 0 (allocChunk >= 127) above ~168 TiB -- far past the 24 TiB CAB FORMAT cap and the 32 TiB
+    // commit cap (kApfsInPlaceCommitMaxBytes). No supported container can reach it; it fails closed
+    // rather than corrupt if a future larger tier ever does. Checked AFTER the foreign re-anchor so
+    // a real volume's re-derived low boundary chunk is honored.
+    if (ctx->layout.allocChunk >= kApfsSpacemanChunksPerCib) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit on this metadata-overflow container is not supported: the "
+            "boundary "
+            "chunk falls outside cib 0 (only reachable above ~168 TiB, past the format cap)"));
+        return false;
+    }
+    return true;
+}
+
 bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList* blockers) {
     uint32_t blockSize = 0;
     uint64_t blockCount = 0;
@@ -9937,37 +10230,16 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
     if (!appendSealedVolumeBlocker(image, ctx->geometry, ctx->chain.volSb, blockers)) {
         return false;
     }
-    ctx->layout = computeGeneratedLayout(blockCount);
-    if (!resolveRelocatedIpLayout(ctx, blockCount, blockers)) {
+    if (!resolveFsCommitAllocation(ctx, blockCount, blockers)) {
         return false;
     }
-    if (!collectOldFsTreeNodePaddrs(image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
-        return false;
-    }
-    ctx->firstLeafOid = le64(ctx->nxsb, kApfsNxNextOidOffset);
-    if (!loadLiveAllocationSlot(ctx, blockers)) {
-        return false;
-    }
-    // Foreign (real macOS) overflow-tier volume: detect it (needs the live cib loaded above) and
-    // fail closed cleanly - the crash-safe internal-pool finalize is not yet generalized. No-op for
-    // generated / non-overflow (returns true).
-    if (!reanchorForeignOverflowAllocation(ctx, blockers)) {
-        return false;
-    }
-    // Metadata-overflow tier: the boundary chunk (metadataChunks - 1) must live in cib 0
-    // (index < chunks_per_cib) so the cib-0 rotation carries its updated entry; a boundary chunk in
-    // an immutable cib would need that cib to rotate too. This is an OUT-OF-RANGE robustness guard,
-    // not a reachable limitation: the reserved prefix grows ~1 chunk per ~1.3 TiB (an 8 TiB
-    // container measures allocChunk 6, ip_block_count 198177), so the boundary chunk only leaves
-    // cib 0 (allocChunk >= 127) above ~168 TiB -- far past the 24 TiB CAB FORMAT cap and the 32 TiB
-    // commit cap (kApfsInPlaceCommitMaxBytes). No supported container can reach it; it fails closed
-    // rather than corrupt if a future larger tier ever does. Checked AFTER the foreign re-anchor so
-    // a real volume's re-derived low boundary chunk is honored.
-    if (ctx->layout.allocChunk >= kApfsSpacemanChunksPerCib) {
-        blockers->append(QStringLiteral(
-            "APFS in-place commit on this metadata-overflow container is not supported: the "
-            "boundary "
-            "chunk falls outside cib 0 (only reachable above ~168 TiB, past the format cap)"));
+    // Fail closed if any context reader recorded a blocker while still returning an in-band result
+    // (e.g. newestCheckpointSuperblock fell back to block 0 on a descriptor-ring read miss, or a
+    // preserved-file extent recovery flagged a malformed record). Otherwise the caller proceeds to
+    // ALLOCATE and WRITE the COW payload -- from a possibly stale allocation bitmap, over blocks
+    // the newest checkpoint still owns -- before advanceCheckpoint's own blocker gate would refuse
+    // to publish. The certified success path leaves this list empty.
+    if (!blockers->isEmpty()) {
         return false;
     }
     return true;
@@ -10476,7 +10748,16 @@ ApfsDivergeDeleteExtentPlan planDivergeDeleteExtents(
     const QSet<uint64_t> droppedPaddrs = liveExclusiveDeletedPaddrs(liveDelta, deletedExtents);
     for (const ExtentRefPhysRecord& r : liveDelta) {
         if (r.kind == kApfsExtentKindNew && droppedPaddrs.contains(r.paddr)) {
-            plan.freedBlocks += dataBlockRange(r.paddr, r.blockCount);
+            if (r.refcnt > 1) {
+                // Another owner (a clone made after the snapshot bumped this shared KIND_NEW
+                // record's refcount) still points at these blocks. Decrement and KEEP the record
+                // rather than freeing blocks the surviving clone's inode still references.
+                ExtentRefPhysRecord kept = r;
+                kept.refcnt -= 1;
+                plan.liveRecords.append(kept);
+            } else {
+                plan.freedBlocks += dataBlockRange(r.paddr, r.blockCount);
+            }
         } else {
             plan.liveRecords.append(r);
         }
@@ -11849,6 +12130,16 @@ bool commitInPlaceFileInsert(QIODevice* image,
     if (!buildInsertFsNodes(ctx, request, layout.dataBlockList, &built, blockers)) {
         return false;
     }
+    // The reservation sized the COW chain from a pass-1 probe assuming a single contiguous data
+    // extent. A fragmented allocation adds one j_file_extent per run and can push the fs-tree past
+    // the reserved node count; the chain slicing downstream indexes newBlocks by the ACTUAL node
+    // count, so a divergence writes the container-omap header over the extent-ref/data blocks
+    // (silent corruption) or indexes past the end. Fail closed on any mismatch.
+    if (built.nodes.size() != static_cast<qsizetype>(sizing.nodeCount)) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit: fs-tree grew past the reserved node count after allocation"));
+        return false;
+    }
     extendDivergeExtentRecords(ctx, built.files, layout.dataBlockList, &diverge);
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
@@ -12026,6 +12317,25 @@ QVector<uint64_t> planPatchOldExtents(const ApfsFsCommitContext& ctx,
 // and the COW'd fs-tree/extent-ref publish atomically at the checkpoint). Diverge-aware: on
 // a snapshotted volume it extends the live delta tree (the new patched extents as KIND_NEW +
 // -1 deltas over pre-snapshot old extents) and keeps the snapshots intact.
+// Assemble the insert request that re-emits the patched file: the new payload plus every preserved
+// attribute of the target inode (hard-link names, stream xattrs, rsrc/extra inode flags, user
+// xattrs) so the mutation reproduces the file instead of rebuilding it as a plain inode.
+ApfsFileInsertRequest makePatchInsertRequest(const ApfsFilePatchRequest& request,
+                                             const ApfsPatchTargetState& preserved) {
+    return {.existingFiles = request.otherFiles,
+            .fileName = request.fileName,
+            .fileData = request.patchedData,
+            .directories = request.directories,
+            .newFileParentId = request.parentDirectoryId,
+            .explicitFileId = request.targetFileId,
+            .preservedLinks = preserved.links,
+            .preservedPrimarySiblingId = preserved.primarySiblingId,
+            .preservedStreamXattrs = preserved.streamXattrs,
+            .preservedExtraInodeFlags = preserved.extraInodeFlags,
+            .preservedRsrcBits = preserved.extraInodeFlags != 0,
+            .preservedXattrs = preserved.xattrs};
+}
+
 bool commitInPlaceFilePatch(QIODevice* image,
                             const ApfsFilePatchRequest& request,
                             ApfsInPlaceCheckpointResult* result,
@@ -12038,18 +12348,7 @@ bool commitInPlaceFilePatch(QIODevice* image,
     if (!recoverPatchTargetState(ctx, request, &preserved, blockers)) {
         return false;
     }
-    const ApfsFileInsertRequest insert{.existingFiles = request.otherFiles,
-                                       .fileName = request.fileName,
-                                       .fileData = request.patchedData,
-                                       .directories = request.directories,
-                                       .newFileParentId = request.parentDirectoryId,
-                                       .explicitFileId = request.targetFileId,
-                                       .preservedLinks = preserved.links,
-                                       .preservedPrimarySiblingId = preserved.primarySiblingId,
-                                       .preservedStreamXattrs = preserved.streamXattrs,
-                                       .preservedExtraInodeFlags = preserved.extraInodeFlags,
-                                       .preservedRsrcBits = preserved.extraInodeFlags != 0,
-                                       .preservedXattrs = preserved.xattrs};
+    const ApfsFileInsertRequest insert = makePatchInsertRequest(request, preserved);
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.patchedData.size()),
                                                   ctx.geometry.blockSize);
     ApfsDivergeState diverge;
@@ -12077,6 +12376,14 @@ bool commitInPlaceFilePatch(QIODevice* image,
     }
     ApfsInsertFsNodes built;
     if (!buildInsertFsNodes(ctx, insert, layout.dataBlockList, &built, blockers)) {
+        return false;
+    }
+    // Same reservation/actual divergence as the insert path: a fragmented data allocation can grow
+    // the fs-tree past the reserved node count, and the chain slicing indexes newBlocks by the
+    // actual count. Fail closed rather than publish a mis-sliced (corrupt) COW chain.
+    if (built.nodes.size() != static_cast<qsizetype>(sizing.nodeCount)) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit: fs-tree grew past the reserved node count after allocation"));
         return false;
     }
     extendDivergeExtentRecords(ctx, built.files, layout.dataBlockList, &diverge);
@@ -12405,6 +12712,14 @@ bool appendSnapMetadataFromLeaf(const QByteArray& node,
         }
         const qsizetype val = valArea - le16(node, toc + kApfsBtreeVariableTocValueOffset);
         const uint16_t nameLen = le16(node, val + kApfsSnapMetaNameLenOffset);
+        // nameLen is a uint16 straight off the (possibly foreign/crafted) snap-meta record. A name
+        // past the APFS 255-byte limit re-emitted as a j_snap_name key can exceed a B-tree node
+        // body and hang the variable-kv index planner on a subsequent create/delete. Fail closed.
+        if (nameLen > kApfsMaxSnapshotNameBytes + 1) {
+            blockers->append(QStringLiteral(
+                "APFS snap-meta tree walk: a snapshot name exceeds the 255-byte APFS limit"));
+            return false;
+        }
         ApfsSnapshotMetadata snap;
         snap.snapXid = keyHdr & kApfsJObjIdMask;
         snap.extentRefTreeOid = le64(node, val + kApfsSnapMetaExtentRefOidOffset);
@@ -13104,8 +13419,24 @@ QVector<uint64_t> readSourceCibAddrs(ApfsFsCommitContext* ctx,
             return {};
         }
         const uint64_t inCab = le32(cab, kApfsCibAddrCibCountOffset);
+        // cab_cib_count is a raw on-disk uint32. A CAB holds at most kApfsSpacemanCibsPerCab (507)
+        // cib addresses, and the total across CABs must be exactly cibCount. An unbounded count
+        // (e.g. 0xFFFFFFFF) would append ~4.3 billion entries (~34 GB) before the size cross-check
+        // downstream runs, and entries past the block decode as address 0 (block 0, the
+        // nx_superblock). Fail closed on an out-of-range count or a zero/off-device address.
+        if (inCab > kApfsSpacemanCibsPerCab ||
+            static_cast<uint64_t>(cibAddrs.size()) + inCab > cibCount) {
+            blockers->append(QStringLiteral("APFS resize: a CAB's cib count is out of range"));
+            return {};
+        }
         for (uint64_t i = 0; i < inCab; ++i) {
-            cibAddrs.append(le64(cab, kApfsCibAddrEntriesOffset + static_cast<qsizetype>(i) * 8));
+            const uint64_t addr = le64(cab,
+                                       kApfsCibAddrEntriesOffset + static_cast<qsizetype>(i) * 8);
+            if (addr == 0 || addr >= ctx->geometry.blockCount) {
+                blockers->append(QStringLiteral("APFS resize: a CAB cib address is out of range"));
+                return {};
+            }
+            cibAddrs.append(addr);
         }
     }
     return cibAddrs;
@@ -14908,12 +15239,38 @@ qsizetype snapshotCreateSnapMetaReserve(const ApfsFsCommitContext& ctx,
 // re-points the volume omap header / superblock / container omap - all published
 // atomically at the checkpoint. Fails closed on a volume that already carries a
 // snapshot (multi-snapshot create is a later increment).
+// The snapshot name must be non-empty and within the APFS 255-byte limit. Beyond it the j_snap_name
+// key (10 + name + 1 bytes) can exceed a single B-tree node body, which the variable-kv index
+// planner cannot pack into a root -- it would spin forever building an unbounded plan vector. Fail
+// closed on an over-long operator/AI/CLI-supplied name rather than hang the elevated process.
+// Returns a non-empty blocker on a bad name, empty when acceptable.
+QString snapshotNameError(const QString& snapshotName) {
+    if (snapshotName.trimmed().isEmpty()) {
+        return QStringLiteral("APFS snapshot-create: the snapshot name is empty");
+    }
+    if (snapshotName.trimmed().toUtf8().size() > kApfsMaxSnapshotNameBytes) {
+        return QStringLiteral(
+            "APFS snapshot-create: the snapshot name exceeds the 255-byte APFS limit");
+    }
+    return QString();
+}
+
+// Whether the volume already carries a snapshot with this (already-trimmed, UTF-8) name.
+bool snapshotNameExists(const QVector<ApfsSnapshotMetadata>& existing, const QByteArray& wantName) {
+    for (const ApfsSnapshotMetadata& snap : existing) {
+        if (snap.name == wantName) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool commitInPlaceSnapshotCreate(QIODevice* image,
                                  const ApfsSnapshotCreateRequest& request,
                                  ApfsInPlaceCheckpointResult* result,
                                  QStringList* blockers) {
-    if (request.snapshotName.trimmed().isEmpty()) {
-        blockers->append(QStringLiteral("APFS snapshot-create: the snapshot name is empty"));
+    if (const QString err = snapshotNameError(request.snapshotName); !err.isEmpty()) {
+        blockers->append(err);
         return false;
     }
     ApfsFsCommitContext ctx;
@@ -14937,13 +15294,11 @@ bool commitInPlaceSnapshotCreate(QIODevice* image,
         return false;
     }
     const QByteArray wantName = request.snapshotName.trimmed().toUtf8();
-    for (const ApfsSnapshotMetadata& snap : existing) {
-        if (snap.name == wantName) {
-            blockers->append(
-                QStringLiteral("APFS snapshot-create: a snapshot named '%1' already exists")
-                    .arg(request.snapshotName.trimmed()));
-            return false;
-        }
+    if (snapshotNameExists(existing, wantName)) {
+        blockers->append(
+            QStringLiteral("APFS snapshot-create: a snapshot named '%1' already exists")
+                .arg(request.snapshotName.trimmed()));
+        return false;
     }
     // The current omap-snapshot tree (0 when there is no snapshot yet); rebuilt on 2nd+.
     uint64_t oldOmapSnapTree = 0;
@@ -16590,7 +16945,8 @@ bool renameDestinationCollision(const ApfsRootFilePayload& file,
                                 bool isSource,
                                 uint64_t destParent,
                                 const QString& newName) {
-    return !isSource && file.parentDirectoryId == destParent && file.fileName == newName;
+    return !isSource && file.parentDirectoryId == destParent &&
+           apfsNamesCollide(file.fileName, newName);
 }
 
 // A file rename/move also fails if the destination parent already holds a DIRECTORY named
@@ -16601,7 +16957,8 @@ bool renameDirectoryNameCollision(const QVector<ApfsRootDirectoryPayload>& direc
                                   uint64_t destParent,
                                   const QString& newName) {
     for (const auto& directory : directories) {
-        if (directory.parentDirectoryId == destParent && directory.directoryName == newName) {
+        if (directory.parentDirectoryId == destParent &&
+            apfsNamesCollide(directory.directoryName, newName)) {
             return true;
         }
     }
@@ -17039,13 +17396,14 @@ bool directoryDestinationNameTaken(const ApfsDirectoryRenameRequest& in,
                                    uint64_t destParent,
                                    uint64_t movedDirectoryId) {
     for (const auto& file : in.existingFiles) {
-        if (file.parentDirectoryId == destParent && file.fileName == in.newName) {
+        if (file.parentDirectoryId == destParent && apfsNamesCollide(file.fileName, in.newName)) {
             return true;
         }
     }
     for (const auto& directory : in.existingDirectories) {
         if (directory.directoryId != movedDirectoryId &&
-            directory.parentDirectoryId == destParent && directory.directoryName == in.newName) {
+            directory.parentDirectoryId == destParent &&
+            apfsNamesCollide(directory.directoryName, in.newName)) {
             return true;
         }
     }

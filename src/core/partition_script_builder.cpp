@@ -177,15 +177,13 @@ uint64_t payloadUInt64(const PartitionOperation& operation, const QString& key) 
 }
 
 bool payloadBool(const PartitionOperation& operation, const QString& key, bool fallback = false) {
+    // STRICT, identical to PartitionSafetyValidator's bool read: only a real JSON bool counts. A
+    // stringly-typed "true"/"1"/"yes" is a wrong-typed input -- coercing it here let the builder
+    // read a routing marker or confirmation as TRUE while the validator (which never coerces) read
+    // it FALSE, so the two authorities approved and BUILT different operations. An absent or
+    // wrong-typed value takes the fallback.
     const auto value = operation.payload.value(key);
-    if (value.isBool()) {
-        return value.toBool();
-    }
-    const QString text = value.toString(fallback ? QStringLiteral("true") : QStringLiteral("false"))
-                             .trimmed()
-                             .toLower();
-    return text == QStringLiteral("true") || text == QStringLiteral("1") ||
-           text == QStringLiteral("yes");
+    return value.isBool() ? value.toBool() : fallback;
 }
 
 // Reads a JSON-array payload value as a trimmed, non-empty string list. Accepts an array
@@ -2203,12 +2201,26 @@ struct CreateScriptSpec {
 // match against.
 QString validatedDriveLetter(const PartitionOperation& operation) {
     const QString target = operation.target.drive_letter.left(1).toUpper();
-    const QString payload =
-        payloadString(operation, QStringLiteral("drive_letter")).left(1).toUpper();
+    const QString payloadRaw = payloadString(operation, QStringLiteral("drive_letter"));
+    const QString payload = payloadRaw.left(1).toUpper();
+    // A multi-character payload ("EF") is malformed; refuse rather than silently truncate it to its
+    // first letter and act on that (possibly different) volume. Checked first so it holds whether
+    // or not there is a target letter to bind against.
+    if (payloadRaw.trimmed().size() > 1) {
+        return {};
+    }
+    if (target.isEmpty()) {
+        // No target VOLUME letter to bind against. This is a disk-level operation (e.g.
+        // dynamic-to-basic convert, whose target is a whole disk): the payload letter names the
+        // volume to preserve within the already-confirmed disk and is the sole authority, still
+        // format-gated by the caller's isValidDriveLetter. It cannot OVERRIDE a partition letter
+        // here because there is none, so the arbitrary-volume-override hazard does not arise.
+        return payload;
+    }
     if (payload.isEmpty()) {
         return target;
     }
-    if (!target.isEmpty() && payload != target) {
+    if (payload != target) {
         return {};
     }
     return payload;
@@ -2365,7 +2377,8 @@ QString cloneTransferVerificationFunctionsScript() {
 QString cloneTransferRawTargetFunctionsScript() {
     return QStringLiteral(
         "function Get-SakPhysicalDriveNumber([string]$p) { if (-not "
-        "$p.StartsWith('\\\\.\\PhysicalDrive')) { return $null }; $suffix = "
+        "$p.StartsWith('\\\\.\\PhysicalDrive', [System.StringComparison]::OrdinalIgnoreCase)) { "
+        "return $null }; $suffix = "
         "$p.Substring('\\\\.\\PhysicalDrive'.Length); $n = -1; if (-not "
         "[int]::TryParse($suffix, [ref]$n)) { throw 'Invalid physical target disk path' }; "
         "return $n }\n"
@@ -2499,11 +2512,12 @@ QString osMigrationBootValidationScript() {
     return QStringLiteral(
         "Write-Output 'SAK OS migration boot validation'\n"
         "$targetDiskNumber = -1\n"
-        "if ($dst.StartsWith('\\\\.\\PhysicalDrive')) { $suffix = "
+        "if ($dst.StartsWith('\\\\.\\PhysicalDrive', "
+        "[System.StringComparison]::OrdinalIgnoreCase)) { $suffix = "
         "$dst.Substring('\\\\.\\PhysicalDrive'.Length); [void][int]::TryParse($suffix, "
         "[ref]$targetDiskNumber) }\n"
-        "if ($targetDiskNumber -lt 0) { Write-Warning 'Boot validation skipped: target is not a "
-        "physical disk path'; return }\n"
+        "if ($targetDiskNumber -lt 0) { throw 'OS migration boot validation could not resolve the "
+        "target physical disk path' }\n"
         "$disk = Get-Disk -Number $targetDiskNumber -ErrorAction Stop\n"
         "$parts = @(Get-Partition -DiskNumber $targetDiskNumber -ErrorAction Stop | Sort-Object "
         "PartitionNumber)\n"
@@ -2594,11 +2608,13 @@ MovePartitionScriptPayload movePartitionScriptPayload(const PartitionOperation& 
     payload.target_offset = payloadUInt64(operation, QStringLiteral("target_offset_bytes"));
     payload.target_size = payloadUInt64(operation, QStringLiteral("target_size_bytes"));
     payload.drive = validatedDriveLetter(operation).left(1).toUpper();
+    // No "NTFS"/"Data" default on a destructive recreate: the validator validates the volume's LIVE
+    // filesystem, so a silent NTFS default here would reformat a FAT32/exFAT volume to a filesystem
+    // the approving authority never checked. Require the caller to state it -- an empty file_system
+    // then fails movePartitionPayloadError's isSupportedFileSystem gate.
     payload.file_system =
-        payloadString(operation, QStringLiteral("file_system"), QStringLiteral("NTFS"))
-            .trimmed()
-            .toUpper();
-    payload.label = payloadString(operation, QStringLiteral("label"), QStringLiteral("Data"));
+        payloadString(operation, QStringLiteral("file_system")).trimmed().toUpper();
+    payload.label = payloadString(operation, QStringLiteral("label"));
     payload.backup_directory =
         payloadString(operation, QStringLiteral("backup_directory")).trimmed();
     return payload;
@@ -4710,6 +4726,29 @@ PartitionScript PartitionScriptBuilder::buildConvertStyleScript(
     return out;
 }
 
+// target_folder is a bare folder name created directly under the target volume root.
+// quotePowerShell only escapes quotes, so a value containing '..' or a path separator would let
+// the merged data escape the intended folder. An empty / whitespace / "." / ".." value is worse
+// still: it resolves $destination to the target volume ROOT, so robocopy /E overwrites the
+// surviving volume's own tree before the source partition is deleted. Return the rejection message
+// for anything that is not a plain name, or an empty string when 'folder' is acceptable.
+QString mergeFolderRejectReason(const QString& folder) {
+    bool bare = !folder.isEmpty() && folder != QStringLiteral(".") &&
+                folder != QStringLiteral("..") && !folder.contains(QStringLiteral(".."));
+    for (const QChar reserved : QStringLiteral("/\\:<>\"|?*")) {
+        if (folder.contains(reserved)) {
+            bare = false;
+        }
+    }
+    if (bare) {
+        return QString();
+    }
+    return QStringLiteral(
+        "Merge target_folder must be a bare folder name (no path separators, '..', drive "
+        "qualifier, reserved characters, or an empty/'.'/'..' value that resolves to the "
+        "volume root)");
+}
+
 PartitionScript PartitionScriptBuilder::buildMergeScript(
     const PartitionOperation& operation) const {
     const uint32_t source_partition =
@@ -4720,15 +4759,10 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
     if (source_partition == 0) {
         return invalidScript(QStringLiteral("Merge requires source_partition_number"));
     }
-    // target_folder is a bare folder name created directly under the target volume
-    // root. quotePowerShell only escapes quotes, so a value containing '..' or a path
-    // separator would let the merged data escape the intended folder into an arbitrary
-    // directory. Reject anything that is not a plain name.
-    if (target_folder.contains(QLatin1Char('/')) || target_folder.contains(QLatin1Char('\\')) ||
-        target_folder.contains(QLatin1Char(':')) || target_folder.contains(QStringLiteral(".."))) {
-        return invalidScript(QStringLiteral(
-            "Merge target_folder must be a bare folder name (no path separators, '..', "
-            "or drive qualifier)"));
+    const QString folder = target_folder.trimmed();
+    const QString folder_reject = mergeFolderRejectReason(folder);
+    if (!folder_reject.isEmpty()) {
+        return invalidScript(folder_reject);
     }
 
     PartitionScript out;
@@ -4750,7 +4784,18 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
                      "{ throw 'Merge requires drive letters on both partitions' }\n"
                      "$mergeFolder = %3\n"
                      "$destination = ('{0}:\\{1}' -f $targetVolume.DriveLetter, $mergeFolder)\n"
+                     // The destination name is predictable, so an unprivileged user can pre-plant
+                     // it as a junction/symlink; New-Item -Force follows it and robocopy /COPYALL
+                     // then mirrors the source THROUGH it (a local elevation of privilege). Refuse
+                     // a reparse point at the destination both before and after creating it.
+                     "if ((Test-Path -LiteralPath $destination) -and ((Get-Item -LiteralPath "
+                     "$destination -Force).Attributes -band "
+                     "[System.IO.FileAttributes]::ReparsePoint)) { throw 'Merge destination exists "
+                     "as a reparse point (junction/symlink); refusing to write through it' }\n"
                      "New-Item -ItemType Directory -Force -Path $destination | Out-Null\n"
+                     "if ((Get-Item -LiteralPath $destination -Force).Attributes -band "
+                     "[System.IO.FileAttributes]::ReparsePoint) { throw 'Merge destination is a "
+                     "reparse point; refusing to mirror the source through it' }\n"
                      "robocopy.exe ('{0}:\\' -f $sourceVolume.DriveLetter) $destination /E "
                      "/COPYALL /DCOPY:DAT /R:1 /W:1\n"
                      // robocopy exit codes are bit flags: 1=copied, 2=extra, 4=MISMATCH,
@@ -4764,7 +4809,7 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
                      "$supported.SizeMax\n")
                      .arg(operation.target.disk_number)
                      .arg(source_partition)
-                     .arg(quotePowerShell(target_folder))
+                     .arg(quotePowerShell(folder))
                      .arg(operation.target.partition_number);
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;

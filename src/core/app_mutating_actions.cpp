@@ -551,6 +551,55 @@ AppActionResult exportPst(const QJsonObject& args) {
 // list cannot spray files onto disk. Truncation is reported in the result.
 constexpr int kMaxSavedAttachments = 256;
 
+// A logon auto-run location: the per-user and all-users Startup folders, where a NEW .lnk/.exe/
+// .cmd runs at the next sign-in. Their on-disk path is language-neutral
+// ("...\Start Menu\Programs\Startup") even on localized Windows, so match that suffix
+// case-insensitively. filePathDeletionRefusal covers the Windows/ProgramData/Program Files
+// trees, but the per-user Startup sits deep under the profile and is not a protected ROOT.
+bool isLogonAutoRunDir(const QString& dir) {
+    QString norm = QDir::fromNativeSeparators(dir).toLower();
+    while (norm.endsWith(QLatin1Char('/'))) {
+        norm.chop(1);
+    }
+    return norm.endsWith(QLatin1String("/start menu/programs/startup"));
+}
+
+// Refuse a headless-write destination that is a system or logon auto-run location. The
+// attachment-save and offline-recovery ops are mutating-but-not-destructive, so in Unattended
+// mode the offer-restore-point branch runs them with no per-call human review of the target
+// path: a prompt-injected "save to <Startup>" (or into the Windows tree) must FAIL CLOSED rather
+// than plant a logon executable. The CANONICAL directory is screened so trailing-dot / alias /
+// relative spellings resolve to the real location.
+std::optional<AppActionResult> protectedSaveDirRefusal(const QString& output_dir,
+                                                       const QString& dir_field) {
+    const QString canonical = QFileInfo(output_dir).canonicalFilePath();
+    if (canonical.isEmpty()) {
+        // Did not resolve; validateSaveOutputDir's isDir() check reports that separately.
+        return std::nullopt;
+    }
+    if (QDir(canonical).isRoot()) {
+        return AppActionResult{
+            false,
+            QStringLiteral("%1 must not be a drive/volume root: %2").arg(dir_field, canonical),
+            {}};
+    }
+    if (const QString refusal = filePathDeletionRefusal(canonical); !refusal.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("%1 is a protected system location (%2): %3")
+                                   .arg(dir_field, refusal, canonical),
+                               {}};
+    }
+    if (isLogonAutoRunDir(canonical)) {
+        return AppActionResult{
+            false,
+            QStringLiteral("%1 must not be a logon Startup folder (a new file there would run at "
+                           "next sign-in): %2")
+                .arg(dir_field, canonical),
+            {}};
+    }
+    return std::nullopt;
+}
+
 // Validate the destination: an EXISTING directory we write NEW files into. Screens for a reparse
 // point (leaf + ancestors) BEFORE the target-following isDir(), so a symlink/junction to a UNC
 // share cannot leak the NTLM hash here. dir_field is the op's JSON arg name for this directory, so
@@ -569,6 +618,9 @@ std::optional<AppActionResult> validateSaveOutputDir(const QString& output_dir,
             false,
             QStringLiteral("%1 must be an existing directory: %2").arg(dir_field, output_dir),
             {}};
+    }
+    if (std::optional<AppActionResult> refusal = protectedSaveDirRefusal(output_dir, dir_field)) {
+        return refusal;
     }
     return std::nullopt;
 }
@@ -1348,6 +1400,22 @@ QString recoveredBaseName(quint64 offset, const QString& safe_ext) {
         .arg(QString::number(offset, 16).rightJustified(16, QLatin1Char('0')), safe_ext);
 }
 
+// Executable / auto-run extensions a headless write must never emit. restore_recoverable writes
+// files whose extension the model chooses, at content it carves from an untrusted image, so a
+// "recovered_<hex>.exe" (or .lnk/.bat/...) is a planted executable, not a recovery. Reject the
+// extension outright rather than write it.
+bool isExecutableOrAutoRunExtension(const QString& ext) {
+    static const QStringList kBlocked = {
+        QStringLiteral("exe"), QStringLiteral("com"), QStringLiteral("scr"), QStringLiteral("bat"),
+        QStringLiteral("cmd"), QStringLiteral("ps1"), QStringLiteral("vbs"), QStringLiteral("vbe"),
+        QStringLiteral("js"),  QStringLiteral("jse"), QStringLiteral("wsf"), QStringLiteral("wsh"),
+        QStringLiteral("msi"), QStringLiteral("msp"), QStringLiteral("lnk"), QStringLiteral("url"),
+        QStringLiteral("dll"), QStringLiteral("cpl"), QStringLiteral("hta"), QStringLiteral("reg"),
+        QStringLiteral("msc"), QStringLiteral("scf"), QStringLiteral("pif"), QStringLiteral("sct"),
+        QStringLiteral("jar")};
+    return kBlocked.contains(ext.toLower());
+}
+
 // Parse the model's candidate list into engine candidates. Each candidate carries only an
 // offset/size range into the image (bytes are re-read by the engine) and a sanitized extension; the
 // id (output name) is derived here, never taken from the model. Rejects an out-of-image or
@@ -1400,6 +1468,14 @@ std::optional<AppActionResult> parseRecoverCandidates(const QJsonArray& raw,
         candidate.size_bytes = static_cast<uint64_t>(size);
         candidate.extension =
             sanitizeRecoverExtension(obj.value(QStringLiteral("extension")).toString());
+        if (isExecutableOrAutoRunExtension(candidate.extension)) {
+            return AppActionResult{
+                false,
+                QStringLiteral("a candidate extension '%1' is an executable/auto-run type and is "
+                               "not allowed for a headless recovery")
+                    .arg(candidate.extension),
+                {}};
+        }
         candidate.id = recoveredBaseName(candidate.offset_bytes, candidate.extension);
         out.append(std::move(candidate));
     }
@@ -3759,6 +3835,27 @@ void registerFileMutatingOps(const AddMutatingActionFn& add) {
 }  // namespace
 
 std::optional<AppActionResult> validatePartitionApplyArgs(const QJsonObject& args) {
+    // Enforce the schema's additionalProperties:false, which nothing on the app-action path
+    // applies otherwise. A misspelled key ("dryrun", "dry-run") would otherwise be silently
+    // ignored, dry_run would default to false, and the catastrophic confirm dialog would render
+    // the bogus key while a REAL elevated, data-erasing apply runs. Fail closed on any unknown key.
+    static const QStringList kAllowedApplyArgs = {QStringLiteral("operation"),
+                                                  QStringLiteral("disk_number"),
+                                                  QStringLiteral("partition_number"),
+                                                  QStringLiteral("offset_bytes"),
+                                                  QStringLiteral("size_bytes"),
+                                                  QStringLiteral("payload"),
+                                                  QStringLiteral("confirm_layout_hash"),
+                                                  QStringLiteral("dry_run")};
+    for (const QString& key : args.keys()) {
+        if (!kAllowedApplyArgs.contains(key)) {
+            return AppActionResult{false,
+                                   QStringLiteral(
+                                       "Unknown argument '%1' for apply_operation (allowed: %2)")
+                                       .arg(key, kAllowedApplyArgs.join(QStringLiteral(", "))),
+                                   {}};
+        }
+    }
     if (!args.value(QStringLiteral("disk_number")).isDouble()) {
         return AppActionResult{false,
                                QStringLiteral("apply_operation requires a numeric 'disk_number'"),

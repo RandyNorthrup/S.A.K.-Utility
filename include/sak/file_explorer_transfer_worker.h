@@ -115,6 +115,24 @@ private:
     // advisory (not [[nodiscard]]).
     bool removeDestinationEntry(const QString& path);
     [[nodiscard]] bool renameDestination(const QString& from, const QString& to);
+    /// Source and destination name the SAME entry: parent and last component match
+    /// case-insensitively (an exact spelling, or a case-only change on a
+    /// case-insensitive volume). Such a rename has no true occupant to replace -- it
+    /// must route straight to renameEntry rather than delete a "replaced" source.
+    [[nodiscard]] static bool isSameTargetEntry(const FileExplorerTransferItem& item);
+    /// Settle a failed renameEntry: restore a set-aside occupant, and when even that
+    /// restore fails, surface both failures (the occupant is stranded at @p backup).
+    /// Always reports failure (returns false), so the caller returns it directly.
+    [[nodiscard]] bool reportFailedRename(const FileManagementMutationResult& result,
+                                          const FileExplorerTransferItem& item,
+                                          bool occupant_set_aside,
+                                          const QString& backup);
+    /// Best-effort removal of the set-aside occupant after a successful rename; a
+    /// removal failure leaves the previous occupant at an internal name, so warn
+    /// rather than swallow it.
+    void dropSetAsideRenameOccupant(const FileExplorerTransferItem& item,
+                                    bool occupant_set_aside,
+                                    const QString& backup);
     [[nodiscard]] bool transferFromHost(const FileExplorerTransferItem& item,
                                         const QString& destination,
                                         const FileManagementTransferObserver& observer);

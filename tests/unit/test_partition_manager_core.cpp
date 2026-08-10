@@ -17642,8 +17642,11 @@ void PartitionManagerCoreTests::apfsWriter_freeQueueRunInBoundsRejectsOutOfRange
     // CODEX_REVIEW_4 M-A4-4: a corrupt free-queue {paddr,length} must be rejected before it
     // expands into a multi-exabyte block list (OOM) or wraps paddr+length past 2^64.
     constexpr quint64 kBlocks = 1000;
-    QVERIFY(PartitionApfsWriter::freeQueueRunInBoundsForTesting(0, 1, kBlocks));
-    QVERIFY(PartitionApfsWriter::freeQueueRunInBoundsForTesting(999, 1, kBlocks));   // exact fit
+    QVERIFY(PartitionApfsWriter::freeQueueRunInBoundsForTesting(1, 1, kBlocks));
+    QVERIFY(PartitionApfsWriter::freeQueueRunInBoundsForTesting(999, 1, kBlocks));  // exact fit
+    // paddr 0 is the container superblock, never a reclaimable data block: a free-queue run
+    // naming it must be refused so it cannot publish the superblock as free space.
+    QVERIFY(!PartitionApfsWriter::freeQueueRunInBoundsForTesting(0, 1, kBlocks));
     QVERIFY(!PartitionApfsWriter::freeQueueRunInBoundsForTesting(0, 0, kBlocks));    // zero length
     QVERIFY(
         !PartitionApfsWriter::freeQueueRunInBoundsForTesting(1000, 1, kBlocks));     // paddr == end
@@ -17668,10 +17671,11 @@ void PartitionManagerCoreTests::apfsWriter_freeQueueExpansionBudgetFailsClosed()
     QVERIFY(!W::freeQueueRunInBoundsForTesting(0, kRunCap + 1, kHugeContainer));
     QVERIFY(
         !W::freeQueueRunInBoundsForTesting(kHugeContainer / 2, kHugeContainer / 2, kHugeContainer));
-    // A run at the cap that still fits the container stays legal; the container bound is not
-    // replaced by the length bound, both must hold.
-    QVERIFY(W::freeQueueRunInBoundsForTesting(0, kRunCap, kHugeContainer));
-    QVERIFY(!W::freeQueueRunInBoundsForTesting(0, kRunCap, kRunCap - 1));
+    // A run at the cap that still fits the container stays legal (paddr 1: block 0 is the
+    // superblock and is refused independently); the container bound is not replaced by the
+    // length bound, both must hold.
+    QVERIFY(W::freeQueueRunInBoundsForTesting(1, kRunCap, kHugeContainer));
+    QVERIFY(!W::freeQueueRunInBoundsForTesting(1, kRunCap, kRunCap - 1));
 
     // The whole-queue budget is cumulative: runs that each pass the per-run bound still fail
     // closed once their total would materialize past the expansion ceiling.
