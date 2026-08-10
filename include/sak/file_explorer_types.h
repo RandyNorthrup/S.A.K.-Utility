@@ -103,12 +103,18 @@ struct FileExplorerItemCapabilities {
 // Columns span Compact(1)..ExtraLarge(5); Cards spans Small(1)..ExtraLarge(4);
 // Grid spans Small(1)..ExtraLarge(12). Defaults match LayoutSettingsService
 // (Details/List/Cards/Columns Small, Grid Large).
+// Default layout size level per view kind (see the size-kind ranges above).
+inline constexpr int kDefaultDetailsLayoutSize = 2;
+inline constexpr int kDefaultListLayoutSize = 2;
+inline constexpr int kDefaultGridLayoutSize = 8;
+inline constexpr int kDefaultColumnsLayoutSize = 2;
+
 struct FileExplorerLayoutSizes {
-    int details{2};
-    int list{2};
+    int details{kDefaultDetailsLayoutSize};
+    int list{kDefaultListLayoutSize};
     int cards{1};
-    int grid{8};
-    int columns{2};
+    int grid{kDefaultGridLayoutSize};
+    int columns{kDefaultColumnsLayoutSize};
 
     [[nodiscard]] friend bool operator==(const FileExplorerLayoutSizes& lhs,
                                          const FileExplorerLayoutSizes& rhs) = default;

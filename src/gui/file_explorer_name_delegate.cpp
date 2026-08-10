@@ -16,6 +16,11 @@ namespace sak {
 
 namespace {
 
+// Halve a leftover span to center a glyph or icon within its cell.
+constexpr int kCenteringDivisor = 2;
+// Alpha applied to the highlight fill of a selected card (subtle tint).
+constexpr int kSelectedCardFillAlpha = 60;
+
 // Files FilesystemHelpers.RestrictedCharacters. Applied on every target so
 // names stay portable between raw Mac volumes and Windows hosts.
 const QString kRestrictedCharacters = QStringLiteral("\\/:*?\"<>|");
@@ -98,7 +103,7 @@ void FileExplorerNameDelegate::paint(QPainter* painter,
     constexpr int kChevronMargin = 4;
     QStyleOption arrow;
     arrow.rect = QRect(option.rect.right() - kChevronEdge - kChevronMargin,
-                       option.rect.center().y() - kChevronEdge / 2,
+                       option.rect.center().y() - kChevronEdge / kCenteringDivisor,
                        kChevronEdge,
                        kChevronEdge);
     arrow.state = option.state;
@@ -124,7 +129,7 @@ QRect paintCardFrameAndIcon(QPainter* painter,
     const bool selected = option.state.testFlag(QStyle::State_Selected);
     QColor fill = option.palette.color(selected ? QPalette::Highlight : QPalette::Base);
     if (selected) {
-        fill.setAlpha(60);
+        fill.setAlpha(kSelectedCardFillAlpha);
     }
     painter->setPen(QPen(option.palette.color(selected ? QPalette::Highlight : QPalette::Mid), 1));
     painter->setBrush(fill);
@@ -135,14 +140,14 @@ QRect paintCardFrameAndIcon(QPainter* painter,
     if (!icon.isNull()) {
         const QSize icon_size = option.decorationSize;
         icon.paint(painter,
-                   QRect(card.left() + (box - icon_size.width()) / 2,
-                         card.top() + (box - icon_size.height()) / 2,
+                   QRect(card.left() + (box - icon_size.width()) / kCenteringDivisor,
+                         card.top() + (box - icon_size.height()) / kCenteringDivisor,
                          icon_size.width(),
                          icon_size.height()));
     }
     return {card.left() + box + kDetailsSpacing,
-            card.top() + kDetailsSpacing / 2,
-            card.width() - box - 2 * kDetailsSpacing,
+            card.top() + kDetailsSpacing / kCenteringDivisor,
+            card.width() - box - kDetailsSpacing - kDetailsSpacing,
             card.height() - kDetailsSpacing};
 }
 

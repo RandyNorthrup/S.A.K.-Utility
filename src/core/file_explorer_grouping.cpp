@@ -30,6 +30,32 @@ QString trGroup(const char* text) {
 // in the 64-bit domain and clamp every sort index into a bounded, monotonic range.
 constexpr int kMaxDateSortIndex = 1'000'000'000;
 
+// Day-difference cutoffs for the relative week buckets: a date is "earlier this
+// week" only within one week, and "last week" only within two weeks, of today.
+constexpr qint64 kDaysPerWeek = 7;
+constexpr qint64 kDaysPerTwoWeeks = 2 * kDaysPerWeek;
+
+// Fold a whole-year delta into months when ranking month/year buckets.
+constexpr qint64 kMonthsPerYear = 12;
+
+// Group sort indices (FileExplorerGroupInfo::sort_index), ranking sections
+// newest-first. Future=-1, Today=0, and Yesterday=1 (bare identity literals)
+// precede these. The relative buckets take fixed ranks; the open-ended
+// per-day / per-month / per-year buckets take a base rank plus the (clamped)
+// elapsed delta so they stay monotonic behind the relative labels.
+constexpr int kSortEarlierThisWeek = 2;
+constexpr int kSortLastWeek = 3;
+constexpr int kSortEarlierThisMonth = 4;
+constexpr int kSortLastMonth = 5;
+constexpr int kSortEarlierThisYear = 6;
+constexpr int kSortLastYear = 7;
+constexpr int kSortDayBucketBase = 2;
+constexpr qint64 kSortMonthBucketBase = 6;
+constexpr qint64 kSortYearBucketBase = 8;
+
+// Invalid / undated items sort to the very bottom.
+constexpr int kSortUnknown = 9999;
+
 // Files GroupingHelper sizeGroups table: strict greater-than thresholds
 // evaluated largest-first; the header shows the bucket name and byte range.
 struct SizeBucket {
@@ -76,13 +102,13 @@ std::optional<FileExplorerGroupInfo> weekDateGroup(const QDate& date,
     int now_week_year = 0;
     const int week = date.weekNumber(&week_year);
     const int now_week = today.weekNumber(&now_week_year);
-    if (day_diff <= 7 && week == now_week && week_year == now_week_year) {
-        return FileExplorerGroupInfo{trGroup("Earlier this week"), 2};
+    if (day_diff <= kDaysPerWeek && week == now_week && week_year == now_week_year) {
+        return FileExplorerGroupInfo{trGroup("Earlier this week"), kSortEarlierThisWeek};
     }
     int last_week_year = 0;
-    const int last_week = today.addDays(-7).weekNumber(&last_week_year);
-    if (day_diff <= 14 && week == last_week && week_year == last_week_year) {
-        return FileExplorerGroupInfo{trGroup("Last week"), 3};
+    const int last_week = today.addDays(-kDaysPerWeek).weekNumber(&last_week_year);
+    if (day_diff <= kDaysPerTwoWeeks && week == last_week && week_year == last_week_year) {
+        return FileExplorerGroupInfo{trGroup("Last week"), kSortLastWeek};
     }
     return std::nullopt;
 }
@@ -91,33 +117,35 @@ FileExplorerGroupInfo monthAndYearDateGroup(const QDate& date,
                                             const QDate& today,
                                             const FileExplorerGroupDateUnit unit) {
     const qint64 year_delta = static_cast<qint64>(today.year()) - date.year();
-    const qint64 month_diff =
-        std::clamp<qint64>(year_delta * 12 + (today.month() - date.month()), 0, kMaxDateSortIndex);
+    const qint64 month_diff = std::clamp<qint64>(
+        year_delta * kMonthsPerYear + (today.month() - date.month()), 0, kMaxDateSortIndex);
     if (month_diff == 0) {
-        return {trGroup("Earlier this month"), 4};
+        return {trGroup("Earlier this month"), kSortEarlierThisMonth};
     }
     if (month_diff == 1) {
-        return {trGroup("Last month"), 5};
+        return {trGroup("Last month"), kSortLastMonth};
     }
     if (unit == FileExplorerGroupDateUnit::Month) {
         return {QLocale().toString(date, QStringLiteral("MMMM yyyy")),
-                static_cast<int>(std::min<qint64>(6 + month_diff, kMaxDateSortIndex))};
+                static_cast<int>(
+                    std::min<qint64>(kSortMonthBucketBase + month_diff, kMaxDateSortIndex))};
     }
     if (date.year() == today.year()) {
-        return {trGroup("Earlier this year"), 6};
+        return {trGroup("Earlier this year"), kSortEarlierThisYear};
     }
     if (date.year() == today.year() - 1) {
-        return {trGroup("Last year"), 7};
+        return {trGroup("Last year"), kSortLastYear};
     }
     return {QString::number(date.year()),
-            static_cast<int>(std::clamp<qint64>(8 + year_delta, 0, kMaxDateSortIndex))};
+            static_cast<int>(
+                std::clamp<qint64>(kSortYearBucketBase + year_delta, 0, kMaxDateSortIndex))};
 }
 
 FileExplorerGroupInfo dateGroupInfo(const QDateTime& time,
                                     const FileExplorerGroupDateUnit unit,
                                     const QDateTime& now) {
     if (!time.isValid()) {
-        return {trGroup("Unknown"), 9999};
+        return {trGroup("Unknown"), kSortUnknown};
     }
     const QDate date = time.date();
     const QDate today = now.date();
@@ -133,7 +161,8 @@ FileExplorerGroupInfo dateGroupInfo(const QDateTime& time,
     }
     if (unit == FileExplorerGroupDateUnit::Day) {
         return {QLocale().toString(date, QLocale::LongFormat),
-                2 + static_cast<int>(std::min<qint64>(day_diff, kMaxDateSortIndex))};
+                kSortDayBucketBase +
+                    static_cast<int>(std::min<qint64>(day_diff, kMaxDateSortIndex))};
     }
     if (const auto week_group = weekDateGroup(date, today, day_diff)) {
         return *week_group;

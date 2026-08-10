@@ -18,12 +18,36 @@ constexpr qint64 kSamplerIntervalMs = 100;
 // Files SpeedGraph point spacing guard (StatusCenterItem.ReportProgress).
 constexpr double kGraphMinPercentStep = 0.5;
 
+// Files StatusCenterItem result branches: indices into CardPatterns::branches
+// and the shared card state-machine switches. Order matches the {InProgress,
+// Success, Failed, Cancelled} card-string columns.
+constexpr int kBranchInProgress = 0;
+constexpr int kBranchSuccess = 1;
+constexpr int kBranchFailed = 2;
+constexpr int kBranchCancelled = 3;
+constexpr int kResultBranchCount = 4;
+
+// Percentage full scale: progress ratios are scaled to, and clamped within,
+// [0, kPercentScale].
+constexpr qint64 kPercentScale = 100;
+
+// Files seeds _previousReportTime one second (in ms) before StartTime so the
+// first speed sample has a sane denominator.
+constexpr qint64 kSpeedSeedOffsetMs = 1000;
+
+// Files InfoBadgeState codes (0 all successful, 1 in progress, 2 in progress
+// with an error, 3 completed with an error).
+constexpr int kBadgeStateAllSuccessful = 0;
+constexpr int kBadgeStateInProgress = 1;
+constexpr int kBadgeStateInProgressWithError = 2;
+constexpr int kBadgeStateCompletedWithError = 3;
+
 /// Card header templates per operation, indexed by result branch
 /// {InProgress, Success, Failed, Cancelled} (Files Strings/en-US/Resources.resw
 /// StatusCenter_* entries; Recycle reuses the Delete headers per
 /// StatusCenterHelper.AddCard_Recycle).
 struct CardPatterns {
-    const char* branches[4];
+    const char* branches[kResultBranchCount];
 };
 
 const CardPatterns& patternsFor(const FileExplorerOperationType operation) {
@@ -71,15 +95,15 @@ const CardPatterns& patternsFor(const FileExplorerOperationType operation) {
 
 int branchForResult(const FileExplorerReturnResult result) {
     if (result == FileExplorerReturnResult::InProgress) {
-        return 0;
+        return kBranchInProgress;
     }
     if (result == FileExplorerReturnResult::Success) {
-        return 1;
+        return kBranchSuccess;
     }
     if (result == FileExplorerReturnResult::Cancelled) {
-        return 3;
+        return kBranchCancelled;
     }
-    return 2;
+    return kBranchFailed;
 }
 
 FileExplorerStatusIconKind iconForOperation(const FileExplorerOperationType operation) {
@@ -157,7 +181,7 @@ FileExplorerStatusProgressReporter::FileExplorerStatusProgressReporter(Sink sink
     }
     // Files seeds _previousReportTime one second before StartTime so the very
     // first speed sample has a sane denominator.
-    m_previous_speed_ms = m_clock() - 1000;
+    m_previous_speed_ms = m_clock() - kSpeedSeedOffsetMs;
 }
 
 void FileExplorerStatusProgressReporter::setStatus(const FileExplorerReturnResult status) {
@@ -261,7 +285,7 @@ void FileExplorerStatusCenterItem::applyInitialState(const FileExplorerStatusCar
     m_total_size = request.total_size;
     m_message = tr("Discovering items...");
     switch (branchForResult(request.result)) {
-    case 0:
+    case kBranchInProgress:
         // Files: only the in-progress branch carries a cancellation source.
         m_cancelable = request.cancelable;
         m_in_progress = true;
@@ -270,11 +294,11 @@ void FileExplorerStatusCenterItem::applyInitialState(const FileExplorerStatusCar
         m_kind = FileExplorerStatusItemKind::InProgress;
         m_icon_kind = iconForOperation(request.operation);
         break;
-    case 1:
+    case kBranchSuccess:
         m_kind = FileExplorerStatusItemKind::Successful;
         m_icon_kind = FileExplorerStatusIconKind::Successful;
         break;
-    case 3:
+    case kBranchCancelled:
         m_kind = FileExplorerStatusItemKind::Canceled;
         m_icon_kind = iconForOperation(request.operation);
         break;
@@ -313,17 +337,17 @@ void FileExplorerStatusCenterItem::reportProgress(const FileExplorerStatusProgre
 // never reaps it. Flip the kind/icon and clear the in-progress flags to match.
 void FileExplorerStatusCenterItem::applyTerminalTransition() {
     const int branch = branchForResult(m_return_result);
-    if (branch == 0) {
+    if (branch == kBranchInProgress) {
         return;  // still running
     }
     m_in_progress = false;
     m_cancelable = false;
     m_indeterminate = false;
     m_discovering = false;
-    if (branch == 1) {
+    if (branch == kBranchSuccess) {
         m_kind = FileExplorerStatusItemKind::Successful;
         m_icon_kind = FileExplorerStatusIconKind::Successful;
-    } else if (branch == 3) {
+    } else if (branch == kBranchCancelled) {
         m_kind = FileExplorerStatusItemKind::Canceled;
         m_icon_kind = iconForOperation(m_operation);
     } else {
@@ -359,13 +383,15 @@ void FileExplorerStatusCenterItem::applyProgressPercentAndSpeed(
     const FileExplorerStatusProgress& progress) {
     double graph_speed = 0.0;
     if (progress.total_size > 0) {
-        m_progress_percentage = static_cast<int>(
-            std::clamp<qint64>(progress.processed_size * 100 / progress.total_size, 0, 100));
+        m_progress_percentage = static_cast<int>(std::clamp<qint64>(
+            progress.processed_size * kPercentScale / progress.total_size, 0, kPercentScale));
         m_speed_text = tr("%1/s").arg(formatBytes(static_cast<qint64>(progress.size_speed)));
         graph_speed = progress.size_speed;
     } else if (progress.items_count > 0) {
         m_progress_percentage = static_cast<int>(std::clamp<qint64>(
-            progress.processed_items_count * 100 / progress.items_count, 0, 100));
+            progress.processed_items_count * kPercentScale / progress.items_count,
+            0,
+            kPercentScale));
         m_speed_text = tr("%1 items/s").arg(progress.items_speed, 0, 'f', 0);
         graph_speed = progress.items_speed;
     } else {
@@ -392,7 +418,7 @@ void FileExplorerStatusCenterItem::updateCardStrings() {
         operationHasDiscoveryHeader(m_operation)) {
         m_header = tr("Discovered %1").arg(itemsText(m_total_items));
     }
-    if (branch == 2) {
+    if (branch == kBranchFailed) {
         m_sub_header = failedSubHeader();
     }
 }
@@ -517,9 +543,9 @@ int FileExplorerStatusCenterModel::infoBadgeState() const {
         });
     const bool any_in_progress = hasAnyItemInProgress();
     if (!any_failure) {
-        return any_in_progress ? 1 : 0;
+        return any_in_progress ? kBadgeStateInProgress : kBadgeStateAllSuccessful;
     }
-    return any_in_progress ? 2 : 3;
+    return any_in_progress ? kBadgeStateInProgressWithError : kBadgeStateCompletedWithError;
 }
 
 int FileExplorerStatusCenterModel::infoBadgeValue() const {
@@ -528,7 +554,8 @@ int FileExplorerStatusCenterModel::infoBadgeValue() const {
 }
 
 void FileExplorerStatusCenterModel::flyoutOpened() {
-    m_show_progress_ring = hasAnyItemInProgress() || infoBadgeState() == 3;
+    m_show_progress_ring = hasAnyItemInProgress() ||
+                           infoBadgeState() == kBadgeStateCompletedWithError;
     Q_EMIT changed();
 }
 

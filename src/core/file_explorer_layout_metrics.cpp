@@ -32,6 +32,22 @@ constexpr int kGridLabelHeight = 60;
 // kind (GridLayoutPage.xaml.cs); the list row must fit the taller of the two.
 constexpr std::array<int, 4> kCardsRowHeights{104, 144, 144, 160};
 
+// Maximum valid size kind for each layout family: the highest 1-based index
+// into that family's metric table, i.e. the table's entry count.
+constexpr int kDetailsRowKindMax = static_cast<int>(kDetailsRowHeights.size());
+constexpr int kListRowKindMax = static_cast<int>(kListRowHeights.size());
+constexpr int kCardsRowKindMax = static_cast<int>(kCardsRowHeights.size());
+constexpr int kCardsIconKindMax = static_cast<int>(kCardsIconSizes.size());
+constexpr int kCompactIconKindMax = static_cast<int>(kCompactLayoutIconSizes.size());
+constexpr int kGridItemKindMax = static_cast<int>(kGridItemWidths.size());
+
+// Files LayoutSizeKindHelper.GetIconSize for GridView: kind 1 -> 96px,
+// kinds 2..8 -> 128px, kinds 9..12 -> 256px.
+constexpr int kGridIconSizeSmall = 96;
+constexpr int kGridIconSizeMedium = 128;
+constexpr int kGridIconSizeLarge = 256;
+constexpr int kGridIconMediumMaxKind = 8;
+
 // Files LayoutCycler order (LayoutAction.cs): Details, List, Cards, Grid,
 // Columns, wrapping in both directions. Adaptive resolves as Grid.
 constexpr std::array<FileExplorerViewMode, 5> kLayoutRing{FileExplorerViewMode::Details,
@@ -117,33 +133,33 @@ void clampFileExplorerLayoutSizes(FileExplorerLayoutSizes& sizes) {
 int fileExplorerRowHeight(const FileExplorerViewMode mode, const int kind) {
     switch (effectiveMode(mode)) {
     case FileExplorerViewMode::Details:
-        return tableAt(kind, 1, 5, kDetailsRowHeights.data());
+        return tableAt(kind, 1, kDetailsRowKindMax, kDetailsRowHeights.data());
     case FileExplorerViewMode::Cards:
-        return tableAt(kind, 1, 4, kCardsRowHeights.data());
+        return tableAt(kind, 1, kCardsRowKindMax, kCardsRowHeights.data());
     case FileExplorerViewMode::Grid:
         return fileExplorerGridItemWidth(kind) + kGridLabelHeight;
     default:
-        return tableAt(kind, 1, 5, kListRowHeights.data());
+        return tableAt(kind, 1, kListRowKindMax, kListRowHeights.data());
     }
 }
 
 int fileExplorerIconSize(const FileExplorerViewMode mode, const int kind) {
     switch (effectiveMode(mode)) {
     case FileExplorerViewMode::Cards:
-        return tableAt(kind, 1, 4, kCardsIconSizes.data());
+        return tableAt(kind, 1, kCardsIconKindMax, kCardsIconSizes.data());
     case FileExplorerViewMode::Grid:
         // GetIconSize: GridView kind 1 -> 96, kinds 2..8 -> 128, 9..12 -> 256.
         if (kind <= 1) {
-            return 96;
+            return kGridIconSizeSmall;
         }
-        return kind <= 8 ? 128 : 256;
+        return kind <= kGridIconMediumMaxKind ? kGridIconSizeMedium : kGridIconSizeLarge;
     default:
-        return tableAt(kind, 1, 5, kCompactLayoutIconSizes.data());
+        return tableAt(kind, 1, kCompactIconKindMax, kCompactLayoutIconSizes.data());
     }
 }
 
 int fileExplorerGridItemWidth(const int kind) {
-    return tableAt(kind, 1, 12, kGridItemWidths.data());
+    return tableAt(kind, 1, kGridItemKindMax, kGridItemWidths.data());
 }
 
 FileExplorerViewMode fileExplorerAdjacentLayout(const FileExplorerViewMode mode,

@@ -112,41 +112,61 @@ constexpr int kSuiteLen = 4;                     ///< OUI(3) + type(1)
 
 constexpr int kRsnVersion = 1;                   ///< the only RSN IE version defined by 802.11
 
+constexpr int kHighByteShift = 8;       ///< high-octet shift when assembling a 16-bit LE field
+constexpr int kLe16FieldBytes = 2;      ///< a 16-bit little-endian field/count occupies 2 octets
+constexpr int kSuiteOuiByte2Index = 2;  ///< 3rd OUI octet within a 4-byte cipher/AKM suite
+constexpr int kSuiteTypeIndex = 3;      ///< suite type octet, after the 3-octet OUI
+
+// WPA1 vendor-specific IE selector: Microsoft OUI 00:50:F2 followed by type 0x01.
+constexpr int kWpaVendorOui0 = 0x00;
+constexpr int kWpaVendorOui1 = 0x50;
+constexpr int kWpaVendorOui2 = 0xF2;
+constexpr int kWpaVendorType = 0x01;
+
+// SAE AKM suite selector: IEEE OUI 00:0F:AC followed by AKM type 0x08 (=> WPA3).
+constexpr int kSaeAkmOui0 = 0x00;
+constexpr int kSaeAkmOui1 = 0x0F;
+constexpr int kSaeAkmOui2 = 0xAC;
+constexpr int kSaeAkmType = 0x08;
+
 [[nodiscard]] int readLe16(const unsigned char* p) {
-    return static_cast<int>(p[0]) | (static_cast<int>(p[1]) << 8);
+    return static_cast<int>(p[0]) | (static_cast<int>(p[1]) << kHighByteShift);
 }
 
 // A valid RSN IE carries at least the 2-byte Version field, and the only defined
 // RSN version is 1. Reject a zero-length or garbage RSN payload so a malformed
 // beacon is never labelled WPA2-secure on element-id presence alone.
 [[nodiscard]] bool rsnIeIsValid(const unsigned char* d, int len) {
-    return len >= 2 && readLe16(d) == kRsnVersion;
+    return len >= kLe16FieldBytes && readLe16(d) == kRsnVersion;
 }
 
 // WPA1 vendor IE payload begins with OUI 00:50:F2 followed by type 0x01.
 [[nodiscard]] bool isWpaVendorIe(const unsigned char* d, int len) {
-    return len >= kSuiteLen && d[0] == 0x00 && d[1] == 0x50 && d[2] == 0xF2 && d[3] == 0x01;
+    return len >= kSuiteLen && d[0] == kWpaVendorOui0 && d[1] == kWpaVendorOui1 &&
+           d[kSuiteOuiByte2Index] == kWpaVendorOui2 && d[kSuiteTypeIndex] == kWpaVendorType;
 }
 
 // Scan an RSN IE payload for the SAE AKM suite (00:0F:AC:08) => WPA3.
 [[nodiscard]] bool rsnHasSae(const unsigned char* d, int len) {
-    int pos = 2 + kSuiteLen;  // version(2) + group cipher suite(4)
-    if (pos + 2 > len) {
+    int pos = kLe16FieldBytes + kSuiteLen;  // version(2) + group cipher suite(4)
+    if (pos + kLe16FieldBytes > len) {
         return false;
     }
     const int pairwise = readLe16(d + pos);
-    pos += 2 + (kSuiteLen * pairwise);
-    if (pos + 2 > len) {
+    pos += kLe16FieldBytes + (kSuiteLen * pairwise);
+    if (pos + kLe16FieldBytes > len) {
         return false;
     }
     const int akm = readLe16(d + pos);
-    pos += 2;
+    pos += kLe16FieldBytes;
     for (int i = 0; i < akm; ++i) {
         const int off = pos + (kSuiteLen * i);
         if (off + kSuiteLen > len) {
             break;
         }
-        if (d[off] == 0x00 && d[off + 1] == 0x0F && d[off + 2] == 0xAC && d[off + 3] == 0x08) {
+        if (d[off] == kSaeAkmOui0 && d[off + 1] == kSaeAkmOui1 &&
+            d[off + kSuiteOuiByte2Index] == kSaeAkmOui2 &&
+            d[off + kSuiteTypeIndex] == kSaeAkmType) {
             return true;
         }
     }

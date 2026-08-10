@@ -40,6 +40,15 @@ EXEMPT_FILES = {
     "include/sak/partition_apfs_writer.h",
     "src/core/partition_apfs_file_system_reader.cpp",
     "include/sak/apfs_compression.h",
+    # The lzbitmap/lzvn/lzfse codecs and the resource-fork wrapper are the same
+    # byte-exact category as apfs_compression.h: bit-shift amounts, byte masks
+    # (0xFF), on-disk field offsets (trailer + 24) and Apple magic values
+    # (0x636D7066 'cmpf'). Naming each offset is high-risk churn against the
+    # Apple-certified compression output, so they join the format exemption.
+    "include/sak/apfs_lzbitmap.h",
+    "include/sak/apfs_lzbitmap_encode.h",
+    "include/sak/apfs_lzbitmap_codec.h",
+    "include/sak/apfs_resource_fork.h",
     "src/core/apfs_keybag.cpp",
     "src/core/apfs_crypto.cpp",
     "include/sak/partition_hfs_internal.h",

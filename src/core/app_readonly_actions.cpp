@@ -107,6 +107,10 @@ constexpr int kMaxConnections = 500;
 constexpr int kMaxFirewallRules = 600;
 constexpr int kMaxFirewallConflicts = 200;
 constexpr int kMaxFirewallGaps = 100;
+// diagnostics firewall serialization: FirewallConflict::Severity {Info=0, Warning=1, Critical=2}
+// and FirewallGap::Severity {Info=0, Warning=1} share the low values; name the mapped levels.
+constexpr int kFirewallSeverityWarning = 1;
+constexpr int kFirewallSeverityCritical = 2;
 constexpr int kMaxDnsAnswers = 100;
 constexpr int kMaxWifiNetworks = 200;
 constexpr int kMaxWifiChannels = 100;
@@ -130,6 +134,8 @@ constexpr int kScanTimeoutMs = 2 * 60 * 1000;  // 2 min
 // chunk, so a huge file is cancelled at the deadline and mapped to an honest timeout failure (never
 // a partial digest reported as the file's hash).
 constexpr int kHashFileTimeoutMs = 2 * 60 * 1000;  // 2 min
+// Milliseconds-per-second divisor for rendering a millisecond deadline as whole seconds.
+constexpr int kMillisecondsPerSecond = 1000;
 // backup.preview_app_data: cap the discovered dirs actually SIZED (each is a full tree walk), the
 // dirs surfaced to the model, and the shared wall time across all of them.
 constexpr int kMaxAppDataScanDirs = 64;
@@ -151,6 +157,8 @@ constexpr int kMaxIsoEditions = 64;
 // ceilings (which match the engine defaults). The scan reads up to kMaxRecoveryScanBytes into
 // memory (one bounded alloc), so the model cannot request a larger spike.
 constexpr int kMaxRecoveryScanMb = 512;  // == kFileRecoveryDefaultMaxScanBytes / MiB
+// Bytes per mebibyte, for converting a user-supplied max_scan_mb into a byte budget.
+constexpr uint64_t kBytesPerMebibyte = 1024ULL * 1024ULL;
 constexpr int kMaxRecoveryCandidates = 2048;
 constexpr int kMaxReportedRecoveryCandidates = 2048;
 // Wall-time ceiling on the carve. The signature scan is O(scan_window * max_candidate_bytes) in the
@@ -164,6 +172,9 @@ constexpr int kRecoveryScanTimeoutMs = 2 * 60 * 1000;  // 2 min
 constexpr qint64 kMaxPstBytes = 2LL * 1024 * 1024 * 1024;  // 2 GiB
 constexpr int kMaxPstFolders = 2000;
 constexpr int kMaxPstItems = 500;
+// PST/OST node IDs are 32-bit; a folder_node_id arg above this (or non-finite) is rejected before
+// the double->uint64 cast, which would otherwise be undefined behavior.
+constexpr uint32_t kMaxPstNodeId = 0xFF'FF'FF'FFu;
 // email.search_pst: wall-time ceiling. The PST search reads message BODIES across every folder, so
 // it is O(items); the DeadlineCanceller calls worker.cancel() (the engine polls it) and a cancelled
 // search is reported search_complete=false, never a partial result presented as the whole.
@@ -210,6 +221,53 @@ constexpr int kSearchMaxResultsCeiling = 5000;
 constexpr int kDefaultMboxLimit = 200;
 constexpr int kMboxLimitCeiling = 1000;
 constexpr int kMaxHeaderChars = 1000;
+// TCP/UDP port number bounds (protocol limits), shared by every port-taking op below.
+constexpr int kMinPortNumber = 1;
+constexpr int kMaxPortNumber = 65'535;
+// Private/link-local network ranges the assistant's port scanner is restricted to; each value is
+// the CIDR prefix length paired with the matching network literal in the kPrivate table.
+constexpr int kPrivatePrefix10 = 8;    // 10.0.0.0/8
+constexpr int kPrivatePrefix172 = 12;  // 172.16.0.0/12
+constexpr int kPrivatePrefix192 = 16;  // 192.168.0.0/16
+constexpr int kPrivatePrefixFc00 = 7;  // fc00::/7
+// diagnostics.ping arg bounds: [min, max] accepted range + the default used when the arg is absent.
+// The SAME constants bound both the config builder (clampArgInt) and the up-front validator
+// (rangedIntArgsError), so the accepted range and the clamp range can never drift apart.
+constexpr int kPingCountMin = 1;
+constexpr int kPingCountMax = 10;
+constexpr int kPingCountDefault = 4;
+constexpr int kPingTimeoutMinMs = 200;
+constexpr int kPingTimeoutMaxMs = 4000;
+constexpr int kPingTimeoutDefaultMs = 2000;
+constexpr int kPingIntervalMinMs = 0;
+constexpr int kPingIntervalMaxMs = 2000;
+constexpr int kPingIntervalDefaultMs = 500;
+// diagnostics.traceroute arg bounds (see the ping note on the shared clamp/validate constants).
+constexpr int kTracerouteMaxHopsMin = 1;
+constexpr int kTracerouteMaxHopsMax = 30;
+constexpr int kTracerouteMaxHopsDefault = 30;
+constexpr int kTracerouteTimeoutMinMs = 500;
+constexpr int kTracerouteTimeoutMaxMs = 3000;
+constexpr int kTracerouteTimeoutDefaultMs = 2000;
+constexpr int kTracerouteProbesMin = 1;
+constexpr int kTracerouteProbesMax = 3;
+constexpr int kTracerouteProbesDefault = 3;
+// diagnostics.mtr arg bounds (cycles max is kMaxMtrCycles above; see the ping note).
+constexpr int kMtrCyclesMin = 1;
+constexpr int kMtrCyclesDefault = 3;
+constexpr int kMtrMaxHopsMin = 1;
+constexpr int kMtrMaxHopsMax = 30;
+constexpr int kMtrMaxHopsDefault = 30;
+constexpr int kMtrTimeoutMinMs = 500;
+constexpr int kMtrTimeoutMaxMs = 1500;
+constexpr int kMtrTimeoutDefaultMs = 1000;
+constexpr int kMtrIntervalMinMs = 0;
+constexpr int kMtrIntervalMaxMs = 2000;
+constexpr int kMtrIntervalDefaultMs = 500;
+// diagnostics.port_scan timeout arg bounds (see the ping note).
+constexpr int kPortScanTimeoutMinMs = 200;
+constexpr int kPortScanTimeoutMaxMs = 3000;
+constexpr int kPortScanTimeoutDefaultMs = 1000;
 
 // One (key, inclusive-range) spec for a bounded numeric arg. Paired with rangedIntArgsError so an
 // op can REJECT an out-of-range / wrong-typed numeric argument up front instead of silently
@@ -1004,7 +1062,7 @@ FileRecoveryScanOptions recoveryOptionsFromArgs(const QJsonObject& args, const Q
             std::clamp(args.value(QStringLiteral("max_scan_mb")).toInt(kMaxRecoveryScanMb),
                        1,
                        kMaxRecoveryScanMb);
-        options.max_scan_bytes = static_cast<uint64_t>(mb) * 1024ULL * 1024ULL;
+        options.max_scan_bytes = static_cast<uint64_t>(mb) * kBytesPerMebibyte;
     }
     if (args.contains(QStringLiteral("max_candidates"))) {
         options.max_candidates =
@@ -1242,7 +1300,7 @@ AppActionResult hashFile(const QJsonObject& args) {
                     QStringLiteral("Hashing %1 exceeded the %2s time limit (file too large to hash "
                                    "within the deadline)")
                         .arg(info.fileName())
-                        .arg(kHashFileTimeoutMs / 1000),
+                        .arg(kHashFileTimeoutMs / kMillisecondsPerSecond),
                     {}};
         }
         const std::string_view reason = sak::to_string(result.error());
@@ -3085,7 +3143,7 @@ void appendPstFolderItems(PstParser& parser, const QJsonObject& args, QJsonObjec
     // non-finite double would be undefined behavior to cast (a bad id otherwise just maps to a
     // non-existent node and reads empty, but the cast itself must be well-defined).
     const double raw_id = args.value(QStringLiteral("folder_node_id")).toDouble(-1);
-    if (!(raw_id >= 0.0) || raw_id > static_cast<double>(0xFF'FF'FF'FFu)) {
+    if (!(raw_id >= 0.0) || raw_id > static_cast<double>(kMaxPstNodeId)) {
         data[QStringLiteral("items_error")] =
             QStringLiteral("Invalid folder_node_id (expected a node_id from the folder tree)");
         return;
@@ -3422,8 +3480,8 @@ AppActionResult listConnections(const QJsonObject& args) {
     config.filterProcessName = args.value(QStringLiteral("filter_process")).toString().trimmed();
     // (clampArgInt is defined later in this TU; a filter port is a simple in-range check.)
     const int filter_port = args.value(QStringLiteral("filter_port")).toInt(0);
-    config.filterPort =
-        static_cast<uint16_t>((filter_port >= 1 && filter_port <= 65'535) ? filter_port : 0);
+    config.filterPort = static_cast<uint16_t>(
+        (filter_port >= kMinPortNumber && filter_port <= kMaxPortNumber) ? filter_port : 0);
     monitor.startMonitoring(config);
     monitor.stopMonitoring();
     const QVector<ConnectionInfo> connections = monitor.getCurrentConnections();
@@ -3819,9 +3877,9 @@ QString fwSeverityToString(int severity) {
     // FirewallConflict::Severity {Info=0, Warning=1, Critical=2}; FirewallGap::Severity
     // {Info=0, Warning=1} share the low values, so one mapping serves both.
     switch (severity) {
-    case 1:
+    case kFirewallSeverityWarning:
         return QStringLiteral("warning");
-    case 2:
+    case kFirewallSeverityCritical:
         return QStringLiteral("critical");
     default:
         return QStringLiteral("info");
@@ -4066,9 +4124,11 @@ int clampArgInt(const QJsonObject& args, const char* key, int lo, int hi, int de
 ConnectivityTester::PingConfig pingConfigFromArgs(const QString& target, const QJsonObject& args) {
     ConnectivityTester::PingConfig config;
     config.target = target;
-    config.count = clampArgInt(args, "count", 1, 10, 4);
-    config.timeoutMs = clampArgInt(args, "timeout_ms", 200, 4000, 2000);
-    config.intervalMs = clampArgInt(args, "interval_ms", 0, 2000, 500);
+    config.count = clampArgInt(args, "count", kPingCountMin, kPingCountMax, kPingCountDefault);
+    config.timeoutMs = clampArgInt(
+        args, "timeout_ms", kPingTimeoutMinMs, kPingTimeoutMaxMs, kPingTimeoutDefaultMs);
+    config.intervalMs = clampArgInt(
+        args, "interval_ms", kPingIntervalMinMs, kPingIntervalMaxMs, kPingIntervalDefaultMs);
     config.resolveHostnames = args.value(QStringLiteral("resolve_hostnames")).toBool(true);
     return config;
 }
@@ -4077,9 +4137,18 @@ ConnectivityTester::TracerouteConfig tracerouteConfigFromArgs(const QString& tar
                                                               const QJsonObject& args) {
     ConnectivityTester::TracerouteConfig config;
     config.target = target;
-    config.maxHops = clampArgInt(args, "max_hops", 1, 30, 30);
-    config.timeoutMs = clampArgInt(args, "timeout_ms", 500, 3000, 2000);
-    config.probesPerHop = clampArgInt(args, "probes_per_hop", 1, 3, 3);
+    config.maxHops = clampArgInt(
+        args, "max_hops", kTracerouteMaxHopsMin, kTracerouteMaxHopsMax, kTracerouteMaxHopsDefault);
+    config.timeoutMs = clampArgInt(args,
+                                   "timeout_ms",
+                                   kTracerouteTimeoutMinMs,
+                                   kTracerouteTimeoutMaxMs,
+                                   kTracerouteTimeoutDefaultMs);
+    config.probesPerHop = clampArgInt(args,
+                                      "probes_per_hop",
+                                      kTracerouteProbesMin,
+                                      kTracerouteProbesMax,
+                                      kTracerouteProbesDefault);
     config.resolveHostnames = args.value(QStringLiteral("resolve_hostnames")).toBool(true);
     return config;
 }
@@ -4090,15 +4159,18 @@ ConnectivityTester::MtrConfig mtrConfigFromArgs(const QString& target, const QJs
     // Hard-clamped so worst-case cycles*maxHops*timeoutMs stays under the wall-time ceiling
     // (see kMaxMtrCycles). Defaults favour a short, useful sample over the engine's 100-cycle GUI
     // default, which would run for many minutes headless.
-    config.cycles = clampArgInt(args, "cycles", 1, kMaxMtrCycles, 3);
-    config.maxHops = clampArgInt(args, "max_hops", 1, 30, 30);
-    config.timeoutMs = clampArgInt(args, "timeout_ms", 500, 1500, 1000);
-    config.intervalMs = clampArgInt(args, "interval_ms", 0, 2000, 500);
+    config.cycles = clampArgInt(args, "cycles", kMtrCyclesMin, kMaxMtrCycles, kMtrCyclesDefault);
+    config.maxHops =
+        clampArgInt(args, "max_hops", kMtrMaxHopsMin, kMtrMaxHopsMax, kMtrMaxHopsDefault);
+    config.timeoutMs =
+        clampArgInt(args, "timeout_ms", kMtrTimeoutMinMs, kMtrTimeoutMaxMs, kMtrTimeoutDefaultMs);
+    config.intervalMs = clampArgInt(
+        args, "interval_ms", kMtrIntervalMinMs, kMtrIntervalMaxMs, kMtrIntervalDefaultMs);
     return config;
 }
 
 void appendPortIfValid(QVector<uint16_t>& out, int port) {
-    if (port < 1 || port > 65'535) {
+    if (port < kMinPortNumber || port > kMaxPortNumber) {
         return;
     }
     const auto value = static_cast<uint16_t>(port);
@@ -4128,7 +4200,10 @@ bool isLocalScanTarget(const QString& target) {
     static const struct {
         const char* net;
         int bits;
-    } kPrivate[] = {{"10.0.0.0", 8}, {"172.16.0.0", 12}, {"192.168.0.0", 16}, {"fc00::", 7}};
+    } kPrivate[] = {{"10.0.0.0", kPrivatePrefix10},
+                    {"172.16.0.0", kPrivatePrefix172},
+                    {"192.168.0.0", kPrivatePrefix192},
+                    {"fc00::", kPrivatePrefixFc00}};
     for (const auto& range : kPrivate) {
         if (addr.isInSubnet(QHostAddress(QString::fromLatin1(range.net)), range.bits)) {
             return true;
@@ -4168,7 +4243,8 @@ std::optional<AppActionResult> collectExplicitScanPorts(const QJsonObject& args,
     }
     for (const QJsonValue& value : explicit_ports) {
         const double port = value.isDouble() ? value.toDouble() : -1.0;
-        if (!(port >= 1.0) || port > 65'535.0 || std::floor(port) != port) {
+        if (!(port >= 1.0) || port > static_cast<double>(kMaxPortNumber) ||
+            std::floor(port) != port) {
             return AppActionResult{
                 false, QStringLiteral("each 'ports' entry must be a whole number in 1..65535"), {}};
         }
@@ -4183,8 +4259,9 @@ std::optional<AppActionResult> collectScanPorts(const QJsonObject& args, QVector
     }
     const int range_start = args.value(QStringLiteral("port_range_start")).toInt(0);
     const int range_end = args.value(QStringLiteral("port_range_end")).toInt(0);
-    if (range_start >= 1 && range_start <= 65'535 && range_end >= range_start) {
-        const int last = std::min(range_end, 65'535);
+    if (range_start >= kMinPortNumber && range_start <= kMaxPortNumber &&
+        range_end >= range_start) {
+        const int last = std::min(range_end, kMaxPortNumber);
         for (int port = range_start; port <= last && out.size() <= kMaxScanPorts; ++port) {
             appendPortIfValid(out, port);
         }
@@ -4213,7 +4290,11 @@ PortScanner::ScanConfig scanConfigFromArgs(const QString& target,
     PortScanner::ScanConfig config;
     config.target = target;
     config.ports = std::move(ports);
-    config.timeoutMs = clampArgInt(args, "timeout_ms", 200, 3000, 1000);
+    config.timeoutMs = clampArgInt(args,
+                                   "timeout_ms",
+                                   kPortScanTimeoutMinMs,
+                                   kPortScanTimeoutMaxMs,
+                                   kPortScanTimeoutDefaultMs);
     config.grabBanners = args.value(QStringLiteral("grab_banners")).toBool(true);
     return config;
 }
@@ -4379,8 +4460,11 @@ AppActionResult pingHost(const QJsonObject& args) {
     if (target.isEmpty()) {
         return {false, QStringLiteral("ping requires a 'target' argument"), {}};
     }
-    if (const std::optional<AppActionResult> error = rangedIntArgsError(
-            args, {{"count", 1, 10}, {"timeout_ms", 200, 4000}, {"interval_ms", 0, 2000}})) {
+    if (const std::optional<AppActionResult> error =
+            rangedIntArgsError(args,
+                               {{"count", kPingCountMin, kPingCountMax},
+                                {"timeout_ms", kPingTimeoutMinMs, kPingTimeoutMaxMs},
+                                {"interval_ms", kPingIntervalMinMs, kPingIntervalMaxMs}})) {
         return *error;
     }
     NetworkProbeWorker worker(pingConfigFromArgs(target, args));
@@ -4403,8 +4487,11 @@ AppActionResult tracerouteHost(const QJsonObject& args) {
     if (target.isEmpty()) {
         return {false, QStringLiteral("traceroute requires a 'target' argument"), {}};
     }
-    if (const std::optional<AppActionResult> error = rangedIntArgsError(
-            args, {{"max_hops", 1, 30}, {"timeout_ms", 500, 3000}, {"probes_per_hop", 1, 3}})) {
+    if (const std::optional<AppActionResult> error =
+            rangedIntArgsError(args,
+                               {{"max_hops", kTracerouteMaxHopsMin, kTracerouteMaxHopsMax},
+                                {"timeout_ms", kTracerouteTimeoutMinMs, kTracerouteTimeoutMaxMs},
+                                {"probes_per_hop", kTracerouteProbesMin, kTracerouteProbesMax}})) {
         return *error;
     }
     NetworkProbeWorker worker(tracerouteConfigFromArgs(target, args));
@@ -4425,10 +4512,10 @@ AppActionResult mtrHost(const QJsonObject& args) {
     }
     if (const std::optional<AppActionResult> error =
             rangedIntArgsError(args,
-                               {{"cycles", 1, kMaxMtrCycles},
-                                {"max_hops", 1, 30},
-                                {"timeout_ms", 500, 1500},
-                                {"interval_ms", 0, 2000}})) {
+                               {{"cycles", kMtrCyclesMin, kMaxMtrCycles},
+                                {"max_hops", kMtrMaxHopsMin, kMtrMaxHopsMax},
+                                {"timeout_ms", kMtrTimeoutMinMs, kMtrTimeoutMaxMs},
+                                {"interval_ms", kMtrIntervalMinMs, kMtrIntervalMaxMs}})) {
         return *error;
     }
     NetworkProbeWorker worker(mtrConfigFromArgs(target, args));
@@ -4474,8 +4561,8 @@ AppActionResult portScan(const QJsonObject& args) {
                                "private IP literal"),
                 {}};
     }
-    if (const std::optional<AppActionResult> error =
-            rangedIntArgsError(args, {{"timeout_ms", 200, 3000}})) {
+    if (const std::optional<AppActionResult> error = rangedIntArgsError(
+            args, {{"timeout_ms", kPortScanTimeoutMinMs, kPortScanTimeoutMaxMs}})) {
         return *error;
     }
     QVector<uint16_t> ports;

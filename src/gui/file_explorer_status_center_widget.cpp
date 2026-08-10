@@ -37,6 +37,32 @@ constexpr int kFlyoutMaxHeight = 500;
 constexpr double kMutedCircleOpacity = 0.1;
 constexpr int kBadgeDiameter = 13;
 constexpr double kRingPenWidth = 2.5;
+// State-glyph (check/cross) stroke width, shared by both marks.
+constexpr double kMarkPenWidth = 2.0;
+// Files check-mark polyline vertices as fractions of the glyph rect.
+constexpr double kCheckMarkStartX = 0.22;
+constexpr double kCheckMarkStartY = 0.55;
+constexpr double kCheckMarkMidX = 0.42;
+constexpr double kCheckMarkMidY = 0.75;
+constexpr double kCheckMarkEndX = 0.78;
+constexpr double kCheckMarkEndY = 0.30;
+// Files SpeedGraph: minimum points to draw a line, fill opacity, line stroke.
+constexpr int kMinGraphPoints = 2;
+constexpr double kGraphFillOpacity = 0.25;
+constexpr double kGraphLinePenWidth = 1.5;
+// Files ProgressBar percentage full-scale maximum.
+constexpr int kProgressBarMax = 100;
+// Files MedianOperationProgressRing geometry: centering divisor plus the arc
+// start angle (12 o'clock) and Qt's 1/16-degree angle unit for drawArc.
+constexpr double kRingCenterDivisor = 2.0;
+constexpr int kRingStartAngleDeg = 90;
+constexpr int kQtAngleSixteenths = 16;
+// Files InfoBadgeState values beyond the allowed 0/1 sentinels: in progress
+// with an error, and completed with an error.
+constexpr int kBadgeStateInProgressWithError = 2;
+constexpr int kBadgeStateCompletedWithError = 3;
+// Files InfoBadge numeric-count font size.
+constexpr int kBadgeFontPixelSize = 9;
 
 /// Circle + glyph colors per card state (Files
 /// StatusCenterStateToBrushConverter: attention/success/critical/secondary).
@@ -73,19 +99,22 @@ QString iconKeyFor(const FileExplorerStatusIconKind kind) {
 }
 
 void paintCheckMark(QPainter* painter, const QRectF& rect, const QColor& color) {
-    QPen pen(color, 2.0);
+    QPen pen(color, kMarkPenWidth);
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
     painter->setPen(pen);
     QPainterPath path;
-    path.moveTo(rect.left() + rect.width() * 0.22, rect.top() + rect.height() * 0.55);
-    path.lineTo(rect.left() + rect.width() * 0.42, rect.top() + rect.height() * 0.75);
-    path.lineTo(rect.left() + rect.width() * 0.78, rect.top() + rect.height() * 0.30);
+    path.moveTo(rect.left() + rect.width() * kCheckMarkStartX,
+                rect.top() + rect.height() * kCheckMarkStartY);
+    path.lineTo(rect.left() + rect.width() * kCheckMarkMidX,
+                rect.top() + rect.height() * kCheckMarkMidY);
+    path.lineTo(rect.left() + rect.width() * kCheckMarkEndX,
+                rect.top() + rect.height() * kCheckMarkEndY);
     painter->drawPath(path);
 }
 
 void paintCrossMark(QPainter* painter, const QRectF& rect, const QColor& color) {
-    QPen pen(color, 2.0);
+    QPen pen(color, kMarkPenWidth);
     pen.setCapStyle(Qt::RoundCap);
     painter->setPen(pen);
     const double inset_x = rect.width() * 0.30;
@@ -119,7 +148,7 @@ void FileExplorerSpeedGraph::setPoints(const QList<QPointF>& points) {
 void FileExplorerSpeedGraph::paintEvent(QPaintEvent* /*event*/) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    if (m_points.size() < 2) {
+    if (m_points.size() < kMinGraphPoints) {
         return;
     }
     // Files SpeedGraph: x maps progress percent over the width, y normalizes
@@ -143,11 +172,11 @@ void FileExplorerSpeedGraph::paintEvent(QPaintEvent* /*event*/) {
     fill.append(QPointF(line.last().x(), height()));
     fill.prepend(QPointF(line.first().x(), height()));
     QColor fill_color = accent;
-    fill_color.setAlphaF(0.25);
+    fill_color.setAlphaF(kGraphFillOpacity);
     painter.setPen(Qt::NoPen);
     painter.setBrush(fill_color);
     painter.drawPolygon(fill);
-    painter.setPen(QPen(accent, 1.5));
+    painter.setPen(QPen(accent, kGraphLinePenWidth));
     painter.setBrush(Qt::NoBrush);
     painter.drawPolyline(line);
 }
@@ -207,7 +236,7 @@ void FileExplorerStatusCardWidget::buildProgressRows(QVBoxLayout* column) {
 
     m_progress_bar = new QProgressBar(this);
     m_progress_bar->setObjectName(QStringLiteral("fileExplorerStatusCardProgressBar"));
-    m_progress_bar->setRange(0, 100);
+    m_progress_bar->setRange(0, kProgressBarMax);
     m_progress_bar->setTextVisible(false);
     m_progress_bar->setFixedHeight(kProgressBarHeight);
     content->addWidget(m_progress_bar);
@@ -266,7 +295,7 @@ void FileExplorerStatusCardWidget::syncProgressRows() {
     const bool indeterminate = m_item->isIndeterminate();
     m_progress_bar->setVisible(in_progress && !expanded);
     // Qt busy bar for the Files indeterminate state.
-    m_progress_bar->setRange(0, indeterminate ? 0 : 100);
+    m_progress_bar->setRange(0, indeterminate ? 0 : kProgressBarMax);
     if (!indeterminate) {
         m_progress_bar->setValue(m_item->progressPercentage());
     }
@@ -468,8 +497,10 @@ void FileExplorerStatusCenterButton::paintEvent(QPaintEvent* event) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     const double diameter = 18.0;
-    const QRectF ring_rect(
-        (width() - diameter) / 2.0, (height() - diameter) / 2.0, diameter, diameter);
+    const QRectF ring_rect((width() - diameter) / kRingCenterDivisor,
+                           (height() - diameter) / kRingCenterDivisor,
+                           diameter,
+                           diameter);
     paintRing(&painter, ring_rect);
     paintBadge(&painter);
 }
@@ -481,16 +512,16 @@ void FileExplorerStatusCenterButton::paintRing(QPainter* painter, const QRectF& 
     QColor track = palette().color(QPalette::Mid);
     if (m_badge_state == 0) {
         track = QColor(QString::fromLatin1(ui::kColorSuccess));
-    } else if (m_badge_state == 3) {
+    } else if (m_badge_state == kBadgeStateCompletedWithError) {
         track = QColor(QString::fromLatin1(ui::kColorError));
     }
     painter->setBrush(Qt::NoBrush);
     painter->setPen(QPen(track, kRingPenWidth));
     painter->drawEllipse(rect);
-    if (m_badge_state == 1 || m_badge_state == 2) {
+    if (m_badge_state == 1 || m_badge_state == kBadgeStateInProgressWithError) {
         painter->setPen(QPen(palette().color(QPalette::Highlight), kRingPenWidth));
         const int span = -m_average_progress * 360 * 16 / 100;
-        painter->drawArc(rect, 90 * 16, span);
+        painter->drawArc(rect, kRingStartAngleDeg * kQtAngleSixteenths, span);
     }
 }
 
@@ -499,7 +530,7 @@ void FileExplorerStatusCenterButton::paintBadge(QPainter* painter) const {
     QColor background = palette().color(QPalette::Highlight);
     if (m_badge_state == 0) {
         background = QColor(QString::fromLatin1(ui::kColorSuccess));
-    } else if (m_badge_state == 3) {
+    } else if (m_badge_state == kBadgeStateCompletedWithError) {
         background = QColor(QString::fromLatin1(ui::kColorError));
     }
     painter->setPen(Qt::NoPen);
@@ -507,12 +538,12 @@ void FileExplorerStatusCenterButton::paintBadge(QPainter* painter) const {
     painter->drawEllipse(badge);
     if (m_badge_state == 0) {
         paintCheckMark(painter, badge, Qt::white);
-    } else if (m_badge_state == 3) {
+    } else if (m_badge_state == kBadgeStateCompletedWithError) {
         paintCrossMark(painter, badge, Qt::white);
     } else if (m_badge_value > 0) {
         painter->setPen(Qt::white);
         QFont badge_font = painter->font();
-        badge_font.setPixelSize(9);
+        badge_font.setPixelSize(kBadgeFontPixelSize);
         painter->setFont(badge_font);
         painter->drawText(badge, Qt::AlignCenter, QString::number(m_badge_value));
     }

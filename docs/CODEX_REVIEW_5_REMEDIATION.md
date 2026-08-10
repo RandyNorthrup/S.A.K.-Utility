@@ -2287,7 +2287,7 @@ coverage but provides none.
 - [ ] **R5-G8-1** run scripts/check_magic_numbers.py (magic-number literals in C++), fix every finding, then wire it into pre-commit and CI
 - [x] **R5-G8-2** run scripts/check_gui_magic_numbers.ps1 (magic numbers in GUI code), fix every finding, then wire it into pre-commit and CI -- DONE: 18 raw literals folded into sak::ui margin/spacing tokens + per-file Files-xaml metric constants; hook 6d wired
 - [x] **R5-G8-3** run scripts/check_gui_style_tokens.ps1 (GUI style-token compliance), fix every finding, then wire it into pre-commit and CI -- DONE (2bee958): the lone residual was a QColor::rgba() method read, not a raw token; matcher fixed, hook 6c wired
-- [ ] **R5-G8-4** run scripts/check_gui_stylesheet_literals.ps1 (inline stylesheet literals that override the root QSS), fix every finding, then wire it into pre-commit and CI
+- [x] **R5-G8-4** run scripts/check_gui_stylesheet_literals.ps1 (inline stylesheet literals that override the root QSS), fix every finding, then wire it into pre-commit and CI -- DONE (f4dd100): 70 explorer QSS templates -> include/sak/file_explorer_style_constants.h, rich-text wrapper -> rich_text_constants.h, 2 prose false-positives fixed by requiring a real ;-terminated declaration; hook 6e wired
 - [ ] **R5-G8-5** run scripts/check_accessibility_patterns.ps1 (accessibility patterns), fix every finding, then wire it into pre-commit and CI
 - [ ] **R5-G8-6** run scripts/check_logged_message_boxes.ps1 (message boxes that must also be logged), fix every finding, then wire it into pre-commit and CI
 - [ ] **R5-G8-7** run scripts/check_partition_filesystem_tool_manifest.ps1 (partition filesystem tool manifest integrity), fix every finding, then wire it into pre-commit and CI
@@ -2311,8 +2311,8 @@ not estimates. Enterprise target: every gate green, no suppression, no exclusion
 
 | Gate | Result | Violations |
 |---|---|---|
-| check_magic_numbers.py | FAIL | 452 |
-| check_gui_stylesheet_literals.ps1 | FAIL | 73 |
+| check_magic_numbers.py | FAIL | 497 (was 452; new code since) |
+| check_gui_stylesheet_literals.ps1 | PASS (wired hook 6e) | 0 (was 74) |
 | check_gui_magic_numbers.ps1 | PASS (wired hook 6d) | 0 (was 18) |
 | check_blocking_patterns.ps1 | PASS (wired hook 6b) | 0 (was 10) |
 | check_accessibility_patterns.ps1 | FAIL | 2 of 1967 widgets |
@@ -2324,8 +2324,8 @@ Remaining after this campaign: 452 (magic_numbers.py) + 73 (stylesheet_literals)
 + 2 (accessibility) = 527; the 29 GUI-token/blocking violations are cleared and wired.
 
 - [ ] R5-G9-1 452 magic-number literals -> named constants
-- [ ] R5-G9-2 73 raw stylesheet literals -> the style-token system (concentrated in
-      src/gui/file_explorer_style.cpp)
+- [x] R5-G9-2 74 raw stylesheet literals -> a style-constants header (DONE, hook 6e wired):
+      the 70 in file_explorer_style.cpp became file_explorer_style_constants.h
 - [x] R5-G9-3 18 raw GUI layout/sizing literals -> layout tokens (DONE, hook 6d wired)
 - [ ] R5-G9-4 10 blocking-pattern violations: nested event loops and processEvents
       pumping in src/gui/ai_assistant_panel.cpp, src/gui/splash_screen.cpp,

@@ -37,12 +37,22 @@
 /// wipe a shared root" judgment the injectable model cannot be trusted to make.
 namespace sak {
 
+// A codepoint below U+0020 is a C0 control character; a screened name must stay printable.
+inline constexpr char16_t kFirstPrintableCodepoint = 0x20;
+// Upper length bounds per delete-target kind: a defense-in-depth screen against absurd names
+// and paths (each distinct target keeps its own bound even where the value coincides).
+inline constexpr int kMaxServiceNameLength = 256;
+inline constexpr int kMaxScheduledTaskNameLength = 512;
+inline constexpr int kMaxFirewallRuleNameLength = 512;
+inline constexpr int kMaxCleanupPathLength = 4096;
+
 /// A control character (< 0x20) or a shell/CLI wildcard ('*' or '?') in a name the op will pass to
 /// an external tool or a Win32 API. Rule names may legitimately contain spaces/punctuation, so this
 /// is applied to service/task/registry targets, not to firewall rule names (see below).
 [[nodiscard]] inline bool cleanupNameHasControlOrWildcard(const QString& value) {
     for (const QChar ch : value) {
-        if (ch.unicode() < 0x20 || ch == QLatin1Char('*') || ch == QLatin1Char('?')) {
+        if (ch.unicode() < kFirstPrintableCodepoint || ch == QLatin1Char('*') ||
+            ch == QLatin1Char('?')) {
             return true;
         }
     }
@@ -424,7 +434,7 @@ namespace sak {
     if (name.isEmpty()) {
         return QStringLiteral("empty service name");
     }
-    if (name.size() > 256) {
+    if (name.size() > kMaxServiceNameLength) {
         return QStringLiteral("service name is too long");
     }
     if (cleanupNameHasControlOrWildcard(name)) {
@@ -447,7 +457,7 @@ namespace sak {
     if (name.isEmpty()) {
         return QStringLiteral("empty scheduled-task name");
     }
-    if (name.size() > 512) {
+    if (name.size() > kMaxScheduledTaskNameLength) {
         return QStringLiteral("scheduled-task name is too long");
     }
     if (cleanupNameHasControlOrWildcard(name)) {
@@ -476,11 +486,11 @@ namespace sak {
     if (name.isEmpty()) {
         return QStringLiteral("empty firewall rule name");
     }
-    if (name.size() > 512) {
+    if (name.size() > kMaxFirewallRuleNameLength) {
         return QStringLiteral("firewall rule name is too long");
     }
     for (const QChar ch : name) {
-        if (ch.unicode() < 0x20) {
+        if (ch.unicode() < kFirstPrintableCodepoint) {
             return QStringLiteral("firewall rule name contains a control character");
         }
     }
@@ -578,7 +588,7 @@ namespace sak {
     if (path.isEmpty()) {
         return QStringLiteral("empty path");
     }
-    if (path.size() > 4096) {
+    if (path.size() > kMaxCleanupPathLength) {
         return QStringLiteral("path is too long");
     }
     // A NUL or other control char makes Win32 truncate the path at that byte, so the executed
