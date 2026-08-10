@@ -138,9 +138,11 @@ public:
     static QString backupDeletionRefusal(const QString& backup_path,
                                          const std::optional<QString>& recorded_backup_path);
 
-    /// @brief True only when every supplied path is non-empty. Release-effective replacement for
-    ///        the old Q_ASSERT_X entry guards (a no-op in release, which let empty paths run
-    ///        CWD-relative). Pure (no I/O), unit-testable in isolation.
+    /// @brief True only when the list is non-empty AND every supplied path is non-empty and not
+    ///        whitespace-only (QDir treats a blank path as the CWD). An empty list is rejected
+    ///        rather than passing vacuously. Release-effective replacement for the old Q_ASSERT_X
+    ///        entry guards (a no-op in release, which let empty paths run CWD-relative). Pure (no
+    ///        I/O), unit-testable in isolation.
     static bool allPathsPresent(std::initializer_list<QString> paths);
 
     /// @brief True when an attacker-supplied encrypted archive's size is within the bound we will
@@ -149,8 +151,10 @@ public:
     ///        on the decrypted .zip).
     static bool encryptedArchiveSizeOk(qint64 size);
 
-    /// @brief Atomically replace @p target with @p tmp by renaming the original aside first;
-    ///        rolls the original back and cleans up @p tmp if the swap fails (no data-loss window).
+    /// @brief Atomically replace @p target with @p tmp. On Windows this is a single MoveFileExW
+    ///        replace, so @p target is never absent even across a crash; elsewhere the original is
+    ///        renamed aside first and rolled back if the swap fails. Fails closed and drops @p tmp
+    ///        on any error, so the original is never lost mid-swap.
     static bool atomicReplaceFile(const QString& tmp, const QString& target);
 
     // Utilities

@@ -7,6 +7,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QSet>
 #include <QTemporaryDir>
 
 #include <algorithm>
@@ -111,6 +112,11 @@ void FileExplorerArchiveWorker::runCompress() {
     if (!result.ok) {
         return;
     }
+    // A cancel that arrived during the (uncancellable) codec run must not still trigger the raw
+    // mutation that follows it: poll the stop state before writing the finished zip to the target.
+    if (checkStop()) {
+        return;
+    }
     if (!local && !FileManagementFileSystemBridge::writeFileFromHostPath(
                        m_request.target, childPath(m_request.zip_name), zip_host)
                        .ok) {
@@ -141,6 +147,13 @@ QStringList FileExplorerArchiveWorker::collectValidatedSources(const QString& st
 // out through the certified readers first.
 QStringList FileExplorerArchiveWorker::collectCompressSources(const QString& staging_dir) {
     QStringList host_sources;
+    // Raw sources stage into ONE shared host folder by basename, and the zip codec names each
+    // entry by that basename. Two selections whose basenames collide -- case-insensitively,
+    // because the host staging folder is case-insensitive, so case-distinct siblings from a
+    // case-sensitive APFS/HFSX/ext source collapse together -- would clobber each other in staging
+    // and pack a duplicate-named entry, silently dropping one requested item while the cardinality
+    // check still passes. Refuse the whole batch instead (fail closed) rather than lose content.
+    QSet<QString> staged_basenames;
     for (const FileExplorerTransferItem& item : m_request.sources) {
         if (checkStop()) {
             return host_sources;
@@ -149,6 +162,15 @@ QStringList FileExplorerArchiveWorker::collectCompressSources(const QString& sta
             host_sources.append(item.source_path);
             continue;
         }
+        const QString basename = QFileInfo(item.source_path).fileName();
+        if (staged_basenames.contains(basename.toLower())) {
+            m_blockers.append(
+                QStringLiteral("Refusing to compress: more than one selected item resolves to the "
+                               "name %1 inside the archive.")
+                    .arg(basename));
+            return {};
+        }
+        staged_basenames.insert(basename.toLower());
         const QString staged = stageSource(item, staging_dir);
         if (!staged.isEmpty()) {
             host_sources.append(staged);
@@ -266,7 +288,12 @@ bool FileExplorerArchiveWorker::extractRawArchive(const QString& host_zip,
     const auto result = FileExplorerArchiveService::extractZip(host_zip, out.path());
     m_blockers.append(result.blockers);
     m_warnings.append(result.warnings);
-    return result.ok && deliverTree(out.path(), wrap_name);
+    // A cancel during the (uncancellable) extract must not still drive the raw import that
+    // follows: poll the stop state before delivering the tree onto the target.
+    if (!result.ok || checkStop()) {
+        return false;
+    }
+    return deliverTree(out.path(), wrap_name);
 }
 
 bool FileExplorerArchiveWorker::deliverTree(const QString& host_out_dir, const QString& wrap_name) {
@@ -295,6 +322,10 @@ bool FileExplorerArchiveWorker::deliverFlattened(const QString& host_out_dir) {
     const QFileInfoList infos =
         QDir(host_out_dir).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
     for (const QFileInfo& info : infos) {
+        // A cancel must stop further raw mutation: each entry is a separate certified write.
+        if (checkStop()) {
+            return false;
+        }
         // The entry names come out of an attacker-supplied archive. Anything that is not a plain
         // child name would be delivered outside the current folder by childPath().
         if (!isSafeChildName(info.fileName())) {
@@ -319,10 +350,14 @@ bool FileExplorerArchiveWorker::deliverFlattened(const QString& host_out_dir) {
         FileExplorerTransferEngine engine(FileManagementFileSystemBridge::localTarget(QString()),
                                           m_request.target,
                                           m_request.raw_read_cap);
-        if (!engine.transferEntry({info.absoluteFilePath(),
-                                   childPath(name),
-                                   static_cast<quint64>(std::max<qint64>(info.size(), 0)),
-                                   info.isDir()})) {
+        const bool delivered =
+            engine.transferEntry({info.absoluteFilePath(),
+                                  childPath(name),
+                                  static_cast<quint64>(std::max<qint64>(info.size(), 0)),
+                                  info.isDir()});
+        // A copy that landed but dropped entries (skipped links, depth/entry-cap overflow) is not
+        // a delivered entry: fail closed rather than counting a partial extraction as delivered.
+        if (!delivered || !engine.lastTransferComplete()) {
             all_ok = false;
         }
         m_blockers.append(engine.blockers());
@@ -343,7 +378,10 @@ QString FileExplorerArchiveWorker::stageSource(const FileExplorerTransferItem& i
         engine.transferEntry({item.source_path, staged, item.size_bytes, item.directory});
     m_blockers.append(engine.blockers());
     m_warnings.append(engine.warnings());
-    return ok ? staged : QString();
+    // A copy that landed but dropped entries (depth/entry caps, skipped links) is not complete
+    // staging: compressing or extracting that subset would treat missing content as a success,
+    // so treat an incomplete transfer as a staging failure (fail closed).
+    return (ok && engine.lastTransferComplete()) ? staged : QString();
 }
 
 // The name itself when free; otherwise the Files incremental "{name} (n)"
@@ -370,13 +408,15 @@ bool FileExplorerArchiveWorker::destinationOccupied(const QString& name) const {
     if (m_request.target.local_file_system) {
         return QFileInfo::exists(QDir(m_request.directory).filePath(name));
     }
+    // Ask for one past the cap so a directory larger than the cap is DETECTABLE: listDirectory
+    // reports truncation only by returning more than the requested count, not through ok.
     const auto listing = FileManagementFileSystemBridge::listDirectory(m_request.target,
                                                                        m_request.directory,
-                                                                       kArchiveListMaxEntries);
-    if (!listing.ok) {
-        // The listing failed, so we cannot prove the name is free. Treat it as
-        // occupied: availableChildName then tries other names and ultimately
-        // fails closed rather than delivering into an unverified destination.
+                                                                       kArchiveListMaxEntries + 1);
+    if (!listing.ok || listing.entries.size() > kArchiveListMaxEntries) {
+        // The listing failed OR was truncated, so we cannot prove the name is free (an occupant
+        // could sit beyond the cap). Treat it as occupied: availableChildName then tries other
+        // names and ultimately fails closed rather than delivering into an unverified destination.
         return true;
     }
     return std::any_of(listing.entries.cbegin(),

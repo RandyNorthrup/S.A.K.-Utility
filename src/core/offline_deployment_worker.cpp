@@ -33,6 +33,8 @@
 #include <QUrlQuery>
 #include <QXmlStreamReader>
 
+#include <optional>
+
 namespace sak {
 
 namespace {
@@ -143,6 +145,35 @@ bool writeDownloadedBody(const QString& output_path, const QByteArray& body) {
         return false;
     }
     return true;
+}
+
+/// @brief True if @p base (already reduced to a single path segment) is hazardous as
+/// a Windows filename: an NTFS ADS/drive colon or other reserved shell metacharacter,
+/// a trailing dot/space (silently stripped by Win32, enabling collisions/escape), or
+/// a reserved DOS device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9). Such a name must
+/// never become the on-disk destination of an attacker-influenced download/copy.
+bool hasWindowsFilenameHazard(const QString& base) {
+    static const QString kReservedChars = QStringLiteral("<>:\"|?*");
+    for (const QChar ch : base) {
+        if (ch.unicode() < 0x20 || kReservedChars.contains(ch)) {
+            return true;
+        }
+    }
+    if (base.endsWith(QLatin1Char('.')) || base.endsWith(QLatin1Char(' '))) {
+        return true;
+    }
+    // Reserved DOS device names match on the stem (text before the first '.'),
+    // case-insensitively, with or without an extension.
+    static const QSet<QString> kReservedNames = {
+        QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
+        QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
+        QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
+        QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
+        QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
+        QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
+        QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
+        QStringLiteral("LPT9")};
+    return kReservedNames.contains(base.section(QLatin1Char('.'), 0, 0).toUpper());
 }
 }  // namespace
 
@@ -261,7 +292,8 @@ QString OfflineDeploymentWorker::safeInstallerFilename(const QString& raw_name,
     // so a crafted URL (e.g. ..%2F..%2Fx) can arrive bearing separators or "..".
     const QString base = QFileInfo(raw_name).fileName();
     if (base.isEmpty() || base == QStringLiteral(".") || base == QStringLiteral("..") ||
-        base.contains(QLatin1Char('/')) || base.contains(QLatin1Char('\\'))) {
+        base.contains(QLatin1Char('/')) || base.contains(QLatin1Char('\\')) ||
+        hasWindowsFilenameHazard(base)) {
         return fallback;
     }
     return base;
@@ -270,7 +302,8 @@ QString OfflineDeploymentWorker::safeInstallerFilename(const QString& raw_name,
 QString OfflineDeploymentWorker::sanitizeManifestFilename(const QString& raw_name) {
     const QString base = QFileInfo(raw_name).fileName();
     if (base.isEmpty() || base == QStringLiteral(".") || base == QStringLiteral("..") ||
-        base.contains(QLatin1Char('/')) || base.contains(QLatin1Char('\\'))) {
+        base.contains(QLatin1Char('/')) || base.contains(QLatin1Char('\\')) ||
+        hasWindowsFilenameHazard(base)) {
         return {};
     }
     return base;
@@ -1980,6 +2013,25 @@ static DeploymentManifestEntry parseManifestEntry(const QJsonObject& pkg) {
     return entry;
 }
 
+// The payload_mode decision, failing closed. Absent (pre-field manifest) -> Bundle,
+// so an older bundle installs from its local packages exactly as before. A PRESENT
+// but unrecognized/mistyped value is NOT coerced to a default: it returns nullopt so
+// the caller can fail closed rather than silently selecting an install strategy from
+// a tampered/corrupt manifest.
+static std::optional<PayloadMode> parsePayloadMode(const QJsonObject& root) {
+    if (!root.contains(QStringLiteral("payload_mode"))) {
+        return PayloadMode::Bundle;
+    }
+    const QJsonValue pm = root.value(QStringLiteral("payload_mode"));
+    if (pm.isString() && pm.toString() == QLatin1String("list")) {
+        return PayloadMode::List;
+    }
+    if (pm.isString() && pm.toString() == QLatin1String("bundle")) {
+        return PayloadMode::Bundle;
+    }
+    return std::nullopt;
+}
+
 DeploymentManifest OfflineDeploymentWorker::readManifest(const QString& path) const {
     DeploymentManifest manifest;
 
@@ -2021,11 +2073,14 @@ DeploymentManifest OfflineDeploymentWorker::readManifest(const QString& path) co
     manifest.creator = root["creator"].toString();
     manifest.description = root["description"].toString();
     manifest.total_size_bytes = root["total_size_bytes"].toInteger();
-    // Absent (pre-field manifest) -> Bundle, so an older bundle installs from its
-    // local packages exactly as before.
-    manifest.payload_mode = root["payload_mode"].toString() == QLatin1String("list")
-                                ? PayloadMode::List
-                                : PayloadMode::Bundle;
+    // A present-but-unrecognized payload_mode (nullopt) is a corrupt/tampered
+    // manifest: fail closed rather than guess an install strategy.
+    const std::optional<PayloadMode> payload_mode = parsePayloadMode(root);
+    if (!payload_mode) {
+        sak::logError("[OfflineDeploymentWorker] Unrecognized payload_mode in manifest");
+        return DeploymentManifest{};
+    }
+    manifest.payload_mode = *payload_mode;
 
     QJsonArray packages_arr = root["packages"].toArray();
     // Parity with the build-side kMaxPackagesPerBuild gate: refuse a manifest that

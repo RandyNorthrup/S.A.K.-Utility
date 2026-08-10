@@ -18,6 +18,7 @@ $required = @(
     'sak_apfs_writer_cli.exe',
     'sak_hfs_writer_cli.exe',
     'Qt6Core.dll',
+    'Qt6Gui.dll',
     'Qt6Widgets.dll',
     'platforms/qwindows.dll',
     'tools/filesystem/manifest.json',
@@ -29,12 +30,12 @@ $required = @(
 
 foreach ($rel in $required) {
     $path = Join-Path $root $rel
-    if (!(Test-Path -LiteralPath $path)) {
+    if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
         Fail "missing required portable file: $rel"
     }
 }
 
-if (Get-ChildItem -LiteralPath $root -Recurse -Filter '*.local.json' -ErrorAction SilentlyContinue) {
+if (Get-ChildItem -LiteralPath $root -Recurse -Filter '*.local.json' -ErrorAction Stop) {
     Fail 'local provider/app config leaked into package'
 }
 if (Test-Path -LiteralPath (Join-Path $root 'tools/mcp/_build')) {
@@ -56,19 +57,53 @@ foreach ($rel in @('tools/chocolatey/lib-bad', 'tools/chocolatey/cache', 'tools/
 
 $providersPath = Join-Path $root 'data/ai/providers/providers.json'
 $providers = Get-Content -LiteralPath $providersPath -Raw | ConvertFrom-Json
+if ($null -eq $providers -or ($providers.PSObject.Properties.Name -notcontains 'providers')) {
+    Fail 'providers.json has no providers array'
+}
+$rootPrefix = $root.TrimEnd('\') + '\'
+# Case-insensitive secret-field names. 'auth' alone is deliberately excluded so
+# legitimate fields like requires_auth / auth_mode are not flagged.
+$secretPattern = '(api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|bearer)'
 foreach ($provider in @($providers.providers)) {
-    if ($provider.transport -eq 'stdio') {
-        if ([System.IO.Path]::IsPathRooted([string]$provider.command)) {
-            Fail "provider '$($provider.id)' uses absolute command path: $($provider.command)"
+    if ($null -eq $provider) {
+        Fail 'providers.json contains an empty provider entry'
+    }
+    $providerProps = @($provider.PSObject.Properties.Name)
+    if (($providerProps -notcontains 'id') -or [string]::IsNullOrWhiteSpace([string]$provider.id)) {
+        Fail 'providers.json contains a provider with no id'
+    }
+    $providerId = [string]$provider.id
+    if (($providerProps -notcontains 'transport') -or [string]::IsNullOrWhiteSpace([string]$provider.transport)) {
+        Fail "provider '$providerId' has no transport"
+    }
+    $transport = [string]$provider.transport
+    if ($transport -eq 'stdio') {
+        if (($providerProps -notcontains 'command') -or [string]::IsNullOrWhiteSpace([string]$provider.command)) {
+            Fail "provider '$providerId' (stdio) has no command"
         }
-        $command = Join-Path $root ([string]$provider.command)
-        if (!(Test-Path -LiteralPath $command)) {
-            Fail "provider '$($provider.id)' command missing: $($provider.command)"
+        $commandRel = [string]$provider.command
+        if ([System.IO.Path]::IsPathRooted($commandRel)) {
+            Fail "provider '$providerId' uses absolute command path: $commandRel"
+        }
+        $resolvedCommand = Resolve-Path -LiteralPath (Join-Path $root $commandRel) -ErrorAction SilentlyContinue
+        if (-not $resolvedCommand) {
+            Fail "provider '$providerId' command missing: $commandRel"
+        }
+        $commandPath = $resolvedCommand.Path
+        if (-not $commandPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Fail "provider '$providerId' command escapes package root: $commandRel"
+        }
+        if (!(Test-Path -LiteralPath $commandPath -PathType Leaf)) {
+            Fail "provider '$providerId' command is not a file: $commandRel"
         }
     }
-    foreach ($bad in @('api_key', 'auth_token')) {
-        if ($provider.PSObject.Properties.Name -contains $bad) {
-            Fail "provider '$($provider.id)' contains forbidden secret field: $bad"
+    $secretNames = @($providerProps)
+    if (($providerProps -contains 'environment') -and ($null -ne $provider.environment)) {
+        $secretNames += @($provider.environment.PSObject.Properties.Name)
+    }
+    foreach ($propName in $secretNames) {
+        if ($propName -match $secretPattern) {
+            Fail "provider '$providerId' contains forbidden secret-like field: $propName"
         }
     }
 }
@@ -76,10 +111,10 @@ foreach ($provider in @($providers.providers)) {
 if ($RepoRoot) {
     $repo = (Resolve-Path -LiteralPath $RepoRoot).Path
     $textExtensions = @('.json', '.txt', '.md', '.ini', '.ps1')
-    $textFiles = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+    $textFiles = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction Stop |
         Where-Object { $textExtensions -contains $_.Extension.ToLowerInvariant() }
     foreach ($file in $textFiles) {
-        $content = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction SilentlyContinue
+        $content = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
         if ($content -and $content.Contains($repo)) {
             Fail "dev repo path found in packaged text file: $($file.FullName.Substring($root.Length + 1))"
         }

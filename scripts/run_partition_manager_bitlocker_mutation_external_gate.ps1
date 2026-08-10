@@ -29,16 +29,20 @@ if ($TargetDiskNumber -lt 1) {
 }
 
 $Script:TranscriptStarted = $false
+$Script:TranscriptPath = $null
+$Script:TranscriptError = $null
 try {
     $guestReportParent = Split-Path -Parent $GuestReportPath
     if (-not [string]::IsNullOrWhiteSpace($guestReportParent)) {
         New-Item -ItemType Directory -Path $guestReportParent -Force | Out-Null
-        Start-Transcript -Path (Join-Path $guestReportParent "run_partition_manager_bitlocker_mutation_external_gate.log") -Force | Out-Null
+        $Script:TranscriptPath = Join-Path $guestReportParent "run_partition_manager_bitlocker_mutation_external_gate.log"
+        Start-Transcript -Path $Script:TranscriptPath -Force | Out-Null
         $Script:TranscriptStarted = $true
     }
 }
 catch {
     $Script:TranscriptStarted = $false
+    $Script:TranscriptError = $_.Exception.Message
 }
 
 trap {
@@ -87,12 +91,20 @@ function Invoke-NativeCommand {
 
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $exitCode = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
+    catch {
+        $output = $_.Exception.Message
+        $exitCode = 1
+    }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        $exitCode = 1
     }
 
     [pscustomobject]@{
@@ -115,12 +127,20 @@ function Invoke-NativeCommandRaw {
 
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $exitCode = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
+    catch {
+        $output = $_.Exception.Message
+        $exitCode = 1
+    }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        $exitCode = 1
     }
 
     [pscustomobject]@{
@@ -213,6 +233,7 @@ function Clear-DisposableDisk {
     param([int]$DiskNumber)
 
     $disk = Get-Disk -Number $DiskNumber
+    Assert-DisposableDisk -Disk $disk
     if ($disk.IsReadOnly) {
         Set-Disk -Number $DiskNumber -IsReadOnly $false
     }
@@ -313,12 +334,13 @@ function Wait-ForFullyDecrypted {
     param([string]$MountPoint)
 
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
-        $status = Invoke-NativeCommand -Name "cleanup-manage-bde-status" -FilePath "manage-bde.exe" -Arguments @("-status", $MountPoint)
+        $status = Invoke-NativeCommand -Name "cleanup-manage-bde-status" -FilePath $ManageBde -Arguments @("-status", $MountPoint)
         if ($status.output -match "Fully Decrypted" -or $status.output -match "Percentage Encrypted:\s+0\.0%") {
             return
         }
         Start-Sleep -Seconds 2
     }
+    throw "Timed out waiting for BitLocker decryption to complete on $MountPoint."
 }
 
 function New-ExternalReport {
@@ -370,6 +392,11 @@ if (-not (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue)) {
     throw "BitLocker PowerShell module is not available in this VM."
 }
 
+$ManageBde = Join-Path $env:SystemRoot "System32\manage-bde.exe"
+if (-not (Test-Path -LiteralPath $ManageBde -PathType Leaf)) {
+    throw "manage-bde.exe was not found at the trusted System32 path: $ManageBde"
+}
+
 New-Item -ItemType Directory -Path $EvidenceDir -Force | Out-Null
 foreach ($staleReport in @("report.json", "report.failed.json", "report.failed-cleanup.json")) {
     $stalePath = Join-Path $EvidenceDir $staleReport
@@ -404,47 +431,54 @@ try {
     "SAK BitLocker mutation certification fixture $(Get-Date -Format o)" |
         Set-Content -LiteralPath $fixturePath -Encoding UTF8
 
-    $addProtectorRaw = Invoke-NativeCommandRaw -Name "manage-bde-add-recovery-password" -FilePath "manage-bde.exe" -Arguments @("-protectors", "-add", $mountPoint, "-RecoveryPassword")
+    $addProtectorRaw = Invoke-NativeCommandRaw -Name "manage-bde-add-recovery-password" -FilePath $ManageBde -Arguments @("-protectors", "-add", $mountPoint, "-RecoveryPassword")
     $recoveryPassword = Get-RecoveryPassword -Output $addProtectorRaw.output
     $commands.Add((ConvertTo-SanitizedCommandLog -Command $addProtectorRaw))
 
-    $enable = Invoke-NativeCommand -Name "manage-bde-on-used-space-only" -FilePath "manage-bde.exe" -Arguments @("-on", $mountPoint, "-UsedSpaceOnly")
+    $enable = Invoke-NativeCommand -Name "manage-bde-on-used-space-only" -FilePath $ManageBde -Arguments @("-on", $mountPoint, "-UsedSpaceOnly")
     $commands.Add($enable)
     if ($enable.exit_code -ne 0) {
         throw "manage-bde -on failed with exit code $($enable.exit_code)."
     }
     $states.encrypted = Wait-ForEncryptedVolume -MountPoint $mountPoint
 
-    $lock = Invoke-NativeCommand -Name "manage-bde-lock" -FilePath "manage-bde.exe" -Arguments @("-lock", $mountPoint, "-ForceDismount")
+    $lock = Invoke-NativeCommand -Name "manage-bde-lock" -FilePath $ManageBde -Arguments @("-lock", $mountPoint, "-ForceDismount")
     $commands.Add($lock)
     if ($lock.exit_code -ne 0) {
         throw "manage-bde -lock failed with exit code $($lock.exit_code)."
     }
-    $statusLocked = Invoke-NativeCommand -Name "manage-bde-status-locked" -FilePath "manage-bde.exe" -Arguments @("-status", $mountPoint)
+    $statusLocked = Invoke-NativeCommand -Name "manage-bde-status-locked" -FilePath $ManageBde -Arguments @("-status", $mountPoint)
     $commands.Add($statusLocked)
+    $states.locked = Get-BitLockerState -MountPoint $mountPoint
+    if ($states.locked.lock_status -ne "Locked") {
+        throw "Volume did not report LockStatus=Locked after manage-bde -lock (LockStatus=$($states.locked.lock_status))."
+    }
 
-    $unlock = Invoke-NativeCommand -Name "manage-bde-unlock-recovery-password" -FilePath "manage-bde.exe" -Arguments @("-unlock", $mountPoint, "-RecoveryPassword", $recoveryPassword)
+    $unlock = Invoke-NativeCommand -Name "manage-bde-unlock-recovery-password" -FilePath $ManageBde -Arguments @("-unlock", $mountPoint, "-RecoveryPassword", $recoveryPassword)
     $commands.Add($unlock)
     if ($unlock.exit_code -ne 0) {
         throw "manage-bde -unlock failed with exit code $($unlock.exit_code)."
     }
     $states.unlocked = Wait-ForProtectionState -MountPoint $mountPoint -Expected "On"
+    if ($states.unlocked.lock_status -ne "Unlocked") {
+        throw "Volume did not report LockStatus=Unlocked after manage-bde -unlock (LockStatus=$($states.unlocked.lock_status))."
+    }
 
-    $suspend = Invoke-NativeCommand -Name "manage-bde-protectors-disable" -FilePath "manage-bde.exe" -Arguments @("-protectors", "-disable", $mountPoint)
+    $suspend = Invoke-NativeCommand -Name "manage-bde-protectors-disable" -FilePath $ManageBde -Arguments @("-protectors", "-disable", $mountPoint)
     $commands.Add($suspend)
     if ($suspend.exit_code -ne 0) {
         throw "manage-bde -protectors -disable failed with exit code $($suspend.exit_code)."
     }
     $states.suspended = Wait-ForProtectionState -MountPoint $mountPoint -Expected "Off"
 
-    $resume = Invoke-NativeCommand -Name "manage-bde-protectors-enable" -FilePath "manage-bde.exe" -Arguments @("-protectors", "-enable", $mountPoint)
+    $resume = Invoke-NativeCommand -Name "manage-bde-protectors-enable" -FilePath $ManageBde -Arguments @("-protectors", "-enable", $mountPoint)
     $commands.Add($resume)
     if ($resume.exit_code -ne 0) {
         throw "manage-bde -protectors -enable failed with exit code $($resume.exit_code)."
     }
     $states.resumed = Wait-ForProtectionState -MountPoint $mountPoint -Expected "On"
 
-    $statusFinal = Invoke-NativeCommand -Name "manage-bde-status-final" -FilePath "manage-bde.exe" -Arguments @("-status", $mountPoint)
+    $statusFinal = Invoke-NativeCommand -Name "manage-bde-status-final" -FilePath $ManageBde -Arguments @("-status", $mountPoint)
     $commands.Add($statusFinal)
 
     $evidence = @{
@@ -457,16 +491,16 @@ try {
         operation_audit_log = "Sanitized command audit recorded in artifacts/partition-manager-certification/vm-lab/external-bitlocker-mutation-guest-report.json; recovery password fixture $recoveryPasswordRecorded"
     }
 
-    $artifacts = @(
-        "artifacts/partition-manager-certification/vm-lab/external-bitlocker-mutation-guest-report.json",
-        "artifacts/partition-manager-certification/vm-lab/bitlocker-mutation-stage-debug/run_partition_manager_bitlocker_mutation_external_gate.log"
-    )
+    $artifacts = @($GuestReportPath)
+    if ($Script:TranscriptStarted -and $Script:TranscriptPath) {
+        $artifacts += $Script:TranscriptPath
+    }
     $report = New-ExternalReport `
         -Status "Passed" `
         -Evidence $evidence `
         -Artifacts $artifacts `
         -VerificationSummary "Windows 11 VirtualBox VM $env:COMPUTERNAME used disposable VBOX disk $TargetDiskNumber, enabled BitLocker used-space-only on a data volume, locked it, unlocked with a generated recovery password, suspended and resumed protection, verified final protection On, and kept all command output sanitized." `
-        -OperatorNotes "Recovery password was generated only for the disposable lab volume and redacted from host evidence; command flow matches the S.A.K. Partition Manager BitLocker dialog templates."
+        -OperatorNotes "Recovery password was generated only for the disposable lab volume and redacted from host evidence; command flow matches the S.A.K. Partition Manager BitLocker dialog templates.$(if ($NoCleanup) { ' NOTE: -NoCleanup was set, so the disposable disk was NOT returned to RAW; this Passed evidence does not certify a RAW final disk state.' })"
     $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $reportPath -Encoding UTF8
     $status = "Passed"
 }
@@ -496,7 +530,7 @@ finally {
         try {
             $mountPoint = $volume.drive_letter
             if (-not [string]::IsNullOrWhiteSpace($recoveryPassword)) {
-                $unlockCleanup = Invoke-NativeCommand -Name "cleanup-unlock" -FilePath "manage-bde.exe" -Arguments @("-unlock", $mountPoint, "-RecoveryPassword", $recoveryPassword)
+                $unlockCleanup = Invoke-NativeCommand -Name "cleanup-unlock" -FilePath $ManageBde -Arguments @("-unlock", $mountPoint, "-RecoveryPassword", $recoveryPassword)
                 $commands.Add($unlockCleanup)
             }
         }
@@ -504,7 +538,7 @@ finally {
             $cleanupErrors.Add("cleanup unlock failed: $($_.Exception.Message)")
         }
         try {
-            $off = Invoke-NativeCommand -Name "cleanup-bitlocker-off" -FilePath "manage-bde.exe" -Arguments @("-off", $mountPoint)
+            $off = Invoke-NativeCommand -Name "cleanup-bitlocker-off" -FilePath $ManageBde -Arguments @("-off", $mountPoint)
             $commands.Add($off)
             Wait-ForFullyDecrypted -MountPoint $mountPoint
         }
@@ -533,6 +567,17 @@ finally {
     catch {
         $cleanupErrors.Add($_.Exception.Message)
     }
+    if (-not $NoCleanup -and $after) {
+        if ($after.partition_style -ne "RAW" -or @($after.partitions).Count -ne 0) {
+            $cleanupErrors.Add("Disk $TargetDiskNumber did not return to RAW with no partitions after cleanup (partition_style=$($after.partition_style), partitions=$(@($after.partitions).Count)).")
+            if ($status -eq "Passed") {
+                $status = "Failed"
+                if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+                    Move-Item -LiteralPath $reportPath -Destination (Join-Path $EvidenceDir "report.failed-cleanup.json") -Force
+                }
+            }
+        }
+    }
 }
 
 $guestReport = [pscustomobject]@{
@@ -545,6 +590,9 @@ $guestReport = [pscustomobject]@{
     user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     is_admin = Test-IsAdmin
     target_disk_number = $TargetDiskNumber
+    no_cleanup = [bool]$NoCleanup
+    transcript_started = [bool]$Script:TranscriptStarted
+    transcript_error = $Script:TranscriptError
     evidence_dir = $EvidenceDir
     source_volume = $volume
     before = $before
@@ -561,6 +609,12 @@ try {
 catch {
     $fallbackPath = "$GuestReportPath.write-error.txt"
     "Failed to write guest report: $($_.Exception.Message)" | Set-Content -LiteralPath $fallbackPath -Encoding UTF8
+    if ($status -eq "Passed") {
+        $status = "Failed"
+        if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+            Move-Item -LiteralPath $reportPath -Destination (Join-Path $EvidenceDir "report.failed-cleanup.json") -Force
+        }
+    }
 }
 
 if ($status -ne "Passed") {

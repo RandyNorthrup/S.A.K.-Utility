@@ -85,6 +85,20 @@ auto ElevationBroker::executeTask(const QString& task_id,
 
     sak::logInfo("ElevationBroker: executing task '{}'", task_id.toStdString());
 
+    // Single-flight: the byte-mode pipe carries exactly one transaction at a time. A
+    // second concurrent executeTask would interleave frames and consume the other's
+    // replies, so refuse re-entry fail-closed rather than corrupt the wire protocol.
+    bool not_in_flight = false;
+    if (!m_task_in_flight.compare_exchange_strong(not_in_flight, true, std::memory_order_acq_rel)) {
+        sak::logError("ElevationBroker: refusing task '{}'; another elevated task is in flight",
+                      task_id.toStdString());
+        return std::unexpected(sak::error_code::invalid_operation);
+    }
+    struct FlightGuard {
+        std::atomic<bool>* flag;
+        ~FlightGuard() { flag->store(false, std::memory_order_release); }
+    } flight_guard{&m_task_in_flight};
+
     if (!isConnected()) {
         auto conn = ensureConnected();
         if (!conn) {
@@ -92,18 +106,31 @@ auto ElevationBroker::executeTask(const QString& task_id,
         }
     }
 
-    // Send task request
-    setCurrentTaskId(task_id);
+    // Serialize the request and bound its size BEFORE sending -- the payload can carry
+    // AI-planned arguments -- then send. Publish the current task id only AFTER the
+    // request is on the wire, so a cancel cannot race ahead of the task it names.
     QByteArray request = buildTaskRequest(task_id, payload);
+    if (static_cast<uint64_t>(request.size()) > static_cast<uint64_t>(kPipeMaxPayload)) {
+        sak::logError("ElevationBroker: task '{}' request too large: {} bytes",
+                      task_id.toStdString(),
+                      static_cast<long long>(request.size()));
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
     if (!sendRaw(request)) {
         sak::logError("ElevationBroker: failed to send task request");
         cleanup();
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
+    setCurrentTaskId(task_id);
 
     // Read messages until we get a result or error. This method is deliberately
     // synchronous and does not spin a nested Qt event loop; callers that need UI
     // responsiveness must dispatch it from a worker thread.
+    return awaitTaskResult(task_id);
+}
+
+auto ElevationBroker::awaitTaskResult(const QString& task_id)
+    -> std::expected<ElevatedTaskResult, sak::error_code> {
     while (true) {
         auto msg = readMessage();
         if (!msg) {
@@ -174,6 +201,10 @@ auto ElevationBroker::handleTaskMessage(const PipeMessage& msg, const QString& t
     }
 
     sak::logWarning("ElevationBroker: unexpected message type {}", static_cast<int>(msg.type));
+    // A protocol violation desynchronizes the pipe; tear the connection down so the next
+    // task starts from a clean, re-authenticated helper rather than reusing a stream
+    // whose framing we can no longer trust.
+    cleanup();
     return std::unexpected(sak::error_code::helper_connection_failed);
 }
 
@@ -279,21 +310,31 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
     int elapsed = 0;
 
     while (elapsed < kPipeConnectTimeoutMs) {
-        const HANDLE handle = CreateFileW(
-            wide_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
-        m_pipe_handle.store(handle, std::memory_order_release);
+        const HANDLE handle = CreateFileW(wide_name.c_str(),
+                                          GENERIC_READ | GENERIC_WRITE,
+                                          0,
+                                          nullptr,
+                                          OPEN_EXISTING,
+                                          SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+                                          nullptr);
 
         if (handle != INVALID_HANDLE_VALUE) {
             // Before trusting the pipe, prove its server IS the helper we launched.
             // An attacker could have raced us to create a pipe of this name; the
             // per-session nonce makes that hard, but we still fail closed on mismatch.
+            // Verify on the LOCAL handle and publish it to m_pipe_handle only AFTER
+            // identity is bound, so a concurrent shutdown/cancel cannot write into an
+            // unverified (possibly squatted) pipe. Opening with SECURITY_IDENTIFICATION
+            // also denies the server the right to impersonate this client.
             auto verified = verifyPipeServer(handle);
             if (!verified) {
+                CloseHandle(handle);
                 return std::unexpected(verified.error());
             }
-            // Set pipe to message mode
+            // Set pipe to byte mode
             DWORD mode = PIPE_READMODE_BYTE;
             SetNamedPipeHandleState(handle, &mode, nullptr, nullptr);
+            m_pipe_handle.store(handle, std::memory_order_release);
             sak::logInfo("ElevationBroker: connected to pipe");
             return {};
         }
@@ -392,11 +433,17 @@ auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_cod
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
 
+    // Cast each byte to uint32_t BEFORE shifting: a bare uint8_t promotes to signed int,
+    // and shifting the high byte left by 24 would be signed and (pre-C++20) UB. Unsigned
+    // 32-bit shifts are always well-defined here.
     uint32_t payload_len =
-        static_cast<uint8_t>(header[kPipeFrameLengthByte0]) |
-        (static_cast<uint8_t>(header[kPipeFrameLengthByte1]) << kPipeFrameByteShift1) |
-        (static_cast<uint8_t>(header[kPipeFrameLengthByte2]) << kPipeFrameByteShift2) |
-        (static_cast<uint8_t>(header[kPipeFrameLengthByte3]) << kPipeFrameByteShift3);
+        static_cast<uint32_t>(static_cast<uint8_t>(header[kPipeFrameLengthByte0])) |
+        (static_cast<uint32_t>(static_cast<uint8_t>(header[kPipeFrameLengthByte1]))
+         << kPipeFrameByteShift1) |
+        (static_cast<uint32_t>(static_cast<uint8_t>(header[kPipeFrameLengthByte2]))
+         << kPipeFrameByteShift2) |
+        (static_cast<uint32_t>(static_cast<uint8_t>(header[kPipeFrameLengthByte3]))
+         << kPipeFrameByteShift3);
 
     auto type = static_cast<PipeMessageType>(static_cast<uint8_t>(header[kPipeFrameTypeByte]));
 
@@ -479,6 +526,11 @@ DWORD ElevationBroker::peekAvailable() const {
 }
 
 bool ElevationBroker::isHelperAlive() const {
+    // Read m_helper_process under m_send_mutex so cleanup()'s CloseHandle+null (which
+    // holds the same lock) cannot land between this null-check and GetExitCodeProcess.
+    // This method is only ever called outside the lock (from readExact's poll), so the
+    // acquisition never recurses.
+    std::lock_guard<std::mutex> lock(m_send_mutex);
     DWORD exit_code = 0;
     if (m_helper_process && GetExitCodeProcess(m_helper_process, &exit_code) &&
         exit_code != STILL_ACTIVE) {
@@ -493,6 +545,7 @@ bool ElevationBroker::isHelperAlive() const {
 
 void ElevationBroker::cleanup() {
 #ifdef _WIN32
+    HANDLE proc_to_close = nullptr;
     {
         // Close the pipe handle under the SAME lock sendRaw() holds. cancelCurrentTask()
         // can drive sendRaw() from a different thread (the GUI/AI thread) than the one
@@ -509,12 +562,17 @@ void ElevationBroker::cleanup() {
             m_pipe_handle.store(INVALID_HANDLE_VALUE, std::memory_order_release);
             CloseHandle(handle);
         }
-    }
-    if (m_helper_process) {
-        // Give the helper a moment to exit cleanly
-        WaitForSingleObject(m_helper_process, kHelperExitWaitMs);
-        CloseHandle(m_helper_process);
+        // Publish the helper handle as gone under the SAME lock isHelperAlive() reads it,
+        // then close it outside the lock. A worker thread polling isHelperAlive() during
+        // its read loop can otherwise race this teardown and call GetExitCodeProcess on a
+        // closed (possibly reused) handle -- a use-after-free.
+        proc_to_close = m_helper_process;
         m_helper_process = nullptr;
+    }
+    if (proc_to_close) {
+        // Give the helper a moment to exit cleanly
+        WaitForSingleObject(proc_to_close, kHelperExitWaitMs);
+        CloseHandle(proc_to_close);
     }
 #endif
     m_pipe_name.clear();
@@ -530,12 +588,17 @@ auto ElevationBroker::findHelperPath() -> std::expected<QString, sak::error_code
     QString app_dir = QCoreApplication::applicationDirPath();
     QString helper = QDir(app_dir).filePath("sak_elevated_helper.exe");
 
-    if (QFileInfo::exists(helper)) {
-        return helper;
+    // Fail closed: the helper must be a real regular file, not a directory and not a
+    // reparse point (symlink/junction) that could redirect the elevated launch to an
+    // attacker-controlled image. This does not replace image-identity verification of
+    // the running server (verifyServerImage), it hardens the launch target itself.
+    const QFileInfo helper_info(helper);
+    if (!helper_info.exists() || !helper_info.isFile() || helper_info.isSymLink()) {
+        sak::logError("ElevationBroker: helper is missing or not a regular file at '{}'",
+                      helper.toStdString());
+        return std::unexpected(sak::error_code::file_not_found);
     }
-
-    sak::logError("ElevationBroker: helper not found at '{}'", helper.toStdString());
-    return std::unexpected(sak::error_code::file_not_found);
+    return helper;
 }
 
 }  // namespace sak

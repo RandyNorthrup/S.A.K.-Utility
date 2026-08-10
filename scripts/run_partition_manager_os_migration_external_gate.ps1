@@ -16,6 +16,7 @@ param(
     [string]$RunRoot = "artifacts\partition-manager-certification\vm-lab\os-migration",
     [string]$VBoxManage = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe",
     [string]$VirtualBoxBaseFolder = (Join-Path $env:USERPROFILE "VirtualBox VMs"),
+    [ValidateRange(60, 7200)]
     [int]$BootTimeoutSeconds = 600,
     [switch]$Force
 )
@@ -35,12 +36,17 @@ function Invoke-VBox {
 
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $output = @()
+    $exitCode = $null
     try {
         $output = & $VBoxManage @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        throw "VBoxManage did not return an exit code (invocation did not complete): VBoxManage $($Arguments -join ' ')"
     }
     $record = [pscustomobject]@{
         command = "VBoxManage " + ($Arguments -join " ")
@@ -95,6 +101,12 @@ if (-not $Force) {
     throw "Pass -Force after confirming the target VM and disk are disposable."
 }
 
+# TargetVmName is joined into the clone destination path; reject anything but a simple name
+# so a caller cannot redirect the cloned boot disk out of the VirtualBox base folder.
+if ($TargetVmName -notmatch "^[A-Za-z0-9._-]+$") {
+    throw "TargetVmName must be a simple name (letters, digits, dot, dash, underscore): '$TargetVmName'"
+}
+
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $runPath = Join-Path $RunRoot $timestamp
 $gateDir = Join-Path $EvidenceRoot "external.os-migration-reboot"
@@ -102,7 +114,10 @@ $commandLog = Join-Path $runPath "vbox-commands.jsonl"
 New-Item -ItemType Directory -Path $runPath -Force | Out-Null
 New-Item -ItemType Directory -Path $gateDir -Force | Out-Null
 
-$sourceInfo = & $VBoxManage showvminfo $SourceVmName --machinereadable
+$sourceInfo = & $VBoxManage showvminfo $SourceVmName --machinereadable 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to query source VM '$SourceVmName' (exit $LASTEXITCODE): $(($sourceInfo | ForEach-Object { $_.ToString() }) -join "`n")"
+}
 $sourceState = Get-MachineValue -Info $sourceInfo -Key "VMState"
 if ($sourceState -ne "poweroff") {
     throw "Source VM must be powered off before cloning. Current state: $sourceState"
@@ -130,7 +145,21 @@ Invoke-VBox -Arguments @("clonemedium", "disk", $sourceDisk, $targetDisk, "--for
 Invoke-VBox -Arguments @("storageattach", $TargetVmName, "--storagectl", "SATA", "--port", "0", "--device", "0", "--type", "hdd", "--medium", $targetDisk) -LogPath $commandLog | Out-Null
 
 (& $VBoxManage showmediuminfo disk $targetDisk) | Set-Content -LiteralPath (Join-Path $runPath "target-showmediuminfo.txt") -Encoding UTF8
-(& $VBoxManage showvminfo $TargetVmName --machinereadable) | Set-Content -LiteralPath (Join-Path $runPath "target-showvminfo-before-boot.txt") -Encoding UTF8
+$targetInfoBeforeBoot = & $VBoxManage showvminfo $TargetVmName --machinereadable
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to query target VM '$TargetVmName' before boot (exit $LASTEXITCODE)."
+}
+$targetInfoBeforeBoot | Set-Content -LiteralPath (Join-Path $runPath "target-showvminfo-before-boot.txt") -Encoding UTF8
+# Verify the EFI firmware and disk-first boot order as a checked postcondition rather than
+# asserting them as hardcoded prose in the report.
+$targetFirmware = Get-MachineValue -Info $targetInfoBeforeBoot -Key "firmware"
+$targetBoot1 = Get-MachineValue -Info $targetInfoBeforeBoot -Key "boot1"
+if ($targetFirmware -notmatch "^efi$") {
+    throw "Target VM firmware is not EFI (got '$targetFirmware'); refusing to certify EFI boot."
+}
+if ($targetBoot1 -notmatch "^disk$") {
+    throw "Target VM boot1 is not disk (got '$targetBoot1'); refusing to certify boot order."
+}
 
 Invoke-VBox -Arguments @("startvm", $TargetVmName, "--type", "headless") -LogPath $commandLog | Out-Null
 
@@ -138,6 +167,8 @@ $pollRows = @()
 $booted = $false
 $deadline = (Get-Date).AddSeconds($BootTimeoutSeconds)
 $shotIndex = 0
+$pollPath = Join-Path $runPath "target-boot-poll.json"
+try {
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 20
     $shotIndex++
@@ -174,15 +205,19 @@ while ((Get-Date) -lt $deadline) {
     }
 }
 
-$pollPath = Join-Path $runPath "target-boot-poll.json"
 Write-JsonFile -Value $pollRows -Path $pollPath
 (& $VBoxManage showvminfo $TargetVmName --machinereadable) | Set-Content -LiteralPath (Join-Path $runPath "target-showvminfo-after-boot.txt") -Encoding UTF8
-
-Invoke-VBox -Arguments @("controlvm", $TargetVmName, "acpipowerbutton") -LogPath $commandLog -AllowFailure | Out-Null
-Start-Sleep -Seconds 15
-$finalState = Get-MachineValue -Info (& $VBoxManage showvminfo $TargetVmName --machinereadable) -Key "VMState"
-if ($finalState -eq "running") {
-    Invoke-VBox -Arguments @("controlvm", $TargetVmName, "poweroff") -LogPath $commandLog -AllowFailure | Out-Null
+}
+finally {
+    # Always attempt to power the disposable target VM back off, even if the poll loop or an
+    # evidence write threw, so a booted clone is never left running. Force poweroff whenever
+    # the state is not a confirmed "poweroff" (fail closed, covers empty/unknown state).
+    Invoke-VBox -Arguments @("controlvm", $TargetVmName, "acpipowerbutton") -LogPath $commandLog -AllowFailure | Out-Null
+    Start-Sleep -Seconds 15
+    $finalState = Get-MachineValue -Info (& $VBoxManage showvminfo $TargetVmName --machinereadable) -Key "VMState"
+    if ($finalState -ne "poweroff") {
+        Invoke-VBox -Arguments @("controlvm", $TargetVmName, "poweroff") -LogPath $commandLog -AllowFailure | Out-Null
+    }
 }
 
 $artifacts = @(
@@ -224,7 +259,7 @@ $report = [ordered]@{
         target_disk_id = "$TargetVmName SATA-0-0 $targetDisk"
         clone_verification_mode = "VBoxManage clonemedium disk from powered-off source boot medium to disposable VDI, then target-only EFI VM booted from cloned disk."
         boot_validation_output = "GuestAdditionsRunLevel=$($latestPoll.guest_additions_run_level); VideoMode=$($latestPoll.video_mode); GuestProduct=$($latestPoll.guest_product); poll_artifact=$(ConvertTo-ProjectRelativePath -Path $pollPath)"
-        firmware_boot_order = "Target VM firmware=EFI, boot1=disk, boot2/3/4=none; target-showvminfo artifacts capture full order."
+        firmware_boot_order = "Target VM firmware=$targetFirmware, boot1=$targetBoot1 (verified via showvminfo --machinereadable before boot), boot2/3/4=none; target-showvminfo artifacts capture full order."
         target_boot_result = if ($booted) { "Passed: target-only cloned VM reached running state with Guest Additions run level 3." } else { "Failed: target cloned VM did not reach Guest Additions run level 3 before timeout." }
     }
     artifacts = $artifacts

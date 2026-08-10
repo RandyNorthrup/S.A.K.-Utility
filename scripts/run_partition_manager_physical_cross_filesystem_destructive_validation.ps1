@@ -39,6 +39,10 @@ $ErrorActionPreference = "Stop"
 $LinuxSwapGptType = "{0657FD6D-A4AB-43C4-84E5-0933C84B4F4F}"
 $LargeDiskGuardBytes = 64GB
 
+if (@($FileSystems).Count -eq 0) {
+    throw "FileSystems must list at least one of ext2/ext3/ext4; refusing an empty cross-filesystem set."
+}
+
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
     $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 }
@@ -68,7 +72,11 @@ function Resolve-ProjectPath {
 
 function Resolve-Certifier {
     if (-not [string]::IsNullOrWhiteSpace($CertifierPath)) {
-        return (Resolve-Path -LiteralPath $CertifierPath -ErrorAction Stop).Path
+        $resolvedCertifier = (Resolve-Path -LiteralPath $CertifierPath -ErrorAction Stop).Path
+        if (-not (Test-Path -LiteralPath $resolvedCertifier -PathType Leaf)) {
+            throw "CertifierPath must reference an executable file, not a directory: $resolvedCertifier"
+        }
+        return $resolvedCertifier
     }
     $candidate = Join-Path $ProjectRoot "build\Release\partition_filesystem_probe_certifier.exe"
     if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
@@ -88,12 +96,16 @@ function Invoke-NativeCommand {
     $started = Get-Date
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $LASTEXITCODE = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        throw "$Name did not run: '$FilePath' produced no exit code."
     }
 
     $record = [pscustomobject]@{
@@ -272,7 +284,7 @@ function Invoke-CertifierProbe {
     }
     Invoke-NativeCommand -Name "sak-probe-$ExpectedFileSystem" -FilePath $Certifier -Arguments $args | Out-Null
     $probe = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json
-    if ($probe.status -ne "Passed") {
+    if (-not (($probe.status -is [string]) -and $probe.status -eq "Passed")) {
         throw "S.A.K. probe failed for $ExpectedFileSystem on $TargetPath."
     }
     return $probe
@@ -552,6 +564,9 @@ $extResults = @()
 $swapResult = $null
 $cleanupAllowed = $false
 $transcriptStarted = $false
+$certifierPathUsed = ""
+$certifierHash = ""
+$manifestHash = ""
 try {
     Start-Transcript -Path (Join-Path $runRoot "physical-cross-filesystem-destructive.log") -Force | Out-Null
     $transcriptStarted = $true
@@ -567,11 +582,14 @@ try {
     }
 
     $certifier = Resolve-Certifier
+    $certifierPathUsed = $certifier
+    $certifierHash = (Get-FileHash -LiteralPath $certifier -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-DisposablePhysicalDisk -Number $DiskNumber
     $cleanupAllowed = $true
     $before = Get-DiskSnapshot -Number $DiskNumber
 
     $manifestPath = Join-Path $ProjectRoot "tools\filesystem\manifest.json"
+    $manifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     foreach ($fileSystem in $FileSystems) {
         $tools = [pscustomobject]@{
@@ -624,6 +642,7 @@ $report = [pscustomobject]@{
     finished_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     computer_name = $env:COMPUTERNAME
     user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    transcript_captured = $transcriptStarted
     disk_number = $DiskNumber
     expected_serial_number = $ExpectedSerialNumber
     expected_friendly_name_pattern = $ExpectedFriendlyNamePattern
@@ -633,6 +652,9 @@ $report = [pscustomobject]@{
     linux_swap_result = $swapResult
     after_layout = $after
     tool_hashes = @($toolHashes | Sort-Object id, file_system, operation -Unique)
+    certifier_path = $certifierPathUsed
+    certifier_sha256 = $certifierHash
+    manifest_sha256 = $manifestHash
     commands = @($Script:Commands.ToArray())
     cleanup = $cleanup
     error = $errorText

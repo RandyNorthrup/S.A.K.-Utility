@@ -127,6 +127,10 @@ private:
     /// @brief Ensure the helper is running, connected, and ready
     [[nodiscard]] auto ensureConnected() -> std::expected<void, sak::error_code>;
 
+    /// @brief Pump the response loop until the helper returns a terminal result
+    [[nodiscard]] auto awaitTaskResult(const QString& task_id)
+        -> std::expected<ElevatedTaskResult, sak::error_code>;
+
     /// @brief Handle a single message in the task response loop
     [[nodiscard]] auto handleTaskMessage(const PipeMessage& msg, const QString& task_id)
         -> std::expected<ElevatedTaskResult, sak::error_code>;
@@ -164,6 +168,10 @@ private:
     // in the lock-free readers, so cleanup()'s close cannot land mid-I/O. mutable so the
     // const peekAvailable() can take it.
     mutable std::mutex m_send_mutex;
+    // Single-flight guard for executeTask(): the byte-mode pipe carries one transaction
+    // at a time, so a concurrent second call is refused fail-closed rather than allowed
+    // to interleave frames on the wire.
+    std::atomic<bool> m_task_in_flight{false};
 
 #ifdef _WIN32
     // B5-06: the pipe handle is read on the GUI/AI thread (isConnected / cancel /

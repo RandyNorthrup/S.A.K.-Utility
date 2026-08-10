@@ -18,8 +18,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$Sys32 = Join-Path $env:SystemRoot "System32"
 $script:TranscriptStarted = $false
 $script:RunRoot = ""
+$script:DiskPartScriptDir = ""
 $script:Commands = @()
 
 trap {
@@ -86,13 +88,13 @@ function Invoke-DiskPartScript {
         [Parameter(Mandatory = $true)] [string[]]$Lines
     )
 
-    $scriptPath = Join-Path $script:RunRoot ("diskpart-" + [guid]::NewGuid().ToString("N") + ".txt")
+    $scriptPath = Join-Path $script:DiskPartScriptDir ("diskpart-" + [guid]::NewGuid().ToString("N") + ".txt")
     Set-Content -LiteralPath $scriptPath -Value ($Lines -join [Environment]::NewLine) -Encoding ASCII
-    return Invoke-NativeCommand -Name $Name -FilePath "diskpart.exe" -Arguments @("/s", $scriptPath)
+    return Invoke-NativeCommand -Name $Name -FilePath (Join-Path $Sys32 "diskpart.exe") -Arguments @("/s", $scriptPath)
 }
 
 function Get-AvailableDriveLetter {
-    $used = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object DriveLetter | ForEach-Object { [string]$_.DriveLetter })
+    $used = @(Get-Volume -ErrorAction Stop | Where-Object DriveLetter | ForEach-Object { [string]$_.DriveLetter })
     foreach ($letter in @("W", "T", "R", "S", "V", "X", "Y", "Z", "P", "Q", "L", "M", "N")) {
         if ($used -notcontains $letter) {
             return $letter
@@ -101,12 +103,27 @@ function Get-AvailableDriveLetter {
     throw "No available drive letter."
 }
 
+function Get-DiskPartitionList {
+    param([Parameter(Mandatory = $true)] [int]$DiskNumber)
+
+    try {
+        return @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop)
+    }
+    catch {
+        if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound `
+                -or $_.Exception.Message -match "No MSFT_Partition") {
+            return @()
+        }
+        throw
+    }
+}
+
 function Get-DiskSnapshot {
     param([Parameter(Mandatory = $true)] [int]$DiskNumber)
 
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | Sort-Object Offset)) {
+    foreach ($partition in @(Get-DiskPartitionList -DiskNumber $DiskNumber | Sort-Object Offset)) {
         $volume = $null
         if ($partition.DriveLetter) {
             $volume = Get-Volume -DriveLetter $partition.DriveLetter -ErrorAction SilentlyContinue
@@ -117,6 +134,7 @@ function Get-DiskSnapshot {
             type = [string]$partition.Type
             offset_bytes = [uint64]$partition.Offset
             size_bytes = [uint64]$partition.Size
+            is_active = [bool]$partition.IsActive
             file_system = if ($null -ne $volume) { [string]$volume.FileSystem } else { "" }
             label = if ($null -ne $volume) { [string]$volume.FileSystemLabel } else { "" }
         }
@@ -140,7 +158,7 @@ function Get-DiskSnapshot {
 function Resolve-WindowsPartition {
     param([Parameter(Mandatory = $true)] [int]$DiskNumber)
 
-    foreach ($partition in @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | Sort-Object Size -Descending)) {
+    foreach ($partition in @(Get-DiskPartitionList -DiskNumber $DiskNumber | Sort-Object Size -Descending)) {
         if ([string]$partition.Type -notmatch "Basic|IFS|Microsoft Basic Data") {
             continue
         }
@@ -172,7 +190,7 @@ function Resolve-WindowsPartition {
 function Resolve-TargetPartition {
     param([Parameter(Mandatory = $true)] [int]$DiskNumber)
 
-    $partition = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue |
+    $partition = @(Get-DiskPartitionList -DiskNumber $DiskNumber |
         Where-Object { [string]$_.Type -match "Basic|IFS|Microsoft Basic Data" } |
         Sort-Object Size -Descending |
         Select-Object -First 1)
@@ -211,6 +229,14 @@ if (-not $Force) {
 
 $script:RunRoot = Join-Path $OutputRoot (Get-Date -Format "yyyyMMdd-HHmmss")
 New-Item -ItemType Directory -Path $script:RunRoot -Force | Out-Null
+$script:DiskPartScriptDir = Join-Path ([System.IO.Path]::GetTempPath()) ("sak-pm-diskpart-" + [guid]::NewGuid().ToString("N"))
+if (Test-Path -LiteralPath $script:DiskPartScriptDir) {
+    throw "DiskPart script directory already exists: $script:DiskPartScriptDir"
+}
+$diskPartDirItem = New-Item -ItemType Directory -Path $script:DiskPartScriptDir
+if ($diskPartDirItem.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+    throw "DiskPart script directory is a reparse point: $script:DiskPartScriptDir"
+}
 Start-Transcript -Path (Join-Path $script:RunRoot "bios-mbr-fixture-transcript.log") -Force | Out-Null
 $script:TranscriptStarted = $true
 
@@ -229,7 +255,7 @@ if ($SourceDiskNumber -lt 0) {
 
 if ($TargetDiskNumber -lt 0) {
     foreach ($candidate in $candidates) {
-        $candidatePartitions = @(Get-Partition -DiskNumber $candidate.Number -ErrorAction SilentlyContinue)
+        $candidatePartitions = @(Get-DiskPartitionList -DiskNumber $candidate.Number)
         $isBlankTarget = $candidate.PartitionStyle -eq "RAW" -or $candidatePartitions.Count -eq 0
         $isResumeTarget = $ResumeExistingTarget -and $candidate.PartitionStyle -eq "MBR" -and $candidatePartitions.Count -gt 0
         if ($candidate.Number -ne $SourceDiskNumber -and ($isBlankTarget -or $isResumeTarget)) {
@@ -248,20 +274,41 @@ $targetBefore = Get-DiskSnapshot -DiskNumber $TargetDiskNumber
 if ($sourceBefore.is_boot -or $sourceBefore.is_system -or $targetBefore.is_boot -or $targetBefore.is_system) {
     throw "Refusing boot/system disk. Source=$SourceDiskNumber Target=$TargetDiskNumber"
 }
+if ($targetBefore.size_bytes -le 60GB -or $targetBefore.size_bytes -ge 120GB) {
+    throw "Target disk $TargetDiskNumber size $($targetBefore.size_bytes) is outside the disposable 60-120GB range."
+}
+$targetIsBlank = $targetBefore.partition_style -eq "RAW" -or $targetBefore.partitions.Count -eq 0
+$targetIsResume = $ResumeExistingTarget -and $targetBefore.partition_style -eq "MBR" -and $targetBefore.partitions.Count -gt 0
+if (-not ($targetIsBlank -or $targetIsResume)) {
+    throw "Target disk $TargetDiskNumber is neither blank nor a resumable MBR fixture; refusing to clean."
+}
 
 $sourceWindows = Resolve-WindowsPartition -DiskNumber $SourceDiskNumber
 if ($null -eq $sourceWindows) {
     throw "Source Windows partition not found on disk $SourceDiskNumber."
 }
 
+$targetNow = Get-Disk -Number $TargetDiskNumber -ErrorAction Stop
+if ([string]$targetNow.UniqueId -ne $targetBefore.unique_id) {
+    throw "Target disk $TargetDiskNumber identity changed since snapshot; aborting before any mutation."
+}
+if ($targetNow.IsBoot -or $targetNow.IsSystem) {
+    throw "Target disk $TargetDiskNumber is now boot/system; aborting."
+}
+
 $targetPartition = $null
 if ($ResumeExistingTarget -and $targetBefore.partition_style -eq "MBR" -and $targetBefore.partitions.Count -gt 0) {
     $targetPartition = Resolve-TargetPartition -DiskNumber $TargetDiskNumber
     if ($null -ne $targetPartition) {
+        $targetVolume = Get-Volume -DriveLetter ($targetPartition.drive_letter) -ErrorAction Stop
+        if ([string]$targetVolume.FileSystemLabel -ne "SAKBIOS") {
+            throw "Resume target volume label is '$($targetVolume.FileSystemLabel)', expected 'SAKBIOS'; refusing to mirror onto a non-fixture partition."
+        }
         Invoke-DiskPartScript -Name "ensure-target-mbr-active" -Lines @(
             "select disk $TargetDiskNumber",
             "select partition $($targetPartition.partition_number)",
             "active",
+            "detail partition",
             "detail disk",
             "list partition",
             "list volume"
@@ -279,6 +326,7 @@ if ($null -eq $targetPartition) {
         "format fs=ntfs quick label=SAKBIOS",
         "active",
         "assign letter=$targetLetter",
+        "detail partition",
         "detail disk",
         "list partition",
         "list volume"
@@ -290,10 +338,16 @@ else {
     $targetRoot = $targetPartition.root
 }
 
+$targetLetterOnly = $targetRoot.TrimEnd(':')
+$targetOwner = Get-Partition -DriveLetter $targetLetterOnly -ErrorAction Stop
+if ([int]$targetOwner.DiskNumber -ne $TargetDiskNumber) {
+    throw "Target root $targetRoot resolves to disk $($targetOwner.DiskNumber), not target disk $TargetDiskNumber; refusing robocopy/bcdboot/bootsect."
+}
+
 $robocopyLog = Join-Path $script:RunRoot "robocopy-windows-volume.log"
 $robocopy = Invoke-NativeCommand `
     -Name "robocopy-windows-volume" `
-    -FilePath "robocopy.exe" `
+    -FilePath (Join-Path $Sys32 "robocopy.exe") `
     -Arguments @(
         "$($sourceWindows.drive_letter):\",
         "$targetRoot\",
@@ -321,9 +375,9 @@ $robocopy = Invoke-NativeCommand `
     ) `
     -AllowedExitCodes @(0, 1, 2, 3, 4, 5, 6, 7)
 
-$bcdboot = Invoke-NativeCommand -Name "bcdboot-bios" -FilePath "bcdboot.exe" -Arguments @("$targetRoot\Windows", "/s", "$targetRoot", "/f", "BIOS")
-$bootsect = Invoke-NativeCommand -Name "bootsect-bios" -FilePath "bootsect.exe" -Arguments @("/nt60", "$targetRoot", "/mbr", "/force")
-$bcdEnum = Invoke-NativeCommand -Name "bcdedit-store-enum" -FilePath "bcdedit.exe" -Arguments @("/store", "$targetRoot\Boot\BCD", "/enum", "all")
+$bcdboot = Invoke-NativeCommand -Name "bcdboot-bios" -FilePath (Join-Path $Sys32 "bcdboot.exe") -Arguments @("$targetRoot\Windows", "/s", "$targetRoot", "/f", "BIOS")
+$bootsect = Invoke-NativeCommand -Name "bootsect-bios" -FilePath (Join-Path $Sys32 "bootsect.exe") -Arguments @("/nt60", "$targetRoot", "/mbr", "/force")
+$bcdEnum = Invoke-NativeCommand -Name "bcdedit-store-enum" -FilePath (Join-Path $Sys32 "bcdedit.exe") -Arguments @("/store", "$targetRoot\Boot\BCD", "/enum", "all")
 
 $sourceAfter = Get-DiskSnapshot -DiskNumber $SourceDiskNumber
 $targetAfter = Get-DiskSnapshot -DiskNumber $TargetDiskNumber
@@ -355,6 +409,22 @@ $report = [ordered]@{
     commands_path = $commandsPath
 }
 $report | ConvertTo-Json -Depth 24 | Set-Content -LiteralPath (Join-Path $script:RunRoot "bios-mbr-fixture-report.json") -Encoding UTF8
+
+if (-not $report.boot_files.windows_exists) {
+    throw "Postcondition failed: Windows directory missing on target $targetRoot."
+}
+if (-not $report.boot_files.bootmgr_exists) {
+    throw "Postcondition failed: bootmgr missing on target $targetRoot."
+}
+if (-not $report.boot_files.bcd_exists) {
+    throw "Postcondition failed: BCD store missing on target $targetRoot."
+}
+if ($targetAfter.partition_style -ne "MBR") {
+    throw "Postcondition failed: target disk $TargetDiskNumber is $($targetAfter.partition_style), expected MBR."
+}
+if (-not ($targetAfter.partitions | Where-Object { $_.is_active })) {
+    throw "Postcondition failed: target disk $TargetDiskNumber has no active partition."
+}
 if ($script:TranscriptStarted) {
     Stop-Transcript | Out-Null
     $script:TranscriptStarted = $false

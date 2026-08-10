@@ -64,7 +64,11 @@ struct FileManagementTarget {
     bool read_only{false};
     bool can_browse{true};
     bool can_read_files{true};
-    bool can_write_files{true};
+    // Fail closed: the sole mutation authority defaults OFF. applyCapabilities is the
+    // only grantor (it sets this true only for a local volume or a writer-certified raw
+    // FS, and forces it false on a real write-protect), so a target that never passed
+    // through it -- a blank/partially-populated one -- can never authorize a write.
+    bool can_write_files{false};
     bool can_organize{true};
     bool can_duplicate_scan{true};
     bool can_advanced_search{true};

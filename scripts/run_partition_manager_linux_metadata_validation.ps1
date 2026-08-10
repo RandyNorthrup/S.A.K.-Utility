@@ -22,6 +22,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$WslExe = Join-Path $env:SystemRoot "System32\wsl.exe"
+$FsutilExe = Join-Path $env:SystemRoot "System32\fsutil.exe"
 
 function ConvertTo-PlainText {
     param([object[]]$Value)
@@ -38,15 +40,22 @@ function Invoke-RecordedCommand {
         [int[]]$AcceptedExitCodes = @(0)
     )
 
+    if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
+        throw "$Name could not resolve executable '$FilePath'."
+    }
     $started = Get-Date
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $exitCode = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        throw "$Name did not produce an exit code (launch failed)."
     }
 
     $record = [pscustomobject]@{
@@ -73,9 +82,9 @@ function Invoke-WslScript {
 
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Script))
     return Invoke-RecordedCommand -Name $Name `
-        -FilePath "wsl.exe" `
-        -Arguments @("-d", $DistroName, "-u", "root", "--", "sh", "-lc",
-            "printf '%s' '$encoded' | base64 -d | bash") `
+        -FilePath $WslExe `
+        -Arguments @("-d", $DistroName, "-u", "root", "--", "bash", "-lc",
+            "set -o pipefail; printf '%s' '$encoded' | base64 -d | bash") `
         -AcceptedExitCodes $AcceptedExitCodes
 }
 
@@ -97,7 +106,14 @@ function ConvertTo-RedactedReportJson {
 
 function Resolve-Certifier {
     if (-not [string]::IsNullOrWhiteSpace($CertifierPath)) {
-        return (Resolve-Path -LiteralPath $CertifierPath).Path
+        $resolved = (Resolve-Path -LiteralPath $CertifierPath).Path
+        if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+            throw "CertifierPath must reference an existing file: $resolved"
+        }
+        if ([IO.Path]::GetExtension($resolved).ToLowerInvariant() -ne ".exe") {
+            throw "CertifierPath must reference a .exe: $resolved"
+        }
+        return $resolved
     }
     $candidate = Join-Path $ProjectRoot "build\Release\partition_filesystem_probe_certifier.exe"
     if (Test-Path -LiteralPath $candidate -PathType Leaf) {
@@ -121,7 +137,7 @@ function New-Image {
     )
 
     Invoke-RecordedCommand -Name "create-disposable-image" `
-        -FilePath "fsutil.exe" `
+        -FilePath $FsutilExe `
         -Arguments @("file", "createnew", $Path, [string]$SizeBytes) | Out-Null
 }
 
@@ -129,7 +145,7 @@ function ConvertTo-WslPath {
     param([Parameter(Mandatory = $true)] [string]$WindowsPath)
 
     $record = Invoke-RecordedCommand -Name "wslpath" `
-        -FilePath "wsl.exe" `
+        -FilePath $WslExe `
         -Arguments @("-d", $DistroName, "--", "wslpath", "-a", ($WindowsPath -replace "\\", "/"))
     return $record.output.Trim()
 }
@@ -141,11 +157,14 @@ function Format-LinuxImage {
     )
 
     $label = if ($FileSystem -eq "xfs") { "SAK_XFS" } else { "SAK_BTRFS" }
+    # Escape any single quote so a path (or hostile wslpath output) cannot break out
+    # of the single-quoted root Bash argument and inject commands.
+    $escapedPath = $LinuxPath.Replace("'", "'\''")
     $formatCommand = if ($FileSystem -eq "xfs") {
-        "mkfs.xfs -f -L '$label' '$LinuxPath'"
+        "mkfs.xfs -f -L '$label' '$escapedPath'"
     }
     else {
-        "mkfs.btrfs -f -L '$label' '$LinuxPath'"
+        "mkfs.btrfs -f -L '$label' '$escapedPath'"
     }
     Invoke-WslScript -Name "linux-format-$FileSystem" -Script @"
 set -euo pipefail
@@ -166,17 +185,34 @@ function Invoke-ProbeCertifier {
     Invoke-RecordedCommand -Name "sak-probe-certifier-$FileSystem" `
         -FilePath $Certifier `
         -Arguments @("--input", $ImagePath, "--output", $OutputPath, "--expect", $expected, "--require-sane") | Out-Null
-    return Get-Content -LiteralPath $OutputPath -Raw | ConvertFrom-Json
+    $probe = Get-Content -LiteralPath $OutputPath -Raw | ConvertFrom-Json
+    if ($null -eq $probe -or $probe -isnot [pscustomobject]) {
+        throw "Probe certifier for $FileSystem produced non-object JSON at $OutputPath."
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$probe.detected_file_system)) {
+        throw "Probe certifier for $FileSystem produced no detected_file_system at $OutputPath."
+    }
+    return $probe
 }
 
+if (@($FileSystems).Count -eq 0) {
+    throw "FileSystems must contain at least one approved filesystem (xfs or btrfs)."
+}
 $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $EvidenceRoot = Join-Path $ProjectRoot $EvidenceRoot
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
     $ReportPath = Join-Path $EvidenceRoot "report.json"
 }
-$runRoot = Join-Path $EvidenceRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
-New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
+# Unique run directory so a same-second/concurrent run can never reuse or read a
+# prior run's probe reports as if they were freshly produced.
+$runRoot = Join-Path $EvidenceRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmssfff") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+New-Item -ItemType Directory -Path $runRoot | Out-Null
 New-Item -ItemType Directory -Path (Split-Path -Parent $ReportPath) -Force | Out-Null
+# Invalidate any prior main report up front so a crash before the final write leaves
+# no stale Passed evidence behind (absence, never a preserved pass).
+if (Test-Path -LiteralPath $ReportPath -PathType Leaf) {
+    Remove-Item -LiteralPath $ReportPath -Force
+}
 
 $Script:Commands = [System.Collections.Generic.List[object]]::new()
 $started = (Get-Date).ToUniversalTime().ToString("o")
@@ -191,7 +227,7 @@ try {
     }
     $certifier = Resolve-Certifier
     Invoke-RecordedCommand -Name "wsl-uname" `
-        -FilePath "wsl.exe" `
+        -FilePath $WslExe `
         -Arguments @("-d", $DistroName, "--", "uname", "-a") | Out-Null
     Invoke-WslScript -Name "linux-metadata-tool-preflight" -Script @"
 set -euo pipefail
@@ -205,6 +241,16 @@ id
         $imagePath = Join-Path $runRoot "sak-$normalized-metadata.img"
         $probePath = Join-Path $runRoot "sak-$normalized-probe-report.json"
         New-Image -Path $imagePath -SizeBytes $ImageSizeBytes
+        # Pin that the freshly created image is a regular, non-reparse file of the
+        # expected size before handing its path to root WSL mkfs (which force-formats
+        # whatever the translated path resolves to).
+        $imageItem = Get-Item -LiteralPath $imagePath -Force
+        if ($imageItem.PSIsContainer -or (($imageItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            throw "Disposable image path is not a regular file: $imagePath"
+        }
+        if ([uint64]$imageItem.Length -ne $ImageSizeBytes) {
+            throw "Disposable image size mismatch for $imagePath (expected $ImageSizeBytes, got $($imageItem.Length))."
+        }
         $linuxPath = ConvertTo-WslPath -WindowsPath $imagePath
         Format-LinuxImage -FileSystem $normalized -LinuxPath $linuxPath
         $probe = Invoke-ProbeCertifier -FileSystem $normalized `
@@ -244,6 +290,7 @@ $report = [pscustomobject]@{
     file_systems = @($FileSystems)
     image_size_bytes = $ImageSizeBytes
     certifier_path = $certifier
+    certifier_sha256 = if (-not [string]::IsNullOrWhiteSpace($certifier)) { (Get-FileHash -LiteralPath $certifier -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" }
     image_results = @($imageResults.ToArray())
     image_cleanup = @($imageCleanup.ToArray())
     commands = @($Script:Commands.ToArray())

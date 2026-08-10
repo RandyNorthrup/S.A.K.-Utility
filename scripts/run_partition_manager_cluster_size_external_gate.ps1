@@ -155,6 +155,18 @@ function ConvertTo-PlainText {
     return (($Value | ForEach-Object { $_.ToString() }) -join "`n").Trim()
 }
 
+function Get-SystemToolPath {
+    param([Parameter(Mandatory = $true)] [string]$FileName)
+
+    # Resolve trusted OS tools by their absolute System32 path so a hostile
+    # earlier PATH entry cannot substitute an elevated diskpart/robocopy/fsutil.
+    $path = Join-Path ([System.Environment]::SystemDirectory) $FileName
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Required system tool not found: $path"
+    }
+    return $path
+}
+
 function Invoke-NativeCommand {
     param(
         [Parameter(Mandatory = $true)] [string]$Name,
@@ -164,6 +176,7 @@ function Invoke-NativeCommand {
 
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $exitCode = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
@@ -171,11 +184,14 @@ function Invoke-NativeCommand {
     finally {
         $ErrorActionPreference = $oldPreference
     }
+    if ($null -eq $exitCode) {
+        throw "Native command '$Name' did not report an exit code (process launch failure): $FilePath"
+    }
     [pscustomobject]@{
         name = $Name
         file_path = $FilePath
         arguments = $Arguments
-        exit_code = $exitCode
+        exit_code = [int]$exitCode
         output = ConvertTo-PlainText -Value $output
     }
 }
@@ -193,7 +209,7 @@ function Invoke-DiskPartScript {
 
     $scriptPath = Join-Path $Script:RunRoot "diskpart-$([guid]::NewGuid()).txt"
     Set-Content -LiteralPath $scriptPath -Value ($Lines -join [Environment]::NewLine) -Encoding ASCII
-    $command = Invoke-NativeCommand -Name "diskpart" -FilePath "diskpart.exe" -Arguments @("/s", $scriptPath)
+    $command = Invoke-NativeCommand -Name "diskpart" -FilePath (Get-SystemToolPath "diskpart.exe") -Arguments @("/s", $scriptPath)
     if ($command.exit_code -ne 0) {
         throw "diskpart failed with exit code $($command.exit_code)`n$($command.output)"
     }
@@ -239,6 +255,7 @@ function Assert-DisposableDisk {
 function New-DisposableVhdDisk {
     $path = Join-Path $Script:RunRoot "cluster-size.vhdx"
     Assert-PathUnderRoot -Path $path -Root $Script:RunRoot
+    Assert-Condition -Condition ($path -notmatch '["\r\n]') -Message "Refusing unsafe VHD path with quote or control characters: $path"
     if (Test-Path -LiteralPath $path) {
         if (-not $Force) {
             throw "VHD already exists. Use -Force only for disposable lab artifacts: $path"
@@ -252,10 +269,21 @@ function New-DisposableVhdDisk {
         "attach vdisk"
     ) | Out-Null
 
-    $disk = Get-AttachedVhdDisk -Path $path
-    Set-Disk -Number $disk.Number -IsOffline $false -ErrorAction SilentlyContinue
-    Set-Disk -Number $disk.Number -IsReadOnly $false -ErrorAction Stop
-    Assert-DisposableDisk -Disk $disk -ExpectedPath $path
+    try {
+        $disk = Get-AttachedVhdDisk -Path $path
+        if ($disk.IsOffline) {
+            Set-Disk -Number $disk.Number -IsOffline $false -ErrorAction Stop
+        }
+        if ($disk.IsReadOnly) {
+            Set-Disk -Number $disk.Number -IsReadOnly $false -ErrorAction Stop
+        }
+        Assert-DisposableDisk -Disk $disk -ExpectedPath $path
+    }
+    catch {
+        # Never leave a partially prepared VHD attached when validation fails.
+        Dismount-DiskImage -ImagePath $path -ErrorAction SilentlyContinue | Out-Null
+        throw
+    }
 
     [pscustomobject]@{
         path = $path
@@ -268,7 +296,7 @@ function Remove-DisposableVhdDisk {
     param([Parameter(Mandatory = $true)] [object]$Vhd)
 
     try {
-        Dismount-DiskImage -ImagePath $Vhd.path -ErrorAction SilentlyContinue | Out-Null
+        Dismount-DiskImage -ImagePath $Vhd.path -ErrorAction Stop | Out-Null
     }
     finally {
         if (-not $KeepVhd -and (Test-Path -LiteralPath $Vhd.path)) {
@@ -322,7 +350,7 @@ function Get-PartitionVolumeId {
 function Get-AllocationUnitSize {
     param([Parameter(Mandatory = $true)] [string]$DriveLetter)
 
-    $command = Invoke-NativeCommand -Name "fsutil-ntfsinfo" -FilePath "fsutil.exe" -Arguments @("fsinfo", "ntfsinfo", "$DriveLetter`:")
+    $command = Invoke-NativeCommand -Name "fsutil-ntfsinfo" -FilePath (Get-SystemToolPath "fsutil.exe") -Arguments @("fsinfo", "ntfsinfo", "$DriveLetter`:")
     if ($command.exit_code -ne 0) {
         throw "fsutil ntfsinfo failed with exit code $($command.exit_code)."
     }
@@ -416,7 +444,7 @@ function Get-AlternateStreamManifest {
     $entries = New-Object System.Collections.Generic.List[object]
     Get-ChildItem -LiteralPath $resolved.Path -Recurse -File | Sort-Object FullName | ForEach-Object {
         $file = $_
-        $streams = @(Get-Item -LiteralPath $file.FullName -Stream * -ErrorAction SilentlyContinue |
+        $streams = @(Get-Item -LiteralPath $file.FullName -Stream * -ErrorAction Stop |
             Where-Object { $_.Stream -ne ':$DATA' } |
             Sort-Object Stream)
         foreach ($stream in $streams) {
@@ -472,10 +500,16 @@ function Invoke-RepairScan {
     param([Parameter(Mandatory = $true)] [string]$DriveLetter)
 
     $output = Repair-Volume -DriveLetter $DriveLetter -Scan -ErrorAction Stop
+    $outputText = ConvertTo-PlainText -Value @($output)
+    # Repair-Volume -Scan returns without throwing even when it finds corruption;
+    # only a clean "NoErrorsFound" result may be certified as a passing scan.
+    if ($outputText -notmatch "NoErrorsFound") {
+        throw "Repair-Volume scan did not report a clean volume for ${DriveLetter}: $outputText"
+    }
     [pscustomobject]@{
         drive_letter = $DriveLetter
         status = "Completed"
-        output = ConvertTo-PlainText -Value @($output)
+        output = $outputText
     }
 }
 
@@ -548,7 +582,11 @@ if ([string]::IsNullOrWhiteSpace($GuestReportPath)) {
 else {
     $GuestReportPath = Resolve-ProjectPath -Path $GuestReportPath
 }
-$Script:RunRoot = Join-Path $resolvedOutputRoot ("cluster-size-stage-debug\run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+# Elevated writes/deletes must stay inside the chosen output root, even when the
+# caller supplies EvidenceDir/GuestReportPath directly.
+Assert-PathUnderRoot -Path $EvidenceDir -Root $resolvedOutputRoot
+Assert-PathUnderRoot -Path $GuestReportPath -Root $resolvedOutputRoot
+$Script:RunRoot = Join-Path $resolvedOutputRoot ("cluster-size-stage-debug\run-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 New-Item -ItemType Directory -Path $EvidenceDir -Force | Out-Null
 New-Item -ItemType Directory -Path $Script:RunRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Split-Path -Parent $GuestReportPath) -Force | Out-Null
@@ -611,7 +649,7 @@ try {
 
     $backupRoot = Join-Path $Script:RunRoot "cluster-backup"
     New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-    $backup = Invoke-NativeCommand -Name "backup-cluster-fixture" -FilePath "robocopy.exe" -Arguments @($fixtureRoot, $backupRoot, "/MIR", "/COPY:DATS", "/DCOPY:DAT", "/R:1", "/W:1", "/NP")
+    $backup = Invoke-NativeCommand -Name "backup-cluster-fixture" -FilePath (Get-SystemToolPath "robocopy.exe") -Arguments @($fixtureRoot, $backupRoot, "/MIR", "/COPY:DATS", "/DCOPY:DAT", "/R:1", "/W:1", "/NP")
     $commands.Add($backup)
     Assert-RobocopySuccess -Command $backup
 
@@ -619,7 +657,7 @@ try {
     Start-Sleep -Milliseconds 500
     New-Item -ItemType Directory -Path $fixtureRoot -Force | Out-Null
 
-    $restore = Invoke-NativeCommand -Name "restore-cluster-fixture" -FilePath "robocopy.exe" -Arguments @($backupRoot, $fixtureRoot, "/MIR", "/COPY:DATS", "/DCOPY:DAT", "/R:1", "/W:1", "/NP")
+    $restore = Invoke-NativeCommand -Name "restore-cluster-fixture" -FilePath (Get-SystemToolPath "robocopy.exe") -Arguments @($backupRoot, $fixtureRoot, "/MIR", "/COPY:DATS", "/DCOPY:DAT", "/R:1", "/W:1", "/NP")
     $commands.Add($restore)
     Assert-RobocopySuccess -Command $restore
 
@@ -698,9 +736,11 @@ try {
         (ConvertTo-ProjectRelativePath -Path $beforeAclPath),
         (ConvertTo-ProjectRelativePath -Path $afterAclPath),
         (ConvertTo-ProjectRelativePath -Path $beforeAdsPath),
-        (ConvertTo-ProjectRelativePath -Path $afterAdsPath),
-        (ConvertTo-ProjectRelativePath -Path (Join-Path $Script:RunRoot "run_partition_manager_cluster_size_external_gate.log"))
+        (ConvertTo-ProjectRelativePath -Path $afterAdsPath)
     )
+    if ($Script:TranscriptStarted) {
+        $artifacts += (ConvertTo-ProjectRelativePath -Path (Join-Path $Script:RunRoot "run_partition_manager_cluster_size_external_gate.log"))
+    }
     $report = New-ExternalReport `
         -Status "Passed" `
         -Evidence $evidence `
@@ -798,6 +838,8 @@ try {
 catch {
     $fallbackPath = "$GuestReportPath.write-error.txt"
     "Failed to write guest report: $($_.Exception.Message)" | Set-Content -LiteralPath $fallbackPath -Encoding UTF8
+    # A required-evidence write failure must fail the run closed, not be swallowed.
+    throw "Failed to write guest report to ${GuestReportPath}: $($_.Exception.Message)"
 }
 
 if ($Script:TranscriptStarted) {

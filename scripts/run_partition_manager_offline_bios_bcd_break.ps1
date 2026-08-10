@@ -13,7 +13,9 @@ param(
 $ErrorActionPreference = "Stop"
 $script:TranscriptStarted = $false
 $script:RunRoot = ""
+$script:LocalScriptRoot = ""
 $script:Actions = @()
+$DiskPartExe = Join-Path $env:SystemRoot "System32\diskpart.exe"
 
 trap {
     if (-not [string]::IsNullOrWhiteSpace($script:RunRoot)) {
@@ -61,8 +63,12 @@ function Get-AvailableDriveLetter {
 
 function Invoke-NativeCommand {
     param([string]$Name, [string]$FilePath, [string[]]$Arguments = @())
+    if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
+        throw "$Name could not resolve executable '$FilePath'."
+    }
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $exitCode = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
@@ -71,6 +77,9 @@ function Invoke-NativeCommand {
         $ErrorActionPreference = $oldPreference
     }
     Add-Action -Name $Name -Detail ((($output | ForEach-Object { $_.ToString() }) -join "`n").Trim())
+    if ($null -eq $exitCode) {
+        throw "$Name did not produce an exit code (launch failed)."
+    }
     if ($exitCode -ne 0) {
         throw "$Name failed with exit code $exitCode."
     }
@@ -78,9 +87,12 @@ function Invoke-NativeCommand {
 
 function Invoke-DiskPartScript {
     param([string]$Name, [string[]]$Lines)
-    $scriptPath = Join-Path $script:RunRoot ("diskpart-" + [guid]::NewGuid().ToString("N") + ".txt")
+    # Write the elevated diskpart script to a local, admin-owned scratch directory --
+    # never under the caller-controlled (possibly shared UNC) OutputRoot, where another
+    # process or share owner could swap the file between creation and elevated execution.
+    $scriptPath = Join-Path $script:LocalScriptRoot ("diskpart-" + [guid]::NewGuid().ToString("N") + ".txt")
     Set-Content -LiteralPath $scriptPath -Value ($Lines -join [Environment]::NewLine) -Encoding ASCII
-    Invoke-NativeCommand -Name $Name -FilePath "diskpart.exe" -Arguments @("/s", $scriptPath)
+    Invoke-NativeCommand -Name $Name -FilePath $DiskPartExe -Arguments @("/s", $scriptPath)
 }
 
 function Get-DiskSnapshot {
@@ -125,8 +137,12 @@ if (-not $Force) {
     throw "Pass -Force after confirming the attached disk is the disposable BIOS target."
 }
 
-$script:RunRoot = Join-Path $OutputRoot (Get-Date -Format "yyyyMMdd-HHmmss")
-New-Item -ItemType Directory -Path $script:RunRoot -Force | Out-Null
+# Unique run directory so same-second/concurrent runs cannot overwrite or mix each
+# other's transcript, action, error, and report artifacts.
+$script:RunRoot = Join-Path $OutputRoot ((Get-Date -Format "yyyyMMdd-HHmmssfff") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+New-Item -ItemType Directory -Path $script:RunRoot | Out-Null
+$script:LocalScriptRoot = Join-Path ([IO.Path]::GetTempPath()) ("sak-offline-bios-break-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $script:LocalScriptRoot | Out-Null
 Start-Transcript -Path (Join-Path $script:RunRoot "offline-bios-break-transcript.log") -Force | Out-Null
 $script:TranscriptStarted = $true
 
@@ -159,6 +175,20 @@ Invoke-DiskPartScript -Name "prepare-target-disk" -Lines @(
 )
 Update-HostStorageCache
 
+# Re-pin disk identity and verify the prepare step actually took effect before any
+# destructive work. Hot-plug/re-enumeration can move disk numbers, and "online disk
+# noerr" / "attributes disk clear readonly" can silently no-op.
+$prepared = Get-DiskSnapshot -DiskNumber $TargetDiskNumber
+if ($prepared.unique_id -ne $before.unique_id -or $prepared.serial_number -ne $before.serial_number) {
+    throw "Disk identity changed after prepare (expected UniqueId '$($before.unique_id)' / Serial '$($before.serial_number)', got '$($prepared.unique_id)' / '$($prepared.serial_number)'). Aborting."
+}
+if ($prepared.is_boot -or $prepared.is_system -or $prepared.partition_style -ne "MBR") {
+    throw "Disk $TargetDiskNumber is boot/system or non-MBR after prepare. Aborting."
+}
+if ($prepared.is_offline -or $prepared.is_read_only) {
+    throw "Disk $TargetDiskNumber did not come online read-write (offline=$($prepared.is_offline), readonly=$($prepared.is_read_only)). Aborting."
+}
+
 $windowsPartition = Get-Partition -DiskNumber $TargetDiskNumber |
     Where-Object { [string]$_.Type -match "IFS|Basic|Microsoft Basic Data" -and $_.Size -gt 20GB } |
     Sort-Object Size -Descending |
@@ -182,6 +212,13 @@ if (-not $windowsPartition.DriveLetter) {
 }
 
 $targetRoot = "${windowsLetter}:"
+# Prove the letter is bound to OUR selected disk and partition before any Copy/Remove,
+# so a stale/occupied/SUBST'd letter cannot redirect the mutation onto another volume.
+Update-HostStorageCache
+$assignedPartition = Get-Partition -DiskNumber $TargetDiskNumber -PartitionNumber $windowsPartition.PartitionNumber -ErrorAction Stop
+if ([string]$assignedPartition.DriveLetter -ne $windowsLetter) {
+    throw "Drive letter $windowsLetter is not bound to disk $TargetDiskNumber partition $($windowsPartition.PartitionNumber) (actual '$([string]$assignedPartition.DriveLetter)'). Aborting."
+}
 if (-not (Test-Path -LiteralPath "$targetRoot\Windows" -PathType Container)) {
     throw "Windows directory not found at $targetRoot\Windows."
 }
@@ -194,6 +231,9 @@ if (-not (Test-Path -LiteralPath $bcdPath -PathType Leaf)) {
 }
 Copy-Item -LiteralPath $bcdPath -Destination $bcdBackupPath -Force
 Remove-Item -LiteralPath $bcdPath -Force
+if (Test-Path -LiteralPath $bcdPath -PathType Leaf) {
+    throw "BCD removal did not take effect; $bcdPath still present."
+}
 Add-Action -Name "remove-bios-bcd" -Detail "Backed up $bcdPath to $bcdBackupPath, then removed active BCD."
 
 $after = Get-DiskSnapshot -DiskNumber $TargetDiskNumber

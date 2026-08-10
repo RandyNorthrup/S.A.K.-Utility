@@ -124,8 +124,14 @@ std::optional<uint64_t> jpegSizeAt(const QByteArray& data,
     if (!hasBytesAt(data, offset, start)) {
         return std::nullopt;
     }
-    const qsizetype limit = std::min<qsizetype>(data.size(),
-                                                offset + static_cast<qsizetype>(maxCandidateBytes));
+    // Bound the forward search to maxCandidateBytes without signed overflow: compute the span in
+    // uint64 and clamp it to the bytes actually available (offset <= data.size(), guaranteed by
+    // hasBytesAt above), so offset + span never exceeds data.size() (F2).
+    const qsizetype available = data.size() - offset;
+    const qsizetype span = maxCandidateBytes >= static_cast<uint64_t>(available)
+                               ? available
+                               : static_cast<qsizetype>(maxCandidateBytes);
+    const qsizetype limit = offset + span;
     for (qsizetype cursor = offset + start.size(); cursor + end.size() <= limit; ++cursor) {
         ++(*work);  // count forward-scan work so the caller can bound it (B8-14)
         if (hasBytesAt(data, cursor, end)) {
@@ -144,8 +150,14 @@ std::optional<uint64_t> pdfSizeAt(const QByteArray& data,
     if (!hasBytesAt(data, offset, start)) {
         return std::nullopt;
     }
-    const qsizetype limit = std::min<qsizetype>(data.size(),
-                                                offset + static_cast<qsizetype>(maxCandidateBytes));
+    // Bound the forward search to maxCandidateBytes without signed overflow: compute the span in
+    // uint64 and clamp it to the bytes actually available (offset <= data.size(), guaranteed by
+    // hasBytesAt above), so offset + span never exceeds data.size() (F2).
+    const qsizetype available = data.size() - offset;
+    const qsizetype span = maxCandidateBytes >= static_cast<uint64_t>(available)
+                               ? available
+                               : static_cast<qsizetype>(maxCandidateBytes);
+    const qsizetype limit = offset + span;
     for (qsizetype cursor = offset + start.size(); cursor + end.size() <= limit; ++cursor) {
         ++(*work);  // count forward-scan work so the caller can bound it (B8-14)
         if (hasBytesAt(data, cursor, end)) {
@@ -261,8 +273,11 @@ QByteArray readSequentialBytes(QFile* image, uint64_t offset, uint64_t size) {
     }
 
     QByteArray bytes;
-    bytes.reserve(static_cast<qsizetype>(
-        std::min<uint64_t>(size, static_cast<uint64_t>(std::numeric_limits<qsizetype>::max()))));
+    // Reserve at most the per-candidate ceiling: a hostile candidate.size_bytes (narrowed from an
+    // untrusted uint64) could otherwise ask QByteArray to preallocate an unsatisfiable buffer and
+    // abort. Anything larger grows through append instead, still bounded by the source (F3).
+    bytes.reserve(
+        static_cast<qsizetype>(std::min<uint64_t>(size, kFileRecoveryDefaultMaxCandidateBytes)));
     while (static_cast<uint64_t>(bytes.size()) < size) {
         const qint64 chunkSize = static_cast<qint64>(std::min<uint64_t>(
             static_cast<uint64_t>(kHashChunkBytes), size - static_cast<uint64_t>(bytes.size())));
@@ -276,15 +291,19 @@ QByteArray readSequentialBytes(QFile* image, uint64_t offset, uint64_t size) {
 }
 
 QByteArray readCandidateBytes(QFile* image, const FileRecoveryCandidate& candidate) {
-    if (static_cast<uint64_t>(candidate.recovered_bytes.size()) == candidate.size_bytes) {
+    // Caller-supplied recovered_bytes may stand in for a source read ONLY when a hash pins them to
+    // the carve (candidateBytesMatch then verifies it). Without a hash they are unverifiable,
+    // caller-influenced bytes, so fall through and re-read from the read-only source rather than
+    // writing them verbatim as "recovered" (F4).
+    if (!candidate.sha256.isEmpty() &&
+        static_cast<uint64_t>(candidate.recovered_bytes.size()) == candidate.size_bytes) {
         return candidate.recovered_bytes;
     }
     if (isWindowsRawDevicePath(image->fileName())) {
-        QFile rawImage(image->fileName());
-        if (rawImage.open(QIODevice::ReadOnly)) {
-            return readSequentialBytes(&rawImage, candidate.offset_bytes, candidate.size_bytes);
-        }
-        return {};
+        // Read through the ALREADY-OPEN, validated handle -- the same handle the before/after
+        // integrity hash covers -- instead of reopening the path by name, which a swapped
+        // device or junction could redirect between validation, hashing, and this read (F5).
+        return readSequentialBytes(image, candidate.offset_bytes, candidate.size_bytes);
     }
     if (image->seek(static_cast<qint64>(candidate.offset_bytes))) {
         const QByteArray bytes = image->read(static_cast<qint64>(candidate.size_bytes));
@@ -298,6 +317,12 @@ QByteArray readCandidateBytes(QFile* image, const FileRecoveryCandidate& candida
 std::optional<QDir> prepareRestoreDestination(const QFileInfo& imageInfo,
                                               const QString& destinationDirectory,
                                               QStringList* warnings) {
+    if (destinationDirectory.trimmed().isEmpty()) {
+        // A blank destination would make QDir("") resolve to the process working directory and
+        // write recovered files there. Refuse an absent target rather than pick one (F6).
+        warnings->append(QStringLiteral("No restore destination directory was given"));
+        return std::nullopt;
+    }
     QDir destination(destinationDirectory);
     if (!destination.exists() && !destination.mkpath(QStringLiteral("."))) {
         warnings->append(QStringLiteral("Could not create restore destination"));
@@ -351,6 +376,12 @@ bool skippedExistingRestoreFile(const QString& outputPath,
 bool candidateBytesMatch(const QByteArray& bytes,
                          const FileRecoveryCandidate& candidate,
                          QStringList* warnings) {
+    if (candidate.size_bytes == 0) {
+        // A zero-byte candidate carves nothing to recover; refuse it rather than write an empty
+        // file and report it restored (F4).
+        warnings->append(QStringLiteral("Skipped zero-size candidate: %1").arg(candidate.id));
+        return false;
+    }
     if (static_cast<uint64_t>(bytes.size()) != candidate.size_bytes) {
         warnings->append(
             QStringLiteral("Skipped candidate with unreadable byte range: %1").arg(candidate.id));
@@ -418,8 +449,11 @@ void restoreCandidate(const RestoreContext& context, const FileRecoveryCandidate
 // (0, e.g. a raw device that reports no length) under a cap cannot be proven whole
 // -- the hash only covered a bounded prefix (B8-23).
 bool hashCoveredWholeSource(uint64_t hash_cap_bytes, uint64_t source_size_bytes) {
+    // An uncapped hash covers the whole source only if the source has a KNOWN, non-zero size to
+    // cover. A size of 0 -- an unknown-length raw device that reports no size, whose hash therefore
+    // covered nothing provable -- cannot be read as a whole-source guarantee (F7).
     if (hash_cap_bytes == 0) {
-        return true;
+        return source_size_bytes > 0;
     }
     return source_size_bytes > 0 && source_size_bytes <= hash_cap_bytes;
 }
@@ -441,7 +475,25 @@ QByteArray readScanData(QFile* image,
             QStringLiteral("Scan limited to first %1 byte(s)").arg(QString::number(scanBytes)));
     }
 
-    const QByteArray data = image->read(static_cast<qint64>(scanBytes));
+    // Fill up to scanBytes over repeated reads: a single QFile::read can short-read a device, and
+    // casting a huge scanBytes straight to qint64 could go negative. Loop in bounded chunks and
+    // surface a genuine read error as a partial result rather than a clean-looking empty scan
+    // (F2/F10/F11).
+    QByteArray data;
+    while (static_cast<uint64_t>(data.size()) < scanBytes) {
+        const qint64 want =
+            static_cast<qint64>(std::min<uint64_t>(static_cast<uint64_t>(kHashChunkBytes),
+                                                   scanBytes - static_cast<uint64_t>(data.size())));
+        const QByteArray chunk = image->read(want);
+        if (chunk.isEmpty()) {
+            if (image->error() != QFileDevice::NoError) {
+                result->warnings.append(
+                    QStringLiteral("Read error during scan; results are partial"));
+            }
+            break;
+        }
+        data.append(chunk);
+    }
     result->bytes_read = static_cast<uint64_t>(std::max<qsizetype>(0, data.size()));
     if (scanBytes > 0 && data.isEmpty()) {
         result->warnings.append(QStringLiteral("No bytes read from recovery source"));
@@ -522,11 +574,21 @@ FileRecoveryScanResult FileRecoveryEngine::scanOfflineImage(const FileRecoverySc
     }
     result.source_opened_read_only = true;
 
-    const uint64_t imageSize = static_cast<uint64_t>(std::max<qint64>(0, image.size()));
+    const qint64 reportedSize = image.size();
+    if (reportedSize < 0 && !isWindowsRawDevicePath(options.image_path)) {
+        // A regular readable file that cannot report its size is an I/O error, not an empty scan:
+        // fail closed with a warning instead of silently carving zero bytes (F10).
+        result.warnings.append(QStringLiteral("Could not determine recovery source size"));
+        return result;
+    }
+    const uint64_t imageSize = static_cast<uint64_t>(std::max<qint64>(0, reportedSize));
     const QByteArray data = readScanData(&image, imageSize, options, &result);
     appendScanCandidates(data, options, &result, cancel);
     if (result.candidates.size() >= options.max_candidates) {
+        // The cap cut enumeration short -- more candidates may exist beyond it. Flag the result as
+        // partial (like the work-budget bound) so callers do not report the scan as complete (F12).
         result.warnings.append(QStringLiteral("Candidate limit reached"));
+        result.scan_cancelled = true;
     }
     return result;
 }
@@ -548,6 +610,15 @@ FileRecoveryRestoreResult FileRecoveryEngine::restoreCandidates(
     }
     result.source_opened_read_only = true;
     const QByteArray beforeHash = hashOpenFile(&image, options.source_hash_bytes);
+    if (beforeHash.isEmpty()) {
+        // Could not establish the pre-restore source baseline (a seek/read failure -- a readable
+        // image, even an empty one, hashes to a non-empty digest). Without it the source-not-
+        // mutated proof is impossible, so refuse to write anything rather than mutate the
+        // destination first and discover the failure afterward (F13).
+        result.warnings.append(
+            QStringLiteral("Could not hash the source before restore; no files were restored"));
+        return result;
+    }
 
     const RestoreContext context{&image, *destination, options.overwrite_existing, &result};
     for (const auto& candidate : options.candidates) {

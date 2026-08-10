@@ -67,7 +67,7 @@ public:
         bool auto_confirm{true};       // -y flag
         bool force{false};             // --force flag
         bool allow_unofficial{false};  // Allow unofficial sources
-        int timeout_seconds{0};        // Command timeout (0 = no timeout)
+        int timeout_seconds{0};        // Command timeout (0 = use the default timeout)
         QStringList extra_args;        // Additional choco arguments
     };
 
@@ -160,6 +160,11 @@ private:
     Result executeChoco(const QStringList& args, int timeout_ms = 0);
     QStringList buildInstallArgs(const InstallConfig& config) const;
     bool parseExitCode(int exit_code) const;
+
+    /// @brief The fail-closed error for an inconsistent version/lock pairing in
+    ///        @p config (locked-but-empty, version-without-lock, or an unparsable
+    ///        locked version), or empty when the pairing is sound. Pure.
+    [[nodiscard]] static QString versionLockError(const InstallConfig& config);
 
     // Authenticity: prove the bundled choco.exe is a genuine, Chocolatey-signed
     // binary (valid Authenticode signature AND trusted signer) before executing

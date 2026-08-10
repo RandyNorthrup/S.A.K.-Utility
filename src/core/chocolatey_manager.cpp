@@ -345,6 +345,31 @@ int ChocolateyManager::computeTimeoutMs(int timeout_seconds, int default_seconds
     return static_cast<int>(ms);
 }
 
+// The version/lock pairing must be internally consistent before an install runs.
+// Returns the specific fail-closed failure message, or empty when the pairing is
+// sound. Kept as one guard so a lock/version contradiction can never slip through
+// as a silent "install latest".
+QString ChocolateyManager::versionLockError(const InstallConfig& config) {
+    // Fail closed: a locked install with no version would silently resolve to the
+    // latest, defeating the pin. Require the version when the lock is requested.
+    if (config.version_locked && config.version.isEmpty()) {
+        return "version_locked requires a non-empty version";
+    }
+
+    // Fail closed on the inverse contradiction: a version supplied WITHOUT the lock
+    // would be silently ignored and the latest installed instead. Surface it rather
+    // than install an unintended version.
+    if (!config.version_locked && !config.version.isEmpty()) {
+        return "version supplied without version_locked";
+    }
+
+    if (config.version_locked && !validateVersion(config.version)) {
+        return "Invalid version format: " + config.version;
+    }
+
+    return {};
+}
+
 ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig& config) {
     if (!m_initialized) {
         return {false, "", "ChocolateyManager not initialized", -1};
@@ -354,14 +379,9 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
         return {false, "", "Invalid package name: " + config.package_name, -1};
     }
 
-    // Fail closed: a locked install with no version would silently resolve to the
-    // latest, defeating the pin. Require the version when the lock is requested.
-    if (config.version_locked && config.version.isEmpty()) {
-        return {false, "", "version_locked requires a non-empty version", -1};
-    }
-
-    if (config.version_locked && !validateVersion(config.version)) {
-        return {false, "", "Invalid version format: " + config.version, -1};
+    const QString version_error = versionLockError(config);
+    if (!version_error.isEmpty()) {
+        return {false, "", version_error, -1};
     }
 
     if (!validateExtraArgs(config.extra_args)) {
@@ -428,6 +448,11 @@ ChocolateyManager::Result ChocolateyManager::upgradePackage(const QString& packa
 ChocolateyManager::Result ChocolateyManager::searchPackage(const QString& query, int max_results) {
     if (query.isEmpty()) {
         return {false, "", "Search query is empty", -1};
+    }
+    // Fail closed: a query beginning with '-' would be parsed by choco as an option
+    // (e.g. "--source"), not a search term, since it becomes a bare argv element.
+    if (query.trimmed().startsWith(QLatin1Char('-'))) {
+        return {false, "", "Search query must not start with '-'", -1};
     }
     // Fail closed: a negative limit previously coerced to 0, which drops the
     // --page-size flag and silently returns an UNBOUNDED result set.
@@ -496,7 +521,9 @@ bool ChocolateyManager::isPackageInstalled(const QString& package_name) {
 }
 
 QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
-    if (package_name.isEmpty()) {
+    // Validate before the name becomes a bare choco argv element: an option-like id
+    // (leading '-') could otherwise be parsed by choco as a flag, not a package.
+    if (!validatePackageName(package_name)) {
         return {};
     }
     if (!m_initialized) {
@@ -526,7 +553,9 @@ QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
 }
 
 bool ChocolateyManager::isPackageAvailable(const QString& package_name) {
-    if (package_name.isEmpty()) {
+    // Validate before the name is handed to choco (defense in depth): an option-like
+    // id must never be interpreted as a search flag rather than a package.
+    if (!validatePackageName(package_name)) {
         return false;
     }
     if (!m_initialized) {
@@ -571,6 +600,16 @@ QStringList ChocolateyManager::getOutdatedPackages() {
 ChocolateyManager::Result ChocolateyManager::installWithRetry(const InstallConfig& config,
                                                               int max_attempts,
                                                               int delay_seconds) {
+    // Fail closed on invalid retry parameters: a non-positive attempt count would
+    // otherwise return an empty-error failure, and a negative delay would convert to
+    // a huge unsigned value in QThread::sleep and hang the operation indefinitely.
+    if (max_attempts <= 0) {
+        return {false, "", "installWithRetry: max_attempts must be positive", -1};
+    }
+    if (delay_seconds < 0) {
+        return {false, "", "installWithRetry: delay_seconds must not be negative", -1};
+    }
+
     Result last_result;
 
     for (int attempt = 1; attempt <= max_attempts; ++attempt) {

@@ -435,9 +435,13 @@ private:
                                                const BundleInstallContext& install_ctx,
                                                BatchStats& stats);
 
-    /// @brief Resolve an absolute path to choco.exe (bundled portable first,
-    ///        then PATH). Empty if not found -- callers must NOT fall back to a
-    ///        bare "choco" (PATH/cwd binary hijack).
+    /// @brief Resolve an absolute path to the app's OWN bundled portable choco.exe
+    ///        ONLY -- never a system choco and never a bare "choco" resolved via
+    ///        PATH/cwd (a planted binary would then run with install-time rights).
+    ///        Confirms the resolved file is a real regular file (not a symlink/
+    ///        junction) whose canonical path stays under the bundled-tools root.
+    ///        Empty when the bundled copy is absent: the caller fails closed rather
+    ///        than borrow host tooling.
     [[nodiscard]] static QString resolveChocoExecutable();
 
     /// @brief Emit a terminal packageProgress signal to the UI thread.

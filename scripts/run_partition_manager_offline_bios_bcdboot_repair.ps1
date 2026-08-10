@@ -40,17 +40,30 @@ function Test-IsAdmin {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Resolve-SystemTool {
+    param([string]$FileName)
+    $path = Join-Path $env:SystemRoot (Join-Path "System32" $FileName)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Required system tool not found: $path"
+    }
+    return $path
+}
+
 function Invoke-NativeCommand {
     param([string]$Name, [string]$FilePath, [string[]]$Arguments = @())
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $started = Get-Date
+    $global:LASTEXITCODE = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        throw "$Name did not launch (no exit code from $FilePath)."
     }
     $record = [pscustomobject]@{
         name = $Name
@@ -71,11 +84,11 @@ function Invoke-DiskPartScript {
     param([string]$Name, [string[]]$Lines)
     $scriptPath = Join-Path $script:RunRoot ("diskpart-" + [guid]::NewGuid().ToString("N") + ".txt")
     Set-Content -LiteralPath $scriptPath -Value ($Lines -join [Environment]::NewLine) -Encoding ASCII
-    return Invoke-NativeCommand -Name $Name -FilePath "diskpart.exe" -Arguments @("/s", $scriptPath)
+    return Invoke-NativeCommand -Name $Name -FilePath (Resolve-SystemTool "diskpart.exe") -Arguments @("/s", $scriptPath)
 }
 
 function Get-AvailableDriveLetter {
-    $used = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object DriveLetter | ForEach-Object { [string]$_.DriveLetter })
+    $used = @(Get-Volume -ErrorAction Stop | Where-Object DriveLetter | ForEach-Object { [string]$_.DriveLetter })
     foreach ($letter in @("W", "T", "R", "S", "U", "V", "X", "Y", "Z", "P", "Q", "L", "M", "N")) {
         if ($used -notcontains $letter) {
             return $letter
@@ -99,6 +112,7 @@ function Get-DiskSnapshot {
             type = [string]$partition.Type
             offset_bytes = [uint64]$partition.Offset
             size_bytes = [uint64]$partition.Size
+            is_active = [bool]$partition.IsActive
             file_system = if ($null -ne $volume) { [string]$volume.FileSystem } else { "" }
             label = if ($null -ne $volume) { [string]$volume.FileSystemLabel } else { "" }
         }
@@ -148,16 +162,23 @@ if ($before.is_boot -or $before.is_system -or $before.partition_style -ne "MBR")
     throw "Refusing non-disposable or non-MBR disk $TargetDiskNumber."
 }
 
-Invoke-DiskPartScript -Name "prepare-target-disk" -Lines @(
+# Online the disk (read/write) so its filesystem can be inspected, but defer the
+# partition-active mutation until the target is confirmed to be Windows. Only a
+# genuinely offline disk is onlined, and WITHOUT "noerr", so a real online
+# failure surfaces instead of being swallowed and then mutated past.
+$prepLines = @(
     "select disk $TargetDiskNumber",
-    "attributes disk clear readonly",
-    "online disk noerr",
-    "select partition 1",
-    "active",
+    "attributes disk clear readonly"
+)
+if ($before.is_offline) {
+    $prepLines += "online disk"
+}
+$prepLines += @(
     "detail disk",
     "list partition",
     "list volume"
-) | Out-Null
+)
+Invoke-DiskPartScript -Name "prepare-target-disk" -Lines $prepLines | Out-Null
 Update-HostStorageCache
 
 $windowsPartition = Get-Partition -DiskNumber $TargetDiskNumber |
@@ -174,6 +195,16 @@ if (-not $windowsPartition.DriveLetter) {
         Add-PartitionAccessPath -DiskNumber $TargetDiskNumber -PartitionNumber $windowsPartition.PartitionNumber -AccessPath "${windowsLetter}:"
     }
     catch {
+        # Do not silence the cmdlet failure: record it as evidence before the
+        # diskpart alternative runs so the two mechanisms stay distinguishable.
+        $script:Commands += [pscustomobject]@{
+            name = "add-partition-access-path-failed"
+            file_path = ""
+            arguments = @("${windowsLetter}:")
+            exit_code = $null
+            duration_seconds = 0
+            output = $_.Exception.Message
+        }
         Invoke-DiskPartScript -Name "assign-windows-letter" -Lines @(
             "select disk $TargetDiskNumber",
             "select partition $($windowsPartition.PartitionNumber)",
@@ -188,11 +219,37 @@ if (-not (Test-Path -LiteralPath $windowsPath -PathType Container)) {
     throw "Windows directory not found at $windowsPath."
 }
 
-$bcdboot = Invoke-NativeCommand -Name "bcdboot-bios" -FilePath "bcdboot.exe" -Arguments @($windowsPath, "/s", $targetRoot, "/f", "BIOS")
-$bootsect = Invoke-NativeCommand -Name "bootsect-bios" -FilePath "bootsect.exe" -Arguments @("/nt60", $targetRoot, "/mbr", "/force")
-$bcdEnum = Invoke-NativeCommand -Name "bcdedit-store-enum" -FilePath "bcdedit.exe" -Arguments @("/store", "$targetRoot\Boot\BCD", "/enum", "all")
+# Windows only installs on NTFS; require it before writing boot files so a
+# non-Windows or wrong volume that merely holds a \Windows folder is refused.
+$windowsVolume = Get-Volume -DriveLetter $windowsLetter -ErrorAction SilentlyContinue
+if ($null -eq $windowsVolume -or [string]$windowsVolume.FileSystem -ne "NTFS") {
+    throw "Target volume ${windowsLetter}: is not an NTFS Windows volume; refusing BIOS repair."
+}
+
+# Only now that the target is a confirmed Windows NTFS volume, mark that SAME
+# partition active. Marking a fixed "partition 1" active would point BIOS at a
+# System-Reserved partition that never receives the boot files this script
+# writes to the Windows partition, leaving a standard layout unbootable.
+Invoke-DiskPartScript -Name "activate-windows-partition" -Lines @(
+    "select disk $TargetDiskNumber",
+    "select partition $($windowsPartition.PartitionNumber)",
+    "active"
+) | Out-Null
+
+$bcdboot = Invoke-NativeCommand -Name "bcdboot-bios" -FilePath (Resolve-SystemTool "bcdboot.exe") -Arguments @($windowsPath, "/s", $targetRoot, "/f", "BIOS")
+$bootsect = Invoke-NativeCommand -Name "bootsect-bios" -FilePath ((Get-Command "bootsect.exe" -CommandType Application -ErrorAction Stop).Source) -Arguments @("/nt60", $targetRoot, "/mbr", "/force")
+$bcdEnum = Invoke-NativeCommand -Name "bcdedit-store-enum" -FilePath (Resolve-SystemTool "bcdedit.exe") -Arguments @("/store", "$targetRoot\Boot\BCD", "/enum", "all")
 
 $after = Get-DiskSnapshot -DiskNumber $TargetDiskNumber
+if ($after.unique_id -ne $before.unique_id) {
+    throw "Disk identity changed during repair (before '$($before.unique_id)', after '$($after.unique_id)')."
+}
+$bootmgrExists = (Test-Path -LiteralPath "$targetRoot\bootmgr" -PathType Leaf)
+$bcdExists = (Test-Path -LiteralPath "$targetRoot\Boot\BCD" -PathType Leaf)
+$windowsExists = (Test-Path -LiteralPath "$targetRoot\Windows" -PathType Container)
+if (-not $bootmgrExists -or -not $bcdExists) {
+    throw "Boot files missing after repair (bootmgr=$bootmgrExists, bcd=$bcdExists); refusing to report success."
+}
 $commandsPath = Join-Path $script:RunRoot "offline-bios-repair-commands.json"
 $script:Commands | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $commandsPath -Encoding UTF8
 
@@ -209,9 +266,9 @@ $report = [ordered]@{
     bootsect_exit_code = $bootsect.exit_code
     bcd_store_enum_exit_code = $bcdEnum.exit_code
     boot_files = @{
-        bootmgr_exists = (Test-Path -LiteralPath "$targetRoot\bootmgr" -PathType Leaf)
-        bcd_exists = (Test-Path -LiteralPath "$targetRoot\Boot\BCD" -PathType Leaf)
-        windows_exists = (Test-Path -LiteralPath "$targetRoot\Windows" -PathType Container)
+        bootmgr_exists = $bootmgrExists
+        bcd_exists = $bcdExists
+        windows_exists = $windowsExists
     }
     commands_path = $commandsPath
 }

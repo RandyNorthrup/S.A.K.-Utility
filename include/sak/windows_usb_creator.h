@@ -111,6 +111,15 @@ Q_SIGNALS:
     void failed(const QString& error);
 
 private:
+    /// @brief Reset every per-run field to its pristine value so a prior run's
+    /// pinned disk/ISO identity or volume label cannot leak into this one.
+    void resetPerRunState(const QString& diskNumber);
+
+    /// @brief Cancellation checkpoint between destructive steps: if a cancel was
+    /// requested, report it (setError + failed()) and return true so the caller
+    /// fails closed.
+    bool cancellationRequested();
+
     /// @brief Validate ISO and disk number inputs before USB creation
     bool validateUSBInputs(const QString& isoPath, const QString& diskNumber);
 
@@ -330,6 +339,11 @@ private:
     /// (positive) ISO size. A non-positive expected size fails closed.
     bool criticalFileOnDiskMatches(const QPair<QString, qint64>& fileInfo, const QString& destPath);
 
+    /// @brief Run Step 5, the sole path to a verified success: announce, then
+    /// verify via finalVerification(), reporting through failed() and failing
+    /// closed on any verification failure.
+    bool runFinalVerification(const QString& driveLetter);
+
     /**
      * @brief Final comprehensive verification - ONLY path to success
      * @param driveLetter Drive letter to verify
@@ -359,6 +373,10 @@ private:
     }
 
     std::atomic<bool> m_cancelled{false};
+    /// Single-flight guard: rejects a second concurrent createBootableUSB() on the same
+    /// instance so its per-run QString/qint64 state (disk/ISO identity, label) cannot be
+    /// raced across threads. Set on entry, cleared on every exit path.
+    std::atomic<bool> m_running{false};
     mutable QMutex m_errorMutex;   ///< Guards m_lastError for cross-thread access
     QString m_lastError;           ///< Protected by m_errorMutex
     QString m_volumeLabel;         // Volume label extracted from ISO

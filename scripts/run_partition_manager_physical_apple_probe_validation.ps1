@@ -38,27 +38,53 @@ $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $AppleHfsGptType = "{48465300-0000-11aa-aa11-00306543ecac}"
 $AppleApfsGptType = "{7c3457ef-0000-11aa-aa11-00306543ecac}"
 
+function Assert-NativeExecutable {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+
+    # This certifier runs elevated. Fail closed unless the resolved path is a real
+    # native .exe: reject directories, reject reparse points (symlink/junction) that
+    # could redirect the launch, and reject non-.exe targets (e.g. a .ps1 that would
+    # execute arbitrary script and could leave $LASTEXITCODE at 0 to fake success).
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.PSIsContainer) {
+        throw "Certifier path '$Path' is a directory, not an executable."
+    }
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Certifier path '$Path' is a reparse point; refusing to run it elevated."
+    }
+    if ([System.IO.Path]::GetExtension($Path).ToLowerInvariant() -ne ".exe") {
+        throw "Certifier path '$Path' is not a .exe; refusing to run a non-native certifier."
+    }
+    return $Path
+}
+
 function Resolve-CertifierPath {
     param([string]$Path)
 
     if (-not [string]::IsNullOrWhiteSpace($Path)) {
-        return (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+        $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+        return Assert-NativeExecutable -Path $resolved
     }
 
     $candidate = Join-Path $ProjectRoot "build\Release\partition_filesystem_probe_certifier.exe"
     if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
         throw "partition_filesystem_probe_certifier.exe was not found. Build target partition_filesystem_probe_certifier first."
     }
-    return (Resolve-Path -LiteralPath $candidate).Path
+    return Assert-NativeExecutable -Path (Resolve-Path -LiteralPath $candidate).Path
 }
 
 function ConvertTo-ResolvedOutputRoot {
     param([string]$Path)
 
-    if ([System.IO.Path]::IsPathRooted($Path)) {
-        return $Path
+    $rooted = if ([System.IO.Path]::IsPathRooted($Path)) {
+        $Path
     }
-    return Join-Path $ProjectRoot $Path
+    else {
+        Join-Path $ProjectRoot $Path
+    }
+    # Canonicalize so downstream fixed-name writes and the recursive export-output
+    # cleanup act on a fully-resolved path rather than one carrying '..' segments.
+    return [System.IO.Path]::GetFullPath($rooted)
 }
 
 function New-ReportBase {
@@ -158,6 +184,18 @@ function Invoke-Certifier {
         [Parameter(Mandatory = $true)] [string]$Path,
         [Parameter(Mandatory = $true)] [string[]]$Arguments
     )
+
+    # Remove any stale report at the --output path BEFORE running so a certifier that
+    # exits 0 without producing new output cannot let a prior run's JSON be read back
+    # and accepted as fresh proof.
+    $outputIndex = [array]::IndexOf($Arguments, "--output")
+    if ($outputIndex -ge 0 -and ($outputIndex + 1) -lt $Arguments.Count) {
+        $staleOutput = $Arguments[$outputIndex + 1]
+        if (-not [string]::IsNullOrWhiteSpace($staleOutput) -and
+            (Test-Path -LiteralPath $staleOutput -PathType Leaf)) {
+            Remove-Item -LiteralPath $staleOutput -Force
+        }
+    }
 
     $previousErrorActionPreference = $ErrorActionPreference
     try {
@@ -665,7 +703,7 @@ function Invoke-ApfsExportProof {
         output = @()
         error = ""
     }
-    if ($ApfsFileProof.status -ne "Passed" -or [string]::IsNullOrWhiteSpace($ApfsFileProof.selected_file_path)) {
+    if ("$($ApfsFileProof.status)" -ne "Passed" -or [string]::IsNullOrWhiteSpace($ApfsFileProof.selected_file_path)) {
         $proof.error = "APFS file proof must pass before export proof."
         return [pscustomobject]@{ proof = $proof; artifacts = $artifacts }
     }
@@ -731,6 +769,12 @@ try {
     }
     if ($apfsPartitions.Count -eq 0) {
         throw "Disk $($disk.Number) does not contain an Apple APFS partition."
+    }
+    # Fail closed on a switch combination that silently under-covers: without
+    # -ProbeAllApfsPartitions only the first APFS partition is probed, so
+    # -RequireAllApfsPartitions would "require all" while validating just one.
+    if ($RequireAllApfsPartitions -and -not $ProbeAllApfsPartitions) {
+        throw "-RequireAllApfsPartitions requires -ProbeAllApfsPartitions so every APFS partition is probed, not only the first."
     }
     $selectedApfsPartitions = if ($ProbeAllApfsPartitions) {
         $apfsPartitions
@@ -821,25 +865,29 @@ try {
         New-NotRunProof -Reason "No Apple APFS partition proof was produced."
     }
     $report.artifacts = $artifacts
-    $failed = @($results | Where-Object { $_.status -ne "Passed" -or $_.exit_code -ne 0 })
-    if ($RequireHfsFileProof -and $report.hfs_file_proof.status -ne "Passed") {
+    # Coerce every status to a scalar string before comparing to "Passed". A raw
+    # certifier report could carry status as an array or empty value; PowerShell's
+    # array-valued -ne would then filter to empty (falsy) and let a non-passing proof
+    # slip through. "$(...)" forces a string so an unexpected shape fails closed.
+    $failed = @($results | Where-Object { "$($_.status)" -ne "Passed" -or $_.exit_code -ne 0 })
+    if ($RequireHfsFileProof -and "$($report.hfs_file_proof.status)" -ne "Passed") {
         $failed += [pscustomobject]@{ status = $report.hfs_file_proof.status; exit_code = 1 }
     }
-    if ($RequireHfsAttributeProof -and $report.hfs_attribute_proof.status -ne "Passed") {
+    if ($RequireHfsAttributeProof -and "$($report.hfs_attribute_proof.status)" -ne "Passed") {
         $failed += [pscustomobject]@{ status = $report.hfs_attribute_proof.status; exit_code = 1 }
     }
-    if ($RequireApfsFileProof -and $report.apfs_file_proof.status -ne "Passed") {
+    if ($RequireApfsFileProof -and "$($report.apfs_file_proof.status)" -ne "Passed") {
         $failed += [pscustomobject]@{ status = $report.apfs_file_proof.status; exit_code = 1 }
     }
-    if ($RequireApfsExportProof -and $report.apfs_export_proof.status -ne "Passed") {
+    if ($RequireApfsExportProof -and "$($report.apfs_export_proof.status)" -ne "Passed") {
         $failed += [pscustomobject]@{ status = $report.apfs_export_proof.status; exit_code = 1 }
     }
     if ($RequireAllApfsPartitions) {
         foreach ($proof in @($report.apfs_partition_proofs)) {
-            if ($RequireApfsFileProof -and $proof.file_proof.status -ne "Passed") {
+            if ($RequireApfsFileProof -and "$($proof.file_proof.status)" -ne "Passed") {
                 $failed += [pscustomobject]@{ status = $proof.file_proof.status; exit_code = 1 }
             }
-            if ($RequireApfsExportProof -and $proof.export_proof.status -ne "Passed") {
+            if ($RequireApfsExportProof -and "$($proof.export_proof.status)" -ne "Passed") {
                 $failed += [pscustomobject]@{ status = $proof.export_proof.status; exit_code = 1 }
             }
         }

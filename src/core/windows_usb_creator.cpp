@@ -49,15 +49,23 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
     // Both arguments are validated by validateUSBInputs below, which reports the
     // failure through setError/failed(). They are not asserted: an assert would
     // abort a Debug build on input that Release rejects cleanly.
-    m_cancelled = false;
-    setError({});
-    m_diskNumber = diskNumber;
-    // Reset per-run state so a prior run's volume label / pinned identity can
-    // never leak into this run if extraction/probing fails early.
-    m_volumeLabel.clear();
-    m_targetDiskUniqueId.clear();
-    m_isoSizeBytes = -1;
-    m_isoModifiedMs = -1;
+
+    // Single-flight guard: this method mutates per-run instance state (m_diskNumber,
+    // m_targetDiskUniqueId, m_isoSizeBytes, m_isoModifiedMs, m_volumeLabel) that is
+    // neither atomic nor mutex-guarded, so a second concurrent call on the same instance
+    // would race and could cross-wire destructive targets. Reject re-entry, fail closed.
+    bool notRunning = false;
+    if (!m_running.compare_exchange_strong(notRunning, true)) {
+        setError("A USB creation is already in progress");
+        Q_EMIT failed(lastError());
+        return false;
+    }
+    struct RunningGuard {
+        std::atomic<bool>& flag;
+        ~RunningGuard() { flag.store(false); }
+    } runningGuard{m_running};
+
+    resetPerRunState(diskNumber);
 
     if (!validateUSBInputs(isoPath, diskNumber)) {
         return false;
@@ -69,9 +77,7 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
         return false;
     }
 
-    if (m_cancelled) {
-        setError("Operation cancelled");
-        Q_EMIT failed(lastError());
+    if (cancellationRequested()) {
         return false;
     }
 
@@ -80,9 +86,7 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
         return false;
     }
 
-    if (m_cancelled) {
-        setError("Operation cancelled");
-        Q_EMIT failed(lastError());
+    if (cancellationRequested()) {
         return false;
     }
 
@@ -91,13 +95,49 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
         return false;
     }
 
-    if (m_cancelled) {
-        setError("Operation cancelled");
-        Q_EMIT failed(lastError());
+    if (cancellationRequested()) {
         return false;
     }
 
     // ==================== STEP 5: FINAL VERIFICATION ====================
+    if (!runFinalVerification(driveLetter)) {
+        return false;
+    }
+
+    // SUCCESS - finalVerification() emits completed() signal
+    sak::logInfo("========================================");
+    sak::logInfo("ALL STEPS COMPLETED AND VERIFIED");
+    sak::logInfo("========================================");
+    return true;
+}
+
+void WindowsUSBCreator::resetPerRunState(const QString& diskNumber) {
+    m_cancelled = false;
+    setError({});
+    m_diskNumber = diskNumber;
+    // Reset per-run state so a prior run's volume label / pinned identity can
+    // never leak into this run if extraction/probing fails early.
+    m_volumeLabel.clear();
+    m_targetDiskUniqueId.clear();
+    m_isoSizeBytes = -1;
+    m_isoModifiedMs = -1;
+}
+
+bool WindowsUSBCreator::cancellationRequested() {
+    // Cancellation checkpoint between destructive steps. Report a cancel exactly as
+    // the inline checks did -- setError + failed() -- and return true so the caller
+    // bails and fails closed.
+    if (m_cancelled) {
+        setError("Operation cancelled");
+        Q_EMIT failed(lastError());
+        return true;
+    }
+    return false;
+}
+
+bool WindowsUSBCreator::runFinalVerification(const QString& driveLetter) {
+    // STEP 5, the sole path to a verified success. finalVerification() emits
+    // completed() on success; on failure report through failed() and fail closed.
     Q_EMIT statusChanged("Step 5/5: Running final comprehensive verification...");
     sak::logInfo("STEP 5: Final comprehensive verification...");
 
@@ -106,11 +146,6 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
         Q_EMIT failed(lastError());
         return false;
     }
-
-    // SUCCESS - finalVerification() emits completed() signal
-    sak::logInfo("========================================");
-    sak::logInfo("ALL STEPS COMPLETED AND VERIFIED");
-    sak::logInfo("========================================");
     return true;
 }
 
@@ -302,14 +337,15 @@ bool WindowsUSBCreator::reverifyTargetDiskIdentity(const QString& diskNumber) {
 }
 
 QString WindowsUSBCreator::system32ExePath(const QString& exeName) {
-    // Absolute %SystemRoot%\System32 path so a hijacked copy earlier in the
-    // CreateProcess search order (app dir/CWD) can never be executed. Fail closed
-    // (empty) if %SystemRoot% is unset -- never guess a default C:\Windows.
-    const QString systemRoot = qEnvironmentVariable("SystemRoot");
-    if (systemRoot.isEmpty()) {
+    // Resolve under the REAL system directory reported by GetSystemDirectoryW
+    // (sak::system32Path), NEVER the %SystemRoot% environment variable: a poisoned
+    // environment on an elevated launch must not be able to redirect diskpart.exe or
+    // bcdboot.exe to an attacker-planted copy. Fail closed (empty) if the system
+    // directory cannot be resolved -- never guess a default C:\Windows.
+    const QString path = sak::system32Path(exeName);
+    if (path.isEmpty()) {
         return {};
     }
-    const QString path = QDir(systemRoot).filePath(QStringLiteral("System32/") + exeName);
     // Fail closed unless this is a real, existing regular file -- never a symlink/reparse point
     // that could redirect an elevated diskpart.exe/bcdboot.exe launch to attacker-planted code.
     const QFileInfo info(path);
@@ -620,6 +656,14 @@ bool WindowsUSBCreator::setAndVerifyBootFlag(const QString& diskNumber,
 
 bool WindowsUSBCreator::configureBootAndVerify(const QString& diskNumber,
                                                const QString& driveLetter) {
+    // TOCTOU guard: bcdboot writes boot files to driveLetter. Re-pin the letter to the
+    // original target disk before that write so a hot-plug that reassigned the letter
+    // between extraction and here cannot redirect boot configuration onto an unrelated
+    // volume. Fails closed on any mismatch or query failure.
+    if (!verifyDriveLetterMapsToTarget(driveLetter)) {
+        Q_EMIT failed(lastError());
+        return false;
+    }
     // ==================== STEP 3: MAKE BOOTABLE ====================
     Q_EMIT progressUpdated(kBootConfigurationStartProgress);
     Q_EMIT statusChanged("Step 3/5: Making drive bootable...");

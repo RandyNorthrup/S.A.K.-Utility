@@ -77,6 +77,9 @@ function Get-CertificationScenarioSpec {
     if ($matches.Count -eq 0) {
         return $null
     }
+    if ($matches.Count -gt 1) {
+        throw "Duplicate certification matrix entries for id '$Id'"
+    }
     return $matches[0]
 }
 
@@ -147,11 +150,17 @@ function ConvertTo-ProcessArgument {
         [string]$Value
     )
 
-    if ($Value -match '[\s"]') {
-        return '"' + ($Value -replace '"', '\"') + '"'
+    if ($Value -notmatch '[\s"]') {
+        return $Value
     }
 
-    return $Value
+    # Follow the CommandLineToArgvW rules exactly: double every run of backslashes that
+    # precedes a double-quote and escape that quote, then double a run of trailing
+    # backslashes so the closing quote is not itself escaped. A naive C-style \" leaves a
+    # malicious OutputRoot able to corrupt argument boundaries or inject extra switches.
+    $escaped = [System.Text.RegularExpressions.Regex]::Replace($Value, '(\\*)"', '$1$1\"')
+    $escaped = [System.Text.RegularExpressions.Regex]::Replace($escaped, '(\\+)$', '$1$1')
+    return '"' + $escaped + '"'
 }
 
 function Invoke-ElevatedRelaunch {
@@ -198,6 +207,27 @@ function Assert-CertificationCondition {
     }
 }
 
+function Resolve-SystemToolPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    # Resolve under the real Windows system directory ([System.Environment]::SystemDirectory,
+    # backed by GetSystemDirectory), NEVER %PATH% or the mutable $env:SystemRoot, so an
+    # elevated launch cannot be redirected to an attacker-planted diskpart.exe / convert.exe.
+    # Fail closed if the directory or the tool cannot be resolved.
+    $systemDir = [System.Environment]::SystemDirectory
+    if ([string]::IsNullOrWhiteSpace($systemDir)) {
+        throw "Cannot resolve the Windows system directory for '$Name'"
+    }
+    $path = Join-Path $systemDir $Name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Required system tool not found: $path"
+    }
+    return $path
+}
+
 function Invoke-DiskPartScript {
     param(
         [Parameter(Mandatory = $true)]
@@ -206,7 +236,8 @@ function Invoke-DiskPartScript {
 
     $scriptPath = Join-Path $Script:RunRoot "diskpart-$([guid]::NewGuid()).txt"
     Set-Content -LiteralPath $scriptPath -Value ($Lines -join [Environment]::NewLine) -Encoding ASCII
-    $output = & diskpart.exe /s $scriptPath 2>&1
+    $diskpartPath = Resolve-SystemToolPath -Name "diskpart.exe"
+    $output = & $diskpartPath /s $scriptPath 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "diskpart failed with exit code $LASTEXITCODE`n$($output -join [Environment]::NewLine)"
     }
@@ -251,15 +282,24 @@ function New-DisposableVhdDisk {
         "attach vdisk"
     ) | Out-Null
 
-    $disk = Get-AttachedVhdDisk -Path $path
-    Set-Disk -Number $disk.Number -IsOffline $false -ErrorAction SilentlyContinue
-    Set-Disk -Number $disk.Number -IsReadOnly $false -ErrorAction Stop
+    try {
+        $disk = Get-AttachedVhdDisk -Path $path
+        Set-Disk -Number $disk.Number -IsOffline $false -ErrorAction SilentlyContinue
+        Set-Disk -Number $disk.Number -IsReadOnly $false -ErrorAction Stop
 
-    [pscustomobject]@{
-        path = $path
-        disk_number = [int]$disk.Number
-        size_mb = $size
-        name = $safeName
+        [pscustomobject]@{
+            path = $path
+            disk_number = [int]$disk.Number
+            size_mb = $size
+            name = $safeName
+        }
+    }
+    catch {
+        # Creation is not transactional: the vdisk is already attached by the diskpart
+        # script above, so any failure while resolving it or bringing it online/read-write
+        # must dismount it rather than leak an attached disk. Then re-throw the real error.
+        Dismount-DiskImage -ImagePath $path -ErrorAction SilentlyContinue | Out-Null
+        throw
     }
 }
 
@@ -320,7 +360,7 @@ function Invoke-FatVolumeConversion {
     )
 
     Assert-CertificationCondition -Condition ($DriveLetter -match '^[A-Z]$') -Message "Invalid conversion drive letter"
-    $convertPath = Join-Path $env:SystemRoot "System32\convert.exe"
+    $convertPath = Resolve-SystemToolPath -Name "convert.exe"
     $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $processInfo.FileName = $convertPath
     $processInfo.Arguments = "$DriveLetter`: /FS:NTFS /NoSecurity /X"
@@ -388,10 +428,51 @@ function New-CertificationPattern {
 
     $bytes = New-Object byte[] $Size
     $seed = [System.Text.Encoding]::ASCII.GetBytes($Text)
-    for ($i = 0; $i -lt $bytes.Length; $i++) {
-        $bytes[$i] = $seed[$i % $seed.Length]
+    if ($Size -le 0 -or $seed.Length -eq 0) {
+        return $bytes
+    }
+    # Tile the seed across the buffer by repeated doubling via Buffer.BlockCopy. This is
+    # byte-for-byte identical to $bytes[$i] = $seed[$i % $seed.Length] (each doubling copies
+    # a whole-seed-multiple region), but avoids a multi-million-iteration PowerShell loop so
+    # a full 16 MiB clone pattern can be generated cheaply.
+    $seedLen = [Math]::Min($seed.Length, $Size)
+    [System.Buffer]::BlockCopy($seed, 0, $bytes, 0, $seedLen)
+    $filled = $seedLen
+    while ($filled -lt $Size) {
+        $copy = [Math]::Min($filled, $Size - $filled)
+        [System.Buffer]::BlockCopy($bytes, 0, $bytes, $filled, $copy)
+        $filled += $copy
     }
     return $bytes
+}
+
+function Test-ByteArrayHashEqual {
+    param(
+        [Parameter(Mandatory = $true)]
+        [byte[]]$Expected,
+        [Parameter(Mandatory = $true)]
+        [byte[]]$Actual
+    )
+
+    # Compare potentially large regions (a full multi-MiB clone) by SHA-256 so verification
+    # covers every byte without a per-byte PowerShell loop. Length is checked first.
+    if ($Expected.Length -ne $Actual.Length) {
+        return $false
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $expectedHash = $sha.ComputeHash($Expected)
+        $actualHash = $sha.ComputeHash($Actual)
+    }
+    finally {
+        $sha.Dispose()
+    }
+    for ($i = 0; $i -lt $expectedHash.Length; $i++) {
+        if ($expectedHash[$i] -ne $actualHash[$i]) {
+            return $false
+        }
+    }
+    return $true
 }
 
 function Write-RawCertificationBytes {
@@ -501,6 +582,64 @@ function Assert-ByteArrayEqual {
     }
 }
 
+function Assert-EvidenceContract {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Id,
+        [object]$Evidence
+    )
+
+    # A scenario is only "Passed" when it produced the exact evidence its matrix entry
+    # requires. Without this the matrix's required_evidence_keys / required_evidence_values
+    # are decorative and any non-throwing body -- including one returning $null or an
+    # incomplete hashtable -- would still be recorded as Passed.
+    $spec = Get-CertificationScenarioSpec -Id $Id
+    if ($null -eq $spec) {
+        throw "No certification matrix entry for scenario '$Id'"
+    }
+    if ($null -eq $Evidence) {
+        throw "Scenario '$Id' produced no evidence"
+    }
+
+    foreach ($key in @($spec.required_evidence_keys)) {
+        $present = $false
+        $value = $null
+        if ($Evidence -is [System.Collections.IDictionary]) {
+            $present = $Evidence.Contains($key)
+            if ($present) {
+                $value = $Evidence[$key]
+            }
+        }
+        else {
+            $prop = $Evidence.PSObject.Properties[$key]
+            if ($null -ne $prop) {
+                $present = $true
+                $value = $prop.Value
+            }
+        }
+        if (-not $present -or $null -eq $value) {
+            throw "Scenario '$Id' is missing required evidence key '$key'"
+        }
+    }
+
+    $valuesProp = $spec.PSObject.Properties["required_evidence_values"]
+    if ($null -ne $valuesProp -and $null -ne $valuesProp.Value) {
+        foreach ($valueSpec in $valuesProp.Value.PSObject.Properties) {
+            $key = $valueSpec.Name
+            $allowed = @($valueSpec.Value.allowed_values)
+            $actual = if ($Evidence -is [System.Collections.IDictionary]) {
+                $Evidence[$key]
+            }
+            else {
+                $Evidence.$key
+            }
+            if ($allowed -notcontains $actual) {
+                throw "Scenario '$Id' evidence '$key'='$actual' is not an allowed value"
+            }
+        }
+    }
+}
+
 function Invoke-VhdScenario {
     param(
         [Parameter(Mandatory = $true)]
@@ -522,6 +661,7 @@ function Invoke-VhdScenario {
 
     try {
         $evidence = & $Body
+        Assert-EvidenceContract -Id $Id -Evidence $evidence
         Add-CertificationResult -Result (New-CertificationResult -Id $Id -Name $Name -Status "Passed" -Evidence $evidence)
     }
     catch {
@@ -864,9 +1004,13 @@ function Invoke-VhdImageCloneScenario {
 }
 
 function Invoke-VhdImageRestoreScenario {
-    $source = New-DisposableVhdDisk -Name "image-restore-source"
-    $target = New-DisposableVhdDisk -Name "image-restore-target"
+    # Acquire both disks INSIDE the try so a failure creating the target cannot leak an
+    # already-attached source (the finally below null-guards each disposal).
+    $source = $null
+    $target = $null
     try {
+        $source = New-DisposableVhdDisk -Name "image-restore-source"
+        $target = New-DisposableVhdDisk -Name "image-restore-target"
         Initialize-Disk -Number $source.disk_number -PartitionStyle GPT -ErrorAction Stop
         $sourcePartition = New-Partition -DiskNumber $source.disk_number -UseMaximumSize -AssignDriveLetter -ErrorAction Stop
         $sourceLetter = Get-CertificationDriveLetter -DiskNumber $source.disk_number -PartitionNumber $sourcePartition.PartitionNumber
@@ -907,15 +1051,19 @@ function Invoke-VhdImageRestoreScenario {
         }
     }
     finally {
-        Remove-DisposableVhdDisk -Vhd $target
-        Remove-DisposableVhdDisk -Vhd $source
+        if ($null -ne $target) { Remove-DisposableVhdDisk -Vhd $target }
+        if ($null -ne $source) { Remove-DisposableVhdDisk -Vhd $source }
     }
 }
 
 function Invoke-PartitionCloneRegionScenario {
-    $source = New-DisposableVhdDisk -Name "partition-clone-region-source"
-    $target = New-DisposableVhdDisk -Name "partition-clone-region-target"
+    # Acquire both disks INSIDE the try so a failure creating the target cannot leak an
+    # already-attached source (the finally below null-guards each disposal).
+    $source = $null
+    $target = $null
     try {
+        $source = New-DisposableVhdDisk -Name "partition-clone-region-source"
+        $target = New-DisposableVhdDisk -Name "partition-clone-region-target"
         Initialize-Disk -Number $source.disk_number -PartitionStyle GPT -ErrorAction Stop
         $sourcePartition = New-Partition -DiskNumber $source.disk_number -Size $PartitionCloneBytes -GptType $BasicDataGptType -ErrorAction Stop
         Initialize-Disk -Number $target.disk_number -PartitionStyle GPT -ErrorAction Stop
@@ -924,7 +1072,10 @@ function Invoke-PartitionCloneRegionScenario {
         $sourceOffset = [uint64]$sourcePartition.Offset
         $targetMarkerOffset = [uint64]$markerPartition.Offset
         $targetOffset = [uint64]($markerPartition.Offset + $markerPartition.Size + 1MB)
-        $sourceSignature = New-CertificationPattern -Text "SAK-PARTITION-CLONE-REGION-SOURCE"
+        # Fill the WHOLE clone region with a non-zero pattern (not just a 4 KiB marker) so
+        # the read-back below verifies every copied byte, not merely the first block, and
+        # corruption anywhere inside the cloned region is caught.
+        $sourceSignature = New-CertificationPattern -Text "SAK-PARTITION-CLONE-REGION-SOURCE" -Size $PartitionCloneBytes
         $outsideMarker = New-CertificationPattern -Text "SAK-PARTITION-CLONE-REGION-OUTSIDE"
 
         Set-CertificationDiskOffline -DiskNumber $source.disk_number
@@ -942,7 +1093,7 @@ function Invoke-PartitionCloneRegionScenario {
         $preservedMarker = Read-RawCertificationBytes -DiskNumber $target.disk_number `
             -Offset $targetMarkerOffset `
             -Size $outsideMarker.Length
-        Assert-ByteArrayEqual -Expected $sourceSignature -Actual $clonedSignature -Message "Partition clone region signature mismatch"
+        Assert-CertificationCondition -Condition (Test-ByteArrayHashEqual -Expected $sourceSignature -Actual $clonedSignature) -Message "Partition clone region signature mismatch across the full $($sourceSignature.Length)-byte region"
         Assert-ByteArrayEqual -Expected $outsideMarker -Actual $preservedMarker -Message "Partition clone region overwrote bytes outside target region"
 
         return @{
@@ -956,10 +1107,14 @@ function Invoke-PartitionCloneRegionScenario {
         }
     }
     finally {
-        Set-CertificationDiskOnline -DiskNumber $target.disk_number
-        Set-CertificationDiskOnline -DiskNumber $source.disk_number
-        Remove-DisposableVhdDisk -Vhd $target
-        Remove-DisposableVhdDisk -Vhd $source
+        if ($null -ne $target) {
+            Set-CertificationDiskOnline -DiskNumber $target.disk_number
+            Remove-DisposableVhdDisk -Vhd $target
+        }
+        if ($null -ne $source) {
+            Set-CertificationDiskOnline -DiskNumber $source.disk_number
+            Remove-DisposableVhdDisk -Vhd $source
+        }
     }
 }
 
@@ -999,7 +1154,10 @@ try {
     $status = if ($failed.Count -gt 0) {
         "Failed"
     }
-    elseif ($RequireVhdDataDiskEvidence -and $RunVhdDataDiskMatrix -and $skippedVhd.Count -gt 0) {
+    elseif ($RequireVhdDataDiskEvidence -and $skippedVhd.Count -gt 0) {
+        # Fail closed whenever evidence was demanded but a VHD scenario did not produce it,
+        # INCLUDING the case where -RunVhdDataDiskMatrix was omitted (every VHD scenario is
+        # then Skipped). Requiring the matrix switch here would let a no-evidence run exit 0.
         "Incomplete"
     }
     elseif ($passed.Count -eq 0) {
@@ -1010,6 +1168,53 @@ try {
     }
     else {
         "Passed"
+    }
+
+    # Provenance so the report can prove which code and native tools produced the evidence.
+    # Values that cannot be resolved are recorded as "unavailable" (honest, non-fatal) rather
+    # than omitted; none of this affects the pass/fail decision above.
+    $provenance = [ordered]@{
+        script_path = $PSCommandPath
+        script_sha256 = "unavailable"
+        git_head = "unavailable"
+        git_dirty = $null
+        os_version = [System.Environment]::OSVersion.Version.ToString()
+        clr_version = [System.Environment]::Version.ToString()
+        powershell_version = $PSVersionTable.PSVersion.ToString()
+        diskpart_path = "unavailable"
+        diskpart_sha256 = "unavailable"
+        convert_path = "unavailable"
+        convert_sha256 = "unavailable"
+    }
+    try {
+        $provenance.script_sha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
+    }
+    catch {
+        $provenance.script_sha256 = "unavailable: $($_.Exception.Message)"
+    }
+    try {
+        $gitHead = & git -C $projectRoot rev-parse HEAD 2>$null
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(($gitHead | Out-String))) {
+            $provenance.git_head = ($gitHead | Out-String).Trim()
+            $gitStatus = & git -C $projectRoot status --porcelain 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $provenance.git_dirty = -not [string]::IsNullOrWhiteSpace(($gitStatus | Out-String).Trim())
+            }
+        }
+    }
+    catch {
+        $provenance.git_head = "unavailable: $($_.Exception.Message)"
+    }
+    try {
+        $diskpartToolPath = Resolve-SystemToolPath -Name "diskpart.exe"
+        $provenance.diskpart_path = $diskpartToolPath
+        $provenance.diskpart_sha256 = (Get-FileHash -LiteralPath $diskpartToolPath -Algorithm SHA256).Hash
+        $convertToolPath = Resolve-SystemToolPath -Name "convert.exe"
+        $provenance.convert_path = $convertToolPath
+        $provenance.convert_sha256 = (Get-FileHash -LiteralPath $convertToolPath -Algorithm SHA256).Hash
+    }
+    catch {
+        $provenance.native_tool_error = $_.Exception.Message
     }
 
     $report = [ordered]@{
@@ -1028,6 +1233,7 @@ try {
         keep_vhd = [bool]$KeepVhd
         vhd_size_mb = [Math]::Max($VhdSizeMB, $MinimumVhdSizeMB)
         administrator = Test-Administrator
+        provenance = $provenance
         summary = [ordered]@{
             passed = $passed.Count
             failed = $failed.Count
@@ -1044,8 +1250,8 @@ try {
     if ($failed.Count -gt 0) {
         exit 1
     }
-    if ($RequireVhdDataDiskEvidence -and $RunVhdDataDiskMatrix -and $skippedVhd.Count -gt 0) {
-        Write-Host "VHD data-disk evidence required, but $($skippedVhd.Count) VHD scenario(s) were skipped." -ForegroundColor Red
+    if ($RequireVhdDataDiskEvidence -and $skippedVhd.Count -gt 0) {
+        Write-Host "VHD data-disk evidence required, but $($skippedVhd.Count) VHD scenario(s) were skipped (was -RunVhdDataDiskMatrix supplied, elevated?)." -ForegroundColor Red
         exit 2
     }
 }

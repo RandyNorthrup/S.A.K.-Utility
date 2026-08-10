@@ -20,6 +20,8 @@ $ErrorActionPreference = "Stop"
 $script:TranscriptStarted = $false
 $script:RunRoot = ""
 $script:Commands = @()
+$script:DiskPartExe = Join-Path $env:SystemRoot "System32\diskpart.exe"
+$script:BcdBootExe = Join-Path $env:SystemRoot "System32\bcdboot.exe"
 
 trap {
     if (-not [string]::IsNullOrWhiteSpace($script:RunRoot)) {
@@ -58,12 +60,16 @@ function Invoke-NativeCommand {
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $started = Get-Date
+    $LASTEXITCODE = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        throw "$Name did not run: '$FilePath' produced no exit code."
     }
     $record = [pscustomobject]@{
         name = $Name
@@ -86,9 +92,11 @@ function Invoke-DiskPartScript {
         [Parameter(Mandatory = $true)] [string[]]$Lines
     )
 
-    $scriptPath = Join-Path $script:RunRoot ("diskpart-" + [guid]::NewGuid().ToString("N") + ".txt")
+    $scriptPath = Join-Path $env:TEMP ("sak-offline-uefi-diskpart-" + [guid]::NewGuid().ToString("N") + ".txt")
     Set-Content -LiteralPath $scriptPath -Value ($Lines -join [Environment]::NewLine) -Encoding ASCII
-    return Invoke-NativeCommand -Name $Name -FilePath "diskpart.exe" -Arguments @("/s", $scriptPath)
+    $result = Invoke-NativeCommand -Name $Name -FilePath $script:DiskPartExe -Arguments @("/s", $scriptPath)
+    $result | Add-Member -NotePropertyName diskpart_script -NotePropertyValue ($Lines -join "`n") -Force
+    return $result
 }
 
 function Get-AvailableDriveLetter {
@@ -142,6 +150,11 @@ if (-not (Test-IsAdmin)) {
 }
 if (-not $Force) {
     throw "Pass -Force after confirming the attached disk is the disposable target clone."
+}
+foreach ($requiredExe in @($script:DiskPartExe, $script:BcdBootExe)) {
+    if (-not (Test-Path -LiteralPath $requiredExe -PathType Leaf)) {
+        throw "Required system executable not found: $requiredExe"
+    }
 }
 
 $script:RunRoot = Join-Path $OutputRoot (Get-Date -Format "yyyyMMdd-HHmmss")
@@ -231,13 +244,16 @@ if ((Test-Path -LiteralPath $beforeBcd -PathType Leaf) -and -not (Test-Path -Lit
     Copy-Item -LiteralPath $beforeBcd -Destination $brokenBackup -Force
 }
 
-$bcdboot = Invoke-NativeCommand -Name "bcdboot-uefi" -FilePath "bcdboot.exe" -Arguments @($windowsPath, "/s", "${efiLetter}:", "/f", "UEFI")
+$bcdboot = Invoke-NativeCommand -Name "bcdboot-uefi" -FilePath $script:BcdBootExe -Arguments @($windowsPath, "/s", "${efiLetter}:", "/f", "UEFI")
 $fallbackDir = "${efiLetter}:\EFI\BOOT"
 New-Item -ItemType Directory -Path $fallbackDir -Force | Out-Null
 $bootmgfw = "${efiLetter}:\EFI\Microsoft\Boot\bootmgfw.efi"
 $fallbackBoot = Join-Path $fallbackDir "BOOTX64.EFI"
-if (Test-Path -LiteralPath $bootmgfw -PathType Leaf) {
+$bootmgfwPresent = Test-Path -LiteralPath $bootmgfw -PathType Leaf
+$fallbackWritten = $false
+if ($bootmgfwPresent) {
     Copy-Item -LiteralPath $bootmgfw -Destination $fallbackBoot -Force
+    $fallbackWritten = $true
 }
 
 $after = Get-DiskSnapshot -DiskNumber $TargetDiskNumber
@@ -248,6 +264,7 @@ $script:Commands | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $commands
 $report = [ordered]@{
     tool = "partition-manager-offline-uefi-bcdboot-repair"
     schema_version = 1
+    status = "Passed"
     created_utc = (Get-Date).ToUniversalTime().ToString("o")
     vm_id = $env:COMPUTERNAME
     expected_target = $ExpectedTargetLabel
@@ -258,6 +275,8 @@ $report = [ordered]@{
     before_layout = $before
     after_layout = $after
     bcdboot_exit_code = $bcdboot.exit_code
+    bootmgfw_source_present = $bootmgfwPresent
+    fallback_bootx64_written = $fallbackWritten
     fallback_bootx64_exists = (Test-Path -LiteralPath $fallbackBoot -PathType Leaf)
     commands_path = $commandsPath
 }

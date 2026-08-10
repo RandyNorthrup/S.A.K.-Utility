@@ -144,12 +144,6 @@ function Assert-DisposableVirtualBoxDisk {
     if ($disk.IsBoot -or $disk.IsSystem) {
         throw "Refusing disk ${DiskNumber}: disk is boot/system."
     }
-    if ($disk.IsReadOnly) {
-        Set-Disk -Number $DiskNumber -IsReadOnly $false
-    }
-    if ($disk.IsOffline) {
-        Set-Disk -Number $DiskNumber -IsOffline $false
-    }
     if ($disk.FriendlyName -notmatch "VBOX HARDDISK") {
         throw "Refusing disk ${DiskNumber}: expected disposable VBOX HARDDISK, got '$($disk.FriendlyName)'."
     }
@@ -163,6 +157,15 @@ function Assert-DisposableVirtualBoxDisk {
     $reportedMedia = if ($physical.Count -gt 0) { [string]$physical[0].MediaType } else { "Unavailable" }
     if ($reportedMedia -match "SSD|SCM|NVMe") {
         throw "Refusing HDD defrag gate on SSD/NVMe media: $reportedMedia."
+    }
+
+    # Identity is fully validated above; only now bring the disposable disk writable/online,
+    # so a rejected wrong disk is never mutated before it is proven disposable.
+    if ($disk.IsReadOnly) {
+        Set-Disk -Number $DiskNumber -IsReadOnly $false
+    }
+    if ($disk.IsOffline) {
+        Set-Disk -Number $DiskNumber -IsOffline $false
     }
 
     return [pscustomobject]@{
@@ -201,14 +204,20 @@ function New-FragmentationFixture {
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     for ($i = 0; $i -lt 80; ++$i) {
         $path = Join-Path $root ("seed-{0:D3}.bin" -f $i)
-        $null = Invoke-NativeCommand -Name "fsutil-create-seed-$i" -FilePath "fsutil.exe" -Arguments @("file", "createnew", $path, "262144")
+        $created = Invoke-NativeCommand -Name "fsutil-create-seed-$i" -FilePath "fsutil.exe" -Arguments @("file", "createnew", $path, "262144")
+        if ($created.exit_code -ne 0 -or -not (Test-Path -LiteralPath $path)) {
+            throw "fsutil failed to create fixture file '$path' (exit $($created.exit_code)): $($created.output)"
+        }
     }
     for ($i = 0; $i -lt 80; $i += 3) {
         Remove-Item -LiteralPath (Join-Path $root ("seed-{0:D3}.bin" -f $i)) -Force
     }
     for ($i = 0; $i -lt 24; ++$i) {
         $path = Join-Path $root ("fill-{0:D3}.bin" -f $i)
-        $null = Invoke-NativeCommand -Name "fsutil-create-fill-$i" -FilePath "fsutil.exe" -Arguments @("file", "createnew", $path, "524288")
+        $created = Invoke-NativeCommand -Name "fsutil-create-fill-$i" -FilePath "fsutil.exe" -Arguments @("file", "createnew", $path, "524288")
+        if ($created.exit_code -ne 0 -or -not (Test-Path -LiteralPath $path)) {
+            throw "fsutil failed to create fixture file '$path' (exit $($created.exit_code)): $($created.output)"
+        }
     }
     return $root
 }
@@ -217,6 +226,25 @@ function Clear-DisposableDisk {
     param([int]$DiskNumber)
 
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
+    $partitions = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue)
+
+    # Re-pin identity at the moment of destruction. The disk number can re-resolve to a
+    # different physical disk after the initial Assert (hot-plug/renumber), and the failure
+    # handler routes here even when Assert rejected the disk. Fail closed rather than wipe
+    # anything that is not the small disposable VBOX data disk.
+    if ($partitions | Where-Object { $_.IsBoot -or $_.IsSystem }) {
+        throw "Refusing to clear disk ${DiskNumber}: boot/system partition present."
+    }
+    if ($disk.IsBoot -or $disk.IsSystem) {
+        throw "Refusing to clear disk ${DiskNumber}: disk is boot/system."
+    }
+    if ($disk.FriendlyName -notmatch "VBOX HARDDISK") {
+        throw "Refusing to clear disk ${DiskNumber}: expected disposable VBOX HARDDISK, got '$($disk.FriendlyName)'."
+    }
+    if ($disk.Size -gt 8GB) {
+        throw "Refusing to clear disk ${DiskNumber}: expected small disposable data disk, got $($disk.Size) bytes."
+    }
+
     if ($disk.IsReadOnly) {
         Set-Disk -Number $DiskNumber -IsReadOnly $false
     }
@@ -224,7 +252,6 @@ function Clear-DisposableDisk {
         Set-Disk -Number $DiskNumber -IsOffline $false
     }
 
-    $partitions = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue)
     if ($disk.PartitionStyle -eq "RAW" -and $partitions.Count -eq 0) {
         return "Disk $DiskNumber already RAW."
     }
@@ -244,6 +271,14 @@ function Write-GateReport {
     )
 
     New-Item -ItemType Directory -Path $EvidenceDir -Force | Out-Null
+    # Remove any prior report so a failed rerun cannot leave a stale Passed report.json
+    # (and a passed rerun cannot leave a stale report.failed.json) for downstream tooling.
+    foreach ($stale in @("report.json", "report.failed.json")) {
+        $stalePath = Join-Path $EvidenceDir $stale
+        if (Test-Path -LiteralPath $stalePath -PathType Leaf) {
+            Remove-Item -LiteralPath $stalePath -Force
+        }
+    }
     $reportName = if ($Status -eq "Passed") { "report.json" } else { "report.failed.json" }
     $reportPath = Join-Path $EvidenceDir $reportName
     $report = [ordered]@{
@@ -309,6 +344,14 @@ try {
     $driveLetter = $fixture.drive_letter
     $fixtureRoot = New-FragmentationFixture -DriveLetter $driveLetter
 
+    # Re-verify the drive letter still maps to the pinned disposable disk before running any
+    # volume operation, so a drive-letter reassignment cannot redirect the defrag to another
+    # volume.
+    $driveLetterOwner = @(Get-Partition -DriveLetter $driveLetter -ErrorAction SilentlyContinue)
+    if ($driveLetterOwner.Count -eq 0 -or $driveLetterOwner[0].DiskNumber -ne $TargetDiskNumber) {
+        throw "Drive letter ${driveLetter}: no longer maps to target disk $TargetDiskNumber; refusing to defrag a volume that is not on the pinned disposable disk."
+    }
+
     $started = Get-Date
     $analyze = Invoke-CapturedScript -Name "Optimize-Volume-Analyze" -ScriptBlock {
         Optimize-Volume -DriveLetter $driveLetter -Analyze -Verbose -ErrorAction Stop
@@ -332,6 +375,22 @@ try {
     if (-not $health.success) {
         throw "Health scan failed: $($health.error)"
     }
+    # Do not fabricate affirmative evidence from empty output: fail closed if any operation
+    # produced nothing to record.
+    if ([string]::IsNullOrWhiteSpace($analyze.output)) {
+        throw "Analyze produced no output; refusing to certify defrag evidence."
+    }
+    if ([string]::IsNullOrWhiteSpace($defrag.output)) {
+        throw "Defrag produced no output; refusing to certify defrag evidence."
+    }
+    if ([string]::IsNullOrWhiteSpace($health.output)) {
+        throw "Post-defrag health scan produced no output; refusing to certify health evidence."
+    }
+    # post_defrag_health_verified: require the scan to affirmatively report a clean volume,
+    # not merely that Repair-Volume did not throw.
+    if ($health.output -notmatch "NoErrorsFound") {
+        throw "Post-defrag health scan did not report NoErrorsFound: $($health.output)"
+    }
 
     $cleanupResult = if ($NoCleanup) {
         "Cleanup skipped by -NoCleanup."
@@ -340,15 +399,21 @@ try {
         Clear-TargetDisk -DiskNumber $TargetDiskNumber
     }
     $guestReport.cleanup = $cleanupResult
+    # Clear-TargetDisk swallows its failure into a string; fail the gate rather than pass with
+    # a summary that falsely claims the disk was cleared to RAW.
+    if (-not $NoCleanup -and $cleanupResult -notmatch "cleared to RAW|already RAW") {
+        throw "Disk cleanup did not restore RAW state: $cleanupResult"
+    }
+    $cleanupSummary = if ($NoCleanup) { "left the disposable disk intact because -NoCleanup was set" } else { "cleared the disk back to RAW" }
 
     $evidence = @{
         device_model = [string]$identity.disk.FriendlyName
         media_type = $identity.media_type
         drive_letter = "${driveLetter}:"
-        analyze_output = if ([string]::IsNullOrWhiteSpace($analyze.output)) { "Analyze completed with no output." } else { $analyze.output }
-        defrag_output = if ([string]::IsNullOrWhiteSpace($defrag.output)) { "Defrag completed with no output." } else { $defrag.output }
+        analyze_output = $analyze.output
+        defrag_output = $defrag.output
         duration_seconds = [string]$durationSeconds
-        post_defrag_health_check = if ([string]::IsNullOrWhiteSpace($health.output)) { "Repair-Volume -Scan completed with no output." } else { $health.output }
+        post_defrag_health_check = $health.output
         cancellation_path = "Partition Manager Apply uses cancellable elevated helper; this VM gate ran same Optimize-Volume defrag command on disposable media."
         cleanup = $cleanupResult
     }
@@ -365,7 +430,7 @@ try {
         -Status "Passed" `
         -Evidence $evidence `
         -Artifacts $artifacts `
-        -VerificationSummary "Windows 11 VirtualBox VM $env:COMPUTERNAME used disposable VBOX HARDDISK $TargetDiskNumber, created NTFS fixture volume ${driveLetter}:, ran Optimize-Volume -Analyze and -Defrag, ran Repair-Volume -Scan, and cleared the disk back to RAW." `
+        -VerificationSummary "Windows 11 VirtualBox VM $env:COMPUTERNAME used disposable VBOX HARDDISK $TargetDiskNumber, created NTFS fixture volume ${driveLetter}:, ran Optimize-Volume -Analyze and -Defrag, ran Repair-Volume -Scan, and $cleanupSummary." `
         -OperatorNotes "Gate intentionally targets VirtualBox rotational data disk only; SSD/NVMe media is rejected before execution."
 
     Write-Host "HDD defrag external gate passed: $reportPath"

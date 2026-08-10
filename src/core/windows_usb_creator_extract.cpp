@@ -923,6 +923,16 @@ bool WindowsUSBCreator::criticalFileOnDiskMatches(const QPair<QString, qint64>& 
     // Normalize path from ISO (may use forward slashes); ensure trailing backslash.
     QString relativePath = fileInfo.first;
     relativePath.replace(QChar('/'), QChar('\\'));
+    // relativePath came from the UNTRUSTED ISO listing. Reject traversal, absolute,
+    // UNC, drive-qualified, and alternate-data-stream forms so a crafted listing can
+    // never make verification stat a file outside the extraction root. Fail closed.
+    if (relativePath.contains(QStringLiteral("..")) || relativePath.contains(QLatin1Char(':')) ||
+        relativePath.startsWith(QLatin1Char('\\'))) {
+        sak::logError(QString("[ ]-- Unsafe critical file path rejected: %1")
+                          .arg(fileInfo.first)
+                          .toStdString());
+        return false;
+    }
     QString basePath = destPath;
     if (!basePath.endsWith("\\")) {
         basePath += "\\";

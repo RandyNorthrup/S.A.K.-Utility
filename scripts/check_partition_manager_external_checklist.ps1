@@ -107,6 +107,7 @@ try {
 
     $expectedHeadings = @($matrix.external_gates | ForEach-Object { "## $($_.id) - $($_.name)" })
     $actualHeadings = @([regex]::Matches($checklist, "(?m)^## external\.[^\r\n]+") | ForEach-Object { $_.Value })
+    Assert-Condition -Condition ($expectedHeadings.Count -gt 0) -Message "Certification matrix has no external gates"
     Assert-Condition -Condition ($actualHeadings.Count -eq $expectedHeadings.Count) -Message "External checklist gate heading count mismatch: expected $($expectedHeadings.Count), found $($actualHeadings.Count)"
 
     foreach ($heading in $actualHeadings) {

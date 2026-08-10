@@ -36,6 +36,12 @@ function Read-CertificationMatrix {
 $CertificationMatrix = Read-CertificationMatrix
 $ExpectedVhdScenarioIds = @($CertificationMatrix.vhd_scenarios | ForEach-Object { $_.id })
 $ExpectedExternalGateIds = @($CertificationMatrix.external_gates | ForEach-Object { $_.id })
+if ($ExpectedVhdScenarioIds.Count -eq 0) {
+    throw "Partition Manager certification matrix has no VHD scenarios"
+}
+if ($ExpectedExternalGateIds.Count -eq 0) {
+    throw "Partition Manager certification matrix has no external gates"
+}
 
 function Resolve-LatestCertificationReport {
     param(
@@ -90,7 +96,7 @@ function Test-EvidenceReference {
         }
 
         foreach ($candidate in $candidatePaths) {
-            if (Test-Path -LiteralPath $candidate) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
                 return $true
             }
         }
@@ -155,7 +161,7 @@ function Test-EvidenceValuePresent {
         return -not [string]::IsNullOrWhiteSpace($Value)
     }
     if ($Value -is [System.Array]) {
-        return $Value.Count -gt 0
+        return @($Value | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
     }
     if ($Value -is [pscustomobject]) {
         return @($Value.PSObject.Properties).Count -gt 0
@@ -415,7 +421,7 @@ try {
         generated_utc = (Get-Date).ToUniversalTime().ToString("o")
         claim_level = $claimLevel
         claims = [ordered]@{
-            code_complete_automated = ($claimLevel -ne "FailedEvidence")
+            code_complete_automated = (($claimLevel -ne "FailedEvidence") -and ($reportResults.Count -gt 0))
             vhd_data_disk_certified = $vhdCertified
             hardware_certified = $hardwareCertified
         }

@@ -178,6 +178,30 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(
     return entry;
 }
 
+namespace {
+
+/// @brief Error describing why a BackupConfig is rejected, or empty when it is accepted.
+///
+/// Encryption is only applied to compressed archives, and needs a password. Reject either
+/// mismatch up front so a requested encryption can never silently produce a readable plaintext
+/// archive or copy directory. Registry backup is not implemented; completing a backup that was
+/// asked to include registry data would report incomplete work as success, so fail closed until
+/// the feature lands (the flag itself is kept, not dropped).
+QString backupConfigError(const UserDataManager::BackupConfig& config) {
+    if (config.encrypt && !config.compress) {
+        return QStringLiteral("Encryption requires compression");
+    }
+    if (config.encrypt && config.password.isEmpty()) {
+        return QStringLiteral("Encryption requires a password");
+    }
+    if (config.include_registry) {
+        return QStringLiteral("Registry backup is not implemented");
+    }
+    return QString();
+}
+
+}  // namespace
+
 bool UserDataManager::validateBackupRequest(const QString& app_name,
                                             const QStringList& source_paths,
                                             const QString& backup_dir,
@@ -201,15 +225,9 @@ bool UserDataManager::validateBackupRequest(const QString& app_name,
         Q_EMIT operationError(app_name, "Failed to create backup directory");
         return false;
     }
-    // Encryption is only applied to compressed archives, and needs a password.
-    // Reject either mismatch up front so a requested encryption can never
-    // silently produce a readable plaintext archive or copy directory.
-    if (config.encrypt && !config.compress) {
-        Q_EMIT operationError(app_name, "Encryption requires compression");
-        return false;
-    }
-    if (config.encrypt && config.password.isEmpty()) {
-        Q_EMIT operationError(app_name, "Encryption requires a password");
+    const QString config_error = backupConfigError(config);
+    if (!config_error.isEmpty()) {
+        Q_EMIT operationError(app_name, config_error);
         return false;
     }
     return true;
@@ -276,7 +294,16 @@ UserDataManager::BackupEntry UserDataManager::buildBackupResult(const QString& a
 }
 
 bool UserDataManager::allPathsPresent(std::initializer_list<QString> paths) {
-    return std::none_of(paths.begin(), paths.end(), [](const QString& p) { return p.isEmpty(); });
+    // An empty list is vacuously "all present" under none_of -- reject it so a caller
+    // that assembled no paths cannot pass the guard.
+    if (paths.size() == 0) {
+        return false;
+    }
+    // A whitespace-only path is not empty but QDir still treats it as the CWD, so trim
+    // before the emptiness test and fail closed on either.
+    return std::none_of(paths.begin(), paths.end(), [](const QString& p) {
+        return p.trimmed().isEmpty();
+    });
 }
 
 bool UserDataManager::encryptedArchiveSizeOk(qint64 size) {
@@ -1038,6 +1065,21 @@ bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
 }
 
 bool UserDataManager::atomicReplaceFile(const QString& tmp, const QString& target) {
+#ifdef SAK_PLATFORM_WINDOWS
+    // MoveFileExW performs the replace as a single atomic rename: the destination name
+    // always resolves to a complete file (the old one or the new one), so unlike the
+    // rename-aside dance below there is no crash window in which target is absent. tmp is
+    // a sibling of target (same volume), so this is a metadata rename, never a copy.
+    // WRITE_THROUGH flushes before returning; on failure target is left untouched, so drop
+    // the staged tmp and fail closed.
+    if (MoveFileExW(reinterpret_cast<const wchar_t*>(tmp.utf16()),
+                    reinterpret_cast<const wchar_t*>(target.utf16()),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
+        QFile::remove(tmp);
+        return false;
+    }
+    return true;
+#else
     // Move the existing target ASIDE instead of deleting it: if renaming the staged replacement
     // onto target fails, roll the original back into place. The original is never destroyed while
     // the swap is incomplete (fail closed, no data-loss window that the old delete-then-rename
@@ -1058,6 +1100,7 @@ bool UserDataManager::atomicReplaceFile(const QString& tmp, const QString& targe
     }
     QFile::remove(backup);
     return true;
+#endif
 }
 
 bool UserDataManager::overwriteFile(const QString& source_file, const QString& dest_file) {

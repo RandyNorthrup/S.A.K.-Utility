@@ -69,12 +69,23 @@ function Invoke-NativeCommand {
 
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $exitCode = $null
+    $output = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
+    catch {
+        # A launch failure (missing/invalid executable) leaves $LASTEXITCODE holding a
+        # prior command's value; report it as a failure so a stale 0 cannot look like success.
+        $output = $_.Exception.Message
+        $exitCode = -1
+    }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        $exitCode = -1
     }
     [pscustomobject]@{
         file_path = $FilePath
@@ -126,6 +137,10 @@ function Clear-DisposableDisk {
     param([int]$DiskNumber)
 
     $disk = Get-Disk -Number $DiskNumber
+    # Re-validate before every wipe: cleanup runs from a finally block that is also
+    # reached after Assert-DisposableDisk rejects a disk, so an unchecked wipe here
+    # would destroy the very boot/system/non-VBOX/oversized disk validation refused.
+    Assert-DisposableDisk -Disk $disk
     if ($disk.IsReadOnly) {
         Set-Disk -Number $DiskNumber -IsReadOnly $false
     }
@@ -199,7 +214,12 @@ try {
 
     $deleteNotifyBefore = Invoke-NativeCommand -FilePath "fsutil.exe" -Arguments @("behavior", "query", "DisableDeleteNotify")
     $commands.Add($deleteNotifyBefore)
-    if ($deleteNotifyBefore.output -match "NTFS DisableDeleteNotify\s*=\s*0" -or
+    if ($deleteNotifyBefore.exit_code -ne 0) {
+        # Prior state is unknown; restore to the Windows default (delete-notify enabled)
+        # so a failed query cannot leave TRIM silently disabled on the lab machine.
+        $restoreNtfsDeleteNotify = $true
+    }
+    elseif ($deleteNotifyBefore.output -match "NTFS DisableDeleteNotify\s*=\s*0" -or
         $deleteNotifyBefore.output -match "DisableDeleteNotify\s*=\s*0") {
         $restoreNtfsDeleteNotify = $true
     }
@@ -209,7 +229,21 @@ try {
         $disableDeleteNotifyLegacy = Invoke-NativeCommand -FilePath "fsutil.exe" -Arguments @("behavior", "set", "DisableDeleteNotify", "1")
         $commands.Add($disableDeleteNotifyLegacy)
     }
+    # Do not trust either set's exit code: re-query and fail closed unless delete-notify
+    # is actually disabled, so the gate can never certify recovery under live TRIM.
+    $deleteNotifyVerify = Invoke-NativeCommand -FilePath "fsutil.exe" -Arguments @("behavior", "query", "DisableDeleteNotify")
+    $commands.Add($deleteNotifyVerify)
+    if ($deleteNotifyVerify.exit_code -ne 0 -or
+        $deleteNotifyVerify.output -notmatch "DisableDeleteNotify\s*=\s*1") {
+        throw "Failed to disable NTFS delete-notify; the file-recovery gate requires TRIM disabled and will not certify under an unverified state."
+    }
 
+    $reportPath = Join-Path $EvidenceDir "report.json"
+    if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+        # A reused evidence directory must not let a previous run's report stand in as
+        # this run's proof; remove it so post-run existence means this run wrote it.
+        Remove-Item -LiteralPath $reportPath -Force
+    }
     $certifierArgs = @(
         "--drive", "$($volume.drive_letter):",
         "--volume-id", $volume.unique_id,
@@ -256,6 +290,9 @@ finally {
             if ($restoreDeleteNotify.exit_code -ne 0) {
                 $restoreDeleteNotifyLegacy = Invoke-NativeCommand -FilePath "fsutil.exe" -Arguments @("behavior", "set", "DisableDeleteNotify", "0")
                 $commands.Add($restoreDeleteNotifyLegacy)
+                if ($restoreDeleteNotifyLegacy.exit_code -ne 0) {
+                    $cleanupErrors.Add("Failed to restore NTFS DisableDeleteNotify (exit $($restoreDeleteNotifyLegacy.exit_code)).")
+                }
             }
         }
         catch {
@@ -279,6 +316,7 @@ $guestReport = [pscustomobject]@{
     completed_at = (Get-Date).ToString("o")
     user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     is_admin = Test-IsAdmin
+    cleanup_skipped = [bool]$NoCleanup
     target_disk_number = $TargetDiskNumber
     certifier_path = $CertifierPath
     evidence_dir = $EvidenceDir
@@ -290,19 +328,26 @@ $guestReport = [pscustomobject]@{
     cleanup_errors = @($cleanupErrors)
 }
 
+$guestReportWritten = $true
 try {
     $guestReport | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $GuestReportPath -Encoding UTF8
 }
 catch {
+    $guestReportWritten = $false
     $fallbackPath = "$GuestReportPath.write-error.txt"
     "Failed to write guest report: $($_.Exception.Message)" | Set-Content -LiteralPath $fallbackPath -Encoding UTF8
 }
-if ($status -ne "Passed") {
+if ($status -ne "Passed" -or -not $guestReportWritten) {
     if ($Script:TranscriptStarted) {
         Stop-Transcript | Out-Null
         $Script:TranscriptStarted = $false
     }
-    Write-Error "External file recovery gate failed. Report: $GuestReportPath"
+    if ($guestReportWritten) {
+        Write-Error "External file recovery gate failed. Report: $GuestReportPath"
+    }
+    else {
+        Write-Error "External file recovery gate could not write its required JSON evidence: $GuestReportPath"
+    }
     exit 1
 }
 
