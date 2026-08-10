@@ -131,13 +131,31 @@ byte-identical (full Release ctest 225/225).
       be re-confirmed once WS3c lands).
 
 --------------------------------------------------------------------------------
-## WORKSTREAM 4 -- infra / gate backlog (no live rig needed; last)
+## WORKSTREAM 4 -- infra / gate backlog (no live rig needed)
 
-Status: BACKLOG. Not APFS. Carried from the R5 campaign.
-- [ ] Wire the source-tree ASCII gate (src is now clean; docs gate already exists).
-- [ ] G21 gate debt; cppcheck-suppression audit.
-- [ ] G14 coverage ledger; G18 mutation testing; fuzz harnesses; fault injection.
-- [ ] clang-tidy backlog (995); G20; remaining gate program; branch protection.
+Status: IN PROGRESS. Not APFS. Carried from the R5 campaign. Two gates wired this pass;
+the rest is a debt-reduction + test-infra program (multi-session, much of it cosmetic).
+
+- [x] ASCII-only gate wired (commit 7f48e91). scripts/check_ascii_only.ps1 already scanned
+      every tracked text file but was never in .pre-commit-config.yaml; normalized three
+      residual source comments (two U+2404 control-pictures for the HFS NUL-prefix, an em
+      dash, a Cyrillic homoglyph) so the whole tree is clean (1467 files) and wired the hook
+      (self-excludes binary + vendored/evidence; runs on changed files only).
+- [x] GUI style-token gate wired (commit 2bee958). Its one residual was a QColor::rgba()
+      method call folded into a pixmap cache key, not a raw color literal; the matcher now
+      excludes a `.`/`::`-prefixed call, debt is zero, hook wired.
+- [ ] Three gate scripts still carry real debt (wired the moment each reaches zero, per the
+      note in .pre-commit-config.yaml). MEASURED 2026-08-10:
+        check_gui_magic_numbers.ps1        18  (raw layout ints in setContentsMargins/
+                                                setSpacing/setFixedHeight -> named ui:: consts;
+                                                bounded, low-value cosmetic)
+        check_gui_stylesheet_literals.ps1  74  (inline stylesheet literals -> style constants)
+        check_magic_numbers.py            452  (whole-tree magic numbers -> named constants)
+- [ ] clang-tidy backlog (~995 findings) -- a full clang-tidy pass + fix program.
+- [ ] cppcheck-suppression audit -- review every inline suppression is still justified.
+- [ ] Test-infra program (each a dedicated effort): G14 coverage ledger, G18 mutation
+      testing, fuzz harnesses, fault injection, G20/G21 remaining gate wiring.
+- [ ] Branch protection -- needs the GitHub repo admin (Randy); flag once ready.
 
 --------------------------------------------------------------------------------
 ## Cert rig quick reference (reuse)
