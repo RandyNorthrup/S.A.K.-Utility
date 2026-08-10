@@ -62,23 +62,25 @@ Mac to harvest one); the physical MacBook rig (10.10.11.38) or a VM SIP-disable 
 --------------------------------------------------------------------------------
 ## WORKSTREAM 2 -- import metadata fidelity (wave G / F1 completion)
 
-Status: SCOPED, not started. Defect CONFIRMED on the live rig: import-image resets an
-adopted real Apple file's owner/group/mode/times/bsd_flags to generated defaults (observed
-alpha.txt mode 0640 -> 0644 after import). The re-emitted container is valid (apfsck
-clean) but loses fidelity. Wave G/F1 preserved this on the writer's own foreign-adopt path;
-the CLI import re-emit path (ImportedFile{name,data} -> commitImageOnlyFileWrite) does not.
+Status: DONE 2026-08-10 (commit 2a2412c). Defect was CONFIRMED on the live rig
+(import-image reset an adopted real Apple file's owner/group/mode/times/bsd_flags to
+generated defaults -- a 0640 file re-emitted as 0644, non-default owners lost). Threaded
+the recovered inode identity end to end, reusing the wave G applyRecoveredInodeMetadata
+already in the writer. Each layer additive + sentinel-guarded, so the generated path stays
+byte-identical (full Release ctest 225/225).
 
-Plan (each layer additive; generated path must stay byte-identical -> 225/225):
-- [ ] Reader: PartitionApfsFileEntry += uid, gid, bsd_flags, create/mod/change/access time.
-      parseInodeRecord already reads mode(0x50)/flags(0x30); add owner(0x48), group(0x4C),
-      bsd_flags(0x44), times(0x10/0x18/0x20/0x28) -- all within the guarded 0x5C bound.
-- [ ] CLI: ImportedFile carries the metadata (with a valid/has-metadata sentinel);
-      collectImportSourceFiles copies it from the listing entry. The ADDED --file-name file
-      has no source metadata -> sentinel false -> generated defaults.
-- [ ] Writer: commitImageOnlyFileWrite request += optional inode metadata; apply it when
-      building the inode value (reuse the wave G applyRecoveredInodeMetadata semantics).
-- [ ] Live re-cert: import a real Apple container with a non-default owner/mode file; verify
-      the re-emitted container preserves uid/gid/mode/times and is fsck-clean.
+- [x] Reader: parseInodeRecord now reads owner(0x48)/group(0x4C)/bsd_flags(0x44)/times
+      (0x10/0x18/0x20/0x28) into InodeRecord; PartitionApfsFileEntry exposes them with a
+      has_inode_metadata gate. All offsets are within the value_length >= 0x5C bound.
+- [x] CLI: ImportedFile carries the metadata from the listing entry; the optional added
+      --file-name file has none -> has_metadata false -> generated defaults.
+- [x] Writer: PartitionApfsImageFileInsertCommitRequest += preserve_inode_metadata + eight
+      scalars; commitImageOnlyFileWrite builds an ApfsRecoveredInodeMetadata and threads it
+      ApfsRootFileWriteRequest -> ApfsFileInsertRequest -> payload -> applyRecoveredInodeMetadata.
+- [x] Live re-cert: imported a real Apple container whose files were chowned 502:80 mode
+      0640 and 503:81 mode 0600 -- the re-emit preserved those exact owner/group/mode
+      (verified via diskutil enableOwnership + stat) and the container fsck_apfs was clean;
+      host apfsck clean for the single- and multi-chunk imports.
 
 --------------------------------------------------------------------------------
 ## WORKSTREAM 3 -- foreign multi-chunk in-place COW
