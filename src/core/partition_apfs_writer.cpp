@@ -148,7 +148,7 @@ constexpr uint64_t kApfsFormatVolumeOid = 1026;
 constexpr uint64_t kApfsFormatFqIpTreeOid = 1027;
 constexpr uint64_t kApfsFormatRootTreeOid = 1028;
 constexpr uint64_t kApfsFormatFqMainTreeOid = 1029;
-// Apple's newfs_apfs commits the genesis container at transaction 2 â€” a
+// Apple's newfs_apfs commits the genesis container at transaction 2 -- a
 // checkpoint at xid 1 fails fsck_apfs's consistency check.
 constexpr uint64_t kApfsFormatXid = 2;
 constexpr uint64_t kApfsNxMinimumNextOid = 1030;
@@ -1668,7 +1668,7 @@ QByteArray fsKey(uint64_t objectId,
 }
 
 // j_inode_val mirroring records written by Apple's APFS driver: parent and
-// private ids, timestamps, link/child count, mode, plus extended fields — a
+// private ids, timestamps, link/child count, mode, plus extended fields -- a
 // NAME xfield on every inode and a 40-byte DSTREAM xfield on regular files.
 struct ApfsInodeParams {
     uint64_t parentId;
@@ -5240,8 +5240,21 @@ QVector<uint64_t> readLiveSpacemanCibArray(QIODevice* image,
     // foreign spaceman whose inline-array packing differs.
     const qsizetype base =
         le32(object, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceAddrOffsetOffset);
+    // F38: fail closed only on an out-of-range array OFFSET (a base that is zero or negative).
+    // Individual entries are NOT rejected: cibCount can exceed the entries materialized in this
+    // single spaceman object (the high chunks have no live cib and are implicit-all-free), and a
+    // cib not yet live is legitimately 0. An entry past the object, or a zero entry, resolves to 0
+    // = "no owning cib"; the point-of-use guards (owningCibAddr's callers) then treat a 0 owner as
+    // implicit-all-free on the read/scan path and fail closed on the spill/write path, so a benign
+    // absent slot never rejects the whole array and a 0 owner is never read as block 0.
+    if (base <= 0) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit: live spaceman cib-address array offset is out of range"));
+        return {};
+    }
     for (uint64_t k = 0; k < cibCount; ++k) {
-        addrs.append(le64(object, base + static_cast<qsizetype>(k) * 8));
+        const qsizetype off = base + static_cast<qsizetype>(k) * 8;
+        addrs.append(off + 8 > object.size() ? 0 : le64(object, off));
     }
     return addrs;
 }
@@ -7516,18 +7529,29 @@ struct ApfsIpSlot {
 // chunk-0 bitmap); the returned cib is the slot's first block and bitmap its
 // last. Foundation for the crash-safe IP-region rotation
 // (docs/APFS_A2_CRASH_SAFETY_DESIGN.md).
-ApfsIpSlot nextIpSlot(uint64_t liveCib, const ApfsGeneratedLayout& layout) {
-    constexpr int kIpSlotCount = 3;  // cib 0 rotates through 3 group slots
+[[nodiscard]] bool nextIpSlot(uint64_t liveCib,
+                              const ApfsGeneratedLayout& layout,
+                              ApfsIpSlot* out,
+                              QStringList* blockers) {
+    constexpr uint64_t kIpSlotCount = 3;  // cib 0 rotates through 3 group slots
     // The rotation group spans ipGroupStride blocks (cib0 + chunk-0 bitmap, plus the
     // boundary bitmap on the non-CAB overflow tier); the new group is the round-robin
     // successor of the live group. cib0Base is the precomputed first group slot
-    // (single/multi-CIB reduce to ip_base + (N-1), stride 2).
+    // (single/multi-CIB reduce to ip_base + (N-1), stride 2). Fail closed when the live cib is
+    // not one of the three group slots: an out-of-range liveCib would underflow the subtraction
+    // and narrow to an arbitrary in-range slot (F16); the index stays a uint64_t.
     const uint64_t cib0Base = layout.cib0Base;
     const uint64_t stride = layout.ipGroupStride;
-    const int liveIndex = static_cast<int>((liveCib - cib0Base) / stride);
-    const uint64_t nextBase = cib0Base +
-                              static_cast<uint64_t>((liveIndex + 1) % kIpSlotCount) * stride;
-    return {nextBase, nextBase + 1};
+    if (stride == 0 || liveCib < cib0Base || (liveCib - cib0Base) % stride != 0 ||
+        (liveCib - cib0Base) / stride >= kIpSlotCount) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit: live internal-pool cib address is not a valid rotation slot"));
+        return false;
+    }
+    const uint64_t liveIndex = (liveCib - cib0Base) / stride;
+    const uint64_t nextBase = cib0Base + ((liveIndex + 1) % kIpSlotCount) * stride;
+    *out = {nextBase, nextBase + 1};
+    return true;
 }
 
 // The full cib/bitmap rotation a crash-safe commit performs: read the live slot,
@@ -7547,12 +7571,21 @@ struct ApfsIpRotation {
     uint64_t newCab0{0};
 };
 
-ApfsIpRotation computeIpRotation(uint64_t liveCib,
-                                 uint64_t liveBitmap,
-                                 const ApfsGeneratedLayout& layout) {
-    const ApfsIpSlot newSlot = nextIpSlot(liveCib, layout);
-    const ApfsIpSlot freeSlot = nextIpSlot(newSlot.cib, layout);
-    return {liveCib, liveBitmap, newSlot.cib, newSlot.bitmap, freeSlot.cib, freeSlot.bitmap};
+[[nodiscard]] bool computeIpRotation(uint64_t liveCib,
+                                     uint64_t liveBitmap,
+                                     const ApfsGeneratedLayout& layout,
+                                     ApfsIpRotation* out,
+                                     QStringList* blockers) {
+    ApfsIpSlot newSlot;
+    if (!nextIpSlot(liveCib, layout, &newSlot, blockers)) {
+        return false;
+    }
+    ApfsIpSlot freeSlot;
+    if (!nextIpSlot(newSlot.cib, layout, &freeSlot, blockers)) {
+        return false;
+    }
+    *out = {liveCib, liveBitmap, newSlot.cib, newSlot.bitmap, freeSlot.cib, freeSlot.bitmap};
+    return true;
 }
 
 struct ApfsFreeBlockScan {
@@ -10598,6 +10631,54 @@ bool resolveRelocatedIpLayout(ApfsFsCommitContext* ctx,
 // re-derive the boundary/ alloc chunk + seed from the real internal-pool extent. Requires
 // ctx->liveCib (call AFTER loadLiveAllocationSlot). No-op below the overflow tier (allocChunk == 0,
 // chunk-0 path).
+// F34: the FOREIGN (real Apple) internal-pool geometry read off the live spaceman, bounded against
+// the container. ip_base/ip_block_count define the pool extent, ip_bm_base + the ring-slot index
+// (le16 at the bitmap-offset field) the live IP-bitmap block. All must sit inside the container and
+// the ring slot inside ip_bm_block_count, or a corrupt value would resolve to a ghost/garbage
+// block. Reads the fields locally (no extra params) so it stays within the parameter budget.
+bool foreignIpGeometryInRange(const QByteArray& sm, uint64_t blockCount) {
+    const uint64_t ipBase = le64(sm, kApfsSpacemanIpBaseOffset);
+    const uint64_t ipBlockCount = le64(sm, kApfsSpacemanIpBlockCountOffset);
+    const uint64_t ipBmBase = le64(sm, kApfsSpacemanIpBmBaseOffset);
+    const qsizetype bmAddrOff = static_cast<qsizetype>(le32(sm, kApfsSpacemanIpBitmapOffsetField));
+    const uint64_t liveSlot0 = le16(sm, bmAddrOff);
+    if (ipBase == 0 || ipBlockCount == 0 || ipBmBase == 0) {
+        return false;
+    }
+    if (ipBase >= blockCount || ipBlockCount > blockCount - ipBase || ipBmBase >= blockCount) {
+        return false;
+    }
+    return liveSlot0 < le32(sm, kApfsSpacemanIpBmBlockCountOffset) &&
+           ipBmBase + liveSlot0 < blockCount;
+}
+
+// F34/F36: fail closed before a foreign internal pool is adopted as the overflow anchor. Rejects an
+// out-of-range bitmap-offset field before le16 reads a ghost slot (F34), a multi-block
+// internal-pool bitmap this path cannot materialize (only IP-bitmap block 0 is written; F36), and
+// any pool/ring geometry that escapes the container (F34).
+bool validateForeignOverflowIpGeometry(const QByteArray& sm,
+                                       uint64_t blockCount,
+                                       QStringList* blockers) {
+    const qsizetype bmAddrOff = static_cast<qsizetype>(le32(sm, kApfsSpacemanIpBitmapOffsetField));
+    if (bmAddrOff <= 0 || bmAddrOff + 2 > sm.size()) {
+        blockers->append(QStringLiteral(
+            "APFS foreign overflow commit: internal-pool bitmap-offset field is out of range"));
+        return false;
+    }
+    if (le32(sm, kApfsSpacemanIpBmSizeOffset) > 1) {
+        blockers->append(QStringLiteral(
+            "APFS foreign overflow commit: multi-block internal-pool bitmap (ip_bm_size > 1) is "
+            "not supported"));
+        return false;
+    }
+    if (!foreignIpGeometryInRange(sm, blockCount)) {
+        blockers->append(
+            QStringLiteral("APFS foreign overflow commit: internal-pool geometry out of range"));
+        return false;
+    }
+    return true;
+}
+
 bool reanchorForeignOverflowAllocation(ApfsFsCommitContext* ctx, QStringList* blockers) {
     if (ctx->layout.allocChunk == 0) {
         return true;  // non-overflow: certified chunk-0 path, proceed
@@ -10634,17 +10715,15 @@ bool reanchorForeignOverflowAllocation(ApfsFsCommitContext* ctx, QStringList* bl
                            "internal-pool geometry"));
         return false;
     }
+    if (!validateForeignOverflowIpGeometry(sm, ctx->geometry.blockCount, blockers)) {
+        return false;
+    }
     const uint64_t ipBase = le64(sm, kApfsSpacemanIpBaseOffset);
     const uint64_t ipBlockCount = le64(sm, kApfsSpacemanIpBlockCountOffset);
     const uint64_t ipBmBase = le64(sm, kApfsSpacemanIpBmBaseOffset);
     const qsizetype bmAddrOff = static_cast<qsizetype>(le32(sm, kApfsSpacemanIpBitmapOffsetField));
     const uint16_t liveSlot0 = le16(sm, bmAddrOff);    // ring slot of the live IP-bitmap block 0
     const uint64_t firstFree = ipBase + ipBlockCount;  // first block past the internal pool
-    if (ipBase == 0 || ipBlockCount == 0 || ipBmBase == 0) {
-        blockers->append(
-            QStringLiteral("APFS foreign overflow commit: degenerate internal-pool geometry"));
-        return false;
-    }
     ctx->foreignOverflow = true;
     ctx->ipBmBase = ipBmBase;
     ctx->ipBlockCount = ipBlockCount;
@@ -10800,6 +10879,28 @@ QVector<uint64_t> foreignLiveIpUsedSet(const QByteArray& ipBitmap, uint64_t ipBl
     return used;
 }
 
+// F37: the live metadata blocks that sit INSIDE the internal pool and must already be marked USED
+// in the on-disk IP bitmap - the live cib/bitmap/cab0, the boundary-chunk bitmap, and every
+// immutable cib address. foreignLiveChunkBitmapBlock is defined later in the file, so it is
+// forward-declared here.
+uint64_t foreignLiveChunkBitmapBlock(const ApfsFsCommitContext& ctx, QStringList* blockers);
+QSet<uint64_t> foreignLiveIpMetadataBlocks(const ApfsFsCommitContext& ctx, QStringList* blockers) {
+    QSet<uint64_t> live{ctx.liveCib, ctx.liveBitmap};
+    if (ctx.liveCab0 != 0) {
+        live.insert(ctx.liveCab0);
+    }
+    const uint64_t boundary = foreignLiveChunkBitmapBlock(ctx, blockers);
+    if (boundary != 0) {
+        live.insert(boundary);
+    }
+    for (uint64_t addr : ctx.liveCibAddrs) {
+        if (addr != 0) {
+            live.insert(addr);
+        }
+    }
+    return live;
+}
+
 // Foreign overflow: allocate `count` free internal-pool blocks by scanning the live IP bitmap for
 // clear bits in IP-rel [0, ipBlockCount), skipping any already taken this commit, returning
 // absolute block addresses (ip_base + rel). The new cib / chunk-bitmap COW copies land here
@@ -10814,6 +10915,10 @@ bool allocateForeignIpBlocks(const ApfsFsCommitContext& ctx,
     if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveIpBitmapBlock, &ipBitmap, blockers)) {
         return false;
     }
+    // F37: a mandatory exclusion set INDEPENDENT of the on-disk bitmap. A clear bit that aliases a
+    // known-live metadata block means the bitmap is inconsistent with a live block, so fail closed
+    // rather than hand it out to be overwritten (which would destroy crash-safety).
+    const QSet<uint64_t> liveMeta = foreignLiveIpMetadataBlocks(ctx, blockers);
     const uint64_t bits = std::min<uint64_t>(ctx.ipBlockCount,
                                              static_cast<uint64_t>(ipBitmap.size()) * 8);
     for (uint64_t bit = 0; bit < bits && outAbs->size() < count; ++bit) {
@@ -10821,8 +10926,17 @@ bool allocateForeignIpBlocks(const ApfsFsCommitContext& ctx,
             (static_cast<unsigned char>(ipBitmap.at(static_cast<qsizetype>(bit / 8))) >>
              (bit % 8)) &
             1U;
+        if (set) {
+            continue;
+        }
         const uint64_t abs = ctx.layout.ipBase + bit;
-        if (!set && !takenAbs.contains(abs)) {
+        if (liveMeta.contains(abs)) {
+            blockers->append(QStringLiteral(
+                "APFS foreign overflow commit: the on-disk internal-pool bitmap marks a known-live "
+                "metadata block free"));
+            return false;
+        }
+        if (!takenAbs.contains(abs)) {
             outAbs->append(abs);
         }
     }
@@ -10879,7 +10993,11 @@ bool allocateOverflowCommitBlocks(const ApfsFsCommitContext& ctx,
         return true;
     }
     const uint64_t cabSlot = ctx.layout.cabCount > 0 ? 1 : 0;
-    *chunk1BitmapBlock = nextIpSlot(ctx.liveCib, ctx.layout).cib + 2 + cabSlot;
+    ApfsIpSlot slot;
+    if (!nextIpSlot(ctx.liveCib, ctx.layout, &slot, blockers)) {
+        return false;
+    }
+    *chunk1BitmapBlock = slot.cib + 2 + cabSlot;
     return true;
 }
 
@@ -10912,12 +11030,22 @@ uint64_t chunkEntryInCib(uint64_t chunk) {
     return chunk % kApfsSpacemanChunksPerCib;
 }
 
-// The on-disk address of the chunk-info block that owns data chunk `c`: cib 0 is the
-// live (rotating) cib; cib k>0 is its current spaceman cib-array address (genesis until
-// keystone S4b copies-on-writes it into a free-pool slot).
+// The on-disk address of the chunk-info block that owns data chunk `c`: cib 0 is the live
+// (rotating) cib; cib k>0 is its current spaceman cib-array address (genesis until keystone S4b
+// copies-on-writes it into a free-pool slot). Returns 0 when the chunk has NO materialized owning
+// cib (k beyond the live cib array, or a zero/absent entry): that is a legitimate implicit-all-free
+// chunk, not an error, and 0 is a safe sentinel because a real cib address is never block 0 (the
+// nx_superblock). F38: callers that must READ the owner treat 0 as "no bitmap, never read block 0";
+// a caller that must WRITE into the chunk fails closed on a 0 owner.
 uint64_t owningCibAddr(const ApfsFsCommitContext& ctx, uint64_t chunk) {
     const uint64_t k = cibIndexForChunk(chunk);
-    return k == 0 ? ctx.liveCib : ctx.liveCibAddrs.value(static_cast<qsizetype>(k), 0);
+    if (k == 0) {
+        return ctx.liveCib;
+    }
+    if (static_cast<qsizetype>(k) >= ctx.liveCibAddrs.size()) {
+        return 0;
+    }
+    return ctx.liveCibAddrs.at(static_cast<qsizetype>(k));
 }
 
 void spillDataIntoChunks(const ApfsFsCommitContext& ctx,
@@ -10930,9 +11058,17 @@ void spillDataIntoChunks(const ApfsFsCommitContext& ctx,
     // k>0. The owning cib is resolved per chunk (owningCibAddr); a spill into cib k>0
     // copies-on-writes that cib and re-points its spaceman cib-array entry at finalize.
     for (uint64_t c = 1; c < chunkCount && newBlocks->size() < need; ++c) {
+        const uint64_t owner = owningCibAddr(ctx, c);
+        if (owner == 0) {
+            // No materialized owning cib: the chunk cannot record a spill allocation. Fail closed
+            // (F38) rather than read block 0 (the nx_superblock) as if it were a chunk-info block.
+            blockers->append(QStringLiteral(
+                "APFS in-place commit: cannot spill into a data chunk with no owning "
+                "chunk-info block"));
+            return;
+        }
         QByteArray ownerCib(ctx.geometry.blockSize, '\0');
-        if (!readApfsRepairBlock(
-                ctx.image, ctx.geometry, owningCibAddr(ctx, c), &ownerCib, blockers)) {
+        if (!readApfsRepairBlock(ctx.image, ctx.geometry, owner, &ownerCib, blockers)) {
             return;
         }
         const auto chunkBitmap = readChunkAllocationBitmap(
@@ -11309,11 +11445,20 @@ QVector<ExtentRefPhysRecord> planDivergeCloneExtents(const QVector<ExtentRefPhys
 }
 
 // The current on-disk ci_bitmap_addr of data chunk `c`, read from its OWNING cib (cib 0
-// or, S4b, the cib k>0 that owns it). 0 == the chunk is still implicit-all-free (fresh).
-uint64_t liveChunkBitmapAddr(const ApfsFsCommitContext& ctx, uint64_t c, QStringList* blockers) {
+// or, S4b, the cib k>0 that owns it). A genuine 0 == the chunk is still implicit-all-free (fresh)
+// and is returned as a valid value; F41: nullopt is a FAILURE - an unreadable cib or an
+// out-of-range owner (owningCibAddr nullopt) - kept distinct from that legitimate 0 so the caller
+// fails the commit before any bitmap block is handed back and overwritten.
+std::optional<uint64_t> liveChunkBitmapAddr(const ApfsFsCommitContext& ctx,
+                                            uint64_t c,
+                                            QStringList* blockers) {
+    const uint64_t owner = owningCibAddr(ctx, c);
+    if (owner == 0) {
+        return 0;  // no owning cib -> the chunk is implicit-all-free; never read block 0
+    }
     QByteArray ownerCib(ctx.geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(ctx.image, ctx.geometry, owningCibAddr(ctx, c), &ownerCib, blockers)) {
-        return 0;
+    if (!readApfsRepairBlock(ctx.image, ctx.geometry, owner, &ownerCib, blockers)) {
+        return std::nullopt;  // F41: a REAL cib that will not read must abort, not read as 0
     }
     const qsizetype entry = kApfsChunkInfoEntriesOffset +
                             static_cast<qsizetype>(chunkEntryInCib(c)) * kApfsChunkInfoEntryStride;
@@ -11330,12 +11475,17 @@ uint64_t liveChunkBitmapAddr(const ApfsFsCommitContext& ctx, uint64_t c, QString
 // S4b: the scan covers EVERY data chunk (1..chunkCount-1) across all cibs, resolving each
 // chunk's owning cib. A chunk cib k>0 owns can now carry a live spill bitmap (cib k was
 // copied-on-written), so its ci_bitmap_addr must be counted too.
-QVector<uint64_t> liveSpilledChunkIndices(const ApfsFsCommitContext& ctx, QStringList* blockers) {
+std::optional<QVector<uint64_t>> liveSpilledChunkIndices(const ApfsFsCommitContext& ctx,
+                                                         QStringList* blockers) {
     QVector<uint64_t> chunks;
     const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
     for (uint64_t c = 1; c < chunkCount; ++c) {
-        if (liveChunkBitmapAddr(ctx, c, blockers) != 0) {
+        const auto addr = liveChunkBitmapAddr(ctx, c, blockers);
+        if (!addr) {
+            return std::nullopt;  // F41: a read failure/short owner must abort, not read as 0
+        }
+        if (*addr != 0) {
             chunks.append(c);
         }
     }
@@ -11365,15 +11515,19 @@ QVector<uint64_t> liveSpilledChunkIndices(const ApfsFsCommitContext& ctx, QStrin
 // on-disk bits come from the exact index-keyed used-set buildSpillIpUsedSet writes
 // into ctx.ipUsedSet, NOT from a contiguous prefix of this count -- because S3 moved
 // spilled-chunk bitmaps to sparse free-pool slots that are no longer base + c-1.
-uint64_t computeFinalizeIpBitmapUsage(const ApfsFsCommitFinalize& f,
-                                      uint64_t groupSize,
-                                      QStringList* blockers) {
+std::optional<uint64_t> computeFinalizeIpBitmapUsage(const ApfsFsCommitFinalize& f,
+                                                     uint64_t groupSize,
+                                                     QStringList* blockers) {
     const uint64_t extraBitmaps = f.ctx.layout.metadataChunks > 1 ? f.ctx.layout.metadataChunks - 2
                                                                   : 0;
     const uint64_t immutableCabCount = f.ctx.layout.cabCount > 0 ? f.ctx.layout.cabCount - 1 : 0;
     uint64_t spillBitmaps = 0;
     if (f.ctx.layout.allocChunk == 0) {
-        QVector<uint64_t> live = liveSpilledChunkIndices(f.ctx, blockers);
+        const auto liveOpt = liveSpilledChunkIndices(f.ctx, blockers);
+        if (!liveOpt) {
+            return std::nullopt;  // F41: propagate the fail-closed abort
+        }
+        QVector<uint64_t> live = *liveOpt;
         for (uint64_t c : spilledChunkIndices(f.newBlocks, f.ctx.layout.chunk0Blocks)) {
             if (!live.contains(c)) {
                 live.append(c);
@@ -11756,7 +11910,7 @@ std::optional<QVector<uint64_t>> postCommitCibKAddrs(
 // holds it: the chunks this commit spilled into use their freshly assigned slot; the chunks a
 // prior commit spilled into but this one did not keep their current (carried-forward) slot,
 // read from that chunk's OWNING cib (cib 0 or a cib k>0, resolved by liveChunkBitmapAddr).
-QVector<QPair<uint64_t, uint64_t>> finalLiveChunkSlots(
+std::optional<QVector<QPair<uint64_t, uint64_t>>> finalLiveChunkSlots(
     const ApfsFsCommitContext& ctx,
     const QVector<uint64_t>& liveSpilled,
     const QVector<QPair<uint64_t, uint64_t>>& chunkSlots,
@@ -11768,7 +11922,11 @@ QVector<QPair<uint64_t, uint64_t>> finalLiveChunkSlots(
                         chunkSlots.cend(),
                         [c](const QPair<uint64_t, uint64_t>& s) { return s.first == c; });
         if (!rewritten) {
-            live.append({c, liveChunkBitmapAddr(ctx, c, blockers)});
+            const auto addr = liveChunkBitmapAddr(ctx, c, blockers);
+            if (!addr) {
+                return std::nullopt;  // F41: abort before the carried-forward slot is trusted
+            }
+            live.append({c, *addr});
         }
     }
     return live;
@@ -11777,14 +11935,18 @@ QVector<QPair<uint64_t, uint64_t>> finalLiveChunkSlots(
 // The free-pool blocks this commit must not pick for a fresh bitmap/cib slot: the reserved
 // IP prefix + rotation groups, every currently-live spilled-chunk bitmap slot, every current
 // cib k>0 address (a cib may sit in the free pool after a prior COW), and every IP-FQ ghost.
-QSet<uint64_t> spillPlanExcludedBlocks(const ApfsFsCommitContext& ctx,
-                                       const ApfsIpFreePoolGeometry& geo,
-                                       const ApfsIpRotation& rotation,
-                                       const QVector<uint64_t>& liveSpilled,
-                                       QStringList* blockers) {
+std::optional<QSet<uint64_t>> spillPlanExcludedBlocks(const ApfsFsCommitContext& ctx,
+                                                      const ApfsIpFreePoolGeometry& geo,
+                                                      const ApfsIpRotation& rotation,
+                                                      const QVector<uint64_t>& liveSpilled,
+                                                      QStringList* blockers) {
     QSet<uint64_t> excluded = reservedIpRegionBlocks(geo);
     for (uint64_t c : liveSpilled) {
-        excluded.insert(liveChunkBitmapAddr(ctx, c, blockers));
+        const auto addr = liveChunkBitmapAddr(ctx, c, blockers);
+        if (!addr) {
+            return std::nullopt;  // F41: abort rather than exclude a garbage/unread block
+        }
+        excluded.insert(*addr);
     }
     for (uint64_t k = 1; k < ctx.layout.cibCount; ++k) {
         excluded.insert(ctx.liveCibAddrs.value(static_cast<qsizetype>(k), 0));
@@ -11839,18 +12001,24 @@ bool planCibKCopyOnWrite(const ApfsFsCommitFinalize& f,
 // live spill slot, every current cib k>0 address, and every IP-FQ ghost. S4b additionally
 // copies-on-writes each cib k>0 that owns a touched chunk and re-points the spaceman cib-array
 // entry. On a chunk-0-only commit the touched set is empty and the plan stays byte-identical.
-bool planSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
-                             const ApfsIpRotation& rotation,
-                             const QVector<uint64_t>& freed,
-                             ApfsSpilledChunkPlan* plan,
-                             QStringList* blockers) {
+// Assign each data chunk this commit TOUCHES (spills into OR frees from) a fresh free-pool bitmap
+// slot - never its current one, so the previous checkpoint's slot is left intact - and free the
+// old slot of a chunk that already carried a live bitmap. Fails closed when a chunk's owning cib is
+// unreadable (liveChunkBitmapAddr nullopt, F38/F41) or the free pool is exhausted. Extracted from
+// planSpilledChunkBitmaps to keep both within the complexity budget.
+bool planTouchedChunkSlots(const ApfsFsCommitFinalize& f,
+                           const QVector<uint64_t>& freed,
+                           QSet<uint64_t>* excluded,
+                           ApfsSpilledChunkPlan* plan,
+                           QStringList* blockers) {
     const ApfsFsCommitContext& ctx = f.ctx;
     const ApfsIpFreePoolGeometry geo = computeIpFreePoolGeometry(ctx);
-    const QVector<uint64_t> liveSpilled = liveSpilledChunkIndices(ctx, blockers);
-    QSet<uint64_t> excluded = spillPlanExcludedBlocks(ctx, geo, rotation, liveSpilled, blockers);
     for (uint64_t c : touchedSpilledChunkIndices(f.newBlocks, freed, ctx.layout.chunk0Blocks)) {
-        const uint64_t current = liveChunkBitmapAddr(ctx, c, blockers);
-        const uint64_t slot = lowestFreeIpBlock(geo, excluded);
+        const auto current = liveChunkBitmapAddr(ctx, c, blockers);
+        if (!current) {
+            return false;
+        }
+        const uint64_t slot = lowestFreeIpBlock(geo, *excluded);
         if (slot == 0) {
             blockers->append(
                 QStringLiteral("APFS in-place commit: internal-pool free pool exhausted for "
@@ -11858,12 +12026,35 @@ bool planSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
             return false;
         }
         plan->chunkSlots.append({c, slot});
-        excluded.insert(slot);
-        if (current != 0) {
+        excluded->insert(slot);
+        if (*current != 0) {
             // The old slot moves onto sm_fq[IP]; it stays excluded (already inserted as a live
             // spill slot above) so a later chunk in this same commit never picks it either.
-            plan->freedOldSlots.append(current);
+            plan->freedOldSlots.append(*current);
         }
+    }
+    return true;
+}
+
+bool planSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
+                             const ApfsIpRotation& rotation,
+                             const QVector<uint64_t>& freed,
+                             ApfsSpilledChunkPlan* plan,
+                             QStringList* blockers) {
+    const ApfsFsCommitContext& ctx = f.ctx;
+    const ApfsIpFreePoolGeometry geo = computeIpFreePoolGeometry(ctx);
+    const auto liveSpilledOpt = liveSpilledChunkIndices(ctx, blockers);
+    if (!liveSpilledOpt) {
+        return false;
+    }
+    const QVector<uint64_t>& liveSpilled = *liveSpilledOpt;
+    const auto excludedOpt = spillPlanExcludedBlocks(ctx, geo, rotation, liveSpilled, blockers);
+    if (!excludedOpt) {
+        return false;
+    }
+    QSet<uint64_t> excluded = *excludedOpt;
+    if (!planTouchedChunkSlots(f, freed, &excluded, plan, blockers)) {
+        return false;
     }
     if (!planCibKCopyOnWrite(f, freed, &excluded, plan, blockers)) {
         return false;
@@ -11875,9 +12066,11 @@ bool planSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
         return false;
     }
     extraUsed += *cibKAddrs;
-    const QVector<QPair<uint64_t, uint64_t>> liveSlots =
-        finalLiveChunkSlots(ctx, liveSpilled, plan->chunkSlots, blockers);
-    const auto usedSet = buildSpillIpUsedSet(ctx, rotation, liveSlots, extraUsed, blockers);
+    const auto liveSlots = finalLiveChunkSlots(ctx, liveSpilled, plan->chunkSlots, blockers);
+    if (!liveSlots) {
+        return false;
+    }
+    const auto usedSet = buildSpillIpUsedSet(ctx, rotation, *liveSlots, extraUsed, blockers);
     if (!usedSet) {
         return false;
     }
@@ -12049,7 +12242,12 @@ bool partitionForeignReclaim(const ApfsFsCommitFinalize& f,
                              ApfsReclaimPartition* part,
                              ApfsForeignReclaimPlan* plan,
                              QStringList* blockers) {
+    QSet<uint64_t> seen;
     for (uint64_t block : reclaimed) {
+        if (seen.contains(block)) {
+            continue;  // F43: a duplicate reclaimed block would double-count ci_free_count
+        }
+        seen.insert(block);
         const uint64_t c = block / kApfsSpacemanBlocksPerChunk;
         if (c == f.ctx.layout.allocChunk) {
             plan->boundaryReclaimed.append(block);
@@ -12104,6 +12302,29 @@ ApfsForeignReclaimCib buildReclaimCibChunks(const QByteArray& cib,
     return rc;
 }
 
+// F43/F44: fail closed if any touched chunk's on-disk ci_bitmap_addr is 0 (would read block 0, the
+// nx_superblock) or escapes the internal pool [ipBase, ipBase+ipBlockCount). The reclaim path only
+// touches chunks that held real data - such a chunk always carries a materialized in-pool bitmap -
+// so a valid volume never trips this.
+bool reclaimChunkBitmapsInPool(const QByteArray& cib,
+                               const QVector<uint64_t>& chunks,
+                               uint64_t ipBase,
+                               uint64_t ipBlockCount,
+                               QStringList* blockers) {
+    for (uint64_t c : chunks) {
+        const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                                static_cast<qsizetype>(c % kApfsSpacemanChunksPerCib) *
+                                    kApfsChunkInfoEntryStride;
+        const uint64_t bmAddr = le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
+        if (bmAddr == 0 || bmAddr < ipBase || bmAddr >= ipBase + ipBlockCount) {
+            blockers->append(
+                QStringLiteral("APFS foreign reclaim: chunk bitmap address out of range"));
+            return false;
+        }
+    }
+    return true;
+}
+
 // Foreign overflow: partition the aged reclaimed blocks (main free-queue runs past the rollback
 // window) by owning far cib + chunk, and allocate the internal-pool blocks the reclaim COW needs
 // (one per touched chunk bitmap + one per touched cib). Fails closed if the internal pool cannot
@@ -12141,6 +12362,10 @@ bool buildForeignReclaimPlan(const ApfsFsCommitFinalize& f,
         if (!readApfsRepairBlock(f.ctx.image, f.ctx.geometry, oldCibAddr, &cib, blockers)) {
             return false;
         }
+        if (!reclaimChunkBitmapsInPool(
+                cib, it.value(), f.ctx.layout.ipBase, f.ctx.ipBlockCount, blockers)) {
+            return false;
+        }
         ApfsForeignReclaimCib rc = buildReclaimCibChunks(cib, it.value(), part, &cur, plan);
         rc.k = it.key();
         rc.oldCibAddr = oldCibAddr;
@@ -12150,6 +12375,79 @@ bool buildForeignReclaimPlan(const ApfsFsCommitFinalize& f,
         plan->cibs.append(rc);
     }
     return true;
+}
+
+// F44: clear each reclaimed block's bit in the chunk bitmap; every bit MUST currently be set. A
+// reclaimed block that is already free means the free-queue double-counted it (or an out-of-chunk
+// address underflowed), so fail closed rather than clear an unrelated bit.
+bool clearReclaimedBits(const ApfsForeignReclaimChunk& ch,
+                        QByteArray* bitmap,
+                        QStringList* blockers) {
+    const uint64_t chunkBase = ch.chunk * kApfsSpacemanBlocksPerChunk;
+    for (uint64_t block : ch.blocks) {
+        const uint64_t bit = block - chunkBase;
+        const qsizetype byteIdx = static_cast<qsizetype>(bit / 8);
+        const unsigned char mask = static_cast<unsigned char>(1U << (bit % 8));
+        if (byteIdx < 0 || byteIdx >= bitmap->size() ||
+            !(static_cast<unsigned char>(bitmap->at(byteIdx)) & mask)) {
+            blockers->append(QStringLiteral(
+                "APFS foreign reclaim: reclaimed block is already free (double free)"));
+            return false;
+        }
+        (*bitmap)[byteIdx] &= static_cast<char>(~mask);
+    }
+    return true;
+}
+
+// F44: update the chunk entry after its bitmap COW: ci_bitmap_addr -> new slot, ci_xid -> newXid,
+// and ci_free_count += reclaimed, bounded by ci_block_count (a count past the chunk size is
+// corrupt).
+bool updateReclaimChunkEntry(const ApfsFsCommitFinalize& f,
+                             const ApfsForeignReclaimChunk& ch,
+                             qsizetype entry,
+                             QByteArray* cib,
+                             QStringList* blockers) {
+    const uint64_t newFree =
+        static_cast<uint64_t>(le32(*cib, entry + kApfsChunkInfoEntryFreeCountOffset)) +
+        static_cast<uint64_t>(ch.blocks.size());
+    if (newFree > le32(*cib, entry + kApfsChunkInfoEntryBlockCountOffset)) {
+        blockers->append(
+            QStringLiteral("APFS foreign reclaim: chunk free count would exceed its block count"));
+        return false;
+    }
+    writeLe32(cib, entry + kApfsChunkInfoEntryFreeCountOffset, static_cast<uint32_t>(newFree));
+    writeLe64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset, ch.newBitmapSlot);
+    writeLe64(cib, entry, f.newXid);
+    return true;
+}
+
+// F43/F44: apply one far chunk's reclaim - read its live bitmap (its ci_bitmap_addr validated
+// in-pool, mirroring buildForeignReclaimPlan), clear the reclaimed bits, write the COW copy, and
+// bump the bounded free count.
+bool applyReclaimChunk(const ApfsFsCommitFinalize& f,
+                       const ApfsForeignReclaimChunk& ch,
+                       QByteArray* cib,
+                       QStringList* blockers) {
+    const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                            static_cast<qsizetype>(ch.chunk % kApfsSpacemanChunksPerCib) *
+                                kApfsChunkInfoEntryStride;
+    const uint64_t bmAddr = le64(*cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
+    if (bmAddr == 0 || bmAddr < f.ctx.layout.ipBase ||
+        bmAddr >= f.ctx.layout.ipBase + f.ctx.ipBlockCount) {
+        blockers->append(QStringLiteral("APFS foreign reclaim: chunk bitmap address out of range"));
+        return false;
+    }
+    QByteArray bitmap(f.ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(f.ctx.image, f.ctx.geometry, bmAddr, &bitmap, blockers)) {
+        return false;
+    }
+    if (!clearReclaimedBits(ch, &bitmap, blockers)) {
+        return false;
+    }
+    if (!writeApfsRepairBlock(f.ctx.image, f.ctx.geometry, ch.newBitmapSlot, bitmap, blockers)) {
+        return false;
+    }
+    return updateReclaimChunkEntry(f, ch, entry, cib, blockers);
 }
 
 // Foreign overflow: write the reclaim COW copies. For each touched far cib, copy the live cib
@@ -12167,32 +12465,9 @@ bool applyForeignReclaim(const ApfsFsCommitFinalize& f,
             return false;
         }
         for (const ApfsForeignReclaimChunk& ch : rc.chunks) {
-            const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                                    static_cast<qsizetype>(ch.chunk % kApfsSpacemanChunksPerCib) *
-                                        kApfsChunkInfoEntryStride;
-            QByteArray bitmap(f.ctx.geometry.blockSize, '\0');
-            if (!readApfsRepairBlock(f.ctx.image,
-                                     f.ctx.geometry,
-                                     le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset),
-                                     &bitmap,
-                                     blockers)) {
+            if (!applyReclaimChunk(f, ch, &cib, blockers)) {
                 return false;
             }
-            const uint64_t chunkBase = ch.chunk * kApfsSpacemanBlocksPerChunk;
-            for (uint64_t block : ch.blocks) {
-                const uint64_t bit = block - chunkBase;
-                bitmap[static_cast<qsizetype>(bit / 8)] &= static_cast<char>(~(1 << (bit % 8)));
-            }
-            if (!writeApfsRepairBlock(
-                    f.ctx.image, f.ctx.geometry, ch.newBitmapSlot, bitmap, blockers)) {
-                return false;
-            }
-            writeLe32(&cib,
-                      entry + kApfsChunkInfoEntryFreeCountOffset,
-                      static_cast<uint32_t>(le32(cib, entry + kApfsChunkInfoEntryFreeCountOffset) +
-                                            static_cast<uint32_t>(ch.blocks.size())));
-            writeLe64(&cib, entry + kApfsChunkInfoEntryBitmapAddrOffset, ch.newBitmapSlot);
-            writeLe64(&cib, entry, f.newXid);
         }
         writeLe64(&cib, kApfsObjectOidOffset, rc.newCibSlot);
         writeLe64(&cib, kApfsObjectXidOffset, f.newXid);
@@ -12229,8 +12504,12 @@ bool computeFinalizeIpPlan(const ApfsFsCommitFinalize& f,
         out->ipBitmapUsage = static_cast<uint64_t>(out->ipUsedSet.size());
         return true;
     }
-    const uint64_t ipBitmapUsage =
+    const auto ipBitmapUsageOpt =
         computeFinalizeIpBitmapUsage(f, f.ctx.layout.ipGroupStride, blockers);
+    if (!ipBitmapUsageOpt) {
+        return false;  // F41: a live-chunk read failure aborts before the checkpoint advance
+    }
+    const uint64_t ipBitmapUsage = *ipBitmapUsageOpt;
     out->ipUsedSet = f.ctx.layout.allocChunk == 0 ? plan.ipUsedSet
                                                   : ipBitmapPrefixSet(ipBitmapUsage);
     out->ipBitmapUsage = ipBitmapUsage;
@@ -12365,6 +12644,21 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
         blockers);
 }
 
+// The crash-safe cib/bitmap rotation for this commit: real free IP blocks on a foreign overflow
+// pool (computeForeignIpRotation), else the synthesized 3-slot rotation (computeIpRotation,
+// F16-guarded). Fails closed if either cannot produce a valid rotation.
+bool computeCommitIpRotation(const ApfsFsCommitFinalize& f,
+                             ApfsIpRotation* rotation,
+                             QStringList* blockers) {
+    if (f.ctx.foreignOverflow) {
+        // Real internal pool: allocate the new cib / new chunk-0 bitmap from real free IP blocks
+        // (the boundary bitmap was already taken by allocateOverflowCommitBlocks into
+        // f.chunk1BitmapBlock) instead of the synthesized 3-slot rotation.
+        return computeForeignIpRotation(f.ctx, f.chunk1BitmapBlock, rotation, blockers);
+    }
+    return computeIpRotation(f.ctx.liveCib, f.ctx.liveBitmap, f.ctx.layout, rotation, blockers);
+}
+
 bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                       ApfsInPlaceCheckpointResult* result,
                       QStringList* blockers) {
@@ -12383,15 +12677,8 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
         return false;
     }
     ApfsIpRotation rotation;
-    if (f.ctx.foreignOverflow) {
-        // Real internal pool: allocate the new cib / new chunk-0 bitmap from real free IP blocks
-        // (the boundary bitmap was already taken by allocateOverflowCommitBlocks into
-        // f.chunk1BitmapBlock) instead of the synthesized 3-slot rotation.
-        if (!computeForeignIpRotation(f.ctx, f.chunk1BitmapBlock, &rotation, blockers)) {
-            return false;
-        }
-    } else {
-        rotation = computeIpRotation(f.ctx.liveCib, f.ctx.liveBitmap, f.ctx.layout);
+    if (!computeCommitIpRotation(f, &rotation, blockers)) {
+        return false;
     }
     // The main free-queue advance is computed here (not inside finalizeApplyAndAdvance) so the
     // spill plan knows this commit's RECLAIMED freed blocks: a multi-chunk file deleted a
@@ -13640,7 +13927,10 @@ bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
     const ApfsFsCommitContext& ctx = t.ctx;
     const int64_t netConsumed = static_cast<int64_t>(t.allocated.size()) -
                                 static_cast<int64_t>(t.freed.size());
-    const ApfsIpRotation rotation = computeIpRotation(ctx.liveCib, ctx.liveBitmap, ctx.layout);
+    ApfsIpRotation rotation;
+    if (!computeIpRotation(ctx.liveCib, ctx.liveBitmap, ctx.layout, &rotation, blockers)) {
+        return false;
+    }
     const ApfsMainFqAdvance mainFq = advanceMainFreeQueue(
         readLiveMainFreeQueue(ctx, blockers), t.freed, t.newXid, kMainFqRollbackWindow, blockers);
     if (!mainFq.ok) {
@@ -13798,7 +14088,10 @@ bool commitInChunkResizeGrow(ApfsFsCommitContext* ctx,
     }
     const uint64_t newXid = ctx->live.xid + 1;
     const int64_t growDelta = static_cast<int64_t>(growDeltaBlocks);
-    const ApfsIpRotation rotation = computeIpRotation(ctx->liveCib, ctx->liveBitmap, ctx->layout);
+    ApfsIpRotation rotation;
+    if (!computeIpRotation(ctx->liveCib, ctx->liveBitmap, ctx->layout, &rotation, blockers)) {
+        return false;
+    }
     const uint64_t groupSize = ctx->layout.ipGroupStride;
     // Single-chunk, single-CIB: the IP bitmap marks the three rotation-group slots only.
     const uint64_t ipBitmapUsage = (ctx->layout.cibCount - 1) + 3 * groupSize;
@@ -15666,7 +15959,10 @@ bool commitInChunkResizeShrink(ApfsFsCommitContext* ctx,
     }
     const uint64_t newXid = ctx->live.xid + 1;
     const int64_t delta = -static_cast<int64_t>(oldBlockCount - newBlockCount);
-    const ApfsIpRotation rotation = computeIpRotation(ctx->liveCib, ctx->liveBitmap, ctx->layout);
+    ApfsIpRotation rotation;
+    if (!computeIpRotation(ctx->liveCib, ctx->liveBitmap, ctx->layout, &rotation, blockers)) {
+        return false;
+    }
     const uint64_t groupSize = ctx->layout.ipGroupStride;
     const uint64_t ipBitmapUsage = (ctx->layout.cibCount - 1) + 3 * groupSize;
     if (!applyFileInsertAllocation({.image = ctx->image,
@@ -25005,7 +25301,11 @@ QVector<QPair<quint64, quint64>> PartitionApfsWriter::readExtentRefTreeBlocksFor
 
 QPair<quint64, quint64> PartitionApfsWriter::nextCrashSafeIpSlot(quint64 live_cib,
                                                                  quint64 block_count) {
-    const ApfsIpSlot slot = nextIpSlot(live_cib, computeGeneratedLayout(block_count));
+    ApfsIpSlot slot;
+    QStringList blockers;
+    if (!nextIpSlot(live_cib, computeGeneratedLayout(block_count), &slot, &blockers)) {
+        return {0, 0};
+    }
     return {slot.cib, slot.bitmap};
 }
 
