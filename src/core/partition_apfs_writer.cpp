@@ -238,6 +238,15 @@ constexpr uint32_t kApfsObjEncryptedFlag = 0x10'00'00'00;
 constexpr qsizetype kApfsInodeBsdFlagsOffset = 0x44;
 constexpr qsizetype kApfsInodeUncompressedSizeOffset = 0x54;
 constexpr qsizetype kApfsInodeInternalFlagsOffset = 0x30;
+// apfs_inode_val identity fields preserved VERBATIM across a COW rebuild of a real Apple
+// inode: the four timestamps (create @0x10 / mod @0x18 / change @0x20 / access @0x28), owner
+// (uid) @0x48 and group (gid) @0x4C. mode is kApfsInodeModeOffset (0x50).
+constexpr qsizetype kApfsInodeCreateTimeOffset = 0x10;
+constexpr qsizetype kApfsInodeModTimeOffset = 0x18;
+constexpr qsizetype kApfsInodeChangeTimeOffset = 0x20;
+constexpr qsizetype kApfsInodeAccessTimeOffset = 0x28;
+constexpr qsizetype kApfsInodeOwnerOffset = 0x48;
+constexpr qsizetype kApfsInodeGroupOffset = 0x4C;
 // A7 (A-h) j_inode_val internal_flags (apfs/raw.h): a named-attribute or sparse
 // inode must set the matching flag or fsck_apfs/apfsck rejects it (inode.c
 // cross-checks i_xattr_bmap SECURITY/FINDER_INFO against these flags exactly).
@@ -1418,6 +1427,24 @@ struct ApfsHardLinkName {
     uint64_t siblingId{0};
 };
 
+// A real Apple inode's identity metadata read VERBATIM off the source j_inode_val and carried
+// across a COW rebuild so a preserved file keeps its true owner/group/mode/timestamps/bsd_flags
+// instead of being republished as root:wheel/0644 with the fabricated kApfsGeneratedTimestamp.
+// `valid` is false on every GENERATED payload (nothing populated it), which keeps inodeValue on
+// its byte-identical generated path -- so this metadata only ever takes the new write path for a
+// genuinely preserved inode.
+struct ApfsRecoveredInodeMetadata {
+    bool valid{false};
+    uint32_t owner{0};       // uid @0x48
+    uint32_t group{0};       // gid @0x4C
+    uint16_t mode{0};        // full st_mode @0x50 (type + permission bits)
+    uint32_t bsdFlags{0};    // bsd_flags @0x44 (UF_COMPRESSED, UF_HIDDEN, ...)
+    uint64_t createTime{0};  // @0x10
+    uint64_t modTime{0};     // @0x18
+    uint64_t changeTime{0};  // @0x20
+    uint64_t accessTime{0};  // @0x28
+};
+
 struct ApfsRootFilePayload {
     QString fileName;
     QString parentDirectoryName;
@@ -1506,6 +1533,11 @@ struct ApfsRootFilePayload {
     // xattr without it). `xattrs` (above) stays the generated-attribute path with plain
     // DATA_EMBEDDED flags.
     QVector<ApfsRecoveredXattr> preservedXattrs;
+    // Preservation: the source inode's real owner/group/mode/timestamps/bsd_flags, populated by
+    // applyPreservedInodeState for a real Apple file so the rebuilt inode is not republished as
+    // root:wheel/0644 with fabricated times. `.valid` stays false on every generated/inserted
+    // file, keeping that inode byte-identical.
+    ApfsRecoveredInodeMetadata recoveredMeta;
 };
 
 // Group ascending block addresses into contiguous runs, assigning each run its
@@ -1698,6 +1730,10 @@ struct ApfsInodeParams {
     bool rsrcBitsExplicit = false;
     // A preserved device inode's dev_t, re-emitted as an INO_EXT_TYPE_RDEV xfield (0 = none).
     uint32_t rdev = 0;
+    // Preservation: a real Apple inode's owner/group/mode/timestamps/bsd_flags. `.valid` false
+    // (the default on every generated inode) keeps inodeValue's byte-identical generated path;
+    // only a genuinely preserved inode overwrites the generated identity fields with these.
+    ApfsRecoveredInodeMetadata recovered;
 };
 
 // internal_flags base is APFS_INODE_NO_RSRC_FORK (0x8000) for a file with no resource
@@ -1809,6 +1845,26 @@ void writeInodeXfields(QByteArray* value, const InodeXfieldParams& x) {
     }
 }
 
+// Overwrite a rebuilt inode's identity fields with the values recovered VERBATIM from a real
+// Apple inode (owner @0x48, group @0x4C, mode @0x50, bsd_flags @0x44 and the four j_inode_val
+// timestamps @0x10-0x28), so a preserved file is not republished as root:wheel/0644 with the
+// fabricated kApfsGeneratedTimestamp. Runs AFTER stampCompressedInodeFields so a preserved
+// compressed file's full bsd_flags win over the UF_COMPRESSED-only stamp. A generated payload
+// leaves recovered.valid false, so this is a no-op and the generated inode stays byte-identical.
+void applyRecoveredInodeMetadata(QByteArray* value, const ApfsRecoveredInodeMetadata& recovered) {
+    if (!recovered.valid) {
+        return;
+    }
+    writeLe64(value, kApfsInodeCreateTimeOffset, recovered.createTime);
+    writeLe64(value, kApfsInodeModTimeOffset, recovered.modTime);
+    writeLe64(value, kApfsInodeChangeTimeOffset, recovered.changeTime);
+    writeLe64(value, kApfsInodeAccessTimeOffset, recovered.accessTime);
+    writeLe32(value, kApfsInodeBsdFlagsOffset, recovered.bsdFlags);
+    writeLe32(value, kApfsInodeOwnerOffset, recovered.owner);
+    writeLe32(value, kApfsInodeGroupOffset, recovered.group);
+    writeLe16(value, kApfsInodeModeOffset, recovered.mode);
+}
+
 QByteArray inodeValue(const ApfsInodeParams& params) {
     const auto& [parentId,
                  privateId,
@@ -1823,7 +1879,8 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
                  cryptoId,
                  protectionClass,
                  rsrcBitsExplicit,
-                 rdev] = params;
+                 rdev,
+                 recovered] = params;
     // A compressed regular file carries the NAME xfield only (its bytes live in the
     // decmpfs xattr); an uncompressed regular file additionally carries a DSTREAM. The
     // type-mask compare matters: S_IFLNK/S_IFSOCK include the S_IFREG bit, and a preserved
@@ -1859,6 +1916,7 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
     const uint16_t permissions = (mode & 0777) ? 0 : (regularFile ? 0644 : 0755);
     writeLe16(&value, kApfsInodeModeOffset, mode | permissions);
     stampCompressedInodeFields(&value, compressed, uncompressedSize);
+    applyRecoveredInodeMetadata(&value, recovered);
     writeInodeXfields(&value,
                       {.hasDstream = hasDstream,
                        .sparse = sparse,
@@ -2260,7 +2318,8 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
                      .cryptoId = file.cryptoId,
                      .protectionClass = file.protectionClass,
                      .rsrcBitsExplicit = file.preservedRsrcBits,
-                     .rdev = file.rdev})});
+                     .rdev = file.rdev,
+                     .recovered = file.recoveredMeta})});
     records->append(
         {directoryEntryKey(file.parentDirectoryId, file.fileName),
          file.additionalLinks.isEmpty()
@@ -7962,6 +8021,10 @@ struct ApfsRecoveredInodeState {
     uint64_t internalFlags{0};
     uint64_t dstreamLogicalSize{0};
     uint32_t rdev{0};  // INO_EXT_TYPE_RDEV (a device inode's dev_t; 0 = none)
+    // The source inode's real owner/group/mode/timestamps/bsd_flags. `.valid` is set true when
+    // the kApfsRecordInode record is located, so applyPreservedInodeState can fail closed if a
+    // preserved inode's identity could not be recovered rather than republish root:wheel/0644.
+    ApfsRecoveredInodeMetadata metadata;
 };
 
 // The value of one inode xfield (looked up by type) within an inode value at `base`, or 0
@@ -8006,6 +8069,24 @@ void recoverLeafXattr(const QByteArray& node,
     }
     const uint16_t xdataLen = le16(node, valuePos + kUint16Size);
     out->append({name, le16(node, valuePos), node.mid(valuePos + 2 * kUint16Size, xdataLen)});
+}
+
+// Read a real Apple inode's identity metadata (owner/group/mode/bsd_flags + the four
+// timestamps) VERBATIM from its j_inode_val at `base`, so a COW rebuild re-emits the true
+// values instead of root:wheel/0644 with fabricated times. `.valid` marks that a real inode
+// record was found (an absent inode record leaves it false and fails the preserve closed).
+ApfsRecoveredInodeMetadata recoverInodeMetadata(const QByteArray& node, qsizetype base) {
+    ApfsRecoveredInodeMetadata m;
+    m.valid = true;
+    m.createTime = le64(node, base + kApfsInodeCreateTimeOffset);
+    m.modTime = le64(node, base + kApfsInodeModTimeOffset);
+    m.changeTime = le64(node, base + kApfsInodeChangeTimeOffset);
+    m.accessTime = le64(node, base + kApfsInodeAccessTimeOffset);
+    m.bsdFlags = le32(node, base + kApfsInodeBsdFlagsOffset);
+    m.owner = le32(node, base + kApfsInodeOwnerOffset);
+    m.group = le32(node, base + kApfsInodeGroupOffset);
+    m.mode = le16(node, base + kApfsInodeModeOffset);
+    return m;
 }
 
 // Recover an inode's xattrs + internal_flags + dstream size from the live fsroot in one leaf walk
@@ -8055,6 +8136,7 @@ ApfsRecoveredInodeState recoverInodeState(QIODevice* image,
                     inodeXfieldValue(node, valuePos, kApfsInodeDstreamField, 8);
                 state.rdev =
                     static_cast<uint32_t>(inodeXfieldValue(node, valuePos, kApfsInodeRdevField, 4));
+                state.metadata = recoverInodeMetadata(node, valuePos);
             }
         }
     }
@@ -8112,6 +8194,18 @@ bool applyPreservedDecmpfs(const ApfsRecoveredXattr& x,
 bool applyPreservedInodeState(const ApfsRecoveredInodeState& state,
                               ApfsRootFilePayload* file,
                               QStringList* blockers) {
+    if (!state.metadata.valid) {
+        // The inode's own j_inode record was not located in the live fsroot, so its real
+        // owner/group/mode/timestamps/bsd_flags are unknown. Rebuilding it now would republish
+        // the file as root:wheel/0644 with fabricated times -- fail closed rather than corrupt it.
+        blockers->append(
+            QStringLiteral("APFS preserve: cannot reproduce owner/mode/timestamps for '%1'")
+                .arg(file->fileName));
+        return false;
+    }
+    // Carry the source inode's real identity forward so inodeValue re-emits it VERBATIM instead
+    // of the fabricated kApfsGeneratedTimestamp constants and synthesized root:wheel permissions.
+    file->recoveredMeta = state.metadata;
     std::optional<ApfsRecoveredXattr> fork;  // classified after the loop (needs the decmpfs algo)
     for (const ApfsRecoveredXattr& x : state.xattrs) {
         if (x.name == QByteArray(kApfsXattrNameCompressed)) {
@@ -8239,6 +8333,34 @@ bool recoverStreamXattrExtents(const ApfsLiveTreeSource& source,
     return true;
 }
 
+// True when preserving `file` would make fileDataExtents synthesize a bogus {logical 0, paddr 0,
+// ceil(size/bs)} extent: a plain regular file (no compression / resource fork / sparse / special
+// mode) with a non-zero logical size but NO recovered data extents and a zero start block. Every
+// logical block would then resolve to block 0 (the nx_superblock) -- silent corruption of real
+// user data. A zero-length file, or a compressed/sparse/special file, is exempt.
+bool preservedFileWouldSynthesizeBlock0(const ApfsRootFilePayload& file) {
+    return file.specialMode == 0 && !file.compressed && !file.resourceFork && !file.sparse &&
+           file.dataExtents.isEmpty() && file.dataStartBlock == 0 && fileLogicalSize(file) != 0;
+}
+
+// Finish a preserved file after its extents/xattrs/compression are recovered: read a dstream-backed
+// com.apple.decmpfs header (its 16-byte algo + uncompressed size live in the stream's first block),
+// then fail closed on the silent block-0 synthesis now that the compression state is final.
+bool finalizePreservedFileState(const ApfsLiveTreeSource& source,
+                                ApfsRootFilePayload* file,
+                                QStringList* blockers) {
+    if (!readPreservedStreamDecmpfsHeader(source, file, blockers)) {
+        return false;
+    }
+    if (preservedFileWouldSynthesizeBlock0(*file)) {
+        blockers->append(
+            QStringLiteral("APFS in-place commit: preserved file's data extents could "
+                           "not be recovered (would synthesize a block-0 extent)"));
+        return false;
+    }
+    return true;
+}
+
 bool preserveFileExtentsAndState(const ApfsLiveTreeSource& source,
                                  const QVector<ApfsDataExtent>& recovered,
                                  uint64_t fallbackStartBlock,
@@ -8266,9 +8388,7 @@ bool preserveFileExtentsAndState(const ApfsLiveTreeSource& source,
     if (!recoverStreamXattrExtents(source, file, blockers)) {
         return false;
     }
-    // A dstream-backed com.apple.decmpfs: the 16-byte header (algo + uncompressed size) lives in
-    // the stream's FIRST block, needed for the rebuilt inode's uncompressed-size field.
-    return readPreservedStreamDecmpfsHeader(source, file, blockers);
+    return finalizePreservedFileState(source, file, blockers);
 }
 
 // Every extent a deleted inode's auxiliary data streams occupy (classic/compressed resource
@@ -18822,6 +18942,15 @@ bool buildRootWriteInsertRequest(const ApfsRootFileWriteRequest& request,
             "APFS file-write-commit: a streamed payload cannot be stored compressed"));
         return false;
     }
+    if (!request.streamPath.isEmpty() && !request.fileData.isEmpty()) {
+        // A create-or-replace must not carry BOTH an in-RAM buffer and a stream source: the insert
+        // path silently prefers the stream and drops the buffer, so reject the ambiguous request
+        // rather than commit bytes the caller did not intend.
+        blockers->append(QStringLiteral(
+            "APFS file-write-commit: a write cannot supply both an in-memory payload and a stream "
+            "source path"));
+        return false;
+    }
     if (!buildFileInsertRequest({.existingFiles = existing,
                                  .fileName = request.fileName,
                                  .fileData = request.fileData,
@@ -18837,6 +18966,40 @@ bool buildRootWriteInsertRequest(const ApfsRootFileWriteRequest& request,
     }
     insert->streamPath = request.streamPath;
     insert->streamSize = request.streamSize;
+    return true;
+}
+
+// Probe a REPLACE's stream source immediately before the destructive delete leg publishes its
+// checkpoint (F55/F56): a stream that is missing, unreadable, zero-sized, or shorter than its
+// declared size must fail closed HERE, or the existing file's delete is published and the insert
+// then never lands the replacement -- permanent data loss on a raw device. Re-stating right before
+// the delete keeps the TOCTOU window minimal. An in-memory replace (empty streamPath) needs no
+// probe (its payload is already in RAM). A create (no delete leg) is not probed here: a short/
+// missing source there fails the insert with no prior delete, so no data can be lost.
+bool preflightReplacedStreamSource(const ApfsRootFileWriteRequest& request, QStringList* blockers) {
+    if (request.streamPath.isEmpty()) {
+        return true;
+    }
+    if (request.streamSize == 0) {
+        blockers->append(
+            QStringLiteral("APFS file-write-commit: streamed replacement source '%1' declares a "
+                           "zero byte size")
+                .arg(request.streamPath));
+        return false;
+    }
+    QFile stream(request.streamPath);
+    if (!stream.open(QIODevice::ReadOnly)) {
+        blockers->append(
+            QStringLiteral("APFS file-write-commit: cannot open streamed replacement source '%1'")
+                .arg(request.streamPath));
+        return false;
+    }
+    if (static_cast<uint64_t>(stream.size()) < request.streamSize) {
+        blockers->append(QStringLiteral("APFS file-write-commit: streamed replacement source '%1' "
+                                        "is shorter than its declared size")
+                             .arg(request.streamPath));
+        return false;
+    }
     return true;
 }
 
@@ -18864,6 +19027,11 @@ bool commitInPlaceRootFileWrite(QIODevice* image,
         return false;
     }
     if (exists) {
+        // Fail closed on an unusable stream BEFORE the delete leg publishes, so a replace never
+        // deletes the existing file and then fails to land the replacement (F55/F56).
+        if (!preflightReplacedStreamSource(request, blockers)) {
+            return false;
+        }
         ApfsInPlaceCheckpointResult deleteResult;
         if (!commitInPlaceFileDelete(image,
                                      {request.allFiles, request.directories, fileName, parentId},
@@ -24357,7 +24525,9 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite
     writeRequest.compressLzvn = request.compress_lzvn;
     writeRequest.compressLzbitmap = request.compress_lzbitmap;
     if (streaming) {
-        writeRequest.fileData.clear();
+        // Do NOT silently drop request.file_data here: buildRootWriteInsertRequest rejects a
+        // request that supplies both a buffer and a stream path (F56), so a both-supplied write
+        // fails closed instead of quietly discarding the caller's bytes.
         writeRequest.streamPath = request.file_data_path.trimmed();
         writeRequest.streamSize = request.file_data_stream_size;
     }
@@ -24692,9 +24862,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     writeRequest.compressLzfse = request.compress_lzfse;
     writeRequest.compressLzvn = request.compress_lzvn;
     writeRequest.compressLzbitmap = request.compress_lzbitmap;
-    if (streaming) {
-        writeRequest.fileData.clear();
-    }
+    // Do NOT silently drop request.file_data when streaming: buildRootWriteInsertRequest rejects a
+    // both-supplied write (buffer + stream path) rather than quietly discarding the buffer (F56).
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceRootFileWrite(target.get(), writeRequest, &commit, &commitBlockers)) {
