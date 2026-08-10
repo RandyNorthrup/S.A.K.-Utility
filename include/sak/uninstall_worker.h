@@ -12,9 +12,12 @@
 #include <QSet>
 #include <QVector>
 
+#include <atomic>
 #include <type_traits>
 
 namespace sak {
+
+struct LeftoverScanReliability;
 
 /// @brief Executes the uninstall pipeline on a background thread
 ///
@@ -118,13 +121,18 @@ private:
     Mode m_mode;
     ScanLevel m_scanLevel;
     bool m_createRestorePoint{true};
-    bool m_headlessSilent{false};
+    // Atomic: setHeadlessSilent() runs on the caller thread while runNativeUninstaller() reads
+    // this on the worker thread. A plain bool would be a data race that could non-atomically
+    // select bounded-silent vs. unbounded-interactive execution.
+    std::atomic<bool> m_headlessSilent{false};
 
     // Pipeline stages
     [[nodiscard]] bool createRestorePoint();
     [[nodiscard]] bool captureRegistrySnapshot();
     [[nodiscard]] bool runNativeUninstaller(int& exitCode);
-    [[nodiscard]] QVector<LeftoverItem> scanLeftovers();
+    /// @param reliabilityOut Records whether each Advanced (system-object/registry) leftover
+    ///        phase actually completed, so a FAILED enumeration is not misread as "none found".
+    [[nodiscard]] QVector<LeftoverItem> scanLeftovers(LeftoverScanReliability& reliabilityOut);
     [[nodiscard]] bool removeUwpPackage();
     [[nodiscard]] bool removeRegistryEntry();
 

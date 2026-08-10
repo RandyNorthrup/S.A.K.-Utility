@@ -29,6 +29,26 @@ namespace sak {
 
 namespace detail {
 
+/// Percent-escape the '|' field separator (and '%' itself) so a '|' inside a registry path, a
+/// registry value name, or a firewall rule name -- all of which legally contain '|' -- cannot
+/// collide with the structural '|' that joins a composite identity key's components. Reversible ->
+/// injective, which is all the key needs. Without it (path="A|B", value="C") and (path="A",
+/// value="B|C") produce the SAME key, letting a proof for one value authorize deleting another.
+[[nodiscard]] inline QString escapeKeyField(const QString& field) {
+    QString out;
+    out.reserve(field.size());
+    for (const QChar ch : field) {
+        if (ch == QLatin1Char('%')) {
+            out += QStringLiteral("%25");
+        } else if (ch == QLatin1Char('|')) {
+            out += QStringLiteral("%7C");
+        } else {
+            out += ch;
+        }
+    }
+    return out;
+}
+
 /// Filesystem identity BODY: case/separator/trailing-dot-insensitive normalized path (no type tag).
 [[nodiscard]] inline QString fsBody(const QString& path) {
     return cleanupCanonicalLower(QDir::cleanPath(QDir::fromNativeSeparators(path.trimmed())));
@@ -69,8 +89,8 @@ namespace detail {
     if (item.type == LeftoverItem::Type::StartupEntry) {
         return item.registryValueName.isEmpty()
                    ? QStringLiteral("startup-file|") + fsBody(item.path)
-                   : QStringLiteral("startup-val|") + regBody(item.path) + QStringLiteral("|") +
-                         valueBody(item.registryValueName);
+                   : QStringLiteral("startup-val|") + escapeKeyField(regBody(item.path)) +
+                         QStringLiteral("|") + escapeKeyField(valueBody(item.registryValueName));
     }
     return QStringLiteral("file|") + fsBody(item.path);
 }
@@ -79,8 +99,8 @@ namespace detail {
 /// body. Value names are case-normalized but whitespace-preserved (see valueBody).
 [[nodiscard]] inline QString registryFamilyKey(const LeftoverItem& item) {
     if (item.type == LeftoverItem::Type::RegistryValue) {
-        return QStringLiteral("regval|") + regBody(item.path) + QStringLiteral("|") +
-               valueBody(item.registryValueName);
+        return QStringLiteral("regval|") + escapeKeyField(regBody(item.path)) +
+               QStringLiteral("|") + escapeKeyField(valueBody(item.registryValueName));
     }
     if (item.type == LeftoverItem::Type::ShellExtension) {
         return QStringLiteral("shellext|") + regBody(item.path);
@@ -89,15 +109,22 @@ namespace detail {
 }
 
 /// Name-based family (Service / ScheduledTask / FirewallRule / other): distinct tags, lower-cased.
-[[nodiscard]] inline QString namedKey(LeftoverItem::Type type, const QString& path) {
-    const QString name = path.trimmed();
-    if (type == LeftoverItem::Type::Service) {
+/// FirewallRule additionally binds the direction/profile/program qualifiers -- captured at scan
+/// time (see LeftoverItem) and used by cleanup to narrow the netsh delete to ONE rule -- so a proof
+/// for one rule cannot authorize deleting a DIFFERENT rule that merely shares the display name. The
+/// firewall components are separator-escaped because a rule name may legally contain '|'.
+[[nodiscard]] inline QString namedKey(const LeftoverItem& item) {
+    const QString name = item.path.trimmed();
+    if (item.type == LeftoverItem::Type::Service) {
         return QStringLiteral("svc|") + name.toLower();
     }
-    if (type == LeftoverItem::Type::FirewallRule) {
-        return QStringLiteral("fw|") + name.toLower();
+    if (item.type == LeftoverItem::Type::FirewallRule) {
+        return QStringLiteral("fw|") + escapeKeyField(name.toLower()) + QStringLiteral("|dir:") +
+               escapeKeyField(item.firewallDirection.trimmed().toLower()) +
+               QStringLiteral("|prof:") + escapeKeyField(item.firewallProfile.trimmed().toLower()) +
+               QStringLiteral("|prog:") + escapeKeyField(item.firewallProgram.trimmed().toLower());
     }
-    if (type == LeftoverItem::Type::ScheduledTask) {
+    if (item.type == LeftoverItem::Type::ScheduledTask) {
         return QStringLiteral("task|") + taskBody(name);
     }
     return QStringLiteral("other|") + name.toLower();
@@ -122,7 +149,7 @@ namespace detail {
     case LeftoverItem::Type::RegistryValue:
         return detail::registryFamilyKey(item);
     default:
-        return detail::namedKey(item.type, item.path);
+        return detail::namedKey(item);
     }
 }
 

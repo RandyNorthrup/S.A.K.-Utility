@@ -256,7 +256,12 @@ void BandwidthTester::startIperfServer(uint16_t port) {
         return;
     }
 
-    if (isServerRunning()) {
+    if (m_serverProcess != nullptr) {
+        // Reject re-entry while a server object exists in ANY state -- Running OR the brief
+        // Starting window before started() fires. isServerRunning() is Running-only, so a
+        // second start during Starting would overwrite m_serverProcess and
+        // m_firewallRuleName, orphaning the first server and leaking its inbound rule.
+        // Both teardown handlers null m_serverProcess, so a genuine restart still proceeds.
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 server is already running"));
         return;
     }
@@ -283,7 +288,14 @@ void BandwidthTester::startIperfServer(uint16_t port) {
 
 void BandwidthTester::connectServerProcessSignals(const QString& ruleName, uint16_t port) {
     connect(m_serverProcess, &QProcess::readyReadStandardOutput, this, [this]() {
-        const auto data = m_serverProcess->readAllStandardOutput();
+        // Read from the process that actually emitted the signal, not the mutable
+        // m_serverProcess member: after a stop (member nulled, deleteLater queued) a
+        // still-queued readyRead would otherwise dereference a null or superseded pointer.
+        auto* process = qobject_cast<QProcess*>(sender());
+        if (process == nullptr) {
+            return;
+        }
+        const auto data = process->readAllStandardOutput();
         for (const auto& line : extractAcceptedClientLines(QString::fromUtf8(data))) {
             Q_EMIT serverClientConnected(line);
         }
@@ -556,10 +568,15 @@ void BandwidthTester::runHttpSpeedTest() {
         return;
     }
 
-    if (*downloadMbps > 0.0 || *uploadMbps > 0.0) {
+    // Fail closed: require BOTH legs to have measured throughput. A leg whose transfers all
+    // failed sums to 0 bytes / 0 time -> 0.0 Mbps here, indistinguishable from a real zero,
+    // so reporting the run "complete" with one leg at 0.0 would present a failed measurement
+    // as a result. Only a two-legged success is surfaced as a completed test.
+    if (*downloadMbps > 0.0 && *uploadMbps > 0.0) {
         Q_EMIT httpSpeedTestComplete(*downloadMbps, *uploadMbps, latencyMs);
     } else {
-        Q_EMIT errorOccurred(QStringLiteral("HTTP speed test failed: no data transferred"));
+        Q_EMIT errorOccurred(
+            QStringLiteral("HTTP speed test failed: download or upload reported no throughput"));
         Q_EMIT httpSpeedTestComplete(0.0, 0.0, 0.0);
     }
 }
@@ -579,7 +596,16 @@ QString BandwidthTester::composeNetshPath(const QString& systemRoot) {
 }
 
 QString BandwidthTester::resolveNetshPath() {
-    return composeNetshPath(qEnvironmentVariable("SystemRoot"));
+#ifdef Q_OS_WIN
+    // Resolve netsh from the AUTHORITATIVE system directory (GetSystemDirectoryW, via
+    // system32Path), never the attacker-influenceable %SystemRoot% environment variable:
+    // that env var can name a relative or planted directory, and this binary runs with our
+    // (often elevated) rights. Fails closed (empty) if the system directory is unresolvable.
+    return system32Path(QStringLiteral("netsh.exe"));
+#else
+    // No netsh off Windows: fail closed so no bare "netsh" is ever launched.
+    return {};
+#endif
 }
 
 void BandwidthTester::createFirewallRule(const QString& ruleName, uint16_t port) {

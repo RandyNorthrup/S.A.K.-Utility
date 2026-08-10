@@ -27,22 +27,44 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
     return id;
 }
 
+// Settle a rejected config read: record @p message when the caller asked for one, then return
+// the empty object that signals failure. Folding every fail-closed exit through one helper keeps
+// the "set the reason, return nothing" contract identical across paths instead of repeating the
+// same null-check branch at each guard.
+[[nodiscard]] QJsonObject rejectConfig(QString* error_message, const QString& message) {
+    if (error_message) {
+        *error_message = message;
+    }
+    return {};
+}
+
 [[nodiscard]] QJsonObject readJsonObject(const QString& path, QString* error_message) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        if (error_message) {
-            *error_message = QStringLiteral("Cannot open %1: %2").arg(path, file.errorString());
-        }
-        return {};
+        return rejectConfig(error_message,
+                            QStringLiteral("Cannot open %1: %2").arg(path, file.errorString()));
+    }
+    // Bound the read before pulling bytes: a providers/manifest config is a few KB, so an
+    // attacker-planted (or otherwise malformed) multi-GB file must be refused BEFORE readAll()
+    // can allocate it. A negative/unknowable size and a short read both fail closed.
+    constexpr qint64 kMaxConfigBytes = 8 * 1024 * 1024;  // 8 MiB is far above any real config.
+    const qint64 declared_size = file.size();
+    if (declared_size < 0 || declared_size > kMaxConfigBytes) {
+        return rejectConfig(error_message,
+                            QStringLiteral("Config file rejected (size %1 bytes): %2")
+                                .arg(declared_size)
+                                .arg(path));
+    }
+    const QByteArray bytes = file.readAll();
+    if (bytes.size() != declared_size) {
+        return rejectConfig(error_message, QStringLiteral("Short read on %1").arg(path));
     }
     QJsonParseError parse_error;
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (error_message) {
-            *error_message =
-                QStringLiteral("Invalid JSON in %1: %2").arg(path, parse_error.errorString());
-        }
-        return {};
+        return rejectConfig(
+            error_message,
+            QStringLiteral("Invalid JSON in %1: %2").arg(path, parse_error.errorString()));
     }
     if (error_message) {
         error_message->clear();
@@ -95,6 +117,10 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
     QJsonObject status = provider;
     status[QStringLiteral("available")] = provider.value(QStringLiteral("enabled")).toBool(true);
     status[QStringLiteral("missing_reason")] = QString();
+    // resolved_command is a COMPUTED output that only the gated stdio branch below may set.
+    // Strip any value carried in from the (untrusted, disk-overridable) provider object so a
+    // non-stdio or forged entry cannot smuggle an un-gated command through to the launcher.
+    status.remove(QStringLiteral("resolved_command"));
 
     const QString transport = provider.value(QStringLiteral("transport")).toString();
     if (!status.value(QStringLiteral("available")).toBool(false)) {
@@ -151,6 +177,11 @@ QJsonObject AiProviderRegistry::providerById(const QString& provider_id,
             return provider;
         }
     }
+    if (error_message && !error_message->isEmpty()) {
+        // providers() recorded an open/parse failure; surface THAT error rather than masking it
+        // as "Unknown provider".
+        return {};
+    }
     if (error_message) {
         *error_message = QStringLiteral("Unknown provider: %1").arg(provider_id);
     }
@@ -188,6 +219,14 @@ QJsonObject AiProviderRegistry::appManifest(const QString& app_id, QString* erro
             *error_message = QStringLiteral("App id is empty");
         }
         return {};
+    }
+    // Bound cache growth: appManifest is reachable with AI-supplied ids, and operator[] below
+    // inserts an entry for every distinct id (even a miss). Cap the map so a flood of unique ids
+    // cannot exhaust memory; a post-clear miss simply re-reads from disk/resource.
+    constexpr int kMaxManifestCacheEntries = 256;
+    if (!m_app_manifest_cache.contains(id) &&
+        m_app_manifest_cache.size() >= kMaxManifestCacheEntries) {
+        m_app_manifest_cache.clear();
     }
     return readCachedJsonObject(
         appManifestPath(id), appManifestResourcePath(id), &m_app_manifest_cache[id], error_message);

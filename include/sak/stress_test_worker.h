@@ -71,8 +71,9 @@ public:
     /// @brief Resolve the number of CPU stress worker threads to launch.
     /// @param configThreads requested count; <= 0 means "use all logical CPUs".
     /// @param hwConcurrency std::thread::hardware_concurrency() (0 if unknown).
-    /// @return at least 1. A requested CPU stress must never launch zero threads
-    ///         -- that would skip the component while still reporting PASSED.
+    /// @return at least 1, and at most an internal ceiling. A requested CPU stress must never
+    ///         launch zero threads (that would skip the component while still reporting PASSED),
+    ///         and a bogus/hostile positive count is clamped so it cannot spawn unbounded threads.
     /// @note Pure + static for unit testing.
     [[nodiscard]] static int resolveCpuThreadCount(int configThreads, unsigned int hwConcurrency);
 
@@ -93,6 +94,13 @@ protected:
     auto execute() -> std::expected<void, sak::error_code> override;
 
 private:
+    /// @brief Launch the stress threads, run the monitor loop, and join every child.
+    /// @return Success, or internal_error if launching or running the threads threw.
+    /// @details Fails closed on any exception: signals the children to stop and drains their
+    ///          futures before returning, so no std::future destructor blocks forever on a
+    ///          child that was never told to exit.
+    std::expected<void, sak::error_code> runStressThreadsToCompletion();
+
     /// @brief Launch CPU, memory, and disk stress threads based on config
     void launchStressThreads(std::vector<std::future<void>>& futures);
 

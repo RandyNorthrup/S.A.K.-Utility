@@ -8,6 +8,8 @@
 #include <QProcess>
 #include <QStandardPaths>
 
+#include <limits>
+
 #ifdef Q_OS_WIN
 #include "sak/logger.h"
 
@@ -77,6 +79,10 @@ bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
                              &totalEntries,
                              &resumeHandle);
         if (status != NERR_Success && status != ERROR_MORE_DATA) {
+            // Surface the exact failure instead of returning a silently-partial list: the
+            // caller's queryOk already flips false, but the concrete status was being lost.
+            sak::logError("NetUserEnum failed; user enumeration incomplete (status {})",
+                          QString::number(status).toStdString());
             return false;
         }
         for (DWORD i = 0; i < entriesRead; ++i) {
@@ -87,6 +93,12 @@ bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
                 continue;
             }
             profile.sid = getUserSID(profile.username);
+            if (profile.sid.isEmpty()) {
+                // Surface, do not silently swallow: the SID drives later ownership/permission
+                // operations, so a profile recorded without one must be visibly flagged.
+                sak::logWarning("Could not resolve SID for user {}; profile recorded without a SID",
+                                profile.username.toStdString());
+            }
             profile.is_current_user = (profile.username.toLower() == currentUserLower);
             profile.total_size_estimated = estimateProfileSize(profile.profile_path);
             populateFolderSelections(profile);
@@ -175,7 +187,9 @@ QString expandRegistryPath(const wchar_t* profileDir, DWORD valueType) {
     if (expandedLen > 0 && expandedLen <= MAX_PATH) {
         return QString::fromWCharArray(expandedPath);
     }
-    return QString::fromWCharArray(profileDir);
+    // Fail closed: a failed or overflowing expansion must NOT fall back to the raw,
+    // unexpanded %VAR% text -- that would let malformed registry data become a profile path.
+    return {};
 }
 
 /// @brief Look up a user's profile path from the registry using their SID
@@ -211,6 +225,18 @@ QString lookupRegistryProfilePath(const QString& sid) {
     if (valueType != REG_SZ && valueType != REG_EXPAND_SZ) {
         return {};
     }
+    // RegQueryValueExW does NOT guarantee the returned string is NUL-terminated and can fill
+    // the whole buffer; bound the read by the returned byte count and force a terminator so
+    // expandRegistryPath / ExpandEnvironmentStringsW / fromWCharArray never read past
+    // profileDir. Reject a malformed length or one that left no room to terminate.
+    if (bufferSize == 0 || (bufferSize % sizeof(wchar_t)) != 0 || bufferSize > sizeof(profileDir)) {
+        return {};
+    }
+    const DWORD charCount = bufferSize / sizeof(wchar_t);
+    if (charCount >= MAX_PATH) {
+        return {};  // no slot left to terminate safely -> treat as hostile/malformed
+    }
+    profileDir[charCount] = L'\0';
 
     QString registryPath = expandRegistryPath(profileDir, valueType);
     if (QDir(registryPath).exists()) {
@@ -228,26 +254,34 @@ QString WindowsUserScanner::getProfilePath(const QString& username) {
         // of every user's profile instead of reporting "not found".
         return {};
     }
-    // First try standard location using SystemDrive environment variable
+
+#ifdef Q_OS_WIN
+    // AUTHORITATIVE source first: the SID -> ProfileImagePath registry mapping is where a
+    // profile actually lives. A relocated profile is correct ONLY there, so it must win over
+    // the guessed <SystemDrive>\Users\<name> location (no guessed-default preferred over the
+    // authoritative source). lookupRegistryProfilePath already fails closed when the path it
+    // names does not exist, so a stale registry entry falls through to the standard location.
+    const QString sid = getUserSID(username);
+    if (!sid.isEmpty()) {
+        const QString registryPath = lookupRegistryProfilePath(sid);
+        if (!registryPath.isEmpty()) {
+            return registryPath;
+        }
+    }
+#endif
+
+    // Standard location only as a SECONDARY, when the authoritative lookup yielded nothing
+    // (or off Windows). Still gated by existence so a nonexistent guess is reported as
+    // "not found" rather than returned.
     QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
     if (systemDrive.isEmpty()) {
         systemDrive = "C:";
     }
-    QString standardPath = systemDrive + "\\Users\\" + username;
+    const QString standardPath = systemDrive + "\\Users\\" + username;
     if (QDir(standardPath).exists()) {
         return standardPath;
     }
-
-#ifdef Q_OS_WIN
-    // Query registry for actual profile path using the user's SID
-    QString sid = getUserSID(username);
-    if (sid.isEmpty()) {
-        return {};
-    }
-    return lookupRegistryProfilePath(sid);
-#else
     return {};
-#endif
 }
 
 qint64 WindowsUserScanner::sumFolderFileSizes(const QString& folderPath, int fileLimit) {
@@ -256,7 +290,16 @@ qint64 WindowsUserScanner::sumFolderFileSizes(const QString& folderPath, int fil
     QDirIterator it(folderPath, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext() && count < fileLimit) {
         it.next();
-        total += it.fileInfo().size();
+        const qint64 sz = it.fileInfo().size();
+        // Saturate rather than overflow: file sizes are attacker-influenceable metadata
+        // (e.g. a crafted sparse file reporting a near-INT64_MAX logical size), and signed
+        // qint64 overflow is undefined behavior.
+        if (sz > 0) {
+            if (total > std::numeric_limits<qint64>::max() - sz) {
+                return std::numeric_limits<qint64>::max();
+            }
+            total += sz;
+        }
         ++count;
     }
     return total;
@@ -287,7 +330,15 @@ qint64 WindowsUserScanner::estimateProfileSize(const QString& profilePath) {
         int fileCount = 0;
         while (it.hasNext() && fileCount < kProfileSizeEstimateFileLimit) {
             it.next();
-            totalSize += it.fileInfo().size();
+            const qint64 sz = it.fileInfo().size();
+            // Saturate rather than overflow (see sumFolderFileSizes): signed qint64
+            // overflow on attacker-influenceable file sizes is undefined behavior.
+            if (sz > 0) {
+                if (totalSize > std::numeric_limits<qint64>::max() - sz) {
+                    return std::numeric_limits<qint64>::max();
+                }
+                totalSize += sz;
+            }
             fileCount++;
         }
     }

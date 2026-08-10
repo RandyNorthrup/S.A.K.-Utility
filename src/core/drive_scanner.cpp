@@ -88,6 +88,41 @@ QVector<int> enumeratePhysicalDriveNumbers(bool& query_ok) {
 
     return drive_numbers;
 }
+
+// Whether a volume is backed by a given physical drive. Undetermined (the volume could not be
+// opened, or IOCTL_STORAGE_GET_DEVICE_NUMBER failed -- e.g. a multi-disk/dynamic volume with no
+// single device number) is kept DISTINCT from a confirmed non-match so a safety caller can fail
+// closed on an uninspectable volume instead of silently treating it as "on another drive".
+enum class VolumeDriveMatch {
+    Yes,
+    No,
+    Undetermined
+};
+
+VolumeDriveMatch volumeDriveMatch(const wchar_t* volumeName, int driveNumber) {
+    HANDLE hVolume = CreateFileW(
+        volumeName, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (hVolume == INVALID_HANDLE_VALUE) {
+        return VolumeDriveMatch::Undetermined;
+    }
+
+    STORAGE_DEVICE_NUMBER deviceNumber = {};
+    DWORD bytesReturned = 0;
+    const bool ioctl_ok = DeviceIoControl(hVolume,
+                                          IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                                          nullptr,
+                                          0,
+                                          &deviceNumber,
+                                          sizeof(deviceNumber),
+                                          &bytesReturned,
+                                          nullptr) != 0;
+    CloseHandle(hVolume);
+    if (!ioctl_ok) {
+        return VolumeDriveMatch::Undetermined;
+    }
+    return static_cast<int>(deviceNumber.DeviceNumber) == driveNumber ? VolumeDriveMatch::Yes
+                                                                      : VolumeDriveMatch::No;
+}
 }  // anonymous namespace
 
 DriveScanner* DriveScanner::s_instance = nullptr;
@@ -649,25 +684,10 @@ QStringList DriveScanner::getMountPoints(int driveNumber, bool* enumerationOk) {
 }
 
 bool DriveScanner::volumeMatchesDrive(const wchar_t* volumeName, int driveNumber) {
-    HANDLE hVolume = CreateFileW(
-        volumeName, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (hVolume == INVALID_HANDLE_VALUE) {
-        return false;
-    }
-
-    STORAGE_DEVICE_NUMBER deviceNumber = {};
-    DWORD bytesReturned = 0;
-    const bool match = DeviceIoControl(hVolume,
-                                       IOCTL_STORAGE_GET_DEVICE_NUMBER,
-                                       nullptr,
-                                       0,
-                                       &deviceNumber,
-                                       sizeof(deviceNumber),
-                                       &bytesReturned,
-                                       nullptr) &&
-                       static_cast<int>(deviceNumber.DeviceNumber) == driveNumber;
-    CloseHandle(hVolume);
-    return match;
+    // Only a CONFIRMED match counts here; getMountPoints treats an Undetermined probe as "not this
+    // drive" for its best-effort mount-point list. The fail-closed safety path consumes
+    // volumeDriveMatch()'s Undetermined state directly -- see appendVolumeRoot().
+    return volumeDriveMatch(volumeName, driveNumber) == VolumeDriveMatch::Yes;
 }
 
 bool DriveScanner::appendVolumeRoot(wchar_t* volumeName, int driveNumber, QStringList& roots) {
@@ -676,8 +696,17 @@ bool DriveScanner::appendVolumeRoot(wchar_t* volumeName, int driveNumber, QStrin
     if (len > 0 && volumeName[len - 1] == L'\\') {
         volumeName[len - 1] = L'\0';
     }
-    if (!volumeMatchesDrive(volumeName, driveNumber)) {
-        return true;
+    const VolumeDriveMatch match = volumeDriveMatch(volumeName, driveNumber);
+    if (match == VolumeDriveMatch::No) {
+        return true;  // Confirmed on a different drive -- an authoritative skip.
+    }
+    if (match == VolumeDriveMatch::Undetermined) {
+        // Could not confirm which physical drive backs this volume (its handle would not open,
+        // IOCTL_STORAGE_GET_DEVICE_NUMBER failed, or it is a multi-disk/dynamic volume with no
+        // single device number). Do NOT silently drop it as "another drive's": report this
+        // drive's volume set as non-authoritative so containsWindowsInstallation() and
+        // physicalDriveBootProbe() fail closed instead of classifying an uninspectable disk safe.
+        return false;
     }
     QStringList mounts;
     const bool mountsOk = collectMountPaths(volumeName, len, mounts);
@@ -814,7 +843,16 @@ bool nativePathExists(const QString& root, const char* rel) {
     full += QString::fromLatin1(rel);
     full.replace(QLatin1Char('/'), QLatin1Char('\\'));
     const DWORD attrs = GetFileAttributesW(reinterpret_cast<LPCWSTR>(full.utf16()));
-    return attrs != INVALID_FILE_ATTRIBUTES;
+    if (attrs != INVALID_FILE_ATTRIBUTES) {
+        return true;  // Path is present.
+    }
+    // The query failed. Only a genuine NOT-FOUND proves the indicator is really absent; any other
+    // error (access denied, sharing violation, not ready, BitLocker-locked, ...) leaves existence
+    // UNKNOWN. hasWindowsIndicators/hasBootManagerIndicators gate erasure of a boot/system disk, so
+    // fail closed: report an uninspectable path as present rather than let an unreadable
+    // system/boot volume be classified "safe".
+    const DWORD err = GetLastError();
+    return err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND;
 }
 
 }  // namespace

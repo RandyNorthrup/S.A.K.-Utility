@@ -61,6 +61,9 @@ public:
     ///        Recycle Bin is reported FAILED and left in place rather than permanently deleted or
     ///        scheduled for reboot removal. Used by AUTOMATIC (no human review) cleanup so an
     ///        auto-deleted item is always undoable. Must be paired with useRecycleBin=true.
+    ///        Configure this BEFORE start(): m_requireRecoverable is read on the worker thread by
+    ///        execute() and is not synchronized, so mutating it after the run begins is a data
+    ///        race.
     void setRequireRecoverable(bool require) { m_requireRecoverable = require; }
 
     /// @brief Whether recoverable-only mode is in effect (defaults to the constructor's
@@ -198,10 +201,11 @@ private:
     /// @brief Handle-verified recursive delete of @p path's tree (Windows). Every destructive
     ///        syscall is preceded by an immediate open+GetFinalPathNameByHandleW verification of
     ///        the exact target, so a swapped ancestor is caught at every node (fail-closed).
-    [[nodiscard]] bool removeFolderTreeVerified(const QString& path);
+    [[nodiscard]] bool removeFolderTreeVerified(const QString& path, int depth = 0);
     /// @brief Remove one child during removeFolderTreeVerified: reparse -> unlink the link only;
-    ///        subdir -> recurse; file -> delete by verified handle.
-    [[nodiscard]] bool removeVerifiedFolderEntry(const QFileInfo& entry);
+    ///        subdir -> recurse; file -> delete by verified handle. @p depth carries the recursion
+    ///        depth so a pathologically deep tree fails closed instead of exhausting the stack.
+    [[nodiscard]] bool removeVerifiedFolderEntry(const QFileInfo& entry, int depth);
     /// @brief Remove an (expected-empty) directory by a redirect-verified handle (POSIX unlink),
     ///        falling back to RemoveDirectoryW / reboot scheduling only when it cannot be opened.
     [[nodiscard]] bool removeEmptyDirByVerifiedHandle(const QString& path);

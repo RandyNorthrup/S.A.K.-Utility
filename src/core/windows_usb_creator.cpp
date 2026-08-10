@@ -141,6 +141,15 @@ bool WindowsUSBCreator::validateUSBInputs(const QString& isoPath, const QString&
         return false;
     }
 
+    // Require a real regular file before wiping the target: a directory or special file must not
+    // pass the existence check above and only fail after the disk has been cleaned/formatted.
+    if (!QFileInfo(isoPath).isFile()) {
+        setError(QString("ISO path is not a regular file: %1").arg(isoPath));
+        sak::logError(lastError().toStdString());
+        Q_EMIT failed(lastError());
+        return false;
+    }
+
     // Engine-level safety gate: never DiskPart-clean the OS boot/system disk. This
     // also captures the target capacity into m_targetDiskSizeBytes.
     if (!guardTargetDiskSafe(diskNumber)) {
@@ -301,7 +310,10 @@ QString WindowsUSBCreator::system32ExePath(const QString& exeName) {
         return {};
     }
     const QString path = QDir(systemRoot).filePath(QStringLiteral("System32/") + exeName);
-    if (!QFile::exists(path)) {
+    // Fail closed unless this is a real, existing regular file -- never a symlink/reparse point
+    // that could redirect an elevated diskpart.exe/bcdboot.exe launch to attacker-planted code.
+    const QFileInfo info(path);
+    if (!info.exists() || !info.isFile() || info.isSymLink()) {
         return {};
     }
     return QDir::toNativeSeparators(path);
@@ -377,7 +389,11 @@ bool WindowsUSBCreator::runDiskpartScript(const QString& script,
         sak::logError(lastError().toStdString());
         return false;
     }
-    scriptFile.flush();
+    if (!scriptFile.flush()) {
+        setError("Failed to flush diskpart script to disk");
+        sak::logError(lastError().toStdString());
+        return false;
+    }
     const auto result = sak::runProcess(diskpartExe,
                                         {QStringLiteral("/s"), scriptFile.fileName()},
                                         timeoutMs,
@@ -458,6 +474,18 @@ bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
         return false;
     }
 
+    // A non-zero exit means the query itself failed; a stray "NTFS" on stdout must not be
+    // accepted as a verified filesystem. Fail closed just like getDriveLetterFromDiskNumber.
+    if (check_result.exit_code != 0) {
+        setError(QString("STEP 1 VERIFICATION FAILED: "
+                         "Filesystem query failed for drive %1 (exit code %2)")
+                     .arg(driveLetter)
+                     .arg(check_result.exit_code));
+        sak::logError(lastError().toStdString());
+        Q_EMIT failed(lastError());
+        return false;
+    }
+
     QString fs = check_result.std_out.trimmed();
     if (fs != "NTFS") {
         setError(QString("STEP 1 VERIFICATION FAILED: "
@@ -474,10 +502,43 @@ bool WindowsUSBCreator::verifyNtfsFilesystem(const QString& driveLetter) {
     return true;
 }
 
+bool WindowsUSBCreator::verifyDriveLetterMapsToTarget(const QString& driveLetter) {
+    // driveLetter is the single A-Z value validateDriveLetter produced, so it is safe to
+    // interpolate. Re-map it to a disk number and require it to still be the pinned target;
+    // fail closed otherwise so extraction never writes to a swapped/reassigned volume.
+    const QString cmd = QString("(Get-Partition -DriveLetter %1).DiskNumber").arg(driveLetter);
+    const auto result = sak::runPowerShell(
+        cmd, sak::kTimeoutProcessMediumMs, true, false, [this]() { return m_cancelled.load(); });
+    if (!result.succeeded()) {
+        setError(
+            QString("Could not confirm drive %1 still maps to target disk %2 before extraction")
+                .arg(driveLetter, m_diskNumber));
+        sak::logError(lastError().toStdString());
+        return false;
+    }
+    const QString mapped = result.std_out.trimmed();
+    bool ok = false;
+    const int mappedDisk = mapped.toInt(&ok);
+    if (!ok || mappedDisk != m_diskNumber.toInt()) {
+        setError(QString("Drive %1 now maps to disk %2, not target disk %3 -- refusing to extract")
+                     .arg(driveLetter, mapped, m_diskNumber));
+        sak::logError(lastError().toStdString());
+        return false;
+    }
+    return true;
+}
+
 bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QString& driveLetter) {
     // Not asserted: copyISOContents below rejects a missing ISO (QFile::exists) and an
     // invalid drive letter (copyISO_normalizeDestination), both via m_lastError.
     // ==================== STEP 2: EXTRACT ====================
+    // TOCTOU guard: confirm the drive letter still maps to the pinned target disk before 7z
+    // writes anything, so a hot-plug that reassigned the letter cannot redirect the extraction
+    // onto an unrelated NTFS volume.
+    if (!verifyDriveLetterMapsToTarget(driveLetter)) {
+        Q_EMIT failed(lastError());
+        return false;
+    }
     Q_EMIT statusChanged("Step 2/5: Extracting Windows installation files...");
     sak::logInfo("STEP 2: Extracting ISO contents...");
 
@@ -597,6 +658,12 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
     // The only path here is createBootableUSB -> formatAndVerifyDrive -> formatDriveNTFS,
     // gated on validateUSBInputs' ^\d{1,3}$ regex.
     Q_ASSERT(!diskNumber.isEmpty());
+    // Honor a cancellation that arrived before this destructive step launches, so the
+    // clean is not started after the user asked to stop.
+    if (m_cancelled) {
+        setError("Operation cancelled");
+        return false;
+    }
     // Re-pin the target's identity immediately before the destructive clean so a
     // hot-plug that reassigned disk numbers cannot redirect the wipe (TOCTOU).
     if (!reverifyTargetDiskIdentity(diskNumber)) {
@@ -626,6 +693,17 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
     // The only path here is createBootableUSB -> formatAndVerifyDrive -> formatDriveNTFS,
     // gated on validateUSBInputs' ^\d{1,3}$ regex.
     Q_ASSERT(!diskNumber.isEmpty());
+    // Honor a cancellation that arrived before this second destructive step launches.
+    if (m_cancelled) {
+        setError("Operation cancelled");
+        return false;
+    }
+    // TOCTOU guard: cleanAndPartitionDisk re-pinned identity before the clean, but the format
+    // is a SEPARATE destructive DiskPart run. Re-pin again immediately before it so a hot-plug
+    // that reassigned disk numbers between the two scripts cannot redirect the format.
+    if (!reverifyTargetDiskIdentity(diskNumber)) {
+        return false;
+    }
     sak::logInfo("Waiting for Windows to recognize partition...");
     Q_EMIT statusChanged("Formatting partition as NTFS...");
     QThread::msleep(sak::kTimerStatusMessageMs);

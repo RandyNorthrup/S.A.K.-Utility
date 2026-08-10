@@ -25,6 +25,7 @@ param(
     [string]$PasswordFile = "",
     [string]$SharedRoot = "\\vboxsvr\sakrepo",
     [string]$VBoxManage = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe",
+    [ValidateRange(1, 128)]
     [int]$DiskNumber = 1,
     [ValidateSet("ext2", "ext3", "ext4")]
     [string]$FileSystem = "ext4",
@@ -41,6 +42,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Pin every host-side path (credentials, reports, screenshots, evidence) to the repository that
+# actually contains this script rather than the ambient working directory, which an unrelated
+# launch location could otherwise turn into an implicit trust root for secrets and evidence.
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+if (-not $RepoRoot -or -not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
+    throw "Unable to resolve repository root from script location."
+}
 
 function ConvertTo-SafeFilePart {
     param([Parameter(Mandatory = $true)] [string]$Value)
@@ -75,15 +84,24 @@ function Resolve-GuestPasswordFile {
         [string]$ExplicitPasswordFile
     )
 
-    $candidateFiles = New-Object System.Collections.Generic.List[string]
+    # An EXPLICIT -PasswordFile or the SAK_VM_GUEST_PASSWORD_FILE override is a deliberate
+    # credential selection: if it is set but does not resolve to a real file, FAIL CLOSED rather
+    # than silently falling through to a cached/unattended password (a different identity).
     if ($ExplicitPasswordFile) {
-        $candidateFiles.Add($ExplicitPasswordFile)
+        if (-not (Test-Path -LiteralPath $ExplicitPasswordFile -PathType Leaf)) {
+            throw "Explicit -PasswordFile does not exist: $ExplicitPasswordFile"
+        }
+        return (Resolve-Path -LiteralPath $ExplicitPasswordFile).Path
     }
     if ($env:SAK_VM_GUEST_PASSWORD_FILE) {
-        $candidateFiles.Add($env:SAK_VM_GUEST_PASSWORD_FILE)
+        if (-not (Test-Path -LiteralPath $env:SAK_VM_GUEST_PASSWORD_FILE -PathType Leaf)) {
+            throw "SAK_VM_GUEST_PASSWORD_FILE is set but does not exist: $env:SAK_VM_GUEST_PASSWORD_FILE"
+        }
+        return (Resolve-Path -LiteralPath $env:SAK_VM_GUEST_PASSWORD_FILE).Path
     }
 
-    $authDir = Join-Path (Get-Location) "temp\vm-auth"
+    $candidateFiles = New-Object System.Collections.Generic.List[string]
+    $authDir = Join-Path $RepoRoot "temp\vm-auth"
     New-Item -ItemType Directory -Path $authDir -Force | Out-Null
     $safeVm = ConvertTo-SafeFilePart -Value $MachineName
     $safeUser = ConvertTo-SafeFilePart -Value $UserName
@@ -134,12 +152,18 @@ function Resolve-GuestPasswordFile {
         throw "No unattended password entry found for guest user $UserName."
     }
 
-    Set-Content -LiteralPath $cachedPasswordFile -Value $passwords[0] -NoNewline -Encoding ascii
-    try {
-        & icacls.exe $cachedPasswordFile /inheritance:r /grant:r "$env:USERNAME`:F" /grant:r "SYSTEM:F" | Out-Null
+    $distinctPasswords = @($passwords | Select-Object -Unique)
+    if ($distinctPasswords.Count -gt 1) {
+        throw "Multiple distinct unattended passwords found for guest user ${UserName}; refusing to guess which one is correct."
     }
-    catch {
-        Write-Warning "Unable to tighten ACLs on password file ${cachedPasswordFile}: $($_.Exception.Message)"
+
+    Set-Content -LiteralPath $cachedPasswordFile -Value $distinctPasswords[0] -NoNewline -Encoding ascii
+    # Harden the freshly written plaintext secret and FAIL CLOSED if the ACL restriction does not
+    # take: a broadly readable password file left on disk is worse than no cached file at all.
+    & icacls.exe $cachedPasswordFile /inheritance:r /grant:r "$env:USERNAME`:F" /grant:r "SYSTEM:F" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $cachedPasswordFile -Force -ErrorAction SilentlyContinue
+        throw "Failed to restrict ACLs on cached password file '${cachedPasswordFile}'; refusing to leave an unprotected plaintext secret on disk."
     }
     return (Resolve-Path -LiteralPath $cachedPasswordFile).Path
 }
@@ -182,7 +206,7 @@ function Wait-GuestDesktopReady {
 function Get-GateConfiguration {
     param([Parameter(Mandatory = $true)] [string]$GateName)
 
-    $artifactRoot = Join-Path (Get-Location) "artifacts\partition-manager-certification\vm-lab"
+    $artifactRoot = Join-Path $RepoRoot "artifacts\partition-manager-certification\vm-lab"
     switch ($GateName) {
         "linux-swap" {
             return [pscustomobject]@{
@@ -258,7 +282,7 @@ $reportPath = $gateConfig.report
 $reportDir = Split-Path -Parent $reportPath
 New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
 
-$hostReportDir = Join-Path (Get-Location) "artifacts\partition-manager-certification\vm-lab\host-launch"
+$hostReportDir = Join-Path $RepoRoot "artifacts\partition-manager-certification\vm-lab\host-launch"
 New-Item -ItemType Directory -Path $hostReportDir -Force | Out-Null
 $hostReportPath = Join-Path $hostReportDir ("{0}-{1}.json" -f $Gate, (Get-Date -Format "yyyyMMddHHmmss"))
 $screenshotDir = Join-Path $hostReportDir ("screenshots-{0}-{1}" -f $Gate, (Get-Date -Format "yyyyMMddHHmmss"))
@@ -317,7 +341,9 @@ if ($GuestDomain) {
     )
 }
 $adminProbe = Invoke-VBoxGuestControl -Arguments $adminProbeArguments
-$directAdmin = (($adminProbe.output -join "`n") -match "admin=true")
+# Authorize direct destructive mode only on an EXACT 'admin=true' line from the probe, never a
+# substring found anywhere in the guest output (which could carry the token incidentally).
+$directAdmin = (@($adminProbe.output | ForEach-Object { "$_".Trim() }) -contains "admin=true")
 
 $uacAcceptedAt = $null
 $launchMode = "direct-admin"
@@ -443,16 +469,22 @@ while ((Get-Date) -lt $deadline) {
 }
 
 $completed = Test-Path -LiteralPath $reportPath -PathType Leaf
+$reportFresh = $true
+if ($completed) {
+    # Bind the report to THIS run: a report older than the run start is stale evidence from a
+    # prior or concurrent run and must not certify this one.
+    $reportFresh = ((Get-Item -LiteralPath $reportPath).LastWriteTimeUtc -ge $startedAt.ToUniversalTime())
+}
 $reportStatus = $null
 $reportGateId = $null
-if ($completed) {
+if ($completed -and $reportFresh) {
     try {
         $reportJson = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
         $reportStatus = $reportJson.status
         $reportGateId = $reportJson.gate_id
     }
     catch {
-        $reportStatus = "unreadable"
+        $reportStatus = "unreadable: $($_.Exception.Message)"
     }
 }
 
@@ -460,13 +492,30 @@ $finalScreenshot = Join-Path $screenshotDir "final.png"
 Invoke-VBoxGuestControl -Arguments @("controlvm", $VmName, "screenshotpng", $finalScreenshot) -AllowFailure | Out-Null
 Invoke-VBoxGuestControl -Arguments @("guestcontrol", $VmName, "closesession", "--all") -AllowFailure | Out-Null
 
-Write-HostLaunchReport -Completed $completed -ReportStatus $reportStatus -ReportGateId $reportGateId
+$hostCompleted = ($completed -and $reportFresh)
+$hostFailureReason = ""
+if (-not $completed) {
+    $hostFailureReason = "No report produced within $TimeoutSeconds seconds."
+}
+elseif (-not $reportFresh) {
+    $hostFailureReason = "Report predates run start; stale evidence refused."
+}
+elseif ($reportStatus -ne "passed") {
+    $hostFailureReason = "Report status is '$reportStatus' (expected 'passed')."
+}
+
+Write-HostLaunchReport -Completed $hostCompleted -ReportStatus $reportStatus -ReportGateId $reportGateId -FailureReason $hostFailureReason
 
 if (-not $completed) {
     throw "VM gate $Gate did not produce report within $TimeoutSeconds seconds. Host report: $hostReportPath"
 }
-if ($reportStatus -and $reportStatus -ne "passed") {
-    throw "VM gate $Gate report status is ${reportStatus}. Host report: $hostReportPath"
+if (-not $reportFresh) {
+    throw "VM gate $Gate report is stale (predates run start). Host report: $hostReportPath"
+}
+# Fail closed on ANY status that is not exactly 'passed' -- a missing, empty, or null status
+# must never print completion.
+if ($reportStatus -ne "passed") {
+    throw "VM gate $Gate report status is '${reportStatus}' (expected 'passed'). Host report: $hostReportPath"
 }
 
 Write-Host "VM gate $Gate completed. Report: $reportPath"

@@ -160,6 +160,10 @@ private:
     bool applyPermissions(const QString& filePath);
 
     // Helper functions
+    /// @brief Load the smart-filter rules for this run and surface any exclusion patterns that
+    /// failed to compile. A dropped pattern is fail-open -- files the user meant to exclude WILL
+    /// be backed up -- so it is reported rather than silently ignored (B8-23).
+    void applySmartFilterRules(const SmartFilter& smartFilter);
     bool createBackupStructure();
     bool saveManifest();
     qint64 calculateTotalSize();
@@ -169,13 +173,16 @@ private:
     /// @brief Count selected users for progress tracking
     void countSelectedUsers(int& currentUser, int& totalUsers) const;
 
-    // Directory operations
+    // Directory operations. @p depth is the recursion level; it is capped so a crafted deep
+    // source tree cannot exhaust the worker thread's stack (see kMaxCopyDepth).
     bool copyDirectory(const QString& sourceDir,
                        const QString& destDir,
-                       const FolderSelection& folderConfig);
+                       const FolderSelection& folderConfig,
+                       int depth = 0);
     void copyDirectoryEntry(const QString& sourceItem,
                             const QString& destDir,
-                            const FolderSelection& folderConfig);
+                            const FolderSelection& folderConfig,
+                            int depth);
     bool createDirectory(const QString& path);
 
     // Validation

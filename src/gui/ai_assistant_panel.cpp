@@ -6838,6 +6838,12 @@ bool AiAssistantPanel::handleRestorePointResponse(const QJsonObject& response_da
 }
 
 QJsonObject AiAssistantPanel::runScreenshotTool(const QString& reason) {
+    // QScreen/QPixmap are GUI-affine. A workflow phase or async tool handler dispatches
+    // this on a worker thread, so marshal the whole capture onto the GUI thread rather
+    // than grabbing and saving the screen off-thread (undefined behavior / crash).
+    if (!isOnGuiThread()) {
+        return runOnGuiThread([this, reason]() { return runScreenshotTool(reason); });
+    }
     QJsonObject result;
     result[QStringLiteral("success")] = false;
     if (!m_conversationStore) {
@@ -8092,12 +8098,16 @@ QString AiAssistantPanel::offlineOutputDirectory(const QString& operation,
 
 bool AiAssistantPanel::authorizeOfflineOperation(const QString& operation,
                                                  const QJsonObject& args) {
+    // ONE immutable snapshot decides the whole authorization (mirrors
+    // authorizePackageManagerChange): re-reading the mode per branch lets a switch to
+    // Chat between the reads fall through every branch and authorize with no gate.
+    const AccessMode mode = currentAccessMode();
     if (operation != QLatin1String("install_bundle")) {
         // A model-chosen output_dir writes downloaded installers OUTSIDE the session's
         // own artifact directory from an elevated process, so it is confirmed like any
         // other local change instead of being written wherever the model asked.
         const QString requested_dir = args.value(QStringLiteral("output_dir")).toString().trimmed();
-        if (requested_dir.isEmpty() || currentAccessMode() != AccessMode::AssistedFullAccess) {
+        if (requested_dir.isEmpty() || mode != AccessMode::AssistedFullAccess) {
             return true;
         }
         return confirmCommandWithUser(
@@ -8108,10 +8118,10 @@ bool AiAssistantPanel::authorizeOfflineOperation(const QString& operation,
     const QString manifest_path = args.value(QStringLiteral("manifest_path")).toString().trimmed();
     const QString preview =
         tr("Install offline Chocolatey deployment bundle from '%1'").arg(manifest_path);
-    if (currentAccessMode() == AccessMode::AssistedFullAccess) {
+    if (mode == AccessMode::AssistedFullAccess) {
         return confirmCommandWithUser(tr("SAK Offline Downloader"), preview, true);
     }
-    if (currentAccessMode() == AccessMode::UnattendedFullAccess) {
+    if (mode == AccessMode::UnattendedFullAccess) {
         return offerRestorePointIfNeeded(preview, true);
     }
     return true;
@@ -8151,7 +8161,11 @@ AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation
     auto* context = new QObject;
     worker->moveToThread(&offline_thread);
     context->moveToThread(&offline_thread);
-    QObject::connect(&offline_thread, &QThread::finished, worker, &QObject::deleteLater);
+    // `worker` is deliberately NOT torn down via finished->deleteLater. The cancellation
+    // poll below calls worker->cancel() cross-thread, and finished fires the instant the
+    // worker completes -- deleting it during the poll would be a use-after-free. It is
+    // deleted after offline_thread.wait() instead, once the thread has fully stopped and
+    // the poll has returned.
     QObject::connect(&offline_thread, &QThread::finished, context, &QObject::deleteLater);
     connectOfflineWorkerSignals(worker, context, &offline_thread, &done, &run);
     QObject::connect(&offline_thread,
@@ -8172,6 +8186,9 @@ AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation
     // ~QThread on a live thread aborts the process. waitForOfflineWorker above already
     // returned, which means the worker reached a terminal signal or honored the cancel.
     offline_thread.wait();
+    // Safe now: the thread has stopped and the cancellation poll has returned, so the
+    // worker outlived every cross-thread worker->cancel() call.
+    delete worker;
     return run;
 }
 
@@ -8232,7 +8249,13 @@ void AiAssistantPanel::connectOfflineWorkerSignals(OfflineDeploymentWorker* work
                      });
     QObject::connect(
         worker, &OfflineDeploymentWorker::logMessage, context, [this, run](const QString& message) {
-            run->log_lines.append(message);
+            // Bound retained log storage: a hostile package's install output can stream
+            // without limit, and only the first kPackageLogLineResultLimit lines are ever
+            // reported. Keep streaming every line to the live log, but stop growing the
+            // stored vector past the reported cap.
+            if (run->log_lines.size() < kPackageLogLineResultLimit) {
+                run->log_lines.append(message);
+            }
             QMetaObject::invokeMethod(
                 this,
                 [this, message]() {
@@ -8291,8 +8314,14 @@ QJsonObject AiAssistantPanel::offlineOperationResultJson(const QString& operatio
                                                          const QString& output_dir,
                                                          const OfflineToolRunResult& run_result) {
     QJsonObject result;
+    // Complete-work semantics: a batch that finished but left packages failed or
+    // cancelled is a partial result, not a success -- the stats block below surfaces the
+    // counts and success must not contradict them. Skipped packages (require-network in
+    // packed_only / air-gap mode) are an expected outcome, so they do not force failure.
     result[QStringLiteral("success")] = run_result.completed &&
-                                        run_result.operation_error.isEmpty();
+                                        run_result.operation_error.isEmpty() &&
+                                        run_result.final_stats.failed == 0 &&
+                                        run_result.final_stats.cancelled == 0;
     result[QStringLiteral("operation")] = operation;
     result[QStringLiteral("error_message")] = run_result.operation_error;
     result[QStringLiteral("output_dir")] = QDir::toNativeSeparators(output_dir);
@@ -8538,9 +8567,22 @@ void AiAssistantPanel::appendCitationsToList(const QVector<ai::OpenAIUrlCitation
     if (citations.isEmpty()) {
         return;
     }
+    // Citations come from an untrusted model/tool response and become live links in the
+    // auto-opened HTML report. Fail closed on non-web schemes (javascript:, file:, data:)
+    // and over-long URLs, and cap the retained count so the O(n) dedup stays bounded.
+    constexpr int kMaxStoredCitations = 500;
+    constexpr int kMaxCitationUrlChars = 2048;
     for (const auto& citation : citations) {
-        if (citation.url.trimmed().isEmpty()) {
+        const QString url = citation.url.trimmed();
+        if (url.isEmpty() || url.size() > kMaxCitationUrlChars) {
             continue;
+        }
+        const QString scheme = QUrl(url).scheme().toLower();
+        if (scheme != QLatin1String("http") && scheme != QLatin1String("https")) {
+            continue;
+        }
+        if (m_citations.size() >= kMaxStoredCitations) {
+            break;
         }
         const bool already_known = std::any_of(m_citations.cbegin(),
                                                m_citations.cend(),
@@ -10814,6 +10856,23 @@ void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workfl
     m_workflowRunWatcher->setFuture(future);
 }
 
+namespace {
+// Every abort path in executeWorkflowRun() has to hand back a Failed result still tagged with
+// the run's identity, because the callers attribute and surface it fail-closed by run_id. One
+// builder for that shape keeps each failure path down to the single fact that differs -- its
+// reason -- instead of repeating the same four-field carcass per branch.
+ai::AiOrchestratorResult failedWorkflowResult(const QString& run_id,
+                                              const QString& workflow_id,
+                                              const QString& error_message) {
+    ai::AiOrchestratorResult result;
+    result.run_id = run_id;
+    result.workflow_id = workflow_id;
+    result.status = ai::AiRunStatus::Failed;
+    result.error_message = error_message;
+    return result;
+}
+}  // namespace
+
 ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunLaunch& launch) {
     // A resume snapshot decides which phases are treated as already done, so a corrupt or
     // tampered one must abort the run with the real reason. Neither alternative is
@@ -10822,12 +10881,10 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
     QString resume_error;
     if (!launch.resume_state.isEmpty() &&
         !workflowResumeStateIsValid(launch.workflow, launch.resume_state, &resume_error)) {
-        ai::AiOrchestratorResult refused;
-        refused.run_id = launch.run_id;
-        refused.workflow_id = launch.workflow.id;
-        refused.status = ai::AiRunStatus::Failed;
-        refused.error_message = QStringLiteral("Workflow resume refused: %1").arg(resume_error);
-        return refused;
+        return failedWorkflowResult(
+            launch.run_id,
+            launch.workflow.id,
+            QStringLiteral("Workflow resume refused: %1").arg(resume_error));
     }
     ai::AiSubagentRunner runner(nullptr);
     runner.setModelClientFactory([]() {
@@ -10862,7 +10919,23 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
     if (launch.wire_callbacks) {
         connectWorkflowOrchestratorCallbacks(&orchestrator, launch.panel_guard);
     }
-    return orchestrator.run(launch.workflow, launch.run_id, launch.token);
+    // orchestrator.run() can throw; the async path stores this in a QFuture and rethrows
+    // at QFutureWatcher::result(), and the tool path calls executeWorkflowRun() directly.
+    // An escaping exception would terminate the app and bypass run-state cleanup, so
+    // convert it into a Failed result the callers already handle fail-closed.
+    try {
+        return orchestrator.run(launch.workflow, launch.run_id, launch.token);
+    } catch (const std::exception& ex) {
+        return failedWorkflowResult(
+            launch.run_id,
+            launch.workflow.id,
+            QStringLiteral("Workflow orchestration crashed: %1").arg(QString::fromUtf8(ex.what())));
+    } catch (...) {
+        return failedWorkflowResult(launch.run_id,
+                                    launch.workflow.id,
+                                    QStringLiteral(
+                                        "Workflow orchestration crashed with an unknown error"));
+    }
 }
 
 AiAssistantPanel::WorkflowRunToolContext AiAssistantPanel::resolveWorkflowRunContext(

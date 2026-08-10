@@ -698,7 +698,13 @@ void AdvancedUninstallPanel::showSettingsDialog() {
 
     m_controller->setSelectAllByDefault(selectAllCheck->isChecked());
     m_controller->setUseRecycleBin(recycleBinCheck->isChecked());
-    m_controller->setAutoRestorePoint(restorePointCheck->isChecked());
+    // Preserve the stored restore-point preference when unelevated: addSettingsRestorePointGroup
+    // force-unchecked and disabled the box because restore points require admin, so its state does
+    // NOT reflect the user's intent. Writing it would silently wipe a previously-enabled
+    // preference just because Settings was opened without elevation.
+    if (RestorePointManager::isElevated()) {
+        m_controller->setAutoRestorePoint(restorePointCheck->isChecked());
+    }
 
     ScanLevel scanLevel = ScanLevel::Safe;
     if (advancedRadio && advancedRadio->isChecked()) {

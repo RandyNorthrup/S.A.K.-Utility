@@ -13,14 +13,79 @@
 [CmdletBinding()]
 param(
     [string]$SharedRoot = "\\vboxsvr\sakrepo",
-    [string]$StageRoot = (Join-Path $env:PUBLIC ("sak-linux-swap-vm-gate-" + (Get-Date -Format "yyyyMMddHHmmss"))),
+    [string]$StageRoot = (Join-Path $env:PUBLIC ("sak-linux-swap-vm-gate-" + (Get-Date -Format "yyyyMMddHHmmss") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8))),
     [int]$DiskNumber = 1,
     [ValidateSet(4096, 8192, 16384, 65536)] [int]$PageSizeBytes = 4096,
-    [string]$Label = "SAKSWAPVM",
+    [ValidatePattern('^[A-Za-z0-9 ._-]{1,16}$')] [string]$Label = "SAKSWAPVM",
     [switch]$NoCleanup
 )
 
 $ErrorActionPreference = "Stop"
+
+function Assert-QualifiedPath {
+    param(
+        [Parameter(Mandatory = $true)] [AllowEmptyString()] [string]$Path,
+        [Parameter(Mandatory = $true)] [string]$Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "$Name must be a non-empty path."
+    }
+    if ($Path -match '["*?\[\]]') {
+        throw "$Name contains characters that cannot be quoted or staged safely: $Path"
+    }
+    if ($Path -notmatch '^([A-Za-z]:[\\/]|\\\\[^\\])') {
+        throw "$Name must be a fully qualified local or UNC path: $Path"
+    }
+}
+
+function Assert-NoReparsePoint {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Path,
+        [Parameter(Mandatory = $true)] [string]$Name
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    $item = Get-Item -LiteralPath $Path -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq [System.IO.FileAttributes]::ReparsePoint) {
+        throw "$Name is a reparse point and cannot be trusted for elevated staging: $Path"
+    }
+}
+
+function Get-TrustedPowerShellPath {
+    if ([string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+        throw "SystemRoot is not set; refusing to elevate an unqualified powershell.exe."
+    }
+    $trusted = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    if (-not (Test-Path -LiteralPath $trusted -PathType Leaf)) {
+        throw "Trusted Windows PowerShell not found: $trusted"
+    }
+    return $trusted
+}
+
+function Assert-PassedReport {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Path,
+        [Parameter(Mandatory = $true)] [string]$Name
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "$Name was not produced: $Path"
+    }
+    $text = Get-Content -LiteralPath $Path -Raw
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        throw "$Name is empty: $Path"
+    }
+    $report = $text | ConvertFrom-Json
+    if ($report.status -ne "Passed") {
+        throw "$Name did not report a passing status ('$($report.status)'): $Path"
+    }
+}
+
+Assert-QualifiedPath -Path $SharedRoot -Name "SharedRoot"
+Assert-QualifiedPath -Path $StageRoot -Name "StageRoot"
 
 function Copy-OptionalPattern {
     param(
@@ -61,6 +126,7 @@ $localBuild = Join-Path $localProjectRoot "build\Release"
 $localEvidenceRoot = Join-Path $StageRoot "external.linux-swap-format-vm"
 $localReport = Join-Path $localEvidenceRoot "report.json"
 
+Assert-NoReparsePoint -Path $StageRoot -Name "StageRoot"
 New-Item -ItemType Directory -Path $StageRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $localBuild -Force | Out-Null
 New-Item -ItemType Directory -Path $localEvidenceRoot -Force | Out-Null
@@ -91,8 +157,9 @@ if ($NoCleanup) {
     $argumentList += "-NoCleanup"
 }
 
+$trustedPowerShell = Get-TrustedPowerShellPath
 $process = Start-Process `
-    -FilePath "powershell.exe" `
+    -FilePath $trustedPowerShell `
     -Verb RunAs `
     -Wait `
     -PassThru `
@@ -111,8 +178,6 @@ if ($process.ExitCode -ne 0) {
     throw "Linux swap VM gate exited with code $($process.ExitCode). Evidence copied when available: $sharedEvidenceRoot"
 }
 
-if (-not (Test-Path -LiteralPath $sharedReport -PathType Leaf)) {
-    throw "Linux swap VM gate did not produce report: $sharedReport"
-}
+Assert-PassedReport -Path $sharedReport -Name "Linux swap VM gate report"
 
 Write-Host "Linux swap VM gate completed. Report: $sharedReport"

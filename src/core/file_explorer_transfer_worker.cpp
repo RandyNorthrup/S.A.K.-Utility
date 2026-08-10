@@ -243,9 +243,13 @@ bool FileExplorerTransferEngine::transferReplacing(const FileExplorerTransferIte
         removeDestinationEntry(staged);
         return false;
     }
-    // 4. Success: drop the set-aside original, if any (best-effort -- the replace is done).
-    if (occupant_set_aside) {
-        removeDestinationEntry(backup);
+    // 4. Success: drop the set-aside original, if any (best-effort -- the replace is done). If the
+    //    removal fails, do not report success silently: the previous version's data is left behind
+    //    at an internal name, so surface it as a warning rather than swallowing the error.
+    if (occupant_set_aside && !removeDestinationEntry(backup)) {
+        m_warnings.append(QStringLiteral("Replaced %1, but the previous version could not be "
+                                         "removed and remains at %2.")
+                              .arg(transferItemName(item.destination_path), backup));
     }
     return true;
 }
@@ -281,6 +285,15 @@ bool FileExplorerTransferEngine::removeReplacedDestination(const FileExplorerTra
 }
 
 bool FileExplorerTransferEngine::deleteMovedSource(const FileExplorerTransferItem& item) {
+    // Defense in depth: never remove a moved source unless the last copy landed whole. Both
+    // callers already gate on lastTransferComplete() before reaching here, but a source delete is
+    // irreversible, so refuse fail-closed rather than trust the precondition was checked.
+    if (m_last_transfer_incomplete) {
+        m_blockers.append(QStringLiteral("Kept %1: the moved copy did not land whole, so the "
+                                         "source was not removed.")
+                              .arg(item.source_path));
+        return false;
+    }
     const auto result =
         item.directory
             ? FileManagementFileSystemBridge::deleteDirectoryTree(m_source_target, item.source_path)
@@ -551,8 +564,20 @@ void FileExplorerTransferWorker::transferItems(FileExplorerStatusProgressReporte
 bool FileExplorerTransferWorker::transferOne(const FileExplorerTransferItem& item,
                                              FileExplorerTransferEngine* engine,
                                              FileExplorerStatusProgressReporter* reporter) {
+    // Fail closed on a malformed request item before any destructive leg runs. A batch item can
+    // carry AI-planned or panel-supplied paths; an empty source (or, for a copy/move/rename, an
+    // empty destination) must never be coerced into a delete/copy against a namespace root.
+    if (item.source_path.isEmpty()) {
+        m_blockers.append(QStringLiteral("Refusing a transfer item with no source path."));
+        return false;
+    }
     if (m_request.kind != FileExplorerTransferKind::Transfer) {
         return deleteOne(item);
+    }
+    if (item.destination_path.isEmpty()) {
+        m_blockers.append(QStringLiteral("Refusing to transfer %1: it has no destination path.")
+                              .arg(item.source_path));
+        return false;
     }
     if (m_request.rename_within_target) {
         return engine->renameWithinTarget(item);

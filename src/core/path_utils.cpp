@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 
 namespace sak {
 
@@ -39,8 +40,19 @@ void accumulateFileEntry(const std::filesystem::directory_entry& entry,
     if (ec) {
         return;
     }
-    info.total_bytes += size;
-    info.file_count++;
+    // Saturate instead of wrapping. entry.file_size() reports the LOGICAL size, so a handful of
+    // attacker-created sparse files can each claim exabytes; a wrapped total_bytes would under-
+    // report the space a set needs and let an oversized one be judged to fit. Clamping to the max
+    // keeps a downstream capacity check failing closed.
+    constexpr auto kUintMax = std::numeric_limits<std::uintmax_t>::max();
+    if (info.total_bytes > kUintMax - size) {
+        info.total_bytes = kUintMax;
+    } else {
+        info.total_bytes += size;
+    }
+    if (info.file_count < kUintMax) {
+        ++info.file_count;
+    }
 }
 
 }  // anonymous namespace

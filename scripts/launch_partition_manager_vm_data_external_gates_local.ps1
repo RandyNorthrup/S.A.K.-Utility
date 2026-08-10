@@ -32,6 +32,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Fail closed on an -SsdMediaProof that contains a double quote: it is forwarded verbatim
+# into the elevated argument list and an embedded quote could break the argument boundary
+# and inject or alter child-script switches.
+if ($SsdMediaProof -match '"') {
+    throw "Invalid -SsdMediaProof: a double-quote character is not allowed."
+}
+
 $rawGateIds = @()
 if (-not [string]::IsNullOrWhiteSpace($GateIdsCsv)) {
     $rawGateIds = @($GateIdsCsv)
@@ -39,16 +46,32 @@ if (-not [string]::IsNullOrWhiteSpace($GateIdsCsv)) {
 else {
     $rawGateIds = @($GateIds)
 }
+# Validate every gate ID against a strict allowlist before it is ever used to build an
+# evidence directory path (Join-Path) or forwarded to the elevated runner. A gate ID
+# carrying a path separator, "..", wildcard, or quote could escape the evidence root or
+# break the elevated argument list. Fail closed on any invalid segment; de-duplicate so a
+# repeated ID cannot rerun a destructive gate or overwrite its evidence twice.
+$seenGateIds = @{}
 $GateIds = @(
     foreach ($gateId in $rawGateIds) {
         foreach ($part in ([string]$gateId -split ",")) {
             $trimmed = $part.Trim()
-            if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
+            if ([string]::IsNullOrWhiteSpace($trimmed)) {
+                continue
+            }
+            if ($trimmed -notmatch '^[A-Za-z0-9._-]+$' -or $trimmed -match '\.\.') {
+                throw "Invalid external gate ID '$trimmed': only letters, digits, '.', '_' and '-' are allowed, and '..' is rejected."
+            }
+            if (-not $seenGateIds.ContainsKey($trimmed)) {
+                $seenGateIds[$trimmed] = $true
                 $trimmed
             }
         }
     }
 )
+if ($GateIds.Count -eq 0) {
+    throw "No valid gate IDs resolved from -GateIds/-GateIdsCsv; refusing to launch. A blank or comma-only selector would otherwise let the elevated runner fall back to its full destructive default gate set."
+}
 
 $sharedEvidenceRoot = Join-Path $SharedRoot "artifacts\partition-manager-certification\vm-lab\external-evidence"
 $sharedGuestReport = Join-Path $SharedRoot "artifacts\partition-manager-certification\vm-lab\external-vm-data-gates-guest-report.json"
@@ -62,6 +85,12 @@ function Copy-StageEvidenceBack {
     foreach ($gateId in $GateIds) {
         $sharedGateDir = Join-Path $sharedEvidenceRoot $gateId
         $localGateDir = Join-Path $localEvidenceRoot $gateId
+        # Only touch the shared gate evidence when this run actually produced fresh local
+        # evidence for the gate. Otherwise the stale-report deletion below would remove the
+        # prior shared reports with no replacement to copy in -- destroying evidence.
+        if (-not (Test-Path -LiteralPath $localGateDir -PathType Container)) {
+            continue
+        }
         New-Item -ItemType Directory -Path $sharedGateDir -Force | Out-Null
         foreach ($staleReport in @("report.json", "report.failed.json", "report.failed-cleanup.json")) {
             $stalePath = Join-Path $sharedGateDir $staleReport
@@ -69,9 +98,7 @@ function Copy-StageEvidenceBack {
                 Remove-Item -LiteralPath $stalePath -Force
             }
         }
-        if (Test-Path -LiteralPath $localGateDir -PathType Container) {
-            Copy-Item -Path (Join-Path $localGateDir "*") -Destination $sharedGateDir -Recurse -Force
-        }
+        Copy-Item -Path (Join-Path $localGateDir "*") -Destination $sharedGateDir -Recurse -Force
     }
     if (Test-Path -LiteralPath $localGuestReport -PathType Leaf) {
         Copy-Item -LiteralPath $localGuestReport -Destination $sharedGuestReport -Force
@@ -132,7 +159,13 @@ if ($GateIds.Count -gt 0) {
     $argumentList += "`"$($GateIds -join ",")`""
 }
 
-$process = Start-Process -FilePath powershell.exe -Verb RunAs -Wait -PassThru -ArgumentList $argumentList
+# Pin the elevated launch to the System32 Windows PowerShell so a hijacked PATH cannot
+# redirect the RunAs to an attacker-planted powershell.exe.
+$systemPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+if (-not (Test-Path -LiteralPath $systemPowerShell -PathType Leaf)) {
+    throw "System PowerShell not found at expected path: $systemPowerShell"
+}
+$process = Start-Process -FilePath $systemPowerShell -Verb RunAs -Wait -PassThru -ArgumentList $argumentList
 Copy-StageEvidenceBack
 
 if ($process.ExitCode -ne 0) {

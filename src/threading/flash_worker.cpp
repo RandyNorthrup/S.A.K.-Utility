@@ -306,7 +306,21 @@ auto FlashWorker::runVerificationStage() -> std::expected<void, sak::error_code>
 }
 
 bool FlashWorker::refuseIfTargetIsOsDisk() {
-    if (!physicalDriveBacksWindows(parseTargetDriveNumber(m_targetDevice))) {
+    const int driveNumber = parseTargetDriveNumber(m_targetDevice);
+    // This worker raw-writes physical drives only ("\\.\PhysicalDriveN"). A target that is not a
+    // parseable physical drive (e.g. a bare volume path like "\\.\C:") cannot be checked against
+    // the OS disk, yet openDevice() may still have opened it -- so fail closed rather than proceed
+    // to raw-write an unverifiable target. The coordinator only ever constructs physical-drive
+    // targets, so this refuses only a direct, coordinator-bypassing misuse.
+    if (driveNumber < 0) {
+        sak::logError(QString("Refusing raw write to %1: target is not a physical-drive path")
+                          .arg(m_targetDevice)
+                          .toStdString());
+        Q_EMIT error("Refusing to write a non-physical-drive target");
+        cleanupFlashResources();
+        return true;
+    }
+    if (!physicalDriveBacksWindows(driveNumber)) {
         return false;
     }
     sak::logError(QString("Refusing raw write to %1: it backs the current OS disk")
@@ -625,7 +639,10 @@ bool FlashWorker::writeImage() {
     m_lastSpeedBytes = 0;
 
     while (!m_imageSource->atEnd() && !stopRequested()) {
-        qint64 bytesRead = m_imageSource->read(buffer.data(), m_bufferSize);
+        // Bound the read by the ACTUAL allocation (buffer.size()), not m_bufferSize: the two are
+        // equal here, but reading against the live member would write past the buffer if a setter
+        // changed m_bufferSize after allocation. Reading into buffer.size() can never overflow it.
+        qint64 bytesRead = m_imageSource->read(buffer.data(), buffer.size());
         if (bytesRead < 0) {
             sak::logError("Failed to read from image source");
             return false;

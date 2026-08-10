@@ -41,6 +41,74 @@ bool isReparsePoint(const QString& path) {
     return QFileInfo(path).isSymLink();
 #endif
 }
+
+// Deepest directory recursion the copy will follow. A real profile tree is far shallower;
+// a crafted tree deeper than this is refused (fail closed) rather than allowed to exhaust
+// the worker thread's stack.
+constexpr int kMaxCopyDepth = 512;
+
+// True if @p component (a single, separator-free path element) is a Win32 reserved device
+// name (CON, PRN, AUX, NUL, COM1-9, LPT1-9), with or without an extension. Win32 resolves
+// such a name to the device no matter which directory it sits in.
+bool isWindowsReservedDeviceName(const QString& component) {
+    QString base = component;
+    const int dot = base.indexOf(QLatin1Char('.'));
+    if (dot >= 0) {
+        base = base.left(dot);
+    }
+    base = base.trimmed().toUpper();
+    static const QStringList kReserved = {
+        QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
+        QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
+        QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
+        QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
+        QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
+        QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
+        QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
+        QStringLiteral("LPT9")};
+    return kReserved.contains(base);
+}
+
+// True if @p component is unsafe as a single Win32 path element beyond the separator/wildcard
+// checks the callers already apply: a trailing dot or space (Win32 silently strips these, so
+// "foo " aliases "foo"), an embedded control character, or a reserved device name.
+bool hasUnsafeComponentTraits(const QString& component) {
+    if (component.endsWith(QLatin1Char('.')) || component.endsWith(QLatin1Char(' '))) {
+        return true;
+    }
+    for (const QChar ch : component) {
+        if (ch.unicode() < 0x20) {
+            return true;
+        }
+    }
+    return isWindowsReservedDeviceName(component);
+}
+
+// True if @p child is equal to, or nested under, @p parent (lexical comparison,
+// case-insensitive on Windows). Used to refuse a backup destination inside a source profile,
+// which would otherwise recursively copy the growing backup into itself.
+bool pathIsWithin(const QString& child, const QString& parent) {
+    if (child.isEmpty() || parent.isEmpty()) {
+        return false;
+    }
+    const QString c = QDir::cleanPath(QFileInfo(child).absoluteFilePath());
+    QString p = QDir::cleanPath(QFileInfo(parent).absoluteFilePath());
+    if (c.isEmpty() || p.isEmpty()) {
+        return false;
+    }
+#ifdef Q_OS_WIN
+    const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+    const Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+    if (c.compare(p, cs) == 0) {
+        return true;
+    }
+    if (!p.endsWith(QLatin1Char('/'))) {
+        p.append(QLatin1Char('/'));
+    }
+    return c.startsWith(p, cs);
+}
 }  // namespace
 
 UserProfileBackupWorker::UserProfileBackupWorker(QObject* parent)
@@ -62,6 +130,21 @@ UserProfileBackupWorker::~UserProfileBackupWorker() {
     }
     delete m_fileFilter;
     delete m_permissionManager;
+}
+
+void UserProfileBackupWorker::applySmartFilterRules(const SmartFilter& smartFilter) {
+    m_fileFilter->setRules(smartFilter);
+    // An exclude pattern that fails to compile is dropped, so files the user meant
+    // to exclude WILL be backed up (fail-open). Surface it rather than silently
+    // backing up what they asked to skip (B8-23).
+    const QStringList invalidPatterns = m_fileFilter->invalidPatterns();
+    if (!invalidPatterns.isEmpty()) {
+        Q_EMIT logMessage(tr("Ignoring %1 invalid exclusion pattern(s); matching files will NOT "
+                             "be excluded from the backup: %2")
+                              .arg(invalidPatterns.size())
+                              .arg(invalidPatterns.join(QStringLiteral("; "))),
+                          true);
+    }
 }
 
 void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
@@ -90,6 +173,14 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
 
     QMutexLocker locker(&m_mutex);
 
+    // Re-check under the lock: two callers can both pass the unlocked isRunning() check above
+    // before either starts the thread, then race to overwrite this shared configuration and
+    // double-start. The winner sets config and start()s while holding the lock; a loser sees
+    // isRunning()==true here and backs out without clobbering the live run.
+    if (isRunning()) {
+        return;
+    }
+
     m_manifest = manifest;
     m_users = users;
     m_destinationPath = destinationPath;
@@ -112,19 +203,7 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
     m_lastProgressByteCount = 0;
     m_currentUserProfile.clear();
 
-    // Apply filter settings
-    m_fileFilter->setRules(smartFilter);
-    // An exclude pattern that fails to compile is dropped, so files the user meant
-    // to exclude WILL be backed up (fail-open). Surface it rather than silently
-    // backing up what they asked to skip (B8-23).
-    const QStringList invalidPatterns = m_fileFilter->invalidPatterns();
-    if (!invalidPatterns.isEmpty()) {
-        Q_EMIT logMessage(tr("Ignoring %1 invalid exclusion pattern(s); matching files will NOT "
-                             "be excluded from the backup: %2")
-                              .arg(invalidPatterns.size())
-                              .arg(invalidPatterns.join(QStringLiteral("; "))),
-                          true);
-    }
+    applySmartFilterRules(smartFilter);
 
     start();
 }
@@ -345,7 +424,21 @@ bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
 
 bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
                                             const QString& destDir,
-                                            const FolderSelection& folderConfig) {
+                                            const FolderSelection& folderConfig,
+                                            int depth) {
+    // Bound the recursion: a crafted deep tree must not exhaust the worker thread's stack.
+    // Beyond the cap this is a hard error (counted so the run cannot report a clean success),
+    // not a silent skip.
+    if (depth > kMaxCopyDepth) {
+        Q_EMIT logMessage(tr("Directory nesting exceeds the %1-level limit; refusing to recurse "
+                             "further: %2")
+                              .arg(kMaxCopyDepth)
+                              .arg(sourceDir),
+                          true);
+        ++m_filesErrored;
+        return false;
+    }
+
     // Empty directories fail the checks below; see startBackup.
     // Check if folder should be excluded
     QFileInfo sourceDirInfo(sourceDir);
@@ -382,7 +475,7 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
         if (m_cancelled) {
             return false;
         }
-        copyDirectoryEntry(it.next(), destDir, folderConfig);
+        copyDirectoryEntry(it.next(), destDir, folderConfig, depth + 1);
     }
 
     return true;
@@ -390,7 +483,8 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
 
 void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
                                                  const QString& destDir,
-                                                 const FolderSelection& folderConfig) {
+                                                 const FolderSelection& folderConfig,
+                                                 int depth) {
     QFileInfo itemInfo(sourceItem);
     QString destItem = destDir + "/" + itemInfo.fileName();
 
@@ -403,7 +497,7 @@ void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
     }
 
     if (itemInfo.isDir()) {
-        if (!copyDirectory(sourceItem, destItem, folderConfig)) {
+        if (!copyDirectory(sourceItem, destItem, folderConfig, depth)) {
             Q_EMIT logMessage(tr("Warning: Failed to copy directory: %1").arg(sourceItem), true);
         }
         return;
@@ -653,13 +747,20 @@ bool UserProfileBackupWorker::createDirectory(const QString& path) {
 
 bool UserProfileBackupWorker::canReadPath(const QString& path) {
 #ifdef Q_OS_WIN
-    DWORD attrs = GetFileAttributesW(path.toStdWString().c_str());
+    const std::wstring wide = path.toStdWString();
+    DWORD attrs = GetFileAttributesW(wide.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) {
+        // This predicate answers ONLY "is the path blocked by permissions such that
+        // elevation might help" -- its single caller emits "requires elevation" and counts an
+        // elevation-skip on false. A denied/sharing-locked path is such a block; a merely
+        // missing path (ERROR_PATH_NOT_FOUND) is not, and must not be mislabelled as one, so
+        // it reports readable and the copy logic handles the absence.
         DWORD err = GetLastError();
         return err != ERROR_ACCESS_DENIED && err != ERROR_SHARING_VIOLATION;
     }
-    // Try opening for read access to confirm
-    HANDLE handle = CreateFileW(path.toStdWString().c_str(),
+    // Confirm read access by actually opening it; a denial here is the elevation case, while
+    // any other open failure is left to the copy path rather than reported as needing rights.
+    HANDLE handle = CreateFileW(wide.c_str(),
                                 GENERIC_READ,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                 nullptr,
@@ -686,6 +787,12 @@ bool UserProfileBackupWorker::isSafePathSegment(const QString& segment) {
             return false;
         }
     }
+    // An untrusted username becomes a real backup subdirectory: reject trailing dot/space,
+    // control characters, and Win32 reserved device names too, any of which Win32 name
+    // normalization could alias onto a different target.
+    if (hasUnsafeComponentTraits(segment)) {
+        return false;
+    }
     return true;
 }
 
@@ -702,6 +809,11 @@ bool UserProfileBackupWorker::isSafeRelativePath(const QString& rel) {
         if (part == QStringLiteral(".") || part == QStringLiteral("..")) {
             return false;  // traversal component
         }
+        // Same Win32 aliasing hazards as a username component: a trailing dot/space, a
+        // control character, or a reserved device name in any element.
+        if (hasUnsafeComponentTraits(part)) {
+            return false;
+        }
     }
     return true;
 }
@@ -715,6 +827,18 @@ bool UserProfileBackupWorker::validateSourcePaths() {
         QDir profileDir(user.profile_path);
         if (!profileDir.exists()) {
             Q_EMIT logMessage(tr("User profile does not exist: %1").arg(user.profile_path), true);
+            return false;
+        }
+
+        // Refuse a destination that sits inside a source profile: backing that profile up
+        // would then recurse into the growing backup directory and never terminate. Fail
+        // closed before any bytes are copied.
+        if (pathIsWithin(m_destinationPath, user.profile_path)) {
+            Q_EMIT logMessage(tr("Backup destination is inside the source profile '%1' and would "
+                                 "recursively copy itself; choose a destination outside the "
+                                 "profile")
+                                  .arg(user.profile_path),
+                              true);
             return false;
         }
     }
@@ -734,6 +858,16 @@ bool UserProfileBackupWorker::checkDiskSpace() {
     qint64 requiredBytes = m_totalBytesToCopy;
 
     requiredBytes = qRound64(static_cast<double>(requiredBytes) * kDiskSpaceSafetyMultiplier);
+
+    // A negative requirement means the summed folder sizes were corrupt (a negative or
+    // overflowed size_bytes). A negative would compare as "always enough space" and slip
+    // under the check below, so reject it and fail closed instead.
+    if (requiredBytes < 0) {
+        Q_EMIT logMessage(tr("Computed backup size is invalid (%1 bytes); refusing to proceed")
+                              .arg(requiredBytes),
+                          true);
+        return false;
+    }
 
     if (availableBytes < requiredBytes) {
         double availableGB = availableBytes / sak::kBytesPerGBf;

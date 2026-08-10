@@ -229,7 +229,8 @@ auto UninstallWorker::runLeftoverPhase(UninstallReport& report)
     reportProgress(kProgressLeftoverScan, sak::kPercentMax, "Scanning for leftovers...");
     Q_EMIT leftoverScanStarted(m_scanLevel);
 
-    auto leftovers = scanLeftovers();
+    LeftoverScanReliability reliability;
+    auto leftovers = scanLeftovers(reliability);
     report.foundLeftovers = leftovers;
 
     // A cancel during the (possibly long) scan must not be reported as a completed uninstall:
@@ -237,6 +238,15 @@ auto UninstallWorker::runLeftoverPhase(UninstallReport& report)
     // `cancelled` signal instead of handing the orchestrator both a success and a cancel.
     if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
+    }
+
+    // Fail-closed reporting: a system-object/registry phase that FAILED to enumerate returns an
+    // empty vector indistinguishable from an honest "nothing found". Surface that the leftover
+    // evidence is incomplete instead of letting the terminal completion imply a full scan.
+    if (!reliability.allOk()) {
+        report.errorLog.append(
+            QStringLiteral("Leftover scan incomplete: one or more system-object or registry "
+                           "phases failed to enumerate; some leftovers may be undetected."));
     }
 
     Q_EMIT leftoverScanFinished(leftovers);
@@ -380,7 +390,7 @@ bool UninstallWorker::runNativeUninstaller(int& exitCode) {
     return nativeUninstallSucceeded(result.exit_status, result.exit_code, result.cancelled);
 }
 
-QVector<LeftoverItem> UninstallWorker::scanLeftovers() {
+QVector<LeftoverItem> UninstallWorker::scanLeftovers(LeftoverScanReliability& reliabilityOut) {
     LeftoverScanner scanner(m_program, m_scanLevel, m_registrySnapshotBefore);
 
     m_scanStopFlag.store(stopRequested());
@@ -390,7 +400,7 @@ QVector<LeftoverItem> UninstallWorker::scanLeftovers() {
         Q_EMIT leftoverScanProgress(path, found);
     };
 
-    return scanner.scan(m_scanStopFlag, progress_cb);
+    return scanner.scan(m_scanStopFlag, progress_cb, &reliabilityOut);
 }
 
 bool UninstallWorker::removeUwpPackage() {
@@ -398,22 +408,35 @@ bool UninstallWorker::removeUwpPackage() {
         return false;
     }
 
+    // packageFullName reaches an ELEVATED single-quoted PowerShell string. Double any embedded
+    // single quote so a crafted value cannot terminate the literal and inject commands (the same
+    // defense used for the ISO volume label). MSIX identity rules normally forbid an apostrophe,
+    // but the value is not validated here, so escape rather than trust.
+    QString safeFullName = m_program.packageFullName;
+    safeFullName.replace(QChar('\''), QStringLiteral("''"));
+
     QString script;
     if (m_program.source == ProgramInfo::Source::Provisioned) {
         // Remove provisioned package (all-users)
         script = QString(
                      "Remove-AppxProvisionedPackage -Online "
                      "-PackageName '%1' -ErrorAction Stop")
-                     .arg(m_program.packageFullName);
+                     .arg(safeFullName);
     } else {
         // Remove per-user package
-        script = QString("Remove-AppxPackage -Package '%1' -ErrorAction Stop")
-                     .arg(m_program.packageFullName);
+        script = QString("Remove-AppxPackage -Package '%1' -ErrorAction Stop").arg(safeFullName);
     }
 
     const auto result = sak::runPowerShell(script, kUwpRemovalTimeoutMs, true, false, [this]() {
         return stopRequested();
     });
+    if (!result.succeeded()) {
+        // Preserve the real backend error instead of flattening it away silently.
+        sak::logWarning("UWP package removal failed for '{}': exit={} {}",
+                        m_program.displayName.toStdString(),
+                        QString::number(result.exit_code).toStdString(),
+                        result.std_err.trimmed().toStdString());
+    }
     return result.succeeded();
 }
 
@@ -437,8 +460,31 @@ bool UninstallWorker::removeRegistryEntry() {
         return false;
     }
 
-    LONG rc = RegDeleteKeyExW(hive, reinterpret_cast<LPCWSTR>(path.utf16()), KEY_WOW64_64KEY, 0);
+    // Confine this ELEVATED key deletion to the Uninstall subtree. registryKeyPath is read from
+    // the registry (attacker-writable), so RegDeleteKeyExW must never be pointed at an arbitrary
+    // HKLM/HKCU key. Require the target to sit STRICTLY beneath a known Uninstall root (a non-empty
+    // leaf must follow it) and fail closed on anything else, including the Uninstall container.
+    static const QString kUninstallRoot =
+        QStringLiteral("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\");
+    static const QString kUninstallRootWow =
+        QStringLiteral("SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\");
+    const bool underUninstall = (path.startsWith(kUninstallRoot, Qt::CaseInsensitive) &&
+                                 path.size() > kUninstallRoot.size()) ||
+                                (path.startsWith(kUninstallRootWow, Qt::CaseInsensitive) &&
+                                 path.size() > kUninstallRootWow.size());
+    if (!underUninstall) {
+        sak::logWarning("Refusing registry-only removal of key outside the Uninstall subtree: '{}'",
+                        m_program.registryKeyPath.toStdString());
+        return false;
+    }
 
+    LONG rc = RegDeleteKeyExW(hive, reinterpret_cast<LPCWSTR>(path.utf16()), KEY_WOW64_64KEY, 0);
+    if (rc != ERROR_SUCCESS) {
+        // Preserve the real Win32 error instead of collapsing it to a generic failure.
+        sak::logWarning("Registry-only removal failed (rc={}) for key '{}'",
+                        QString::number(rc).toStdString(),
+                        m_program.registryKeyPath.toStdString());
+    }
     return rc == ERROR_SUCCESS;
 #else
     return false;

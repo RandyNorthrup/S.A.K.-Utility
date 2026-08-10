@@ -25,6 +25,7 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFileInfo>
 #include <QFont>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -749,13 +750,22 @@ void AdvancedUninstallPanel::onEnumerationFailed(const QString& error) {
     Q_EMIT statusMessage(tr("Enumeration failed"), sak::kTimerStatusDefaultMs);
     logMessage(QString("ERROR: Enumeration failed: %1").arg(error));
     sak::logError("Enumeration failed: {}", error.toStdString());
-    sak::showWarningLogged(this,
-                           tr("Enumeration Error"),
-                           tr("Failed to enumerate installed programs:\n%1").arg(error));
+    // error may carry registry-derived (HKCU-writable) text, and the warning box renders in
+    // AutoText mode, so escape it to markup rather than let it spoof the dialog.
+    sak::showWarningLogged(
+        this,
+        tr("Enumeration Error"),
+        tr("Failed to enumerate installed programs:\n%1").arg(error.toHtmlEscaped()));
 }
 
 void AdvancedUninstallPanel::onUninstallStarted(const QString& programName) {
     setOperationRunning(true);
+    // Invalidate any leftovers still shown from a PRIOR scan before this operation runs: they
+    // belong to a different program, and if this uninstall later fails or is cancelled the UI
+    // re-enables with those stale, now-misattributed delete targets still present. A fresh scan
+    // repopulates the section for this program.
+    clearLeftoverTable();
+    m_leftover_section->setVisible(false);
     Q_EMIT statusMessage(tr("Uninstalling: %1").arg(programName), 0);
     Q_EMIT progressUpdate(0, kPercentMax);
     logMessage(QString("Uninstall started: %1").arg(programName));
@@ -828,9 +838,11 @@ void AdvancedUninstallPanel::onUninstallFailed(const QString& error) {
     Q_EMIT statusMessage(tr("Uninstall failed"), sak::kTimerStatusDefaultMs);
     logMessage(QString("ERROR: Uninstall failed: %1").arg(error));
     sak::logError("Uninstall failed: {}", error.toStdString());
+    // error may carry registry-derived (HKCU-writable) text, and the warning box renders in
+    // AutoText mode, so escape it to markup rather than let it spoof the dialog.
     sak::showWarningLogged(this,
                            tr("Uninstall Error"),
-                           tr("The uninstall operation failed:\n%1").arg(error));
+                           tr("The uninstall operation failed:\n%1").arg(error.toHtmlEscaped()));
 }
 
 void AdvancedUninstallPanel::onUninstallCancelled() {
@@ -873,9 +885,13 @@ void AdvancedUninstallPanel::onCleanupFinished(int succeeded, int failed, qint64
     Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     logMessage(msg);
 
-    // Clear leftover section after cleanup
-    clearLeftoverTable();
-    m_leftover_section->setVisible(false);
+    // Only tear down the leftover view when everything actually cleaned. If any item failed, keep
+    // the table and section visible so the failures stay on screen and remain retryable instead
+    // of being silently erased under a "Cleanup complete" message.
+    if (failed == 0) {
+        clearLeftoverTable();
+        m_leftover_section->setVisible(false);
+    }
 
     // Refresh program list
     m_controller->refreshPrograms();
@@ -1167,8 +1183,37 @@ void AdvancedUninstallPanel::contextAddToQueue() {
 
 void AdvancedUninstallPanel::contextOpenInstallLocation() {
     auto program = selectedProgram();
-    if (!program.installLocation.isEmpty()) {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(program.installLocation));
+    if (program.installLocation.isEmpty()) {
+        return;
+    }
+
+    // installLocation comes from the uninstall registry, and HKCU is writable without elevation,
+    // so it is untrusted. "Open Install Location" must open a local DIRECTORY only: handing a
+    // file, .exe, .lnk, .url, or a UNC/device path to the shell would launch or fetch attacker-
+    // controlled content with this (possibly elevated) process's rights, or trigger network
+    // authentication. Fail closed on anything that is not an existing on-disk folder.
+    const QString& location = program.installLocation;
+    if (location.startsWith(QLatin1String("\\\\")) || location.startsWith(QLatin1String("//"))) {
+        sak::showWarningLogged(
+            this,
+            tr("Cannot Open Location"),
+            tr("The install location is a network or device path and was not opened."));
+        return;
+    }
+
+    const QFileInfo info(location);
+    if (!info.exists() || !info.isDir()) {
+        sak::showWarningLogged(this,
+                               tr("Cannot Open Location"),
+                               tr("The install location for this program is not a valid folder."));
+        return;
+    }
+
+    const QString canonical = info.canonicalFilePath();
+    if (canonical.isEmpty() || !QDesktopServices::openUrl(QUrl::fromLocalFile(canonical))) {
+        sak::showWarningLogged(this,
+                               tr("Cannot Open Location"),
+                               tr("The install location could not be opened."));
     }
 }
 
@@ -1210,7 +1255,7 @@ void AdvancedUninstallPanel::contextRemoveRegistryEntry() {
                                   "Program files will NOT be deleted.\n\n"
                                   "This is useful for orphaned entries where the program "
                                   "is already uninstalled.")
-                                   .arg(program.displayName),
+                                   .arg(program.displayName.toHtmlEscaped()),
                                QMessageBox::Yes | QMessageBox::No,
                                QMessageBox::No);
 

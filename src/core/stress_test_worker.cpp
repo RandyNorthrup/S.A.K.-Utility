@@ -59,6 +59,11 @@ constexpr uint64_t kGpuHealthCheckMask = 0xFFULL;
 // computed as int; capping at one week keeps total_seconds well within int range so
 // the monitor-loop bound never overflows. A longer request is rejected, not clamped.
 constexpr int kMaxStressDurationMinutes = 7 * 24 * 60;  // 10080 minutes
+// Upper bound on an explicitly-requested CPU stress thread count. A larger request is CLAMPED (not
+// rejected) so a bogus or hostile cpu_threads value cannot spawn an unbounded number of std::async
+// worker threads (resource exhaustion, or a std::system_error from thread creation); 4096 is far
+// above any legitimate oversubscription need on real hardware.
+constexpr int kMaxCpuStressThreads = 4096;
 
 /// @brief Pattern-fill a memory region with a known repeating pattern
 /// @param data Pointer to memory
@@ -112,54 +117,39 @@ void matrixSelfMultiply4x4(double mat[kMatrixElementCount]) {
 }
 
 #ifdef SAK_PLATFORM_WINDOWS
-/// @brief Atomically claim a unique disk-stress test file, failing closed if it exists.
-/// @return The claimed path, or an empty string if the exclusive create failed.
-/// @note Unique per-run name so a crashed prior run's leftover never blocks a new run, and the
-///       CREATE_NEW claim never truncates (and later deletes) a real user file.
-std::wstring claimUniqueStressFile(const QString& drive) {
+/// @brief Atomically create and pin a unique disk-stress test file for the whole run.
+/// @return An open, exclusive handle to the file, or INVALID_HANDLE_VALUE on failure.
+/// @note One handle for the entire run closes the claim->close->reopen and the
+///       close->delete-by-name TOCTOU windows the old two-step design still left open:
+///       CREATE_NEW fails closed if the name already exists (including a planted symlink,
+///       which FILE_FLAG_OPEN_REPARSE_POINT stops us following), the exclusive share mode
+///       (0) blocks any swap or delete while the handle is open, and
+///       FILE_FLAG_DELETE_ON_CLOSE removes the file THROUGH this handle on close -- so it
+///       is never resolved by name for deletion. The unique per-run name (process id +
+///       timestamp) keeps a crashed prior run's leftover from blocking a new run.
+HANDLE openExclusiveStressFile(const QString& drive) {
     const QString name = QString("sak_stress_test_%1_%2.tmp")
                              .arg(GetCurrentProcessId())
                              .arg(QDateTime::currentMSecsSinceEpoch());
     const std::wstring wpath = QDir(drive).filePath(name).toStdWString();
-    HANDLE claim = CreateFileW(
-        wpath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (claim == INVALID_HANDLE_VALUE) {
-        return {};
-    }
-    CloseHandle(claim);
-    return wpath;
-}
-
-/// @brief Reopen the already-claimed stress file ONCE for the whole run, without
-///        traversing a reparse point.
-/// @return The pinned handle, or INVALID_HANDLE_VALUE if the open failed or the name
-///         resolved to a reparse point.
-/// @note claimUniqueStressFile() exclusively created the file via CREATE_NEW.
-///       Re-creating the guessable path with CREATE_ALWAYS every loop would follow a
-///       symlink or junction swapped in between iterations; a single pinned handle,
-///       opened with FILE_FLAG_OPEN_REPARSE_POINT and verified not to be a reparse
-///       point, can only ever touch the file we claimed.
-HANDLE openClaimedStressFile(const std::wstring& path) {
-    HANDLE h =
-        CreateFileW(path.c_str(),
-                    GENERIC_WRITE | GENERIC_READ,
-                    0,
-                    nullptr,
-                    OPEN_EXISTING,
-                    FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OPEN_REPARSE_POINT,
-                    nullptr);
+    HANDLE h = CreateFileW(wpath.c_str(),
+                           GENERIC_WRITE | GENERIC_READ | DELETE,
+                           0,           // exclusive: nothing can swap or delete the file mid-run
+                           nullptr,
+                           CREATE_NEW,  // fail closed if the name already exists
+                           FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH |
+                               FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_DELETE_ON_CLOSE,
+                           nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         return INVALID_HANDLE_VALUE;
     }
     BY_HANDLE_FILE_INFORMATION info{};
-    // Fail closed on a reparse point (symlink/junction) OR a file with more than one
-    // hard link: claimUniqueStressFile created a unique regular file (exactly one
-    // link, no reparse attr), so a same-name hard-link swap onto an unrelated target
-    // in the claim->reopen window would raise nNumberOfLinks above one and is rejected
-    // here rather than overwritten.
+    // Belt-and-suspenders: CREATE_NEW already guarantees a freshly created regular file,
+    // but reject anything carrying a reparse attribute or more than one hard link so this
+    // handle can only ever write to (and delete on close) the unique file we just created.
     if (!GetFileInformationByHandle(h, &info) ||
         (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 || info.nNumberOfLinks != 1) {
-        CloseHandle(h);
+        CloseHandle(h);  // FILE_FLAG_DELETE_ON_CLOSE removes the file we just created
         return INVALID_HANDLE_VALUE;
     }
     return h;
@@ -175,24 +165,76 @@ void fillDiskStressBuffer(uint8_t* buf, size_t size) {
 }
 #endif
 
-// Fail closed on a stress config that would do no work or overflow the monitor
-// timer. Every component disabled, or a nonpositive/absurd duration, must be rejected
-// -- such a run launches nothing (or exits the monitor loop immediately) yet
-// computeStressPassed() would otherwise report PASSED. An invalid memory percentage
-// is also rejected so determineTargetMemoryBytes never casts a negative/NaN value.
-std::expected<void, sak::error_code> validateStressConfig(const StressTestConfig& cfg) {
+// At least one stress component must be enabled. A run with everything disabled launches
+// nothing yet computeStressPassed() would otherwise report PASSED -- fail closed.
+std::expected<void, sak::error_code> validateComponentsEnabled(const StressTestConfig& cfg) {
     if (!cfg.stress_cpu && !cfg.stress_memory && !cfg.stress_disk && !cfg.stress_gpu) {
         return std::unexpected(sak::error_code::invalid_configuration);
     }
+    return {};
+}
+
+// Reject a nonpositive or absurd duration: duration_minutes * kSecondsPerMinute is computed as
+// int, and rejecting anything above kMaxStressDurationMinutes keeps total_seconds within int
+// range so the monitor-loop bound never overflows (a longer request is rejected, not clamped).
+std::expected<void, sak::error_code> validateDuration(const StressTestConfig& cfg) {
     if (cfg.duration_minutes <= 0 || cfg.duration_minutes > kMaxStressDurationMinutes) {
         return std::unexpected(sak::error_code::invalid_argument);
     }
-    // !(x > 0) rejects <= 0 and NaN; the upper check rejects > 100%.
+    return {};
+}
+
+// Reject an invalid memory percentage so determineTargetMemoryBytes never casts a negative/NaN
+// value. !(x > 0) rejects <= 0 and NaN; the upper check rejects > 100%.
+std::expected<void, sak::error_code> validateMemoryPercent(const StressTestConfig& cfg) {
     if (cfg.stress_memory &&
         (!(cfg.memory_usage_percent > 0.0) || cfg.memory_usage_percent > sak::kPercentMaxF)) {
         return std::unexpected(sak::error_code::invalid_argument);
     }
     return {};
+}
+
+// The thermal-abort check compares temp >= thermal_limit_celsius; a NaN or +Inf limit
+// makes that comparison never fire, silently disabling thermal protection. Require a
+// finite, positive limit and fail closed otherwise (a large FINITE limit is still
+// accepted for a deliberately hot run).
+std::expected<void, sak::error_code> validateThermalLimit(const StressTestConfig& cfg) {
+    if (!std::isfinite(cfg.thermal_limit_celsius) || cfg.thermal_limit_celsius <= 0.0) {
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    return {};
+}
+
+// A disk stress target must be an explicit, absolute path. An empty or relative
+// disk_test_drive would resolve against the process working directory (a guessed
+// target); fail closed rather than create the stress file somewhere unintended.
+std::expected<void, sak::error_code> validateDiskTarget(const StressTestConfig& cfg) {
+    if (cfg.stress_disk) {
+        const QString drive = cfg.disk_test_drive.trimmed();
+        if (drive.isEmpty() || !QDir::isAbsolutePath(drive)) {
+            return std::unexpected(sak::error_code::invalid_argument);
+        }
+    }
+    return {};
+}
+
+// Fail closed on a stress config that would do no work, overflow the monitor timer, or feed an
+// out-of-range value to a later stage. Each guard below is a separate fail-closed check; the
+// order is preserved because the first failure is the one execute() logs and returns.
+std::expected<void, sak::error_code> validateStressConfig(const StressTestConfig& cfg) {
+    if (auto status = validateComponentsEnabled(cfg); !status) {
+        return status;
+    }
+    if (auto status = validateDuration(cfg); !status) {
+        return status;
+    }
+    if (auto status = validateMemoryPercent(cfg); !status) {
+        return status;
+    }
+    if (auto status = validateThermalLimit(cfg); !status) {
+        return status;
+    }
+    return validateDiskTarget(cfg);
 }
 
 }  // anonymous namespace
@@ -239,18 +281,8 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     m_max_temp.store(0.0, std::memory_order_relaxed);
     m_stop_children.store(false, std::memory_order_relaxed);
 
-    // Launch stress threads
-    std::vector<std::future<void>> futures;
-    launchStressThreads(futures);
-
-    // Monitor loop -- runs in the WorkerBase thread
-    const int total_seconds = m_config.duration_minutes * sak::kSecondsPerMinute;
-    monitorStressLoop(total_seconds);
-
-    // Signal child stress threads to stop (without marking WorkerBase cancelled)
-    m_stop_children.store(true, std::memory_order_release);
-    for (auto& future : futures) {
-        future.get();
+    if (auto status = runStressThreadsToCompletion(); !status) {
+        return status;
     }
 
     // Finalize results
@@ -274,9 +306,48 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     return {};
 }
 
+std::expected<void, sak::error_code> StressTestWorker::runStressThreadsToCompletion() {
+    // Launch stress threads. If launching or the monitor loop throws (e.g. std::async
+    // cannot create a thread, or a vector reallocation throws), the already-running
+    // children would otherwise never be told to stop -- and each std::future's destructor
+    // would then block forever waiting on a child that never exits. Signal stop before
+    // those destructors run and fail closed.
+    std::vector<std::future<void>> futures;
+    try {
+        launchStressThreads(futures);
+
+        // Monitor loop -- runs in the WorkerBase thread
+        const int total_seconds = m_config.duration_minutes * sak::kSecondsPerMinute;
+        monitorStressLoop(total_seconds);
+
+        // Signal child stress threads to stop (without marking WorkerBase cancelled)
+        m_stop_children.store(true, std::memory_order_release);
+        for (auto& future : futures) {
+            future.get();
+        }
+    } catch (...) {
+        m_stop_children.store(true, std::memory_order_release);
+        for (auto& future : futures) {
+            if (future.valid()) {
+                // SAK-ALLOW-BLOCKING: runs on the WorkerBase thread, not the GUI thread, and
+                // the wait is bounded -- m_stop_children was just set, so each child stress
+                // thread returns at its next loop check. Draining here is mandatory: a future
+                // left unwaited would let a child thread outlive this scope and touch freed
+                // worker state during stack unwinding.
+                future.wait();
+            }
+        }
+        logError("Stress test: aborted -- error while launching or running stress threads");
+        return std::unexpected(sak::error_code::internal_error);
+    }
+    return {};
+}
+
 int StressTestWorker::resolveCpuThreadCount(int configThreads, unsigned int hwConcurrency) {
     if (configThreads > 0) {
-        return configThreads;
+        // Honor an explicit request verbatim, but clamp an absurd/hostile count so it cannot spawn
+        // an unbounded number of stress threads (see kMaxCpuStressThreads).
+        return std::min(configThreads, kMaxCpuStressThreads);
     }
     // configThreads <= 0 means "use all logical CPUs". hardware_concurrency()
     // returns 0 when it cannot detect the count -- fall back to one worker so a
@@ -496,7 +567,10 @@ int StressTestWorker::runMemoryStress() {
     }
 
     const size_t count = alloc_size / sizeof(uint64_t);
-    int total_errors = 0;
+    // Accumulate in 64-bit: a single fully-corrupt pass saturates at INT_MAX, and summing
+    // several such passes into an int would overflow (signed UB). Clamp back to INT_MAX
+    // only when reporting into the int result field / int return value.
+    int64_t total_errors = 0;
     uint64_t total_bytes_written = 0;
     uint64_t pattern_seed = kInitialMemoryPatternSeed;
 
@@ -513,15 +587,18 @@ int StressTestWorker::runMemoryStress() {
         ++pattern_seed;
     }
 
+    constexpr int64_t kMaxIntErrors = static_cast<int64_t>(std::numeric_limits<int>::max());
+    const int reported_errors = static_cast<int>(std::min(total_errors, kMaxIntErrors));
+
     m_result.memory_bytes_written = total_bytes_written;
-    m_result.memory_pattern_errors = total_errors;
+    m_result.memory_pattern_errors = reported_errors;
 
     freeStressMemory(data);
 
     logInfo("Memory stress: wrote {} GB, {} pattern errors",
             total_bytes_written / static_cast<uint64_t>(sak::kBytesPerGB),
-            total_errors);
-    return total_errors;
+            reported_errors);
+    return reported_errors;
 }
 
 size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const {
@@ -581,8 +658,10 @@ void StressTestWorker::freeStressMemory(volatile uint64_t* data) {
 
 void StressTestWorker::runDiskStress() {
 #ifdef SAK_PLATFORM_WINDOWS
-    const std::wstring wpath = claimUniqueStressFile(m_config.disk_test_drive);
-    if (wpath.empty()) {
+    // One exclusive, delete-on-close handle for the whole run (see openExclusiveStressFile):
+    // there is no claim->reopen or delete-by-name window for an attacker to race.
+    HANDLE h = openExclusiveStressFile(m_config.disk_test_drive);
+    if (h == INVALID_HANDLE_VALUE) {
         logError("Disk stress: could not exclusively create test file -- refusing to overwrite");
         m_result.disk_errors = 1;
         m_error_count.fetch_add(1, std::memory_order_relaxed);
@@ -592,28 +671,16 @@ void StressTestWorker::runDiskStress() {
     constexpr size_t kBlockSize = 1024 * 1024;          // 1 MB blocks
     constexpr size_t kFileSize = 256ULL * 1024 * 1024;  // 256 MB file
     // A disk stress that cannot allocate its buffer did no work: record an error so
-    // the run cannot report PASSED (mirrors the could-not-claim-file guard above).
+    // the run cannot report PASSED (mirrors the could-not-create-file guard above).
     auto* buf = static_cast<uint8_t*>(_aligned_malloc(kBlockSize, kDiskBufferAlignment));
     if (!buf) {
         logError("Disk stress: buffer allocation failed -- marking disk stress failed");
         m_result.disk_errors = 1;
         m_error_count.fetch_add(1, std::memory_order_relaxed);
-        DeleteFileW(wpath.c_str());
+        CloseHandle(h);  // FILE_FLAG_DELETE_ON_CLOSE removes the test file
         return;
     }
     fillDiskStressBuffer(buf, kBlockSize);
-
-    // Pin ONE handle for the whole run (see openClaimedStressFile) rather than
-    // re-creating the guessable path each loop and following a swapped-in reparse point.
-    HANDLE h = openClaimedStressFile(wpath);
-    if (h == INVALID_HANDLE_VALUE) {
-        logError("Disk stress: could not open claimed test file -- refusing to overwrite");
-        m_result.disk_errors = 1;
-        m_error_count.fetch_add(1, std::memory_order_relaxed);
-        _aligned_free(buf);
-        DeleteFileW(wpath.c_str());
-        return;
-    }
 
     uint64_t total_bytes_written = 0;
     int disk_errors = 0;
@@ -636,9 +703,8 @@ void StressTestWorker::runDiskStress() {
         }
     }
 
-    CloseHandle(h);
+    CloseHandle(h);  // FILE_FLAG_DELETE_ON_CLOSE removes the test file
     _aligned_free(buf);
-    DeleteFileW(wpath.c_str());
 
     m_result.disk_bytes_written = total_bytes_written;
     m_result.disk_errors = disk_errors;

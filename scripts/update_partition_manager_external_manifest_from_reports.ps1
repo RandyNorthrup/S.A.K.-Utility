@@ -81,6 +81,7 @@ function Write-ImportedChecklist {
     Assert-Condition -Condition (Test-Path -LiteralPath $resolvedSource -PathType Leaf) -Message "External evidence checklist missing: $SourceChecklistPath"
 
     $resolvedDestination = Resolve-ProjectPath -Path $DestinationChecklistPath
+    Assert-Condition -Condition (-not [string]::Equals([System.IO.Path]::GetFullPath($resolvedDestination), [System.IO.Path]::GetFullPath($resolvedSource), [System.StringComparison]::OrdinalIgnoreCase)) -Message "Imported checklist output must differ from the source checklist: $resolvedDestination"
     if ((Test-Path -LiteralPath $resolvedDestination) -and -not $Force) {
         throw "External checklist import output already exists: $resolvedDestination. Use -Force to overwrite."
     }
@@ -134,6 +135,7 @@ function Update-LabPackageManifestReferences {
     $updatedCount = 0
     foreach ($gateDirectory in @(Get-ChildItem -LiteralPath $resolvedRoot -Directory)) {
         $gate = $resultById[$gateDirectory.Name]
+        $updated = $false
         $readmePath = Join-Path $gateDirectory.FullName "README.md"
         if (Test-Path -LiteralPath $readmePath -PathType Leaf) {
             $readmeText = Get-Content -LiteralPath $readmePath -Raw
@@ -153,6 +155,7 @@ function Update-LabPackageManifestReferences {
                     [System.Text.RegularExpressions.MatchEvaluator] { param($match) $manifestLine }
                 )
                 $readmeText | Set-Content -LiteralPath $readmePath -Encoding UTF8
+                $updated = $true
             }
         }
 
@@ -171,9 +174,12 @@ function Update-LabPackageManifestReferences {
                 }
                 Set-JsonProperty -Object $template -Name "evidence" -Value $evidence
             }
-            $template | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $templatePath -Encoding UTF8
+            $template | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $templatePath -Encoding UTF8
+            $updated = $true
         }
-        $updatedCount++
+        if ($updated) {
+            $updatedCount++
+        }
     }
 
     return $updatedCount
@@ -187,9 +193,9 @@ function Get-ScenarioSpec {
         [string]$Id
     )
 
-    $matches = @($Matrix.external_gates | Where-Object { $_.id -eq $Id })
-    Assert-Condition -Condition ($matches.Count -eq 1) -Message "Certification matrix missing or duplicated external gate: $Id"
-    return $matches[0]
+    $scenarioMatches = @($Matrix.external_gates | Where-Object { $_.id -eq $Id })
+    Assert-Condition -Condition ($scenarioMatches.Count -eq 1) -Message "Certification matrix missing or duplicated external gate: $Id"
+    return $scenarioMatches[0]
 }
 
 function Set-JsonProperty {
@@ -210,6 +216,26 @@ function Set-JsonProperty {
     }
 }
 
+function Test-ScalarStringEquals {
+    param(
+        [object]$Actual,
+        [Parameter(Mandatory = $true)]
+        [string]$Expected
+    )
+
+    # Fail closed on PowerShell's "-eq filters an array" trap: if $Actual is an array,
+    # ($Actual -eq $Expected) returns the matching elements (a non-empty, truthy array), so
+    # a forged report field such as @('Failed','Passed') would satisfy an identity check.
+    # Require a real, non-array string and compare case-insensitively (ordinal).
+    if ($Actual -is [System.Array]) {
+        return $false
+    }
+    if ($Actual -isnot [string]) {
+        return $false
+    }
+    return [string]::Equals($Actual, $Expected, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Test-EvidenceValuePresent {
     param(
         [object]$Value
@@ -222,7 +248,14 @@ function Test-EvidenceValuePresent {
         return -not [string]::IsNullOrWhiteSpace($Value)
     }
     if ($Value -is [System.Array]) {
-        return $Value.Count -gt 0
+        # Present only if at least one element is itself present -- an array of blanks or
+        # nulls (@(''), @($null)) is NOT evidence and must fail closed.
+        foreach ($element in $Value) {
+            if (Test-EvidenceValuePresent -Value $element) {
+                return $true
+            }
+        }
+        return $false
     }
     if ($Value -is [pscustomobject]) {
         return @($Value.PSObject.Properties).Count -gt 0
@@ -314,12 +347,12 @@ function Assert-ExternalReport {
         [string]$ReportPath
     )
 
-    Assert-Condition -Condition ($Report.tool -eq "partition-manager-external-evidence-report") -Message "Unexpected external evidence report tool: $ReportPath"
-    Assert-Condition -Condition ($Report.schema_version -eq 1) -Message "Unexpected external evidence report schema_version for $($Spec.id)"
-    Assert-Condition -Condition ($Report.gate_id -eq $Spec.id) -Message "External evidence report gate ID mismatch: expected $($Spec.id), got $($Report.gate_id)"
-    Assert-Condition -Condition ($Report.gate_name -eq $Spec.name) -Message "External evidence report gate name mismatch for $($Spec.id)"
-    Assert-Condition -Condition ($Report.status -eq "Passed") -Message "External evidence report must be Passed before import: $($Spec.id)=$($Report.status)"
-    Assert-Condition -Condition ($Report.certification_matrix -eq "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json") -Message "External evidence report matrix mismatch for $($Spec.id)"
+    Assert-Condition -Condition (Test-ScalarStringEquals -Actual $Report.tool -Expected "partition-manager-external-evidence-report") -Message "Unexpected external evidence report tool: $ReportPath"
+    Assert-Condition -Condition ((-not ($Report.schema_version -is [System.Array])) -and ($Report.schema_version -eq 1)) -Message "Unexpected external evidence report schema_version for $($Spec.id)"
+    Assert-Condition -Condition (Test-ScalarStringEquals -Actual $Report.gate_id -Expected ([string]$Spec.id)) -Message "External evidence report gate ID mismatch: expected $($Spec.id), got $($Report.gate_id)"
+    Assert-Condition -Condition (Test-ScalarStringEquals -Actual $Report.gate_name -Expected ([string]$Spec.name)) -Message "External evidence report gate name mismatch for $($Spec.id)"
+    Assert-Condition -Condition (Test-ScalarStringEquals -Actual $Report.status -Expected "Passed") -Message "External evidence report must be Passed before import: $($Spec.id)=$($Report.status)"
+    Assert-Condition -Condition (Test-ScalarStringEquals -Actual $Report.certification_matrix -Expected "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json") -Message "External evidence report matrix mismatch for $($Spec.id)"
     Assert-Condition -Condition (Test-ArrayContainsAll -Actual @($Report.required_evidence_keys) -Expected @($Spec.required_evidence_keys)) -Message "External evidence report keys mismatch for $($Spec.id)"
     Assert-Condition -Condition (Test-ArrayContainsAll -Actual @($Report.safety_contract) -Expected @($Spec.safety_contract)) -Message "External evidence report safety contract mismatch for $($Spec.id)"
     Assert-RequiredEvidenceValuesMatch -Report $Report -Spec $Spec
@@ -343,7 +376,8 @@ Push-Location $ProjectRoot
 try {
     $matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
-    Assert-Condition -Condition ($matrix.schema_version -eq 1) -Message "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
+    Assert-Condition -Condition ((-not ($matrix.schema_version -is [System.Array])) -and ($matrix.schema_version -eq 1)) -Message "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
+    Assert-Condition -Condition (@($matrix.external_gates).Count -ge 1) -Message "Certification matrix defines no external gates; refusing to import (an empty gate set would produce a hollow zero-report certification)."
 
     $resolvedManifestPath = Resolve-Path -LiteralPath (Resolve-ProjectPath -Path $ManifestPath) -ErrorAction Stop
     $resolvedEvidenceRoot = Resolve-ProjectPath -Path $EvidenceRoot
@@ -355,6 +389,14 @@ try {
         $OutputPath = Join-Path $manifestDirectory "$manifestName.imported.json"
     }
     $resolvedOutputPath = Resolve-ProjectPath -Path $OutputPath
+    # Path-role separation: the output manifest must never alias the source manifest or be
+    # written inside the evidence root (either would let the import overwrite the very
+    # source/evidence it was validating, especially under -Force). Fail closed.
+    $resolvedOutputFull = [System.IO.Path]::GetFullPath($resolvedOutputPath)
+    $manifestSourceFull = [System.IO.Path]::GetFullPath($resolvedManifestPath.Path)
+    $evidenceRootPrefix = [System.IO.Path]::GetFullPath($resolvedEvidenceRoot).TrimEnd('\') + '\'
+    Assert-Condition -Condition (-not [string]::Equals($resolvedOutputFull, $manifestSourceFull, [System.StringComparison]::OrdinalIgnoreCase)) -Message "Output manifest path must differ from the source manifest: $resolvedOutputFull"
+    Assert-Condition -Condition (-not $resolvedOutputFull.StartsWith($evidenceRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) -Message "Output manifest must not be written inside the evidence root (would overwrite report evidence): $resolvedOutputFull"
     if ((Test-Path -LiteralPath $resolvedOutputPath) -and -not $Force) {
         throw "External manifest import output already exists: $resolvedOutputPath. Use -Force to overwrite."
     }
@@ -362,10 +404,17 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($outputParent)) {
         New-Item -ItemType Directory -Path $outputParent -Force | Out-Null
     }
+    # Fail closed BEFORE writing the manifest or mutating any lab-package file if a
+    # requested checklist source is missing -- otherwise a missing checklist would only be
+    # discovered after the manifest and package files were already written (partial state).
+    if (-not [string]::IsNullOrWhiteSpace($ChecklistPath)) {
+        $preflightChecklistSource = Resolve-ProjectPath -Path $ChecklistPath
+        Assert-Condition -Condition (Test-Path -LiteralPath $preflightChecklistSource -PathType Leaf) -Message "External evidence checklist missing: $ChecklistPath"
+    }
 
     $manifest = Get-Content -LiteralPath $resolvedManifestPath.Path -Raw | ConvertFrom-Json
-    Assert-Condition -Condition ($manifest.tool -eq "partition-manager-external-certification") -Message "Unexpected external evidence manifest tool"
-    Assert-Condition -Condition ($manifest.schema_version -eq 1) -Message "Unexpected external evidence manifest schema_version"
+    Assert-Condition -Condition (Test-ScalarStringEquals -Actual $manifest.tool -Expected "partition-manager-external-certification") -Message "Unexpected external evidence manifest tool"
+    Assert-Condition -Condition ((-not ($manifest.schema_version -is [System.Array])) -and ($manifest.schema_version -eq 1)) -Message "Unexpected external evidence manifest schema_version"
 
     $importedCount = 0
     $missingReports = New-Object System.Collections.Generic.List[string]
@@ -386,6 +435,13 @@ try {
         $reportPath = Join-Path (Join-Path $resolvedEvidenceRoot $gate.id) "report.json"
         if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
             $missingReports.Add($gate.id)
+            # Fail closed: a gate with no validated report this run must never keep a
+            # pre-existing "Passed" status/evidence carried in from the source manifest.
+            if ([string]$result.status -eq "Passed") {
+                Set-JsonProperty -Object $result -Name "status" -Value "Missing"
+                Set-JsonProperty -Object $result -Name "evidence" -Value $null
+                Set-JsonProperty -Object $result -Name "evidence_path" -Value ""
+            }
             continue
         }
 
@@ -407,7 +463,7 @@ try {
 
     Set-JsonProperty -Object $manifest -Name "imported_utc" -Value (Get-Date).ToUniversalTime().ToString("o")
     Set-JsonProperty -Object $manifest -Name "imported_report_count" -Value $importedCount
-    $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $resolvedOutputPath -Encoding UTF8
+    $manifest | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $resolvedOutputPath -Encoding UTF8
     $updatedLabPackageCount = Update-LabPackageManifestReferences -LabEvidenceRoot $EvidenceRoot -ImportedManifestPath $resolvedOutputPath
 
     $writtenChecklistPath = ""

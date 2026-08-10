@@ -54,6 +54,14 @@ bool FileImageSource::open() {
     }
 
     m_device = std::move(file);
+    // Bind the reported size to the handle we actually opened, not to the pre-open stat taken in
+    // the constructor: a reparse-point or file swap between construction and open() would leave
+    // size() reporting file A while every read comes from file B. The open handle is the
+    // authority the capacity gate must trust.
+    const qint64 openedSize = m_device->size();
+    if (openedSize >= 0) {
+        m_metadata.size = openedSize;
+    }
     sak::logInfo(QString("Opened image: %1 (%2 bytes)")
                      .arg(m_metadata.name)
                      .arg(m_metadata.size)
@@ -172,6 +180,16 @@ QString FileImageSource::calculateChecksum() {
         }
     }
 
+    // The image must not change length under us mid-hash: if the bytes we read do not match what
+    // the handle reported before the loop, a concurrent truncation or growth raced the read and
+    // the digest would certify a prefix (or a short read) as the whole image. A wrong digest the
+    // caller compares and trusts is worse than none, so fail closed.
+    if (totalBytes >= 0 && totalRead != totalBytes) {
+        sak::logError("Image length changed during checksum; refusing to certify a partial read");
+        static_cast<void>(m_device->seek(oldPos));
+        return QString();
+    }
+
     // Restore position
     static_cast<void>(m_device->seek(oldPos));
 
@@ -282,7 +300,8 @@ bool CompressedImageSource::open() {
 
     // Open the decompressor
     if (!m_decompressor->open(m_filePath)) {
-        QString error = QString("Failed to open compressed file: %1").arg(m_filePath);
+        QString error = QString("Failed to open compressed file: %1 (%2)")
+                            .arg(m_filePath, m_decompressor->lastError());
         sak::logError(error.toStdString());
         Q_EMIT readError(error);
         m_decompressor.reset();
@@ -340,13 +359,25 @@ qint64 CompressedImageSource::read(char* data, qint64 maxSize) {
         sak::logError("CompressedImageSource::read called with a null buffer");
         return -1;
     }
+    // A negative length is not a short read to tolerate: it is a malformed request that would
+    // reach the backend as an unbounded/garbage width. Reject it with the documented -1.
+    if (maxSize < 0) {
+        sak::logError("CompressedImageSource::read called with a negative length");
+        return -1;
+    }
     if (!isOpen()) {
         sak::logError("Cannot read from closed CompressedImageSource");
         return -1;
     }
 
     qint64 bytesRead = m_decompressor->read(data, maxSize);
-    if (bytesRead > 0) {
+    if (bytesRead < 0) {
+        // Surface the decompressor's real failure instead of a bare -1: malformed compressed
+        // input must reach the caller as the actual error, not a silent short read.
+        const QString err = m_decompressor->lastError();
+        sak::logError(QString("Decompressor read error: %1").arg(err).toStdString());
+        Q_EMIT readError(err.isEmpty() ? QStringLiteral("Decompressor read error") : err);
+    } else if (bytesRead > 0) {
         m_totalDecompressed += bytesRead;
     }
 
@@ -413,7 +444,9 @@ QString CompressedImageSource::calculateChecksum() {
     while (!atEnd()) {
         qint64 bytesRead = read(buffer.data(), bufferSize);
         if (bytesRead < 0) {
-            sak::logError("Error reading data during checksum calculation");
+            sak::logError(QString("Error reading data during checksum calculation: %1")
+                              .arg(m_decompressor ? m_decompressor->lastError() : QString())
+                              .toStdString());
             return QString();
         }
         if (bytesRead > 0) {
@@ -421,9 +454,13 @@ QString CompressedImageSource::calculateChecksum() {
         }
     }
 
-    // Close and reopen to reset
+    // Close and reopen to reset the stream to the beginning so the caller can re-read from the
+    // start. The digest above is already complete and valid; a reopen failure here does not
+    // change it, but must not pass silently -- a later read would otherwise fail with no clue.
     close();
-    open();
+    if (!open()) {
+        sak::logError("Failed to reopen CompressedImageSource after checksum calculation");
+    }
 
     // Cannot restore position for compressed streams, user must re-read from start
     sak::logWarning("Checksum calculation reset decompression stream to beginning");

@@ -30,6 +30,9 @@
   "acceptance_criteria": [
     "SAK offline bundle builder was used.",
     "Manifest path is reported.",
+    "Every requested application is present in the bundle manifest.",
+    "Zero packages failed, were cancelled, or are still pending.",
+    "Every bundled package is offline-capable (requires_network is 0); a bundle that still needs network at deploy time is NOT accepted.",
     "Failed packages are not hidden.",
     "Install-from-bundle instructions are included."
   ],

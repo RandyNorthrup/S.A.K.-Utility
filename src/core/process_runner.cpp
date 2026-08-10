@@ -73,16 +73,18 @@ bool dispatchDetachedTreeKill(qint64 pid) {
     if (pid <= 0) {
         return false;
     }
-    // System32-qualified shell, never a bare "cmd.exe": the tree kill can be dispatched
-    // from an elevated worker, so a PATH/CWD-planted cmd.exe must not be able to satisfy
-    // it. Unresolvable -> return false so the caller kills the direct child instead.
-    const QString shell = system32Path(QStringLiteral("cmd.exe"));
-    if (shell.isEmpty()) {
+    // Launch the System32-qualified taskkill DIRECTLY (no cmd.exe shell, and never a bare
+    // "taskkill" that a PATH/CWD-planted binary could satisfy): the tree kill can be
+    // dispatched from an elevated worker, so both the program AND the tool it invokes must
+    // be resolved absolutely. taskkill /T reaps the whole child tree. Unresolvable ->
+    // return false so the caller kills the direct child instead.
+    const QString taskkill = system32Path(QStringLiteral("taskkill.exe"));
+    if (taskkill.isEmpty()) {
         return false;
     }
-    return QProcess::startDetached(shell,
-                                   {QStringLiteral("/C"),
-                                    QStringLiteral("taskkill /PID %1 /T /F >NUL 2>NUL").arg(pid)});
+    return QProcess::startDetached(
+        taskkill,
+        {QStringLiteral("/PID"), QString::number(pid), QStringLiteral("/T"), QStringLiteral("/F")});
 #else
     Q_UNUSED(pid);
     return false;
@@ -93,13 +95,14 @@ void terminateProcess(QProcess* proc, const ProcessTerminationCallback& on_termi
     if (on_terminate) {
         on_terminate();
     }
-    // Prefer the tree kill (reaps orphaned grandchildren), but never rely on it:
-    // if it could not be launched, fall through to kill the direct child so a
-    // cancel/timeout can never leave the child running while we report it torn
-    // down.
-    if (!dispatchDetachedTreeKill(proc->processId())) {
-        proc->kill();
-    }
+    // Reap orphaned grandchildren via the detached whole-tree kill, and ALWAYS also kill
+    // the direct child. startDetached only proves the kill helper LAUNCHED, not that
+    // taskkill actually reached and terminated the child, so the child we own must be
+    // signalled directly here rather than trusted to the detached, best-effort tree kill.
+    // A cancel/timeout can then never leave the direct child running while we report it
+    // torn down.
+    dispatchDetachedTreeKill(proc->processId());
+    proc->kill();
 }
 
 bool startProcess(const ProcessRunRequest& request, QProcess* proc, ProcessResult* result) {
@@ -141,6 +144,15 @@ bool stopForCancelOrTimeout(const ProcessRunRequest& request,
 ProcessResult runProcessInternal(const ProcessRunRequest& request) {
     ProcessResult result;
     result.exit_code = -1;
+
+    // Honor a cancel that is ALREADY set before we launch: a pre-cancelled request must
+    // not start a (possibly destructive, elevated) process at all. Without this the
+    // command runs to completion and can report success, because should_cancel is
+    // otherwise first consulted only after the process has already been started.
+    if (request.should_cancel && request.should_cancel()) {
+        result.cancelled = true;
+        return result;
+    }
 
     QProcess proc;
     if (!startProcess(request, &proc, &result)) {

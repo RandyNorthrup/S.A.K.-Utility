@@ -131,10 +131,10 @@ namespace sak {
     return kPrefixes;
 }
 
-/// Shared registry roots blocked only as the EXACT key -- a specific deeper key (an app's own
-/// subkey) is a legitimate leftover, but deleting one of these whole trees is catastrophic.
-[[nodiscard]] inline const QStringList& cleanupDeniedRegistryExact() {
-    static const QStringList kExact = {
+/// The bare shared roots: the SOFTWARE hive and its top branches, the HKCR COM roots
+/// (CLSID/AppID/TypeLib/Interface), the all-files "*" key, and the bare file-type classes.
+[[nodiscard]] inline QStringList cleanupDeniedRegistryExactRoots() {
+    return {
         QStringLiteral("software"),
         QStringLiteral("software\\microsoft"),
         QStringLiteral("software\\microsoft\\windows"),
@@ -164,9 +164,14 @@ namespace sak {
         QStringLiteral("lnkfile"),
         QStringLiteral("directory"),
         QStringLiteral("folder"),
-        // Executable/launch file-extension class registrations: deleting the key unregisters that
-        // extension entirely (double-clicking a .exe/.lnk stops working). Blocked as the exact key;
-        // a descendant such as .exe\\OpenWithProgids is a legitimate per-app leftover.
+    };
+}
+
+/// Executable/launch file-extension class registrations: deleting the key unregisters that
+/// extension entirely (double-clicking a .exe/.lnk stops working). Blocked as the exact key;
+/// a descendant such as .exe\\OpenWithProgids is a legitimate per-app leftover.
+[[nodiscard]] inline QStringList cleanupDeniedRegistryExactLaunchExtensions() {
+    return {
         QStringLiteral(".exe"),
         QStringLiteral(".com"),
         QStringLiteral(".bat"),
@@ -184,6 +189,46 @@ namespace sak {
         QStringLiteral("software\\classes\\.sys"),
         QStringLiteral("software\\classes\\.dll"),
     };
+}
+
+/// SOFTWARE\\Classes mirror of the COM registries and launch classes (the HKLM/HKCU/WOW
+/// view of what HKCR exposes at its root). Deleting the whole CLSID/AppID/TypeLib/Interface
+/// tree breaks COM system-wide, and deleting a mirrored file-type class (exefile, ...)
+/// breaks launching that class. Blocked as the EXACT key so a specific app-owned GUID/subkey
+/// under them stays a cleanable leftover (mirrors the bare HKCR forms already blocked
+/// above).
+[[nodiscard]] inline QStringList cleanupDeniedRegistryExactClassesMirror() {
+    return {
+        QStringLiteral("software\\classes\\clsid"),
+        QStringLiteral("software\\classes\\appid"),
+        QStringLiteral("software\\classes\\typelib"),
+        QStringLiteral("software\\classes\\interface"),
+        QStringLiteral("software\\classes\\wow6432node\\clsid"),
+        QStringLiteral("software\\classes\\wow6432node\\appid"),
+        QStringLiteral("software\\classes\\wow6432node\\typelib"),
+        QStringLiteral("software\\classes\\wow6432node\\interface"),
+        QStringLiteral("software\\wow6432node\\classes\\clsid"),
+        QStringLiteral("software\\wow6432node\\classes\\appid"),
+        QStringLiteral("software\\wow6432node\\classes\\typelib"),
+        QStringLiteral("software\\wow6432node\\classes\\interface"),
+        QStringLiteral("software\\classes\\exefile"),
+        QStringLiteral("software\\classes\\comfile"),
+        QStringLiteral("software\\classes\\batfile"),
+        QStringLiteral("software\\classes\\cmdfile"),
+        QStringLiteral("software\\classes\\piffile"),
+        QStringLiteral("software\\classes\\lnkfile"),
+        QStringLiteral("software\\classes\\directory"),
+        QStringLiteral("software\\classes\\folder"),
+    };
+}
+
+/// Shared registry roots blocked only as the EXACT key -- a specific deeper key (an app's own
+/// subkey) is a legitimate leftover, but deleting one of these whole trees is catastrophic. Built
+/// from the three category tables above so no single table exceeds the complexity budget.
+[[nodiscard]] inline const QStringList& cleanupDeniedRegistryExact() {
+    static const QStringList kExact = cleanupDeniedRegistryExactRoots() +
+                                      cleanupDeniedRegistryExactLaunchExtensions() +
+                                      cleanupDeniedRegistryExactClassesMirror();
     return kExact;
 }
 
@@ -258,10 +303,9 @@ namespace sak {
     return {};
 }
 
-/// Critical Windows services whose deletion breaks boot, security, or core OS function.
-/// Lower-cased.
-[[nodiscard]] inline const QSet<QString>& cleanupCriticalServices() {
-    static const QSet<QString> kServices = {
+/// Named Windows services whose deletion breaks boot, security, or core OS function. Lower-cased.
+[[nodiscard]] inline QStringList cleanupCriticalServiceNames() {
+    return {
         QStringLiteral("rpcss"),
         QStringLiteral("rpceptmapper"),
         QStringLiteral("dcomlaunch"),
@@ -309,6 +353,68 @@ namespace sak {
         QStringLiteral("usosvc"),
         QStringLiteral("wdiservicehost"),
     };
+}
+
+/// The BOOT_START / system drivers whose deletion makes Windows fail to boot on the next restart.
+[[nodiscard]] inline QStringList cleanupCriticalDriverNames() {
+    // clang-format off
+    return {
+        // BOOT_START / system drivers: the storage, bus, filesystem, and crypto stack the loader
+        // needs to reach and mount the OS. Deleting any of these service keys (sc delete) makes
+        // Windows fail to boot on the next restart. None is ever a legitimate application leftover.
+        QStringLiteral("disk"),
+        QStringLiteral("partmgr"),
+        QStringLiteral("mountmgr"),
+        QStringLiteral("volmgr"),
+        QStringLiteral("volmgrx"),
+        QStringLiteral("volsnap"),
+        QStringLiteral("volume"),
+        QStringLiteral("fvevol"),
+        QStringLiteral("rdyboost"),
+        QStringLiteral("spaceport"),
+        QStringLiteral("storahci"),
+        QStringLiteral("stornvme"),
+        QStringLiteral("storport"),
+        QStringLiteral("msahci"),
+        QStringLiteral("atapi"),
+        QStringLiteral("ataport"),
+        QStringLiteral("pciide"),
+        QStringLiteral("pci"),
+        QStringLiteral("intelide"),
+        QStringLiteral("amdsata"),
+        QStringLiteral("amdxata"),
+        QStringLiteral("iastorv"),
+        QStringLiteral("acpi"),
+        QStringLiteral("acpiex"),
+        QStringLiteral("msisadrv"),
+        QStringLiteral("pdc"),
+        QStringLiteral("vdrvroot"),
+        QStringLiteral("vmbus"),
+        QStringLiteral("fltmgr"),
+        QStringLiteral("ntfs"),
+        QStringLiteral("fastfat"),
+        QStringLiteral("refs"),
+        QStringLiteral("refsv1"),
+        QStringLiteral("cldflt"),
+        QStringLiteral("bindflt"),
+        QStringLiteral("wof"),
+        QStringLiteral("clfs"),
+        QStringLiteral("ksecdd"),
+        QStringLiteral("ksecpkg"),
+        QStringLiteral("cng"),
+        QStringLiteral("tpm"),
+        QStringLiteral("wdf01000"),
+        QStringLiteral("wdfldr"),
+    };
+    // clang-format on
+}
+
+/// Critical Windows services whose deletion breaks boot, security, or core OS function.
+/// Lower-cased. Built from the named-service and boot-driver tables above so no single table
+/// exceeds the complexity budget.
+[[nodiscard]] inline const QSet<QString>& cleanupCriticalServices() {
+    static const QStringList kNames = cleanupCriticalServiceNames() + cleanupCriticalDriverNames();
+    static const QSet<QString> kServices(kNames.cbegin(), kNames.cend());
     return kServices;
 }
 
@@ -378,6 +484,12 @@ namespace sak {
             return QStringLiteral("firewall rule name contains a control character");
         }
     }
+    // netsh strips a surrounding double-quote group, so a quoted name=all bypasses the bare-token
+    // check below and still deletes EVERY rule. A real firewall rule name never contains a double
+    // quote, so refuse it outright (also blocks any other quote/token injection into netsh).
+    if (name.contains(QLatin1Char('"'))) {
+        return QStringLiteral("firewall rule name contains a double-quote character");
+    }
     if (name.compare(QLatin1String("all"), Qt::CaseInsensitive) == 0) {
         return QStringLiteral(
             "refusing firewall wildcard name=all (deletes ALL rules); name a "
@@ -418,24 +530,41 @@ namespace sak {
 /// tree while a genuine app subfolder under them stays cleanable.
 [[nodiscard]] inline const QRegularExpression& cleanupSharedRootDirRegex() {
     static const QRegularExpression kRegex(QStringLiteral(
-        "^[a-z]:/(program files|program files \\(x86\\)|programdata|users|"
+        "^[a-z]:/(program files|program files \\(x86\\)|"
+        "program files/common files|program files \\(x86\\)/common files|"
+        "programdata|users|"
         "users/public|windows|users/[^/]+|users/[^/]+/appdata|"
         "users/[^/]+/appdata/local|users/[^/]+/appdata/roaming|"
         "users/[^/]+/appdata/locallow|"
         "users/[^/]+/(documents|desktop|downloads|pictures|music|videos|favorites|contacts|"
-        "links|searches|saved games|onedrive)|"
+        "links|searches|saved games|onedrive( - [^/]+)?)|"
         "users/public/(documents|desktop|downloads|pictures|music|videos|libraries))$"));
     return kRegex;
 }
 
 /// Boot / system-critical roots that are NEVER a legitimate application leftover: refused as the
 /// path AND its whole subtree (unlike the shared roots, no subfolder under these is ever
-/// cleanable).
+/// cleanable). The Windows directory is included here UNCONDITIONALLY (any drive) so its subtree
+/// stays protected even if %SystemRoot% is unset, malformed, or attacker-redirected -- the
+/// %SystemRoot%-based check in filePathDeletionRefusal only ADDS a non-standard install location,
+/// it can no longer be the sole shield for the real Windows tree.
 [[nodiscard]] inline const QRegularExpression& cleanupCriticalTreeRegex() {
     static const QRegularExpression kRegex(
-        QStringLiteral("^[a-z]:/(bootmgr|boot|efi|recovery|\\$recycle\\.bin|"
+        QStringLiteral("^[a-z]:/(windows|bootmgr|boot|efi|recovery|\\$recycle\\.bin|"
                        "system volume information|hiberfil\\.sys|pagefile\\.sys|swapfile\\.sys|"
                        "bootsect\\.bak|bootnxt|config\\.msi)(/.*)?$"));
+    return kRegex;
+}
+
+/// Login / credential / class-registration data that lives UNDER a shared user or machine root yet
+/// is never a recoverable application leftover: the per-user registry hives (NTUSER.DAT,
+/// UsrClass.dat and their log/transaction files) and the machine crypto key store. Deleting any of
+/// these breaks login, DPAPI/credentials, or per-user COM. Refused as the exact file or subtree.
+[[nodiscard]] inline const QRegularExpression& cleanupCriticalDataFileRegex() {
+    static const QRegularExpression kRegex(
+        QStringLiteral("^[a-z]:/(users/[^/]+/(ntuser\\.dat.*|"
+                       "appdata/local/microsoft/windows/usrclass\\.dat.*)|"
+                       "programdata/microsoft/crypto(/.*)?)$"));
     return kRegex;
 }
 
@@ -451,6 +580,12 @@ namespace sak {
     }
     if (path.size() > 4096) {
         return QStringLiteral("path is too long");
+    }
+    // A NUL or other control char makes Win32 truncate the path at that byte, so the executed
+    // deletion target would differ from the validated/displayed string; '*'/'?' are wildcards
+    // (and illegal in real Windows filenames). Refuse them fail-closed before any screening.
+    if (cleanupNameHasControlOrWildcard(path)) {
+        return QStringLiteral("path contains a control or wildcard character");
     }
     static const QRegularExpression kRawDriveRe(QStringLiteral("^[A-Za-z]:[\\\\/]"));
     if (!kRawDriveRe.match(path).hasMatch()) {
@@ -484,6 +619,14 @@ namespace sak {
     const QString canonical = info.canonicalFilePath();
     const QString clean = QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath()
                                                               : canonical);
+    // A DOS-device / SUBST alias (or a symlink) can resolve to a UNC/device target; re-screen the
+    // RESOLVED path so an aliased or reparse target that canonicalized to \\host\share can never
+    // slip the local drive-letter checks below and be certified a safe local delete. (A mapped
+    // network drive letter that stays a bare letter after canonicalization is a residual: rejecting
+    // it needs a GetDriveType(DRIVE_REMOTE) probe outside this pure string screen.)
+    if (isNetworkOrDevicePath(clean)) {
+        return QStringLiteral("refusing a path that resolves to a UNC/device target");
+    }
     const QString lower = cleanupCanonicalLower(clean);
     static const QRegularExpression kDriveRootRe(QStringLiteral("^[a-z]:/?$"));
     if (kDriveRootRe.match(lower).hasMatch()) {
@@ -497,6 +640,10 @@ namespace sak {
     }
     if (cleanupCriticalTreeRegex().match(lower).hasMatch()) {
         return QStringLiteral("refusing a boot/system-critical path");
+    }
+    if (cleanupCriticalDataFileRegex().match(lower).hasMatch()) {
+        return QStringLiteral(
+            "refusing a login/credential-critical file (registry hive or machine crypto keys)");
     }
     if (cleanupSharedRootDirRegex().match(lower).hasMatch()) {
         return QStringLiteral(

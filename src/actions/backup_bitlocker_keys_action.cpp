@@ -148,6 +148,11 @@ try {
 
 static constexpr auto kRestrictPermissionsScriptTemplate = R"PS(
 try {
+    # Fail closed on ANY non-terminating error too: without this, a failed Set-Acl /
+    # Get-ChildItem / Get-Acl would leave a permissive ACL in place yet still fall through
+    # to Write-Output "SUCCESS", reporting plaintext recovery keys as secured when they are
+    # not. With Stop, any such failure throws into catch -> exit 1 -> fail closed.
+    $ErrorActionPreference = 'Stop'
     $path = '%1'
 
     # Disable inheritance and remove inherited ACEs.
@@ -199,7 +204,14 @@ try {
         exit 1
     }
 
-    $protectorIds = $vol.GetKeyProtectors(0).VolumeKeyProtectorID
+    $kpResult = $vol.GetKeyProtectors(0)
+    if ($kpResult.ReturnValue -ne 0) {
+        # A failed enumeration must NOT be coerced to "no protectors" (which would silently
+        # drop this volume's recovery key from the backup); fail the query so C++ fails closed.
+        Write-Error "GetKeyProtectors failed for %1 (rc=$($kpResult.ReturnValue))"
+        exit 1
+    }
+    $protectorIds = $kpResult.VolumeKeyProtectorID
     if (-not $protectorIds) {
         @() | ConvertTo-Json
         exit 0
@@ -208,14 +220,23 @@ try {
     $results = @()
     foreach ($id in $protectorIds) {
         $typeResult = $vol.GetKeyProtectorType($id)
+        if ($typeResult.ReturnValue -ne 0) {
+            Write-Error "GetKeyProtectorType failed for protector $id"
+            exit 1
+        }
         $type = $typeResult.KeyProtectorType
 
         $recoveryPassword = ""
         if ($type -eq 3) {
             $pwResult = $vol.GetKeyProtectorNumericalPassword($id)
-            if ($pwResult.ReturnValue -eq 0) {
-                $recoveryPassword = $pwResult.NumericalPassword
+            if ($pwResult.ReturnValue -ne 0) {
+                # A recovery-password protector we cannot read must fail the whole query
+                # rather than surface an empty password that the backup would treat as
+                # "this volume has no recovery key".
+                Write-Error "GetKeyProtectorNumericalPassword failed for protector $id"
+                exit 1
             }
+            $recoveryPassword = $pwResult.NumericalPassword
         }
 
         $keyFileName = ""
@@ -366,6 +387,14 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseD
     }
 
     for (const QJsonValue& val : volume_array) {
+        if (!val.isObject()) {
+            // A non-object entry must not be coerced to an empty volume record (blank drive
+            // letter, zeroed fields); fail closed exactly like parseKeyProtectorResponse so a
+            // malformed response is never read as a valid volume set.
+            Q_EMIT logMessage(
+                "Malformed BitLocker volume entry (not a JSON object); failing closed");
+            return {};  // parse_ok stays false
+        }
         QJsonObject obj = val.toObject();
 
         VolumeInfo vi;
@@ -1224,7 +1253,10 @@ bool BackupBitlockerKeysAction::restrictFilePermissions(const QString& path) {
         QString::fromUtf8(kRestrictPermissionsScriptTemplate).arg(QString(path).replace("'", "''"));
 
     ProcessResult proc = runPowerShell(script, sak::kTimeoutChocoListMs);
-    return proc.succeeded() && proc.std_out.trimmed().contains("SUCCESS");
+    // The script emits exactly "SUCCESS" on its one success path and nothing else on stdout
+    // (Set-Acl/Get-ChildItem produce no output), so require an exact match rather than a
+    // substring -- a stray token accompanying an error must not read as success.
+    return proc.succeeded() && proc.std_out.trimmed() == QStringLiteral("SUCCESS");
 }
 
 // ============================================================================

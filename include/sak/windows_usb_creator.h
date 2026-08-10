@@ -153,6 +153,12 @@ private:
     /// @brief Extract ISO contents and verify critical files (Step 2)
     bool extractAndVerifyFiles(const QString& isoPath, const QString& driveLetter);
 
+    /// @brief TOCTOU guard run before extraction writes anything: confirm @p driveLetter still
+    /// resolves to the ORIGINAL target disk (m_diskNumber). A hot-plug that reassigned the letter
+    /// to another disk's volume between format and extraction would otherwise let 7z overwrite that
+    /// unrelated volume. Fails closed on any mismatch or query failure.
+    bool verifyDriveLetterMapsToTarget(const QString& driveLetter);
+
     /// @brief Configure boot files and set bootable flag (Steps 3-4)
     bool configureBootAndVerify(const QString& diskNumber, const QString& driveLetter);
 
@@ -175,6 +181,14 @@ private:
      * @return true if successful
      */
     bool copyISOContents(const QString& sourcePath, const QString& destPath);
+
+    /**
+     * @brief Validate the source ISO and resolve the trusted bundled 7z before extraction
+     * @param sourcePath Path to source ISO file
+     * @param sevenZipPath [out] Verified path to the bundled 7z.exe
+     * @return true if the ISO exists, 7z is trusted, and no cancel was requested
+     */
+    bool copyISO_prepareExtraction(const QString& sourcePath, QString& sevenZipPath);
 
     /**
      * @brief Extract volume label from ISO metadata using 7z
@@ -322,6 +336,9 @@ private:
      * @return true ONLY if ALL verifications pass
      */
     bool finalVerification(const QString& driveLetter);
+
+    /// @brief Normalize a raw drive letter to validated "X:\\" form for final verification
+    bool normalizeVerificationDrive(const QString& driveLetter, QString& cleanDrive);
 
     /// @brief Verify critical boot files and install images exist on the drive
     bool verifyBootAndInstallFiles(const QString& cleanDrive);

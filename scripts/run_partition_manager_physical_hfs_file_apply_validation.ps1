@@ -33,6 +33,7 @@ $LargeDiskGuardBytes = 64GB
 $CopyBufferBytes = 4MB
 $StaleSignatureClearBytes = 16MB
 $AppleHfsGptType = "{48465300-0000-11aa-aa11-00306543ecac}"
+$FsutilPath = Join-Path $env:SystemRoot "System32\fsutil.exe"
 
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
     $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
@@ -43,6 +44,14 @@ function Assert-Condition {
     if (-not $Condition) {
         throw $Message
     }
+}
+
+function Test-JsonBooleanTrue {
+    # Fail closed: a report's boolean gate must be an actual JSON boolean set true.
+    # A missing field (null), a wrong-typed string like "false", or a number never
+    # counts as success.
+    param([object]$Value)
+    return ($Value -is [bool]) -and [bool]$Value
 }
 
 function Test-IsAdmin {
@@ -123,12 +132,18 @@ function Invoke-NativeCommand {
     $started = Get-Date
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    # Clear any prior exit code so a process that fails to launch cannot inherit a
+    # stale zero and be recorded as success.
+    $LASTEXITCODE = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        throw "$Name did not run: no exit code was recorded (process failed to launch)."
     }
 
     $record = [pscustomobject]@{
@@ -171,7 +186,7 @@ function New-SparseImageFile {
     param([string]$Path, [uint64]$SizeBytes)
     Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     New-Item -ItemType File -Path $Path -Force | Out-Null
-    $sparseOutput = fsutil sparse setflag $Path 2>&1
+    $sparseOutput = & $FsutilPath sparse setflag $Path 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to mark staged HFS image sparse. $(ConvertTo-PlainText -Value $sparseOutput)"
     }
@@ -302,7 +317,7 @@ function Test-ZeroBuffer {
 
 function Get-SparseAllocatedRanges {
     param([string]$Path)
-    $output = fsutil sparse queryrange $Path 2>&1
+    $output = & $FsutilPath sparse queryrange $Path 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to query sparse ranges. $(ConvertTo-PlainText -Value $output)"
     }
@@ -410,15 +425,16 @@ function Copy-SparseImageToRawTarget {
             Write-ZeroRange -TargetStream $target -Offset ($TargetSizeBytes - $edgeBytes) -Length $edgeBytes
         }
         foreach ($range in $ranges) {
+            # Fail closed: the sparse image is the same logical size as the raw target,
+            # so any range that falls outside the target means image and target geometry
+            # disagree. Refuse a partial/clipped copy-back instead of silently dropping data.
             if ([uint64]$range.offset -ge $TargetSizeBytes) {
-                $clippedRanges += 1
-                continue
+                throw "Sparse range offset $($range.offset) lies beyond raw target size $TargetSizeBytes; refusing partial copy-back."
             }
             $rangeLength = [uint64]$range.length
             $maxLength = $TargetSizeBytes - [uint64]$range.offset
             if ($rangeLength -gt $maxLength) {
-                $rangeLength = $maxLength
-                $clippedRanges += 1
+                throw "Sparse range at offset $($range.offset) length $rangeLength exceeds raw target bound $maxLength; refusing partial copy-back."
             }
             if ($rangeLength -eq 0) {
                 continue
@@ -426,7 +442,7 @@ function Copy-SparseImageToRawTarget {
             Copy-FileRange -SourceStream $source -TargetStream $target -Offset $range.offset -Length $rangeLength
             $copiedBytes += $rangeLength
         }
-        $target.Flush()
+        $target.Flush($true)
     }
     finally {
         $source.Dispose()
@@ -460,7 +476,7 @@ function Seed-HfsFixtureToRawTarget {
         $target.Write($fixtureBytes, 0, $fixtureBytes.Length)
         $tailClear = [uint64][Math]::Min([uint64]$StaleSignatureClearBytes, $TargetSizeBytes - [uint64]$fixtureBytes.Length)
         Write-ZeroRange -TargetStream $target -Offset ([uint64]$fixtureBytes.Length) -Length $tailClear
-        $target.Flush()
+        $target.Flush($true)
     }
     finally {
         $target.Dispose()
@@ -585,6 +601,9 @@ if ([string]::IsNullOrWhiteSpace($ReportPath)) {
 
 $Script:Commands = [System.Collections.Generic.List[object]]::new()
 $report = New-ReportBase -OutputPath $outputRoot
+# Stamp a fresh Failed report immediately so an aborted or killed run cannot leave a
+# stale Passed report from a previous run at this path.
+Write-Json -Path $ReportPath -Value $report
 
 try {
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
@@ -596,7 +615,7 @@ try {
     $hfsCli = Resolve-BuildTool -ExplicitPath $HfsWriterCliPath -FileName "sak_hfs_writer_cli.exe" -Description "sak_hfs_writer_cli.exe"
     $fsck = Resolve-ApprovedFsckHfs
 
-    $runRoot = Join-Path $outputRoot ("run-" + (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss"))
+    $runRoot = Join-Path $outputRoot ("run-" + (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss-fff"))
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
     $fixturePath = Join-Path $runRoot "seed-hfs-writer-fixture.img"
     $fixtureReportPath = Join-Path $runRoot "seed-fixture.json"
@@ -776,15 +795,15 @@ try {
     $secureFolderCreateReport = Read-Json -Path $secureFolderCreateReportPath
     $secureFolderFileCreateReport = Read-Json -Path $secureFolderFileCreateReportPath
     $secureFolderTreeDeleteReport = Read-Json -Path $secureFolderTreeDeleteReportPath
-    Assert-Condition -Condition ([bool]$dataReport.ok) -Message "Data-fork staged mutation failed."
-    Assert-Condition -Condition ([bool]$resourceReport.ok) -Message "Resource-fork staged mutation failed."
-    Assert-Condition -Condition ([bool]$attributeReport.ok) -Message "Inline-attribute staged mutation failed."
-    Assert-Condition -Condition ([bool]$secureFileCreateReport.ok) -Message "Secure-delete file create staged mutation failed."
-    Assert-Condition -Condition ([bool]$secureFileRenameReport.ok) -Message "Secure-delete file rename staged mutation failed."
-    Assert-Condition -Condition ([bool]$secureFileDeleteReport.ok) -Message "Secure-delete file staged mutation failed."
-    Assert-Condition -Condition ([bool]$secureFolderCreateReport.ok) -Message "Secure-delete folder create staged mutation failed."
-    Assert-Condition -Condition ([bool]$secureFolderFileCreateReport.ok) -Message "Secure-delete folder file create staged mutation failed."
-    Assert-Condition -Condition ([bool]$secureFolderTreeDeleteReport.ok) -Message "Secure-delete folder-tree staged mutation failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $dataReport.ok) -Message "Data-fork staged mutation failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $resourceReport.ok) -Message "Resource-fork staged mutation failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $attributeReport.ok) -Message "Inline-attribute staged mutation failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $secureFileCreateReport.ok) -Message "Secure-delete file create staged mutation failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $secureFileRenameReport.ok) -Message "Secure-delete file rename staged mutation failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $secureFileDeleteReport.ok) -Message "Secure-delete file staged mutation failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $secureFolderCreateReport.ok) -Message "Secure-delete folder create staged mutation failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $secureFolderFileCreateReport.ok) -Message "Secure-delete folder file create staged mutation failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $secureFolderTreeDeleteReport.ok) -Message "Secure-delete folder-tree staged mutation failed."
     Assert-Condition -Condition ($dataReport.after_sha256 -eq $expectedDataHash) -Message "Data-fork staged hash mismatch."
     Assert-Condition -Condition ($resourceReport.after_sha256 -eq $expectedResourceHash) -Message "Resource-fork staged hash mismatch."
     Assert-Condition -Condition ($attributeReport.after_sha256 -eq $expectedAttributeHash) -Message "Inline-attribute staged hash mismatch."
@@ -815,6 +834,10 @@ try {
     Assert-Condition -Condition ($readBackReport.hfs_read_resource_fork.sha256 -eq $expectedResourceHash) -Message "Final raw resource-fork hash mismatch."
     Assert-Condition -Condition ($readBackReport.hfs_read_attribute.sha256 -eq $expectedAttributeHash) -Message "Final raw inline-attribute hash mismatch."
     $rootNames = @($readBackReport.hfs_listing.entries | ForEach-Object { [string]$_.name })
+    # Anchor the absence checks on a known survivor: a missing or empty hfs_listing would
+    # make every -notcontains pass vacuously, so require the listing to actually enumerate
+    # the root before trusting that the secure-deleted entries are gone.
+    Assert-Condition -Condition ($rootNames -contains "hello.txt") -Message "Final HFS root listing did not enumerate the known survivor hello.txt; secure-delete absence checks cannot be trusted."
     Assert-Condition -Condition ($rootNames -notcontains "secure-delete.txt") -Message "Secure-deleted file still appears in final HFS root listing."
     Assert-Condition -Condition ($rootNames -notcontains "secure-delete-renamed.txt") -Message "Renamed secure-deleted file still appears in final HFS root listing."
     Assert-Condition -Condition ($rootNames -notcontains "Secure Delete") -Message "Secure-deleted folder tree still appears in final HFS root listing."
@@ -879,7 +902,7 @@ try {
         param([string]$Name, [string[]]$CliArguments, [string]$CliReportPath)
         $null = Invoke-NativeCommand -Name $Name -FilePath $hfsCli -Arguments $CliArguments -AcceptedExitCodes @(0, 1)
         $cliReport = Read-Json -Path $CliReportPath
-        Assert-Condition -Condition ([bool]$cliReport.ok) -Message "$Name failed: $(@($cliReport.blockers) -join '; ')"
+        Assert-Condition -Condition (Test-JsonBooleanTrue $cliReport.ok) -Message "$Name failed: $(@($cliReport.blockers) -join '; ')"
         return $cliReport
     }
 
@@ -1017,7 +1040,7 @@ try {
         "--confirm-target", "--evidence-id", "external.hfs-file-apply-physical.phase3-fork-attr",
         "--output-json", (Join-Path $runRoot "phase3-fork-attr-create.json")) `
         -CliReportPath (Join-Path $runRoot "phase3-fork-attr-create.json")
-    Assert-Condition -Condition ([bool]$phase3ForkAttrReport.ok) -Message "Phase-3 fork attribute create failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $phase3ForkAttrReport.ok) -Message "Phase-3 fork attribute create failed."
     $phase3ForkAttrDelete = Invoke-Phase2Cli -Name "phase3-fork-attr-delete" -CliArguments @(
         "delete-attribute-image", "--target", $phase3StagedPath,
         "--file-id", $phase3CreateReport.catalog_id,
@@ -1025,14 +1048,14 @@ try {
         "--confirm-target", "--evidence-id", "external.hfs-file-apply-physical.phase3-attr-delete",
         "--output-json", (Join-Path $runRoot "phase3-fork-attr-delete.json")) `
         -CliReportPath (Join-Path $runRoot "phase3-fork-attr-delete.json")
-    Assert-Condition -Condition ([bool]$phase3ForkAttrDelete.ok) -Message "Phase-3 fork attribute delete failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $phase3ForkAttrDelete.ok) -Message "Phase-3 fork attribute delete failed."
     $phase3Depth3Report = Invoke-Phase2Cli -Name "phase3-depth3-create" -CliArguments @(
         "create-empty-files-image", "--target", $phase3StagedPath,
         "--hfs-path", "/d3raw", "--file-count", "120", "--name-pad", "220",
         "--confirm-target", "--evidence-id", "external.hfs-file-apply-physical.phase3-depth3",
         "--output-json", (Join-Path $runRoot "phase3-depth3-create.json")) `
         -CliReportPath (Join-Path $runRoot "phase3-depth3-create.json")
-    Assert-Condition -Condition ([bool]$phase3Depth3Report.ok) -Message "Phase-3 depth-3 bulk create failed."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $phase3Depth3Report.ok) -Message "Phase-3 depth-3 bulk create failed."
     $phase3Depth3Pad = "x" * 220
     $null = Invoke-Phase2Cli -Name "phase3-depth3-delete" -CliArguments @(
         "delete-empty-file-image", "--target", $phase3StagedPath,
@@ -1074,7 +1097,7 @@ try {
     Assert-Condition -Condition ($phase2RootNames -notcontains "frag-2.bin") -Message "Phase-2 overflow-deleted file still appears on raw target."
     Assert-Condition -Condition ($phase2RootNames -notcontains "split-02.txt") -Message "Phase-3 depth-2 deleted file still appears on raw target."
     Assert-Condition -Condition ($phase2RootNames -contains "split-01.txt") -Message "Phase-2 split-created file missing from raw target listing."
-    Assert-Condition -Condition ([bool]$phase3AttrReport.ok) -Message "Phase-3 attribute create report missing."
+    Assert-Condition -Condition (Test-JsonBooleanTrue $phase3AttrReport.ok) -Message "Phase-3 attribute create report missing."
     Assert-Condition -Condition ($phase3Repair.exit_code -eq 0 -and $phase3Check.exit_code -eq 0) -Message "Phase-3 staged fsck did not pass."
 
     $report | Add-Member -NotePropertyName "broad_growth_and_split" -NotePropertyValue ([pscustomobject]@{

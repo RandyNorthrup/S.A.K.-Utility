@@ -32,6 +32,11 @@ constexpr int kRegistryHivePrefixLength = 5;
 constexpr int kCleanupCommandTimeoutMs = 10'000;
 constexpr int kCleanupServiceStopSettleMs = kTimerProgressPollMs;
 
+// Bound on removeFolderTreeVerified recursion: a crafted, deeply nested leftover tree must not
+// exhaust the worker thread's stack. Real app-leftover trees are shallow, so past this depth the
+// delete fails closed (the tree is reported not fully handled) rather than risk a stack overflow.
+constexpr int kMaxCleanupTreeDepth = 256;
+
 // Append the scan-time identity qualifiers that narrow a netsh firewall delete to the
 // single matching rule. Each is emitted only when known so an unbound/unknown field
 // does not over-constrain (and thus fail to delete) the intended rule.
@@ -681,7 +686,7 @@ bool CleanupWorker::removeFolderPermanent(QDir& dir, const QString& path) {
 }
 
 #ifdef Q_OS_WIN
-bool CleanupWorker::removeVerifiedFolderEntry(const QFileInfo& entry) {
+bool CleanupWorker::removeVerifiedFolderEntry(const QFileInfo& entry, int depth) {
     const QString child = entry.absoluteFilePath();
     // Guard the string-based paths below against an ANCESTOR swapped into a junction after the
     // parent verify: if any ancestor is now a reparse point the child string would resolve
@@ -696,7 +701,7 @@ bool CleanupWorker::removeVerifiedFolderEntry(const QFileInfo& entry) {
         return unlinkReparsePoint(child);
     }
     if (entry.isDir()) {
-        return removeFolderTreeVerified(child);  // recurse; re-verifies the subdir by handle
+        return removeFolderTreeVerified(child, depth);  // recurse; re-verifies the subdir by handle
     }
     // Plain file: delete by verified handle (redirect -> refuse). A locked (NotOpenable) file falls
     // back to a string unlink / reboot schedule -- safe now that the ancestor chain is verified.
@@ -743,7 +748,15 @@ bool CleanupWorker::removeEmptyDirByVerifiedHandle(const QString& path) {
     return tryScheduleReboot(path);
 }
 
-bool CleanupWorker::removeFolderTreeVerified(const QString& path) {
+bool CleanupWorker::removeFolderTreeVerified(const QString& path, int depth) {
+    // Bound the recursion depth: a crafted, deeply nested leftover tree must not exhaust the
+    // worker thread's stack. Past the budget, fail closed (report the tree not fully handled) so
+    // the emptied-dir removal below then fails and the incompleteness propagates upward.
+    if (depth > kMaxCleanupTreeDepth) {
+        sak::logWarning("Refusing folder delete of " + path.toStdString() +
+                        ": directory nesting exceeds the safe recursion depth");
+        return false;
+    }
     // Verify THIS directory still resolves to the validated, non-protected target before touching
     // its contents (catches an ancestor swap at this level).
     if (!deleteTimeRedirectSafe(path)) {
@@ -754,7 +767,7 @@ bool CleanupWorker::removeFolderTreeVerified(const QString& path) {
     const auto entries = dir.entryInfoList(
         QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::DirsLast);
     for (const QFileInfo& entry : entries) {
-        if (!removeVerifiedFolderEntry(entry)) {
+        if (!removeVerifiedFolderEntry(entry, depth + 1)) {
             all_handled = false;
         }
     }
