@@ -6416,6 +6416,12 @@ QVector<uint64_t> readOmapIndexChildPaddrs(const QByteArray& indexNode, uint32_t
     return children;
 }
 
+// The maximum number of distinct nodes any single B-tree / object-map walk may visit. The
+// per-walk visited set already bounds a walk to distinct paddrs; this is a hard backstop so even
+// a pathologically wide-but-acyclic crafted tree cannot exhaust memory or IO. Real APFS trees on
+// the largest supported containers are far smaller.
+inline constexpr int kApfsMaxTreeWalkNodes = 1 << 20;
+
 // The two products of a live-omap walk: the paddr of every node (root + interior + leaves)
 // and the {oid -> paddr} mapping of every leaf record.
 struct ApfsLiveOmapWalk {
@@ -6425,7 +6431,55 @@ struct ApfsLiveOmapWalk {
     // any in-range cycle) passes readApfsRepairBlock and would recurse forever. Real omaps are
     // a handful of levels; fail closed at 0 (mirrors ApfsFsTreeCollect::depthBudget).
     int depthBudget{16};
+    // Fan-out / cycle guard shared across the whole descent (pointers, so they persist rather
+    // than being copied per level like depthBudget). The depth budget alone bounds neither a
+    // fan-out bomb (every level-N index whose children all point at one deeper index) nor a
+    // cycle; reject a repeated paddr or an over-budget walk, fail closed. Allocated once at the
+    // top-level entry.
+    QSet<uint64_t>* visited{nullptr};
+    int* nodeBudget{nullptr};
 };
+
+// Charge one node against a shared walk budget and reject a repeat: fail closed (blocker +
+// false) when the budget is exhausted or paddr was already visited, else record it. Returns
+// true to continue. Shared by the omap, extent-ref and fs-tree walks; treeName names the walk
+// in the blocker text.
+[[nodiscard]] inline bool chargeTreeWalkNode(QSet<uint64_t>* visited,
+                                             int* nodeBudget,
+                                             uint64_t paddr,
+                                             const char* treeName,
+                                             QStringList* blockers) {
+    if (visited == nullptr || nodeBudget == nullptr) {
+        return true;
+    }
+    if (*nodeBudget <= 0) {
+        blockers->append(QStringLiteral("APFS in-place commit: %1 walk exceeded the node budget")
+                             .arg(QString::fromLatin1(treeName)));
+        return false;
+    }
+    --*nodeBudget;
+    if (visited->contains(paddr)) {
+        blockers->append(QStringLiteral("APFS in-place commit: %1 has a cyclic or repeated node")
+                             .arg(QString::fromLatin1(treeName)));
+        return false;
+    }
+    visited->insert(paddr);
+    return true;
+}
+
+// A tree child pointer must be non-zero and inside the container before it is followed; fail
+// closed otherwise. treeName names the walk in the blocker text.
+[[nodiscard]] inline bool treeChildInRange(uint64_t child,
+                                           uint64_t blockCount,
+                                           const char* treeName,
+                                           QStringList* blockers) {
+    if (child == 0 || child >= blockCount) {
+        blockers->append(QStringLiteral("APFS in-place commit: %1 child pointer is out of range")
+                             .arg(QString::fromLatin1(treeName)));
+        return false;
+    }
+    return true;
+}
 
 // Descend the live physical volume object map rooted at `nodePaddr`, appending every node's
 // paddr and every leaf mapping into `out`. A level-0 root is the certified single-leaf shape
@@ -6447,6 +6501,9 @@ bool collectLiveOmapTree(QIODevice* image,
     if (!readApfsRepairBlock(image, geometry, nodePaddr, &node, blockers)) {
         return false;
     }
+    if (!chargeTreeWalkNode(out.visited, out.nodeBudget, nodePaddr, "object map", blockers)) {
+        return false;
+    }
     out.nodePaddrs->append(nodePaddr);
     if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
         for (const ApfsObjectMapEntry& entry : readOmapLeafEntries(node, geometry.blockSize)) {
@@ -6457,6 +6514,9 @@ bool collectLiveOmapTree(QIODevice* image,
     ApfsLiveOmapWalk deeper = out;
     deeper.depthBudget = out.depthBudget - 1;
     for (const uint64_t child : readOmapIndexChildPaddrs(node, geometry.blockSize)) {
+        if (!treeChildInRange(child, geometry.blockCount, "object map", blockers)) {
+            return false;
+        }
         if (!collectLiveOmapTree(image, geometry, child, deeper, blockers)) {
             return false;
         }
@@ -6556,7 +6616,10 @@ bool resolveLiveVolOmapTree(QIODevice* image,
                                            chain->rootTreeOid);
     } else {
         QHash<uint64_t, uint64_t> omapOidToPaddr;
-        const ApfsLiveOmapWalk walk{&chain->volOmapTreeNodes, &omapOidToPaddr};
+        QSet<uint64_t> visited;
+        int nodeBudget = kApfsMaxTreeWalkNodes;
+        const ApfsLiveOmapWalk walk{
+            &chain->volOmapTreeNodes, &omapOidToPaddr, 16, &visited, &nodeBudget};
         if (!collectLiveOmapTree(image, geometry, chain->volOmapTree, walk, blockers)) {
             return false;
         }
@@ -6808,6 +6871,11 @@ struct ApfsExtentRefWalk {
     // tree from the full live-file set (whose pre-snapshot extents the SNAPSHOT owns).
     QVector<ExtentRefPhysRecord>* records{nullptr};
     int depthBudget{16};
+    // Fan-out / cycle guard shared across the whole descent (see ApfsLiveOmapWalk): a crafted
+    // tree whose index nodes all point back at a shallow set of nodes would otherwise be read
+    // an exponential number of times. Allocated once at the top-level entry.
+    QSet<uint64_t>* visited{nullptr};
+    int* nodeBudget{nullptr};
 };
 
 // The child paddrs of an extent-ref INDEX node: each record's 8-byte value is the child
@@ -6829,13 +6897,27 @@ QVector<uint64_t> extentRefIndexChildPaddrs(const QByteArray& node, uint32_t blo
     return children;
 }
 
+// True iff an extent-ref leaf record's key (8 bytes at keyPos) and value (20 bytes at value)
+// both lie inside the node's [keyAreaStart, valueAreaEnd) region. A crafted TOC entry whose
+// offset points outside that region would otherwise have le64/le32 coerce the read to 0 and
+// record a bogus {paddr 0, len 0, owner 0} phys-extent.
+[[nodiscard]] inline bool extentRefRecordInBounds(qsizetype keyPos,
+                                                  qsizetype value,
+                                                  qsizetype keyAreaStart,
+                                                  qsizetype valueAreaEnd) {
+    return keyPos >= keyAreaStart && keyPos + 8 <= valueAreaEnd && value >= keyAreaStart &&
+           value + 20 <= valueAreaEnd;
+}
+
 // Read one extent-ref LEAF's {owner id -> data paddr} records into walk.owners. Keys start
 // past the node's OWN TOC region (read from the header, not recomputed, so multi-node leaves
 // with different record counts decode correctly); a non-root leaf's value area ends at
-// blockSize.
-void collectExtentRefLeafOwners(const QByteArray& node, const ApfsExtentRefWalk& walk) {
+// blockSize. Fails closed on any record whose TOC key/value offset falls outside the node.
+[[nodiscard]] bool collectExtentRefLeafOwners(const QByteArray& node,
+                                              const ApfsExtentRefWalk& walk,
+                                              QStringList* blockers) {
     if (walk.owners == nullptr && walk.records == nullptr) {
-        return;
+        return true;
     }
     const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
@@ -6850,8 +6932,13 @@ void collectExtentRefLeafOwners(const QByteArray& node, const ApfsExtentRefWalk&
                               static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
         const uint16_t keyOffset = le16(node, toc);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
+        const qsizetype keyPos = keyAreaStart + keyOffset;
         const qsizetype value = valueAreaEnd - valueOffset;
-        const uint64_t paddr = le64(node, keyAreaStart + keyOffset) & paddrMask;
+        if (!extentRefRecordInBounds(keyPos, value, keyAreaStart, valueAreaEnd)) {
+            blockers->append(QStringLiteral("APFS extent-ref leaf record offset is out of range"));
+            return false;
+        }
+        const uint64_t paddr = le64(node, keyPos) & paddrMask;
         if (walk.owners != nullptr) {
             walk.owners->insert(le64(node, value + 8), paddr);
         }
@@ -6863,6 +6950,7 @@ void collectExtentRefLeafOwners(const QByteArray& node, const ApfsExtentRefWalk&
                                   static_cast<uint32_t>(le64(node, value) >> kApfsObjTypeShift)});
         }
     }
+    return true;
 }
 
 // Recursively visit the extent-ref tree rooted at `paddr`. The inverse of
@@ -6881,18 +6969,19 @@ bool walkExtentRefTree(const ApfsExtentRefWalk& walk, uint64_t paddr, QStringLis
     if (!readApfsRepairBlock(walk.image, walk.geometry, paddr, &node, blockers)) {
         return false;
     }
+    if (!chargeTreeWalkNode(walk.visited, walk.nodeBudget, paddr, "extent-ref tree", blockers)) {
+        return false;
+    }
     if (walk.nodes != nullptr) {
         walk.nodes->append(paddr);
     }
     if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
-        collectExtentRefLeafOwners(node, walk);
-        return true;
+        return collectExtentRefLeafOwners(node, walk, blockers);
     }
     ApfsExtentRefWalk child = walk;
     child.depthBudget = walk.depthBudget - 1;
     for (const uint64_t childPaddr : extentRefIndexChildPaddrs(node, walk.geometry.blockSize)) {
-        if (childPaddr == 0) {
-            blockers->append(QStringLiteral("APFS extent-ref index node has a zero child pointer"));
+        if (!treeChildInRange(childPaddr, walk.geometry.blockCount, "extent-ref tree", blockers)) {
             return false;
         }
         if (!walkExtentRefTree(child, childPaddr, blockers)) {
@@ -6910,7 +6999,11 @@ QHash<uint64_t, uint64_t> parseExtentRefOwners(QIODevice* image,
                                                uint64_t extentRefBlock,
                                                QStringList* blockers) {
     QHash<uint64_t, uint64_t> owners;
-    walkExtentRefTree({image, geometry, &owners, nullptr, nullptr, 16}, extentRefBlock, blockers);
+    QSet<uint64_t> visited;
+    int nodeBudget = kApfsMaxTreeWalkNodes;
+    walkExtentRefTree({image, geometry, &owners, nullptr, nullptr, 16, &visited, &nodeBudget},
+                      extentRefBlock,
+                      blockers);
     return owners;
 }
 
@@ -6921,7 +7014,11 @@ QVector<uint64_t> collectExtentRefTreeNodes(QIODevice* image,
                                             uint64_t extentRefBlock,
                                             QStringList* blockers) {
     QVector<uint64_t> nodes;
-    walkExtentRefTree({image, geometry, nullptr, &nodes, nullptr, 16}, extentRefBlock, blockers);
+    QSet<uint64_t> visited;
+    int nodeBudget = kApfsMaxTreeWalkNodes;
+    walkExtentRefTree({image, geometry, nullptr, &nodes, nullptr, 16, &visited, &nodeBudget},
+                      extentRefBlock,
+                      blockers);
     return nodes;
 }
 
@@ -6934,7 +7031,11 @@ QVector<ExtentRefPhysRecord> readLiveExtentRefRecords(QIODevice* image,
                                                       uint64_t extentRefBlock,
                                                       QStringList* blockers) {
     QVector<ExtentRefPhysRecord> records;
-    walkExtentRefTree({image, geometry, nullptr, nullptr, &records, 16}, extentRefBlock, blockers);
+    QSet<uint64_t> visited;
+    int nodeBudget = kApfsMaxTreeWalkNodes;
+    walkExtentRefTree({image, geometry, nullptr, nullptr, &records, 16, &visited, &nodeBudget},
+                      extentRefBlock,
+                      blockers);
     return records;
 }
 
@@ -7370,7 +7471,9 @@ QHash<uint64_t, uint64_t> parseVolOmapEntries(QIODevice* image,
     }
     if (le16(node, kApfsBtreeNodeLevelOffset) != 0) {
         QVector<uint64_t> nodePaddrs;
-        const ApfsLiveOmapWalk walk{&nodePaddrs, &entries};
+        QSet<uint64_t> visited;
+        int nodeBudget = kApfsMaxTreeWalkNodes;
+        const ApfsLiveOmapWalk walk{&nodePaddrs, &entries, 16, &visited, &nodeBudget};
         collectLiveOmapTree(image, geometry, volOmapTree, walk, blockers);
         return entries;
     }
@@ -7412,6 +7515,10 @@ struct ApfsFsTreeCollect {
     const QHash<uint64_t, uint64_t>* omap{nullptr};
     QVector<uint64_t>* paddrs{nullptr};
     int depthBudget{16};
+    // Fan-out / cycle guard shared across the whole descent (see ApfsLiveOmapWalk). Allocated
+    // once at the top-level entry.
+    QSet<uint64_t>* visited{nullptr};
+    int* nodeBudget{nullptr};
 };
 
 // Recursively collect every fs-tree node paddr rooted at `nodePaddr` into out.paddrs
@@ -7435,6 +7542,9 @@ bool collectFsTreeSubtree(QIODevice* image,
     if (!readApfsRepairBlock(image, geometry, nodePaddr, &node, blockers)) {
         return false;
     }
+    if (!chargeTreeWalkNode(out.visited, out.nodeBudget, nodePaddr, "fs-tree", blockers)) {
+        return false;
+    }
     out.paddrs->append(nodePaddr);
     if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
         return true;
@@ -7442,9 +7552,9 @@ bool collectFsTreeSubtree(QIODevice* image,
     ApfsFsTreeCollect deeper = out;
     deeper.depthBudget = out.depthBudget - 1;
     for (const uint64_t child : fsTreeChildPaddrs(node, geometry.blockSize, *out.omap)) {
-        if (child == 0) {
+        if (child == 0 || child >= geometry.blockCount) {
             blockers->append(QStringLiteral(
-                "APFS in-place commit: fs-tree child oid has no object-map mapping"));
+                "APFS in-place commit: fs-tree child oid has no valid object-map mapping"));
             return false;
         }
         if (!collectFsTreeSubtree(image, geometry, child, deeper, blockers)) {
@@ -7473,7 +7583,9 @@ bool collectOldFsTreeNodePaddrs(QIODevice* image,
     }
     const QHash<uint64_t, uint64_t> omap =
         parseVolOmapEntries(image, geometry, chain.volOmapTree, blockers);
-    const ApfsFsTreeCollect collect{&omap, paddrs};
+    QSet<uint64_t> visited;
+    int nodeBudget = kApfsMaxTreeWalkNodes;
+    const ApfsFsTreeCollect collect{&omap, paddrs, 16, &visited, &nodeBudget};
     return collectFsTreeSubtree(image, geometry, chain.rootTree, collect, blockers);
 }
 
@@ -15902,7 +16014,9 @@ bool collectSnapshotFsTreeNodePaddrs(const ApfsFsCommitContext& ctx,
             "APFS snapshot-delete: kept snapshot's fs-tree root has no object-map mapping"));
         return false;
     }
-    const ApfsFsTreeCollect collect{&omap, paddrs};
+    QSet<uint64_t> visited;
+    int nodeBudget = kApfsMaxTreeWalkNodes;
+    const ApfsFsTreeCollect collect{&omap, paddrs, 16, &visited, &nodeBudget};
     return collectFsTreeSubtree(ctx.image, ctx.geometry, rootPaddr, collect, blockers);
 }
 
@@ -24353,7 +24467,10 @@ QVector<QPair<quint64, quint64>> PartitionApfsWriter::readExtentRefTreeBlocksFor
         }
         QHash<uint64_t, uint64_t> owners;
         const ApfsExtentRefWalk leaf{nullptr, {block_size, 0}, &owners, nullptr, 0};
-        collectExtentRefLeafOwners(node, leaf);
+        QStringList leafBlockers;
+        if (!collectExtentRefLeafOwners(node, leaf, &leafBlockers)) {
+            continue;
+        }
         for (auto it = owners.constBegin(); it != owners.constEnd(); ++it) {
             out.append({it.key(), it.value()});
         }
