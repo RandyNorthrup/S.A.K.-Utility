@@ -7604,7 +7604,10 @@ struct ApfsIpSlot {
     if (stride == 0 || liveCib < cib0Base || (liveCib - cib0Base) % stride != 0 ||
         (liveCib - cib0Base) / stride >= kIpSlotCount) {
         blockers->append(QStringLiteral(
-            "APFS in-place commit: live internal-pool cib address is not a valid rotation slot"));
+            "APFS in-place commit: the live internal-pool cib address does not match the generated "
+            "rotation model -- in-place file mutation of a real multi-chunk Apple internal pool is "
+            "not yet supported (use import-image or resize); on a S.A.K.-generated container this "
+            "indicates checkpoint corruption"));
         return false;
     }
     const uint64_t liveIndex = (liveCib - cib0Base) / stride;
@@ -16433,9 +16436,11 @@ bool commitInPlaceResizeShrinkImage(QIODevice* image,
 }
 
 // A7 (A-g) container grow dispatcher. A grow that stays within the single chunk 0 takes the
-// in-chunk path; a single-chunk container crossing a 32768-block boundary takes the
-// chunk-adding path (relocate the internal pool into the grow region, add chunks). Growing a
-// multi-chunk container is a later increment.
+// in-chunk path. A SUB-chunk source (chunk 0 has a free tail) crossing the 32768-block boundary
+// takes the chunk-adding path: the relocated pool fits chunk 0's grown tail and every added chunk
+// stays all-free. A source at (or past) a full chunk has no chunk-0 tail, so its relocated pool
+// must land in a GROWN chunk -- the multi-chunk-source path (pool in the first grown chunk),
+// which handles a one-chunk source growing to N chunks exactly as it handles a larger source.
 bool commitInPlaceResizeGrow(QIODevice* image,
                              uint64_t growDeltaBlocks,
                              bool deviceAlreadySized,
@@ -16449,7 +16454,7 @@ bool commitInPlaceResizeGrow(QIODevice* image,
     if (newBlockCount <= kApfsSpacemanBlocksPerChunk) {
         return commitInChunkResizeGrow(&ctx, growDeltaBlocks, result, blockers);
     }
-    if (ctx.geometry.blockCount > kApfsSpacemanBlocksPerChunk) {
+    if (ctx.geometry.blockCount >= kApfsSpacemanBlocksPerChunk) {
         return commitMultiChunkSourceResizeGrow(&ctx, newBlockCount, result, blockers);
     }
     return commitChunkAddingResizeGrow(&ctx, newBlockCount, result, blockers);
