@@ -348,6 +348,19 @@ struct PartitionApfsImageFileInsertCommitRequest {
     // trailing hole -- its extents cover file_data and the gap up to this logical
     // size reads as zeros (INODE_IS_SPARSE).
     uint64_t sparse_logical_size{0};
+    // Import fidelity: when preserve_inode_metadata is true, the inserted file's inode
+    // carries these adopted owner/group/mode/bsd_flags/timestamps (recovered from a foreign
+    // source file) instead of generated defaults. False leaves every generated insert
+    // byte-identical. inode_mode is the full st_mode; the four times are j_inode_val ns.
+    bool preserve_inode_metadata{false};
+    uint32_t inode_owner{0};
+    uint32_t inode_group{0};
+    uint16_t inode_mode{0};
+    uint32_t inode_bsd_flags{0};
+    uint64_t inode_create_time{0};
+    uint64_t inode_mod_time{0};
+    uint64_t inode_change_time{0};
+    uint64_t inode_access_time{0};
     PartitionApfsWriteOptions options;
 };
 

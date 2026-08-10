@@ -794,6 +794,18 @@ std::optional<QJsonObject> buildRawCommandReport(const CliInvocation& invocation
 struct ImportedFile {
     QString name;
     QByteArray data;
+    // Adopted inode identity metadata carried from the foreign source file so the re-emitted
+    // container preserves its owner/group/mode/flags/timestamps. has_metadata is false for a
+    // file with no recoverable inode and for the optional added file (generated defaults).
+    bool has_metadata{false};
+    uint32_t uid{0};
+    uint32_t gid{0};
+    uint16_t mode{0};
+    uint32_t bsd_flags{0};
+    uint64_t create_time{0};
+    uint64_t mod_time{0};
+    uint64_t change_time{0};
+    uint64_t access_time{0};
 };
 
 // Read every flat root file from a foreign source container into `files`.
@@ -835,7 +847,17 @@ bool collectImportSourceFiles(const QString& sourcePath,
                          .arg(entry.name, read.blockers.join(QStringLiteral("; ")));
             return false;
         }
-        files->append({entry.name, read.data});
+        files->append({.name = entry.name,
+                       .data = read.data,
+                       .has_metadata = entry.has_inode_metadata,
+                       .uid = entry.uid,
+                       .gid = entry.gid,
+                       .mode = entry.mode,
+                       .bsd_flags = entry.bsd_flags,
+                       .create_time = entry.create_time,
+                       .mod_time = entry.mod_time,
+                       .change_time = entry.change_time,
+                       .access_time = entry.access_time});
     }
     return true;
 }
@@ -864,12 +886,21 @@ std::optional<QString> reEmitImportedFiles(const CliInvocation& invocation,
     int stage = 0;
     for (const auto& file : files) {
         const QString nextPath = scratch.filePath(QStringLiteral("import-%1.apfs").arg(stage++));
-        const auto write =
-            sak::PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = currentPath,
-                                                                .written_image_path = nextPath,
-                                                                .file_name = file.name,
-                                                                .file_data = file.data,
-                                                                .options = options});
+        const auto write = sak::PartitionApfsWriter::commitImageOnlyFileWrite(
+            {.source_image_path = currentPath,
+             .written_image_path = nextPath,
+             .file_name = file.name,
+             .file_data = file.data,
+             .preserve_inode_metadata = file.has_metadata,
+             .inode_owner = file.uid,
+             .inode_group = file.gid,
+             .inode_mode = file.mode,
+             .inode_bsd_flags = file.bsd_flags,
+             .inode_create_time = file.create_time,
+             .inode_mod_time = file.mod_time,
+             .inode_change_time = file.change_time,
+             .inode_access_time = file.access_time,
+             .options = options});
         if (!write.ok) {
             *error = QStringLiteral("Unable to re-emit file '%1': %2")
                          .arg(file.name, write.blockers.join(QStringLiteral("; ")));

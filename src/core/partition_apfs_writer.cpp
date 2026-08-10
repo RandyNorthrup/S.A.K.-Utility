@@ -9922,6 +9922,9 @@ struct ApfsFileInsertRequest {
     // The new file's parent directory (the root directory for a root file, or a
     // directory's object id for a directory child).
     uint64_t newFileParentId{kApfsRootDirectoryId};
+    // Import fidelity: adopted inode identity metadata carried into the built payload. Applied
+    // only when recoveredMeta.valid; default (a generated insert) keeps the inode byte-identical.
+    ApfsRecoveredInodeMetadata recoveredMeta;
     // Object id for the written file. 0 = take the volume's next object id (a fresh
     // insert); non-zero reuses an existing id (an in-place patch that keeps the file's
     // identity while replacing its data extents).
@@ -10158,7 +10161,8 @@ void appendInsertedFile(const ApfsChainedListInput& in,
                    .primarySiblingId = in.request.preservedPrimarySiblingId,
                    .logicalSizeOverride = streamed ? in.request.streamSize : 0,
                    .preservedRsrcBits = in.request.preservedRsrcBits,
-                   .preservedXattrs = in.request.preservedXattrs});
+                   .preservedXattrs = in.request.preservedXattrs,
+                   .recoveredMeta = in.request.recoveredMeta});
 }
 
 bool buildChainedFileList(const ApfsChainedListInput& in,
@@ -10263,6 +10267,9 @@ struct ApfsFileInsertBuildInputs {
     // com.apple.ResourceFork data stream. LZBITMAP is resource-only (no inline form), so this
     // always uses a resource fork; highest precedence, being an explicit algorithm request.
     bool compressLzbitmap{false};
+    // Import fidelity: adopted inode identity metadata (owner/group/mode/flags/times). Applied
+    // only when recoveredMeta.valid; a generated insert leaves it default -> byte-identical.
+    ApfsRecoveredInodeMetadata recoveredMeta;
 };
 
 // Build the embedded com.apple.decmpfs value for an inline LZFSE-compressed file: the 16-byte
@@ -10505,6 +10512,7 @@ bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
                             QStringList* blockers) {
     *request = {in.existingFiles, in.fileName, in.fileData, in.directories};
     request->newFileParentId = in.parentDirectoryId;
+    request->recoveredMeta = in.recoveredMeta;
     request->xattrs = in.xattrs;
     request->cloneSourcePrivateId = in.cloneSourcePrivateId;
     request->cloneLogicalSize = in.cloneLogicalSize;
@@ -18948,6 +18956,9 @@ struct ApfsRootFileWriteRequest {
     bool compressLzfse{false};
     bool compressLzvn{false};
     bool compressLzbitmap{false};
+    // Import fidelity: adopted inode identity metadata threaded to the built payload. Applied
+    // only when recoveredMeta.valid; default keeps every generated write byte-identical.
+    ApfsRecoveredInodeMetadata recoveredMeta;
 };
 
 // Build the insert leg of a create-or-replace write through the shared
@@ -18982,7 +18993,8 @@ bool buildRootWriteInsertRequest(const ApfsRootFileWriteRequest& request,
                                  .parentDirectoryId = request.parentDirectoryId,
                                  .compressLzfse = request.compressLzfse,
                                  .compressLzvn = request.compressLzvn,
-                                 .compressLzbitmap = request.compressLzbitmap},
+                                 .compressLzbitmap = request.compressLzbitmap,
+                                 .recoveredMeta = request.recoveredMeta},
                                 insert,
                                 blockers)) {
         return false;
@@ -24109,6 +24121,21 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     writeRequest.compressLzfse = request.compress_lzfse;
     writeRequest.compressLzvn = request.compress_lzvn;
     writeRequest.compressLzbitmap = request.compress_lzbitmap;
+    // Import fidelity: carry an adopted file's real owner/group/mode/flags/timestamps into the
+    // written inode instead of generated defaults. preserve_inode_metadata is false on every
+    // ordinary file-write, so recoveredMeta stays invalid and the generated inode is
+    // byte-identical.
+    if (request.preserve_inode_metadata) {
+        writeRequest.recoveredMeta = {.valid = true,
+                                      .owner = request.inode_owner,
+                                      .group = request.inode_group,
+                                      .mode = request.inode_mode,
+                                      .bsdFlags = request.inode_bsd_flags,
+                                      .createTime = request.inode_create_time,
+                                      .modTime = request.inode_mod_time,
+                                      .changeTime = request.inode_change_time,
+                                      .accessTime = request.inode_access_time};
+    }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceRootFileWrite(&image, writeRequest, &commit, &commitBlockers)) {

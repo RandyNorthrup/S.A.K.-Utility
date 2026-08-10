@@ -169,6 +169,16 @@ constexpr uint8_t kApfsInodeDstreamField = 8;
 constexpr qsizetype kApfsInodePrivateIdOffset = 0x08;
 constexpr qsizetype kApfsInodeModeOffset = 0x50;
 constexpr qsizetype kApfsInodeInternalFlagsOffset = 0x30;
+// j_inode_val identity fields preserved verbatim across an arbitrary import (all < the
+// kApfsInodeXfieldsOffset bound the caller already checks): the four timestamps, the BSD
+// flags, and the owner/group. Mirrors the writer's applyRecoveredInodeMetadata offsets.
+constexpr qsizetype kApfsInodeCreateTimeOffset = 0x10;
+constexpr qsizetype kApfsInodeModTimeOffset = 0x18;
+constexpr qsizetype kApfsInodeChangeTimeOffset = 0x20;
+constexpr qsizetype kApfsInodeAccessTimeOffset = 0x28;
+constexpr qsizetype kApfsInodeBsdFlagsOffset = 0x44;
+constexpr qsizetype kApfsInodeOwnerOffset = 0x48;
+constexpr qsizetype kApfsInodeGroupOffset = 0x4C;
 constexpr uint64_t kApfsInodeFlagSparse = 0x00'00'02'00;  // APFS_INODE_IS_SPARSE
 constexpr qsizetype kApfsInodeUncompressedSizeOffset = 0x54;
 constexpr qsizetype kApfsInodeXfieldsOffset = 0x5C;
@@ -448,6 +458,15 @@ struct InodeRecord {
     uint64_t private_id{0};
     uint64_t size{0};
     uint16_t mode{0};
+    // Identity metadata preserved verbatim across an arbitrary import so an adopted real
+    // Apple file keeps its owner/group/permissions/flags/timestamps (not generated defaults).
+    uint32_t owner{0};
+    uint32_t group{0};
+    uint32_t bsd_flags{0};
+    uint64_t create_time{0};
+    uint64_t mod_time{0};
+    uint64_t change_time{0};
+    uint64_t access_time{0};
     bool sparse{false};  // A7 (A-h): INODE_IS_SPARSE -- a trailing/embedded hole reads as zeros
     // The j_inode_val uncompressed-size field, valid when internal_flags carries
     // APFS_INODE_HAS_UNCOMPRESSED_SIZE (a compressed file's logical size; 0 otherwise).
@@ -1762,6 +1781,13 @@ private:
         record.object_id = objectId;
         record.private_id = le64(node, entry.value_offset + kApfsInodePrivateIdOffset);
         record.mode = le16(node, entry.value_offset + kApfsInodeModeOffset);
+        record.owner = le32(node, entry.value_offset + kApfsInodeOwnerOffset);
+        record.group = le32(node, entry.value_offset + kApfsInodeGroupOffset);
+        record.bsd_flags = le32(node, entry.value_offset + kApfsInodeBsdFlagsOffset);
+        record.create_time = le64(node, entry.value_offset + kApfsInodeCreateTimeOffset);
+        record.mod_time = le64(node, entry.value_offset + kApfsInodeModTimeOffset);
+        record.change_time = le64(node, entry.value_offset + kApfsInodeChangeTimeOffset);
+        record.access_time = le64(node, entry.value_offset + kApfsInodeAccessTimeOffset);
         record.size = inodeDstreamSize(node, entry);
         const uint64_t internalFlags = le64(node,
                                             entry.value_offset + kApfsInodeInternalFlagsOffset);
@@ -1957,6 +1983,16 @@ private:
         entry.symlink = record.directory_type == kApfsDirTypeSymlink ||
                         (mode & kApfsModeTypeMask) == kApfsModeSymlink;
         entry.mode = mode;
+        if (inode != inodeById_.cend()) {
+            entry.uid = inode->owner;
+            entry.gid = inode->group;
+            entry.bsd_flags = inode->bsd_flags;
+            entry.create_time = inode->create_time;
+            entry.mod_time = inode->mod_time;
+            entry.change_time = inode->change_time;
+            entry.access_time = inode->access_time;
+            entry.has_inode_metadata = true;
+        }
         entry.type = entryTypeName(record.directory_type, mode);
         return entry;
     }

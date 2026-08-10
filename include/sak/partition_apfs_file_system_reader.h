@@ -37,6 +37,18 @@ struct PartitionApfsFileEntry {
     // The inode's full st_mode (type + permission bits), so a non-regular entry
     // (symlink, FIFO, socket, device) can be preserved verbatim across a mutation.
     uint16_t mode{0};
+    // Identity metadata recovered from the inode (owner/group @0x48/0x4C, bsd_flags @0x44,
+    // the four j_inode_val timestamps). has_inode_metadata is true only when the entry's
+    // inode record was found, so an arbitrary import can preserve a real Apple file's
+    // ownership/permissions/flags/times instead of stamping generated defaults.
+    uint32_t uid{0};
+    uint32_t gid{0};
+    uint32_t bsd_flags{0};
+    uint64_t create_time{0};
+    uint64_t mod_time{0};
+    uint64_t change_time{0};
+    uint64_t access_time{0};
+    bool has_inode_metadata{false};
 };
 
 struct PartitionApfsFileReadResult {
