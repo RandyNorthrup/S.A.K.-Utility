@@ -346,6 +346,15 @@ void MboxParser::buildMessageIndex() {
         qint64 line_offset = m_file.pos();
         QByteArray line = m_file.readLine(sak::email::kMboxMaxMessageSize);
 
+        // A successful non-EOF readLine always yields at least one byte. An empty return while
+        // !atEnd() means the underlying read FAILED (I/O error, removed media, a dropped network
+        // share) and pos did NOT advance, so the while(!atEnd()) loop would otherwise spin forever
+        // on the GUI thread while holding m_file_mutex -- blocking every other parser entry point.
+        // Break out so the run ends instead of hanging.
+        if (line.isEmpty()) {
+            break;
+        }
+
         if (isFromLine(line)) {
             m_message_offsets.append(line_offset);
         }

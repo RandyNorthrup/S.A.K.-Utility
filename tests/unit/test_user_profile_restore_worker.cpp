@@ -678,6 +678,9 @@ void UserProfileRestoreWorkerTests::conflictSkipDuplicate() {
                              1);
     auto manifest = buildManifest(QStringLiteral("CUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("CUser"));
+    // File-level conflict resolution applies when merging INTO an existing profile; "Create New
+    // User" now (correctly) refuses a name whose profile directory already exists.
+    mapping.mode = sak::MergeMode::MergeIntoDestination;
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
@@ -722,6 +725,7 @@ void UserProfileRestoreWorkerTests::conflictRenameWithSuffix() {
                              1);
     auto manifest = buildManifest(QStringLiteral("RUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("RUser"));
+    mapping.mode = sak::MergeMode::MergeIntoDestination;
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
@@ -798,6 +802,7 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer() {
                              1);
     auto manifest = buildManifest(QStringLiteral("NUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("NUser"));
+    mapping.mode = sak::MergeMode::MergeIntoDestination;
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
@@ -843,6 +848,7 @@ void UserProfileRestoreWorkerTests::conflictKeepLarger() {
                              1);
     auto manifest = buildManifest(QStringLiteral("LUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("LUser"));
+    mapping.mode = sak::MergeMode::MergeIntoDestination;
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
@@ -889,6 +895,7 @@ void UserProfileRestoreWorkerTests::conflictPromptUserAutoRenames() {
                              1);
     auto manifest = buildManifest(QStringLiteral("PUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("PUser"));
+    mapping.mode = sak::MergeMode::MergeIntoDestination;
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
@@ -1168,6 +1175,7 @@ void UserProfileRestoreWorkerTests::overwriteRestoreLeavesNoTempArtifacts() {
                              1);
     auto manifest = buildManifest(QStringLiteral("OUser"), {folder});
     auto mapping = makeMapping(QStringLiteral("OUser"));
+    mapping.mode = sak::MergeMode::MergeIntoDestination;
 
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);

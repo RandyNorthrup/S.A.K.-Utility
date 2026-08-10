@@ -467,8 +467,12 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
     disk.is_boot = jsonBool(object, QStringLiteral("IsBoot"));
     disk.is_read_only = jsonBool(object, QStringLiteral("IsReadOnly"));
     disk.is_dynamic = jsonBool(object, QStringLiteral("IsDynamic"));
-    disk.is_storage_spaces = disk.bus_type.contains(QStringLiteral("Storage Spaces"),
-                                                    Qt::CaseInsensitive);
+    // Get-Disk stringifies MSFT_Disk BusType enum value 16 as "Spaces" (NOT "Storage Spaces"), so
+    // the old contains("Storage Spaces") never matched and every Storage-Spaces blocker keyed on
+    // this flag was dead. Match the value Windows actually emits; keep the long form as an alias.
+    disk.is_storage_spaces =
+        disk.bus_type.compare(QStringLiteral("Spaces"), Qt::CaseInsensitive) == 0 ||
+        disk.bus_type.contains(QStringLiteral("Storage Spaces"), Qt::CaseInsensitive);
     disk.size_bytes = jsonUInt64(object, QStringLiteral("Size"));
 
     disk.partition_enumeration_failed = jsonBool(object, QStringLiteral("PartitionQueryFailed"));

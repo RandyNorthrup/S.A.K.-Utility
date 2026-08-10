@@ -42,9 +42,11 @@ struct PartitionApfsFileEntry {
 struct PartitionApfsFileReadResult {
     bool ok{false};
     // True if the returned data is a prefix of a larger file (the read hit the byte
-    // cap). Safe to ignore for a read-only display/export, but a read-modify-write
-    // caller (byte patch) MUST fail closed on it -- writing the prefix back would
-    // truncate the file's tail.
+    // cap). Any caller that PERSISTS or HASHES these bytes -- export, copy-out, file
+    // hash, or a read-modify-write byte patch -- MUST treat this as failure: writing
+    // or hashing the prefix silently yields a short file or a wrong-file digest that
+    // is indistinguishable from a complete one. Only a purely on-screen preview may
+    // ignore it.
     bool truncated{false};
     QString file_system;
     QString volume_name;

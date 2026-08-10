@@ -815,6 +815,17 @@ void NetworkDiagnosticController::scanWiFi() {
 }
 
 void NetworkDiagnosticController::startContinuousWiFiScan(int intervalMs) {
+    // The one-shot scanWiFi() runs WiFiAnalyzer::scan() on a WORKER thread, while this continuous
+    // path and its GUI-thread timer write the same (unsynchronized) WiFiAnalyzer::m_lastScan and
+    // drive the same WLAN handle. Register ScanningWiFi and gate on the shared-worker busy check so
+    // the two are mutually exclusive: an in-flight one-shot scan blocks starting continuous, and an
+    // active continuous scan blocks a one-shot (scanWiFi already routes through the same gate).
+    // Without this the two threads race the QVector d-pointer -> double-free / use-after-free.
+    if (isWorkerGroupBusy(State::ScanningWiFi)) {
+        Q_EMIT errorOccurred(QStringLiteral("A WiFi scan is already in progress"));
+        return;
+    }
+    addOperation(State::ScanningWiFi);
     Q_EMIT logOutput(
         QStringLiteral("Starting continuous WiFi scan (interval: %1 ms)").arg(intervalMs));
     m_wifiAnalyzer->startContinuousScan(intervalMs);
@@ -822,6 +833,7 @@ void NetworkDiagnosticController::startContinuousWiFiScan(int intervalMs) {
 
 void NetworkDiagnosticController::stopContinuousWiFiScan() {
     m_wifiAnalyzer->stopContinuousScan();
+    removeOperation(State::ScanningWiFi);
     Q_EMIT logOutput(QStringLiteral("Continuous WiFi scan stopped"));
 }
 

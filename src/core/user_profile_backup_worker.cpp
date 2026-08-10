@@ -32,14 +32,58 @@ constexpr qint64 kProgressEmitByteInterval = kProgressEmitFileInterval * kBytesP
 constexpr double kDiskSpaceSafetyMultiplier = 1.1;
 constexpr int kDiskSpaceDisplayPrecision = 1;
 
-// True if the path is an NTFS reparse point (junction/symlink/mount point).
+// True if the path is an NTFS reparse point (junction/symlink/mount point). Fails CLOSED: a query
+// that cannot resolve the path is reported AS a reparse point so the caller refuses to follow it.
 bool isReparsePoint(const QString& path) {
 #ifdef Q_OS_WIN
-    const DWORD attrs = GetFileAttributesW(path.toStdWString().c_str());
-    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    // Query through the \\?\ extended-length form so a path longer than MAX_PATH (this process
+    // carries no long-path manifest) still resolves. A bare GetFileAttributesW fails on such a path
+    // and -- under the fail-closed rule below -- would refuse every ordinary deep profile path;
+    // \\?\ avoids that. It needs a fully-qualified backslash path, and a \\server\share UNC path
+    // becomes \\?\UNC\server\share.
+    QString extended = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
+    if (!extended.startsWith(QStringLiteral("\\\\?\\"))) {
+        if (extended.startsWith(QStringLiteral("\\\\"))) {
+            extended = QStringLiteral("\\\\?\\UNC\\") + extended.mid(2);
+        } else {
+            extended = QStringLiteral("\\\\?\\") + extended;
+        }
+    }
+    const DWORD attrs = GetFileAttributesW(extended.toStdWString().c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        return true;  // fail closed: an unresolvable/denied query must not read as "not a link"
+    }
+    return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 #else
     return QFileInfo(path).isSymLink();
 #endif
+}
+
+// True if @p path resolves through a reparse point anywhere between @p root (inclusive) and the
+// leaf. mkpath would silently create the remainder INSIDE a planted junction: an attacker with
+// write access to the technician-chosen backup @p root can pre-plant e.g. <root>\<user> ->
+// C:\Windows\System32, and the elevated copy would then write profile content through it. Screen
+// the destination before it is created. Only ancestors at or below @p root are checked (anything
+// above the technician-chosen root is trusted); an empty root and any unresolvable component fail
+// closed.
+bool destinationRedirectedThroughReparsePoint(const QString& root, const QString& path) {
+    if (root.trimmed().isEmpty()) {
+        return true;  // no known root to bound the walk -> refuse rather than walk to the drive
+    }
+    const QString canonicalRoot = QDir::cleanPath(QFileInfo(root).absoluteFilePath());
+    QString current = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    QString previous;
+    while (!current.isEmpty() && current != previous) {
+        if (QFileInfo::exists(current) && isReparsePoint(current)) {
+            return true;
+        }
+        if (current.compare(canonicalRoot, Qt::CaseInsensitive) == 0) {
+            break;  // reached the trusted root; nothing above it is our concern
+        }
+        previous = current;
+        current = QFileInfo(current).path();
+    }
+    return false;
 }
 
 // Deepest directory recursion the copy will follow. A real profile tree is far shallower;
@@ -403,9 +447,15 @@ bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
     // the profile, and a FILE one would copy the content of whatever it targets (e.g. a symlink to
     // a privileged system file) into the backup. Skip both, not just directories.
     if (isReparsePoint(sourcePath)) {
-        Q_EMIT logMessage(tr("Skipping reparse point: %1").arg(sourcePath), false);
-        m_filesSkipped++;
-        return true;
+        // A selected folder that is (or resolves through) a reparse point is NOT backed up -- we
+        // refuse to follow the link. Recording it as a benign skip would let the run report a clean
+        // success while omitting data the user asked to keep, so count it as an error, matching the
+        // missing-selected-folder case above and the restore worker's refused-reparse handling
+        // (B7-20).
+        Q_EMIT logMessage(
+            tr("Refusing to follow reparse point (not backed up): %1").arg(sourcePath), true);
+        ++m_filesErrored;
+        return false;
     }
 
     if (sourceInfo.isDir()) {
@@ -492,7 +542,12 @@ void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
     // directory one can loop back into the profile or point outside it (foreign/privileged data),
     // and a FILE symlink would pull the content of its target (e.g. a system file) into the backup.
     if (isReparsePoint(sourceItem)) {
-        Q_EMIT logMessage(tr("Skipping reparse point: %1").arg(sourceItem), false);
+        // A reparse-point child is not followed, so it is not backed up. Count it as an error
+        // rather than an untracked silent skip so the run cannot report a clean success while
+        // omitting the linked subtree/file (B7-20).
+        Q_EMIT logMessage(
+            tr("Refusing to follow reparse point (not backed up): %1").arg(sourceItem), true);
+        ++m_filesErrored;
         return;
     }
 
@@ -737,6 +792,16 @@ void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
 }
 
 bool UserProfileBackupWorker::createDirectory(const QString& path) {
+    // Fail closed on a destination that resolves through a symlink/junction. mkpath would otherwise
+    // happily create the tree INSIDE a planted link, redirecting the elevated copy outside the
+    // technician-chosen backup root (e.g. into System32). Both call sites pass destination paths.
+    if (destinationRedirectedThroughReparsePoint(m_destinationPath, path)) {
+        Q_EMIT logMessage(
+            tr("Refusing backup directory (path resolves through a symlink/junction): %1")
+                .arg(path),
+            true);
+        return false;
+    }
     QDir dir;
     if (!dir.mkpath(path)) {
         Q_EMIT logMessage(tr("Failed to create directory: %1").arg(path), true);

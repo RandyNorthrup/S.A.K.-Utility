@@ -122,6 +122,12 @@ constexpr qsizetype kExtentPhysicalLowOffset = 8;
 constexpr qsizetype kExtentIndexLeafLowOffset = 4;
 constexpr qsizetype kExtentIndexLeafHighOffset = 8;
 constexpr int kExtentTreeMaxDepth = 5;
+// Global budget on the number of extent-tree nodes visited while mapping ONE inode. The per-node
+// entry/depth caps do not stop a crafted "diamond" tree whose many index entries all point at the
+// SAME child block: with no visited/global bound that fans out multiplicatively (e.g. 4*84^4 leaf
+// visits from a ~10-block image) into an unbounded ExtentRecord vector -> OOM. A real file's tree
+// has a handful of nodes; this ceiling is far above any legitimate file yet stops the blow-up.
+constexpr int kExtentTreeNodeBudget = 8192;
 // ext4 ee_len: values > 32768 mark an uninitialized extent whose real block
 // count is (ee_len - 32768); ee_len <= 32768 is initialized with length ee_len.
 constexpr uint16_t kExtentMaxInitializedLength = 0x8000;
@@ -936,6 +942,7 @@ private:
 
     [[nodiscard]] std::optional<QVector<ExtentRecord>> collectExtents(const ExtInode& inode) {
         QVector<ExtentRecord> extents;
+        m_extentNodeBudget = kExtentTreeNodeBudget;  // per-inode: reset before each mapping
         if (!collectExtentsFromNode(inode.blocks, 0, kExtentRootDepth, &extents)) {
             return std::nullopt;
         }
@@ -978,6 +985,14 @@ private:
                                 int recursionDepth,
                                 int expectedDepth,
                                 QVector<ExtentRecord>* extents) {
+        // Global node-visit budget: a diamond tree (many index entries pointing at the same child
+        // block) revisits the same blocks exponentially, which the per-path depth/entry caps do not
+        // catch. Bounding the total node count fails closed before the ExtentRecord vector can grow
+        // without bound.
+        if (--m_extentNodeBudget < 0) {
+            m_blockers.append(QStringLiteral("Ext extent tree exceeds the node-visit budget"));
+            return false;
+        }
         if (!validateExtentNode(node, recursionDepth, expectedDepth)) {
             return false;
         }
@@ -1061,24 +1076,34 @@ private:
 
     [[nodiscard]] std::optional<uint64_t> physicalBlockFromExtents(
         const QVector<ExtentRecord>& extents, uint64_t logical) const {
-        const auto match =
-            std::find_if(extents.cbegin(), extents.cend(), [logical](const ExtentRecord& extent) {
-                return logical >= extent.logical_start &&
-                       logical < extent.logical_start + extent.length;
-            });
-        if (match == extents.cend()) {
+        // Binary search the sorted, non-overlapping extents (O(log n) per block instead of the old
+        // linear scan, which was O(blocks * extents) across a whole file read). Find the last
+        // extent whose logical_start <= logical, then confirm it actually covers the block.
+        const auto after = std::upper_bound(extents.cbegin(),
+                                            extents.cend(),
+                                            logical,
+                                            [](uint64_t value, const ExtentRecord& extent) {
+                                                return value < extent.logical_start;
+                                            });
+        if (after == extents.cbegin()) {
             return kZeroPhysicalBlock;
         }
-        if (!match->initialized) {
-            return kZeroPhysicalBlock;
+        const auto& match = *(after - 1);
+        if (logical >= match.logical_start &&
+            logical < static_cast<uint64_t>(match.logical_start) + match.length) {
+            if (!match.initialized) {
+                return kZeroPhysicalBlock;
+            }
+            return match.physical_start + (logical - match.logical_start);
         }
-        return match->physical_start + (logical - match->logical_start);
+        return kZeroPhysicalBlock;
     }
 
     QIODevice* m_device{nullptr};
     ExtSuperblock m_superblock;
     QStringList m_blockers;
     QStringList m_warnings;
+    int m_extentNodeBudget{0};  // remaining extent-tree nodes for the current inode mapping
 };
 
 PartitionExtFileReadResult withOpenImage(

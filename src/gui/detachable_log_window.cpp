@@ -280,7 +280,7 @@ private:
 
 LogToggleSwitch::LogToggleSwitch(const QString& label, QWidget* parent)
     : QWidget(parent), m_label(label) {
-    setMinimumSize(minimumSizeHint());
+    setMinimumSize(LogToggleSwitch::minimumSizeHint());
     setMaximumHeight(sak::kSnapButtonH);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setCursor(Qt::PointingHandCursor);

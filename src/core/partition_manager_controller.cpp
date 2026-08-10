@@ -260,7 +260,11 @@ void PartitionManagerController::finishApplyQueue(
     }
     auto result = watcher->result();
     setState(PartitionManagerState::Verifying);
-    if (!result.dry_run && !result.cancelled) {
+    if (!result.dry_run) {
+        // Re-scan after ANY real apply, cancelled or not. The executor observes cancellation only
+        // between steps and has no rollback, so a cancelled batch may have already destroyed
+        // partitions; restoring the pre-apply snapshot here would fabricate an "unchanged"
+        // before/after in the report and leave the panel showing partitions that no longer exist.
         m_inventory = StorageInventoryWorker::scanCurrentSystem();
     } else {
         m_inventory = m_apply_before_inventory;

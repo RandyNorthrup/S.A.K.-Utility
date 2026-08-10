@@ -2350,6 +2350,15 @@ std::optional<AdvancedSearchWorker::ArchiveEntry> AdvancedSearchWorker::readArch
     const uint16_t extraLen = readU16(archive_data.constData() + offset + kZipExtraLengthOffset,
                                       true);
 
+    // A STORED (method 0) entry is uncompressed, so its compressed and uncompressed sizes MUST be
+    // equal. A crafted stored entry that declares a tiny uncompressed_size but a huge
+    // compressed_size defeats the uncompressed-size text cap downstream, which would then copy
+    // compressed_size bytes and split them into an enormous QStringList (billion-laughs DoS).
+    // Reject the inconsistency.
+    if (compMethod == kZipMethodStored && compSize != uncompSize) {
+        return std::nullopt;
+    }
+
     if (offset + kZipLocalHeaderSize + nameLen > data_size) {
         return std::nullopt;
     }
@@ -2458,7 +2467,11 @@ bool AdvancedSearchWorker::appendArchiveContentMatches(const QByteArray& archive
         return false;
     }
     if (entry.data_start + entry.entry_size > archive_data.size() || entry.uncompressed_size == 0 ||
-        entry.uncompressed_size >= kMaxArchiveTextEntrySize) {
+        entry.uncompressed_size >= kMaxArchiveTextEntrySize ||
+        entry.entry_size >= static_cast<int>(kMaxArchiveTextEntrySize)) {
+        // Cap the COPIED bytes (entry_size == the on-disk/compressed size) too, not just the
+        // declared uncompressed size: a stored entry copies entry_size bytes verbatim, so an
+        // over-cap compressed size must be refused before mid()+split materialize it.
         return false;
     }
 

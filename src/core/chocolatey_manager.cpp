@@ -258,7 +258,7 @@ bool ChocolateyManager::verifyChocoAuthenticity() const {
     return isAuthenticChocoBinary(m_choco_path);
 }
 
-bool ChocolateyManager::ensureChocoAuthentic() {
+bool ChocolateyManager::ensureChocoAuthentic() const {
     // Re-verify on every call rather than caching a permanent verdict: a binary
     // proven genuine once could be swapped on disk afterward (TOCTOU). A fresh
     // local signature check per execution closes that window and fails closed.
@@ -781,6 +781,15 @@ bool ChocolateyManager::isPermissionError(const QString& output) const {
 
 bool ChocolateyManager::validatePackageName(const QString& package_name) {
     if (package_name.isEmpty() || package_name.length() > kMaxPackageNameLength) {
+        return false;
+    }
+
+    // Refuse Chocolatey's reserved bulk target "all": `choco uninstall all` / `choco upgrade all`
+    // operate on EVERY installed package, so a single unbound token (an AI-planned or
+    // injection-influenced package_id) would uninstall/upgrade the whole bundled tree. A real
+    // bulk operation must go through an explicit, separately-confirmed path, never this
+    // per-package validator.
+    if (package_name.compare(QLatin1String("all"), Qt::CaseInsensitive) == 0) {
         return false;
     }
 

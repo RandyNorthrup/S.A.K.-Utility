@@ -348,7 +348,19 @@ QString InstallScriptParser::resolveVariables(const QString& value, const QStrin
             break;
         }
 
-        resolved.replace(match.captured(0), *assigned_value);
+        // Substitute ONLY the matched span, and fail closed if the result would exceed a sane
+        // bound. QString::replace(QString, QString) replaces EVERY occurrence, so an assignment
+        // whose value itself references the same/another chained variable multiplies the token
+        // count each pass -- a billion-laughs expansion (K^depth) from a tiny attacker-authored
+        // chocolateyInstall.ps1. Replacing just the matched span removes that multiplication and
+        // also fixes replace-all corrupting a reference that is a prefix of a longer name (e.g. $b
+        // inside $bc). An empty return makes the downstream url/checksum gate refuse.
+        constexpr qsizetype kMaxResolvedLength = 8 * 1024;
+        if (resolved.size() - match.capturedLength() + assigned_value->size() >
+            kMaxResolvedLength) {
+            return {};
+        }
+        resolved.replace(match.capturedStart(), match.capturedLength(), *assigned_value);
         iterations++;
     }
 

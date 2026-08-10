@@ -64,9 +64,8 @@ QPixmap scaledSplashPixmap(const QPixmap& source) {
 
 }  // namespace
 
-SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent) : QWidget(parent) {
-    m_pixmap = scaledSplashPixmap(pixmap);
-
+SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent)
+    : QWidget(parent), m_pixmap(scaledSplashPixmap(pixmap)) {
     m_rounded_pixmap = createRoundedPixmap(m_pixmap, m_corner_radius);
 
     setWindowFlags(Qt::FramelessWindowHint | Qt::SplashScreen | Qt::WindowStaysOnTopHint);

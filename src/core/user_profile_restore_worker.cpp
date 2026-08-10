@@ -525,6 +525,18 @@ bool UserProfileRestoreWorker::resolveCreateNewUser(const UserMapping& mapping,
         Q_EMIT logMessage(tr("Invalid destination username: %1").arg(destUsername), true);
         return false;
     }
+    // Fail closed on a name that already has a profile directory. QDir::mkpath() returns true for
+    // an EXISTING directory, so without this check leaving the mode on "Create New User" for a name
+    // that matches a live local profile would write the foreign backup straight into that user's
+    // profile (with the conflict policy applied, so files can be overwritten) while the log below
+    // falsely claims a new profile was created. Refuse the collision instead.
+    if (QFileInfo::exists(destProfilePath)) {
+        Q_EMIT logMessage(
+            tr("A profile directory already exists at %1; refusing to restore as a new user")
+                .arg(destProfilePath),
+            true);
+        return false;
+    }
     if (!QDir().mkpath(destProfilePath)) {
         Q_EMIT logMessage(tr("Failed to create profile directory: %1").arg(destProfilePath), true);
         return false;

@@ -87,6 +87,45 @@ static bool isSafeAria2Field(const QString& value) {
     return !value.contains(QLatin1Char('\n')) && !value.contains(QLatin1Char('\r'));
 }
 
+// Recursively delete @p dirPath WITHOUT following reparse points. A junction/symlink encountered
+// anywhere in the tree is UNLINKED (the link removed, its target left untouched) rather than
+// recursed into. QDir::removeRecursively() re-resolves the path STRING for the whole subtree and
+// therefore follows such a link, so an attacker who plants a junction inside this predictable,
+// elevated workspace could redirect the delete out of it (e.g. into System32) -- this replaces
+// those calls. The callers already verify the ROOT is not a reparse point; this closes the
+// child/descendant gap. Returns false (fail closed) if any component could not be removed.
+static bool removeTreeRefusingReparse(const QString& dirPath) {
+    const QFileInfo rootInfo(dirPath);
+    if (rootInfo.isSymLink() || rootInfo.isJunction()) {
+        return QDir().rmdir(dirPath) || QFile::remove(dirPath);  // unlink the link only
+    }
+    if (!rootInfo.exists()) {
+        return true;
+    }
+    QDir dir(dirPath);
+    bool ok = true;
+    const QFileInfoList entries =
+        dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    for (const QFileInfo& entry : entries) {
+        const QString childPath = entry.absoluteFilePath();
+        if (entry.isSymLink() || entry.isJunction()) {
+            if (!QDir().rmdir(childPath) && !QFile::remove(childPath)) {
+                ok = false;
+            }
+        } else if (entry.isDir()) {
+            if (!removeTreeRefusingReparse(childPath)) {
+                ok = false;
+            }
+        } else if (!QFile::remove(childPath)) {
+            ok = false;
+        }
+    }
+    if (!dir.rmdir(dirPath)) {
+        ok = false;
+    }
+    return ok;
+}
+
 static bool isSafeAria2OutName(const QString& name) {
     // The name is a JSON object key from the API, so it can legitimately arrive empty;
     // an empty out= value names no file at all, so refuse it like any other unsafe name.
@@ -919,7 +958,7 @@ bool UupIsoBuilder::ensureCleanConversionTempDir(const QString& conversionTempDi
         return false;
     }
     QDir conversionDir(conversionTempDir);
-    if (conversionDir.exists() && !conversionDir.removeRecursively()) {
+    if (conversionDir.exists() && !removeTreeRefusingReparse(conversionTempDir)) {
         m_phase = Phase::Failed;
         Q_EMIT buildError("Failed to remove stale conversion temp directory: " + conversionTempDir);
         return false;
@@ -1412,7 +1451,7 @@ void UupIsoBuilder::cleanupWorkDir() {
     QDir workDir(m_workDir);
     if (workDir.exists()) {
         sak::logInfo("Cleaning up work directory: " + m_workDir.toStdString());
-        if (!workDir.removeRecursively()) {
+        if (!removeTreeRefusingReparse(m_workDir)) {
             sak::logWarning(
                 "Could not fully remove work directory "
                 "(files may be in use): " +

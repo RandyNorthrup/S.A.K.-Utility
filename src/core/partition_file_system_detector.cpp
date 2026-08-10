@@ -369,6 +369,18 @@ std::optional<uint64_t> checkedProduct(uint64_t left, uint64_t right) {
     return left * right;
 }
 
+// Foreign on-disk name fields (volume labels, etc.) are embedded VERBATIM into human-readable
+// detection details that downstream UI renders line-by-line (joined with '\n') and that gates
+// parse. A control byte (code point < 0x20 or 0x7F) -- notably an embedded newline -- would let a
+// crafted label fabricate additional detail lines in the metadata dialog. Reject any field carrying
+// one rather than pass it through; a legitimate name never contains control characters.
+bool fieldTextHasControlCharacter(const QString& text) {
+    return std::any_of(text.cbegin(), text.cend(), [](QChar c) {
+        const char16_t code = c.unicode();
+        return code < 0x20 || code == 0x7F;
+    });
+}
+
 QString fixedAsciiField(const QByteArray& bytes, qsizetype offset, qsizetype length) {
     if (!hasBytes(bytes, offset, length)) {
         return {};
@@ -378,7 +390,11 @@ QString fixedAsciiField(const QByteArray& bytes, qsizetype offset, qsizetype len
     if (terminator >= 0) {
         field.truncate(terminator);
     }
-    return QString::fromLatin1(field).trimmed();
+    const QString value = QString::fromLatin1(field).trimmed();
+    if (fieldTextHasControlCharacter(value)) {
+        return {};
+    }
+    return value;
 }
 
 QString fixedUtf8Field(const QByteArray& bytes, qsizetype offset, qsizetype length) {
@@ -390,7 +406,11 @@ QString fixedUtf8Field(const QByteArray& bytes, qsizetype offset, qsizetype leng
     if (terminator >= 0) {
         field.truncate(terminator);
     }
-    return QString::fromUtf8(field).trimmed();
+    const QString value = QString::fromUtf8(field).trimmed();
+    if (fieldTextHasControlCharacter(value)) {
+        return {};
+    }
+    return value;
 }
 
 QString hex32(uint32_t value) {

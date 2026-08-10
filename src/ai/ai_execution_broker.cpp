@@ -392,6 +392,11 @@ bool ExecutionBroker::runElevatedRequest(const AiCommandRequest& request) {
     // The runner uses ElevationBroker::executeTask which processes events
     // periodically so the UI can update and Stop can route cancel.
     AiCommandResult elevated_result = m_elevated_runner(request);
+    // Not redundant with the earlier self.isNull(): m_elevated_runner pumps the
+    // event loop (UI update + Stop routing), which can delete this broker while
+    // the elevated command runs. Re-checking here is the only guard against a
+    // use-after-free on the lines below.
+    // cppcheck-suppress identicalConditionAfterEarlyExit
     if (self.isNull()) {
         return false;
     }

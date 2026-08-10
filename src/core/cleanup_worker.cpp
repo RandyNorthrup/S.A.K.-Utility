@@ -109,26 +109,57 @@ bool unlinkByHandle(HANDLE handle) {
     return SetFileInformationByHandle(handle, FileDispositionInfo, &info, sizeof(info)) != 0;
 }
 
-// A registry key can be a REG_LINK symbolic-link key whose deletion BY PATH would traverse to the
-// link TARGET and delete ITS subtree -- escaping the denylist that screened only the literal path.
-// Detect it by opening the EXACT key WITHOUT following the link (REG_OPTION_OPEN_LINK) and probing
-// for the reserved "SymbolicLinkValue" value that marks a link key. True => the key is a symbolic
-// link and must NOT be tree-deleted by path. A key that cannot be opened as a link returns false;
-// the subsequent RegDeleteTreeW then resolves/errors on it normally (a nonexistent key no-ops).
-bool registryKeyIsSymbolicLink(HKEY hive, const QString& subkey) {
+// True only if the key opened WITHOUT following the link (REG_OPTION_OPEN_LINK affects the FINAL
+// path component only) carries the reserved "SymbolicLinkValue" REG_LINK value that marks a link
+// key. Fails CLOSED: a probe that cannot be resolved (ACCESS_DENIED, sharing, invalid handle, ...)
+// is reported AS a link so the caller refuses the delete rather than letting RegDeleteTreeW re-
+// resolve through an indeterminate key. ERROR_FILE_NOT_FOUND is the one benign "not a link" (a
+// nonexistent key makes the subsequent delete a no-op).
+bool registryLeafComponentIsLink(HKEY hive, const QString& prefix, bool& notFound) {
+    notFound = false;
     HKEY key = nullptr;
     const LONG rc = RegOpenKeyExW(hive,
-                                  reinterpret_cast<LPCWSTR>(subkey.utf16()),
+                                  reinterpret_cast<LPCWSTR>(prefix.utf16()),
                                   REG_OPTION_OPEN_LINK,
                                   KEY_QUERY_VALUE,
                                   &key);
-    if (rc != ERROR_SUCCESS) {
+    if (rc == ERROR_FILE_NOT_FOUND) {
+        notFound = true;
         return false;
+    }
+    if (rc != ERROR_SUCCESS) {
+        return true;  // fail closed: an indeterminate probe is treated as a link
     }
     DWORD type = 0;
     const LONG q = RegQueryValueExW(key, L"SymbolicLinkValue", nullptr, &type, nullptr, nullptr);
     RegCloseKey(key);
     return q == ERROR_SUCCESS && type == REG_LINK;
+}
+
+// A registry key can be a REG_LINK symbolic-link key whose deletion BY PATH would traverse to the
+// link TARGET and delete ITS subtree -- escaping the denylist that screened only the literal path.
+// A REG_LINK ANCESTOR is equally dangerous: RegDeleteTreeW / RegOpenKeyExW re-resolve the whole
+// pathname, so a link anywhere along the path redirects the operation. Probe EVERY component from
+// the root down (each as the final component of its own prefix, since REG_OPTION_OPEN_LINK only
+// suppresses resolution of the last component, and every shorter prefix has already been proven
+// non-link by the time we reach it). True => some component is (or cannot be proven not to be) a
+// link and the key must NOT be tree-deleted by path.
+bool registryKeyIsSymbolicLink(HKEY hive, const QString& subkey) {
+    const QStringList components = subkey.split(QLatin1Char('\\'), Qt::SkipEmptyParts);
+    QString prefix;
+    for (const QString& component : components) {
+        prefix = prefix.isEmpty() ? component : prefix + QLatin1Char('\\') + component;
+        bool notFound = false;
+        if (registryLeafComponentIsLink(hive, prefix, notFound)) {
+            return true;
+        }
+        if (notFound) {
+            // This component does not exist, so no deeper component can either; the delete/open
+            // will no-op on a nonexistent key. Nothing left to resolve through -- not a link.
+            return false;
+        }
+    }
+    return false;
 }
 #endif  // Q_OS_WIN
 

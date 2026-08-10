@@ -171,7 +171,7 @@ private:
     // it. Re-verified immediately before every execution (no cached verdict) so a
     // file swapped on disk after an earlier check cannot ride a stale "authentic".
     bool verifyChocoAuthenticity() const;
-    bool ensureChocoAuthentic();
+    bool ensureChocoAuthentic() const;
 
     // Output parsing
     QString extractErrorMessage(const QString& output) const;

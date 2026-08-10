@@ -55,18 +55,29 @@ bool securityIsEnterprise(const QString& upper) {
 
 // Resolve a Windows WLAN authentication/encryption pair, or std::nullopt for an
 // unsupported security type (enterprise/802.1X) that must fail closed.
+// A WPA3/SAE-ONLY label maps to WPA3SAE. A combined/transitional label -- notably the WiFi
+// panel's own default "WPA/WPA2/WPA3", and any label that also names WPA2 -- must NOT become a
+// WPA3SAE-only profile (it would fail to associate with a WPA2-only AP and is rejected outright
+// by pre-1903 Windows). Those fall through to the interoperable WPA2PSK default.
+bool isWpa3SaeOnly(const QString& upper) {
+    return (upper.contains("WPA3") || upper.contains("SAE")) && !upper.contains("WPA2") &&
+           !upper.contains("WPA/");
+}
+
 std::optional<WlanAuthConfig> resolveWlanAuth(const QString& security) {
     const QString upper = security.toUpper();
     if (securityIsEnterprise(upper)) {
         return std::nullopt;
     }
-    if (upper.contains("WEP")) {
+    // WEP only when the label names WEP and no WPA variant: a mixed label like "WPA2, not WEP"
+    // is a WPA2 network, not an (insecure) open/WEP one.
+    if (upper.contains("WEP") && !upper.contains("WPA")) {
         return WlanAuthConfig{"open", "WEP"};
     }
-    if (upper.contains("NONE") || upper.contains("OPEN")) {
+    if (upper.contains("NONE") || upper.contains("OPEN") || upper.contains("OWE")) {
         return WlanAuthConfig{"open", "none"};
     }
-    if (upper.contains("WPA3") || upper.contains("SAE")) {
+    if (isWpa3SaeOnly(upper)) {
         return WlanAuthConfig{"WPA3SAE", "AES"};
     }
     return WlanAuthConfig{"WPA2PSK", "AES"};
@@ -156,9 +167,16 @@ QString buildBatchScript(const QString& ssid, const QString& xml_base64) {
 
     QString script;
     script += "@echo off\r\n";
+    // setlocal scopes the environment and the explicit clear below wipes any INHERITED PROFILE_XML,
+    // so an attacker who seeds PROFILE_XML (e.g. via HKCU\\Environment before an elevated launch)
+    // cannot satisfy the "if not defined PROFILE_XML" guard when the for/f allocation produces no
+    // output (powershell blocked, GetTempFileName throws): without this the script would run an
+    // ELEVATED write and delete against the attacker-chosen path.
+    script += "setlocal\r\n";
     script += "echo S.A.K. Utility - WiFi Network Setup Script\r\n";
     script += "echo Network: " + safe_ssid + "\r\n";
     script += "echo.\r\n";
+    script += "set \"PROFILE_XML=\"\r\n";
     // Allocate a kernel-chosen, unpredictable temp file (GetTempFileName atomically
     // creates a uniquely named 0-byte file), instead of a fixed %TEMP%\wifi_profile_sak.xml
     // that a local attacker could pre-create/symlink and that two runs would collide on.

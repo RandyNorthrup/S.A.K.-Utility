@@ -581,8 +581,13 @@ void EmailInspectorController::connectSearchSignals() {
     });
 
     connect(m_search_worker.get(), &EmailSearchWorker::errorOccurred, this, [this](QString err) {
+        // A search errorOccurred is NON-terminal: EmailSearchWorker reports a per-folder read
+        // failure and keeps scanning the remaining folders, then always emits searchComplete on
+        // exit. Clearing the busy state here would drop m_state to Idle mid-scan and let a second
+        // operation (export/search) enter the unsynchronized parser while the pool thread is still
+        // reading it. Forward the error only; the terminal searchComplete handler is the single
+        // place that returns to Idle.
         Q_EMIT errorOccurred(err);
-        setState(State::Idle);
     });
 }
 
@@ -603,9 +608,30 @@ void EmailInspectorController::connectExportSignals() {
             [this](sak::EmailExportResult result) {
                 m_cached_exports.append(result);
                 Q_EMIT exportComplete(result);
-                Q_EMIT logOutput(QStringLiteral("Export complete: %1 items (%2)")
-                                     .arg(result.items_exported)
-                                     .arg(result.export_format));
+                // EmailExportWorker delivers outright failures, cancellations and partial exports
+                // through this SAME exportComplete channel (its errorOccurred is declared but never
+                // emitted), recording the reason in result.errors / result.items_failed. Logging
+                // every one as "Export complete" reports failures as successes, so branch on the
+                // real outcome and surface an error when nothing (or not everything) was exported.
+                if (result.items_exported == 0 &&
+                    (!result.errors.isEmpty() || result.items_failed > 0)) {
+                    Q_EMIT errorOccurred(
+                        result.errors.isEmpty()
+                            ? QStringLiteral("Export failed: %1 item(s) could not be exported")
+                                  .arg(result.items_failed)
+                            : QStringLiteral("Export failed: %1")
+                                  .arg(result.errors.join(QStringLiteral("; "))));
+                } else if (result.items_failed > 0 || !result.errors.isEmpty()) {
+                    Q_EMIT errorOccurred(
+                        QStringLiteral("Export incomplete: %1 item(s) exported, %2 failed -- %3")
+                            .arg(result.items_exported)
+                            .arg(result.items_failed)
+                            .arg(result.errors.join(QStringLiteral("; "))));
+                } else {
+                    Q_EMIT logOutput(QStringLiteral("Export complete: %1 items (%2)")
+                                         .arg(result.items_exported)
+                                         .arg(result.export_format));
+                }
                 setState(State::Idle);
             });
 

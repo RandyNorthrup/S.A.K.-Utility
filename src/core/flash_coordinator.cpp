@@ -598,7 +598,7 @@ void FlashCoordinator::startWorkers(const std::vector<FlashWorker*>& workers) {
 
     // Report AFTER the start loop: onWorkerFailedFor() can finalize the run and tear
     // the workers down, which would invalidate the pointers still being iterated above.
-    for (FlashWorker* worker : failedToStart) {
+    for (const FlashWorker* worker : failedToStart) {
         onWorkerFailedFor(worker, QStringLiteral("Could not start the writer thread"));
     }
 }
