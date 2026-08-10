@@ -9364,7 +9364,8 @@ bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringLis
 // copied-on-written.
 QVector<uint64_t> oldChainFreedBlocks(const ApfsLiveFsChain& chain,
                                       const QVector<uint64_t>& oldFsTreeNodes,
-                                      bool extentRefCowed) {
+                                      bool extentRefCowed,
+                                      QStringList* blockers) {
     QVector<uint64_t> freed = oldFsTreeNodes;
     // Free EVERY block the live volume omap tree occupied (root + interior + leaves), not
     // just the root: a multi-node omap leaks its other V-1 nodes and inflates the cib's
@@ -9381,6 +9382,18 @@ QVector<uint64_t> oldChainFreedBlocks(const ApfsLiveFsChain& chain,
         // extentRefTreeNodes == {extentRef} on the single-node path (byte-identical there).
         freed.append(chain.extentRefTreeNodes);
     }
+    // Fail closed on a chain member that resolves to block 0 (the nx_superblock): queuing it would
+    // publish the superblock as free a rollback window later. Drop it and blocker.
+    if (freed.contains(uint64_t{0})) {
+        blockers->append(
+            QStringLiteral("APFS free-queue: a freed COW-chain member resolves to block 0"));
+        freed.removeAll(uint64_t{0});
+    }
+    // De-duplicate so freedCount (freed.size() at the caller) matches the coalesced runs, which
+    // drop exact duplicates: an aliased chain oid (e.g. omap_oid == extentref_tree_oid) otherwise
+    // drifts the published spaceman/cib free counts by one per alias.
+    std::sort(freed.begin(), freed.end());
+    freed.erase(std::unique(freed.begin(), freed.end()), freed.end());
     return freed;
 }
 
@@ -9401,6 +9414,16 @@ uint64_t findEphemeralPaddrByOid(QIODevice* image,
         if (le64(cpm, entry + kApfsCheckpointMapEntryOidOffset) == oid) {
             return le64(cpm, entry + kApfsCheckpointMapEntryPaddrOffset);
         }
+    }
+    // Fail closed on a NONZERO oid with no mapping: a silent 0 would make the free-queue readers
+    // treat a missing tree as an empty queue and permanently leak every previously queued block.
+    // oid == 0 stays the legitimate empty-queue sentinel (no blocker). This scans only the first
+    // checkpoint-map block (descBase + descIndex), matching every other reader in this file; a map
+    // spanning further blocks lands the oid here as not-found, which fails the commit closed.
+    if (oid != 0) {
+        blockers->append(
+            QStringLiteral("APFS free-queue: no checkpoint-map mapping for ephemeral oid %1")
+                .arg(oid));
     }
     return 0;
 }
@@ -9530,6 +9553,30 @@ QVector<ApfsFreeQueueEntry> parseFreeQueueEntries(QIODevice* image,
     return entries;
 }
 
+// Fail closed unless an index root's resolved child is a level-0 leaf. A child at level >= 1 means
+// the root is a level >= 2 tree whose index children would be mis-decoded as leaves (their child
+// OIDs read as run lengths - the single-node overflow this multi-node tree exists to prevent); a
+// child paddr of 0 means the oid had no checkpoint-map mapping. Reject either.
+[[nodiscard]] bool freeQueueIndexChildIsLeaf(QIODevice* image,
+                                             const ApfsRepairGeometry& geometry,
+                                             uint64_t childPaddr,
+                                             QStringList* blockers) {
+    if (childPaddr == 0) {
+        blockers->append(QStringLiteral("APFS free-queue: an index child resolves to block 0"));
+        return false;
+    }
+    QByteArray child(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, childPaddr, &child, blockers)) {
+        return false;
+    }
+    if (le16(child, kApfsBtreeNodeLevelOffset) != 0) {
+        blockers->append(QStringLiteral("APFS free-queue: index child at block %1 is not a leaf")
+                             .arg(childPaddr));
+        return false;
+    }
+    return true;
+}
+
 // Read every record of the MAIN free-queue tree rooted (by paddr) at `rootPaddr`. A level-0
 // root is the certified single node -> parseFreeQueueEntries directly (byte-identical read).
 // A level>0 root is the multi-node index: its values are child leaf OIDs (ephemeral), so
@@ -9543,7 +9590,14 @@ QVector<ApfsFreeQueueEntry> parseMainFreeQueueTree(QIODevice* image,
                                                    uint64_t rootPaddr,
                                                    QStringList* blockers) {
     QByteArray root(geometry.blockSize, '\0');
-    if (rootPaddr == 0 || !readApfsRepairBlock(image, geometry, rootPaddr, &root, blockers)) {
+    // Fail closed (with a blocker) when the root object could not be resolved: a bare empty return
+    // would silently drop every previously-queued, not-yet-aged free.
+    if (rootPaddr == 0) {
+        blockers->append(QStringLiteral(
+            "APFS free-queue: the main free-queue root object could not be resolved"));
+        return {};
+    }
+    if (!readApfsRepairBlock(image, geometry, rootPaddr, &root, blockers)) {
         return {};
     }
     if (le16(root, kApfsBtreeNodeLevelOffset) == 0) {
@@ -9560,6 +9614,11 @@ QVector<ApfsFreeQueueEntry> parseMainFreeQueueTree(QIODevice* image,
         const uint64_t childOid = le64(root, valueAreaEnd - voff);
         const uint64_t childPaddr =
             findEphemeralPaddrByOid(image, geometry, live, childOid, blockers);
+        // Require each resolved child to be a level-0 leaf before decoding it (rejects a level >= 2
+        // root whose index children would be mis-parsed as leaves, and a zero child paddr).
+        if (!freeQueueIndexChildIsLeaf(image, geometry, childPaddr, blockers)) {
+            return {};
+        }
         entries += parseFreeQueueEntries(image, geometry, childPaddr, blockers);
     }
     // Each leaf was budgeted on its own; the concatenated tree must also fit, or a hostile
@@ -11413,7 +11472,8 @@ ApfsFinalizeFreeQueue advanceFinalizeMainFreeQueue(const ApfsFsCommitFinalize& f
     // only the omap/container chain + old extent-ref tree are released.
     const QVector<uint64_t> oldFsNodes =
         f.diverge.active && !f.diverge.freeLiveFsNodes ? QVector<uint64_t>{} : f.ctx.oldFsNodes;
-    QVector<uint64_t> freed = oldChainFreedBlocks(f.ctx.chain, oldFsNodes, f.extentRefNew != 0);
+    QVector<uint64_t> freed =
+        oldChainFreedBlocks(f.ctx.chain, oldFsNodes, f.extentRefNew != 0, blockers);
     freed += f.freedDataBlocks;
     const QVector<ApfsFreeQueueEntry> liveMainFq = parseMainFreeQueueTree(
         f.ctx.image,
