@@ -29,6 +29,8 @@ namespace sak {
 namespace {
 constexpr qsizetype kIpv4OctetCount = 4;
 constexpr int kMaxOctetValue = 255;
+// Bound on the ipconfig /displaydns child process so a wedged launch cannot hang the tool.
+constexpr int kDisplayDnsTimeoutMs = 10'000;
 }  // namespace
 
 DnsDiagnosticTool::DnsDiagnosticTool(QObject* parent) : QObject(parent) {}
@@ -382,10 +384,10 @@ void DnsDiagnosticTool::inspectDnsCache() {
         return;
     }
 
-    const auto result =
-        sak::runProcess(ipconfig_exe, {QStringLiteral("/displaydns")}, 10'000, [this]() {
-            return m_cancelled.load();
-        });
+    const auto result = sak::runProcess(ipconfig_exe,
+                                        {QStringLiteral("/displaydns")},
+                                        kDisplayDnsTimeoutMs,
+                                        [this]() { return m_cancelled.load(); });
     if (!result.succeeded()) {
         Q_EMIT dnsCacheResults({});
         return;

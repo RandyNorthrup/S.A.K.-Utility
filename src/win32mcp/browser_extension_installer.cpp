@@ -29,12 +29,19 @@
 namespace sak::win32mcp {
 namespace {
 
+// Oversize the module-path buffer well past MAX_PATH so a long extended-length
+// executable path still fits.
+constexpr int kExePathBufferMultiplier = 4;
+// Registry value names are capped at 16,383 characters by Win32; size the buffer
+// one larger to hold the terminating NUL.
+constexpr int kRegValueNameBufferChars = 16'384;
+
 // Full path of THIS running executable. The installer runs both in the GUI app (where
 // QCoreApplication is up) and in the headless MCP helper process (which has none), so on
 // Windows it resolves the path from the OS directly rather than via QCoreApplication.
 QString currentExeFilePath() {
 #if defined(_WIN32)
-    wchar_t buf[MAX_PATH * 4];
+    wchar_t buf[MAX_PATH * kExePathBufferMultiplier];
     const DWORD n = GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(std::size(buf)));
     if (n > 0 && n < std::size(buf)) {
         return QString::fromWCharArray(buf, static_cast<int>(n));
@@ -314,7 +321,7 @@ std::vector<RegValue> enumStringValues(HKEY key, bool* ok) {
     *ok = true;
     DWORD index = 0;
     for (;;) {
-        wchar_t nameBuf[16'384];
+        wchar_t nameBuf[kRegValueNameBufferChars];
         DWORD nameLen = static_cast<DWORD>(std::size(nameBuf));
         DWORD type = 0;
         DWORD dataBytes = 0;

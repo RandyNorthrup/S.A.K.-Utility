@@ -34,6 +34,8 @@ constexpr int kQuotedPrintableSecondHexOffset = 2;
 constexpr int kQuotedPrintableNibbleShift = 4;
 constexpr int kFromLineMinimumLength = 6;
 constexpr int kFromLineSenderOffset = 5;
+// Filename regex capture groups: 1 is the quoted value, 2 is the bare unquoted token.
+constexpr int kUnquotedFilenameGroup = 2;
 
 /// Header-level attachment heuristic for the summary list. Mirrors the classification
 /// parseMimeMessage applies to full bodies: any multipart/* may carry parts, an explicit
@@ -671,8 +673,9 @@ void MboxParser::appendAttachment(const MimePartInfo& part,
         fn_match = filename_regex.match(part.content_type);
     }
     if (fn_match.hasMatch()) {
-        att.long_filename = fn_match.captured(1).isNull() ? fn_match.captured(2)
-                                                          : fn_match.captured(1);
+        att.long_filename = fn_match.captured(1).isNull()
+                                ? fn_match.captured(kUnquotedFilenameGroup)
+                                : fn_match.captured(1);
         att.filename = att.long_filename;
     }
 

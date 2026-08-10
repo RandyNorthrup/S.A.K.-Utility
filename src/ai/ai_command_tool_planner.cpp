@@ -22,8 +22,15 @@ namespace {
 // Cap on how much of a rejected tool name is echoed back in the refusal message.
 constexpr int kToolNameErrorMaxChars = 64;
 
+// Code points below this are C0 control characters; 0x7f is the DEL control character.
+constexpr char16_t kFirstPrintableCodePoint = 0x20;
+constexpr char16_t kDeleteControlChar = 0x7f;
+// Render an escaped control byte as two hexadecimal digits (\xNN).
+constexpr int kControlEscapeHexWidth = 2;
+constexpr int kHexadecimalBase = 16;
+
 bool isControlChar(QChar ch) {
-    return ch.unicode() < 0x20 || ch.unicode() == 0x7f;
+    return ch.unicode() < kFirstPrintableCodePoint || ch.unicode() == kDeleteControlChar;
 }
 
 // Renders a control character as a visible escape so a newline/tab embedded in an
@@ -38,7 +45,10 @@ QString escapeControlChar(QChar ch) {
     if (ch == QLatin1Char('\r')) {
         return QStringLiteral("\\r");
     }
-    return QStringLiteral("\\x%1").arg(static_cast<uint>(ch.unicode()), 2, 16, QLatin1Char('0'));
+    return QStringLiteral("\\x%1").arg(static_cast<uint>(ch.unicode()),
+                                       kControlEscapeHexWidth,
+                                       kHexadecimalBase,
+                                       QLatin1Char('0'));
 }
 
 // Makes control chars visible and escapes embedded double quotes (the preview's

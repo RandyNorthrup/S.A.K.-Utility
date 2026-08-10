@@ -40,6 +40,12 @@ constexpr int kDriveRootPrefixLength = 3;
 // Management write gate cannot drift from the rest of the codebase.
 constexpr uint64_t kFileManagementMaxWriteBytes = kMaximumNonNativeFileWriteBytes;
 constexpr uint64_t kMinimumGeneratedApfsBytes = kMinimumApfsGeneratedContainerBytes;
+constexpr int kCopyWindowBytes = 1 << 20;  // 1 MiB per-file copy window
+// ASCII code-point boundaries shared by the filename-safety and preview heuristics.
+constexpr int kAsciiTab = 0x09;             // horizontal tab
+constexpr int kAsciiCarriageReturn = 0x0D;  // carriage return
+constexpr int kFirstPrintableChar = 0x20;   // space; bytes below are C0 controls
+constexpr int kAsciiDel = 0x7F;             // DEL; upper bound of printable ASCII
 
 QString normalizedPath(QString path) {
     path = path.trimmed();
@@ -97,16 +103,18 @@ uint64_t probeApfsContainerBytes(const QString& root_path) {
         return 0;
     }
     const QByteArray block0 = device->read(4096);
-    constexpr int kMagicOffset = 0x20;       // obj_phys_t header is 32 bytes
-    constexpr int kBlockSizeOffset = 0x24;   // nx_block_size (u32)
-    constexpr int kBlockCountOffset = 0x28;  // nx_block_count (u64)
-    if (block0.size() < kBlockCountOffset + 8) {
+    constexpr int kMagicOffset = 0x20;                       // obj_phys_t header is 32 bytes
+    constexpr int kBlockSizeOffset = 0x24;                   // nx_block_size (u32)
+    constexpr int kBlockCountOffset = 0x28;                  // nx_block_count (u64)
+    constexpr int kBlockCountFieldBytes = 8;                 // nx_block_count is a u64
+    constexpr quint32 kApfsContainerMagic = 0x42'53'58'4EU;  // 'NXSB'
+    if (block0.size() < kBlockCountOffset + kBlockCountFieldBytes) {
         return 0;
     }
     const auto u32 = [&block0](const int offset) {
         return qFromLittleEndian<quint32>(block0.constData() + offset);
     };
-    if (u32(kMagicOffset) != 0x42'53'58'4EU) {  // 'NXSB'
+    if (u32(kMagicOffset) != kApfsContainerMagic) {
         return 0;
     }
     const quint64 block_size = u32(kBlockSizeOffset);
@@ -782,7 +790,7 @@ FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
         result.blockers.append(QStringLiteral("Unable to write file: %1").arg(dst.errorString()));
         return result;
     }
-    QByteArray window(1 << 20, Qt::Uninitialized);
+    QByteArray window(kCopyWindowBytes, Qt::Uninitialized);
     uint64_t written = 0;
     for (;;) {
         if (observer.isCancelled()) {
@@ -957,7 +965,7 @@ namespace {
 bool hasUnsafeHostNameChar(const QString& base) {
     static const QString kReserved = QStringLiteral(":<>\"|?*/\\");
     for (const QChar ch : base) {
-        if (ch.unicode() < 0x20 || kReserved.contains(ch)) {
+        if (ch.unicode() < kFirstPrintableChar || kReserved.contains(ch)) {
             return true;
         }
     }
@@ -974,8 +982,10 @@ bool isWindowsReservedDeviceName(const QString& base) {
     if (kNames.contains(stem)) {
         return true;
     }
+    constexpr int kReservedDeviceStemLength = 4;  // "COM"/"LPT" prefix plus one digit
     const QString prefix = stem.left(3);
-    if (stem.size() != 4 || (prefix != QStringLiteral("COM") && prefix != QStringLiteral("LPT"))) {
+    if (stem.size() != kReservedDeviceStemLength ||
+        (prefix != QStringLiteral("COM") && prefix != QStringLiteral("LPT"))) {
         return false;
     }
     const QChar last = stem.at(3);
@@ -1694,6 +1704,11 @@ namespace {
 
 constexpr int kPreviewHexDumpBytes = 4096;
 constexpr int kPreviewHexBytesPerRow = 16;
+// More than 1-in-20 (5%) C0 control bytes flags the buffer as binary.
+constexpr int kBinaryControlRatioReciprocal = 20;
+constexpr int kHexDigitsPerByte = 2;     // each byte prints as two hex digits
+constexpr int kHexBase = 16;             // base for the arg() hex formatting
+constexpr int kHexOffsetFieldWidth = 8;  // row offset prints as eight hex digits
 
 // Heuristic: a NUL byte, or more than 5% C0 control bytes (excluding tab/newline/return),
 // marks the bytes as binary and routes them to the hex dump instead of a text decode.
@@ -1704,11 +1719,12 @@ bool looksBinary(const QByteArray& data) {
         if (u == 0) {
             return true;
         }
-        if (u < 0x09 || (u > 0x0D && u < 0x20) || u == 0x7F) {
+        if (u < kAsciiTab || (u > kAsciiCarriageReturn && u < kFirstPrintableChar) ||
+            u == kAsciiDel) {
             ++controls;
         }
     }
-    return !data.isEmpty() && controls * 20 > data.size();
+    return !data.isEmpty() && controls * kBinaryControlRatioReciprocal > data.size();
 }
 
 // One "OFFSET  HH HH ... |ascii|" row for up to kPreviewHexBytesPerRow bytes at @p offset.
@@ -1718,13 +1734,15 @@ QString hexDumpRow(const QByteArray& data, int offset) {
     for (int col = 0; col < kPreviewHexBytesPerRow; ++col) {
         if (offset + col < data.size()) {
             const auto u = static_cast<unsigned char>(data.at(offset + col));
-            hex += QStringLiteral("%1 ").arg(u, 2, 16, QLatin1Char('0'));
-            ascii += (u >= 0x20 && u < 0x7F) ? QChar(u) : QLatin1Char('.');
+            hex += QStringLiteral("%1 ").arg(u, kHexDigitsPerByte, kHexBase, QLatin1Char('0'));
+            ascii += (u >= kFirstPrintableChar && u < kAsciiDel) ? QChar(u) : QLatin1Char('.');
         } else {
             hex += QStringLiteral("   ");
         }
     }
-    return QStringLiteral("%1  %2 |%3|").arg(offset, 8, 16, QLatin1Char('0')).arg(hex, ascii);
+    return QStringLiteral("%1  %2 |%3|")
+        .arg(offset, kHexOffsetFieldWidth, kHexBase, QLatin1Char('0'))
+        .arg(hex, ascii);
 }
 
 QString hexDump(const QByteArray& window) {

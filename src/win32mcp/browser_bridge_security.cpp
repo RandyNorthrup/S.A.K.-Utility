@@ -20,6 +20,10 @@ namespace {
 constexpr int kNonceHexWidth = 16;  // 64-bit nonce as zero-padded hex
 constexpr int kHexBase = 16;
 
+// Upper bound for a valid app_pid: the largest value that survives a double->qint64 cast
+// exactly. Anything above this exact-integer double range fails the record closed.
+constexpr double kMaxAppPidExactDouble = 9.0e15;
+
 void setError(QString* error, const QString& message) {
     if (error) {
         *error = message;
@@ -138,7 +142,7 @@ bool readRendezvousRecord(const QString& path, RendezvousRecord* out, QString* e
     // fixed in clampMs). A malformed value fails the record closed rather than yielding garbage.
     const QJsonValue pid_value = object.value(QStringLiteral("app_pid"));
     const double pid_raw = pid_value.toDouble(-1.0);
-    if (!pid_value.isDouble() || pid_raw < 1.0 || pid_raw > 9.0e15) {
+    if (!pid_value.isDouble() || pid_raw < 1.0 || pid_raw > kMaxAppPidExactDouble) {
         setError(error, QStringLiteral("Rendezvous record has an invalid app_pid."));
         return false;
     }

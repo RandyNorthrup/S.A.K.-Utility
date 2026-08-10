@@ -64,8 +64,9 @@ QString windowTitle(HWND hwnd) {
 }
 
 QString windowClassName(HWND hwnd) {
-    wchar_t buffer[256] = {0};
-    const int copied = GetClassNameW(hwnd, buffer, 256);
+    constexpr int kWindowClassNameBufferChars = 256;
+    wchar_t buffer[kWindowClassNameBufferChars] = {0};
+    const int copied = GetClassNameW(hwnd, buffer, kWindowClassNameBufferChars);
     return wideToQString(buffer, copied);
 }
 
@@ -241,8 +242,9 @@ BOOL CALLBACK collectMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM param) {
         // silently omitting a monitor and returning a short list as if it were complete.
         return FALSE;
     }
-    UINT dpi_x = 96;
-    UINT dpi_y = 96;
+    constexpr UINT kDefaultDpi = 96;
+    UINT dpi_x = kDefaultDpi;
+    UINT dpi_y = kDefaultDpi;
     GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpi_x, &dpi_y);
     monitors->append(
         QJsonObject{{QStringLiteral("index"), monitors->size()},
@@ -282,11 +284,13 @@ constexpr int kMaxClipboardChars = 200'000;
 // The clipboard is a shared, single-owner OS resource; another process may hold it for a
 // moment. Retry a few times before giving up rather than failing on transient contention.
 bool openClipboardWithRetry() {
-    for (int attempt = 0; attempt < 5; ++attempt) {
+    constexpr int kOpenClipboardAttempts = 5;
+    constexpr DWORD kClipboardRetryDelayMs = 10;
+    for (int attempt = 0; attempt < kOpenClipboardAttempts; ++attempt) {
         if (OpenClipboard(nullptr) != FALSE) {
             return true;
         }
-        Sleep(10);
+        Sleep(kClipboardRetryDelayMs);
     }
     return false;
 }

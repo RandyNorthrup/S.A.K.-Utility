@@ -1491,6 +1491,8 @@ QString icsEscapeText(const QString& value) {
 /// with a single space. Folding is byte-based and never splits a UTF-8 sequence.
 QString icsFoldLine(const QString& line) {
     constexpr int kMaxOctets = 75;
+    constexpr int kUtf8ContinuationMask = 0xC0;  // top two bits of a byte
+    constexpr int kUtf8ContinuationByte = 0x80;  // 10xxxxxx marks a UTF-8 continuation byte
     const QByteArray utf8 = line.toUtf8();
     if (utf8.size() <= kMaxOctets) {
         return line;
@@ -1499,7 +1501,8 @@ QString icsFoldLine(const QString& line) {
     int pos = 0;
     while (pos < utf8.size()) {
         int take = qMin(kMaxOctets, static_cast<int>(utf8.size()) - pos);
-        while (pos + take < utf8.size() && take > 1 && (utf8.at(pos + take) & 0xC0) == 0x80) {
+        while (pos + take < utf8.size() && take > 1 &&
+               (utf8.at(pos + take) & kUtf8ContinuationMask) == kUtf8ContinuationByte) {
             --take;
         }
         if (!folded.isEmpty()) {

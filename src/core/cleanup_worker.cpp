@@ -53,6 +53,16 @@ void appendFirewallDeleteFilters(QStringList& args, const LeftoverItem& item) {
 }
 
 #ifdef Q_OS_WIN
+// Initial character capacity for the GetFinalPathNameByHandleW output buffer; grown on demand when
+// the resolved path is longer.
+constexpr int kFinalPathBufferChars = 1024;
+// Length of the "\\?\UNC\" extended-length UNC prefix that finalPathOfHandle strips.
+constexpr int kExtendedUncPrefixLength = 8;
+// Length of the "\\?\" extended-length prefix that finalPathOfHandle strips.
+constexpr int kExtendedPathPrefixLength = 4;
+// Characters in a Windows drive root ("C:\") -- drive letter, ':' and separator.
+constexpr int kWindowsDriveRootLength = 3;
+
 // Open a handle to the EXACT path for delete-time verification, WITHOUT following a leaf reparse
 // point (FILE_FLAG_OPEN_REPARSE_POINT). Ancestor junctions are still traversed by the OS during
 // path parsing -- which is the point: GetFinalPathNameByHandleW then reveals the real resolved
@@ -71,7 +81,7 @@ HANDLE openForVerifiedDelete(const QString& path) {
 // The REAL on-disk path of an open handle, every ancestor junction/symlink resolved, with the
 // \\?\ (and \\?\UNC\) extended-length prefix stripped. Empty on failure.
 QString finalPathOfHandle(HANDLE handle) {
-    std::wstring buffer(1024, L'\0');
+    std::wstring buffer(kFinalPathBufferChars, L'\0');
     const DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
     DWORD length =
         GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
@@ -88,10 +98,10 @@ QString finalPathOfHandle(HANDLE handle) {
     }
     QString resolved = QString::fromWCharArray(buffer.data(), static_cast<int>(length));
     if (resolved.startsWith(QStringLiteral("\\\\?\\UNC\\"))) {
-        return QStringLiteral("\\\\") + resolved.mid(8);
+        return QStringLiteral("\\\\") + resolved.mid(kExtendedUncPrefixLength);
     }
     if (resolved.startsWith(QStringLiteral("\\\\?\\"))) {
-        return resolved.mid(4);
+        return resolved.mid(kExtendedPathPrefixLength);
     }
     return resolved;
 }
@@ -169,8 +179,9 @@ bool registryKeyIsSymbolicLink(HKEY hive, const QString& subkey) {
 // reliable proxy for "has a Recycle Bin".
 bool volumeSupportsRecycleBin(const QString& path) {
 #ifdef Q_OS_WIN
-    const QString root = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(3);
-    if (root.size() < 3 || root[1] != QLatin1Char(':')) {
+    const QString root =
+        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(kWindowsDriveRootLength);
+    if (root.size() < kWindowsDriveRootLength || root[1] != QLatin1Char(':')) {
         return false;
     }
     return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16())) == DRIVE_FIXED;

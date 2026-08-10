@@ -48,6 +48,13 @@ constexpr qint64 kBase64GrowthDenominator = 3;
 constexpr int kMaxOpenMboxFiles = 64;
 constexpr int kImportanceLow = 0;
 constexpr int kImportanceHigh = 2;
+// Extra capacity reserved for base64Wrapped output beyond data + one separator per line, covering
+// the final line's CRLF; reserve is only a hint, so an approximate slack is sufficient.
+constexpr qsizetype kBase64ReserveSlackBytes = 2;
+// The two enclosing angle brackets ("<" and ">") stripped from a Content-ID value.
+constexpr qsizetype kAngleBracketPairLength = 2;
+// First numeric suffix used to disambiguate a colliding mbox filename ("base (2).mbox").
+constexpr int kFirstDisambiguationSuffix = 2;
 
 // True when any character is outside 7-bit ASCII (needs RFC 2047 header encoding).
 bool hasNonAscii(const QString& value) {
@@ -191,7 +198,7 @@ QString encodedDisplayName(const QString& name) {
 QByteArray base64Wrapped(const QByteArray& data) {
     const QByteArray b64 = data.toBase64();
     QByteArray out;
-    out.reserve(b64.size() + b64.size() / kMimeBase64LineLength + 2);
+    out.reserve(b64.size() + b64.size() / kMimeBase64LineLength + kBase64ReserveSlackBytes);
     for (qsizetype i = 0; i < b64.size(); i += kMimeBase64LineLength) {
         out.append(b64.mid(i, kMimeBase64LineLength));
         out.append("\r\n");
@@ -235,7 +242,7 @@ QByteArray sanitizedMimeType(const QString& mime_type) {
 QByteArray sanitizedContentId(const QString& content_id) {
     QString id = content_id;
     if (id.startsWith(QLatin1Char('<')) && id.endsWith(QLatin1Char('>')) && id.size() > 1) {
-        id = id.mid(1, id.size() - 2);
+        id = id.mid(1, id.size() - kAngleBracketPairLength);
     }
     static const QRegularExpression kCid(QStringLiteral("^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.@-]+$"));
     return kCid.match(id).hasMatch() ? id.toLatin1() : QByteArray();
@@ -548,7 +555,9 @@ QString MboxWriter::resolveFilePath(const QString& folder_path) const {
     // and "Inbox"/"inbox" ARE one file on Windows; disambiguate with a numeric suffix so their
     // mail does not interleave into one mailbox -- or truncate it twice through two handles.
     QString file_path = base + QStringLiteral(".mbox");
-    for (int suffix = 2; m_used_file_paths.contains(pathIdentity(file_path)); ++suffix) {
+    for (int suffix = kFirstDisambiguationSuffix;
+         m_used_file_paths.contains(pathIdentity(file_path));
+         ++suffix) {
         file_path = base + QStringLiteral(" (%1).mbox").arg(suffix);
     }
     return file_path;

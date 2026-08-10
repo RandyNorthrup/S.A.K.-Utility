@@ -730,8 +730,9 @@ QString shellEscapeStrippedPreview(const QString& preview) {
     // escape before a quote or a newline -- are not intra-word and stay untouched, so this
     // does not manufacture matches for ordinary commands. The loop handles a keyword split
     // more than once, such as "f^o^rmat".
+    constexpr int kMaxEscapeStripPasses = 8;
     QString stripped = preview;
-    for (int guard = 0; guard < 8; ++guard) {
+    for (int guard = 0; guard < kMaxEscapeStripPasses; ++guard) {
         const QString previous = stripped;
         stripped.replace(caret_split, QStringLiteral("\\1\\2"));
         stripped.replace(escape_split, QStringLiteral("\\1\\2"));
@@ -885,6 +886,9 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
 }
 
 int toolPolicyRank(AiToolPolicy policy) {
+    constexpr int kRankDownloadTier = 2;
+    constexpr int kRankMutatingRequiresLease = 3;
+    constexpr int kRankExclusiveMutatingExecutor = 4;
     switch (policy) {
     case AiToolPolicy::NoLocalExecution:
         return 0;
@@ -892,11 +896,11 @@ int toolPolicyRank(AiToolPolicy policy) {
         return 1;
     case AiToolPolicy::DownloadOnly:
     case AiToolPolicy::PackageToolsOnly:
-        return 2;
+        return kRankDownloadTier;
     case AiToolPolicy::MutatingRequiresLease:
-        return 3;
+        return kRankMutatingRequiresLease;
     case AiToolPolicy::ExclusiveMutatingExecutor:
-        return 4;
+        return kRankExclusiveMutatingExecutor;
     }
     return 0;
 }

@@ -68,9 +68,11 @@ namespace sak {
 /// alternate-data-stream suffix ("C:/dir/f.txt:payload.exe", which would otherwise satisfy
 /// an extension check). @p slashPath must already be in screeningPathForm.
 [[nodiscard]] inline bool driveQualifiedPath(const QString& slashPath) {
-    constexpr int kDriveRootLength = 3;  // "X:/"
+    constexpr int kDriveRootLength = 3;      // "X:/"
+    constexpr int kDriveSeparatorIndex = 2;  // '/' at index 2 of "X:/"
     if (slashPath.size() <= kDriveRootLength || !slashPath.at(0).isLetter() ||
-        slashPath.at(1) != QLatin1Char(':') || slashPath.at(2) != QLatin1Char('/')) {
+        slashPath.at(1) != QLatin1Char(':') ||
+        slashPath.at(kDriveSeparatorIndex) != QLatin1Char('/')) {
         return false;
     }
     return slashPath.indexOf(QLatin1Char(':'), kDriveRootLength) < 0;

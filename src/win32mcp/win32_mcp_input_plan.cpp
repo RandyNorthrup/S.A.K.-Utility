@@ -20,6 +20,14 @@
 
 namespace sak::win32mcp {
 
+namespace {
+// SendInput absolute mouse coordinates are normalized into the range [0, 65535] across the
+// virtual screen (MOUSEEVENTF_ABSOLUTE), so the span maps to this maximum.
+constexpr double kAbsCoordMax = 65535.0;
+// Each typed character plans a key-down plus a key-up stroke.
+constexpr int kKeyStrokesPerChar = 2;
+}  // namespace
+
 bool pointInVirtualScreen(int px, int py, const ScreenBox& screen) {
     if (screen.w <= 0 || screen.h <= 0) {
         return false;
@@ -29,8 +37,10 @@ bool pointInVirtualScreen(int px, int py, const ScreenBox& screen) {
 
 AbsPoint toAbsCoord(int px, int py, const ScreenBox& screen) {
     AbsPoint p;
-    p.nx = static_cast<long>(std::llround((px - screen.x) * 65535.0 / std::max(1, screen.w - 1)));
-    p.ny = static_cast<long>(std::llround((py - screen.y) * 65535.0 / std::max(1, screen.h - 1)));
+    p.nx =
+        static_cast<long>(std::llround((px - screen.x) * kAbsCoordMax / std::max(1, screen.w - 1)));
+    p.ny =
+        static_cast<long>(std::llround((py - screen.y) * kAbsCoordMax / std::max(1, screen.h - 1)));
     return p;
 }
 
@@ -56,7 +66,7 @@ bool mouseButtonFlags(const QString& button, unsigned long& down, unsigned long&
 
 QVector<KeyStroke> planTypeText(const QString& text) {
     QVector<KeyStroke> strokes;
-    strokes.reserve(text.size() * 2);
+    strokes.reserve(text.size() * kKeyStrokesPerChar);
     const int count = text.size();
     for (int i = 0; i < count; ++i) {
         const QChar ch = text.at(i);

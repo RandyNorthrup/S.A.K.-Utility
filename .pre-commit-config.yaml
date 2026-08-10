@@ -203,12 +203,23 @@ repos:
         pass_filenames: false
 
       # -------------------------------------------------------------------
-      # NOTE: one further gate script exists and is NOT yet listed here
-      # because it currently reports real debt, and a failing hook would
-      # block the very commits that fix it. It is wired the moment its
-      # debt reaches zero. Tracked as R5-G9 in
-      # docs/CODEX_REVIEW_5_REMEDIATION.md with measured counts:
-      #   check_magic_numbers.py             497 violations
+      # 6f. Magic numbers - bare numeric literals must be named constexpr
+      #     Debt reached zero: every literal outside the -1/0/1 sentinels was
+      #     named across the tree (the on-disk-format and crypto modules stay
+      #     exempt in the script, where hand-naming byte offsets is high-risk
+      #     churn against certified output), so this one is wired.
+      # -------------------------------------------------------------------
+      - id: magic-numbers
+        name: "Magic-number check"
+        description: "Bare numeric literals must be named constexpr constants"
+        entry: python scripts/check_magic_numbers.py
+        language: system
+        pass_filenames: false
+
+      # -------------------------------------------------------------------
+      # All GUI/style/magic-number debt gates are now wired above. Any new
+      # gate script added later that reports debt should follow the same
+      # pattern: fix the debt to zero, then list the hook here.
       # -------------------------------------------------------------------
 
       # -------------------------------------------------------------------

@@ -387,13 +387,15 @@ QString FileExplorerArchiveWorker::stageSource(const FileExplorerTransferItem& i
 // The name itself when free; otherwise the Files incremental "{name} (n)"
 // (FileOperationsHelpers.GetIncrementalName, starting at 2).
 QString FileExplorerArchiveWorker::availableChildName(const QString& name) const {
+    constexpr int kIncrementalNameStart = 2;
+    constexpr int kIncrementalNameLimit = 10'000;
     if (!destinationOccupied(name)) {
         return name;
     }
     const qsizetype last_dot = name.lastIndexOf(QLatin1Char('.'));
     const QString base = last_dot > 0 ? name.left(last_dot) : name;
     const QString extension = last_dot > 0 ? name.mid(last_dot) : QString();
-    for (int index = 2; index < 10'000; ++index) {
+    for (int index = kIncrementalNameStart; index < kIncrementalNameLimit; ++index) {
         const QString candidate = QStringLiteral("%1 (%2)%3").arg(base).arg(index).arg(extension);
         if (!destinationOccupied(candidate)) {
             return candidate;

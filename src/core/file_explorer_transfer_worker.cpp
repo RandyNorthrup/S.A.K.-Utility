@@ -29,6 +29,11 @@ constexpr int kDiscoveryMaxEntriesPerDirectory = 10'000;
 // destination whose name already sits near it.
 constexpr qsizetype kSiblingTempNameChars = 64;
 
+// The 64-bit entropy suffix renders as 16 hexadecimal digits, zero-padded to that field width.
+constexpr int kHexTokenWidth = 16;
+// Base-16 (hexadecimal) formatting for the entropy suffix.
+constexpr int kHexBase = 16;
+
 QString transferItemName(const QString& path) {
     QString clean = path;
     clean.replace(QLatin1Char('\\'), QLatin1Char('/'));
@@ -110,10 +115,12 @@ QString FileExplorerTransferEngine::siblingTempPath(const QString& destination_p
     // sequence number alone made the name predictable, so a co-located writer
     // could plant content where the staged copy merges into it, or where the
     // cleanup then deletes it; a guessed name is now impractical.
-    const QString token =
-        QStringLiteral("%1-%2")
-            .arg(m_replace_seq++)
-            .arg(QRandomGenerator::system()->generate64(), 16, 16, QLatin1Char('0'));
+    const QString token = QStringLiteral("%1-%2")
+                              .arg(m_replace_seq++)
+                              .arg(QRandomGenerator::system()->generate64(),
+                                   kHexTokenWidth,
+                                   kHexBase,
+                                   QLatin1Char('0'));
     const QString temp =
         QStringLiteral("%1%2.%3").arg(prefix, split.name.left(kSiblingTempNameChars), token);
     return split.parent.isEmpty() ? temp : split.parent + QLatin1Char('/') + temp;

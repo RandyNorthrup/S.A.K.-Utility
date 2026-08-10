@@ -834,9 +834,11 @@ bool deadlineOverridesResult(AiSubagentStatus status) {
 // run to the runner-wide limit (or forever) regardless of its own declared budget. A source that
 // is 0/unset does not constrain; if both are unset the deadline is Forever.
 qint64 effectiveWallClockMs(const AiSubagentRunnerOptions& options, const AiSubagentTask& task) {
+    constexpr qint64 kMillisecondsPerSecond = 1000;
     const qint64 option_ms = options.wall_clock_timeout_ms > 0 ? options.wall_clock_timeout_ms : 0;
-    const qint64 task_ms =
-        task.timeout_seconds > 0 ? static_cast<qint64>(task.timeout_seconds) * 1000 : 0;
+    const qint64 task_ms = task.timeout_seconds > 0
+                               ? static_cast<qint64>(task.timeout_seconds) * kMillisecondsPerSecond
+                               : 0;
     if (option_ms > 0 && task_ms > 0) {
         return std::min(option_ms, task_ms);
     }

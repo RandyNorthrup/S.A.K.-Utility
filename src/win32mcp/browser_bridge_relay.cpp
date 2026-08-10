@@ -23,6 +23,12 @@ namespace {
 // wait costs nothing measurable.
 constexpr DWORD kCancelPollMs = 25;
 
+// Room for a long \\?\-prefixed image path: twice MAX_PATH wide characters.
+constexpr int kImagePathBufferChars = MAX_PATH * 2;
+
+// A native-messaging frame is prefixed by a 4-byte little-endian uint32 length header.
+constexpr int kNativeFrameHeaderBytes = 4;
+
 void setError(QString* error, const QString& message) {
     if (error) {
         *error = message;
@@ -33,8 +39,8 @@ void setError(QString* error, const QString& message) {
 // verify the recorded server pid is really the bridge binary (not a foreign process a
 // rewritten rendezvous record points at).
 QString ownImageLower() {
-    wchar_t buffer[MAX_PATH * 2] = {0};
-    const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH * 2);
+    wchar_t buffer[kImagePathBufferChars] = {0};
+    const DWORD length = GetModuleFileNameW(nullptr, buffer, kImagePathBufferChars);
     return QString::fromWCharArray(buffer, static_cast<int>(length)).toLower();
 }
 
@@ -43,8 +49,8 @@ QString imageLower(DWORD pid) {
     if (process == nullptr) {
         return {};
     }
-    wchar_t buffer[MAX_PATH * 2] = {0};
-    DWORD size = MAX_PATH * 2;
+    wchar_t buffer[kImagePathBufferChars] = {0};
+    DWORD size = kImagePathBufferChars;
     const BOOL ok = QueryFullProcessImageNameW(process, 0, buffer, &size);
     CloseHandle(process);
     return ok != FALSE ? QString::fromWCharArray(buffer, static_cast<int>(size)).toLower()
@@ -101,7 +107,7 @@ bool stdinReadExact(char* buffer, int size) {
 bool readBodyFrame(const std::function<bool(char*, int)>& read_exact,
                    DWORD length,
                    QJsonObject* out) {
-    QByteArray frame(4, Qt::Uninitialized);
+    QByteArray frame(kNativeFrameHeaderBytes, Qt::Uninitialized);
     qToLittleEndian<quint32>(length, reinterpret_cast<uchar*>(frame.data()));
     QByteArray body(static_cast<int>(length), Qt::Uninitialized);
     if (!read_exact(body.data(), static_cast<int>(length))) {
@@ -117,11 +123,12 @@ bool readBodyFrame(const std::function<bool(char*, int)>& read_exact,
 }
 
 bool readStdinFrame(QJsonObject* out) {
-    char header[4];
-    if (!stdinReadExact(header, 4)) {
+    char header[kNativeFrameHeaderBytes];
+    if (!stdinReadExact(header, kNativeFrameHeaderBytes)) {
         return false;
     }
-    if (parseFrame(QByteArray(header, 4)).status == NativeFrame::Status::Error) {
+    if (parseFrame(QByteArray(header, kNativeFrameHeaderBytes)).status ==
+        NativeFrame::Status::Error) {
         return false;
     }
     const DWORD length = qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(header));
@@ -133,7 +140,7 @@ bool writeStdoutFrame(const QJsonObject& message) {
     // Chrome terminates a native host that emits a host->browser frame over 1 MiB.
     // Refuse to write an oversized frame (report failure so relayPumpOnce tears the
     // pipe down) rather than letting Chrome kill the host mid-stream.
-    if (frame.size() - 4 > kMaxHostToBrowserBytes) {
+    if (frame.size() - kNativeFrameHeaderBytes > kMaxHostToBrowserBytes) {
         return false;
     }
     const size_t wrote =
@@ -147,11 +154,12 @@ bool writeStdoutFrame(const QJsonObject& message) {
 }  // namespace
 
 bool relayReadPipeFrame(HANDLE pipe, QJsonObject* out) {
-    char header[4];
-    if (!pipeReadExact(pipe, header, 4)) {
+    char header[kNativeFrameHeaderBytes];
+    if (!pipeReadExact(pipe, header, kNativeFrameHeaderBytes)) {
         return false;
     }
-    if (parseFrame(QByteArray(header, 4)).status == NativeFrame::Status::Error) {
+    if (parseFrame(QByteArray(header, kNativeFrameHeaderBytes)).status ==
+        NativeFrame::Status::Error) {
         return false;
     }
     const DWORD length = qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(header));
@@ -285,7 +293,7 @@ bool awaitBrowserReply(HANDLE pipe,
             pipe_ok = false;  // the server went away; stop watching and let the read finish
             break;
         }
-        if (available < 4) {
+        if (available < kNativeFrameHeaderBytes) {
             Sleep(kCancelPollMs);
             continue;
         }

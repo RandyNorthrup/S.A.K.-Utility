@@ -269,6 +269,14 @@ static constexpr int kBlockTrailerSizeAnsi = 12;
 /// On-disk blocks (non-4k) are padded so data+trailer rounds up to this boundary.
 static constexpr int kBlockAlignment = 64;
 
+/// Bits shifted out of the CRC register per input byte, and the low-byte mask that
+/// indexes the CRC lookup table (MS-PST reflected CRC-32 update step).
+static constexpr int kBitsPerByte = 8;
+static constexpr uint32_t kByteMask = 0xFFu;
+/// WORD size (bits) and mask used by MS-PST ComputeSig to fold a 32-bit value.
+static constexpr int kBitsPerWord = 16;
+static constexpr uint32_t kWordMask = 0xFFFFu;
+
 // MS-PST 2.2.2.7.1 / 2.2.2.8.1: 32-bit "weak" CRC. Standard reflected CRC-32
 // lookup table (poly 0xEDB88320) with initial value 0 and NO final inversion --
 // this differs from ISO 3309 CRC-32, which pre/post-inverts with 0xFFFFFFFF.
@@ -295,7 +303,7 @@ static bool msPstWeakCrc(const QByteArray& data, int offset, int len, uint32_t& 
     uint32_t crc = 0;
     const auto* bytes = reinterpret_cast<const uint8_t*>(data.constData()) + offset;
     for (int i = 0; i < len; ++i) {
-        crc = (crc >> 8) ^ kTable[(crc ^ bytes[i]) & 0xFFu];
+        crc = (crc >> kBitsPerByte) ^ kTable[(crc ^ bytes[i]) & kByteMask];
     }
     out = crc;
     return true;
@@ -309,7 +317,7 @@ static bool msPstWeakCrc(const QByteArray& data, int offset, int len, uint32_t& 
 // with its declared BID.
 static uint16_t msPstComputeSig(uint64_t ib, uint64_t bid) {
     const uint64_t value = ib ^ bid;
-    return static_cast<uint16_t>(((value >> 16) ^ value) & 0xFFFFu);
+    return static_cast<uint16_t>(((value >> kBitsPerWord) ^ value) & kWordMask);
 }
 
 // MS-OXCMSG: PR_SUBJECT may begin with a prefix marker (U+0001) followed by

@@ -71,6 +71,7 @@ namespace {
 // segment activates \server\... on the current drive, not the network path.
 QVector<FileExplorerBreadcrumb::Segment> splitUncSegments(const QString& path) {
     using Segment = FileExplorerBreadcrumb::Segment;
+    constexpr int kFirstUncPathSegmentIndex = 2;
     QVector<Segment> segments;
     const QString normalized = QString(path).replace(QLatin1Char('\\'), QLatin1Char('/'));
     const QStringList parts = normalized.mid(2).split(QLatin1Char('/'), Qt::SkipEmptyParts);
@@ -86,7 +87,7 @@ QVector<FileExplorerBreadcrumb::Segment> splitUncSegments(const QString& path) {
     accumulated += QLatin1Char('\\') + parts.at(1);
     segments.append(
         Segment{QStringLiteral("\\\\%1\\%2").arg(parts.at(0), parts.at(1)), accumulated});
-    for (int i = 2; i < parts.size(); ++i) {
+    for (int i = kFirstUncPathSegmentIndex; i < parts.size(); ++i) {
         accumulated += QLatin1Char('\\') + parts.at(i);
         segments.append(Segment{parts.at(i), accumulated});
     }

@@ -26,12 +26,16 @@ namespace sak {
 namespace {
 
 #ifdef _WIN32
+// The 32-bit ULONG ceiling BCrypt one-shot length parameters cannot exceed. 0xFFFFFFFF ==
+// ULONG_MAX.
+constexpr quint64 kBcryptMaxLengthBytes = 0xFF'FF'FF'FFULL;
+
 /// @brief Guard against silent 32-bit truncation of a length. BCrypt's one-shot length
 /// parameters are ULONG (32-bit); a QByteArray larger than that would narrow to its low 32
 /// bits, so the cipher/HMAC would cover only a prefix while still reporting success. Any
 /// over-size input must fail closed instead. 0xFFFFFFFF == ULONG_MAX.
 bool bcrypt_length_ok(qsizetype n) {
-    return static_cast<quint64>(n) <= 0xFF'FF'FF'FFULL;
+    return static_cast<quint64>(n) <= kBcryptMaxLengthBytes;
 }
 
 /// @brief Generate cryptographic random bytes
@@ -351,10 +355,13 @@ bool constant_time_equal(const QByteArray& a, const QByteArray& b) {
 // iterations 100000) sit far inside these.
 constexpr int kMaxEncryptionSaltBytes = 1024;
 constexpr int kMaxPbkdf2Iterations = 100'000'000;
+// A salt shorter than this offers too little collision resistance to derive keys from.
+constexpr int kMinEncryptionSaltBytes = 8;
 
 bool valid_encryption_params(const EncryptionParams& params) {
     const bool aes_key = params.key_size == 16 || params.key_size == 24 || params.key_size == 32;
-    return aes_key && params.iv_size == kAesBlockBytes && params.salt_size >= 8 &&
+    return aes_key && params.iv_size == kAesBlockBytes &&
+           params.salt_size >= kMinEncryptionSaltBytes &&
            params.salt_size <= kMaxEncryptionSaltBytes && params.iterations > 0 &&
            params.iterations <= kMaxPbkdf2Iterations;
 }

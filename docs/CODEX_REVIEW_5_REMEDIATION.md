@@ -2284,7 +2284,7 @@ These gate scripts are committed to the repository but appear in neither
 This is the same failure mode as clang-tidy: a gate that exists on disk reads as
 coverage but provides none.
 
-- [ ] **R5-G8-1** run scripts/check_magic_numbers.py (magic-number literals in C++), fix every finding, then wire it into pre-commit and CI
+- [x] **R5-G8-1** run scripts/check_magic_numbers.py (magic-number literals in C++), fix every finding, then wire it into pre-commit and CI -- DONE (hook 6f wired): all 497 literals named across ~90 files (wave 1 hand + wave 2 12-agent workflow); the lzbitmap/lzvn/lzfse + resource-fork codecs joined the on-disk-format exemption
 - [x] **R5-G8-2** run scripts/check_gui_magic_numbers.ps1 (magic numbers in GUI code), fix every finding, then wire it into pre-commit and CI -- DONE: 18 raw literals folded into sak::ui margin/spacing tokens + per-file Files-xaml metric constants; hook 6d wired
 - [x] **R5-G8-3** run scripts/check_gui_style_tokens.ps1 (GUI style-token compliance), fix every finding, then wire it into pre-commit and CI -- DONE (2bee958): the lone residual was a QColor::rgba() method read, not a raw token; matcher fixed, hook 6c wired
 - [x] **R5-G8-4** run scripts/check_gui_stylesheet_literals.ps1 (inline stylesheet literals that override the root QSS), fix every finding, then wire it into pre-commit and CI -- DONE (f4dd100): 70 explorer QSS templates -> include/sak/file_explorer_style_constants.h, rich-text wrapper -> rich_text_constants.h, 2 prose false-positives fixed by requiring a real ;-terminated declaration; hook 6e wired
@@ -2311,7 +2311,7 @@ not estimates. Enterprise target: every gate green, no suppression, no exclusion
 
 | Gate | Result | Violations |
 |---|---|---|
-| check_magic_numbers.py | FAIL | 497 (was 452; new code since) |
+| check_magic_numbers.py | PASS (wired hook 6f) | 0 (was 497) |
 | check_gui_stylesheet_literals.ps1 | PASS (wired hook 6e) | 0 (was 74) |
 | check_gui_magic_numbers.ps1 | PASS (wired hook 6d) | 0 (was 18) |
 | check_blocking_patterns.ps1 | PASS (wired hook 6b) | 0 (was 10) |
@@ -2323,7 +2323,7 @@ Original measured style and quality debt: 556 violations.
 Remaining after this campaign: 452 (magic_numbers.py) + 73 (stylesheet_literals)
 + 2 (accessibility) = 527; the 29 GUI-token/blocking violations are cleared and wired.
 
-- [ ] R5-G9-1 452 magic-number literals -> named constants
+- [x] R5-G9-1 497 magic-number literals -> named constants (DONE, hook 6f wired)
 - [x] R5-G9-2 74 raw stylesheet literals -> a style-constants header (DONE, hook 6e wired):
       the 70 in file_explorer_style.cpp became file_explorer_style_constants.h
 - [x] R5-G9-3 18 raw GUI layout/sizing literals -> layout tokens (DONE, hook 6d wired)

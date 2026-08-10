@@ -10994,6 +10994,9 @@ void PartitionManagerPanel::onCloneDisk() {
 
 namespace {
 
+// A drive-letter designator ("X:") is a letter followed by a colon: two characters.
+constexpr qsizetype kDriveLetterColonLength = 2;
+
 // A custom raw clone target ("\\.\D:" or "\\.\PhysicalDriveN") is typed free-form and skips
 // the region-target size/safety gates. Resolve it against the inventory and return a blocker
 // string if it names a protected system volume/disk or is smaller than the source.
@@ -11054,7 +11057,8 @@ namespace {
         return {};  // image file target: covered by the image size checks elsewhere
     }
     const QString rest = trimmed.mid(prefix.size());
-    if (rest.size() == 2 && rest.at(0).isLetter() && rest.at(1) == QLatin1Char(':')) {
+    if (rest.size() == kDriveLetterColonLength && rest.at(0).isLetter() &&
+        rest.at(1) == QLatin1Char(':')) {
         return customRawVolumeBlocker(inventory, rest.left(1).toUpper(), trimmed, sourceSize);
     }
     const QString diskToken = QStringLiteral("PhysicalDrive");
@@ -11161,7 +11165,7 @@ namespace {
                                       uint32_t diskNumber) {
     const QString root = QStorageInfo(path).rootPath();
     const QString source = root.isEmpty() ? QFileInfo(path).absoluteFilePath() : root;
-    if (source.size() < 2 || source.at(1) != QLatin1Char(':')) {
+    if (source.size() < kDriveLetterColonLength || source.at(1) != QLatin1Char(':')) {
         return false;  // UNC / unmapped path: cannot attribute to a local disk here
     }
     const QString letter = source.left(1).toUpper();

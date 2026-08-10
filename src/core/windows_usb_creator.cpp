@@ -247,17 +247,24 @@ bool parseTriBool(const QString& field, bool* value) {
 // size, or an empty UniqueId, so a short/malformed row can never be read as "not
 // boot/system, safe to erase".
 bool parseDiskSafetyRow(const QString& out, DiskSafetyRow& row) {
+    constexpr int kDiskSafetyFieldCount = 5;
+    constexpr int kFieldIsBoot = 0;
+    constexpr int kFieldIsSystem = 1;
+    constexpr int kFieldIsReadOnly = 2;
+    constexpr int kFieldSizeBytes = 3;
+    constexpr int kFieldUniqueId = 4;
     const QStringList parts = out.split(QLatin1Char('|'));
-    if (parts.size() != 5) {
+    if (parts.size() != kDiskSafetyFieldCount) {
         return false;
     }
-    if (!parseTriBool(parts.at(0), &row.isBoot) || !parseTriBool(parts.at(1), &row.isSystem) ||
-        !parseTriBool(parts.at(2), &row.isReadOnly)) {
+    if (!parseTriBool(parts.at(kFieldIsBoot), &row.isBoot) ||
+        !parseTriBool(parts.at(kFieldIsSystem), &row.isSystem) ||
+        !parseTriBool(parts.at(kFieldIsReadOnly), &row.isReadOnly)) {
         return false;
     }
     bool sizeOk = false;
-    row.sizeBytes = parts.at(3).trimmed().toLongLong(&sizeOk);
-    row.uniqueId = parts.at(4).trimmed();
+    row.sizeBytes = parts.at(kFieldSizeBytes).trimmed().toLongLong(&sizeOk);
+    row.uniqueId = parts.at(kFieldUniqueId).trimmed();
     return sizeOk && row.sizeBytes > 0 && !row.uniqueId.isEmpty();
 }
 

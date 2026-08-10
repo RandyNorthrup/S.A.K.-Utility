@@ -41,11 +41,13 @@ constexpr uint64_t kPropertiesHashMaxBytes = 512ULL * 1024 * 1024;
 // Tree-size walk bounds, shared spirit with the bridge directory walks.
 constexpr int kSizeWalkMaxDepth = 32;
 constexpr int kSizeWalkMaxEntriesPerDirectory = 10'000;
+constexpr int kCrc32HexDigits = 8;  // a 32-bit CRC prints as eight hex digits
+constexpr int kHexBase = 16;        // base for the arg() hex formatting
 
 QString crc32Hex(const QByteArray& data) {
     const auto value = static_cast<quint32>(crc32(
         0L, reinterpret_cast<const Bytef*>(data.constData()), static_cast<uInt>(data.size())));
-    return QStringLiteral("%1").arg(value, 8, 16, QLatin1Char('0'));
+    return QStringLiteral("%1").arg(value, kCrc32HexDigits, kHexBase, QLatin1Char('0'));
 }
 
 // True once the shared cancel flag has been set (dialog closing). Cheap wrapper

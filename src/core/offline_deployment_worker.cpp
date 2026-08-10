@@ -39,6 +39,7 @@ namespace sak {
 
 namespace {
 constexpr qsizetype kInstallErrorPreviewChars = 200;
+constexpr int kFirstPrintableAscii = 0x20;  // bytes below space are C0 controls
 
 /// @brief Manifest-facing view of an engine OfflineReadiness classification.
 struct OfflineReadinessInfo {
@@ -155,7 +156,7 @@ bool writeDownloadedBody(const QString& output_path, const QByteArray& body) {
 bool hasWindowsFilenameHazard(const QString& base) {
     static const QString kReservedChars = QStringLiteral("<>:\"|?*");
     for (const QChar ch : base) {
-        if (ch.unicode() < 0x20 || kReservedChars.contains(ch)) {
+        if (ch.unicode() < kFirstPrintableAscii || kReservedChars.contains(ch)) {
             return true;
         }
     }
@@ -199,7 +200,7 @@ bool OfflineDeploymentWorker::isSafeInstallToken(const QString& token) {
         return false;
     }
     for (const QChar c : token) {
-        if (c.isSpace() || c.unicode() < 0x20) {
+        if (c.isSpace() || c.unicode() < kFirstPrintableAscii) {
             return false;
         }
     }

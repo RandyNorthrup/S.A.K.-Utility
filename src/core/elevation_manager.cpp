@@ -45,11 +45,11 @@ void appendQuotedArg(std::wstring& out, const std::wstring& arg) {
             ++slashes;
         }
         if (it == arg.end()) {
-            out.append(slashes * 2, L'\\');
+            out.append(slashes + slashes, L'\\');
             break;
         }
         if (*it == L'\"') {
-            out.append(slashes * 2 + 1, L'\\');
+            out.append(slashes + slashes + 1, L'\\');
         } else {
             out.append(slashes, L'\\');
         }

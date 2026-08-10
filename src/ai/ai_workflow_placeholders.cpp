@@ -20,6 +20,10 @@ namespace {
 // 2^63: the first double above the qint64 range (and exactly representable).
 constexpr double kTwoPow63 = 9223372036854775808.0;
 
+// A backtick escape or a doubled quote ('' or "") is a two-character lexical unit; the scanner
+// consumes both characters at once and advances past the pair.
+constexpr qsizetype kTwoCharSequenceLength = 2;
+
 QString scalarJsonValueToString(const QJsonValue& value) {
     if (value.isString()) {
         return value.toString().trimmed();
@@ -141,7 +145,8 @@ qsizetype scanCodeCharacter(const QString& text,
     const QChar ch = text.at(index);
     const QChar next = characterAt(text, index + 1);
     if (ch == QLatin1Char('`')) {
-        return 2;  // escapes the next character, so that character is never a delimiter
+        return kTwoCharSequenceLength;  // escapes the next character, so that character is never a
+                                        // delimiter
     }
     if (ch == QLatin1Char('#') || (ch == QLatin1Char('<') && next == QLatin1Char('#'))) {
         *blocking_construct = QStringLiteral("a comment");
@@ -168,7 +173,7 @@ qsizetype scanSingleQuotedCharacter(const QString& text,
         return 1;
     }
     if (characterAt(text, index + 1) == QLatin1Char('\'')) {
-        return 2;
+        return kTwoCharSequenceLength;
     }
     *state = PowerShellScanState::Code;
     return 1;
@@ -183,7 +188,7 @@ qsizetype scanDoubleQuotedCharacter(const QString& text,
     const QChar ch = text.at(index);
     const QChar next = characterAt(text, index + 1);
     if (ch == QLatin1Char('`')) {
-        return 2;
+        return kTwoCharSequenceLength;
     }
     if (ch == QLatin1Char('$') && next == QLatin1Char('(')) {
         *blocking_construct = QStringLiteral("a $( ) subexpression inside a double-quoted string");
@@ -193,7 +198,7 @@ qsizetype scanDoubleQuotedCharacter(const QString& text,
         return 1;
     }
     if (next == QLatin1Char('"')) {
-        return 2;
+        return kTwoCharSequenceLength;
     }
     *state = PowerShellScanState::Code;
     return 1;

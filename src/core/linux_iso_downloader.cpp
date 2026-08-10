@@ -40,6 +40,11 @@ constexpr int kAria2cTotalCaptureGroup = 2;
 constexpr int kAria2cPercentCaptureGroup = 3;
 constexpr int kAria2cSpeedCaptureGroup = 4;
 constexpr int kChecksumRecordMinimumParts = 2;
+// Capture-group indices of the BSD-style checksum record regex
+// "^([A-Za-z0-9-]+)\\s*\\(([^)]+)\\)\\s*=\\s*(\\S+)$": group 1 is the algorithm,
+// group 2 the filename, group 3 the digest.
+constexpr int kBsdRecordFileNameGroup = 2;
+constexpr int kBsdRecordDigestGroup = 3;
 constexpr qsizetype kSha256HexLength = 64;
 constexpr qsizetype kSha1HexLength = 40;
 constexpr int kChecksumComputingProgress = 97;
@@ -572,10 +577,11 @@ QString LinuxISODownloader::bsdRecordDigest(const QString& line,
     QString wantedAlgorithm = algorithm.toUpper();
     lineAlgorithm.remove(QLatin1Char('-'));
     wantedAlgorithm.remove(QLatin1Char('-'));
-    if (lineAlgorithm != wantedAlgorithm || match.captured(2) != expectedFileName) {
+    if (lineAlgorithm != wantedAlgorithm ||
+        match.captured(kBsdRecordFileNameGroup) != expectedFileName) {
         return {};
     }
-    const QString digest = match.captured(3);
+    const QString digest = match.captured(kBsdRecordDigestGroup);
     return isHexDigestOfLength(digest, hex_length) ? digest.toLower() : QString();
 }
 

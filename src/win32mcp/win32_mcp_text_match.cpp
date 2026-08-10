@@ -13,6 +13,12 @@ namespace sak::win32mcp {
 
 namespace {
 
+// Match strength when every token is a whole-word match (vs. 1 for a substring match).
+constexpr int kWholeWordStrength = 2;
+// Weight applied to match strength so a stronger match always outranks a weaker one before
+// the extra-words tie-breaker is subtracted.
+constexpr int kStrengthScoreWeight = 100'000;
+
 // Lowercase a word and strip leading/trailing non-alphanumerics so OCR punctuation ("Continue:",
 // "cookies,") does not defeat a whole-word comparison.
 QString normWord(const QString& raw) {
@@ -38,7 +44,7 @@ int runMatch(
     int y0 = hits[i].y;
     int x1 = hits[i].x + hits[i].w;
     int y1 = hits[i].y + hits[i].h;
-    int strength = 2;
+    int strength = kWholeWordStrength;
     QStringList joined;
     for (int t = 0; t < tokens.size(); ++t) {
         const WordHit& h = hits[i + t];
@@ -91,7 +97,7 @@ QVector<TextMatch> locateText(const QVector<WordHit>& hits, const QString& query
             continue;
         }
         const int extra = line_words.value(m.line, tk) - tk;  // other words sharing the line
-        m.score = strength * 100'000 - extra;
+        m.score = strength * kStrengthScoreWeight - extra;
         out.append(m);
     }
     std::stable_sort(out.begin(), out.end(), [](const TextMatch& a, const TextMatch& b) {

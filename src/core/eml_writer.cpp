@@ -29,6 +29,11 @@ constexpr qsizetype kEmlInitialReserveBytes = 4096;
 constexpr qsizetype kMimeBase64LineLength = 76;
 constexpr ushort kAsciiMaxCodePoint = 0x7F;
 constexpr int kBoundaryAttempts = 8;
+// Byte length of a CRLF ("\r\n") line terminator; reserve slack for the final wrapped line.
+constexpr qsizetype kCrlfLength = 2;
+// First code point that is not a C0 control character (space, U+0020); characters below it are
+// dropped from a header value.
+constexpr ushort kFirstNonControlCodePoint = 0x20;
 
 // True when any character is outside 7-bit ASCII (needs RFC 2047 header encoding).
 bool hasNonAscii(const QString& value) {
@@ -42,7 +47,7 @@ bool hasNonAscii(const QString& value) {
 QByteArray base64Wrapped(const QByteArray& data) {
     const QByteArray b64 = data.toBase64();
     QByteArray out;
-    out.reserve(b64.size() + b64.size() / kMimeBase64LineLength + 2);
+    out.reserve(b64.size() + b64.size() / kMimeBase64LineLength + kCrlfLength);
     for (qsizetype i = 0; i < b64.size(); i += kMimeBase64LineLength) {
         out.append(b64.mid(i, kMimeBase64LineLength));
         out.append("\r\n");
@@ -69,7 +74,7 @@ QString sanitizeHeaderValue(const QString& value) {
     for (const QChar ch : value) {
         if (ch == QLatin1Char('\r') || ch == QLatin1Char('\n') || ch == QLatin1Char('\t')) {
             out.append(QLatin1Char(' '));
-        } else if (ch.unicode() >= 0x20) {
+        } else if (ch.unicode() >= kFirstNonControlCodePoint) {
             out.append(ch);
         }
         // else: drop other C0 control characters

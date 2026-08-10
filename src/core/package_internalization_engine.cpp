@@ -32,13 +32,25 @@
 namespace sak {
 
 namespace {
+// Version metadata is a small feed document; cap the buffered body at 32 MiB so a
+// hostile endpoint cannot exhaust memory while parsing the feed.
+constexpr qint64 kMaxVersionResponseBytes = 32LL * 1024 * 1024;
+// Hex-string lengths of the supported digest algorithms (two hex chars per byte).
+constexpr int kMd5HexLength = 32;
+constexpr int kSha1HexLength = 40;
+constexpr int kSha256HexLength = 64;
+constexpr int kSha512HexLength = 128;
+// Code units below this are C0 control characters and are rejected in a path
+// component (U+0000..U+001F).
+constexpr char16_t kFirstNonControlCodeUnit = 0x20;
+
 NetworkTransferRequest makeVersionRequest(const QUrl& url) {
     NetworkTransferRequest request;
     request.url = url;
     request.timeout_ms = offline::kApiRequestTimeoutMs;
     // Version metadata is a small feed document; cap the buffer so a hostile endpoint
     // cannot exhaust memory here (B9-19). Binary downloads are left uncapped.
-    request.max_response_bytes = 32LL * 1024 * 1024;
+    request.max_response_bytes = kMaxVersionResponseBytes;
     request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
                                                              QByteArrayLiteral("SAK-Utility/1.0")});
     request.raw_headers.append(QPair<QByteArray, QByteArray>{
@@ -99,13 +111,13 @@ std::optional<QCryptographicHash::Algorithm> hashAlgorithmByName(const QString& 
 
 std::optional<QCryptographicHash::Algorithm> hashAlgorithmByHexLength(int hex_len) {
     switch (hex_len) {
-    case 32:
+    case kMd5HexLength:
         return QCryptographicHash::Md5;
-    case 40:
+    case kSha1HexLength:
         return QCryptographicHash::Sha1;
-    case 64:
+    case kSha256HexLength:
         return QCryptographicHash::Sha256;
-    case 128:
+    case kSha512HexLength:
         return QCryptographicHash::Sha512;
     default:
         return std::nullopt;
@@ -395,7 +407,7 @@ bool PackageInternalizationEngine::isSafePackageComponent(const QString& compone
     // (< > " | ? *) plus control characters are all rejected.
     static const QString kForbidden = QStringLiteral("/\\:<>\"|?*");
     for (const QChar c : component) {
-        if (kForbidden.contains(c) || c.unicode() < 0x20) {
+        if (kForbidden.contains(c) || c.unicode() < kFirstNonControlCodeUnit) {
             return false;
         }
     }

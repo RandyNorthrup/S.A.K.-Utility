@@ -87,6 +87,14 @@ constexpr int kMaxExportItems = 5000;
 // before a single message is written; larger stores use the GUI. (Matches email.read_pst's cap.)
 constexpr qint64 kMaxPstExportBytes = 2LL * 1024 * 1024 * 1024;
 
+// A PST/OST message node id (NID) is an unsigned 32-bit value (0 .. 0xFFFFFFFF). It is
+// range-checked as a double because a NID can exceed INT_MAX yet is still exactly representable as
+// a double.
+constexpr double kMaxPstNodeId = 4294967295.0;
+
+// Number base for formatting/parsing hexadecimal values (e.g. QString::number(x, kHexBase)).
+constexpr int kHexBase = 16;
+
 // Map the model-facing format string to the MBOX-capable ExportFormat set. MBOX
 // export only supports per-message file formats (eml/html/text/pdf); the CSV / VCF /
 // ICS formats are PST-only, so they are intentionally not offered here.
@@ -431,7 +439,7 @@ std::optional<AppActionResult> pstExportItemIdsFromArgs(const QJsonObject& args,
         // Fail CLOSED on a wrong-typed, negative, fractional, NaN/inf, or out-of-range NID: a
         // silently-dropped entry could collapse the set to empty and widen the export to the whole
         // store. NIDs are 32-bit whole numbers (0 .. 0xFFFFFFFF).
-        if (!(raw_id >= 0.0) || raw_id > 4294967295.0 || std::isinf(raw_id) ||
+        if (!(raw_id >= 0.0) || raw_id > kMaxPstNodeId || std::isinf(raw_id) ||
             std::floor(raw_id) != raw_id) {
             return AppActionResult{false,
                                    QStringLiteral(
@@ -876,7 +884,7 @@ quint64 parsePstNodeIdArg(const QJsonValue& value, bool& ok) {
         return 0;
     }
     const double raw = value.toDouble(-1.0);
-    if (!(raw >= 0.0) || raw > 4294967295.0) {  // NaN-safe; 0 .. 0xFFFFFFFF
+    if (!(raw >= 0.0) || raw > kMaxPstNodeId) {  // NaN-safe; 0 .. 0xFFFFFFFF
         return 0;
     }
     ok = true;
@@ -955,13 +963,14 @@ AppActionResult savePstAttachments(const QJsonObject& args) {
     if (!metas) {
         return {false,
                 QStringLiteral("Could not read attachments for node 0x%1 in %2")
-                    .arg(node_id, 0, 16)
+                    .arg(node_id, 0, kHexBase)
                     .arg(path),
                 {}};
     }
     if (metas->isEmpty()) {
         return {false,
-                QStringLiteral("Message node 0x%1 has no attachments to save").arg(node_id, 0, 16),
+                QStringLiteral("Message node 0x%1 has no attachments to save")
+                    .arg(node_id, 0, kHexBase),
                 {}};
     }
 
@@ -1382,9 +1391,10 @@ constexpr qint64 kMaxRecoverImageBytes = 512LL * 1024 * 1024;  // cap the double
 // Reduce a model-supplied extension to a safe [a-z0-9]{1,8} token (default "bin"), so the derived
 // output name can never contain a path separator, "..", drive letter, or other traversal.
 QString sanitizeRecoverExtension(const QString& raw) {
+    constexpr int kMaxSanitizedExtLength = 8;  // [a-z0-9]{1,8} token
     QString ext;
     for (const QChar c : raw) {
-        if (ext.size() >= 8) {
+        if (ext.size() >= kMaxSanitizedExtLength) {
             break;
         }
         if (c.isLetterOrNumber()) {
@@ -1396,8 +1406,10 @@ QString sanitizeRecoverExtension(const QString& raw) {
 
 // Build the safe, fully-derived output basename for a recovered file.
 QString recoveredBaseName(quint64 offset, const QString& safe_ext) {
+    constexpr int kOffsetHexDigits = 16;  // a quint64 byte offset is 16 hex digits wide
     return QStringLiteral("recovered_%1.%2")
-        .arg(QString::number(offset, 16).rightJustified(16, QLatin1Char('0')), safe_ext);
+        .arg(QString::number(offset, kHexBase).rightJustified(kOffsetHexDigits, QLatin1Char('0')),
+             safe_ext);
 }
 
 // Executable / auto-run extensions a headless write must never emit. restore_recoverable writes
@@ -1486,6 +1498,10 @@ std::optional<AppActionResult> parseRecoverCandidates(const QJsonArray& raw,
     return std::nullopt;
 }
 
+// Maximum entries copied from a variable-length result list into a model-facing JSON array, so a
+// large list cannot bloat the tool result.
+constexpr int kMaxReportedListEntries = 50;
+
 // Copy up to max strings into a JSON array (bounds the model-facing list).
 QJsonArray jsonStringArrayCapped(const QStringList& values, int max) {
     QJsonArray out;
@@ -1532,7 +1548,8 @@ AppActionResult buildRestoreResult(const sak::FileRecoveryRestoreResult& res,
                      {QStringLiteral("source_hash_covered_whole"), res.source_hash_covered_whole},
                      {QStringLiteral("restored_paths"),
                       jsonStringArrayCapped(res.restored_paths, kMaxRestoreCandidates)},
-                     {QStringLiteral("warnings"), jsonStringArrayCapped(res.warnings, 50)}};
+                     {QStringLiteral("warnings"),
+                      jsonStringArrayCapped(res.warnings, kMaxReportedListEntries)}};
     if (restored > 0 && res.source_opened_read_only && res.source_not_mutated &&
         res.source_hash_covered_whole) {
         return {true,
@@ -2103,8 +2120,12 @@ using AddMutatingActionFn = std::function<void(const AppActionDescriptor&, AppAc
 // satisfy CleanupWorker's Q_ASSERT(!x.isEmpty()) preconditions.
 
 constexpr int kMaxCleanupItems = 500;
-constexpr int kCleanupTimeoutMs = 10 * 60 *
-                                  1000;  // ceiling above many ~10s sc/schtasks/netsh calls
+constexpr int kCleanupTimeoutMinutes = 10;
+constexpr int kSecondsPerMinute = 60;
+constexpr int kMillisecondsPerSecond = 1000;
+// ceiling above many ~10s sc/schtasks/netsh calls
+constexpr int kCleanupTimeoutMs = kCleanupTimeoutMinutes * kSecondsPerMinute *
+                                  kMillisecondsPerSecond;
 
 // Truncate a path/name to a bounded single line for reporting (clampLine is file-local to the
 // read-only module; this is the mutating module's own small equivalent).
@@ -2174,16 +2195,17 @@ struct CleanupTally {
 // the cleaned count.
 AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
     const bool ok = tally.failed == 0;
-    QJsonObject data{
-        {QStringLiteral("items_total"), items_total},
-        {QStringLiteral("succeeded"), tally.succeeded},
-        {QStringLiteral("failed"), tally.failed},
-        {QStringLiteral("reboot_pending_count"), tally.reboot_paths.size()},
-        {QStringLiteral("reboot_pending"), jsonStringArrayCapped(tally.reboot_paths, 50)},
-        {QStringLiteral("permanently_deleted_count"), tally.recycle_fallback_paths.size()},
-        {QStringLiteral("permanently_deleted"),
-         jsonStringArrayCapped(tally.recycle_fallback_paths, 50)},
-        {QStringLiteral("items"), tally.per_item}};
+    QJsonObject data{{QStringLiteral("items_total"), items_total},
+                     {QStringLiteral("succeeded"), tally.succeeded},
+                     {QStringLiteral("failed"), tally.failed},
+                     {QStringLiteral("reboot_pending_count"), tally.reboot_paths.size()},
+                     {QStringLiteral("reboot_pending"),
+                      jsonStringArrayCapped(tally.reboot_paths, kMaxReportedListEntries)},
+                     {QStringLiteral("permanently_deleted_count"),
+                      tally.recycle_fallback_paths.size()},
+                     {QStringLiteral("permanently_deleted"),
+                      jsonStringArrayCapped(tally.recycle_fallback_paths, kMaxReportedListEntries)},
+                     {QStringLiteral("items"), tally.per_item}};
     QString message =
         ok ? QStringLiteral("Cleaned %1 leftover item(s)").arg(tally.succeeded)
            : QStringLiteral("Cleaned %1 item(s); %2 failed").arg(tally.succeeded).arg(tally.failed);
@@ -2302,6 +2324,11 @@ void collectCleanupItems(const QJsonArray& items_arr,
     }
 }
 
+// How many list items to inline into a human-readable refusal MESSAGE preview.
+constexpr int kRefusalMessagePreviewCount = 10;
+// Cap on refusal-list entries surfaced in the model-facing JSON payload.
+constexpr int kMaxRefusalListEntries = 20;
+
 // Result for a batch blocked because items were not produced by a prior scan (proof-of-scan gate).
 AppActionResult provenanceRefusalResult(const QStringList& unscanned, int total) {
     return {
@@ -2315,8 +2342,9 @@ AppActionResult provenanceRefusalResult(const QStringList& unscanned, int total)
             "performed. %3")
             .arg(unscanned.size())
             .arg(total)
-            .arg(unscanned.mid(0, 10).join(QStringLiteral("; "))),
-        QJsonObject{{QStringLiteral("unscanned"), jsonStringArrayCapped(unscanned, 20)},
+            .arg(unscanned.mid(0, kRefusalMessagePreviewCount).join(QStringLiteral("; "))),
+        QJsonObject{{QStringLiteral("unscanned"),
+                     jsonStringArrayCapped(unscanned, kMaxRefusalListEntries)},
                     {QStringLiteral("hint"),
                      QStringLiteral("call software.scan_leftovers for this program first")}}};
 }
@@ -2377,8 +2405,9 @@ AppActionResult cleanLeftovers(const QJsonObject& args) {
                                "deletion performed. %3")
                     .arg(refusals.size())
                     .arg(items_arr.size())
-                    .arg(refusals.mid(0, 10).join(QStringLiteral("; "))),
-                QJsonObject{{QStringLiteral("refused"), jsonStringArrayCapped(refusals, 20)}}};
+                    .arg(refusals.mid(0, kRefusalMessagePreviewCount).join(QStringLiteral("; "))),
+                QJsonObject{{QStringLiteral("refused"),
+                             jsonStringArrayCapped(refusals, kMaxRefusalListEntries)}}};
     }
     if (!unscanned.isEmpty()) {
         return provenanceRefusalResult(unscanned, items_arr.size());
@@ -3217,7 +3246,8 @@ AppActionResult buildConvertResult(const OstConversionResult& result,
                      {QStringLiteral("folders_processed"), result.folders_processed},
                      {QStringLiteral("bytes_written"), static_cast<double>(result.bytes_written)},
                      {QStringLiteral("error_count"), static_cast<int>(result.errors.size())},
-                     {QStringLiteral("errors"), jsonStringArrayCapped(result.errors, 50)}};
+                     {QStringLiteral("errors"),
+                      jsonStringArrayCapped(result.errors, kMaxReportedListEntries)}};
     // Honest + export-aligned (buildExportResult): a run that WROTE files is a success even if some
     // non-fatal item errors were logged (a dropped attachment, one unreadable folder) -- those are
     // surfaced as warnings in the payload + message, NOT treated as total failure. Failure only
@@ -3623,6 +3653,9 @@ QJsonObject deleteToRecycleBinParamsSchema() {
 // Empty when the object cannot be opened (locked/raced/denied) or the name cannot be read, which
 // the caller treats as fail-closed.
 QString recycleFinalPathByHandle(const QString& path) {
+    constexpr int kFinalPathInitialChars = 1024;  // initial GetFinalPathNameByHandleW buffer
+    constexpr int kExtendedUncPrefixLength = 8;   // length of the "\\?\UNC\" prefix
+    constexpr int kExtendedPathPrefixLength = 4;  // length of the "\\?\" prefix
     const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()),
                                       FILE_READ_ATTRIBUTES,
                                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -3633,7 +3666,7 @@ QString recycleFinalPathByHandle(const QString& path) {
     if (handle == INVALID_HANDLE_VALUE) {
         return {};
     }
-    std::wstring buffer(1024, L'\0');
+    std::wstring buffer(kFinalPathInitialChars, L'\0');
     const DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
     DWORD length =
         GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
@@ -3648,10 +3681,10 @@ QString recycleFinalPathByHandle(const QString& path) {
     }
     QString resolved = QString::fromWCharArray(buffer.data(), static_cast<int>(length));
     if (resolved.startsWith(QStringLiteral("\\\\?\\UNC\\"))) {
-        return QStringLiteral("\\\\") + resolved.mid(8);
+        return QStringLiteral("\\\\") + resolved.mid(kExtendedUncPrefixLength);
     }
     if (resolved.startsWith(QStringLiteral("\\\\?\\"))) {
-        return resolved.mid(4);
+        return resolved.mid(kExtendedPathPrefixLength);
     }
     return resolved;
 }
@@ -3924,8 +3957,10 @@ bool isSafePackageFullName(const QString& name) {
     // inert inside a single-quoted PowerShell string. Reject anything else (quotes, spaces,
     // ';', backticks, '$', newlines) so the value can never break out of the -Package '<...>'
     // argument.
+    constexpr int kMaxPackageFullNameLength = 256;
     static const QRegularExpression kPackageRe(QStringLiteral("\\A[A-Za-z0-9][A-Za-z0-9._~-]*\\z"));
-    return !name.isEmpty() && name.size() <= 256 && kPackageRe.match(name).hasMatch();
+    return !name.isEmpty() && name.size() <= kMaxPackageFullNameLength &&
+           kPackageRe.match(name).hasMatch();
 }
 
 std::optional<AppActionResult> resolveWin32ProgramFromList(const QVector<ProgramInfo>& programs,

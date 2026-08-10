@@ -33,6 +33,13 @@ constexpr int kMaxScanNodes = 100'000;
 // Cap the page-controlled url/title that head the snapshot text.
 constexpr int kMaxUrlChars = 2048;
 constexpr int kMaxTitleChars = 300;
+// Largest backendNodeId still exactly representable as a double; a larger value
+// cannot be an exact integer id and is rejected.
+constexpr double kMaxExactIntegerDouble = 9.0e15;
+// Cap the page-derived input/slider value string rendered into the outline.
+constexpr int kMaxValueChars = 60;
+// Spaces of indentation rendered per outline depth level.
+constexpr int kSpacesPerIndentLevel = 2;
 
 // Collapse to a single line and length-cap an untrusted string. simplified() strips
 // newlines/tabs, which is what stops a hostile role/title/url from forging extra
@@ -63,7 +70,7 @@ bool asBackendId(const QJsonValue& value, qint64* out) {
         return false;
     }
     const double raw = value.toDouble();
-    if (raw < 1.0 || raw > 9.0e15) {  // stay within exact-integer double range
+    if (raw < 1.0 || raw > kMaxExactIntegerDouble) {  // stay within exact-integer double range
         return false;
     }
     const auto id = static_cast<qint64>(raw);
@@ -118,7 +125,7 @@ bool nodeIsRefWorthy(const QJsonObject& node, bool interactable) {
 // extra state flags in the outline.
 void appendValueFlags(const QJsonObject& node, QStringList& flags) {
     if (node.contains(QStringLiteral("value"))) {
-        QString value = oneLine(node.value(QStringLiteral("value")).toString(), 60);
+        QString value = oneLine(node.value(QStringLiteral("value")).toString(), kMaxValueChars);
         value.remove(QLatin1Char('(')).remove(QLatin1Char(')')).remove(QLatin1Char(','));
         if (!value.isEmpty()) {
             flags << QStringLiteral("value=") + value;
@@ -169,7 +176,8 @@ QString buildNodeLine(const QJsonObject& node, const QString& name, const QStrin
     if (role.isEmpty()) {
         role = QStringLiteral("generic");
     }
-    QString line = QString(depth * 2, QLatin1Char(' ')) + QStringLiteral("- ") + role;
+    QString line = QString(depth * kSpacesPerIndentLevel, QLatin1Char(' ')) + QStringLiteral("- ") +
+                   role;
     if (!name.isEmpty()) {
         line += QStringLiteral(" \"") + name + QLatin1Char('"');
     }

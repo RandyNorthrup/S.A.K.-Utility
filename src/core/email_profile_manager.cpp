@@ -61,6 +61,11 @@ private:
 };
 
 #ifdef Q_OS_WIN
+/// wchar_t capacity for the GetFinalPathNameByHandleW output buffer.
+constexpr int kFinalPathBufferChars = 4096;
+/// Length of the Win32 "\\?\" extended-length path prefix stripped from a resolved path.
+constexpr int kWin32ExtendedPrefixLength = 4;
+
 /// @brief Fully resolve an EXISTING path through every reparse point (junctions AND symlinks) to
 /// its real on-disk location, using GetFinalPathNameByHandleW. QFileInfo::canonicalFilePath does
 /// NOT follow directory junctions on Windows, so it cannot detect a junction-based escape. Returns
@@ -76,7 +81,7 @@ QString realCanonicalPath(const QString& path) {
     if (handle == INVALID_HANDLE_VALUE) {
         return {};
     }
-    std::vector<wchar_t> buffer(4096);
+    std::vector<wchar_t> buffer(kFinalPathBufferChars);
     const DWORD written = GetFinalPathNameByHandleW(
         handle, buffer.data(), static_cast<DWORD>(buffer.size()), FILE_NAME_NORMALIZED);
     CloseHandle(handle);
@@ -85,7 +90,7 @@ QString realCanonicalPath(const QString& path) {
     }
     QString result = QString::fromWCharArray(buffer.data(), static_cast<int>(written));
     if (result.startsWith(QStringLiteral("\\\\?\\"))) {
-        result = result.mid(4);
+        result = result.mid(kWin32ExtendedPrefixLength);
     }
     return QDir::fromNativeSeparators(result);
 }
@@ -105,6 +110,17 @@ constexpr qsizetype kMapiPropertyTypePrefixLength = 4;
 /// already depth-limited, but a very wide/hostile profile tree (or a tampered absolute
 /// profiles.ini Path) could otherwise grow the result vector without bound and exhaust memory.
 constexpr int kMaxThunderbirdDataFiles = 10'000;
+
+/// Length in bytes of the UTF-16LE byte-order mark (0xFF 0xFE) that reg.exe writes at the start
+/// of every export; also the offset past it to the first code unit.
+constexpr int kUtf16BomLength = 2;
+/// The two bytes, in file order, of the UTF-16LE byte-order mark.
+constexpr int kUtf16LeBomByte0 = 0xFF;
+constexpr int kUtf16LeBomByte1 = 0xFE;
+/// Bytes per UTF-16 code unit, to convert a payload byte count into a code-unit count.
+constexpr int kBytesPerUtf16CodeUnit = 2;
+/// Characters dropped from a "[...]" .reg key-section header: the leading '[' and trailing ']'.
+constexpr int kKeySectionBracketChars = 2;
 
 /// Resolve a manifest-supplied file name strictly inside `dir`. Returns the
 /// absolute path only when `name` is a bare basename (no directory component,
@@ -1075,10 +1091,12 @@ bool EmailProfileManager::exportRegistryKey(const QString& key_path, const QStri
 
 QString EmailProfileManager::decodeRegFile(const QByteArray& bytes) {
     // reg.exe export writes UTF-16LE with a BOM (0xFF 0xFE). Older REGEDIT4 files are ANSI.
-    if (bytes.size() >= 2 && static_cast<unsigned char>(bytes[0]) == 0xFF &&
-        static_cast<unsigned char>(bytes[1]) == 0xFE) {
-        return QString::fromUtf16(reinterpret_cast<const char16_t*>(bytes.constData() + 2),
-                                  (bytes.size() - 2) / 2);
+    if (bytes.size() >= kUtf16BomLength &&
+        static_cast<unsigned char>(bytes[0]) == kUtf16LeBomByte0 &&
+        static_cast<unsigned char>(bytes[1]) == kUtf16LeBomByte1) {
+        return QString::fromUtf16(reinterpret_cast<const char16_t*>(bytes.constData() +
+                                                                    kUtf16BomLength),
+                                  (bytes.size() - kUtf16BomLength) / kBytesPerUtf16CodeUnit);
     }
     return QString::fromUtf8(bytes);
 }
@@ -1108,7 +1126,7 @@ bool EmailProfileManager::regContentConfinedToEmailHives(const QString& reg_text
         if (!line.startsWith(QLatin1Char('[')) || !line.endsWith(QLatin1Char(']'))) {
             continue;
         }
-        QString key = line.mid(1, line.size() - 2).trimmed();
+        QString key = line.mid(1, line.size() - kKeySectionBracketChars).trimmed();
         if (key.startsWith(QLatin1Char('-'))) {
             // [-HKEY...] is a destructive key DELETION. A genuine `reg export` never emits one, so
             // a backup that contains it is crafted/corrupt: refuse the whole file rather than apply
@@ -1140,8 +1158,9 @@ bool EmailProfileManager::importRegistryKey(const QString& reg_file) {
     // (REGEDIT4/ANSI) file would be read as UTF-8 by decodeRegFile but as ANSI by reg.exe, and a
     // high-bit byte could hide a disallowed key from the scan that the import would still apply.
     // Our own exportRegistryKey never produces a non-BOM file, so this rejects only crafted input.
-    if (bytes.size() < 2 || static_cast<unsigned char>(bytes[0]) != 0xFF ||
-        static_cast<unsigned char>(bytes[1]) != 0xFE) {
+    if (bytes.size() < kUtf16BomLength ||
+        static_cast<unsigned char>(bytes[0]) != kUtf16LeBomByte0 ||
+        static_cast<unsigned char>(bytes[1]) != kUtf16LeBomByte1) {
         sak::logWarning("Refused .reg import (not UTF-16LE-with-BOM as reg.exe export writes): {}",
                         reg_file.toStdString());
         return false;

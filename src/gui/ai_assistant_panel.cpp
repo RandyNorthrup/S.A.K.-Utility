@@ -263,6 +263,13 @@ constexpr qint64 kTokenCompactMillion = 1'000'000;
 constexpr qint64 kTokenCompactThousand = 1000;
 constexpr double kContextUsageErrorRatio = 0.95;
 constexpr double kContextUsageWarningRatio = 0.80;
+// Highest context-pressure band (error). The warning band is level 1, no pressure is level 0.
+constexpr int kContextPressureErrorLevel = 2;
+// In a cleaned absolute path the drive-root separator sits at index 2 ("C:/"); a last-slash at
+// or before it means the walk has reached the drive root and must stop.
+constexpr qsizetype kDriveRootSlashIndex = 2;
+// Code points below this are C0 control characters, disallowed in a download file name.
+constexpr char16_t kUnsafeNameControlCharUpper = 0x20;
 constexpr int kArtifactCountDisplayLimit = 999;
 constexpr int kContextChipColumns = 2;
 constexpr int kContextItemTooltipMaxChars = 400;
@@ -2010,7 +2017,7 @@ QString offlineOutputLinkComponent(const QString& cleaned) {
             return probe;
         }
         const qsizetype slash = probe.lastIndexOf(QLatin1Char('/'));
-        if (slash <= 2) {
+        if (slash <= kDriveRootSlashIndex) {
             break;
         }
         probe.truncate(slash);
@@ -2103,7 +2110,8 @@ bool isUnsafeWindowsFileName(const QString& name) {
         return true;
     }
     for (const QChar character : name) {
-        if (character.unicode() < 0x20 || QStringLiteral("<>:\"/\\|?*").contains(character)) {
+        if (character.unicode() < kUnsafeNameControlCharUpper ||
+            QStringLiteral("<>:\"/\\|?*").contains(character)) {
             return true;
         }
     }
@@ -7453,13 +7461,31 @@ std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDes
     return std::nullopt;
 }
 
+// Code-point boundaries of characters that cannot be shown literally in a confirm dialog: C0/C1
+// controls (invisible) and bidi/format controls that silently reorder surrounding text.
+constexpr uint kC0ControlUpperExclusive = 0x20u;  // code < this => C0 control
+constexpr uint kC1ControlStart = 0x7fu;           // DEL and the C1 control block start
+constexpr uint kC1ControlEnd = 0x9fu;
+constexpr uint kZeroWidthFormatStart = 0x200bu;   // ZERO WIDTH SPACE .. RIGHT-TO-LEFT MARK
+constexpr uint kZeroWidthFormatEnd = 0x200fu;
+constexpr uint kBidiEmbeddingStart = 0x202au;  // LEFT-TO-RIGHT EMBEDDING .. RIGHT-TO-LEFT OVERRIDE
+constexpr uint kBidiEmbeddingEnd = 0x202eu;
+constexpr uint kBidiIsolateStart = 0x2066u;    // LEFT-TO-RIGHT ISOLATE .. POP DIRECTIONAL ISOLATE
+constexpr uint kBidiIsolateEnd = 0x2069u;
+constexpr uint kByteOrderMark = 0xfeffu;       // ZERO WIDTH NO-BREAK SPACE / BOM
+// Render a code point as a fixed-width four-hex-digit token, <U+XXXX>.
+constexpr int kCodePointHexWidth = 4;
+constexpr int kCodePointHexBase = 16;
+
 // True when a code point cannot be shown literally in a confirm dialog: an invisible C0/C1
 // control, or a bidi/format control that silently reorders the surrounding text.
 static bool requiresVisibleToken(uint code) {
-    const bool control = code < 0x20u || (code >= 0x7fu && code <= 0x9fu);
-    const bool bidi_or_format = (code >= 0x200bu && code <= 0x200fu) ||
-                                (code >= 0x202au && code <= 0x202eu) ||
-                                (code >= 0x2066u && code <= 0x2069u) || code == 0xfeffu;
+    const bool control = code < kC0ControlUpperExclusive ||
+                         (code >= kC1ControlStart && code <= kC1ControlEnd);
+    const bool bidi_or_format = (code >= kZeroWidthFormatStart && code <= kZeroWidthFormatEnd) ||
+                                (code >= kBidiEmbeddingStart && code <= kBidiEmbeddingEnd) ||
+                                (code >= kBidiIsolateStart && code <= kBidiIsolateEnd) ||
+                                code == kByteOrderMark;
     return control || bidi_or_format;
 }
 
@@ -7479,7 +7505,9 @@ static QString visibleControlTokens(const QString& raw) {
     for (const QChar character : raw) {
         const uint code = character.unicode();
         if (requiresVisibleToken(code)) {
-            out += QStringLiteral("<U+%1>").arg(code, 4, 16, QLatin1Char('0')).toUpper();
+            out += QStringLiteral("<U+%1>")
+                       .arg(code, kCodePointHexWidth, kCodePointHexBase, QLatin1Char('0'))
+                       .toUpper();
         } else {
             out += character;
         }
@@ -12651,7 +12679,7 @@ void AiAssistantPanel::notifyContextPressureIfCrossed() {
     const double ratio = currentContextUsageRatio();
     int level = 0;
     if (ratio >= kContextUsageErrorRatio) {
-        level = 2;
+        level = kContextPressureErrorLevel;
     } else if (ratio >= kContextUsageWarningRatio) {
         level = 1;
     }
@@ -12669,7 +12697,7 @@ void AiAssistantPanel::notifyContextPressureIfCrossed() {
     const QString limit = QLocale().toString(currentContextWindowTokens());
     const int percent = static_cast<int>(ratio * 100.0);
     const QString message =
-        level >= 2
+        level >= kContextPressureErrorLevel
             ? tr("Context window ~%1% full (%2 of %3 tokens). The server is now auto-truncating "
                  "older turns to fit; start a fresh chat to keep full fidelity.")
                   .arg(percent)

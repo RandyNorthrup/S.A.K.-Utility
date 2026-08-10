@@ -510,11 +510,16 @@ bool UupDumpApi::isValidSha1(const QString& sha1) {
 
 namespace {
 
+// Code units below the first printable ASCII character are C0 control characters (incl. NUL);
+// 0x7f is DEL.
+constexpr char16_t kFirstPrintableCodeUnit = 0x20;
+constexpr char16_t kDeleteControlCodeUnit = 0x7f;
+
 // True if @p s holds any C0 control character (incl. NUL) or DEL. Such a byte in a field
 // serialized into the aria2 input file could truncate the line or break out of the record.
 bool hasAria2ControlChar(const QString& s) {
     for (const QChar ch : s) {
-        if (ch.unicode() < 0x20 || ch.unicode() == 0x7f) {
+        if (ch.unicode() < kFirstPrintableCodeUnit || ch.unicode() == kDeleteControlCodeUnit) {
             return true;
         }
     }

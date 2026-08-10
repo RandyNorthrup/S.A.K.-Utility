@@ -59,6 +59,16 @@ QString sanitizedImageMime(const QString& mime) {
     return QStringLiteral("image/png");
 }
 
+// PNG header field offsets/lengths (fixed by the PNG spec): the 8-byte signature, the IHDR
+// chunk type at byte 12, and the big-endian width@16 / height@20. Reading height@20..23 needs
+// at least 24 bytes present.
+constexpr int kPngSignatureLength = 8;
+constexpr int kPngChunkTypeLength = 4;
+constexpr int kPngIhdrTypeOffset = 12;
+constexpr int kPngWidthOffset = 16;
+constexpr int kPngHeightOffset = 20;
+constexpr int kPngMinHeaderBytes = 24;
+
 // Read the true pixel dimensions from a PNG's IHDR chunk: 8-byte signature, then a chunk
 // whose type at offset 12 is "IHDR" with big-endian width@16 and height@20. This is the
 // authoritative image size regardless of devicePixelRatio / clip / emulation, and it is a
@@ -66,8 +76,9 @@ QString sanitizedImageMime(const QString& mime) {
 // valid PNG header with positive dimensions.
 bool pngDimensions(const QByteArray& png, int& width, int& height) {
     static const unsigned char kSignature[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
-    if (png.size() < 24 || std::memcmp(png.constData(), kSignature, 8) != 0 ||
-        std::memcmp(png.constData() + 12, "IHDR", 4) != 0) {
+    if (png.size() < kPngMinHeaderBytes ||
+        std::memcmp(png.constData(), kSignature, kPngSignatureLength) != 0 ||
+        std::memcmp(png.constData() + kPngIhdrTypeOffset, "IHDR", kPngChunkTypeLength) != 0) {
         return false;
     }
     const auto* bytes = reinterpret_cast<const unsigned char*>(png.constData());
@@ -77,8 +88,8 @@ bool pngDimensions(const QByteArray& png, int& width, int& height) {
                (static_cast<quint32>(bytes[offset + 2]) << 8) |
                static_cast<quint32>(bytes[offset + 3]);
     };
-    width = static_cast<int>(be32(16));
-    height = static_cast<int>(be32(20));
+    width = static_cast<int>(be32(kPngWidthOffset));
+    height = static_cast<int>(be32(kPngHeightOffset));
     return width > 0 && height > 0;
 }
 
@@ -250,7 +261,10 @@ void BrowserBridgeSession::reconcileDomEpoch(const QString& sent_cmd, const QJso
     // baseline, and casting it straight to quint64 is UB -- fail closed by marking refs stale.
     const QJsonValue epoch_value = frame.value(QStringLiteral("domEpoch"));
     const double epoch_raw = epoch_value.toDouble(-1.0);
-    if (!epoch_value.isDouble() || epoch_raw < 0.0 || epoch_raw > 9.0e15) {
+    // Upper bound for a trustworthy epoch: at or below the exact-integer range of a double
+    // (2^53); a larger value cannot be represented losslessly and is treated as malformed.
+    constexpr double kMaxTrustworthyDomEpoch = 9.0e15;
+    if (!epoch_value.isDouble() || epoch_raw < 0.0 || epoch_raw > kMaxTrustworthyDomEpoch) {
         onDetached();
         return;
     }

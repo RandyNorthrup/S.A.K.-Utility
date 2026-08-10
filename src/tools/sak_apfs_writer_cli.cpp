@@ -51,6 +51,12 @@ constexpr int kExitReportFailed = 3;
 constexpr qint64 kMaxSeedPayloadFileBytes = 2LL * 1024 * 1024 * 1024;
 constexpr qint64 kMaxCredentialFileBytes = 1LL * 1024 * 1024;
 
+// A drive-letter volume path is exactly "\\.\X:" or "\\?\X:" -- six characters with the drive
+// letter at index 4 and the trailing colon at index 5.
+constexpr int kDriveLetterVolumePathLength = 6;
+constexpr int kDriveLetterVolumeLetterIndex = 4;
+constexpr int kDriveLetterVolumeColonIndex = 5;
+
 QJsonArray toJsonArray(const QStringList& values) {
     QJsonArray array;
     for (const auto& value : values) {
@@ -2324,7 +2330,9 @@ std::vector<int> volumeBackingPhysicalDrives(const QString& path) {
 
 // A \\.\X: or \\?\X: whole-volume handle addressed by drive letter.
 bool isDriveLetterVolumePath(const QString& path) {
-    if (path.size() != 6 || path[5] != QLatin1Char(':') || !path[4].isLetter()) {
+    if (path.size() != kDriveLetterVolumePathLength ||
+        path[kDriveLetterVolumeColonIndex] != QLatin1Char(':') ||
+        !path[kDriveLetterVolumeLetterIndex].isLetter()) {
         return false;
     }
     return path.startsWith(QStringLiteral("\\\\.\\")) || path.startsWith(QStringLiteral("\\\\?\\"));

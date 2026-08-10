@@ -16,6 +16,9 @@ namespace {
 // qsizetype line/column counts used as int indices during parsing.
 constexpr qsizetype kMaxSkillBytes = 8 * 1024 * 1024;
 
+// UTF-8 byte-order mark (U+FEFF): QString::fromUtf8 preserves it, so it is stripped explicitly.
+constexpr int kByteOrderMark = 0xFEFF;
+
 QStringList splitTriggers(const QString& value) {
     QStringList triggers;
     const auto parts = value.split(QRegularExpression(QStringLiteral("[;,]")), Qt::SkipEmptyParts);
@@ -153,7 +156,7 @@ Skill Skill::fromMarkdown(const QByteArray& bytes, const QString& path) {
     // Strip a leading UTF-8 BOM (U+FEFF): QString::fromUtf8 keeps it, and it is not
     // whitespace, so an un-stripped BOM would make the first-line "---" front-matter
     // check fail and the whole file (front-matter included) parse as body.
-    if (text.startsWith(QChar(0xFEFF))) {
+    if (text.startsWith(QChar(kByteOrderMark))) {
         text.remove(0, 1);
     }
     text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));

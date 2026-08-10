@@ -19,6 +19,9 @@ namespace sak {
 
 namespace {
 
+// A matched wrapping quote pair is two characters (the opening and closing quote).
+constexpr int kWrappingQuotePairChars = 2;
+
 /// @brief Build the fail-closed error for an incomplete rewrite, or "" if the
 ///        rewrite internalized every expected URL. A rewrite that leaves a
 ///        download URL live would silently fall back to the network (defeating
@@ -167,8 +170,8 @@ ScriptRewriter::ReplacementSpan ScriptRewriter::urlReplacementSpan(const QString
         const bool wrapped = (before == QLatin1Char('\'') && after == QLatin1Char('\'')) ||
                              (before == QLatin1Char('"') && after == QLatin1Char('"'));
         if (wrapped) {
-            span.start = found_pos - 1;  // swallow the opening quote
-            span.length = url_len + 2;   // ...and the closing quote
+            span.start = found_pos - 1;                       // swallow the opening quote
+            span.length = url_len + kWrappingQuotePairChars;  // ...and the closing quote
         }
     }
     return span;

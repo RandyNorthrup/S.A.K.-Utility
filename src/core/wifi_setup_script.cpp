@@ -23,7 +23,8 @@ namespace sak {
 namespace {
 
 constexpr int kEscapedTextReserveMultiplier = 2;
-constexpr int kMaxSsidBytes = 32;  // an 802.11 SSID is at most 32 octets
+constexpr int kMaxSsidBytes = 32;           // an 802.11 SSID is at most 32 octets
+constexpr int kFirstPrintableAscii = 0x20;  // bytes below space are C0 controls
 
 // Fully-qualified System32 paths for the tools the generated elevated .cmd invokes.
 // Emitting absolute paths (rather than bare `powershell`/`netsh`) defeats a planted-exe
@@ -154,7 +155,7 @@ QString escapeBatchString(const QString& text) {
 // SSID broadcast by a rogue access point can reach here via the scan-and-add flow.
 bool ssidIsBatchSafe(const QString& ssid) {
     for (const QChar c : ssid) {
-        if (c == '"' || c.unicode() < 0x20) {
+        if (c == '"' || c.unicode() < kFirstPrintableAscii) {
             return false;
         }
     }

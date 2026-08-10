@@ -988,6 +988,9 @@ bool firewallDumpHeaderMissing(const QStringList& lines) {
 }
 
 namespace {
+// Lengths of the netsh rule-block label prefixes, each counting through the trailing colon.
+constexpr int kDirectionLabelLen = 10;  // "Direction:"
+constexpr int kProfilesLabelLen = 9;    // "Profiles:"
 // Value that follows a "Label:" prefix in a netsh rule block (labelLen counts the
 // prefix including the colon). Trimmed of the padding netsh inserts for alignment.
 QString netshFieldValue(const QString& trimmed, int labelLen) {
@@ -1001,9 +1004,9 @@ QString netshFieldValue(const QString& trimmed, int labelLen) {
 // External linkage so it is unit-testable without netsh.
 void applyFirewallField(const QString& trimmed, LeftoverItem& item) {
     if (trimmed.startsWith("Direction:", Qt::CaseInsensitive)) {
-        item.firewallDirection = netshFieldValue(trimmed, 10).toLower();
+        item.firewallDirection = netshFieldValue(trimmed, kDirectionLabelLen).toLower();
     } else if (trimmed.startsWith("Profiles:", Qt::CaseInsensitive)) {
-        item.firewallProfile = netshFieldValue(trimmed, 9);
+        item.firewallProfile = netshFieldValue(trimmed, kProfilesLabelLen);
     } else if (trimmed.startsWith("Program:", Qt::CaseInsensitive)) {
         const QString prog = netshFieldValue(trimmed, 8);
         if (prog.compare("Any", Qt::CaseInsensitive) != 0) {
@@ -1105,6 +1108,9 @@ namespace {
 // closed (skip the value) rather than loop.
 constexpr DWORD kMaxRunValueNameChars = 32u * 1024u;
 constexpr std::size_t kMaxRunValueDataBytes = 1024u * 1024u;
+// The API never reports the required NAME buffer size, so on ERROR_MORE_DATA the name buffer is
+// grown by doubling until the ceiling above is reached.
+constexpr std::size_t kNameBufferGrowthFactor = 2;
 
 // Decode a REG_SZ / REG_EXPAND_SZ payload to a QString; empty for any other type or a buffer too
 // short to hold even one wide char.
@@ -1141,7 +1147,7 @@ bool growRunValueBuffers(std::vector<wchar_t>& name_buf,
     if (static_cast<std::size_t>(data_len) > data_buf.size()) {
         data_buf.resize(data_len);
     } else {
-        name_buf.resize(name_buf.size() * 2);
+        name_buf.resize(name_buf.size() * kNameBufferGrowthFactor);
     }
     return name_buf.size() <= kMaxRunValueNameChars && data_buf.size() <= kMaxRunValueDataBytes;
 }

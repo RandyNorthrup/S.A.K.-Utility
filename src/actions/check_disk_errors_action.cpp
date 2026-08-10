@@ -15,7 +15,8 @@
 namespace sak {
 
 namespace {
-constexpr int kBareDriveRootLength = 3;  ///< "C:/" -- the only form Repair-Volume can address.
+constexpr int kBareDriveRootLength = 3;      ///< "C:/" -- the only form Repair-Volume can address.
+constexpr int kDriveRootSeparatorIndex = 2;  ///< index of the path separator in "C:/".
 constexpr int kDiskReportWidth = 78;
 constexpr int kMinimumScanKeyValueParts = 2;
 constexpr int kDriveScanProgressStart = 10;
@@ -37,7 +38,8 @@ QVector<QChar> enumerateWritableDriveLetters() {
         const QString root = storage.rootPath();
         if (root.length() != kBareDriveRootLength || !root.at(0).isLetter() ||
             root.at(1) != QLatin1Char(':') ||
-            (root.at(2) != QLatin1Char('/') && root.at(2) != QLatin1Char('\\'))) {
+            (root.at(kDriveRootSeparatorIndex) != QLatin1Char('/') &&
+             root.at(kDriveRootSeparatorIndex) != QLatin1Char('\\'))) {
             continue;
         }
         const QChar drive = root.at(0).toUpper();

@@ -30,6 +30,8 @@ namespace sak {
 namespace {
 constexpr int kShareInfoLevel = 1;  // SHARE_INFO_1 level
 constexpr DWORD kShareTypeMask = 0x00'00'FF'FF;
+// First printable ASCII code point; anything below it is a C0 control character (including NUL).
+constexpr char16_t kFirstPrintableCodePoint = 0x20;
 
 // NetShareEnum is a blocking remote call whose result set is attacker-influenced. Bound the
 // resume-handle loop and the accumulated share count so a server that keeps returning
@@ -47,7 +49,7 @@ constexpr int kMaxTotalShares = 100'000;
     }
     for (const QChar ch : name) {
         const char16_t code = ch.unicode();
-        if (code < 0x20 || code == u'\\' || code == u'/' || code == u':') {
+        if (code < kFirstPrintableCodePoint || code == u'\\' || code == u'/' || code == u':') {
             return false;
         }
     }
@@ -62,7 +64,8 @@ constexpr int kMaxTotalShares = 100'000;
         return false;
     }
     for (const QChar ch : path) {
-        if (ch.unicode() < 0x20) {  // control characters, including an embedded NUL
+        if (ch.unicode() <
+            kFirstPrintableCodePoint) {  // control characters, including embedded NUL
             return false;
         }
     }

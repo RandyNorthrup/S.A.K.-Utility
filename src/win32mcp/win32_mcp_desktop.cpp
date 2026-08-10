@@ -183,11 +183,12 @@ HWND resolveTargetHwnd(const QJsonObject& args, QString& err) {
 // full-resolution pixels (no downscale) up to its own hard bound.
 constexpr int kMaxCaptureBase64 = 16 * 1024 * 1024;
 constexpr int kCaptureFullEdge = 16'384;
+constexpr int kRgb32BytesPerPixel = 4;  // Format_RGB32 stores 4 bytes per pixel
 
 // Encode a top-down 32bpp buffer as base64 PNG. Format_RGB32 reads the B,G,R,X bytes a screen
 // DIB holds (little-endian) and ignores the unused 4th byte, so an opaque capture round-trips.
 QString encodePng(const uchar* bits, int width, int height) {
-    const QImage image(bits, width, height, width * 4, QImage::Format_RGB32);
+    const QImage image(bits, width, height, width * kRgb32BytesPerPixel, QImage::Format_RGB32);
     if (image.isNull()) {
         return {};
     }

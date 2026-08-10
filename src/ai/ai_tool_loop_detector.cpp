@@ -10,10 +10,15 @@ namespace sak::ai {
 namespace {
 constexpr int kArgsPreviewChars = 80;
 constexpr char16_t kSignatureSeparator = 0x1F;  // ASCII unit separator
+// The detector needs at least two identical observations before a repeat can be
+// declared, so any caller-supplied threshold is floored here.
+constexpr int kMinRepeatThreshold = 2;
+// Base for rendering the folded-arguments digest as a hexadecimal string.
+constexpr int kHexRadix = 16;
 }  // namespace
 
 AiToolLoopDetector::AiToolLoopDetector(int repeat_threshold)
-    : m_threshold(std::max(2, repeat_threshold)) {}
+    : m_threshold(std::max(kMinRepeatThreshold, repeat_threshold)) {}
 
 QString AiToolLoopDetector::signatureKey(const QString& tool_name, const QString& arguments_json) {
     // Case-insensitive tool name + exact trimmed argument string, joined by a
@@ -27,7 +32,7 @@ QString AiToolLoopDetector::signatureKey(const QString& tool_name, const QString
     // distinct for genuinely different arguments (the loop heuristic is preserved).
     if (args.size() > kMaxSignatureArgChars) {
         args = QStringLiteral("#") + QString::number(args.size()) + QStringLiteral(":") +
-               QString::number(static_cast<qulonglong>(qHash(args)), 16);
+               QString::number(static_cast<qulonglong>(qHash(args)), kHexRadix);
     }
     return name + QChar(kSignatureSeparator) + args;
 }

@@ -29,6 +29,21 @@ constexpr DWORD kCancelWriteBudgetMs = 1000;
 // command generation every iteration.
 constexpr DWORD kCancelDrainBudgetMs = 3000;
 
+// Native-messaging framing: a fixed 4-byte little-endian length prefix precedes every body.
+constexpr int kFrameHeaderBytes = 4;
+
+// Wide-char path buffer sized at twice MAX_PATH so a long module/image path is never truncated.
+constexpr DWORD kModulePathBufferChars = MAX_PATH * 2;
+
+// In/out buffer advisory for the named pipe (64 KiB each).
+constexpr DWORD kPipeBufferBytes = 64 * 1024;
+
+// Backoff after a transient accept failure so a persistent error cannot hot-spin the loop.
+constexpr DWORD kAcceptRetryBackoffMs = 50;
+
+// Best-effort ancestor-image walk depth when confirming a Chrome-launched client.
+constexpr int kChromeAncestorMaxDepth = 12;
+
 // An ABSOLUTE deadline (a GetTickCount64 tick by which the whole logical operation
 // must finish) plus the event that aborts the wait (the server shutdown event). The
 // deadline is absolute, not per-call, so a byte-at-a-time dribble cannot keep
@@ -103,15 +118,15 @@ bool pipeWriteAll(HANDLE pipe, const char* buffer, DWORD size, IoDeadline deadli
 }
 
 bool readFrame(HANDLE pipe, IoDeadline deadline, QJsonObject* out) {
-    char header[4];
-    if (!pipeReadExact(pipe, header, 4, deadline)) {
+    char header[kFrameHeaderBytes];
+    if (!pipeReadExact(pipe, header, kFrameHeaderBytes, deadline)) {
         return false;
     }
-    if (parseFrame(QByteArray(header, 4)).status == NativeFrame::Status::Error) {
+    if (parseFrame(QByteArray(header, kFrameHeaderBytes)).status == NativeFrame::Status::Error) {
         return false;  // zero / over-cap length prefix
     }
     const DWORD length = qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(header));
-    QByteArray frame(header, 4);
+    QByteArray frame(header, kFrameHeaderBytes);
     QByteArray body(static_cast<int>(length), Qt::Uninitialized);
     if (!pipeReadExact(pipe, body.data(), length, deadline)) {
         return false;
@@ -166,8 +181,8 @@ ConnectResult waitForConnection(HANDLE pipe, HANDLE shutdown_event) {
 }
 
 QString ownModulePath() {
-    wchar_t buffer[MAX_PATH * 2] = {0};
-    const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH * 2);
+    wchar_t buffer[kModulePathBufferChars] = {0};
+    const DWORD length = GetModuleFileNameW(nullptr, buffer, kModulePathBufferChars);
     return QString::fromWCharArray(buffer, static_cast<int>(length)).toLower();
 }
 
@@ -176,8 +191,8 @@ QString clientImagePath(DWORD pid) {
     if (process == nullptr) {
         return {};
     }
-    wchar_t buffer[MAX_PATH * 2] = {0};
-    DWORD size = MAX_PATH * 2;
+    wchar_t buffer[kModulePathBufferChars] = {0};
+    DWORD size = kModulePathBufferChars;
     const BOOL ok = QueryFullProcessImageNameW(process, 0, buffer, &size);
     CloseHandle(process);
     return ok != FALSE ? QString::fromWCharArray(buffer, static_cast<int>(size)).toLower()
@@ -245,8 +260,8 @@ bool BrowserBridgePipeServer::createPipeResources(QString* error) {
         PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
         1,
-        64 * 1024,
-        64 * 1024,
+        kPipeBufferBytes,
+        kPipeBufferBytes,
         0,
         &attributes);
     LocalFree(descriptor);
@@ -361,7 +376,7 @@ void BrowserBridgePipeServer::run() {
             // the life of the process. Reset the instance and back off briefly so a
             // persistent error cannot hot-spin.
             DisconnectNamedPipe(pipe_);
-            Sleep(50);
+            Sleep(kAcceptRetryBackoffMs);
             continue;
         }
         if (!handshake()) {
@@ -433,8 +448,9 @@ bool BrowserBridgePipeServer::verifyPeer(QString* why) const {
         *why = QStringLiteral("client is not the bridge binary");
         return false;
     }
-    if (options_.require_chrome_ancestor &&
-        !hasAncestorImage(static_cast<DWORD>(client_pid), QStringLiteral("chrome.exe"), 12)) {
+    if (options_.require_chrome_ancestor && !hasAncestorImage(static_cast<DWORD>(client_pid),
+                                                              QStringLiteral("chrome.exe"),
+                                                              kChromeAncestorMaxDepth)) {
         *why = QStringLiteral("client was not launched by Chrome");
         return false;
     }

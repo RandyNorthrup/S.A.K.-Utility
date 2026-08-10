@@ -31,6 +31,13 @@ namespace {
 // A model-supplied string cannot be allowed to inject an unbounded keystroke stream.
 constexpr int kMaxTypeChars = 10'000;
 
+// Let a freshly activated window settle before returning / typing into it.
+constexpr DWORD kWindowActivationSettleMs = 120;
+
+// Each typed character is emitted as a key-down + key-up pair, so the injected event
+// count is twice the number of characters.
+constexpr int kInputEventsPerChar = 2;
+
 // -- result + schema helpers (module-local, mirroring win32_mcp_tools) -------
 
 ToolResult jsonResult(const QJsonObject& object) {
@@ -241,7 +248,7 @@ QString activateTarget(const QJsonObject& args) {
         return err.isEmpty() ? QStringLiteral("Could not raise the requested window.") : err;
     }
     activateWindow(static_cast<HWND>(wr.hwnd));
-    Sleep(120);
+    Sleep(kWindowActivationSettleMs);
     return {};
 }
 
@@ -375,8 +382,8 @@ ToolResult toolTypeText(const QJsonObject& args) {
     }
     // Each typed unit is a down+up pair; report units actually sent (excludes dropped CRs), not the
     // raw text length, so the count is honest.
-    return jsonResult(
-        QJsonObject{{QStringLiteral("ok"), true}, {QStringLiteral("typed"), strokes.size() / 2}});
+    return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
+                                  {QStringLiteral("typed"), strokes.size() / kInputEventsPerChar}});
 }
 
 ToolResult toolSendKeys(const QJsonObject& args) {
@@ -418,7 +425,7 @@ ToolResult toolFocusWindow(const QJsonObject& args) {
         return errorResult(err);
     }
     activateWindow(static_cast<HWND>(wr.hwnd));
-    Sleep(120);
+    Sleep(kWindowActivationSettleMs);
     return jsonResult(
         QJsonObject{{QStringLiteral("ok"), true},
                     {QStringLiteral("window"), fg ? QStringLiteral("<foreground>") : title}});

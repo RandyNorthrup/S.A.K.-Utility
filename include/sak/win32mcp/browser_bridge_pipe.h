@@ -37,13 +37,16 @@
 /// drive onHostConnected/onHostDisconnected on its own thread.
 namespace sak::win32mcp {
 
+/// Default per read/write deadline for a bridge exchange, in milliseconds.
+inline constexpr DWORD kBrowserBridgeDefaultIoTimeoutMs = 30'000;
+
 class BrowserBridgePipeServer {
 public:
     struct Options {
-        int protocol{1};                     ///< kBrowserBridgeProtocol.
-        bool require_chrome_ancestor{true};  ///< Production; tests relax this.
-        DWORD io_timeout_ms{30'000};         ///< Per read/write deadline.
-        QString rendezvous_path;             ///< Empty -> the real per-user location.
+        int protocol{1};                                        ///< kBrowserBridgeProtocol.
+        bool require_chrome_ancestor{true};                     ///< Production; tests relax this.
+        DWORD io_timeout_ms{kBrowserBridgeDefaultIoTimeoutMs};  ///< Per read/write deadline.
+        QString rendezvous_path;  ///< Empty -> the real per-user location.
     };
 
     /// The result of one command/reply exchange.

@@ -22,6 +22,12 @@ namespace sak {
 
 #ifdef Q_OS_WIN
 namespace {
+// The standard-user DACL grants three trustees: the destination user, SYSTEM, and
+// the local Administrators group.
+constexpr int kAclTrusteeCount = 3;
+// Number of leading characters in the Win32 extended-length path prefix "\\?\".
+constexpr int kExtendedPathPrefixLength = 4;
+
 // Builds a DACL granting full control to the destination user PLUS SYSTEM and
 // the local Administrators group. Without SYSTEM/Administrators a "standard
 // user" ACL locks out the OS, services (backup, AV, indexing), and every
@@ -37,19 +43,19 @@ DWORD buildStandardUserDacl(PSID userSid, PACL* outAcl) {
         return GetLastError();
     }
 
-    const PSID sids[3] = {userSid,
-                          reinterpret_cast<PSID>(systemSid),
-                          reinterpret_cast<PSID>(adminSid)};
-    EXPLICIT_ACCESSW ea[3];
+    const PSID sids[kAclTrusteeCount] = {userSid,
+                                         reinterpret_cast<PSID>(systemSid),
+                                         reinterpret_cast<PSID>(adminSid)};
+    EXPLICIT_ACCESSW ea[kAclTrusteeCount];
     ZeroMemory(ea, sizeof(ea));
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < kAclTrusteeCount; ++i) {
         ea[i].grfAccessPermissions = GENERIC_ALL;
         ea[i].grfAccessMode = SET_ACCESS;
         ea[i].grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
         ea[i].Trustee.TrusteeForm = TRUSTEE_IS_SID;
         ea[i].Trustee.ptstrName = reinterpret_cast<LPWSTR>(sids[i]);
     }
-    return SetEntriesInAclW(3, ea, nullptr, outAcl);
+    return SetEntriesInAclW(kAclTrusteeCount, ea, nullptr, outAcl);
 }
 
 // Local sentinel (NOT a Win32 error; carries the customer bit 0x20000000) meaning
@@ -105,7 +111,7 @@ QString resolvedHandlePath(HANDLE h) {
     buf.resize(got);
     QString path = QString::fromStdWString(buf);
     if (path.startsWith(QLatin1String("\\\\?\\"))) {
-        path = path.mid(4);
+        path = path.mid(kExtendedPathPrefixLength);
     }
     return path;
 }

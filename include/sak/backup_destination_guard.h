@@ -111,19 +111,24 @@ struct BackupDestinationCheck {
     return {};
 }
 
+/// Number of characters in a bare drive specifier such as "C:" (drive letter plus colon). The
+/// path separator of a fully absolute path, if present, sits at the index one past this prefix.
+inline constexpr qsizetype kDrivePrefixLength = 2;
+
 /// True for a drive-relative path such as "C:Backups" (a drive letter and colon with no
 /// separator after it). Qt reports these as absolute, but Windows resolves them against that
 /// drive's own current directory, so the same text can name a different folder from one process
 /// to the next. A backup destination must never be one.
 [[nodiscard]] inline bool backupPathIsDriveRelative(const QString& path) {
     const QString normalized = QDir::fromNativeSeparators(path.trimmed());
-    if (normalized.size() < 2 || normalized.at(1) != QLatin1Char(':')) {
+    if (normalized.size() < kDrivePrefixLength || normalized.at(1) != QLatin1Char(':')) {
         return false;
     }
     if (!normalized.at(0).isLetter()) {
         return false;
     }
-    return normalized.size() == 2 || normalized.at(2) != QLatin1Char('/');
+    return normalized.size() == kDrivePrefixLength ||
+           normalized.at(kDrivePrefixLength) != QLatin1Char('/');
 }
 
 /// Screen a raw destination from the settings page against the selected source profiles.

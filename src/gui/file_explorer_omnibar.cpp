@@ -32,6 +32,8 @@ constexpr int kAddressButtonWidth = 36;
 constexpr int kAddressButtonHeight = 32;
 // Files Omnibar.xaml AutoSuggestListMaxHeight-ish cap for the popup.
 constexpr int kSuggestionPopupMaxHeight = 320;
+// Vertical gap in pixels between the address bar's bottom edge and the top of the popup.
+constexpr int kSuggestionPopupGapPx = 2;
 
 QPushButton* makeIconButton(QWidget* parent,
                             const char* object_name,
@@ -297,8 +299,10 @@ void FileExplorerOmnibar::positionSuggestionPopup() {
         return;
     }
     const QPoint anchor = m_address_stack->mapTo(window(), m_address_stack->rect().bottomLeft());
-    m_suggestion_frame->setGeometry(
-        anchor.x(), anchor.y() + 2, m_address_stack->width(), kSuggestionPopupMaxHeight);
+    m_suggestion_frame->setGeometry(anchor.x(),
+                                    anchor.y() + kSuggestionPopupGapPx,
+                                    m_address_stack->width(),
+                                    kSuggestionPopupMaxHeight);
 }
 
 QListWidget* FileExplorerOmnibar::suggestionList() const {

@@ -21,6 +21,12 @@ namespace {
 
 using IconDescriptor = FileExplorerIconDescriptor;
 
+// Pixmap cache key packs the requested QSize and tint into one quint64: each dimension is
+// masked to 12 bits, the width shifted above the height, and the tint RGBA held in the low bits.
+constexpr int kIconCacheDimensionMask = 0xFFF;
+constexpr int kIconCacheWidthShift = 44;
+constexpr int kIconCacheHeightShift = 32;
+
 [[nodiscard]] IconDescriptor descriptor(const char* key,
                                         const char* file_name,
                                         const char* upstream_key,
@@ -61,8 +67,10 @@ public:
 
     QPixmap pixmap(const QSize& size, const QIcon::Mode mode, const QIcon::State state) override {
         const QColor tint = tintColor(mode);
-        const quint64 cache_key = (static_cast<quint64>(size.width() & 0xFFF) << 44) |
-                                  (static_cast<quint64>(size.height() & 0xFFF) << 32) |
+        const quint64 cache_key = (static_cast<quint64>(size.width() & kIconCacheDimensionMask)
+                                   << kIconCacheWidthShift) |
+                                  (static_cast<quint64>(size.height() & kIconCacheDimensionMask)
+                                   << kIconCacheHeightShift) |
                                   static_cast<quint64>(tint.rgba());
         const auto it = m_cache.constFind(cache_key);
         if (it != m_cache.constEnd()) {

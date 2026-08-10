@@ -133,7 +133,8 @@ static bool isSafeAria2OutName(const QString& name) {
         name.startsWith(QLatin1Char('\\'))) {
         return false;
     }
-    if (name.size() >= 2 && name.at(1) == QLatin1Char(':')) {
+    constexpr qsizetype kDriveQualifiedMinLength = 2;
+    if (name.size() >= kDriveQualifiedMinLength && name.at(1) == QLatin1Char(':')) {
         return false;  // drive-qualified (e.g. C:\...)
     }
     static const QRegularExpression pathSep(QStringLiteral(R"([\\/])"));
@@ -1326,10 +1327,11 @@ bool UupIsoBuilder::hasIso9660Signature(const QString& isoPath) {
     // The Primary Volume Descriptor lives in sector 16 (offset 0x8000); its
     // standard identifier "CD001" begins one byte in, at offset 0x8001.
     constexpr qint64 kPvdSignatureOffset = 0x8001;
+    constexpr qint64 kCd001SignatureLength = 5;
     if (!file.seek(kPvdSignatureOffset)) {
         return false;
     }
-    return file.read(5) == QByteArrayLiteral("CD001");
+    return file.read(kCd001SignatureLength) == QByteArrayLiteral("CD001");
 }
 
 void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitStatus) {

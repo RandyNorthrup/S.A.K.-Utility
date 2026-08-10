@@ -8,19 +8,25 @@
 
 namespace sak::win32mcp {
 
+namespace {
+// Every native-messaging frame is prefixed with a little-endian uint32 length header; this is
+// that header's width in bytes.
+constexpr int kLengthPrefixBytes = 4;
+}  // namespace
+
 QByteArray encodeFrame(const QJsonObject& message) {
     const QByteArray body = QJsonDocument(message).toJson(QJsonDocument::Compact);
     QByteArray frame;
-    frame.reserve(4 + body.size());
+    frame.reserve(kLengthPrefixBytes + body.size());
     const quint32 length = qToLittleEndian<quint32>(static_cast<quint32>(body.size()));
-    frame.append(reinterpret_cast<const char*>(&length), 4);
+    frame.append(reinterpret_cast<const char*>(&length), kLengthPrefixBytes);
     frame.append(body);
     return frame;
 }
 
 NativeFrame parseFrame(const QByteArray& buffer) {
     NativeFrame frame;
-    if (buffer.size() < 4) {
+    if (buffer.size() < kLengthPrefixBytes) {
         frame.status = NativeFrame::Status::NeedMore;
         return frame;
     }
@@ -38,14 +44,14 @@ NativeFrame parseFrame(const QByteArray& buffer) {
                           .arg(kMaxNativeMessageBytes);
         return frame;
     }
-    const int total = 4 + static_cast<int>(length);
+    const int total = kLengthPrefixBytes + static_cast<int>(length);
     if (buffer.size() < total) {
         frame.status = NativeFrame::Status::NeedMore;
         return frame;
     }
     QJsonParseError parse_error;
-    const QJsonDocument doc = QJsonDocument::fromJson(buffer.mid(4, static_cast<int>(length)),
-                                                      &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(
+        buffer.mid(kLengthPrefixBytes, static_cast<int>(length)), &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
         frame.status = NativeFrame::Status::Error;
         frame.error = QStringLiteral("Native message is not a JSON object: %1")

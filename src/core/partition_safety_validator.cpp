@@ -45,6 +45,8 @@ constexpr auto kApfsEncryptVolumePayload = "apfs_encrypt_volume";
 constexpr auto kApfsVolumePasswordPayload = "apfs_volume_password";
 constexpr qsizetype kApfsVolumeLabelMaxChars = 255;
 constexpr qsizetype kApfsVolumeLabelFieldBytes = 256;
+// A raw "\\.\X:" volume alias's tail is a drive letter plus ':', i.e. exactly two characters.
+constexpr qsizetype kDriveLetterAliasLength = 2;
 constexpr auto kHfsPathPayload = "hfs_path";
 constexpr auto kHfsDestinationPathPayload = "hfs_destination_path";
 constexpr auto kHfsPayloadBase64 = "hfs_payload_base64";
@@ -524,7 +526,8 @@ std::optional<QString> rawVolumeAliasLetter(const QString& targetPath) {
         return std::nullopt;
     }
     const QString rest = path.mid(prefix.size());
-    if (rest.size() == 2 && rest.at(0).isLetter() && rest.at(1) == QLatin1Char(':')) {
+    if (rest.size() == kDriveLetterAliasLength && rest.at(0).isLetter() &&
+        rest.at(1) == QLatin1Char(':')) {
         return rest.left(1).toUpper();
     }
     return std::nullopt;

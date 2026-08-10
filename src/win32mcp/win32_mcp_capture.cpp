@@ -39,6 +39,10 @@ struct Surface {
     void* bits;
 };
 
+// A 32bpp top-down DIB: each pixel occupies 4 bytes (BGRX/BGRA).
+constexpr int kDibBitsPerPixel = 32;
+constexpr int kDibBytesPerPixel = 4;
+
 // Create a top-down 32bpp (BGRX) DIB section selected into memDC. Top-down (negative height)
 // so scanlines are in the row order both PNG and SoftwareBitmap expect.
 HBITMAP makeTopDownDib(HDC memDC, int width, int height, void** bits) {
@@ -47,7 +51,7 @@ HBITMAP makeTopDownDib(HDC memDC, int width, int height, void** bits) {
     bmi.bmiHeader.biWidth = width;
     bmi.bmiHeader.biHeight = -height;
     bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biBitCount = kDibBitsPerPixel;
     bmi.bmiHeader.biCompression = BI_RGB;
     return CreateDIBSection(memDC, &bmi, DIB_RGB_COLORS, bits, nullptr, 0);
 }
@@ -75,7 +79,8 @@ bool blitSource(void* hwnd, HDC memDC, HDC screen, const RECT& rect) {
 
 // Copy a DIB's pixels out to a byte array (width*height*4, top-down BGRA).
 QByteArray copyDibBytes(const void* bits, int width, int height) {
-    return QByteArray(static_cast<const char*>(bits), static_cast<qsizetype>(width) * height * 4);
+    return QByteArray(static_cast<const char*>(bits),
+                      static_cast<qsizetype>(width) * height * kDibBytesPerPixel);
 }
 
 // StretchBlt the source DC into a fresh destination DIB and return its bytes. HALFTONE keeps

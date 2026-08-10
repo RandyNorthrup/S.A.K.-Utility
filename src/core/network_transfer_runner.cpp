@@ -27,6 +27,10 @@ constexpr int kCancellationPollIntervalMs = sak::kTimerPollingFastMs;
 // caller can trigger unbounded growth; callers that legitimately need more must opt in.
 constexpr qint64 kDefaultMaxResponseBytes = 512LL * 1024 * 1024;  // 512 MiB
 
+// Only a 2xx status is an authoritative, complete body. The success range is [200, 300).
+constexpr int kHttpSuccessStatusMin = 200;
+constexpr int kHttpSuccessStatusEnd = 300;
+
 struct NetworkTransferSinks {
     NetworkTransferResult* result{nullptr};
     QSemaphore* finished{nullptr};
@@ -177,7 +181,7 @@ private:
         // response as success. The scheme is restricted to http/https, so http_status is always
         // a real HTTP code once the reply has finished.
         const int status = m_sinks.result->http_status;
-        return status >= 200 && status < 300;
+        return status >= kHttpSuccessStatusMin && status < kHttpSuccessStatusEnd;
     }
 
     NetworkTransferRequest m_request;

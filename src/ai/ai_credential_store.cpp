@@ -37,6 +37,11 @@ namespace {
 // narrowing at the DPAPI boundary can never truncate the protected plaintext.
 constexpr int kMaxApiKeyChars = 8192;
 
+// ASCII control-character boundaries: code points below the first printable character (space,
+// U+0020) are C0 controls, and U+007F is DEL. A real API key never contains either.
+constexpr char16_t kAsciiControlLimit = 0x20;
+constexpr char16_t kAsciiDelete = 0x7F;
+
 #ifdef Q_OS_WIN
 constexpr auto kCredentialProvider = "dpapi-current-user-v1";
 constexpr char kDpapiEntropy[] = "SAK Utility/OpenAI API Key/v1";
@@ -305,7 +310,7 @@ bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message)
     // them, and letting one through could inject a newline into an outbound Authorization header
     // downstream. Fail closed rather than silently storing a malformed credential.
     for (const QChar ch : api_key) {
-        if (ch.unicode() < 0x20 || ch.unicode() == 0x7F) {
+        if (ch.unicode() < kAsciiControlLimit || ch.unicode() == kAsciiDelete) {
             setError(error_message, QStringLiteral("API key contains control characters"));
             return false;
         }

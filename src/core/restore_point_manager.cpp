@@ -181,6 +181,11 @@ bool RestorePointManager::createRestorePoint(const QString& description) {
 
 namespace {
 
+// The serialized form is "/Date(<epoch-ms>[+hhmm])/": the leading "/Date(" prefix is 6 chars,
+// and the full wrapper (that prefix plus the trailing ")/") is 8 chars.
+constexpr int kEpochDatePrefixLength = 6;
+constexpr int kEpochDateWrapperLength = 8;
+
 /// Windows PowerShell 5.1 serializes a DateTime through JavaScriptSerializer, so ConvertTo-Json
 /// can emit "/Date(1754323200000)/" (epoch milliseconds, optionally with a +hhmm offset suffix)
 /// rather than an ISO string. The query below asks for a round-trip ISO string, but accept this
@@ -189,7 +194,8 @@ QDateTime parseEpochMillisecondsDate(const QString& date_str) {
     if (!date_str.startsWith(QLatin1String("/Date(")) || !date_str.endsWith(QLatin1String(")/"))) {
         return {};
     }
-    QString digits = date_str.mid(6, date_str.size() - 8);
+    QString digits = date_str.mid(kEpochDatePrefixLength,
+                                  date_str.size() - kEpochDateWrapperLength);
     qsizetype offset_at = digits.lastIndexOf(QLatin1Char('+'));
     if (offset_at < 1) {
         offset_at = digits.lastIndexOf(QLatin1Char('-'));

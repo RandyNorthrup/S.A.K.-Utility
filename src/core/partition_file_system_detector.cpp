@@ -369,6 +369,11 @@ std::optional<uint64_t> checkedProduct(uint64_t left, uint64_t right) {
     return left * right;
 }
 
+// ASCII control-character boundaries: code points below the first printable character (space,
+// U+0020) are C0 controls, and U+007F is DEL.
+constexpr char16_t kAsciiControlLimit = 0x20;
+constexpr char16_t kAsciiDelete = 0x7F;
+
 // Foreign on-disk name fields (volume labels, etc.) are embedded VERBATIM into human-readable
 // detection details that downstream UI renders line-by-line (joined with '\n') and that gates
 // parse. A control byte (code point < 0x20 or 0x7F) -- notably an embedded newline -- would let a
@@ -377,7 +382,7 @@ std::optional<uint64_t> checkedProduct(uint64_t left, uint64_t right) {
 bool fieldTextHasControlCharacter(const QString& text) {
     return std::any_of(text.cbegin(), text.cend(), [](QChar c) {
         const char16_t code = c.unicode();
-        return code < 0x20 || code == 0x7F;
+        return code < kAsciiControlLimit || code == kAsciiDelete;
     });
 }
 

@@ -21,6 +21,9 @@ namespace sak::win32mcp {
 
 namespace {
 
+// The native-messaging framing prefixes each message with a little-endian uint32 length.
+constexpr int kNativeFrameHeaderBytes = 4;
+
 QJsonObject pongReply(const QJsonObject& request,
                       const QString& server_name,
                       const QString& server_version) {
@@ -82,19 +85,20 @@ QJsonObject handleNativeMessage(const QJsonObject& request,
 
 int runNativeHostLoop(const QString& server_name, const QString& server_version) {
     while (true) {
-        char header[4];
-        if (!readExact(header, 4)) {
+        char header[kNativeFrameHeaderBytes];
+        if (!readExact(header, kNativeFrameHeaderBytes)) {
             return 0;  // clean end-of-stream: the extension closed the port
         }
         // Validate the length prefix through the codec (a 4-byte buffer yields
         // NeedMore for an in-range length, Error for zero / over-cap) before
         // allocating the body, so a corrupt prefix cannot trigger a huge alloc.
-        if (parseFrame(QByteArray(header, 4)).status == NativeFrame::Status::Error) {
+        if (parseFrame(QByteArray(header, kNativeFrameHeaderBytes)).status ==
+            NativeFrame::Status::Error) {
             return 1;  // out-of-range length: framing is unrecoverable
         }
         const int length =
             static_cast<int>(qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(header)));
-        QByteArray frame(header, 4);
+        QByteArray frame(header, kNativeFrameHeaderBytes);
         QByteArray body(length, Qt::Uninitialized);
         if (!readExact(body.data(), length)) {
             return 1;  // truncated body: peer died mid-message

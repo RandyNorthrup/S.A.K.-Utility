@@ -45,6 +45,15 @@ constexpr int kMaxTargetDrives = 64;
 constexpr int kDefaultMaxConcurrentWrites = 1;
 constexpr int kWorkerShutdownTimeoutMs = sak::kTimeoutThreadShutdownMs;
 
+// ZIP local-file-header signature "PK\x03\x04": four bytes, with 0x03 at index 2 and 0x04 at
+// index 3 (index 0/1 hold 'P'/'K').
+constexpr int kZipSignatureLength = 4;
+constexpr int kZipSignatureThirdByteIndex = 2;
+constexpr int kZipSignatureFourthByteIndex = 3;
+
+// Milliseconds in one second, for converting an elapsed-timer reading to fractional seconds.
+constexpr double kMillisecondsPerSecond = 1000.0;
+
 // Tri-state result of the OS-disk identity probe. Undetermined MUST be treated
 // as unsafe by callers (fail closed) -- a fallback to "not system" would let a
 // raw write proceed when protection could not be established.
@@ -101,10 +110,11 @@ bool hasZipContainerMagic(const QString& imagePath) {
     if (!file.open(QIODevice::ReadOnly)) {
         return false;
     }
-    char magic[4] = {};
+    char magic[kZipSignatureLength] = {};
     const qint64 read = file.read(magic, static_cast<qint64>(sizeof(magic)));
     return read == static_cast<qint64>(sizeof(magic)) && magic[0] == 'P' && magic[1] == 'K' &&
-           magic[2] == '\x03' && magic[3] == '\x04';
+           magic[kZipSignatureThirdByteIndex] == '\x03' &&
+           magic[kZipSignatureFourthByteIndex] == '\x04';
 }
 
 // A file the flasher recognizes as a compressed container but the streaming
@@ -1478,7 +1488,7 @@ void FlashCoordinator::finalizeResultMetrics() {
         }
     }
     m_result.bytesWritten = total_bytes;
-    m_result.elapsedSeconds = static_cast<double>(m_flashTimer.elapsed()) / 1000.0;
+    m_result.elapsedSeconds = static_cast<double>(m_flashTimer.elapsed()) / kMillisecondsPerSecond;
     // Say whether anything actually read the drives back. With verification off a
     // "successful" drive means the write succeeded and nothing checked it, and the
     // result must report that rather than let a skipped verify read as a passed one.

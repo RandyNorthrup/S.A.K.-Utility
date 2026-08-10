@@ -163,8 +163,10 @@ constexpr int kTargetSearchBrowseMaxEntries = 10'000;
 ///        touch the (possibly unresponsive) share.
 [[nodiscard]] unsigned int rootDriveType(const QString& path) {
 #ifdef Q_OS_WIN
-    const QString root = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(3);
-    if (root.size() < 3 || root[1] != QLatin1Char(':')) {
+    constexpr int kDriveRootLength = 3;
+    const QString root =
+        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(kDriveRootLength);
+    if (root.size() < kDriveRootLength || root[1] != QLatin1Char(':')) {
         return 0;
     }
     return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16()));
@@ -221,12 +223,14 @@ struct BoundedReadWindow {
                                                                       char* out,
                                                                       DWORD& read_bytes) {
     using Step = AdvancedSearchWorker::NetworkReadStep;
+    constexpr quint64 kLow32BitMask = 0xFF'FF'FF'FFULL;
+    constexpr int kDwordBitCount = 32;
     read_bytes = 0;
 
     OVERLAPPED overlapped{};
     overlapped.hEvent = w.event;
-    overlapped.Offset = static_cast<DWORD>(static_cast<quint64>(w.offset) & 0xFF'FF'FF'FFULL);
-    overlapped.OffsetHigh = static_cast<DWORD>(static_cast<quint64>(w.offset) >> 32);
+    overlapped.Offset = static_cast<DWORD>(static_cast<quint64>(w.offset) & kLow32BitMask);
+    overlapped.OffsetHigh = static_cast<DWORD>(static_cast<quint64>(w.offset) >> kDwordBitCount);
     ResetEvent(w.event);
 
     if (ReadFile(w.file, out, w.bytes, nullptr, &overlapped) == FALSE &&

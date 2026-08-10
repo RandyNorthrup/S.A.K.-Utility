@@ -29,6 +29,9 @@ namespace {
 /// crafted store declaring a far deeper tree must fail closed rather than overflow the stack.
 constexpr int kMaxFolderRecursionDepth = 256;
 
+/// First printable ASCII code point; anything below it is a C0 control character.
+constexpr char16_t kFirstPrintableCodePoint = 0x20;
+
 /// Sanitize one folder-tree path segment so a parsed PST/OST folder name can
 /// never escape the output root. Path separators, control and Windows-reserved
 /// characters are replaced, trailing dots/spaces are stripped, and a segment
@@ -38,7 +41,7 @@ QString sanitizeFolderSegment(const QString& raw) {
     QString out;
     out.reserve(raw.size());
     for (QChar character : raw) {
-        if (character.unicode() < 0x20 || kForbidden.contains(character)) {
+        if (character.unicode() < kFirstPrintableCodePoint || kForbidden.contains(character)) {
             out += QLatin1Char('_');
         } else {
             out += character;

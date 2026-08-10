@@ -18,6 +18,10 @@
 /// read-only and mutating op modules. Both include this and call the same code.
 namespace sak {
 
+/// A UNC / device-namespace root begins with two leading separators, so a path
+/// must be at least this long to carry that double-separator prefix.
+inline constexpr qsizetype kDoubleSeparatorPrefixLength = 2;
+
 /// True if @p path begins with two separators of any kind (\\, //, \/, /\).
 ///
 /// Windows treats ANY two leading separators as a UNC / device namespace root
@@ -30,7 +34,8 @@ namespace sak {
     const auto isSeparator = [](QChar ch) {
         return ch == QLatin1Char('\\') || ch == QLatin1Char('/');
     };
-    return path.size() >= 2 && isSeparator(path.at(0)) && isSeparator(path.at(1));
+    return path.size() >= kDoubleSeparatorPrefixLength && isSeparator(path.at(0)) &&
+           isSeparator(path.at(1));
 }
 
 /// True if @p info is a reparse point (symbolic link or junction).

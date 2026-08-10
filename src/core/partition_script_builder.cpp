@@ -50,6 +50,10 @@ constexpr uint64_t kAllocationUnit16KbBytes = 16 * 1024;
 constexpr uint64_t kAllocationUnit32KbBytes = 32 * 1024;
 constexpr uint64_t kAllocationUnit64KbBytes = 64 * 1024;
 constexpr qsizetype kDiskPartLabelMaxChars = 32;
+// Lowest printable ASCII code point (space); everything below it is a control character.
+constexpr char16_t kFirstPrintableAsciiCodePoint = 0x20;
+// DEL control character code point, stripped like the other control characters.
+constexpr char16_t kDeleteControlCodePoint = 0x7F;
 constexpr uint64_t kMinimumDiskPartSizeMb = 1;
 constexpr uint64_t kHfsStagedCopyBufferBytes = 4ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kHfsStaleSignatureClearBytes = 16ULL * 1024ULL * 1024ULL;
@@ -1771,7 +1775,8 @@ QString diskPartLabel(QString label) {
     QString cleaned;
     cleaned.reserve(label.size());
     for (const QChar ch : label) {
-        if (ch.unicode() >= 0x20 && ch.unicode() != 0x7F && ch != QLatin1Char('"')) {
+        if (ch.unicode() >= kFirstPrintableAsciiCodePoint &&
+            ch.unicode() != kDeleteControlCodePoint && ch != QLatin1Char('"')) {
             cleaned.append(ch);
         }
     }

@@ -88,6 +88,9 @@ constexpr int kKeyRetrievalProgressSpan = 40;
 constexpr qsizetype kBitlockerSummaryLineReserve = 14;
 constexpr int kVolumeSizeDisplayPrecision = 2;
 
+/// Length of a bare drive-letter root in native form ("X:\\"): drive letter, ':' and separator.
+constexpr int kDriveRootLength = 3;
+
 /// GetDriveTypeW() value for a mapped network drive. Named so the classification
 /// exists on every platform; the value is checked against the Win32 macro below.
 constexpr unsigned int kWin32DriveRemote = 4;
@@ -100,8 +103,9 @@ static_assert(kWin32DriveRemote == DRIVE_REMOTE, "DRIVE_REMOTE value drifted");
 ///        answers from the local mount table, so it does not itself touch the share.
 [[nodiscard]] unsigned int rootDriveType(const QString& path) {
 #ifdef Q_OS_WIN
-    const QString root = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(3);
-    if (root.size() < 3 || root[1] != QLatin1Char(':')) {
+    const QString root =
+        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(kDriveRootLength);
+    if (root.size() < kDriveRootLength || root[1] != QLatin1Char(':')) {
         return 0;
     }
     return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16()));

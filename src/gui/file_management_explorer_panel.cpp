@@ -533,7 +533,8 @@ FileManagementExplorerPanel::~FileManagementExplorerPanel() {
         // QThread must not be destroyed with the panel. Interactive stops go
         // through the non-blocking stopExplorerSearch instead.
         m_search_worker->requestStop();
-        if (!m_search_worker->wait(5000)) {
+        constexpr int kSearchWorkerJoinMs = 5000;
+        if (!m_search_worker->wait(kSearchWorkerJoinMs)) {
             // Refuses to stop within the bounded join (e.g. blocked in a slow
             // network-path enumeration that does not poll requestStop in time):
             // detach exactly like the IO-worker path below so ~QObject cannot
@@ -1251,7 +1252,8 @@ void FileManagementExplorerPanel::toggleStatusCenterFlyout() {
     // Files Placement=BottomEdgeAlignedRight under the toolbar button.
     QPushButton* button = m_omnibar->statusCenterButton();
     const QPoint anchor = button->mapTo(window(), button->rect().bottomRight());
-    m_status_flyout->openAt(QPoint(anchor.x(), anchor.y() + 2));
+    constexpr int kStatusFlyoutGapPx = 2;
+    m_status_flyout->openAt(QPoint(anchor.x(), anchor.y() + kStatusFlyoutGapPx));
 }
 
 void FileManagementExplorerPanel::syncStatusCenterButton() {
@@ -1974,7 +1976,8 @@ void FileManagementExplorerPanel::installTabShortcuts() {
             &QShortcut::activated,
             this,
             [this]() { cycleTab(-1); });
-    for (int digit = 1; digit <= 9; ++digit) {
+    constexpr int kMaxTabShortcutDigit = 9;
+    for (int digit = 1; digit <= kMaxTabShortcutDigit; ++digit) {
         connect(addPanelShortcut(QStringLiteral("Ctrl+%1").arg(digit)),
                 &QShortcut::activated,
                 this,
@@ -1998,7 +2001,8 @@ void FileManagementExplorerPanel::installPaneShortcuts() {
 }
 
 void FileManagementExplorerPanel::cycleTab(const int direction) {
-    if (!m_tab_bar || m_tab_bar->count() < 2) {
+    constexpr int kMinTabsToCycle = 2;
+    if (!m_tab_bar || m_tab_bar->count() < kMinTabsToCycle) {
         return;
     }
     const int count = m_tab_bar->count();
@@ -3153,7 +3157,8 @@ void FileManagementExplorerPanel::cancelSpringOpen() {
 }
 
 int FileManagementExplorerPanel::paneIndexForView(const QAbstractItemView* view) const {
-    for (int index = 0; index < 2; ++index) {
+    constexpr int kPaneCount = 2;
+    for (int index = 0; index < kPaneCount; ++index) {
         FileExplorerPane* pane = index == 0 ? m_pane_a : m_pane_b;
         if (pane && pane->itemViews().contains(const_cast<QAbstractItemView*>(view))) {
             return index;
@@ -3358,7 +3363,9 @@ QString FileManagementExplorerPanel::uniqueChildName(const FileManagementTarget&
     const int last_dot = name.lastIndexOf(QLatin1Char('.'));
     const QString base = last_dot > 0 ? name.left(last_dot) : name;
     const QString extension = last_dot > 0 ? name.mid(last_dot) : QString();
-    for (int index = 2; index < 10'000; ++index) {
+    constexpr int kIncrementalNameStart = 2;
+    constexpr int kMaxIncrementalNameAttempts = 10'000;
+    for (int index = kIncrementalNameStart; index < kMaxIncrementalNameAttempts; ++index) {
         const QString candidate = QStringLiteral("%1 (%2)%3").arg(base).arg(index).arg(extension);
         if (!destinationOccupied(target, directory, candidate)) {
             return candidate;
@@ -8604,10 +8611,11 @@ bool FileManagementExplorerPanel::canEjectTarget(const FileManagementTarget& tar
         return false;
     }
     const QString root = QDir::cleanPath(target.root_path);
-    if (root.size() < 2 || root.at(1) != QLatin1Char(':')) {
+    constexpr int kDriveSpecifierLength = 2;  // drive letter + ':'
+    if (root.size() < kDriveSpecifierLength || root.at(1) != QLatin1Char(':')) {
         return false;
     }
-    return !root.startsWith(QDir::rootPath().left(2), Qt::CaseInsensitive);
+    return !root.startsWith(QDir::rootPath().left(kDriveSpecifierLength), Qt::CaseInsensitive);
 }
 
 void FileManagementExplorerPanel::ejectLocalTargetAtIndex(const int target_index) {

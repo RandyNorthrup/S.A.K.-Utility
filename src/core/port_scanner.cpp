@@ -343,6 +343,11 @@ void PortScanner::cancel() {
 }
 
 namespace {
+// Code units below this are C0 control characters (U+0000..U+001F); 0x7F is DEL.
+// Either in a scan target would inject headers, so both are rejected.
+constexpr int kFirstNonControlCodeUnit = 0x20;
+constexpr int kDeleteControlChar = 0x7F;
+
 // Validate the untrusted scan target, returning the human-readable rejection reason and an
 // empty string when the target is safe to hand to connectToHost / the HTTP Host header.
 QString validateScanTarget(const QString& target) {
@@ -357,7 +362,7 @@ QString validateScanTarget(const QString& target) {
     // target would inject additional request headers; a real hostname or IP contains none,
     // so reject the whole request rather than sanitize-and-send.
     for (const QChar ch : target) {
-        if (ch.unicode() < 0x20 || ch.unicode() == 0x7F) {
+        if (ch.unicode() < kFirstNonControlCodeUnit || ch.unicode() == kDeleteControlChar) {
             return QStringLiteral("Target contains invalid control characters");
         }
     }

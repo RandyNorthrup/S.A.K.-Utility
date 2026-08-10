@@ -59,6 +59,11 @@ constexpr int kHelperStartupFailureExitCode = 2;
 // delivered. That is not a clean exit and must not be reported as one.
 constexpr int kHelperClientLostExitCode = 3;
 
+// A UTF-8 continuation byte has its top two bits set to 10. Mask the top two bits and compare, so
+// truncation can back up out of a multi-byte sequence that straddles the byte cap.
+constexpr unsigned int kUtf8ContinuationMask = 0xC0U;
+constexpr unsigned int kUtf8ContinuationByte = 0x80U;
+
 // ======================================================================
 // Command-Line Parsing
 // ======================================================================
@@ -298,7 +303,8 @@ QString cappedTaskOutput(const QString& value, int max_bytes, bool* truncated = 
     // with U+FFFD, silently corrupting output a machine reader may be parsing. Drop back to the
     // start of the sequence that straddles the cap.
     qsizetype cut = max_bytes;
-    while (cut > 0 && (static_cast<unsigned char>(bytes.at(cut)) & 0xC0U) == 0x80U) {
+    while (cut > 0 && (static_cast<unsigned char>(bytes.at(cut)) & kUtf8ContinuationMask) ==
+                          kUtf8ContinuationByte) {
         --cut;
     }
     if (truncated != nullptr) {

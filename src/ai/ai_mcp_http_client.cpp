@@ -34,6 +34,9 @@ constexpr int kMinimumRequestTimeoutMs = sak::kMillisecondsPerSecond;
 // Upper bound on the caller-supplied timeout: rejects negative/zero waits and keeps
 // timeout_ms + kSemaphoreWaitGraceMs from signed-overflowing int.
 constexpr int kMaxRequestTimeoutMs = 3'600'000;
+// Inclusive-lower / exclusive-upper bounds of the HTTP 2xx success class.
+constexpr int kHttpStatusSuccessMin = 200;
+constexpr int kHttpStatusSuccessEnd = 300;
 
 struct HttpCallState {
     QVariant status;
@@ -383,7 +386,7 @@ HttpCallState performHttpToolCall(const QUrl& endpoint, const QByteArray& body, 
 // result -- a 3xx we did not follow (cross-origin) or any other non-2xx, or a missing status code.
 [[nodiscard]] QString statusEnvelopeFailure(const HttpCallState& state) {
     const int status_code = state.status.isValid() ? state.status.toInt() : 0;
-    if (status_code >= 200 && status_code < 300) {
+    if (status_code >= kHttpStatusSuccessMin && status_code < kHttpStatusSuccessEnd) {
         return {};
     }
     return state.status.isValid()

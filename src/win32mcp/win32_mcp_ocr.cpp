@@ -50,6 +50,9 @@ using winrt::Windows::Security::Cryptography::CryptographicBuffer;
 // captureBgra downscales to fit and reports the scale so boxes map back to screen pixels.
 constexpr int kOcrMaxEdgeCap = 4096;
 
+// Divisor that halves a match's width/height to offset from its top-left corner to its center.
+constexpr int kCenterHalfDivisor = 2;
+
 // -- result + schema helpers (module-local, mirroring win32_mcp_tools) -------
 
 ToolResult jsonResult(const QJsonObject& object) {
@@ -595,8 +598,8 @@ QString ocrLocateText(const QJsonObject& args, int& center_x, int& center_y) {
     if (matches.isEmpty()) {
         return QStringLiteral("Text not found on screen: %1").arg(text.trimmed());
     }
-    center_x = matches.first().x + matches.first().w / 2;
-    center_y = matches.first().y + matches.first().h / 2;
+    center_x = matches.first().x + matches.first().w / kCenterHalfDivisor;
+    center_y = matches.first().y + matches.first().h / kCenterHalfDivisor;
     return {};
 }
 

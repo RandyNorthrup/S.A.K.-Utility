@@ -48,6 +48,22 @@ constexpr qint64 kExtractMaxTotalBytes = 8LL * 1024 * 1024 * 1024;  // 8 GiB exp
 // DECLARED uncompressed size is checked against it before any decode (B8-10).
 constexpr qint64 kExtractMaxFileBytes = 512LL * 1024 * 1024;  // 512 MiB per file
 
+// End-Of-Central-Directory (EOCD) record layout, all little-endian. The record is at least 22
+// bytes, and the total central-directory byte size is a uint32 field at EOCD offset +12.
+constexpr int kEocdMinRecordBytes = 22;
+// The size field is a little-endian uint32 spanning EOCD offsets +12..+15.
+constexpr int kEocdCentralDirSizeByte0 = 12;
+constexpr int kEocdCentralDirSizeByte1 = 13;
+constexpr int kEocdCentralDirSizeByte2 = 14;
+constexpr int kEocdCentralDirSizeByte3 = 15;
+// The four size-field bytes [+12..+15] must all be present, so the EOCD must sit at least this
+// many bytes before the end of the scanned tail buffer.
+constexpr int kEocdCentralDirSizeFieldEnd = 16;
+// Bit shifts that place each successive byte of the little-endian uint32 field.
+constexpr int kSecondByteShift = 8;
+constexpr int kThirdByteShift = 16;
+constexpr int kFourthByteShift = 24;
+
 // Byte size of a zip's central directory (from the End-Of-Central-Directory record), or -1 when no
 // EOCD is found (i.e. not a zip). QZipReader::isReadable() only confirms the DEVICE opened and
 // status() stays NoError on a garbage file, so a non-zip would otherwise list as a fake "0
@@ -64,7 +80,7 @@ qint64 zipCentralDirectorySize(const QString& path) {
     }
     const qint64 size = file.size();
     const qint64 tail = qMin<qint64>(size, (64LL * 1024) + 22);
-    if (tail < 22) {  // too small to hold an EOCD record
+    if (tail < kEocdMinRecordBytes) {  // too small to hold an EOCD record
         return -1;
     }
     if (!file.seek(size - tail)) {
@@ -72,15 +88,17 @@ qint64 zipCentralDirectorySize(const QString& path) {
     }
     const QByteArray buf = file.read(tail);
     const int eocd = buf.lastIndexOf(QByteArrayLiteral("PK\x05\x06"));
-    if (eocd < 0 || eocd + 16 > buf.size()) {
+    if (eocd < 0 || eocd + kEocdCentralDirSizeFieldEnd > buf.size()) {
         return -1;
     }
     // Central-directory size is a little-endian uint32 at EOCD offset +12.
     const auto byte_at = [&](int i) {
         return static_cast<quint32>(static_cast<quint8>(buf.at(eocd + i)));
     };
-    return static_cast<qint64>(byte_at(12) | (byte_at(13) << 8) | (byte_at(14) << 16) |
-                               (byte_at(15) << 24));
+    return static_cast<qint64>(byte_at(kEocdCentralDirSizeByte0) |
+                               (byte_at(kEocdCentralDirSizeByte1) << kSecondByteShift) |
+                               (byte_at(kEocdCentralDirSizeByte2) << kThirdByteShift) |
+                               (byte_at(kEocdCentralDirSizeByte3) << kFourthByteShift));
 }
 
 // Read a zip's central-directory entry list only AFTER bounding its byte size, so

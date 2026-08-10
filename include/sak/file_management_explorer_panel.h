@@ -957,7 +957,9 @@ private:
     // Per-pane listing revisions: a load started for pane N is superseded only
     // by a NEWER load for pane N, so a deliberately-targeted background load
     // (refreshOtherPane, dual-pane restore) survives active-pane navigation.
-    std::array<quint64, 2> m_listing_revision{0, 0};
+    // Two panes (primary + secondary), one listing revision each.
+    static constexpr std::size_t kListingRevisionPaneCount = 2;
+    std::array<quint64, kListingRevisionPaneCount> m_listing_revision{0, 0};
     quint64 m_columns_preview_revision{0};
     // Supersedes an in-flight details-pane preview read on selection change.
     quint64 m_preview_revision{0};

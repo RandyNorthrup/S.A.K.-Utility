@@ -133,8 +133,18 @@ bool windowVisibleExists(const QString& needle_lower, bool& enum_ok) {
 
 // -- tools -------------------------------------------------------------------
 
+// Pack 8-bit R/G/B channels into a single 24-bit value and format it as a fixed-width "#RRGGBB"
+// hexadecimal string.
+constexpr int kRedShiftBits = 16;
+constexpr int kGreenShiftBits = 8;
+constexpr int kHexColorDigits = 6;
+constexpr int kHexBase = 16;
+
 QString hexColor(int r, int g, int b) {
-    return QStringLiteral("#%1").arg((r << 16) | (g << 8) | b, 6, 16, QLatin1Char('0'));
+    return QStringLiteral("#%1").arg((r << kRedShiftBits) | (g << kGreenShiftBits) | b,
+                                     kHexColorDigits,
+                                     kHexBase,
+                                     QLatin1Char('0'));
 }
 
 ToolResult toolGetPixelColor(const QJsonObject& args) {

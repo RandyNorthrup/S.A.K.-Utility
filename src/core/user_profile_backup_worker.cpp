@@ -31,6 +31,12 @@ constexpr int kProgressEmitFileInterval = 100;
 constexpr qint64 kProgressEmitByteInterval = kProgressEmitFileInterval * kBytesPerMB;
 constexpr double kDiskSpaceSafetyMultiplier = 1.1;
 constexpr int kDiskSpaceDisplayPrecision = 1;
+// Number of leading backslashes in a "\\server\share" UNC path, stripped before the
+// "\\?\UNC\" extended-length prefix is prepended.
+constexpr int kUncLeadingBackslashCount = 2;
+// First code point that is not a C0 control character (space, U+0020); anything below it is a
+// control character disallowed in a path component.
+constexpr int kFirstNonControlCodePoint = 0x20;
 
 // True if the path is an NTFS reparse point (junction/symlink/mount point). Fails CLOSED: a query
 // that cannot resolve the path is reported AS a reparse point so the caller refuses to follow it.
@@ -44,7 +50,7 @@ bool isReparsePoint(const QString& path) {
     QString extended = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
     if (!extended.startsWith(QStringLiteral("\\\\?\\"))) {
         if (extended.startsWith(QStringLiteral("\\\\"))) {
-            extended = QStringLiteral("\\\\?\\UNC\\") + extended.mid(2);
+            extended = QStringLiteral("\\\\?\\UNC\\") + extended.mid(kUncLeadingBackslashCount);
         } else {
             extended = QStringLiteral("\\\\?\\") + extended;
         }
@@ -121,7 +127,7 @@ bool hasUnsafeComponentTraits(const QString& component) {
         return true;
     }
     for (const QChar ch : component) {
-        if (ch.unicode() < 0x20) {
+        if (ch.unicode() < kFirstNonControlCodePoint) {
             return true;
         }
     }

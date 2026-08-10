@@ -22,6 +22,8 @@ namespace sak {
 
 namespace {
 constexpr int kProfileSizeDisplayPrecision = 1;
+// permissionMode combo index (built in enum order) that maps to AssignToDestination.
+constexpr int kPermissionModeIndexAssignToDestination = 2;
 
 enum UserProfileColumn {
     UserProfileColSelect = 0,
@@ -75,7 +77,7 @@ PermissionMode UserProfileBackupWizard::getPermissionMode() const {
     switch (field("permissionMode").toInt()) {
     case 1:
         return PermissionMode::PreserveOriginal;
-    case 2:
+    case kPermissionModeIndexAssignToDestination:
         return PermissionMode::AssignToDestination;
     default:
         return PermissionMode::StripAll;

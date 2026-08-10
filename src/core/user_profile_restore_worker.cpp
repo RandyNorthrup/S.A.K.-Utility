@@ -46,6 +46,7 @@ constexpr int kRestoreProgressFileInterval = 100;
 constexpr qint64 kRestoreProgressByteInterval = kRestoreProgressFileInterval * kBytesPerMB;
 constexpr int kRestoreConflictMaxAttempts = 1000;
 constexpr int kNetshTimeoutMs = 30'000;
+constexpr int kHexBase = 16;  // base for the random staging-token suffix
 constexpr unsigned long kAdapterEnumInitialBytes = 15'000;
 
 // Structural, locale-independent DHCP-enabled query for an adapter by its friendly
@@ -156,7 +157,7 @@ bool createRestoreRecoveryCopy(const QString& finalDestPath) {
 QString makeRestoreTempPath(const QString& finalDestPath, const QString& tag) {
     const quint64 token = QRandomGenerator::global()->generate64();
     return finalDestPath + QStringLiteral(".sak-") + tag + QLatin1Char('-') +
-           QString::number(token, 16) + QStringLiteral(".tmp");
+           QString::number(token, kHexBase) + QStringLiteral(".tmp");
 }
 
 // Replace an existing destination file only after the new copy is fully written.

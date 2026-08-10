@@ -102,13 +102,16 @@ QString recycleTargetRefusal(const QString& path, const QString& absolute) {
     return {};
 }
 
+// Base used to format the SHFileOperation error code as hexadecimal for the message.
+constexpr int kHexBase = 16;
+
 // Decide whether the finished shell call really delivered the item; empty means it did.
 QString recycleOutcomeError(const SHFILEOPSTRUCTW& op, int shell_result, const QString& absolute) {
     if (shell_result != 0) {
         return QStringLiteral(
                    "The shell refused to recycle '%1' (SHFileOperation "
                    "error 0x%2).")
-            .arg(absolute, QString::number(shell_result, 16));
+            .arg(absolute, QString::number(shell_result, kHexBase));
     }
     // A user or the shell can abort mid-flight with a zero return, so the item may never
     // have reached the bin even though the call "succeeded".

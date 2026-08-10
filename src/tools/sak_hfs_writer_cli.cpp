@@ -52,6 +52,12 @@ constexpr int kMaxNamePad = 255;
 // run for an arbitrarily long time. Cap it so a malformed/huge value fails closed.
 constexpr int kMaxGeneratorFileCount = 100'000;
 
+// A drive-letter whole-volume path is exactly "\\.\X:" or "\\?\X:": six characters, with the drive
+// letter at index 4 and the colon at index 5.
+constexpr qsizetype kDriveLetterVolumePathLength = 6;
+constexpr qsizetype kDriveLetterVolumeLetterIndex = 4;
+constexpr qsizetype kDriveLetterVolumeColonIndex = 5;
+
 QJsonArray stringArray(const QStringList& values) {
     QJsonArray array;
     for (const auto& value : values) {
@@ -896,7 +902,9 @@ std::vector<int> volumeBackingPhysicalDrives(const QString& path) {
 
 // A \\.\X: or \\?\X: whole-volume handle addressed by drive letter.
 bool isDriveLetterVolumePath(const QString& path) {
-    if (path.size() != 6 || path[5] != QLatin1Char(':') || !path[4].isLetter()) {
+    if (path.size() != kDriveLetterVolumePathLength ||
+        path[kDriveLetterVolumeColonIndex] != QLatin1Char(':') ||
+        !path[kDriveLetterVolumeLetterIndex].isLetter()) {
         return false;
     }
     return path.startsWith(QStringLiteral("\\\\.\\")) || path.startsWith(QStringLiteral("\\\\?\\"));

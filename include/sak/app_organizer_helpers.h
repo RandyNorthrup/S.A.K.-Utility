@@ -25,13 +25,17 @@ namespace sak {
 
 namespace organizer_detail {
 
+/// First code point that is not a C0 control character (space, U+0020); anything below it is a
+/// control character forbidden in a category name.
+inline constexpr char16_t kFirstNonControlCodePoint = 0x20;
+
 /// Characters a category name may never contain: the separators and ':' that would turn a
 /// single component into a path, drive or alternate-data-stream reference, the characters
 /// Win32 forbids in a name, and every control character (which only ever produces a move
 /// that fails after earlier files have already been relocated).
 [[nodiscard]] inline bool isForbiddenCategoryChar(QChar ch) {
     static const QString kForbidden = QStringLiteral("/\\:<>\"|?*");
-    return ch.unicode() < 0x20 || kForbidden.contains(ch);
+    return ch.unicode() < kFirstNonControlCodePoint || kForbidden.contains(ch);
 }
 
 /// True for a reserved DOS device name. These resolve to a device inside EVERY directory,
