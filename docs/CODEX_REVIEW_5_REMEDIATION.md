@@ -2050,10 +2050,48 @@ clang-tidy is absent from .pre-commit-config.yaml and no compile_commands.json e
 therefore never executed. clang-tidy 22.1.1 is present at the LLVM install; Ninja has
 been installed into the repo venv to produce a compilation database.
 
-- [ ] R5-G1-1 Generate compile_commands.json via a Ninja configure step
-- [ ] R5-G1-2 Run clang-tidy across all first-party sources and record the true finding count
-- [ ] R5-G1-3 Fix every clang-tidy finding
+- [x] R5-G1-1 Generate compile_commands.json via a Ninja configure step -- DONE:
+      scripts/generate_compile_commands.ps1 configures a parallel Ninja tree
+      (build-tidy/) with CMAKE_EXPORT_COMPILE_COMMANDS=ON, reading the Qt prefix +
+      vcpkg triplet from the Visual Studio cache so it cannot drift. The critical
+      flag is -DCMAKE_CXX_SCAN_FOR_MODULES=OFF (see R5-G12-7).
+- [x] R5-G1-2 Run clang-tidy across all first-party sources and record the true
+      finding count -- DONE 2026-08-10 (see the MEASURED table below):
+      scripts/run_clang_tidy.ps1 de-duplicates to 301 first-party translation
+      units and runs clang-tidy inside the MSVC environment.
+- [ ] R5-G1-3 Fix every clang-tidy finding -- IN PROGRESS (tiered gated waves; see plan below)
 - [ ] R5-G1-4 Wire clang-tidy into .pre-commit-config.yaml and CI so it cannot silently stop running
+
+MEASURED 2026-08-10 (301 first-party TUs, deduped by file:line:col:check;
+build-tidy database, SCAN_FOR_MODULES=OFF): ~26,260 unique first-party findings.
+Top checks: readability-identifier-naming 15705, cppcoreguidelines-pro-bounds-
+avoid-unchecked-container-access 2383, modernize-use-designated-initializers 1963,
+misc-const-correctness 1783, readability-implicit-bool-conversion 1467,
+cppcoreguidelines-narrowing-conversions 404, misc-use-internal-linkage 268,
+modernize-use-ranges 236, readability-math-missing-parentheses 220. Security /
+correctness cluster ~670: narrowing 404 + implicit-widening-of-multiplication 90 +
+use-integer-sign-comparison 96 + throwing-static-initialization 48 + cert-err33-c 18
++ exception-escape 15.
+
+The 110 residual clang-diagnostic-error are NOT code defects: they are clang-vs-MSVC
+parse differences (default-member-initializer strictness, taking a member function
+address unqualified) plus 2 AUTOMOC .moc files that only exist after a build. The
+code compiles clean under MSVC, the only target; these just leave clang-tidy's
+analysis of those specific files partial.
+
+REMEDIATION PLAN (each wave: scripts/run_clang_tidy.ps1 -Checks X -Fix, then full
+Release build + ctest 225/225, then commit):
+  1. Safe mechanical autofix waves: math-missing-parentheses, use-ranges,
+     return-braced-init-list, qualified-auto, redundant-casting, use-std-min-max,
+     implicit-bool-conversion, misc-const-correctness, use-designated-initializers.
+  2. Security / correctness tier (~670): narrowing + widening + integer-sign +
+     throwing-static-init + cert-err33 + exception-escape -- each finding hand-
+     verified (a truncation is a real bug or an intended explicit cast, not a blind
+     autofix).
+  3. readability-identifier-naming (15705) LAST: run-clang-tidy -fix applies the
+     per-kind styles consistently across TUs, but renames are the highest-risk
+     change, so in small batches with a full build + ctest after each.
+  4. Wire clang-tidy into pre-commit + CI (R5-G1-4) once the tree is clean.
 
 ### G2 - re-enable the 30 disabled clang-tidy checks
 
@@ -2208,9 +2246,15 @@ SECURITY AND CORRECTNESS TIER -- 995 diagnostics, fix these first:
       config explicitly disables (R5-G2). The disabled check was concealing 451
       instances of precisely the truncation class this review found in the raw
       filesystem parsers.
-- [ ] R5-G12-7 251 clang-diagnostic-error: clang cannot parse these constructs. Each
-      must be triaged as either a real defect or an MSVC-specific construct needing a
-      parse flag; a file that fails to parse is a file clang-tidy never checked.
+- [x] R5-G12-7 251 clang-diagnostic-error ROOT-CAUSED 2026-08-10: they were NOT
+      un-parseable constructs. Every one was '@<tu>.obj.modmap file not found' -- CMake's
+      C++20 module-dependency scanning adds a modmap response-file argument to each
+      compile command, and that file only exists after a build. Configuring the
+      clang-tidy database with -DCMAKE_CXX_SCAN_FOR_MODULES=OFF removes the argument and
+      drops clang-diagnostic-error from 251 to 110. The remaining 110 are clang-vs-MSVC
+      parse differences (default-member-init strictness, unqualified member-function
+      address) plus 2 not-yet-generated AUTOMOC .moc files -- analysis-environment
+      residue on MSVC-only code, not defects. Tracked for later flag tuning, not code fixes.
 - [ ] R5-G12-8 173 bugprone-implicit-widening-of-multiplication-result: a 32-bit
       multiplication widened only after it can already overflow -- the exact pattern
       behind the block and offset arithmetic findings in the raw filesystem passes.
