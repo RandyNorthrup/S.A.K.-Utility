@@ -3954,7 +3954,7 @@ QString PartitionScriptBuilder::quotePowerShell(const QString& value) {
 
 bool PartitionScriptBuilder::isValidDriveLetter(const QString& value) {
     // A Windows drive letter is strictly an ASCII A-Z. QChar::isLetter() would also
-    // accept Unicode letters (e.g. Cyrillic 'Е'), which are not valid mount points and
+    // accept Unicode letters (e.g. Cyrillic Ye, U+0415), which are not valid mount points and
     // could smuggle a homoglyph past letter-based gates; reject anything non-ASCII.
     if (value.size() != 1) {
         return false;

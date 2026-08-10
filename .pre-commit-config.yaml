@@ -202,3 +202,22 @@ repos:
           -File scripts/check_third_party_licenses.ps1
         language: system
         pass_filenames: false
+
+      # -------------------------------------------------------------------
+      # 10. ASCII-only text - no byte above 0x7F, no UTF-8 BOM. Sources and
+      #     docs are plain 7-bit ASCII; non-ASCII here has repeatedly been
+      #     silent damage (a double-encoded em dash that sat in a comment for
+      #     months, mojibake test data) rather than typography. See the
+      #     scripts/check_ascii_only.ps1 header for the rule and the \u-escape
+      #     escape hatch for a codepoint that must reach a user. Wired now that
+      #     the whole tree is clean (1467 files pass); the script self-excludes
+      #     binary extensions and vendored/evidence trees, and pre-commit passes
+      #     only the changed files.
+      # -------------------------------------------------------------------
+      - id: ascii-only
+        name: "ASCII-only text (no byte > 0x7F, no BOM)"
+        description: "Reject non-ASCII bytes or a UTF-8 BOM in tracked text files"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_ascii_only.ps1
+        language: system
+        exclude: (tools/chocolatey|tools/uup|tools/iperf3|tools/smartmontools|artifacts)/

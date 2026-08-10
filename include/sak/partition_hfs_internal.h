@@ -2609,7 +2609,7 @@ private:
                 fileId, QString(), hfsCatalogFileThreadRecord(parentId, name))});
     }
 
-    // H5: symlink records — a file record carrying the S_IFLNK/'slnk' bytes plus its
+    // H5: symlink records -- a file record carrying the S_IFLNK/'slnk' bytes plus its
     // thread record. The target path lives in the data fork (written separately).
     void appendSymlinkCatalogRecords(QVector<HfsRawCatalogRecord>* records,
                                      uint32_t parentId,
@@ -9046,7 +9046,7 @@ public:
 private:
     // Resolve a hard-link alias ('hlnk'/'hfs+') to the inode that holds the real
     // data. The inode is the file named iNode<special> inside the reserved
-    // `␄␄␄␄HFS+ Private Data` metadata directory at the volume root. Mirrors the
+    // `\0\0\0\0HFS+ Private Data` metadata directory at the volume root. Mirrors the
     // macOS kernel, which reads every alias's content through this indirection.
     [[nodiscard]] std::optional<HfsCatalogRecord> resolveHardLinkInode(
         const HfsCatalogRecord& alias) {
