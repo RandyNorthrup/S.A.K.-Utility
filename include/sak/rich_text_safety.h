@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "sak/rich_text_constants.h"
+
 #include <QLatin1Char>
 #include <QLatin1String>
 #include <QString>
@@ -46,8 +48,7 @@ namespace sak::ui {
     }
     QString escaped = untrusted.toHtmlEscaped();
     escaped.replace(QLatin1Char('\n'), QStringLiteral("<br/>"));
-    return QStringLiteral("<html><span style='white-space: pre-wrap;'>") + escaped +
-           QStringLiteral("</span></html>");
+    return literalRichTextOpenTag() + escaped + literalRichTextCloseTag();
 }
 
 }  // namespace sak::ui

@@ -18,6 +18,7 @@
 #include "sak/file_explorer_session_store.h"
 #include "sak/file_explorer_status_center_widget.h"
 #include "sak/file_explorer_style.h"
+#include "sak/file_explorer_style_constants.h"
 #include "sak/file_explorer_tag_store.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
@@ -7528,8 +7529,7 @@ void FileManagementExplorerPanel::highlightActivePane() {
     if (!m_pane_a) {
         return;
     }
-    const QString border = QStringLiteral("FileExplorerPane { border: 1px solid %1; }")
-                               .arg(QString::fromLatin1(ui::kColorAccentWindows));
+    const QString border = ui::activePaneBorderStyleSheet();
     m_pane_a->setStyleSheet(m_dual_pane_enabled && m_active_pane_index == 0 ? border : QString());
     if (m_pane_b) {
         m_pane_b->setStyleSheet(m_dual_pane_enabled && m_active_pane_index == 1 ? border

@@ -13,7 +13,9 @@ $repo = (Resolve-Path -LiteralPath $Root).Path
 $allowedFiles = @(
     "include/sak/color_constants.h",
     "include/sak/style_constants.h",
-    "include/sak/report_style_constants.h"
+    "include/sak/report_style_constants.h",
+    "include/sak/file_explorer_style_constants.h",
+    "include/sak/rich_text_constants.h"
 )
 
 function Convert-ToRepoPath([string]$Path) {
@@ -38,16 +40,24 @@ try {
             $allowedFiles -notcontains $repoPath
         }
 
+    # The property:value patterns require a real, semicolon-terminated CSS declaration
+    # (`prop: value;` with no intervening quote or brace) rather than a bare `prop:`.
+    # A bare colon match flagged prose that merely mentions a CSS word -- an error
+    # message ("...for padding: %1") or a tool description ("Group color: grey, blue,
+    # red, ...") -- neither of which is a style literal. A genuine QSS/CSS declaration
+    # always terminates its value with `;`, so requiring it removes those false
+    # positives without letting real inline styles through. style=/<style>/rgba()/
+    # qlineargradient stay bare: they are unambiguous style markers on their own.
     $rawStyleLiteralPatterns = @(
         'style\s*=',
         '<style\b',
         '</style>',
-        'background(?:-color)?\s*:',
-        'border(?:-(?:radius|color|bottom|top|left|right))?\s*:',
-        'color\s*:',
-        'font-(?:size|family|weight)\s*:',
-        'padding(?:-(?:left|right|top|bottom))?\s*:',
-        'margin(?:-(?:left|right|top|bottom))?\s*:',
+        'background(?:-color)?\s*:\s*[^;{}"]*;',
+        'border(?:-(?:radius|color|bottom|top|left|right))?\s*:\s*[^;{}"]*;',
+        '(?<![-a-zA-Z])color\s*:\s*[^;{}"]*;',
+        'font-(?:size|family|weight)\s*:\s*[^;{}"]*;',
+        'padding(?:-(?:left|right|top|bottom))?\s*:\s*[^;{}"]*;',
+        'margin(?:-(?:left|right|top|bottom))?\s*:\s*[^;{}"]*;',
         'qlineargradient',
         'rgba?\s*\('
     )
