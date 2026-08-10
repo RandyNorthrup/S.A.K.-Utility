@@ -14473,6 +14473,15 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
         } else if (poolChunkBmp.contains(k)) {
             const uint64_t poolInChunk = qMin(poolEnd, addr + kApfsSpacemanBlocksPerChunk) -
                                          qMax(usedBase, addr);
+            // F47: a pool overrunning the new logical end makes poolInChunk exceed this chunk's
+            // real blocks; the uint32 subtraction below would underflow ci_free_count to ~4.29e9
+            // and the allocator would hand out blocks past the new end. Fail closed before the
+            // subtraction.
+            if (poolInChunk > blocks) {
+                blockers->append(QStringLiteral(
+                    "APFS resize-grow: the relocated internal pool overruns the new logical end"));
+                return false;
+            }
             e.bitmapAddr = poolChunkBmp.value(k);
             e.freeCount = blocks - static_cast<uint32_t>(poolInChunk);
             e.xid = plan.newXid;
@@ -15073,6 +15082,22 @@ bool survivingPoolStraddlesChunk(uint64_t poolOffset, uint64_t poolBlocks) {
            poolBlocks > kApfsSpacemanBlocksPerChunk - poolOffset;
 }
 
+// F53: the surviving pool chunk's free count is (its kept blocks - oldIpBlockCount).
+// shrinkSurvivingPoolEntries performs that uint32 subtraction, so guard it here: a pool larger than
+// the chunk's kept blocks (a straddle that slipped past the upstream guard) fails closed rather
+// than underflowing the free count to ~4.29e9.
+bool survivingPoolFitsChunk(const ApfsChunkAddingGrowPlan& plan, QStringList* blockers) {
+    const uint64_t keptBlocks =
+        qMin<uint64_t>(kApfsSpacemanBlocksPerChunk,
+                       plan.newBlockCount - plan.survivingPoolChunk * kApfsSpacemanBlocksPerChunk);
+    if (plan.oldIpBlockCount > keptBlocks) {
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: the surviving internal pool exceeds its chunk's kept blocks"));
+        return false;
+    }
+    return true;
+}
+
 // Build + write the shrink allocator when the superseded pool sits in a SURVIVING high chunk. The
 // new pool relocates to chunk 0 (exactly like buildGrownAllocatorSubtree), but the surviving pool
 // chunk needs its own bitmap (the old pool stays marked used, riding the main fq), so the cib is
@@ -15106,6 +15131,9 @@ bool buildShrinkSurvivingPoolAllocator(ApfsFsCommitContext* ctx,
     if (survivingPoolStraddlesChunk(poolOffset, plan.oldIpBlockCount)) {
         blockers->append(
             QStringLiteral("APFS shrink: surviving-pool bitmap run straddles a chunk boundary"));
+        return false;
+    }
+    if (!survivingPoolFitsChunk(plan, blockers)) {
         return false;
     }
     const auto poolBitmap =
@@ -15242,6 +15270,17 @@ bool readGrowSourcePool(ApfsFsCommitContext* ctx,
     if (plan->oldIpBase == 0) {
         blockers->append(
             QStringLiteral("APFS resize-grow: unable to read the source internal-pool base"));
+        return false;
+    }
+    // F47: the relocated pool MUST fit inside the new logical size, or layoutMultiChunkGrow's
+    // ci_free_count subtraction underflows and the allocator writes blocks past the new end. The
+    // footprint base is newIpBmBase on a ring transition, else newIpBase; configureGrowTransition
+    // (not yet run here) sets newIpBmBase EQUAL to this newIpBase, so newIpBase is the footprint
+    // base for both layouts and the ternary is exact.
+    const uint64_t poolFootprintBase = plan->newIpBmBase != 0 ? plan->newIpBmBase : plan->newIpBase;
+    if (poolFootprintBase + plan->newIpBlockCount > plan->newBlockCount) {
+        blockers->append(QStringLiteral(
+            "APFS resize-grow: the relocated internal pool would overrun the new logical size"));
         return false;
     }
     return true;
@@ -15472,13 +15511,13 @@ bool shrinkChunkInScope(ApfsFsCommitContext* ctx,
 // chunk also holds the ring - scope it as metadata, not user data).
 ApfsShrinkScope buildShrinkScope(ApfsFsCommitContext* ctx,
                                  uint64_t oldChunks,
-                                 uint64_t newBlockCount) {
-    QStringList ignore;
+                                 uint64_t newBlockCount,
+                                 QStringList* blockers) {
     const uint64_t oldIpBase =
-        readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, &ignore);
+        readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     const uint64_t oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
     const QByteArray spaceman =
-        readLiveSpacemanObject(ctx->image, ctx->geometry, ctx->nxsb, &ignore);
+        readLiveSpacemanObject(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     const uint64_t oldIpBmBase = spaceman.isEmpty() ? 0
                                                     : le64(spaceman, kApfsSpacemanIpBmBaseOffset);
     const uint64_t ringBlocks =
@@ -15495,6 +15534,33 @@ ApfsShrinkScope buildShrinkScope(ApfsFsCommitContext* ctx,
             (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) / kApfsSpacemanBlocksPerChunk,
             oldIpBmBase,
             ringBlocks};
+}
+
+// F52: fail closed unless the on-disk internal-pool / ip-bitmap-ring geometry the scope reads is
+// self-consistent. Without this, buildShrinkScope trusts raw sm_ip_base / sm_ip_bm_base /
+// sm_ip_bm_block_count words: blockIsPoolOrRing then classifies a forged range as allocator
+// metadata (waving a data-bearing chunk through the shrink), and shrinkMainFreeQueue expands the
+// raw ring range block-by-block (a forged count near 2^32 is an unbounded allocation). Require the
+// pool to be non-zero, sit above chunk 0's reserved header prefix, and fit the source device;
+// require the ring's block count to be EXACTLY the size the source geometry implies, and to fit the
+// device.
+bool validateShrinkGeometryFields(const ApfsFsCommitContext* ctx,
+                                  uint64_t oldChunks,
+                                  const ApfsShrinkScope& s,
+                                  QStringList* blockers) {
+    const uint64_t blockCount = ctx->geometry.blockCount;
+    const uint64_t expectedRing =
+        ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, ctx->layout.cabCount) *
+        kApfsSpacemanIpBmTxMultiplier;
+    if (s.oldIpBase < kApfsFormatIpBitmapBaseBlock ||
+        s.oldIpBase + s.oldIpBlockCount > blockCount || s.ringBlocks != expectedRing ||
+        s.oldIpBmBase < kApfsFormatIpBitmapBaseBlock || s.oldIpBmBase + s.ringBlocks > blockCount) {
+        blockers->append(
+            QStringLiteral("APFS resize-shrink: the on-disk internal-pool/ring geometry is out of "
+                           "range or forged"));
+        return false;
+    }
+    return true;
 }
 
 // A source chunk whose ci_bitmap_addr is 0 is only legitimately "implicit all-free" when its
@@ -15530,7 +15596,10 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
         !readMultiChunkGrowSource(ctx, oldChunks, src, blockers)) {
         return false;
     }
-    const ApfsShrinkScope scope = buildShrinkScope(ctx, oldChunks, newBlockCount);
+    const ApfsShrinkScope scope = buildShrinkScope(ctx, oldChunks, newBlockCount, blockers);
+    if (!validateShrinkGeometryFields(ctx, oldChunks, scope, blockers)) {
+        return false;
+    }
     for (uint64_t k = 1; k < oldChunks; ++k) {
         const ApfsSourceChunkState& chunk = src->at(static_cast<qsizetype>(k));
         if (chunk.bitmapAddr == 0) {
@@ -15583,9 +15652,15 @@ bool ipBitmapRingHasBitAtOrAbove(QIODevice* image,
 // The superseded pool sits in a surviving high chunk when its chunk is neither chunk 0 nor in the
 // removed tail (validateShrinkScope already proved that chunk holds only the pool). Returns that
 // chunk index, or 0 when the pool relocates from chunk 0 / a removed chunk (the common path).
-uint64_t survivingPoolChunkIndex(uint64_t oldIpBase, uint64_t newBlockCount, uint64_t newChunks) {
+uint64_t survivingPoolChunkIndex(uint64_t oldIpBase,
+                                 uint64_t oldIpBlockCount,
+                                 uint64_t newBlockCount,
+                                 uint64_t newChunks) {
     const uint64_t oldPoolChunk = oldIpBase == 0 ? 0 : oldIpBase / kApfsSpacemanBlocksPerChunk;
-    const bool surviving = oldPoolChunk > 0 && oldIpBase < newBlockCount &&
+    // F53: the pool survives only when its FULL extent stays at or below the new size. Consulting
+    // the start alone would treat a pool that straddles newBlockCount (start kept, end removed) as
+    // a surviving chunk; classify by the whole extent so only a wholly-kept pool counts.
+    const bool surviving = oldPoolChunk > 0 && oldIpBase + oldIpBlockCount <= newBlockCount &&
                            oldPoolChunk < newChunks;
     return surviving ? oldPoolChunk : 0;
 }
@@ -15698,6 +15773,68 @@ bool resolveShrinkPoolPlacement(ApfsFsCommitContext* ctx,
     return true;
 }
 
+// F51: read the surviving pool chunk's on-disk bitmap and report whether it holds user data beyond
+// the internal-pool prefix [poolOffset, poolOffset + oldIpBlockCount). The ip-bitmap ring stays low
+// (chunk 0) on the single-chunk-pool path this feeds, so it is never in this high chunk; any used
+// block outside the pool prefix is real user data. validateShrinkScope already read this bitmap, so
+// the read here succeeds; a defensive read error surfaces via blockers and reads as no data.
+bool poolChunkHoldsUserData(ApfsFsCommitContext* ctx,
+                            const ApfsChunkAddingGrowPlan& plan,
+                            uint64_t bitmapAddr,
+                            QStringList* blockers) {
+    QByteArray bm(ctx->geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx->image, ctx->geometry, bitmapAddr, &bm, blockers)) {
+        return false;
+    }
+    const uint64_t poolOffset = plan.oldIpBase -
+                                plan.survivingPoolChunk * kApfsSpacemanBlocksPerChunk;
+    for (uint64_t b = 0; b < kApfsSpacemanBlocksPerChunk; ++b) {
+        const bool used =
+            ((static_cast<uint8_t>(bm.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) != 0;
+        if (used && (b < poolOffset || b >= poolOffset + plan.oldIpBlockCount)) {
+            return true;  // a used block outside the pool prefix = real user data
+        }
+    }
+    return false;
+}
+
+// F51: classify a chunk-removing shrink's surviving chunks. survivingUserData is set when a
+// surviving chunk k>0 other than the pool chunk carries a bitmap. A surviving pool chunk that ALSO
+// holds user data is re-routed to the data-preserving allocator: survivingUserData is set and
+// survivingPoolChunk cleared, so buildShrinkAllocator carries its real (pool + data) bitmap forward
+// (buildDataShrinkAllocator) instead of rebuilding it pool-only
+// (buildShrinkSurvivingPoolAllocator), which would mark the still-referenced data blocks free. Data
+// in a non-pool surviving chunk PLUS a surviving pool-ONLY high chunk stays a later increment (fail
+// closed).
+bool classifyShrinkSurvivors(ApfsFsCommitContext* ctx,
+                             ApfsChunkAddingGrowPlan* plan,
+                             const QVector<ApfsSourceChunkState>& src,
+                             QStringList* blockers) {
+    const uint64_t poolChunk = plan->oldIpBase == 0 ? 0
+                                                    : plan->oldIpBase / kApfsSpacemanBlocksPerChunk;
+    for (uint64_t k = 1; k < plan->newChunkCount && k < static_cast<uint64_t>(src.size()); ++k) {
+        if (k != poolChunk && src.at(static_cast<qsizetype>(k)).bitmapAddr != 0) {
+            plan->survivingUserData = true;
+            break;
+        }
+    }
+    if (plan->survivingPoolChunk != 0 &&
+        poolChunkHoldsUserData(ctx,
+                               *plan,
+                               src.at(static_cast<qsizetype>(plan->survivingPoolChunk)).bitmapAddr,
+                               blockers)) {
+        plan->survivingUserData = true;
+        plan->survivingPoolChunk = 0;
+    }
+    if (plan->survivingUserData && plan->survivingPoolChunk != 0) {
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: surviving user data plus a surviving high-chunk pool is a later "
+            "increment"));
+        return false;
+    }
+    return true;
+}
+
 // Validate a chunk-removing shrink and lay out its plan: the relocated pool base is a free run
 // in surviving chunk-0 free space, the block counts drop to newChunkCount. When the shrunk pool
 // would drop below a stale ip-bitmap ring bit, the ring is relocated too (newIpBmBase set) so the
@@ -15725,20 +15862,9 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
     plan->newIpBlockCount = 3 * (plan->newChunkCount + newCibs + newCabs);
     plan->oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     plan->oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks) + ctx->layout.cabCount);
-    plan->survivingPoolChunk =
-        survivingPoolChunkIndex(plan->oldIpBase, newBlockCount, plan->newChunkCount);
-    const uint64_t poolChunk = plan->oldIpBase == 0 ? 0
-                                                    : plan->oldIpBase / kApfsSpacemanBlocksPerChunk;
-    for (uint64_t k = 1; k < plan->newChunkCount && k < static_cast<uint64_t>(src.size()); ++k) {
-        if (k != poolChunk && src.at(static_cast<qsizetype>(k)).bitmapAddr != 0) {
-            plan->survivingUserData = true;
-            break;
-        }
-    }
-    if (plan->survivingUserData && plan->survivingPoolChunk != 0) {
-        blockers->append(QStringLiteral(
-            "APFS resize-shrink: surviving user data plus a surviving high-chunk pool is a later "
-            "increment"));
+    plan->survivingPoolChunk = survivingPoolChunkIndex(
+        plan->oldIpBase, plan->oldIpBlockCount, newBlockCount, plan->newChunkCount);
+    if (!classifyShrinkSurvivors(ctx, plan, src, blockers)) {
         return false;
     }
     // ip_bm_size 2 -> 1 transition (a shrink crossing ~1.35 TiB down): the target's smaller pool
@@ -16021,11 +16147,49 @@ int64_t shrinkFreeDelta(const ApfsChunkAddingGrowPlan& plan,
         plan.newIpBmSize != 0
             ? static_cast<int64_t>(plan.newIpBmSize * kApfsSpacemanIpBmTxMultiplier)
             : (plan.newIpBmBase != 0 ? static_cast<int64_t>(plan.ipBmBlocks) : 0);
-    const bool ringInRemovedTail = plan.oldIpBmBase >= newBlockCount;
+    // F53: classify the ring by its FULL extent, not its start (a straddling ring is rejected
+    // upstream, so this only distinguishes a wholly-removed ring from a wholly-kept one).
+    const bool ringInRemovedTail = plan.oldIpBmBase + plan.ipBmBlocks > newBlockCount;
     return static_cast<int64_t>(newBlockCount - oldBlockCount) -
            static_cast<int64_t>(plan.newIpBlockCount) + static_cast<int64_t>(reclaimedCount) +
            (poolInRemovedTail ? static_cast<int64_t>(plan.oldIpBlockCount) : 0) +
            (ringInRemovedTail ? static_cast<int64_t>(plan.ipBmBlocks) : 0) - newRingUsed;
+}
+
+// F53: a shrink target that cuts THROUGH the superseded internal pool or its ip-bitmap ring (start
+// kept, end removed) would enqueue the truncated-away tail onto the main free-queue and underflow a
+// surviving chunk's free count. A valid shrink removes or keeps each range whole (both are chunk-
+// aligned against a chunk-multiple target), so a straddle is a forged/unsupported geometry - fail
+// closed. A fully-removed range (start >= newBlockCount) and a fully-kept range (start + count <=
+// newBlockCount) both pass.
+bool shrinkRangesDoNotStraddle(const ApfsChunkAddingGrowPlan& plan,
+                               uint64_t newBlockCount,
+                               QStringList* blockers) {
+    const bool poolStraddles = plan.oldIpBase < newBlockCount &&
+                               plan.oldIpBase + plan.oldIpBlockCount > newBlockCount;
+    const bool ringStraddles = plan.ipBmBlocks != 0 && plan.oldIpBmBase < newBlockCount &&
+                               plan.oldIpBmBase + plan.ipBmBlocks > newBlockCount;
+    if (poolStraddles || ringStraddles) {
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: the target cuts through the internal pool or its ip-bitmap ring"));
+        return false;
+    }
+    return true;
+}
+
+// Truncate the backing image to the shrunk size after the checkpoint re-anchor (image-only; a raw
+// block device is never truncated - raw shrink is not offered). A non-file device is a no-op.
+bool truncateShrinkBackingImage(ApfsFsCommitContext* ctx,
+                                uint64_t newBlockCount,
+                                QStringList* blockers) {
+    auto* fileDevice = qobject_cast<QFileDevice*>(ctx->image);
+    if (fileDevice != nullptr &&
+        !fileDevice->resize(static_cast<qint64>(newBlockCount * ctx->geometry.blockSize))) {
+        blockers->append(
+            QStringLiteral("APFS resize-shrink: unable to truncate the backing image"));
+        return false;
+    }
+    return true;
 }
 
 // A7 (A-g) chunk-removing shrink: drop free high chunks and relocate the internal pool into
@@ -16047,7 +16211,13 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
     if (!buildShrinkPlan(ctx, newBlockCount, &plan, blockers)) {
         return false;
     }
-    const bool poolInRemovedTail = plan.oldIpBase >= newBlockCount;
+    if (!shrinkRangesDoNotStraddle(plan, newBlockCount, blockers)) {
+        return false;
+    }
+    // F53: past the straddle guard the pool is wholly removed or wholly kept, so classify it by its
+    // full extent (equivalent to oldIpBase >= newBlockCount here, but correct even if the pool sits
+    // flush against the new end).
+    const bool poolInRemovedTail = plan.oldIpBase + plan.oldIpBlockCount > newBlockCount;
     const ApfsMainFqAdvance mainFq = shrinkMainFreeQueue(ctx, plan, poolInRemovedTail, blockers);
     if (!mainFq.ok) {
         return false;
@@ -16095,14 +16265,7 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
             blockers)) {
         return false;
     }
-    auto* fileDevice = qobject_cast<QFileDevice*>(ctx->image);
-    if (fileDevice != nullptr &&
-        !fileDevice->resize(static_cast<qint64>(newBlockCount * ctx->geometry.blockSize))) {
-        blockers->append(
-            QStringLiteral("APFS resize-shrink: unable to truncate the backing image"));
-        return false;
-    }
-    return true;
+    return truncateShrinkBackingImage(ctx, newBlockCount, blockers);
 }
 
 // Load the commit context and run a chunk-removing shrink (image-only; a raw block device
