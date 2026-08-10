@@ -25,6 +25,10 @@
 
 namespace {
 
+/// Upper bound on folder-tree recursion. Real mailbox hierarchies are only a handful deep; a
+/// crafted store declaring a far deeper tree must fail closed rather than overflow the stack.
+constexpr int kMaxFolderRecursionDepth = 256;
+
 /// Sanitize one folder-tree path segment so a parsed PST/OST folder name can
 /// never escape the output root. Path separators, control and Windows-reserved
 /// characters are replaced, trailing dots/spaces are stripped, and a segment
@@ -119,7 +123,7 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
         processRecoveredItems(parser.get(), config, result);
     }
 
-    finalizeWriters();
+    finalizeWriters(result);
 
     result.finished = QDateTime::currentDateTime();
 
@@ -237,9 +241,20 @@ bool OstConversionWorker::initializeMboxWriter(const OstConversionConfig& config
     return true;
 }
 
-void OstConversionWorker::finalizeWriters() {
-    if (m_mbox_writer) {
-        m_mbox_writer->finalize();
+void OstConversionWorker::finalizeWriters(OstConversionResult& result) {
+    if (!m_mbox_writer) {
+        return;
+    }
+    m_mbox_writer->finalize();
+    if (m_mbox_writer->hadFailure()) {
+        // finalize() latched a flush/close failure: the mailbox on disk is NOT what the run
+        // produced, so the conversion must not be reported clean. Record and surface it.
+        const QString msg = QStringLiteral(
+            "MBOX export did not finalize cleanly: a flush or close failed, so the mailbox on "
+            "disk is incomplete.");
+        logError("OST Converter: {}", msg.toStdString());
+        result.errors.append(msg);
+        Q_EMIT errorOccurred(msg);
     }
 }
 
@@ -259,7 +274,7 @@ void OstConversionWorker::processFolderTree(PstParser* parser,
         if (m_cancelled.load()) {
             return;
         }
-        processFolder(parser, root_folder, QString(), config, result);
+        processFolder(parser, root_folder, FolderPosition{}, config, result);
     }
 }
 
@@ -350,10 +365,24 @@ void OstConversionWorker::loadAndProcessFolderItems(PstParser* parser,
 
 void OstConversionWorker::processFolder(PstParser* parser,
                                         const PstFolder& folder,
-                                        const QString& parent_path,
+                                        const FolderPosition& position,
                                         const OstConversionConfig& config,
                                         OstConversionResult& result) {
     if (m_cancelled.load()) {
+        return;
+    }
+
+    // A crafted PST/OST can declare a folder tree nested far deeper than any real mailbox;
+    // recursing it unbounded would overflow the stack. Fail closed with a surfaced error
+    // (which classifyOutcome treats as a failed job) rather than crash.
+    if (position.depth > kMaxFolderRecursionDepth) {
+        QString err = QStringLiteral(
+                          "Folder nesting exceeds the supported depth (%1); deeper "
+                          "folders were not converted under: ")
+                          .arg(kMaxFolderRecursionDepth) +
+                      position.parent_path;
+        logWarning("OST Converter: {}", err.toStdString());
+        result.errors.append(err);
         return;
     }
 
@@ -361,7 +390,8 @@ void OstConversionWorker::processFolder(PstParser* parser,
     // PST/OST and is appended to the output directory by every writer, so a name
     // containing "../" would otherwise write outside the chosen output root.
     const QString safe_segment = sanitizeFolderSegment(folder.display_name);
-    QString folder_path = parent_path.isEmpty() ? safe_segment : parent_path + "/" + safe_segment;
+    QString folder_path =
+        position.parent_path.isEmpty() ? safe_segment : position.parent_path + "/" + safe_segment;
 
     if (!folderPassesFilter(folder.display_name, config)) {
         return;
@@ -375,7 +405,7 @@ void OstConversionWorker::processFolder(PstParser* parser,
     loadAndProcessFolderItems(parser, folder, folder_path, config, result);
 
     for (const auto& child : folder.children) {
-        processFolder(parser, child, folder_path, config, result);
+        processFolder(parser, child, {folder_path, position.depth + 1}, config, result);
     }
 }
 

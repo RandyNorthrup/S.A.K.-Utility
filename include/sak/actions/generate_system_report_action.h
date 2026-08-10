@@ -34,10 +34,10 @@ public:
     // Pure decision seams (public for unit testing; no I/O, no state)
     // ------------------------------------------------------------------
 
-    /// @brief A PowerShell collector failed if it timed out or exited non-zero.
-    /// Such a run yields empty/partial output that must not be silently saved as
-    /// a complete report.
-    static bool collectorFailed(bool timed_out, int exit_code);
+    /// @brief A PowerShell collector failed if it timed out, exited non-zero, or
+    /// produced no/truncated output (@p output_incomplete). Such a run yields
+    /// empty/partial output that must not be silently saved as a complete report.
+    static bool collectorFailed(bool timed_out, int exit_code, bool output_incomplete = false);
 
     /// @brief Report generation only succeeds when the file was written AND
     /// every collector ran; a saved-but-empty report is a failure to surface.
@@ -48,6 +48,17 @@ private:
     QString m_report_path;
     /// @brief Names of collectors that failed to run during the current execute().
     QStringList m_collector_errors;
+
+    /// @brief Fail-closed guard for the output location: when it is blank or
+    /// relative, emits the invalid-location failure result and returns true so
+    /// execute() aborts before writing to a caller-unintended path.
+    /// @return True when the location was rejected and its result already emitted.
+    bool rejectInvalidOutputLocation();
+
+    /// @brief Mid-run cancellation check: when execute() has been cancelled,
+    /// emits the cancelled result stamped with @p start_time and returns true.
+    /// @return True when cancellation was handled and execute() should return.
+    bool finishIfCancelled(const QDateTime& start_time);
 
     /// @brief Builds the report header with box-drawing frame and timestamp.
     /// @return Formatted report header string.

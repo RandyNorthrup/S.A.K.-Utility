@@ -89,11 +89,21 @@ QVector<FileExplorerTaggedItem> FileExplorerTagStore::itemsWithTag(QSettings& se
     QVector<FileExplorerTaggedItem> items;
     for (const QString& key : keys) {
         settings.beginGroup(key);
+        const QString target_id = settings.value(QStringLiteral("targetId")).toString();
+        const QString path = settings.value(QStringLiteral("path")).toString();
         const QStringList tags = settings.value(QStringLiteral("tags")).toStringList();
+        // Fail closed on a mismatched record: each sub-group is content-addressed by
+        // itemKey(target_id, path), so a stored identity that does not reproduce its own
+        // group key is not a record this store wrote (tampered/foreign settings). Skip it
+        // rather than surface an attacker-chosen target_id/path to the caller.
+        if (itemKey(target_id, path) != key) {
+            settings.endGroup();
+            continue;
+        }
         if (tags.contains(needle, Qt::CaseInsensitive)) {
             FileExplorerTaggedItem item;
-            item.target_id = settings.value(QStringLiteral("targetId")).toString();
-            item.path = settings.value(QStringLiteral("path")).toString();
+            item.target_id = target_id;
+            item.path = path;
             item.tags = normalizeTags(tags);
             items.append(item);
         }

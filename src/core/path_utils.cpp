@@ -30,15 +30,18 @@ std::string normalize_for_compare(std::string value) {
 }
 
 /// @brief Accumulate size information for a single directory entry
-void accumulateFileEntry(const std::filesystem::directory_entry& entry,
+/// @return false only when a regular file's size cannot be read -- an unreadable real file must
+///         fail the whole scan closed rather than be silently skipped, because an under-counted
+///         total would let an oversized set be judged to fit (fail open).
+bool accumulateFileEntry(const std::filesystem::directory_entry& entry,
                          path_utils::DirectorySizeInfo& info) {
     if (!entry.is_regular_file()) {
-        return;
+        return true;
     }
     std::error_code ec;
     auto size = entry.file_size(ec);
     if (ec) {
-        return;
+        return false;
     }
     // Saturate instead of wrapping. entry.file_size() reports the LOGICAL size, so a handful of
     // attacker-created sparse files can each claim exabytes; a wrapped total_bytes would under-
@@ -53,6 +56,7 @@ void accumulateFileEntry(const std::filesystem::directory_entry& entry,
     if (info.file_count < kUintMax) {
         ++info.file_count;
     }
+    return true;
 }
 
 }  // anonymous namespace
@@ -189,7 +193,10 @@ auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
     try {
         for (const auto& entry : std::filesystem::recursive_directory_iterator(
                  dir_path, std::filesystem::directory_options::skip_permission_denied)) {
-            accumulateFileEntry(entry, info);
+            if (!accumulateFileEntry(entry, info)) {
+                logError("Failed to read the size of a regular file under: {}", dir_path.string());
+                return std::unexpected(error_code::read_error);
+            }
         }
     } catch (const std::filesystem::filesystem_error& e) {
         logError("Failed to calculate directory size: {}", e.what());

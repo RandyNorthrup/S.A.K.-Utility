@@ -14,6 +14,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QProcess>
 #include <QSaveFile>
@@ -88,6 +89,18 @@ void ScreenshotSettingsAction::scan() {
 void ScreenshotSettingsAction::execute() {
     if (isCancelled()) {
         emitCancelledResult("Screenshot capture cancelled");
+        return;
+    }
+    // Fail closed on a blank or relative output location: "" makes the output path
+    // "/SettingsScreenshots/..." (drive root) and a relative one resolves against the
+    // working directory, so screenshots and the report could land outside the intended
+    // backup folder.
+    if (m_output_location.trimmed().isEmpty() || !QDir::isAbsolutePath(m_output_location)) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = QStringLiteral("Screenshot output location is invalid");
+        result.log = QStringLiteral("Refusing to capture to a blank or relative path");
+        finishWithResult(result, ActionStatus::Failed);
         return;
     }
     setStatus(ActionStatus::Running);
@@ -212,7 +225,16 @@ QMap<QString, QString> ScreenshotSettingsAction::buildSettingsPageMap() {
 }
 
 void ScreenshotSettingsAction::closeSettingsApp() {
-    ProcessResult close_proc = runProcess("taskkill",
+    // System32-qualify taskkill.exe: a bare name resolves through the CreateProcess
+    // search order (current directory and PATH ahead of System32), so a planted
+    // taskkill.exe would run instead. Fail closed if the path cannot be resolved.
+    const QString taskkill = sak::system32Path(QStringLiteral("taskkill.exe"));
+    if (taskkill.isEmpty()) {
+        Q_EMIT logMessage(
+            QStringLiteral("Settings close skipped: cannot resolve System32 taskkill.exe path"));
+        return;
+    }
+    ProcessResult close_proc = runProcess(taskkill,
                                           QStringList() << "/IM" << "SystemSettings.exe" << "/F",
                                           sak::kTimeoutProcessMediumMs);
     if (!close_proc.succeeded()) {
@@ -240,7 +262,13 @@ bool ScreenshotSettingsAction::captureSettingsWindow(const QDir& output_dir,
             DWORD path_size = MAX_PATH;
             bool found = false;
             if (QueryFullProcessImageNameW(proc, 0, exe_path, &path_size)) {
-                found = (wcsstr(exe_path, L"SystemSettings") != nullptr);
+                // Require an EXACT executable-name match, not a substring anywhere in the
+                // path: "SystemSettings" occurs in any folder named that, so a decoy exe
+                // under such a path (or named SystemSettingsX.exe) would otherwise be
+                // trusted as the real Settings window and captured as evidence.
+                const QString exe_name = QFileInfo(QString::fromWCharArray(exe_path)).fileName();
+                found = exe_name.compare(QStringLiteral("SystemSettings.exe"),
+                                         Qt::CaseInsensitive) == 0;
             }
             CloseHandle(proc);
             if (found) {
@@ -394,6 +422,30 @@ bool ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
 
 // Helper method: Detect monitor count for multi-monitor support
 int ScreenshotSettingsAction::detectMonitorCount() {
+    // QGuiApplication::screens()/QScreen access is GUI-thread-affine, but execute() runs
+    // on the quick-action worker thread. Marshal the query onto the GUI thread and block
+    // until it finishes; fail closed (0) if there is no application object to marshal onto
+    // or the invocation cannot be marshalled -- never touch QScreen off the GUI thread.
+    QCoreApplication* app = QCoreApplication::instance();
+    if (!app) {
+        sak::logWarning("ScreenshotSettingsAction: no QCoreApplication to detect monitors");
+        return 0;
+    }
+    if (QThread::currentThread() == app->thread()) {
+        return countMonitorsOnGui();
+    }
+    int count = 0;
+    const bool invoked = QMetaObject::invokeMethod(
+        app, [&count]() { count = countMonitorsOnGui(); }, Qt::BlockingQueuedConnection);
+    if (!invoked) {
+        sak::logWarning(
+            "ScreenshotSettingsAction: failed to marshal monitor detection onto the GUI thread");
+        return 0;
+    }
+    return count;
+}
+
+int ScreenshotSettingsAction::countMonitorsOnGui() {
     QList<QScreen*> screens = QGuiApplication::screens();
     int count = screens.size();
 
@@ -420,7 +472,14 @@ bool ScreenshotSettingsAction::isProcessRunning(const QString& process_name) {
         sak::logWarning("isProcessRunning: empty process_name");
         return false;
     }
-    const auto result = sak::runProcess(QStringLiteral("tasklist"),
+    // System32-qualify tasklist.exe so a CWD/PATH-planted tasklist.exe cannot be run
+    // in its place. Fail closed (treat as not running) if the path cannot be resolved.
+    const QString tasklist = sak::system32Path(QStringLiteral("tasklist.exe"));
+    if (tasklist.isEmpty()) {
+        sak::logWarning("isProcessRunning: cannot resolve System32 tasklist.exe path");
+        return false;
+    }
+    const auto result = sak::runProcess(tasklist,
                                         {QStringLiteral("/FI"),
                                          QStringLiteral("IMAGENAME eq %1").arg(process_name)},
                                         sak::kTimerServiceDelayMs);

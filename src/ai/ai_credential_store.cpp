@@ -32,6 +32,11 @@ namespace sak::ai {
 
 namespace {
 
+// An API key is a short token (real provider keys are well under a kilobyte). Cap the accepted
+// length so a hostile/huge value cannot be encrypted/serialized, and so the qsizetype->DWORD
+// narrowing at the DPAPI boundary can never truncate the protected plaintext.
+constexpr int kMaxApiKeyChars = 8192;
+
 #ifdef Q_OS_WIN
 constexpr auto kCredentialProvider = "dpapi-current-user-v1";
 constexpr char kDpapiEntropy[] = "SAK Utility/OpenAI API Key/v1";
@@ -69,8 +74,16 @@ std::optional<QJsonObject> readCredentialRoot(const QString& path, QString* erro
         return std::nullopt;
     }
 
+    // Bound the read at the cap+1 so a file that grew (or was swapped) between the size check
+    // above and here cannot force an unbounded allocation -- the pre-check is a fast reject, this
+    // is the real ceiling.
+    const QByteArray raw = file.read(kMaxCredentialFileBytes + 1);
+    if (raw.size() > kMaxCredentialFileBytes) {
+        setError(error_message, QStringLiteral("Encrypted API key file is implausibly large"));
+        return std::nullopt;
+    }
     QJsonParseError parse_error;
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
         setError(
             error_message,
@@ -257,7 +270,17 @@ QString CredentialStore::loadApiKey(QString* error_message) const {
     if (!encrypted.has_value()) {
         return {};
     }
-    return decryptCredentialBytes(std::move(*encrypted), error_message);
+    const QString api_key = decryptCredentialBytes(std::move(*encrypted), error_message);
+    if (api_key.isEmpty()) {
+        // A stored credential is never empty (saveApiKey rejects empty). An empty result here
+        // means decryption failed (error already set) or the plaintext was empty/corrupt -- do
+        // not hand back an empty key as if that were an error-free "not configured" state.
+        if (error_message && error_message->isEmpty()) {
+            *error_message = QStringLiteral("Decrypted API key is empty or invalid");
+        }
+        return {};
+    }
+    return api_key;
 #else
     setError(error_message,
              QStringLiteral("Encrypted persistent credential storage is not available"));
@@ -273,6 +296,19 @@ bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message)
     if (api_key.trimmed().isEmpty()) {
         setError(error_message, QStringLiteral("API key is empty"));
         return false;
+    }
+    if (api_key.size() > kMaxApiKeyChars) {
+        setError(error_message, QStringLiteral("API key is implausibly long"));
+        return false;
+    }
+    // Reject embedded control characters (NUL, CR, LF, tab, etc.): a real API key never contains
+    // them, and letting one through could inject a newline into an outbound Authorization header
+    // downstream. Fail closed rather than silently storing a malformed credential.
+    for (const QChar ch : api_key) {
+        if (ch.unicode() < 0x20 || ch.unicode() == 0x7F) {
+            setError(error_message, QStringLiteral("API key contains control characters"));
+            return false;
+        }
     }
 
 #ifdef Q_OS_WIN
@@ -337,6 +373,15 @@ QString CredentialStore::redactSecrets(const QString& text) {
     static const QRegularExpression kGitHubToken(
         QStringLiteral(R"(\bgh[pousr]_[A-Za-z0-9]{20,}\b)"));
     result.replace(kGitHubToken, QStringLiteral("[redacted-github-token]"));
+
+    // GitHub fine-grained PATs (github_pat_...) and Slack app-level tokens (xapp-...), which the
+    // prefix-specific patterns above do not cover.
+    static const QRegularExpression kGitHubFineGrained(
+        QStringLiteral(R"(\bgithub_pat_[A-Za-z0-9_]{20,}\b)"));
+    result.replace(kGitHubFineGrained, QStringLiteral("[redacted-github-token]"));
+    static const QRegularExpression kSlackAppToken(
+        QStringLiteral(R"(\bxapp-[A-Za-z0-9\-]{12,}\b)"));
+    result.replace(kSlackAppToken, QStringLiteral("[redacted-slack-token]"));
 
     // AWS access key IDs (AKIA/ASIA + 16 alnum) and Google API keys (AIza...)
     static const QRegularExpression kAwsAccessKey(

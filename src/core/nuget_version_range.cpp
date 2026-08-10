@@ -242,6 +242,9 @@ bool passesUpper(const NuGetVersion& version,
 
 NuGetVersionRange NuGetVersionRange::parse(const QString& text) {
     NuGetVersionRange range;
+    // A parsed range starts valid; the apply* helpers set it false on a malformed token. The
+    // member defaults to false so a never-parsed range fails closed, so parse() must opt in.
+    range.m_valid = true;
     range.m_original = text.trimmed();
     const QString trimmed = range.m_original;
 

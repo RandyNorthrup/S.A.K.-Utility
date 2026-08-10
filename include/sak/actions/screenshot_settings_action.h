@@ -49,6 +49,10 @@ private:
     };
 
     int detectMonitorCount();
+    /// @brief Count and log the connected monitors. MUST run on the GUI thread
+    ///        (QGuiApplication::screens()/QScreen access is GUI-thread-affine);
+    ///        detectMonitorCount() marshals it there from the worker thread.
+    static int countMonitorsOnGui();
     bool isProcessRunning(const QString& process_name);
     /// @brief Grab @p window (0 = whole primary screen) and save it as PNG to @p filepath.
     ///        MUST run on the GUI thread (QScreen::grabWindow has GUI-thread affinity). Returns

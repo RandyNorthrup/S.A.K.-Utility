@@ -73,10 +73,21 @@ private:
                            const OstConversionConfig& config,
                            OstConversionResult& result);
 
-    /// Process a single folder and its children
+    /// Where a folder sits in the recursive walk: its parent's sanitized path (empty at a root)
+    /// and its own nesting depth (0 at a root). Both are values a child inherits from its parent
+    /// frame, so carrying them as one cursor keeps processFolder within the parameter limit; depth
+    /// still bounds the recursion exactly as a standalone argument did.
+    struct FolderPosition {
+        QString parent_path;
+        int depth = 0;
+    };
+
+    /// Process a single folder and its children. @p position.depth bounds the recursion so a
+    /// crafted PST/OST declaring a pathologically deep folder tree fails closed with a surfaced
+    /// error instead of overflowing the stack.
     void processFolder(PstParser* parser,
                        const PstFolder& folder,
-                       const QString& parent_path,
+                       const FolderPosition& position,
                        const OstConversionConfig& config,
                        OstConversionResult& result);
 
@@ -99,9 +110,11 @@ private:
     [[nodiscard]] std::unique_ptr<PstParser> openSourceParser(const QString& source_path,
                                                               OstConversionResult& result);
 
-    /// Finalize the MBOX writer. Takes no result: MboxWriter::finalize returns void, so
-    /// there is nothing to record.
-    void finalizeWriters();
+    /// Finalize the MBOX writer and surface a finalize-time failure. MboxWriter::finalize
+    /// returns void but latches any flush/close failure in hadFailure(); leaving it unchecked
+    /// would report an incomplete mailbox as a clean conversion, so it is recorded into
+    /// @p result (which classifyOutcome then turns into a Failed job).
+    void finalizeWriters(OstConversionResult& result);
 
     /// Check if a folder passes the include/exclude filter
     [[nodiscard]] bool folderPassesFilter(const QString& folder_name,

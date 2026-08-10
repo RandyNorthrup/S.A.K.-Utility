@@ -78,6 +78,12 @@ inline constexpr int kPipeNonceHexWidth = 16;
 
 /// @brief Frame a message for transmission: [length][type][payload]
 [[nodiscard]] inline QByteArray frameMessage(PipeMessageType type, const QByteArray& payload = {}) {
+    // Fail closed above the 4 MiB ceiling: a larger payload would narrow through uint32_t
+    // (truncating the framed length and desynchronizing the stream) and overflow the int
+    // reserve() below. The read side rejects the same ceiling before it allocates.
+    if (static_cast<quint64>(payload.size()) > kPipeMaxPayload) {
+        return {};
+    }
     uint32_t payload_len = static_cast<uint32_t>(payload.size());
     QByteArray frame;
     frame.reserve(kPipeHeaderSize + static_cast<int>(payload_len));
@@ -165,6 +171,68 @@ struct PipeMessage {
     bool valid{false};
 };
 
+/// @brief True only when @p key holds a non-empty string. The two task-bearing message types
+/// both reject a blank id, so that one question lives in one place.
+[[nodiscard]] inline bool jsonHasNonEmptyString(const QJsonObject& json, QLatin1String key) {
+    const QJsonValue value = json.value(key);
+    return value.isString() && !value.toString().isEmpty();
+}
+
+/// @brief A TaskRequest must name a non-empty task and carry an object payload; a missing field
+/// would become a blank/default destructive target downstream.
+[[nodiscard]] inline bool taskRequestBodyIsValid(const QJsonObject& json) {
+    return jsonHasNonEmptyString(json, QLatin1String("task")) &&
+           json.value(QLatin1String("payload")).isObject();
+}
+
+/// @brief A CancelRequest must name the non-empty task to cancel.
+[[nodiscard]] inline bool cancelRequestBodyIsValid(const QJsonObject& json) {
+    return jsonHasNonEmptyString(json, QLatin1String("task"));
+}
+
+/// @brief A ProgressUpdate must carry a numeric percent and a string status.
+[[nodiscard]] inline bool progressUpdateBodyIsValid(const QJsonObject& json) {
+    return json.value(QLatin1String("percent")).isDouble() &&
+           json.value(QLatin1String("status")).isString();
+}
+
+/// @brief A TaskResult must carry a boolean success flag and an object data body.
+[[nodiscard]] inline bool taskResultBodyIsValid(const QJsonObject& json) {
+    return json.value(QLatin1String("success")).isBool() &&
+           json.value(QLatin1String("data")).isObject();
+}
+
+/// @brief A TaskError must carry a numeric code and a string message.
+[[nodiscard]] inline bool taskErrorBodyIsValid(const QJsonObject& json) {
+    return json.value(QLatin1String("code")).isDouble() &&
+           json.value(QLatin1String("message")).isString();
+}
+
+/// @brief Enforce the minimal per-type field schema. A structurally-valid but semantically
+/// empty object (e.g. `{}` sent as a TaskRequest, or any JSON body accompanying a payloadless
+/// Shutdown/Ready) must be rejected here rather than handed downstream, where the missing fields
+/// would silently become blank/default destructive targets. Fail closed: an unknown or
+/// out-of-range message type matches no case and is refused.
+[[nodiscard]] inline bool pipeMessageJsonIsValid(PipeMessageType type, const QJsonObject& json) {
+    switch (type) {
+    case PipeMessageType::TaskRequest:
+        return taskRequestBodyIsValid(json);
+    case PipeMessageType::CancelRequest:
+        return cancelRequestBodyIsValid(json);
+    case PipeMessageType::ProgressUpdate:
+        return progressUpdateBodyIsValid(json);
+    case PipeMessageType::TaskResult:
+        return taskResultBodyIsValid(json);
+    case PipeMessageType::TaskError:
+        return taskErrorBodyIsValid(json);
+    case PipeMessageType::Shutdown:
+    case PipeMessageType::Ready:
+        // These carry no payload at all; an accompanying JSON body is malformed.
+        return false;
+    }
+    return false;  // unknown/out-of-range message type
+}
+
 /// @brief Parse a raw payload into a PipeMessage
 [[nodiscard]] inline PipeMessage parsePayload(PipeMessageType type, const QByteArray& payload) {
     PipeMessage msg;
@@ -183,7 +251,8 @@ struct PipeMessage {
     }
 
     msg.json = doc.object();
-    msg.valid = true;
+    // Do not trust an arbitrary object: require the fields this message type declares.
+    msg.valid = pipeMessageJsonIsValid(type, msg.json);
     return msg;
 }
 
@@ -193,8 +262,10 @@ struct PipeMessage {
     quint32 pid = static_cast<quint32>(QCoreApplication::applicationPid());
     quint64 nonce = 0;
 
-    // Use crypto-quality randomness from QRandomGenerator
-    auto* gen = QRandomGenerator::global();
+    // Crypto-quality randomness: system() is the OS CSPRNG (BCryptGenRandom on Windows), not
+    // the seeded global() PRNG whose predicted state could expose future pipe names to a
+    // squatter. 64 bits of true random plus the pipe's restrictive ACL is ample against squatting.
+    auto* gen = QRandomGenerator::system();
     nonce = gen->generate64();
 
     return QString("%1%2_%3")

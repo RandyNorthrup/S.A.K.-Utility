@@ -64,11 +64,12 @@ bool isWritableDirectory(const QString& path) {
 }  // namespace
 
 QString applicationDirectory() {
-    QString app_dir = QCoreApplication::applicationDirPath();
-    if (app_dir.trimmed().isEmpty()) {
-        app_dir = QDir::currentPath();
-    }
-    return app_dir;
+    // Return the real executable directory only. When it is unavailable (no
+    // QCoreApplication instance yet), fail closed with an empty string rather than
+    // substituting the attacker-influenceable current working directory. dataRoot()
+    // skips the portable branch when this is empty, so no data path is ever derived
+    // from the current directory.
+    return QCoreApplication::applicationDirPath();
 }
 
 bool isPackaged() {
@@ -89,16 +90,22 @@ QString dataRoot() {
         }
     }
 
-    const QString portable_data = QDir(applicationDirectory()).filePath(QStringLiteral("data"));
-    if (isWritableDirectory(portable_data)) {
-        return portable_data;
+    const QString app_dir = applicationDirectory();
+    if (!app_dir.trimmed().isEmpty()) {
+        const QString portable_data = QDir(app_dir).filePath(QStringLiteral("data"));
+        if (isWritableDirectory(portable_data)) {
+            return portable_data;
+        }
     }
 
+    // Portable storage is unavailable or not writable. Use the OS per-user writable
+    // location. Never return a current-working-directory-relative path, and never return
+    // the portable path that just failed its writability probe.
     const QString local_data = writableAppLocalDataLocation();
     if (!local_data.trimmed().isEmpty()) {
         return local_data;
     }
-    return portable_data;
+    return QString();
 }
 
 QString configDirectory() {

@@ -416,7 +416,13 @@ QVector<QVariantMap> HardwareInventoryScanner::jsonDocToVariantMaps(const QJsonD
 
 void HardwareInventoryScanner::finishScan() {
     m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    if (m_wmiQueryFailed) {
+    if (m_cancelled.load(std::memory_order_relaxed)) {
+        // A cancel observed during a single-component scan (the full scan() runs
+        // its own cancel checkpoints and returns before here) must surface as a
+        // terminal error, never a clean scanComplete-as-success over data the
+        // query was torn down mid-read.
+        Q_EMIT errorOccurred(QStringLiteral("Hardware inventory scan cancelled"));
+    } else if (m_wmiQueryFailed) {
         Q_EMIT errorOccurred(
             "One or more hardware queries failed; the inventory may be incomplete.");
     }
@@ -443,7 +449,11 @@ CpuInfo HardwareInventoryScanner::queryCpu() {
                                    "LoadPercentage"});
 
     if (results.isEmpty()) {
+        // Every system has a processor: an empty Win32_Processor result with a
+        // clean exit is a failed query, not a legitimately empty class. Flag it so
+        // the scan reports an incomplete inventory instead of a silent success.
         logWarning("No CPU information returned from WMI");
+        m_wmiQueryFailed = true;
         return info;
     }
 
@@ -935,7 +945,11 @@ void HardwareInventoryScanner::queryOsInfo() {
                  {"Caption", "Version", "BuildNumber", "OSArchitecture", "LastBootUpTime"});
 
     if (results.isEmpty()) {
+        // The host always runs an OS: an empty Win32_OperatingSystem result with a
+        // clean exit is a failed query. Flag it so the scan reports an incomplete
+        // inventory rather than a silent success with blank OS fields.
         logWarning("No OS information returned from WMI");
+        m_wmiQueryFailed = true;
         return;
     }
 

@@ -237,6 +237,7 @@ private:
     QMap<QDate, QVector<int>> m_date_index;  ///< date -> indices into m_all_events
     QHash<uint64_t, int> m_node_index;       ///< node_id -> index into m_all_events
     int m_folders_loaded{0};
+    bool m_load_truncated{false};  ///< a folder held more items than the per-folder display cap
     int m_details_pending{0};
 };
 

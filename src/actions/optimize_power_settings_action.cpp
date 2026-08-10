@@ -181,6 +181,17 @@ bool OptimizePowerSettingsAction::resolveHighPerformancePlan(const QVector<Power
     if (!discoveryPermitsActivation(discovery_ok, static_cast<int>(plans.size()))) {
         return false;
     }
+    // Prefer a plan the enumeration identifies by its canonical built-in GUID: a custom
+    // plan merely NAMED "High Performance"/"Ultimate Performance" must never win over the
+    // real built-in scheme. Selection stays GUID-anchored (same predicate the
+    // already-optimized check uses), not a name that an arbitrary plan can spoof.
+    auto by_guid = std::find_if(plans.begin(), plans.end(), [](const PowerPlan& plan) {
+        return isHighPerformanceGuid(plan.guid);
+    });
+    if (by_guid != plans.end()) {
+        out_plan = *by_guid;
+        return true;
+    }
     PowerPlan found = findPlanByNameIn(plans, "High Performance");
     if (found.guid.isEmpty()) {
         found = findPlanByNameIn(plans, "Ultimate Performance");
@@ -387,6 +398,12 @@ void OptimizePowerSettingsAction::execute() {
             QString("| Action:       No change needed\n").leftJustified(kReportInnerWidth, ' ') +
             "|\n";
     } else {
+        // Discovery ran several powercfg processes; honor a cancellation that arrived
+        // during it before mutating the active plan with -SETACTIVE (fail closed).
+        if (isCancelled()) {
+            emitCancelledResult("Power settings optimization cancelled");
+            return;
+        }
         success = activateHighPerformancePlan(high_perf_plan, current_plan.name, report);
     }
 

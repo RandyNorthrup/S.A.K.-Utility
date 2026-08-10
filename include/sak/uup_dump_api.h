@@ -130,11 +130,14 @@ public:
     static QString channelToRing(ReleaseChannel channel);
 
     /**
-     * @brief Reject a file entry that could inject aria2 directives or escape the download dir.
-     * @details The fileName/url/sha1 are serialized into the aria2 input manifest; a CR/LF/TAB in
-     *          any of them (or ../, /, \ in fileName) could break out of the record or add an
-     *          out=/uri directive. Returns false for any such entry (fail closed). Public+static
-     *          so it is unit-testable headless.
+     * @brief Reject a file entry that could inject aria2 directives or escape/alias the download
+     * dir.
+     * @details fileName/url/sha1 are serialized into the aria2 input manifest. Returns false (fail
+     *          closed) for any control character (NUL/CR/LF/TAB/...) in any field, and for a
+     *          fileName that traverses (../), carries a path separator (/ or \), a drive/ADS ':',
+     *          a reserved DOS device name (CON, NUL, COM1...), or a trailing dot/space that Windows
+     *          would trim into a different on-disk name. Public+static so it is unit-testable
+     *          headless.
      */
     [[nodiscard]] static bool isSafeAria2FileEntry(const FileInfo& info);
 

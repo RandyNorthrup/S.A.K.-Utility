@@ -57,6 +57,30 @@ void appendQuotedArg(std::wstring& out, const std::wstring& arg) {
     }
     out += L'\"';
 }
+
+// Wait for an elevated child to finish and map its outcome to a result. Fails closed on a
+// missing handle, a failed wait, an unreadable exit code, or a non-zero exit code, so a caller
+// that asked to wait is never told an operation succeeded that we could not actually observe.
+std::expected<void, sak::error_code> waitForElevatedExit(HANDLE process) {
+    if (!process) {
+        sak::logError("Elevated launch returned no process handle; cannot confirm completion");
+        return std::unexpected(sak::error_code::execution_failed);
+    }
+    if (WaitForSingleObject(process, INFINITE) != WAIT_OBJECT_0) {
+        sak::logError("Failed to wait for elevated process: error {}", GetLastError());
+        return std::unexpected(sak::error_code::execution_failed);
+    }
+    DWORD exit_code = 0;
+    if (!GetExitCodeProcess(process, &exit_code)) {
+        sak::logError("Failed to read elevated process exit code: error {}", GetLastError());
+        return std::unexpected(sak::error_code::execution_failed);
+    }
+    if (exit_code != 0) {
+        sak::logError("Elevated process failed with exit code {}", exit_code);
+        return std::unexpected(sak::error_code::execution_failed);
+    }
+    return {};
+}
 }  // namespace
 
 std::wstring ElevationManager::serializeArgsForRelaunch(int argc, wchar_t* const* argv) {
@@ -119,18 +143,23 @@ auto ElevationManager::get_executable_path() -> std::expected<std::wstring, sak:
     return std::wstring(path);
 }
 
-std::wstring ElevationManager::get_command_line_args() {
+auto ElevationManager::get_command_line_args() -> std::expected<std::wstring, sak::error_code> {
     LPWSTR cmd_line = GetCommandLineW();
 
     // Skip the executable name (first argument)
-    int argc;
+    int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(cmd_line, &argc);
 
-    if (!argv || argc <= 1) {
-        if (argv) {
-            LocalFree(argv);
-        }
-        return {};
+    if (!argv) {
+        // A genuine parse failure is NOT the same as "no arguments": fail closed instead of
+        // relaunching elevated with whatever arguments this process was started with dropped.
+        sak::logError("CommandLineToArgvW failed: error {}", GetLastError());
+        return std::unexpected(sak::error_code::execution_failed);
+    }
+
+    if (argc <= 1) {
+        LocalFree(argv);
+        return std::wstring{};  // legitimately no arguments
     }
 
     std::wstring args = serializeArgsForRelaunch(argc, argv);
@@ -149,7 +178,11 @@ auto ElevationManager::restartElevated(bool wait_for_exit) -> std::expected<void
         return std::unexpected(exe_path_result.error());
     }
 
-    std::wstring args = get_command_line_args();
+    auto args_result = get_command_line_args();
+    if (!args_result) {
+        return std::unexpected(args_result.error());
+    }
+    const std::wstring& args = args_result.value();
 
     // Log using narrow-string conversion for log output
     int logLen = WideCharToMultiByte(
@@ -194,17 +227,14 @@ auto ElevationManager::executeElevated(const std::wstring& executable,
 
     sak::logInfo("Successfully launched elevated process");
 
-    if (wait_for_exit && sei.hProcess) {
+    if (wait_for_exit) {
         sak::logInfo("Waiting for elevated process to complete...");
-        WaitForSingleObject(sei.hProcess, INFINITE);
-
-        DWORD exit_code = 0;
-        GetExitCodeProcess(sei.hProcess, &exit_code);
-        CloseHandle(sei.hProcess);
-
-        if (exit_code != 0) {
-            sak::logError("Elevated process failed with exit code {}", exit_code);
-            return std::unexpected(sak::error_code::execution_failed);
+        auto wait_result = waitForElevatedExit(sei.hProcess);
+        if (sei.hProcess) {
+            CloseHandle(sei.hProcess);
+        }
+        if (!wait_result) {
+            return std::unexpected(wait_result.error());
         }
         sak::logInfo("Elevated process completed successfully");
     } else if (sei.hProcess) {

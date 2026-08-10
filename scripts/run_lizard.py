@@ -62,6 +62,10 @@ JS_DIRS = ["browser"]
 
 JS_EXTENSIONS = {".js", ".mjs"}
 
+# The repository root, derived from this script's own location so the gate scans the real tree
+# regardless of the caller's working directory.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 # The enumerated JavaScript baseline. See the module docstring: this list may shrink and
 # may not grow, and a stale entry is itself a failure.
 BASELINE_PATH = Path(__file__).resolve().parent / "lizard_js_baseline.txt"
@@ -77,8 +81,7 @@ WARNING_LOCATION_RE = re.compile(r"^(.+?):(\d+): warning: (\S+) has ")
 
 def find_lizard() -> str:
     """Locate the lizard executable."""
-    project_root = Path(__file__).resolve().parent.parent
-    venv_lizard = project_root / ".venv" / "Scripts" / "lizard.exe"
+    venv_lizard = PROJECT_ROOT / ".venv" / "Scripts" / "lizard.exe"
     if venv_lizard.exists():
         return str(venv_lizard)
     return "lizard"
@@ -101,6 +104,9 @@ def build_command(files: list[str], language: str, default_dirs: list[str]) -> l
     for pattern in EXCLUDE_PATTERNS:
         command.extend(["-x", pattern])
 
+    # Everything after "--" is a positional path, so a file whose name begins with "-" cannot be
+    # mistaken for a lizard option (argument injection through a crafted filename).
+    command.append("--")
     if files:
         command.extend(files)
     else:
@@ -112,9 +118,24 @@ def build_command(files: list[str], language: str, default_dirs: list[str]) -> l
 def run_lizard(files: list[str], language: str, default_dirs: list[str]) -> list[str]:
     """Run lizard and return the lines that are hard violations."""
     command = build_command(files, language, default_dirs)
-    result = subprocess.run(command, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, cwd=str(PROJECT_ROOT))
+    except FileNotFoundError as exc:
+        raise SystemExit(
+            f"ABORT: lizard executable not found ({command[0]!r}); the complexity gate cannot "
+            "run. Install lizard into .venv or on PATH.") from exc
     output = result.stdout + result.stderr
-    return [line for line in output.splitlines() if classify_warning(line) == "hard"]
+    hard = [line for line in output.splitlines() if classify_warning(line) == "hard"]
+    # lizard runs with "-i 0", so it exits non-zero only to report threshold violations, and
+    # every such violation is a parseable warning line. A non-zero exit with nothing parseable
+    # means lizard itself failed (bad arguments, a crash, or a changed output format) -- fail
+    # closed rather than read the empty result as a clean pass.
+    if result.returncode != 0 and not hard:
+        raise SystemExit(
+            f"ABORT: lizard ({language}) exited {result.returncode} with no parseable "
+            f"violations; refusing to certify this run.\n{output.strip()}")
+    return hard
 
 
 def parse_violation(line: str) -> tuple[str, int, int, int] | None:

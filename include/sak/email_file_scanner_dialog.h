@@ -41,6 +41,7 @@ private:
     void setupStatusRow(QVBoxLayout* layout);
     void setupButtonRow(QVBoxLayout* layout);
     void showEvent(QShowEvent* event) override;
+    void showScanFailure(const QString& message);
     [[nodiscard]] static QStringList commonScanPaths();
 
     QTableWidget* m_results_table{nullptr};

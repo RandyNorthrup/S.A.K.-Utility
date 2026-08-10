@@ -62,15 +62,30 @@ function Test-IsScannableFile {
                                ".zip", ".7z", ".gz", ".bz2", ".xz", ".pdf")
 }
 
-$Files = git ls-files -c -m -o --exclude-standard |
+# $ErrorActionPreference does not turn a native nonzero exit into a terminating error, so
+# check it explicitly: a failed/wrong-directory git invocation must not yield an empty list
+# that then reports "clean".
+$trackedFiles = git ls-files -c -m -o --exclude-standard
+if ($LASTEXITCODE -ne 0) {
+    throw "git ls-files failed with exit code $LASTEXITCODE; cannot perform a complete secret scan."
+}
+$Files = $trackedFiles |
     ForEach-Object { Convert-ToRepoPath $_ } |
     Where-Object { Test-IsScannableFile $_ } |
     Sort-Object -Unique
 
 $Findings = @()
 foreach ($file in $Files) {
-    $text = Get-Content -LiteralPath $file -Raw -ErrorAction SilentlyContinue
+    # A tracked, scannable file that cannot be read must fail closed rather than be
+    # silently skipped -- a suppressed read error could hide a secret.
+    try {
+        $text = Get-Content -LiteralPath $file -Raw -ErrorAction Stop
+    }
+    catch {
+        throw "Secret scan cannot read tracked file '$file': $($_.Exception.Message)"
+    }
     if ($null -eq $text) {
+        # Genuinely empty file: nothing to scan.
         continue
     }
     foreach ($pattern in $Patterns) {
@@ -95,7 +110,7 @@ if ($SkipExternalTools) {
     exit 0
 }
 
-$gitleaks = Get-Command gitleaks -ErrorAction SilentlyContinue
+$gitleaks = Get-Command gitleaks -CommandType Application -ErrorAction SilentlyContinue
 if ($gitleaks) {
     & $gitleaks.Source detect --source . --config .gitleaks.toml --redact --verbose
     if ($LASTEXITCODE -ne 0) {
@@ -105,7 +120,7 @@ if ($gitleaks) {
     Write-Host "gitleaks not installed; skipped external gitleaks scan." -ForegroundColor Yellow
 }
 
-$trufflehog = Get-Command trufflehog -ErrorAction SilentlyContinue
+$trufflehog = Get-Command trufflehog -CommandType Application -ErrorAction SilentlyContinue
 if ($trufflehog) {
     & $trufflehog.Source git "file://$ProjectRoot" --only-verified --fail --no-update
     if ($LASTEXITCODE -ne 0) {

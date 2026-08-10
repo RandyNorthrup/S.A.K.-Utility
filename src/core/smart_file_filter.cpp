@@ -25,6 +25,14 @@ SmartFileFilter::SmartFileFilter(const SmartFilter& rules) : m_rules(rules) {
         m_dangerousFilesSet.insert(file.toLower());
     }
 
+    // Defense in depth: the registry-hive protections are non-negotiable. A caller can
+    // hand us an empty or hand-built rules struct whose dangerous_files list dropped
+    // them, so re-union the mandatory set -- NTUSER.DAT and friends can never be
+    // filtered back in as copyable and corrupt a live profile on restore.
+    for (const QString& file : SmartFilter::mandatoryDangerousFiles()) {
+        m_dangerousFilesSet.insert(file.toLower());
+    }
+
     for (const QString& folder : m_rules.exclude_folders) {
         m_excludeFoldersSet.insert(folder.toLower());
     }
@@ -36,6 +44,10 @@ void SmartFileFilter::setRules(const SmartFilter& rules) {
 
     m_dangerousFilesSet.clear();
     for (const QString& file : m_rules.dangerous_files) {
+        m_dangerousFilesSet.insert(file.toLower());
+    }
+    // Mandatory registry-hive protections survive any supplied rules (see ctor).
+    for (const QString& file : SmartFilter::mandatoryDangerousFiles()) {
         m_dangerousFilesSet.insert(file.toLower());
     }
 

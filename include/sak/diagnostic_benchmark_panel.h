@@ -138,6 +138,12 @@ private:
     /// @brief Enable/disable inputs based on running state
     void setOperationRunning(bool running);
 
+    /// @brief Enable the operation-starting controls only when fully idle. Single
+    ///        authority that mutually excludes a standalone op, the full suite, a
+    ///        stress test, and a quick action so two never run on the shared
+    ///        controller at once (a second would consume the first's completion).
+    void refreshPrimaryControls();
+
     /// @brief Append a timestamped message to the log viewer
     void logMessage(const QString& message);
 
@@ -280,6 +286,13 @@ private:
     bool m_operation_running{false};
     bool m_stress_test_running{false};
     bool m_suite_running{false};
+    bool m_qa_running{false};
+    /// Index of the suite step currently executing (-1 when none), tracked so Skip
+    /// Step can record which step it skipped.
+    int m_current_suite_step{-1};
+    /// Per-step skip flags: a skipped step is reported distinctly instead of being
+    /// shown with the same "done" checkmark as a completed one.
+    bool m_suite_step_skipped[kSuiteStepCount]{};
 };
 
 }  // namespace sak

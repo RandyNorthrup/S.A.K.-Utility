@@ -687,6 +687,10 @@ void MboxParser::recurseMultipartPart(const QString& part_content_type,
                                       int depth) {
     constexpr int kMaxMimeDepth = 20;
     if (depth >= kMaxMimeDepth) {
+        // Fail closed rather than silently drop every part below this point: nesting deeper than
+        // any real mail is only ever a crafted structure, and handing back the partial parse as a
+        // success would hide the truncation. mimeParseFailure() turns this into a read error.
+        m_mime_decode_failed = true;
         return;
     }
     const QString sub_boundary = extractBoundary(part_content_type);

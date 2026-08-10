@@ -3,6 +3,8 @@
 
 #include "sak/file_explorer_session_store.h"
 
+#include "sak/logger.h"
+
 #include <QSettings>
 
 #include <algorithm>
@@ -110,6 +112,11 @@ FileExplorerPaneState readPane(QSettings& settings, const QString& prefix) {
 void FileExplorerSessionStore::save(QSettings& settings,
                                     const QString& group,
                                     const FileExplorerTabSession& session) {
+    // Fail closed on an empty group: beginGroup("") + remove(QString()) below would target the
+    // root QSettings scope and wipe unrelated application settings.
+    if (group.isEmpty()) {
+        return;
+    }
     settings.beginGroup(group);
     settings.remove(QString());  // drop any prior session under this group
     settings.setValue(QString::fromLatin1(kActiveIndexKey), session.active_index);
@@ -126,12 +133,30 @@ void FileExplorerSessionStore::save(QSettings& settings,
     }
     settings.endArray();
     settings.endGroup();
+    // QSettings buffers writes; sync() flushes them and exposes a real disk/registry failure that
+    // would otherwise be reported as a successful save.
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        sak::logWarning(
+            "FileExplorerSessionStore::save could not durably persist group '{}': QSettings "
+            "status {}",
+            group.toStdString(),
+            static_cast<int>(settings.status()));
+    }
 }
 
 FileExplorerTabSession FileExplorerSessionStore::load(QSettings& settings, const QString& group) {
     FileExplorerTabSession session;
+    // An empty group would read from the root scope; refuse and return an empty session.
+    if (group.isEmpty()) {
+        return session;
+    }
     settings.beginGroup(group);
-    const int count = settings.beginReadArray(QString::fromLatin1(kTabsArray));
+    // Cap the declared tab count: settings are attacker-writable, and a huge array size would
+    // otherwise drive an unbounded read loop. Clamp the work instead of trusting the count.
+    constexpr int kMaxSessionTabs = 512;
+    const int count =
+        std::clamp(settings.beginReadArray(QString::fromLatin1(kTabsArray)), 0, kMaxSessionTabs);
     for (int i = 0; i < count; ++i) {
         settings.setArrayIndex(i);
         FileExplorerTabState tab;
@@ -152,6 +177,15 @@ FileExplorerTabSession FileExplorerSessionStore::load(QSettings& settings, const
     session.active_index = settings.value(QString::fromLatin1(kActiveIndexKey), 0).toInt();
     settings.endGroup();
 
+    // A read error (inaccessible or malformed backing store) otherwise hides behind a plausible
+    // empty/partial session; surface it rather than silently returning valid-looking state.
+    if (settings.status() != QSettings::NoError) {
+        sak::logWarning(
+            "FileExplorerSessionStore::load hit a read error for group '{}': QSettings status {}",
+            group.toStdString(),
+            static_cast<int>(settings.status()));
+    }
+
     if (!session.tabs.isEmpty()) {
         session.active_index =
             std::clamp(session.active_index, 0, static_cast<int>(session.tabs.size()) - 1);
@@ -162,9 +196,22 @@ FileExplorerTabSession FileExplorerSessionStore::load(QSettings& settings, const
 }
 
 void FileExplorerSessionStore::clear(QSettings& settings, const QString& group) {
+    // Fail closed on an empty group: remove(QString()) under the root scope would erase unrelated
+    // application settings rather than just this session.
+    if (group.isEmpty()) {
+        return;
+    }
     settings.beginGroup(group);
     settings.remove(QString());
     settings.endGroup();
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        sak::logWarning(
+            "FileExplorerSessionStore::clear could not durably remove group '{}': QSettings "
+            "status {}",
+            group.toStdString(),
+            static_cast<int>(settings.status()));
+    }
 }
 
 }  // namespace sak

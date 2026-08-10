@@ -43,45 +43,58 @@ namespace sak {
 /// vbscript: URIs from an untrusted email body. Header-only + pure so both writers and their unit
 /// tests share exactly one implementation.
 inline QString sanitizeEmailBodyHtml(const QString& html) {
-    QString out = html;
-
     // Remove entire <script>...</script> blocks, including their contents, across newlines.
     static const QRegularExpression kScriptBlock(
         QStringLiteral("<script\\b[^>]*>.*?</script\\s*>"),
         QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption);
-    out.remove(kScriptBlock);
 
     // Remove framing / resource-loading / script-hosting tags (open, close, or self-closing).
     static const QRegularExpression kDangerTags(
         QStringLiteral("</?\\s*(script|iframe|object|embed|frame|frameset|applet|base|meta|link|"
                        "form)\\b[^>]*>"),
         QRegularExpression::CaseInsensitiveOption);
-    out.remove(kDangerTags);
 
-    // Remove inline event-handler attributes: on...="..." / on...='...' / on...=bareword.
+    // Remove inline event-handler attributes: on...="..." / on...='...' / on...=bareword. The
+    // boundary before `on` is whitespace OR a solidus, because HTML5 treats `/` as an attribute
+    // separator, so "<svg/onload=alert(1)>" is a live handler that a whitespace-only rule misses.
     static const QRegularExpression kEventHandlers(
-        QStringLiteral("\\son[a-zA-Z]+\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)"),
+        QStringLiteral("[\\s/]on[a-zA-Z]+\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)"),
         QRegularExpression::CaseInsensitiveOption);
-    out.remove(kEventHandlers);
 
     // Neutralize javascript:/vbscript: URIs wherever they appear (href, src, style, ...).
     static const QRegularExpression kScriptUris(QStringLiteral("(javascript|vbscript)\\s*:"),
                                                 QRegularExpression::CaseInsensitiveOption);
-    out.replace(kScriptUris, QStringLiteral("blocked:"));
 
     // A <style> block (and every inline style=) is kept, because it carries the formatting a
     // technician needs to read the message -- but the two CSS constructs that are not formatting
     // are neutralized. expression() is IE's CSS-to-script escape hatch.
     static const QRegularExpression kCssExpression(QStringLiteral("expression\\s*\\("),
                                                    QRegularExpression::CaseInsensitiveOption);
-    out.replace(kCssExpression, QStringLiteral("blocked("));
 
     // url(...) is a resource fetch: remote (tracking pixel / @import beacon) or file:// and
     // relative refs (local disclosure). Only a self-contained data: URI is kept; a cid: url()
     // was never resolvable here either, so nothing that worked is lost.
     static const QRegularExpression kCssUrl(QStringLiteral("url\\(\\s*['\"]?(?!data:)[^)]*\\)"),
                                             QRegularExpression::CaseInsensitiveOption);
-    out.replace(kCssUrl, QStringLiteral("none"));
+
+    // Re-apply the passes until the body stops changing. A single forward scan is defeatable:
+    // removing a danger tag can splice two fragments into a fresh construct the earlier pass
+    // already walked past -- "<scr<form>ipt>alert(1)</script>" collapses to "<script>alert(1)"
+    // once <form> is stripped. Re-scanning the mutated output catches the reassembled tag on the
+    // next pass. The removals are monotonic, so this converges; the cap only bounds pathological
+    // nesting and never truncates ordinary mail (which stabilizes in one or two passes).
+    QString out = html;
+    QString previous;
+    constexpr int kMaxSanitizePasses = 8;
+    for (int pass = 0; pass < kMaxSanitizePasses && out != previous; ++pass) {
+        previous = out;
+        out.remove(kScriptBlock);
+        out.remove(kDangerTags);
+        out.remove(kEventHandlers);
+        out.replace(kScriptUris, QStringLiteral("blocked:"));
+        out.replace(kCssExpression, QStringLiteral("blocked("));
+        out.replace(kCssUrl, QStringLiteral("none"));
+    }
 
     return out;
 }

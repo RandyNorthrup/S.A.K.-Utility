@@ -486,7 +486,7 @@ private:
 
     BackupManifest& m_manifest;
     QVector<UserProfile> m_users;  // Owned copy: the source list may not outlive this page
-    const QString& m_destinationPath;
+    QString m_destinationPath;     // Owned copy: the source string may not outlive this page
 
     QProgressBar* m_overallProgress{nullptr};
     QProgressBar* m_currentProgress{nullptr};

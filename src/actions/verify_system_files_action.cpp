@@ -12,6 +12,7 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 
 #include <atomic>
@@ -19,13 +20,16 @@
 namespace sak {
 
 namespace {
-// A DISM health probe only produced an authoritative verdict if its stdout carries one of the
-// known result phrases. On elevation refusal / error 740 / timeout, stdout has none of these,
-// so the probe is treated as "did not run" and verification fails closed.
+// A DISM health probe only produced an authoritative verdict if its stdout carries an actual
+// component-store corruption-state phrase ("corruption" also covers the healthy "No component
+// store corruption detected." verdict; "repairable" covers the corrupt verdict). The generic
+// "The operation completed successfully" is DELIBERATELY not accepted: DISM prints it for almost
+// any command, so treating it as a health verdict would let output that lacks the real corruption
+// line pass as healthy. On elevation refusal / error 740 / timeout / a localized verdict, stdout
+// carries none of these, so the probe is treated as "did not run" and verification fails closed.
 bool dismProbeCompleted(const ProcessResult& proc) {
     return proc.std_out.contains("corruption", Qt::CaseInsensitive) ||
-           proc.std_out.contains("repairable", Qt::CaseInsensitive) ||
-           proc.std_out.contains("The operation completed successfully", Qt::CaseInsensitive);
+           proc.std_out.contains("repairable", Qt::CaseInsensitive);
 }
 }  // namespace
 
@@ -40,10 +44,10 @@ bool VerifySystemFilesAction::dismReportsCorruption(const QString& dism_output) 
            dism_output.contains("corruption", Qt::CaseInsensitive);
 }
 
-QString VerifySystemFilesAction::makeUniqueSfcOutputName(qint64 pid,
+QString VerifySystemFilesAction::makeUniqueSfcOutputName(qint64 entropy,
                                                          qint64 msecs,
                                                          unsigned counter) {
-    return QStringLiteral("sak_sfc_output_%1_%2_%3.txt").arg(pid).arg(msecs).arg(counter);
+    return QStringLiteral("sak_sfc_output_%1_%2_%3.txt").arg(entropy).arg(msecs).arg(counter);
 }
 
 VerifySystemFilesAction::VerifySystemFilesAction(QObject* parent) : QuickAction(parent) {}
@@ -55,8 +59,14 @@ void VerifySystemFilesAction::runSFC() {
     // Redirect to an unpredictable per-run temp file (not a fixed name) so concurrent runs
     // cannot clobber each other and a planted reparse point cannot redirect the write.
     static std::atomic<unsigned> s_sfc_counter{0};
+    // Feed a cryptographically-random 63-bit token (OS CSPRNG) as the leading field so the
+    // redirect target name cannot be predicted -- a predictable pid/time/counter name could be
+    // pre-empted by a reparse point planted at the guessed path to hijack the elevated write. The
+    // monotonic counter still guarantees two runs in the same millisecond never collide.
+    const qint64 entropy = static_cast<qint64>(QRandomGenerator::system()->generate64() &
+                                               0x7F'FF'FF'FF'FF'FF'FF'FFULL);
     const QString sfc_out_name =
-        makeUniqueSfcOutputName(QCoreApplication::applicationPid(),
+        makeUniqueSfcOutputName(entropy,
                                 QDateTime::currentMSecsSinceEpoch(),
                                 s_sfc_counter.fetch_add(1, std::memory_order_relaxed));
     QString ps_script =
@@ -119,8 +129,10 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
     if (proc.cancelled) {
         return false;  // cancelled probe conservatively reports no corruption
     }
-    if (dismProbeCompleted(proc)) {
-        m_dism_assessed = true;
+    // Require a clean process outcome AND an authoritative verdict phrase; a timed-out or crashed
+    // probe (or one that never reached DISM) is NOT an assessment and must not count.
+    if (proc.completedSuccessfully() && dismProbeCompleted(proc)) {
+        m_dism_check_assessed = true;
     }
     return dismReportsCorruption(proc.std_out);
 }
@@ -140,8 +152,10 @@ bool VerifySystemFilesAction::runDismScanHealth() {
     if (proc.cancelled) {
         return false;  // cancelled probe conservatively reports nothing to repair
     }
-    if (dismProbeCompleted(proc)) {
-        m_dism_assessed = true;
+    // Require a clean process outcome AND an authoritative verdict phrase; a timed-out or crashed
+    // probe (or one that never reached DISM) is NOT an assessment and must not count.
+    if (proc.completedSuccessfully() && dismProbeCompleted(proc)) {
+        m_dism_scan_assessed = true;
     }
     return dismReportsCorruption(proc.std_out);
 }
@@ -189,7 +203,9 @@ void VerifySystemFilesAction::runDISM() {
 
     if (corruption_detected || repair_needed) {
         runDismRestoreHealth();
-    } else if (m_dism_assessed) {
+    } else if (m_dism_check_assessed && m_dism_scan_assessed) {
+        // Only claim a clean store when BOTH probes reached an authoritative verdict. If either
+        // probe failed to complete, fall through leaving m_dism_successful false (fail closed).
         Q_EMIT executionProgress("DISM: No corruption detected", progress::kStep85);
         m_dism_successful = true;
         m_dism_repaired_issues = false;
@@ -234,7 +250,8 @@ void VerifySystemFilesAction::execute() {
     m_sfc_ran = false;
     m_dism_successful = false;
     m_dism_repaired_issues = false;
-    m_dism_assessed = false;
+    m_dism_check_assessed = false;
+    m_dism_scan_assessed = false;
     m_cbs_log_path.clear();  // never carry a prior run's CBS log path into this run
 
     runSFC();
@@ -259,8 +276,16 @@ bool VerifySystemFilesAction::verificationSucceeded() const {
 VerifySystemFilesAction::ExecutionResult VerifySystemFilesAction::buildVerificationResult(
     const QDateTime& start_time) const {
     QString message = buildSfcSummary();
-    message += m_dism_repaired_issues ? "DISM repaired component store issues."
-                                      : "DISM found no issues.";
+    if (m_dism_repaired_issues) {
+        message += QStringLiteral("DISM repaired component store issues.");
+    } else if (m_dism_successful) {
+        message += QStringLiteral("DISM found no issues.");
+    } else {
+        // DISM did not reach an authoritative verdict (launch/elevation failure, timeout, an
+        // incomplete probe, or a failed repair). Do NOT claim health -- fail closed in the
+        // human-facing message, matching result.success == false.
+        message += QStringLiteral("DISM did not complete a component store assessment.");
+    }
 
     ExecutionResult result;
     result.success = verificationSucceeded();

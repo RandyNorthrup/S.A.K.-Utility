@@ -291,7 +291,7 @@ void AppInstallationPanel::loadQueueFromFile() {
 
     QString msg = QString("Loaded %1 package(s)").arg(added);
     if (skipped > 0) {
-        msg += QString(", %1 duplicate(s) skipped").arg(skipped);
+        msg += QString(", %1 skipped (duplicate or invalid)").arg(skipped);
     }
     Q_EMIT logOutput(msg + QString(" from %1").arg(filePath));
     Q_EMIT statusMessage(msg, sak::kTimerStatusMessageMs);
@@ -331,12 +331,16 @@ bool AppInstallationPanel::parseQueueFile(const QString& filePath, QJsonArray& o
 
 void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added, int& skipped) {
     for (const auto& val : arr) {
+        // A malformed entry must be surfaced, not silently vanish: count it as
+        // skipped so a partial import can never be reported as a clean load.
         if (!val.isObject()) {
+            skipped++;
             continue;
         }
         QJsonObject obj = val.toObject();
         QString pkgId = obj["package_id"].toString().trimmed();
         if (pkgId.isEmpty()) {
+            skipped++;
             continue;
         }
 

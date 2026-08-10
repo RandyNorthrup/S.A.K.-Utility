@@ -87,7 +87,10 @@ private:
     // False when the last enumerateViaCOM() failed (COM init or a partway break),
     // so the public ops do not emit a clean empty result over a failed security
     // audit (B9-09). An empty-but-successful enumeration leaves this true.
-    bool m_enumerationOk{true};
+    // Defaults to false so a standalone detectConflicts()/analyzeGaps() invoked
+    // before any enumeration ran also fails closed instead of emitting a clean
+    // empty result over a rule set that was never gathered.
+    bool m_enumerationOk{false};
 
     [[nodiscard]] QVector<FirewallRule> enumerateViaCOM();
     // Fail-closed outcome check for the COM enumeration loop: returns true (and

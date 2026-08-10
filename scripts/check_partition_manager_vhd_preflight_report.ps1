@@ -69,7 +69,12 @@ try {
     Assert-Condition -Condition ([int]$report.vhd_size_mb -ge [int]$report.minimum_vhd_size_mb) -Message "VHD size below minimum"
     Assert-Condition -Condition ([int]$report.vhd_scenarios -eq @($matrix.vhd_scenarios).Count) -Message "VHD scenario count mismatch"
     Assert-Condition -Condition ([int]$report.external_gates -eq @($matrix.external_gates).Count) -Message "External gate count mismatch"
-    Assert-Condition -Condition ($null -ne $report.ready_for_vhd_certification) -Message "Missing ready flag"
+    # Gate booleans must be real JSON booleans. A [bool] cast of the JSON string "false"
+    # is $true in PowerShell, which would let a not-ready report enter the ready path or a
+    # missing/"false" administrator flag bypass enforcement -- fail closed on any non-boolean.
+    Assert-Condition -Condition ($report.ready_for_vhd_certification -is [bool]) -Message "ready_for_vhd_certification must be a JSON boolean"
+    Assert-Condition -Condition ($report.require_administrator -is [bool]) -Message "require_administrator must be a JSON boolean"
+    Assert-Condition -Condition ($report.administrator -is [bool]) -Message "administrator must be a JSON boolean"
     Assert-Condition -Condition ($report.next_command -like "*run_partition_manager_destructive_certification.ps1*") -Message "Missing destructive certification command"
 
     $actualCommands = @($report.required_commands | ForEach-Object { $_.name.ToString() })
@@ -79,22 +84,29 @@ try {
 
     foreach ($commandCheck in @($report.required_commands)) {
         Assert-Condition -Condition ($null -ne $commandCheck.PSObject.Properties["available"]) -Message "Command check missing availability: $($commandCheck.name)"
+        Assert-Condition -Condition ($commandCheck.available -is [bool]) -Message "Command availability must be a JSON boolean: $($commandCheck.name)"
     }
 
-    if ([bool]$report.require_administrator -and -not [bool]$report.administrator) {
-        $blockers = @($report.blockers | ForEach-Object { $_.ToString() })
-        Assert-Condition -Condition (@($blockers | Where-Object { $_ -like "*Administrator shell required*" }).Count -gt 0) -Message "Non-admin required preflight missing administrator blocker"
-        Assert-Condition -Condition (-not [bool]$report.ready_for_vhd_certification) -Message "Non-admin required preflight must not be ready"
+    # Filter out nulls so an omitted/null "blockers" does not masquerade as one blocker
+    # via the PowerShell quirk @($null).Count -eq 1.
+    $reportBlockers = @($report.blockers | Where-Object { $null -ne $_ } | ForEach-Object { $_.ToString() })
+
+    if ($report.require_administrator -and -not $report.administrator) {
+        Assert-Condition -Condition (@($reportBlockers | Where-Object { $_ -like "*Administrator shell required*" }).Count -gt 0) -Message "Non-admin required preflight missing administrator blocker"
+        Assert-Condition -Condition (-not $report.ready_for_vhd_certification) -Message "Non-admin required preflight must not be ready"
     }
 
-    if ([bool]$report.ready_for_vhd_certification) {
-        Assert-Condition -Condition (@($report.blockers).Count -eq 0) -Message "Ready preflight has blockers"
+    if ($report.ready_for_vhd_certification) {
+        Assert-Condition -Condition ($reportBlockers.Count -eq 0) -Message "Ready preflight has blockers"
+        foreach ($commandCheck in @($report.required_commands)) {
+            Assert-Condition -Condition ($commandCheck.available -eq $true) -Message "Ready preflight lists an unavailable required command: $($commandCheck.name)"
+        }
     }
     else {
-        Assert-Condition -Condition (@($report.blockers).Count -gt 0) -Message "Not-ready preflight missing blockers"
+        Assert-Condition -Condition ($reportBlockers.Count -gt 0) -Message "Not-ready preflight missing blockers"
     }
 
-    Write-Host "Partition Manager VHD preflight report passed: ready=$($report.ready_for_vhd_certification), blockers=$(@($report.blockers).Count)."
+    Write-Host "Partition Manager VHD preflight report passed: ready=$($report.ready_for_vhd_certification), blockers=$($reportBlockers.Count)."
 }
 finally {
     Pop-Location

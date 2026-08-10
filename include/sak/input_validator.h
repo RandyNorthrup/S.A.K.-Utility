@@ -9,10 +9,12 @@
 
 #include "error_codes.h"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -270,6 +272,14 @@ private:
 template <typename T>
 validation_result input_validator::validateNumeric(T value,
                                                    const numeric_validation_config<T>& config) {
+    if constexpr (std::is_floating_point_v<T>) {
+        // A NaN compares false against BOTH bounds below, so the range test would
+        // pass it as valid. Reject it up front: malformed non-finite input must
+        // fail closed, never slip through as a successful validation.
+        if (std::isnan(value)) {
+            return failure(error_code::validation_failed, "Value is not a number");
+        }
+    }
     if (value < config.min_value) {
         return failure(error_code::validation_failed, "Value below minimum allowed");
     }
@@ -283,6 +293,11 @@ validation_result input_validator::validateNumeric(T value,
 
 template <typename T>
 std::expected<T, error_code> input_validator::safeAdd(T a, T b) {
+    // Integral-only by contract: the overflow logic below relies on integer
+    // wrap semantics and numeric_limits bounds. A floating T would take the
+    // signed branch, where numeric_limits::min() is the smallest POSITIVE
+    // value (not the lowest), silently mis-checking; fail closed at compile time.
+    static_assert(std::is_integral_v<T>, "safeAdd is defined for integral types only");
     // Check for overflow
     if constexpr (std::is_unsigned_v<T>) {
         if (a > (std::numeric_limits<T>::max)() - b) {
@@ -325,6 +340,11 @@ bool checkSignedMultiplyOverflow(T a, T b) {
 
 template <typename T>
 std::expected<T, error_code> input_validator::safeMultiply(T a, T b) {
+    // Integral-only by contract: the zero short-circuit and numeric_limits
+    // overflow checks below are integer logic. For a floating T, safeMultiply(NaN,
+    // 0) or safeMultiply(inf, 0) would return 0 (a forbidden silent coercion) and
+    // the bounds would be wrong; fail closed at compile time instead.
+    static_assert(std::is_integral_v<T>, "safeMultiply is defined for integral types only");
     if (a == 0 || b == 0) {
         return T{0};
     }
@@ -341,6 +361,36 @@ std::expected<T, error_code> input_validator::safeMultiply(T a, T b) {
     return a * b;
 }
 
+// True when converting the floating value to integral target To would be
+// undefined. Called only from safeCast's floating-source branch, so To is
+// integral and non-bool and From is floating by construction.
+template <typename To, typename From>
+bool checkFloatToIntCastOverflow(From value) {
+    // A floating source converted to an integral target is UNDEFINED when the
+    // value is non-finite or its truncated magnitude does not fit the target,
+    // so reject both before the static_cast rather than coerce them.
+    if (!std::isfinite(value)) {
+        return true;
+    }
+    const From truncated = std::trunc(value);
+    // (target max + 1) for unsigned, and the negated signed target min, are
+    // exact powers of two: ldexp yields them with no rounding error, unlike
+    // casting the target's max() straight to floating (which rounds UP at
+    // 64-bit width and would admit an out-of-range boundary value).
+    const From bound = std::ldexp(static_cast<From>(1), std::numeric_limits<To>::digits);
+    if (truncated >= bound) {
+        return true;
+    }
+    if constexpr (std::is_signed_v<To>) {
+        if (truncated < -bound) {
+            return true;
+        }
+    } else if (truncated < static_cast<From>(0)) {
+        return true;
+    }
+    return false;
+}
+
 template <typename To, typename From>
 std::expected<To, error_code> input_validator::safeCast(From value) {
     // Use std::in_range for the range test. Casting To's limits into From (the
@@ -352,6 +402,11 @@ std::expected<To, error_code> input_validator::safeCast(From value) {
     if constexpr (std::is_integral_v<To> && std::is_integral_v<From> && !std::is_same_v<To, bool> &&
                   !std::is_same_v<From, bool>) {
         if (!std::in_range<To>(value)) {
+            return std::unexpected(error_code::integer_overflow);
+        }
+    } else if constexpr (std::is_floating_point_v<From> && std::is_integral_v<To> &&
+                         !std::is_same_v<To, bool>) {
+        if (checkFloatToIntCastOverflow<To>(value)) {
             return std::unexpected(error_code::integer_overflow);
         }
     }

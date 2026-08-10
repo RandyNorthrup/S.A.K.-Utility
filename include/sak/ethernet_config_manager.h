@@ -86,7 +86,10 @@ public:
     /// @param dnsApplied   Optional out: on the DHCP path, set to whether DNS was
     ///        also switched to automatic (previously discarded). Lets a caller
     ///        report the ACTUAL DNS outcome instead of implying it always worked.
-    /// @return true if all netsh commands succeeded
+    /// @return On the STATIC path, true only when every netsh command (IP and DNS) succeeded.
+    ///        On the DHCP path, switching IPv4 to DHCP is the authoritative success; the
+    ///        DNS-to-automatic step is reported through @p dnsApplied and does NOT by itself
+    ///        fail the restore, so a caller that needs the DNS outcome must pass @p dnsApplied.
     [[nodiscard]] bool restoreSettings(const EthernetConfigSnapshot& snapshot,
                                        const QString& adapterName,
                                        bool* dnsApplied = nullptr);

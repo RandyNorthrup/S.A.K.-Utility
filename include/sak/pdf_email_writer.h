@@ -34,6 +34,12 @@ public:
     [[nodiscard]] qint64 totalBytesWritten() const { return m_bytes_written; }
 
 private:
+    /// Resolve (and create) the directory this message's PDF is written into: the export root,
+    /// plus the preserved subfolder when enabled. Fails closed on a blank/relative root, a
+    /// subfolder that escapes the root, or a directory that cannot be created.
+    [[nodiscard]] std::expected<QString, error_code> resolveTargetDirectory(
+        const QString& subfolder_path) const;
+
     [[nodiscard]] QString buildHtmlForPdf(
         const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const;
 

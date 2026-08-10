@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_run_state.h"
 
+#include <algorithm>
+
 namespace sak::ai {
 
 QString runStatusToString(AiRunStatus status) {
@@ -96,10 +98,14 @@ AiRunState AiRunState::fromJson(const QJsonObject& object) {
     state.workflow_id = object.value(QStringLiteral("workflow_id")).toString();
     state.status = runStatusFromString(object.value(QStringLiteral("status")).toString());
     state.phase_id = object.value(QStringLiteral("phase_id")).toString();
-    state.active_subagents = object.value(QStringLiteral("active_subagents")).toInt(0);
-    state.completed_subagents = object.value(QStringLiteral("completed_subagents")).toInt(0);
-    state.active_tools = object.value(QStringLiteral("active_tools")).toInt(0);
-    state.completed_tools = object.value(QStringLiteral("completed_tools")).toInt(0);
+    // Counters arrive from a persisted (attacker-writable) state file. A negative count
+    // is meaningless, would render nonsensically, and could drive a later decrement
+    // below zero; clamp to non-negative rather than trust the raw value.
+    state.active_subagents = std::max(0, object.value(QStringLiteral("active_subagents")).toInt(0));
+    state.completed_subagents =
+        std::max(0, object.value(QStringLiteral("completed_subagents")).toInt(0));
+    state.active_tools = std::max(0, object.value(QStringLiteral("active_tools")).toInt(0));
+    state.completed_tools = std::max(0, object.value(QStringLiteral("completed_tools")).toInt(0));
     state.message = object.value(QStringLiteral("message")).toString();
     state.has_pending_human_gate =
         object.value(QStringLiteral("has_pending_human_gate")).toBool(false);

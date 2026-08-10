@@ -6,6 +6,8 @@
 #include <QElapsedTimer>
 #include <QStringList>
 
+#include <exception>
+
 namespace sak::ai {
 
 namespace {
@@ -20,6 +22,17 @@ QJsonObject emptyHandlerResult(const AiToolCallRequest& request) {
     obj[QStringLiteral("tool_name")] = request.tool_name;
     obj[QStringLiteral("operation")] = request.operation;
     obj[QStringLiteral("error_message")] = QStringLiteral("Tool handler returned no data");
+    return obj;
+}
+
+QJsonObject handlerThrewResult(const AiToolCallRequest& request, const QString& what) {
+    QJsonObject obj;
+    obj[QStringLiteral("success")] = false;
+    obj[QStringLiteral("tool_name")] = request.tool_name;
+    obj[QStringLiteral("operation")] = request.operation;
+    obj[QStringLiteral("failure_class")] = QStringLiteral("handler_exception");
+    obj[QStringLiteral("error_message")] =
+        QStringLiteral("Tool handler threw an exception: %1").arg(what);
     return obj;
 }
 
@@ -131,6 +144,30 @@ void AiToolDispatcher::setHealthLedger(AiToolHealthLedger* ledger) {
     m_health_ledger = ledger;
 }
 
+void AiToolDispatcher::invokeHandler(const Handler& handler,
+                                     const AiToolCallRequest& request,
+                                     const QJsonObject& arguments,
+                                     DispatchOutcome* outcome) const {
+    QElapsedTimer timer;
+    timer.start();
+    try {
+        outcome->result = handler(arguments, outcome->policy_decision);
+    } catch (const std::exception& ex) {
+        // Fail closed: a throwing handler must not leak the mutation lease -- an unreleased
+        // lease blocks every future mutating call until its TTL expires -- nor skip health
+        // recording. Convert the throw into a structured failure so the caller's normal
+        // record-health / release-lease path still runs.
+        outcome->result = handlerThrewResult(request, QString::fromUtf8(ex.what()));
+    } catch (...) {
+        outcome->result = handlerThrewResult(request, QStringLiteral("unknown exception"));
+    }
+    outcome->latency_ms = timer.elapsed();
+    outcome->dispatched = true;
+    if (outcome->result.isEmpty()) {
+        outcome->result = emptyHandlerResult(request);
+    }
+}
+
 AiToolDispatcher::DispatchOutcome AiToolDispatcher::dispatch(AiToolPolicy policy,
                                                              const AiToolCallRequest& request,
                                                              const QJsonObject& arguments,
@@ -161,14 +198,7 @@ AiToolDispatcher::DispatchOutcome AiToolDispatcher::dispatch(AiToolPolicy policy
         return outcome;
     }
 
-    QElapsedTimer timer;
-    timer.start();
-    outcome.result = handler(arguments, outcome.policy_decision);
-    outcome.latency_ms = timer.elapsed();
-    outcome.dispatched = true;
-    if (outcome.result.isEmpty()) {
-        outcome.result = emptyHandlerResult(request);
-    }
+    invokeHandler(handler, request, arguments, &outcome);
     recordHealthForResult(outcome);
     if (!lease_id.isEmpty() && m_lease_manager) {
         m_lease_manager->release(lease_id);
@@ -194,11 +224,25 @@ bool AiToolDispatcher::applyAvailabilityGate(DispatchOutcome* outcome,
                                              const AiToolCallRequest& request,
                                              const QJsonObject& arguments,
                                              const QString& normalized_name) const {
-    const auto checker = m_availability_checkers.constFind(normalized_name);
-    if (checker == m_availability_checkers.constEnd() || !checker.value()) {
+    const auto checker_it = m_availability_checkers.constFind(normalized_name);
+    if (checker_it == m_availability_checkers.constEnd() || !checker_it.value()) {
         return true;
     }
-    const QJsonObject availability = checker.value()(arguments, outcome->policy_decision);
+    // Copy the checker out of the hash before invoking it. Invoking through the live
+    // iterator would dangle if the callback re-entrantly registers or clears a checker:
+    // a QHash rehash destroys the referenced std::function mid-call (use-after-free).
+    const AvailabilityChecker checker = checker_it.value();
+    QJsonObject availability;
+    try {
+        availability = checker(arguments, outcome->policy_decision);
+    } catch (const std::exception& ex) {
+        // Fail closed: a throwing checker denies (no explicit success below).
+        availability[QStringLiteral("error_message")] =
+            QStringLiteral("Availability check threw: %1").arg(QString::fromUtf8(ex.what()));
+    } catch (...) {
+        availability[QStringLiteral("error_message")] =
+            QStringLiteral("Availability check threw an unknown exception");
+    }
     // Fail closed: a registered checker that returns success:true passes; anything else --
     // including an empty/malformed object with no explicit success -- denies the call. An
     // empty result is not evidence of availability.

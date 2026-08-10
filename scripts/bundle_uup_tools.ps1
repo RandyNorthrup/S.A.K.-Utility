@@ -15,7 +15,7 @@
 #     +-- UUPMediaConverter.exe        - UUP-to-ISO conversion utility
 #     +-- UUPDownload.exe              - UUP download utility
 #     +-- libwim-15.dll                - WIM library
-#     +-- CDImage/cdimage.exe          - CD/DVD image builder
+#     +-- CDImage/CDImage/cdimage.exe  - CD/DVD image builder
 
 param(
     [string]$OutputDir = (Join-Path $PSScriptRoot "..\tools\uup"),
@@ -134,7 +134,7 @@ try {
     $aria2Zip = Join-Path $tempDir "aria2.zip"
     $aria2Exe = Join-Path $OutputDir "aria2c.exe"
 
-    if ((Test-Path $aria2Exe) -and -not $Force) {
+    if ((Test-Path $aria2Exe -PathType Leaf) -and -not $Force) {
         Write-Status "aria2c.exe already present. Use -Force to re-download."
     }
     else {
@@ -156,17 +156,28 @@ try {
 
     # --- Step 2: Verify patched UUPMediaConverter (checked into repo) ---
     $uupmcDir = Join-Path $OutputDir "uupmc"
-    $uupmcCritical = @("UUPMediaConverter.exe", "UUPDownload.exe", "libwim-15.dll")
+    $uupmcCritical = @(
+        "UUPMediaConverter.exe",
+        "UUPDownload.exe",
+        "libwim-15.dll",
+        "CDImage\CDImage\cdimage.exe"
+    )
 
     Write-Status "Verifying patched UUPMediaConverter..."
     foreach ($file in $uupmcCritical) {
         $filePath = Join-Path $uupmcDir $file
-        if (-not (Test-Path $filePath)) {
+        # -PathType Leaf so a directory bearing the file's name cannot satisfy the gate.
+        if (-not (Test-Path $filePath -PathType Leaf)) {
             Write-Err "MISSING: $filePath"
             Write-Err "UUPMediaConverter binaries must be checked into the repo at tools/uup/uupmc/"
             throw "Patched UUPMediaConverter not found: $file"
         }
-        $sizeKB = [math]::Round((Get-Item $filePath).Length / 1024, 1)
+        $length = (Get-Item -LiteralPath $filePath).Length
+        if ($length -le 0) {
+            Write-Err "EMPTY: $filePath"
+            throw "Patched UUPMediaConverter file is empty: $file"
+        }
+        $sizeKB = [math]::Round($length / 1024, 1)
         Write-Success "  OK: $file ($sizeKB KB)"
     }
 
@@ -181,7 +192,7 @@ try {
 
     $allPresent = $true
     foreach ($file in $requiredFiles) {
-        if (Test-Path $file) {
+        if (Test-Path $file -PathType Leaf) {
             Write-Success "  OK: $file"
         }
         else {

@@ -42,8 +42,10 @@ public:
 
     /// @brief Build an unpredictable per-run temp filename for SFC's redirected
     /// stdout, so concurrent runs cannot overwrite each other and a planted
-    /// reparse point at a fixed name cannot redirect the write.
-    static QString makeUniqueSfcOutputName(qint64 pid, qint64 msecs, unsigned counter);
+    /// reparse point at a guessed name cannot redirect the elevated write. The
+    /// first field is an OS-CSPRNG entropy token (see runSFC); the counter still
+    /// guarantees two runs in the same millisecond never collide.
+    static QString makeUniqueSfcOutputName(qint64 entropy, qint64 msecs, unsigned counter);
 
 private:
     enum class ScanPhase {
@@ -60,7 +62,12 @@ private:
     bool m_sfc_ran{false};
     bool m_dism_successful{false};
     bool m_dism_repaired_issues{false};
-    bool m_dism_assessed{false};
+    // Each DISM health probe (CheckHealth, ScanHealth) sets its OWN assessed flag, and only when
+    // it produced an authoritative verdict. A "no corruption" conclusion requires BOTH probes to
+    // have completed -- a single shared flag would let a completed CheckHealth mask a failed
+    // ScanHealth and report full health after only a partial verification.
+    bool m_dism_check_assessed{false};
+    bool m_dism_scan_assessed{false};
     QString m_cbs_log_path;
 
     void runDISM();

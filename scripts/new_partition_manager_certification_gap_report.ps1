@@ -233,6 +233,26 @@ try {
 
     $resolvedOutputPath = Resolve-ProjectPath -Path $OutputPath
     $resolvedMarkdownPath = Resolve-ProjectPath -Path $MarkdownPath
+
+    # Output identity: refuse to let the JSON and Markdown targets resolve to the same file (the
+    # second write would silently overwrite the first) or to overwrite an input artifact, which
+    # -Force would otherwise permit. Compare canonical full paths, case-insensitively.
+    $outputFull = [System.IO.Path]::GetFullPath($resolvedOutputPath)
+    $markdownFull = [System.IO.Path]::GetFullPath($resolvedMarkdownPath)
+    if ([string]::Equals($outputFull, $markdownFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "JSON output and Markdown output resolve to the same path: $outputFull. Choose distinct -OutputPath and -MarkdownPath."
+    }
+    $inputFulls = @(
+        [System.IO.Path]::GetFullPath($resolvedStatusPath.Path),
+        [System.IO.Path]::GetFullPath($matrixPath))
+    foreach ($outFull in @($outputFull, $markdownFull)) {
+        foreach ($inFull in $inputFulls) {
+            if ([string]::Equals($outFull, $inFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing to overwrite a certification input file: $outFull"
+            }
+        }
+    }
+
     Ensure-WriteTarget -Path $resolvedOutputPath -Kind "Certification gap report"
     Ensure-WriteTarget -Path $resolvedMarkdownPath -Kind "Certification gap Markdown report"
 

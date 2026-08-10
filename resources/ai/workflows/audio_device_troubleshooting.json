@@ -42,7 +42,7 @@
       "tool": "run_powershell",
       "operation": "repair",
       "arguments": {
-        "command": "$ErrorActionPreference='Continue'; Write-Output 'Restarting audio services after approval.'; Restart-Service Audiosrv -Force -ErrorAction Stop; Restart-Service AudioEndpointBuilder -Force -ErrorAction SilentlyContinue; Get-Service Audiosrv,AudioEndpointBuilder | Select-Object Name,Status,StartType | Format-Table -AutoSize",
+        "command": "$ErrorActionPreference='Continue'; Write-Output 'Restarting audio services after approval (AudioEndpointBuilder first, then Audiosrv).'; Restart-Service AudioEndpointBuilder -Force -ErrorAction Stop; Restart-Service Audiosrv -Force -ErrorAction Stop; Get-Service Audiosrv,AudioEndpointBuilder | Select-Object Name,Status,StartType | Format-Table -AutoSize",
         "timeout_seconds": 120,
         "requires_admin": true,
         "max_output_bytes": 524288

@@ -7,10 +7,17 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 
 namespace sak::ai {
 
 namespace {
+
+// A skill body is prose instructions; 1 MiB is far beyond any real skill and bounds
+// the per-file allocation from an attacker-writable directory. The file count is
+// capped so a directory stuffed with files cannot drive unbounded work/memory.
+constexpr qint64 kMaxSkillFileBytes = 1LL * 1024 * 1024;
+constexpr int kMaxSkillFiles = 512;
 
 bool loadSkillFile(const QString& path, Skill* skill, QStringList* errors) {
     QFile file(path);
@@ -20,7 +27,30 @@ bool loadSkillFile(const QString& path, Skill* skill, QStringList* errors) {
         }
         return false;
     }
-    *skill = Skill::fromMarkdown(file.readAll(), path);
+    // Bound the allocation before reading the whole file: fail closed on an
+    // unreadable size or one exceeding the cap rather than readAll() an attacker
+    // sized file into memory.
+    const qint64 size = file.size();
+    if (size < 0 || size > kMaxSkillFileBytes) {
+        if (errors != nullptr) {
+            errors->append(
+                QStringLiteral("Skill file too large or unreadable (%1 bytes, max %2): %3")
+                    .arg(size)
+                    .arg(kMaxSkillFileBytes)
+                    .arg(path));
+        }
+        return false;
+    }
+    const QByteArray bytes = file.readAll();
+    // A short/partial read must not be admitted as valid content: surface the error
+    // and fail closed instead of parsing a truncated file.
+    if (file.error() != QFileDevice::NoError) {
+        if (errors != nullptr) {
+            errors->append(QStringLiteral("%1: %2").arg(path, file.errorString()));
+        }
+        return false;
+    }
+    *skill = Skill::fromMarkdown(bytes, path);
     return skill->isValid(errors);
 }
 
@@ -48,11 +78,34 @@ bool SkillStore::loadDirectory(const QString& directory, QStringList* errors) {
         return false;
     }
 
-    const QStringList files = dir.entryList({QStringLiteral("*.md")}, QDir::Files, QDir::Name);
+    QStringList files = dir.entryList({QStringLiteral("*.md")}, QDir::Files, QDir::Name);
     bool ok = true;
+    if (files.size() > kMaxSkillFiles) {
+        if (errors != nullptr) {
+            errors->append(
+                QStringLiteral("Skill directory %1 has %2 files; only the first %3 are loaded")
+                    .arg(directory)
+                    .arg(files.size())
+                    .arg(kMaxSkillFiles));
+        }
+        files = files.mid(0, kMaxSkillFiles);
+        ok = false;
+    }
     for (const auto& file_name : files) {
+        const QString path = dir.filePath(file_name);
+        // Fail closed on a symlink/reparse-point entry: it can redirect the read to a
+        // file outside the intended skill directory (a swap between enumeration and
+        // open), so never open it as a skill.
+        if (QFileInfo(path).isSymLink()) {
+            if (errors != nullptr) {
+                errors->append(
+                    QStringLiteral("Skipping skill via symlink/reparse point: %1").arg(path));
+            }
+            ok = false;
+            continue;
+        }
         Skill skill;
-        if (!loadSkillFile(dir.filePath(file_name), &skill, errors)) {
+        if (!loadSkillFile(path, &skill, errors)) {
             ok = false;
             continue;
         }

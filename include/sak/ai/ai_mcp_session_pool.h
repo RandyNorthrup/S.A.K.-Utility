@@ -60,12 +60,17 @@ private:
     struct Entry {
         std::unique_ptr<AiMcpStdioSession> session;
         QMutex mutex;  // serializes calls to this one session (it is one-at-a-time)
+        // Set by closeAll() (under mutex) when this Entry is torn down and dropped from the map.
+        // A caller that grabbed the shared handle just before closeAll() must NOT reopen a fresh
+        // session on it afterwards -- that would spawn a process after the pool reported closed.
+        bool detached{false};
     };
 
     // Returns a shared handle so an in-flight caller keeps its Entry (and its
     // mutex) alive even if closeAll() clears the map concurrently -- the caller
-    // then locks a live mutex and simply sees a null session to reopen, instead of
-    // touching freed memory.
+    // then locks a live mutex and simply sees a null (or detached) session,
+    // instead of touching freed memory. Returns nullptr when the pool already
+    // holds its maximum number of distinct sessions (fail closed).
     [[nodiscard]] std::shared_ptr<Entry> entryFor(const AiMcpStdioCallRequest& request);
 
     // Opens entry.session for `request` if not already open. Call with entry.mutex

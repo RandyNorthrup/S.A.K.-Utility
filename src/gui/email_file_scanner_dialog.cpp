@@ -89,6 +89,35 @@ QVector<ScannedFile> scanPathsWorker(const QStringList& paths) {
     return results;
 }
 
+// Batch-populate the table in a single pass so sort/repaint only run
+// once regardless of how many hits we found.
+void populateResultsTable(QTableWidget* table, const QVector<ScannedFile>& results) {
+    table->setUpdatesEnabled(false);
+    table->setSortingEnabled(false);
+    table->setRowCount(results.size());
+    for (int row = 0; row < results.size(); ++row) {
+        const auto& r = results.at(row);
+        table->setItem(row, FileScanColPath, new QTableWidgetItem(r.path));
+        table->setItem(row, FileScanColType, new QTableWidgetItem(r.type));
+        QString size_str;
+        if (r.size_bytes >= kBytesPerGB) {
+            size_str = QStringLiteral("%1 GB").arg(static_cast<double>(r.size_bytes) / kBytesPerGBf,
+                                                   0,
+                                                   'f',
+                                                   kEmailFileSizeGigabytePrecision);
+        } else if (r.size_bytes >= kBytesPerMB) {
+            size_str = QStringLiteral("%1 MB").arg(
+                static_cast<double>(r.size_bytes) / kBytesPerMBf, 0, 'f', 1);
+        } else {
+            size_str = QStringLiteral("%1 KB").arg(
+                static_cast<double>(r.size_bytes) / kBytesPerKBf, 0, 'f', 0);
+        }
+        table->setItem(row, FileScanColSize, new QTableWidgetItem(size_str));
+    }
+    table->setSortingEnabled(true);
+    table->setUpdatesEnabled(true);
+}
+
 }  // namespace
 
 // ============================================================================
@@ -213,6 +242,14 @@ void EmailFileScannerDialog::setupUi() {
 // Slots
 // ============================================================================
 
+// Restore the dialog to its idle state after a scan aborts. Both fail-closed
+// catch paths funnel through here so the recovery stays identical.
+void EmailFileScannerDialog::showScanFailure(const QString& message) {
+    m_progress_bar->setVisible(false);
+    m_scan_button->setEnabled(true);
+    m_status_label->setText(message);
+}
+
 void EmailFileScannerDialog::onScanClicked() {
     m_results_table->setRowCount(0);
     m_files_found = 0;
@@ -229,36 +266,25 @@ void EmailFileScannerDialog::onScanClicked() {
     // `QtConcurrent::run` + `QFutureWatcher` is the idiomatic replacement.
     auto* watcher = new QFutureWatcher<QVector<ScannedFile>>(this);
     connect(watcher, &QFutureWatcher<QVector<ScannedFile>>::finished, this, [this, watcher] {
-        const auto results = watcher->result();
+        QVector<ScannedFile> results;
+        try {
+            // result() rethrows anything the worker threw (std::bad_alloc on a
+            // pathological directory being the realistic case). This runs inside Qt
+            // event delivery, so an escaping exception would terminate the process --
+            // fail closed by surfacing the failure and restoring the UI instead.
+            results = watcher->result();
+        } catch (const std::exception& e) {
+            watcher->deleteLater();
+            showScanFailure(tr("Scan failed: %1").arg(QString::fromUtf8(e.what())));
+            return;
+        } catch (...) {
+            watcher->deleteLater();
+            showScanFailure(tr("Scan failed"));
+            return;
+        }
         watcher->deleteLater();
 
-        // Batch-populate the table in a single pass so sort/repaint only run
-        // once regardless of how many hits we found.
-        m_results_table->setUpdatesEnabled(false);
-        m_results_table->setSortingEnabled(false);
-        m_results_table->setRowCount(results.size());
-        for (int row = 0; row < results.size(); ++row) {
-            const auto& r = results.at(row);
-            m_results_table->setItem(row, FileScanColPath, new QTableWidgetItem(r.path));
-            m_results_table->setItem(row, FileScanColType, new QTableWidgetItem(r.type));
-            QString size_str;
-            if (r.size_bytes >= kBytesPerGB) {
-                size_str =
-                    QStringLiteral("%1 GB").arg(static_cast<double>(r.size_bytes) / kBytesPerGBf,
-                                                0,
-                                                'f',
-                                                kEmailFileSizeGigabytePrecision);
-            } else if (r.size_bytes >= kBytesPerMB) {
-                size_str = QStringLiteral("%1 MB").arg(
-                    static_cast<double>(r.size_bytes) / kBytesPerMBf, 0, 'f', 1);
-            } else {
-                size_str = QStringLiteral("%1 KB").arg(
-                    static_cast<double>(r.size_bytes) / kBytesPerKBf, 0, 'f', 0);
-            }
-            m_results_table->setItem(row, FileScanColSize, new QTableWidgetItem(size_str));
-        }
-        m_results_table->setSortingEnabled(true);
-        m_results_table->setUpdatesEnabled(true);
+        populateResultsTable(m_results_table, results);
         m_files_found = results.size();
 
         m_progress_bar->setVisible(false);

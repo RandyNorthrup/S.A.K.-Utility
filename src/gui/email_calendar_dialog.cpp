@@ -11,6 +11,7 @@
 #include "sak/email_inspector_controller.h"
 #include "sak/email_safe_text_browser.h"
 #include "sak/layout_constants.h"
+#include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
@@ -31,6 +32,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -1161,6 +1163,12 @@ void EmailCalendarDialog::setupFooter(QVBoxLayout* parent) {
 // ============================================================================
 
 void EmailCalendarDialog::loadCalendarItems() {
+    // Fail closed on a missing controller instead of dereferencing it below (loadFolderItems):
+    // the dialog has no data source, so leave it empty rather than crash at construction.
+    if (m_controller == nullptr) {
+        m_status_label->setText(tr("No calendar data source available"));
+        return;
+    }
     if (m_folder_ids.isEmpty()) {
         m_status_label->setText(tr("No calendar folders found"));
         return;
@@ -1168,6 +1176,7 @@ void EmailCalendarDialog::loadCalendarItems() {
 
     m_status_label->setText(tr("Loading calendar events..."));
     m_folders_loaded = 0;
+    m_load_truncated = false;
     m_all_events.clear();
     m_date_index.clear();
     m_node_index.clear();
@@ -1383,6 +1392,9 @@ void EmailCalendarDialog::onExportIcsClicked() {
     if (dir_path.isEmpty()) {
         return;
     }
+    if (m_controller == nullptr) {
+        return;
+    }
     sak::EmailExportConfig config;
     config.format = sak::ExportFormat::Ics;
     config.output_path = dir_path;
@@ -1401,6 +1413,9 @@ void EmailCalendarDialog::onExportCsvClicked() {
     if (dir_path.isEmpty()) {
         return;
     }
+    if (m_controller == nullptr) {
+        return;
+    }
     sak::EmailExportConfig config;
     config.format = sak::ExportFormat::CsvCalendar;
     config.output_path = dir_path;
@@ -1417,11 +1432,15 @@ void EmailCalendarDialog::showEventContextMenu(const QPoint& global_pos, uint64_
     if (iter == m_node_index.end()) {
         return;
     }
-    const auto& evt = m_all_events[*iter];
+    // Copy the event by value. menu.exec() below runs a nested event loop in which a
+    // queued folderItemsLoaded can append to m_all_events and reallocate it, leaving any
+    // reference into the vector dangling. The action lambdas outlive that loop, so they
+    // must own their data or a chosen action would use freed memory.
+    const CalendarEvent evt = m_all_events[*iter];
 
     QMenu menu(this);
     menu.addAction(tr("View Details"), this, [this, node_id]() { onEventClicked(node_id); });
-    menu.addAction(tr("View in Day"), this, [this, node_id, &evt]() {
+    menu.addAction(tr("View in Day"), this, [this, node_id, evt]() {
         if (evt.start_time.isValid()) {
             setCurrentDate(evt.start_time.date());
         }
@@ -1429,8 +1448,8 @@ void EmailCalendarDialog::showEventContextMenu(const QPoint& global_pos, uint64_
         onEventClicked(node_id);
     });
     menu.addSeparator();
-    menu.addAction(tr("Export Event as ICS"), this, [this, &evt]() { exportSingleEventIcs(evt); });
-    menu.addAction(tr("Copy Details"), this, [this, &evt]() { copyEventDetailsToClipboard(evt); });
+    menu.addAction(tr("Export Event as ICS"), this, [this, evt]() { exportSingleEventIcs(evt); });
+    menu.addAction(tr("Copy Details"), this, [this, evt]() { copyEventDetailsToClipboard(evt); });
     menu.exec(global_pos);
 }
 
@@ -1511,6 +1530,12 @@ void EmailCalendarDialog::exportSingleEventIcs(const CalendarEvent& evt) {
 
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        // Fail closed and surface it: a silent return leaves the user believing the
+        // export succeeded when nothing was written.
+        sak::showWarningLogged(
+            this,
+            tr("Export Failed"),
+            tr("Could not open '%1' for writing:\n%2").arg(file_path, file.errorString()));
         return;
     }
     QTextStream out(&file);
@@ -1535,6 +1560,19 @@ void EmailCalendarDialog::exportSingleEventIcs(const CalendarEvent& evt) {
     }
     out << "END:VEVENT\r\n"
         << "END:VCALENDAR\r\n";
+
+    // A write can fail mid-stream (disk full, quota, I/O error), which would leave a
+    // truncated .ics behind. Flush and check both the stream and file state, then surface
+    // any failure instead of reporting a phantom success.
+    out.flush();
+    if (out.status() != QTextStream::Ok || file.error() != QFileDevice::NoError) {
+        const QString err = file.errorString();
+        file.close();
+        sak::showWarningLogged(this,
+                               tr("Export Failed"),
+                               tr("Failed while writing '%1':\n%2").arg(file_path, err));
+        return;
+    }
 }
 
 void EmailCalendarDialog::copyEventDetailsToClipboard(const CalendarEvent& evt) {
@@ -1562,7 +1600,13 @@ void EmailCalendarDialog::copyEventDetailsToClipboard(const CalendarEvent& evt) 
 
 void EmailCalendarDialog::onItemsLoaded(uint64_t /*folder_id*/,
                                         QVector<sak::PstItemSummary> items,
-                                        int /*total*/) {
+                                        int total) {
+    // The folder holds more items than this capped page returned: some (possibly
+    // calendar) items were not fetched. Record it so the status label reports a partial
+    // view instead of presenting the truncated set as the complete calendar.
+    if (total > items.size()) {
+        m_load_truncated = true;
+    }
     for (const auto& item : items) {
         if (item.item_type != EmailItemType::Calendar &&
             item.item_type != EmailItemType::MeetingRequest) {
@@ -1686,11 +1730,12 @@ void EmailCalendarDialog::updateStatusLabel() {
             ++visible;
         }
     }
-    if (visible == total) {
-        m_status_label->setText(tr("%1 events").arg(total));
-    } else {
-        m_status_label->setText(tr("%1 of %2 events (filtered)").arg(visible).arg(total));
+    QString text = (visible == total) ? tr("%1 events").arg(total)
+                                      : tr("%1 of %2 events (filtered)").arg(visible).arg(total);
+    if (m_load_truncated) {
+        text += tr(" (partial view: a folder exceeded the display cap)");
     }
+    m_status_label->setText(text);
 }
 
 // ============================================================================

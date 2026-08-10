@@ -67,6 +67,9 @@ try {
         "resources/ai/providers/providers.json",
         "data/ai/providers/providers.json"
     ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    if (@($providerFiles).Count -eq 0) {
+        throw "No AI provider manifest found to scan for embedded API keys (expected resources/ai/providers/providers.json or data/ai/providers/providers.json)"
+    }
     foreach ($providerFile in $providerFiles) {
         $providerText = Get-Content -LiteralPath $providerFile -Raw
         if ($providerText -match "ctx7sk-[A-Za-z0-9-]{20,}") {
@@ -78,20 +81,29 @@ try {
     }
 
     $filesystemManifestPath = "tools/filesystem/manifest.json"
-    if (Test-Path -LiteralPath $filesystemManifestPath -PathType Leaf) {
-        $filesystemManifest = Get-Content -LiteralPath $filesystemManifestPath -Raw | ConvertFrom-Json
-        foreach ($tool in @($filesystemManifest.tools)) {
-            $toolId = [string]$tool.id
-            $displayName = [string]$tool.display_name
-            $upstreamUrl = [string]$tool.upstream_url
-            $license = [string]$tool.license
-            foreach ($requiredPhrase in @($toolId, $displayName, $upstreamUrl, $license, "tools/filesystem")) {
-                if ([string]::IsNullOrWhiteSpace($requiredPhrase)) {
-                    continue
-                }
-                if (-not $licenseText.Contains($requiredPhrase)) {
-                    throw "Filesystem tool '$toolId' is approved in $filesystemManifestPath but missing from THIRD_PARTY_LICENSES.md: $requiredPhrase"
-                }
+    if (-not (Test-Path -LiteralPath $filesystemManifestPath -PathType Leaf)) {
+        throw "Missing bundled filesystem tool manifest: $filesystemManifestPath"
+    }
+    $filesystemManifest = Get-Content -LiteralPath $filesystemManifestPath -Raw | ConvertFrom-Json
+    foreach ($tool in @($filesystemManifest.tools)) {
+        $toolId = [string]$tool.id
+        $displayName = [string]$tool.display_name
+        $upstreamUrl = [string]$tool.upstream_url
+        $license = [string]$tool.license
+        # An approved tool with a blank required field must fail closed rather than be
+        # silently skipped -- {}, {"tools":[{}]}, and null fields would otherwise pass.
+        foreach ($field in @(
+                @{ Name = "id"; Value = $toolId },
+                @{ Name = "display_name"; Value = $displayName },
+                @{ Name = "upstream_url"; Value = $upstreamUrl },
+                @{ Name = "license"; Value = $license })) {
+            if ([string]::IsNullOrWhiteSpace($field.Value)) {
+                throw "Filesystem tool in $filesystemManifestPath has a blank required field '$($field.Name)'"
+            }
+        }
+        foreach ($requiredPhrase in @($toolId, $displayName, $upstreamUrl, $license, "tools/filesystem")) {
+            if (-not $licenseText.Contains($requiredPhrase)) {
+                throw "Filesystem tool '$toolId' is approved in $filesystemManifestPath but missing from THIRD_PARTY_LICENSES.md: $requiredPhrase"
             }
         }
     }

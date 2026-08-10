@@ -9,7 +9,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $TestName = "test_windows_iso_downloader"
-$BuildDir = "build"
+# Anchor to this script's repository root, not the caller's working directory, so -Run cannot
+# execute an attacker-planted build\Release\Release\ tree that happens to sit in the cwd.
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$BuildDir = Join-Path $RepoRoot "build"
 
 # Add Qt bin to PATH for DLL resolution
 if ($env:Qt6_DIR) {
@@ -43,7 +46,7 @@ if ($Build -or (-not $Run)) {
 if ($Run -or $All) {
     Write-Host "`nRunning tests..." -ForegroundColor Yellow
 
-    $TestExe = "$BuildDir\Release\Release\$TestName.exe"
+    $TestExe = Join-Path $BuildDir "Release\Release\$TestName.exe"
     if (-not (Test-Path $TestExe)) {
         Write-Host "Test executable not found: $TestExe" -ForegroundColor Red
         exit 1

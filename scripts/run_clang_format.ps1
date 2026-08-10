@@ -64,11 +64,18 @@ if ($cppFiles.Count -eq 0) {
     exit 0
 }
 
+# Require the repository .clang-format so the gate cannot pass against clang-format's
+# built-in fallback style when the config is absent.
+$clangFormatConfig = Join-Path $ProjectRoot ".clang-format"
+if (-not (Test-Path -LiteralPath $clangFormatConfig -PathType Leaf)) {
+    throw "Repository .clang-format configuration not found at $clangFormatConfig; refusing to format with clang-format's built-in fallback style."
+}
+
 $clangFormat = Find-ClangFormat
 if ($Check) {
-    & $clangFormat --dry-run -Werror -- $cppFiles
+    & $clangFormat -style=file -fallback-style=none --dry-run -Werror -- $cppFiles
 } else {
-    & $clangFormat -i -- $cppFiles
+    & $clangFormat -style=file -fallback-style=none -i -- $cppFiles
 }
 
 if ($LASTEXITCODE -ne 0) {

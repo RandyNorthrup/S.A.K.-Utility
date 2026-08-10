@@ -42,7 +42,7 @@
       "tool": "run_powershell",
       "operation": "repair",
       "arguments": {
-        "command": "$ErrorActionPreference='Continue'; Write-Output 'Restarting Windows Search after approval.'; Restart-Service WSearch -Force -ErrorAction Stop; Get-Service WSearch | Select-Object Name,Status,StartType | Format-List",
+        "command": "$ErrorActionPreference='Continue'; Write-Output 'Restarting Windows Search after approval.'; Restart-Service WSearch -Force -ErrorAction Stop; $svc = Get-Service WSearch; $svc | Select-Object Name,Status,StartType | Format-List; if ($svc.Status -ne 'Running') { throw ('Windows Search did not reach Running state after restart: ' + $svc.Status) }",
         "timeout_seconds": 120,
         "requires_admin": true,
         "max_output_bytes": 524288

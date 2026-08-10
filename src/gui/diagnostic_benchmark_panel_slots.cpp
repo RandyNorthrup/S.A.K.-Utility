@@ -42,6 +42,7 @@ constexpr int kTemperatureWarningCelsius = 60;
 constexpr int kTemperatureCriticalCelsius = 80;
 constexpr int kSuiteStepDoneSymbol = 0x2705;
 constexpr int kSuiteStepRunningSymbol = 0x25B6;
+constexpr int kSuiteStepSkippedSymbol = 0x23ED;  // BMP "skip" marker, distinct from the done check
 constexpr int kBenchmarkMetricPrecision = 2;
 }  // namespace
 
@@ -393,10 +394,22 @@ void DiagnosticBenchmarkPanel::onStartStressTestClicked() {
         return;
     }
 
+    // A disk stress writes a real test file. Never let it fall back to a struct-default
+    // volume: require an explicitly selected drive (populated by Hardware Scan).
+    if (config.stress_disk) {
+        if (m_disk_drive_combo->count() == 0) {
+            logMessage("Disk stress needs a drive -- run Hardware Scan first");
+            Q_EMIT statusMessage("Select a drive (run Hardware Scan) before disk stress",
+                                 sak::kTimerStatusMessageMs);
+            return;
+        }
+        config.disk_test_drive = m_disk_drive_combo->currentData().toString();
+    }
+
     logMessage(QString("Starting stress test (%1 minutes)...").arg(config.duration_minutes));
 
     m_stress_test_running = true;
-    m_stress_start_button->setEnabled(false);
+    refreshPrimaryControls();  // lock out benchmarks / suite / quick actions while stressing
     m_stress_stop_button->setEnabled(true);
     m_stress_status_label->setText("Status: Running");
     m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
@@ -415,7 +428,7 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(const StressTestResult& resu
     Q_ASSERT(m_stress_start_button);
     Q_ASSERT(m_stress_stop_button);
     m_stress_test_running = false;
-    m_stress_start_button->setEnabled(true);
+    refreshPrimaryControls();  // re-enable start and the other operations
     m_stress_stop_button->setEnabled(false);
 
     if (result.passed) {
@@ -492,17 +505,24 @@ void DiagnosticBenchmarkPanel::onRunFullSuiteClicked() {
         disk_config.drive_path = m_disk_drive_combo->currentData().toString();
         stress_config.disk_test_drive = disk_config.drive_path;
     } else {
-        disk_config.drive_path = "C:\\";
+        // No drive selected: refuse rather than defaulting the mutating disk step to the
+        // system volume. Hardware Scan populates the drive list.
+        logMessage("Full suite needs a drive selected -- run Hardware Scan first");
+        Q_EMIT statusMessage("Select a drive (run Hardware Scan) before the full suite",
+                             sak::kTimerStatusMessageMs);
+        return;
     }
 
     logMessage("Starting full diagnostic suite...");
     m_suite_running = true;
-    m_suite_run_button->setEnabled(false);
+    m_current_suite_step = -1;
+    refreshPrimaryControls();  // lock standalone ops / report exports / quick actions
     m_suite_cancel_button->setEnabled(true);
     m_suite_skip_button->setEnabled(true);
 
-    // Reset step labels
+    // Reset step labels and per-step skip flags
     for (int i = 0; i < kSuiteStepCount; ++i) {
+        m_suite_step_skipped[i] = false;
         m_suite_step_labels[i]->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextDisabled));
     }
 
@@ -514,7 +534,7 @@ void DiagnosticBenchmarkPanel::onCancelSuiteClicked() {
     logMessage("Cancelling diagnostic suite...");
     m_controller->cancelCurrent();
     m_suite_running = false;
-    m_suite_run_button->setEnabled(true);
+    refreshPrimaryControls();
     m_suite_cancel_button->setEnabled(false);
     m_suite_skip_button->setEnabled(false);
     m_suite_status_label->setText("Suite cancelled");
@@ -522,6 +542,11 @@ void DiagnosticBenchmarkPanel::onCancelSuiteClicked() {
 
 void DiagnosticBenchmarkPanel::onSkipStepClicked() {
     Q_ASSERT(m_controller);
+    // Record which step is being skipped so it is reported as skipped rather than
+    // silently rolled into the completed set (which reads as passed).
+    if (m_current_suite_step >= 0 && m_current_suite_step < kSuiteStepCount) {
+        m_suite_step_skipped[m_current_suite_step] = true;
+    }
     logMessage("Skipping current suite step...");
     m_controller->skipCurrentStep();
 }
@@ -545,15 +570,28 @@ void DiagnosticBenchmarkPanel::onSuiteStateChanged(DiagnosticController::SuiteSt
         return;  // Invalid state -- ignore
     }
     const int step = state_to_step[state_idx];
+    if (step >= 0) {
+        m_current_suite_step = step;
+    }
 
-    // Mark completed steps with checkmark, current with arrow icon
+    // Mark completed steps with a checkmark, skipped steps distinctly, current with arrow
     for (int i = 0; i < kSuiteStepCount; ++i) {
         if (step >= 0 && i < step) {
-            // Completed -- reconstruct label from stored step name
-            m_suite_step_labels[i]->setText(
-                QString("  %1  %2").arg(QChar(kSuiteStepDoneSymbol)).arg(m_suite_step_names[i]));
-            m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-                sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+            if (m_suite_step_skipped[i]) {
+                // Skipped -- must not read as a completed/passed step.
+                m_suite_step_labels[i]->setText(QString("  %1  %2 (skipped)")
+                                                    .arg(QChar(kSuiteStepSkippedSymbol))
+                                                    .arg(m_suite_step_names[i]));
+                m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+                    sak::ui::kFontWeightSemibold, sak::ui::kStatusColorWarning));
+            } else {
+                // Completed -- reconstruct label from stored step name
+                m_suite_step_labels[i]->setText(QString("  %1  %2")
+                                                    .arg(QChar(kSuiteStepDoneSymbol))
+                                                    .arg(m_suite_step_names[i]));
+                m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+                    sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+            }
         } else if (i == step) {
             // Current \u2014 use BMP arrow symbol (U+25B6) instead of non-BMP U+1F504
             m_suite_step_labels[i]->setText(
@@ -580,19 +618,28 @@ void DiagnosticBenchmarkPanel::onSuiteComplete() {
     Q_ASSERT(m_suite_run_button);
     Q_ASSERT(m_suite_cancel_button);
     m_suite_running = false;
-    m_suite_run_button->setEnabled(true);
+    refreshPrimaryControls();
     m_suite_cancel_button->setEnabled(false);
     m_suite_skip_button->setEnabled(false);
     m_suite_status_label->setText("Suite complete!");
     m_suite_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
         sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
 
-    // Mark all steps as complete \u2014 reconstruct from stored step names
+    // Mark steps done, but keep any skipped step reported as skipped rather than
+    // overwriting it with a completed checkmark.
     for (int i = 0; i < kSuiteStepCount; ++i) {
-        m_suite_step_labels[i]->setText(
-            QString("  %1  %2").arg(QChar(kSuiteStepDoneSymbol)).arg(m_suite_step_names[i]));
-        m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-            sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+        if (m_suite_step_skipped[i]) {
+            m_suite_step_labels[i]->setText(QString("  %1  %2 (skipped)")
+                                                .arg(QChar(kSuiteStepSkippedSymbol))
+                                                .arg(m_suite_step_names[i]));
+            m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+                sak::ui::kFontWeightSemibold, sak::ui::kStatusColorWarning));
+        } else {
+            m_suite_step_labels[i]->setText(
+                QString("  %1  %2").arg(QChar(kSuiteStepDoneSymbol)).arg(m_suite_step_names[i]));
+            m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+                sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+        }
     }
 
     logMessage("Full diagnostic suite complete");

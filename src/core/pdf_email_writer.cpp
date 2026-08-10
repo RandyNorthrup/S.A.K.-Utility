@@ -120,21 +120,13 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
     const PstItemDetail& item,
     const QVector<QPair<QString, QByteArray>>& attachment_data,
     const QString& subfolder_path) {
-    QString target_dir = m_output_dir;
-    if (m_preserve_folders && !subfolder_path.isEmpty()) {
-        target_dir = m_output_dir + QStringLiteral("/") + subfolder_path;
-        if (subfolderEscapes(m_output_dir, target_dir)) {
-            return std::unexpected(error_code::path_traversal_attempt);
-        }
-    }
-
-    QDir dir(target_dir);
-    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
-        return std::unexpected(error_code::write_error);
+    const auto target_dir = resolveTargetDirectory(subfolder_path);
+    if (!target_dir) {
+        return std::unexpected(target_dir.error());
     }
 
     const QString filename = sanitizeFilename(item.subject, item.date);
-    const QString full_path = resolveCollisionPath(target_dir, filename);
+    const QString full_path = resolveCollisionPath(*target_dir, filename);
 
     // Build HTML content for the PDF
     QString html_content = buildHtmlForPdf(item, attachment_data);
@@ -149,6 +141,14 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
     {
         renderPdfDocument(out_file, html_content, item);
     }  // writer destroyed here: PDF fully flushed to out_file before commit
+
+    // resolveCollisionPath() chose a name that was free, but a concurrent writer could
+    // have created it since. QSaveFile::commit() replaces an existing target, so fail
+    // closed rather than overwrite a raced-in file (narrows the inherent check-then-act
+    // window; it never widens it).
+    if (QFile::exists(full_path)) {
+        return std::unexpected(error_code::file_already_exists);
+    }
 
     if (!out_file.commit()) {
         return std::unexpected(error_code::write_error);
@@ -167,6 +167,30 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
 // ======================================================================
 // Private helpers
 // ======================================================================
+
+std::expected<QString, error_code> PdfEmailWriter::resolveTargetDirectory(
+    const QString& subfolder_path) const {
+    // Fail closed on a blank or relative output directory: it would otherwise resolve
+    // against the process current directory / current drive and write the PDF to a
+    // guessed location. The export root must be an explicit absolute path.
+    if (m_output_dir.isEmpty() || !QDir::isAbsolutePath(m_output_dir)) {
+        return std::unexpected(error_code::invalid_path);
+    }
+
+    QString target_dir = m_output_dir;
+    if (m_preserve_folders && !subfolder_path.isEmpty()) {
+        target_dir = m_output_dir + QStringLiteral("/") + subfolder_path;
+        if (subfolderEscapes(m_output_dir, target_dir)) {
+            return std::unexpected(error_code::path_traversal_attempt);
+        }
+    }
+
+    QDir dir(target_dir);
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        return std::unexpected(error_code::write_error);
+    }
+    return target_dir;
+}
 
 // De-duplicate by re-checking existence (mirrors EmlWriter). A counter-only scheme
 // never verifies the "_N" candidate is free, so a crafted subject could overwrite a

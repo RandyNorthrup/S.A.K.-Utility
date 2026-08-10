@@ -18,6 +18,11 @@ $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
     $ProjectRoot = Split-Path -Parent $PSScriptRoot
 }
+# Canonicalize to an absolute path once, before any file is read or Push-Location runs.
+# A relative -ProjectRoot would otherwise resolve differently before and after
+# Push-Location (the matrix and the evidence files would be read from different trees).
+# Resolve-Path also fails closed when the root does not exist.
+$ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot -ErrorAction Stop).Path
 
 function Get-RepoText {
     param(

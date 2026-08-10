@@ -128,7 +128,12 @@ void OstConverterController::startConversion(const OstConversionConfig& config) 
     // zero/negative max_threads would launch no worker, so finalizeBatch() would
     // never run and the batch would wedge (m_running stuck true, no completion
     // signal). m_queue is non-empty per the guard above, so this launches >= 1.
-    int threads_to_launch = qMin(qMax(config.max_threads, 1), m_queue.size());
+    // Bound it from ABOVE too: an untrusted/oversized max_threads must not spawn
+    // one QThread per queued file and exhaust handles, memory, and scheduler
+    // resources -- cap the peak worker count regardless of the requested value.
+    constexpr int kMaxConcurrentWorkers = 64;
+    int threads_to_launch = qMin(qBound(1, config.max_threads, kMaxConcurrentWorkers),
+                                 m_queue.size());
     for (int i = 0; i < threads_to_launch; ++i) {
         startNextFile();
     }
@@ -291,8 +296,11 @@ OstConversionJob::Status OstConverterController::classifyOutcome(
     const OstConversionResult& result) {
     // Any failed item or recorded error (e.g. a source-open failure, or a message
     // whose attachment could not be read) means the conversion was not clean.
-    // Everything else -- including a validly empty mailbox -- is Complete.
-    if (result.items_failed > 0 || !result.errors.isEmpty()) {
+    // A negative counter cannot occur on a real run and signals a corrupt result, so it
+    // fails closed too -- a negative items_failed would otherwise slip past the old > 0
+    // test. Everything else -- including a validly empty mailbox -- is Complete.
+    if (result.items_failed != 0 || !result.errors.isEmpty() || result.items_converted < 0 ||
+        result.items_recovered < 0 || result.bytes_written < 0) {
         return OstConversionJob::Status::Failed;
     }
     return OstConversionJob::Status::Complete;

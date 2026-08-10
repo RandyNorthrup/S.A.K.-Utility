@@ -32,7 +32,15 @@ struct AiAppActionPlan {
     // take the SAME hard human confirm as the shell/own-action/workflow paths in every mode.
     bool catastrophic{false};
 
-    [[nodiscard]] bool ok() const { return error_message.isEmpty(); }
+    [[nodiscard]] bool ok() const {
+        // Fail closed: an empty error_message alone must never certify a default-constructed
+        // or partially built plan as runnable. A plan is executable only when no error and no
+        // guard block are recorded AND the structural fields an executor needs are populated
+        // (app/action/method, plus an actual body -- win32_gui steps or a shell command).
+        return error_message.isEmpty() && guard_block_error.isEmpty() && !app_id.isEmpty() &&
+               !action.isEmpty() && !method.isEmpty() &&
+               (!steps.isEmpty() || !request.command.isEmpty());
+    }
 };
 
 class AiAppActionPlanner {

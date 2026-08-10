@@ -114,10 +114,17 @@ $CppcheckArgs += @(
 # Determine files to check
 # ---------------------------------------------------------------------------
 if ($Files -and $Files.Count -gt 0) {
-    # Filter to C++ files only
+    # Filter to real C++ source files only. Each value is passed straight to cppcheck, so
+    # reject anything option-shaped (leading '-') or that does not exist as a real file on
+    # disk. Without this, a value such as "--suppress=*:*.cpp" or "--addon=evil.cpp" ends in
+    # a C++ extension and would be handed to cppcheck as an option, not a file.
     $CppFiles = $Files | Where-Object {
-        $ext = [System.IO.Path]::GetExtension($_).ToLower()
-        $ext -in @(".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx")
+        $candidate = $_
+        if ([string]::IsNullOrWhiteSpace($candidate)) { return $false }
+        if ($candidate.StartsWith("-")) { return $false }
+        $ext = [System.IO.Path]::GetExtension($candidate).ToLower()
+        ($ext -in @(".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx")) -and
+            (Test-Path -LiteralPath $candidate -PathType Leaf)
     }
     if ($CppFiles.Count -eq 0) {
         Write-Host "No C++ files to check."

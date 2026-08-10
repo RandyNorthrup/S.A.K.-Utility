@@ -57,9 +57,18 @@ bool mouseButtonFlags(const QString& button, unsigned long& down, unsigned long&
 QVector<KeyStroke> planTypeText(const QString& text) {
     QVector<KeyStroke> strokes;
     strokes.reserve(text.size() * 2);
-    for (const QChar ch : text) {
+    const int count = text.size();
+    for (int i = 0; i < count; ++i) {
+        const QChar ch = text.at(i);
         if (ch == QLatin1Char('\r')) {
-            continue;  // CRLF collapses to a single newline
+            // Drop only the CR that begins a CRLF -- the following LF emits the newline. A lone CR
+            // is itself a line break, so emit a VK_RETURN pair rather than silently swallowing it.
+            if (i + 1 < count && text.at(i + 1) == QLatin1Char('\n')) {
+                continue;
+            }
+            strokes.append(KeyStroke{static_cast<unsigned short>(VK_RETURN), true, false});
+            strokes.append(KeyStroke{static_cast<unsigned short>(VK_RETURN), true, true});
+            continue;
         }
         if (ch == QLatin1Char('\n')) {
             strokes.append(KeyStroke{static_cast<unsigned short>(VK_RETURN), true, false});

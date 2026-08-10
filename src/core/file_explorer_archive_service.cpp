@@ -466,6 +466,25 @@ FileExplorerArchiveResult FileExplorerArchiveService::compressToZip(
     FileExplorerArchiveResult result;
     result.output_path = zip_path;
 
+    // Refuse to write the archive INTO a folder that is itself being compressed: the
+    // recursive walk below would otherwise reach the archive file mid-write and fold
+    // a partial copy of it back into itself. (An archive path that equals an existing
+    // source file is already refused by the exclusive NewOnly open below.)
+    const QString clean_zip = QDir::cleanPath(QFileInfo(zip_path).absoluteFilePath());
+    for (const QString& source : source_paths) {
+        const QFileInfo source_info(source);
+        if (!source_info.isDir()) {
+            continue;
+        }
+        const QString clean_source = QDir::cleanPath(source_info.absoluteFilePath());
+        if (clean_zip == clean_source || clean_zip.startsWith(clean_source + QLatin1Char('/'))) {
+            result.blockers.append(
+                QStringLiteral("Refused to write the archive inside source folder %1.")
+                    .arg(source));
+            return result;
+        }
+    }
+
     // Exclusive create: NewOnly makes open() fail if the path already exists, closing
     // the TOCTOU window after the op-layer's exists() check -- a file raced in at
     // zip_path is NOT clobbered. It also guarantees the archive is the file we

@@ -85,6 +85,10 @@ private:
                                                const AiToolCallRequest& request,
                                                const QString& agent_id,
                                                QString* lease_id) const;
+    void invokeHandler(const Handler& handler,
+                       const AiToolCallRequest& request,
+                       const QJsonObject& arguments,
+                       DispatchOutcome* outcome) const;
     void recordHealthForResult(const DispatchOutcome& outcome) const;
 
     QHash<QString, Handler> m_handlers;

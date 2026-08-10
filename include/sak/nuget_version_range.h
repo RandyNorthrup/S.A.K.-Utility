@@ -127,7 +127,10 @@ private:
     std::optional<NuGetVersion> m_upper;
     bool m_lower_inclusive{false};
     bool m_upper_inclusive{false};
-    bool m_valid{true};  ///< false when a non-empty string failed to parse
+    /// A DEFAULT-constructed (never parsed) range is INVALID and satisfies nothing (fail
+    /// closed): a forgotten or stale range must not silently accept every version. parse()
+    /// sets this true up front and the apply* helpers set it false again on a malformed token.
+    bool m_valid{false};
 };
 
 }  // namespace sak

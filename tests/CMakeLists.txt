@@ -1303,6 +1303,10 @@ add_executable(test_file_explorer_session_store
     ../src/core/file_explorer_types.cpp
     ../src/core/file_explorer_layout_metrics.cpp
     ../src/core/file_explorer_session_store.cpp
+    # The session store now surfaces its own failures instead of swallowing them, which pulls
+    # in the logger; carry it the way the helper-built unit tests do.
+    ../src/core/logger.cpp
+    ../include/sak/logger.h
     ../include/sak/file_explorer_types.h
     ../include/sak/file_explorer_layout_metrics.h
     ../include/sak/file_explorer_session_store.h

@@ -1925,9 +1925,14 @@ QString WifiManagerPanel::buildWlanProfileXml(const WifiConfig& cfg) {
     xml += "    <encryption>" + encType + "</encryption>\r\n";
     xml += "    <useOneX>false</useOneX>\r\n";
     xml += "  </authEncryption>\r\n";
-    if (!cfg.password.isEmpty() && authType != "open") {
+    // WEP maps to auth "open" but still carries a key: emit it as <networkKey> so a WEP key is NOT
+    // silently discarded (a keyless WEP profile cannot connect). WPA keys stay passPhrase; a
+    // genuinely open network (no key) emits no <sharedKey>.
+    const bool is_wep = encType == QLatin1String("WEP");
+    if (!cfg.password.isEmpty() && (authType != QLatin1String("open") || is_wep)) {
         xml += "  <sharedKey>\r\n";
-        xml += "    <keyType>passPhrase</keyType>\r\n";
+        xml += is_wep ? "    <keyType>networkKey</keyType>\r\n"
+                      : "    <keyType>passPhrase</keyType>\r\n";
         xml += "    <protected>false</protected>\r\n";
         xml += "    <keyMaterial>" + cfg.password.toHtmlEscaped() + "</keyMaterial>\r\n";
         xml += "  </sharedKey>\r\n";

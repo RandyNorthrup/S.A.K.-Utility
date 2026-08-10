@@ -35,14 +35,24 @@ QString BundledToolsManager::toolPath(const QString& category, const QString& ex
 }
 
 bool BundledToolsManager::toolExists(const QString& category, const QString& exeName) const {
-    return QFileInfo::exists(toolPath(category, exeName));
+    // Fail closed: a resolved DIRECTORY (an empty/"." exeName collapses the path onto a parent
+    // folder that exists) is not a runnable tool -- require a regular file, not mere presence.
+    const QFileInfo info(toolPath(category, exeName));
+    return info.exists() && info.isFile();
 }
 
 bool BundledToolsManager::scriptExists(const QString& scriptName) const {
-    return QFileInfo::exists(scriptPath(scriptName));
+    const QFileInfo info(scriptPath(scriptName));
+    return info.exists() && info.isFile();
 }
 
 bool BundledToolsManager::moduleExists(const QString& moduleName) const {
+    // A PowerShell module is its own named subdirectory. An empty/"."/".." name resolves to the
+    // ps_modules root (or its parent), which exists -- reject it so only a real module matches.
+    const QString trimmed = moduleName.trimmed();
+    if (trimmed.isEmpty() || trimmed == QStringLiteral(".") || trimmed == QStringLiteral("..")) {
+        return false;
+    }
     QDir moduleDir(psModulePath(moduleName));
     return moduleDir.exists();
 }

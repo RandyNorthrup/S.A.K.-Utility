@@ -28,7 +28,7 @@
         {"tool": "click_text", "arguments": {"text": "Scan This Computer", "window_title": "SUPERAntiSpyware"}},
         {"tool": "wait_for_idle", "arguments": {"window_title": "SUPERAntiSpyware", "timeout_ms": 8000}},
         {"tool": "click_text", "arguments": {"text": "Quick Scan", "window_title": "SUPERAntiSpyware"}},
-        {"tool": "wait_for_text", "arguments": {"text": "Scan Results", "foreground": true, "timeout_ms": 1800000, "poll_ms": 3000}},
+        {"tool": "wait_for_text", "timeout_ms": 1800000, "arguments": {"text": "Scan Results", "foreground": true, "timeout_ms": 1800000, "poll_ms": 3000}},
         {"tool": "ocr_window", "arguments": {"foreground": true}}
       ],
       "evidence": [
@@ -45,7 +45,7 @@
         {"tool": "click_text", "arguments": {"text": "Scan This Computer", "window_title": "SUPERAntiSpyware"}},
         {"tool": "wait_for_idle", "arguments": {"window_title": "SUPERAntiSpyware", "timeout_ms": 8000}},
         {"tool": "click_text", "arguments": {"text": "Complete Scan", "window_title": "SUPERAntiSpyware"}},
-        {"tool": "wait_for_text", "arguments": {"text": "Scan Results", "foreground": true, "timeout_ms": 7200000, "poll_ms": 5000}},
+        {"tool": "wait_for_text", "timeout_ms": 7200000, "arguments": {"text": "Scan Results", "foreground": true, "timeout_ms": 7200000, "poll_ms": 5000}},
         {"tool": "ocr_window", "arguments": {"foreground": true}}
       ],
       "evidence": [
@@ -60,7 +60,8 @@
       "steps": [
         {"tool": "focus_window", "arguments": {"window_title": "SUPERAntiSpyware"}},
         {"tool": "click_text", "arguments": {"text": "check for", "window_title": "SUPERAntiSpyware"}},
-        {"tool": "wait_for_idle", "arguments": {"window_title": "SUPERAntiSpyware", "timeout_ms": 300000, "idle_ms": 3000}},
+        {"tool": "wait_for_idle", "timeout_ms": 300000, "arguments": {"window_title": "SUPERAntiSpyware", "timeout_ms": 300000, "idle_ms": 3000}},
+        {"tool": "wait_for_text", "timeout_ms": 900000, "arguments": {"text": "Complete", "foreground": true, "timeout_ms": 900000, "poll_ms": 3000}},
         {"tool": "ocr_window", "arguments": {"foreground": true}}
       ],
       "evidence": [

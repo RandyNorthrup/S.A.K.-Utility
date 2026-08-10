@@ -42,8 +42,10 @@ GenerateSystemReportAction::GenerateSystemReportAction(const QString& output_loc
                                                        QObject* parent)
     : QuickAction(parent), m_output_location(output_location) {}
 
-bool GenerateSystemReportAction::collectorFailed(bool timed_out, int exit_code) {
-    return timed_out || exit_code != 0;
+bool GenerateSystemReportAction::collectorFailed(bool timed_out,
+                                                 int exit_code,
+                                                 bool output_incomplete) {
+    return timed_out || exit_code != 0 || output_incomplete;
 }
 
 bool GenerateSystemReportAction::reportGenerationSucceeded(bool save_ok, bool all_collectors_ok) {
@@ -63,9 +65,39 @@ void GenerateSystemReportAction::scan() {
     Q_EMIT scanComplete(result);
 }
 
+// Fail closed on an empty or relative output location: a blank path resolves
+// against the process working directory and a relative one escapes the intended
+// reports folder, so the report must never be written to a caller-unintended place.
+bool GenerateSystemReportAction::rejectInvalidOutputLocation() {
+    if (m_output_location.trimmed().isEmpty() || !QDir::isAbsolutePath(m_output_location)) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = QStringLiteral("System report output location is invalid");
+        result.log =
+            QStringLiteral("Refusing to write a system report to a blank or relative path");
+        finishWithResult(result, ActionStatus::Failed);
+        return true;
+    }
+    return false;
+}
+
+// Polled between collectors so a cancel aborts promptly; settles the cancelled
+// outcome (stamped with start_time) and reports whether execute() should return.
+bool GenerateSystemReportAction::finishIfCancelled(const QDateTime& start_time) {
+    if (isCancelled()) {
+        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+        return true;
+    }
+    return false;
+}
+
 void GenerateSystemReportAction::execute() {
     if (isCancelled()) {
         emitCancelledResult(QStringLiteral("System report generation cancelled"));
+        return;
+    }
+
+    if (rejectInvalidOutputLocation()) {
         return;
     }
 
@@ -80,32 +112,28 @@ void GenerateSystemReportAction::execute() {
     // Phase 2: OS and hardware
     Q_EMIT executionProgress("Collecting OS and hardware information...", progress::kStep15);
     report += gatherOsAndHardwareInfo();
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+    if (finishIfCancelled(start_time)) {
         return;
     }
 
     // Phase 3: Storage
     Q_EMIT executionProgress("Collecting storage information...", progress::kStep40);
     report += gatherStorageInfo();
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+    if (finishIfCancelled(start_time)) {
         return;
     }
 
     // Phase 4: Network
     Q_EMIT executionProgress("Collecting network configuration...", progress::kStep60);
     report += gatherNetworkInfo();
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+    if (finishIfCancelled(start_time)) {
         return;
     }
 
     // Phase 5: Qt/Volume info
     Q_EMIT executionProgress("Adding supplemental system data...", progress::kStep80);
     report += gatherQtAndVolumeInfo();
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+    if (finishIfCancelled(start_time)) {
         return;
     }
 
@@ -291,7 +319,9 @@ QString GenerateSystemReportAction::gatherOsAndHardwareInfo() {
         Q_EMIT logMessage("System report OS warning: " + proc_info.std_err.trimmed());
     }
 
-    if (collectorFailed(proc_info.timed_out, proc_info.exit_code)) {
+    const bool info_incomplete = proc_info.output_truncated ||
+                                 proc_info.std_out.trimmed().isEmpty();
+    if (collectorFailed(proc_info.timed_out, proc_info.exit_code, info_incomplete)) {
         m_collector_errors << QStringLiteral("OS/hardware");
         return "=== OPERATING SYSTEM ===\n[collection failed: OS/hardware data unavailable]\n\n";
     }
@@ -330,7 +360,9 @@ QString GenerateSystemReportAction::gatherStorageInfo() {
         Q_EMIT logMessage("System report storage warning: " + proc_storage.std_err.trimmed());
     }
 
-    if (collectorFailed(proc_storage.timed_out, proc_storage.exit_code)) {
+    const bool storage_incomplete = proc_storage.output_truncated ||
+                                    proc_storage.std_out.trimmed().isEmpty();
+    if (collectorFailed(proc_storage.timed_out, proc_storage.exit_code, storage_incomplete)) {
         m_collector_errors << QStringLiteral("storage");
         return "=== STORAGE DEVICES ===\n[collection failed: storage data unavailable]\n\n";
     }
@@ -366,7 +398,9 @@ QString GenerateSystemReportAction::gatherNetworkInfo() {
         Q_EMIT logMessage("System report network warning: " + proc_network.std_err.trimmed());
     }
 
-    if (collectorFailed(proc_network.timed_out, proc_network.exit_code)) {
+    const bool network_incomplete = proc_network.output_truncated ||
+                                    proc_network.std_out.trimmed().isEmpty();
+    if (collectorFailed(proc_network.timed_out, proc_network.exit_code, network_incomplete)) {
         m_collector_errors << QStringLiteral("network");
         return "=== NETWORK ADAPTERS ===\n[collection failed: network data unavailable]\n\n";
     }

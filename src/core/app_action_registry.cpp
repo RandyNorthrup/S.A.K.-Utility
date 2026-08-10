@@ -20,19 +20,42 @@ QJsonObject appActionDescriptorToJson(const AppActionDescriptor& descriptor) {
     };
 }
 
+namespace {
+
+// Returns the first reason the descriptor/invoke pair may not be registered, or an
+// empty string when it is well formed. The read_only contradiction is fatal because
+// the assistant's gate treats a read_only action with zero risk flags as ungated
+// (isUngatedReadOnlyAction), so a descriptor that is both read_only and
+// mutating/destructive/catastrophic is rejected here rather than stored to be misread
+// later.
+QString registrationError(const QString& id,
+                          const AppActionDescriptor& descriptor,
+                          const AppActionInvoke& invoke) {
+    if (id.isEmpty()) {
+        return QStringLiteral("App action id is empty");
+    }
+    if (!invoke) {
+        return QStringLiteral("App action '%1' has no invoke handler").arg(id);
+    }
+    if (descriptor.read_only &&
+        (descriptor.mutating || descriptor.destructive || descriptor.catastrophic)) {
+        return QStringLiteral(
+                   "App action '%1' is marked read_only but also carries a state-change flag")
+            .arg(id);
+    }
+    return QString();
+}
+
+}  // namespace
+
 bool AppActionRegistry::registerAction(const AppActionDescriptor& descriptor,
                                        AppActionInvoke invoke,
                                        QString* error) {
     const QString id = descriptor.id.trimmed();
-    if (id.isEmpty()) {
+    const QString invalid = registrationError(id, descriptor, invoke);
+    if (!invalid.isEmpty()) {
         if (error) {
-            *error = QStringLiteral("App action id is empty");
-        }
-        return false;
-    }
-    if (!invoke) {
-        if (error) {
-            *error = QStringLiteral("App action '%1' has no invoke handler").arg(id);
+            *error = invalid;
         }
         return false;
     }

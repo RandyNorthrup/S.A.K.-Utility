@@ -69,7 +69,7 @@ public:
     /// Register every built-in QuickAction into @p registry as an AppAction whose
     /// invoke thunk runs it headless via runQuickActionSync(). Returns the count
     /// registered. Ids are stable ("action.<slug>").
-    int registerInto(AppActionRegistry& registry);
+    [[nodiscard]] int registerInto(AppActionRegistry& registry);
 
     /// The underlying controller (for the GUI panels to share, and for tests).
     [[nodiscard]] QuickActionController* controller() const;

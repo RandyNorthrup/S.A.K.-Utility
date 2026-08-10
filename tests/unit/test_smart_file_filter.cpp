@@ -369,15 +369,24 @@ void SmartFileFilterTests::exclusionReason_normal() {
 void SmartFileFilterTests::setRules_updatesFiltering() {
     sak::SmartFileFilter filter;
 
-    // Initially should detect NTUSER.DAT as dangerous
+    // A caller-supplied dangerous file is rule-controlled: present under default rules...
+    sak::SmartFilter withCustom;
+    withCustom.dangerous_files.append("my_custom_secret.dat");
+    filter.setRules(withCustom);
+    QVERIFY(filter.isDangerousFile("my_custom_secret.dat"));
+
+    // ...and gone once the rules no longer list it. This proves setRules updates filtering.
+    sak::SmartFilter cleared;
+    cleared.dangerous_files.clear();
+    filter.setRules(cleared);
+    QVERIFY(!filter.isDangerousFile("my_custom_secret.dat"));
+
+    // But the registry-hive protections are mandatory and survive ANY supplied rules,
+    // including an empty set: a live NTUSER.DAT copied during a profile restore corrupts the
+    // profile, so no caller may filter it back in as copyable. This is a fail-closed
+    // invariant, not a rule the caller controls.
     QVERIFY(filter.isDangerousFile("NTUSER.DAT"));
-
-    // Update rules with empty dangerous files
-    sak::SmartFilter newRules;
-    newRules.dangerous_files.clear();
-    filter.setRules(newRules);
-
-    QVERIFY(!filter.isDangerousFile("NTUSER.DAT"));
+    QVERIFY(filter.isDangerousFile("UsrClass.dat"));
 }
 
 QTEST_GUILESS_MAIN(SmartFileFilterTests)

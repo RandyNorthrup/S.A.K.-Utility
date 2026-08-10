@@ -33,7 +33,7 @@ struct ScreenBox {
 // True when (px, py) lies inside [screen.x, screen.x+screen.w) x [screen.y, screen.y+screen.h). A
 // width or height <= 0 (no such metric) makes every point out of range. Callers reject an
 // out-of-range click rather than let the OS clamp it to a desktop-edge control.
-bool pointInVirtualScreen(int px, int py, const ScreenBox& screen);
+[[nodiscard]] bool pointInVirtualScreen(int px, int py, const ScreenBox& screen);
 
 // Map a virtual-screen point to the 0..65535 absolute space. The divisor is floored at 1 so a
 // degenerate 1px virtual screen cannot divide by zero. Assumes the point is already validated.
@@ -42,7 +42,7 @@ AbsPoint toAbsCoord(int px, int py, const ScreenBox& screen);
 // Map a button name to its MOUSEEVENTF down/up flags (unsigned long == DWORD). Case-insensitive and
 // trimmed; an empty name defaults to "left". Returns false (leaving down/up untouched) on an
 // unknown name so the tool refuses rather than firing an unintended button.
-bool mouseButtonFlags(const QString& button, unsigned long& down, unsigned long& up);
+[[nodiscard]] bool mouseButtonFlags(const QString& button, unsigned long& down, unsigned long& up);
 
 // One planned keystroke: either a UTF-16 code unit typed via KEYEVENTF_UNICODE (is_vk == false) or
 // a virtual-key press (is_vk == true, e.g. VK_RETURN for a newline). key_up distinguishes the
@@ -57,11 +57,12 @@ struct KeyStroke {
     }
 };
 
-// Plan type_text into an ordered keystroke list: a CR ("\r") is dropped so CRLF collapses to one
-// newline, a LF ("\n") becomes a VK_RETURN down+up pair, and every other UTF-16 unit becomes a
-// unicode down+up pair (an astral character's two surrogates each emit their own pair). The count
-// of source units actually turned into keystrokes (i.e. excluding dropped CRs) can be recovered by
-// the caller for an honest "typed" report.
+// Plan type_text into an ordered keystroke list: the CR of a CRLF is dropped so the pair collapses
+// to one newline, while a LF ("\n") -- and a lone CR that is NOT part of a CRLF -- becomes a
+// VK_RETURN down+up pair (a bare CR is itself a line break and must not be silently swallowed).
+// Every other UTF-16 unit becomes a unicode down+up pair (an astral character's two surrogates each
+// emit their own pair). The count of source units actually turned into keystrokes (i.e. excluding
+// only the dropped CR of a CRLF) can be recovered by the caller for an honest "typed" report.
 QVector<KeyStroke> planTypeText(const QString& text);
 
 }  // namespace sak::win32mcp

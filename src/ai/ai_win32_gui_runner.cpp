@@ -36,10 +36,16 @@ struct Rejection {
 
 Rejection rejectionFor(const Win32StepOutcome& outcome, int index, const QString& tool) {
     if (!outcome.planned) {
-        return {outcome.error,
-                QStringLiteral("Step %1 (%2) could not be planned: %3")
-                    .arg(index)
-                    .arg(tool, outcome.error)};
+        // A step whose tool could not be planned is ALWAYS fatal (the header's
+        // documented invariant). Supply a fallback reason when the executor left
+        // the error empty so it cannot read as non-fatal -- Rejection::fatal keys
+        // on a non-empty short_error, and a default Win32StepOutcome{} would
+        // otherwise slip through as a successful step.
+        const QString reason = outcome.error.isEmpty() ? QStringLiteral("tool could not be planned")
+                                                       : outcome.error;
+        return {
+            reason,
+            QStringLiteral("Step %1 (%2) could not be planned: %3").arg(index).arg(tool, reason)};
     }
     if (outcome.high_risk) {
         return {QStringLiteral("high-risk tool not allowed in recipe"),
@@ -57,6 +63,23 @@ Rejection rejectionFor(const Win32StepOutcome& outcome, int index, const QString
                     .arg(tool)};
     }
     return {};
+}
+
+// Record the executor's outcome onto the step entry and report whether the step
+// failed. A step succeeds only when the executor reports no runtime error AND
+// carries no error text: a non-empty error with tool_error unset is a
+// contradictory result that must not read as ok (fail closed).
+bool recordStepOutcome(QJsonObject& entry, const Win32StepOutcome& outcome) {
+    const bool step_failed = outcome.tool_error || !outcome.error.isEmpty();
+    entry[QStringLiteral("ok")] = !step_failed;
+    if (!outcome.result_text.isEmpty()) {
+        entry[QStringLiteral("result_text")] = outcome.result_text;
+    }
+    if (step_failed) {
+        entry[QStringLiteral("error")] = outcome.error.isEmpty() ? outcome.result_text
+                                                                 : outcome.error;
+    }
+    return step_failed;
 }
 
 }  // namespace
@@ -93,10 +116,30 @@ std::optional<QString> win32WaitExpectationFailure(const QJsonObject& payload,
 
 QJsonObject executeWin32GuiSteps(const QJsonArray& steps, const Win32StepExecutor& exec) {
     QJsonArray results;
+    // An empty recipe has nothing to execute; reporting success would falsely
+    // claim a GUI action ran. Fail closed.
+    if (steps.isEmpty()) {
+        return finish(results,
+                      false,
+                      QStringLiteral("win32_gui recipe contained no steps to execute"));
+    }
     for (int index = 0; index < steps.size(); ++index) {
         const QJsonObject step = steps.at(index).toObject();
         const QString tool = step.value(QStringLiteral("tool")).toString().trimmed();
         const bool optional = step.value(QStringLiteral("optional")).toBool(false);
+
+        // A malformed step (not an object, or naming no tool) cannot be executed
+        // safely; reject the recipe rather than hand a blank tool to the executor.
+        if (tool.isEmpty()) {
+            QJsonObject entry = stepEntry(index, tool, optional);
+            entry[QStringLiteral("ok")] = false;
+            entry[QStringLiteral("error")] = QStringLiteral("step names no tool");
+            results.append(entry);
+            return finish(results,
+                          false,
+                          QStringLiteral("Step %1 names no tool to execute").arg(index));
+        }
+
         const Win32StepOutcome outcome = exec(step);
 
         QJsonObject entry = stepEntry(index, tool, optional);
@@ -107,17 +150,10 @@ QJsonObject executeWin32GuiSteps(const QJsonArray& steps, const Win32StepExecuto
             return finish(results, false, rejection.detail);
         }
 
-        entry[QStringLiteral("ok")] = !outcome.tool_error;
-        if (!outcome.result_text.isEmpty()) {
-            entry[QStringLiteral("result_text")] = outcome.result_text;
-        }
-        if (outcome.tool_error) {
-            entry[QStringLiteral("error")] = outcome.error.isEmpty() ? outcome.result_text
-                                                                     : outcome.error;
-        }
+        const bool step_failed = recordStepOutcome(entry, outcome);
         results.append(entry);
 
-        if (outcome.tool_error && !optional) {
+        if (step_failed && !optional) {
             return finish(results,
                           false,
                           QStringLiteral("Step %1 (%2) failed").arg(index).arg(tool));

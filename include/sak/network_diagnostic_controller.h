@@ -88,11 +88,11 @@ public:
     // -- Connectivity --
     struct PingParams {
         QString target;
-        int count;
-        int interval_ms;
-        int timeout_ms;
-        int packet_size;
-        int ttl;
+        int count{0};
+        int interval_ms{0};
+        int timeout_ms{0};
+        int packet_size{0};
+        int ttl{0};
     };
     void ping(const PingParams& params);
     void traceroute(
@@ -110,22 +110,22 @@ public:
     struct PortScanParams {
         QString target;
         QVector<uint16_t> ports;
-        uint16_t range_start;
-        uint16_t range_end;
-        int timeout_ms;
-        int max_concurrent;
-        bool grab_banners;
+        uint16_t range_start{0};
+        uint16_t range_end{0};
+        int timeout_ms{0};
+        int max_concurrent{0};
+        bool grab_banners{false};
     };
     void scanPorts(const PortScanParams& params);
 
     // -- Bandwidth --
     struct BandwidthTestParams {
         QString server_addr;
-        uint16_t port;
-        int duration_sec;
-        int streams;
-        bool bidirectional;
-        bool udp;
+        uint16_t port{0};
+        int duration_sec{0};
+        int streams{0};
+        bool bidirectional{false};
+        bool udp{false};
     };
     void startIperfServer(uint16_t port);
     void stopIperfServer();

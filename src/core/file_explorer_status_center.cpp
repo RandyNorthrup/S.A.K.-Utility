@@ -217,7 +217,7 @@ void FileExplorerStatusProgressReporter::computeSpeeds(const qint64 now_ms) {
 void FileExplorerStatusProgressReporter::report() {
     // Files auto-success: everything enumerated and fully processed flips the
     // status without an explicit call.
-    if (m_progress.enumeration_completed && m_progress.total_size != 0 &&
+    if (m_progress.enumeration_completed && m_progress.total_size > 0 &&
         m_progress.processed_size == m_progress.total_size &&
         m_progress.processed_items_count == m_progress.items_count &&
         m_progress.status == FileExplorerReturnResult::InProgress) {

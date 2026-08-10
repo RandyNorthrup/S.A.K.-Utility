@@ -925,20 +925,33 @@ void DiagnosticBenchmarkPanel::connectStatusSignals() {
 // Helpers
 // ============================================================================
 
-void DiagnosticBenchmarkPanel::setOperationRunning(bool running) {
+void DiagnosticBenchmarkPanel::refreshPrimaryControls() {
     Q_ASSERT(m_hw_rescan_button);
     Q_ASSERT(m_smart_rescan_button);
-    m_operation_running = running;
-
-    m_hw_rescan_button->setEnabled(!running);
-    m_smart_rescan_button->setEnabled(!running);
-    m_cpu_benchmark_button->setEnabled(!running);
-    m_disk_benchmark_button->setEnabled(!running);
-    m_mem_benchmark_button->setEnabled(!running);
-
-    if (!m_stress_test_running) {
-        m_stress_start_button->setEnabled(!running);
+    // A standalone diagnostic, the full suite, a stress test, or a quick action each
+    // locks every operation-starting control. Computing from all the flags at once
+    // keeps them from disagreeing -- even a stray completion that toggles one flag
+    // mid-run cannot re-enable a control while another operation is still in flight.
+    const bool idle = !m_operation_running && !m_suite_running && !m_stress_test_running &&
+                      !m_qa_running;
+    m_hw_rescan_button->setEnabled(idle);
+    m_smart_rescan_button->setEnabled(idle);
+    m_cpu_benchmark_button->setEnabled(idle);
+    m_disk_benchmark_button->setEnabled(idle);
+    m_mem_benchmark_button->setEnabled(idle);
+    m_stress_start_button->setEnabled(idle);
+    m_suite_run_button->setEnabled(idle);
+    m_report_html_button->setEnabled(idle);
+    m_report_json_button->setEnabled(idle);
+    m_report_csv_button->setEnabled(idle);
+    for (auto* qa_btn : m_qa_buttons) {
+        qa_btn->setEnabled(idle);
     }
+}
+
+void DiagnosticBenchmarkPanel::setOperationRunning(bool running) {
+    m_operation_running = running;
+    refreshPrimaryControls();
 
     if (running) {
         Q_EMIT statusMessage("Running...", 0);
@@ -1101,6 +1114,8 @@ void DiagnosticBenchmarkPanel::onQuickActionClicked(QuickAction* action) {
     Q_EMIT statusMessage(QString("Running: %1...").arg(action->name()), sak::kTimerStatusMessageMs);
     m_qa_progress_bar->setValue(0);
     m_qa_progress_bar->setVisible(true);
+    m_qa_running = true;
+    refreshPrimaryControls();  // lock out overlapping diagnostic/suite/stress work
     m_qa_controller->executeAction(action->name(), false);
 }
 
@@ -1116,6 +1131,10 @@ void DiagnosticBenchmarkPanel::onQuickActionProgress(QuickAction* action,
 }
 
 void DiagnosticBenchmarkPanel::onQuickActionComplete(QuickAction* action) {
+    // The quick action has finished either way; clear the busy flag and re-enable the
+    // controls it was excluding (still gated by any other in-flight operation's flag).
+    m_qa_running = false;
+    refreshPrimaryControls();
     // Queued connection from QuickActionController, which owns this pointer's
     // lifetime; this panel cannot vouch for it and dereferences it on the next
     // line. Refuse rather than crash Release (Debug would have aborted here and
@@ -1135,6 +1154,9 @@ void DiagnosticBenchmarkPanel::onQuickActionComplete(QuickAction* action) {
 
 void DiagnosticBenchmarkPanel::onQuickActionError(QuickAction* action,
                                                   const QString& error_message) {
+    // The quick action has terminated; clear the busy flag and restore the controls.
+    m_qa_running = false;
+    refreshPrimaryControls();
     // Same boundary as onQuickActionComplete, and the next line dereferences it.
     // Losing the action's name must not lose the error itself.
     if (!action) {

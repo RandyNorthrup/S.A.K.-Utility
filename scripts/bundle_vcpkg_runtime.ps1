@@ -28,8 +28,19 @@ if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
 if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
     $VcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
 }
-if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
+# Last resort: the conventional install location, but only when it actually exists -- never
+# proceed against a guessed path that is absent, which would silently bundle nothing.
+if ([string]::IsNullOrWhiteSpace($VcpkgRoot) -and (Test-Path -LiteralPath "C:\vcpkg" -PathType Container)) {
     $VcpkgRoot = "C:\vcpkg"
+}
+if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
+    throw "vcpkg root not found: pass -VcpkgRoot or set VCPKG_ROOT / VCPKG_INSTALLATION_ROOT."
+}
+
+# The triplet is joined straight into the source path; reject anything that is not a plain
+# triplet token so a value like '..\..\Windows\System32' cannot redirect the copy source.
+if ($Triplet -notmatch '^[A-Za-z0-9._-]+$') {
+    throw "Invalid vcpkg triplet '$Triplet'."
 }
 
 $destination = Resolve-Path -LiteralPath $DestinationPath

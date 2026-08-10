@@ -12,6 +12,12 @@ namespace sak::ai {
 
 namespace {
 
+// Hard ceiling on the number of distinct pooled sessions. Each slot can own a live server
+// process + worker thread, so an unbounded map (distinct command/env/timeout keys) would let a
+// caller exhaust processes/threads/handles. When the pool is full and a new key arrives we first
+// reclaim any already-dead slot, then fail the call closed rather than spawning without limit.
+constexpr std::size_t kMaxPooledSessions = 32;
+
 // The cache key must isolate launch environments: a server started read-only must
 // never be reused for a full-access call. Key on the command plus a hash of the
 // FULL, sorted environment, so any env difference (security profile, redaction
@@ -53,6 +59,27 @@ std::shared_ptr<AiMcpSessionPool::Entry> AiMcpSessionPool::entryFor(
     QMutexLocker lock(&m_mutex);
     auto it = m_sessions.find(key);
     if (it == m_sessions.end()) {
+        if (m_sessions.size() >= kMaxPooledSessions) {
+            // Full: reclaim any dead slot (a key whose session already failed/closed and was
+            // dropped) before refusing, so transient churn cannot permanently wedge the pool.
+            // tryLock keeps us from ever blocking on an in-flight call while holding m_mutex.
+            for (auto i = m_sessions.begin(); i != m_sessions.end();) {
+                Entry& candidate = *i->second;
+                bool dead = false;
+                if (candidate.mutex.tryLock()) {
+                    dead = !candidate.session;
+                    candidate.mutex.unlock();
+                }
+                if (dead) {
+                    i = m_sessions.erase(i);
+                } else {
+                    ++i;
+                }
+            }
+        }
+        if (m_sessions.size() >= kMaxPooledSessions) {
+            return nullptr;  // fail closed: too many distinct live sessions to add another
+        }
         it = m_sessions.emplace(key, std::make_shared<Entry>()).first;
     }
     // Hand back a shared handle: the caller locks entry->mutex OUTSIDE m_mutex, and
@@ -64,6 +91,14 @@ std::shared_ptr<AiMcpSessionPool::Entry> AiMcpSessionPool::entryFor(
 bool AiMcpSessionPool::ensureSessionOpen(Entry& entry,
                                          const AiMcpStdioCallRequest& request,
                                          QString* error) {
+    if (entry.detached) {
+        // closeAll() tore this Entry down and dropped it from the map. Refuse to reopen so a call
+        // that grabbed the handle mid-teardown cannot spawn a process after shutdown.
+        if (error) {
+            *error = QStringLiteral("MCP session pool is closing");
+        }
+        return false;
+    }
     if (entry.session && entry.session->isOpen()) {
         return true;
     }
@@ -84,6 +119,12 @@ QJsonObject AiMcpSessionPool::callTool(const AiMcpStdioCallRequest& request,
         return {};
     }
     const std::shared_ptr<Entry> entry = entryFor(request);
+    if (!entry) {
+        if (error_message) {
+            *error_message = QStringLiteral("MCP session pool is at capacity");
+        }
+        return {};
+    }
     QMutexLocker call_lock(&entry->mutex);
 
     QString error;
@@ -122,6 +163,12 @@ QVector<AiMcpToolDescriptor> AiMcpSessionPool::listTools(const AiMcpStdioCallReq
         return {};
     }
     const std::shared_ptr<Entry> entry = entryFor(request);
+    if (!entry) {
+        if (error_message) {
+            *error_message = QStringLiteral("MCP session pool is at capacity");
+        }
+        return {};
+    }
     QMutexLocker call_lock(&entry->mutex);
 
     QString error;
@@ -153,6 +200,9 @@ void AiMcpSessionPool::closeAll() {
         // session down, so we never destroy a session mid-call.
         QMutexLocker entry_lock(&entry->mutex);
         entry->session.reset();
+        // Mark detached under the entry mutex so an in-flight caller that grabbed this handle
+        // before we cleared the map cannot reopen a session on it after closeAll() returns.
+        entry->detached = true;
     }
     m_sessions.clear();
 }

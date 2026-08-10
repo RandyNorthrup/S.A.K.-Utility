@@ -96,9 +96,14 @@ QString buildWlanXmlContent(const QString& ssid,
     xml += "    <encryption>" + auth.enc_type + "</encryption>\r\n";
     xml += "    <useOneX>false</useOneX>\r\n";
     xml += "  </authEncryption>\r\n";
-    if (!password.isEmpty() && auth.auth_type != "open") {
+    // WEP resolves to auth "open" but still carries a key: emit it as <networkKey> so a WEP key is
+    // NOT silently discarded (a keyless WEP profile cannot connect). WPA/WPA2/WPA3 keys stay
+    // passPhrase; a genuinely open/none network (no key) emits no <sharedKey>.
+    const bool is_wep = auth.enc_type == QLatin1String("WEP");
+    if (!password.isEmpty() && (auth.auth_type != QLatin1String("open") || is_wep)) {
         xml += "  <sharedKey>\r\n";
-        xml += "    <keyType>passPhrase</keyType>\r\n";
+        xml += is_wep ? "    <keyType>networkKey</keyType>\r\n"
+                      : "    <keyType>passPhrase</keyType>\r\n";
         xml += "    <protected>false</protected>\r\n";
         xml += "    <keyMaterial>" + password.toHtmlEscaped() + "</keyMaterial>\r\n";
         xml += "  </sharedKey>\r\n";

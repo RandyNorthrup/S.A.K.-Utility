@@ -14,6 +14,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# $PackageName is joined onto $BuildDir and then used to delete, clean, archive, and hash
+# paths. Require a single, safe path segment so it cannot escape $BuildDir via separators,
+# "..", or wildcard metacharacters.
+if ($PackageName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$' -or $PackageName.Contains('..')) {
+    throw "Invalid PackageName '$PackageName': must be a single path segment of letters, digits, '.', '_', or '-' with no '..'."
+}
+
 $build = Resolve-Path -LiteralPath $BuildDir
 $packageDir = Join-Path $build.Path $PackageName
 $zipPath = Join-Path $build.Path "$PackageName-Windows-x64.zip"
@@ -34,7 +41,7 @@ if (Test-Path -LiteralPath $checksumsPath -PathType Leaf) {
     Remove-Item -LiteralPath $checksumsPath -Force
 }
 
-$packagedLocalProviderFiles = Get-ChildItem -LiteralPath $packageDir -Recurse -Filter "*.local.json" -ErrorAction SilentlyContinue
+$packagedLocalProviderFiles = Get-ChildItem -LiteralPath $packageDir -Recurse -Filter "*.local.json" -ErrorAction Stop
 if ($packagedLocalProviderFiles) {
     throw "Refusing to archive package with local provider config file: $($packagedLocalProviderFiles[0].FullName)"
 }
@@ -51,6 +58,18 @@ foreach ($relativePath in $requiredPackageFiles) {
     $fullPath = Join-Path $packageDir $relativePath
     if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
         throw "Refusing to archive package missing required file: $relativePath"
+    }
+    $requiredItem = Get-Item -LiteralPath $fullPath -Force
+    if ($requiredItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Refusing to archive package: required file is a reparse point: $relativePath"
+    }
+    if ($requiredItem.Attributes -band ([System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System)) {
+        # Compress-Archive silently excludes hidden/system entries, so such a file would
+        # pass this presence check yet be absent from the ZIP.
+        throw "Refusing to archive package: required file is hidden or system and would be excluded from the archive: $relativePath"
+    }
+    if ($requiredItem.Length -le 0) {
+        throw "Refusing to archive package: required file is empty: $relativePath"
     }
 }
 

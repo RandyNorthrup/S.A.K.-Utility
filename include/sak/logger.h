@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -286,8 +287,10 @@ void logger::log(log_level level,
         auto message = std::vformat(format, std::make_format_args(arg1, args...));
         logInternal(level, message, std::source_location::current());
     } catch (...) {
-        // Intentional: final safety net in noexcept function
-        // Never throw from logger - best effort only
+        // Final safety net in a noexcept function (never throw from the logger). Do not
+        // swallow silently: a malformed format string or formatter failure would otherwise
+        // erase the entry with no trace, so note it to stderr like logInternal's own catch.
+        std::fprintf(stderr, "SAK Logger: log formatting failed; entry dropped\n");
     }
 }
 

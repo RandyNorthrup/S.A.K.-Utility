@@ -6,10 +6,54 @@
 
 #include "sak/file_explorer_properties_calc.h"
 
+#include <limits>
+
 namespace sak {
 
 namespace {
 constexpr quint64 kBytesPerMebibyte = 1024ULL * 1024ULL;
+
+// Add @p add into @p acc, saturating at the quint64 maximum. Returns false when
+// the sum would have wrapped. File sizes on a foreign/hostile file system are
+// attacker-controlled and could otherwise overflow into a small, plausible-but-
+// wrong total; the caller then marks the walk incomplete so the figure reads as
+// a lower bound rather than an exact -- and wrong -- number.
+bool addBytesSaturating(quint64& acc, quint64 add) {
+    if (acc > std::numeric_limits<quint64>::max() - add) {
+        acc = std::numeric_limits<quint64>::max();
+        return false;
+    }
+    acc += add;
+    return true;
+}
+
+// Fold a single directory entry into the running @p result: descend a real
+// subdirectory, refuse to follow a symlink/junction, or add a regular file's own
+// bytes. Each path also carries its completeness signal -- a truncated subtree, a
+// skipped link, or a saturated total -- up into @p result, so the reported figure
+// stays honest about whether every byte was actually counted.
+void accumulateEntry(TreeSizeResult& result,
+                     const DirectoryLister& list,
+                     const FileManagementEntry& entry,
+                     const int max_depth,
+                     const int max_entries_per_directory) {
+    if (entry.directory && !entry.symlink) {
+        const TreeSizeResult sub =
+            treeSize(list, entry.path, max_depth - 1, max_entries_per_directory);
+        const bool no_overflow = addBytesSaturating(result.bytes, sub.bytes);
+        result.complete = result.complete && sub.complete && no_overflow;
+    } else if (entry.directory) {
+        // A symlinked / junctioned directory is NOT descended: following it can
+        // redirect the walk out of the tree or loop back into it (a cycle that
+        // inflates the total), so the "lower bound" would become an over-count.
+        // Treat the subtree as not walked -> lower bound, mirroring the
+        // export/import walks that skip symlinks.
+        result.complete = false;
+    } else if (entry.regular_file) {
+        const bool no_overflow = addBytesSaturating(result.bytes, entry.size_bytes);
+        result.complete = result.complete && no_overflow;
+    }
+}
 }  // namespace
 
 TreeSizeResult treeSize(const DirectoryLister& list,
@@ -38,14 +82,7 @@ TreeSizeResult treeSize(const DirectoryLister& list,
         result.complete = false;
     }
     for (const FileManagementEntry& entry : listing.entries) {
-        if (entry.directory) {
-            const TreeSizeResult sub =
-                treeSize(list, entry.path, max_depth - 1, max_entries_per_directory);
-            result.bytes += sub.bytes;
-            result.complete = result.complete && sub.complete;
-        } else if (entry.regular_file) {
-            result.bytes += entry.size_bytes;
-        }
+        accumulateEntry(result, list, entry, max_depth, max_entries_per_directory);
     }
     return result;
 }
@@ -56,13 +93,17 @@ TreeSizeResult combinedSize(const DirectoryLister& list,
                             const int max_entries_per_directory) {
     TreeSizeResult result;
     for (const FileManagementEntry& entry : entries) {
-        if (entry.directory) {
+        if (entry.directory && !entry.symlink) {
             const TreeSizeResult sub =
                 treeSize(list, entry.path, max_depth, max_entries_per_directory);
-            result.bytes += sub.bytes;
-            result.complete = result.complete && sub.complete;
+            const bool no_overflow = addBytesSaturating(result.bytes, sub.bytes);
+            result.complete = result.complete && sub.complete && no_overflow;
+        } else if (entry.directory) {
+            // Symlinked / junctioned directory: not descended (see treeSize).
+            result.complete = false;
         } else {
-            result.bytes += entry.size_bytes;
+            const bool no_overflow = addBytesSaturating(result.bytes, entry.size_bytes);
+            result.complete = result.complete && no_overflow;
         }
     }
     return result;

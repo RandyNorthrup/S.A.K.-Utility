@@ -466,17 +466,59 @@ bool UupDumpApi::isValidSha1(const QString& sha1) {
     return true;
 }
 
-bool UupDumpApi::isSafeAria2FileEntry(const FileInfo& info) {
-    if (info.fileName.contains("..") || info.fileName.contains('/') ||
-        info.fileName.contains('\\')) {
-        return false;  // out= path confinement
-    }
-    for (const QString* field : {&info.fileName, &info.url, &info.sha1}) {
-        if (field->contains('\n') || field->contains('\r') || field->contains('\t')) {
-            return false;  // record/directive break-out
+namespace {
+
+// True if @p s holds any C0 control character (incl. NUL) or DEL. Such a byte in a field
+// serialized into the aria2 input file could truncate the line or break out of the record.
+bool hasAria2ControlChar(const QString& s) {
+    for (const QChar ch : s) {
+        if (ch.unicode() < 0x20 || ch.unicode() == 0x7f) {
+            return true;
         }
     }
-    return true;
+    return false;
+}
+
+// True if @p fileName is a Windows reserved device name (CON, NUL, COM1, ...), with or without an
+// extension: aria2 out=con / out=con.esd would open the console device instead of creating a file.
+bool isReservedDosDeviceName(const QString& fileName) {
+    const int dot = fileName.indexOf(QLatin1Char('.'));
+    const QString base = (dot < 0 ? fileName : fileName.left(dot)).toUpper();
+    static const QStringList kReserved = {
+        QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
+        QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
+        QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
+        QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
+        QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
+        QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
+        QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
+        QStringLiteral("LPT9")};
+    return kReserved.contains(base);
+}
+
+// The out= name must not escape the download dir, alias another file, or normalize (via a trailing
+// dot/space Windows trims) to a different on-disk name than the one we integrity-checked.
+bool isUnsafeAria2FileName(const QString& fileName) {
+    if (fileName.isEmpty() || fileName.contains(QLatin1String("..")) ||
+        fileName.contains(QLatin1Char('/')) || fileName.contains(QLatin1Char('\\')) ||
+        fileName.contains(QLatin1Char(':'))) {
+        return true;  // out= path confinement / drive / NTFS ADS
+    }
+    const QChar last = fileName.back();
+    return last == QLatin1Char('.') || last == QLatin1Char(' ') ||
+           isReservedDosDeviceName(fileName);
+}
+
+}  // namespace
+
+bool UupDumpApi::isSafeAria2FileEntry(const FileInfo& info) {
+    if (isUnsafeAria2FileName(info.fileName)) {
+        return false;
+    }
+    // A control character (incl. NUL, CR, LF, TAB) in ANY serialized field could truncate the
+    // aria2 input line or break out of the record to inject an out=/uri directive.
+    return !hasAria2ControlChar(info.fileName) && !hasAria2ControlChar(info.url) &&
+           !hasAria2ControlChar(info.sha1);
 }
 
 std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(

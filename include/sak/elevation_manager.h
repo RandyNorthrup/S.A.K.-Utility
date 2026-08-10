@@ -71,9 +71,12 @@ private:
 
     /**
      * @brief Get command line arguments (wide-char for Unicode support)
-     * @return Arguments string
+     * @return Serialized arguments (empty when there are legitimately none), or an error when
+     *         the command line could not be parsed -- so a genuine parse failure fails closed
+     *         instead of relaunching elevated with the arguments silently dropped.
      */
-    [[nodiscard]] static std::wstring get_command_line_args();
+    [[nodiscard]] static auto get_command_line_args()
+        -> std::expected<std::wstring, sak::error_code>;
 
     /**
      * @brief Serialize argv[1..argc-1] into one command-line string using the
