@@ -2343,7 +2343,24 @@ misc-no-recursion (the recursion with no depth or visited-set bound).
 - [ ] R5-G2 re-enable and fix: misc-no-recursion
 - [ ] R5-G2 re-enable and fix: misc-include-cleaner
 - [ ] R5-G2 re-enable and fix: modernize-use-trailing-return-type
-- [ ] R5-G2 re-enable and fix: modernize-avoid-c-arrays
+- [~] R5-G2 modernize-avoid-c-arrays: DEFER (stays disabled), with rationale. Measured 187
+      findings: 109 in src/core (raw-block on-disk APFS/HFS/PST buffers accessed via
+      reinterpret_cast -- a C array is the correct, ABI-shaped type there), 28 in win32mcp and
+      more across drive/network/dns/pipe tools (fixed-size Win32 ABI buffers: TCHAR[MAX_PATH],
+      MIB_* tables, BYTE[]), and a benign tail of `constexpr char k...[] = "..."` string literals
+      plus a few `constexpr TabMeta kTabs[]` tables (main_window.cpp). The check has no autofix;
+      a blanket char[]/T[] -> std::array conversion would churn 187 ABI-sensitive sites and add
+      .data() friction (and real risk in the reinterpret_cast and Win32-call paths) for marginal
+      bounds-safety gain. If ever revisited, set modernize-avoid-c-arrays.AllowStringArrays=true
+      first to drop the benign string-literal findings, then adjudicate only the pure-local
+      fixed arrays; the Win32/on-disk arrays are correct as-is and stay.
+- [~] readability-function-size: DEFER (out of any gate), with rationale. 886 findings at the
+      configured thresholds (Line 120 / Statement 80 / Branch 20 / Param 8 / Nesting 5). No
+      autofix exists; each "fix" is a manual split of a large, TESTED function. This debt is
+      already governed by the enforced lizard gate (CCN<=10, length<=70, params<=5) under a
+      grandfather baseline that blocks NEW violations, so clang-tidy function-size would only
+      duplicate lizard with looser numbers. Refactoring 886 working functions purely for line
+      count is unjustified regression risk for zero behavior change -- deferred by decision.
 - [ ] R5-G2 re-enable and fix: readability-magic-numbers
 - [ ] R5-G2 re-enable and fix: readability-function-cognitive-complexity
 - [ ] R5-G2 re-enable and fix: readability-identifier-length
