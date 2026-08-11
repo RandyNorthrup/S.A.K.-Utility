@@ -4816,10 +4816,11 @@ private:
             return false;
         }
         for (const auto& update : edit.valence_updates) {
-            // applyCatalogModelValence currently warns-and-succeeds when the parent folder record
-            // is absent (always returns true), so this guard is presently dead. Whether an absent
-            // parent folder should instead fail closed is logged for adjudication (R5-G5); until
-            // then the defensive guard is kept ([[implement-never-drop]]).
+            // applyCatalogModelValence tolerates an absent parent folder record BY DESIGN (warns
+            // and returns true): a normal create emits a valence update whose parent folder record
+            // is not in the scanned leaves, so the not-found path is hit on valid operations.
+            // Making it fail closed broke test_sak_hfs_writer_cli (R5-G5-FO1, reverted). The guard
+            // is kept for a real future failure signal ([[implement-never-drop]]).
             // cppcheck-suppress knownConditionTrueFalse
             if (!applyCatalogModelValence(model, update, warnings)) {
                 return false;

@@ -2395,16 +2395,22 @@ properly (supply the include paths and --library=qt) rather than silence.
           inner `!payload_complete` re-check after the identical outer guard -- removed.
         * 3 dead defensive guards over helpers that currently always return true -- kept
           ([[implement-never-drop]]) with inline suppressions: scanCatalogRecord (scan soft-skips
-          bad records BY DESIGN), and TWO genuine FAIL-OPEN questions in the raw-filesystem writers
-          logged for adjudication + LIVE RE-CERT before any behavior change:
-            R5-G5-FO1 (HFS) applyCatalogModelValence warns-and-succeeds when the parent folder
-              record is absent; sibling helpers fail closed. Should an absent parent folder fail
-              the valence update? ([[no-fallbacks-fail-closed]] says likely yes -- HFS write path.)
-            R5-G5-FO2 (APFS) resolveRelocatedIpLayout treats a zero actualIpBase (a failed
-              readLiveSpacemanIpBase) as "no relocation" and returns true; its header comment
-              deliberately states "there is no fail-close". Is a zero ip_base a real spaceman-read
-              failure that must fail closed? Cert-sensitive in-place-commit code; needs Randy + Mac
-              re-cert. NOT changed unilaterally.
+          bad records BY DESIGN), and TWO that looked like FAIL-OPEN questions but were PROVEN
+          correct-by-design when the fail-close was tried:
+            R5-G5-FO1 (HFS) applyCatalogModelValence returns true when no leaf holds the valence
+              update's parent folder record. Making it return false (fail closed) BROKE
+              test_sak_hfs_writer_cli: a normal create-empty-file-image emits a valence update whose
+              parent folder record is not in the scanned leaves, so the not-found path is HIT on
+              valid operations -- the warn-and-continue is intentional best-effort, not a bug.
+            R5-G5-FO2 (APFS) resolveRelocatedIpLayout returns true when actualIpBase == 0. Making a
+              zero ip_base fail closed BROKE test_partition_manager_core: a zero ip_base occurs on
+              valid generated containers (readLiveSpacemanIpBase is 0 when there is no live spaceman
+              object to relocate against), NOT only on a read failure -- so treating it as "no
+              relocation" is correct.
+          BOTH fail-close attempts were reverted; the generated round-trip tests caught the
+          over-reach (a false-close is worse than the gap -- the standing R5 raw-fs lesson). The
+          guards stay with their inline suppressions and their headers now note the paths are
+          intentionally tolerant.
       cppcheck now reports 0 knownConditionTrueFalse in src/ with the scoped list; tests unchanged.
 - [ ] R5-G3-5 functionStatic (137) and useStlAlgorithm (203): fix or justify each individually; delete the blanket suppressions
 - [ ] R5-G3-6 unmatchedSuppression: 8 inline suppressions are stale and no longer match anything; remove them

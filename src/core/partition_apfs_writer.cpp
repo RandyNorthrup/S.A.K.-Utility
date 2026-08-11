@@ -10886,11 +10886,12 @@ bool reanchorForeignOverflowAllocation(ApfsFsCommitContext* ctx, QStringList* bl
 bool resolveFsCommitAllocation(ApfsFsCommitContext* ctx,
                                uint64_t blockCount,
                                QStringList* blockers) {
-    // resolveRelocatedIpLayout is intentionally non-failing today (see its header comment: every
-    // mutation caller is relocation-aware, so it re-anchors rather than rejecting), which makes
-    // this guard presently dead. Whether a zero actualIpBase from readLiveSpacemanIpBase is a real
-    // spaceman-read failure that must fail closed is logged for adjudication + live re-cert
-    // (R5-G5); the defensive guard is kept ([[implement-never-drop]]).
+    // resolveRelocatedIpLayout re-anchors rather than rejecting (see its header comment) and is
+    // intentionally non-failing: a zero actualIpBase means there is no live spaceman object to
+    // relocate against, which occurs on valid generated containers -- treating it as "no
+    // relocation" is correct. Making a zero ip_base fail closed broke test_partition_manager_core
+    // (R5-G5-FO2, reverted). The guard is kept for a real future failure
+    // ([[implement-never-drop]]).
     ctx->layout = computeGeneratedLayout(blockCount);
     // cppcheck-suppress knownConditionTrueFalse
     if (!resolveRelocatedIpLayout(ctx, blockCount, blockers)) {
