@@ -540,7 +540,7 @@ QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName) {
     }
 
     // Allocate buffer
-    std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1, L'\0');
+    std::vector<wchar_t> buffer((size / sizeof(wchar_t)) + 1, L'\0');
     DWORD type2 = 0;
     DWORD size2 = size;
     rc = RegQueryValueExW(

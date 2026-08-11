@@ -1366,7 +1366,7 @@ QString formatExifMultiValues(int type_size, uint32_t count, const char* valuePt
     const uint32_t limit = std::min(count, kMaxMultiValues);
     QStringList parts;
     for (uint32_t idx = 0; idx < limit; ++idx) {
-        parts.append(QString::number(reader(valuePtr + idx * type_size)));
+        parts.append(QString::number(reader(valuePtr + (idx * type_size))));
     }
     return parts.join(QStringLiteral(", "));
 }
@@ -1378,7 +1378,8 @@ QString formatExifRationals(uint32_t count, const char* valuePtr, bool littleEnd
     const uint32_t limit = std::min(count, kMaxMultiValues);
     QStringList parts;
     for (uint32_t idx = 0; idx < limit; ++idx) {
-        const QString rat = extractExifRational(valuePtr + idx * kExifRationalBytes, littleEndian);
+        const QString rat = extractExifRational(valuePtr + (idx * kExifRationalBytes),
+                                                littleEndian);
         if (!rat.isEmpty()) {
             parts.append(rat);
         }
@@ -1635,9 +1636,9 @@ void parseITXtChunk(const QByteArray& chunk_data, QMap<QString, QString>& metada
         // advance in unsigned/qsizetype math: narrowing to int made a length
         // >= 0x80000000 negative, which drove offset backwards and led to an
         // out-of-bounds read before the buffer on the next iteration.
-        const uint32_t chunk_len = readBE16(fileData.constData() + offset) *
-                                       kPngChunkLengthHighWordFactor +
-                                   readBE16(fileData.constData() + offset + kExifEntryCountBytes);
+        const uint32_t chunk_len =
+            (readBE16(fileData.constData() + offset) * kPngChunkLengthHighWordFactor) +
+            readBE16(fileData.constData() + offset + kExifEntryCountBytes);
         const QByteArray chunk_type = fileData.mid(offset + kExifLongBytes, kExifLongBytes);
 
         if (chunk_type == "IEND") {

@@ -296,7 +296,7 @@ bool readString(HKEY key, const wchar_t* name, QString& out) {
     if (type != REG_SZ && type != REG_EXPAND_SZ) {
         return false;
     }
-    std::vector<wchar_t> buf(bytes / sizeof(wchar_t) + 1, L'\0');
+    std::vector<wchar_t> buf((bytes / sizeof(wchar_t)) + 1, L'\0');
     DWORD outBytes = bytes;
     if (RegQueryValueExW(
             key, name, nullptr, &type, reinterpret_cast<BYTE*>(buf.data()), &outBytes) !=

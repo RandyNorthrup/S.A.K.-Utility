@@ -170,7 +170,7 @@ bool physicalDriveBacksWindows(int driveNumber) {
         return false;
     }
     constexpr DWORD kMaxExtents = 16;
-    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + (kMaxExtents - 1) * sizeof(DISK_EXTENT);
+    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + ((kMaxExtents - 1) * sizeof(DISK_EXTENT));
     std::vector<unsigned char> buffer(bufSize, 0);
     auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
     DWORD bytesReturned = 0;

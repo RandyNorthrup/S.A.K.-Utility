@@ -54,10 +54,11 @@ void updateHopStats(sak::MtrHopStats& stats,
         max_discovered = std::max(max_discovered, ttl);
     }
 
-    stats.lossPercent = (stats.sent > 0) ? (1.0 - static_cast<double>(stats.received) /
-                                                      static_cast<double>(stats.sent)) *
-                                               kFullPercent
-                                         : 0.0;
+    stats.lossPercent =
+        (stats.sent > 0)
+            ? (1.0 - (static_cast<double>(stats.received) / static_cast<double>(stats.sent))) *
+                  kFullPercent
+            : 0.0;
 }
 
 }  // namespace

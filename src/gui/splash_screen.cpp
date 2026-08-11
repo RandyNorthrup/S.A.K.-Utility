@@ -73,10 +73,10 @@ SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent)
     setAttribute(Qt::WA_ShowWithoutActivating);
 
     const int padding = m_shadow_radius + m_shadow_offset;
-    const QSize content_size(kSplashSizePx - padding * kSplashPaddingSides,
-                             kSplashSizePx - padding * kSplashPaddingSides);
-    resize(content_size.width() + padding * kSplashPaddingSides,
-           content_size.height() + padding * kSplashPaddingSides);
+    const QSize content_size(kSplashSizePx - (padding * kSplashPaddingSides),
+                             kSplashSizePx - (padding * kSplashPaddingSides));
+    resize(content_size.width() + (padding * kSplashPaddingSides),
+           content_size.height() + (padding * kSplashPaddingSides));
     setFixedSize(kSplashSizePx, kSplashSizePx);
 }
 

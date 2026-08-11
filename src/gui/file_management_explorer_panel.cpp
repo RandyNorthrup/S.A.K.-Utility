@@ -3712,7 +3712,7 @@ void FileManagementExplorerPanel::startTransferWorker(const FileExplorerTransfer
     connect(worker,
             &FileExplorerTransferWorker::failed,
             this,
-            [this, failure](const int code, const QString& message) {
+            [failure](const int code, const QString& message) {
                 *failure = message.trimmed().isEmpty()
                                ? tr("The transfer failed with error %1.").arg(code)
                                : message;

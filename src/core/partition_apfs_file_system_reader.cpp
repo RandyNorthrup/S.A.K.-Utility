@@ -1352,9 +1352,9 @@ private:
         const uint32_t maxFileSystems =
             std::min<uint32_t>(le32(nxBlock, kApfsNxMaxFileSystemsOffset), kApfsMaxFileSystems);
         for (uint32_t index = 0; index < maxFileSystems; ++index) {
-            const uint64_t oid =
-                le64(nxBlock,
-                     kApfsNxFsOidArrayOffset + static_cast<qsizetype>(index) * kApfsObjectIdBytes);
+            const uint64_t oid = le64(nxBlock,
+                                      kApfsNxFsOidArrayOffset +
+                                          (static_cast<qsizetype>(index) * kApfsObjectIdBytes));
             if (oid != 0) {
                 return oid;
             }
@@ -1816,10 +1816,10 @@ private:
         // 1-2 xfields but shifted the data for a 3-xfield sparse inode.)
         const qsizetype metadataRelative = kApfsInodeXfieldsOffset + kApfsXfieldHeaderBytes;
         qsizetype dataRelative = metadataRelative +
-                                 static_cast<qsizetype>(count) * kApfsXfieldTocEntryBytes;
+                                 (static_cast<qsizetype>(count) * kApfsXfieldTocEntryBytes);
         for (uint16_t index = 0; index < count; ++index) {
-            const qsizetype fieldRelative = metadataRelative + static_cast<qsizetype>(index) *
-                                                                   kApfsXfieldTocEntryBytes;
+            const qsizetype fieldRelative =
+                metadataRelative + (static_cast<qsizetype>(index) * kApfsXfieldTocEntryBytes);
             if (fieldRelative + kApfsXfieldTocEntryBytes > entry.value_length) {
                 return 0;
             }
@@ -2049,7 +2049,8 @@ private:
             return true;
         }
         const uint64_t fileLogicalBlock =
-            (extent.logical_offset + (absolute - extent.physical_block * blockSize_)) / blockSize_;
+            (extent.logical_offset + (absolute - (extent.physical_block * blockSize_))) /
+            blockSize_;
         return decryptDataBlock(
             perFileKey, extent.crypto_id + fileLogicalBlock, blockIndex, block, result);
     }
@@ -2073,7 +2074,7 @@ private:
             return false;
         }
         uint64_t remaining = length;
-        uint64_t absolute = extent.physical_block * blockSize_ + extentOffset;
+        uint64_t absolute = (extent.physical_block * blockSize_) + extentOffset;
         while (remaining > 0) {
             const uint64_t blockOffset = absolute % blockSize_;
             QByteArray block;
@@ -2132,7 +2133,7 @@ private:
         entries.reserve(static_cast<int>(std::min<uint32_t>(count, kApfsBtreeMaxEntryCount)));
         const BtreeEntryContext context{keyAreaStart, valueAreaEnd, level, info};
         for (uint32_t index = 0; index < count; ++index) {
-            const qsizetype toc = tableStart + static_cast<qsizetype>(index) * tocEntryBytes;
+            const qsizetype toc = tableStart + (static_cast<qsizetype>(index) * tocEntryBytes);
             const auto entry = fixed ? fixedBtreeEntry(node, toc, context)
                                      : variableBtreeEntry(node, toc, context);
             if (!entry.has_value() || !btreeEntryInBounds(node, *entry)) {
@@ -2150,7 +2151,7 @@ private:
                                           qsizetype keyAreaStart,
                                           qsizetype tocEntryBytes) const {
         return count <= kApfsBtreeMaxEntryCount && tableStart >= kApfsBtreeNodeHeaderBytes &&
-               tableStart + static_cast<qsizetype>(count) * tocEntryBytes <= node.size() &&
+               tableStart + (static_cast<qsizetype>(count) * tocEntryBytes) <= node.size() &&
                keyAreaStart <= node.size();
     }
 

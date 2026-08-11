@@ -805,7 +805,7 @@ auto DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
     }
 
     const uint64_t file_size = static_cast<uint64_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
-    const uint64_t max_offset = (file_size / m_rand_block_bytes - 1) * m_rand_block_bytes;
+    const uint64_t max_offset = ((file_size / m_rand_block_bytes) - 1) * m_rand_block_bytes;
     const int duration_ms = m_config.random_duration_sec * kBenchmarkMillisecondsPerSecond;
 
     std::vector<double> latencies;
@@ -874,7 +874,7 @@ void DiskBenchmarkWorker::processRandomReadOp(
     // offset is a real disk error, not a completed op -- count it as a failure so one
     // success cannot mask many partial/failed reads and report garbage IOPS.
     if (!ReadFile(h,
-                  buf_data + queue_index * m_rand_block_bytes,
+                  buf_data + (queue_index * m_rand_block_bytes),
                   static_cast<DWORD>(m_rand_block_bytes),
                   &bytes_read,
                   nullptr) ||
@@ -948,7 +948,7 @@ void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
     // offset is a real disk error, not a completed op -- count it as a failure so one
     // success cannot mask many partial/failed writes and report garbage IOPS.
     if (!WriteFile(h,
-                   buf_data + queue_index * m_rand_block_bytes,
+                   buf_data + (queue_index * m_rand_block_bytes),
                    static_cast<DWORD>(m_rand_block_bytes),
                    &bytes_written,
                    nullptr) ||
@@ -1018,7 +1018,7 @@ auto DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
     fillRandomWriteBuffer(buf);
 
     const uint64_t file_size = static_cast<uint64_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
-    const uint64_t max_offset = (file_size / m_rand_block_bytes - 1) * m_rand_block_bytes;
+    const uint64_t max_offset = ((file_size / m_rand_block_bytes) - 1) * m_rand_block_bytes;
 
     std::vector<double> latencies;
     latencies.reserve(kLatencySampleReserve);

@@ -104,12 +104,12 @@ void paintCheckMark(QPainter* painter, const QRectF& rect, const QColor& color) 
     pen.setJoinStyle(Qt::RoundJoin);
     painter->setPen(pen);
     QPainterPath path;
-    path.moveTo(rect.left() + rect.width() * kCheckMarkStartX,
-                rect.top() + rect.height() * kCheckMarkStartY);
-    path.lineTo(rect.left() + rect.width() * kCheckMarkMidX,
-                rect.top() + rect.height() * kCheckMarkMidY);
-    path.lineTo(rect.left() + rect.width() * kCheckMarkEndX,
-                rect.top() + rect.height() * kCheckMarkEndY);
+    path.moveTo(rect.left() + (rect.width() * kCheckMarkStartX),
+                rect.top() + (rect.height() * kCheckMarkStartY));
+    path.lineTo(rect.left() + (rect.width() * kCheckMarkMidX),
+                rect.top() + (rect.height() * kCheckMarkMidY));
+    path.lineTo(rect.left() + (rect.width() * kCheckMarkEndX),
+                rect.top() + (rect.height() * kCheckMarkEndY));
     painter->drawPath(path);
 }
 

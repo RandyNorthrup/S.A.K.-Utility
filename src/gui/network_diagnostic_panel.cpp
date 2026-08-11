@@ -3371,7 +3371,7 @@ void NetworkDiagnosticPanel::applyDnsServers(const QString& adapter_name,
     launchTrackedNetshSequence(
         this,
         m_pending_command_futures,
-        [adapter_name, primary, secondary, timeout]() {
+        [adapter_name, primary, secondary]() {
             return runDnsApplySequence(adapter_name, primary, secondary, timeout);
         },
         [this, adapter_name, primary, secondary](bool success, const QString& message) {
@@ -3423,7 +3423,7 @@ void NetworkDiagnosticPanel::onEnableDhcp() {
     launchTrackedNetshSequence(
         this,
         m_pending_command_futures,
-        [adapter_name, timeout]() { return runDhcpEnableSequence(adapter_name, timeout); },
+        [adapter_name]() { return runDhcpEnableSequence(adapter_name, timeout); },
         [this, adapter_name](bool success, const QString& message) {
             if (success) {
                 Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);

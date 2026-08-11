@@ -101,8 +101,8 @@ void matrixRowMultiply4x4(const double mat[kMatrixElementCount],
                           int row) {
     for (int k = 0; k < kMatrixDimension; ++k) {
         for (int j = 0; j < kMatrixDimension; ++j) {
-            out[row * kMatrixDimension + j] += mat[row * kMatrixDimension + k] *
-                                               other[k * kMatrixDimension + j];
+            out[(row * kMatrixDimension) + j] += mat[(row * kMatrixDimension) + k] *
+                                                 other[(k * kMatrixDimension) + j];
         }
     }
 }

@@ -3742,7 +3742,7 @@ bool quickPartitionSizesAreValid(const QVector<uint64_t>& sizes, uint64_t usable
     if (sizes.isEmpty() || quickPartitionTotalBytes(sizes) > usableBytes) {
         return false;
     }
-    return std::all_of(sizes.cbegin(), sizes.cend(), [minimumBytes](uint64_t size) {
+    return std::all_of(sizes.cbegin(), sizes.cend(), [](uint64_t size) {
         return size >= minimumBytes;
     });
 }

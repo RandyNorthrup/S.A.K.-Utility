@@ -97,7 +97,7 @@ QVector<TextMatch> locateText(const QVector<WordHit>& hits, const QString& query
             continue;
         }
         const int extra = line_words.value(m.line, tk) - tk;  // other words sharing the line
-        m.score = strength * kStrengthScoreWeight - extra;
+        m.score = (strength * kStrengthScoreWeight) - extra;
         out.append(m);
     }
     std::stable_sort(out.begin(), out.end(), [](const TextMatch& a, const TextMatch& b) {

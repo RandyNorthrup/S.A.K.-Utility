@@ -314,7 +314,7 @@ QString EmailSearchWorker::extractContextSnippet(const QString& text,
         return text.left(context_chars);
     }
 
-    int start = std::max(0, pos - context_chars / kSnippetContextDivisor);
+    int start = std::max(0, pos - (context_chars / kSnippetContextDivisor));
     int length = std::min(context_chars, static_cast<int>(text.size()) - start);
 
     QString snippet = text.mid(start, length);

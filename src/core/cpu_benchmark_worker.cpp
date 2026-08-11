@@ -70,9 +70,9 @@ void multiplyMatrixRow(const std::vector<double>& a,
                        int row,
                        int n) {
     for (int k = 0; k < n; ++k) {
-        const double a_ik = a[row * n + k];
+        const double a_ik = a[(row * n) + k];
         for (int j = 0; j < n; ++j) {
-            c[row * n + j] += a_ik * b[k * n + j];
+            c[(row * n) + j] += a_ik * b[(k * n) + j];
         }
     }
 }

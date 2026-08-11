@@ -133,8 +133,8 @@ protected:
         }
 
         constexpr int side = ui::kUiIconSmall;
-        const int cx = rect.x() + (rect.width() - side) / 2;
-        const int cy = rect.y() + (rect.height() - side) / 2;
+        const int cx = rect.x() + ((rect.width() - side) / 2);
+        const int cy = rect.y() + ((rect.height() - side) / 2);
         const QRect check_rect(cx, cy, side, side);
 
         painter->save();
@@ -1527,8 +1527,8 @@ void EmailInspectorPanel::onFolderItemsLoaded(uint64_t /*folder_id*/,
     populateItemList(items);
 
     const int page_size = currentPageSize();
-    const int first = (items.isEmpty()) ? 0 : (m_current_page * page_size + 1);
-    const int last = m_current_page * page_size + static_cast<int>(items.size());
+    const int first = (items.isEmpty()) ? 0 : ((m_current_page * page_size) + 1);
+    const int last = (m_current_page * page_size) + static_cast<int>(items.size());
     if (total > items.size()) {
         m_item_count_label->setText(tr("Showing %1\u2013%2 of %3").arg(first).arg(last).arg(total));
     } else {

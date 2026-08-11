@@ -144,7 +144,7 @@ bool volumeExtentsReplyIsComplete(const VOLUME_DISK_EXTENTS* extents,
     }
     const size_t headerSize = offsetof(VOLUME_DISK_EXTENTS, Extents);
     const size_t returned = bytesReturned;
-    return returned >= headerSize + extents->NumberOfDiskExtents * sizeof(DISK_EXTENT);
+    return returned >= headerSize + (extents->NumberOfDiskExtents * sizeof(DISK_EXTENT));
 }
 
 // Returns whether the given physical-drive number backs the current OS (system)
@@ -165,7 +165,7 @@ OsDiskCheck physicalDriveOsDiskCheck(int driveNumber) {
         return OsDiskCheck::Undetermined;
     }
     constexpr DWORD kMaxExtents = 16;
-    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + (kMaxExtents - 1) * sizeof(DISK_EXTENT);
+    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + ((kMaxExtents - 1) * sizeof(DISK_EXTENT));
     std::vector<unsigned char> buffer(bufSize, 0);
     auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
     DWORD bytesReturned = 0;

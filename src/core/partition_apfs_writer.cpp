@@ -341,9 +341,9 @@ constexpr uint64_t kApfsNxEphInfoVersion1 = 1;
 constexpr uint16_t mainFreeQueueNodeLimit(uint64_t blocks) {
     uint16_t ret = 0;
     if (blocks < 0x40000ULL) {
-        ret = static_cast<uint16_t>(1 + (blocks - 1) / 4544);
+        ret = static_cast<uint16_t>(1 + ((blocks - 1) / 4544));
     } else if (blocks < 0x10'00'00ULL) {
-        ret = static_cast<uint16_t>(116 + (blocks - 261'281) / 2272);
+        ret = static_cast<uint16_t>(116 + ((blocks - 261'281) / 2272));
     } else {
         ret = 512;
     }
@@ -353,7 +353,7 @@ constexpr uint16_t mainFreeQueueNodeLimit(uint64_t blocks) {
 // internal-pool free-queue B-tree node limit as a function of chunk count
 // (mirrors apfsprogs lib/parameters.c ip_fq_node_limit).
 constexpr uint16_t ipFreeQueueNodeLimit(uint64_t chunks) {
-    const uint16_t ret = static_cast<uint16_t>(3 * (chunks + 751) / 1127 - 1);
+    const uint16_t ret = static_cast<uint16_t>((3 * (chunks + 751) / 1127) - 1);
     return ret == 2 ? 3 : ret;
 }
 
@@ -987,14 +987,15 @@ constexpr qsizetype kApfsExtentRefIndexValueBytes = 8;
 
 qsizetype extentRefTocBytes(qsizetype recordCount) {
     return std::max<qsizetype>(64,
-                               ((recordCount * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64);
+                               (((recordCount * kApfsBtreeVariableTocEntryBytes) + 63) / 64) * 64);
 }
 
 qsizetype extentRefNodeCapacity(uint32_t blockSize, qsizetype valueBytes, bool isRoot) {
     const qsizetype avail = static_cast<qsizetype>(blockSize) - kApfsBtreeNodeHeaderBytes -
                             (isRoot ? kApfsBtreeInfoBytes : 0);
     qsizetype fit = 0;
-    for (qsizetype n = 1; extentRefTocBytes(n) + n * (kApfsExtentRefKeyBytes + valueBytes) <= avail;
+    for (qsizetype n = 1;
+         extentRefTocBytes(n) + (n * (kApfsExtentRefKeyBytes + valueBytes)) <= avail;
          ++n) {
         fit = n;
     }
@@ -1090,7 +1091,7 @@ void writeOmapLeafNode(QByteArray* block,
     writeLe16(block, 0x34, 0xFFFF);
     writeLe16(block, 0x36, 0);
     for (qsizetype index = 0; index < mappings.size(); ++index) {
-        const qsizetype toc = tableStart + index * kApfsBtreeFixedTocEntryBytes;
+        const qsizetype toc = tableStart + (index * kApfsBtreeFixedTocEntryBytes);
         const qsizetype keyOffset = index * kApfsObjectMapKeyBytes;
         const qsizetype valueBackOffset = (index + 1) * kApfsObjectMapValueBytes;
         const qsizetype key = keyAreaStart + keyOffset;
@@ -1137,7 +1138,7 @@ void writeOmapIndexNode(QByteArray* block,
     writeLe16(block, 0x34, 0xFFFF);
     writeLe16(block, 0x36, 0);
     for (qsizetype index = 0; index < count; ++index) {
-        const qsizetype toc = tableStart + index * kApfsBtreeFixedTocEntryBytes;
+        const qsizetype toc = tableStart + (index * kApfsBtreeFixedTocEntryBytes);
         const qsizetype keyOffset = index * kApfsObjectMapKeyBytes;
         const qsizetype valueBackOffset = (index + 1) * kApfsOmapIndexValueBytes;
         const qsizetype key = keyAreaStart + keyOffset;
@@ -1893,14 +1894,14 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
     const qsizetype xfieldCount = 1 + static_cast<qsizetype>(hasDstream) +
                                   static_cast<qsizetype>(sparse) +
                                   static_cast<qsizetype>(rdev != 0);
-    const qsizetype tocBytes = kApfsXfieldHeaderBytes + xfieldCount * kApfsXfieldTocEntryBytes;
+    const qsizetype tocBytes = kApfsXfieldHeaderBytes + (xfieldCount * kApfsXfieldTocEntryBytes);
     const qsizetype namePadded =
         ((nameBytes.size() + kApfsXfieldAlignmentPadding) / kApfsXfieldAlignment) *
         kApfsXfieldAlignment;
     const qsizetype dstreamBytes = static_cast<qsizetype>(hasDstream) * kApfsDstreamMinBytes;
     const qsizetype sparseFieldBytes = static_cast<qsizetype>(sparse) * 8;
     const qsizetype valueBytes = kApfsInodeXfieldsOffset + tocBytes + namePadded + dstreamBytes +
-                                 sparseFieldBytes + static_cast<qsizetype>(rdev != 0) * 8;
+                                 sparseFieldBytes + (static_cast<qsizetype>(rdev != 0) * 8);
     QByteArray value(valueBytes, '\0');
     writeLe64(&value, 0, parentId);
     writeLe64(&value, kApfsInodePrivateIdOffset, privateId);
@@ -2016,10 +2017,10 @@ QByteArray xattrKey(uint64_t inodeId, const QByteArray& name) {
 
 // j_xattr_val for an embedded attribute: le16 flags + le16 xdata_len + xdata.
 QByteArray xattrEmbeddedValue(uint16_t flags, const QByteArray& xdata) {
-    QByteArray value(2 * kUint16Size + xdata.size(), '\0');
+    QByteArray value((2 * kUint16Size) + xdata.size(), '\0');
     writeLe16(&value, 0, flags);
     writeLe16(&value, kUint16Size, static_cast<uint16_t>(xdata.size()));
-    std::copy(xdata.cbegin(), xdata.cend(), value.begin() + 2 * kUint16Size);
+    std::copy(xdata.cbegin(), xdata.cend(), value.begin() + (2 * kUint16Size));
     return value;
 }
 
@@ -2527,7 +2528,8 @@ bool writeFsTreeNodeBody(QByteArray* block,
                          QStringList* blockers) {
     writeLe32(block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(records.size()));
     const qsizetype tocLength =
-        ((static_cast<qsizetype>(records.size()) * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64;
+        (((static_cast<qsizetype>(records.size()) * kApfsBtreeVariableTocEntryBytes) + 63) / 64) *
+        64;
     writeLe16(block, kApfsBtreeNodeTableOffsetOffset, 0);
     writeLe16(block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
@@ -2542,7 +2544,7 @@ bool writeFsTreeNodeBody(QByteArray* block,
     for (qsizetype index = 0; index < records.size(); ++index) {
         const auto& record = records.at(index);
         valueBackCursor += record.value.size();
-        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + (index * kApfsBtreeVariableTocEntryBytes);
         writeLe16(block, toc, static_cast<uint16_t>(keyCursor));
         writeLe16(block,
                   toc + kApfsBtreeVariableTocKeyLengthOffset,
@@ -2658,7 +2660,7 @@ QVector<QVector<ApfsBtreeKeyValue>> distributeFsTreeRecordsIntoLeaves(
     qsizetype currentBytes = 0;
     for (const auto& record : records) {
         const qsizetype count = current.size() + 1;
-        const qsizetype toc = ((count * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64;
+        const qsizetype toc = (((count * kApfsBtreeVariableTocEntryBytes) + 63) / 64) * 64;
         const qsizetype need = kApfsBtreeNodeHeaderBytes + toc + currentBytes + record.key.size() +
                                record.value.size();
         if (need > blockSize && !current.isEmpty()) {
@@ -2915,7 +2917,7 @@ QByteArray buildNxSuperblock(uint32_t blockSize,
     } else {
         for (qsizetype i = 0; i < position.fsOids.size(); ++i) {
             writeLe64(&block,
-                      kApfsNxFsOidArrayOffset + i * static_cast<qsizetype>(sizeof(uint64_t)),
+                      kApfsNxFsOidArrayOffset + (i * static_cast<qsizetype>(sizeof(uint64_t))),
                       position.fsOids.at(i));
         }
     }
@@ -3071,27 +3073,27 @@ QByteArray buildFreeQueueLeafNode(const ApfsFreeQueueEmit& ident,
     const qsizetype infoOffset = static_cast<qsizetype>(blockSize) -
                                  (isRoot ? kApfsBtreeInfoBytes : 0);
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + 576;
+    const auto freeSpace = static_cast<uint16_t>(infoOffset - keyAreaStart -
+                                                 (nkeys * static_cast<qsizetype>(16)) -
+                                                 (valueRecords * static_cast<qsizetype>(8)));
     writeLe16(&block, 0x2C, static_cast<uint16_t>(nkeys * 16));
-    writeLe16(&block,
-              0x2E,
-              static_cast<uint16_t>(infoOffset - keyAreaStart - nkeys * static_cast<qsizetype>(16) -
-                                    valueRecords * static_cast<qsizetype>(8)));
+    writeLe16(&block, 0x2E, freeSpace);
     writeLe16(&block, 0x30, 0xFFFF);
     writeLe16(&block, 0x32, 0);
     writeLe16(&block, 0x34, 0xFFFF);
     writeLe16(&block, 0x36, 0);
     int valueSlot = 0;
     for (int i = 0; i < nkeys; ++i) {
-        writeLe16(&block, kApfsBtreeNodeHeaderBytes + i * 4, static_cast<uint16_t>(i * 16));
+        writeLe16(&block, kApfsBtreeNodeHeaderBytes + (i * 4), static_cast<uint16_t>(i * 16));
         uint16_t valueOffset = 0xFFFF;
         if (entries[i].length != 1) {
             ++valueSlot;
             valueOffset = static_cast<uint16_t>(valueSlot * 8);
-            writeLe64(&block, infoOffset - valueSlot * 8, entries[i].length);
+            writeLe64(&block, infoOffset - (valueSlot * 8), entries[i].length);
         }
-        writeLe16(&block, kApfsBtreeNodeHeaderBytes + i * 4 + 2, valueOffset);
-        writeLe64(&block, keyAreaStart + i * 16, entries[i].xid);
-        writeLe64(&block, keyAreaStart + i * 16 + 8, entries[i].paddr);
+        writeLe16(&block, kApfsBtreeNodeHeaderBytes + (i * 4) + 2, valueOffset);
+        writeLe64(&block, keyAreaStart + (i * 16), entries[i].xid);
+        writeLe64(&block, keyAreaStart + (i * 16) + 8, entries[i].paddr);
     }
     if (isRoot) {
         writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'0E);
@@ -3157,7 +3159,7 @@ QByteArray buildFreeQueueIndexRoot(const ApfsFreeQueueEmit& ident,
     writeLe16(&block, 0x34, 0xFFFF);
     writeLe16(&block, 0x36, 0);
     for (qsizetype index = 0; index < count; ++index) {
-        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeFixedTocEntryBytes;
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + (index * kApfsBtreeFixedTocEntryBytes);
         const qsizetype keyOffset = index * 16;
         const qsizetype valueBackOffset = (index + 1) * 8;
         writeLe16(&block, toc, static_cast<uint16_t>(keyOffset));
@@ -3384,7 +3386,7 @@ qsizetype writeExtentRefRecords(QByteArray* block,
     qsizetype keyCursor = 0;
     for (qsizetype index = 0; index < records.size(); ++index) {
         const auto& record = records.at(index);
-        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + (index * kApfsBtreeVariableTocEntryBytes);
         writeLe16(block, toc, static_cast<uint16_t>(keyCursor));
         writeLe16(block, toc + kApfsBtreeVariableTocKeyLengthOffset, kApfsExtentRefKeyBytes);
         *valueBackCursor += kApfsExtentRefLeafValueBytes;
@@ -3513,7 +3515,7 @@ void writeExtentRefIndexNode(QByteArray* block,
     qsizetype keyCursor = 0;
     qsizetype valueBackCursor = 0;
     for (qsizetype index = 0; index < count; ++index) {
-        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + (index * kApfsBtreeVariableTocEntryBytes);
         writeLe16(block, toc, static_cast<uint16_t>(keyCursor));
         writeLe16(block, toc + kApfsBtreeVariableTocKeyLengthOffset, kApfsExtentRefKeyBytes);
         valueBackCursor += kApfsExtentRefIndexValueBytes;
@@ -3772,7 +3774,7 @@ QByteArray buildOmapSnapshotTreeBlock(uint32_t blockSize,
     writeLe16(&block, 0x34, 0xFFFF);
     writeLe16(&block, 0x36, 0);
     for (qsizetype index = 0; index < entries.size(); ++index) {
-        const qsizetype toc = tableStart + index * kApfsBtreeFixedTocEntryBytes;
+        const qsizetype toc = tableStart + (index * kApfsBtreeFixedTocEntryBytes);
         const qsizetype keyOffset = index * kApfsOmapSnapshotKeyBytes;
         const qsizetype valueBackOffset = (index + 1) * kApfsOmapSnapshotValueBytes;
         writeLe16(&block, toc, static_cast<uint16_t>(keyOffset));
@@ -3857,7 +3859,7 @@ QByteArray buildVariableKvLeafBlock(const ApfsVariableKvTree& tree, QStringList*
     writeLe32(&block, kApfsObjectSubtypeOffset, tree.subtype);
     writeLe16(&block, kApfsBtreeNodeFlagsOffset, kApfsBtreeNodeRoot | kApfsBtreeNodeLeaf);
     const qsizetype tocLength = std::max<qsizetype>(
-        64, ((records.size() * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64);
+        64, (((records.size() * kApfsBtreeVariableTocEntryBytes) + 63) / 64) * 64);
     writeLe32(&block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(records.size()));
     writeLe16(&block, kApfsBtreeNodeTableOffsetOffset, 0);
     writeLe16(&block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
@@ -3877,7 +3879,7 @@ QByteArray buildVariableKvLeafBlock(const ApfsVariableKvTree& tree, QStringList*
     for (qsizetype index = 0; index < records.size(); ++index) {
         const QByteArray& key = records.at(index).key;
         const QByteArray& value = records.at(index).value;
-        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + (index * kApfsBtreeVariableTocEntryBytes);
         writeLe16(&block, toc, static_cast<uint16_t>(keyCursor));
         writeLe16(&block,
                   toc + kApfsBtreeVariableTocKeyLengthOffset,
@@ -3937,7 +3939,8 @@ bool variableKvRecordsFitBody(const QVector<ApfsBtreeKeyValue>& records,
                               uint32_t blockSize,
                               bool isRoot) {
     const qsizetype tocLength =
-        ((static_cast<qsizetype>(records.size()) * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64;
+        (((static_cast<qsizetype>(records.size()) * kApfsBtreeVariableTocEntryBytes) + 63) / 64) *
+        64;
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + std::max<qsizetype>(64, tocLength);
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
                                    (isRoot ? kApfsBtreeInfoBytes : 0);
@@ -4310,7 +4313,7 @@ uint64_t ipBitmapSizeBlocks(uint64_t chunkCount, uint64_t cibCount, uint64_t cab
 // ip bitmap pushes ip_base out. Single-block bitmaps keep the certified 185.
 uint64_t generatedIpBaseBlock(uint64_t chunkCount, uint64_t cibCount, uint64_t cabCount = 0) {
     return kApfsFormatIpBitmapBaseBlock +
-           ipBitmapSizeBlocks(chunkCount, cibCount, cabCount) * kApfsSpacemanIpBmTxMultiplier;
+           (ipBitmapSizeBlocks(chunkCount, cibCount, cabCount) * kApfsSpacemanIpBmTxMultiplier);
 }
 
 // Apple's spaceman packs three variable-length inline arrays ahead of the
@@ -4322,14 +4325,14 @@ uint64_t generatedIpBaseBlock(uint64_t chunkCount, uint64_t cibCount, uint64_t c
 constexpr qsizetype kApfsSpacemanBitmapXidOffset = 2520;
 
 uint64_t spacemanBmAddrOffset(uint64_t ipBmSize) {
-    return static_cast<uint64_t>(kApfsSpacemanBitmapXidOffset) + 8 * ipBmSize;
+    return static_cast<uint64_t>(kApfsSpacemanBitmapXidOffset) + (8 * ipBmSize);
 }
 uint64_t spacemanFreeNextOffset(uint64_t ipBmSize) {
     const uint64_t ringBytes = 2 * ipBmSize;
-    return spacemanBmAddrOffset(ipBmSize) + (ringBytes + 7) / 8 * 8;
+    return spacemanBmAddrOffset(ipBmSize) + ((ringBytes + 7) / 8 * 8);
 }
 uint64_t spacemanCibArrayOffset(uint64_t ipBmSize) {
-    return spacemanFreeNextOffset(ipBmSize) + 16 * ipBmSize * 2;
+    return spacemanFreeNextOffset(ipBmSize) + (16 * ipBmSize * 2);
 }
 
 // Number of blocks the spaceman ephemeral object spans. The inline cib/cab-address
@@ -4340,7 +4343,7 @@ uint64_t spacemanCibArrayOffset(uint64_t ipBmSize) {
 // 1, so every certified single-block tier stays byte-identical; cibs_per_cab (507)
 // bounds it to 2 before the CAB tier takes over.
 uint64_t spacemanBlockSpan(uint64_t blockSize, uint64_t ipBmSize, uint64_t addrEntries) {
-    const uint64_t bytes = spacemanCibArrayOffset(ipBmSize) + addrEntries * 8;
+    const uint64_t bytes = spacemanCibArrayOffset(ipBmSize) + (addrEntries * 8);
     return (bytes + blockSize - 1) / blockSize;
 }
 
@@ -4397,7 +4400,7 @@ void setupIpBitmapRing(QByteArray* block, uint64_t ipBmSize, bool genesis) {
     const uint64_t ring = spacemanFreeNextOffset(ipBmSize);
     const uint64_t bmapCount = 16 * ipBmSize;
     const auto set = [&](uint64_t i, uint16_t v) {
-        writeLe16(block, static_cast<qsizetype>(ring + i * 2), v);
+        writeLe16(block, static_cast<qsizetype>(ring + (i * 2)), v);
     };
     const uint64_t inUseStart = genesis ? 0 : ipBmSize;
     for (uint64_t i = 0; i < ipBmSize; ++i) {
@@ -4511,7 +4514,7 @@ void writeSpacemanInternalPoolAndBitmaps(QByteArray* block, const ApfsSpacemanWr
     const uint64_t addrArrayEntries = cabCount > 0 ? cabCount : cibCount;
     writeLe32(block,
               kApfsSpacemanMainDeviceOffset + 0x30 + kApfsSpacemanDeviceAddrOffsetOffset,
-              static_cast<uint32_t>(cibArrayOffset + addrArrayEntries * 8));
+              static_cast<uint32_t>(cibArrayOffset + (addrArrayEntries * 8)));
     writeLe16(block, kApfsSpacemanFqIpLimitOffset, ipFreeQueueNodeLimit(chunkCount));
     writeLe16(block, kApfsSpacemanFqMainLimitOffset, mainFreeQueueNodeLimit(blockCount));
     // Internal-offset table: sm_ip_bm_xid_offset / sm_ip_bitmap_offset /
@@ -4526,7 +4529,7 @@ void writeSpacemanInternalPoolAndBitmaps(QByteArray* block, const ApfsSpacemanWr
     writeLe32(block, 0x154, 2520);
     // Per-bitmap xid array: one u64 per active bitmap block, all the checkpoint xid.
     for (uint64_t i = 0; i < ipBmSize; ++i) {
-        writeLe64(block, kApfsSpacemanBitmapXidOffset + static_cast<qsizetype>(i) * 8, xid);
+        writeLe64(block, kApfsSpacemanBitmapXidOffset + (static_cast<qsizetype>(i) * 8), xid);
     }
     // Active-bitmap index array: the live checkpoint's ip_bm_size bitmap blocks sit
     // at ring slots 0..ip_bm_size-1 (genesis) or ip_bm_size..2*ip_bm_size-1 (rotated).
@@ -4534,7 +4537,7 @@ void writeSpacemanInternalPoolAndBitmaps(QByteArray* block, const ApfsSpacemanWr
     const uint64_t activeBase = genesis ? 0 : ipBmSize;
     for (uint64_t i = 0; i < ipBmSize; ++i) {
         writeLe16(block,
-                  static_cast<qsizetype>(bmAddrOffset + i * 2),
+                  static_cast<qsizetype>(bmAddrOffset + (i * 2)),
                   static_cast<uint16_t>(activeBase + i));
     }
     setupIpBitmapRing(block, ipBmSize, genesis);
@@ -4591,7 +4594,7 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     // tier publishes cib_count inline CIB block numbers (byte-identical to before).
     const QVector<uint64_t>& addrArray = cabCount > 0 ? cabAddrs : cibAddrs;
     for (qsizetype i = 0; i < addrArray.size(); ++i) {
-        writeLe64(&block, static_cast<qsizetype>(cibArrayOffset) + i * 8, addrArray.at(i));
+        writeLe64(&block, static_cast<qsizetype>(cibArrayOffset) + (i * 8), addrArray.at(i));
     }
     stampApfsObjectBlock(&block, blockers);
     return block;
@@ -4679,7 +4682,7 @@ QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* b
     for (uint64_t index = 0; index < chunkSpan; ++index) {
         const uint64_t chunk = chunkStart + index;
         const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                                static_cast<qsizetype>(index) * kApfsChunkInfoEntryStride;
+                                (static_cast<qsizetype>(index) * kApfsChunkInfoEntryStride);
         const uint64_t chunkAddr = chunk * kApfsSpacemanBlocksPerChunk;
         const uint64_t chunkBlocks = qMin<uint64_t>(kApfsSpacemanBlocksPerChunk,
                                                     blockCount - chunkAddr);
@@ -4759,7 +4762,7 @@ QByteArray buildCibAddrBlock(const ApfsCibAddrParams& params, QStringList* block
     writeLe32(&block, kApfsCibAddrIndexOffset, cabIndex);
     writeLe32(&block, kApfsCibAddrCibCountOffset, static_cast<uint32_t>(cibAddrs.size()));
     for (qsizetype i = 0; i < cibAddrs.size(); ++i) {
-        writeLe64(&block, kApfsCibAddrEntriesOffset + i * 8, cibAddrs.at(i));
+        writeLe64(&block, kApfsCibAddrEntriesOffset + (i * 8), cibAddrs.at(i));
     }
     stampApfsObjectBlock(&block, blockers);
     return block;
@@ -5207,7 +5210,7 @@ QByteArray readLiveSpacemanObject(QIODevice* image,
     }
     for (uint32_t index = 0; index < count; ++index) {
         const qsizetype entry = kApfsCheckpointMapEntriesOffset +
-                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
+                                (static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes);
         const uint64_t paddr = le64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
         const uint64_t span = checkpointEntryBlockSpan(checkpointMap, entry, geometry.blockSize);
         // A checkpoint-mapped ephemeral object (spaceman/reaper/free-queue tree) spans a handful of
@@ -5312,7 +5315,7 @@ QVector<uint64_t> readLiveSpacemanCibArray(QIODevice* image,
         return {};
     }
     for (uint64_t k = 0; k < cibCount; ++k) {
-        const qsizetype off = base + static_cast<qsizetype>(k) * 8;
+        const qsizetype off = base + (static_cast<qsizetype>(k) * 8);
         addrs.append(off + 8 > object.size() ? 0 : le64(object, off));
     }
     return addrs;
@@ -5409,7 +5412,7 @@ bool relocateIpBitmapRing(QByteArray* spaceman,
     // A zero size wraps bmapCount - 1 into a ~2^64 loop, and a size whose inline ring array does
     // not fit the re-emitted spaceman object would (absent the write-primitive bound) be an
     // out-of-bounds write. Fail closed before any ring work.
-    if (bmSize == 0 || static_cast<qsizetype>(spacemanFreeNextOffset(bmSize) + 16 * bmSize * 2) >
+    if (bmSize == 0 || static_cast<qsizetype>(spacemanFreeNextOffset(bmSize) + (16 * bmSize * 2)) >
                            spaceman->size()) {
         blockers->append(
             QStringLiteral("APFS commit: internal-pool bitmap size (ip_bm_size) is invalid"));
@@ -5421,10 +5424,10 @@ bool relocateIpBitmapRing(QByteArray* spaceman,
     const qsizetype bmAddrOff = static_cast<qsizetype>(spacemanBmAddrOffset(bmSize));
     for (uint64_t i = 0; i < bmSize; ++i) {
         writeLe16(spaceman,
-                  bmAddrOff + static_cast<qsizetype>(i) * 2,
+                  bmAddrOff + (static_cast<qsizetype>(i) * 2),
                   static_cast<uint16_t>(bmSize + i));
         writeLe64(spaceman,
-                  kApfsSpacemanBitmapXidOffset + static_cast<qsizetype>(i) * 8,
+                  kApfsSpacemanBitmapXidOffset + (static_cast<qsizetype>(i) * 8),
                   ctx.newXid);
     }
     writeLe64(spaceman, kApfsSpacemanIpBmBaseOffset, base);
@@ -5479,10 +5482,10 @@ bool rotateIpBitmapRingSlots(QByteArray* spaceman,
     const qsizetype bmAddrOff = le32(*spaceman, kApfsSpacemanIpBitmapOffsetField);
     const qsizetype ringOff = le32(*spaceman, kApfsSpacemanIpBmFreeNextOffsetField);
     const auto ringNext = [&](uint16_t i) {
-        return le16(*spaceman, ringOff + i * 2);
+        return le16(*spaceman, ringOff + (i * 2));
     };
     const auto setRing = [&](uint16_t i, uint16_t v) {
-        writeLe16(spaceman, ringOff + i * 2, v);
+        writeLe16(spaceman, ringOff + (i * 2), v);
     };
     const auto ringSlotOutOfRange = [&](uint16_t slot) {
         if (slot >= bmCount) {
@@ -5507,7 +5510,7 @@ bool rotateIpBitmapRingSlots(QByteArray* spaceman,
         if (ringSlotOutOfRange(tail)) {
             return false;
         }
-        const uint16_t oldActive = le16(*spaceman, bmAddrOff + static_cast<qsizetype>(i) * 2);
+        const uint16_t oldActive = le16(*spaceman, bmAddrOff + (static_cast<qsizetype>(i) * 2));
         setRing(tail, oldActive);
         tail = oldActive;
     }
@@ -5543,8 +5546,8 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
         return false;
     }
     for (uint64_t i = 0; i < bmSize; ++i) {
-        writeLe16(spaceman, bmAddrOff + static_cast<qsizetype>(i) * 2, newSlots.at(i));
-        writeLe64(spaceman, xidOff + static_cast<qsizetype>(i) * 8, ctx.newXid);
+        writeLe16(spaceman, bmAddrOff + (static_cast<qsizetype>(i) * 2), newSlots.at(i));
+        writeLe64(spaceman, xidOff + (static_cast<qsizetype>(i) * 8), ctx.newXid);
     }
     // The whole ip usage (the exact ipUsedSet, all indices below one block's worth of
     // bits for the certified tiers) fits the first bitmap block; the remaining bmSize-1
@@ -5633,7 +5636,7 @@ void applyChunkAddingSpacemanPatches(const ApfsCheckpointCommitContext& ctx, QBy
         const uint64_t addrEntries = ctx.newCabCount != 0 ? ctx.newCabCount : ctx.newCibCount;
         writeLe32(object,
                   kApfsSpacemanMainDeviceOffset + 0x30 + kApfsSpacemanDeviceAddrOffsetOffset,
-                  static_cast<uint32_t>(spacemanCibArrayOffset(ipBmSize) + addrEntries * 8));
+                  static_cast<uint32_t>(spacemanCibArrayOffset(ipBmSize) + (addrEntries * 8)));
     }
 }
 
@@ -5670,7 +5673,7 @@ bool applyCibArrayRepoints(const ApfsCheckpointCommitContext& ctx,
     for (const QPair<uint64_t, uint64_t>& repoint : ctx.cibArrayRepoints) {
         maxEntryIndex = std::max(maxEntryIndex, static_cast<qsizetype>(repoint.first));
     }
-    const qsizetype maxWriteEnd = arrayBase + maxEntryIndex * 8 +
+    const qsizetype maxWriteEnd = arrayBase + (maxEntryIndex * 8) +
                                   static_cast<qsizetype>(sizeof(uint64_t));
     if (arrayBase <= 0 || maxWriteEnd > object->size()) {
         blockers->append(
@@ -5682,7 +5685,7 @@ bool applyCibArrayRepoints(const ApfsCheckpointCommitContext& ctx,
     // Keystone S4b: re-point each cib k>0 this commit copied-on-wrote to its new free-pool
     // slot. The whole spaceman is re-emitted, so writing entry k is crash-safe.
     for (const QPair<uint64_t, uint64_t>& repoint : ctx.cibArrayRepoints) {
-        writeLe64(object, arrayBase + static_cast<qsizetype>(repoint.first) * 8, repoint.second);
+        writeLe64(object, arrayBase + (static_cast<qsizetype>(repoint.first) * 8), repoint.second);
     }
     return true;
 }
@@ -5767,8 +5770,8 @@ uint64_t checkpointDataBlockSpan(const QByteArray& map, uint32_t blockSize) {
     for (uint32_t index = 0; index < count; ++index) {
         total += checkpointEntryBlockSpan(map,
                                           kApfsCheckpointMapEntriesOffset +
-                                              static_cast<qsizetype>(index) *
-                                                  kApfsCheckpointMapEntryBytes,
+                                              (static_cast<qsizetype>(index) *
+                                               kApfsCheckpointMapEntryBytes),
                                           blockSize);
     }
     return total;
@@ -5837,7 +5840,7 @@ uint64_t liveMainFqBlockSpan(const QByteArray& checkpointMap,
     const uint32_t liveCount = le32(checkpointMap, kApfsCheckpointMapCountOffset);
     for (uint32_t index = 0; index < liveCount; ++index) {
         const qsizetype entry = kApfsCheckpointMapEntriesOffset +
-                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
+                                (static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes);
         if (isMainFreeQueueMapEntry(le32(checkpointMap, entry + 4),
                                     le64(checkpointMap, entry + kApfsCheckpointMapEntryOidOffset),
                                     ipFqTreeOid)) {
@@ -5962,7 +5965,7 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
     QVector<ApfsReemittedEntry> newEntries;
     for (uint32_t index = 0; index < count; ++index) {
         const qsizetype entry = kApfsCheckpointMapEntriesOffset +
-                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
+                                (static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes);
         const uint32_t subtype = le32(*checkpointMap, entry + 4);
         const uint64_t oid = le64(*checkpointMap, entry + kApfsCheckpointMapEntryOidOffset);
         if (replaceMainFq && isMainFreeQueueMapEntry(subtype, oid, ctx.ipFqTreeOid)) {
@@ -6291,7 +6294,7 @@ uint64_t commitEphemeralBlockSpan(const QByteArray& checkpointMap,
         total += static_cast<uint64_t>(mainFqNodeSet.blocks.size());
     }
     if (spacemanEmitSpan != 0) {
-        total += spacemanEmitSpan - static_cast<uint64_t>(liveSpaceman.size()) / blockSize;
+        total += spacemanEmitSpan - (static_cast<uint64_t>(liveSpaceman.size()) / blockSize);
     }
     return total;
 }
@@ -6499,7 +6502,7 @@ QVector<ApfsObjectMapEntry> readOmapLeafEntries(const QByteArray& omapTreeNode,
     // bogus oids (e.g. 1114111 for a slot that actually holds oid 1026).
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
-                              static_cast<qsizetype>(index) * kApfsBtreeFixedTocEntryBytes;
+                              (static_cast<qsizetype>(index) * kApfsBtreeFixedTocEntryBytes);
         const uint16_t keyOffset = le16(omapTreeNode, toc);
         const uint16_t valueOffset = le16(omapTreeNode, toc + kApfsBtreeFixedTocValueOffset);
         const qsizetype key = keyAreaStart + keyOffset;
@@ -6526,7 +6529,7 @@ QVector<uint64_t> readOmapIndexChildPaddrs(const QByteArray& indexNode, uint32_t
         boundedNodeKeyCount(indexNode, valueAreaEnd, kApfsBtreeFixedTocEntryBytes);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
-                              static_cast<qsizetype>(index) * kApfsBtreeFixedTocEntryBytes;
+                              (static_cast<qsizetype>(index) * kApfsBtreeFixedTocEntryBytes);
         const uint16_t valueOffset = le16(indexNode, toc + kApfsBtreeFixedTocValueOffset);
         children.append(le64(indexNode, valueAreaEnd - valueOffset));
     }
@@ -7065,7 +7068,7 @@ bool parseLiveContainerSpaceman(QIODevice* image,
     layout->smAddrOffset = static_cast<uint32_t>(cibArr);
     layout->cibAddrs.clear();
     for (uint32_t k = 0; k < layout->smMainCibCount; ++k) {
-        layout->cibAddrs.append(le64(sm, cibArr + static_cast<qsizetype>(k) * 8));
+        layout->cibAddrs.append(le64(sm, cibArr + (static_cast<qsizetype>(k) * 8)));
     }
     // Live IP-bitmap ring state: the free-list head/tail, the three inline-array offsets, and the
     // ring slot + set-bit count of each of the bmSize live bitmap blocks. Ground truth for
@@ -7079,7 +7082,7 @@ bool parseLiveContainerSpaceman(QIODevice* image,
     layout->liveBmSlots.clear();
     layout->liveBmPop.clear();
     for (uint32_t i = 0; i < layout->ipBmSizeBlocks; ++i) {
-        const uint16_t slot = le16(sm, layout->ipBmAddrArrayOff + static_cast<qsizetype>(i) * 2);
+        const uint16_t slot = le16(sm, layout->ipBmAddrArrayOff + (static_cast<qsizetype>(i) * 2));
         layout->liveBmSlots.append(slot);
         QByteArray bmp(geometry.blockSize, '\0');
         uint64_t setBits = 0;
@@ -7156,7 +7159,7 @@ QVector<uint64_t> extentRefIndexChildPaddrs(const QByteArray& node, uint32_t blo
     const uint32_t nkeys = boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeVariableTocEntryBytes);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
-                              static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+                              (static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
         children.append(le64(node, valueAreaEnd - valueOffset));
     }
@@ -7195,7 +7198,7 @@ QVector<uint64_t> extentRefIndexChildPaddrs(const QByteArray& node, uint32_t blo
     const uint32_t nkeys = boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeVariableTocEntryBytes);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
-                              static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+                              (static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes);
         const uint16_t keyOffset = le16(node, toc);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
         const qsizetype keyPos = keyAreaStart + keyOffset;
@@ -7407,7 +7410,7 @@ struct ApfsMultiCibLayout {
 // 191), so ipDelta is their difference (0 single-chunk).
 uint64_t generatedIpDelta(uint64_t chunkCount, uint64_t cibCount, uint64_t cabCount = 0) {
     return generatedIpBaseBlock(chunkCount, cibCount, cabCount) +
-           3 * (chunkCount + cibCount + cabCount) - kApfsFormatGhostContainerOmapBlock;
+           (3 * (chunkCount + cibCount + cabCount)) - kApfsFormatGhostContainerOmapBlock;
 }
 
 // seedData (the reserved metadata prefix length) = the live allocation-region start
@@ -7611,7 +7614,7 @@ struct ApfsIpSlot {
         return false;
     }
     const uint64_t liveIndex = (liveCib - cib0Base) / stride;
-    const uint64_t nextBase = cib0Base + ((liveIndex + 1) % kIpSlotCount) * stride;
+    const uint64_t nextBase = cib0Base + (((liveIndex + 1) % kIpSlotCount) * stride);
     *out = {nextBase, nextBase + 1};
     return true;
 }
@@ -7741,7 +7744,7 @@ std::optional<QByteArray> readChunkAllocationBitmap(QIODevice* image,
                                                     QStringList* blockers) {
     QByteArray bitmap(geometry.blockSize, '\0');
     const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                            static_cast<qsizetype>(chunkIndex) * kApfsChunkInfoEntryStride;
+                            (static_cast<qsizetype>(chunkIndex) * kApfsChunkInfoEntryStride);
     // An entry past the end of this cib must be an error, never a read. le64 bounds-checks and
     // returns 0 for an out-of-range offset, and 0 is the ENCODING for "this chunk is entirely
     // free" -- so an index the cib does not contain would come back as a fully-free chunk and
@@ -7819,7 +7822,7 @@ QVector<uint64_t> fsTreeChildPaddrs(const QByteArray& node,
     const uint32_t nkeys = boundedNodeKeyCount(node, valueAreaEnd, kApfsBtreeVariableTocEntryBytes);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
-                              static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+                              (static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
         children.append(omap.value(le64(node, valueAreaEnd - valueOffset)));
     }
@@ -7980,7 +7983,7 @@ QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
                                        le16(node, kApfsBtreeNodeTableLengthOffset);
         for (uint32_t index = 0; index < nkeys; ++index) {
             const qsizetype toc = kApfsBtreeNodeHeaderBytes +
-                                  static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+                                  (static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes);
             const uint16_t keyOffset = le16(node, toc);
             const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
             const uint64_t keyHeader = le64(node, keyAreaStart + keyOffset);
@@ -8040,7 +8043,7 @@ uint64_t inodeXfieldValue(const QByteArray& value,
                           int widthBytes) {
     const uint16_t xfieldCount = le16(value, base + kApfsInodeXfieldsOffset);
     qsizetype toc = base + kApfsInodeXfieldsOffset + kApfsXfieldHeaderBytes;
-    qsizetype data = toc + static_cast<qsizetype>(xfieldCount) * kApfsXfieldTocEntryBytes;
+    qsizetype data = toc + (static_cast<qsizetype>(xfieldCount) * kApfsXfieldTocEntryBytes);
     for (uint16_t i = 0; i < xfieldCount; ++i) {
         // A corrupt/inflated xfieldCount can push toc past the 4 KiB node; stop before the
         // TOC or value read leaves the buffer (le8/le16/le64 are individually bounds-safe,
@@ -8071,7 +8074,7 @@ void recoverLeafXattr(const QByteArray& node,
         name.chop(1);
     }
     const uint16_t xdataLen = le16(node, valuePos + kUint16Size);
-    out->append({name, le16(node, valuePos), node.mid(valuePos + 2 * kUint16Size, xdataLen)});
+    out->append({name, le16(node, valuePos), node.mid(valuePos + (2 * kUint16Size), xdataLen)});
 }
 
 // Read a real Apple inode's identity metadata (owner/group/mode/bsd_flags + the four
@@ -8122,7 +8125,7 @@ ApfsRecoveredInodeState recoverInodeState(QIODevice* image,
                                        le16(node, kApfsBtreeNodeTableLengthOffset);
         for (uint32_t index = 0; index < nkeys; ++index) {
             const qsizetype toc = kApfsBtreeNodeHeaderBytes +
-                                  static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+                                  (static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes);
             const uint64_t keyHeader = le64(node, keyAreaStart + le16(node, toc));
             if ((keyHeader & oidMask) != inodeId) {
                 continue;
@@ -8430,7 +8433,7 @@ void mergeLeafFileExtentRecords(const QByteArray& node,
                                    le16(node, kApfsBtreeNodeTableLengthOffset);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
-                              static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+                              (static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes);
         const uint64_t keyHeader = le64(node, keyAreaStart + le16(node, toc));
         if ((keyHeader >> kApfsObjTypeShift) != kApfsRecordFileExtent) {
             continue;
@@ -8770,7 +8773,7 @@ QVector<ApfsInodeSibling> recoverInodeSiblings(QIODevice* image,
                                        le16(node, kApfsBtreeNodeTableLengthOffset);
         for (uint32_t index = 0; index < nkeys; ++index) {
             const qsizetype toc = kApfsBtreeNodeHeaderBytes +
-                                  static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+                                  (static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes);
             const uint16_t keyOffset = le16(node, toc);
             const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
             const uint64_t keyHeader = le64(node, keyAreaStart + keyOffset);
@@ -9254,9 +9257,9 @@ bool writeRotatedCibOverflow(QByteArray* cib,
     writeLe64(cib,
               kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset,
               alloc.rotation.newBitmap);
-    const qsizetype entryM = kApfsChunkInfoEntriesOffset +
-                             static_cast<qsizetype>(alloc.layout.allocChunk) *
-                                 kApfsChunkInfoEntryStride;
+    const qsizetype entryM =
+        kApfsChunkInfoEntriesOffset +
+        (static_cast<qsizetype>(alloc.layout.allocChunk) * kApfsChunkInfoEntryStride);
     writeLe32(cib,
               entryM + kApfsChunkInfoEntryFreeCountOffset,
               static_cast<uint32_t>(
@@ -9297,7 +9300,7 @@ void updateSpilledChunkCibEntry(QByteArray* cib,
     const int64_t delta = static_cast<int64_t>(chunkFreedBlocks(alloc, chunk).size()) -
                           static_cast<int64_t>(chunkAllocatedBlocks(alloc, chunk).size());
     const qsizetype entryC = kApfsChunkInfoEntriesOffset +
-                             static_cast<qsizetype>(entryIndex) * kApfsChunkInfoEntryStride;
+                             (static_cast<qsizetype>(entryIndex) * kApfsChunkInfoEntryStride);
     writeLe32(cib,
               entryC + kApfsChunkInfoEntryFreeCountOffset,
               static_cast<uint32_t>(
@@ -9613,7 +9616,7 @@ uint64_t findEphemeralPaddrByOid(QIODevice* image,
     const uint32_t count = le32(cpm, kApfsCheckpointMapCountOffset);
     for (uint32_t index = 0; index < count; ++index) {
         const qsizetype entry = kApfsCheckpointMapEntriesOffset +
-                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
+                                (static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes);
         if (le64(cpm, entry + kApfsCheckpointMapEntryOidOffset) == oid) {
             return le64(cpm, entry + kApfsCheckpointMapEntryPaddrOffset);
         }
@@ -9734,8 +9737,8 @@ QVector<ApfsFreeQueueEntry> parseFreeQueueEntries(QIODevice* image,
     const qsizetype keyStart = kApfsBtreeNodeHeaderBytes +
                                le16(node, kApfsBtreeNodeTableLengthOffset);
     for (uint32_t index = 0; index < nkeys; ++index) {
-        const uint16_t koff = le16(node, kApfsBtreeNodeHeaderBytes + index * 4);
-        const uint16_t voff = le16(node, kApfsBtreeNodeHeaderBytes + index * 4 + 2);
+        const uint16_t koff = le16(node, kApfsBtreeNodeHeaderBytes + (index * 4));
+        const uint16_t voff = le16(node, kApfsBtreeNodeHeaderBytes + (index * 4) + 2);
         const uint64_t entryXid = le64(node, keyStart + koff);
         const uint64_t entryPaddr = le64(node, keyStart + koff + 8);
         const uint64_t length = (voff == 0xFFFF) ? 1 : le64(node, valueAreaEnd - voff);
@@ -9813,7 +9816,7 @@ QVector<ApfsFreeQueueEntry> parseMainFreeQueueTree(QIODevice* image,
     const uint32_t nkeys = boundedNodeKeyCount(root, valueAreaEnd, kApfsBtreeFixedTocEntryBytes);
     QVector<ApfsFreeQueueEntry> entries;
     for (uint32_t index = 0; index < nkeys; ++index) {
-        const uint16_t voff = le16(root, kApfsBtreeNodeHeaderBytes + index * 4 + 2);
+        const uint16_t voff = le16(root, kApfsBtreeNodeHeaderBytes + (index * 4) + 2);
         const uint64_t childOid = le64(root, valueAreaEnd - voff);
         const uint64_t childPaddr =
             findEphemeralPaddrByOid(image, geometry, live, childOid, blockers);
@@ -10665,9 +10668,9 @@ bool loadLiveAllocationSlot(ApfsFsCommitContext* ctx, QStringList* blockers) {
     if (ctx->layout.allocChunk != 0) {
         // Overflow tier: the boundary chunk (M-1) is the allocation chunk; read its
         // live bitmap from the live cib (M-1 < 126 keeps it inside cib 0).
-        const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                                static_cast<qsizetype>(ctx->layout.allocChunk) *
-                                    kApfsChunkInfoEntryStride;
+        const qsizetype entry =
+            kApfsChunkInfoEntriesOffset +
+            (static_cast<qsizetype>(ctx->layout.allocChunk) * kApfsChunkInfoEntryStride);
         ctx->allocChunkBitmap = le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
     }
     return true;
@@ -11591,8 +11594,9 @@ std::optional<uint64_t> liveChunkBitmapAddr(const ApfsFsCommitContext& ctx,
     if (!readApfsRepairBlock(ctx.image, ctx.geometry, owner, &ownerCib, blockers)) {
         return std::nullopt;  // F41: a REAL cib that will not read must abort, not read as 0
     }
-    const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                            static_cast<qsizetype>(chunkEntryInCib(c)) * kApfsChunkInfoEntryStride;
+    const qsizetype entry =
+        kApfsChunkInfoEntriesOffset +
+        (static_cast<qsizetype>(chunkEntryInCib(c)) * kApfsChunkInfoEntryStride);
     return le64(ownerCib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
 }
 
@@ -11666,7 +11670,7 @@ std::optional<uint64_t> computeFinalizeIpBitmapUsage(const ApfsFsCommitFinalize&
         }
         spillBitmaps = static_cast<uint64_t>(live.size());
     }
-    return (f.ctx.layout.cibCount - 1) + immutableCabCount + extraBitmaps + 3 * groupSize +
+    return (f.ctx.layout.cibCount - 1) + immutableCabCount + extraBitmaps + (3 * groupSize) +
            spillBitmaps;
 }
 
@@ -11871,7 +11875,7 @@ ApfsIpFreePoolGeometry computeIpFreePoolGeometry(const ApfsFsCommitContext& ctx)
     geo.ipBase = ctx.layout.ipBase;
     geo.ipBlockCount = 3 * (chunkCount + ctx.layout.cibCount + ctx.layout.cabCount);
     geo.cib0Base = ctx.layout.cib0Base;
-    geo.freePoolBase = ctx.layout.cib0Base + 3 * ctx.layout.ipGroupStride;
+    geo.freePoolBase = ctx.layout.cib0Base + (3 * ctx.layout.ipGroupStride);
     return geo;
 }
 
@@ -12265,8 +12269,8 @@ uint64_t foreignLiveChunkBitmapBlock(const ApfsFsCommitContext& ctx, QStringList
     }
     const qsizetype entry =
         kApfsChunkInfoEntriesOffset +
-        static_cast<qsizetype>(ctx.layout.allocChunk % kApfsSpacemanChunksPerCib) *
-            kApfsChunkInfoEntryStride;
+        (static_cast<qsizetype>(ctx.layout.allocChunk % kApfsSpacemanChunksPerCib) *
+         kApfsChunkInfoEntryStride);
     return le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
 }
 
@@ -12422,9 +12426,9 @@ ApfsForeignReclaimCib buildReclaimCibChunks(const QByteArray& cib,
         ch.chunk = c;
         ch.blocks = part.byChunk.value(c);
         ch.newBitmapSlot = cur->slots.at(cur->idx++);
-        const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                                static_cast<qsizetype>(c % kApfsSpacemanChunksPerCib) *
-                                    kApfsChunkInfoEntryStride;
+        const qsizetype entry =
+            kApfsChunkInfoEntriesOffset +
+            (static_cast<qsizetype>(c % kApfsSpacemanChunksPerCib) * kApfsChunkInfoEntryStride);
         plan->freedIpBlocks.append(le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset));
         plan->newIpBlocks.append(ch.newBitmapSlot);
         plan->totalFarReclaimed += static_cast<uint64_t>(ch.blocks.size());
@@ -12443,9 +12447,9 @@ bool reclaimChunkBitmapsInPool(const QByteArray& cib,
                                uint64_t ipBlockCount,
                                QStringList* blockers) {
     for (uint64_t c : chunks) {
-        const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                                static_cast<qsizetype>(c % kApfsSpacemanChunksPerCib) *
-                                    kApfsChunkInfoEntryStride;
+        const qsizetype entry =
+            kApfsChunkInfoEntriesOffset +
+            (static_cast<qsizetype>(c % kApfsSpacemanChunksPerCib) * kApfsChunkInfoEntryStride);
         const uint64_t bmAddr = le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
         if (bmAddr == 0 || bmAddr < ipBase || bmAddr >= ipBase + ipBlockCount) {
             blockers->append(
@@ -12559,9 +12563,9 @@ bool applyReclaimChunk(const ApfsFsCommitFinalize& f,
                        const ApfsForeignReclaimChunk& ch,
                        QByteArray* cib,
                        QStringList* blockers) {
-    const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                            static_cast<qsizetype>(ch.chunk % kApfsSpacemanChunksPerCib) *
-                                kApfsChunkInfoEntryStride;
+    const qsizetype entry =
+        kApfsChunkInfoEntriesOffset +
+        (static_cast<qsizetype>(ch.chunk % kApfsSpacemanChunksPerCib) * kApfsChunkInfoEntryStride);
     const uint64_t bmAddr = le64(*cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
     if (bmAddr == 0 || bmAddr < f.ctx.layout.ipBase ||
         bmAddr >= f.ctx.layout.ipBase + f.ctx.ipBlockCount) {
@@ -13578,7 +13582,7 @@ bool pushSnapMetaChildren(const QByteArray& node,
         return false;
     }
     for (qsizetype index = static_cast<qsizetype>(nkeys) - 1; index >= 0; --index) {
-        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + (index * kApfsBtreeVariableTocEntryBytes);
         const uint64_t child = le64(node,
                                     valArea - le16(node, toc + kApfsBtreeVariableTocValueOffset));
         pending->append({child, depth + 1});
@@ -13653,7 +13657,7 @@ bool appendSnapMetadataFromLeaf(const QByteArray& node,
     const qsizetype valArea = static_cast<qsizetype>(blockSize) -
                               (isRoot ? kApfsBtreeInfoBytes : 0);
     for (uint32_t index = 0; index < nkeys; ++index) {
-        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + (index * kApfsBtreeVariableTocEntryBytes);
         const uint64_t keyHdr = le64(node, keyArea + le16(node, toc));
         if ((keyHdr >> kApfsObjTypeShift) != kApfsJObjTypeSnapMetadata) {
             continue;
@@ -14032,7 +14036,7 @@ uint64_t snapshotGeneratedIpBitmapUsage(const ApfsFsCommitContext& ctx,
     const uint64_t extraBitmaps = ctx.layout.metadataChunks > 1 ? ctx.layout.metadataChunks - 2 : 0;
     const uint64_t immutableCabCount = ctx.layout.cabCount > 0 ? ctx.layout.cabCount - 1 : 0;
     return (ctx.layout.cibCount - 1) + immutableCabCount + extraBitmaps +
-           3 * ctx.layout.ipGroupStride +
+           (3 * ctx.layout.ipGroupStride) +
            (ctx.layout.allocChunk == 0 && chunk1BitmapBlock != 0 ? 1 : 0);
 }
 
@@ -14225,7 +14229,7 @@ bool commitInChunkResizeGrow(ApfsFsCommitContext* ctx,
     }
     const uint64_t groupSize = ctx->layout.ipGroupStride;
     // Single-chunk, single-CIB: the IP bitmap marks the three rotation-group slots only.
-    const uint64_t ipBitmapUsage = (ctx->layout.cibCount - 1) + 3 * groupSize;
+    const uint64_t ipBitmapUsage = (ctx->layout.cibCount - 1) + (3 * groupSize);
     // No blocks are allocated or freed; the cib's chunk 0 simply gains growDelta blocks,
     // all free. cibFreeDelta/spacemanFreeDelta raise the free counts, the *BlockCountDelta
     // fields raise the block counts.
@@ -14327,7 +14331,7 @@ QByteArray buildExplicitChunkInfoBlock(const ApfsCibObjId& id,
     writeLe32(&block, kApfsChunkInfoCountOffset, static_cast<uint32_t>(chunks.size()));
     for (qsizetype i = 0; i < chunks.size(); ++i) {
         const ApfsExplicitChunkEntry& c = chunks.at(i);
-        const qsizetype entry = kApfsChunkInfoEntriesOffset + i * kApfsChunkInfoEntryStride;
+        const qsizetype entry = kApfsChunkInfoEntriesOffset + (i * kApfsChunkInfoEntryStride);
         writeLe64(&block, entry, c.xid);
         writeLe64(&block, entry + kApfsChunkInfoEntryAddrOffset, c.chunkAddr);
         writeLe32(&block, entry + kApfsChunkInfoEntryBlockCountOffset, c.blockCount);
@@ -14383,7 +14387,8 @@ bool appendCabCibAddrs(const QByteArray& cab,
         return false;
     }
     for (uint64_t i = 0; i < inCab; ++i) {
-        const uint64_t addr = le64(cab, kApfsCibAddrEntriesOffset + static_cast<qsizetype>(i) * 8);
+        const uint64_t addr = le64(cab,
+                                   kApfsCibAddrEntriesOffset + (static_cast<qsizetype>(i) * 8));
         if (addr == 0 || addr >= blockCount) {
             blockers->append(QStringLiteral("APFS resize: a CAB cib address is out of range"));
             return false;
@@ -14460,9 +14465,9 @@ bool readMultiChunkGrowSource(ApfsFsCommitContext* ctx,
             }
             loadedCib = ci;
         }
-        const qsizetype e = kApfsChunkInfoEntriesOffset +
-                            static_cast<qsizetype>(k % kApfsSpacemanChunksPerCib) *
-                                kApfsChunkInfoEntryStride;
+        const qsizetype e =
+            kApfsChunkInfoEntriesOffset +
+            (static_cast<qsizetype>(k % kApfsSpacemanChunksPerCib) * kApfsChunkInfoEntryStride);
         if (!validateSourceChunkEntry(cib, e, k, blockers)) {
             return false;
         }
@@ -14554,7 +14559,7 @@ bool layoutGrowPoolBitmaps(const ApfsGrowPoolPlacement& p,
                            QStringList* blockers) {
     const uint64_t poolChunk = p.usedBase / kApfsSpacemanBlocksPerChunk;
     const uint64_t poolSpan =
-        (p.poolEnd - poolChunk * kApfsSpacemanBlocksPerChunk + kApfsSpacemanBlocksPerChunk - 1) /
+        (p.poolEnd - (poolChunk * kApfsSpacemanBlocksPerChunk) + kApfsSpacemanBlocksPerChunk - 1) /
         kApfsSpacemanBlocksPerChunk;
     for (uint64_t i = 0; i < poolSpan; ++i) {
         const uint64_t chunkStart = (poolChunk + i) * kApfsSpacemanBlocksPerChunk;
@@ -15241,9 +15246,9 @@ bool survivingPoolStraddlesChunk(uint64_t poolOffset, uint64_t poolBlocks) {
 // the chunk's kept blocks (a straddle that slipped past the upstream guard) fails closed rather
 // than underflowing the free count to ~4.29e9.
 bool survivingPoolFitsChunk(const ApfsChunkAddingGrowPlan& plan, QStringList* blockers) {
-    const uint64_t keptBlocks =
-        qMin<uint64_t>(kApfsSpacemanBlocksPerChunk,
-                       plan.newBlockCount - plan.survivingPoolChunk * kApfsSpacemanBlocksPerChunk);
+    const uint64_t keptBlocks = qMin<uint64_t>(kApfsSpacemanBlocksPerChunk,
+                                               plan.newBlockCount - (plan.survivingPoolChunk *
+                                                                     kApfsSpacemanBlocksPerChunk));
     if (plan.oldIpBlockCount > keptBlocks) {
         blockers->append(QStringLiteral(
             "APFS resize-shrink: the surviving internal pool exceeds its chunk's kept blocks"));
@@ -15281,7 +15286,7 @@ bool buildShrinkSurvivingPoolAllocator(ApfsFsCommitContext* ctx,
     const uint64_t poolBmp = base + 8;
     // The surviving pool chunk keeps the old pool used at its in-chunk offset.
     const uint64_t poolOffset = plan.oldIpBase -
-                                plan.survivingPoolChunk * kApfsSpacemanBlocksPerChunk;
+                                (plan.survivingPoolChunk * kApfsSpacemanBlocksPerChunk);
     if (survivingPoolStraddlesChunk(poolOffset, plan.oldIpBlockCount)) {
         blockers->append(
             QStringLiteral("APFS shrink: surviving-pool bitmap run straddles a chunk boundary"));
@@ -15395,7 +15400,7 @@ void configureGrowTransition(ApfsFsCommitContext* ctx,
     plan->ipBmBlocks = oldIpBmSize *
                        kApfsSpacemanIpBmTxMultiplier;  // old ring freed to the main fq
     plan->newIpBmBase = plan->newIpBase;               // ring at the grow-region start
-    plan->newIpBase = plan->newIpBmBase + newIpBmSize * kApfsSpacemanIpBmTxMultiplier;
+    plan->newIpBase = plan->newIpBmBase + (newIpBmSize * kApfsSpacemanIpBmTxMultiplier);
 }
 
 // The main-device free-count delta for a multi-chunk-source grow: grown space minus the new pool
@@ -15677,7 +15682,7 @@ ApfsShrinkScope buildShrinkScope(ApfsFsCommitContext* ctx,
     const uint64_t ringBlocks =
         spaceman.isEmpty() ? 0 : le32(spaceman, kApfsSpacemanIpBmBlockCountOffset);
     // A multi-chunk pool (ip_bm_size > 1) a grow left high spans several chunks; scope every one.
-    const uint64_t poolSpan = (oldIpBase % kApfsSpacemanBlocksPerChunk + oldIpBlockCount +
+    const uint64_t poolSpan = ((oldIpBase % kApfsSpacemanBlocksPerChunk) + oldIpBlockCount +
                                kApfsSpacemanBlocksPerChunk - 1) /
                               kApfsSpacemanBlocksPerChunk;
     return {oldIpBase == 0 ? 0 : oldIpBase / kApfsSpacemanBlocksPerChunk,
@@ -15881,7 +15886,7 @@ bool placeMultiChunkShrinkPool(ApfsFsCommitContext* ctx,
     // the ring). Non-transition: ring stays in place (advanceIpBitmapRing rewrites its active
     // slot).
     plan->newIpBmBase = transition ? poolChunk * kApfsSpacemanBlocksPerChunk : 0;
-    plan->newIpBase = poolChunk * kApfsSpacemanBlocksPerChunk + newRing;
+    plan->newIpBase = (poolChunk * kApfsSpacemanBlocksPerChunk) + newRing;
     return true;
 }
 
@@ -15941,7 +15946,7 @@ bool poolChunkHoldsUserData(ApfsFsCommitContext* ctx,
         return false;
     }
     const uint64_t poolOffset = plan.oldIpBase -
-                                plan.survivingPoolChunk * kApfsSpacemanBlocksPerChunk;
+                                (plan.survivingPoolChunk * kApfsSpacemanBlocksPerChunk);
     for (uint64_t b = 0; b < kApfsSpacemanBlocksPerChunk; ++b) {
         const bool used =
             ((static_cast<uint8_t>(bm.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) != 0;
@@ -16244,7 +16249,7 @@ bool commitInChunkResizeShrink(ApfsFsCommitContext* ctx,
         return false;
     }
     const uint64_t groupSize = ctx->layout.ipGroupStride;
-    const uint64_t ipBitmapUsage = (ctx->layout.cibCount - 1) + 3 * groupSize;
+    const uint64_t ipBitmapUsage = (ctx->layout.cibCount - 1) + (3 * groupSize);
     if (!applyFileInsertAllocation({.image = ctx->image,
                                     .geometry = ctx->geometry,
                                     .layout = ctx->layout,
@@ -19656,7 +19661,7 @@ QString generatedApfsContainerFormatBlocker(QLatin1StringView purpose,
         ipBitmapSizeBlocks(geometry.chunk_count, geometry.cib_count, geometry.cab_count);
     const uint64_t addrEntries = geometry.cab_count > 0 ? geometry.cab_count : geometry.cib_count;
     const uint64_t spacemanBlocks = spacemanBlockSpan(blockSize, ipBmSize, addrEntries);
-    const uint64_t liveEphemeralEnd = kApfsFormatGenesisSpacemanBlock + 2 * spacemanBlocks + 3;
+    const uint64_t liveEphemeralEnd = kApfsFormatGenesisSpacemanBlock + (2 * spacemanBlocks) + 3;
     const bool arrayFits = liveEphemeralEnd <
                            kApfsFormatCheckpointDataBaseBlock + kApfsFormatCheckpointDataBlocks;
     // The genesis/live IP usage bitmap is a single 4096-byte block; the live
@@ -20824,7 +20829,7 @@ QString PartitionApfsWriter::operationName(PartitionApfsWriteOperation operation
 // non-zero compile-time geometry constant here.
 namespace {
 [[nodiscard]] constexpr uint64_t apfsCeilDivU64(uint64_t numerator, uint64_t divisor) {
-    return numerator / divisor + (numerator % divisor != 0 ? 1 : 0);
+    return (numerator / divisor) + (numerator % divisor != 0 ? 1 : 0);
 }
 }  // namespace
 
@@ -21121,7 +21126,7 @@ bool appendMultiVolumeFormatBlockers(const PartitionApfsImageFormatRequest& requ
                                 kApfsSpacemanBlocksPerChunk;
     const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
     const uint64_t reservedSeed = generatedSeedDataBlock(chunkCount, mcib.cibCount, mcib.cabCount) +
-                                  kApfsExtraVolumeBlockSpan * static_cast<uint64_t>(extraVolumes);
+                                  (kApfsExtraVolumeBlockSpan * static_cast<uint64_t>(extraVolumes));
     if (reservedSeed >= kApfsSpacemanBlocksPerChunk) {
         result->blockers.append(QStringLiteral(
             "APFS multi-volume containers are not certified on the metadata-overflow "
@@ -21277,7 +21282,7 @@ ExtraApfsVolumes layOutExtraApfsVolumes(const QStringList& names, uint64_t baseB
         v.name = names.at(i);
         v.uuid = randomApfsUuid();
         v.fsIndex = static_cast<uint32_t>(i + 1);
-        v.volumeOid = kApfsNxMinimumNextOid + 2 * static_cast<uint64_t>(i);
+        v.volumeOid = kApfsNxMinimumNextOid + (2 * static_cast<uint64_t>(i));
         v.rootTreeOid = v.volumeOid + 1;
         v.volOmap = block++;
         v.volOmapTree = block++;
@@ -21891,7 +21896,7 @@ void buildEmptyFormatNxsbs(const PartitionApfsImageFormatRequest& request,
     const uint32_t genesisDataLen = static_cast<uint32_t>(p.spacemanBlocks + 1);
     const uint32_t liveDataIndex = static_cast<uint32_t>(p.spacemanBlocks + 1);
     const uint32_t liveDataLen = static_cast<uint32_t>(p.spacemanBlocks + 3);
-    const uint32_t liveDataNext = static_cast<uint32_t>(2 * p.spacemanBlocks + 4);
+    const uint32_t liveDataNext = static_cast<uint32_t>((2 * p.spacemanBlocks) + 4);
     p.nxsb = buildNxSuperblock(request.block_size_bytes,
                                blockCount,
                                p.containerUuid,
@@ -21974,7 +21979,7 @@ void resolveEmptyFormatSuperblocks(const PartitionApfsImageFormatRequest& reques
     p.reservedSeed = p.seedData + p.extras.blockCount + p.enc.reservedDelta;
     p.volumeMappings = {{kApfsFormatRootTreeOid, kApfsFormatXid, p.rootTree, p.enc.omapFlag}};
     const uint64_t containerNextOid = kApfsNxMinimumNextOid +
-                                      2 * static_cast<uint64_t>(p.extras.volumes.size());
+                                      (2 * static_cast<uint64_t>(p.extras.volumes.size()));
     p.containerMappings = {{kApfsFormatVolumeOid, kApfsFormatXid, p.volSuper}};
     QVector<uint64_t> fsOids{kApfsFormatVolumeOid};
     for (const auto& extra : p.extras.volumes) {
@@ -25596,7 +25601,7 @@ QVector<QByteArray> PartitionApfsWriter::buildMainFreeQueueTreeBlocks(uint32_t b
     QVector<ApfsFreeQueueEntry> entries;
     entries.reserve(entry_count);
     for (qsizetype index = 0; index < entry_count; ++index) {
-        entries.append({xid, 1000 + static_cast<uint64_t>(index) * 2, 1});
+        entries.append({xid, 1000 + (static_cast<uint64_t>(index) * 2), 1});
     }
     return buildMainFreeQueueNodes({block_size, kApfsFormatFqMainTreeOid, leaf_base_oid, xid},
                                    entries,
@@ -25619,7 +25624,7 @@ QVector<QPair<quint64, quint64>> PartitionApfsWriter::readMainFreeQueueTreeBlock
         const qsizetype keyStart = kApfsBtreeNodeHeaderBytes +
                                    le16(node, kApfsBtreeNodeTableLengthOffset);
         for (uint32_t index = 0; index < nkeys; ++index) {
-            const uint16_t koff = le16(node, kApfsBtreeNodeHeaderBytes + index * 4);
+            const uint16_t koff = le16(node, kApfsBtreeNodeHeaderBytes + (index * 4));
             out.append({le64(node, keyStart + koff), le64(node, keyStart + koff + 8)});
         }
     };
@@ -25651,7 +25656,7 @@ QVector<QByteArray> PartitionApfsWriter::buildExtentRefTreeBlocksForTesting(
     for (qsizetype index = 0; index < record_count; ++index) {
         ApfsRootFilePayload file;
         file.fileId = 1000 + static_cast<uint64_t>(index);
-        file.dataExtents = {{0, tree_base_paddr + 100'000 + static_cast<uint64_t>(index) * 2, 1}};
+        file.dataExtents = {{0, tree_base_paddr + 100'000 + (static_cast<uint64_t>(index) * 2), 1}};
         files.append(file);
     }
     const qsizetype nodeTotal = extentRefTreeBlockCount(record_count, block_size);
@@ -25744,8 +25749,8 @@ quint64 PartitionApfsWriter::readGeneratedChunkBitmapAddr(const QString& image_p
         return 0;
     }
     const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                            static_cast<qsizetype>(chunk_index % kApfsSpacemanChunksPerCib) *
-                                kApfsChunkInfoEntryStride;
+                            (static_cast<qsizetype>(chunk_index % kApfsSpacemanChunksPerCib) *
+                             kApfsChunkInfoEntryStride);
     return le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
 }
 
@@ -25778,8 +25783,8 @@ quint64 PartitionApfsWriter::readGeneratedChunkFreeCount(const QString& image_pa
         return 0;
     }
     const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                            static_cast<qsizetype>(chunk_index % kApfsSpacemanChunksPerCib) *
-                                kApfsChunkInfoEntryStride;
+                            (static_cast<qsizetype>(chunk_index % kApfsSpacemanChunksPerCib) *
+                             kApfsChunkInfoEntryStride);
     return le32(cib, entry + kApfsChunkInfoEntryFreeCountOffset);
 }
 

@@ -61,9 +61,9 @@ void applyCompactQueueButton(QPushButton* button, const QString& style) {
 
 AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     : QWidget(parent)
+    , m_list_manager(std::make_unique<PackageListManager>())
     , m_choco_manager(std::make_shared<ChocolateyManager>())
     , m_worker(std::make_shared<AppInstallationWorker>(m_choco_manager))
-    , m_list_manager(std::make_unique<PackageListManager>())
     , m_offline_worker(std::make_unique<OfflineDeploymentWorker>()) {
     sak::logInfo("[AppInstallationPanel] constructing");
     sak::logInfo("[AppInstallationPanel] setupUi start");

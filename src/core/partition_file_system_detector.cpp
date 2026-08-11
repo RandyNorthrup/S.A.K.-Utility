@@ -1049,7 +1049,7 @@ QStringList apfsVolumeOids(const QByteArray& bytes, uint32_t maxFileSystems) {
     const uint32_t boundedCount = std::min<uint32_t>(maxFileSystems, kApfsFileSystemOidCount);
     for (uint32_t index = 0; index < boundedCount; ++index) {
         const qsizetype offset = kApfsFileSystemOidArrayOffset +
-                                 static_cast<qsizetype>(index) * kUint64Size;
+                                 (static_cast<qsizetype>(index) * kUint64Size);
         const uint64_t oid = littleEndian64(bytes, offset);
         if (oid != 0) {
             oids.append(QStringLiteral("%1:%2").arg(index).arg(oid));
@@ -1082,7 +1082,7 @@ void appendApfsContainerObjectReferences(std::vector<ApfsObjectReference>* refer
     const uint32_t boundedCount = std::min<uint32_t>(maxFileSystems, kApfsFileSystemOidCount);
     for (uint32_t index = 0; index < boundedCount; ++index) {
         const qsizetype offset = kApfsFileSystemOidArrayOffset +
-                                 static_cast<qsizetype>(index) * kUint64Size;
+                                 (static_cast<qsizetype>(index) * kUint64Size);
         appendApfsObjectReference(references,
                                   QStringLiteral("volume OID slot %1").arg(index),
                                   littleEndian64(bytes, offset));

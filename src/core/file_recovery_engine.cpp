@@ -537,7 +537,7 @@ void appendScanCandidates(const QByteArray& data,
     // ~= its data size in total; bound the cumulative forward-scan to a small multiple
     // of that so a hostile image fails closed to a partial result instead of pinning
     // the CPU -- independent of whether a cancel deadline was supplied (B8-14).
-    const uint64_t work_budget = static_cast<uint64_t>(data.size()) * kScanWorkBudgetFactor +
+    const uint64_t work_budget = (static_cast<uint64_t>(data.size()) * kScanWorkBudgetFactor) +
                                  kScanWorkBudgetFloorBytes;
     uint64_t work = 0;
     for (qsizetype offset = 0;

@@ -598,8 +598,8 @@ QString ocrLocateText(const QJsonObject& args, int& center_x, int& center_y) {
     if (matches.isEmpty()) {
         return QStringLiteral("Text not found on screen: %1").arg(text.trimmed());
     }
-    center_x = matches.first().x + matches.first().w / kCenterHalfDivisor;
-    center_y = matches.first().y + matches.first().h / kCenterHalfDivisor;
+    center_x = matches.first().x + (matches.first().w / kCenterHalfDivisor);
+    center_y = matches.first().y + (matches.first().h / kCenterHalfDivisor);
     return {};
 }
 

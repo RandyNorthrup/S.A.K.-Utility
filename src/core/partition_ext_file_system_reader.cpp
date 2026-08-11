@@ -999,7 +999,7 @@ private:
         const uint16_t entries = le16(node, kExtentHeaderEntriesOffset);
         const uint16_t depth = le16(node, kExtentHeaderDepthOffset);
         for (uint16_t index = 0; index < entries; ++index) {
-            const qsizetype offset = kExtentHeaderBytes + index * kExtentRecordBytes;
+            const qsizetype offset = kExtentHeaderBytes + (index * kExtentRecordBytes);
             if (depth == 0) {
                 if (!appendLeafExtent(node, offset, extents)) {
                     return false;

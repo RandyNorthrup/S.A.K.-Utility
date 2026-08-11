@@ -3823,39 +3823,43 @@ QHash<int, PartitionScriptBuilder::Builder> PartitionScriptBuilder::buildOperati
 }
 
 void PartitionScriptBuilder::appendCoreBuilders(QHash<int, Builder>* builders) {
-    builders->insert(static_cast<int>(PartitionOperationType::Create), &buildCreateScript);
-    builders->insert(static_cast<int>(PartitionOperationType::Delete), &buildDeleteScript);
-    builders->insert(static_cast<int>(PartitionOperationType::Format), &buildFormatScript);
+    builders->insert(static_cast<int>(PartitionOperationType::Create),
+                     &PartitionScriptBuilder::buildCreateScript);
+    builders->insert(static_cast<int>(PartitionOperationType::Delete),
+                     &PartitionScriptBuilder::buildDeleteScript);
+    builders->insert(static_cast<int>(PartitionOperationType::Format),
+                     &PartitionScriptBuilder::buildFormatScript);
     builders->insert(static_cast<int>(PartitionOperationType::SetDriveLetter),
-                     &buildSetDriveLetterScript);
+                     &PartitionScriptBuilder::buildSetDriveLetterScript);
     builders->insert(static_cast<int>(PartitionOperationType::SetPartitionLabel),
-                     &buildSetPartitionLabelScript);
+                     &PartitionScriptBuilder::buildSetPartitionLabelScript);
     builders->insert(static_cast<int>(PartitionOperationType::CheckFileSystem),
-                     &buildCheckFileSystemScript);
+                     &PartitionScriptBuilder::buildCheckFileSystemScript);
     builders->insert(static_cast<int>(PartitionOperationType::SurfaceTest),
-                     &buildSurfaceTestScript);
+                     &PartitionScriptBuilder::buildSurfaceTestScript);
 }
 
 void PartitionScriptBuilder::appendLayoutBuilders(QHash<int, Builder>* builders) {
     builders->insert(static_cast<int>(PartitionOperationType::PartitionRecoveryScan),
-                     &buildPartitionRecoveryScanScript);
+                     &PartitionScriptBuilder::buildPartitionRecoveryScanScript);
     builders->insert(static_cast<int>(PartitionOperationType::RestoreRecoveredPartition),
-                     &buildRestoreRecoveredPartitionScript);
+                     &PartitionScriptBuilder::buildRestoreRecoveredPartitionScript);
     builders->insert(static_cast<int>(PartitionOperationType::SetPartitionHidden),
-                     &buildSetPartitionHiddenScript);
+                     &PartitionScriptBuilder::buildSetPartitionHiddenScript);
     builders->insert(static_cast<int>(PartitionOperationType::SetPartitionActive),
-                     &buildSetPartitionActiveScript);
+                     &PartitionScriptBuilder::buildSetPartitionActiveScript);
     builders->insert(static_cast<int>(PartitionOperationType::SetPartitionTypeId),
-                     &buildSetPartitionTypeIdScript);
+                     &PartitionScriptBuilder::buildSetPartitionTypeIdScript);
     builders->insert(static_cast<int>(PartitionOperationType::InitializeDisk),
-                     &buildInitializeDiskScript);
+                     &PartitionScriptBuilder::buildInitializeDiskScript);
     builders->insert(static_cast<int>(PartitionOperationType::DeleteAllPartitions),
-                     &buildDeleteAllPartitionsScript);
-    builders->insert(static_cast<int>(PartitionOperationType::Resize), &buildResizeScript);
+                     &PartitionScriptBuilder::buildDeleteAllPartitionsScript);
+    builders->insert(static_cast<int>(PartitionOperationType::Resize),
+                     &PartitionScriptBuilder::buildResizeScript);
     builders->insert(static_cast<int>(PartitionOperationType::AllocateFreeSpace),
-                     &buildAllocateFreeSpaceScript);
+                     &PartitionScriptBuilder::buildAllocateFreeSpaceScript);
     builders->insert(static_cast<int>(PartitionOperationType::ConvertPartitionStyle),
-                     &buildConvertStyleScript);
+                     &PartitionScriptBuilder::buildConvertStyleScript);
     builders->insert(static_cast<int>(PartitionOperationType::Merge), &buildMergeScript);
     builders->insert(static_cast<int>(PartitionOperationType::Split), &buildSplitScript);
 }

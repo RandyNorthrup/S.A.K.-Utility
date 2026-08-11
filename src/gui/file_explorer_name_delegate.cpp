@@ -103,7 +103,7 @@ void FileExplorerNameDelegate::paint(QPainter* painter,
     constexpr int kChevronMargin = 4;
     QStyleOption arrow;
     arrow.rect = QRect(option.rect.right() - kChevronEdge - kChevronMargin,
-                       option.rect.center().y() - kChevronEdge / kCenteringDivisor,
+                       option.rect.center().y() - (kChevronEdge / kCenteringDivisor),
                        kChevronEdge,
                        kChevronEdge);
     arrow.state = option.state;
@@ -140,13 +140,13 @@ QRect paintCardFrameAndIcon(QPainter* painter,
     if (!icon.isNull()) {
         const QSize icon_size = option.decorationSize;
         icon.paint(painter,
-                   QRect(card.left() + (box - icon_size.width()) / kCenteringDivisor,
-                         card.top() + (box - icon_size.height()) / kCenteringDivisor,
+                   QRect(card.left() + ((box - icon_size.width()) / kCenteringDivisor),
+                         card.top() + ((box - icon_size.height()) / kCenteringDivisor),
                          icon_size.width(),
                          icon_size.height()));
     }
     return {card.left() + box + kDetailsSpacing,
-            card.top() + kDetailsSpacing / kCenteringDivisor,
+            card.top() + (kDetailsSpacing / kCenteringDivisor),
             card.width() - box - kDetailsSpacing - kDetailsSpacing,
             card.height() - kDetailsSpacing};
 }

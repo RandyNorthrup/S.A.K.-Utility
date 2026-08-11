@@ -1757,7 +1757,8 @@ std::expected<QByteArray, error_code> PstParser::readDataTreeGuarded(uint64_t bi
     // comes from the BBT), so a small block can claim a large count. Reject any
     // count whose entries would run past the block before reading child bids.
     const int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
-    if (static_cast<int64_t>(kBlockTreeHeaderSize) + static_cast<int64_t>(entry_count) * bid_size >
+    if (static_cast<int64_t>(kBlockTreeHeaderSize) +
+            (static_cast<int64_t>(entry_count) * bid_size) >
         data.size()) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
@@ -2325,7 +2326,7 @@ QVector<uint32_t> PstParser::fallbackTcRowIndices(int block_count, int rows_per_
     indices.reserve(block_count * rows_per_block);
     for (int b = 0; b < block_count; ++b) {
         for (int r = 0; r < rows_per_block; ++r) {
-            indices.append(static_cast<uint32_t>(b * rows_per_block + r));
+            indices.append(static_cast<uint32_t>((b * rows_per_block) + r));
         }
     }
     return indices;
@@ -2368,7 +2369,7 @@ int PstParser::tcRowOffset(const TcRowMatrix& matrix,
     const int row_in_block = static_cast<int>(row_in_block_u);
     const int block_start = (block_i == 0) ? 0 : matrix.block_ends[block_i - 1];
     const int block_end = matrix.block_ends[block_i];
-    const int off = block_start + row_in_block * row_size;
+    const int off = block_start + (row_in_block * row_size);
     if (off < 0 || off + row_size > block_end) {
         return -1;
     }
@@ -2410,7 +2411,7 @@ QVector<uint32_t> PstParser::extractTcRowIndicesFromLeaf(const QByteArray& leaf)
     live_row_indices.reserve(record_count);
     for (int rec = 0; rec < record_count; ++rec) {
         live_row_indices.append(
-            readLE<uint32_t>(leaf, rec * kTcRowIdRecordSize + kBthRowIdValueOffset));
+            readLE<uint32_t>(leaf, (rec * kTcRowIdRecordSize) + kBthRowIdValueOffset));
     }
     return live_row_indices;
 }

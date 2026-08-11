@@ -22,9 +22,9 @@ QByteArray fingerprint(const QByteArray& bgra, int width, int height) {
         for (int gx = 0; gx < kFingerprintGrid; ++gx) {
             const int sx = std::min(width - 1, gx * width / kFingerprintGrid);
             const int sy = std::min(height - 1, gy * height / kFingerprintGrid);
-            const qsizetype idx = (static_cast<qsizetype>(sy) * width + sx) * 4;
+            const qsizetype idx = ((static_cast<qsizetype>(sy) * width) + sx) * 4;
             const int gray = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
-            fp[gy * kFingerprintGrid + gx] = static_cast<char>(gray);
+            fp[(gy * kFingerprintGrid) + gx] = static_cast<char>(gray);
         }
     }
     return fp;

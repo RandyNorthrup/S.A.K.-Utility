@@ -168,7 +168,7 @@ FileExplorerViewMode fileExplorerAdjacentLayout(const FileExplorerViewMode mode,
     const auto it = std::find(kLayoutRing.begin(), kLayoutRing.end(), current);
     const auto position = static_cast<int>(it - kLayoutRing.begin());
     const auto count = static_cast<int>(kLayoutRing.size());
-    const int next = ((position + (forward ? 1 : -1)) % count + count) % count;
+    const int next = (((position + (forward ? 1 : -1)) % count) + count) % count;
     return kLayoutRing.at(static_cast<size_t>(next));
 }
 

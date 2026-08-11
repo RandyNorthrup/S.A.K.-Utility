@@ -47,7 +47,7 @@ bool hasNonAscii(const QString& value) {
 QByteArray base64Wrapped(const QByteArray& data) {
     const QByteArray b64 = data.toBase64();
     QByteArray out;
-    out.reserve(b64.size() + b64.size() / kMimeBase64LineLength + kCrlfLength);
+    out.reserve(b64.size() + (b64.size() / kMimeBase64LineLength) + kCrlfLength);
     for (qsizetype i = 0; i < b64.size(); i += kMimeBase64LineLength) {
         out.append(b64.mid(i, kMimeBase64LineLength));
         out.append("\r\n");

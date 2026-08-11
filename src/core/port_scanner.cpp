@@ -203,7 +203,7 @@ TcpProbeResult runTcpProbe(const QString& target,
     // failure -- started() never runs, so nothing ever releases `done` -- can leave it
     // unsignalled, and an unconditional acquire would then hang this scan thread forever.
     // Fail closed: give up after a budget that already exceeds the probe's own timeouts.
-    const int waitBudgetMs = connectTimeoutMs + 2 * bannerTimeoutMs + kProbeThreadStartGraceMs;
+    const int waitBudgetMs = connectTimeoutMs + (2 * bannerTimeoutMs) + kProbeThreadStartGraceMs;
     if (!done.tryAcquire(1, waitBudgetMs)) {
         result.timed_out = true;
         result.error_message = QStringLiteral("Probe thread did not start");

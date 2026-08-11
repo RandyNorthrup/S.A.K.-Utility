@@ -128,7 +128,7 @@ void ScreenshotSettingsAction::execute() {
             return;
         }
 
-        int progress = progress::kStep5 + (processed * progress::kStep90) / settings_pages.size();
+        int progress = progress::kStep5 + ((processed * progress::kStep90) / settings_pages.size());
         Q_EMIT executionProgress(QString("Capturing %1...").arg(it.value()), progress);
 
         if (captureSettingsPage(it.key(), it.value(), output_dir.absolutePath(), timestamp)) {
@@ -308,9 +308,9 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
             return false;
         }
 
-        const int wait_time = kSettingsCaptureInitialWaitMs +
-                              (attempt - kSettingsCaptureFirstAttempt) *
-                                  kSettingsCaptureRetryWaitMs;
+        const int wait_time =
+            kSettingsCaptureInitialWaitMs +
+            ((attempt - kSettingsCaptureFirstAttempt) * kSettingsCaptureRetryWaitMs);
         QThread::msleep(wait_time);
 
         if (!isProcessRunning("SystemSettings.exe")) {

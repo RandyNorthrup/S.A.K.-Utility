@@ -118,7 +118,7 @@ FileExplorerGroupInfo monthAndYearDateGroup(const QDate& date,
                                             const FileExplorerGroupDateUnit unit) {
     const qint64 year_delta = static_cast<qint64>(today.year()) - date.year();
     const qint64 month_diff = std::clamp<qint64>(
-        year_delta * kMonthsPerYear + (today.month() - date.month()), 0, kMaxDateSortIndex);
+        (year_delta * kMonthsPerYear) + (today.month() - date.month()), 0, kMaxDateSortIndex);
     if (month_diff == 0) {
         return {trGroup("Earlier this month"), kSortEarlierThisMonth};
     }

@@ -645,7 +645,7 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
         return 0.0;
     }
 
-    int match_distance = std::max(len1, len2) / kJaroMatchWindowDivisor - 1;
+    int match_distance = (std::max(len1, len2) / kJaroMatchWindowDivisor) - 1;
     if (match_distance < 1) {
         match_distance = 1;
     }
@@ -671,7 +671,7 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
 
     constexpr double kJaroParts = 3.0;
     const double jaro = ((double(matches) / len1) + (double(matches) / len2) +
-                         ((matches - transpositions / 2.0) / matches)) /
+                         ((matches - (transpositions / 2.0)) / matches)) /
                         kJaroParts;
 
     constexpr double kWinklerScaling = 0.1;

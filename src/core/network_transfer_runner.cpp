@@ -61,7 +61,7 @@ public:
         auto* timeout_timer = createTimeoutTimer(reply);
         auto* cancel_timer = createCancelTimer(reply);
         connectProgress(reply);
-        QObject::connect(reply, &QNetworkReply::finished, this, [=]() {
+        QObject::connect(reply, &QNetworkReply::finished, this, [=, this]() {
             finish(reply, timeout_timer, cancel_timer);
         });
     }

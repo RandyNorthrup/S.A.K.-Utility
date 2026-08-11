@@ -57,7 +57,11 @@ try {
     if ($kept.Count -eq 0) { throw "No first-party entries found in $db." }
     $fpDir = Join-Path $Root $FirstPartyDir
     New-Item -ItemType Directory -Force -Path $fpDir | Out-Null
-    $kept | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $fpDir "compile_commands.json") -Encoding UTF8
+    # Write UTF-8 WITHOUT a BOM: Windows PowerShell's -Encoding UTF8 prepends a BOM, and
+    # run-clang-tidy's json.load then fails with 'Expecting value: line 1 column 1'.
+    $json = $kept | ConvertTo-Json -Depth 6
+    [System.IO.File]::WriteAllText((Join-Path $fpDir "compile_commands.json"), $json,
+        [System.Text.UTF8Encoding]::new($false))
     Write-Host "first-party translation units: $($kept.Count)"
 
     # Locate the developer environment and the LLVM tools.
@@ -66,14 +70,15 @@ try {
     $vcvars = Join-Path $vsRoot "VC\Auxiliary\Build\vcvars64.bat"
     $runTidy = "${env:ProgramFiles}\LLVM\bin\run-clang-tidy"
     $tidyBin = "${env:ProgramFiles}\LLVM\bin\clang-tidy.exe"
-    foreach ($t in @($vcvars, $tidyBin)) {
+    $applyBin = "${env:ProgramFiles}\LLVM\bin\clang-apply-replacements.exe"
+    foreach ($t in @($vcvars, $tidyBin, $applyBin)) {
         if (-not (Test-Path $t)) { throw "required tool missing: $t" }
     }
 
     if (-not $LogPath) { $LogPath = Join-Path $Root "$FirstPartyDir/clang-tidy.log" }
     $tidyArgs = "-p `"$fpDir`" -clang-tidy-binary `"$tidyBin`" -j $Jobs -quiet"
     if ($Checks) { $tidyArgs += " -checks=`"-*,$Checks`"" }
-    if ($Fix) { $tidyArgs += " -fix" }
+    if ($Fix) { $tidyArgs += " -fix -clang-apply-replacements-binary `"$applyBin`"" }
 
     $cmd = "call `"$vcvars`" >nul 2>&1 && python `"$runTidy`" $tidyArgs"
     Write-Host "running clang-tidy (checks='$Checks' fix=$Fix) -> $LogPath"

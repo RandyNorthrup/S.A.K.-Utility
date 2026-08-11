@@ -443,8 +443,8 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
         const qint64 totalBytes = storage.bytesTotal();
         const double usedPercent =
             totalBytes > 0
-                ? kPercentMaxF * (1.0 - static_cast<double>(storage.bytesFree()) /
-                                            static_cast<double>(totalBytes))
+                ? kPercentMaxF * (1.0 - (static_cast<double>(storage.bytesFree()) /
+                                         static_cast<double>(totalBytes)))
                 : 0.0;  // guard divide-by-zero: an unknown-capacity volume reports 0% used
         section += QString("  Used: %1%%\n\n").arg(usedPercent, 0, 'f', kPercentDisplayPrecision);
     }

@@ -193,9 +193,9 @@ private:
 
         for (int row = 0; row < kMonthGridRows; ++row) {
             for (int col = 0; col < kDaysPerWeek; ++col) {
-                QDate day = grid_start.addDays(row * kDaysPerWeek + col);
+                QDate day = grid_start.addDays((row * kDaysPerWeek) + col);
                 int left = col * col_width;
-                int top = email::kCalendarDayHeaderHeight + row * row_height;
+                int top = email::kCalendarDayHeaderHeight + (row * row_height);
                 QRect cell_rect(left, top, col_width, row_height);
                 drawDayCell(painter, cell_rect, day);
             }
@@ -243,8 +243,9 @@ private:
         if (is_today) {
             int circle_diam = email::kCalendarDayLabelHeight - kTodayCircleInsetPx;
             int cx = rect.left() + email::kCalendarCellPadding +
-                     circle_diam / kGeometryHalfDivisor + kTodayCircleCenterAdjustPx;
-            int cy = rect.top() + email::kCalendarCellPadding + circle_diam / kGeometryHalfDivisor;
+                     (circle_diam / kGeometryHalfDivisor) + kTodayCircleCenterAdjustPx;
+            int cy = rect.top() + email::kCalendarCellPadding +
+                     (circle_diam / kGeometryHalfDivisor);
             painter.setPen(Qt::NoPen);
             painter.setBrush(QColor(ui::kColorPrimary));
             painter.drawEllipse(QPoint(cx, cy),
@@ -268,7 +269,7 @@ private:
         const auto& events = *iter;
         int bar_top = rect.top() + email::kCalendarDayLabelHeight + email::kCalendarCellPadding;
         int bar_left = rect.left() + email::kCalendarCellPadding;
-        int bar_width = rect.width() - kCellPaddingBothSidesFactor * email::kCalendarCellPadding;
+        int bar_width = rect.width() - (kCellPaddingBothSidesFactor * email::kCalendarCellPadding);
         int max_bars = std::min(static_cast<int>(events.size()), email::kCalendarMaxVisibleBars);
         int space_per_bar = email::kCalendarEventBarHeight + email::kCalendarBarGap;
 
@@ -278,7 +279,7 @@ private:
         }
 
         for (int idx = 0; idx < max_bars; ++idx) {
-            int top = bar_top + idx * space_per_bar;
+            int top = bar_top + (idx * space_per_bar);
             if (top + email::kCalendarEventBarHeight > rect.bottom()) {
                 break;
             }
@@ -290,7 +291,7 @@ private:
         if (need_more) {
             int more_count = events.size() - max_bars;
             drawMoreLabel(
-                painter, more_count, bar_left, bar_top + max_bars * space_per_bar, bar_width);
+                painter, more_count, bar_left, bar_top + (max_bars * space_per_bar), bar_width);
         }
     }
 
@@ -383,7 +384,7 @@ private:
         QDate first_of_month(m_date.year(), m_date.month(), 1);
         int start_dow = first_of_month.dayOfWeek() % kDaysPerWeek;
         QDate grid_start = first_of_month.addDays(-start_dow);
-        return grid_start.addDays(row * kDaysPerWeek + col);
+        return grid_start.addDays((row * kDaysPerWeek) + col);
     }
 
     struct HitRect {
@@ -424,7 +425,7 @@ public:
     [[nodiscard]] int totalHeight() const {
         int hours = email::kCalendarDayEndHour - email::kCalendarDayStartHour;
         return email::kCalendarDayHeaderHeight + email::kCalendarAllDayRowHeight +
-               hours * email::kCalendarHourHeight;
+               (hours * email::kCalendarHourHeight);
     }
 
 Q_SIGNALS:
@@ -487,14 +488,14 @@ private:
     }
 
     [[nodiscard]] int columnLeft(int col) const {
-        return email::kCalendarTimeColumnWidth + col * columnWidth();
+        return email::kCalendarTimeColumnWidth + (col * columnWidth());
     }
 
     [[nodiscard]] int timeToY(const QTime& time) const {
         int top_offset = email::kCalendarDayHeaderHeight + email::kCalendarAllDayRowHeight;
-        int minutes = time.hour() * kMinutesPerHour + time.minute() -
-                      email::kCalendarDayStartHour * kMinutesPerHour;
-        return top_offset + (minutes * email::kCalendarHourHeight) / kMinutesPerHour;
+        int minutes = (time.hour() * kMinutesPerHour) + time.minute() -
+                      (email::kCalendarDayStartHour * kMinutesPerHour);
+        return top_offset + ((minutes * email::kCalendarHourHeight) / kMinutesPerHour);
     }
 
     [[nodiscard]] QDate dayAtColumn(int px) const {
@@ -548,7 +549,7 @@ private:
 
         for (int hour = 0; hour <= hours; ++hour) {
             int display_hour = email::kCalendarDayStartHour + hour;
-            int row_y = top_base + hour * email::kCalendarHourHeight;
+            int row_y = top_base + (hour * email::kCalendarHourHeight);
 
             drawHourRow(painter, display_hour, row_y);
         }
@@ -562,7 +563,7 @@ private:
 
         // Half-hour dashed line
         if (hour < email::kCalendarDayEndHour) {
-            int half_y = row_y + email::kCalendarHourHeight / kGeometryHalfDivisor;
+            int half_y = row_y + (email::kCalendarHourHeight / kGeometryHalfDivisor);
             QColor half_color = QColor(ui::kColorBorderDefault).lighter(kHalfHourLineLightness);
             painter.setPen(QPen(half_color, 1, Qt::DotLine));
             painter.drawLine(email::kCalendarTimeColumnWidth, half_y, width(), half_y);
@@ -589,10 +590,10 @@ private:
     }
 
     void drawWorkHoursBackground(QPainter& painter, int top_base) {
-        int work_top = top_base + (email::kCalendarWorkStartHour - email::kCalendarDayStartHour) *
-                                      email::kCalendarHourHeight;
-        int work_bot = top_base + (email::kCalendarWorkEndHour - email::kCalendarDayStartHour) *
-                                      email::kCalendarHourHeight;
+        int work_top = top_base + ((email::kCalendarWorkStartHour - email::kCalendarDayStartHour) *
+                                   email::kCalendarHourHeight);
+        int work_bot = top_base + ((email::kCalendarWorkEndHour - email::kCalendarDayStartHour) *
+                                   email::kCalendarHourHeight);
 
         for (int col = 0; col < columnCount(); ++col) {
             int left = columnLeft(col);

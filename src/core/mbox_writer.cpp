@@ -198,7 +198,7 @@ QString encodedDisplayName(const QString& name) {
 QByteArray base64Wrapped(const QByteArray& data) {
     const QByteArray b64 = data.toBase64();
     QByteArray out;
-    out.reserve(b64.size() + b64.size() / kMimeBase64LineLength + kBase64ReserveSlackBytes);
+    out.reserve(b64.size() + (b64.size() / kMimeBase64LineLength) + kBase64ReserveSlackBytes);
     for (qsizetype i = 0; i < b64.size(); i += kMimeBase64LineLength) {
         out.append(b64.mid(i, kMimeBase64LineLength));
         out.append("\r\n");
@@ -368,8 +368,8 @@ qint64 estimatedEntryBytes(const PstItemDetail& item,
     total = addSaturating(total,
                           static_cast<qint64>(item.body_html.size()) * kUtf8WorstBytesPerUnit);
     for (const auto& attachment : attachments) {
-        const qint64 encoded = static_cast<qint64>(attachment.second.size()) /
-                                   kBase64GrowthDenominator * kBase64GrowthNumerator +
+        const qint64 encoded = (static_cast<qint64>(attachment.second.size()) /
+                                kBase64GrowthDenominator * kBase64GrowthNumerator) +
                                kMimeBase64LineLength;
         total = addSaturating(total, encoded);
     }

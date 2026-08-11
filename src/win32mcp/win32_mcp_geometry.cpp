@@ -39,8 +39,8 @@ double inverseScale(double scale) {
 }
 
 AbsBox mapWordBox(const WordRectF& rect, long origin_x, long origin_y, double inv) {
-    return AbsBox{static_cast<int>(std::llround(origin_x + rect.x * inv)),
-                  static_cast<int>(std::llround(origin_y + rect.y * inv)),
+    return AbsBox{static_cast<int>(std::llround(origin_x + (rect.x * inv))),
+                  static_cast<int>(std::llround(origin_y + (rect.y * inv))),
                   static_cast<int>(std::llround(rect.w * inv)),
                   static_cast<int>(std::llround(rect.h * inv))};
 }

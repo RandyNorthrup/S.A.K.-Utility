@@ -113,8 +113,8 @@ protected:
 
         // Draw a custom checkbox that matches the table indicator stylesheet tokens.
         constexpr int side = sak::ui::kUiIconSmall;
-        const int cx = rect.x() + (rect.width() - side) / 2;
-        const int cy = rect.y() + (rect.height() - side) / 2;
+        const int cx = rect.x() + ((rect.width() - side) / 2);
+        const int cy = rect.y() + ((rect.height() - side) / 2);
         const QRect cbRect(cx, cy, side, side);
 
         painter->save();
@@ -1518,7 +1518,7 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
 
     int currentIdx = 0;
 
-    auto updatePage = [this, &sources, &ui](int idx) {
+    auto updatePage = [&sources, &ui](int idx) {
         Q_ASSERT(idx >= 0);
         Q_ASSERT(idx < sources.size());
 
@@ -2066,7 +2066,7 @@ static void drawQrModules(QImage& out, const QString& payload, int imageSize) {
     const int modules = qr.getSize();
     // The quiet zone (BORDER) around the QR is required by the spec so
     // scanners can reliably detect the code boundaries.
-    const int totalModules = modules + BORDER * 2;
+    const int totalModules = modules + (BORDER * 2);
     const double cellSize = static_cast<double>(imageSize) / totalModules;
 
     QPainter painter(&out);

@@ -166,9 +166,9 @@ QByteArray xtsTransformUnit(const QByteArray& key1,
     QByteArray masked(unitData.size(), 0);
     QByteArray tweakStream(unitData.size(), 0);
     for (int j = 0; j < blocks; ++j) {
-        std::memcpy(tweakStream.data() + j * 16, tj.constData(), 16);
+        std::memcpy(tweakStream.data() + (j * 16), tj.constData(), 16);
         for (int k = 0; k < 16; ++k) {
-            masked[j * 16 + k] = static_cast<char>(unitData[j * 16 + k] ^ tj[k]);
+            masked[(j * 16) + k] = static_cast<char>(unitData[(j * 16) + k] ^ tj[k]);
         }
         tj = gf128MulAlpha(tj);
     }
@@ -204,7 +204,7 @@ QByteArray xtsTransform(const QByteArray& xtsKey,
         if (r.size() != unitBytes) {
             return {};
         }
-        std::memcpy(out.data() + static_cast<qsizetype>(u) * unitBytes, r.constData(), unitBytes);
+        std::memcpy(out.data() + (static_cast<qsizetype>(u) * unitBytes), r.constData(), unitBytes);
     }
     return out;
 }
@@ -310,15 +310,15 @@ QByteArray aesKeyWrap(const QByteArray& kek, const QByteArray& plaintextKey) {
     for (int j = 0; j < 6; ++j) {
         for (int i = 1; i <= n; ++i) {
             std::memcpy(buf.data(), a.constData(), 8);
-            std::memcpy(buf.data() + 8, r.constData() + (i - 1) * 8, 8);
+            std::memcpy(buf.data() + 8, r.constData() + ((i - 1) * 8), 8);
             const QByteArray b = aesEcbBlock(kek, buf, true);
             if (b.size() != 16) {
                 return {};
             }
             std::memcpy(a.data(), b.constData(), 8);
             xorCounter(reinterpret_cast<unsigned char*>(a.data()),
-                       static_cast<uint64_t>(n) * j + i);
-            std::memcpy(r.data() + (i - 1) * 8, b.constData() + 8, 8);
+                       (static_cast<uint64_t>(n) * j) + i);
+            std::memcpy(r.data() + ((i - 1) * 8), b.constData() + 8, 8);
         }
     }
     QByteArray out;
@@ -345,14 +345,14 @@ std::optional<QByteArray> aesKeyUnwrap(const QByteArray& kek, const QByteArray& 
         for (int i = n; i >= 1; --i) {
             std::memcpy(buf.data(), a.constData(), 8);
             xorCounter(reinterpret_cast<unsigned char*>(buf.data()),
-                       static_cast<uint64_t>(n) * j + i);
-            std::memcpy(buf.data() + 8, r.constData() + (i - 1) * 8, 8);
+                       (static_cast<uint64_t>(n) * j) + i);
+            std::memcpy(buf.data() + 8, r.constData() + ((i - 1) * 8), 8);
             const QByteArray b = aesEcbBlock(kek, buf, false);
             if (b.size() != 16) {
                 return std::nullopt;
             }
             std::memcpy(a.data(), b.constData(), 8);
-            std::memcpy(r.data() + (i - 1) * 8, b.constData() + 8, 8);
+            std::memcpy(r.data() + ((i - 1) * 8), b.constData() + 8, 8);
         }
     }
     for (char byte : a) {
