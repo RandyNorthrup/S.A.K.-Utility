@@ -277,17 +277,17 @@ void NuGetDependencyResolver::resolveDequeued(const QueueItem& item,
         return;
     }
 
-    ResolvedPackage resolved;
-    resolved.package_id = item.id;
-    resolved.version = chosen->version;
-    resolved.version_range = item.version_range;
-    resolved.depth = item.depth;
+    ResolvedPackage resolved_pkg;
+    resolved_pkg.package_id = item.id;
+    resolved_pkg.version = chosen->version;
+    resolved_pkg.version_range = item.version_range;
+    resolved_pkg.depth = item.depth;
     for (const NuGetDependency& dep : chosen->dependencies) {
         if (!dep.id.isEmpty()) {
-            resolved.dependencies.append(dep.id);
+            resolved_pkg.dependencies.append(dep.id);
         }
     }
-    m_resolved.append(resolved);
+    m_resolved.append(resolved_pkg);
 
     // Cache this package's feed + item so a constraint discovered later (a diamond
     // edge) can re-run selection against it without a network refetch.

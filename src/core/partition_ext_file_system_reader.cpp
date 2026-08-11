@@ -669,10 +669,10 @@ private:
     }
 
     [[nodiscard]] std::optional<ExtInode> resolvePath(const QString& path) {
-        QStringList blockers;
-        const QStringList parts = pathParts(path, &blockers);
-        if (!blockers.isEmpty()) {
-            m_blockers.append(blockers);
+        QStringList local_blockers;
+        const QStringList parts = pathParts(path, &local_blockers);
+        if (!local_blockers.isEmpty()) {
+            m_blockers.append(local_blockers);
             return std::nullopt;
         }
 
@@ -702,8 +702,8 @@ private:
     }
 
     [[nodiscard]] QString normalizedDisplayPath(const QString& path) const {
-        QStringList blockers;
-        const QStringList parts = pathParts(path, &blockers);
+        QStringList local_blockers;
+        const QStringList parts = pathParts(path, &local_blockers);
         if (parts.isEmpty()) {
             return QStringLiteral("/");
         }

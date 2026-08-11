@@ -330,17 +330,18 @@ void FileExplorerGroupProxyModel::rebuildGroups() {
     // bucket (Files: grouping and sorting are orthogonal).
     QVector<GroupBucket> buckets;
     for (int row = 0; row < count; ++row) {
-        const QModelIndex index = source->index(row, FileExplorerItemModel::NameColumn);
+        const QModelIndex src_index = source->index(row, FileExplorerItemModel::NameColumn);
         FileExplorerGroupSource group_source;
-        group_source.name = index.data(FileExplorerItemModel::EntryNameRole).toString();
-        group_source.type = index.data(FileExplorerItemModel::EntryTypeRole).toString();
-        group_source.size_bytes = index.data(FileExplorerItemModel::EntrySizeRole).toULongLong();
-        group_source.directory = index.data(FileExplorerItemModel::EntryDirectoryRole).toBool();
+        group_source.name = src_index.data(FileExplorerItemModel::EntryNameRole).toString();
+        group_source.type = src_index.data(FileExplorerItemModel::EntryTypeRole).toString();
+        group_source.size_bytes =
+            src_index.data(FileExplorerItemModel::EntrySizeRole).toULongLong();
+        group_source.directory = src_index.data(FileExplorerItemModel::EntryDirectoryRole).toBool();
         group_source.modified_time =
-            index.data(FileExplorerItemModel::EntryModifiedTimeRole).toDateTime();
+            src_index.data(FileExplorerItemModel::EntryModifiedTimeRole).toDateTime();
         group_source.created_time =
-            index.data(FileExplorerItemModel::EntryCreatedTimeRole).toDateTime();
-        group_source.tags = index.data(FileExplorerItemModel::EntryTagsRole).toStringList();
+            src_index.data(FileExplorerItemModel::EntryCreatedTimeRole).toDateTime();
+        group_source.tags = src_index.data(FileExplorerItemModel::EntryTagsRole).toStringList();
         const FileExplorerGroupInfo info =
             fileExplorerGroupInfo(group_source, m_option, m_date_unit, now);
         auto it = std::ranges::find_if(buckets,

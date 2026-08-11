@@ -580,31 +580,36 @@ AiTraceEvent TraceStore::event(const AiTraceEventSeed& seed) {
 }
 
 AiActivityEvent TraceStore::activityEvent(const AiActivityEventSeed& seed) {
-    AiActivityEvent event;
-    event.timestamp_utc = QDateTime::fromString(nowIso(), Qt::ISODateWithMs);
-    event.session_id = seed.session_id;
-    event.run_id = seed.run_id;
-    event.kind = seed.kind;
-    event.state = seed.state;
-    event.summary = seed.summary;
-    event.metadata = seed.metadata;
-    event.workflow_id = seed.metadata.value(QStringLiteral("workflow_id")).toString();
-    event.phase_id = seed.metadata.value(QStringLiteral("phase_id")).toString();
-    event.agent_id = seed.metadata.value(QStringLiteral("agent_id")).toString();
-    event.tool_name = seed.metadata.value(QStringLiteral("tool_name")).toString();
-    event.parent_id = seed.metadata.value(QStringLiteral("parent_id")).toString();
-    event.question_for_human = seed.metadata.value(QStringLiteral("question_for_human")).toString();
-    event.recovery_action = seed.metadata.value(QStringLiteral("recovery_action")).toString();
-    event.error = seed.metadata.value(QStringLiteral("error_message")).toString();
-    if (event.error.isEmpty()) {
-        event.error = seed.metadata.value(QStringLiteral("error")).toString();
+    AiActivityEvent activity_event;
+    activity_event.timestamp_utc = QDateTime::fromString(nowIso(), Qt::ISODateWithMs);
+    activity_event.session_id = seed.session_id;
+    activity_event.run_id = seed.run_id;
+    activity_event.kind = seed.kind;
+    activity_event.state = seed.state;
+    activity_event.summary = seed.summary;
+    activity_event.metadata = seed.metadata;
+    activity_event.workflow_id = seed.metadata.value(QStringLiteral("workflow_id")).toString();
+    activity_event.phase_id = seed.metadata.value(QStringLiteral("phase_id")).toString();
+    activity_event.agent_id = seed.metadata.value(QStringLiteral("agent_id")).toString();
+    activity_event.tool_name = seed.metadata.value(QStringLiteral("tool_name")).toString();
+    activity_event.parent_id = seed.metadata.value(QStringLiteral("parent_id")).toString();
+    activity_event.question_for_human =
+        seed.metadata.value(QStringLiteral("question_for_human")).toString();
+    activity_event.recovery_action =
+        seed.metadata.value(QStringLiteral("recovery_action")).toString();
+    activity_event.error = seed.metadata.value(QStringLiteral("error_message")).toString();
+    if (activity_event.error.isEmpty()) {
+        activity_event.error = seed.metadata.value(QStringLiteral("error")).toString();
     }
-    event.artifact_refs = stringListFromJson(seed.metadata.value(QStringLiteral("artifact_refs")));
-    if (event.artifact_refs.isEmpty()) {
-        event.artifact_refs = stringListFromJson(seed.metadata.value(QStringLiteral("artifacts")));
+    activity_event.artifact_refs =
+        stringListFromJson(seed.metadata.value(QStringLiteral("artifact_refs")));
+    if (activity_event.artifact_refs.isEmpty()) {
+        activity_event.artifact_refs =
+            stringListFromJson(seed.metadata.value(QStringLiteral("artifacts")));
     }
-    event.evidence_refs = stringListFromJson(seed.metadata.value(QStringLiteral("evidence_refs")));
-    return event;
+    activity_event.evidence_refs =
+        stringListFromJson(seed.metadata.value(QStringLiteral("evidence_refs")));
+    return activity_event;
 }
 
 }  // namespace sak::ai

@@ -11960,10 +11960,10 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsCatalogRecord> resolveCatalogPath(const QString& path) {
-        QStringList blockers;
-        const QStringList parts = hfsPathParts(path, &blockers);
-        if (!blockers.isEmpty()) {
-            m_blockers.append(blockers);
+        QStringList local_blockers;
+        const QStringList parts = hfsPathParts(path, &local_blockers);
+        if (!local_blockers.isEmpty()) {
+            m_blockers.append(local_blockers);
             return std::nullopt;
         }
         if (parts.isEmpty()) {
@@ -12017,8 +12017,8 @@ private:
     }
 
     [[nodiscard]] QString normalizedDisplayPath(const QString& path) const {
-        QStringList blockers;
-        const QStringList parts = hfsPathParts(path, &blockers);
+        QStringList local_blockers;
+        const QStringList parts = hfsPathParts(path, &local_blockers);
         if (parts.isEmpty()) {
             return QStringLiteral("/");
         }

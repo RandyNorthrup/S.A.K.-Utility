@@ -114,13 +114,13 @@ auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     m_result = CpuBenchmarkResult{};
     m_result.thread_count = std::thread::hardware_concurrency();
 
-    if (auto result = runSingleThreadBenchmarks(); !result) {
-        return result;
+    if (auto single_thread_result = runSingleThreadBenchmarks(); !single_thread_result) {
+        return single_thread_result;
     }
     updateDerivedMetrics();
 
-    if (auto result = runMultiThreadBenchmark(); !result) {
-        return result;
+    if (auto multi_thread_result = runMultiThreadBenchmark(); !multi_thread_result) {
+        return multi_thread_result;
     }
 
     reportProgress(kProgressStepScoring, kBenchmarkStepTotal, "Calculating scores...");

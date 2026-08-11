@@ -381,22 +381,22 @@ AiToolHealthRecord* AiToolHealthLedger::recordForUpdateUnlocked(const QString& n
             "AI tool health ledger is at its record ceiling; a new tool key is not tracked");
         return nullptr;
     }
-    auto& record = m_records[normalized_key];
-    record.key = normalized_key;
-    return &record;
+    auto& new_record = m_records[normalized_key];
+    new_record.key = normalized_key;
+    return &new_record;
 }
 
 void AiToolHealthLedger::recordSuccess(const QString& key, qint64 latency_ms, QDateTime now_utc) {
     const QMutexLocker locker(&m_mutex);
-    AiToolHealthRecord* record = recordForUpdateUnlocked(normalizeKey(key));
-    if (record == nullptr) {
+    AiToolHealthRecord* rec = recordForUpdateUnlocked(normalizeKey(key));
+    if (rec == nullptr) {
         return;
     }
-    record->last_success_utc = normalizedNow(now_utc);
-    record->last_latency_ms = std::clamp<qint64>(latency_ms, 0, kAiToolHealthMaxLatencyMs);
-    incrementSaturating(&record->success_count);
-    record->consecutive_failures = 0;
-    record->disabled_until_utc = {};
+    rec->last_success_utc = normalizedNow(now_utc);
+    rec->last_latency_ms = std::clamp<qint64>(latency_ms, 0, kAiToolHealthMaxLatencyMs);
+    incrementSaturating(&rec->success_count);
+    rec->consecutive_failures = 0;
+    rec->disabled_until_utc = {};
     persistIfConfigured();
 }
 
@@ -406,21 +406,21 @@ void AiToolHealthLedger::recordFailure(const QString& key,
                                        qint64 latency_ms,
                                        QDateTime now_utc) {
     const QMutexLocker locker(&m_mutex);
-    AiToolHealthRecord* record = recordForUpdateUnlocked(normalizeKey(key));
-    if (record == nullptr) {
+    AiToolHealthRecord* rec = recordForUpdateUnlocked(normalizeKey(key));
+    if (rec == nullptr) {
         return;
     }
     const QDateTime now = normalizedNow(now_utc);
-    record->last_failure_utc = now;
-    record->last_latency_ms = std::clamp<qint64>(latency_ms, 0, kAiToolHealthMaxLatencyMs);
-    record->last_failure_class = failure_class.trimmed().isEmpty()
-                                     ? QStringLiteral("tool_failed")
-                                     : failure_class.trimmed().left(kHealthErrorPreviewChars);
-    record->last_error_message = error_message.trimmed().left(kHealthErrorPreviewChars);
-    incrementSaturating(&record->failure_count);
-    incrementSaturating(&record->consecutive_failures);
-    if (record->consecutive_failures >= m_suppress_after_failures) {
-        record->disabled_until_utc = now.addMSecs(backoffMs(record->consecutive_failures));
+    rec->last_failure_utc = now;
+    rec->last_latency_ms = std::clamp<qint64>(latency_ms, 0, kAiToolHealthMaxLatencyMs);
+    rec->last_failure_class = failure_class.trimmed().isEmpty()
+                                  ? QStringLiteral("tool_failed")
+                                  : failure_class.trimmed().left(kHealthErrorPreviewChars);
+    rec->last_error_message = error_message.trimmed().left(kHealthErrorPreviewChars);
+    incrementSaturating(&rec->failure_count);
+    incrementSaturating(&rec->consecutive_failures);
+    if (rec->consecutive_failures >= m_suppress_after_failures) {
+        rec->disabled_until_utc = now.addMSecs(backoffMs(rec->consecutive_failures));
     }
     persistIfConfigured();
 }
@@ -478,16 +478,16 @@ bool AiToolHealthLedger::loadRecordsUnlocked(const QJsonObject& root, QString* e
     QHash<QString, AiToolHealthRecord> loaded;
     for (const auto& value : records) {
         bool record_ok = false;
-        const AiToolHealthRecord record = AiToolHealthRecord::fromJson(value.toObject(),
-                                                                       &record_ok);
-        if (!value.isObject() || !record_ok || !persistedRecordIsSane(record, now)) {
+        const AiToolHealthRecord parsed_record = AiToolHealthRecord::fromJson(value.toObject(),
+                                                                              &record_ok);
+        if (!value.isObject() || !record_ok || !persistedRecordIsSane(parsed_record, now)) {
             return refuse(QStringLiteral("a record is malformed or inconsistent"));
         }
-        if (loaded.contains(record.key)) {
-            return refuse(QStringLiteral("duplicate record key '%1'").arg(record.key));
+        if (loaded.contains(parsed_record.key)) {
+            return refuse(QStringLiteral("duplicate record key '%1'").arg(parsed_record.key));
         }
-        if (recordIsFresh(record, now)) {
-            loaded.insert(record.key, record);
+        if (recordIsFresh(parsed_record, now)) {
+            loaded.insert(parsed_record.key, parsed_record);
         }
     }
     m_records = std::move(loaded);
@@ -564,8 +564,8 @@ QJsonObject AiToolHealthLedger::snapshot() const {
 
 QJsonObject AiToolHealthLedger::snapshotUnlocked() const {
     QJsonArray records;
-    for (const auto& record : m_records) {
-        records.append(record.toJson());
+    for (const auto& rec : m_records) {
+        records.append(rec.toJson());
     }
     QJsonObject object;
     object[QStringLiteral("schema_version")] = 1;

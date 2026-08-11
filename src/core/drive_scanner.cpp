@@ -391,12 +391,12 @@ QString DriveScanner::descriptorString(const BYTE* buffer,
         return QString();  // Offset points outside the returned data -- would be an OOB read.
     }
     const DWORD max_len = limit - field_offset;
-    const char* start = reinterpret_cast<const char*>(buffer + field_offset);
+    const char* field_start = reinterpret_cast<const char*>(buffer + field_offset);
     DWORD len = 0;
-    while (len < max_len && start[len] != '\0') {
+    while (len < max_len && field_start[len] != '\0') {
         ++len;
     }
-    return QString::fromLatin1(start, static_cast<int>(len));
+    return QString::fromLatin1(field_start, static_cast<int>(len));
 }
 
 QString DriveScanner::getDriveName(int driveNumber) {

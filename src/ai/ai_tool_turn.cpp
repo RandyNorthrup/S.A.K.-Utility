@@ -115,9 +115,9 @@ AiToolTurn::AdvanceResult AiToolTurn::appendOutput(OpenAIFunctionOutput output) 
 
 QVector<OpenAIFunctionOutput> AiToolTurn::takeOutputs() {
     // swap (not move + clear) so m_outputs is left provably empty without a moved-from access.
-    QVector<OpenAIFunctionOutput> outputs;
-    outputs.swap(m_outputs);
-    return outputs;
+    QVector<OpenAIFunctionOutput> taken_outputs;
+    taken_outputs.swap(m_outputs);
+    return taken_outputs;
 }
 
 QJsonObject AiToolTurn::toJson(const QString& run_id) const {
@@ -133,17 +133,17 @@ QJsonObject AiToolTurn::toJson(const QString& run_id) const {
         state[QStringLiteral("run_id")] = run_id.trimmed();
     }
 
-    QJsonArray calls;
+    QJsonArray calls_array;
     for (const auto& call : m_calls) {
-        calls.append(functionCallToJson(call));
+        calls_array.append(functionCallToJson(call));
     }
-    state[QStringLiteral("calls")] = calls;
+    state[QStringLiteral("calls")] = calls_array;
 
-    QJsonArray outputs;
+    QJsonArray outputs_array;
     for (const auto& output : m_outputs) {
-        outputs.append(functionOutputToJson(output));
+        outputs_array.append(functionOutputToJson(output));
     }
-    state[QStringLiteral("outputs")] = outputs;
+    state[QStringLiteral("outputs")] = outputs_array;
 
     if (hasCurrentCall()) {
         state[QStringLiteral("current_call")] = functionCallToJson(m_calls.at(m_call_index));
@@ -227,22 +227,23 @@ bool AiToolTurn::restore(const QJsonObject& state, QString* error_message) {
         return false;
     }
 
-    QVector<OpenAIFunctionCall> calls;
-    if (!decodeCalls(calls_json, &calls, error_message)) {
+    QVector<OpenAIFunctionCall> decoded_calls;
+    if (!decodeCalls(calls_json, &decoded_calls, error_message)) {
         return false;
     }
 
-    QVector<OpenAIFunctionOutput> outputs;
-    if (!decodeOutputs(outputs_value.toArray(), &outputs, error_message)) {
+    QVector<OpenAIFunctionOutput> decoded_outputs;
+    if (!decodeOutputs(outputs_value.toArray(), &decoded_outputs, error_message)) {
         return false;
     }
-    if (!validateSnapshotOutputsMatchCalls(outputs, calls, call_index, error_message)) {
+    if (!validateSnapshotOutputsMatchCalls(
+            decoded_outputs, decoded_calls, call_index, error_message)) {
         return false;
     }
 
     m_response_id = response_id;
-    m_calls = std::move(calls);
-    m_outputs = std::move(outputs);
+    m_calls = std::move(decoded_calls);
+    m_outputs = std::move(decoded_outputs);
     m_call_index = call_index;
     m_active = true;
     return true;
