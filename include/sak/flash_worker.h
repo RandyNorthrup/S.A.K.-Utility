@@ -86,8 +86,8 @@ struct ValidationResult {
  *
  * Example:
  * @code
- * auto imageSource = std::make_unique<FileImageSource>("image.iso");
- * FlashWorker worker(std::move(imageSource), "\\.\PhysicalDrive1");
+ * auto image_source = std::make_unique<FileImageSource>("image.iso");
+ * FlashWorker worker(std::move(image_source), "\\.\PhysicalDrive1");
  *
  * connect(&worker, &FlashWorker::progressUpdated,
  *         [](double pct) { qDebug() << pct << "%"; });
@@ -101,12 +101,12 @@ class FlashWorker : public WorkerBase {
 public:
     /**
      * @brief Construct flash worker
-     * @param imageSource Image source to read from
-     * @param targetDevice Target device path (e.g., "\\.\PhysicalDrive1")
+     * @param image_source Image source to read from
+     * @param target_device Target device path (e.g., "\\.\PhysicalDrive1")
      * @param parent Parent object
      */
-    explicit FlashWorker(std::unique_ptr<ImageSource> imageSource,
-                         const QString& targetDevice,
+    explicit FlashWorker(std::unique_ptr<ImageSource> image_source,
+                         const QString& target_device,
                          QObject* parent = nullptr);
     ~FlashWorker() override;
 
@@ -148,53 +148,53 @@ public:
 
     /**
      * @brief Set buffer size
-     * @param sizeBytes Buffer size in bytes
+     * @param size_bytes Buffer size in bytes
      */
-    void setBufferSize(qint64 sizeBytes);
+    void setBufferSize(qint64 size_bytes);
 
     /// @brief Zero-pad a buffer up to a whole multiple of the device sector size
     /// @param buffer Buffer to pad in place (grown to the padded size)
-    /// @param bytesRead In/out valid byte count; set to the padded size on success
-    /// @param sectorSize Device logical sector size (512 for 512e, 4096 for 4Kn)
+    /// @param bytes_read In/out valid byte count; set to the padded size on success
+    /// @param sector_size Device logical sector size (512 for 512e, 4096 for 4Kn)
     /// @return false on a bogus sector size or a failed/oversized allocation
     /// @note Unbuffered raw-device writes must be a whole multiple of the LOGICAL
     ///       sector size; a 512-only assumption fails every write on a 4Kn disk.
     [[nodiscard]] static bool padToSectorSize(QByteArray& buffer,
-                                              qint64& bytesRead,
-                                              qint64 sectorSize);
+                                              qint64& bytes_read,
+                                              qint64 sector_size);
 
     /// @brief Round a byte count up to a whole multiple of the sector size.
     /// @param bytes Byte count to align (must be >= 0).
-    /// @param sectorSize Device logical sector size (> 0).
+    /// @param sector_size Device logical sector size (> 0).
     /// @return The aligned length, or -1 on a bogus sector size, a negative
     ///         input, or a multiply overflow.
     /// @note Unbuffered raw-device reads must be a whole multiple of the logical
     ///       sector size; a short read length is rejected by ReadFile.
-    [[nodiscard]] static qint64 alignUpToSectorSize(qint64 bytes, qint64 sectorSize);
+    [[nodiscard]] static qint64 alignUpToSectorSize(qint64 bytes, qint64 sector_size);
 
     /// @brief Does an image fit on the target device?
-    /// @param imageBytes Total (uncompressed) image size, or < 0 when unknown.
-    /// @param deviceBytes Device capacity in bytes, or < 0 when it cannot be
+    /// @param image_bytes Total (uncompressed) image size, or < 0 when unknown.
+    /// @param device_bytes Device capacity in bytes, or < 0 when it cannot be
     ///        queried.
     /// @return true only when BOTH sizes are known and the image fits. Fails
-    ///         closed (false) on an unknown capacity (deviceBytes < 0) or an
-    ///         undetermined image size (imageBytes < 0) -- never assumes "fits".
-    [[nodiscard]] static bool imageFitsDevice(qint64 imageBytes, qint64 deviceBytes);
+    ///         closed (false) on an unknown capacity (device_bytes < 0) or an
+    ///         undetermined image size (image_bytes < 0) -- never assumes "fits".
+    [[nodiscard]] static bool imageFitsDevice(qint64 image_bytes, qint64 device_bytes);
 
 Q_SIGNALS:
     /**
      * @brief Emitted periodically during write
      * @param percentage Progress 0-100
-     * @param bytesWritten Total bytes written so far
+     * @param bytes_writtenTotal bytes written so far
      */
-    void progressUpdated(double percentage, qint64 bytesWritten);
+    void progressUpdated(double percentage, qint64 bytes_written);
 
     /**
      * @brief Emitted periodically during verification
      * @param percentage Progress 0-100
-     * @param bytesVerified Total bytes verified so far
+     * @param bytes_verified Total bytes verified so far
      */
-    void verificationProgress(double percentage, qint64 bytesVerified);
+    void verificationProgress(double percentage, qint64 bytes_verified);
 
     /**
      * @brief Emitted when verification completes
@@ -204,9 +204,9 @@ Q_SIGNALS:
 
     /**
      * @brief Emitted when write completes (before verification)
-     * @param bytesWritten Total bytes written
+     * @param bytes_writtenTotal bytes written
      */
-    void writeCompleted(qint64 bytesWritten);
+    void writeCompleted(qint64 bytes_written);
 
     /**
      * @brief Emitted on error
@@ -246,7 +246,7 @@ private:
     bool writeImage();
     /// @brief Flush + fail-closed completeness check after the write loop.
     bool finalizeWrite();
-    bool writeChunk(const char* buffer, qint64 bytesRead);
+    bool writeChunk(const char* buffer, qint64 bytes_read);
     bool prepareSourceChecksum();
     /// @brief Query the target's logical sector size (IOCTL_DISK_GET_DRIVE_GEOMETRY)
     /// @return true and sets m_sectorSize on success; false (fail closed) if the
@@ -258,10 +258,10 @@ private:
     /// @brief Zero-pad the tail of a sector-aligned I/O buffer up to a whole
     ///        multiple of the device sector size, in place (no realloc).
     /// @param data Buffer base (must have @p capacity bytes; sector-aligned).
-    /// @param bytesRead In/out valid byte count; set to the padded size on success.
+    /// @param bytes_read In/out valid byte count; set to the padded size on success.
     /// @param capacity Total allocated bytes of @p data.
     /// @return false on bogus geometry, overflow, or padded size > capacity.
-    [[nodiscard]] bool padAlignedBuffer(char* data, qint64& bytesRead, qint64 capacity) const;
+    [[nodiscard]] bool padAlignedBuffer(char* data, qint64& bytes_read, qint64 capacity) const;
     sak::ValidationResult verifyImage();
     /// @brief Whole-image compare for images smaller than one sample block
     /// @note Fail-closed: mutates @p result to passed=false on any read failure
@@ -282,22 +282,22 @@ private:
     /// @return Number of blocks successfully verified
     int verifySampleBlocks(sak::ValidationResult& result,
                            const VerifyBlocksConfig& config,
-                           char* sourceData,
-                           char* targetData);
+                           char* source_data,
+                           char* target_data);
     /// @brief Read one block back from the device at @p offset_bytes and compare
-    ///        it to @p sourceData. Fails closed on a short device read.
-    /// @param targetData Sector-aligned read-back buffer (FILE_FLAG_NO_BUFFERING).
+    ///        it to @p source_data. Fails closed on a short device read.
+    /// @param target_data Sector-aligned read-back buffer (FILE_FLAG_NO_BUFFERING).
     /// @return true if the block was fully read back (counts as a verified
     ///         sample, match or mismatch); false if it must be skipped.
     bool compareDeviceBlock(sak::ValidationResult& result,
                             qint64 offset_bytes,
-                            qint64 compareLen,
-                            const char* sourceData,
-                            char* targetData);
+                            qint64 compare_len,
+                            const char* source_data,
+                            char* target_data);
 
-    void updateProgress(qint64 bytesWritten);
-    void updateSpeed(qint64 bytesWritten);
-    void updateVerificationProgress(qint64 bytesVerified, qint64 totalBytes);
+    void updateProgress(qint64 bytes_written);
+    void updateSpeed(qint64 bytes_written);
+    void updateVerificationProgress(qint64 bytes_verified, qint64 total_bytes);
 
     std::unique_ptr<ImageSource> m_imageSource;
     QString m_targetDevice;
