@@ -404,10 +404,14 @@ private:
     /// Extract dwRowIndex values from a TCROWID leaf buffer.
     [[nodiscard]] static QVector<uint32_t> extractTcRowIndicesFromLeaf(const QByteArray& leaf);
 
-    /// Build the contiguous [0..block_count*rows_per_block) fallback index list
-    /// used when the TCROWID BTH is absent.
+    /// Build the contiguous [0..block_count*rows_per_block) fallback index list used when
+    /// the TCROWID BTH is absent. @p max_valid_rows is data bytes / row_size; the table is
+    /// rejected (empty result) if the physical-slot count exceeds max_valid_rows plus one
+    /// block of rows, so a crafted TC whose block_count*rows_per_block over-counts the real
+    /// capacity cannot force a multi-GB reservation or overflow the 32-bit product.
     [[nodiscard]] static QVector<uint32_t> fallbackTcRowIndices(int block_count,
-                                                                int rows_per_block);
+                                                                int rows_per_block,
+                                                                qsizetype max_valid_rows);
 
     /// Materialize a single TC row at the given byte offset into a property vector.
     [[nodiscard]] QVector<sak::MapiProperty> materializeTcRow(const QByteArray& row_data,

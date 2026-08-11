@@ -63,10 +63,17 @@ bool readExact(char* dst, int n) {
     return true;
 }
 
-void writeFrame(const QJsonObject& message) {
+bool writeFrame(const QJsonObject& message) {
     const QByteArray frame = encodeFrame(message);
-    std::fwrite(frame.constData(), 1, static_cast<size_t>(frame.size()), stdout);
-    std::fflush(stdout);
+    const size_t want = static_cast<size_t>(frame.size());
+    // A short fwrite or a failed flush means the peer (Chrome) received a partial frame or
+    // none at all; the length-prefixed native-messaging stream has no in-band resync, so
+    // report the failure and let the loop close the port fail-closed rather than keep
+    // serving a desynchronized stream.
+    if (std::fwrite(frame.constData(), 1, want, stdout) != want || std::fflush(stdout) != 0) {
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -108,11 +115,15 @@ int runNativeHostLoop(const QString& server_name, const QString& server_version)
         if (parsed.status != NativeFrame::Status::Ok) {
             // Framing was valid but the body was not a JSON object; stay connected
             // and report the error so one bad message does not kill the session.
-            writeFrame(QJsonObject{{QStringLiteral("type"), QStringLiteral("error")},
-                                   {QStringLiteral("error"), parsed.error}});
+            if (!writeFrame(QJsonObject{{QStringLiteral("type"), QStringLiteral("error")},
+                                        {QStringLiteral("error"), parsed.error}})) {
+                return 1;  // response write failed: stream desynchronized, close the port
+            }
             continue;
         }
-        writeFrame(handleNativeMessage(parsed.message, server_name, server_version));
+        if (!writeFrame(handleNativeMessage(parsed.message, server_name, server_version))) {
+            return 1;  // response write failed: stream desynchronized, close the port
+        }
     }
 }
 

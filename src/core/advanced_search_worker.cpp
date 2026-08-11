@@ -2193,7 +2193,10 @@ void captureId3Frame(const QByteArray& file_data,
 
     // ID3v2 size is stored as synchsafe integer (4 bytes, 7 bits each)
     const uint32_t tagSize = readId3TagSize(fileData);
-    const auto tagSizeBytes = static_cast<qsizetype>(tagSize + kId3HeaderSize);
+    // Widen before the add: tagSize is a 28-bit synchsafe value so tagSize + header cannot
+    // overflow uint32 today, but doing the addition in qsizetype keeps it correct if the
+    // header constant or tag width ever changes.
+    const auto tagSizeBytes = static_cast<qsizetype>(tagSize) + kId3HeaderSize;
     const qsizetype maxOffsetBytes = std::min(tagSizeBytes, fileData.size());
     const int maxOffset = static_cast<int>(maxOffsetBytes);
 

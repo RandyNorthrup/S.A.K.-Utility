@@ -544,7 +544,7 @@ bool consumeMimeLine(const QByteArray& line,
                 return false;
             }
             parts.append(std::move(current));
-            current.clear();
+            current = QByteArray();  // fresh buffer for the next part (avoid touching moved-from)
         }
         // A closing delimiter ("--<boundary>--") ends the multipart; an opening
         // one ("--<boundary>") starts the next part.

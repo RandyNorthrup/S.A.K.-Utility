@@ -115,7 +115,7 @@ void logger::logInternal(log_level level,
             try {
                 std::println(std::cerr, "[{}] {}", to_string(level), message);
             } catch (...) {
-                std::fprintf(stderr, "SAK Logger: console write failed\n");
+                (void)std::fprintf(stderr, "SAK Logger: console write failed\n");
             }
         }
         return;
@@ -140,10 +140,10 @@ void logger::logInternal(log_level level,
 
     } catch (const std::exception& e) {
         // Logger itself cannot recurse -- fall back to stderr
-        std::fprintf(stderr, "SAK Logger: logInternal failed: %s\n", e.what());
+        (void)std::fprintf(stderr, "SAK Logger: logInternal failed: %s\n", e.what());
     } catch (...) {
         // Intentional: final safety net in noexcept function
-        std::fprintf(stderr, "SAK Logger: logInternal failed with unknown exception\n");
+        (void)std::fprintf(stderr, "SAK Logger: logInternal failed with unknown exception\n");
     }
 }
 
@@ -186,7 +186,7 @@ void logger::noteWriteFailure() noexcept {
     // stderr). Clear the stream error bits so a later recovered write can resume
     // instead of the stream staying wedged in a failed state forever.
     if (!m_write_failed.exchange(true, std::memory_order_relaxed)) {
-        std::fprintf(stderr, "SAK Logger: file log write failed (log entries may be lost)\n");
+        (void)std::fprintf(stderr, "SAK Logger: file log write failed (log entries may be lost)\n");
     }
     m_file_stream.clear();
 }
@@ -206,7 +206,7 @@ void logger::writeEntryToConsole(std::string_view log_entry, log_level level) no
             std::print("{}", log_entry);
         }
     } catch (...) {
-        std::fprintf(stderr, "SAK Logger: console write failed\n");
+        (void)std::fprintf(stderr, "SAK Logger: console write failed\n");
     }
 }
 
@@ -248,7 +248,8 @@ auto logger::ensureLogDirectory(const std::filesystem::path& dir)
         return std::unexpected(error_code::permission_denied);
     } catch (...) {
         // Intentional: final safety net in noexcept function
-        std::fprintf(stderr, "SAK Logger: ensureLogDirectory failed with unknown exception\n");
+        (void)std::fprintf(stderr,
+                           "SAK Logger: ensureLogDirectory failed with unknown exception\n");
         return std::unexpected(error_code::unknown_error);
     }
 }
@@ -259,7 +260,7 @@ std::string logger::getTimestamp() noexcept {
         return std::format("{:%Y-%m-%d %H:%M:%S}", now);
     } catch (...) {
         // Intentional: final safety net in noexcept function
-        std::fprintf(stderr, "SAK Logger: getTimestamp failed\n");
+        (void)std::fprintf(stderr, "SAK Logger: getTimestamp failed\n");
         return "TIMESTAMP_ERROR";
     }
 }
@@ -305,10 +306,10 @@ void logger::rotateLog() noexcept {
 
     } catch (const std::exception& e) {
         // Logger cannot use logError (infinite recursion), fall back to stderr
-        std::fprintf(stderr, "SAK Logger: Log rotation failed: %s\n", e.what());
+        (void)std::fprintf(stderr, "SAK Logger: Log rotation failed: %s\n", e.what());
     } catch (...) {
         // Intentional: final safety net in noexcept function
-        std::fprintf(stderr, "SAK Logger: Log rotation failed with unknown exception\n");
+        (void)std::fprintf(stderr, "SAK Logger: Log rotation failed with unknown exception\n");
     }
 }
 

@@ -2325,7 +2325,8 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& ma
         if (tc.hid_row_index != 0) {
             return {};
         }
-        live_row_indices = fallbackTcRowIndices(block_count, rows_per_block);
+        live_row_indices =
+            fallbackTcRowIndices(block_count, rows_per_block, matrix.data.size() / row_size);
     }
 
     QVector<QVector<sak::MapiProperty>> rows;
@@ -2340,9 +2341,25 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& ma
     return rows;
 }
 
-QVector<uint32_t> PstParser::fallbackTcRowIndices(int block_count, int rows_per_block) {
+QVector<uint32_t> PstParser::fallbackTcRowIndices(int block_count,
+                                                  int rows_per_block,
+                                                  qsizetype max_valid_rows) {
     QVector<uint32_t> indices;
-    indices.reserve(block_count * rows_per_block);
+    // Widen before the multiply: block_count and rows_per_block are int and both derive
+    // from parsed PST bytes, so their 32-bit product can exceed INT32_MAX and wrap to a
+    // bogus (possibly negative) reserve.
+    const qsizetype slot_count = static_cast<qsizetype>(block_count) * rows_per_block;
+    // Fail closed on a corrupt geometry. In a well-formed matrix every block but the last is
+    // the same size, so the physical-slot count is at most max_valid_rows (data bytes /
+    // row_size) plus one block's worth of rows. A crafted TC with a large first block and
+    // many tiny later blocks inflates block_count*rows_per_block far past that, which would
+    // otherwise force a multi-GB reservation of padding slots; reject the whole table (as the
+    // hid_row_index != 0 path above does) rather than enumerating it. The bound never rejects
+    // a uniform-block matrix, and it keeps the inner (b*rows_per_block)+r below 2^31.
+    if (slot_count > max_valid_rows + rows_per_block) {
+        return {};
+    }
+    indices.reserve(slot_count);
     for (int b = 0; b < block_count; ++b) {
         for (int r = 0; r < rows_per_block; ++r) {
             indices.append(static_cast<uint32_t>((b * rows_per_block) + r));

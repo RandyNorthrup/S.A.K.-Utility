@@ -88,9 +88,9 @@ void serveRequests(BrowserControl* browser_ptr, const Win32McpServerPolicy& poli
             break;
         }
         if (status == LineRead::TooLong) {
-            std::fprintf(stderr,
-                         "win32 mcp: request line exceeded %zu bytes; closing stream\n",
-                         kMaxRequestLineBytes);
+            (void)std::fprintf(stderr,
+                               "win32 mcp: request line exceeded %zu bytes; closing stream\n",
+                               kMaxRequestLineBytes);
             break;
         }
         if (line.empty()) {
@@ -106,7 +106,7 @@ void serveRequests(BrowserControl* browser_ptr, const Win32McpServerPolicy& poli
         }
         const std::optional<QJsonObject> response = handleRequest(request, browser_ptr, policy);
         if (response.has_value() && !writeResponse(response.value())) {
-            std::fprintf(stderr, "win32 mcp: response write failed; closing stream\n");
+            (void)std::fprintf(stderr, "win32 mcp: response write failed; closing stream\n");
             break;
         }
     }
@@ -153,7 +153,7 @@ int runWin32McpProcess(int argc, char** argv) {
         // Best-effort: on a modern OS this succeeds; surface a failure so a virtualized-coordinate
         // session is diagnosable rather than silently wrong. (Older OSes lack the API entirely and
         // compile this branch out.)
-        std::fprintf(stderr, "win32 mcp: could not set per-monitor DPI awareness\n");
+        (void)std::fprintf(stderr, "win32 mcp: could not set per-monitor DPI awareness\n");
     }
 #endif
 
@@ -161,7 +161,7 @@ int runWin32McpProcess(int argc, char** argv) {
     // length-prefixed for native messaging). A failure here would corrupt every frame, so fail
     // closed rather than serve on a text-translated stream.
     if (_setmode(_fileno(stdin), _O_BINARY) == -1 || _setmode(_fileno(stdout), _O_BINARY) == -1) {
-        std::fprintf(stderr, "win32 mcp: could not set binary stdio mode; aborting\n");
+        (void)std::fprintf(stderr, "win32 mcp: could not set binary stdio mode; aborting\n");
         return 1;
     }
 
@@ -179,9 +179,9 @@ int runWin32McpProcess(int argc, char** argv) {
     QString browser_error;
     const bool browser_ready = browser.start(&browser_error);
     if (!browser_ready) {
-        std::fprintf(stderr,
-                     "browser control unavailable: %s\n",
-                     browser_error.toUtf8().constData());
+        (void)std::fprintf(stderr,
+                           "browser control unavailable: %s\n",
+                           browser_error.toUtf8().constData());
     }
     sak::win32mcp::BrowserControl* const browser_ptr = browser_ready ? &browser : nullptr;
 

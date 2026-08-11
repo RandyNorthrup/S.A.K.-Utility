@@ -470,7 +470,7 @@ int runMainEventLoop(QApplication& app, bool startup_smoke_test, bool headless_s
     if (startup_smoke_test && result == 0) {
         std::println("SAK_STARTUP_SMOKE_OK");
         if (headless_smoke_test) {
-            std::fflush(stdout);
+            (void)std::fflush(stdout);
             std::_Exit(0);
         }
     }
@@ -496,7 +496,7 @@ int runAccessibilityAuditHeadless(QApplication& app, sak::MainWindow& main_windo
     sak::logger::instance().flush();
     if (result == 0) {
         // Audit status is already written; avoid Qt/shared-folder teardown crashes in automation.
-        std::fflush(stdout);
+        (void)std::fflush(stdout);
         std::_Exit(0);
     }
     return result;
