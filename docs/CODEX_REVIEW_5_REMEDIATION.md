@@ -2387,11 +2387,12 @@ appears once per target that compiles it and clang-tidy re-analyzes each entry.
 
 SECURITY AND CORRECTNESS TIER -- 995 diagnostics, fix these first:
 
-- [ ] R5-G12-6 451 cppcoreguidelines-narrowing-conversions. Note that
-      bugprone-narrowing-conversions, the sibling check, is one of the checks this
-      config explicitly disables (R5-G2). The disabled check was concealing 451
-      instances of precisely the truncation class this review found in the raw
-      filesystem parsers.
+- [x] R5-G12-6 cppcoreguidelines-narrowing-conversions DONE -- the narrowing tier
+      (measured 400 first-party, adjudicated all 400): 15 real truncation fixes on
+      untrusted input + 344 benign made explicit + 40 qint64->double, commits
+      6d54533/fad3806/6aa9ac4/23b0a30. See the narrowing-tier block above. The
+      disabled sibling bugprone-narrowing-conversions was concealing precisely the
+      truncation class this review found in the raw filesystem parsers.
 - [x] R5-G12-7 251 clang-diagnostic-error ROOT-CAUSED 2026-08-10: they were NOT
       un-parseable constructs. Every one was '@<tu>.obj.modmap file not found' -- CMake's
       C++20 module-dependency scanning adds a modmap response-file argument to each
@@ -2401,14 +2402,49 @@ SECURITY AND CORRECTNESS TIER -- 995 diagnostics, fix these first:
       parse differences (default-member-init strictness, unqualified member-function
       address) plus 2 not-yet-generated AUTOMOC .moc files -- analysis-environment
       residue on MSVC-only code, not defects. Tracked for later flag tuning, not code fixes.
-- [ ] R5-G12-8 173 bugprone-implicit-widening-of-multiplication-result: a 32-bit
-      multiplication widened only after it can already overflow -- the exact pattern
-      behind the block and offset arithmetic findings in the raw filesystem passes.
-- [ ] R5-G12-9 51 bugprone-throwing-static-initialization
-- [ ] R5-G12-10 30 cert-err33-c: return values not checked, the fail-open class
-- [ ] R5-G12-11 24 bugprone-misplaced-widening-cast
-- [ ] R5-G12-12 3 bugprone-unchecked-optional-access, 2 bugprone-integer-division,
-      1 bugprone-use-after-move
+  SECURITY-TIER REMAINDER DONE (commit 20d10a6, full Release build + ctest 225/225).
+  Measured the remaining security/correctness checks in one pass (dedup, single build):
+  90 implicit-widening + 48 throwing-static-init + 18 cert-err33-c + 1 misplaced-
+  widening + 2 integer-division + 2 unchecked-optional + 1 use-after-move = 162.
+  Adjudicated (7-agent Workflow over the 90 widening sites; the rest hand-reviewed).
+  21 sites fixed fail-closed, 141 documented benign. Details below.
+- [x] R5-G12-8 bugprone-implicit-widening-of-multiplication-result DONE: 90 sites, 1
+      REAL, 89 benign. REAL = pst_parser fallbackTcRowIndices block_count *
+      rows_per_block computed in int then widened to QVector::reserve(qsizetype) -- a
+      crafted PST overflows INT32_MAX before the widen. Fixed: widen one operand AND
+      fail-closed reject when the physical-slot count exceeds (data bytes / row_size)
+      plus one block of rows (a bound that provably never rejects a uniform-block
+      matrix but stops a large-first-block + many-tiny-blocks inflation from forcing a
+      multi-GB reservation of padding slots). The 89 benign are compile-time literals
+      (1024*1024, allocation-unit constants) or products of tightly bounded loop/slot
+      indices (uint16 ring slots, block-size-4096-bounded TOC walks).
+- [x] R5-G12-9 bugprone-throwing-static-initialization DONE (documented benign, no
+      code change): all 48 sites are namespace-scope const literal tables (const
+      QString = QStringLiteral, const QSet/QStringList/QHash/QVector/QByteArray::
+      fromHex initializer lists). They can throw bad_alloc during dynamic init in
+      principle, but that is not a reachable defect (small tables, memory plentiful at
+      startup) and they carry no static-init-order hazard. Not the fail-open/overflow
+      class; converting 48 namespace globals to lazy statics is churn with GUI-init
+      risk for no reachable bug. Not gated.
+- [x] R5-G12-10 cert-err33-c DONE: 18 sites, 4 files. 16 are last-resort std::fprintf
+      (stderr, ...) diagnostics in noexcept catch/fallback paths (logger 9, win32_mcp_
+      entry 5) and pre-_Exit std::fflush(stdout) (main 2) whose return is genuinely
+      unusable -- marked (void) to document the intentional ignore. The remaining 2
+      (win32_mcp_native_host writeFrame) were a REAL fail-open: fwrite/fflush of a
+      Chrome native-messaging frame ignored their result, so a short write / failed
+      flush desynchronized the length-prefixed stream silently. writeFrame now returns
+      bool and the loop closes the port fail-closed, matching win32_mcp_entry's
+      JSON-RPC writeResponse.
+- [x] R5-G12-11 bugprone-misplaced-widening-cast DONE: 1 site (advanced_search_worker
+      ID3 tag size). static_cast<qsizetype>(tagSize + kId3HeaderSize) did the add in
+      uint32 before widening; the synchsafe encoding caps tagSize at 2^28 so it cannot
+      overflow today, but widened before the add so it stays correct if the header
+      constant or tag width changes.
+- [x] R5-G12-12 DONE: use-after-move (1, mbox_parser) fixed by reassigning the
+      moved-from part buffer with a fresh QByteArray instead of clear(). The 2
+      integer-division (detachable_log_window toggle-track pixel radii) and 2
+      unchecked-optional-access (app_mutating_actions, guarded by hasVolume() ==
+      volume.has_value()) sites are benign, documented, no change.
 
 The remaining ~38800 are style and modernization tier (naming, const-correctness,
 designated initializers, implicit bool conversion). They are mechanical but large,
