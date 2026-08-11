@@ -25,11 +25,11 @@ constexpr int kCancellationPollIntervalMs = sak::kTimerPollingFastMs;
 constexpr int kSemaphoreWaitGraceMs = 30'000;
 
 struct ModelInvokeState {
-    OpenAIResponseResult result;
-    QString error;
-    bool got_response{false};
-    bool got_failure{false};
-    bool timed_out{false};
+    OpenAIResponseResult m_result;
+    QString m_error;
+    bool m_got_response{false};
+    bool m_got_failure{false};
+    bool m_timed_out{false};
 };
 
 bool tokenCancelled(const CancellationToken& token) {
@@ -70,24 +70,24 @@ IAiModelClient::Response modelResponseFromState(const ModelInvokeState& state,
         response.error_message = token.cancelReason();
         return response;
     }
-    if (state.got_response) {
+    if (state.m_got_response) {
         response.success = true;
-        response.text = state.result.output_text;
-        response.usage = state.result.usage;
-        response.response_id = state.result.id;
-        response.tool_calls.reserve(state.result.function_calls.size());
-        for (const auto& call : state.result.function_calls) {
+        response.text = state.m_result.output_text;
+        response.usage = state.m_result.usage;
+        response.response_id = state.m_result.id;
+        response.tool_calls.reserve(state.m_result.function_calls.size());
+        for (const auto& call : state.m_result.function_calls) {
             response.tool_calls.append({.call_id = call.call_id,
                                         .name = call.name,
                                         .arguments_json = call.arguments_json});
         }
         return response;
     }
-    if (state.got_failure) {
-        response.error_message = state.error;
+    if (state.m_got_failure) {
+        response.error_message = state.m_error;
         return response;
     }
-    if (state.timed_out) {
+    if (state.m_timed_out) {
         response.error_message =
             QStringLiteral("Model invocation timed out after %1 ms").arg(kModelInvokeTimeoutMs);
         return response;
@@ -108,8 +108,8 @@ void joinWorkerAndRecordTimeout(QThread& network_thread,
     // a worker handler might still be writing the same fields would be a data race; once
     // wait() returns no worker code can run, so this write is ordered after every worker
     // write. Guard on the terminal flags so a result that landed at the boundary still wins.
-    if (!signalled && !state.got_response && !state.got_failure && !state.timed_out) {
-        state.timed_out = true;
+    if (!signalled && !state.m_got_response && !state.m_got_failure && !state.m_timed_out) {
+        state.m_timed_out = true;
     }
 }
 
@@ -157,26 +157,26 @@ IAiModelClient::Response OpenAIResponsesModelClient::runResponseRequest(
                          &OpenAIResponsesClient::responseReady,
                          worker,
                          [&, finish](const OpenAIResponseResult& result) {
-                             state.result = result;
-                             state.got_response = true;
+                             state.m_result = result;
+                             state.m_got_response = true;
                              finish();
                          });
         QObject::connect(client,
                          &OpenAIResponsesClient::requestFailed,
                          worker,
                          [&, finish](const QString& error_message) {
-                             state.error = error_message;
-                             state.got_failure = true;
+                             state.m_error = error_message;
+                             state.m_got_failure = true;
                              finish();
                          });
         QObject::connect(cancel_timer, &QTimer::timeout, worker, [&, finish]() {
             if (tokenCancelled(token)) {
-                state.error = token.cancelReason();
+                state.m_error = token.cancelReason();
                 finish();
             }
         });
         QObject::connect(timeout_timer, &QTimer::timeout, worker, [&, finish]() {
-            state.timed_out = true;
+            state.m_timed_out = true;
             finish();
         });
         cancel_timer->start();

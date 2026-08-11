@@ -38,28 +38,28 @@ WORD modifierVk(const QString& name) {
 
 WORD namedKeyVk(const QString& low) {
     static const struct {
-        const char* name;
-        WORD vk;
+        const char* m_name;
+        WORD m_vk;
     } kKeys[] = {
-        {.name = "enter", .vk = VK_RETURN},   {.name = "return", .vk = VK_RETURN},
-        {.name = "tab", .vk = VK_TAB},        {.name = "escape", .vk = VK_ESCAPE},
-        {.name = "esc", .vk = VK_ESCAPE},     {.name = "space", .vk = VK_SPACE},
-        {.name = "backspace", .vk = VK_BACK}, {.name = "delete", .vk = VK_DELETE},
-        {.name = "del", .vk = VK_DELETE},     {.name = "up", .vk = VK_UP},
-        {.name = "down", .vk = VK_DOWN},      {.name = "left", .vk = VK_LEFT},
-        {.name = "right", .vk = VK_RIGHT},    {.name = "home", .vk = VK_HOME},
-        {.name = "end", .vk = VK_END},        {.name = "pageup", .vk = VK_PRIOR},
-        {.name = "pagedown", .vk = VK_NEXT},  {.name = "insert", .vk = VK_INSERT},
-        {.name = "f1", .vk = VK_F1},          {.name = "f2", .vk = VK_F2},
-        {.name = "f3", .vk = VK_F3},          {.name = "f4", .vk = VK_F4},
-        {.name = "f5", .vk = VK_F5},          {.name = "f6", .vk = VK_F6},
-        {.name = "f7", .vk = VK_F7},          {.name = "f8", .vk = VK_F8},
-        {.name = "f9", .vk = VK_F9},          {.name = "f10", .vk = VK_F10},
-        {.name = "f11", .vk = VK_F11},        {.name = "f12", .vk = VK_F12},
+        {.m_name = "enter", .m_vk = VK_RETURN},   {.m_name = "return", .m_vk = VK_RETURN},
+        {.m_name = "tab", .m_vk = VK_TAB},        {.m_name = "escape", .m_vk = VK_ESCAPE},
+        {.m_name = "esc", .m_vk = VK_ESCAPE},     {.m_name = "space", .m_vk = VK_SPACE},
+        {.m_name = "backspace", .m_vk = VK_BACK}, {.m_name = "delete", .m_vk = VK_DELETE},
+        {.m_name = "del", .m_vk = VK_DELETE},     {.m_name = "up", .m_vk = VK_UP},
+        {.m_name = "down", .m_vk = VK_DOWN},      {.m_name = "left", .m_vk = VK_LEFT},
+        {.m_name = "right", .m_vk = VK_RIGHT},    {.m_name = "home", .m_vk = VK_HOME},
+        {.m_name = "end", .m_vk = VK_END},        {.m_name = "pageup", .m_vk = VK_PRIOR},
+        {.m_name = "pagedown", .m_vk = VK_NEXT},  {.m_name = "insert", .m_vk = VK_INSERT},
+        {.m_name = "f1", .m_vk = VK_F1},          {.m_name = "f2", .m_vk = VK_F2},
+        {.m_name = "f3", .m_vk = VK_F3},          {.m_name = "f4", .m_vk = VK_F4},
+        {.m_name = "f5", .m_vk = VK_F5},          {.m_name = "f6", .m_vk = VK_F6},
+        {.m_name = "f7", .m_vk = VK_F7},          {.m_name = "f8", .m_vk = VK_F8},
+        {.m_name = "f9", .m_vk = VK_F9},          {.m_name = "f10", .m_vk = VK_F10},
+        {.m_name = "f11", .m_vk = VK_F11},        {.m_name = "f12", .m_vk = VK_F12},
     };
     for (const auto& key : kKeys) {
-        if (low == QLatin1String(key.name)) {
-            return key.vk;
+        if (low == QLatin1String(key.m_name)) {
+            return key.m_vk;
         }
     }
     return 0;

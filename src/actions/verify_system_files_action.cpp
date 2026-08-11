@@ -94,10 +94,10 @@ void VerifySystemFilesAction::runSFC() {
     const QString accumulated_output = proc.std_out;
 
     // Extract CBS.log path
-    const QRegularExpression cbsLogRe("CBS_LOG_PATH:(.+)");
-    const QRegularExpressionMatch cbsMatch = cbsLogRe.match(accumulated_output);
-    if (cbsMatch.hasMatch()) {
-        m_cbs_log_path = cbsMatch.captured(1).trimmed();
+    const QRegularExpression cbs_log_re("CBS_LOG_PATH:(.+)");
+    const QRegularExpressionMatch cbs_match = cbs_log_re.match(accumulated_output);
+    if (cbs_match.hasMatch()) {
+        m_cbs_log_path = cbs_match.captured(1).trimmed();
     }
 
     if (accumulated_output.contains("found corrupt files", Qt::CaseInsensitive)) {

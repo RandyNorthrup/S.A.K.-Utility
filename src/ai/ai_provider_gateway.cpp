@@ -223,11 +223,11 @@ QJsonObject availabilityError(const QString& operation,
 }
 
 struct DocsToolPlan {
-    QString provider_tool;
-    QJsonObject tool_arguments;
-    QString error;
+    QString m_provider_tool;
+    QJsonObject m_tool_arguments;
+    QString m_error;
 
-    [[nodiscard]] bool ok() const { return error.isEmpty() && !provider_tool.isEmpty(); }
+    [[nodiscard]] bool ok() const { return m_error.isEmpty() && !m_provider_tool.isEmpty(); }
 };
 
 QString firstNonEmpty(const QJsonObject& object, const QString& primary, const QString& fallback) {
@@ -243,28 +243,28 @@ DocsToolPlan context7DocsPlan(const QString& query, const QJsonObject& extra) {
                                                      QStringLiteral("library_name")},
                                                     QStringLiteral("docs_query arguments"));
     if (!type_error.isEmpty()) {
-        return {.error = type_error};
+        return {.m_error = type_error};
     }
     const QString library_id =
         firstNonEmpty(extra, QStringLiteral("libraryId"), QStringLiteral("library_id"));
     const QString library_name =
         firstNonEmpty(extra, QStringLiteral("libraryName"), QStringLiteral("library_name"));
     if (!library_id.isEmpty() && query.isEmpty()) {
-        return {.error = QStringLiteral("Context7 query-docs requires query")};
+        return {.m_error = QStringLiteral("Context7 query-docs requires query")};
     }
     if (!library_id.isEmpty()) {
-        return {.provider_tool = QStringLiteral("query-docs"),
-                .tool_arguments = QJsonObject{{QStringLiteral("libraryId"), library_id},
-                                              {QStringLiteral("query"), query}}};
+        return {.m_provider_tool = QStringLiteral("query-docs"),
+                .m_tool_arguments = QJsonObject{{QStringLiteral("libraryId"), library_id},
+                                                {QStringLiteral("query"), query}}};
     }
 
     const QString resolved_name = library_name.isEmpty() ? query : library_name;
     if (resolved_name.isEmpty()) {
         return {
-            .error = QStringLiteral("Context7 resolve-library-id requires libraryName or query")};
+            .m_error = QStringLiteral("Context7 resolve-library-id requires libraryName or query")};
     }
-    return {.provider_tool = QStringLiteral("resolve-library-id"),
-            .tool_arguments =
+    return {.m_provider_tool = QStringLiteral("resolve-library-id"),
+            .m_tool_arguments =
                 QJsonObject{{QStringLiteral("libraryName"), resolved_name},
                             {QStringLiteral("query"), query.isEmpty() ? resolved_name : query}}};
 }
@@ -277,22 +277,22 @@ DocsToolPlan microsoftCodeSamplePlan(const QString& query,
         return {};
     }
     if (query.isEmpty()) {
-        return {.error = QStringLiteral("Microsoft code sample search requires query")};
+        return {.m_error = QStringLiteral("Microsoft code sample search requires query")};
     }
     QJsonObject arguments{{QStringLiteral("query"), query}};
     if (!language.isEmpty()) {
         arguments[QStringLiteral("language")] = language;
     }
-    return {.provider_tool = QStringLiteral("microsoft_code_sample_search"),
-            .tool_arguments = arguments};
+    return {.m_provider_tool = QStringLiteral("microsoft_code_sample_search"),
+            .m_tool_arguments = arguments};
 }
 
 bool isKnownMicrosoftDocsTool(const QString& requested_tool) {
-    static const QSet<QString> tools{QStringLiteral("microsoft_docs_search"),
-                                     QStringLiteral("microsoft_docs_fetch"),
-                                     QStringLiteral("microsoft_code_sample_search"),
-                                     QStringLiteral("code_sample_search")};
-    return tools.contains(requested_tool);
+    static const QSet<QString> kTools{QStringLiteral("microsoft_docs_search"),
+                                      QStringLiteral("microsoft_docs_fetch"),
+                                      QStringLiteral("microsoft_code_sample_search"),
+                                      QStringLiteral("code_sample_search")};
+    return kTools.contains(requested_tool);
 }
 
 // Plans a microsoft_docs_fetch when an explicit url (or an explicit fetch request) is present,
@@ -307,11 +307,11 @@ DocsToolPlan microsoftFetchPlan(const QString& query,
     }
     const QString target = url.isEmpty() ? query : url;
     if (!isAbsoluteHttpUrl(target, false)) {
-        return {.error = QStringLiteral(
+        return {.m_error = QStringLiteral(
                     "microsoft_docs_fetch requires an absolute http(s) url in arguments.url")};
     }
-    return {.provider_tool = QStringLiteral("microsoft_docs_fetch"),
-            .tool_arguments = QJsonObject{{QStringLiteral("url"), target}}};
+    return {.m_provider_tool = QStringLiteral("microsoft_docs_fetch"),
+            .m_tool_arguments = QJsonObject{{QStringLiteral("url"), target}}};
 }
 
 DocsToolPlan microsoftDocsPlan(const QString& query, const QJsonObject& extra) {
@@ -320,7 +320,7 @@ DocsToolPlan microsoftDocsPlan(const QString& query, const QJsonObject& extra) {
         {QStringLiteral("tool"), QStringLiteral("url"), QStringLiteral("language")},
         QStringLiteral("docs_query arguments"));
     if (!type_error.isEmpty()) {
-        return {.error = type_error};
+        return {.m_error = type_error};
     }
     const QString requested_tool = extra.value(QStringLiteral("tool")).toString().trimmed();
     const QString url = extra.value(QStringLiteral("url")).toString().trimmed();
@@ -328,23 +328,23 @@ DocsToolPlan microsoftDocsPlan(const QString& query, const QJsonObject& extra) {
     // Fail CLOSED on an explicit tool request this provider does not implement, instead of
     // quietly downgrading it to an ordinary docs search the caller never asked for.
     if (!requested_tool.isEmpty() && !isKnownMicrosoftDocsTool(requested_tool)) {
-        return {.error = QStringLiteral("Unknown microsoft_docs tool: %1").arg(requested_tool)};
+        return {.m_error = QStringLiteral("Unknown microsoft_docs tool: %1").arg(requested_tool)};
     }
 
     DocsToolPlan fetch = microsoftFetchPlan(query, url, requested_tool);
-    if (fetch.ok() || !fetch.error.isEmpty()) {
+    if (fetch.ok() || !fetch.m_error.isEmpty()) {
         return fetch;
     }
 
     DocsToolPlan code_sample = microsoftCodeSamplePlan(query, language, requested_tool);
-    if (code_sample.ok() || !code_sample.error.isEmpty()) {
+    if (code_sample.ok() || !code_sample.m_error.isEmpty()) {
         return code_sample;
     }
     if (query.isEmpty()) {
-        return {.error = QStringLiteral("Microsoft docs search requires query")};
+        return {.m_error = QStringLiteral("Microsoft docs search requires query")};
     }
-    return {.provider_tool = QStringLiteral("microsoft_docs_search"),
-            .tool_arguments = QJsonObject{{QStringLiteral("query"), query}}};
+    return {.m_provider_tool = QStringLiteral("microsoft_docs_search"),
+            .m_tool_arguments = QJsonObject{{QStringLiteral("query"), query}}};
 }
 
 DocsToolPlan docsToolPlan(const QString& provider_id,
@@ -356,7 +356,7 @@ DocsToolPlan docsToolPlan(const QString& provider_id,
     if (provider_id == QLatin1String("microsoft_docs")) {
         return microsoftDocsPlan(query, extra);
     }
-    return {.error = QStringLiteral("docs_query supports context7 and microsoft_docs")};
+    return {.m_error = QStringLiteral("docs_query supports context7 and microsoft_docs")};
 }
 
 QJsonObject loadHttpDocsProvider(const AiProviderRegistry& registry,
@@ -410,11 +410,11 @@ bool requireProviderTool(const QJsonObject& provider,
 }
 
 bool isAppOperation(const QString& operation) {
-    static const QSet<QString> operations{QStringLiteral("app_manifest"),
-                                          QStringLiteral("app_capabilities"),
-                                          QStringLiteral("app_run_action_plan"),
-                                          QStringLiteral("app_run_action")};
-    return operations.contains(operation);
+    static const QSet<QString> kOperations{QStringLiteral("app_manifest"),
+                                           QStringLiteral("app_capabilities"),
+                                           QStringLiteral("app_run_action_plan"),
+                                           QStringLiteral("app_run_action")};
+    return kOperations.contains(operation);
 }
 
 // Keeps the pointer-level error channel in step with the availability envelope: a success
@@ -598,7 +598,7 @@ QString win32CallEnvelopeError(const QJsonObject& args) {
 // directories it reads and writes. The child can run elevated, so a manifest that names one of
 // these is a configuration attack, not a preference -- fail closed instead of honoring it.
 bool isProtectedChildEnvVar(const QString& name) {
-    static const QSet<QString> protected_vars{
+    static const QSet<QString> kProtectedVars{
         QStringLiteral("PATH"),
         QStringLiteral("PATHEXT"),
         QStringLiteral("COMSPEC"),
@@ -621,7 +621,7 @@ bool isProtectedChildEnvVar(const QString& name) {
         QStringLiteral("__COMPAT_LAYER"),
     };
     const QString key = name.trimmed().toUpper();
-    return protected_vars.contains(key) || key.startsWith(QLatin1String("QT_")) ||
+    return kProtectedVars.contains(key) || key.startsWith(QLatin1String("QT_")) ||
            key.startsWith(QLatin1String("LD_"));
 }
 
@@ -774,8 +774,8 @@ QJsonObject runDocsToolCall(const QJsonObject& provider,
                             QString* error_message) {
     const QUrl endpoint(provider.value(QStringLiteral("endpoint")).toString());
     const QJsonObject message = AiMcpHttpClient::callTool(endpoint,
-                                                          plan.provider_tool,
-                                                          plan.tool_arguments,
+                                                          plan.m_provider_tool,
+                                                          plan.m_tool_arguments,
                                                           kDefaultProviderGatewayTimeoutMs,
                                                           error_message);
     if (message.isEmpty()) {
@@ -789,7 +789,7 @@ QJsonObject runDocsToolCall(const QJsonObject& provider,
         return {};
     }
     QJsonObject result =
-        mcpDocsQueryResult(provider, plan.provider_tool, query, plan.tool_arguments, message);
+        mcpDocsQueryResult(provider, plan.m_provider_tool, query, plan.m_tool_arguments, message);
     const QString logical_error = docsQueryLogicalError(result);
     if (!logical_error.isEmpty()) {
         if (error_message != nullptr) {
@@ -848,11 +848,11 @@ QJsonObject AiProviderGateway::docsQuery(const QJsonObject& args, QString* error
     const DocsToolPlan plan = docsToolPlan(provider_id, query, extra);
     if (!plan.ok()) {
         if (error_message != nullptr) {
-            *error_message = plan.error;
+            *error_message = plan.m_error;
         }
         return {};
     }
-    if (!requireProviderTool(provider, provider_id, plan.provider_tool, error_message)) {
+    if (!requireProviderTool(provider, provider_id, plan.m_provider_tool, error_message)) {
         return {};
     }
     // Fail closed on a logical tool error: runDocsToolCall does not let the read-op path force
@@ -1016,7 +1016,7 @@ bool AiProviderGateway::isWin32ReadOnlyTool(const QString& tool_name) {
     // dispatch hover, scroll into view), so the server rejects them under read_only. Listing them
     // here would send read_only AND report them safe, yet the call would fail; instead they fall
     // to the fail-closed default in populateWin32Plan (interactive profile + human confirmation).
-    static const QSet<QString> read_only{
+    static const QSet<QString> kReadOnly{
         QStringLiteral("assert_text_visible"),
         QStringLiteral("browser_box"),
         QStringLiteral("browser_extension_status"),
@@ -1053,21 +1053,21 @@ bool AiProviderGateway::isWin32ReadOnlyTool(const QString& tool_name) {
         QStringLiteral("wait_for_text"),
         QStringLiteral("wait_for_window"),
     };
-    return read_only.contains(tool_name.trimmed());
+    return kReadOnly.contains(tool_name.trimmed());
 }
 
 bool AiProviderGateway::isWin32HighRiskTool(const QString& tool_name) {
     // Only tools the win32 server actually implements. list_processes/kill_process/start_process
     // were classified here (and as read-only) but were never in the server manifest, so their
     // classification was dead -- removed.
-    static const QSet<QString> high_risk{
+    static const QSet<QString> kHighRisk{
         QStringLiteral("close_window"),
     };
-    return high_risk.contains(tool_name.trimmed());
+    return kHighRisk.contains(tool_name.trimmed());
 }
 
 bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
-    static const QSet<QString> input_tools{
+    static const QSet<QString> kInputTools{
         // Installing/removing the browser-control extension writes user Chrome enterprise
         // policy that force-installs software; gate it at the hard-confirm tier so it needs
         // a human even in Unattended mode, like live input injection.
@@ -1103,7 +1103,7 @@ bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
         // input lands, so it takes the same hard gate as the input it sets up.
         QStringLiteral("focus_window"),
     };
-    return input_tools.contains(tool_name.trimmed());
+    return kInputTools.contains(tool_name.trimmed());
 }
 
 bool AiProviderGateway::isWin32DesktopInputTool(const QString& tool_name) {
@@ -1113,7 +1113,7 @@ bool AiProviderGateway::isWin32DesktopInputTool(const QString& tool_name) {
     // confirm even inside a win32_gui recipe (a SUPERAntiSpyware-style desktop recipe does not
     // need them). This is a positive allowlist, so a newly added input tool is rejected in
     // recipes until it is explicitly added here.
-    static const QSet<QString> desktop_tools{
+    static const QSet<QString> kDesktopTools{
         QStringLiteral("click_text"),
         QStringLiteral("uia_click_control"),
         QStringLiteral("dismiss_dialog"),
@@ -1122,7 +1122,7 @@ bool AiProviderGateway::isWin32DesktopInputTool(const QString& tool_name) {
         QStringLiteral("send_keys"),
         QStringLiteral("focus_window"),
     };
-    return desktop_tools.contains(tool_name.trimmed());
+    return kDesktopTools.contains(tool_name.trimmed());
 }
 
 QProcessEnvironment AiProviderGateway::win32McpEnvironment(const QString& security_profile,

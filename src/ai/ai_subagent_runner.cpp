@@ -453,8 +453,8 @@ AiSubagentResult parseSubagentJsonResult(const AiSubagentTask& task,
 }
 
 struct SubagentAttempt {
-    AiSubagentResult result;
-    bool retryable{false};
+    AiSubagentResult m_result;
+    bool m_retryable{false};
 };
 
 // Records the tools the runner ACTUALLY executed, distinct from the model's
@@ -521,30 +521,30 @@ AiSubagentResult toolIterationCapResult(const AiSubagentTask& task,
 }
 
 struct ToolExecutionContext {
-    IAiSubagentToolExecutor* executor{nullptr};
-    int max_iterations{kDefaultSubagentToolIterationCap};
+    IAiSubagentToolExecutor* m_executor{nullptr};
+    int m_max_iterations{kDefaultSubagentToolIterationCap};
 };
 
 // Immutable per-attempt inputs, bundled to keep the acting-loop helpers within
 // the argument-count budget.
 struct AttemptContext {
-    IAiModelClient* model_client{nullptr};
-    const AiSubagentTask* task{nullptr};
-    const IAiModelClient::Request* request{nullptr};
-    ToolExecutionContext tools;
+    IAiModelClient* m_model_client{nullptr};
+    const AiSubagentTask* m_task{nullptr};
+    const IAiModelClient::Request* m_request{nullptr};
+    ToolExecutionContext m_tools;
 };
 
 struct ActingLoopOutcome {
-    IAiModelClient::Response response;
-    QStringList executed_tools;
-    bool early_return{false};       ///< Set when the loop terminated with a final attempt.
-    SubagentAttempt early_attempt;  ///< Valid only when early_return is true.
+    IAiModelClient::Response m_response;
+    QStringList m_executed_tools;
+    bool m_early_return{false};       ///< Set when the loop terminated with a final attempt.
+    SubagentAttempt m_early_attempt;  ///< Valid only when early_return is true.
 };
 
 // Terminates the batch: `result` becomes the attempt's final outcome.
 bool stopBatch(ActingLoopOutcome* outcome, AiSubagentResult result) {
-    outcome->early_return = true;
-    outcome->early_attempt = {.result = std::move(result), .retryable = false};
+    outcome->m_early_return = true;
+    outcome->m_early_attempt = {.m_result = std::move(result), .m_retryable = false};
     return false;
 }
 
@@ -640,11 +640,11 @@ bool toolTurnMayProceed(const AttemptContext& ctx,
     if (tokenCancelled(agent_token)) {
         return stopBatch(
             outcome,
-            cancelledToolResult(*ctx.task, agent_token, outcome->executed_tools, accumulated));
+            cancelledToolResult(*ctx.m_task, agent_token, outcome->m_executed_tools, accumulated));
     }
     if (deadline.hasExpired()) {
-        return stopBatch(outcome,
-                         toolLoopTimeoutResult(*ctx.task, outcome->executed_tools, accumulated));
+        return stopBatch(
+            outcome, toolLoopTimeoutResult(*ctx.m_task, outcome->m_executed_tools, accumulated));
     }
     return true;
 }
@@ -661,34 +661,36 @@ bool executeToolCallsForTurn(const AttemptContext& ctx,
                              const QDeadlineTimer& deadline,
                              const TokenUsage& accumulated,
                              ActingLoopOutcome* outcome) {
-    const QString batch_error = toolCallBatchError(outcome->response);
+    const QString batch_error = toolCallBatchError(outcome->m_response);
     if (!batch_error.isEmpty()) {
         return stopBatch(outcome,
                          toolContractFailureResult(
-                             *ctx.task, batch_error, outcome->executed_tools, accumulated));
+                             *ctx.m_task, batch_error, outcome->m_executed_tools, accumulated));
     }
     QVector<AiSubagentToolOutput> outputs;
-    outputs.reserve(outcome->response.tool_calls.size());
-    for (const auto& call : outcome->response.tool_calls) {
+    outputs.reserve(outcome->m_response.tool_calls.size());
+    for (const auto& call : outcome->m_response.tool_calls) {
         if (!toolTurnMayProceed(ctx, agent_token, deadline, accumulated, outcome)) {
             return false;
         }
-        outcome->executed_tools << call.name;
+        outcome->m_executed_tools << call.name;
         const AiSubagentToolOutput output =
-            ctx.tools.executor->executeToolCall(*ctx.task, call, agent_token);
+            ctx.m_tools.m_executor->executeToolCall(*ctx.m_task, call, agent_token);
         const QString output_error = toolOutputError(call, output);
         if (!output_error.isEmpty()) {
             return stopBatch(outcome,
-                             toolContractFailureResult(
-                                 *ctx.task, output_error, outcome->executed_tools, accumulated));
+                             toolContractFailureResult(*ctx.m_task,
+                                                       output_error,
+                                                       outcome->m_executed_tools,
+                                                       accumulated));
         }
         outputs.append(output);
     }
     if (!toolTurnMayProceed(ctx, agent_token, deadline, accumulated, outcome)) {
         return false;
     }
-    outcome->response = ctx.model_client->continueWithToolOutputs(
-        *ctx.request, outcome->response.response_id, outputs, agent_token);
+    outcome->m_response = ctx.m_model_client->continueWithToolOutputs(
+        *ctx.m_request, outcome->m_response.response_id, outputs, agent_token);
     return true;
 }
 
@@ -701,18 +703,18 @@ bool executeToolCallsForTurn(const AttemptContext& ctx,
 bool pendingToolCallsAreRunnable(const AttemptContext& ctx,
                                  const TokenUsage& accumulated,
                                  ActingLoopOutcome* outcome) {
-    if (!outcome->response.success || outcome->response.tool_calls.isEmpty() ||
-        ctx.tools.executor != nullptr) {
+    if (!outcome->m_response.success || outcome->m_response.tool_calls.isEmpty() ||
+        ctx.m_tools.m_executor != nullptr) {
         return true;
     }
     AiSubagentResult failed = baseResult(
-        *ctx.task,
+        *ctx.m_task,
         AiSubagentStatus::Failed,
         QStringLiteral("Model requested %1 tool call(s) but no tool executor is available "
                        "under this task's policy; the turn produced no final answer")
-            .arg(outcome->response.tool_calls.size()));
+            .arg(outcome->m_response.tool_calls.size()));
     failed.usage = accumulated;
-    recordExecutedTools(&failed, outcome->executed_tools);
+    recordExecutedTools(&failed, outcome->m_executed_tools);
     return stopBatch(outcome, failed);
 }
 
@@ -724,29 +726,28 @@ ActingLoopOutcome runToolCallLoop(const AttemptContext& ctx,
                                   const CancellationToken& agent_token,
                                   const QDeadlineTimer& deadline,
                                   IAiModelClient::Response initial_response) {
-    const AiSubagentTask& task = *ctx.task;
+    const AiSubagentTask& task = *ctx.m_task;
     ActingLoopOutcome outcome;
-    outcome.response = std::move(initial_response);
-    TokenUsage accumulated = outcome.response.usage;
+    outcome.m_response = std::move(initial_response);
+    TokenUsage accumulated = outcome.m_response.usage;
     int iterations = 0;
-    while (outcome.response.success && !outcome.response.tool_calls.isEmpty() &&
-           ctx.tools.executor != nullptr) {
+    while (outcome.m_response.success && !outcome.m_response.tool_calls.isEmpty() &&
+           ctx.m_tools.m_executor != nullptr) {
         if (!toolTurnMayProceed(ctx, agent_token, deadline, accumulated, &outcome)) {
             return outcome;
         }
-        if (iterations >= ctx.tools.max_iterations) {
-            outcome.early_return = true;
-            outcome.early_attempt = {.result = toolIterationCapResult(task,
-                                                                      ctx.tools.max_iterations,
-                                                                      outcome.executed_tools,
-                                                                      accumulated),
-                                     .retryable = false};
+        if (iterations >= ctx.m_tools.m_max_iterations) {
+            outcome.m_early_return = true;
+            outcome.m_early_attempt = {
+                .m_result = toolIterationCapResult(
+                    task, ctx.m_tools.m_max_iterations, outcome.m_executed_tools, accumulated),
+                .m_retryable = false};
             return outcome;
         }
         if (!executeToolCallsForTurn(ctx, agent_token, deadline, accumulated, &outcome)) {
             return outcome;
         }
-        addUsage(&accumulated, outcome.response.usage);
+        addUsage(&accumulated, outcome.m_response.usage);
         ++iterations;
     }
     if (!pendingToolCallsAreRunnable(ctx, accumulated, &outcome)) {
@@ -754,31 +755,31 @@ ActingLoopOutcome runToolCallLoop(const AttemptContext& ctx,
     }
     // The final turn carries the usage summed across every round trip so callers
     // (budget checks, telemetry) see the whole cost, not just the last turn.
-    outcome.response.usage = accumulated;
+    outcome.m_response.usage = accumulated;
     return outcome;
 }
 
 SubagentAttempt invokeSubagentAttempt(const AttemptContext& ctx,
                                       const CancellationToken& agent_token,
                                       const QDeadlineTimer& deadline) {
-    const AiSubagentTask& task = *ctx.task;
+    const AiSubagentTask& task = *ctx.m_task;
     const ActingLoopOutcome loop = runToolCallLoop(
-        ctx, agent_token, deadline, ctx.model_client->invoke(*ctx.request, agent_token));
-    if (loop.early_return) {
-        return loop.early_attempt;
+        ctx, agent_token, deadline, ctx.m_model_client->invoke(*ctx.m_request, agent_token));
+    if (loop.m_early_return) {
+        return loop.m_early_attempt;
     }
-    const IAiModelClient::Response& response = loop.response;
+    const IAiModelClient::Response& response = loop.m_response;
     // Retrying an attempt replays the WHOLE attempt from invoke(), so any tool it
     // already dispatched would run a second time with no idempotency key, no
     // call-id de-duplication, and no renewed human confirmation. An attempt that
     // touched the machine is therefore never retryable, whatever failed after it.
-    const bool tools_ran = !loop.executed_tools.isEmpty();
+    const bool tools_ran = !loop.m_executed_tools.isEmpty();
     if (tokenCancelled(agent_token)) {
         AiSubagentResult cancelled =
             baseResult(task, AiSubagentStatus::Cancelled, agent_token.cancelReason());
         cancelled.usage = response.usage;
-        recordExecutedTools(&cancelled, loop.executed_tools);
-        return {.result = cancelled, .retryable = false};
+        recordExecutedTools(&cancelled, loop.m_executed_tools);
+        return {.m_result = cancelled, .m_retryable = false};
     }
     if (!response.success) {
         AiSubagentResult failed = baseResult(task,
@@ -787,13 +788,13 @@ SubagentAttempt invokeSubagentAttempt(const AttemptContext& ctx,
                                                  ? QStringLiteral("Model invocation failed")
                                                  : response.error_message);
         failed.usage = response.usage;
-        recordExecutedTools(&failed, loop.executed_tools);
-        return {.result = failed, .retryable = !tools_ran};
+        recordExecutedTools(&failed, loop.m_executed_tools);
+        return {.m_result = failed, .m_retryable = !tools_ran};
     }
     bool retryable = false;
     AiSubagentResult parsed = parseSubagentJsonResult(task, response, &retryable);
-    recordExecutedTools(&parsed, loop.executed_tools);
-    return {.result = parsed, .retryable = retryable && !tools_ran};
+    recordExecutedTools(&parsed, loop.m_executed_tools);
+    return {.m_result = parsed, .m_retryable = retryable && !tools_ran};
 }
 
 // The retry backoff must not outlive the run: sleep in short slices so a cancel
@@ -862,7 +863,7 @@ AiSubagentResult carryForwardEvidence(AiSubagentResult result, const AiSubagentR
 AiSubagentResult runSubagentAttempts(const AttemptContext& ctx,
                                      const AiSubagentRunnerOptions& options,
                                      const CancellationToken& agent_token) {
-    const AiSubagentTask& task = *ctx.task;
+    const AiSubagentTask& task = *ctx.m_task;
     const int max_attempts = std::max(1, options.max_retries + 1);
     const qint64 effective_timeout_ms = effectiveWallClockMs(options, task);
     const QDeadlineTimer deadline = effective_timeout_ms > 0
@@ -882,12 +883,12 @@ AiSubagentResult runSubagentAttempts(const AttemptContext& ctx,
         }
 
         const SubagentAttempt current = invokeSubagentAttempt(ctx, agent_token, deadline);
-        addUsage(&attempts_usage, current.result.usage);
-        last_attempt = current.result;
+        addUsage(&attempts_usage, current.m_result.usage);
+        last_attempt = current.m_result;
         // Every attempt's tokens are real spend, so the reported usage is the sum
         // across attempts, not just whatever the surviving attempt reported.
         last_attempt.usage = attempts_usage;
-        if (!current.retryable || attempt >= max_attempts || deadline.hasExpired()) {
+        if (!current.m_retryable || attempt >= max_attempts || deadline.hasExpired()) {
             break;
         }
         sleepBeforeRetry(options.retry_delay_ms, agent_token, deadline);
@@ -1123,11 +1124,11 @@ AiSubagentResult AiSubagentRunner::run(const AiSubagentTask& task,
                                (task.tool_policy != AiToolPolicy::NoLocalExecution);
     request.enable_local_tools = tools_allowed;
     AttemptContext ctx;
-    ctx.model_client = model_client;
-    ctx.task = &task;
-    ctx.request = &request;
-    ctx.tools.executor = tools_allowed ? m_tool_executor : nullptr;
-    ctx.tools.max_iterations = m_options.max_tool_iterations;
+    ctx.m_model_client = model_client;
+    ctx.m_task = &task;
+    ctx.m_request = &request;
+    ctx.m_tools.m_executor = tools_allowed ? m_tool_executor : nullptr;
+    ctx.m_tools.m_max_iterations = m_options.max_tool_iterations;
     return runSubagentAttempts(ctx, m_options, agent_token);
 }
 

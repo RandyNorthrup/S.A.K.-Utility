@@ -27,16 +27,16 @@ namespace sak::win32mcp {
 namespace {
 
 struct Size {
-    int w;
-    int h;
+    int m_w;
+    int m_h;
 };
 
 // The GDI objects backing one capture, torn down together in freeSurface.
 struct Surface {
-    HDC screen;
-    HDC memDC;
-    HBITMAP dib;
-    void* bits;
+    HDC m_screen;
+    HDC m_mem_dc;
+    HBITMAP m_dib;
+    void* m_bits;
 };
 
 // A 32bpp top-down DIB: each pixel occupies 4 bytes (BGRX/BGRA).
@@ -45,7 +45,7 @@ constexpr int kDibBytesPerPixel = 4;
 
 // Create a top-down 32bpp (BGRX) DIB section selected into memDC. Top-down (negative height)
 // so scanlines are in the row order both PNG and SoftwareBitmap expect.
-HBITMAP makeTopDownDib(HDC memDC, int width, int height, void** bits) {
+HBITMAP makeTopDownDib(HDC mem_dc, int width, int height, void** bits) {
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi.bmiHeader.biWidth = width;
@@ -53,7 +53,7 @@ HBITMAP makeTopDownDib(HDC memDC, int width, int height, void** bits) {
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = kDibBitsPerPixel;
     bmi.bmiHeader.biCompression = BI_RGB;
-    return CreateDIBSection(memDC, &bmi, DIB_RGB_COLORS, bits, nullptr, 0);
+    return CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, bits, nullptr, 0);
 }
 
 // Render the source into memDC (which owns the target DIB). For a specific window we use
@@ -62,11 +62,11 @@ HBITMAP makeTopDownDib(HDC memDC, int width, int height, void** bits) {
 // occluded window would capture whatever OTHER window sits on top, feeding OCR/clicks the wrong
 // pixels. BitBlt is used solely for a null-hwnd full-screen / region grab, where the screen rect
 // IS the intended source.
-bool blitSource(void* hwnd, HDC memDC, HDC screen, const RECT& rect) {
+bool blitSource(void* hwnd, HDC mem_dc, HDC screen, const RECT& rect) {
     if (hwnd != nullptr) {
-        return PrintWindow(static_cast<HWND>(hwnd), memDC, PW_RENDERFULLCONTENT) != FALSE;
+        return PrintWindow(static_cast<HWND>(hwnd), mem_dc, PW_RENDERFULLCONTENT) != FALSE;
     }
-    return BitBlt(memDC,
+    return BitBlt(mem_dc,
                   0,
                   0,
                   rect.right - rect.left,
@@ -91,14 +91,15 @@ QByteArray stretchToBytes(HDC screen, HDC src_dc, Size src, Size dst) {
         return {};
     }
     void* bits = nullptr;
-    HBITMAP dib = makeTopDownDib(dst_dc, dst.w, dst.h, &bits);
+    HBITMAP dib = makeTopDownDib(dst_dc, dst.m_w, dst.m_h, &bits);
     QByteArray out;
     if (dib != nullptr && bits != nullptr) {
         HGDIOBJ old = SelectObject(dst_dc, dib);
         SetStretchBltMode(dst_dc, HALFTONE);
         SetBrushOrgEx(dst_dc, 0, 0, nullptr);
-        if (StretchBlt(dst_dc, 0, 0, dst.w, dst.h, src_dc, 0, 0, src.w, src.h, SRCCOPY) != FALSE) {
-            out = copyDibBytes(bits, dst.w, dst.h);
+        if (StretchBlt(dst_dc, 0, 0, dst.m_w, dst.m_h, src_dc, 0, 0, src.m_w, src.m_h, SRCCOPY) !=
+            FALSE) {
+            out = copyDibBytes(bits, dst.m_w, dst.m_h);
         }
         SelectObject(dst_dc, old);
     }
@@ -112,21 +113,22 @@ QByteArray stretchToBytes(HDC screen, HDC src_dc, Size src, Size dst) {
 // Allocate the screen DC + a memory DC + a top-down DIB of (w x h). Returns false (and frees
 // whatever was created) if any step fails; on success s.dib is selected by the caller.
 bool allocSurface(int width, int height, Surface& s) {
-    s.screen = GetDC(nullptr);
-    s.memDC = CreateCompatibleDC(s.screen);
-    s.bits = nullptr;
-    s.dib = (s.memDC != nullptr) ? makeTopDownDib(s.memDC, width, height, &s.bits) : nullptr;
-    return s.memDC != nullptr && s.dib != nullptr && s.bits != nullptr;
+    s.m_screen = GetDC(nullptr);
+    s.m_mem_dc = CreateCompatibleDC(s.m_screen);
+    s.m_bits = nullptr;
+    s.m_dib = (s.m_mem_dc != nullptr) ? makeTopDownDib(s.m_mem_dc, width, height, &s.m_bits)
+                                      : nullptr;
+    return s.m_mem_dc != nullptr && s.m_dib != nullptr && s.m_bits != nullptr;
 }
 
 void freeSurface(const Surface& s) {
-    if (s.dib != nullptr) {
-        DeleteObject(s.dib);
+    if (s.m_dib != nullptr) {
+        DeleteObject(s.m_dib);
     }
-    if (s.memDC != nullptr) {
-        DeleteDC(s.memDC);
+    if (s.m_mem_dc != nullptr) {
+        DeleteDC(s.m_mem_dc);
     }
-    ReleaseDC(nullptr, s.screen);
+    ReleaseDC(nullptr, s.m_screen);
 }
 
 // Blit the source into the surface, downscale if needed, and copy pixels into `out`. Returns an
@@ -135,15 +137,16 @@ QString renderToBytes(const Surface& s,
                       const CaptureRequest& req,
                       const RECT& rect,
                       CaptureBits& out) {
-    if (!blitSource(req.hwnd, s.memDC, s.screen, rect)) {
+    if (!blitSource(req.hwnd, s.m_mem_dc, s.m_screen, rect)) {
         return QStringLiteral("The capture failed (the window may be minimized or protected).");
     }
-    const Size src{.w = static_cast<int>(rect.right - rect.left),
-                   .h = static_cast<int>(rect.bottom - rect.top)};
-    const Scaled sc = scaledSize(src.w, src.h, req.max_edge);
-    QByteArray bytes = (sc.scale < 1.0)
-                           ? stretchToBytes(s.screen, s.memDC, src, Size{.w = sc.w, .h = sc.h})
-                           : copyDibBytes(s.bits, src.w, src.h);
+    const Size src{.m_w = static_cast<int>(rect.right - rect.left),
+                   .m_h = static_cast<int>(rect.bottom - rect.top)};
+    const Scaled sc = scaledSize(src.m_w, src.m_h, req.max_edge);
+    QByteArray bytes =
+        (sc.scale < 1.0)
+            ? stretchToBytes(s.m_screen, s.m_mem_dc, src, Size{.m_w = sc.w, .m_h = sc.h})
+            : copyDibBytes(s.m_bits, src.m_w, src.m_h);
     if (bytes.isEmpty()) {
         return QStringLiteral("The capture could not be read.");
     }
@@ -168,7 +171,7 @@ bool captureBgra(const CaptureRequest& req, CaptureBits& out, QString& err) {
         err = QStringLiteral("Could not allocate a capture surface.");
         return false;
     }
-    HGDIOBJ old = SelectObject(s.memDC, s.dib);
+    HGDIOBJ old = SelectObject(s.m_mem_dc, s.m_dib);
     if (old == nullptr || old == HGDI_ERROR) {
         // Without the DIB selected the blit renders into the DC's default 1x1 bitmap and we would
         // return the DIB's zero-filled memory as a "successful" black capture; fail closed instead.
@@ -177,7 +180,7 @@ bool captureBgra(const CaptureRequest& req, CaptureBits& out, QString& err) {
         return false;
     }
     err = renderToBytes(s, req, rect, out);
-    SelectObject(s.memDC, old);
+    SelectObject(s.m_mem_dc, old);
     freeSurface(s);
     return err.isEmpty();
 }
@@ -185,13 +188,13 @@ bool captureBgra(const CaptureRequest& req, CaptureBits& out, QString& err) {
 namespace {
 
 struct WindowMatch {
-    HWND hwnd;
-    QString title_lower;
+    HWND m_hwnd;
+    QString m_title_lower;
 };
 
 struct FindWindowState {
-    QString needle_lower;
-    QVector<WindowMatch> matches;
+    QString m_needle_lower;
+    QVector<WindowMatch> m_matches;
 };
 
 QString titleOf(HWND hwnd) {
@@ -211,10 +214,10 @@ BOOL CALLBACK findWindowProc(HWND hwnd, LPARAM param) {
     }
     const QString title = titleOf(hwnd);
     const QString lower = title.toLower();
-    if (title.isEmpty() || !lower.contains(find->needle_lower)) {
+    if (title.isEmpty() || !lower.contains(find->m_needle_lower)) {
         return TRUE;
     }
-    find->matches.append(WindowMatch{.hwnd = hwnd, .title_lower = lower});
+    find->m_matches.append(WindowMatch{.m_hwnd = hwnd, .m_title_lower = lower});
     return TRUE;  // collect every match, then disambiguate rather than blindly taking the first
 }
 
@@ -230,13 +233,13 @@ HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
         return nullptr;
     }
     if (matches.size() == 1) {
-        return matches.first().hwnd;
+        return matches.first().m_hwnd;
     }
     HWND exact = nullptr;
     int exact_count = 0;
     for (const WindowMatch& m : matches) {
-        if (m.title_lower == needle_lower) {
-            exact = m.hwnd;
+        if (m.m_title_lower == needle_lower) {
+            exact = m.m_hwnd;
             ++exact_count;
         }
     }
@@ -258,9 +261,9 @@ bool windowRectByTitle(const QString& needle_lower, WindowRect& out, QString& er
         err = QStringLiteral("No window title was provided.");
         return false;
     }
-    FindWindowState state{.needle_lower = needle_lower, .matches = {}};
+    FindWindowState state{.m_needle_lower = needle_lower, .m_matches = {}};
     EnumWindows(findWindowProc, reinterpret_cast<LPARAM>(&state));
-    HWND match = pickUniqueWindow(state.matches, needle_lower, err);
+    HWND match = pickUniqueWindow(state.m_matches, needle_lower, err);
     if (match == nullptr) {
         return false;
     }

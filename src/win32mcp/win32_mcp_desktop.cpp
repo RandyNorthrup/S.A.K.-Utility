@@ -99,13 +99,13 @@ QString windowTitleOf(HWND hwnd) {
 }
 
 struct WindowMatch {
-    HWND hwnd;
-    QString title_lower;
+    HWND m_hwnd;
+    QString m_title_lower;
 };
 
 struct FindState {
-    QString needle_lower;
-    QVector<WindowMatch> matches;
+    QString m_needle_lower;
+    QVector<WindowMatch> m_matches;
 };
 
 BOOL CALLBACK collectMatchProc(HWND hwnd, LPARAM param) {
@@ -115,10 +115,10 @@ BOOL CALLBACK collectMatchProc(HWND hwnd, LPARAM param) {
     }
     const QString title = windowTitleOf(hwnd);
     const QString lower = title.toLower();
-    if (title.isEmpty() || !lower.contains(find->needle_lower)) {
+    if (title.isEmpty() || !lower.contains(find->m_needle_lower)) {
         return TRUE;
     }
-    find->matches.append(WindowMatch{.hwnd = hwnd, .title_lower = lower});
+    find->m_matches.append(WindowMatch{.m_hwnd = hwnd, .m_title_lower = lower});
     return TRUE;  // collect every match, then disambiguate rather than taking the first
 }
 
@@ -133,13 +133,13 @@ HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
         return nullptr;
     }
     if (matches.size() == 1) {
-        return matches.first().hwnd;
+        return matches.first().m_hwnd;
     }
     HWND exact = nullptr;
     int exact_count = 0;
     for (const WindowMatch& m : matches) {
-        if (m.title_lower == needle_lower) {
-            exact = m.hwnd;
+        if (m.m_title_lower == needle_lower) {
+            exact = m.m_hwnd;
             ++exact_count;
         }
     }
@@ -153,9 +153,9 @@ HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
 }
 
 HWND findVisibleWindowByTitle(const QString& needle_lower, QString& err) {
-    FindState state{.needle_lower = needle_lower, .matches = {}};
+    FindState state{.m_needle_lower = needle_lower, .m_matches = {}};
     EnumWindows(collectMatchProc, reinterpret_cast<LPARAM>(&state));
-    return pickUniqueWindow(state.matches, needle_lower, err);
+    return pickUniqueWindow(state.m_matches, needle_lower, err);
 }
 
 // Resolve the window an observation tool targets: foreground=true -> the active window (the only
@@ -318,14 +318,14 @@ using Microsoft::WRL::ComPtr;
 // are the element's screen-space bounding-rectangle origin, kept as part of the ref-drift identity
 // so two same-role, same-(or empty-)name controls that swap position cannot pass the guard.
 struct UiaNode {
-    QString role;
-    QString name;
-    QString value;
-    int depth{0};
-    bool enabled{true};
-    bool offscreen{false};
-    long left{0};
-    long top{0};
+    QString m_role;
+    QString m_name;
+    QString m_value;
+    int m_depth{0};
+    bool m_enabled{true};
+    bool m_offscreen{false};
+    long m_left{0};
+    long m_top{0};
 };
 
 // Bound the walk so a pathological tree (thousands of list items) cannot flood the transport
@@ -343,10 +343,10 @@ class ComApartment {
 public:
     ComApartment() {
         const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        owned_ = (hr == S_OK || hr == S_FALSE);
+        m_owned = (hr == S_OK || hr == S_FALSE);
     }
     ~ComApartment() {
-        if (owned_) {
+        if (m_owned) {
             CoUninitialize();
         }
     }
@@ -354,7 +354,7 @@ public:
     ComApartment& operator=(const ComApartment&) = delete;
 
 private:
-    bool owned_{false};
+    bool m_owned{false};
 };
 
 QString bstrToQString(BSTR text) {
@@ -368,50 +368,50 @@ QString bstrToQString(BSTR text) {
 // reports "control" so the outline is still well-formed.
 const char* controlTypeName(CONTROLTYPEID id) {
     struct Row {
-        int id;
-        const char* name;
+        int m_id;
+        const char* m_name;
     };
     static const Row kRows[] = {
-        {.id = UIA_ButtonControlTypeId, .name = "button"},
-        {.id = UIA_CheckBoxControlTypeId, .name = "checkbox"},
-        {.id = UIA_ComboBoxControlTypeId, .name = "combobox"},
-        {.id = UIA_EditControlTypeId, .name = "edit"},
-        {.id = UIA_HyperlinkControlTypeId, .name = "link"},
-        {.id = UIA_ImageControlTypeId, .name = "image"},
-        {.id = UIA_ListItemControlTypeId, .name = "listitem"},
-        {.id = UIA_ListControlTypeId, .name = "list"},
-        {.id = UIA_MenuControlTypeId, .name = "menu"},
-        {.id = UIA_MenuBarControlTypeId, .name = "menubar"},
-        {.id = UIA_MenuItemControlTypeId, .name = "menuitem"},
-        {.id = UIA_ProgressBarControlTypeId, .name = "progressbar"},
-        {.id = UIA_RadioButtonControlTypeId, .name = "radio"},
-        {.id = UIA_ScrollBarControlTypeId, .name = "scrollbar"},
-        {.id = UIA_SliderControlTypeId, .name = "slider"},
-        {.id = UIA_SpinnerControlTypeId, .name = "spinner"},
-        {.id = UIA_StatusBarControlTypeId, .name = "statusbar"},
-        {.id = UIA_TabControlTypeId, .name = "tab"},
-        {.id = UIA_TabItemControlTypeId, .name = "tabitem"},
-        {.id = UIA_TextControlTypeId, .name = "text"},
-        {.id = UIA_ToolBarControlTypeId, .name = "toolbar"},
-        {.id = UIA_ToolTipControlTypeId, .name = "tooltip"},
-        {.id = UIA_TreeControlTypeId, .name = "tree"},
-        {.id = UIA_TreeItemControlTypeId, .name = "treeitem"},
-        {.id = UIA_GroupControlTypeId, .name = "group"},
-        {.id = UIA_DataGridControlTypeId, .name = "datagrid"},
-        {.id = UIA_DataItemControlTypeId, .name = "dataitem"},
-        {.id = UIA_DocumentControlTypeId, .name = "document"},
-        {.id = UIA_SplitButtonControlTypeId, .name = "splitbutton"},
-        {.id = UIA_WindowControlTypeId, .name = "window"},
-        {.id = UIA_PaneControlTypeId, .name = "pane"},
-        {.id = UIA_HeaderControlTypeId, .name = "header"},
-        {.id = UIA_HeaderItemControlTypeId, .name = "headeritem"},
-        {.id = UIA_TableControlTypeId, .name = "table"},
-        {.id = UIA_TitleBarControlTypeId, .name = "titlebar"},
-        {.id = UIA_SeparatorControlTypeId, .name = "separator"},
+        {.m_id = UIA_ButtonControlTypeId, .m_name = "button"},
+        {.m_id = UIA_CheckBoxControlTypeId, .m_name = "checkbox"},
+        {.m_id = UIA_ComboBoxControlTypeId, .m_name = "combobox"},
+        {.m_id = UIA_EditControlTypeId, .m_name = "edit"},
+        {.m_id = UIA_HyperlinkControlTypeId, .m_name = "link"},
+        {.m_id = UIA_ImageControlTypeId, .m_name = "image"},
+        {.m_id = UIA_ListItemControlTypeId, .m_name = "listitem"},
+        {.m_id = UIA_ListControlTypeId, .m_name = "list"},
+        {.m_id = UIA_MenuControlTypeId, .m_name = "menu"},
+        {.m_id = UIA_MenuBarControlTypeId, .m_name = "menubar"},
+        {.m_id = UIA_MenuItemControlTypeId, .m_name = "menuitem"},
+        {.m_id = UIA_ProgressBarControlTypeId, .m_name = "progressbar"},
+        {.m_id = UIA_RadioButtonControlTypeId, .m_name = "radio"},
+        {.m_id = UIA_ScrollBarControlTypeId, .m_name = "scrollbar"},
+        {.m_id = UIA_SliderControlTypeId, .m_name = "slider"},
+        {.m_id = UIA_SpinnerControlTypeId, .m_name = "spinner"},
+        {.m_id = UIA_StatusBarControlTypeId, .m_name = "statusbar"},
+        {.m_id = UIA_TabControlTypeId, .m_name = "tab"},
+        {.m_id = UIA_TabItemControlTypeId, .m_name = "tabitem"},
+        {.m_id = UIA_TextControlTypeId, .m_name = "text"},
+        {.m_id = UIA_ToolBarControlTypeId, .m_name = "toolbar"},
+        {.m_id = UIA_ToolTipControlTypeId, .m_name = "tooltip"},
+        {.m_id = UIA_TreeControlTypeId, .m_name = "tree"},
+        {.m_id = UIA_TreeItemControlTypeId, .m_name = "treeitem"},
+        {.m_id = UIA_GroupControlTypeId, .m_name = "group"},
+        {.m_id = UIA_DataGridControlTypeId, .m_name = "datagrid"},
+        {.m_id = UIA_DataItemControlTypeId, .m_name = "dataitem"},
+        {.m_id = UIA_DocumentControlTypeId, .m_name = "document"},
+        {.m_id = UIA_SplitButtonControlTypeId, .m_name = "splitbutton"},
+        {.m_id = UIA_WindowControlTypeId, .m_name = "window"},
+        {.m_id = UIA_PaneControlTypeId, .m_name = "pane"},
+        {.m_id = UIA_HeaderControlTypeId, .m_name = "header"},
+        {.m_id = UIA_HeaderItemControlTypeId, .m_name = "headeritem"},
+        {.m_id = UIA_TableControlTypeId, .m_name = "table"},
+        {.m_id = UIA_TitleBarControlTypeId, .m_name = "titlebar"},
+        {.m_id = UIA_SeparatorControlTypeId, .m_name = "separator"},
     };
     for (const auto& row : kRows) {
-        if (row.id == id) {
-            return row.name;
+        if (row.m_id == id) {
+            return row.m_name;
         }
     }
     return "control";
@@ -471,13 +471,13 @@ QString readElementValue(IUIAutomationElement* element) {
 
 UiaNode describeElement(IUIAutomationElement* element, int depth) {
     UiaNode node;
-    node.depth = depth;
+    node.m_depth = depth;
     CONTROLTYPEID control_type = 0;
     element->get_CurrentControlType(&control_type);
-    node.role = QString::fromLatin1(controlTypeName(control_type));
+    node.m_role = QString::fromLatin1(controlTypeName(control_type));
     BSTR name = nullptr;
     if (SUCCEEDED(element->get_CurrentName(&name)) && name != nullptr) {
-        node.name = bstrToQString(name).trimmed().left(kMaxUiaNameChars);
+        node.m_name = bstrToQString(name).trimmed().left(kMaxUiaNameChars);
         SysFreeString(name);
     }
     BOOL enabled = TRUE;
@@ -485,48 +485,49 @@ UiaNode describeElement(IUIAutomationElement* element, int depth) {
         enabled = FALSE;  // fail closed: an unreadable enabled state must not read as enabled --
                           // it feeds collectButtons/dismiss_dialog, which must not invoke it.
     }
-    node.enabled = enabled != FALSE;
+    node.m_enabled = enabled != FALSE;
     BOOL offscreen = FALSE;
     if (FAILED(element->get_CurrentIsOffscreen(&offscreen))) {
         offscreen = TRUE;  // fail closed: an unreadable visibility must not read as on-screen.
     }
-    node.offscreen = offscreen != FALSE;
+    node.m_offscreen = offscreen != FALSE;
     RECT bounds{};
     if (SUCCEEDED(element->get_CurrentBoundingRectangle(&bounds))) {
-        node.left = bounds.left;
-        node.top = bounds.top;
+        node.m_left = bounds.left;
+        node.m_top = bounds.top;
     }
-    node.value = readElementValue(element).left(kMaxUiaValueChars);
+    node.m_value = readElementValue(element).left(kMaxUiaValueChars);
     return node;
 }
 
 struct WalkState {
-    QVector<UiaNode>* nodes;
-    IUIAutomationTreeWalker* walker;
-    int max_depth;
-    bool truncated;
+    QVector<UiaNode>* m_nodes;
+    IUIAutomationTreeWalker* m_walker;
+    int m_max_depth;
+    bool m_truncated;
     // Optional parallel list of the live elements (same index as nodes), retained so a ref can be
     // invoked. Null when only the read-only outline is needed (inspect/find/get_value).
-    QVector<ComPtr<IUIAutomationElement>>* elements;
+    QVector<ComPtr<IUIAutomationElement>>* m_elements;
 };
 
 // Depth-first pre-order walk of the control view, appending each element as a flat node. The
 // node index becomes its ref. Stops (and flags truncated) once kMaxUiaNodes is reached.
 void walkElement(WalkState& state, IUIAutomationElement* element, int depth) {
-    if (state.nodes->size() >= kMaxUiaNodes) {
-        state.truncated = true;
+    if (state.m_nodes->size() >= kMaxUiaNodes) {
+        state.m_truncated = true;
         return;
     }
-    state.nodes->append(describeElement(element, depth));
-    if (state.elements != nullptr) {
-        state.elements->append(ComPtr<IUIAutomationElement>(element));
+    state.m_nodes->append(describeElement(element, depth));
+    if (state.m_elements != nullptr) {
+        state.m_elements->append(ComPtr<IUIAutomationElement>(element));
     }
-    if (depth >= state.max_depth) {
+    if (depth >= state.m_max_depth) {
         return;
     }
     ComPtr<IUIAutomationElement> child;
-    if (FAILED(state.walker->GetFirstChildElement(element, &child))) {
-        state.truncated = true;  // a walk failure leaves the tree incomplete -- flag, don't hide it
+    if (FAILED(state.m_walker->GetFirstChildElement(element, &child))) {
+        state.m_truncated =
+            true;  // a walk failure leaves the tree incomplete -- flag, don't hide it
         return;
     }
     if (child == nullptr) {
@@ -534,13 +535,13 @@ void walkElement(WalkState& state, IUIAutomationElement* element, int depth) {
     }
     while (child != nullptr) {
         walkElement(state, child.Get(), depth + 1);
-        if (state.nodes->size() >= kMaxUiaNodes) {
-            state.truncated = true;
+        if (state.m_nodes->size() >= kMaxUiaNodes) {
+            state.m_truncated = true;
             return;
         }
         ComPtr<IUIAutomationElement> next;
-        if (FAILED(state.walker->GetNextSiblingElement(child.Get(), &next))) {
-            state.truncated = true;  // sibling read failed -> remaining peers unseen; flag it
+        if (FAILED(state.m_walker->GetNextSiblingElement(child.Get(), &next))) {
+            state.m_truncated = true;  // sibling read failed -> remaining peers unseen; flag it
             return;
         }
         child = next;
@@ -569,13 +570,13 @@ QString inspectHwnd(HWND hwnd,
     if (FAILED(automation->get_ControlViewWalker(&walker)) || (walker == nullptr)) {
         return QStringLiteral("The UI Automation control view is unavailable.");
     }
-    WalkState state{.nodes = &out,
-                    .walker = walker.Get(),
-                    .max_depth = max_depth,
-                    .truncated = false,
-                    .elements = elements};
+    WalkState state{.m_nodes = &out,
+                    .m_walker = walker.Get(),
+                    .m_max_depth = max_depth,
+                    .m_truncated = false,
+                    .m_elements = elements};
     walkElement(state, root.Get(), 0);
-    truncated = state.truncated;
+    truncated = state.m_truncated;
     return {};
 }
 
@@ -596,18 +597,18 @@ QString buildOutline(const QVector<UiaNode>& nodes) {
     lines.reserve(nodes.size());
     for (int i = 0; i < nodes.size(); ++i) {
         const UiaNode& node = nodes[i];
-        const QString indent(std::min(node.depth, kMaxIndentDepth) * 2, QLatin1Char(' '));
-        QString line = QStringLiteral("%1[%2] %3").arg(indent).arg(i).arg(node.role);
-        if (!node.name.isEmpty()) {
-            line += QStringLiteral(" \"%1\"").arg(escapeOutlineText(node.name));
+        const QString indent(std::min(node.m_depth, kMaxIndentDepth) * 2, QLatin1Char(' '));
+        QString line = QStringLiteral("%1[%2] %3").arg(indent).arg(i).arg(node.m_role);
+        if (!node.m_name.isEmpty()) {
+            line += QStringLiteral(" \"%1\"").arg(escapeOutlineText(node.m_name));
         }
-        if (!node.value.isEmpty()) {
-            line += QStringLiteral(" = \"%1\"").arg(escapeOutlineText(node.value));
+        if (!node.m_value.isEmpty()) {
+            line += QStringLiteral(" = \"%1\"").arg(escapeOutlineText(node.m_value));
         }
-        if (!node.enabled) {
+        if (!node.m_enabled) {
             line += QStringLiteral(" (disabled)");
         }
-        if (node.offscreen) {
+        if (node.m_offscreen) {
             line += QStringLiteral(" (offscreen)");
         }
         lines << line;
@@ -627,10 +628,10 @@ int clampUiaDepth(const QJsonObject& args) {
 // ref still points at the same control. The native server processes one request at a time, so
 // a single module-local snapshot is safe.
 struct UiaSnapshot {
-    HWND hwnd{nullptr};
-    QString title;
-    QVector<UiaNode> nodes;
-    int depth{kDefaultUiaDepth};  // walk depth used, so a ref re-walk matches the stored indices
+    HWND m_hwnd{nullptr};
+    QString m_title;
+    QVector<UiaNode> m_nodes;
+    int m_depth{kDefaultUiaDepth};  // walk depth used, so a ref re-walk matches the stored indices
 };
 UiaSnapshot g_uia_snapshot;
 
@@ -639,8 +640,8 @@ QVector<UiaRefNode> toRefNodes(const QVector<UiaNode>& nodes) {
     QVector<UiaRefNode> out;
     out.reserve(nodes.size());
     for (const UiaNode& node : nodes) {
-        out.append(
-            UiaRefNode{.role = node.role, .name = node.name, .left = node.left, .top = node.top});
+        out.append(UiaRefNode{
+            .role = node.m_role, .name = node.m_name, .left = node.m_left, .top = node.m_top});
     }
     return out;
 }
@@ -659,8 +660,8 @@ ToolResult toolUiaInspectWindow(const QJsonObject& args) {
     if (!err.isEmpty()) {
         return errorResult(err);
     }
-    g_uia_snapshot =
-        UiaSnapshot{.hwnd = hwnd, .title = windowTitleOf(hwnd), .nodes = nodes, .depth = depth};
+    g_uia_snapshot = UiaSnapshot{
+        .m_hwnd = hwnd, .m_title = windowTitleOf(hwnd), .m_nodes = nodes, .m_depth = depth};
     return jsonResult(
         QJsonObject{{QStringLiteral("window"), windowTitleOf(hwnd)},
                     {QStringLiteral("hwnd"), QString::number(reinterpret_cast<quintptr>(hwnd))},
@@ -688,22 +689,22 @@ ToolResult toolUiaFindControl(const QJsonObject& args) {
     if (!err.isEmpty()) {
         return errorResult(err);
     }
-    g_uia_snapshot = UiaSnapshot{.hwnd = hwnd, .title = windowTitleOf(hwnd), .nodes = nodes};
+    g_uia_snapshot = UiaSnapshot{.m_hwnd = hwnd, .m_title = windowTitleOf(hwnd), .m_nodes = nodes};
     const QString needle = query.toLower();
     QJsonArray matches;
     for (int i = 0; i < nodes.size(); ++i) {
         const UiaNode& node = nodes[i];
-        if (!node.name.toLower().contains(needle)) {
+        if (!node.m_name.toLower().contains(needle)) {
             continue;
         }
-        if (!type_filter.isEmpty() && node.role != type_filter) {
+        if (!type_filter.isEmpty() && node.m_role != type_filter) {
             continue;
         }
         matches.append(QJsonObject{{QStringLiteral("ref"), i},
-                                   {QStringLiteral("role"), node.role},
-                                   {QStringLiteral("name"), node.name},
-                                   {QStringLiteral("value"), node.value},
-                                   {QStringLiteral("enabled"), node.enabled}});
+                                   {QStringLiteral("role"), node.m_role},
+                                   {QStringLiteral("name"), node.m_name},
+                                   {QStringLiteral("value"), node.m_value},
+                                   {QStringLiteral("enabled"), node.m_enabled}});
     }
     return jsonResult(QJsonObject{{QStringLiteral("window"), windowTitleOf(hwnd)},
                                   {QStringLiteral("count"), matches.size()},
@@ -714,13 +715,13 @@ ToolResult toolUiaFindControl(const QJsonObject& args) {
 // Guard the stored snapshot before a ref lookup: it must exist and still describe a live
 // window with the same title. Returns an error string when stale, empty when usable.
 QString uiaSnapshotPrecheck() {
-    if (g_uia_snapshot.hwnd == nullptr) {
+    if (g_uia_snapshot.m_hwnd == nullptr) {
         return QStringLiteral("No inspection yet; call uia_inspect_window first.");
     }
-    if (IsWindow(g_uia_snapshot.hwnd) == FALSE) {
+    if (IsWindow(g_uia_snapshot.m_hwnd) == FALSE) {
         return QStringLiteral("The inspected window is gone; call uia_inspect_window again.");
     }
-    if (windowTitleOf(g_uia_snapshot.hwnd) != g_uia_snapshot.title) {
+    if (windowTitleOf(g_uia_snapshot.m_hwnd) != g_uia_snapshot.m_title) {
         return QStringLiteral(
             "The window changed since inspection; call uia_inspect_window again.");
     }
@@ -731,7 +732,7 @@ QString uiaSnapshotPrecheck() {
 // shifted between calls), so reading it would silently target the wrong element. Delegates the
 // comparison to the pure, unit-tested uiaRefDrifted seam over the stored snapshot.
 bool snapshotRefDrifted(const QVector<UiaNode>& live, int ref) {
-    return uiaRefDrifted(toRefNodes(g_uia_snapshot.nodes), toRefNodes(live), ref);
+    return uiaRefDrifted(toRefNodes(g_uia_snapshot.m_nodes), toRefNodes(live), ref);
 }
 
 ToolResult toolUiaGetControlValue(const QJsonObject& args) {
@@ -746,7 +747,8 @@ ToolResult toolUiaGetControlValue(const QJsonObject& args) {
     const ComApartment com;
     QVector<UiaNode> nodes;
     bool truncated = false;
-    const QString err = inspectHwnd(g_uia_snapshot.hwnd, g_uia_snapshot.depth, nodes, truncated);
+    const QString err =
+        inspectHwnd(g_uia_snapshot.m_hwnd, g_uia_snapshot.m_depth, nodes, truncated);
     if (!err.isEmpty()) {
         return errorResult(err);
     }
@@ -756,13 +758,13 @@ ToolResult toolUiaGetControlValue(const QJsonObject& args) {
                            "uia_inspect_window again."));
     }
     const UiaNode& node = nodes[ref];
-    g_uia_snapshot.nodes = nodes;  // keep the stored tree aligned with what we just read
+    g_uia_snapshot.m_nodes = nodes;  // keep the stored tree aligned with what we just read
     return jsonResult(QJsonObject{{QStringLiteral("ref"), ref},
-                                  {QStringLiteral("role"), node.role},
-                                  {QStringLiteral("name"), node.name},
-                                  {QStringLiteral("value"), node.value},
-                                  {QStringLiteral("enabled"), node.enabled},
-                                  {QStringLiteral("offscreen"), node.offscreen}});
+                                  {QStringLiteral("role"), node.m_role},
+                                  {QStringLiteral("name"), node.m_name},
+                                  {QStringLiteral("value"), node.m_value},
+                                  {QStringLiteral("enabled"), node.m_enabled},
+                                  {QStringLiteral("offscreen"), node.m_offscreen}});
 }
 
 // Programmatic activation via UI Automation patterns (no cursor movement): Invoke a button/menu
@@ -826,7 +828,7 @@ ToolResult toolUiaClickControl(const QJsonObject& args) {
     bool truncated = false;
     QVector<ComPtr<IUIAutomationElement>> elements;
     const QString err =
-        inspectHwnd(g_uia_snapshot.hwnd, g_uia_snapshot.depth, nodes, truncated, &elements);
+        inspectHwnd(g_uia_snapshot.m_hwnd, g_uia_snapshot.m_depth, nodes, truncated, &elements);
     if (!err.isEmpty()) {
         return errorResult(err);
     }
@@ -840,13 +842,13 @@ ToolResult toolUiaClickControl(const QJsonObject& args) {
     if (!invoke_err.isEmpty()) {
         return errorResult(invoke_err);
     }
-    g_uia_snapshot.nodes = nodes;
+    g_uia_snapshot.m_nodes = nodes;
     const UiaNode& node = nodes[ref];
     return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
                                   {QStringLiteral("ref"), ref},
                                   {QStringLiteral("action"), action},
-                                  {QStringLiteral("role"), node.role},
-                                  {QStringLiteral("name"), node.name}});
+                                  {QStringLiteral("role"), node.m_role},
+                                  {QStringLiteral("name"), node.m_name}});
 }
 
 QString focusedWindowTitle(IUIAutomationElement* element) {
@@ -871,10 +873,10 @@ ToolResult toolUiaGetFocused(const QJsonObject&) {
         return errorResult(QStringLiteral("No UI element currently has focus."));
     }
     const UiaNode node = describeElement(element.Get(), 0);
-    return jsonResult(QJsonObject{{QStringLiteral("role"), node.role},
-                                  {QStringLiteral("name"), node.name},
-                                  {QStringLiteral("value"), node.value},
-                                  {QStringLiteral("enabled"), node.enabled},
+    return jsonResult(QJsonObject{{QStringLiteral("role"), node.m_role},
+                                  {QStringLiteral("name"), node.m_name},
+                                  {QStringLiteral("value"), node.m_value},
+                                  {QStringLiteral("enabled"), node.m_enabled},
                                   {QStringLiteral("window"), focusedWindowTitle(element.Get())}});
 }
 
@@ -894,10 +896,10 @@ QVector<DialogButton> buttonsFromNodes(const QVector<UiaNode>& nodes) {
     QVector<ButtonNode> views;
     views.reserve(nodes.size());
     for (const UiaNode& node : nodes) {
-        views.append(ButtonNode{.role = node.role,
-                                .name = node.name,
-                                .enabled = node.enabled,
-                                .offscreen = node.offscreen});
+        views.append(ButtonNode{.role = node.m_role,
+                                .name = node.m_name,
+                                .enabled = node.m_enabled,
+                                .offscreen = node.m_offscreen});
     }
     return collectButtons(views);
 }
@@ -939,7 +941,7 @@ ToolResult toolDismissDialog(const QJsonObject& args) {
     }
     return jsonResult(QJsonObject{{QStringLiteral("ok"), true},
                                   {QStringLiteral("action"), action},
-                                  {QStringLiteral("button"), nodes[index].name},
+                                  {QStringLiteral("button"), nodes[index].m_name},
                                   {QStringLiteral("window"), windowTitleOf(hwnd)}});
 }
 
@@ -1058,20 +1060,20 @@ void appendCaptureTools(QJsonArray& tools) {
 }
 
 struct DesktopHandler {
-    QLatin1String name;
-    ToolResult (*fn)(const QJsonObject&);
+    QLatin1String m_name;
+    ToolResult (*m_fn)(const QJsonObject&);
 };
 
 const DesktopHandler kDesktopHandlers[] = {
-    {.name = QLatin1String("capture_window"), .fn = toolCaptureWindow},
-    {.name = QLatin1String("capture_screen"), .fn = toolCaptureScreen},
-    {.name = QLatin1String("capture_monitor"), .fn = toolCaptureMonitor},
-    {.name = QLatin1String("uia_inspect_window"), .fn = toolUiaInspectWindow},
-    {.name = QLatin1String("uia_find_control"), .fn = toolUiaFindControl},
-    {.name = QLatin1String("uia_get_control_value"), .fn = toolUiaGetControlValue},
-    {.name = QLatin1String("uia_get_focused"), .fn = toolUiaGetFocused},
-    {.name = QLatin1String("uia_click_control"), .fn = toolUiaClickControl},
-    {.name = QLatin1String("dismiss_dialog"), .fn = toolDismissDialog},
+    {.m_name = QLatin1String("capture_window"), .m_fn = toolCaptureWindow},
+    {.m_name = QLatin1String("capture_screen"), .m_fn = toolCaptureScreen},
+    {.m_name = QLatin1String("capture_monitor"), .m_fn = toolCaptureMonitor},
+    {.m_name = QLatin1String("uia_inspect_window"), .m_fn = toolUiaInspectWindow},
+    {.m_name = QLatin1String("uia_find_control"), .m_fn = toolUiaFindControl},
+    {.m_name = QLatin1String("uia_get_control_value"), .m_fn = toolUiaGetControlValue},
+    {.m_name = QLatin1String("uia_get_focused"), .m_fn = toolUiaGetFocused},
+    {.m_name = QLatin1String("uia_click_control"), .m_fn = toolUiaClickControl},
+    {.m_name = QLatin1String("dismiss_dialog"), .m_fn = toolDismissDialog},
 };
 
 }  // namespace
@@ -1086,7 +1088,7 @@ QJsonArray desktopToolCatalog() {
 
 bool desktopHandles(const QString& name) {
     for (const auto& entry : kDesktopHandlers) {
-        if (name == entry.name) {
+        if (name == entry.m_name) {
             return true;
         }
     }
@@ -1095,8 +1097,8 @@ bool desktopHandles(const QString& name) {
 
 ToolResult invokeDesktopTool(const QString& name, const QJsonObject& args) {
     for (const auto& entry : kDesktopHandlers) {
-        if (name == entry.name) {
-            return entry.fn(args);
+        if (name == entry.m_name) {
+            return entry.m_fn(args);
         }
     }
     return errorResult(QStringLiteral("Unknown desktop tool: %1").arg(name));

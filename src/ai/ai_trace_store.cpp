@@ -99,20 +99,20 @@ QJsonArray stringListToJson(const QStringList& values) {
 
 bool sensitiveKey(const QString& key) {
     const QString name = key.trimmed().toLower();
-    static const QStringList markers = {QStringLiteral("password"),
-                                        QStringLiteral("passwd"),
-                                        QStringLiteral("secret"),
-                                        QStringLiteral("token"),
-                                        QStringLiteral("api_key"),
-                                        QStringLiteral("api-key"),
-                                        QStringLiteral("apikey"),
-                                        QStringLiteral("authorization"),
-                                        QStringLiteral("bearer"),
-                                        QStringLiteral("cookie"),
-                                        QStringLiteral("credential"),
-                                        QStringLiteral("ciphertext"),
-                                        QStringLiteral("recovery_password")};
-    for (const auto& marker : markers) {
+    static const QStringList kMarkers = {QStringLiteral("password"),
+                                         QStringLiteral("passwd"),
+                                         QStringLiteral("secret"),
+                                         QStringLiteral("token"),
+                                         QStringLiteral("api_key"),
+                                         QStringLiteral("api-key"),
+                                         QStringLiteral("apikey"),
+                                         QStringLiteral("authorization"),
+                                         QStringLiteral("bearer"),
+                                         QStringLiteral("cookie"),
+                                         QStringLiteral("credential"),
+                                         QStringLiteral("ciphertext"),
+                                         QStringLiteral("recovery_password")};
+    for (const auto& marker : kMarkers) {
         if (name.contains(marker)) {
             return true;
         }

@@ -47,8 +47,8 @@ enum class StdioPhase {
 };
 
 struct StdioCallState {
-    QJsonObject response;
-    QString error_message;
+    QJsonObject m_response;
+    QString m_error_message;
 };
 
 QString timeoutMessage(const QString& stderr_text) {
@@ -100,7 +100,7 @@ public:
         : m_request(std::move(request))
         , m_state(state)
         , m_done(done)
-        , m_ownerThread(owner_thread) {}
+        , m_owner_thread(owner_thread) {}
 
     ~StdioToolCallWorker() override {
 #ifdef Q_OS_WIN
@@ -110,14 +110,14 @@ public:
 
     void start() {
         m_process = new QProcess(this);
-        m_timeoutTimer = new QTimer(this);
-        m_timeoutTimer->setSingleShot(true);
+        m_timeout_timer = new QTimer(this);
+        m_timeout_timer->setSingleShot(true);
         m_process->setProgram(m_request.command);
         m_process->setProcessEnvironment(m_request.environment);
         m_process->setProcessChannelMode(QProcess::SeparateChannels);
 
         connectProcessSignals();
-        m_timeoutTimer->start(qMax(m_request.timeout_ms, kMinimumRequestTimeoutMs));
+        m_timeout_timer->start(qMax(m_request.timeout_ms, kMinimumRequestTimeoutMs));
         m_process->start();
     }
 
@@ -140,7 +140,7 @@ private:
         QObject::connect(m_process, &QProcess::readyReadStandardError, this, [this]() {
             drainStderr();
         });
-        QObject::connect(m_timeoutTimer, &QTimer::timeout, this, [this]() {
+        QObject::connect(m_timeout_timer, &QTimer::timeout, this, [this]() {
             fail(timeoutMessage(currentStderr()));
         });
     }
@@ -151,15 +151,15 @@ private:
         if (m_process == nullptr) {
             return;
         }
-        m_stderrTail.append(m_process->readAllStandardError());
-        if (m_stderrTail.size() > kMaxStderrTailBytes) {
-            m_stderrTail = m_stderrTail.right(kMaxStderrTailBytes);
+        m_stderr_tail.append(m_process->readAllStandardError());
+        if (m_stderr_tail.size() > kMaxStderrTailBytes) {
+            m_stderr_tail = m_stderr_tail.right(kMaxStderrTailBytes);
         }
     }
 
     QString currentStderr() {
         drainStderr();
-        return QString::fromUtf8(m_stderrTail).trimmed();
+        return QString::fromUtf8(m_stderr_tail).trimmed();
     }
 
     void onStarted() {
@@ -178,14 +178,14 @@ private:
         if ((m_process == nullptr) || m_process->processId() <= 0) {
             return;
         }
-        m_jobHandle = ::CreateJobObjectW(nullptr, nullptr);
-        if (m_jobHandle == nullptr) {
+        m_job_handle = ::CreateJobObjectW(nullptr, nullptr);
+        if (m_job_handle == nullptr) {
             return;
         }
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         if (::SetInformationJobObject(
-                m_jobHandle, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
+                m_job_handle, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
             closeJob();  // Without KILL_ON_JOB_CLOSE the job cannot guarantee cleanup; drop it.
             return;
         }
@@ -196,16 +196,16 @@ private:
             closeJob();
             return;
         }
-        if (::AssignProcessToJobObject(m_jobHandle, proc) == 0) {
+        if (::AssignProcessToJobObject(m_job_handle, proc) == 0) {
             closeJob();  // Not in the job -> closing it would reap nothing; fall back.
         }
         ::CloseHandle(proc);
     }
 
     void closeJob() {
-        if (m_jobHandle != nullptr) {
-            ::CloseHandle(m_jobHandle);  // KILL_ON_JOB_CLOSE reaps any surviving descendants.
-            m_jobHandle = nullptr;
+        if (m_job_handle != nullptr) {
+            ::CloseHandle(m_job_handle);  // KILL_ON_JOB_CLOSE reaps any surviving descendants.
+            m_job_handle = nullptr;
         }
     }
 #endif
@@ -298,19 +298,19 @@ private:
         if (!m_completed.compare_exchange_strong(expected, true)) {
             return;
         }
-        if (m_timeoutTimer->isActive()) {
-            m_timeoutTimer->stop();
+        if (m_timeout_timer->isActive()) {
+            m_timeout_timer->stop();
         }
-        m_state->error_message = error;
-        m_state->response = response;
+        m_state->m_error_message = error;
+        m_state->m_response = response;
         stopProcess(force_kill);
         m_done->release();
-        m_ownerThread->quit();
+        m_owner_thread->quit();
     }
 
     void stopProcess(bool force_kill) {
 #ifdef Q_OS_WIN
-        if (m_jobHandle != nullptr) {
+        if (m_job_handle != nullptr) {
             // The Job Object reaps the entire tree via KILL_ON_JOB_CLOSE -- including a server
             // that already exited on its own and left orphaned descendants (the NotRunning
             // early-return below would otherwise skip cleanup entirely). Supersedes the
@@ -338,14 +338,14 @@ private:
     AiMcpStdioCallRequest m_request;
     StdioCallState* m_state{nullptr};
     QSemaphore* m_done{nullptr};
-    QThread* m_ownerThread{nullptr};
+    QThread* m_owner_thread{nullptr};
     QProcess* m_process{nullptr};
-    QTimer* m_timeoutTimer{nullptr};
-    QByteArray m_stderrTail;
+    QTimer* m_timeout_timer{nullptr};
+    QByteArray m_stderr_tail;
     StdioPhase m_phase{StdioPhase::Starting};
     std::atomic_bool m_completed{false};
 #ifdef Q_OS_WIN
-    HANDLE m_jobHandle{nullptr};
+    HANDLE m_job_handle{nullptr};
 #endif
 };
 
@@ -381,7 +381,7 @@ StdioCallState performStdioToolCall(const AiMcpStdioCallRequest& request) {
     const int acquire_timeout_ms = qMax(request.timeout_ms, kMinimumRequestTimeoutMs) +
                                    kSemaphoreWaitGraceMs;
     if (!done.tryAcquire(1, acquire_timeout_ms)) {
-        state.error_message = QStringLiteral("MCP stdio worker thread did not start");
+        state.m_error_message = QStringLiteral("MCP stdio worker thread did not start");
     }
     stdio_thread.quit();
     // SAK-ALLOW-BLOCKING: `stdio_thread` is a stack local destroyed on return, and
@@ -401,12 +401,12 @@ QJsonObject AiMcpStdioClient::callTool(const AiMcpStdioCallRequest& request,
     }
     const StdioCallState state = performStdioToolCall(request);
     if (error_message != nullptr) {
-        *error_message = state.error_message;
+        *error_message = state.m_error_message;
     }
-    if (!state.error_message.isEmpty()) {
+    if (!state.m_error_message.isEmpty()) {
         return {};
     }
-    return state.response;
+    return state.m_response;
 }
 
 QJsonObject AiMcpStdioClient::initializePayloadForTesting() {

@@ -154,22 +154,22 @@ QString offlineInstallerTitle(const QString& text) {
 QString domainTitle(const QString& text) {
     const QString lower = text.toLower();
     const struct {
-        const char* title;
-        std::initializer_list<const char*> terms;
+        const char* m_title;
+        std::initializer_list<const char*> m_terms;
     } rules[] = {
-        {.title = "AI Panel Quality Pass", .terms = {"ai panel", "assistant panel"}},
-        {.title = "Windows Update Repair", .terms = {"windows update"}},
-        {.title = "BSOD Investigation", .terms = {"blue screen", "bsod"}},
-        {.title = "Malware Cleanup", .terms = {"malware", "virus"}},
-        {.title = "Bloatware Cleanup", .terms = {"bloatware", "adware"}},
-        {.title = "Drive Health Check", .terms = {"drive health", "smart check", "smart data"}},
-        {.title = "Network Connectivity Repair", .terms = {"network", "wifi", "wi-fi"}},
-        {.title = "Printer Troubleshooting", .terms = {"printer"}},
-        {.title = "Partition Manager", .terms = {"partition"}},
+        {.m_title = "AI Panel Quality Pass", .m_terms = {"ai panel", "assistant panel"}},
+        {.m_title = "Windows Update Repair", .m_terms = {"windows update"}},
+        {.m_title = "BSOD Investigation", .m_terms = {"blue screen", "bsod"}},
+        {.m_title = "Malware Cleanup", .m_terms = {"malware", "virus"}},
+        {.m_title = "Bloatware Cleanup", .m_terms = {"bloatware", "adware"}},
+        {.m_title = "Drive Health Check", .m_terms = {"drive health", "smart check", "smart data"}},
+        {.m_title = "Network Connectivity Repair", .m_terms = {"network", "wifi", "wi-fi"}},
+        {.m_title = "Printer Troubleshooting", .m_terms = {"printer"}},
+        {.m_title = "Partition Manager", .m_terms = {"partition"}},
     };
     for (const auto& rule : rules) {
-        if (containsAnyTerm(lower, rule.terms)) {
-            return QString::fromLatin1(rule.title);
+        if (containsAnyTerm(lower, rule.m_terms)) {
+            return QString::fromLatin1(rule.m_title);
         }
     }
     return offlineInstallerTitle(text);

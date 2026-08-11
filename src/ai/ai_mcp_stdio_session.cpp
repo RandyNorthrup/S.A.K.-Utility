@@ -77,7 +77,7 @@ public:
     }
 
     bool doOpen(const AiMcpSessionConfig& config, QString* error_message) {
-        m_timeoutMs = boundedTimeout(config.request_timeout_ms);
+        m_timeout_ms = boundedTimeout(config.request_timeout_ms);
         const QString command = config.command.trimmed();
         if (command.isEmpty() || !QFileInfo::exists(command)) {
             setError(error_message, QStringLiteral("MCP stdio command missing: %1").arg(command));
@@ -89,7 +89,7 @@ public:
         m_process->setProcessChannelMode(QProcess::SeparateChannels);
         m_process->setReadChannel(QProcess::StandardOutput);
         m_process->start();
-        if (!m_process->waitForStarted(m_timeoutMs)) {
+        if (!m_process->waitForStarted(m_timeout_ms)) {
             setError(error_message,
                      QStringLiteral("Could not start MCP stdio server: %1")
                          .arg(m_process->errorString()));
@@ -180,7 +180,7 @@ public:
     void doClose() { stopProcess(); }
 
 private:
-    int nextId() { return ++m_nextId; }
+    int nextId() { return ++m_next_id; }
 
     // Writes a request and blocks (synchronously, on this worker thread) until the
     // matching-id response arrives. Returns the full JSON-RPC message; sets
@@ -199,7 +199,7 @@ private:
         }
         const QByteArray bytes = mcp::jsonLine(object);
         if (m_process->write(bytes) != bytes.size() ||
-            !m_process->waitForBytesWritten(m_timeoutMs)) {
+            !m_process->waitForBytesWritten(m_timeout_ms)) {
             setError(error_message, QStringLiteral("Could not write MCP request to stdio server"));
             return false;
         }
@@ -220,7 +220,7 @@ private:
                              .arg(kMaxStdioReadBufferBytes));
                 return {};
             }
-            const int remaining = m_timeoutMs - static_cast<int>(timer.elapsed());
+            const int remaining = m_timeout_ms - static_cast<int>(timer.elapsed());
             if (remaining <= 0) {
                 setError(error_message, timeoutMessage());
                 return {};
@@ -289,15 +289,15 @@ private:
         if (m_process == nullptr) {
             return;
         }
-        m_stderrTail.append(m_process->readAllStandardError());
-        if (m_stderrTail.size() > kMaxStderrTailBytes) {
-            m_stderrTail = m_stderrTail.right(kMaxStderrTailBytes);
+        m_stderr_tail.append(m_process->readAllStandardError());
+        if (m_stderr_tail.size() > kMaxStderrTailBytes) {
+            m_stderr_tail = m_stderr_tail.right(kMaxStderrTailBytes);
         }
     }
 
     QString stderrText() {
         drainStderr();
-        return QString::fromUtf8(m_stderrTail).trimmed().left(kMcpStdioErrorPreviewChars);
+        return QString::fromUtf8(m_stderr_tail).trimmed().left(kMcpStdioErrorPreviewChars);
     }
 
     QString timeoutMessage() {
@@ -315,7 +315,7 @@ private:
 
     void stopProcess() {
 #ifdef Q_OS_WIN
-        if (m_jobHandle != nullptr) {
+        if (m_job_handle != nullptr) {
             // The kill-on-close Job Object reaps the entire descendant tree -- including a
             // server that already exited on its own and left orphaned descendants, which the
             // NotRunning early-return below would otherwise skip. Supersedes the per-process
@@ -343,14 +343,14 @@ private:
         if ((m_process == nullptr) || m_process->processId() <= 0) {
             return;
         }
-        m_jobHandle = ::CreateJobObjectW(nullptr, nullptr);
-        if (m_jobHandle == nullptr) {
+        m_job_handle = ::CreateJobObjectW(nullptr, nullptr);
+        if (m_job_handle == nullptr) {
             return;
         }
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         if (::SetInformationJobObject(
-                m_jobHandle, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
+                m_job_handle, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
             closeJob();  // Without KILL_ON_JOB_CLOSE the job cannot guarantee cleanup; drop it.
             return;
         }
@@ -361,16 +361,16 @@ private:
             closeJob();
             return;
         }
-        if (::AssignProcessToJobObject(m_jobHandle, proc) == 0) {
+        if (::AssignProcessToJobObject(m_job_handle, proc) == 0) {
             closeJob();  // Not in the job -> closing it would reap nothing; fall back.
         }
         ::CloseHandle(proc);
     }
 
     void closeJob() {
-        if (m_jobHandle != nullptr) {
-            ::CloseHandle(m_jobHandle);  // KILL_ON_JOB_CLOSE reaps any surviving descendants.
-            m_jobHandle = nullptr;
+        if (m_job_handle != nullptr) {
+            ::CloseHandle(m_job_handle);  // KILL_ON_JOB_CLOSE reaps any surviving descendants.
+            m_job_handle = nullptr;
         }
     }
 #endif
@@ -382,11 +382,11 @@ private:
     }
 
     QProcess* m_process{nullptr};
-    QByteArray m_stderrTail;
-    int m_nextId{0};
-    int m_timeoutMs{kMinimumRequestTimeoutMs};
+    QByteArray m_stderr_tail;
+    int m_next_id{0};
+    int m_timeout_ms{kMinimumRequestTimeoutMs};
 #ifdef Q_OS_WIN
-    HANDLE m_jobHandle{nullptr};
+    HANDLE m_job_handle{nullptr};
 #endif
 };
 

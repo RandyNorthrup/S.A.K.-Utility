@@ -49,15 +49,15 @@ constexpr int kChromeAncestorMaxDepth = 12;
 // deadline is absolute, not per-call, so a byte-at-a-time dribble cannot keep
 // restarting a per-op timer and hold a read open forever (slow-loris).
 struct IoDeadline {
-    ULONGLONG deadline_tick;
-    HANDLE cancel_event;
+    ULONGLONG m_deadline_tick;
+    HANDLE m_cancel_event;
 
-    [[nodiscard]] DWORD remaining_ms() const {
+    [[nodiscard]] DWORD remainingMs() const {
         const ULONGLONG now = GetTickCount64();
-        if (now >= deadline_tick) {
+        if (now >= m_deadline_tick) {
             return 0;
         }
-        const ULONGLONG left = deadline_tick - now;
+        const ULONGLONG left = m_deadline_tick - now;
         return left > MAXDWORD ? MAXDWORD : static_cast<DWORD>(left);
     }
 };
@@ -77,9 +77,9 @@ int overlappedIo(HANDLE pipe, bool is_write, char* buffer, DWORD size, IoDeadlin
     if (immediate != FALSE) {
         result = static_cast<int>(moved);
     } else if (GetLastError() == ERROR_IO_PENDING) {
-        const HANDLE waits[2] = {overlapped.hEvent, deadline.cancel_event};
-        const DWORD count = deadline.cancel_event != nullptr ? 2 : 1;
-        const DWORD which = WaitForMultipleObjects(count, waits, FALSE, deadline.remaining_ms());
+        const HANDLE waits[2] = {overlapped.hEvent, deadline.m_cancel_event};
+        const DWORD count = deadline.m_cancel_event != nullptr ? 2 : 1;
+        const DWORD which = WaitForMultipleObjects(count, waits, FALSE, deadline.remainingMs());
         if (which == WAIT_OBJECT_0 &&
             GetOverlappedResult(pipe, &overlapped, &moved, FALSE) != FALSE) {
             result = static_cast<int>(moved);
@@ -404,8 +404,8 @@ void BrowserBridgePipeServer::run() {
 bool BrowserBridgePipeServer::handshake() {
     // One absolute budget for the whole handshake, so a dribbling peer cannot hold the
     // sole pipe instance open past the deadline by restarting a per-read timer.
-    const IoDeadline deadline{.deadline_tick = GetTickCount64() + options_.io_timeout_ms,
-                              .cancel_event = shutdown_event_};
+    const IoDeadline deadline{.m_deadline_tick = GetTickCount64() + options_.io_timeout_ms,
+                              .m_cancel_event = shutdown_event_};
     QJsonObject hello;
     if (!readFrame(pipe_, deadline, &hello)) {
         return false;
@@ -469,8 +469,8 @@ void BrowserBridgePipeServer::serveConnected() {
         has_request_ = false;
         lock.unlock();
 
-        const IoDeadline deadline{.deadline_tick = GetTickCount64() + options_.io_timeout_ms,
-                                  .cancel_event = shutdown_event_};
+        const IoDeadline deadline{.m_deadline_tick = GetTickCount64() + options_.io_timeout_ms,
+                                  .m_cancel_event = shutdown_event_};
         QJsonObject reply;
         Exchange result;
         if (!writeFrame(pipe_, request, deadline)) {
@@ -485,18 +485,18 @@ void BrowserBridgePipeServer::serveConnected() {
             // extension retires the command generation, and the poll loop stops on its next
             // iteration. Best effort on a fresh short budget: the deadline above has already
             // elapsed, and a peer that will not take the frame is being torn down anyway.
-            const IoDeadline cancel_deadline{.deadline_tick = GetTickCount64() +
-                                                              kCancelWriteBudgetMs,
-                                             .cancel_event = shutdown_event_};
+            const IoDeadline cancel_deadline{.m_deadline_tick = GetTickCount64() +
+                                                                kCancelWriteBudgetMs,
+                                             .m_cancel_event = shutdown_event_};
             if (writeFrame(pipe_,
                            QJsonObject{{QStringLiteral("type"), QStringLiteral("cancel")}},
                            cancel_deadline)) {
                 // Do not tear down until the relay has had the chance to act on it. The
                 // late reply is the proof it did; it belongs to a command this exchange has
                 // already failed, so it is read only to be discarded.
-                const IoDeadline drain_deadline{.deadline_tick = GetTickCount64() +
-                                                                 kCancelDrainBudgetMs,
-                                                .cancel_event = shutdown_event_};
+                const IoDeadline drain_deadline{.m_deadline_tick = GetTickCount64() +
+                                                                   kCancelDrainBudgetMs,
+                                                .m_cancel_event = shutdown_event_};
                 QJsonObject discarded;
                 readFrame(pipe_, drain_deadline, &discarded);
             }

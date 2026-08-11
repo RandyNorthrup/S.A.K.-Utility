@@ -52,14 +52,14 @@ QString currentExeFilePath() {
 
 // file:///C:/Program%20Files/... - percent-encoded so paths with spaces work as a
 // Chrome file:// update_url / CRX codebase (QUrl handles the encoding + drive letter).
-QString toFileUrl(const QString& absPath) {
-    return QUrl::fromLocalFile(absPath).toString(QUrl::FullyEncoded);
+QString toFileUrl(const QString& abs_path) {
+    return QUrl::fromLocalFile(abs_path).toString(QUrl::FullyEncoded);
 }
 
 QString defaultDataDir() {
-    const QString localAppData = qEnvironmentVariable("LOCALAPPDATA");
-    if (!localAppData.isEmpty()) {
-        return QDir(localAppData).filePath(QStringLiteral("SAK"));
+    const QString local_app_data = qEnvironmentVariable("LOCALAPPDATA");
+    if (!local_app_data.isEmpty()) {
+        return QDir(local_app_data).filePath(QStringLiteral("SAK"));
     }
     const QString fallback =
         QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
@@ -104,7 +104,7 @@ QString updateXmlPath(const ExtensionInstallConfig& c) {
         .filePath(QString::fromLatin1(kNativeHostName) + QStringLiteral(".json"));
 }
 
-[[maybe_unused]] QString buildUpdateXml(const QString& crxPath) {
+[[maybe_unused]] QString buildUpdateXml(const QString& crx_path) {
     // Omaha update manifest; a single force-installed app pointing at the local CRX.
     return QStringLiteral(
                "<?xml version='1.0' encoding='UTF-8'?>\n"
@@ -114,16 +114,16 @@ QString updateXmlPath(const ExtensionInstallConfig& c) {
                "  </app>\n"
                "</gupdate>\n")
         .arg(QString::fromLatin1(kBrowserExtensionId),
-             toFileUrl(crxPath),
+             toFileUrl(crx_path),
              QString::fromLatin1(kBrowserExtensionVersion));
 }
 
-[[maybe_unused]] QByteArray buildHostManifest(const QString& hostExePath) {
+[[maybe_unused]] QByteArray buildHostManifest(const QString& host_exe_path) {
     QJsonObject obj;
     obj[QStringLiteral("name")] = QString::fromLatin1(kNativeHostName);
     obj[QStringLiteral("description")] =
         QStringLiteral("S.A.K. Utility browser-control native messaging host");
-    obj[QStringLiteral("path")] = QDir::toNativeSeparators(hostExePath);
+    obj[QStringLiteral("path")] = QDir::toNativeSeparators(host_exe_path);
     obj[QStringLiteral("type")] = QStringLiteral("stdio");
     QJsonArray origins;
     origins.append(QStringLiteral("chrome-extension://") +
@@ -234,18 +234,18 @@ class RegKey {
 public:
     RegKey() = default;
     ~RegKey() {
-        if (h_ != nullptr) {
-            RegCloseKey(h_);
+        if (m_h != nullptr) {
+            RegCloseKey(m_h);
         }
     }
     RegKey(const RegKey&) = delete;
     RegKey& operator=(const RegKey&) = delete;
-    HKEY get() const { return h_; }
-    HKEY* addr() { return &h_; }
-    explicit operator bool() const { return h_ != nullptr; }
+    HKEY get() const { return m_h; }
+    HKEY* addr() { return &m_h; }
+    explicit operator bool() const { return m_h != nullptr; }
 
 private:
-    HKEY h_ = nullptr;
+    HKEY m_h = nullptr;
 };
 
 // Open (creating if needed) an HKCU subkey for read+write.
@@ -297,9 +297,9 @@ bool readString(HKEY key, const wchar_t* name, QString& out) {
         return false;
     }
     std::vector<wchar_t> buf((bytes / sizeof(wchar_t)) + 1, L'\0');
-    DWORD outBytes = bytes;
+    DWORD out_bytes = bytes;
     if (RegQueryValueExW(
-            key, name, nullptr, &type, reinterpret_cast<BYTE*>(buf.data()), &outBytes) !=
+            key, name, nullptr, &type, reinterpret_cast<BYTE*>(buf.data()), &out_bytes) !=
         ERROR_SUCCESS) {
         return false;
     }
@@ -308,8 +308,8 @@ bool readString(HKEY key, const wchar_t* name, QString& out) {
 }
 
 struct RegValue {
-    QString name;
-    QString data;
+    QString m_name;
+    QString m_data;
 };
 
 // Enumerate the string values under an already-open key. On any genuine enumeration or
@@ -321,12 +321,12 @@ std::vector<RegValue> enumStringValues(HKEY key, bool* ok) {
     *ok = true;
     DWORD index = 0;
     for (;;) {
-        wchar_t nameBuf[kRegValueNameBufferChars];
-        DWORD nameLen = static_cast<DWORD>(std::size(nameBuf));
+        wchar_t name_buf[kRegValueNameBufferChars];
+        DWORD name_len = static_cast<DWORD>(std::size(name_buf));
         DWORD type = 0;
-        DWORD dataBytes = 0;
+        DWORD data_bytes = 0;
         LSTATUS const s =
-            RegEnumValueW(key, index, nameBuf, &nameLen, nullptr, &type, nullptr, &dataBytes);
+            RegEnumValueW(key, index, name_buf, &name_len, nullptr, &type, nullptr, &data_bytes);
         if (s == ERROR_NO_MORE_ITEMS) {
             break;
         }
@@ -335,14 +335,14 @@ std::vector<RegValue> enumStringValues(HKEY key, bool* ok) {
             break;
         }
         RegValue v;
-        v.name = QString::fromWCharArray(nameBuf, static_cast<int>(nameLen));
+        v.m_name = QString::fromWCharArray(name_buf, static_cast<int>(name_len));
         if (type == REG_SZ || type == REG_EXPAND_SZ) {
             QString data;
-            if (!readString(key, v.name.isEmpty() ? nullptr : toW(v.name).c_str(), data)) {
+            if (!readString(key, v.m_name.isEmpty() ? nullptr : toW(v.m_name).c_str(), data)) {
                 *ok = false;  // a value we must inspect could not be read: fail closed
                 break;
             }
-            v.data = data;
+            v.m_data = data;
         }
         values.push_back(std::move(v));
         ++index;
@@ -357,7 +357,7 @@ QString firstFreeSlot(const std::vector<RegValue>& values) {
         const QString candidate = QString::number(slot);
         bool taken = false;
         for (const auto& v : values) {
-            if (v.name == candidate) {
+            if (v.m_name == candidate) {
                 taken = true;
                 break;
             }
@@ -371,24 +371,24 @@ QString firstFreeSlot(const std::vector<RegValue>& values) {
 
 // Add (or refresh) our single force-install policy value without disturbing other
 // entries. On failure returns false and sets *failDetail to the offending location.
-bool writeForcelistEntry(const ExtensionInstallConfig& c, QString* failDetail) {
+bool writeForcelistEntry(const ExtensionInstallConfig& c, QString* fail_detail) {
     RegKey key;
     if (!openOrCreate(c.forcelist_key_path, key)) {
-        *failDetail = c.forcelist_key_path;
+        *fail_detail = c.forcelist_key_path;
         return false;
     }
-    bool enumOk = false;
-    const auto values = enumStringValues(key.get(), &enumOk);
-    if (!enumOk) {
+    bool enum_ok = false;
+    const auto values = enumStringValues(key.get(), &enum_ok);
+    if (!enum_ok) {
         // Cannot see the existing values: writing a slot blindly could clobber a foreign
         // policy entry or duplicate ours. Refuse rather than guess.
-        *failDetail = c.forcelist_key_path + QStringLiteral(" (could not read existing values)");
+        *fail_detail = c.forcelist_key_path + QStringLiteral(" (could not read existing values)");
         return false;
     }
     QString slot;
     for (const auto& v : values) {
-        if (isOurForcelistData(v.data)) {
-            slot = v.name;
+        if (isOurForcelistData(v.m_data)) {
+            slot = v.m_name;
             break;
         }
     }
@@ -396,7 +396,7 @@ bool writeForcelistEntry(const ExtensionInstallConfig& c, QString* failDetail) {
         slot = firstFreeSlot(values);
     }
     if (!setString(key.get(), toW(slot).c_str(), forcelistEntryData(c))) {
-        *failDetail = c.forcelist_key_path + QStringLiteral(" value ") + slot;
+        *fail_detail = c.forcelist_key_path + QStringLiteral(" value ") + slot;
         return false;
     }
     return true;
@@ -421,13 +421,13 @@ int forcelistPresence(const ExtensionInstallConfig& c) {
     if (s != ERROR_SUCCESS) {
         return -1;
     }
-    bool enumOk = false;
-    const auto values = enumStringValues(key.get(), &enumOk);
-    if (!enumOk) {
+    bool enum_ok = false;
+    const auto values = enumStringValues(key.get(), &enum_ok);
+    if (!enum_ok) {
         return -1;  // read error: never downgrade an unreadable key to "absent"
     }
     for (const auto& v : values) {
-        if (isOurForcelistData(v.data)) {
+        if (isOurForcelistData(v.m_data)) {
             return 1;
         }
     }
@@ -449,9 +449,9 @@ int nativeHostPresence(const ExtensionInstallConfig& c) {
 
 // Outcome of trying to remove our force-install policy values from the forcelist key.
 struct ForcelistRemoval {
-    bool touched{false};     // at least one of our entries was deleted
-    bool failed{false};      // an entry we own could not be deleted / key not writable
-    bool read_error{false};  // the key exists but could not be READ (a genuine error)
+    bool m_touched{false};     // at least one of our entries was deleted
+    bool m_failed{false};      // an entry we own could not be deleted / key not writable
+    bool m_read_error{false};  // the key exists but could not be READ (a genuine error)
 };
 
 // Remove ONLY our force-install entries, leaving foreign policy values intact. Fails (rather
@@ -467,31 +467,31 @@ ForcelistRemoval removeOurForcelistEntries(const QString& forcelist_key_path) {
             return out;  // absent: nothing of ours to remove
         }
         if (s != ERROR_SUCCESS) {
-            out.read_error = true;
+            out.m_read_error = true;
             return out;
         }
-        bool enumOk = false;
-        values = enumStringValues(key.get(), &enumOk);
-        if (!enumOk) {
-            out.read_error = true;  // truncated view: refuse rather than claim a clean removal
+        bool enum_ok = false;
+        values = enumStringValues(key.get(), &enum_ok);
+        if (!enum_ok) {
+            out.m_read_error = true;  // truncated view: refuse rather than claim a clean removal
             return out;
         }
     }
     RegKey wkey;
     if (!openOrCreate(forcelist_key_path, wkey)) {
-        out.failed = true;  // our entries remain -- force-install policy stays in place
+        out.m_failed = true;  // our entries remain -- force-install policy stays in place
         return out;
     }
     for (const auto& v : values) {
-        if (!isOurForcelistData(v.data)) {
+        if (!isOurForcelistData(v.m_data)) {
             continue;
         }
         const LSTATUS del = RegDeleteValueW(wkey.get(),
-                                            v.name.isEmpty() ? nullptr : toW(v.name).c_str());
+                                            v.m_name.isEmpty() ? nullptr : toW(v.m_name).c_str());
         if (del == ERROR_SUCCESS) {
-            out.touched = true;
+            out.m_touched = true;
         } else {
-            out.failed = true;
+            out.m_failed = true;
         }
     }
     return out;
@@ -543,10 +543,10 @@ ExtensionInstallResult BrowserExtensionInstaller::install() {
     }
 
     // Force-install policy entry (idempotent: reuse our slot if already present).
-    QString failDetail;
-    if (!writeForcelistEntry(config_, &failDetail)) {
+    QString fail_detail;
+    if (!writeForcelistEntry(config_, &fail_detail)) {
         r.summary = QStringLiteral("Could not write force-install policy entry");
-        r.detail = failDetail;
+        r.detail = fail_detail;
         return r;
     }
 
@@ -565,14 +565,14 @@ ExtensionInstallResult BrowserExtensionInstaller::install() {
 ExtensionInstallResult BrowserExtensionInstaller::uninstall() {
     ExtensionInstallResult r;
     const ForcelistRemoval fl = removeOurForcelistEntries(config_.forcelist_key_path);
-    if (fl.read_error) {
+    if (fl.m_read_error) {
         r.ok = false;
         r.summary = QStringLiteral("Could not read Chrome policy to uninstall");
         r.detail = config_.forcelist_key_path;
         return r;
     }
-    bool touched = fl.touched;
-    bool failed = fl.failed;
+    bool touched = fl.m_touched;
+    bool failed = fl.m_failed;
     removeNativeHostKey(config_.native_host_key_path, &touched, &failed);
 
     // Best-effort cleanup of generated files (harmless orphans once the registry policy is gone).

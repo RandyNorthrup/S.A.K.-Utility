@@ -116,9 +116,9 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
     }
     const QString base = QDir::cleanPath(QDir(app_dir).absolutePath());
     const QString target = QDir::cleanPath(QFileInfo(command).absoluteFilePath());
-    const bool lexicalWithin = target == base ||
-                               target.startsWith(base + QLatin1Char('/'), Qt::CaseInsensitive);
-    if (!lexicalWithin) {
+    const bool lexical_within = target == base ||
+                                target.startsWith(base + QLatin1Char('/'), Qt::CaseInsensitive);
+    if (!lexical_within) {
         return false;
     }
     // A lexical cleanPath resolves "../" but NOT symlinks/junctions, so a within-dir
@@ -126,13 +126,13 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
     // When the command exists, also require its CANONICAL path (links resolved) to stay
     // within the canonical app dir. A command that does not exist yet keeps the lexical
     // verdict -- its absence is reported separately as "missing".
-    const QString canonicalBase = QFileInfo(app_dir).canonicalFilePath();
-    const QString canonicalTarget = QFileInfo(command).canonicalFilePath();
-    if (canonicalBase.isEmpty() || canonicalTarget.isEmpty()) {
+    const QString canonical_base = QFileInfo(app_dir).canonicalFilePath();
+    const QString canonical_target = QFileInfo(command).canonicalFilePath();
+    if (canonical_base.isEmpty() || canonical_target.isEmpty()) {
         return true;
     }
-    return canonicalTarget == canonicalBase ||
-           canonicalTarget.startsWith(canonicalBase + QLatin1Char('/'), Qt::CaseInsensitive);
+    return canonical_target == canonical_base ||
+           canonical_target.startsWith(canonical_base + QLatin1Char('/'), Qt::CaseInsensitive);
 }
 
 [[nodiscard]] QJsonObject providerStatusObject(const QString& app_dir,
@@ -175,9 +175,9 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
 // The effective backing file for one cached config read: its path (on-disk copy or embedded
 // resource), the on-disk modification time used for cache invalidation, and which of the two won.
 struct ResolvedConfigSource {
-    QString path;
-    QDateTime last_modified_utc;
-    bool file_exists{false};
+    QString m_path;
+    QDateTime m_last_modified_utc;
+    bool m_file_exists{false};
 };
 
 // Decide which file answers a config read and capture its modification time. The embedded Qt
@@ -191,10 +191,10 @@ struct ResolvedConfigSource {
 [[nodiscard]] ResolvedConfigSource resolveConfigSource(const QString& file_path,
                                                        const QString& resource_path) {
     const bool file_exists = diskPolicyOverrideAuthorized() && QFileInfo::exists(file_path);
-    return {.path = file_exists ? file_path : resource_path,
-            .last_modified_utc = file_exists ? QFileInfo(file_path).lastModified().toUTC()
-                                             : QDateTime{},
-            .file_exists = file_exists};
+    return {.m_path = file_exists ? file_path : resource_path,
+            .m_last_modified_utc = file_exists ? QFileInfo(file_path).lastModified().toUTC()
+                                               : QDateTime{},
+            .m_file_exists = file_exists};
 }
 
 }  // namespace
@@ -339,21 +339,21 @@ QJsonObject AiProviderRegistry::readCachedJsonObject(const QString& file_path,
     }
     const ResolvedConfigSource source = resolveConfigSource(file_path, resource_path);
 
-    if (cache->valid && cache->path == source.path &&
-        (!source.file_exists || cache->last_modified_utc == source.last_modified_utc)) {
+    if (cache->valid && cache->path == source.m_path &&
+        (!source.m_file_exists || cache->last_modified_utc == source.m_last_modified_utc)) {
         if (error_message != nullptr) {
             error_message->clear();
         }
         return cache->object;
     }
 
-    QJsonObject object = readJsonObject(source.path, error_message);
+    QJsonObject object = readJsonObject(source.m_path, error_message);
     if (object.isEmpty()) {
         cache->valid = false;
         return {};
     }
-    cache->path = source.path;
-    cache->last_modified_utc = source.last_modified_utc;
+    cache->path = source.m_path;
+    cache->last_modified_utc = source.m_last_modified_utc;
     cache->object = object;
     cache->valid = true;
     return object;

@@ -142,15 +142,15 @@ QString stateSuffix(const QJsonObject& node) {
     QStringList flags;
     // Tri-state flags rendered as one of two labels when present.
     struct TriFlag {
-        const char* key;
-        const char* on;
-        const char* off;
+        const char* m_key;
+        const char* m_on;
+        const char* m_off;
     };
     static const TriFlag kTri[] = {{"checked", "checked", "unchecked"},
                                    {"expanded", "expanded", "collapsed"}};
     for (const auto& t : kTri) {
-        if (node.contains(QLatin1String(t.key))) {
-            flags << QLatin1String(node.value(QLatin1String(t.key)).toBool() ? t.on : t.off);
+        if (node.contains(QLatin1String(t.m_key))) {
+            flags << QLatin1String(node.value(QLatin1String(t.m_key)).toBool() ? t.m_on : t.m_off);
         }
     }
     // Simple boolean flags whose label is the key.
@@ -194,15 +194,15 @@ QString buildNodeLine(const QJsonObject& node, const QString& name, const QStrin
 // -- Command translation -----------------------------------------------------
 
 struct ArgSpec {
-    QString key;
-    QString type;  // "string" | "int" | "number" | "bool"
-    bool required{false};
+    QString m_key;
+    QString m_type;  // "string" | "int" | "number" | "bool"
+    bool m_required{false};
 };
 
 struct CmdSpec {
-    QString cmd;
-    QString ref_mode;  // "none" | "optional" | "required"
-    QVector<ArgSpec> args;
+    QString m_cmd;
+    QString m_ref_mode;  // "none" | "optional" | "required"
+    QVector<ArgSpec> m_args;
 };
 
 // Navigation, read, and element-interaction command specs.
@@ -458,7 +458,7 @@ QHash<QString, CmdSpec> windowCommandSpecs() {
 }
 
 const QHash<QString, CmdSpec>& commandSpecs() {
-    static const QHash<QString, CmdSpec> specs = [] {
+    static const QHash<QString, CmdSpec> kSpecs = [] {
         QHash<QString, CmdSpec> merged = interactionCommandSpecs();
         merged.insert(formCommandSpecs());
         merged.insert(pageAndTabCommandSpecs());
@@ -469,7 +469,7 @@ const QHash<QString, CmdSpec>& commandSpecs() {
         merged.insert(infraCommandSpecs());
         return merged;
     }();
-    return specs;
+    return kSpecs;
 }
 
 // Resolve an optional/required `ref` argument to a backendNodeId via the current
@@ -531,22 +531,22 @@ QString argTypeMismatch(const QString& key, const QString& type, const QJsonValu
 }
 
 QString copyArg(const QJsonObject& args, const ArgSpec& spec, QJsonObject& command) {
-    if (!args.contains(spec.key)) {
-        return spec.required ? QStringLiteral("%1 is required").arg(spec.key) : QString();
+    if (!args.contains(spec.m_key)) {
+        return spec.m_required ? QStringLiteral("%1 is required").arg(spec.m_key) : QString();
     }
-    const QJsonValue value = args.value(spec.key);
-    const QString mismatch = argTypeMismatch(spec.key, spec.type, value);
+    const QJsonValue value = args.value(spec.m_key);
+    const QString mismatch = argTypeMismatch(spec.m_key, spec.m_type, value);
     if (!mismatch.isEmpty()) {
         return mismatch;
     }
-    if (spec.type == QLatin1String("int")) {
-        command.insert(spec.key, value.toInt());
-    } else if (spec.type == QLatin1String("number")) {
-        command.insert(spec.key, value.toDouble());
-    } else if (spec.type == QLatin1String("bool")) {
-        command.insert(spec.key, value.toBool());
+    if (spec.m_type == QLatin1String("int")) {
+        command.insert(spec.m_key, value.toInt());
+    } else if (spec.m_type == QLatin1String("number")) {
+        command.insert(spec.m_key, value.toDouble());
+    } else if (spec.m_type == QLatin1String("bool")) {
+        command.insert(spec.m_key, value.toBool());
     } else {
-        command.insert(spec.key, value.toString());
+        command.insert(spec.m_key, value.toString());
     }
     return QString();
 }
@@ -617,11 +617,11 @@ QString applyToolExtras(const QString& tool,
 // advertises so a caller cannot smuggle an unmodeled key past this layer.
 QSet<QString> allowedArgKeys(const QString& tool, const CmdSpec& spec) {
     QSet<QString> allowed;
-    if (spec.ref_mode != QLatin1String("none")) {
+    if (spec.m_ref_mode != QLatin1String("none")) {
         allowed.insert(QStringLiteral("ref"));
     }
-    for (const ArgSpec& arg : spec.args) {
-        allowed.insert(arg.key);
+    for (const ArgSpec& arg : spec.m_args) {
+        allowed.insert(arg.m_key);
     }
     if (tool == QLatin1String("browser_drag")) {
         allowed.insert(QStringLiteral("to_ref"));
@@ -1407,15 +1407,15 @@ ExtensionCommand buildExtensionCommand(const QString& tool,
     if (!unknown.isEmpty()) {
         return fail(unknown);
     }
-    QJsonObject command{{QStringLiteral("cmd"), spec.cmd}};
-    if (spec.ref_mode != QLatin1String("none")) {
+    QJsonObject command{{QStringLiteral("cmd"), spec.m_cmd}};
+    if (spec.m_ref_mode != QLatin1String("none")) {
         const QString error =
-            resolveRef(arguments, ref_index, spec.ref_mode == QLatin1String("required"), command);
+            resolveRef(arguments, ref_index, spec.m_ref_mode == QLatin1String("required"), command);
         if (!error.isEmpty()) {
             return fail(error);
         }
     }
-    for (const ArgSpec& arg : spec.args) {
+    for (const ArgSpec& arg : spec.m_args) {
         const QString error = copyArg(arguments, arg, command);
         if (!error.isEmpty()) {
             return fail(error);

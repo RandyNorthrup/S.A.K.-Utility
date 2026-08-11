@@ -502,16 +502,16 @@ void appendInputTools(QJsonArray& tools) {
 }
 
 struct InputHandler {
-    QLatin1String name;
-    ToolResult (*fn)(const QJsonObject&);
+    QLatin1String m_name;
+    ToolResult (*m_fn)(const QJsonObject&);
 };
 
 const InputHandler kInputHandlers[] = {
-    {.name = QLatin1String("mouse_click"), .fn = toolMouseClick},
-    {.name = QLatin1String("click_text"), .fn = toolClickText},
-    {.name = QLatin1String("type_text"), .fn = toolTypeText},
-    {.name = QLatin1String("send_keys"), .fn = toolSendKeys},
-    {.name = QLatin1String("focus_window"), .fn = toolFocusWindow},
+    {.m_name = QLatin1String("mouse_click"), .m_fn = toolMouseClick},
+    {.m_name = QLatin1String("click_text"), .m_fn = toolClickText},
+    {.m_name = QLatin1String("type_text"), .m_fn = toolTypeText},
+    {.m_name = QLatin1String("send_keys"), .m_fn = toolSendKeys},
+    {.m_name = QLatin1String("focus_window"), .m_fn = toolFocusWindow},
 };
 
 }  // namespace
@@ -524,7 +524,7 @@ QJsonArray inputToolCatalog() {
 
 bool inputHandles(const QString& name) {
     for (const auto& entry : kInputHandlers) {
-        if (name == entry.name) {
+        if (name == entry.m_name) {
             return true;
         }
     }
@@ -533,8 +533,8 @@ bool inputHandles(const QString& name) {
 
 ToolResult invokeInputTool(const QString& name, const QJsonObject& args) {
     for (const auto& entry : kInputHandlers) {
-        if (name == entry.name) {
-            return entry.fn(args);
+        if (name == entry.m_name) {
+            return entry.m_fn(args);
         }
     }
     return errorResult(QStringLiteral("Unknown input tool: %1").arg(name));

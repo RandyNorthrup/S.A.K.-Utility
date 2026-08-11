@@ -100,10 +100,10 @@ class ComApartment {
 public:
     ComApartment() {
         const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        owned_ = (hr == S_OK || hr == S_FALSE);
+        m_owned = (hr == S_OK || hr == S_FALSE);
     }
     ~ComApartment() {
-        if (owned_) {
+        if (m_owned) {
             CoUninitialize();
         }
     }
@@ -111,7 +111,7 @@ public:
     ComApartment& operator=(const ComApartment&) = delete;
 
 private:
-    bool owned_{false};
+    bool m_owned{false};
 };
 
 QString hstringToQString(const winrt::hstring& text) {
@@ -565,19 +565,19 @@ void appendOcrTools(QJsonArray& tools) {
 }
 
 struct OcrHandler {
-    QLatin1String name;
-    ToolResult (*fn)(const QJsonObject&);
+    QLatin1String m_name;
+    ToolResult (*m_fn)(const QJsonObject&);
 };
 
 const OcrHandler kOcrHandlers[] = {
-    {.name = QLatin1String("ocr_window"), .fn = toolOcrWindow},
-    {.name = QLatin1String("ocr_region"), .fn = toolOcrRegion},
-    {.name = QLatin1String("ocr_region_structured"), .fn = toolOcrRegionStructured},
-    {.name = QLatin1String("ocr_screen"), .fn = toolOcrScreen},
-    {.name = QLatin1String("ocr_screen_structured"), .fn = toolOcrScreenStructured},
-    {.name = QLatin1String("find_text_on_screen"), .fn = toolFindText},
-    {.name = QLatin1String("assert_text_visible"), .fn = toolAssertText},
-    {.name = QLatin1String("wait_for_text"), .fn = toolWaitForText},
+    {.m_name = QLatin1String("ocr_window"), .m_fn = toolOcrWindow},
+    {.m_name = QLatin1String("ocr_region"), .m_fn = toolOcrRegion},
+    {.m_name = QLatin1String("ocr_region_structured"), .m_fn = toolOcrRegionStructured},
+    {.m_name = QLatin1String("ocr_screen"), .m_fn = toolOcrScreen},
+    {.m_name = QLatin1String("ocr_screen_structured"), .m_fn = toolOcrScreenStructured},
+    {.m_name = QLatin1String("find_text_on_screen"), .m_fn = toolFindText},
+    {.m_name = QLatin1String("assert_text_visible"), .m_fn = toolAssertText},
+    {.m_name = QLatin1String("wait_for_text"), .m_fn = toolWaitForText},
 };
 
 }  // namespace
@@ -590,7 +590,7 @@ QJsonArray ocrToolCatalog() {
 
 bool ocrHandles(const QString& name) {
     for (const auto& entry : kOcrHandlers) {
-        if (name == entry.name) {
+        if (name == entry.m_name) {
             return true;
         }
     }
@@ -599,8 +599,8 @@ bool ocrHandles(const QString& name) {
 
 ToolResult invokeOcrTool(const QString& name, const QJsonObject& args) {
     for (const auto& entry : kOcrHandlers) {
-        if (name == entry.name) {
-            return entry.fn(args);
+        if (name == entry.m_name) {
+            return entry.m_fn(args);
         }
     }
     return errorResult(QStringLiteral("Unknown OCR tool: %1").arg(name));

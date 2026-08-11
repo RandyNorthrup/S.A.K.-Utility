@@ -47,8 +47,8 @@ bool firstStringValue(const QJsonObject& object,
 // candidate is dropped by packageCandidatesFromJson). Case is normalized only.
 QString safePackageIdToken(const QString& value) {
     const QString out = value.trimmed().toLower();
-    static const QRegularExpression valid(QStringLiteral(R"(^[a-z0-9_.+-]+$)"));
-    return valid.match(out).hasMatch() ? out : QString();
+    static const QRegularExpression kValid(QStringLiteral(R"(^[a-z0-9_.+-]+$)"));
+    return kValid.match(out).hasMatch() ? out : QString();
 }
 
 // Returns false when the record is malformed (any present field that is not a string). The
@@ -104,9 +104,9 @@ QJsonArray candidatesToJson(const QVector<AiPackageCandidate>& candidates) {
 }
 
 struct ParsedPackages {
-    QVector<AiPackageCandidate> candidates;
-    int rejected_entries{0};
-    QSet<QString> conflicting_ids;
+    QVector<AiPackageCandidate> m_candidates;
+    int m_rejected_entries{0};
+    QSet<QString> m_conflicting_ids;
 };
 
 ParsedPackages packageCandidatesFromJson(const QJsonArray& packages) {
@@ -118,7 +118,7 @@ ParsedPackages packageCandidatesFromJson(const QJsonArray& packages) {
             candidate.package_id.isEmpty()) {
             // Counted, not hidden: the caller reports how many records were refused so a
             // wholly malformed response cannot masquerade as an honest "nothing found".
-            ++parsed.rejected_entries;
+            ++parsed.m_rejected_entries;
             continue;
         }
         const auto existing = version_by_id.constFind(candidate.package_id);
@@ -127,12 +127,12 @@ ParsedPackages packageCandidatesFromJson(const QJsonArray& packages) {
             // version the human never saw, so remember the conflict and refuse to
             // auto-select that id below.
             if (*existing != candidate.version) {
-                parsed.conflicting_ids.insert(candidate.package_id);
+                parsed.m_conflicting_ids.insert(candidate.package_id);
             }
             continue;
         }
         version_by_id.insert(candidate.package_id, candidate.version);
-        parsed.candidates.append(candidate);
+        parsed.m_candidates.append(candidate);
     }
     return parsed;
 }
@@ -277,20 +277,20 @@ AiPackageSelectionResult selectPackageForWorkflow(const QString& query,
     }
 
     const ParsedPackages parsed = packageCandidatesFromJson(packages);
-    result.candidates = limitedCandidates(parsed.candidates, limit);
+    result.candidates = limitedCandidates(parsed.m_candidates, limit);
 
-    if (parsed.candidates.isEmpty()) {
-        return noPackageCandidatesResult(clean_query, parsed.rejected_entries);
+    if (parsed.m_candidates.isEmpty()) {
+        return noPackageCandidatesResult(clean_query, parsed.m_rejected_entries);
     }
 
     // Fail closed: never auto-select a lone candidate that does not exactly match the
     // query -- a fuzzy single search hit could install the wrong package. Only an exact
     // package_id/title/name match is auto-selected below; anything else asks the human.
     const QVector<AiPackageCandidate> exact_matches = exactPackageMatches(query_key,
-                                                                          parsed.candidates);
+                                                                          parsed.m_candidates);
 
     if (exact_matches.size() == 1 &&
-        !parsed.conflicting_ids.contains(exact_matches.first().package_id)) {
+        !parsed.m_conflicting_ids.contains(exact_matches.first().package_id)) {
         return selectedPackageResult(exact_matches.first());
     }
 

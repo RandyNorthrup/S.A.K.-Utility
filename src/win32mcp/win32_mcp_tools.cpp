@@ -98,8 +98,8 @@ QJsonObject describeWindow(HWND hwnd) {
 }
 
 struct WindowCollectState {
-    QString filter_lower;
-    QJsonArray windows;
+    QString m_filter_lower;
+    QJsonArray m_windows;
 };
 
 BOOL CALLBACK collectWindowProc(HWND hwnd, LPARAM param) {
@@ -111,21 +111,21 @@ BOOL CALLBACK collectWindowProc(HWND hwnd, LPARAM param) {
     if (title.isEmpty()) {
         return TRUE;
     }
-    if (!state->filter_lower.isEmpty() && !title.toLower().contains(state->filter_lower)) {
+    if (!state->m_filter_lower.isEmpty() && !title.toLower().contains(state->m_filter_lower)) {
         return TRUE;
     }
-    state->windows.append(describeWindow(hwnd));
+    state->m_windows.append(describeWindow(hwnd));
     return TRUE;
 }
 
 struct WindowMatch {
-    HWND hwnd;
-    QString title_lower;
+    HWND m_hwnd;
+    QString m_title_lower;
 };
 
 struct FindState {
-    QString needle_lower;
-    QVector<WindowMatch> matches;
+    QString m_needle_lower;
+    QVector<WindowMatch> m_matches;
 };
 
 BOOL CALLBACK collectMatchProc(HWND hwnd, LPARAM param) {
@@ -135,10 +135,10 @@ BOOL CALLBACK collectMatchProc(HWND hwnd, LPARAM param) {
     }
     const QString title = windowTitle(hwnd);
     const QString lower = title.toLower();
-    if (title.isEmpty() || !lower.contains(find->needle_lower)) {
+    if (title.isEmpty() || !lower.contains(find->m_needle_lower)) {
         return TRUE;
     }
-    find->matches.append(WindowMatch{.hwnd = hwnd, .title_lower = lower});
+    find->m_matches.append(WindowMatch{.m_hwnd = hwnd, .m_title_lower = lower});
     return TRUE;  // collect every match, then disambiguate rather than taking the first
 }
 
@@ -153,13 +153,13 @@ HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
         return nullptr;
     }
     if (matches.size() == 1) {
-        return matches.first().hwnd;
+        return matches.first().m_hwnd;
     }
     HWND exact = nullptr;
     int exact_count = 0;
     for (const WindowMatch& m : matches) {
-        if (m.title_lower == needle_lower) {
-            exact = m.hwnd;
+        if (m.m_title_lower == needle_lower) {
+            exact = m.m_hwnd;
             ++exact_count;
         }
     }
@@ -173,9 +173,9 @@ HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
 }
 
 HWND findWindowByTitle(const QString& needle_lower, QString& err) {
-    FindState state{.needle_lower = needle_lower, .matches = {}};
+    FindState state{.m_needle_lower = needle_lower, .m_matches = {}};
     EnumWindows(collectMatchProc, reinterpret_cast<LPARAM>(&state));
-    return pickUniqueWindow(state.matches, needle_lower, err);
+    return pickUniqueWindow(state.m_matches, needle_lower, err);
 }
 
 ToolResult toolHealthCheck(const QJsonObject&) {
@@ -190,10 +190,10 @@ ToolResult toolHealthCheck(const QJsonObject&) {
 
 ToolResult toolListWindows(const QJsonObject& args) {
     WindowCollectState state;
-    state.filter_lower = args.value(QStringLiteral("filter")).toString().trimmed().toLower();
+    state.m_filter_lower = args.value(QStringLiteral("filter")).toString().trimmed().toLower();
     EnumWindows(collectWindowProc, reinterpret_cast<LPARAM>(&state));
-    return jsonResult(QJsonObject{{QStringLiteral("count"), state.windows.size()},
-                                  {QStringLiteral("windows"), state.windows}});
+    return jsonResult(QJsonObject{{QStringLiteral("count"), state.m_windows.size()},
+                                  {QStringLiteral("windows"), state.m_windows}});
 }
 
 ToolResult toolGetWindowInfo(const QJsonObject& args) {
@@ -533,25 +533,26 @@ QJsonArray toolCatalog() {
 ToolResult invokeTool(const QString& name, const QJsonObject& arguments) {
     using Handler = ToolResult (*)(const QJsonObject&);
     struct Entry {
-        QLatin1String name;
-        Handler fn;
+        QLatin1String m_name;
+        Handler m_fn;
     };
     static const Entry kHandlers[] = {
-        {.name = QLatin1String("health_check"), .fn = toolHealthCheck},
-        {.name = QLatin1String("list_windows"), .fn = toolListWindows},
-        {.name = QLatin1String("get_window_info"), .fn = toolGetWindowInfo},
-        {.name = QLatin1String("close_window"), .fn = toolCloseWindow},
-        {.name = QLatin1String("list_monitors"), .fn = toolListMonitors},
-        {.name = QLatin1String("mouse_position"), .fn = toolMousePosition},
-        {.name = QLatin1String("clipboard_read"), .fn = toolClipboardRead},
-        {.name = QLatin1String("clipboard_write"), .fn = toolClipboardWrite},
-        {.name = QLatin1String("browser_extension_install"), .fn = toolBrowserExtensionInstall},
-        {.name = QLatin1String("browser_extension_uninstall"), .fn = toolBrowserExtensionUninstall},
-        {.name = QLatin1String("browser_extension_status"), .fn = toolBrowserExtensionStatus},
+        {.m_name = QLatin1String("health_check"), .m_fn = toolHealthCheck},
+        {.m_name = QLatin1String("list_windows"), .m_fn = toolListWindows},
+        {.m_name = QLatin1String("get_window_info"), .m_fn = toolGetWindowInfo},
+        {.m_name = QLatin1String("close_window"), .m_fn = toolCloseWindow},
+        {.m_name = QLatin1String("list_monitors"), .m_fn = toolListMonitors},
+        {.m_name = QLatin1String("mouse_position"), .m_fn = toolMousePosition},
+        {.m_name = QLatin1String("clipboard_read"), .m_fn = toolClipboardRead},
+        {.m_name = QLatin1String("clipboard_write"), .m_fn = toolClipboardWrite},
+        {.m_name = QLatin1String("browser_extension_install"), .m_fn = toolBrowserExtensionInstall},
+        {.m_name = QLatin1String("browser_extension_uninstall"),
+         .m_fn = toolBrowserExtensionUninstall},
+        {.m_name = QLatin1String("browser_extension_status"), .m_fn = toolBrowserExtensionStatus},
     };
     for (const auto& entry : kHandlers) {
-        if (name == entry.name) {
-            return entry.fn(arguments);
+        if (name == entry.m_name) {
+            return entry.m_fn(arguments);
         }
     }
     if (desktopHandles(name)) {

@@ -51,33 +51,33 @@ BackupBitlockerKeysAction::BackupBitlockerKeysAction(const QString& backup_locat
 namespace {
 
 struct CodeDescriptionEntry {
-    int code;
-    const char* description;
+    int m_code;
+    const char* m_description;
 };
 
 static constexpr CodeDescriptionEntry kEncryptionMethods[] = {
-    {.code = 0, .description = "None"},
-    {.code = 1, .description = "AES-128 with Diffuser"},
-    {.code = 2, .description = "AES-256 with Diffuser"},
-    {.code = 3, .description = "AES-128"},
-    {.code = 4, .description = "AES-256"},
-    {.code = 5, .description = "Hardware Encryption"},
-    {.code = 6, .description = "XTS-AES-128"},
-    {.code = 7, .description = "XTS-AES-256"},
+    {.m_code = 0, .m_description = "None"},
+    {.m_code = 1, .m_description = "AES-128 with Diffuser"},
+    {.m_code = 2, .m_description = "AES-256 with Diffuser"},
+    {.m_code = 3, .m_description = "AES-128"},
+    {.m_code = 4, .m_description = "AES-256"},
+    {.m_code = 5, .m_description = "Hardware Encryption"},
+    {.m_code = 6, .m_description = "XTS-AES-128"},
+    {.m_code = 7, .m_description = "XTS-AES-256"},
 };
 
 static constexpr CodeDescriptionEntry kProtectorTypes[] = {
-    {.code = 0, .description = "Unknown or Other"},
-    {.code = 1, .description = "TPM"},
-    {.code = 2, .description = "External Key (USB)"},
-    {.code = 3, .description = "Numerical Password (Recovery Password)"},
-    {.code = 4, .description = "TPM + PIN"},
-    {.code = 5, .description = "TPM + Startup Key"},
-    {.code = 6, .description = "TPM + PIN + Startup Key"},
-    {.code = 7, .description = "Public Key (Certificate)"},
-    {.code = 8, .description = "Passphrase"},
-    {.code = 9, .description = "TPM + Certificate"},
-    {.code = 10, .description = "Clear Key (Unprotected)"},
+    {.m_code = 0, .m_description = "Unknown or Other"},
+    {.m_code = 1, .m_description = "TPM"},
+    {.m_code = 2, .m_description = "External Key (USB)"},
+    {.m_code = 3, .m_description = "Numerical Password (Recovery Password)"},
+    {.m_code = 4, .m_description = "TPM + PIN"},
+    {.m_code = 5, .m_description = "TPM + Startup Key"},
+    {.m_code = 6, .m_description = "TPM + PIN + Startup Key"},
+    {.m_code = 7, .m_description = "Public Key (Certificate)"},
+    {.m_code = 8, .m_description = "Passphrase"},
+    {.m_code = 9, .m_description = "TPM + Certificate"},
+    {.m_code = 10, .m_description = "Clear Key (Unprotected)"},
 };
 
 constexpr int kVolumeTypeOperatingSystem = 0;
@@ -269,10 +269,10 @@ try {
 template <std::size_t N>
 QString lookupCodeDescription(const CodeDescriptionEntry (&table)[N], int code) {
     auto it = std::find_if(std::begin(table), std::end(table), [code](const auto& e) {
-        return e.code == code;
+        return e.m_code == code;
     });
     if (it != std::end(table)) {
-        return QString::fromLatin1(it->description);
+        return QString::fromLatin1(it->m_description);
     }
     return QString("Unknown (%1)").arg(code);
 }
@@ -282,8 +282,8 @@ QString lookupCodeDescription(const CodeDescriptionEntry (&table)[N], int code) 
 // rejected so a malformed value can never break out of the single-quoted
 // PowerShell filter or escape the backup directory when used in a filename.
 bool isValidDriveLetter(const QString& drive_letter) {
-    static const QRegularExpression re(QStringLiteral("^[A-Za-z]:?$"));
-    return re.match(drive_letter).hasMatch();
+    static const QRegularExpression kRe(QStringLiteral("^[A-Za-z]:?$"));
+    return kRe.match(drive_letter).hasMatch();
 }
 
 }  // namespace
@@ -770,7 +770,7 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
     // disk: remove the partial backup directory before reporting the cancel. If the
     // removal itself fails, plaintext keys may remain, so that is a failure -- not a
     // clean cancel.
-    auto cancelWithCleanup = [&]() {
+    auto cancel_with_cleanup = [&]() {
         if (!QDir(backup_dir_path).removeRecursively()) {
             emitFailedResult(
                 "BitLocker key backup cancelled, but the partial backup directory "
@@ -784,7 +784,7 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
     };
 
     if (isCancelled()) {
-        cancelWithCleanup();
+        cancel_with_cleanup();
         return false;
     }
 
@@ -794,7 +794,7 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
     if (isCancelled()) {
-        cancelWithCleanup();
+        cancel_with_cleanup();
         return false;
     }
 
@@ -807,7 +807,7 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
     if (isCancelled()) {
-        cancelWithCleanup();
+        cancel_with_cleanup();
         return false;
     }
 
@@ -817,7 +817,7 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
     if (isCancelled()) {
-        cancelWithCleanup();
+        cancel_with_cleanup();
         return false;
     }
 

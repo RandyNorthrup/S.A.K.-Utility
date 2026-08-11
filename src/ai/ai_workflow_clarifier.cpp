@@ -38,7 +38,7 @@ bool isAppLikeInput(const WorkflowRequiredInput& input) {
     const QString label = input.label.trimmed().toLower();
     // The id carries two extra tokens the label does not: a "query"/"name" field names
     // a destructive target here even when its label never says "app".
-    static const QStringList id_terms{
+    static const QStringList kIdTerms{
         QStringLiteral("app"),
         QStringLiteral("package"),
         QStringLiteral("product"),
@@ -47,14 +47,14 @@ bool isAppLikeInput(const WorkflowRequiredInput& input) {
         QStringLiteral("software"),
         QStringLiteral("target"),
     };
-    static const QStringList label_terms{
+    static const QStringList kLabelTerms{
         QStringLiteral("app"),
         QStringLiteral("package"),
         QStringLiteral("product"),
         QStringLiteral("software"),
         QStringLiteral("target"),
     };
-    return containsAny(id, id_terms) || containsAny(label, label_terms);
+    return containsAny(id, kIdTerms) || containsAny(label, kLabelTerms);
 }
 
 QString firstTextValue(const QJsonValue& value) {
@@ -74,7 +74,7 @@ QString firstTextValue(const QJsonValue& value) {
 }
 
 const QStringList& genericAppTerms() {
-    static const QStringList terms{
+    static const QStringList kTerms{
         QStringLiteral("app"),
         QStringLiteral("application"),
         QStringLiteral("program"),
@@ -87,7 +87,7 @@ const QStringList& genericAppTerms() {
         QStringLiteral("that"),
         QStringLiteral("this"),
     };
-    return terms;
+    return kTerms;
 }
 
 QStringList significantWords(const QStringList& raw_words) {
@@ -97,7 +97,7 @@ QStringList significantWords(const QStringList& raw_words) {
     // every remaining word is itself a generic placeholder. An exact-token check
     // alone lets multi-word and trailing-punctuation forms ("app.", "the app")
     // slip through as if they were specific destructive targets.
-    static const QStringList qualifier_terms{
+    static const QStringList kQualifierTerms{
         QStringLiteral("the"),
         QStringLiteral("a"),
         QStringLiteral("an"),
@@ -125,7 +125,7 @@ QStringList significantWords(const QStringList& raw_words) {
         while (!word.isEmpty() && !word.back().isLetterOrNumber()) {
             word.chop(1);
         }
-        if (word.isEmpty() || qualifier_terms.contains(word)) {
+        if (word.isEmpty() || kQualifierTerms.contains(word)) {
             continue;
         }
         significant.append(word);

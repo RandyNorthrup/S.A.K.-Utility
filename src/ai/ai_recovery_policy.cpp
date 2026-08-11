@@ -22,57 +22,57 @@ bool containsAny(const QString& value, std::initializer_list<const char*> needle
 }
 
 struct DecisionSeed {
-    AiRecoveryAction action{AiRecoveryAction::Abort};
-    QString reason;
-    bool requires_human{false};
-    bool retry_allowed{false};
-    bool safe_to_continue{false};
-    QString suggested_agent;
+    AiRecoveryAction m_action{AiRecoveryAction::Abort};
+    QString m_reason;
+    bool m_requires_human{false};
+    bool m_retry_allowed{false};
+    bool m_safe_to_continue{false};
+    QString m_suggested_agent;
 };
 
 AiRecoveryDecision decision(const DecisionSeed& seed) {
     AiRecoveryDecision result;
-    result.action = seed.action;
-    result.reason = seed.reason;
-    result.requires_human = seed.requires_human;
-    result.retry_allowed = seed.retry_allowed;
-    result.safe_to_continue = seed.safe_to_continue;
-    result.suggested_agent = seed.suggested_agent;
+    result.action = seed.m_action;
+    result.reason = seed.m_reason;
+    result.requires_human = seed.m_requires_human;
+    result.retry_allowed = seed.m_retry_allowed;
+    result.safe_to_continue = seed.m_safe_to_continue;
+    result.suggested_agent = seed.m_suggested_agent;
     result.preserve_artifacts = true;
     return result;
 }
 
 AiRecoveryDecision abortDecision(const QString& reason) {
-    return decision({.action = AiRecoveryAction::Abort, .reason = reason});
+    return decision({.m_action = AiRecoveryAction::Abort, .m_reason = reason});
 }
 
 AiRecoveryDecision askHumanDecision(const QString& reason) {
     return decision(
-        {.action = AiRecoveryAction::AskHuman, .reason = reason, .requires_human = true});
+        {.m_action = AiRecoveryAction::AskHuman, .m_reason = reason, .m_requires_human = true});
 }
 
 AiRecoveryDecision retryDecision(const QString& reason) {
-    return decision({.action = AiRecoveryAction::Retry,
-                     .reason = reason,
-                     .requires_human = false,
-                     .retry_allowed = true});
+    return decision({.m_action = AiRecoveryAction::Retry,
+                     .m_reason = reason,
+                     .m_requires_human = false,
+                     .m_retry_allowed = true});
 }
 
 AiRecoveryDecision continueDecision(const QString& reason) {
-    return decision({.action = AiRecoveryAction::ContinueDegraded,
-                     .reason = reason,
-                     .requires_human = false,
-                     .retry_allowed = false,
-                     .safe_to_continue = true});
+    return decision({.m_action = AiRecoveryAction::ContinueDegraded,
+                     .m_reason = reason,
+                     .m_requires_human = false,
+                     .m_retry_allowed = false,
+                     .m_safe_to_continue = true});
 }
 
 AiRecoveryDecision reassignDecision(const QString& reason, const QString& suggested_agent) {
-    return decision({.action = AiRecoveryAction::Reassign,
-                     .reason = reason,
-                     .requires_human = false,
-                     .retry_allowed = false,
-                     .safe_to_continue = true,
-                     .suggested_agent = suggested_agent});
+    return decision({.m_action = AiRecoveryAction::Reassign,
+                     .m_reason = reason,
+                     .m_requires_human = false,
+                     .m_retry_allowed = false,
+                     .m_safe_to_continue = true,
+                     .m_suggested_agent = suggested_agent});
 }
 
 bool isMissingInputError(const QString& error) {
@@ -123,8 +123,8 @@ bool isRiskyFailure(const QString& risk) {
 // than as a free substring of a model- or catalog-supplied agent id, so an id that merely
 // embeds those letters cannot trigger an automatic review reassignment.
 bool agentIsCritic(const QString& agent_id) {
-    static const QRegularExpression separator(QStringLiteral("[^a-z0-9]+"));
-    const QStringList tokens = agent_id.trimmed().toLower().split(separator, Qt::SkipEmptyParts);
+    static const QRegularExpression kSeparator(QStringLiteral("[^a-z0-9]+"));
+    const QStringList tokens = agent_id.trimmed().toLower().split(kSeparator, Qt::SkipEmptyParts);
     return tokens.contains(QStringLiteral("critic"));
 }
 

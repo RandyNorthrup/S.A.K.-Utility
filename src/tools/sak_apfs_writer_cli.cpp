@@ -130,7 +130,7 @@ std::optional<QByteArray> readPayloadFile(const QString& path, QString* error) {
     return data;
 }
 
-sak::PartitionApfsWriteOptions imageWriteOptions(const QString& evidenceId) {
+sak::PartitionApfsWriteOptions imageWriteOptions(const QString& evidence_id) {
     sak::PartitionApfsWriteOptions options;
     options.enable_experimental_writer = true;
     options.image_only = true;
@@ -139,12 +139,12 @@ sak::PartitionApfsWriteOptions imageWriteOptions(const QString& evidenceId) {
     // destructive/hardware evidence gate itself (see review finding 4).
     options.destructive_certification_evidence = true;
     options.max_payload_bytes = kDefaultApfsMaxPayloadBytes;
-    options.evidence_id = evidenceId;
+    options.evidence_id = evidence_id;
     return options;
 }
 
-sak::PartitionApfsWriteOptions rawWriteOptions(const QString& evidenceId) {
-    auto options = imageWriteOptions(evidenceId);
+sak::PartitionApfsWriteOptions rawWriteOptions(const QString& evidence_id) {
+    auto options = imageWriteOptions(evidence_id);
     options.image_only = false;
     options.raw_media_hardware_certification_evidence = true;
     return options;
@@ -243,19 +243,19 @@ QJsonObject volumeLabelRawReport(const QString& command,
     return report;
 }
 
-bool writeReport(const QJsonObject& report, const QString& outputPath, QString* error) {
+bool writeReport(const QJsonObject& report, const QString& output_path, QString* error) {
     const auto bytes = QJsonDocument(report).toJson(QJsonDocument::Indented);
     QTextStream(stdout) << bytes << Qt::endl;
-    if (outputPath.trimmed().isEmpty()) {
+    if (output_path.trimmed().isEmpty()) {
         return true;
     }
 
-    if (!QFileInfo(outputPath).absoluteDir().exists() &&
-        !QDir().mkpath(QFileInfo(outputPath).absolutePath())) {
-        *error = QStringLiteral("Unable to create report directory for %1").arg(outputPath);
+    if (!QFileInfo(output_path).absoluteDir().exists() &&
+        !QDir().mkpath(QFileInfo(output_path).absolutePath())) {
+        *error = QStringLiteral("Unable to create report directory for %1").arg(output_path);
         return false;
     }
-    QFile file(outputPath);
+    QFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         *error = file.errorString();
         return false;
@@ -318,10 +318,10 @@ std::optional<QString> fileIdentityToken(const QString& path) {
 // result with JSON. Detects identical strings (raw device paths like
 // \\.\PhysicalDriveN), symlink aliases (canonicalFilePath follows symlinks), and
 // hardlink aliases (OS volume+file-id identity, which path comparison cannot see).
-bool outputJsonAliasesTarget(const QString& outputJson,
-                             const QString& targetPath,
-                             const QString& outputImagePath) {
-    if (outputJson.trimmed().isEmpty()) {
+bool outputJsonAliasesTarget(const QString& output_json,
+                             const QString& target_path,
+                             const QString& output_image_path) {
+    if (output_json.trimmed().isEmpty()) {
         return false;
     }
     const auto canon = [](const QString& p) {
@@ -329,56 +329,56 @@ bool outputJsonAliasesTarget(const QString& outputJson,
         const QString real = fi.canonicalFilePath();  // resolves symlinks; empty if absent
         return real.isEmpty() ? QDir::cleanPath(fi.absoluteFilePath()) : real;
     };
-    const QString jsonCanon = canon(outputJson);
-    const std::optional<QString> jsonId = fileIdentityToken(outputJson);
+    const QString json_canon = canon(output_json);
+    const std::optional<QString> json_id = fileIdentityToken(output_json);
     const auto aliases = [&](const QString& other) {
         if (other.trimmed().isEmpty()) {
             return false;
         }
-        if (outputJson.trimmed().compare(other.trimmed(), Qt::CaseInsensitive) == 0 ||
-            jsonCanon.compare(canon(other), Qt::CaseInsensitive) == 0) {
+        if (output_json.trimmed().compare(other.trimmed(), Qt::CaseInsensitive) == 0 ||
+            json_canon.compare(canon(other), Qt::CaseInsensitive) == 0) {
             return true;
         }
-        return jsonId.has_value() && jsonId == fileIdentityToken(other);
+        return json_id.has_value() && json_id == fileIdentityToken(other);
     };
-    return aliases(targetPath) || aliases(outputImagePath);
+    return aliases(target_path) || aliases(output_image_path);
 }
 
 QString evidenceIdForCommand(const QCommandLineParser& parser,
-                             const QCommandLineOption& evidenceOption,
+                             const QCommandLineOption& evidence_option,
                              const QString& command) {
-    const QString value = parser.value(evidenceOption).trimmed();
+    const QString value = parser.value(evidence_option).trimmed();
     return value.isEmpty() ? QStringLiteral("sak-ui.%1").arg(command) : value;
 }
 
 struct CliInvocation {
-    QString command;
-    QString target_path;
-    uint64_t target_size_bytes{0};
-    uint32_t block_size_bytes{kDefaultApfsBlockSizeBytes};
-    QString volume_name;
-    QStringList additional_volume_names;
-    QString output_image_path;
-    QString file_name;
-    QString directory_name;
-    QString parent_directory_path;
-    QString new_file_name;
-    QString destination_directory_name;
-    QByteArray payload;
-    uint64_t patch_offset_bytes{0};
-    QString patch_offset_error;
-    QString snapshot_name;
-    QString evidence_id;
-    QString volume_password;
-    QString recovery_key;
-    bool confirm_target{false};
-    bool allow_raw_target{false};
-    bool compress_zlib{false};
-    bool compress_lzfse{false};
-    bool compress_lzvn{false};
-    bool compress_lzbitmap{false};
-    uint64_t sparse_logical_size{0};
-    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    QString m_command;
+    QString m_target_path;
+    uint64_t m_target_size_bytes{0};
+    uint32_t m_block_size_bytes{kDefaultApfsBlockSizeBytes};
+    QString m_volume_name;
+    QStringList m_additional_volume_names;
+    QString m_output_image_path;
+    QString m_file_name;
+    QString m_directory_name;
+    QString m_parent_directory_path;
+    QString m_new_file_name;
+    QString m_destination_directory_name;
+    QByteArray m_payload;
+    uint64_t m_patch_offset_bytes{0};
+    QString m_patch_offset_error;
+    QString m_snapshot_name;
+    QString m_evidence_id;
+    QString m_volume_password;
+    QString m_recovery_key;
+    bool m_confirm_target{false};
+    bool m_allow_raw_target{false};
+    bool m_compress_zlib{false};
+    bool m_compress_lzfse{false};
+    bool m_compress_lzvn{false};
+    bool m_compress_lzbitmap{false};
+    uint64_t m_sparse_logical_size{0};
+    QVector<QPair<QByteArray, QByteArray>> m_xattrs;
 };
 
 std::optional<QString> fileNameForCommand(const QCommandLineParser& parser,
@@ -386,8 +386,8 @@ std::optional<QString> fileNameForCommand(const QCommandLineParser& parser,
                                           const QString& command,
                                           QString* error);
 std::optional<QString> directoryNameForCommand(const QCommandLineParser& parser,
-                                               const QCommandLineOption& directoryOption,
-                                               const QCommandLineOption& fileOption,
+                                               const QCommandLineOption& directory_option,
+                                               const QCommandLineOption& file_option,
                                                const QString& command,
                                                QString* error);
 std::optional<QByteArray> payloadForCommand(const QCommandLineParser& parser,
@@ -400,33 +400,33 @@ std::optional<uint64_t> patchOffsetForCommand(const QCommandLineParser& parser,
                                               QString* error);
 
 struct CliParserOptions {
-    const QCommandLineOption* target{nullptr};
-    const QCommandLineOption* size{nullptr};
-    const QCommandLineOption* block_size{nullptr};
-    const QCommandLineOption* volume_name{nullptr};
-    const QCommandLineOption* additional_volume_name{nullptr};
-    const QCommandLineOption* output_image{nullptr};
-    const QCommandLineOption* file_name{nullptr};
-    const QCommandLineOption* directory_name{nullptr};
-    const QCommandLineOption* parent_directory_path{nullptr};
-    const QCommandLineOption* new_file_name{nullptr};
-    const QCommandLineOption* destination_directory_name{nullptr};
-    const QCommandLineOption* payload{nullptr};
-    const QCommandLineOption* patch_offset{nullptr};
-    const QCommandLineOption* snapshot_name{nullptr};
-    const QCommandLineOption* evidence{nullptr};
-    const QCommandLineOption* confirm{nullptr};
-    const QCommandLineOption* allow_raw{nullptr};
-    const QCommandLineOption* compress_zlib{nullptr};
-    const QCommandLineOption* compress_lzfse{nullptr};
-    const QCommandLineOption* compress_lzvn{nullptr};
-    const QCommandLineOption* compress_lzbitmap{nullptr};
-    const QCommandLineOption* volume_password{nullptr};
-    const QCommandLineOption* recovery_key{nullptr};
-    const QCommandLineOption* volume_password_file{nullptr};
-    const QCommandLineOption* recovery_key_file{nullptr};
-    const QCommandLineOption* sparse_size{nullptr};
-    const QCommandLineOption* xattr{nullptr};
+    const QCommandLineOption* m_target{nullptr};
+    const QCommandLineOption* m_size{nullptr};
+    const QCommandLineOption* m_block_size{nullptr};
+    const QCommandLineOption* m_volume_name{nullptr};
+    const QCommandLineOption* m_additional_volume_name{nullptr};
+    const QCommandLineOption* m_output_image{nullptr};
+    const QCommandLineOption* m_file_name{nullptr};
+    const QCommandLineOption* m_directory_name{nullptr};
+    const QCommandLineOption* m_parent_directory_path{nullptr};
+    const QCommandLineOption* m_new_file_name{nullptr};
+    const QCommandLineOption* m_destination_directory_name{nullptr};
+    const QCommandLineOption* m_payload{nullptr};
+    const QCommandLineOption* m_patch_offset{nullptr};
+    const QCommandLineOption* m_snapshot_name{nullptr};
+    const QCommandLineOption* m_evidence{nullptr};
+    const QCommandLineOption* m_confirm{nullptr};
+    const QCommandLineOption* m_allow_raw{nullptr};
+    const QCommandLineOption* m_compress_zlib{nullptr};
+    const QCommandLineOption* m_compress_lzfse{nullptr};
+    const QCommandLineOption* m_compress_lzvn{nullptr};
+    const QCommandLineOption* m_compress_lzbitmap{nullptr};
+    const QCommandLineOption* m_volume_password{nullptr};
+    const QCommandLineOption* m_recovery_key{nullptr};
+    const QCommandLineOption* m_volume_password_file{nullptr};
+    const QCommandLineOption* m_recovery_key_file{nullptr};
+    const QCommandLineOption* m_sparse_size{nullptr};
+    const QCommandLineOption* m_xattr{nullptr};
 };
 
 // Parse repeatable --xattr name=hexvalue options into (name, value) pairs. Fails closed on a
@@ -442,13 +442,13 @@ struct CliParserOptions {
             return std::nullopt;
         }
         const QString hex = spec.mid(eq + 1);
-        const auto isHexDigit = [](QChar ch) {
+        const auto is_hex_digit = [](QChar ch) {
             return (ch >= QLatin1Char('0') && ch <= QLatin1Char('9')) ||
                    (ch >= QLatin1Char('a') && ch <= QLatin1Char('f')) ||
                    (ch >= QLatin1Char('A') && ch <= QLatin1Char('F'));
         };
-        const bool cleanHex = (hex.size() % 2) == 0 && std::ranges::all_of(hex, isHexDigit);
-        if (!cleanHex) {
+        const bool clean_hex = (hex.size() % 2) == 0 && std::ranges::all_of(hex, is_hex_digit);
+        if (!clean_hex) {
             *error = QStringLiteral("--xattr value must be even-length hex: %1").arg(spec);
             return std::nullopt;
         }
@@ -458,16 +458,16 @@ struct CliParserOptions {
 }
 
 struct CliNumericInputs {
-    uint64_t size{0};
-    uint32_t block_size{kDefaultApfsBlockSizeBytes};
+    uint64_t m_size{0};
+    uint32_t m_block_size{kDefaultApfsBlockSizeBytes};
 };
 
 struct CliMutationInputs {
-    QString file_name;
-    QString directory_name;
-    QByteArray payload;
-    uint64_t patch_offset{0};
-    QString patch_offset_error;
+    QString m_file_name;
+    QString m_directory_name;
+    QByteArray m_payload;
+    uint64_t m_patch_offset{0};
+    QString m_patch_offset_error;
 };
 
 std::optional<QString> commandFromParser(const QCommandLineParser& parser, QString* error) {
@@ -482,74 +482,74 @@ std::optional<QString> commandFromParser(const QCommandLineParser& parser, QStri
 std::optional<QString> targetFromParser(const QCommandLineParser& parser,
                                         const CliParserOptions& options,
                                         QString* error) {
-    const QString targetPath = parser.value(*options.target).trimmed();
-    if (targetPath.isEmpty()) {
+    const QString target_path = parser.value(*options.m_target).trimmed();
+    if (target_path.isEmpty()) {
         *error = QStringLiteral("--target is required.");
         return std::nullopt;
     }
-    return targetPath;
+    return target_path;
 }
 
 std::optional<CliNumericInputs> numericInputsFromParser(const QCommandLineParser& parser,
                                                         const CliParserOptions& options,
                                                         QString* error) {
-    const auto size = parseUInt64Option(parser, *options.size, error);
+    const auto size = parseUInt64Option(parser, *options.m_size, error);
     if (!size.has_value()) {
         return std::nullopt;
     }
-    const uint32_t blockSize = parseBlockSizeOption(parser, *options.block_size, error);
-    if (blockSize == 0) {
+    const uint32_t block_size = parseBlockSizeOption(parser, *options.m_block_size, error);
+    if (block_size == 0) {
         return std::nullopt;
     }
-    return CliNumericInputs{.size = *size, .block_size = blockSize};
+    return CliNumericInputs{.m_size = *size, .m_block_size = block_size};
 }
 
 std::optional<CliMutationInputs> mutationInputsFromParser(const QCommandLineParser& parser,
                                                           const CliParserOptions& options,
                                                           const QString& command,
                                                           QString* error) {
-    const auto fileName = fileNameForCommand(parser, *options.file_name, command, error);
-    if (!fileName.has_value()) {
+    const auto file_name = fileNameForCommand(parser, *options.m_file_name, command, error);
+    if (!file_name.has_value()) {
         return std::nullopt;
     }
-    const auto directoryName = directoryNameForCommand(
-        parser, *options.directory_name, *options.file_name, command, error);
-    if (!directoryName.has_value()) {
+    const auto directory_name = directoryNameForCommand(
+        parser, *options.m_directory_name, *options.m_file_name, command, error);
+    if (!directory_name.has_value()) {
         return std::nullopt;
     }
-    const auto payload = payloadForCommand(parser, *options.payload, command, error);
+    const auto payload = payloadForCommand(parser, *options.m_payload, command, error);
     if (!payload.has_value()) {
         return std::nullopt;
     }
-    QString patchOffsetError;
-    const auto patchOffset =
-        patchOffsetForCommand(parser, *options.patch_offset, command, &patchOffsetError);
-    return CliMutationInputs{.file_name = *fileName,
-                             .directory_name = *directoryName,
-                             .payload = *payload,
-                             .patch_offset = patchOffset.value_or(0),
-                             .patch_offset_error = patchOffsetError};
+    QString patch_offset_error;
+    const auto patch_offset =
+        patchOffsetForCommand(parser, *options.m_patch_offset, command, &patch_offset_error);
+    return CliMutationInputs{.m_file_name = *file_name,
+                             .m_directory_name = *directory_name,
+                             .m_payload = *payload,
+                             .m_patch_offset = patch_offset.value_or(0),
+                             .m_patch_offset_error = patch_offset_error};
 }
 
 // Read a credential file's exact bytes and STRICT-UTF-8 decode them. Fails closed on an
 // unreadable/oversized file, a read error / short read, or invalid UTF-8 -- never
 // replacement-decodes a malformed credential into a silently-wrong password.
-QString readCredentialFile(const QString& filePath, QString* error) {
-    QFile credentialFile(filePath);
-    if (!credentialFile.open(QIODevice::ReadOnly)) {
-        *error = QStringLiteral("Unable to read credential file: %1").arg(filePath);
+QString readCredentialFile(const QString& file_path, QString* error) {
+    QFile credential_file(file_path);
+    if (!credential_file.open(QIODevice::ReadOnly)) {
+        *error = QStringLiteral("Unable to read credential file: %1").arg(file_path);
         return QString();
     }
-    const qint64 expected = credentialFile.size();
+    const qint64 expected = credential_file.size();
     if (expected > kMaxCredentialFileBytes) {
         *error = QStringLiteral("Credential file exceeds the %1-byte limit")
                      .arg(kMaxCredentialFileBytes);
         return QString();
     }
-    QByteArray raw = credentialFile.readAll();
-    if (credentialFile.error() != QFile::NoError || raw.size() != expected) {
+    QByteArray raw = credential_file.readAll();
+    if (credential_file.error() != QFile::NoError || raw.size() != expected) {
         sak::secure_wiper::wipe(raw.data(), raw.size());
-        *error = QStringLiteral("Unable to fully read credential file: %1").arg(filePath);
+        *error = QStringLiteral("Unable to fully read credential file: %1").arg(file_path);
         return QString();
     }
     // Default UTF-8 decoder; decoder.hasError() below is set on any invalid sequence, so we
@@ -561,7 +561,7 @@ QString readCredentialFile(const QString& filePath, QString* error) {
     // lingering plaintext copy from the process heap.
     sak::secure_wiper::wipe(raw.data(), raw.size());
     if (decoder.hasError()) {
-        *error = QStringLiteral("Credential file is not valid UTF-8: %1").arg(filePath);
+        *error = QStringLiteral("Credential file is not valid UTF-8: %1").arg(file_path);
         return QString();
     }
     return credential;
@@ -573,24 +573,24 @@ QString readCredentialFile(const QString& filePath, QString* error) {
 // the inline and the file form is a conflicting-precedence error -- fail closed rather than
 // silently letting the file win.
 QString credentialFromParser(const QCommandLineParser& parser,
-                             const QCommandLineOption& directOption,
-                             const QCommandLineOption& fileOption,
+                             const QCommandLineOption& direct_option,
+                             const QCommandLineOption& file_option,
                              QString* error) {
-    const QString filePath = parser.value(fileOption).trimmed();
-    if (filePath.isEmpty()) {
-        return parser.value(directOption);
+    const QString file_path = parser.value(file_option).trimmed();
+    if (file_path.isEmpty()) {
+        return parser.value(direct_option);
     }
-    if (parser.isSet(directOption)) {
+    if (parser.isSet(direct_option)) {
         *error = QStringLiteral("Specify only one of --%1 or --%2, not both")
-                     .arg(directOption.names().constFirst(), fileOption.names().constFirst());
+                     .arg(direct_option.names().constFirst(), file_option.names().constFirst());
         return QString();
     }
-    return readCredentialFile(filePath, error);
+    return readCredentialFile(file_path, error);
 }
 
 struct CliSparseXattrInputs {
-    uint64_t sparse_logical_size{0};
-    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    uint64_t m_sparse_logical_size{0};
+    QVector<QPair<QByteArray, QByteArray>> m_xattrs;
 };
 
 // Validate --sparse-size (a bad value would silently become 0, i.e. non-sparse) and the
@@ -598,18 +598,19 @@ struct CliSparseXattrInputs {
 std::optional<CliSparseXattrInputs> sparseXattrFromParser(const QCommandLineParser& parser,
                                                           const CliParserOptions& options,
                                                           QString* error) {
-    const QString sparseRaw = parser.value(*options.sparse_size).trimmed();
-    bool sparseOk = true;
-    const uint64_t sparseSize = sparseRaw.isEmpty() ? 0 : sparseRaw.toULongLong(&sparseOk);
-    if (!sparseOk) {
-        *error = QStringLiteral("--sparse-size must be a non-negative integer: %1").arg(sparseRaw);
+    const QString sparse_raw = parser.value(*options.m_sparse_size).trimmed();
+    bool sparse_ok = true;
+    const uint64_t sparse_size = sparse_raw.isEmpty() ? 0 : sparse_raw.toULongLong(&sparse_ok);
+    if (!sparse_ok) {
+        *error = QStringLiteral("--sparse-size must be a non-negative integer: %1").arg(sparse_raw);
         return std::nullopt;
     }
-    auto xattrs = parseXattrOptions(parser.values(*options.xattr), error);
+    auto xattrs = parseXattrOptions(parser.values(*options.m_xattr), error);
     if (!xattrs.has_value()) {
         return std::nullopt;
     }
-    return CliSparseXattrInputs{.sparse_logical_size = sparseSize, .xattrs = std::move(*xattrs)};
+    return CliSparseXattrInputs{.m_sparse_logical_size = sparse_size,
+                                .m_xattrs = std::move(*xattrs)};
 }
 
 std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& parser,
@@ -631,123 +632,124 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
     if (!mutation.has_value()) {
         return std::nullopt;
     }
-    const QString volumePassword = credentialFromParser(
-        parser, *options.volume_password, *options.volume_password_file, error);
+    const QString volume_password = credentialFromParser(
+        parser, *options.m_volume_password, *options.m_volume_password_file, error);
     if (!error->isEmpty()) {
         return std::nullopt;
     }
-    const QString recoveryKey =
-        credentialFromParser(parser, *options.recovery_key, *options.recovery_key_file, error);
+    const QString recovery_key =
+        credentialFromParser(parser, *options.m_recovery_key, *options.m_recovery_key_file, error);
     if (!error->isEmpty()) {
         return std::nullopt;
     }
-    const auto sparseXattr = sparseXattrFromParser(parser, options, error);
-    if (!sparseXattr.has_value()) {
+    const auto sparse_xattr = sparseXattrFromParser(parser, options, error);
+    if (!sparse_xattr.has_value()) {
         return std::nullopt;
     }
     return CliInvocation{
-        .command = *command,
-        .target_path = *target,
-        .target_size_bytes = numeric->size,
-        .block_size_bytes = numeric->block_size,
-        .volume_name = parser.value(*options.volume_name),
-        .additional_volume_names = parser.values(*options.additional_volume_name),
-        .output_image_path = parser.value(*options.output_image).trimmed(),
-        .file_name = mutation->file_name,
-        .directory_name = mutation->directory_name,
-        .parent_directory_path = parser.value(*options.parent_directory_path).trimmed(),
-        .new_file_name = parser.value(*options.new_file_name).trimmed(),
-        .destination_directory_name = parser.value(*options.destination_directory_name).trimmed(),
-        .payload = mutation->payload,
-        .patch_offset_bytes = mutation->patch_offset,
-        .patch_offset_error = mutation->patch_offset_error,
-        .snapshot_name = parser.value(*options.snapshot_name).trimmed(),
-        .evidence_id = evidenceIdForCommand(parser, *options.evidence, *command),
-        .volume_password = volumePassword,
-        .recovery_key = recoveryKey,
-        .confirm_target = parser.isSet(*options.confirm),
-        .allow_raw_target = parser.isSet(*options.allow_raw),
-        .compress_zlib = parser.isSet(*options.compress_zlib),
-        .compress_lzfse = parser.isSet(*options.compress_lzfse),
-        .compress_lzvn = parser.isSet(*options.compress_lzvn),
-        .compress_lzbitmap = parser.isSet(*options.compress_lzbitmap),
-        .sparse_logical_size = sparseXattr->sparse_logical_size,
-        .xattrs = sparseXattr->xattrs};
+        .m_command = *command,
+        .m_target_path = *target,
+        .m_target_size_bytes = numeric->m_size,
+        .m_block_size_bytes = numeric->m_block_size,
+        .m_volume_name = parser.value(*options.m_volume_name),
+        .m_additional_volume_names = parser.values(*options.m_additional_volume_name),
+        .m_output_image_path = parser.value(*options.m_output_image).trimmed(),
+        .m_file_name = mutation->m_file_name,
+        .m_directory_name = mutation->m_directory_name,
+        .m_parent_directory_path = parser.value(*options.m_parent_directory_path).trimmed(),
+        .m_new_file_name = parser.value(*options.m_new_file_name).trimmed(),
+        .m_destination_directory_name =
+            parser.value(*options.m_destination_directory_name).trimmed(),
+        .m_payload = mutation->m_payload,
+        .m_patch_offset_bytes = mutation->m_patch_offset,
+        .m_patch_offset_error = mutation->m_patch_offset_error,
+        .m_snapshot_name = parser.value(*options.m_snapshot_name).trimmed(),
+        .m_evidence_id = evidenceIdForCommand(parser, *options.m_evidence, *command),
+        .m_volume_password = volume_password,
+        .m_recovery_key = recovery_key,
+        .m_confirm_target = parser.isSet(*options.m_confirm),
+        .m_allow_raw_target = parser.isSet(*options.m_allow_raw),
+        .m_compress_zlib = parser.isSet(*options.m_compress_zlib),
+        .m_compress_lzfse = parser.isSet(*options.m_compress_lzfse),
+        .m_compress_lzvn = parser.isSet(*options.m_compress_lzvn),
+        .m_compress_lzbitmap = parser.isSet(*options.m_compress_lzbitmap),
+        .m_sparse_logical_size = sparse_xattr->m_sparse_logical_size,
+        .m_xattrs = sparse_xattr->m_xattrs};
 }
 
 QJsonObject buildFormatImageReport(const CliInvocation& invocation) {
-    return formatReport(invocation.command,
+    return formatReport(invocation.m_command,
                         sak::PartitionApfsWriter::buildImageOnlyFormatImage(
-                            {.image_path = invocation.target_path,
-                             .target_container_bytes = invocation.target_size_bytes,
-                             .block_size_bytes = invocation.block_size_bytes,
-                             .volume_name = invocation.volume_name,
-                             .additional_volume_names = invocation.additional_volume_names,
-                             .volume_password = invocation.volume_password,
-                             .recovery_key = invocation.recovery_key,
-                             .options = imageWriteOptions(invocation.evidence_id)}));
+                            {.image_path = invocation.m_target_path,
+                             .target_container_bytes = invocation.m_target_size_bytes,
+                             .block_size_bytes = invocation.m_block_size_bytes,
+                             .volume_name = invocation.m_volume_name,
+                             .additional_volume_names = invocation.m_additional_volume_names,
+                             .volume_password = invocation.m_volume_password,
+                             .recovery_key = invocation.m_recovery_key,
+                             .options = imageWriteOptions(invocation.m_evidence_id)}));
 }
 
 std::optional<QJsonObject> buildRepairImageReport(const CliInvocation& invocation, QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for repair-image.");
         return std::nullopt;
     }
-    return repairImageReport(invocation.command,
+    return repairImageReport(invocation.m_command,
                              sak::PartitionApfsWriter::repairImageOnlyObjectChecksums(
-                                 {.source_image_path = invocation.target_path,
-                                  .repaired_image_path = invocation.output_image_path,
-                                  .options = imageWriteOptions(invocation.evidence_id)}));
+                                 {.source_image_path = invocation.m_target_path,
+                                  .repaired_image_path = invocation.m_output_image_path,
+                                  .options = imageWriteOptions(invocation.m_evidence_id)}));
 }
 
 QJsonObject buildFormatRawReport(const CliInvocation& invocation) {
-    return formatReport(invocation.command,
+    return formatReport(invocation.m_command,
                         sak::PartitionApfsWriter::formatExistingContainerTarget(
-                            {.image_path = invocation.target_path,
-                             .target_container_bytes = invocation.target_size_bytes,
-                             .block_size_bytes = invocation.block_size_bytes,
-                             .volume_name = invocation.volume_name,
-                             .additional_volume_names = invocation.additional_volume_names,
-                             .volume_password = invocation.volume_password,
-                             .recovery_key = invocation.recovery_key,
-                             .target_wipe_confirmed = invocation.confirm_target,
-                             .allow_raw_device_target = invocation.allow_raw_target,
-                             .options = rawWriteOptions(invocation.evidence_id)}));
+                            {.image_path = invocation.m_target_path,
+                             .target_container_bytes = invocation.m_target_size_bytes,
+                             .block_size_bytes = invocation.m_block_size_bytes,
+                             .volume_name = invocation.m_volume_name,
+                             .additional_volume_names = invocation.m_additional_volume_names,
+                             .volume_password = invocation.m_volume_password,
+                             .recovery_key = invocation.m_recovery_key,
+                             .target_wipe_confirmed = invocation.m_confirm_target,
+                             .allow_raw_device_target = invocation.m_allow_raw_target,
+                             .options = rawWriteOptions(invocation.m_evidence_id)}));
 }
 
 std::optional<QJsonObject> buildChangeVolumeLabelImageReport(const CliInvocation& invocation,
                                                              QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for change-image-volume-label.");
         return std::nullopt;
     }
-    return volumeLabelImageReport(invocation.command,
+    return volumeLabelImageReport(invocation.m_command,
                                   sak::PartitionApfsWriter::changeImageOnlyVolumeLabel(
-                                      {.source_image_path = invocation.target_path,
-                                       .written_image_path = invocation.output_image_path,
-                                       .volume_name = invocation.volume_name,
-                                       .options = imageWriteOptions(invocation.evidence_id)}));
+                                      {.source_image_path = invocation.m_target_path,
+                                       .written_image_path = invocation.m_output_image_path,
+                                       .volume_name = invocation.m_volume_name,
+                                       .options = imageWriteOptions(invocation.m_evidence_id)}));
 }
 
 QJsonObject buildChangeVolumeLabelRawReport(const CliInvocation& invocation) {
-    return volumeLabelRawReport(invocation.command,
+    return volumeLabelRawReport(invocation.m_command,
                                 sak::PartitionApfsWriter::changeRawVolumeLabel(
-                                    {.target_path = invocation.target_path,
-                                     .target_container_bytes = invocation.target_size_bytes,
-                                     .volume_name = invocation.volume_name,
-                                     .target_write_confirmed = invocation.confirm_target,
-                                     .allow_raw_device_target = invocation.allow_raw_target,
-                                     .options = rawWriteOptions(invocation.evidence_id)}));
+                                    {.target_path = invocation.m_target_path,
+                                     .target_container_bytes = invocation.m_target_size_bytes,
+                                     .volume_name = invocation.m_volume_name,
+                                     .target_write_confirmed = invocation.m_confirm_target,
+                                     .allow_raw_device_target = invocation.m_allow_raw_target,
+                                     .options = rawWriteOptions(invocation.m_evidence_id)}));
 }
 
 QJsonObject buildRepairRawReport(const CliInvocation& invocation) {
-    return repairRawReport(invocation.command,
+    return repairRawReport(invocation.m_command,
                            sak::PartitionApfsWriter::repairRawObjectChecksums(
-                               {.target_path = invocation.target_path,
-                                .target_container_bytes = invocation.target_size_bytes,
-                                .target_repair_confirmed = invocation.confirm_target,
-                                .allow_raw_device_target = invocation.allow_raw_target,
-                                .options = rawWriteOptions(invocation.evidence_id)}));
+                               {.target_path = invocation.m_target_path,
+                                .target_container_bytes = invocation.m_target_size_bytes,
+                                .target_repair_confirmed = invocation.m_confirm_target,
+                                .allow_raw_device_target = invocation.m_allow_raw_target,
+                                .options = rawWriteOptions(invocation.m_evidence_id)}));
 }
 
 bool isImageCommand(const QString& command) {
@@ -772,61 +774,61 @@ bool isRawCommand(const QString& command) {
 
 std::optional<QJsonObject> buildImageCommandReport(const CliInvocation& invocation,
                                                    QString* error) {
-    if (invocation.command == QStringLiteral("format-image")) {
+    if (invocation.m_command == QStringLiteral("format-image")) {
         return buildFormatImageReport(invocation);
     }
-    if (invocation.command == QStringLiteral("repair-image")) {
+    if (invocation.m_command == QStringLiteral("repair-image")) {
         return buildRepairImageReport(invocation, error);
     }
-    if (invocation.command == QStringLiteral("change-image-volume-label")) {
+    if (invocation.m_command == QStringLiteral("change-image-volume-label")) {
         return buildChangeVolumeLabelImageReport(invocation, error);
     }
-    *error = QStringLiteral("Unsupported image command: %1").arg(invocation.command);
+    *error = QStringLiteral("Unsupported image command: %1").arg(invocation.m_command);
     return std::nullopt;
 }
 
 std::optional<QJsonObject> buildRawCommandReport(const CliInvocation& invocation, QString* error) {
-    if (invocation.command == QStringLiteral("format-raw")) {
+    if (invocation.m_command == QStringLiteral("format-raw")) {
         return buildFormatRawReport(invocation);
     }
-    if (invocation.command == QStringLiteral("change-raw-volume-label")) {
+    if (invocation.m_command == QStringLiteral("change-raw-volume-label")) {
         return buildChangeVolumeLabelRawReport(invocation);
     }
-    if (invocation.command == QStringLiteral("repair-raw")) {
+    if (invocation.m_command == QStringLiteral("repair-raw")) {
         return buildRepairRawReport(invocation);
     }
-    *error = QStringLiteral("Unsupported raw command: %1").arg(invocation.command);
+    *error = QStringLiteral("Unsupported raw command: %1").arg(invocation.m_command);
     return std::nullopt;
 }
 
 struct ImportedFile {
-    QString name;
-    QByteArray data;
+    QString m_name;
+    QByteArray m_data;
     // Adopted inode identity metadata carried from the foreign source file so the re-emitted
     // container preserves its owner/group/mode/flags/timestamps. has_metadata is false for a
     // file with no recoverable inode and for the optional added file (generated defaults).
-    bool has_metadata{false};
-    uint32_t uid{0};
-    uint32_t gid{0};
-    uint16_t mode{0};
-    uint32_t bsd_flags{0};
-    uint64_t create_time{0};
-    uint64_t mod_time{0};
-    uint64_t change_time{0};
-    uint64_t access_time{0};
+    bool m_has_metadata{false};
+    uint32_t m_uid{0};
+    uint32_t m_gid{0};
+    uint16_t m_mode{0};
+    uint32_t m_bsd_flags{0};
+    uint64_t m_create_time{0};
+    uint64_t m_mod_time{0};
+    uint64_t m_change_time{0};
+    uint64_t m_access_time{0};
 };
 
 // Read every flat root file from a foreign source container into `files`.
-bool collectImportSourceFiles(const QString& sourcePath,
+bool collectImportSourceFiles(const QString& source_path,
                               QVector<ImportedFile>* files,
-                              QString* volumeName,
+                              QString* volume_name,
                               QString* error) {
     // Request one past the cap so an over-cap listing is detectable: if the reader returns
     // more than the cap, the root has more files than we can enumerate and re-emitting would
     // silently drop the overflow. Fail closed rather than build a truncated image.
     constexpr int kRootBrowseCap = sak::kPartitionApfsDefaultBrowseEntryLimit;
     const auto listing = sak::PartitionApfsFileSystemReader::listDirectoryFromImage(
-        sourcePath, QStringLiteral("/"), kRootBrowseCap + 1);
+        source_path, QStringLiteral("/"), kRootBrowseCap + 1);
     if (!listing.ok) {
         *error = QStringLiteral("Unable to read source container: %1")
                      .arg(listing.blockers.join(QStringLiteral("; ")));
@@ -839,7 +841,7 @@ bool collectImportSourceFiles(const QString& sourcePath,
                      .arg(kRootBrowseCap);
         return false;
     }
-    *volumeName = listing.volume_name;
+    *volume_name = listing.volume_name;
     for (const auto& entry : listing.entries) {
         if (entry.directory) {
             *error = QStringLiteral(
@@ -849,23 +851,23 @@ bool collectImportSourceFiles(const QString& sourcePath,
             return false;
         }
         const auto read = sak::PartitionApfsFileSystemReader::readFileFromImage(
-            sourcePath, QStringLiteral("/%1").arg(entry.name), entry.size_bytes);
+            source_path, QStringLiteral("/%1").arg(entry.name), entry.size_bytes);
         if (!read.ok) {
             *error = QStringLiteral("Unable to read source file '%1': %2")
                          .arg(entry.name, read.blockers.join(QStringLiteral("; ")));
             return false;
         }
-        files->append({.name = entry.name,
-                       .data = read.data,
-                       .has_metadata = entry.has_inode_metadata,
-                       .uid = entry.uid,
-                       .gid = entry.gid,
-                       .mode = entry.mode,
-                       .bsd_flags = entry.bsd_flags,
-                       .create_time = entry.create_time,
-                       .mod_time = entry.mod_time,
-                       .change_time = entry.change_time,
-                       .access_time = entry.access_time});
+        files->append({.m_name = entry.name,
+                       .m_data = read.data,
+                       .m_has_metadata = entry.has_inode_metadata,
+                       .m_uid = entry.uid,
+                       .m_gid = entry.gid,
+                       .m_mode = entry.mode,
+                       .m_bsd_flags = entry.bsd_flags,
+                       .m_create_time = entry.create_time,
+                       .m_mod_time = entry.mod_time,
+                       .m_change_time = entry.change_time,
+                       .m_access_time = entry.access_time});
     }
     return true;
 }
@@ -874,62 +876,62 @@ bool collectImportSourceFiles(const QString& sourcePath,
 // file into successive scratch images; returns the final container path.
 std::optional<QString> reEmitImportedFiles(const CliInvocation& invocation,
                                            QTemporaryDir& scratch,
-                                           const QString& volumeName,
+                                           const QString& volume_name,
                                            const QVector<ImportedFile>& files,
                                            QString* error) {
-    const auto options = imageWriteOptions(invocation.evidence_id);
-    const QString freshPath = scratch.filePath(QStringLiteral("import-fresh.apfs"));
-    const auto formatResult = sak::PartitionApfsWriter::buildImageOnlyFormatImage(
-        {.image_path = freshPath,
-         .target_container_bytes = invocation.target_size_bytes,
-         .block_size_bytes = invocation.block_size_bytes,
-         .volume_name = volumeName,
+    const auto options = imageWriteOptions(invocation.m_evidence_id);
+    const QString fresh_path = scratch.filePath(QStringLiteral("import-fresh.apfs"));
+    const auto format_result = sak::PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = fresh_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .block_size_bytes = invocation.m_block_size_bytes,
+         .volume_name = volume_name,
          .options = options});
-    if (!formatResult.ok) {
-        *error = formatResult.blockers.join(QStringLiteral("; "));
+    if (!format_result.ok) {
+        *error = format_result.blockers.join(QStringLiteral("; "));
         return std::nullopt;
     }
 
-    QString currentPath = freshPath;
+    QString current_path = fresh_path;
     int stage = 0;
     for (const auto& file : files) {
-        const QString nextPath = scratch.filePath(QStringLiteral("import-%1.apfs").arg(stage++));
+        const QString next_path = scratch.filePath(QStringLiteral("import-%1.apfs").arg(stage++));
         const auto write = sak::PartitionApfsWriter::commitImageOnlyFileWrite(
-            {.source_image_path = currentPath,
-             .written_image_path = nextPath,
-             .file_name = file.name,
-             .file_data = file.data,
-             .preserve_inode_metadata = file.has_metadata,
-             .inode_owner = file.uid,
-             .inode_group = file.gid,
-             .inode_mode = file.mode,
-             .inode_bsd_flags = file.bsd_flags,
-             .inode_create_time = file.create_time,
-             .inode_mod_time = file.mod_time,
-             .inode_change_time = file.change_time,
-             .inode_access_time = file.access_time,
+            {.source_image_path = current_path,
+             .written_image_path = next_path,
+             .file_name = file.m_name,
+             .file_data = file.m_data,
+             .preserve_inode_metadata = file.m_has_metadata,
+             .inode_owner = file.m_uid,
+             .inode_group = file.m_gid,
+             .inode_mode = file.m_mode,
+             .inode_bsd_flags = file.m_bsd_flags,
+             .inode_create_time = file.m_create_time,
+             .inode_mod_time = file.m_mod_time,
+             .inode_change_time = file.m_change_time,
+             .inode_access_time = file.m_access_time,
              .options = options});
         if (!write.ok) {
             *error = QStringLiteral("Unable to re-emit file '%1': %2")
-                         .arg(file.name, write.blockers.join(QStringLiteral("; ")));
+                         .arg(file.m_name, write.blockers.join(QStringLiteral("; ")));
             return std::nullopt;
         }
-        currentPath = nextPath;
+        current_path = next_path;
     }
-    return currentPath;
+    return current_path;
 }
 
-QJsonObject buildImportReportObject(const QString& sourcePath,
-                                    const QString& outputPath,
-                                    const QString& volumeName,
-                                    int importedFileCount) {
+QJsonObject buildImportReportObject(const QString& source_path,
+                                    const QString& output_path,
+                                    const QString& volume_name,
+                                    int imported_file_count) {
     QJsonObject report;
     report.insert(QStringLiteral("ok"), true);
     report.insert(QStringLiteral("operation"), QStringLiteral("Arbitrary APFS import"));
-    report.insert(QStringLiteral("source_image"), sourcePath);
-    report.insert(QStringLiteral("output_image"), outputPath);
-    report.insert(QStringLiteral("volume_name"), volumeName);
-    report.insert(QStringLiteral("imported_file_count"), importedFileCount);
+    report.insert(QStringLiteral("source_image"), source_path);
+    report.insert(QStringLiteral("output_image"), output_path);
+    report.insert(QStringLiteral("volume_name"), volume_name);
+    report.insert(QStringLiteral("imported_file_count"), imported_file_count);
     return report;
 }
 
@@ -938,29 +940,29 @@ QJsonObject buildImportReportObject(const QString& sourcePath,
 // output: the temp is committed with an atomic rename only after a full, verified
 // copy, and discarded otherwise. Replaces a remove-then-copy that deleted the old
 // output before writing, leaving nothing if the copy failed.
-bool publishImportedContainer(const QString& stagedPath,
-                              const QString& outputPath,
+bool publishImportedContainer(const QString& staged_path,
+                              const QString& output_path,
                               QString* error) {
-    QFile source(stagedPath);
+    QFile source(staged_path);
     if (!source.open(QIODevice::ReadOnly)) {
-        *error = QStringLiteral("Unable to read staged container %1").arg(stagedPath);
+        *error = QStringLiteral("Unable to read staged container %1").arg(staged_path);
         return false;
     }
-    QSaveFile sink(outputPath);
+    QSaveFile sink(output_path);
     if (!sink.open(QIODevice::WriteOnly)) {
-        *error = QStringLiteral("Unable to write imported container to %1").arg(outputPath);
+        *error = QStringLiteral("Unable to write imported container to %1").arg(output_path);
         return false;
     }
     constexpr qint64 kImportCopyChunkBytes = 1 << 20;
     while (!source.atEnd()) {
         const QByteArray chunk = source.read(kImportCopyChunkBytes);
         if (chunk.isEmpty() || sink.write(chunk) != chunk.size()) {
-            *error = QStringLiteral("Unable to write imported container to %1").arg(outputPath);
+            *error = QStringLiteral("Unable to write imported container to %1").arg(output_path);
             return false;
         }
     }
     if (!sink.commit()) {
-        *error = QStringLiteral("Unable to write imported container to %1").arg(outputPath);
+        *error = QStringLiteral("Unable to write imported container to %1").arg(output_path);
         return false;
     }
     return true;
@@ -973,15 +975,15 @@ std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocatio
     // plus an optional added file. This delivers mutation of arbitrary
     // unencrypted single-volume Apple containers without fragile in-place
     // checkpoint-ring surgery.
-    const QString sourcePath = invocation.target_path;
-    const QString outputPath = invocation.output_image_path;
+    const QString source_path = invocation.m_target_path;
+    const QString output_path = invocation.m_output_image_path;
     QVector<ImportedFile> files;
-    QString volumeName;
-    if (!collectImportSourceFiles(sourcePath, &files, &volumeName, error)) {
+    QString volume_name;
+    if (!collectImportSourceFiles(source_path, &files, &volume_name, error)) {
         return std::nullopt;
     }
-    if (!invocation.file_name.trimmed().isEmpty()) {
-        files.append({.name = invocation.file_name, .data = invocation.payload});
+    if (!invocation.m_file_name.trimmed().isEmpty()) {
+        files.append({.m_name = invocation.m_file_name, .m_data = invocation.m_payload});
     }
 
     QTemporaryDir scratch;
@@ -989,25 +991,25 @@ std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocatio
         *error = QStringLiteral("Unable to create scratch directory for arbitrary import");
         return std::nullopt;
     }
-    const auto currentPath = reEmitImportedFiles(invocation, scratch, volumeName, files, error);
-    if (!currentPath.has_value()) {
+    const auto current_path = reEmitImportedFiles(invocation, scratch, volume_name, files, error);
+    if (!current_path.has_value()) {
         return std::nullopt;
     }
 
-    if (!QFile::exists(*currentPath)) {
+    if (!QFile::exists(*current_path)) {
         *error = QStringLiteral("Arbitrary import produced no output");
         return std::nullopt;
     }
-    if (!publishImportedContainer(*currentPath, outputPath, error)) {
+    if (!publishImportedContainer(*current_path, output_path, error)) {
         return std::nullopt;
     }
     return buildImportReportObject(
-        sourcePath, outputPath, volumeName, static_cast<int>(files.size()));
+        source_path, output_path, volume_name, static_cast<int>(files.size()));
 }
 
 std::optional<QJsonObject> buildListImageReport(const CliInvocation& invocation, QString* error) {
     const auto listing = sak::PartitionApfsFileSystemReader::listDirectoryFromImage(
-        invocation.target_path, QStringLiteral("/"), 4096);
+        invocation.m_target_path, QStringLiteral("/"), 4096);
     QJsonObject report;
     report.insert(QStringLiteral("ok"), listing.ok);
     report.insert(QStringLiteral("volume_name"), listing.volume_name);
@@ -1032,7 +1034,7 @@ std::optional<QJsonObject> buildListImageReport(const CliInvocation& invocation,
 }
 
 std::optional<QJsonObject> buildProbeLayoutReport(const CliInvocation& invocation, QString* error) {
-    const auto probe = sak::PartitionApfsWriter::probeLiveLayout(invocation.target_path);
+    const auto probe = sak::PartitionApfsWriter::probeLiveLayout(invocation.m_target_path);
     QJsonObject report;
     report.insert(QStringLiteral("tool"), QStringLiteral("sak_apfs_writer_cli"));
     report.insert(QStringLiteral("command"), QStringLiteral("probe-layout"));
@@ -1077,16 +1079,16 @@ std::optional<QJsonObject> buildProbeLayoutReport(const CliInvocation& invocatio
                   static_cast<qint64>(probe.ip_bm_addr_array_off));
     report.insert(QStringLiteral("ip_bm_free_next_off"),
                   static_cast<qint64>(probe.ip_bm_free_next_off));
-    QJsonArray liveSlots;
+    QJsonArray live_slots;
     for (const uint64_t slot : probe.live_bm_slots) {
-        liveSlots.append(static_cast<qint64>(slot));
+        live_slots.append(static_cast<qint64>(slot));
     }
-    report.insert(QStringLiteral("live_bm_slots"), liveSlots);
-    QJsonArray livePop;
+    report.insert(QStringLiteral("live_bm_slots"), live_slots);
+    QJsonArray live_pop;
     for (const uint64_t pop : probe.live_bm_pop) {
-        livePop.append(static_cast<qint64>(pop));
+        live_pop.append(static_cast<qint64>(pop));
     }
-    report.insert(QStringLiteral("live_bm_pop"), livePop);
+    report.insert(QStringLiteral("live_bm_pop"), live_pop);
     QJsonArray cibs;
     for (const uint64_t addr : probe.cib_addrs) {
         cibs.append(static_cast<qint64>(addr));
@@ -1101,14 +1103,14 @@ std::optional<QJsonObject> buildProbeLayoutReport(const CliInvocation& invocatio
 
 std::optional<QJsonObject> buildCommitCheckpointReport(const CliInvocation& invocation,
                                                        QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-checkpoint.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyCheckpoint(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"), QStringLiteral("APFS in-place checkpoint commit"));
@@ -1132,23 +1134,23 @@ std::optional<QJsonObject> buildCommitCheckpointReport(const CliInvocation& invo
 
 std::optional<QJsonObject> buildCommitFileRenameReport(const CliInvocation& invocation,
                                                        QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-file-rename.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileRename(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .file_name = invocation.file_name,
-         .new_file_name = invocation.directory_name,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .file_name = invocation.m_file_name,
+         .new_file_name = invocation.m_directory_name,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"), QStringLiteral("APFS in-place file rename commit"));
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
-    report.insert(QStringLiteral("old_name"), invocation.file_name.trimmed());
-    report.insert(QStringLiteral("new_name"), invocation.directory_name.trimmed());
+    report.insert(QStringLiteral("old_name"), invocation.m_file_name.trimmed());
+    report.insert(QStringLiteral("new_name"), invocation.m_directory_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     QJsonArray blockers;
@@ -1164,30 +1166,30 @@ std::optional<QJsonObject> buildCommitFileRenameReport(const CliInvocation& invo
 
 std::optional<QJsonObject> buildCommitDirectoryCreateReport(const CliInvocation& invocation,
                                                             QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-directory-create.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyDirectoryCreate(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .directory_name = invocation.directory_name,
-         .parent_directory_path = invocation.parent_directory_path,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .directory_name = invocation.m_directory_name,
+         .parent_directory_path = invocation.m_parent_directory_path,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"),
                   QStringLiteral("APFS in-place directory create commit"));
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
-    report.insert(QStringLiteral("directory_name"), invocation.directory_name.trimmed());
+    report.insert(QStringLiteral("directory_name"), invocation.m_directory_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
-    QJsonArray dirBlockers;
+    QJsonArray dir_blockers;
     for (const auto& blocker : commit.blockers) {
-        dirBlockers.append(blocker);
+        dir_blockers.append(blocker);
     }
-    report.insert(QStringLiteral("blockers"), dirBlockers);
+    report.insert(QStringLiteral("blockers"), dir_blockers);
     if (!commit.ok) {
         *error = commit.blockers.join(QStringLiteral("; "));
     }
@@ -1196,29 +1198,29 @@ std::optional<QJsonObject> buildCommitDirectoryCreateReport(const CliInvocation&
 
 std::optional<QJsonObject> buildCommitDirectoryDeleteReport(const CliInvocation& invocation,
                                                             QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-directory-delete.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyDirectoryDelete(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .directory_name = invocation.directory_name,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .directory_name = invocation.m_directory_name,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"),
                   QStringLiteral("APFS in-place directory delete commit"));
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
-    report.insert(QStringLiteral("directory_name"), invocation.directory_name.trimmed());
+    report.insert(QStringLiteral("directory_name"), invocation.m_directory_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
-    QJsonArray dirBlockers;
+    QJsonArray dir_blockers;
     for (const auto& blocker : commit.blockers) {
-        dirBlockers.append(blocker);
+        dir_blockers.append(blocker);
     }
-    report.insert(QStringLiteral("blockers"), dirBlockers);
+    report.insert(QStringLiteral("blockers"), dir_blockers);
     if (!commit.ok) {
         *error = commit.blockers.join(QStringLiteral("; "));
     }
@@ -1227,26 +1229,26 @@ std::optional<QJsonObject> buildCommitDirectoryDeleteReport(const CliInvocation&
 
 std::optional<QJsonObject> buildCommitDirectoryChildWriteReport(const CliInvocation& invocation,
                                                                 QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error =
             QStringLiteral("--output-image is required for commit-image-directory-child-write.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .directory_name = invocation.directory_name,
-         .file_name = invocation.file_name,
-         .file_data = invocation.payload,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .directory_name = invocation.m_directory_name,
+         .file_name = invocation.m_file_name,
+         .file_data = invocation.m_payload,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"),
                   QStringLiteral("APFS in-place directory-child write (create-or-replace) commit"));
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
-    report.insert(QStringLiteral("directory_name"), invocation.directory_name.trimmed());
-    report.insert(QStringLiteral("file_name"), invocation.file_name.trimmed());
+    report.insert(QStringLiteral("directory_name"), invocation.m_directory_name.trimmed());
+    report.insert(QStringLiteral("file_name"), invocation.m_file_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     QJsonArray blockers;
@@ -1262,25 +1264,25 @@ std::optional<QJsonObject> buildCommitDirectoryChildWriteReport(const CliInvocat
 
 std::optional<QJsonObject> buildCommitDirectoryChildDeleteReport(const CliInvocation& invocation,
                                                                  QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error =
             QStringLiteral("--output-image is required for commit-image-directory-child-delete.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyDirectoryChildDelete(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .directory_name = invocation.directory_name,
-         .file_name = invocation.file_name,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .directory_name = invocation.m_directory_name,
+         .file_name = invocation.m_file_name,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"),
                   QStringLiteral("APFS in-place directory-child delete commit"));
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
-    report.insert(QStringLiteral("directory_name"), invocation.directory_name.trimmed());
-    report.insert(QStringLiteral("file_name"), invocation.file_name.trimmed());
+    report.insert(QStringLiteral("directory_name"), invocation.m_directory_name.trimmed());
+    report.insert(QStringLiteral("file_name"), invocation.m_file_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     QJsonArray blockers;
@@ -1296,27 +1298,27 @@ std::optional<QJsonObject> buildCommitDirectoryChildDeleteReport(const CliInvoca
 
 std::optional<QJsonObject> buildCommitFileWriteReport(const CliInvocation& invocation,
                                                       QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-file-write.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileWrite(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .file_name = invocation.file_name,
-         .file_data = invocation.payload,
-         .compress_zlib = invocation.compress_zlib,
-         .compress_lzfse = invocation.compress_lzfse,
-         .compress_lzvn = invocation.compress_lzvn,
-         .compress_lzbitmap = invocation.compress_lzbitmap,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .file_name = invocation.m_file_name,
+         .file_data = invocation.m_payload,
+         .compress_zlib = invocation.m_compress_zlib,
+         .compress_lzfse = invocation.m_compress_lzfse,
+         .compress_lzvn = invocation.m_compress_lzvn,
+         .compress_lzbitmap = invocation.m_compress_lzbitmap,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"),
                   QStringLiteral("APFS in-place file write (create-or-replace) commit"));
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
-    report.insert(QStringLiteral("file_name"), invocation.file_name.trimmed());
+    report.insert(QStringLiteral("file_name"), invocation.m_file_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     report.insert(QStringLiteral("superblock_block"), static_cast<qint64>(commit.superblock_block));
@@ -1333,28 +1335,28 @@ std::optional<QJsonObject> buildCommitFileWriteReport(const CliInvocation& invoc
 
 std::optional<QJsonObject> buildCommitFileInsertReport(const CliInvocation& invocation,
                                                        QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-file-insert.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileInsert(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .file_name = invocation.file_name,
-         .file_data = invocation.payload,
-         .compress_zlib = invocation.compress_zlib,
-         .compress_lzfse = invocation.compress_lzfse,
-         .compress_lzvn = invocation.compress_lzvn,
-         .compress_lzbitmap = invocation.compress_lzbitmap,
-         .xattrs = invocation.xattrs,
-         .sparse_logical_size = invocation.sparse_logical_size,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .file_name = invocation.m_file_name,
+         .file_data = invocation.m_payload,
+         .compress_zlib = invocation.m_compress_zlib,
+         .compress_lzfse = invocation.m_compress_lzfse,
+         .compress_lzvn = invocation.m_compress_lzvn,
+         .compress_lzbitmap = invocation.m_compress_lzbitmap,
+         .xattrs = invocation.m_xattrs,
+         .sparse_logical_size = invocation.m_sparse_logical_size,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"), QStringLiteral("APFS in-place file insert commit"));
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
-    report.insert(QStringLiteral("file_name"), invocation.file_name.trimmed());
+    report.insert(QStringLiteral("file_name"), invocation.m_file_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     report.insert(QStringLiteral("superblock_block"), static_cast<qint64>(commit.superblock_block));
@@ -1371,23 +1373,23 @@ std::optional<QJsonObject> buildCommitFileInsertReport(const CliInvocation& invo
 
 std::optional<QJsonObject> buildCommitFileCloneReport(const CliInvocation& invocation,
                                                       QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-file-clone.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileClone(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .source_file_name = invocation.file_name,
-         .clone_file_name = invocation.directory_name,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .source_file_name = invocation.m_file_name,
+         .clone_file_name = invocation.m_directory_name,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"), QStringLiteral("APFS in-place file clone commit"));
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
-    report.insert(QStringLiteral("source_name"), invocation.file_name.trimmed());
-    report.insert(QStringLiteral("clone_name"), invocation.directory_name.trimmed());
+    report.insert(QStringLiteral("source_name"), invocation.m_file_name.trimmed());
+    report.insert(QStringLiteral("clone_name"), invocation.m_directory_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     report.insert(QStringLiteral("superblock_block"), static_cast<qint64>(commit.superblock_block));
@@ -1404,15 +1406,15 @@ std::optional<QJsonObject> buildCommitFileCloneReport(const CliInvocation& invoc
 
 std::optional<QJsonObject> buildCommitResizeReport(const CliInvocation& invocation,
                                                    QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-resize.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyResize(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .new_size_bytes = invocation.target_size_bytes,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .new_size_bytes = invocation.m_target_size_bytes,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"),
@@ -1420,7 +1422,7 @@ std::optional<QJsonObject> buildCommitResizeReport(const CliInvocation& invocati
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
     report.insert(QStringLiteral("new_size_bytes"),
-                  static_cast<qint64>(invocation.target_size_bytes));
+                  static_cast<qint64>(invocation.m_target_size_bytes));
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     report.insert(QStringLiteral("superblock_block"), static_cast<qint64>(commit.superblock_block));
@@ -1437,24 +1439,24 @@ std::optional<QJsonObject> buildCommitResizeReport(const CliInvocation& invocati
 
 std::optional<QJsonObject> buildCommitFileHardlinkReport(const CliInvocation& invocation,
                                                          QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-file-hardlink.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileHardlink(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .source_file_name = invocation.file_name,
-         .link_file_name = invocation.directory_name,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .source_file_name = invocation.m_file_name,
+         .link_file_name = invocation.m_directory_name,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"),
                   QStringLiteral("APFS in-place file hard link commit"));
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
-    report.insert(QStringLiteral("source_name"), invocation.file_name.trimmed());
-    report.insert(QStringLiteral("link_name"), invocation.directory_name.trimmed());
+    report.insert(QStringLiteral("source_name"), invocation.m_file_name.trimmed());
+    report.insert(QStringLiteral("link_name"), invocation.m_directory_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     report.insert(QStringLiteral("superblock_block"), static_cast<qint64>(commit.superblock_block));
@@ -1471,21 +1473,21 @@ std::optional<QJsonObject> buildCommitFileHardlinkReport(const CliInvocation& in
 
 std::optional<QJsonObject> buildCommitFileDeleteReport(const CliInvocation& invocation,
                                                        QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-file-delete.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileDelete(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .file_name = invocation.file_name,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .file_name = invocation.m_file_name,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"), QStringLiteral("APFS in-place file delete commit"));
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
-    report.insert(QStringLiteral("file_name"), invocation.file_name.trimmed());
+    report.insert(QStringLiteral("file_name"), invocation.m_file_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     QJsonArray blockers;
@@ -1507,7 +1509,7 @@ QJsonObject commitResultReport(const sak::PartitionApfsImageCheckpointCommitResu
     report.insert(QStringLiteral("ok"), commit.ok);
     report.insert(QStringLiteral("operation"), operation);
     report.insert(QStringLiteral("target"), commit.written_image_path);
-    report.insert(QStringLiteral("file_name"), invocation.file_name.trimmed());
+    report.insert(QStringLiteral("file_name"), invocation.m_file_name.trimmed());
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     QJsonArray blockers;
@@ -1524,18 +1526,18 @@ QJsonObject commitResultReport(const sak::PartitionApfsImageCheckpointCommitResu
 std::optional<QJsonObject> buildCommitRawFileWriteReport(const CliInvocation& invocation,
                                                          QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawFileWrite(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .file_name = invocation.file_name,
-         .file_data = invocation.payload,
-         .parent_directory_path = invocation.parent_directory_path,
-         .compress_zlib = invocation.compress_zlib,
-         .compress_lzfse = invocation.compress_lzfse,
-         .compress_lzvn = invocation.compress_lzvn,
-         .compress_lzbitmap = invocation.compress_lzbitmap,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .file_name = invocation.m_file_name,
+         .file_data = invocation.m_payload,
+         .parent_directory_path = invocation.m_parent_directory_path,
+         .compress_zlib = invocation.m_compress_zlib,
+         .compress_lzfse = invocation.m_compress_lzfse,
+         .compress_lzvn = invocation.m_compress_lzvn,
+         .compress_lzbitmap = invocation.m_compress_lzbitmap,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(commit,
                               QStringLiteral(
                                   "APFS raw in-place file write (create-or-replace) commit"),
@@ -1546,18 +1548,18 @@ std::optional<QJsonObject> buildCommitRawFileWriteReport(const CliInvocation& in
 std::optional<QJsonObject> buildCommitRawFileInsertReport(const CliInvocation& invocation,
                                                           QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawFileInsert(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .file_name = invocation.file_name,
-         .file_data = invocation.payload,
-         .parent_directory_path = invocation.parent_directory_path,
-         .compress_zlib = invocation.compress_zlib,
-         .compress_lzfse = invocation.compress_lzfse,
-         .compress_lzvn = invocation.compress_lzvn,
-         .compress_lzbitmap = invocation.compress_lzbitmap,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .file_name = invocation.m_file_name,
+         .file_data = invocation.m_payload,
+         .parent_directory_path = invocation.m_parent_directory_path,
+         .compress_zlib = invocation.m_compress_zlib,
+         .compress_lzfse = invocation.m_compress_lzfse,
+         .compress_lzvn = invocation.m_compress_lzvn,
+         .compress_lzbitmap = invocation.m_compress_lzbitmap,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place file insert commit"), invocation, error);
 }
@@ -1565,13 +1567,13 @@ std::optional<QJsonObject> buildCommitRawFileInsertReport(const CliInvocation& i
 std::optional<QJsonObject> buildCommitRawFileDeleteReport(const CliInvocation& invocation,
                                                           QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawFileDelete(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .file_name = invocation.file_name,
-         .parent_directory_path = invocation.parent_directory_path,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .file_name = invocation.m_file_name,
+         .parent_directory_path = invocation.m_parent_directory_path,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place file delete commit"), invocation, error);
 }
@@ -1579,14 +1581,14 @@ std::optional<QJsonObject> buildCommitRawFileDeleteReport(const CliInvocation& i
 std::optional<QJsonObject> buildCommitRawFileRenameReport(const CliInvocation& invocation,
                                                           QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawFileRename(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .file_name = invocation.file_name,
-         .new_file_name = invocation.directory_name,
-         .parent_directory_path = invocation.parent_directory_path,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .file_name = invocation.m_file_name,
+         .new_file_name = invocation.m_directory_name,
+         .parent_directory_path = invocation.m_parent_directory_path,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place file rename commit"), invocation, error);
 }
@@ -1594,13 +1596,13 @@ std::optional<QJsonObject> buildCommitRawFileRenameReport(const CliInvocation& i
 std::optional<QJsonObject> buildCommitRawDirectoryCreateReport(const CliInvocation& invocation,
                                                                QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawDirectoryCreate(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .directory_name = invocation.directory_name,
-         .parent_directory_path = invocation.parent_directory_path,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .directory_name = invocation.m_directory_name,
+         .parent_directory_path = invocation.m_parent_directory_path,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place directory create commit"), invocation, error);
 }
@@ -1608,12 +1610,12 @@ std::optional<QJsonObject> buildCommitRawDirectoryCreateReport(const CliInvocati
 std::optional<QJsonObject> buildCommitRawDirectoryDeleteReport(const CliInvocation& invocation,
                                                                QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawDirectoryDelete(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .directory_name = invocation.directory_name,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .directory_name = invocation.m_directory_name,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place directory delete commit"), invocation, error);
 }
@@ -1621,18 +1623,18 @@ std::optional<QJsonObject> buildCommitRawDirectoryDeleteReport(const CliInvocati
 std::optional<QJsonObject> buildCommitRawDirectoryChildWriteReport(const CliInvocation& invocation,
                                                                    QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawDirectoryChildWrite(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .directory_name = invocation.directory_name,
-         .file_name = invocation.file_name,
-         .file_data = invocation.payload,
-         .compress_zlib = invocation.compress_zlib,
-         .compress_lzfse = invocation.compress_lzfse,
-         .compress_lzvn = invocation.compress_lzvn,
-         .compress_lzbitmap = invocation.compress_lzbitmap,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .directory_name = invocation.m_directory_name,
+         .file_name = invocation.m_file_name,
+         .file_data = invocation.m_payload,
+         .compress_zlib = invocation.m_compress_zlib,
+         .compress_lzfse = invocation.m_compress_lzfse,
+         .compress_lzvn = invocation.m_compress_lzvn,
+         .compress_lzbitmap = invocation.m_compress_lzbitmap,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit,
         QStringLiteral("APFS raw in-place directory-child write (create-or-replace) commit"),
@@ -1643,13 +1645,13 @@ std::optional<QJsonObject> buildCommitRawDirectoryChildWriteReport(const CliInvo
 std::optional<QJsonObject> buildCommitRawDirectoryChildDeleteReport(const CliInvocation& invocation,
                                                                     QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawDirectoryChildDelete(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .directory_name = invocation.directory_name,
-         .file_name = invocation.file_name,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .directory_name = invocation.m_directory_name,
+         .file_name = invocation.m_file_name,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(commit,
                               QStringLiteral("APFS raw in-place directory-child delete commit"),
                               invocation,
@@ -1658,18 +1660,18 @@ std::optional<QJsonObject> buildCommitRawDirectoryChildDeleteReport(const CliInv
 
 std::optional<QJsonObject> buildCommitFileMoveReport(const CliInvocation& invocation,
                                                      QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-file-move.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileMove(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .source_directory_name = invocation.directory_name,
-         .file_name = invocation.file_name,
-         .destination_directory_name = invocation.destination_directory_name,
-         .new_file_name = invocation.new_file_name,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .source_directory_name = invocation.m_directory_name,
+         .file_name = invocation.m_file_name,
+         .destination_directory_name = invocation.m_destination_directory_name,
+         .new_file_name = invocation.m_new_file_name,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS in-place file move commit"), invocation, error);
 }
@@ -1677,33 +1679,33 @@ std::optional<QJsonObject> buildCommitFileMoveReport(const CliInvocation& invoca
 std::optional<QJsonObject> buildCommitRawFileMoveReport(const CliInvocation& invocation,
                                                         QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawFileMove(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .source_directory_name = invocation.directory_name,
-         .file_name = invocation.file_name,
-         .destination_directory_name = invocation.destination_directory_name,
-         .new_file_name = invocation.new_file_name,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .source_directory_name = invocation.m_directory_name,
+         .file_name = invocation.m_file_name,
+         .destination_directory_name = invocation.m_destination_directory_name,
+         .new_file_name = invocation.m_new_file_name,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place file move commit"), invocation, error);
 }
 
 std::optional<QJsonObject> buildCommitFilePatchReport(const CliInvocation& invocation,
                                                       QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-file-patch.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyFilePatch(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .directory_name = invocation.directory_name,
-         .file_name = invocation.file_name,
-         .patch_offset_bytes = invocation.patch_offset_bytes,
-         .patch_data = invocation.payload,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .directory_name = invocation.m_directory_name,
+         .file_name = invocation.m_file_name,
+         .patch_offset_bytes = invocation.m_patch_offset_bytes,
+         .patch_data = invocation.m_payload,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS in-place file patch commit"), invocation, error);
 }
@@ -1711,30 +1713,30 @@ std::optional<QJsonObject> buildCommitFilePatchReport(const CliInvocation& invoc
 std::optional<QJsonObject> buildCommitRawFilePatchReport(const CliInvocation& invocation,
                                                          QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawFilePatch(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .directory_name = invocation.directory_name,
-         .file_name = invocation.file_name,
-         .patch_offset_bytes = invocation.patch_offset_bytes,
-         .patch_data = invocation.payload,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .directory_name = invocation.m_directory_name,
+         .file_name = invocation.m_file_name,
+         .patch_offset_bytes = invocation.m_patch_offset_bytes,
+         .patch_data = invocation.m_payload,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place file patch commit"), invocation, error);
 }
 
 std::optional<QJsonObject> buildCommitSnapshotCreateReport(const CliInvocation& invocation,
                                                            QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-snapshot-create.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlySnapshotCreate(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .snapshot_name = invocation.snapshot_name,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .snapshot_name = invocation.m_snapshot_name,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS in-place snapshot create commit"), invocation, error);
 }
@@ -1742,27 +1744,27 @@ std::optional<QJsonObject> buildCommitSnapshotCreateReport(const CliInvocation& 
 std::optional<QJsonObject> buildCommitRawSnapshotCreateReport(const CliInvocation& invocation,
                                                               QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawSnapshotCreate(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .snapshot_name = invocation.snapshot_name,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .snapshot_name = invocation.m_snapshot_name,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place snapshot create commit"), invocation, error);
 }
 
 std::optional<QJsonObject> buildCommitSnapshotDeleteReport(const CliInvocation& invocation,
                                                            QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-snapshot-delete.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlySnapshotDelete(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .snapshot_name = invocation.snapshot_name,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .snapshot_name = invocation.m_snapshot_name,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS in-place snapshot delete commit"), invocation, error);
 }
@@ -1770,27 +1772,27 @@ std::optional<QJsonObject> buildCommitSnapshotDeleteReport(const CliInvocation& 
 std::optional<QJsonObject> buildCommitRawSnapshotDeleteReport(const CliInvocation& invocation,
                                                               QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawSnapshotDelete(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .snapshot_name = invocation.snapshot_name,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .snapshot_name = invocation.m_snapshot_name,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place snapshot delete commit"), invocation, error);
 }
 
 std::optional<QJsonObject> buildCommitSnapshotRevertReport(const CliInvocation& invocation,
                                                            QString* error) {
-    if (invocation.output_image_path.isEmpty()) {
+    if (invocation.m_output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for commit-image-snapshot-revert.");
         return std::nullopt;
     }
     const auto commit = sak::PartitionApfsWriter::commitImageOnlySnapshotRevert(
-        {.source_image_path = invocation.target_path,
-         .written_image_path = invocation.output_image_path,
-         .snapshot_name = invocation.snapshot_name,
-         .options = imageWriteOptions(invocation.evidence_id)});
+        {.source_image_path = invocation.m_target_path,
+         .written_image_path = invocation.m_output_image_path,
+         .snapshot_name = invocation.m_snapshot_name,
+         .options = imageWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS in-place snapshot revert commit"), invocation, error);
 }
@@ -1798,12 +1800,12 @@ std::optional<QJsonObject> buildCommitSnapshotRevertReport(const CliInvocation& 
 std::optional<QJsonObject> buildCommitRawSnapshotRevertReport(const CliInvocation& invocation,
                                                               QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawSnapshotRevert(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .snapshot_name = invocation.snapshot_name,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .snapshot_name = invocation.m_snapshot_name,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place snapshot revert commit"), invocation, error);
 }
@@ -1811,13 +1813,13 @@ std::optional<QJsonObject> buildCommitRawSnapshotRevertReport(const CliInvocatio
 std::optional<QJsonObject> buildCommitRawFileCloneReport(const CliInvocation& invocation,
                                                          QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawFileClone(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .source_file_name = invocation.file_name,
-         .clone_file_name = invocation.new_file_name,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .source_file_name = invocation.m_file_name,
+         .clone_file_name = invocation.m_new_file_name,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place file clone commit"), invocation, error);
 }
@@ -1825,13 +1827,13 @@ std::optional<QJsonObject> buildCommitRawFileCloneReport(const CliInvocation& in
 std::optional<QJsonObject> buildCommitRawFileHardlinkReport(const CliInvocation& invocation,
                                                             QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawFileHardlink(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .source_file_name = invocation.file_name,
-         .link_file_name = invocation.new_file_name,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .source_file_name = invocation.m_file_name,
+         .link_file_name = invocation.m_new_file_name,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place file hard link commit"), invocation, error);
 }
@@ -1839,12 +1841,12 @@ std::optional<QJsonObject> buildCommitRawFileHardlinkReport(const CliInvocation&
 std::optional<QJsonObject> buildCommitRawResizeReport(const CliInvocation& invocation,
                                                       QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawResize(
-        {.target_path = invocation.target_path,
-         .target_container_bytes = invocation.target_size_bytes,
-         .new_size_bytes = invocation.target_size_bytes,
-         .target_mutation_confirmed = invocation.confirm_target,
-         .allow_raw_device_target = invocation.allow_raw_target,
-         .options = rawWriteOptions(invocation.evidence_id)});
+        {.target_path = invocation.m_target_path,
+         .target_container_bytes = invocation.m_target_size_bytes,
+         .new_size_bytes = invocation.m_target_size_bytes,
+         .target_mutation_confirmed = invocation.m_confirm_target,
+         .allow_raw_device_target = invocation.m_allow_raw_target,
+         .options = rawWriteOptions(invocation.m_evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS raw in-place container resize commit"), invocation, error);
 }
@@ -1895,7 +1897,7 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
         {QLatin1StringView("commit-raw-snapshot-revert"), buildCommitRawSnapshotRevertReport},
     }};
     for (const auto& [command, builder] : kCommitBuilders) {
-        if (invocation.command == command) {
+        if (invocation.m_command == command) {
             *handled = true;
             return builder(invocation, error);
         }
@@ -1905,27 +1907,27 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
 }
 
 std::optional<QJsonObject> buildCommandReport(const CliInvocation& invocation, QString* error) {
-    if (invocation.command == QStringLiteral("list-image")) {
+    if (invocation.m_command == QStringLiteral("list-image")) {
         return buildListImageReport(invocation, error);
     }
-    if (invocation.command == QStringLiteral("probe-layout")) {
+    if (invocation.m_command == QStringLiteral("probe-layout")) {
         return buildProbeLayoutReport(invocation, error);
     }
-    if (invocation.command == QStringLiteral("import-image")) {
+    if (invocation.m_command == QStringLiteral("import-image")) {
         return buildImportImageReport(invocation, error);
     }
-    bool commitHandled = false;
-    auto commitReport = buildCommitCommandReport(invocation, error, &commitHandled);
-    if (commitHandled) {
-        return commitReport;
+    bool commit_handled = false;
+    auto commit_report = buildCommitCommandReport(invocation, error, &commit_handled);
+    if (commit_handled) {
+        return commit_report;
     }
-    if (isImageCommand(invocation.command)) {
+    if (isImageCommand(invocation.m_command)) {
         return buildImageCommandReport(invocation, error);
     }
-    if (isRawCommand(invocation.command)) {
+    if (isRawCommand(invocation.m_command)) {
         return buildRawCommandReport(invocation, error);
     }
-    *error = QStringLiteral("Unsupported command: %1").arg(invocation.command);
+    *error = QStringLiteral("Unsupported command: %1").arg(invocation.m_command);
     return std::nullopt;
 }
 
@@ -1983,17 +1985,17 @@ std::optional<QString> fileNameForCommand(const QCommandLineParser& parser,
     if (!isFileNameCommand(command)) {
         return QString();
     }
-    const QString fileName = parser.value(option).trimmed();
-    if (fileName.isEmpty()) {
+    const QString file_name = parser.value(option).trimmed();
+    if (file_name.isEmpty()) {
         *error = QStringLiteral("--file-name is required for APFS root-file mutations.");
         return std::nullopt;
     }
-    return fileName;
+    return file_name;
 }
 
 std::optional<QString> directoryNameForCommand(const QCommandLineParser& parser,
-                                               const QCommandLineOption& directoryOption,
-                                               const QCommandLineOption& fileOption,
+                                               const QCommandLineOption& directory_option,
+                                               const QCommandLineOption& file_option,
                                                const QString& command,
                                                QString* error) {
     // File-move and file-patch commands take an OPTIONAL directory (empty = the root).
@@ -2001,20 +2003,20 @@ std::optional<QString> directoryNameForCommand(const QCommandLineParser& parser,
         command == QStringLiteral("commit-raw-file-move") ||
         command == QStringLiteral("commit-image-file-patch") ||
         command == QStringLiteral("commit-raw-file-patch")) {
-        return parser.value(directoryOption).trimmed();
+        return parser.value(directory_option).trimmed();
     }
     if (!isDirectoryNameCommand(command)) {
         return QString();
     }
-    QString directoryName = parser.value(directoryOption).trimmed();
-    if (directoryName.isEmpty()) {
-        directoryName = parser.value(fileOption).trimmed();
+    QString directory_name = parser.value(directory_option).trimmed();
+    if (directory_name.isEmpty()) {
+        directory_name = parser.value(file_option).trimmed();
     }
-    if (directoryName.isEmpty()) {
+    if (directory_name.isEmpty()) {
         *error = QStringLiteral("--directory-name is required for APFS root-directory mutations.");
         return std::nullopt;
     }
-    return directoryName;
+    return directory_name;
 }
 
 // Commands that accept an OPTIONAL payload (an empty payload is valid - e.g. import
@@ -2038,11 +2040,11 @@ std::optional<QByteArray> payloadForCommand(const QCommandLineParser& parser,
                                             const QString& command,
                                             QString* error) {
     if (commandTakesOptionalPayload(command)) {
-        const QString payloadPath = parser.value(option).trimmed();
-        if (payloadPath.isEmpty()) {
+        const QString payload_path = parser.value(option).trimmed();
+        if (payload_path.isEmpty()) {
             return QByteArray();
         }
-        return readPayloadFile(payloadPath, error);
+        return readPayloadFile(payload_path, error);
     }
     return QByteArray();
 }
@@ -2052,12 +2054,12 @@ std::optional<uint64_t> patchOffsetForCommand(const QCommandLineParser& parser,
                                               const QString& command,
                                               QString* error) {
     // The COW patch commands take an optional offset (default 0 = patch from the start).
-    const bool cowPatch = command == QStringLiteral("commit-image-file-patch") ||
-                          command == QStringLiteral("commit-raw-file-patch");
-    if (cowPatch && !parser.isSet(option)) {
+    const bool cow_patch = command == QStringLiteral("commit-image-file-patch") ||
+                           command == QStringLiteral("commit-raw-file-patch");
+    if (cow_patch && !parser.isSet(option)) {
         return 0ULL;
     }
-    if (!cowPatch) {
+    if (!cow_patch) {
         return 0ULL;
     }
     if (!parser.isSet(option)) {
@@ -2069,115 +2071,116 @@ std::optional<uint64_t> patchOffsetForCommand(const QCommandLineParser& parser,
 
 // Owns every QCommandLineOption used by the CLI so the objects outlive parsing.
 struct CliOptions {
-    QCommandLineOption target{{QStringLiteral("target")},
-                              QStringLiteral("Target raw partition or image path."),
-                              QStringLiteral("path")};
-    QCommandLineOption size{{QStringLiteral("size-bytes")},
-                            QStringLiteral("Target APFS container size in bytes."),
-                            QStringLiteral("bytes")};
-    QCommandLineOption blockSize{{QStringLiteral("block-size-bytes")},
-                                 QStringLiteral("APFS block size, default 4096."),
-                                 QStringLiteral("bytes")};
-    QCommandLineOption volumeName{{QStringLiteral("volume-name")},
-                                  QStringLiteral("APFS volume name."),
-                                  QStringLiteral("name"),
-                                  QStringLiteral("SAK APFS")};
-    QCommandLineOption additionalVolumeName{
+    QCommandLineOption m_target{{QStringLiteral("target")},
+                                QStringLiteral("Target raw partition or image path."),
+                                QStringLiteral("path")};
+    QCommandLineOption m_size{{QStringLiteral("size-bytes")},
+                              QStringLiteral("Target APFS container size in bytes."),
+                              QStringLiteral("bytes")};
+    QCommandLineOption m_block_size{{QStringLiteral("block-size-bytes")},
+                                    QStringLiteral("APFS block size, default 4096."),
+                                    QStringLiteral("bytes")};
+    QCommandLineOption m_volume_name{{QStringLiteral("volume-name")},
+                                     QStringLiteral("APFS volume name."),
+                                     QStringLiteral("name"),
+                                     QStringLiteral("SAK APFS")};
+    QCommandLineOption m_additional_volume_name{
         {QStringLiteral("additional-volume-name")},
         QStringLiteral("Name of an additional APFS volume (repeatable; multi-volume format)."),
         QStringLiteral("name")};
-    QCommandLineOption outputImage{{QStringLiteral("output-image")},
-                                   QStringLiteral("Image repair output path."),
-                                   QStringLiteral("path")};
-    QCommandLineOption fileName{{QStringLiteral("file-name")},
-                                QStringLiteral(
-                                    "Root or child file name for generated APFS writes."),
-                                QStringLiteral("name")};
-    QCommandLineOption directoryName{
+    QCommandLineOption m_output_image{{QStringLiteral("output-image")},
+                                      QStringLiteral("Image repair output path."),
+                                      QStringLiteral("path")};
+    QCommandLineOption m_file_name{{QStringLiteral("file-name")},
+                                   QStringLiteral(
+                                       "Root or child file name for generated APFS writes."),
+                                   QStringLiteral("name")};
+    QCommandLineOption m_directory_name{
         {QStringLiteral("directory-name")},
         QStringLiteral("Root directory name for generated APFS directory or child-file mutations."),
         QStringLiteral("name")};
-    QCommandLineOption parentDirectoryPath{
+    QCommandLineOption m_parent_directory_path{
         {QStringLiteral("parent-directory-path")},
         QStringLiteral("Parent directory the new directory nests under (empty = container root, "
                        "\"/docs\" or \"/docs/sub\"); for create-image/raw-root-directory."),
         QStringLiteral("path")};
-    QCommandLineOption newFileName{{QStringLiteral("new-file-name")},
-                                   QStringLiteral(
-                                       "Destination file name for a generated APFS file move."),
-                                   QStringLiteral("name")};
-    QCommandLineOption destinationDirectoryName{
+    QCommandLineOption m_new_file_name{{QStringLiteral("new-file-name")},
+                                       QStringLiteral(
+                                           "Destination file name for a generated APFS file move."),
+                                       QStringLiteral("name")};
+    QCommandLineOption m_destination_directory_name{
         {QStringLiteral("destination-directory-name")},
         QStringLiteral("Destination directory (empty = root) for a generated APFS file move."),
         QStringLiteral("name")};
-    QCommandLineOption payload{{QStringLiteral("payload-file")},
-                               QStringLiteral("Payload file for generated APFS writes or patches."),
-                               QStringLiteral("path")};
-    QCommandLineOption patchOffset{
+    QCommandLineOption m_payload{{QStringLiteral("payload-file")},
+                                 QStringLiteral(
+                                     "Payload file for generated APFS writes or patches."),
+                                 QStringLiteral("path")};
+    QCommandLineOption m_patch_offset{
         {QStringLiteral("patch-offset-bytes")},
         QStringLiteral("Byte offset for generated APFS partial root or child-file patch."),
         QStringLiteral("bytes")};
-    QCommandLineOption snapshotName{{QStringLiteral("snapshot-name")},
-                                    QStringLiteral(
-                                        "Snapshot name for a generated APFS snapshot create."),
-                                    QStringLiteral("name")};
-    QCommandLineOption outputJson{{QStringLiteral("output-json")},
-                                  QStringLiteral("Optional report JSON path."),
-                                  QStringLiteral("path")};
-    QCommandLineOption evidence{{QStringLiteral("evidence-id")},
-                                QStringLiteral("Certification/evidence ID."),
-                                QStringLiteral("id")};
-    QCommandLineOption confirm{{QStringLiteral("confirm-target")},
-                               QStringLiteral("Confirm destructive target mutation.")};
-    QCommandLineOption allowRaw{{QStringLiteral("allow-raw-target")},
-                                QStringLiteral("Permit Windows raw-device mutation.")};
-    QCommandLineOption compressZlib{
+    QCommandLineOption m_snapshot_name{{QStringLiteral("snapshot-name")},
+                                       QStringLiteral(
+                                           "Snapshot name for a generated APFS snapshot create."),
+                                       QStringLiteral("name")};
+    QCommandLineOption m_output_json{{QStringLiteral("output-json")},
+                                     QStringLiteral("Optional report JSON path."),
+                                     QStringLiteral("path")};
+    QCommandLineOption m_evidence{{QStringLiteral("evidence-id")},
+                                  QStringLiteral("Certification/evidence ID."),
+                                  QStringLiteral("id")};
+    QCommandLineOption m_confirm{{QStringLiteral("confirm-target")},
+                                 QStringLiteral("Confirm destructive target mutation.")};
+    QCommandLineOption m_allow_raw{{QStringLiteral("allow-raw-target")},
+                                   QStringLiteral("Permit Windows raw-device mutation.")};
+    QCommandLineOption m_compress_zlib{
         {QStringLiteral("compress-zlib")},
         QStringLiteral("Store the inserted/written file transparently compressed (inline zlib "
                        "com.apple.decmpfs); for commit-image/raw-file-insert, "
                        "commit-raw-file-write, and commit-raw-directory-child-write.")};
-    QCommandLineOption compressLzfse{
+    QCommandLineOption m_compress_lzfse{
         {QStringLiteral("compress-lzfse")},
         QStringLiteral("Store the inserted file transparently compressed (inline LZFSE, "
                        "com.apple.decmpfs algo 11); takes precedence over --compress-zlib.")};
-    QCommandLineOption compressLzvn{
+    QCommandLineOption m_compress_lzvn{
         {QStringLiteral("compress-lzvn")},
         QStringLiteral("Store the inserted file transparently compressed (inline LZVN, "
                        "com.apple.decmpfs algo 7); takes precedence over --compress-lzfse.")};
-    QCommandLineOption compressLzbitmap{
+    QCommandLineOption m_compress_lzbitmap{
         {QStringLiteral("compress-lzbitmap")},
         QStringLiteral("Store the inserted file transparently compressed (LZBITMAP, "
                        "com.apple.decmpfs algo 14, resource fork); works for any file size.")};
-    QCommandLineOption volumePassword{
+    QCommandLineOption m_volume_password{
         {QStringLiteral("volume-password")},
         QStringLiteral("Format a software-encrypted (FileVault) volume unlockable by this "
                        "password; for format-image. Credential-in, never stored."),
         QStringLiteral("password")};
-    QCommandLineOption recoveryKey{
+    QCommandLineOption m_recovery_key{
         {QStringLiteral("recovery-key")},
         QStringLiteral("Add a personal-recovery-key unlock record (used with --volume-password); "
                        "the volume then unlocks by either the password or this recovery key; for "
                        "format-image. Credential-in, never stored."),
         QStringLiteral("recovery-key")};
-    QCommandLineOption volumePasswordFile{
+    QCommandLineOption m_volume_password_file{
         {QStringLiteral("volume-password-file")},
         QStringLiteral("Read the FileVault volume password from this file's exact UTF-8 bytes "
                        "instead of --volume-password (keeps the credential off the command line "
                        "and out of any script text); for format-image/format-raw."),
         QStringLiteral("path")};
-    QCommandLineOption recoveryKeyFile{
+    QCommandLineOption m_recovery_key_file{
         {QStringLiteral("recovery-key-file")},
         QStringLiteral("Read the personal-recovery-key from this file's exact UTF-8 bytes instead "
                        "of --recovery-key (same off-command-line handling); for "
                        "format-image/format-raw."),
         QStringLiteral("path")};
-    QCommandLineOption sparseSize{
+    QCommandLineOption m_sparse_size{
         {QStringLiteral("sparse-size")},
         QStringLiteral("Insert the file sparse with a trailing hole: its extents cover --payload "
                        "and the inode's logical size is this many bytes (the gap reads as zeros); "
                        "for commit-image-file-insert."),
         QStringLiteral("bytes")};
-    QCommandLineOption xattr{
+    QCommandLineOption m_xattr{
         {QStringLiteral("xattr")},
         QStringLiteral("Attach a named extended attribute name=hexvalue (repeatable); ACL names "
                        "com.apple.system.Security / com.apple.FinderInfo set the matching inode "
@@ -2187,34 +2190,34 @@ struct CliOptions {
 
 // Register every CLI option plus the positional command argument on `parser`.
 void registerCliOptions(QCommandLineParser& parser, CliOptions& options) {
-    parser.addOptions({options.target,
-                       options.size,
-                       options.blockSize,
-                       options.volumeName,
-                       options.additionalVolumeName,
-                       options.outputImage,
-                       options.fileName,
-                       options.directoryName,
-                       options.parentDirectoryPath,
-                       options.newFileName,
-                       options.destinationDirectoryName,
-                       options.payload,
-                       options.patchOffset,
-                       options.snapshotName,
-                       options.outputJson,
-                       options.evidence,
-                       options.confirm,
-                       options.allowRaw,
-                       options.compressZlib,
-                       options.compressLzfse,
-                       options.compressLzvn,
-                       options.compressLzbitmap,
-                       options.volumePassword,
-                       options.recoveryKey,
-                       options.volumePasswordFile,
-                       options.recoveryKeyFile,
-                       options.sparseSize,
-                       options.xattr});
+    parser.addOptions({options.m_target,
+                       options.m_size,
+                       options.m_block_size,
+                       options.m_volume_name,
+                       options.m_additional_volume_name,
+                       options.m_output_image,
+                       options.m_file_name,
+                       options.m_directory_name,
+                       options.m_parent_directory_path,
+                       options.m_new_file_name,
+                       options.m_destination_directory_name,
+                       options.m_payload,
+                       options.m_patch_offset,
+                       options.m_snapshot_name,
+                       options.m_output_json,
+                       options.m_evidence,
+                       options.m_confirm,
+                       options.m_allow_raw,
+                       options.m_compress_zlib,
+                       options.m_compress_lzfse,
+                       options.m_compress_lzvn,
+                       options.m_compress_lzbitmap,
+                       options.m_volume_password,
+                       options.m_recovery_key,
+                       options.m_volume_password_file,
+                       options.m_recovery_key_file,
+                       options.m_sparse_size,
+                       options.m_xattr});
     parser.addPositionalArgument(
         QStringLiteral("command"),
         QStringLiteral(
@@ -2228,33 +2231,34 @@ std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser
                                                 const CliOptions& options,
                                                 QString* error) {
     return invocationFromParser(parser,
-                                {.target = &options.target,
-                                 .size = &options.size,
-                                 .block_size = &options.blockSize,
-                                 .volume_name = &options.volumeName,
-                                 .additional_volume_name = &options.additionalVolumeName,
-                                 .output_image = &options.outputImage,
-                                 .file_name = &options.fileName,
-                                 .directory_name = &options.directoryName,
-                                 .parent_directory_path = &options.parentDirectoryPath,
-                                 .new_file_name = &options.newFileName,
-                                 .destination_directory_name = &options.destinationDirectoryName,
-                                 .payload = &options.payload,
-                                 .patch_offset = &options.patchOffset,
-                                 .snapshot_name = &options.snapshotName,
-                                 .evidence = &options.evidence,
-                                 .confirm = &options.confirm,
-                                 .allow_raw = &options.allowRaw,
-                                 .compress_zlib = &options.compressZlib,
-                                 .compress_lzfse = &options.compressLzfse,
-                                 .compress_lzvn = &options.compressLzvn,
-                                 .compress_lzbitmap = &options.compressLzbitmap,
-                                 .volume_password = &options.volumePassword,
-                                 .recovery_key = &options.recoveryKey,
-                                 .volume_password_file = &options.volumePasswordFile,
-                                 .recovery_key_file = &options.recoveryKeyFile,
-                                 .sparse_size = &options.sparseSize,
-                                 .xattr = &options.xattr},
+                                {.m_target = &options.m_target,
+                                 .m_size = &options.m_size,
+                                 .m_block_size = &options.m_block_size,
+                                 .m_volume_name = &options.m_volume_name,
+                                 .m_additional_volume_name = &options.m_additional_volume_name,
+                                 .m_output_image = &options.m_output_image,
+                                 .m_file_name = &options.m_file_name,
+                                 .m_directory_name = &options.m_directory_name,
+                                 .m_parent_directory_path = &options.m_parent_directory_path,
+                                 .m_new_file_name = &options.m_new_file_name,
+                                 .m_destination_directory_name =
+                                     &options.m_destination_directory_name,
+                                 .m_payload = &options.m_payload,
+                                 .m_patch_offset = &options.m_patch_offset,
+                                 .m_snapshot_name = &options.m_snapshot_name,
+                                 .m_evidence = &options.m_evidence,
+                                 .m_confirm = &options.m_confirm,
+                                 .m_allow_raw = &options.m_allow_raw,
+                                 .m_compress_zlib = &options.m_compress_zlib,
+                                 .m_compress_lzfse = &options.m_compress_lzfse,
+                                 .m_compress_lzvn = &options.m_compress_lzvn,
+                                 .m_compress_lzbitmap = &options.m_compress_lzbitmap,
+                                 .m_volume_password = &options.m_volume_password,
+                                 .m_recovery_key = &options.m_recovery_key,
+                                 .m_volume_password_file = &options.m_volume_password_file,
+                                 .m_recovery_key_file = &options.m_recovery_key_file,
+                                 .m_sparse_size = &options.m_sparse_size,
+                                 .m_xattr = &options.m_xattr},
                                 error);
 }
 
@@ -2264,31 +2268,31 @@ std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser
 // Physical drive number backing the OS system volume, or -1 if it cannot be
 // determined. Native (no elevation needed).
 static int osSystemPhysicalDrive() {
-    wchar_t winDir[MAX_PATH] = {};
-    const UINT len = GetWindowsDirectoryW(winDir, MAX_PATH);
-    if (len == 0 || len >= MAX_PATH || winDir[1] != L':') {
+    wchar_t win_dir[MAX_PATH] = {};
+    const UINT len = GetWindowsDirectoryW(win_dir, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH || win_dir[1] != L':') {
         return -1;
     }
-    const wchar_t volumePath[] = {L'\\', L'\\', L'.', L'\\', winDir[0], L':', L'\0'};
-    HANDLE hVol = CreateFileW(
-        volumePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (hVol == INVALID_HANDLE_VALUE) {
+    const wchar_t volume_path[] = {L'\\', L'\\', L'.', L'\\', win_dir[0], L':', L'\0'};
+    HANDLE h_vol = CreateFileW(
+        volume_path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h_vol == INVALID_HANDLE_VALUE) {
         return -1;
     }
     constexpr DWORD kMaxExtents = 16;
-    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + ((kMaxExtents - 1) * sizeof(DISK_EXTENT));
-    std::vector<unsigned char> buffer(bufSize, 0);
+    const DWORD buf_size = sizeof(VOLUME_DISK_EXTENTS) + ((kMaxExtents - 1) * sizeof(DISK_EXTENT));
+    std::vector<unsigned char> buffer(buf_size, 0);
     auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
-    DWORD bytesReturned = 0;
-    const BOOL ok = DeviceIoControl(hVol,
+    DWORD bytes_returned = 0;
+    const BOOL ok = DeviceIoControl(h_vol,
                                     IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
                                     nullptr,
                                     0,
                                     extents,
-                                    bufSize,
-                                    &bytesReturned,
+                                    buf_size,
+                                    &bytes_returned,
                                     nullptr);
-    CloseHandle(hVol);
+    CloseHandle(h_vol);
     if ((ok == 0) || extents->NumberOfDiskExtents == 0) {
         return -1;
     }
@@ -2307,17 +2311,17 @@ static std::vector<int> volumeBackingPhysicalDrives(const QString& path) {
         return drives;
     }
     constexpr DWORD kMaxExtents = 32;
-    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + ((kMaxExtents - 1) * sizeof(DISK_EXTENT));
-    std::vector<unsigned char> buffer(bufSize, 0);
+    const DWORD buf_size = sizeof(VOLUME_DISK_EXTENTS) + ((kMaxExtents - 1) * sizeof(DISK_EXTENT));
+    std::vector<unsigned char> buffer(buf_size, 0);
     auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
-    DWORD bytesReturned = 0;
+    DWORD bytes_returned = 0;
     const BOOL ok = DeviceIoControl(handle,
                                     IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
                                     nullptr,
                                     0,
                                     extents,
-                                    bufSize,
-                                    &bytesReturned,
+                                    buf_size,
+                                    &bytes_returned,
                                     nullptr);
     CloseHandle(handle);
     if (ok == 0) {
@@ -2369,12 +2373,12 @@ static QString physicalDriveTargetRefusal(const QString& path, const QString& pr
             "Refusing raw APFS write to PhysicalDrive0 (the first physical disk)");
     }
 #ifdef _WIN32
-    const int osDrive = osSystemPhysicalDrive();
-    if (osDrive < 0) {
+    const int os_drive = osSystemPhysicalDrive();
+    if (os_drive < 0) {
         return QStringLiteral(
             "Refusing raw APFS write: could not establish the OS system-disk identity");
     }
-    if (osDrive == drive) {
+    if (os_drive == drive) {
         return QStringLiteral(
             "Refusing raw APFS write: target PhysicalDrive backs the OS system volume");
     }
@@ -2387,8 +2391,8 @@ static QString physicalDriveTargetRefusal(const QString& path, const QString& pr
 // or the alias's backing drive cannot be resolved.
 static QString volumeAliasTargetRefusal(const QString& path) {
 #ifdef _WIN32
-    const int osDrive = osSystemPhysicalDrive();
-    if (osDrive < 0) {
+    const int os_drive = osSystemPhysicalDrive();
+    if (os_drive < 0) {
         return QStringLiteral(
             "Refusing raw APFS write: could not establish the OS system-disk identity");
     }
@@ -2399,7 +2403,7 @@ static QString volumeAliasTargetRefusal(const QString& path) {
             "volume/device target");
     }
     for (const int drive : drives) {
-        if (drive == 0 || drive == osDrive) {
+        if (drive == 0 || drive == os_drive) {
             return QStringLiteral(
                 "Refusing raw APFS write: volume/device target resolves to the OS system disk "
                 "or PhysicalDrive0");
@@ -2420,10 +2424,10 @@ static QString volumeAliasTargetRefusal(const QString& path) {
 // reason, or an empty string when the target is provably a different disk / not a
 // raw whole-disk form this guard covers.
 static QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
-    if (!invocation.allow_raw_target) {
+    if (!invocation.m_allow_raw_target) {
         return QString();
     }
-    QString path = invocation.target_path.trimmed();
+    QString path = invocation.m_target_path.trimmed();
     path.replace(QLatin1Char('/'), QLatin1Char('\\'));
     const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
     if (path.startsWith(prefix, Qt::CaseInsensitive)) {
@@ -2452,16 +2456,16 @@ int main(int argc, char* argv[]) {
     registerCliOptions(parser, options);
     parser.process(app);
 
-    QString parseError;
-    const auto invocation = parseCliInvocation(parser, options, &parseError);
+    QString parse_error;
+    const auto invocation = parseCliInvocation(parser, options, &parse_error);
     if (!invocation.has_value()) {
-        QTextStream(stderr) << parseError << Qt::endl;
+        QTextStream(stderr) << parse_error << Qt::endl;
         return kExitInvalidArguments;
     }
 
-    const QString outputJsonPath = parser.value(options.outputJson).trimmed();
+    const QString output_json_path = parser.value(options.m_output_json).trimmed();
     if (outputJsonAliasesTarget(
-            outputJsonPath, invocation->target_path, invocation->output_image_path)) {
+            output_json_path, invocation->m_target_path, invocation->m_output_image_path)) {
         QTextStream(stderr) << "--output-json path must not alias the target or output image"
                             << Qt::endl;
         return kExitInvalidArguments;
@@ -2469,22 +2473,22 @@ int main(int argc, char* argv[]) {
 
     // Defense-in-depth: never let a confirmed --allow-raw command hit the OS disk
     // or PhysicalDrive0 (the GUI validator does not run for this CLI).
-    const QString rawRefusal = rawTargetProtectedDiskRefusal(*invocation);
-    if (!rawRefusal.isEmpty()) {
-        QTextStream(stderr) << rawRefusal << Qt::endl;
+    const QString raw_refusal = rawTargetProtectedDiskRefusal(*invocation);
+    if (!raw_refusal.isEmpty()) {
+        QTextStream(stderr) << raw_refusal << Qt::endl;
         return kExitInvalidArguments;
     }
 
-    QString commandError;
-    const auto report = buildCommandReport(*invocation, &commandError);
+    QString command_error;
+    const auto report = buildCommandReport(*invocation, &command_error);
     if (!report.has_value()) {
-        QTextStream(stderr) << commandError << Qt::endl;
+        QTextStream(stderr) << command_error << Qt::endl;
         return kExitInvalidArguments;
     }
 
-    QString reportError;
-    if (!writeReport(*report, outputJsonPath, &reportError)) {
-        QTextStream(stderr) << "Failed to write report: " << reportError << Qt::endl;
+    QString report_error;
+    if (!writeReport(*report, output_json_path, &report_error)) {
+        QTextStream(stderr) << "Failed to write report: " << report_error << Qt::endl;
         return kExitReportFailed;
     }
     return report->value(QStringLiteral("ok")).toBool(false) ? kExitOk : kExitOperationFailed;

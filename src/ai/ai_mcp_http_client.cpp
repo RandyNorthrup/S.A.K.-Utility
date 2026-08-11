@@ -39,18 +39,18 @@ constexpr int kHttpStatusSuccessMin = 200;
 constexpr int kHttpStatusSuccessEnd = 300;
 
 struct HttpCallState {
-    QVariant status;
-    QByteArray response_body;
-    QNetworkReply::NetworkError network_error{QNetworkReply::NoError};
-    QString network_error_text;
-    bool timed_out{false};
-    bool too_large{false};
+    QVariant m_status;
+    QByteArray m_response_body;
+    QNetworkReply::NetworkError m_network_error{QNetworkReply::NoError};
+    QString m_network_error_text;
+    bool m_timed_out{false};
+    bool m_too_large{false};
 };
 
 struct HttpWorkerSinks {
-    HttpCallState* state{nullptr};
-    QSemaphore* done{nullptr};
-    QThread* owner_thread{nullptr};
+    HttpCallState* m_state{nullptr};
+    QSemaphore* m_done{nullptr};
+    QThread* m_owner_thread{nullptr};
 };
 
 [[nodiscard]] QJsonObject toolCallPayload(const QString& tool_name, const QJsonObject& arguments) {
@@ -196,7 +196,7 @@ public:
     HttpToolCallWorker(QUrl endpoint, QByteArray body, int timeout_ms, const HttpWorkerSinks& sinks)
         : m_endpoint(std::move(endpoint))
         , m_body(std::move(body))
-        , m_timeoutMs(timeout_ms)
+        , m_timeout_ms(timeout_ms)
         , m_sinks(sinks) {}
 
     void start() {
@@ -227,7 +227,7 @@ public:
         QObject::connect(
             m_reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
                 if (received > kMaxResponseBytes || total > kMaxResponseBytes) {
-                    m_tooLarge = true;
+                    m_too_large = true;
                     m_reply->abort();
                     finish(false);
                 }
@@ -236,7 +236,7 @@ public:
             m_reply->abort();
             finish(true);
         });
-        m_timer->start(qMax(m_timeoutMs, kMinimumRequestTimeoutMs));
+        m_timer->start(qMax(m_timeout_ms, kMinimumRequestTimeoutMs));
     }
 
 private:
@@ -254,14 +254,14 @@ private:
             m_accumulated.append(m_reply->read(qMin(m_reply->bytesAvailable(), room)));
         }
         if (m_accumulated.size() > kMaxResponseBytes) {
-            m_tooLarge = true;
+            m_too_large = true;
             m_reply->abort();
             finish(false);
             return;
         }
         QString ignored_error;
         if (!extractJsonRpcMessage(m_accumulated, &ignored_error).isEmpty()) {
-            m_haveResponse = true;
+            m_have_response = true;
             finish(false);
         }
     }
@@ -275,8 +275,9 @@ private:
             m_timer->stop();
         }
         if (!timed_out) {
-            m_sinks.state->status = m_reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
-            if (!m_haveResponse) {
+            m_sinks.m_state->m_status =
+                m_reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+            if (!m_have_response) {
                 const qint64 room = static_cast<qint64>(kMaxResponseBytes) + 1 -
                                     m_accumulated.size();
                 if (room > 0 && m_reply->bytesAvailable() > 0) {
@@ -286,30 +287,30 @@ private:
                 // undercounted by the wire-byte downloadProgress) must be rejected, not
                 // truncated-and-accepted as if it were a complete message.
                 if (m_accumulated.size() > kMaxResponseBytes || m_reply->bytesAvailable() > 0) {
-                    m_tooLarge = true;
+                    m_too_large = true;
                 }
             }
-            m_sinks.state->response_body = m_accumulated;
-            m_sinks.state->network_error = m_reply->error();
-            m_sinks.state->network_error_text = m_reply->errorString();
+            m_sinks.m_state->m_response_body = m_accumulated;
+            m_sinks.m_state->m_network_error = m_reply->error();
+            m_sinks.m_state->m_network_error_text = m_reply->errorString();
         }
-        m_sinks.state->timed_out = timed_out;
-        m_sinks.state->too_large = m_tooLarge.load();
+        m_sinks.m_state->m_timed_out = timed_out;
+        m_sinks.m_state->m_too_large = m_too_large.load();
         m_reply->deleteLater();
-        m_sinks.done->release();
-        m_sinks.owner_thread->quit();
+        m_sinks.m_done->release();
+        m_sinks.m_owner_thread->quit();
     }
 
     QUrl m_endpoint;
     QByteArray m_body;
-    int m_timeoutMs{0};
+    int m_timeout_ms{0};
     HttpWorkerSinks m_sinks;
     QNetworkReply* m_reply{nullptr};
     QTimer* m_timer{nullptr};
     QByteArray m_accumulated;
-    bool m_haveResponse{false};
+    bool m_have_response{false};
     std::atomic_bool m_completed{false};
-    std::atomic_bool m_tooLarge{false};
+    std::atomic_bool m_too_large{false};
 };
 
 // A loopback host may use plain http (a local MCP server is not a MITM/eavesdrop surface); every
@@ -354,11 +355,11 @@ HttpCallState performHttpToolCall(const QUrl& endpoint, const QByteArray& body, 
     HttpCallState state;
     QSemaphore done;
     QThread network_thread;
-    auto* worker =
-        new HttpToolCallWorker(endpoint,
-                               body,
-                               timeout_ms,
-                               {.state = &state, .done = &done, .owner_thread = &network_thread});
+    auto* worker = new HttpToolCallWorker(
+        endpoint,
+        body,
+        timeout_ms,
+        {.m_state = &state, .m_done = &done, .m_owner_thread = &network_thread});
     worker->moveToThread(&network_thread);
     QObject::connect(&network_thread, &QThread::finished, worker, &QObject::deleteLater);
     QObject::connect(&network_thread, &QThread::started, worker, [worker]() { worker->start(); });
@@ -376,7 +377,7 @@ HttpCallState performHttpToolCall(const QUrl& endpoint, const QByteArray& body, 
     // Write state.timed_out ONLY after wait() has joined the worker, so it can never race the
     // worker's own finish() write to the shared HttpCallState (that would be C++ data-race UB).
     if (!acquired) {
-        state.timed_out = true;
+        state.m_timed_out = true;
     }
     return state;
 }
@@ -385,11 +386,11 @@ HttpCallState performHttpToolCall(const QUrl& endpoint, const QByteArray& body, 
 // string for a usable 2xx envelope; otherwise the reason it must not be parsed as a successful MCP
 // result -- a 3xx we did not follow (cross-origin) or any other non-2xx, or a missing status code.
 [[nodiscard]] QString statusEnvelopeFailure(const HttpCallState& state) {
-    const int status_code = state.status.isValid() ? state.status.toInt() : 0;
+    const int status_code = state.m_status.isValid() ? state.m_status.toInt() : 0;
     if (status_code >= kHttpStatusSuccessMin && status_code < kHttpStatusSuccessEnd) {
         return {};
     }
-    return state.status.isValid()
+    return state.m_status.isValid()
                ? QStringLiteral("MCP HTTP request returned an unexpected status (HTTP %1)")
                      .arg(status_code)
                : QStringLiteral("MCP HTTP response had no HTTP status code");
@@ -399,19 +400,19 @@ HttpCallState performHttpToolCall(const QUrl& endpoint, const QByteArray& body, 
 // usable 2xx envelope. Checked in the order the failure is enforced: the local caps (too-large,
 // timeout) before any status the server returned, then the transport error itself.
 [[nodiscard]] QString httpFailureReason(const HttpCallState& state) {
-    if (state.too_large) {
+    if (state.m_too_large) {
         return QStringLiteral("MCP HTTP response exceeded the %1-byte cap").arg(kMaxResponseBytes);
     }
-    if (state.timed_out) {
+    if (state.m_timed_out) {
         return QStringLiteral("MCP HTTP request timed out");
     }
-    if (state.network_error == QNetworkReply::NoError) {
+    if (state.m_network_error == QNetworkReply::NoError) {
         return statusEnvelopeFailure(state);
     }
     return QStringLiteral("MCP HTTP request failed%1: %2")
-        .arg(state.status.isValid() ? QStringLiteral(" (HTTP %1)").arg(state.status.toInt())
-                                    : QString(),
-             state.network_error_text);
+        .arg(state.m_status.isValid() ? QStringLiteral(" (HTTP %1)").arg(state.m_status.toInt())
+                                      : QString(),
+             state.m_network_error_text);
 }
 
 bool explainHttpFailure(const HttpCallState& state, QString* error_message) {
@@ -466,7 +467,7 @@ QJsonObject AiMcpHttpClient::callTool(const QUrl& endpoint,
         return {};
     }
 
-    QJsonObject message = extractJsonRpcMessage(state.response_body, error_message);
+    QJsonObject message = extractJsonRpcMessage(state.m_response_body, error_message);
     if (message.isEmpty()) {
         return {};
     }

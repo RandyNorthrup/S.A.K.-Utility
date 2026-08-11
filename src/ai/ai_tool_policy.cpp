@@ -285,23 +285,23 @@ bool packageMutationMissingExplicitIntent(const AiToolCallRequest& request) {
 bool shellCommandProvenReadOnly(const QString& preview);
 
 struct ToolPolicyContext {
-    bool shell{false};
-    bool package_tool{false};
-    bool provider_gateway{false};
-    bool mutating_package{false};
+    bool m_shell{false};
+    bool m_package_tool{false};
+    bool m_provider_gateway{false};
+    bool m_mutating_package{false};
     // A shell/process command the read-only allowlist cannot PROVE non-mutating.
-    bool shell_unproven{false};
-    bool risky{false};
-    bool catastrophic{false};
+    bool m_shell_unproven{false};
+    bool m_risky{false};
+    bool m_catastrophic{false};
 };
 
 ToolPolicyContext policyContext(const AiToolCallRequest& request) {
     ToolPolicyContext context;
-    context.shell = isShellTool(request.tool_name);
-    context.package_tool = isPackageTool(request.tool_name);
-    context.provider_gateway = isReadOnlyProviderOperation(request);
-    context.mutating_package = context.package_tool &&
-                               isMutatingPackageOperation(request.operation);
+    context.m_shell = isShellTool(request.tool_name);
+    context.m_package_tool = isPackageTool(request.tool_name);
+    context.m_provider_gateway = isReadOnlyProviderOperation(request);
+    context.m_mutating_package = context.m_package_tool &&
+                                 isMutatingPackageOperation(request.operation);
     // commandLooksRiskyChange is a blacklist, and a blacklist is fail-open: "fsutil file
     // setzerodata", "powershell -File attacker.ps1", a vendor wipe utility, or any mutator
     // invented after this list was written match none of its patterns, so under the mutating
@@ -309,17 +309,19 @@ ToolPolicyContext policyContext(const AiToolCallRequest& request) {
     // policies a shell command therefore counts as mutating unless the read-only allowlist
     // proves otherwise (fail closed); the read-only policy keeps its own allowlist path so it
     // still reports precisely why a command was refused.
-    context.shell_unproven = context.shell && !shellCommandProvenReadOnly(request.command_preview);
+    context.m_shell_unproven = context.m_shell &&
+                               !shellCommandProvenReadOnly(request.command_preview);
     // An obfuscated/indirected shell command (encoded, concatenated verb, in-memory
     // download-and-run) hides its real effect from commandLooksCatastrophic, so it
     // cannot be proven non-catastrophic. Treat it as catastrophic and force the hard
     // human confirmation rather than downgrading it to a mere restore-point (a wiped
     // volume behind '& (\'For\'+\'mat-Volume\')' must not slip through unattended).
-    context.catastrophic = context.shell && (commandLooksCatastrophic(request.command_preview) ||
-                                             commandLooksObfuscated(request.command_preview));
-    context.risky = request.requires_admin ||
-                    (context.shell && commandLooksRiskyChange(request.command_preview)) ||
-                    context.mutating_package || isMutatingProviderOperation(request);
+    context.m_catastrophic = context.m_shell &&
+                             (commandLooksCatastrophic(request.command_preview) ||
+                              commandLooksObfuscated(request.command_preview));
+    context.m_risky = request.requires_admin ||
+                      (context.m_shell && commandLooksRiskyChange(request.command_preview)) ||
+                      context.m_mutating_package || isMutatingProviderOperation(request);
     return context;
 }
 
@@ -345,11 +347,11 @@ bool commandUsesResolutionIndirection(const QString& preview) {
     //     out of harmless-looking fragments so 'format-volume' is never contiguous.
     // Any of these forfeits the read-only allowlist and is classified risky so a hidden
     // mutation cannot run without a lease/restore point (fail closed, no silent bypass).
-    static const QRegularExpression indirection(
+    static const QRegularExpression kIndirection(
         QStringLiteral(
             R"RX((\bget-command\b|\binvoke-command\b|\bstart-process\b|\bstart-job\b|\bnew-object\b|&\s*[('"$@{]|['"]\s*\+|\+\s*['"]))RX"),
         QRegularExpression::CaseInsensitiveOption);
-    return indirection.match(preview).hasMatch();
+    return kIndirection.match(preview).hasMatch();
 }
 
 bool commandHasUnsafeConstruct(const QString& preview) {
@@ -367,11 +369,11 @@ bool commandHasUnsafeConstruct(const QString& preview) {
     // command syntax after this check passed on "echo %VAR%". Delayed !VAR! expansion is
     // rejected with it: neither form's real command text is knowable here, so neither can
     // be proven read-only.
-    static const QRegularExpression unsafe(
+    static const QRegularExpression kUnsafe(
         QStringLiteral(
             R"((::|\.\s*\w+\s*\(|`|\$\(|\{|%[^\s%]{1,64}%|![a-z_][a-z0-9_]{0,63}!|\biex\b|\binvoke-expression\b|>>?\s*(?!&|nul\b|\$null\b|/dev/null\b)[^\s>&|]))"),
         QRegularExpression::CaseInsensitiveOption);
-    return unsafe.match(preview).hasMatch() || commandUsesResolutionIndirection(preview);
+    return kUnsafe.match(preview).hasMatch() || commandUsesResolutionIndirection(preview);
 }
 
 bool segmentLeadIsReadOnly(const QString& segment) {
@@ -382,11 +384,11 @@ bool segmentLeadIsReadOnly(const QString& segment) {
     // anything not clearly read-only is refused. Get-*/Test-* wildcards are safe (no
     // mutating cmdlet uses those verbs); Format-* is spelled out to exclude the
     // disk-destroying Format-Volume/Format-Table sharing the "format" stem.
-    static const QRegularExpression lead(
+    static const QRegularExpression kLead(
         QStringLiteral(
             R"(^\s*\(*\s*(get-\w+|test-\w+|resolve-dnsname|select-object|select-string|sort-object|measure-object|compare-object|group-object|where-object|format-table|format-list|format-wide|out-string|write-output|write-host|convertto-\w+|convertfrom-\w+|ping|tracert|pathping|ipconfig|netstat|nslookup|systeminfo|tasklist|whoami|hostname|ver|getmac|driverquery|type|dir|findstr|find|fc|tree|vol|where|echo)\b)"),
         QRegularExpression::CaseInsensitiveOption);
-    return lead.match(segment).hasMatch();
+    return kLead.match(segment).hasMatch();
 }
 
 // A parenthesis inside a quoted string is literal text, not a group delimiter, so a
@@ -409,9 +411,9 @@ bool consumeQuoteChar(QChar c, QChar& quote) {
 // Running state of the top-level paren scan: the groups closed so far, the current
 // nesting depth, and where the open top-level group started (-1 when outside one).
 struct ParenScan {
-    QStringList groups;
-    int depth{0};
-    qsizetype start{-1};
+    QStringList m_groups;
+    int m_depth{0};
+    qsizetype m_start{-1};
 };
 
 // Fold the delimiter at index i into the scan. A ')' with no matching '(' means the
@@ -420,18 +422,18 @@ struct ParenScan {
 bool applyParenBoundary(ParenScan& scan, const QString& s, qsizetype i) {
     const QChar c = s.at(i);
     if (c == QLatin1Char('(')) {
-        if (scan.depth == 0) {
-            scan.start = i + 1;
+        if (scan.m_depth == 0) {
+            scan.m_start = i + 1;
         }
-        ++scan.depth;
+        ++scan.m_depth;
     } else if (c == QLatin1Char(')')) {
-        if (scan.depth == 0) {
+        if (scan.m_depth == 0) {
             return false;
         }
-        --scan.depth;
-        if (scan.depth == 0 && scan.start >= 0) {
-            scan.groups.append(s.mid(scan.start, i - scan.start));
-            scan.start = -1;
+        --scan.m_depth;
+        if (scan.m_depth == 0 && scan.m_start >= 0) {
+            scan.m_groups.append(s.mid(scan.m_start, i - scan.m_start));
+            scan.m_start = -1;
         }
     }
     return true;
@@ -460,22 +462,22 @@ std::optional<QStringList> topLevelParenGroups(const QString& s) {
             return std::nullopt;
         }
     }
-    if (scan.depth != 0 || !quote.isNull()) {
+    if (scan.m_depth != 0 || !quote.isNull()) {
         return std::nullopt;
     }
-    return scan.groups;
+    return scan.m_groups;
 }
 
 constexpr int kMaxReadOnlyParenDepth = 8;
 
-bool commandIsReadOnlyDiagnostic(const QString& preview, int depthRemaining);
+bool commandIsReadOnlyDiagnostic(const QString& preview, int depth_remaining);
 
 // Require EVERY &/|/;/newline-separated segment to lead with an allowlisted
 // read-only command. One non-diagnostic segment (chained mutator, call-operator
 // to a binary) refuses the whole command.
 bool allSegmentsReadOnly(const QString& normalized) {
-    static const QRegularExpression sep(QStringLiteral(R"([|;&\r\n])"));
-    const QStringList segments = normalized.split(sep, Qt::SkipEmptyParts);
+    static const QRegularExpression kSep(QStringLiteral(R"([|;&\r\n])"));
+    const QStringList segments = normalized.split(kSep, Qt::SkipEmptyParts);
     if (segments.isEmpty()) {
         return false;
     }
@@ -491,7 +493,7 @@ bool allSegmentsReadOnly(const QString& normalized) {
 // first, so it must be read-only too (this is what stops a nested mutator hiding
 // behind a read-only lead). Fail closed if the grouping nests deeper than we
 // will verify.
-bool parenSubExpressionsReadOnly(const QString& normalized, int depthRemaining) {
+bool parenSubExpressionsReadOnly(const QString& normalized, int depth_remaining) {
     const std::optional<QStringList> groups = topLevelParenGroups(normalized);
     if (!groups.has_value()) {
         // Unbalanced parentheses or an unterminated quote: the grouping cannot be resolved,
@@ -501,29 +503,29 @@ bool parenSubExpressionsReadOnly(const QString& normalized, int depthRemaining) 
     if (groups->isEmpty()) {
         return true;
     }
-    if (depthRemaining <= 0) {
+    if (depth_remaining <= 0) {
         return false;
     }
     for (const QString& group : *groups) {
         const QString inner = group.trimmed();
-        if (!inner.isEmpty() && !commandIsReadOnlyDiagnostic(inner, depthRemaining - 1)) {
+        if (!inner.isEmpty() && !commandIsReadOnlyDiagnostic(inner, depth_remaining - 1)) {
             return false;
         }
     }
     return true;
 }
 
-bool commandIsReadOnlyDiagnostic(const QString& preview, int depthRemaining) {
+bool commandIsReadOnlyDiagnostic(const QString& preview, int depth_remaining) {
     QString normalized = preview.trimmed();
     if (normalized.isEmpty() || commandHasUnsafeConstruct(normalized)) {
         return false;
     }
     // Neutralize stream-merge redirections (2>&1, 1>&2) so their '&' is not mistaken
     // for a command separator.
-    static const QRegularExpression merge(QStringLiteral(R"([0-9]?>&[0-9]?)"));
-    normalized.replace(merge, QStringLiteral(" "));
+    static const QRegularExpression kMerge(QStringLiteral(R"([0-9]?>&[0-9]?)"));
+    normalized.replace(kMerge, QStringLiteral(" "));
     return allSegmentsReadOnly(normalized) &&
-           parenSubExpressionsReadOnly(normalized, depthRemaining);
+           parenSubExpressionsReadOnly(normalized, depth_remaining);
 }
 
 bool shellCommandProvenReadOnly(const QString& preview) {
@@ -602,15 +604,15 @@ AiToolPolicyDecision evaluateKnownPolicy(AiToolPolicy policy,
         return block(QStringLiteral("Local execution disabled by tool policy"));
     case AiToolPolicy::ReadOnlyPc:
         return evaluateReadOnlyPolicy(
-            request, context.shell, context.provider_gateway, context.risky);
+            request, context.m_shell, context.m_provider_gateway, context.m_risky);
     case AiToolPolicy::PackageToolsOnly:
-        return evaluatePackageOnlyPolicy(context.package_tool, context.mutating_package);
+        return evaluatePackageOnlyPolicy(context.m_package_tool, context.m_mutating_package);
     case AiToolPolicy::DownloadOnly:
         return evaluateDownloadOnlyPolicy(request);
     case AiToolPolicy::MutatingRequiresLease:
-        return evaluateMutatingPolicy(context.risky || context.shell_unproven, false);
+        return evaluateMutatingPolicy(context.m_risky || context.m_shell_unproven, false);
     case AiToolPolicy::ExclusiveMutatingExecutor:
-        return evaluateMutatingPolicy(context.risky || context.shell_unproven, true);
+        return evaluateMutatingPolicy(context.m_risky || context.m_shell_unproven, true);
     }
     return block(QStringLiteral("Unsupported tool policy"));
 }
@@ -716,8 +718,8 @@ static QString shellEscapeStrippedPreview(const QString& preview) {
     // character yields that literal character, so a split spelling of vssadmin really does
     // invoke vssadmin. Excluding the escape letters would miss real bypasses, so every
     // intra-word occurrence is stripped.
-    static const QRegularExpression caret_split(QStringLiteral("(\\w)\\x5E(\\w)"));
-    static const QRegularExpression escape_split(QStringLiteral("(\\w)\\x60(\\w)"));
+    static const QRegularExpression kCaretSplit(QStringLiteral("(\\w)\\x5E(\\w)"));
+    static const QRegularExpression kEscapeSplit(QStringLiteral("(\\w)\\x60(\\w)"));
     // cmd.exe uses '^' and PowerShell uses U+0060 as escape characters that the shell
     // removes before parsing, so a keyword split by one of them executes exactly as the
     // unsplit keyword. Every risk regex below matches whole words, so a single escape
@@ -734,8 +736,8 @@ static QString shellEscapeStrippedPreview(const QString& preview) {
     QString stripped = preview;
     for (int guard = 0; guard < kMaxEscapeStripPasses; ++guard) {
         const QString previous = stripped;
-        stripped.replace(caret_split, QStringLiteral("\\1\\2"));
-        stripped.replace(escape_split, QStringLiteral("\\1\\2"));
+        stripped.replace(kCaretSplit, QStringLiteral("\\1\\2"));
+        stripped.replace(kEscapeSplit, QStringLiteral("\\1\\2"));
         if (stripped == previous) {
             break;
         }
@@ -750,9 +752,9 @@ static QString shellCommandNormalizedPreview(const QString& preview) {
     // and "cipher.exe /w:c" escaped even the risky tier. Match the escape-stripped form with
     // the executable suffix removed as well.
     QString normalized = shellEscapeStrippedPreview(preview);
-    static const QRegularExpression exe_suffix(QStringLiteral(R"(\.(exe|com|cmd|bat|ps1|msc)\b)"),
+    static const QRegularExpression kExeSuffix(QStringLiteral(R"(\.(exe|com|cmd|bat|ps1|msc)\b)"),
                                                QRegularExpression::CaseInsensitiveOption);
-    normalized.remove(exe_suffix);
+    normalized.remove(kExeSuffix);
     return normalized;
 }
 
@@ -761,7 +763,7 @@ bool commandLooksObfuscated(const QString& preview) {
     // PowerShell -EncodedCommand/-enc, base64 decode, Invoke-Expression, in-memory
     // remote download-and-run (Net.WebClient / Invoke-WebRequest piped to iex),
     // and LOLBin decoders (certutil -decode/-urlcache).
-    static const QRegularExpression obfuscated(
+    static const QRegularExpression kObfuscated(
         QStringLiteral(
             R"((\s-enc(odedcommand)?\b|\s-e\s+[A-Za-z0-9+/]{24,}={0,2}|\bfrombase64string\b|\b(iex|invoke-expression)\b|\bdownloadstring\b|\bdownloadfile\b|\b(new-object\s+)?net\.webclient\b|\binvoke-webrequest\b.*\|\s*(iex|invoke-expression)\b|\bcertutil\b.*\s-(decode|urlcache|f)\b|\bconvert\]::frombase64))"),
         QRegularExpression::CaseInsensitiveOption);
@@ -770,7 +772,7 @@ bool commandLooksObfuscated(const QString& preview) {
     // catastrophic would force a confirmation prompt on it. Instead the stripped form is
     // against the same patterns, so an escape only matters when it reveals a real command.
     const QString stripped = shellEscapeStrippedPreview(preview);
-    return obfuscated.match(preview).hasMatch() || obfuscated.match(stripped).hasMatch() ||
+    return kObfuscated.match(preview).hasMatch() || kObfuscated.match(stripped).hasMatch() ||
            commandUsesResolutionIndirection(preview) || commandUsesResolutionIndirection(stripped);
 }
 
@@ -782,16 +784,16 @@ bool commandLooksCatastrophic(const QString& preview) {
     // Switches may precede the drive letter ("format /q D:"); Remove-Item's aliases rm/ri
     // wipe exactly what Remove-Item wipes; PowerShell accepts forward slashes in paths
     // ("C:/Windows"); and dd destroys whichever way round if=/of= are written.
-    static const QRegularExpression catastrophic(
+    static const QRegularExpression kCatastrophic(
         QStringLiteral(
             R"((\bformat\b\s+(?:/\S+\s+)*[a-z]:|\bformat-volume\b|\bdiskpart\b|\bclear-disk\b|\bremove-partition\b|\bclear-volume\b|\breset-physicaldisk\b|\binitialize-disk\b|\bbcdedit\b|\bvssadmin\b\s+delete|\bwbadmin\b\s+delete|\bwevtutil\b\s+cl\b|\bcipher\b\s+/w|\breg\b\s+delete\s+hk|\bremove-item\b[^\n]*\bhk(lm|cu|cr|u):|\bset-executionpolicy\b\s+\S*(unrestricted|bypass)|\b(?:remove-item|rm|ri)\b(?=[^\n]*\s-r)(?=[^\n]*(\$env:systemroot|\$env:windir|c:[\\/]windows|c:[\\/]program files))|\b(rd|rmdir)\b\s+/s\b(?=[^\n]*(c:[\\/]windows|c:[\\/]program files|%systemroot%|%windir%))|\bmkfs\b|\bdd\b(?=[^\n]*\b(if|of)=)))"),
         QRegularExpression::CaseInsensitiveOption);
     // Match the shell-escape-stripped form as well, so "fo^rmat C:" and "For`mat-Volume"
     // are classified exactly like the plain commands they execute as, and the
     // executable-suffix-stripped form so "format.com D:" is too.
-    return catastrophic.match(preview).hasMatch() ||
-           catastrophic.match(shellEscapeStrippedPreview(preview)).hasMatch() ||
-           catastrophic.match(shellCommandNormalizedPreview(preview)).hasMatch();
+    return kCatastrophic.match(preview).hasMatch() ||
+           kCatastrophic.match(shellEscapeStrippedPreview(preview)).hasMatch() ||
+           kCatastrophic.match(shellCommandNormalizedPreview(preview)).hasMatch();
 }
 
 bool commandLooksRiskyChange(const QString& preview) {
@@ -803,13 +805,13 @@ bool commandLooksRiskyChange(const QString& preview) {
     // service control, taskkill, shutdown, schtasks, powercfg, and file-writing output
     // redirection (> / >>). Obfuscated and catastrophic shapes also count as risky so
     // they never slip through as safe.
-    static const QRegularExpression risky(
+    static const QRegularExpression kRisky(
         QStringLiteral(
             R"((\bremove-\w+|\bclear-\w+|\bset-\w+|\bnew-\w+|\brename-\w+|\bmove-\w+|\bcopy-\w+|\badd-content\b|\bout-file\b|\btee-object\b|\bdelete\b|\bdel\b|\berase\b|\brd\b|\brmdir\b|\bmkdir\b|\bmd\b|\bmove\b|\bren\b|\brename\b|\bcopy\b|\bxcopy\b|\brobocopy\b|\bformat\b|\bclean\b|\breset\b|\brepair\b|\brestorehealth\b|\bchkdsk\b.*\s/[frx]|\bsfc\b|\bdism\b|\bmsiexec\b|\bwinget\s+(install|uninstall|upgrade)|\bchoco\s+(install|uninstall|upgrade)|\buninstall\b|\binstall\b|\bdisable-\w+|\benable-\w+|\bstop-service\b|\bstart-service\b|\brestart-service\b|\bstop-process\b|\bkill\b|\brestart-computer\b|\bstop-computer\b|(?:^|[|;&\r\n]\s*)r[im]\b|\]\s*::|\.\w+\s*\(|\bset-itemproperty\b|\bnew-itemproperty\b|\bremove-item\b|\breg\b\s+add\b|\bsc(\.exe)?\b\s+(stop|start|config|delete|create|failure|pause|continue)\b|\bnet\b\s+(stop|start)\b|\btaskkill\b|\bshutdown\b|\bschtasks\b\s*/(create|delete|change|run|end)|\bpowercfg\b\s*/(setactive|s\b|import|delete|x\b)|\s\d*>>?\s*(?!&|nul\b|\$null\b|/dev/null\b)[^\s>&|]))"),
         QRegularExpression::CaseInsensitiveOption);
-    return risky.match(preview).hasMatch() ||
-           risky.match(shellEscapeStrippedPreview(preview)).hasMatch() ||
-           risky.match(shellCommandNormalizedPreview(preview)).hasMatch() ||
+    return kRisky.match(preview).hasMatch() ||
+           kRisky.match(shellEscapeStrippedPreview(preview)).hasMatch() ||
+           kRisky.match(shellCommandNormalizedPreview(preview)).hasMatch() ||
            commandLooksObfuscated(preview) || commandLooksCatastrophic(preview);
 }
 
@@ -862,7 +864,7 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
 
     const ToolPolicyContext context = policyContext(request);
     AiToolPolicyDecision decision = evaluateKnownPolicy(policy, request, context);
-    if (context.catastrophic && decision.allowed) {
+    if (context.m_catastrophic && decision.allowed) {
         // Force the full mutating treatment regardless of which policy allowed it.
         decision.catastrophic_change = true;
         decision.risky_change = true;

@@ -69,8 +69,8 @@ constexpr unsigned int kUtf8ContinuationByte = 0x80U;
 // ======================================================================
 
 struct HelperArgs {
-    QString pipe_name;
-    qint64 parent_pid{0};
+    QString m_pipe_name;
+    qint64 m_parent_pid{0};
 };
 
 bool applyPipeArg(const QString& value, HelperArgs* args) {
@@ -78,11 +78,11 @@ bool applyPipeArg(const QString& value, HelperArgs* args) {
         sak::logError("ElevatedHelper: --pipe value is empty");
         return false;
     }
-    if (!args->pipe_name.isEmpty()) {
+    if (!args->m_pipe_name.isEmpty()) {
         sak::logError("ElevatedHelper: --pipe supplied more than once");
         return false;
     }
-    args->pipe_name = value;
+    args->m_pipe_name = value;
     return true;
 }
 
@@ -95,11 +95,11 @@ bool applyParentPidArg(const QString& value, HelperArgs* args) {
         sak::logError("ElevatedHelper: invalid --parent-pid value '{}'", value.toStdString());
         return false;
     }
-    if (args->parent_pid != 0) {
+    if (args->m_parent_pid != 0) {
         sak::logError("ElevatedHelper: --parent-pid supplied more than once");
         return false;
     }
-    args->parent_pid = pid;
+    args->m_parent_pid = pid;
     return true;
 }
 
@@ -247,9 +247,9 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
 struct PermissionTaskSpec {
     std::function<std::expected<void, sak::error_code>(
         sak::PermissionManager&, const QString&, const QString&)>
-        operation;
-    QString action_label;
-    bool needs_user_sid{false};
+        m_operation;
+    QString m_action_label;
+    bool m_needs_user_sid{false};
 };
 
 sak::TaskHandlerResult runPermissionTask(const QJsonObject& payload,
@@ -264,7 +264,7 @@ sak::TaskHandlerResult runPermissionTask(const QJsonObject& payload,
     }
     const QString path = path_value.toString();
     QString user_sid;
-    if (spec.needs_user_sid) {
+    if (spec.m_needs_user_sid) {
         const QJsonValue sid_value = payload.value(QStringLiteral("user_sid"));
         if (!sid_value.isString() || sid_value.toString().trimmed().isEmpty()) {
             return {.success = false,
@@ -276,9 +276,9 @@ sak::TaskHandlerResult runPermissionTask(const QJsonObject& payload,
     if (is_cancelled()) {
         return {.success = false, .data = {}, .error_message = "Task cancelled before it started"};
     }
-    progress(0, spec.action_label + path);
+    progress(0, spec.m_action_label + path);
     sak::PermissionManager pm;
-    auto result = spec.operation(pm, path, user_sid);
+    auto result = spec.m_operation(pm, path, user_sid);
     if (!result) {
         // Do not discard the structured error: a PermissionManager that failed without setting a
         // message would otherwise produce a failure carrying no error at all.
@@ -288,7 +288,7 @@ sak::TaskHandlerResult runPermissionTask(const QJsonObject& payload,
         }
         return {.success = false, .data = {}, .error_message = message};
     }
-    progress(sak::kPercentMax, spec.action_label + QStringLiteral("done"));
+    progress(sak::kPercentMax, spec.m_action_label + QStringLiteral("done"));
     return {.success = true, .data = {}, .error_message = {}};
 }
 
@@ -323,30 +323,30 @@ QString cappedTaskOutput(const QString& value, int max_bytes, bool* truncated = 
 
 #ifdef _WIN32
 struct ElevatedJobGuard {
-    HANDLE job{nullptr};
+    HANDLE m_job{nullptr};
     ~ElevatedJobGuard() {
-        if (job != nullptr) {
-            ::CloseHandle(job);  // KILL_ON_JOB_CLOSE reaps survivors
+        if (m_job != nullptr) {
+            ::CloseHandle(m_job);  // KILL_ON_JOB_CLOSE reaps survivors
         }
     }
     // Create the KILL_ON_JOB_CLOSE job on first use. Returns false (job left null) if
     // creation or configuration fails so the caller does not rely on an unconfigured job.
     bool ensureJob() {
-        if (job != nullptr) {
+        if (m_job != nullptr) {
             return true;
         }
-        job = ::CreateJobObjectW(nullptr, nullptr);
-        if (job == nullptr) {
+        m_job = ::CreateJobObjectW(nullptr, nullptr);
+        if (m_job == nullptr) {
             sak::logError("ElevatedHelper: CreateJobObject failed: {}", ::GetLastError());
             return false;
         }
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         if (::SetInformationJobObject(
-                job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
+                m_job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
             sak::logError("ElevatedHelper: SetInformationJobObject failed: {}", ::GetLastError());
-            ::CloseHandle(job);
-            job = nullptr;
+            ::CloseHandle(m_job);
+            m_job = nullptr;
             return false;
         }
         return true;
@@ -391,7 +391,7 @@ struct ElevatedJobGuard {
             terminateUncontained(pid);
             return;
         }
-        if (::AssignProcessToJobObject(job, handle) == 0) {
+        if (::AssignProcessToJobObject(m_job, handle) == 0) {
             sak::logError("ElevatedHelper: AssignProcessToJobObject failed: {}; terminating child",
                           ::GetLastError());
             if (::TerminateProcess(handle, 1) == 0) {
@@ -404,7 +404,7 @@ struct ElevatedJobGuard {
         ::CloseHandle(handle);
     }
     void terminate() const {
-        if ((job != nullptr) && (::TerminateJobObject(job, 1) == 0)) {
+        if ((m_job != nullptr) && (::TerminateJobObject(m_job, 1) == 0)) {
             sak::logError("ElevatedHelper: TerminateJobObject failed: {}", ::GetLastError());
         }
     }
@@ -432,10 +432,10 @@ constexpr int kMaxProgressChunkBytes = 64 * 1024;
 constexpr uint64_t kMaxPartitionProbeBytes = 2ULL * 1024ULL * 1024ULL;
 
 struct ElevatedPowerShellConfig {
-    QString command;
-    int timeout_ms{0};
-    int output_cap{0};
-    int half_cap{0};
+    QString m_command;
+    int m_timeout_ms{0};
+    int m_output_cap{0};
+    int m_half_cap{0};
 };
 
 QJsonObject baseElevatedPowerShellData() {
@@ -547,20 +547,21 @@ sak::TaskHandlerResult elevatedPowerShellOutcome(QJsonObject data,
 std::optional<int> optionalPayloadInt(const QJsonObject& payload,
                                       const QString& key,
                                       int default_value,
-                                      QString* errorMessage) {
+                                      QString* error_message) {
     const QJsonValue value = payload.value(key);
     if (value.isUndefined()) {
         return default_value;
     }
     if (!value.isDouble()) {
-        *errorMessage = QStringLiteral("Payload field '%1' must be a number").arg(key);
+        *error_message = QStringLiteral("Payload field '%1' must be a number").arg(key);
         return std::nullopt;
     }
     const double raw = value.toDouble();
     if (!std::isfinite(raw) || std::floor(raw) != raw ||
         raw < static_cast<double>(std::numeric_limits<int>::min()) ||
         raw > static_cast<double>(std::numeric_limits<int>::max())) {
-        *errorMessage = QStringLiteral("Payload field '%1' must be a whole 32-bit number").arg(key);
+        *error_message =
+            QStringLiteral("Payload field '%1' must be a whole 32-bit number").arg(key);
         return std::nullopt;
     }
     return static_cast<int>(raw);
@@ -571,32 +572,34 @@ std::optional<int> optionalPayloadInt(const QJsonObject& payload,
 // the caller). payloadUInt64 (used for the raw-probe numeric fields) fails closed on wrong-typed
 // input by returning std::nullopt.
 std::optional<ElevatedPowerShellConfig> elevatedPowerShellConfig(const QJsonObject& payload,
-                                                                 QString* errorMessage) {
+                                                                 QString* error_message) {
     const QJsonValue command_value = payload.value(QStringLiteral("command"));
     if (!command_value.isString()) {
-        *errorMessage = QStringLiteral("PowerShell command must be a string");
+        *error_message = QStringLiteral("PowerShell command must be a string");
         return std::nullopt;
     }
-    const auto timeout_seconds = optionalPayloadInt(
-        payload, QStringLiteral("timeout_seconds"), kDefaultPowerShellTimeoutSeconds, errorMessage);
+    const auto timeout_seconds = optionalPayloadInt(payload,
+                                                    QStringLiteral("timeout_seconds"),
+                                                    kDefaultPowerShellTimeoutSeconds,
+                                                    error_message);
     if (!timeout_seconds.has_value()) {
         return std::nullopt;
     }
     const auto max_output_bytes = optionalPayloadInt(
-        payload, QStringLiteral("max_output_bytes"), kDefaultPowerShellOutputBytes, errorMessage);
+        payload, QStringLiteral("max_output_bytes"), kDefaultPowerShellOutputBytes, error_message);
     if (!max_output_bytes.has_value()) {
         return std::nullopt;
     }
 
     ElevatedPowerShellConfig config;
-    config.command = command_value.toString();
-    config.timeout_ms =
+    config.m_command = command_value.toString();
+    config.m_timeout_ms =
         std::clamp(*timeout_seconds, kMinPowerShellTimeoutSeconds, kMaxPowerShellTimeoutSeconds) *
         kPowerShellMillisecondsPerSecond;
-    config.output_cap =
+    config.m_output_cap =
         std::clamp(*max_output_bytes, kMinPowerShellOutputBytes, kMaxPowerShellOutputBytes);
-    config.half_cap = std::max(config.output_cap / kPowerShellOutputHalfDivisor,
-                               kMinPowerShellHalfOutputBytes);
+    config.m_half_cap = std::max(config.m_output_cap / kPowerShellOutputHalfDivisor,
+                                 kMinPowerShellHalfOutputBytes);
     return config;
 }
 
@@ -693,13 +696,13 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
     if (!config.has_value()) {
         return elevatedPowerShellFailure(data, config_error);
     }
-    if (config->command.trimmed().isEmpty()) {
+    if (config->m_command.trimmed().isEmpty()) {
         return elevatedPowerShellFailure(data, QStringLiteral("PowerShell command is empty"));
     }
     // Report the limits actually in force so a clamped request is visible to the caller instead
     // of silently running under different bounds than it asked for.
-    data[QStringLiteral("timeout_ms")] = config->timeout_ms;
-    data[QStringLiteral("max_output_bytes")] = config->output_cap;
+    data[QStringLiteral("timeout_ms")] = config->m_timeout_ms;
+    data[QStringLiteral("max_output_bytes")] = config->m_output_cap;
 
     const QString powershell_path = resolveSystemPowerShellPath();
     if (powershell_path.isEmpty()) {
@@ -719,11 +722,11 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
     bool started = false;
     sak::ProcessStreamingRequest request;
     request.program = powershell_path;
-    request.args = elevatedPowerShellArgs(config->command);
-    request.timeout_ms = config->timeout_ms;
+    request.args = elevatedPowerShellArgs(config->m_command);
+    request.timeout_ms = config->m_timeout_ms;
     configureElevatedPowerShellProgress(&request,
                                         &progress,
-                                        std::min(config->half_cap, kMaxProgressChunkBytes));
+                                        std::min(config->m_half_cap, kMaxProgressChunkBytes));
     configureElevatedPowerShellStart(&request,
                                      &started,
                                      &progress
@@ -747,7 +750,7 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
                                          timer.elapsed());
     }
 
-    return elevatedPowerShellOutcome(data, result, timer.elapsed(), config->half_cap, progress);
+    return elevatedPowerShellOutcome(data, result, timer.elapsed(), config->m_half_cap, progress);
 }
 
 bool isAllowedPhysicalDrivePath(const QString& path) {
@@ -799,9 +802,9 @@ uint64_t partitionProbeReadLimit(uint64_t partition_size_bytes, uint64_t request
 }
 
 struct PartitionProbeRequest {
-    QString device_path;
-    uint64_t offset_bytes{0};
-    uint64_t read_limit{0};
+    QString m_device_path;
+    uint64_t m_offset_bytes{0};
+    uint64_t m_read_limit{0};
 };
 
 sak::TaskHandlerResult partitionProbeFailure(const QString& message) {
@@ -812,77 +815,77 @@ sak::TaskHandlerResult partitionProbeFailure(const QString& message) {
 // MUST parse and MUST be non-zero -- an explicit zero asks for no bytes and a malformed value
 // must not be read as "no limit".
 std::optional<uint64_t> partitionProbeRequestedBytes(const QJsonObject& payload,
-                                                     QString* errorMessage) {
+                                                     QString* error_message) {
     if (payload.value(QStringLiteral("max_bytes")).isUndefined()) {
         return kMaxPartitionProbeBytes;
     }
     const auto requested = payloadUInt64(payload, QStringLiteral("max_bytes"));
     if (!requested.has_value() || *requested == 0) {
-        *errorMessage = QStringLiteral("Raw probe byte limit is invalid");
+        *error_message = QStringLiteral("Raw probe byte limit is invalid");
         return std::nullopt;
     }
     return requested;
 }
 
 std::optional<PartitionProbeRequest> partitionProbeRequest(const QJsonObject& payload,
-                                                           QString* errorMessage) {
-    const QString devicePath = payload.value(QStringLiteral("device_path")).toString();
-    if (!isAllowedPhysicalDrivePath(devicePath)) {
-        *errorMessage = QStringLiteral("Raw probe target must be \\\\.\\PhysicalDriveN");
+                                                           QString* error_message) {
+    const QString device_path = payload.value(QStringLiteral("device_path")).toString();
+    if (!isAllowedPhysicalDrivePath(device_path)) {
+        *error_message = QStringLiteral("Raw probe target must be \\\\.\\PhysicalDriveN");
         return std::nullopt;
     }
 
     const auto offset = payloadUInt64(payload, QStringLiteral("partition_offset_bytes"));
-    const auto partitionSize = payloadUInt64(payload, QStringLiteral("partition_size_bytes"));
-    if (!offset.has_value() || !partitionSize.has_value()) {
-        *errorMessage = QStringLiteral("Raw probe offset and partition size are required");
+    const auto partition_size = payloadUInt64(payload, QStringLiteral("partition_size_bytes"));
+    if (!offset.has_value() || !partition_size.has_value()) {
+        *error_message = QStringLiteral("Raw probe offset and partition size are required");
         return std::nullopt;
     }
     if (*offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max())) {
-        *errorMessage = QStringLiteral("Raw probe offset is too large");
+        *error_message = QStringLiteral("Raw probe offset is too large");
         return std::nullopt;
     }
     // A declared zero-length partition bounds the read to nothing: accepting it and then falling
     // back to the 2 MiB ceiling would read data the request never described.
-    if (*partitionSize == 0) {
-        *errorMessage = QStringLiteral("Raw probe partition size must be greater than zero");
+    if (*partition_size == 0) {
+        *error_message = QStringLiteral("Raw probe partition size must be greater than zero");
         return std::nullopt;
     }
-    const auto requestedBytes = partitionProbeRequestedBytes(payload, errorMessage);
-    if (!requestedBytes.has_value()) {
+    const auto requested_bytes = partitionProbeRequestedBytes(payload, error_message);
+    if (!requested_bytes.has_value()) {
         return std::nullopt;
     }
-    const uint64_t readLimit = partitionProbeReadLimit(*partitionSize, *requestedBytes);
-    if (readLimit == 0 || readLimit > kMaxPartitionProbeBytes) {
-        *errorMessage = QStringLiteral("Raw probe byte limit is invalid");
+    const uint64_t read_limit = partitionProbeReadLimit(*partition_size, *requested_bytes);
+    if (read_limit == 0 || read_limit > kMaxPartitionProbeBytes) {
+        *error_message = QStringLiteral("Raw probe byte limit is invalid");
         return std::nullopt;
     }
-    return PartitionProbeRequest{.device_path = devicePath,
-                                 .offset_bytes = *offset,
-                                 .read_limit = readLimit};
+    return PartitionProbeRequest{.m_device_path = device_path,
+                                 .m_offset_bytes = *offset,
+                                 .m_read_limit = read_limit};
 }
 
 std::optional<QByteArray> readPartitionProbeBytes(const PartitionProbeRequest& request,
-                                                  QString* errorMessage) {
-    QFile device(request.device_path);
+                                                  QString* error_message) {
+    QFile device(request.m_device_path);
     if (!device.open(QIODevice::ReadOnly)) {
-        *errorMessage = QStringLiteral("Raw probe open failed: %1").arg(device.errorString());
+        *error_message = QStringLiteral("Raw probe open failed: %1").arg(device.errorString());
         return std::nullopt;
     }
-    if (!device.seek(static_cast<qint64>(request.offset_bytes))) {
-        *errorMessage = QStringLiteral("Raw probe seek failed: %1").arg(device.errorString());
+    if (!device.seek(static_cast<qint64>(request.m_offset_bytes))) {
+        *error_message = QStringLiteral("Raw probe seek failed: %1").arg(device.errorString());
         return std::nullopt;
     }
-    const QByteArray bytes = device.read(static_cast<qint64>(request.read_limit));
+    const QByteArray bytes = device.read(static_cast<qint64>(request.m_read_limit));
     // Fail closed: a read error invalidates the probe even if some bytes came back, and a
     // zero-byte read yields no signature to analyze. A short (non-empty, error-free) read is
     // legitimate on a small partition, so those are accepted.
     if (device.error() != QFileDevice::NoError) {
-        *errorMessage = QStringLiteral("Raw probe read failed: %1").arg(device.errorString());
+        *error_message = QStringLiteral("Raw probe read failed: %1").arg(device.errorString());
         return std::nullopt;
     }
     if (bytes.isEmpty()) {
-        *errorMessage = QStringLiteral("Raw probe read returned no data");
+        *error_message = QStringLiteral("Raw probe read returned no data");
         return std::nullopt;
     }
     return bytes;
@@ -891,7 +894,7 @@ std::optional<QByteArray> readPartitionProbeBytes(const PartitionProbeRequest& r
 sak::TaskHandlerResult partitionProbeSuccess(const PartitionProbeRequest& request,
                                              const QByteArray& bytes) {
     QJsonObject data;
-    data[QStringLiteral("device_path")] = request.device_path;
+    data[QStringLiteral("device_path")] = request.m_device_path;
     data[QStringLiteral("bytes_read")] = static_cast<double>(bytes.size());
     data[QStringLiteral("bytes_base64")] = QString::fromLatin1(bytes.toBase64());
     return {.success = true, .data = data, .error_message = {}};
@@ -900,19 +903,19 @@ sak::TaskHandlerResult partitionProbeSuccess(const PartitionProbeRequest& reques
 sak::TaskHandlerResult runPartitionProbeReadTask(const QJsonObject& payload,
                                                  sak::ProgressCallback progress,
                                                  sak::CancelCheck is_cancelled) {
-    QString errorMessage;
-    const auto request = partitionProbeRequest(payload, &errorMessage);
+    QString error_message;
+    const auto request = partitionProbeRequest(payload, &error_message);
     if (!request.has_value()) {
-        return partitionProbeFailure(errorMessage);
+        return partitionProbeFailure(error_message);
     }
     if (is_cancelled()) {
         return partitionProbeFailure(QStringLiteral("Raw probe cancelled"));
     }
 
     progress(0, QStringLiteral("Reading partition signature probe"));
-    const auto bytes = readPartitionProbeBytes(*request, &errorMessage);
+    const auto bytes = readPartitionProbeBytes(*request, &error_message);
     if (!bytes.has_value()) {
-        return partitionProbeFailure(errorMessage);
+        return partitionProbeFailure(error_message);
     }
     if (is_cancelled()) {
         return partitionProbeFailure(QStringLiteral("Raw probe cancelled"));
@@ -980,11 +983,12 @@ void registerPermissionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
                 std::move(progress),
                 is_cancelled,
                 PermissionTaskSpec{
-                    .operation = [](sak::PermissionManager& pm,
-                                    const QString& path,
-                                    const QString& sid) { return pm.tryTakeOwnership(path, sid); },
-                    .action_label = QStringLiteral("Taking ownership of: "),
-                    .needs_user_sid = true});
+                    .m_operation =
+                        [](sak::PermissionManager& pm, const QString& path, const QString& sid) {
+                            return pm.tryTakeOwnership(path, sid);
+                        },
+                    .m_action_label = QStringLiteral("Taking ownership of: "),
+                    .m_needs_user_sid = true});
         });
 
     dispatcher.registerHandler(
@@ -996,14 +1000,14 @@ void registerPermissionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
                 payload,
                 std::move(progress),
                 is_cancelled,
-                PermissionTaskSpec{.operation =
+                PermissionTaskSpec{.m_operation =
                                        [](sak::PermissionManager& pm,
                                           const QString& path,
                                           const QString& /*sid*/) {
                                            return pm.tryStripPermissions(path);
                                        },
-                                   .action_label = QStringLiteral("Stripping permissions: "),
-                                   .needs_user_sid = false});
+                                   .m_action_label = QStringLiteral("Stripping permissions: "),
+                                   .m_needs_user_sid = false});
         });
 
     dispatcher.registerHandler(
@@ -1016,12 +1020,12 @@ void registerPermissionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
                 std::move(progress),
                 is_cancelled,
                 PermissionTaskSpec{
-                    .operation =
+                    .m_operation =
                         [](sak::PermissionManager& pm, const QString& path, const QString& sid) {
                             return pm.trySetStandardUserPermissions(path, sid);
                         },
-                    .action_label = QStringLiteral("Setting permissions: "),
-                    .needs_user_sid = true});
+                    .m_action_label = QStringLiteral("Setting permissions: "),
+                    .m_needs_user_sid = true});
         });
 }
 
@@ -1403,18 +1407,18 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     const HelperArgs args = *parsed_args;
-    if (args.pipe_name.isEmpty()) {
+    if (args.m_pipe_name.isEmpty()) {
         sak::logError("ElevatedHelper: --pipe argument required");
         return 1;
     }
-    if (args.parent_pid <= 0) {
+    if (args.m_parent_pid <= 0) {
         sak::logError("ElevatedHelper: --parent-pid argument required");
         return 1;
     }
 
     sak::logInfo("ElevatedHelper: pipe='{}', parent_pid={}",
-                 args.pipe_name.toStdString(),
-                 args.parent_pid);
+                 args.m_pipe_name.toStdString(),
+                 args.m_parent_pid);
 
     // Register task handlers (compile-time allowlist)
     sak::ElevatedTaskDispatcher dispatcher;
@@ -1422,7 +1426,7 @@ int main(int argc, char* argv[]) {
     sak::logInfo("ElevatedHelper: registered {} task handlers", dispatcher.handlerCount());
 
     // Start pipe server and wait for connection
-    sak::ElevatedPipeServer server(args.pipe_name, args.parent_pid);
+    sak::ElevatedPipeServer server(args.m_pipe_name, args.m_parent_pid);
     if (!server.start()) {
         sak::logError("ElevatedHelper: failed to start pipe server");
         return kHelperStartupFailureExitCode;

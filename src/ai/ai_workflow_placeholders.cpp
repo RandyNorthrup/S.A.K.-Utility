@@ -127,9 +127,9 @@ struct PowerShellScanResult {
     // False when the scanned prefix used a construct this scanner deliberately does not
     // lex. The caller then REJECTS the template instead of guessing the placeholder's
     // quoting context (the naive quote-toggle it replaced guessed, and guessed wrong).
-    bool provable{false};
-    bool inside_single_quoted{false};
-    QString blocking_construct;
+    bool m_provable{false};
+    bool m_inside_single_quoted{false};
+    QString m_blocking_construct;
 };
 
 [[nodiscard]] QChar characterAt(const QString& text, qsizetype index) {
@@ -222,13 +222,13 @@ PowerShellScanResult scanPowerShellPrefix(const QString& text, qsizetype offset)
         qsizetype consumed = 0;
         switch (state) {
         case PowerShellScanState::Code:
-            consumed = scanCodeCharacter(text, index, &state, &result.blocking_construct);
+            consumed = scanCodeCharacter(text, index, &state, &result.m_blocking_construct);
             break;
         case PowerShellScanState::SingleQuoted:
             consumed = scanSingleQuotedCharacter(text, index, &state);
             break;
         case PowerShellScanState::DoubleQuoted:
-            consumed = scanDoubleQuotedCharacter(text, index, &state, &result.blocking_construct);
+            consumed = scanDoubleQuotedCharacter(text, index, &state, &result.m_blocking_construct);
             break;
         }
         if (consumed == 0) {
@@ -236,8 +236,8 @@ PowerShellScanResult scanPowerShellPrefix(const QString& text, qsizetype offset)
         }
         index += consumed;
     }
-    result.provable = true;
-    result.inside_single_quoted = state == PowerShellScanState::SingleQuoted;
+    result.m_provable = true;
+    result.m_inside_single_quoted = state == PowerShellScanState::SingleQuoted;
     return result;
 }
 
@@ -262,8 +262,8 @@ void setSingleQuoteError(QString* error, const QString& placeholder, const QStri
 // $vars (and ${...} spellings the substitutor ignores, e.g. containing ':') are not flagged.
 // One definition keeps the validators and the substitutor from drifting apart.
 const QRegularExpression& workflowPlaceholderPattern() {
-    static const QRegularExpression pattern(QStringLiteral(R"(\$\{([A-Za-z0-9_]+)\})"));
-    return pattern;
+    static const QRegularExpression kPattern(QStringLiteral(R"(\$\{([A-Za-z0-9_]+)\})"));
+    return kPattern;
 }
 
 }  // namespace
@@ -273,8 +273,8 @@ bool powerShellCommandTemplateIsSingleQuoteSafe(const QString& command, QString*
     while (matches.hasNext()) {
         const auto match = matches.next();
         const PowerShellScanResult scan = scanPowerShellPrefix(command, match.capturedStart());
-        if (!scan.provable || !scan.inside_single_quoted) {
-            setSingleQuoteError(error, match.captured(), scan.blocking_construct);
+        if (!scan.m_provable || !scan.m_inside_single_quoted) {
+            setSingleQuoteError(error, match.captured(), scan.m_blocking_construct);
             return false;
         }
     }

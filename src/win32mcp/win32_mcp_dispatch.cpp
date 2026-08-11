@@ -290,7 +290,7 @@ bool win32McpToolIsReadOnly(const QString& tool_name) {
     // profile independently, never trusting the client. KEEP IN SYNC with that list.
     // browser_focus/hover/reveal are deliberately NOT here: they mutate UI state (move focus,
     // dispatch hover, scroll into view), so they are not passive inspectors.
-    static const QSet<QString> read_only{
+    static const QSet<QString> kReadOnly{
         QStringLiteral("assert_text_visible"),
         QStringLiteral("browser_box"),
         QStringLiteral("browser_extension_status"),
@@ -327,7 +327,7 @@ bool win32McpToolIsReadOnly(const QString& tool_name) {
         QStringLiteral("wait_for_text"),
         QStringLiteral("wait_for_window"),
     };
-    return read_only.contains(tool_name.trimmed());
+    return kReadOnly.contains(tool_name.trimmed());
 }
 
 QString redactWin32McpSensitiveText(const QString& text) {
@@ -340,11 +340,11 @@ QString redactWin32McpSensitiveText(const QString& text) {
     // optional closing quote after the key and an optional opening quote before the value let
     // this also catch quoted-JSON forms like "token":"secret"; the value stops at a quote,
     // whitespace, comma, or closing brace so structural punctuation is not swallowed.
-    static const QRegularExpression assignment(
+    static const QRegularExpression kAssignment(
         QStringLiteral(
             R"RX((\b(?:pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|bearer)\b"?(?:\s*[:=]\s*|\s+)"?)([^"\s,}]+))RX"),
         QRegularExpression::CaseInsensitiveOption);
-    redacted.replace(assignment, QStringLiteral("\\1[REDACTED]"));
+    redacted.replace(kAssignment, QStringLiteral("\\1[REDACTED]"));
     return redacted;
 }
 

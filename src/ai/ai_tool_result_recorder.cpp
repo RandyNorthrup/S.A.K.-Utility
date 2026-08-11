@@ -51,19 +51,19 @@ void appendToolStatusSummary(QStringList* lines, const QJsonObject& result) {
 }
 
 struct ToolTextSummaryRequest {
-    QString field;
-    QString label;
-    int max_chars{0};
+    QString m_field;
+    QString m_label;
+    int m_max_chars{0};
 };
 
 void appendToolTextSummary(QStringList* lines,
                            const QJsonObject& result,
                            const ToolTextSummaryRequest& request,
                            const ToolResultTextRedactor& redactor) {
-    const QString text = result.value(request.field).toString().trimmed();
+    const QString text = result.value(request.m_field).toString().trimmed();
     if (!text.isEmpty()) {
         *lines << QStringLiteral("%1: %2").arg(
-            request.label, clippedToolResultText(text, request.max_chars, redactor));
+            request.m_label, clippedToolResultText(text, request.m_max_chars, redactor));
     }
 }
 
@@ -142,15 +142,15 @@ QString toolResultChatSummary(const QJsonObject& result, const ToolResultTextRed
     }
     appendToolTextSummary(&lines,
                           result,
-                          {.field = QStringLiteral("stdout"),
-                           .label = QStringLiteral("Output"),
-                           .max_chars = kToolStdoutSummaryMaxChars},
+                          {.m_field = QStringLiteral("stdout"),
+                           .m_label = QStringLiteral("Output"),
+                           .m_max_chars = kToolStdoutSummaryMaxChars},
                           redactor);
     appendToolTextSummary(&lines,
                           result,
-                          {.field = QStringLiteral("stderr"),
-                           .label = QStringLiteral("Errors"),
-                           .max_chars = kToolStderrSummaryMaxChars},
+                          {.m_field = QStringLiteral("stderr"),
+                           .m_label = QStringLiteral("Errors"),
+                           .m_max_chars = kToolStderrSummaryMaxChars},
                           redactor);
     return lines.join(QStringLiteral("\n"));
 }

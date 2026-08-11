@@ -105,8 +105,8 @@ QHash<QString, QByteArray> g_baselines;
 // -- window existence --------------------------------------------------------
 
 struct ExistState {
-    QString needle_lower;
-    bool found;
+    QString m_needle_lower;
+    bool m_found;
 };
 
 BOOL CALLBACK existProc(HWND hwnd, LPARAM param) {
@@ -120,8 +120,8 @@ BOOL CALLBACK existProc(HWND hwnd, LPARAM param) {
     }
     QVector<wchar_t> buffer(length + 1, L'\0');
     const int copied = GetWindowTextW(hwnd, buffer.data(), length + 1);
-    if (QString::fromWCharArray(buffer.data(), copied).toLower().contains(state->needle_lower)) {
-        state->found = true;
+    if (QString::fromWCharArray(buffer.data(), copied).toLower().contains(state->m_needle_lower)) {
+        state->m_found = true;
         return FALSE;
     }
     return TRUE;
@@ -131,10 +131,10 @@ BOOL CALLBACK existProc(HWND hwnd, LPARAM param) {
 // match" via enum_ok: EnumWindows returns FALSE both when a callback stops it (our found-and-stop)
 // and on a genuine failure, so a FALSE return is only an error when nothing was found.
 bool windowVisibleExists(const QString& needle_lower, bool& enum_ok) {
-    ExistState state{.needle_lower = needle_lower, .found = false};
+    ExistState state{.m_needle_lower = needle_lower, .m_found = false};
     const BOOL enum_ret = EnumWindows(existProc, reinterpret_cast<LPARAM>(&state));
-    enum_ok = state.found || enum_ret != FALSE;
-    return state.found;
+    enum_ok = state.m_found || enum_ret != FALSE;
+    return state.m_found;
 }
 
 // -- tools -------------------------------------------------------------------
@@ -350,16 +350,16 @@ void appendWaitTools(QJsonArray& tools) {
 }
 
 struct WatchHandler {
-    QLatin1String name;
-    ToolResult (*fn)(const QJsonObject&);
+    QLatin1String m_name;
+    ToolResult (*m_fn)(const QJsonObject&);
 };
 
 const WatchHandler kWatchHandlers[] = {
-    {.name = QLatin1String("get_pixel_color"), .fn = toolGetPixelColor},
-    {.name = QLatin1String("get_window_snapshot"), .fn = toolGetWindowSnapshot},
-    {.name = QLatin1String("compare_screenshots"), .fn = toolCompareScreenshots},
-    {.name = QLatin1String("wait_for_window"), .fn = toolWaitForWindow},
-    {.name = QLatin1String("wait_for_idle"), .fn = toolWaitForIdle},
+    {.m_name = QLatin1String("get_pixel_color"), .m_fn = toolGetPixelColor},
+    {.m_name = QLatin1String("get_window_snapshot"), .m_fn = toolGetWindowSnapshot},
+    {.m_name = QLatin1String("compare_screenshots"), .m_fn = toolCompareScreenshots},
+    {.m_name = QLatin1String("wait_for_window"), .m_fn = toolWaitForWindow},
+    {.m_name = QLatin1String("wait_for_idle"), .m_fn = toolWaitForIdle},
 };
 
 }  // namespace
@@ -373,7 +373,7 @@ QJsonArray watchToolCatalog() {
 
 bool watchHandles(const QString& name) {
     for (const auto& entry : kWatchHandlers) {
-        if (name == entry.name) {
+        if (name == entry.m_name) {
             return true;
         }
     }
@@ -382,8 +382,8 @@ bool watchHandles(const QString& name) {
 
 ToolResult invokeWatchTool(const QString& name, const QJsonObject& args) {
     for (const auto& entry : kWatchHandlers) {
-        if (name == entry.name) {
-            return entry.fn(args);
+        if (name == entry.m_name) {
+            return entry.m_fn(args);
         }
     }
     return errorResult(QStringLiteral("Unknown watch tool: %1").arg(name));

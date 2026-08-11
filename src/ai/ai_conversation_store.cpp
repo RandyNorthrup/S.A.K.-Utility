@@ -534,25 +534,25 @@ bool openOptionalTranscriptFile(QFile* file, QString* error_message) {
 }
 
 struct SearchHitCandidate {
-    QString source;
-    QString text;
-    QString query;
-    QDateTime timestamp;
+    QString m_source;
+    QString m_text;
+    QString m_query;
+    QDateTime m_timestamp;
 };
 
 void appendSearchHit(QVector<AiSessionSearchResult>* results,
                      const AiSessionInfo& session,
                      const SearchHitCandidate& candidate) {
-    const int score = matchScore(candidate.text, candidate.query);
+    const int score = matchScore(candidate.m_text, candidate.m_query);
     if (score <= 0) {
         return;
     }
     AiSessionSearchResult hit;
     hit.session = session;
-    hit.source = candidate.source;
+    hit.source = candidate.m_source;
     hit.score = score;
-    hit.snippet = snippetAround(candidate.text, candidate.query);
-    hit.timestamp_utc = candidate.timestamp;
+    hit.snippet = snippetAround(candidate.m_text, candidate.m_query);
+    hit.timestamp_utc = candidate.m_timestamp;
     results->append(hit);
 }
 
@@ -575,10 +575,12 @@ bool searchIndexFile(const AiSessionInfo& session,
         }
         const QString text = obj->value(QStringLiteral("text")).toString();
         const QString source = obj->value(QStringLiteral("source")).toString();
-        appendSearchHit(
-            results,
-            session,
-            {.source = source, .text = text, .query = query, .timestamp = objectTimestamp(*obj)});
+        appendSearchHit(results,
+                        session,
+                        {.m_source = source,
+                         .m_text = text,
+                         .m_query = query,
+                         .m_timestamp = objectTimestamp(*obj)});
     }
     return true;
 }
@@ -601,10 +603,10 @@ void searchRawSessionFiles(const AiSessionInfo& session,
                                             obj->value(QStringLiteral("text")).toString());
             appendSearchHit(results,
                             session,
-                            {.source = QStringLiteral("transcript"),
-                             .text = text,
-                             .query = query,
-                             .timestamp = objectTimestamp(*obj)});
+                            {.m_source = QStringLiteral("transcript"),
+                             .m_text = text,
+                             .m_query = query,
+                             .m_timestamp = objectTimestamp(*obj)});
         }
     }
 
@@ -624,10 +626,10 @@ void searchRawSessionFiles(const AiSessionInfo& session,
                 obj->value(QStringLiteral("command")).toString(), result_text);
             appendSearchHit(results,
                             session,
-                            {.source = QStringLiteral("command"),
-                             .text = text,
-                             .query = query,
-                             .timestamp = objectTimestamp(*obj)});
+                            {.m_source = QStringLiteral("command"),
+                             .m_text = text,
+                             .m_query = query,
+                             .m_timestamp = objectTimestamp(*obj)});
         }
     }
 }
@@ -772,10 +774,10 @@ QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& 
         const auto& session = sessions.at(i);
         appendSearchHit(&results,
                         session,
-                        {.source = QStringLiteral("manifest"),
-                         .text = session.title,
-                         .query = term,
-                         .timestamp = session.updated_at});
+                        {.m_source = QStringLiteral("manifest"),
+                         .m_text = session.title,
+                         .m_query = term,
+                         .m_timestamp = session.updated_at});
         if (!searchIndexFile(session, term, &results)) {
             searchRawSessionFiles(session, term, &results);
         }
