@@ -155,10 +155,10 @@ void DiagnosticBenchmarkPanel::setupUi() {
     // -- Log Toggle --
     m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
 
-    auto* logToggleLayout = new QHBoxLayout();
-    logToggleLayout->addWidget(m_logToggle);
-    logToggleLayout->addStretch();
-    root_layout->addLayout(logToggleLayout);
+    auto* log_toggle_layout = new QHBoxLayout();
+    log_toggle_layout->addWidget(m_logToggle);
+    log_toggle_layout->addStretch();
+    root_layout->addLayout(log_toggle_layout);
 }
 
 // ============================================================================

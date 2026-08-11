@@ -32,19 +32,19 @@ class InfoButton : public QToolButton {
     Q_OBJECT
 
 public:
-    explicit InfoButton(const QString& infoText, QWidget* parent = nullptr);
+    explicit InfoButton(const QString& info_text, QWidget* parent = nullptr);
 
     /**
      * @brief Create a composite widget: [QLabel] [InfoButton]
      *
      * Suitable for use as the label argument in QFormLayout::addRow().
-     * @param labelText  The label text (e.g. "Thread Count:")
-     * @param infoText   The explanatory text shown in the popup
+     * @param label_text  The label text (e.g. "Thread Count:")
+     * @param info_text   The explanatory text shown in the popup
      * @param parent     Parent widget
      * @return A QWidget* containing the label and info button side-by-side
      */
-    static QWidget* createInfoLabel(const QString& labelText,
-                                    const QString& infoText,
+    static QWidget* createInfoLabel(const QString& label_text,
+                                    const QString& info_text,
                                     QWidget* parent = nullptr);
 
 private Q_SLOTS:

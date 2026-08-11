@@ -62,54 +62,54 @@ UserMigrationPanel::~UserMigrationPanel() = default;
 
 void UserMigrationPanel::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
-    auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(
+    auto* root_layout = new QVBoxLayout(this);
+    root_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
 
-    auto* contentWidget = new QWidget(scrollArea);
-    auto* mainLayout = new QVBoxLayout(contentWidget);
-    mainLayout->setContentsMargins(sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium);
-    mainLayout->setSpacing(sak::ui::kSpacingLarge);
+    auto* content_widget = new QWidget(scroll_area);
+    auto* main_layout = new QVBoxLayout(content_widget);
+    main_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium);
+    main_layout->setSpacing(sak::ui::kSpacingLarge);
 
-    scrollArea->setWidget(contentWidget);
-    rootLayout->addWidget(scrollArea);
+    scroll_area->setWidget(content_widget);
+    root_layout->addWidget(scroll_area);
 
-    sak::createPanelHeader(contentWidget,
+    sak::createPanelHeader(content_widget,
                            QStringLiteral(":/icons/icons/panel_backup_restore.svg"),
                            tr("Backup and Restore"),
                            tr("Comprehensive backup and restore wizards"
                               " for Windows user profiles."),
-                           mainLayout);
+                           main_layout);
 
-    createMigrationCards(contentWidget, mainLayout);
-    mainLayout->addWidget(createQuickToolsSection(contentWidget));
+    createMigrationCards(content_widget, main_layout);
+    main_layout->addWidget(createQuickToolsSection(content_widget));
 
-    mainLayout->addStretch();
+    main_layout->addStretch();
 
     // Bottom row: Settings + Log toggle
-    auto* bottomLayout = new QHBoxLayout();
-    bottomLayout->setContentsMargins(sak::ui::kMarginMedium,
-                                     sak::ui::kMarginTight,
-                                     sak::ui::kMarginMedium,
-                                     sak::ui::kMarginSmall);
+    auto* bottom_layout = new QHBoxLayout();
+    bottom_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                      sak::ui::kMarginTight,
+                                      sak::ui::kMarginMedium,
+                                      sak::ui::kMarginSmall);
 
-    auto* settingsBtn = new QPushButton(tr("Settings"), this);
-    settingsBtn->setAccessibleName(QStringLiteral("User Migration Settings"));
-    settingsBtn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(settingsBtn, &QPushButton::clicked, this, &UserMigrationPanel::onSettingsClicked);
-    bottomLayout->addWidget(settingsBtn);
+    auto* settings_btn = new QPushButton(tr("Settings"), this);
+    settings_btn->setAccessibleName(QStringLiteral("User Migration Settings"));
+    settings_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    connect(settings_btn, &QPushButton::clicked, this, &UserMigrationPanel::onSettingsClicked);
+    bottom_layout->addWidget(settings_btn);
 
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    bottomLayout->addWidget(m_logToggle);
-    bottomLayout->addStretch();
-    rootLayout->addLayout(bottomLayout);
+    bottom_layout->addWidget(m_logToggle);
+    bottom_layout->addStretch();
+    root_layout->addLayout(bottom_layout);
 }
 
 void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layout) {
@@ -386,50 +386,50 @@ void UserMigrationPanel::onSettingsClicked() {
     dialog.setMinimumWidth(kUserMigrationSettingsDialogMinWidth);
     auto* layout = new QVBoxLayout(&dialog);
 
-    auto* formLayout = new QFormLayout();
+    auto* form_layout = new QFormLayout();
 
-    auto* threadSpin = new QSpinBox(&dialog);
-    threadSpin->setRange(kBackupThreadCountMin, kBackupThreadCountMax);
-    threadSpin->setValue(config.getBackupThreadCount());
-    formLayout->addRow(
+    auto* thread_spin = new QSpinBox(&dialog);
+    thread_spin->setRange(kBackupThreadCountMin, kBackupThreadCountMax);
+    thread_spin->setValue(config.getBackupThreadCount());
+    form_layout->addRow(
         InfoButton::createInfoLabel(
             tr("Thread Count:"),
             tr("Number of parallel copy threads \u2014 higher values speed up backup but increase "
                "CPU and disk I/O load"),
             &dialog),
-        threadSpin);
+        thread_spin);
 
-    auto* verifyCheck = new QCheckBox(tr("Verify files using MD5 hash after backup"), &dialog);
-    verifyCheck->setChecked(config.getBackupVerifyMD5());
-    formLayout->addRow(
+    auto* verify_check = new QCheckBox(tr("Verify files using MD5 hash after backup"), &dialog);
+    verify_check->setChecked(config.getBackupVerifyMD5());
+    form_layout->addRow(
         InfoButton::createInfoLabel(
             tr("Verify MD5:"),
             tr("Re-read each copied file and verify its MD5 checksum matches the original \u2014 "
                "slower but ensures integrity"),
             &dialog),
-        verifyCheck);
+        verify_check);
 
-    auto* locRow = new QHBoxLayout();
-    auto* locEdit = new QLineEdit(config.getLastBackupLocation(), &dialog);
-    locEdit->setReadOnly(true);
-    auto* browseBtn = new QPushButton(tr("Browse..."), &dialog);
-    browseBtn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(browseBtn, &QPushButton::clicked, &dialog, [&locEdit, &dialog]() {
+    auto* loc_row = new QHBoxLayout();
+    auto* loc_edit = new QLineEdit(config.getLastBackupLocation(), &dialog);
+    loc_edit->setReadOnly(true);
+    auto* browse_btn = new QPushButton(tr("Browse..."), &dialog);
+    browse_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    connect(browse_btn, &QPushButton::clicked, &dialog, [&loc_edit, &dialog]() {
         const QString dir = QFileDialog::getExistingDirectory(&dialog,
                                                               tr("Select Backup Location"),
-                                                              locEdit->text());
+                                                              loc_edit->text());
         if (!dir.isEmpty()) {
-            locEdit->setText(dir);
+            loc_edit->setText(dir);
         }
     });
-    locRow->addWidget(locEdit);
-    locRow->addWidget(browseBtn);
-    formLayout->addRow(
+    loc_row->addWidget(loc_edit);
+    loc_row->addWidget(browse_btn);
+    form_layout->addRow(
         InfoButton::createInfoLabel(
             tr("Backup Location:"), tr("Choose the destination folder for backup files"), &dialog),
-        locRow);
+        loc_row);
 
-    layout->addLayout(formLayout);
+    layout->addLayout(form_layout);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
@@ -437,14 +437,14 @@ void UserMigrationPanel::onSettingsClicked() {
     layout->addWidget(buttons);
 
     if (dialog.exec() == QDialog::Accepted) {
-        config.setBackupThreadCount(threadSpin->value());
-        config.setBackupVerifyMD5(verifyCheck->isChecked());
-        config.setLastBackupLocation(locEdit->text());
+        config.setBackupThreadCount(thread_spin->value());
+        config.setBackupVerifyMD5(verify_check->isChecked());
+        config.setLastBackupLocation(loc_edit->text());
         config.sync();
         appendLog(QString("Settings updated: threads=%1, verify=%2, location=%3")
-                      .arg(threadSpin->value())
-                      .arg(verifyCheck->isChecked() ? "yes" : "no")
-                      .arg(locEdit->text()));
+                      .arg(thread_spin->value())
+                      .arg(verify_check->isChecked() ? "yes" : "no")
+                      .arg(loc_edit->text()));
     }
 }
 

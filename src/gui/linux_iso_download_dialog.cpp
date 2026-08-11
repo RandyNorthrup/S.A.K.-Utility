@@ -67,131 +67,131 @@ LinuxISODownloadDialog::~LinuxISODownloadDialog() = default;
 
 void LinuxISODownloadDialog::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
-    auto* mainLayout = new QVBoxLayout(this);
-    setupUi_selectionGroup(mainLayout);
-    setupUi_progressAndButtons(mainLayout);
+    auto* main_layout = new QVBoxLayout(this);
+    setupUi_selectionGroup(main_layout);
+    setupUi_progressAndButtons(main_layout);
 }
 
-void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* mainLayout) {
+void LinuxISODownloadDialog::setupUi_selectionGroup(QVBoxLayout* main_layout) {
     // ---- Distribution Selection ----
-    auto* selectionGroup = new QGroupBox("Select Distribution", this);
-    auto* selectionLayout = new QVBoxLayout(selectionGroup);
+    auto* selection_group = new QGroupBox("Select Distribution", this);
+    auto* selection_layout = new QVBoxLayout(selection_group);
 
     // Category filter
-    auto* filterRow = new QHBoxLayout();
-    filterRow->addWidget(new QLabel("Category:", selectionGroup));
-    m_categoryCombo = new QComboBox(selectionGroup);
+    auto* filter_row = new QHBoxLayout();
+    filter_row->addWidget(new QLabel("Category:", selection_group));
+    m_categoryCombo = new QComboBox(selection_group);
     m_categoryCombo->addItem("All Distributions", -1);
 
-    auto categoryMap = LinuxDistroCatalog::categoryNames();
-    for (auto it = categoryMap.constBegin(); it != categoryMap.constEnd(); ++it) {
+    auto category_map = LinuxDistroCatalog::categoryNames();
+    for (auto it = category_map.constBegin(); it != category_map.constEnd(); ++it) {
         m_categoryCombo->addItem(it.value(), static_cast<int>(it.key()));
     }
-    filterRow->addWidget(m_categoryCombo, 1);
-    selectionLayout->addLayout(filterRow);
+    filter_row->addWidget(m_categoryCombo, 1);
+    selection_layout->addLayout(filter_row);
 
     // Distro list + details side by side
-    auto* contentLayout = new QHBoxLayout();
+    auto* content_layout = new QHBoxLayout();
 
     // Left: List
-    m_distroListWidget = new QListWidget(selectionGroup);
+    m_distroListWidget = new QListWidget(selection_group);
     m_distroListWidget->setMinimumWidth(kDistroListMinWidth);
     m_distroListWidget->setMinimumHeight(kDistroListMinHeight);
-    contentLayout->addWidget(m_distroListWidget, kDistroListStretch);
+    content_layout->addWidget(m_distroListWidget, kDistroListStretch);
 
     // Right: Details panel
-    auto* detailsWidget = new QWidget(selectionGroup);
-    auto* detailsLayout = new QVBoxLayout(detailsWidget);
-    detailsLayout->setContentsMargins(
+    auto* details_widget = new QWidget(selection_group);
+    auto* details_layout = new QVBoxLayout(details_widget);
+    details_layout->setContentsMargins(
         sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
-    m_distroDescriptionLabel = new QLabel("", detailsWidget);
+    m_distroDescriptionLabel = new QLabel("", details_widget);
     m_distroDescriptionLabel->setWordWrap(true);
     m_distroDescriptionLabel->setStyleSheet(sak::ui::fontSizeStyle(sak::ui::kFontSizeBody));
-    detailsLayout->addWidget(m_distroDescriptionLabel);
+    details_layout->addWidget(m_distroDescriptionLabel);
 
-    detailsLayout->addSpacing(sak::ui::kSpacingMedium);
+    details_layout->addSpacing(sak::ui::kSpacingMedium);
 
-    m_distroVersionLabel = new QLabel("", detailsWidget);
+    m_distroVersionLabel = new QLabel("", details_widget);
     m_distroVersionLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
-    detailsLayout->addWidget(m_distroVersionLabel);
+    details_layout->addWidget(m_distroVersionLabel);
 
-    m_distroSizeLabel = new QLabel("", detailsWidget);
+    m_distroSizeLabel = new QLabel("", details_widget);
     m_distroSizeLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
-    detailsLayout->addWidget(m_distroSizeLabel);
+    details_layout->addWidget(m_distroSizeLabel);
 
-    m_distroHomepageLabel = new QLabel("", detailsWidget);
+    m_distroHomepageLabel = new QLabel("", details_widget);
     m_distroHomepageLabel->setOpenExternalLinks(true);
     m_distroHomepageLabel->setTextFormat(Qt::RichText);
-    detailsLayout->addWidget(m_distroHomepageLabel);
+    details_layout->addWidget(m_distroHomepageLabel);
 
-    detailsLayout->addStretch();
-    contentLayout->addWidget(detailsWidget, kDistroDetailsStretch);
+    details_layout->addStretch();
+    content_layout->addWidget(details_widget, kDistroDetailsStretch);
 
-    selectionLayout->addLayout(contentLayout);
-    mainLayout->addWidget(selectionGroup);
+    selection_layout->addLayout(content_layout);
+    main_layout->addWidget(selection_group);
 }
 
-void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout) {
+void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* main_layout) {
     // ---- Save Location ----
-    auto* saveGroup = new QGroupBox("Save Location", this);
-    auto* saveLayout = new QHBoxLayout(saveGroup);
+    auto* save_group = new QGroupBox("Save Location", this);
+    auto* save_layout = new QHBoxLayout(save_group);
 
-    m_saveLocationEdit = new QLineEdit(saveGroup);
+    m_saveLocationEdit = new QLineEdit(save_group);
     m_saveLocationEdit->setPlaceholderText("Select a distribution first...");
-    saveLayout->addWidget(m_saveLocationEdit);
+    save_layout->addWidget(m_saveLocationEdit);
 
-    m_browseSaveButton = new QPushButton("Browse...", saveGroup);
+    m_browseSaveButton = new QPushButton("Browse...", save_group);
     m_browseSaveButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    saveLayout->addWidget(m_browseSaveButton);
+    save_layout->addWidget(m_browseSaveButton);
 
-    mainLayout->addWidget(saveGroup);
+    main_layout->addWidget(save_group);
 
     // ---- Progress ----
-    auto* progressGroup = new QGroupBox("Progress", this);
-    auto* progressLayout = new QVBoxLayout(progressGroup);
+    auto* progress_group = new QGroupBox("Progress", this);
+    auto* progress_layout = new QVBoxLayout(progress_group);
 
-    m_statusLabel = new QLabel("Ready", progressGroup);
-    progressLayout->addWidget(m_statusLabel);
+    m_statusLabel = new QLabel("Ready", progress_group);
+    progress_layout->addWidget(m_statusLabel);
 
-    m_phaseLabel = new QLabel("", progressGroup);
+    m_phaseLabel = new QLabel("", progress_group);
     m_phaseLabel->setStyleSheet(sak::ui::kFontWeightBoldStyle);
-    progressLayout->addWidget(m_phaseLabel);
+    progress_layout->addWidget(m_phaseLabel);
 
-    m_progressBar = new QProgressBar(progressGroup);
+    m_progressBar = new QProgressBar(progress_group);
     m_progressBar->setMinimum(0);
     m_progressBar->setMaximum(sak::kPercentMax);
     m_progressBar->setValue(0);
-    progressLayout->addWidget(m_progressBar);
+    progress_layout->addWidget(m_progressBar);
 
-    auto* detailRow = new QHBoxLayout();
-    m_detailLabel = new QLabel("", progressGroup);
-    detailRow->addWidget(m_detailLabel, 1);
-    m_speedLabel = new QLabel("", progressGroup);
-    detailRow->addWidget(m_speedLabel);
-    progressLayout->addLayout(detailRow);
+    auto* detail_row = new QHBoxLayout();
+    m_detailLabel = new QLabel("", progress_group);
+    detail_row->addWidget(m_detailLabel, 1);
+    m_speedLabel = new QLabel("", progress_group);
+    detail_row->addWidget(m_speedLabel);
+    progress_layout->addLayout(detail_row);
 
-    mainLayout->addWidget(progressGroup);
+    main_layout->addWidget(progress_group);
 
     // ---- Action Buttons ----
-    auto* buttonLayout = new QHBoxLayout();
-    buttonLayout->addStretch();
+    auto* button_layout = new QHBoxLayout();
+    button_layout->addStretch();
 
     m_startButton = new QPushButton("Download ISO", this);
     m_startButton->setEnabled(false);
     m_startButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    buttonLayout->addWidget(m_startButton);
+    button_layout->addWidget(m_startButton);
 
     m_cancelButton = new QPushButton("Cancel", this);
     m_cancelButton->setEnabled(false);
     m_cancelButton->setStyleSheet(sak::ui::kDangerButtonStyle);
-    buttonLayout->addWidget(m_cancelButton);
+    button_layout->addWidget(m_cancelButton);
 
     m_closeButton = new QPushButton("Close", this);
     m_closeButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    buttonLayout->addWidget(m_closeButton);
+    button_layout->addWidget(m_closeButton);
 
-    mainLayout->addLayout(buttonLayout);
+    main_layout->addLayout(button_layout);
 }
 
 // ============================================================================
@@ -261,13 +261,13 @@ void LinuxISODownloadDialog::populateDistroList() {
     m_distroListWidget->clear();
     m_currentDistros.clear();
 
-    const int categoryValue = m_categoryCombo->currentData().toInt();
+    const int category_value = m_categoryCombo->currentData().toInt();
 
-    if (categoryValue < 0) {
+    if (category_value < 0) {
         // "All" selected
         m_currentDistros = m_downloader->catalog()->allDistros();
     } else {
-        auto category = static_cast<LinuxDistroCatalog::Category>(categoryValue);
+        auto category = static_cast<LinuxDistroCatalog::Category>(category_value);
         m_currentDistros = m_downloader->catalog()->distrosByCategory(category);
     }
 
@@ -308,10 +308,10 @@ void LinuxISODownloadDialog::onDistroSelected() {
     updateDistroDetails();
 
     // Set default save path using the distro's expected filename
-    const QString fileName = m_downloader->catalog()->resolveFileName(distro);
-    if (!fileName.isEmpty()) {
+    const QString file_name = m_downloader->catalog()->resolveFileName(distro);
+    if (!file_name.isEmpty()) {
         Q_ASSERT(m_saveLocationEdit);
-        m_saveLocationEdit->setText(getDefaultSavePath(fileName));
+        m_saveLocationEdit->setText(getDefaultSavePath(file_name));
     }
 
     updateStartButton();
@@ -331,14 +331,14 @@ void LinuxISODownloadDialog::updateDistroDetails() {
 
     m_distroDescriptionLabel->setText(distro.description);
 
-    QString versionText = QString("Version: %1").arg(distro.version);
+    QString version_text = QString("Version: %1").arg(distro.version);
     if (!distro.versionLabel.isEmpty()) {
-        versionText += QString(" (%1)").arg(distro.versionLabel);
+        version_text += QString(" (%1)").arg(distro.versionLabel);
     }
     if (distro.sourceType == LinuxDistroCatalog::SourceType::GitHubRelease) {
-        versionText += "  [latest checked at download time]";
+        version_text += "  [latest checked at download time]";
     }
-    m_distroVersionLabel->setText(versionText);
+    m_distroVersionLabel->setText(version_text);
 
     m_distroSizeLabel->setText(
         QString("Approximate size: %1").arg(formatSize(distro.approximateSize)));
@@ -364,11 +364,11 @@ void LinuxISODownloadDialog::onBrowseSaveLocation() {
     // Determine file filter based on selected distro
     const QString filter = "ISO Files (*.iso);;Compressed Images (*.iso.gz *.img);;All Files (*.*)";
 
-    const QString filePath = QFileDialog::getSaveFileName(this, "Save Linux ISO", current, filter);
+    const QString file_path = QFileDialog::getSaveFileName(this, "Save Linux ISO", current, filter);
 
-    if (!filePath.isEmpty()) {
+    if (!file_path.isEmpty()) {
         Q_ASSERT(m_saveLocationEdit);
-        m_saveLocationEdit->setText(filePath);
+        m_saveLocationEdit->setText(file_path);
     }
 }
 
@@ -387,26 +387,26 @@ void LinuxISODownloadDialog::onStartDownload() {
         return;
     }
 
-    const QString savePath = m_saveLocationEdit->text().trimmed();
-    if (savePath.isEmpty()) {
+    const QString save_path = m_saveLocationEdit->text().trimmed();
+    if (save_path.isEmpty()) {
         sak::logWarning("ISO download attempted with no save path specified");
         sak::showWarningLogged(this, "No Save Path", "Please specify where to save the ISO.");
         return;
     }
 
     // Ensure parent directory exists
-    const QString save_dir = QFileInfo(savePath).absolutePath();
+    const QString save_dir = QFileInfo(save_path).absolutePath();
     if (!QDir().mkpath(save_dir)) {
         sak::logWarning("Failed to create download directory: {}", save_dir.toStdString());
     }
 
     // Check for existing file
-    if (QFile::exists(savePath)) {
+    if (QFile::exists(save_path)) {
         auto reply = sak::showQuestionLogged(this,
                                              "File Exists",
                                              QString("The file already exists:\n\n%1\n\n"
                                                      "Do you want to overwrite it?")
-                                                 .arg(savePath),
+                                                 .arg(save_path),
                                              QMessageBox::Yes | QMessageBox::No);
 
         if (reply != QMessageBox::Yes) {
@@ -422,7 +422,7 @@ void LinuxISODownloadDialog::onStartDownload() {
     m_speedLabel->clear();
     m_detailLabel->clear();
 
-    m_downloader->startDownload(m_selectedDistroId, savePath);
+    m_downloader->startDownload(m_selectedDistroId, save_path);
 }
 
 // ============================================================================
@@ -469,17 +469,17 @@ void LinuxISODownloadDialog::onProgressUpdated(int percent, const QString& detai
     m_detailLabel->setText(detail);
 }
 
-void LinuxISODownloadDialog::onSpeedUpdated(double speedMBps) {
-    if (speedMBps > kDownloadSpeedVisibleThresholdMBps) {
+void LinuxISODownloadDialog::onSpeedUpdated(double speed_m_bps) {
+    if (speed_m_bps > kDownloadSpeedVisibleThresholdMBps) {
         m_speedLabel->setText(
-            QString("%1 MB/s").arg(speedMBps, 0, 'f', kDownloadSpeedDisplayPrecision));
+            QString("%1 MB/s").arg(speed_m_bps, 0, 'f', kDownloadSpeedDisplayPrecision));
     }
 }
 
-void LinuxISODownloadDialog::onDownloadComplete(const QString& isoPath, qint64 fileSize) {
+void LinuxISODownloadDialog::onDownloadComplete(const QString& iso_path, qint64 file_size) {
     Q_ASSERT(m_progressBar);
     Q_ASSERT(m_speedLabel);
-    m_downloadedFilePath = isoPath;
+    m_downloadedFilePath = iso_path;
     m_isDownloading = false;
 
     m_progressBar->setValue(sak::kPercentMax);
@@ -487,8 +487,8 @@ void LinuxISODownloadDialog::onDownloadComplete(const QString& isoPath, qint64 f
     m_detailLabel->clear();
     m_cancelButton->setEnabled(false);
 
-    const QString sizeStr = formatSize(fileSize);
-    m_statusLabel->setText(QString("Download complete! (%1)").arg(sizeStr));
+    const QString size_str = formatSize(file_size);
+    m_statusLabel->setText(QString("Download complete! (%1)").arg(size_str));
     m_phaseLabel->setText("Complete!");
     m_phaseLabel->setStyleSheet(
         sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold, sak::ui::kStatusColorSuccess));
@@ -498,9 +498,9 @@ void LinuxISODownloadDialog::onDownloadComplete(const QString& isoPath, qint64 f
                                QString("Linux ISO downloaded successfully!\n\n"
                                        "Saved to: %1\nSize: %2\n\n"
                                        "Click OK to use this image.")
-                                   .arg(isoPath, sizeStr));
+                                   .arg(iso_path, size_str));
 
-    Q_EMIT downloadCompleted(isoPath);
+    Q_EMIT downloadCompleted(iso_path);
     accept();
 }
 
@@ -571,9 +571,9 @@ void LinuxISODownloadDialog::setInputsEnabled(bool enabled) {
     m_browseSaveButton->setEnabled(enabled);
 }
 
-QString LinuxISODownloadDialog::getDefaultSavePath(const QString& fileName) const {
+QString LinuxISODownloadDialog::getDefaultSavePath(const QString& file_name) const {
     const QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
-    return QDir(downloads).filePath(fileName);
+    return QDir(downloads).filePath(file_name);
 }
 
 QString LinuxISODownloadDialog::formatSize(qint64 bytes) {

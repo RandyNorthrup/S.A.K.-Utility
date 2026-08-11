@@ -48,8 +48,8 @@ void UserProfileRestoreExecutePage::setupUi() {
     layout->addWidget(m_statusLabel);
 
     // Overall progress
-    auto* overallLabel = new QLabel(tr("Overall Progress:"), this);
-    layout->addWidget(overallLabel);
+    auto* overall_label = new QLabel(tr("Overall Progress:"), this);
+    layout->addWidget(overall_label);
     m_overallProgressBar = new QProgressBar(this);
     m_overallProgressBar->setTextVisible(true);
     layout->addWidget(m_overallProgressBar);
@@ -64,24 +64,24 @@ void UserProfileRestoreExecutePage::setupUi() {
     layout->addSpacing(sak::ui::kSpacingDefault);
 
     // Log viewer
-    auto* logLabel = new QLabel(tr("Operation Log:"), this);
-    layout->addWidget(logLabel);
+    auto* log_label = new QLabel(tr("Operation Log:"), this);
+    layout->addWidget(log_label);
     m_logText = new QTextEdit(this);
     m_logText->setReadOnly(true);
     m_logText->setMaximumHeight(sak::kLogAreaMaxH);
     layout->addWidget(m_logText);
 
     // Buttons
-    auto* buttonLayout = new QHBoxLayout();
+    auto* button_layout = new QHBoxLayout();
     m_cancelButton = new QPushButton(tr("Cancel Restore"), this);
     m_cancelButton->setStyleSheet(sak::ui::kDangerButtonStyle);
     m_viewLogButton = new QPushButton(tr("View Full Log"), this);
     m_viewLogButton->setEnabled(false);
     m_viewLogButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    buttonLayout->addWidget(m_cancelButton);
-    buttonLayout->addStretch(1);
-    buttonLayout->addWidget(m_viewLogButton);
-    layout->addLayout(buttonLayout);
+    button_layout->addWidget(m_cancelButton);
+    button_layout->addStretch(1);
+    button_layout->addWidget(m_viewLogButton);
+    layout->addLayout(button_layout);
 
     // Connections
     connect(m_cancelButton,
@@ -132,13 +132,13 @@ void UserProfileRestoreExecutePage::onStartRestore() {
     m_statusLabel->setText(tr("Restore in progress..."));
     m_logText->append(tr("[INFO] Restore started..."));
 
-    const QString backupPath = wiz->backupPath();
+    const QString backup_path = wiz->backupPath();
     const BackupManifest manifest = wiz->manifest();
     const QVector<UserMapping> mappings = wiz->userMappings();
-    const ConflictResolution conflictMode = wiz->conflictResolution();
-    const PermissionMode permMode = wiz->permissionMode();
+    const ConflictResolution conflict_mode = wiz->conflictResolution();
+    const PermissionMode perm_mode = wiz->permissionMode();
     const bool verify = wiz->verifyFiles();
-    const bool createBackup = wiz->createBackup();
+    const bool create_backup = wiz->createBackup();
 
     // An encrypted backup cannot be read without the password, and the worker refuses to
     // start without one. Ask here, where the manifest is already known, rather than
@@ -168,10 +168,10 @@ void UserProfileRestoreExecutePage::onStartRestore() {
 
     // Forward the WiFi/Ethernet/AppData selections persisted by their pages'
     // validatePage() so the worker actually applies them (previously dead state).
-    worker->startRestore(backupPath,
+    worker->startRestore(backup_path,
                          manifest,
                          mappings,
-                         {conflictMode, permMode, verify, createBackup, password},
+                         {conflict_mode, perm_mode, verify, create_backup, password},
                          {wiz->wifiProfiles(), wiz->ethernetConfigs(), wiz->appDataSources()});
 
     m_overallProgressBar->setRange(0, static_cast<int>(mappings.size()));
@@ -182,11 +182,11 @@ void UserProfileRestoreExecutePage::connectRestoreWorkerSignals(UserProfileResto
     connect(worker,
             &UserProfileRestoreWorker::overallProgress,
             this,
-            [this](int current, int total, qint64 bytes, qint64 totalBytes) {
+            [this](int current, int total, qint64 bytes, qint64 total_bytes) {
                 m_overallProgressBar->setMaximum(total);
                 m_overallProgressBar->setValue(current);
                 (void)bytes;
-                (void)totalBytes;  // Currently unused
+                (void)total_bytes;  // Currently unused
             });
     connect(worker, &UserProfileRestoreWorker::fileProgress, this, [this](int current, int total) {
         m_currentProgressBar->setMaximum(total);
@@ -201,8 +201,8 @@ void UserProfileRestoreExecutePage::connectRestoreWorkerSignals(UserProfileResto
     connect(worker,
             &UserProfileRestoreWorker::logMessage,
             this,
-            [this](const QString& message, bool isWarning) {
-                const QString prefix = isWarning ? "[WARNING]" : "[INFO]";
+            [this](const QString& message, bool is_warning) {
+                const QString prefix = is_warning ? "[WARNING]" : "[INFO]";
                 m_logText->append(QString("%1 %2").arg(prefix, message));
             });
     connect(worker,
@@ -233,18 +233,18 @@ void UserProfileRestoreExecutePage::onCancelRestore() {
 void UserProfileRestoreExecutePage::onOverallProgress(int current,
                                                       int total,
                                                       qint64 bytes,
-                                                      qint64 totalBytes) {
+                                                      qint64 total_bytes) {
     if (total > 0) {
         const int percent = (current * kPercentMax) / total;
         m_overallProgressBar->setValue(percent);
 
-        const double gbCopied = static_cast<double>(bytes) / sak::kBytesPerGBf;
-        const double gbTotal = static_cast<double>(totalBytes) / sak::kBytesPerGBf;
+        const double gb_copied = static_cast<double>(bytes) / sak::kBytesPerGBf;
+        const double gb_total = static_cast<double>(total_bytes) / sak::kBytesPerGBf;
         m_overallProgressBar->setFormat(
             QString("%1% - %2 / %3 GB")
                 .arg(percent)
-                .arg(gbCopied, 0, 'f', kRestoreProgressDisplayPrecision)
-                .arg(gbTotal, 0, 'f', kRestoreProgressDisplayPrecision));
+                .arg(gb_copied, 0, 'f', kRestoreProgressDisplayPrecision)
+                .arg(gb_total, 0, 'f', kRestoreProgressDisplayPrecision));
     }
 }
 
@@ -262,8 +262,8 @@ void UserProfileRestoreExecutePage::onStatusUpdate(const QString& username,
     m_currentOperationLabel->setText(tr("Current: %1 - %2").arg(username, operation));
 }
 
-void UserProfileRestoreExecutePage::onLogMessage(const QString& message, bool isWarning) {
-    const QString prefix = isWarning ? "[WARNING]" : "[INFO]";
+void UserProfileRestoreExecutePage::onLogMessage(const QString& message, bool is_warning) {
+    const QString prefix = is_warning ? "[WARNING]" : "[INFO]";
     m_logText->append(QString("%1 %2").arg(prefix, message));
 
     // Auto-scroll to bottom
@@ -291,31 +291,31 @@ void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QStrin
 
 void UserProfileRestoreExecutePage::onViewLog() {
     Q_ASSERT(m_logText);
-    QMessageBox msgBox(this);
-    msgBox.setWindowTitle(tr("Restore Log"));
-    msgBox.setText(tr("Complete restore operation log:"));
-    msgBox.setDetailedText(m_logText->toPlainText());
-    msgBox.setIcon(m_restoreSuccess ? QMessageBox::Information : QMessageBox::Warning);
-    msgBox.setStandardButtons(QMessageBox::Ok | QMessageBox::Save);
+    QMessageBox msg_box(this);
+    msg_box.setWindowTitle(tr("Restore Log"));
+    msg_box.setText(tr("Complete restore operation log:"));
+    msg_box.setDetailedText(m_logText->toPlainText());
+    msg_box.setIcon(m_restoreSuccess ? QMessageBox::Information : QMessageBox::Warning);
+    msg_box.setStandardButtons(QMessageBox::Ok | QMessageBox::Save);
 
-    if (msgBox.exec() != QMessageBox::Save) {
+    if (msg_box.exec() != QMessageBox::Save) {
         return;
     }
-    const QString fileName = QFileDialog::getSaveFileName(
+    const QString file_name = QFileDialog::getSaveFileName(
         this,
         tr("Save Log"),
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/restore_log.txt",
         tr("Text Files (*.txt);;All Files (*.*)"));
-    if (fileName.isEmpty()) {
+    if (file_name.isEmpty()) {
         return;
     }
-    QFile file(fileName);
+    QFile file(file_name);
     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QTextStream out(&file);
         out << m_logText->toPlainText();
         file.close();
     } else {
-        sak::logError("Failed to save restore log: {}", fileName.toStdString());
+        sak::logError("Failed to save restore log: {}", file_name.toStdString());
     }
 }
 

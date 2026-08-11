@@ -637,17 +637,17 @@ void FileManagementExplorerPanel::setupUi() {
     m_shell_splitter->addWidget(m_sidebar);
 
     auto* center = new QWidget(m_shell_splitter);
-    auto* centerLayout = new QVBoxLayout(center);
-    centerLayout->setContentsMargins(
+    auto* center_layout = new QVBoxLayout(center);
+    center_layout->setContentsMargins(
         ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
-    centerLayout->setSpacing(ui::kSpacingSmall);
+    center_layout->setSpacing(ui::kSpacingSmall);
     m_shell_splitter->addWidget(center);
 
-    buildCommandAndNavBars(center, centerLayout);
-    buildContentArea(center, centerLayout);
+    buildCommandAndNavBars(center, center_layout);
+    buildContentArea(center, center_layout);
     // Files puts the status bar INSIDE the content column (MainPage.xaml
     // InnerContent row 5), not across the sidebar.
-    buildStatusRow(centerLayout);
+    buildStatusRow(center_layout);
 
     connectUiSignals();
     installCommandShortcuts();
@@ -1811,7 +1811,7 @@ void FileManagementExplorerPanel::resizeEvent(QResizeEvent* event) {
 }
 
 void FileManagementExplorerPanel::installCommandShortcuts() {
-    const QVector<FileExplorerCommandId> panelShortcuts{
+    const QVector<FileExplorerCommandId> panel_shortcuts{
         FileExplorerCommandId::Back,
         FileExplorerCommandId::Forward,
         FileExplorerCommandId::Up,
@@ -1858,7 +1858,7 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::Redo,
     };
 
-    for (const FileExplorerCommandId command_id : panelShortcuts) {
+    for (const FileExplorerCommandId command_id : panel_shortcuts) {
         const auto command = FileExplorerCommandRegistry::command(command_id);
         if (command.shortcut.trimmed().isEmpty()) {
             continue;
@@ -1876,40 +1876,40 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
 void FileManagementExplorerPanel::installAuxiliaryShortcuts() {
     // Files SearchAction: Ctrl+F (and F3 below) enter the omnibar search
     // mode; the filter header moved to Ctrl+Shift+F (ToggleFilterHeaderAction).
-    auto* searchShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+F")), this);
-    searchShortcut->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(searchShortcut, &QShortcut::activated, this, [this]() {
+    auto* search_shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+F")), this);
+    search_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(search_shortcut, &QShortcut::activated, this, [this]() {
         if (m_omnibar) {
             m_omnibar->setMode(FileExplorerOmnibarMode::Search);
         }
     });
 
-    auto* filterShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), this);
-    filterShortcut->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(filterShortcut,
+    auto* filter_shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), this);
+    filter_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(filter_shortcut,
             &QShortcut::activated,
             this,
             &FileManagementExplorerPanel::toggleFilterHeader);
 
     // Files OpenSettingsAction: Ctrl+, opens the explorer settings.
-    auto* settingsShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+,")), this);
-    settingsShortcut->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(settingsShortcut,
+    auto* settings_shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+,")), this);
+    settings_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(settings_shortcut,
             &QShortcut::activated,
             this,
             &FileManagementExplorerPanel::showExplorerSettings);
 
-    auto* paletteShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+P")), this);
-    paletteShortcut->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(paletteShortcut,
+    auto* palette_shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+P")), this);
+    palette_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(palette_shortcut,
             &QShortcut::activated,
             this,
             &FileManagementExplorerPanel::showCommandPalette);
 
     // Files ToggleSidebarAction: Ctrl+B shows/hides the sidebar pane.
-    auto* sidebarShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+B")), this);
-    sidebarShortcut->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(sidebarShortcut, &QShortcut::activated, this, [this]() {
+    auto* sidebar_shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+B")), this);
+    sidebar_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(sidebar_shortcut, &QShortcut::activated, this, [this]() {
         if (m_sidebar_toggle_button) {
             m_sidebar_toggle_button->click();
         }
@@ -2347,25 +2347,25 @@ void FileManagementExplorerPanel::applyViewSettings() {
         proxy->setFolderSortPlacement(m_pane_state.view.folder_placement);
     }
     if (m_view_button != nullptr) {
-        FileExplorerCommandId iconCommand = FileExplorerCommandId::ViewDetails;
+        FileExplorerCommandId icon_command = FileExplorerCommandId::ViewDetails;
         switch (m_pane_state.view.mode) {
         case FileExplorerViewMode::List:
-            iconCommand = FileExplorerCommandId::ViewList;
+            icon_command = FileExplorerCommandId::ViewList;
             break;
         case FileExplorerViewMode::Grid:
         case FileExplorerViewMode::Adaptive:
-            iconCommand = FileExplorerCommandId::ViewGrid;
+            icon_command = FileExplorerCommandId::ViewGrid;
             break;
         case FileExplorerViewMode::Cards:
-            iconCommand = FileExplorerCommandId::ViewCards;
+            icon_command = FileExplorerCommandId::ViewCards;
             break;
         case FileExplorerViewMode::Columns:
-            iconCommand = FileExplorerCommandId::ViewColumns;
+            icon_command = FileExplorerCommandId::ViewColumns;
             break;
         case FileExplorerViewMode::Details:
             break;
         }
-        m_view_button->setIcon(FileExplorerIconRegistry::iconForCommand(iconCommand));
+        m_view_button->setIcon(FileExplorerIconRegistry::iconForCommand(icon_command));
     }
 }
 
@@ -2388,16 +2388,16 @@ void FileManagementExplorerPanel::loadViewSettingsForCurrentLocation() {
         m_pane_state.view.show_extensions =
             settings.value(QString::fromLatin1(kShowExtensionsKey)).toBool();
     }
-    const auto readSizeKind = [&settings](const char* key, int& kind) {
+    const auto read_size_kind = [&settings](const char* key, int& kind) {
         if (settings.contains(QString::fromLatin1(key))) {
             kind = settings.value(QString::fromLatin1(key)).toInt();
         }
     };
-    readSizeKind(kDetailsSizeKey, m_pane_state.view.sizes.details);
-    readSizeKind(kListSizeKey, m_pane_state.view.sizes.list);
-    readSizeKind(kCardsSizeKey, m_pane_state.view.sizes.cards);
-    readSizeKind(kGridSizeKey, m_pane_state.view.sizes.grid);
-    readSizeKind(kColumnsSizeKey, m_pane_state.view.sizes.columns);
+    read_size_kind(kDetailsSizeKey, m_pane_state.view.sizes.details);
+    read_size_kind(kListSizeKey, m_pane_state.view.sizes.list);
+    read_size_kind(kCardsSizeKey, m_pane_state.view.sizes.cards);
+    read_size_kind(kGridSizeKey, m_pane_state.view.sizes.grid);
+    read_size_kind(kColumnsSizeKey, m_pane_state.view.sizes.columns);
     if (settings.contains(QString::fromLatin1(kGroupOptionKey))) {
         m_pane_state.view.group_option = fileExplorerGroupOptionFromName(
             settings.value(QString::fromLatin1(kGroupOptionKey)).toString());
@@ -4958,8 +4958,8 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     }
     menu->clear();
 
-    auto* viewGroup = new QActionGroup(menu);
-    viewGroup->setExclusive(true);
+    auto* view_group = new QActionGroup(menu);
+    view_group->setExclusive(true);
     for (const FileExplorerCommandId command : {FileExplorerCommandId::ViewDetails,
                                                 FileExplorerCommandId::ViewList,
                                                 FileExplorerCommandId::ViewGrid,
@@ -4972,7 +4972,7 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
         }
         action->setCheckable(true);
         action->setChecked(modeForCommand(command) == m_pane_state.view.mode);
-        viewGroup->addAction(action);
+        view_group->addAction(action);
     }
     menu->addSeparator();
 
@@ -4982,16 +4982,16 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     appendViewToggleActions(menu, context);
     menu->addSeparator();
     addCommandMenuAction(menu, FileExplorerCommandId::ToggleDualPane, context);
-    auto* stackAction = menu->addAction(tr("Stack Panes Vertically"));
-    stackAction->setObjectName(QStringLiteral("fileExplorerStackPanesAction"));
-    stackAction->setCheckable(true);
-    stackAction->setChecked((m_pane_splitter != nullptr) &&
-                            m_pane_splitter->orientation() == Qt::Vertical);
-    stackAction->setEnabled(m_dual_pane_enabled);
-    stackAction->setToolTip(m_dual_pane_enabled
-                                ? tr("Switch between side-by-side and stacked panes.")
-                                : tr("Enable dual pane first."));
-    connect(stackAction,
+    auto* stack_action = menu->addAction(tr("Stack Panes Vertically"));
+    stack_action->setObjectName(QStringLiteral("fileExplorerStackPanesAction"));
+    stack_action->setCheckable(true);
+    stack_action->setChecked((m_pane_splitter != nullptr) &&
+                             m_pane_splitter->orientation() == Qt::Vertical);
+    stack_action->setEnabled(m_dual_pane_enabled);
+    stack_action->setToolTip(m_dual_pane_enabled
+                                 ? tr("Switch between side-by-side and stacked panes.")
+                                 : tr("Enable dual pane first."));
+    connect(stack_action,
             &QAction::triggered,
             this,
             &FileManagementExplorerPanel::togglePaneOrientation);
@@ -4999,32 +4999,32 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     addCommandMenuAction(menu, FileExplorerCommandId::DuplicateTab, context);
     addCommandMenuAction(menu, FileExplorerCommandId::ReopenClosedTab, context);
 
-    const FileExplorerCommandState detailsState =
+    const FileExplorerCommandState details_state =
         FileExplorerCommandRegistry::state(FileExplorerCommandId::ViewDetails, context);
-    m_view_button->setEnabled(detailsState.enabled);
-    m_view_button->setToolTip(detailsState.enabled ? tr("Change File Explorer view layout")
-                                                   : detailsState.blocker);
+    m_view_button->setEnabled(details_state.enabled);
+    m_view_button->setToolTip(details_state.enabled ? tr("Change File Explorer view layout")
+                                                    : details_state.blocker);
 }
 
 void FileManagementExplorerPanel::appendViewToggleActions(
     QMenu* menu, const FileExplorerCommandContext& context) {
-    if (auto* hiddenAction =
+    if (auto* hidden_action =
             addCommandMenuAction(menu, FileExplorerCommandId::ToggleHiddenItems, context)) {
-        hiddenAction->setCheckable(true);
-        hiddenAction->setChecked(m_pane_state.view.show_hidden);
+        hidden_action->setCheckable(true);
+        hidden_action->setChecked(m_pane_state.view.show_hidden);
     }
-    if (auto* extensionAction =
+    if (auto* extension_action =
             addCommandMenuAction(menu, FileExplorerCommandId::ToggleFileExtensions, context)) {
-        extensionAction->setCheckable(true);
-        extensionAction->setChecked(m_pane_state.view.show_extensions);
+        extension_action->setCheckable(true);
+        extension_action->setChecked(m_pane_state.view.show_extensions);
     }
     // Files Settings > Folders "Show checkboxes when selecting items";
     // surfaced here until the C6 settings page lands.
-    auto* checkboxesAction = menu->addAction(tr("Item Check Boxes"));
-    checkboxesAction->setObjectName(QStringLiteral("fileExplorerItemCheckBoxesAction"));
-    checkboxesAction->setCheckable(true);
-    checkboxesAction->setChecked(showCheckboxesEnabled());
-    connect(checkboxesAction, &QAction::triggered, this, [this](const bool checked) {
+    auto* checkboxes_action = menu->addAction(tr("Item Check Boxes"));
+    checkboxes_action->setObjectName(QStringLiteral("fileExplorerItemCheckBoxesAction"));
+    checkboxes_action->setCheckable(true);
+    checkboxes_action->setChecked(showCheckboxesEnabled());
+    connect(checkboxes_action, &QAction::triggered, this, [this](const bool checked) {
         setShowCheckboxes(checked);
     });
 }
@@ -5034,30 +5034,30 @@ void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
     // to that layout's size kind (Details/List/Columns 1-5, Cards 1-4, Grid
     // 1-12). This row binds to the active layout's kind.
     const FileExplorerViewMode mode = m_pane_state.view.mode;
-    auto* sizeRow = new QWidget(menu);
-    sizeRow->setObjectName(QStringLiteral("fileExplorerItemSizeRow"));
-    auto* sizeLayout = new QHBoxLayout(sizeRow);
-    sizeLayout->setContentsMargins(
+    auto* size_row = new QWidget(menu);
+    size_row->setObjectName(QStringLiteral("fileExplorerItemSizeRow"));
+    auto* size_layout = new QHBoxLayout(size_row);
+    size_layout->setContentsMargins(
         ui::kMarginSmall, ui::kSpacingTight, ui::kMarginSmall, ui::kSpacingTight);
-    sizeLayout->setSpacing(ui::kSpacingSmall);
-    auto* sizeLabel = new QLabel(tr("Item size"), sizeRow);
-    sizeLabel->setAccessibleName(tr("Explorer item size label"));
-    auto* sizeSlider = new QSlider(Qt::Horizontal, sizeRow);
-    sizeSlider->setObjectName(QStringLiteral("fileExplorerItemSizeSlider"));
-    sizeSlider->setAccessibleName(tr("Explorer item size"));
-    sizeSlider->setRange(fileExplorerSizeKindMin(mode), fileExplorerSizeKindMax(mode));
-    sizeSlider->setSingleStep(1);
-    sizeSlider->setPageStep(1);
-    sizeSlider->setTickPosition(QSlider::TicksBelow);
-    sizeSlider->setTickInterval(1);
-    sizeSlider->setValue(fileExplorerSizeKind(m_pane_state.view.sizes, mode));
-    sizeLabel->setBuddy(sizeSlider);
-    sizeLayout->addWidget(sizeLabel);
-    sizeLayout->addWidget(sizeSlider, 1);
-    auto* sizeAction = new QWidgetAction(menu);
-    sizeAction->setDefaultWidget(sizeRow);
-    menu->addAction(sizeAction);
-    connect(sizeSlider, &QSlider::valueChanged, this, [this](const int value) {
+    size_layout->setSpacing(ui::kSpacingSmall);
+    auto* size_label = new QLabel(tr("Item size"), size_row);
+    size_label->setAccessibleName(tr("Explorer item size label"));
+    auto* size_slider = new QSlider(Qt::Horizontal, size_row);
+    size_slider->setObjectName(QStringLiteral("fileExplorerItemSizeSlider"));
+    size_slider->setAccessibleName(tr("Explorer item size"));
+    size_slider->setRange(fileExplorerSizeKindMin(mode), fileExplorerSizeKindMax(mode));
+    size_slider->setSingleStep(1);
+    size_slider->setPageStep(1);
+    size_slider->setTickPosition(QSlider::TicksBelow);
+    size_slider->setTickInterval(1);
+    size_slider->setValue(fileExplorerSizeKind(m_pane_state.view.sizes, mode));
+    size_label->setBuddy(size_slider);
+    size_layout->addWidget(size_label);
+    size_layout->addWidget(size_slider, 1);
+    auto* size_action = new QWidgetAction(menu);
+    size_action->setDefaultWidget(size_row);
+    menu->addAction(size_action);
+    connect(size_slider, &QSlider::valueChanged, this, [this](const int value) {
         setFileExplorerSizeKind(m_pane_state.view.sizes, m_pane_state.view.mode, value);
         applyViewSettings();
         saveViewSettings();
@@ -5477,13 +5477,13 @@ void FileManagementExplorerPanel::installIconProvider(FileExplorerItemModel* mod
     // Row icons come from the shared explorer registry (palette-tinted, so they
     // stay legible in dark mode); the model itself stays GUI-free.
     model->setIconProvider([](const FileManagementEntry& entry) -> QVariant {
-        static const QIcon folder_icon =
+        static const QIcon kFolderIcon =
             FileExplorerIconRegistry::iconForKey(QStringLiteral("folder"));
-        static const QIcon file_icon = FileExplorerIconRegistry::iconForKey(QStringLiteral("file"));
-        static const QIcon image_icon =
+        static const QIcon kFileIcon = FileExplorerIconRegistry::iconForKey(QStringLiteral("file"));
+        static const QIcon kImageIcon =
             FileExplorerIconRegistry::iconForKey(QStringLiteral("image-file"));
         if (entry.directory) {
-            return folder_icon;
+            return kFolderIcon;
         }
         static const QSet<QString> kImageSuffixes = {QStringLiteral("png"),
                                                      QStringLiteral("jpg"),
@@ -5495,7 +5495,7 @@ void FileManagementExplorerPanel::installIconProvider(FileExplorerItemModel* mod
                                                      QStringLiteral("ico"),
                                                      QStringLiteral("heic")};
         const QString suffix = QFileInfo(entry.name).suffix().toLower();
-        return kImageSuffixes.contains(suffix) ? image_icon : file_icon;
+        return kImageSuffixes.contains(suffix) ? kImageIcon : kFileIcon;
     });
 }
 
@@ -7165,10 +7165,10 @@ void FileManagementExplorerPanel::onAddManualTarget() {
     path->setAccessibleName(tr("Raw or image target path"));
     auto* browse = new QPushButton(tr("Browse"), &dialog);
     browse->setStyleSheet(ui::kSecondaryButtonStyle);
-    auto* pathRow = new QHBoxLayout();
-    pathRow->addWidget(path, 1);
-    pathRow->addWidget(browse);
-    layout->addRow(tr("Target path:"), pathRow);
+    auto* path_row = new QHBoxLayout();
+    path_row->addWidget(path, 1);
+    path_row->addWidget(browse);
+    layout->addRow(tr("Target path:"), path_row);
 
     auto* fs = new QComboBox(&dialog);
     fs->addItems({QStringLiteral("ext2"),
@@ -7908,28 +7908,28 @@ void FileManagementExplorerPanel::onWriteFileClicked() {
         sak::showWarningLogged(this, tr("Write File"), identity_blocker);
         return;
     }
-    const QString sourcePath = QFileDialog::getOpenFileName(this, tr("Select File to Write"));
-    if (sourcePath.isEmpty()) {
+    const QString source_path = QFileDialog::getOpenFileName(this, tr("Select File to Write"));
+    if (source_path.isEmpty()) {
         return;
     }
-    const QString source_blocker = writeSourceFileBlocker(sourcePath);
+    const QString source_blocker = writeSourceFileBlocker(source_path);
     if (!source_blocker.isEmpty()) {
         sak::showWarningLogged(this, tr("Write File"), source_blocker);
         return;
     }
-    const QFileInfo sourceInfo(sourcePath);
+    const QFileInfo source_info(source_path);
     bool ok = false;
     const QString name = QInputDialog::getText(this,
                                                tr("Write File"),
                                                tr("Target file name:"),
                                                QLineEdit::Normal,
-                                               sourceInfo.fileName(),
+                                               source_info.fileName(),
                                                &ok);
     if (!ok) {
         return;
     }
-    const QString targetPath = targetPathForName(name);
-    if (targetPath.isEmpty()) {
+    const QString target_path = targetPathForName(name);
+    if (target_path.isEmpty()) {
         sak::showWarningLogged(this,
                                tr("Write File"),
                                tr("Enter a file name without path separators."));
@@ -7945,7 +7945,7 @@ void FileManagementExplorerPanel::onWriteFileClicked() {
         return;
     }
     const auto result =
-        FileManagementFileSystemBridge::writeFileFromHostPath(target, targetPath, sourcePath);
+        FileManagementFileSystemBridge::writeFileFromHostPath(target, target_path, source_path);
     showMutationResult(tr("Write File"), result);
     if (result.ok) {
         loadDirectory(m_current_path);
@@ -8022,21 +8022,21 @@ void FileManagementExplorerPanel::performInlineRename(const int row,
         sak::showWarningLogged(this, tr("Rename"), name_blocker);
         return;
     }
-    const QString sourcePath = m_item_model->entryAt(row).path;
-    const QString destinationPath =
-        childPathFor(parentPathForEntry(sourcePath, target.local_file_system),
+    const QString source_path = m_item_model->entryAt(row).path;
+    const QString destination_path =
+        childPathFor(parentPathForEntry(source_path, target.local_file_system),
                      new_name,
                      target.local_file_system);
     const bool is_directory = m_item_model->entryAt(row).directory;
     const auto result =
-        FileManagementFileSystemBridge::renameEntry(target, sourcePath, destinationPath);
+        FileManagementFileSystemBridge::renameEntry(target, source_path, destination_path);
     showMutationResult(tr("Rename"), result);
     if (result.ok) {
         recordHistory(FileExplorerHistoryOperation::Rename,
                       target,
                       target,
-                      {FileExplorerHistoryItem{.source_path = sourcePath,
-                                               .destination_path = destinationPath,
+                      {FileExplorerHistoryItem{.source_path = source_path,
+                                               .destination_path = destination_path,
                                                .directory = is_directory}});
         loadDirectory(m_current_path);
     }
@@ -8297,13 +8297,13 @@ void FileManagementExplorerPanel::addTagsSubmenu(QMenu* menu,
         tags_menu->addSeparator();
     }
     addCommandMenuAction(tags_menu, FileExplorerCommandId::RemoveTags, context);
-    auto* editTags = tags_menu->addAction(tr("Edit Tags..."));
-    editTags->setObjectName(QStringLiteral("fileExplorerEditTagsAction"));
-    editTags->setEnabled(selection.hasSingleEntry());
-    editTags->setToolTip(
+    auto* edit_tags = tags_menu->addAction(tr("Edit Tags..."));
+    edit_tags->setObjectName(QStringLiteral("fileExplorerEditTagsAction"));
+    edit_tags->setEnabled(selection.hasSingleEntry());
+    edit_tags->setToolTip(
         tr("Tag this item with S.A.K. metadata (never written to the file system)."));
     connect(
-        editTags, &QAction::triggered, this, &FileManagementExplorerPanel::editSelectedItemTags);
+        edit_tags, &QAction::triggered, this, &FileManagementExplorerPanel::editSelectedItemTags);
 }
 
 void FileManagementExplorerPanel::toggleTagOnSelection(const QString& tag, const bool add) {
@@ -8750,9 +8750,9 @@ void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& pos
     connect(open, &QAction::triggered, this, [this, menu_target_index]() {
         openTargetAtIndex(menu_target_index);
     });
-    auto* copyRoot = menu.addAction(tr("Copy Target Root"));
-    copyRoot->setEnabled(has_menu_target && !m_targets.at(menu_target_index).root_path.isEmpty());
-    connect(copyRoot, &QAction::triggered, this, [this, menu_target_index]() {
+    auto* copy_root = menu.addAction(tr("Copy Target Root"));
+    copy_root->setEnabled(has_menu_target && !m_targets.at(menu_target_index).root_path.isEmpty());
+    connect(copy_root, &QAction::triggered, this, [this, menu_target_index]() {
         copyTargetRootAtIndex(menu_target_index);
     });
     auto* favorite = menu.addAction(favoriteActionLabel(menu_target_index, has_menu_target));
@@ -8761,16 +8761,16 @@ void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& pos
         toggleFavoriteAtIndex(menu_target_index);
     });
     const bool is_favorite = has_menu_target && isFavoriteTargetIndex(menu_target_index);
-    auto* moveUp = menu.addAction(tr("Move Favorite Up"));
-    moveUp->setObjectName(QStringLiteral("fileExplorerMoveFavoriteUp"));
-    moveUp->setEnabled(is_favorite);
-    connect(moveUp, &QAction::triggered, this, [this, menu_target_index]() {
+    auto* move_up = menu.addAction(tr("Move Favorite Up"));
+    move_up->setObjectName(QStringLiteral("fileExplorerMoveFavoriteUp"));
+    move_up->setEnabled(is_favorite);
+    connect(move_up, &QAction::triggered, this, [this, menu_target_index]() {
         moveFavoriteAtIndex(menu_target_index, -1);
     });
-    auto* moveDown = menu.addAction(tr("Move Favorite Down"));
-    moveDown->setObjectName(QStringLiteral("fileExplorerMoveFavoriteDown"));
-    moveDown->setEnabled(is_favorite);
-    connect(moveDown, &QAction::triggered, this, [this, menu_target_index]() {
+    auto* move_down = menu.addAction(tr("Move Favorite Down"));
+    move_down->setObjectName(QStringLiteral("fileExplorerMoveFavoriteDown"));
+    move_down->setEnabled(is_favorite);
+    connect(move_down, &QAction::triggered, this, [this, menu_target_index]() {
         moveFavoriteAtIndex(menu_target_index, 1);
     });
     auto* properties = menu.addAction(tr("Target Properties"));
@@ -8799,13 +8799,13 @@ void FileManagementExplorerPanel::addSidebarGlobalMenuActions(QMenu* menu) {
         refresh, &QAction::triggered, this, &FileManagementExplorerPanel::onRefreshMountedTargets);
     auto* scan = menu->addAction(tr("Scan Disks"));
     connect(scan, &QAction::triggered, this, &FileManagementExplorerPanel::onScanDiskTargets);
-    auto* addManual = menu->addAction(tr("Add Raw/Image"));
-    connect(addManual, &QAction::triggered, this, &FileManagementExplorerPanel::onAddManualTarget);
-    auto* clearRecent = menu->addAction(tr("Clear Recent"));
-    clearRecent->setObjectName(QStringLiteral("fileExplorerClearRecent"));
-    clearRecent->setEnabled(!m_recent_target_ids.isEmpty());
+    auto* add_manual = menu->addAction(tr("Add Raw/Image"));
+    connect(add_manual, &QAction::triggered, this, &FileManagementExplorerPanel::onAddManualTarget);
+    auto* clear_recent = menu->addAction(tr("Clear Recent"));
+    clear_recent->setObjectName(QStringLiteral("fileExplorerClearRecent"));
+    clear_recent->setEnabled(!m_recent_target_ids.isEmpty());
     connect(
-        clearRecent, &QAction::triggered, this, &FileManagementExplorerPanel::clearRecentTargets);
+        clear_recent, &QAction::triggered, this, &FileManagementExplorerPanel::clearRecentTargets);
     menu->addSeparator();
     auto* reorder = menu->addAction(tr("Reorder sidebar items..."));
     reorder->setObjectName(QStringLiteral("fileExplorerReorderSidebarItems"));

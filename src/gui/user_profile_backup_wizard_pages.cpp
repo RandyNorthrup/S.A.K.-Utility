@@ -78,7 +78,7 @@ constexpr int kEthernetColumnCount = 7;
 /// those constrain where the destination may live.
 struct SelectedProfileRoots {
     QStringList paths;
-    QStringList folderNames;
+    QStringList folder_names;
 };
 
 SelectedProfileRoots selectedProfileRoots(const QVector<UserProfile>& users) {
@@ -86,7 +86,7 @@ SelectedProfileRoots selectedProfileRoots(const QVector<UserProfile>& users) {
     for (const auto& user : users) {
         if (user.is_selected && !user.profile_path.trimmed().isEmpty()) {
             roots.paths.append(user.profile_path);
-            roots.folderNames.append(user.username);
+            roots.folder_names.append(user.username);
         }
     }
     return roots;
@@ -130,7 +130,7 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
     layout->addWidget(m_userTable);
 
     // Customize button (for selected row)
-    auto* buttonLayout = new QHBoxLayout();
+    auto* button_layout = new QHBoxLayout();
     m_customizeButton = new QPushButton(tr("Customize Selected User"), this);
     m_customizeButton->setIcon(QIcon::fromTheme("configure"));
     m_customizeButton->setEnabled(false);
@@ -142,9 +142,9 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
     connect(m_userTable, &QTableWidget::itemSelectionChanged, this, [this]() {
         m_customizeButton->setEnabled(!m_userTable->selectedItems().isEmpty());
     });
-    buttonLayout->addWidget(m_customizeButton);
-    buttonLayout->addStretch();
-    layout->addLayout(buttonLayout);
+    button_layout->addWidget(m_customizeButton);
+    button_layout->addStretch();
+    layout->addLayout(button_layout);
 
     // Summary
     m_summaryLabel = new QLabel(this);
@@ -184,46 +184,46 @@ void UserProfileBackupCustomizeDataPage::populateUserList() {
         m_userTable->insertRow(row);
 
         // Username
-        auto* nameItem = new QTableWidgetItem(user.username);
-        m_userTable->setItem(row, kUserFolderColumnName, nameItem);
+        auto* name_item = new QTableWidgetItem(user.username);
+        m_userTable->setItem(row, kUserFolderColumnName, name_item);
 
         // Folder count
-        int selectedCount = 0;
+        int selected_count = 0;
         for (const auto& folder : user.folder_selections) {
             if (folder.selected) {
-                selectedCount++;
+                selected_count++;
             }
         }
-        auto* folderItem = new QTableWidgetItem(tr("%1 folders selected").arg(selectedCount));
-        m_userTable->setItem(row, kUserFolderColumnFolders, folderItem);
+        auto* folder_item = new QTableWidgetItem(tr("%1 folders selected").arg(selected_count));
+        m_userTable->setItem(row, kUserFolderColumnFolders, folder_item);
 
         row++;
     }
 }
 
-UserProfile* UserProfileBackupCustomizeDataPage::findSelectedUserByRow(int selectedRow) {
-    Q_ASSERT(selectedRow >= 0);
-    int currentRow = 0;
+UserProfile* UserProfileBackupCustomizeDataPage::findSelectedUserByRow(int selected_row) {
+    Q_ASSERT(selected_row >= 0);
+    int current_row = 0;
     for (auto& user : m_users) {
         if (!user.is_selected) {
             continue;
         }
-        if (currentRow == selectedRow) {
+        if (current_row == selected_row) {
             return &user;
         }
-        currentRow++;
+        current_row++;
     }
     return nullptr;
 }
 
 void UserProfileBackupCustomizeDataPage::onCustomizeUser() {
     Q_ASSERT(m_userTable);
-    const int selectedRow = m_userTable->currentRow();
-    if (selectedRow < 0) {
+    const int selected_row = m_userTable->currentRow();
+    if (selected_row < 0) {
         return;
     }
 
-    auto* user = findSelectedUserByRow(selectedRow);
+    auto* user = findSelectedUserByRow(selected_row);
     if (user == nullptr) {
         return;
     }
@@ -233,40 +233,40 @@ void UserProfileBackupCustomizeDataPage::onCustomizeUser() {
         return;
     }
 
-    const int selectedCount =
+    const int selected_count =
         static_cast<int>(std::count_if(user->folder_selections.begin(),
                                        user->folder_selections.end(),
                                        [](const auto& f) { return f.selected; }));
-    m_userTable->item(selectedRow, 1)->setText(tr("%1 folders selected").arg(selectedCount));
+    m_userTable->item(selected_row, 1)->setText(tr("%1 folders selected").arg(selected_count));
     updateSummary();
 }
 
 void UserProfileBackupCustomizeDataPage::updateSummary() {
     Q_ASSERT(m_summaryLabel);
-    int totalUsers = 0;
-    int totalFolders = 0;
-    qint64 totalSize = 0;
+    int total_users = 0;
+    int total_folders = 0;
+    qint64 total_size = 0;
 
     for (const auto& user : m_users) {
         if (!user.is_selected) {
             continue;
         }
-        totalUsers++;
+        total_users++;
 
         for (const auto& folder : user.folder_selections) {
             if (!folder.selected) {
                 continue;
             }
-            totalFolders++;
-            totalSize += folder.size_bytes;
+            total_folders++;
+            total_size += folder.size_bytes;
         }
     }
 
-    const double totalGB = static_cast<double>(totalSize) / sak::kBytesPerGBf;
+    const double total_gb = static_cast<double>(total_size) / sak::kBytesPerGBf;
     m_summaryLabel->setText(tr("%1 user(s), %2 total folders | Estimated: %3 GB")
-                                .arg(totalUsers)
-                                .arg(totalFolders)
-                                .arg(totalGB, 0, 'f', kSizeDisplayPrecision));
+                                .arg(total_users)
+                                .arg(total_folders)
+                                .arg(total_gb, 0, 'f', kSizeDisplayPrecision));
 }
 
 // ============================================================================
@@ -286,13 +286,13 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
-    auto* instructionLabel =
+    auto* instruction_label =
         new QLabel(tr("Smart filters automatically exclude files that can corrupt user profiles or "
                       "waste space. "
                       "You can adjust these settings or keep the recommended defaults."),
                    this);
-    instructionLabel->setWordWrap(true);
-    layout->addWidget(instructionLabel);
+    instruction_label->setWordWrap(true);
+    layout->addWidget(instruction_label);
 
     setupUi_filterSettings(layout);
     setupUi_exclusionsAndControls(layout);
@@ -305,7 +305,7 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
 
 void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layout) {
     Q_ASSERT(layout);
-    auto* gridLayout = new QGridLayout();
+    auto* grid_layout = new QGridLayout();
     int row = 0;
 
     // File size limit
@@ -314,7 +314,7 @@ void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layo
         m_maxFileSizeSpinBox->setEnabled(enabled);
         updateSummary();
     });
-    gridLayout->addWidget(m_enableFileSizeLimitCheck, row, 0);
+    grid_layout->addWidget(m_enableFileSizeLimitCheck, row, 0);
 
     m_maxFileSizeSpinBox = new QSpinBox(this);
     m_maxFileSizeSpinBox->setRange(kMaxFileSizeMinimumMb, kMaxFileSizeMaximumMb);
@@ -324,7 +324,7 @@ void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layo
             QOverload<int>::of(&QSpinBox::valueChanged),
             this,
             &UserProfileBackupSmartFiltersPage::updateSummary);
-    gridLayout->addWidget(m_maxFileSizeSpinBox, row, 1);
+    grid_layout->addWidget(m_maxFileSizeSpinBox, row, 1);
     row++;
 
     // Folder size warning
@@ -333,7 +333,7 @@ void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layo
         m_maxFolderSizeSpinBox->setEnabled(enabled);
         updateSummary();
     });
-    gridLayout->addWidget(m_enableFolderSizeLimitCheck, row, 0);
+    grid_layout->addWidget(m_enableFolderSizeLimitCheck, row, 0);
 
     m_maxFolderSizeSpinBox = new QSpinBox(this);
     m_maxFolderSizeSpinBox->setRange(kMaxFolderSizeMinimumGb, kMaxFolderSizeMaximumGb);
@@ -343,22 +343,22 @@ void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layo
             QOverload<int>::of(&QSpinBox::valueChanged),
             this,
             &UserProfileBackupSmartFiltersPage::updateSummary);
-    gridLayout->addWidget(m_maxFolderSizeSpinBox, row, 1);
+    grid_layout->addWidget(m_maxFolderSizeSpinBox, row, 1);
     row++;
 
-    layout->addLayout(gridLayout);
+    layout->addLayout(grid_layout);
 }
 
 void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayout* layout) {
     Q_ASSERT(layout);
     // Automatic exclusions
-    auto* exclusionsGroup = new QWidget(this);
-    auto* exclusionsLayout = new QVBoxLayout(exclusionsGroup);
-    exclusionsLayout->setContentsMargins(
+    auto* exclusions_group = new QWidget(this);
+    auto* exclusions_layout = new QVBoxLayout(exclusions_group);
+    exclusions_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
-    auto* exclusionsLabel = new QLabel(tr("<b>Automatic Exclusions:</b>"), this);
-    exclusionsLayout->addWidget(exclusionsLabel);
+    auto* exclusions_label = new QLabel(tr("<b>Automatic Exclusions:</b>"), this);
+    exclusions_layout->addWidget(exclusions_label);
 
     m_excludeCacheCheck = new QCheckBox(tr("Exclude cache directories (WebCache, GPUCache, etc.)"),
                                         this);
@@ -366,7 +366,7 @@ void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayou
             &QCheckBox::toggled,
             this,
             &UserProfileBackupSmartFiltersPage::updateSummary);
-    exclusionsLayout->addWidget(m_excludeCacheCheck);
+    exclusions_layout->addWidget(m_excludeCacheCheck);
 
     m_excludeTempCheck = new QCheckBox(tr("Exclude temporary files (*.tmp, *.cache, *.temp)"),
                                        this);
@@ -374,24 +374,24 @@ void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayou
             &QCheckBox::toggled,
             this,
             &UserProfileBackupSmartFiltersPage::updateSummary);
-    exclusionsLayout->addWidget(m_excludeTempCheck);
+    exclusions_layout->addWidget(m_excludeTempCheck);
 
     m_excludeLockCheck = new QCheckBox(tr("Exclude lock files (*.lock, *.lck)"), this);
     connect(m_excludeLockCheck,
             &QCheckBox::toggled,
             this,
             &UserProfileBackupSmartFiltersPage::updateSummary);
-    exclusionsLayout->addWidget(m_excludeLockCheck);
+    exclusions_layout->addWidget(m_excludeLockCheck);
 
-    layout->addWidget(exclusionsGroup);
+    layout->addWidget(exclusions_group);
 
     // Dangerous files info
-    auto* dangerousLayout = new QHBoxLayout();
-    auto* dangerousLabel = new QLabel(tr("\u26a0 <b>Always excluded:</b> Registry hives "
-                                         "(NTUSER.DAT, UsrClass.dat), system folders"),
-                                      this);
-    dangerousLabel->setWordWrap(true);
-    dangerousLayout->addWidget(dangerousLabel, 1);
+    auto* dangerous_layout = new QHBoxLayout();
+    auto* dangerous_label = new QLabel(tr("\u26a0 <b>Always excluded:</b> Registry hives "
+                                          "(NTUSER.DAT, UsrClass.dat), system folders"),
+                                       this);
+    dangerous_label->setWordWrap(true);
+    dangerous_layout->addWidget(dangerous_label, 1);
 
     m_viewDangerousButton = new QPushButton(tr("View Full List..."), this);
     m_viewDangerousButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
@@ -399,13 +399,13 @@ void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayou
             &QPushButton::clicked,
             this,
             &UserProfileBackupSmartFiltersPage::onViewDangerousList);
-    dangerousLayout->addWidget(m_viewDangerousButton);
-    layout->addLayout(dangerousLayout);
+    dangerous_layout->addWidget(m_viewDangerousButton);
+    layout->addLayout(dangerous_layout);
 
     layout->addStretch();
 
     // Reset button
-    auto* resetLayout = new QHBoxLayout();
+    auto* reset_layout = new QHBoxLayout();
     m_resetButton = new QPushButton(tr("Reset to Defaults"), this);
     m_resetButton->setIcon(QIcon::fromTheme("edit-undo"));
     m_resetButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
@@ -413,9 +413,9 @@ void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayou
             &QPushButton::clicked,
             this,
             &UserProfileBackupSmartFiltersPage::onResetToDefaults);
-    resetLayout->addWidget(m_resetButton);
-    resetLayout->addStretch();
-    layout->addLayout(resetLayout);
+    reset_layout->addWidget(m_resetButton);
+    reset_layout->addStretch();
+    layout->addLayout(reset_layout);
 }
 
 void UserProfileBackupSmartFiltersPage::initializePage() {
@@ -431,38 +431,38 @@ void UserProfileBackupSmartFiltersPage::loadFilterSettings() {
     m_enableFolderSizeLimitCheck->setChecked(m_filter.enable_folder_size_limit);
 
     // Load from m_filter (convert bytes to MB/GB for UI)
-    const qint64 fileSizeMB = m_filter.max_single_file_size_bytes / sak::kBytesPerMB;
-    m_maxFileSizeSpinBox->setValue(static_cast<int>(fileSizeMB));
+    const qint64 file_size_mb = m_filter.max_single_file_size_bytes / sak::kBytesPerMB;
+    m_maxFileSizeSpinBox->setValue(static_cast<int>(file_size_mb));
     m_maxFileSizeSpinBox->setEnabled(m_filter.enable_file_size_limit);
 
-    const qint64 folderSizeGB = m_filter.max_folder_size_bytes / sak::kBytesPerGB;
-    m_maxFolderSizeSpinBox->setValue(static_cast<int>(folderSizeGB));
+    const qint64 folder_size_gb = m_filter.max_folder_size_bytes / sak::kBytesPerGB;
+    m_maxFolderSizeSpinBox->setValue(static_cast<int>(folder_size_gb));
     m_maxFolderSizeSpinBox->setEnabled(m_filter.enable_folder_size_limit);
 
     // Enable checkboxes based on whether the filter category has any rules defined
-    const bool hasCacheRules = !m_filter.exclude_folders.isEmpty();
-    const bool hasTempRules = !m_filter.exclude_patterns.isEmpty();
-    const bool hasLockRules = !m_filter.dangerous_files.isEmpty();
+    const bool has_cache_rules = !m_filter.exclude_folders.isEmpty();
+    const bool has_temp_rules = !m_filter.exclude_patterns.isEmpty();
+    const bool has_lock_rules = !m_filter.dangerous_files.isEmpty();
 
-    m_excludeCacheCheck->setEnabled(hasCacheRules);
-    m_excludeCacheCheck->setChecked(hasCacheRules);
-    if (!hasCacheRules) {
+    m_excludeCacheCheck->setEnabled(has_cache_rules);
+    m_excludeCacheCheck->setChecked(has_cache_rules);
+    if (!has_cache_rules) {
         m_excludeCacheCheck->setToolTip(tr("No cache exclusion rules defined"));
     } else {
         m_excludeCacheCheck->setToolTip(QString());
     }
 
-    m_excludeTempCheck->setEnabled(hasTempRules);
-    m_excludeTempCheck->setChecked(hasTempRules);
-    if (!hasTempRules) {
+    m_excludeTempCheck->setEnabled(has_temp_rules);
+    m_excludeTempCheck->setChecked(has_temp_rules);
+    if (!has_temp_rules) {
         m_excludeTempCheck->setToolTip(tr("No temporary file exclusion patterns defined"));
     } else {
         m_excludeTempCheck->setToolTip(QString());
     }
 
-    m_excludeLockCheck->setEnabled(hasLockRules);
-    m_excludeLockCheck->setChecked(hasLockRules);
-    if (!hasLockRules) {
+    m_excludeLockCheck->setEnabled(has_lock_rules);
+    m_excludeLockCheck->setChecked(has_lock_rules);
+    if (!has_lock_rules) {
         m_excludeLockCheck->setToolTip(tr("No dangerous file rules defined"));
     } else {
         m_excludeLockCheck->setToolTip(QString());
@@ -484,15 +484,15 @@ void UserProfileBackupSmartFiltersPage::onViewDangerousList() {
     auto* layout = new QVBoxLayout(dialog);
 
     // Header
-    auto* headerLabel = new QLabel(
+    auto* header_label = new QLabel(
         tr("<b>[shield] Files and patterns that are always excluded from backups</b>"), dialog);
-    headerLabel->setWordWrap(true);
-    headerLabel->setStyleSheet(sak::ui::notePanelStyleWithFontSize(sak::ui::kColorBgWarningPanel,
-                                                                   sak::ui::kColorTextBody,
-                                                                   sak::ui::kFontSizeStatus,
-                                                                   sak::ui::kCssPaddingXLargePx,
-                                                                   sak::ui::kCssRadiusLargePx));
-    layout->addWidget(headerLabel);
+    header_label->setWordWrap(true);
+    header_label->setStyleSheet(sak::ui::notePanelStyleWithFontSize(sak::ui::kColorBgWarningPanel,
+                                                                    sak::ui::kColorTextBody,
+                                                                    sak::ui::kFontSizeStatus,
+                                                                    sak::ui::kCssPaddingXLargePx,
+                                                                    sak::ui::kCssRadiusLargePx));
+    layout->addWidget(header_label);
 
     // Build rich content
     QString content;
@@ -520,17 +520,17 @@ void UserProfileBackupSmartFiltersPage::onViewDangerousList() {
     }
     content += "</ul>";
 
-    auto* textBrowser = new QTextEdit(dialog);
-    textBrowser->setReadOnly(true);
-    textBrowser->setHtml(content);
-    textBrowser->setStyleSheet(
+    auto* text_browser = new QTextEdit(dialog);
+    text_browser->setReadOnly(true);
+    text_browser->setHtml(content);
+    text_browser->setStyleSheet(
         sak::ui::textBrowserSurfaceStyle(sak::ui::kColorBgSurface, sak::ui::kColorBorderDefault));
-    layout->addWidget(textBrowser);
+    layout->addWidget(text_browser);
 
-    auto* closeButton = new QPushButton(tr("Close"), dialog);
-    closeButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(closeButton, &QPushButton::clicked, dialog, &QDialog::accept);
-    layout->addWidget(closeButton, 0, Qt::AlignRight);
+    auto* close_button = new QPushButton(tr("Close"), dialog);
+    close_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    connect(close_button, &QPushButton::clicked, dialog, &QDialog::accept);
+    layout->addWidget(close_button, 0, Qt::AlignRight);
 
     dialog->exec();
 }
@@ -549,19 +549,19 @@ void UserProfileBackupSmartFiltersPage::updateSummary() {
                                      sak::kBytesPerGB;
 
     // Count total exclusions
-    const int exclusionCount = static_cast<int>(m_filter.dangerous_files.size() +
-                                                m_filter.exclude_patterns.size() +
-                                                m_filter.exclude_folders.size());
+    const int exclusion_count = static_cast<int>(m_filter.dangerous_files.size() +
+                                                 m_filter.exclude_patterns.size() +
+                                                 m_filter.exclude_folders.size());
 
-    QString limitText;
+    QString limit_text;
     if (m_filter.enable_file_size_limit) {
-        limitText = tr("File limit: %1 MB").arg(m_maxFileSizeSpinBox->value());
+        limit_text = tr("File limit: %1 MB").arg(m_maxFileSizeSpinBox->value());
     } else {
-        limitText = tr("No file size limit");
+        limit_text = tr("No file size limit");
     }
 
     m_summaryLabel->setText(
-        tr("[shield] %1 exclusion rules active | %2").arg(exclusionCount).arg(limitText));
+        tr("[shield] %1 exclusion rules active | %2").arg(exclusion_count).arg(limit_text));
 }
 
 // ============================================================================
@@ -580,23 +580,23 @@ UserProfileBackupSettingsPage::UserProfileBackupSettingsPage(BackupManifest& man
 void UserProfileBackupSettingsPage::setupUi_destination(QVBoxLayout* layout) {
     Q_ASSERT(layout);
     // Destination path
-    auto* destLayout = new QHBoxLayout();
-    destLayout->addWidget(new QLabel(tr("Backup destination:"), this));
+    auto* dest_layout = new QHBoxLayout();
+    dest_layout->addWidget(new QLabel(tr("Backup destination:"), this));
     m_destinationEdit = new QLineEdit(this);
     m_destinationEdit->setPlaceholderText(tr("Select backup folder..."));
     connect(m_destinationEdit,
             &QLineEdit::textChanged,
             this,
             &UserProfileBackupSettingsPage::updateSummary);
-    destLayout->addWidget(m_destinationEdit, 1);
+    dest_layout->addWidget(m_destinationEdit, 1);
     m_browseButton = new QPushButton(tr("Browse..."), this);
     m_browseButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_browseButton,
             &QPushButton::clicked,
             this,
             &UserProfileBackupSettingsPage::onBrowseDestination);
-    destLayout->addWidget(m_browseButton);
-    layout->addLayout(destLayout);
+    dest_layout->addWidget(m_browseButton);
+    layout->addLayout(dest_layout);
 
     // The compression combo that used to sit here is gone. It defaulted to Balanced, so
     // every default run logged "Compression: Balanced" and then produced an uncompressed
@@ -614,16 +614,16 @@ void UserProfileBackupSettingsPage::setupUi_transforms(QVBoxLayout* layout) {
         tr("Stores each file compressed. Smaller backups, slower to write and restore."));
     layout->addWidget(m_compressCheck);
 
-    auto* levelLayout = new QHBoxLayout();
-    levelLayout->addWidget(new QLabel(tr("Compression level:"), this));
+    auto* level_layout = new QHBoxLayout();
+    level_layout->addWidget(new QLabel(tr("Compression level:"), this));
     m_compressionLevelCombo = new QComboBox(this);
     m_compressionLevelCombo->addItem(tr("Fastest"), kCompressionLevelFastest);
     m_compressionLevelCombo->addItem(tr("Balanced"), sak::kBackupDefaultCompressionLevel);
     m_compressionLevelCombo->addItem(tr("Smallest"), kCompressionLevelSmallest);
     m_compressionLevelCombo->setCurrentIndex(1);
     m_compressionLevelCombo->setEnabled(false);
-    levelLayout->addWidget(m_compressionLevelCombo, 1);
-    layout->addLayout(levelLayout);
+    level_layout->addWidget(m_compressionLevelCombo, 1);
+    layout->addLayout(level_layout);
 
     // Encryption. The controls are created BEFORE the toggle handler that enables them:
     // the removed version captured m_passwordEdit in a lambda ten lines before it existed.
@@ -646,15 +646,15 @@ void UserProfileBackupSettingsPage::setupUi_transforms(QVBoxLayout* layout) {
     // Say what encryption does NOT cover, where the choice is made. File names and sizes
     // stay readable because the tree is preserved for selective restore; a technician
     // deciding whether this is enough protection needs to know that here, not in a header.
-    auto* encryptNote = new QLabel(
+    auto* encrypt_note = new QLabel(
         tr("(i) File <b>contents</b> are encrypted. File <b>names</b>, folder structure and "
            "file sizes remain visible. There is no password recovery - a lost password means "
            "the backup cannot be restored."),
         this);
-    encryptNote->setWordWrap(true);
-    encryptNote->setStyleSheet(
+    encrypt_note->setWordWrap(true);
+    encrypt_note->setStyleSheet(
         sak::ui::paddedTextStyle(sak::ui::kColorTextMuted, sak::ui::kSpacingSmall));
-    layout->addWidget(encryptNote);
+    layout->addWidget(encrypt_note);
 
     connect(m_compressCheck, &QCheckBox::toggled, this, [this](const bool on) {
         m_compressionLevelCombo->setEnabled(on);
@@ -715,8 +715,8 @@ void UserProfileBackupSettingsPage::setupUi_permissions(QVBoxLayout* layout) {
     Q_ASSERT(layout);
 
     // Permission mode
-    auto* permLayout = new QHBoxLayout();
-    permLayout->addWidget(new QLabel(tr("Permission handling:"), this));
+    auto* perm_layout = new QHBoxLayout();
+    perm_layout->addWidget(new QLabel(tr("Permission handling:"), this));
     m_permissionModeCombo = new QComboBox(this);
     m_permissionModeCombo->addItem(tr("Strip All (Recommended)"),
                                    static_cast<int>(PermissionMode::StripAll));
@@ -729,19 +729,19 @@ void UserProfileBackupSettingsPage::setupUi_permissions(QVBoxLayout* layout) {
             QOverload<int>::of(&QComboBox::currentIndexChanged),
             this,
             &UserProfileBackupSettingsPage::updateSummary);
-    permLayout->addWidget(m_permissionModeCombo, 1);
-    layout->addLayout(permLayout);
+    perm_layout->addWidget(m_permissionModeCombo, 1);
+    layout->addLayout(perm_layout);
 
     // Permission explanation
-    auto* permExplainLabel = new QLabel(
+    auto* perm_explain_label = new QLabel(
         tr("(i) <b>Strip All:</b> Removes ACLs to prevent permission conflicts (safest). "
            "<b>Preserve:</b> Keeps original permissions (may cause errors). "
            "<b>Assign Standard:</b> Sets full control for destination user."),
         this);
-    permExplainLabel->setWordWrap(true);
-    permExplainLabel->setStyleSheet(
+    perm_explain_label->setWordWrap(true);
+    perm_explain_label->setStyleSheet(
         sak::ui::paddedTextStyle(sak::ui::kColorTextMuted, sak::ui::kSpacingSmall));
-    layout->addWidget(permExplainLabel);
+    layout->addWidget(perm_explain_label);
 }
 
 void UserProfileBackupSettingsPage::setupUi_summaryAndRegistration(QVBoxLayout* layout) {
@@ -766,10 +766,10 @@ void UserProfileBackupSettingsPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
     // Instructions
-    auto* instructionLabel =
+    auto* instruction_label =
         new QLabel(tr("Choose where to save the backup and configure additional options."), this);
-    instructionLabel->setWordWrap(true);
-    layout->addWidget(instructionLabel);
+    instruction_label->setWordWrap(true);
+    layout->addWidget(instruction_label);
 
     setupUi_destination(layout);
     setupUi_transforms(layout);
@@ -779,15 +779,15 @@ void UserProfileBackupSettingsPage::setupUi() {
 
 void UserProfileBackupSettingsPage::initializePage() {
     // Suggest default backup location
-    const QString defaultPath = QDir::homePath() + "/UserProfileBackup_" +
-                                QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-    m_destinationEdit->setText(defaultPath);
+    const QString default_path = QDir::homePath() + "/UserProfileBackup_" +
+                                 QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    m_destinationEdit->setText(default_path);
     updateSummary();
 }
 
 bool UserProfileBackupSettingsPage::confirmExistingDestination(const QString& destination) {
-    const QDir destDir(destination);
-    if (!destDir.exists()) {
+    const QDir dest_dir(destination);
+    if (!dest_dir.exists()) {
         return true;
     }
     auto reply =
@@ -815,7 +815,7 @@ bool UserProfileBackupSettingsPage::validateDestination() {
 
     const SelectedProfileRoots roots = selectedProfileRoots(wiz->scannedUsers());
     const BackupDestinationCheck check =
-        screenBackupDestination(m_destinationEdit->text(), roots.paths, roots.folderNames);
+        screenBackupDestination(m_destinationEdit->text(), roots.paths, roots.folder_names);
     if (!check.accepted) {
         sak::logWarning("User profile backup: destination refused: {}",
                         check.refusal.toStdString());
@@ -879,19 +879,19 @@ void UserProfileBackupSettingsPage::updateSummary() {
                              ? tr("Not selected")
                              : QDir::toNativeSeparators(m_destinationEdit->text());
 
-    QString permMode;
-    auto currentMode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
-    if (currentMode == PermissionMode::StripAll) {
-        permMode = tr("Strip ACLs");
-    } else if (currentMode == PermissionMode::PreserveOriginal) {
-        permMode = tr("Preserve");
-    } else if (currentMode == PermissionMode::AssignToDestination) {
-        permMode = tr("Assign Destination");
+    QString perm_mode;
+    auto current_mode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
+    if (current_mode == PermissionMode::StripAll) {
+        perm_mode = tr("Strip ACLs");
+    } else if (current_mode == PermissionMode::PreserveOriginal) {
+        perm_mode = tr("Preserve");
+    } else if (current_mode == PermissionMode::AssignToDestination) {
+        perm_mode = tr("Assign Destination");
     }
 
     m_summaryLabel->setText(tr("[save] Destination: %1 | Permissions: %2 | Verify: %3")
                                 .arg(dest)
-                                .arg(permMode)
+                                .arg(perm_mode)
                                 .arg(m_verifyCheck->isChecked() ? tr("Yes") : tr("No")));
 }
 
@@ -912,13 +912,13 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
     // Instructions
-    auto* instructionLabel =
+    auto* instruction_label =
         new QLabel(tr("Click <b>Scan Applications</b> to detect all installed programs. "
                       "Selected applications will be saved to the backup so they can be "
                       "reinstalled via Chocolatey on the destination machine."),
                    this);
-    instructionLabel->setWordWrap(true);
-    layout->addWidget(instructionLabel);
+    instruction_label->setWordWrap(true);
+    layout->addWidget(instruction_label);
 
     setupScanControls(layout);
     setupAppsTree(layout);
@@ -931,17 +931,17 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
 }
 
 void UserProfileBackupInstalledAppsPage::setupScanControls(QVBoxLayout* layout) {
-    auto* scanLayout = new QHBoxLayout();
+    auto* scan_layout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Applications"), this);
     m_scanButton->setIcon(QIcon::fromTheme("view-refresh"));
     m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(
         m_scanButton, &QPushButton::clicked, this, &UserProfileBackupInstalledAppsPage::onScanApps);
-    scanLayout->addWidget(m_scanButton);
+    scan_layout->addWidget(m_scanButton);
 
     m_statusLabel = new QLabel(tr("Click Scan Applications to begin"), this);
-    scanLayout->addWidget(m_statusLabel, 1);
-    layout->addLayout(scanLayout);
+    scan_layout->addWidget(m_statusLabel, 1);
+    layout->addLayout(scan_layout);
 
     m_scanProgress = new QProgressBar(this);
     m_scanProgress->setVisible(false);
@@ -967,7 +967,7 @@ void UserProfileBackupInstalledAppsPage::setupAppsTree(QVBoxLayout* layout) {
 }
 
 void UserProfileBackupInstalledAppsPage::setupSelectionControls(QVBoxLayout* layout) {
-    auto* buttonLayout = new QHBoxLayout();
+    auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
     m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
@@ -975,7 +975,7 @@ void UserProfileBackupInstalledAppsPage::setupSelectionControls(QVBoxLayout* lay
             &QPushButton::clicked,
             this,
             &UserProfileBackupInstalledAppsPage::onSelectAll);
-    buttonLayout->addWidget(m_selectAllButton);
+    button_layout->addWidget(m_selectAllButton);
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
@@ -984,9 +984,9 @@ void UserProfileBackupInstalledAppsPage::setupSelectionControls(QVBoxLayout* lay
             &QPushButton::clicked,
             this,
             &UserProfileBackupInstalledAppsPage::onSelectNone);
-    buttonLayout->addWidget(m_selectNoneButton);
-    buttonLayout->addStretch();
-    layout->addLayout(buttonLayout);
+    button_layout->addWidget(m_selectNoneButton);
+    button_layout->addStretch();
+    layout->addLayout(button_layout);
 }
 
 void UserProfileBackupInstalledAppsPage::initializePage() {
@@ -1018,16 +1018,16 @@ static void collectCategoryApps(QTreeWidgetItem* category,
                                 int& selected,
                                 QVector<InstalledAppInfo>& out) {
     for (int child_index = 0; child_index < category->childCount(); ++child_index) {
-        auto* appItem = category->child(child_index);
+        auto* app_item = category->child(child_index);
         total++;
-        if (appItem->checkState(0) != Qt::Checked) {
+        if (app_item->checkState(0) != Qt::Checked) {
             continue;
         }
         selected++;
         InstalledAppInfo info;
-        info.name = appItem->text(kInstalledAppColumnName);
-        info.version = appItem->text(kInstalledAppColumnVersion);
-        info.publisher = appItem->text(kInstalledAppColumnPublisher);
+        info.name = app_item->text(kInstalledAppColumnName);
+        info.version = app_item->text(kInstalledAppColumnVersion);
+        info.publisher = app_item->text(kInstalledAppColumnPublisher);
         info.category = category->text(kInstalledAppColumnName);
         info.selected = true;
         out.append(info);
@@ -1041,16 +1041,16 @@ void UserProfileBackupInstalledAppsPage::updateNextButtonText() {
         return;
     }
 
-    bool hasSelection = false;
+    bool has_selection = false;
     for (int category_index = 0; category_index < m_appTree->topLevelItemCount();
          ++category_index) {
         if (categoryHasCheckedApp(m_appTree->topLevelItem(category_index))) {
-            hasSelection = true;
+            has_selection = true;
             break;
         }
     }
 
-    wiz->setButtonText(QWizard::NextButton, hasSelection ? tr("Next >") : tr("Skip >"));
+    wiz->setButtonText(QWizard::NextButton, has_selection ? tr("Next >") : tr("Skip >"));
 }
 
 bool UserProfileBackupInstalledAppsPage::isComplete() const {
@@ -1165,35 +1165,37 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
     m_appTree->clear();
 
     // Use a QPointer so we can detect if the page was destroyed while scanning
-    const QPointer<UserProfileBackupInstalledAppsPage> safeThis(this);
+    const QPointer<UserProfileBackupInstalledAppsPage> safe_this(this);
 
     // Run heavy scanning work on a background thread to avoid freezing the UI
     auto* watcher = new QFutureWatcher<QVector<InstalledAppInfo>>(this);
 
-    connect(
-        watcher, &QFutureWatcher<QVector<InstalledAppInfo>>::finished, this, [safeThis, watcher]() {
-            watcher->deleteLater();
-            if (!safeThis) {
-                return;  // Page was destroyed
-            }
+    connect(watcher,
+            &QFutureWatcher<QVector<InstalledAppInfo>>::finished,
+            this,
+            [safe_this, watcher]() {
+                watcher->deleteLater();
+                if (!safe_this) {
+                    return;  // Page was destroyed
+                }
 
-            auto appInfos = watcher->result();
+                auto app_infos = watcher->result();
 
-            safeThis->m_scanned = true;
-            safeThis->m_scanButton->setEnabled(true);
-            safeThis->m_selectAllButton->setEnabled(true);
-            safeThis->m_selectNoneButton->setEnabled(true);
-            safeThis->m_appTree->setEnabled(true);
-            safeThis->m_scanProgress->setVisible(false);
+                safe_this->m_scanned = true;
+                safe_this->m_scanButton->setEnabled(true);
+                safe_this->m_selectAllButton->setEnabled(true);
+                safe_this->m_selectNoneButton->setEnabled(true);
+                safe_this->m_appTree->setEnabled(true);
+                safe_this->m_scanProgress->setVisible(false);
 
-            safeThis->m_statusLabel->setText(
-                QCoreApplication::translate("UserProfileBackupInstalledAppsPage",
-                                            "Found %1 application(s)")
-                    .arg(appInfos.size()));
-            safeThis->populateTree(appInfos);
-            safeThis->updateNextButtonText();
-            Q_EMIT safeThis->completeChanged();
-        });
+                safe_this->m_statusLabel->setText(
+                    QCoreApplication::translate("UserProfileBackupInstalledAppsPage",
+                                                "Found %1 application(s)")
+                        .arg(app_infos.size()));
+                safe_this->populateTree(app_infos);
+                safe_this->updateNextButtonText();
+                Q_EMIT safe_this->completeChanged();
+            });
 
     watcher->setFuture(QtConcurrent::run([]() -> QVector<InstalledAppInfo> {
         // Scan installed apps from registry + AppX (no Chocolatey calls).
@@ -1203,8 +1205,8 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
 
         sak::logDebug("onScanApps background: scanAll returned {} apps", apps.size());
 
-        QVector<InstalledAppInfo> appInfos;
-        appInfos.reserve(static_cast<qsizetype>(apps.size()));
+        QVector<InstalledAppInfo> app_infos;
+        app_infos.reserve(static_cast<qsizetype>(apps.size()));
 
         for (const auto& app : apps) {
             InstalledAppInfo info;
@@ -1213,11 +1215,11 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
             info.publisher = app.publisher;
             info.selected = true;
             info.category = categorizeApp(app.name, app.publisher);
-            appInfos.append(info);
+            app_infos.append(info);
         }
 
-        sak::logDebug("onScanApps background: returning {} app infos", appInfos.size());
-        return appInfos;
+        sak::logDebug("onScanApps background: returning {} app infos", app_infos.size());
+        return app_infos;
     }));
 }
 
@@ -1234,21 +1236,21 @@ void UserProfileBackupInstalledAppsPage::populateTree(const QVector<InstalledApp
     }
 
     for (auto it = categories.constBegin(); it != categories.constEnd(); ++it) {
-        auto* categoryItem = new QTreeWidgetItem(m_appTree);
-        categoryItem->setText(kInstalledAppColumnName, it.key());
-        categoryItem->setFlags(categoryItem->flags() | Qt::ItemIsUserCheckable);
-        categoryItem->setCheckState(0, Qt::Checked);
+        auto* category_item = new QTreeWidgetItem(m_appTree);
+        category_item->setText(kInstalledAppColumnName, it.key());
+        category_item->setFlags(category_item->flags() | Qt::ItemIsUserCheckable);
+        category_item->setCheckState(0, Qt::Checked);
 
         for (const auto* app : it.value()) {
-            auto* appItem = new QTreeWidgetItem(categoryItem);
-            appItem->setText(kInstalledAppColumnName, app->name);
-            appItem->setText(kInstalledAppColumnVersion, app->version);
-            appItem->setText(kInstalledAppColumnPublisher, app->publisher);
-            appItem->setFlags(appItem->flags() | Qt::ItemIsUserCheckable);
-            appItem->setCheckState(0, app->selected ? Qt::Checked : Qt::Unchecked);
+            auto* app_item = new QTreeWidgetItem(category_item);
+            app_item->setText(kInstalledAppColumnName, app->name);
+            app_item->setText(kInstalledAppColumnVersion, app->version);
+            app_item->setText(kInstalledAppColumnPublisher, app->publisher);
+            app_item->setFlags(app_item->flags() | Qt::ItemIsUserCheckable);
+            app_item->setCheckState(0, app->selected ? Qt::Checked : Qt::Unchecked);
         }
 
-        categoryItem->setExpanded(true);
+        category_item->setExpanded(true);
     }
 
     m_appTree->blockSignals(false);
@@ -1287,32 +1289,33 @@ void UserProfileBackupInstalledAppsPage::commitAppSelection() {
     Q_ASSERT(m_summaryLabel);
     int total = 0;
     int selected = 0;
-    QVector<InstalledAppInfo> selectedApps;
+    QVector<InstalledAppInfo> selected_apps;
 
     for (int category_index = 0; category_index < m_appTree->topLevelItemCount();
          ++category_index) {
-        collectCategoryApps(m_appTree->topLevelItem(category_index), total, selected, selectedApps);
+        collectCategoryApps(
+            m_appTree->topLevelItem(category_index), total, selected, selected_apps);
     }
 
     m_summaryLabel->setText(tr("%1 application(s) selected out of %2").arg(selected).arg(total));
     if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
-        wiz->setInstalledApps(selectedApps);
+        wiz->setInstalledApps(selected_apps);
     }
 }
 
 void UserProfileBackupInstalledAppsPage::updateParentCheckState(QTreeWidgetItem* parent) {
-    int checkedCount = 0;
-    const int totalCount = parent->childCount();
+    int checked_count = 0;
+    const int total_count = parent->childCount();
 
-    for (int i = 0; i < totalCount; ++i) {
+    for (int i = 0; i < total_count; ++i) {
         if (parent->child(i)->checkState(0) == Qt::Checked) {
-            checkedCount++;
+            checked_count++;
         }
     }
 
-    if (checkedCount == 0) {
+    if (checked_count == 0) {
         parent->setCheckState(0, Qt::Unchecked);
-    } else if (checkedCount == totalCount) {
+    } else if (checked_count == total_count) {
         parent->setCheckState(0, Qt::Checked);
     } else {
         parent->setCheckState(0, Qt::PartiallyChecked);
@@ -1432,31 +1435,31 @@ static void parseNetshAdapterField(const QString& trimmed, EthernetConfigInfo& c
 static QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& output) {
     QVector<EthernetConfigInfo> configs;
     EthernetConfigInfo current;
-    bool inAdapter = false;
+    bool in_adapter = false;
 
     for (const QString& line : output.split('\n')) {
         const QString trimmed = line.trimmed();
 
         if (trimmed.startsWith("Configuration for interface")) {
-            if (inAdapter && !current.adapter_name.isEmpty()) {
+            if (in_adapter && !current.adapter_name.isEmpty()) {
                 configs.append(current);
             }
             current = EthernetConfigInfo();
-            const int firstQuote = static_cast<int>(trimmed.indexOf('"'));
-            const int lastQuote = static_cast<int>(trimmed.lastIndexOf('"'));
-            if (firstQuote >= 0 && lastQuote > firstQuote) {
-                current.adapter_name = trimmed.mid(firstQuote + 1, lastQuote - firstQuote - 1);
+            const int first_quote = static_cast<int>(trimmed.indexOf('"'));
+            const int last_quote = static_cast<int>(trimmed.lastIndexOf('"'));
+            if (first_quote >= 0 && last_quote > first_quote) {
+                current.adapter_name = trimmed.mid(first_quote + 1, last_quote - first_quote - 1);
             }
-            inAdapter = true;
+            in_adapter = true;
             continue;
         }
-        if (!inAdapter) {
+        if (!in_adapter) {
             continue;
         }
 
         parseNetshAdapterField(trimmed, current);
     }
-    if (inAdapter && !current.adapter_name.isEmpty()) {
+    if (in_adapter && !current.adapter_name.isEmpty()) {
         configs.append(current);
     }
     return configs;
@@ -1729,23 +1732,23 @@ void UserProfileBackupAppDataPage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
-    auto* instructionLabel = new QLabel(
+    auto* instruction_label = new QLabel(
         tr("Click <b>Scan App Data</b> to detect application data on selected users. "
            "This backs up application settings, profiles, and configurations -- "
            "not the applications themselves (use the Installed Applications step for that)."),
         this);
-    instructionLabel->setWordWrap(true);
-    layout->addWidget(instructionLabel);
+    instruction_label->setWordWrap(true);
+    layout->addWidget(instruction_label);
 
-    auto* scanLayout = new QHBoxLayout();
+    auto* scan_layout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan App Data"), this);
     m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(
         m_scanButton, &QPushButton::clicked, this, &UserProfileBackupAppDataPage::onScanAppData);
-    scanLayout->addWidget(m_scanButton);
+    scan_layout->addWidget(m_scanButton);
     m_statusLabel = new QLabel(tr("Click Scan App Data to begin"), this);
-    scanLayout->addWidget(m_statusLabel, 1);
-    layout->addLayout(scanLayout);
+    scan_layout->addWidget(m_statusLabel, 1);
+    layout->addLayout(scan_layout);
 
     m_scanProgress = new QProgressBar(this);
     m_scanProgress->setVisible(false);
@@ -1766,13 +1769,13 @@ void UserProfileBackupAppDataPage::setupUi() {
             &UserProfileBackupAppDataPage::onItemChanged);
     layout->addWidget(m_appDataTree);
 
-    auto* buttonLayout = new QHBoxLayout();
+    auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
     m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(
         m_selectAllButton, &QPushButton::clicked, this, &UserProfileBackupAppDataPage::onSelectAll);
-    buttonLayout->addWidget(m_selectAllButton);
+    button_layout->addWidget(m_selectAllButton);
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
@@ -1781,9 +1784,9 @@ void UserProfileBackupAppDataPage::setupUi() {
             &QPushButton::clicked,
             this,
             &UserProfileBackupAppDataPage::onSelectNone);
-    buttonLayout->addWidget(m_selectNoneButton);
-    buttonLayout->addStretch();
-    layout->addLayout(buttonLayout);
+    button_layout->addWidget(m_selectNoneButton);
+    button_layout->addStretch();
+    layout->addLayout(button_layout);
 
     m_summaryLabel = new QLabel(this);
     m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
@@ -1811,27 +1814,27 @@ void UserProfileBackupAppDataPage::cleanupPage() {
 // Honors an optional cancel flag so an owner teardown can bound the wait.
 static QVector<AppDataSourceInfo> scanSelectedAppDataSources(const QVector<UserProfile>& users,
                                                              const std::atomic_bool* cancel) {
-    QVector<AppDataSourceInfo> allSources;
-    const auto commonSources = getCommonAppDataSources();
+    QVector<AppDataSourceInfo> all_sources;
+    const auto common_sources = getCommonAppDataSources();
     for (const auto& user : users) {
         if (!user.is_selected) {
             continue;
         }
-        for (auto source : commonSources) {
+        for (auto source : common_sources) {
             if ((cancel != nullptr) && cancel->load()) {
-                return allSources;
+                return all_sources;
             }
-            const QString fullPath = user.profile_path + "/" + source.relative_path;
-            const qint64 pathSize = calculateSourceSize(fullPath, cancel);
-            if (pathSize < 0) {
+            const QString full_path = user.profile_path + "/" + source.relative_path;
+            const qint64 path_size = calculateSourceSize(full_path, cancel);
+            if (path_size < 0) {
                 continue;
             }
             source.exists = true;
-            source.size_bytes = pathSize;
-            allSources.append(source);
+            source.size_bytes = path_size;
+            all_sources.append(source);
         }
     }
-    return allSources;
+    return all_sources;
 }
 
 void UserProfileBackupAppDataPage::onScanAppData() {
@@ -1858,7 +1861,7 @@ void UserProfileBackupAppDataPage::onScanAppData() {
 
 void UserProfileBackupAppDataPage::onScanFinished() {
     Q_ASSERT(m_scanWatcher);
-    const QVector<AppDataSourceInfo> allSources = m_scanWatcher->result();
+    const QVector<AppDataSourceInfo> all_sources = m_scanWatcher->result();
     m_scanned = true;
     m_scanButton->setEnabled(true);
     m_selectAllButton->setEnabled(true);
@@ -1866,8 +1869,8 @@ void UserProfileBackupAppDataPage::onScanFinished() {
     m_appDataTree->setEnabled(true);
     m_scanProgress->setVisible(false);
 
-    m_statusLabel->setText(tr("Found %1 application data source(s)").arg(allSources.size()));
-    populateTree(allSources);
+    m_statusLabel->setText(tr("Found %1 application data source(s)").arg(all_sources.size()));
+    populateTree(all_sources);
     updateNextButtonText();
 }
 
@@ -1884,30 +1887,30 @@ void UserProfileBackupAppDataPage::populateTree(const QVector<AppDataSourceInfo>
     }
 
     for (auto it = categories.constBegin(); it != categories.constEnd(); ++it) {
-        auto* categoryItem = new QTreeWidgetItem(m_appDataTree);
-        categoryItem->setText(kAppDataColumnName, it.key());
-        categoryItem->setFlags(categoryItem->flags() | Qt::ItemIsUserCheckable);
+        auto* category_item = new QTreeWidgetItem(m_appDataTree);
+        category_item->setText(kAppDataColumnName, it.key());
+        category_item->setFlags(category_item->flags() | Qt::ItemIsUserCheckable);
 
-        int catSelected = 0;
+        int cat_selected = 0;
         for (const auto* source : it.value()) {
-            auto* item = new QTreeWidgetItem(categoryItem);
+            auto* item = new QTreeWidgetItem(category_item);
             item->setText(kAppDataColumnName, source->name);
             item->setText(kAppDataColumnPath, source->relative_path);
-            const double sizeMB = static_cast<double>(source->size_bytes) / sak::kBytesPerMBf;
+            const double size_mb = static_cast<double>(source->size_bytes) / sak::kBytesPerMBf;
             item->setText(kAppDataColumnSize,
-                          QString("%1 MB").arg(sizeMB, 0, 'f', kAppDataSizeDisplayPrecision));
+                          QString("%1 MB").arg(size_mb, 0, 'f', kAppDataSizeDisplayPrecision));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setCheckState(0, source->selected ? Qt::Checked : Qt::Unchecked);
             if (source->selected) {
-                catSelected++;
+                cat_selected++;
             }
         }
 
-        categoryItem->setCheckState(0,
-                                    catSelected == it.value().size() ? Qt::Checked
-                                    : catSelected > 0                ? Qt::PartiallyChecked
-                                                                     : Qt::Unchecked);
-        categoryItem->setExpanded(true);
+        category_item->setCheckState(0,
+                                     cat_selected == it.value().size() ? Qt::Checked
+                                     : cat_selected > 0                ? Qt::PartiallyChecked
+                                                                       : Qt::Unchecked);
+        category_item->setExpanded(true);
     }
 
     m_appDataTree->blockSignals(false);
@@ -1921,46 +1924,46 @@ void UserProfileBackupAppDataPage::commitAppDataSelection() {
     Q_ASSERT(m_summaryLabel);
     int total = 0;
     int selected = 0;
-    QVector<AppDataSourceInfo> selectedSources;
+    QVector<AppDataSourceInfo> selected_sources;
 
     for (int i = 0; i < m_appDataTree->topLevelItemCount(); ++i) {
         auto* category = m_appDataTree->topLevelItem(i);
         for (int j = 0; j < category->childCount(); ++j) {
-            auto* appItem = category->child(j);
+            auto* app_item = category->child(j);
             total++;
-            if (appItem->checkState(0) != Qt::Checked) {
+            if (app_item->checkState(0) != Qt::Checked) {
                 continue;
             }
             selected++;
             AppDataSourceInfo info;
-            info.name = appItem->text(0);
+            info.name = app_item->text(0);
             info.category = category->text(0);
-            info.relative_path = appItem->text(1);
+            info.relative_path = app_item->text(1);
             info.selected = true;
-            selectedSources.append(info);
+            selected_sources.append(info);
         }
     }
 
     m_summaryLabel->setText(
         tr("%1 of %2 application data source(s) selected").arg(selected).arg(total));
     if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
-        wiz->setAppDataSources(selectedSources);
+        wiz->setAppDataSources(selected_sources);
     }
 }
 
 void UserProfileBackupAppDataPage::updateParentCheckState(QTreeWidgetItem* parent) {
-    int checkedCount = 0;
-    const int totalCount = parent->childCount();
+    int checked_count = 0;
+    const int total_count = parent->childCount();
 
-    for (int i = 0; i < totalCount; ++i) {
+    for (int i = 0; i < total_count; ++i) {
         if (parent->child(i)->checkState(0) == Qt::Checked) {
-            checkedCount++;
+            checked_count++;
         }
     }
 
-    if (checkedCount == 0) {
+    if (checked_count == 0) {
         parent->setCheckState(0, Qt::Unchecked);
-    } else if (checkedCount == totalCount) {
+    } else if (checked_count == total_count) {
         parent->setCheckState(0, Qt::Checked);
     } else {
         parent->setCheckState(0, Qt::PartiallyChecked);
@@ -1974,21 +1977,21 @@ void UserProfileBackupAppDataPage::updateNextButtonText() {
         return;
     }
 
-    bool hasSelection = false;
+    bool has_selection = false;
     for (int i = 0; i < m_appDataTree->topLevelItemCount(); ++i) {
         auto* category = m_appDataTree->topLevelItem(i);
         for (int j = 0; j < category->childCount(); ++j) {
             if (category->child(j)->checkState(0) == Qt::Checked) {
-                hasSelection = true;
+                has_selection = true;
                 break;
             }
         }
-        if (hasSelection) {
+        if (has_selection) {
             break;
         }
     }
 
-    wiz->setButtonText(QWizard::NextButton, hasSelection ? tr("Next >") : tr("Skip >"));
+    wiz->setButtonText(QWizard::NextButton, has_selection ? tr("Next >") : tr("Skip >"));
 }
 
 void UserProfileBackupAppDataPage::onItemChanged(QTreeWidgetItem* item, int column) {
@@ -2064,25 +2067,25 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
-    auto* instructionLabel =
+    auto* instruction_label =
         new QLabel(tr("Click <b>Scan Networks</b> to detect saved WiFi profiles. "
                       "Selected profiles will be exported and included in the backup "
                       "for easy restoration on the destination machine."),
                    this);
-    instructionLabel->setWordWrap(true);
-    layout->addWidget(instructionLabel);
+    instruction_label->setWordWrap(true);
+    layout->addWidget(instruction_label);
 
-    auto* scanLayout = new QHBoxLayout();
+    auto* scan_layout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Networks"), this);
     m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_scanButton,
             &QPushButton::clicked,
             this,
             &UserProfileBackupKnownNetworksPage::onScanNetworks);
-    scanLayout->addWidget(m_scanButton);
+    scan_layout->addWidget(m_scanButton);
     m_statusLabel = new QLabel(tr("Click Scan Networks to begin"), this);
-    scanLayout->addWidget(m_statusLabel, 1);
-    layout->addLayout(scanLayout);
+    scan_layout->addWidget(m_statusLabel, 1);
+    layout->addLayout(scan_layout);
 
     m_scanProgress = new QProgressBar(this);
     m_scanProgress->setVisible(false);
@@ -2100,7 +2103,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
             &UserProfileBackupKnownNetworksPage::onItemChanged);
     layout->addWidget(m_networkTree);
 
-    auto* buttonLayout = new QHBoxLayout();
+    auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
     m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
@@ -2108,7 +2111,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
             &QPushButton::clicked,
             this,
             &UserProfileBackupKnownNetworksPage::onSelectAll);
-    buttonLayout->addWidget(m_selectAllButton);
+    button_layout->addWidget(m_selectAllButton);
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
@@ -2117,9 +2120,9 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
             &QPushButton::clicked,
             this,
             &UserProfileBackupKnownNetworksPage::onSelectNone);
-    buttonLayout->addWidget(m_selectNoneButton);
-    buttonLayout->addStretch();
-    layout->addLayout(buttonLayout);
+    button_layout->addWidget(m_selectNoneButton);
+    button_layout->addStretch();
+    layout->addLayout(button_layout);
 
     m_summaryLabel = new QLabel(this);
     m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
@@ -2195,25 +2198,25 @@ void UserProfileBackupKnownNetworksPage::commitWifiSelection() {
     Q_ASSERT(m_networkTree);
     int selected = 0;
     const int total = m_networkTree->topLevelItemCount();
-    QVector<WifiProfileInfo> selectedProfiles;
+    QVector<WifiProfileInfo> selected_profiles;
 
     for (int i = 0; i < total; ++i) {
-        auto* treeItem = m_networkTree->topLevelItem(i);
-        if (treeItem->checkState(0) != Qt::Checked) {
+        auto* tree_item = m_networkTree->topLevelItem(i);
+        if (tree_item->checkState(0) != Qt::Checked) {
             continue;
         }
         selected++;
-        const int idx = treeItem->data(0, Qt::UserRole).toInt();
+        const int idx = tree_item->data(0, Qt::UserRole).toInt();
         WifiProfileInfo info = (idx >= 0 && idx < m_scannedProfiles.size()) ? m_scannedProfiles[idx]
                                                                             : WifiProfileInfo{};
-        info.profile_name = treeItem->text(0);  // fall back to display text if unmapped
+        info.profile_name = tree_item->text(0);  // fall back to display text if unmapped
         info.selected = true;
-        selectedProfiles.append(info);
+        selected_profiles.append(info);
     }
 
     m_summaryLabel->setText(tr("%1 of %2 WiFi profile(s) selected").arg(selected).arg(total));
     if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
-        wiz->setWifiProfiles(selectedProfiles);
+        wiz->setWifiProfiles(selected_profiles);
     }
 }
 
@@ -2224,15 +2227,15 @@ void UserProfileBackupKnownNetworksPage::updateNextButtonText() {
         return;
     }
 
-    bool hasSelection = false;
+    bool has_selection = false;
     for (int i = 0; i < m_networkTree->topLevelItemCount(); ++i) {
         if (m_networkTree->topLevelItem(i)->checkState(0) == Qt::Checked) {
-            hasSelection = true;
+            has_selection = true;
             break;
         }
     }
 
-    wiz->setButtonText(QWizard::NextButton, hasSelection ? tr("Next >") : tr("Skip >"));
+    wiz->setButtonText(QWizard::NextButton, has_selection ? tr("Next >") : tr("Skip >"));
 }
 
 void UserProfileBackupKnownNetworksPage::onItemChanged(QTreeWidgetItem* item, int column) {
@@ -2284,27 +2287,27 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
-    auto* instructionLabel =
+    auto* instruction_label =
         new QLabel(tr("Click <b>Scan Ethernet</b> to detect network adapter configurations. "
                       "Selected adapter settings (IP, DNS, gateway) will be saved to the backup. "
                       "This is especially useful for static IP configurations."),
                    this);
-    instructionLabel->setWordWrap(true);
-    layout->addWidget(instructionLabel);
+    instruction_label->setWordWrap(true);
+    layout->addWidget(instruction_label);
 
-    auto* scanLayout = new QHBoxLayout();
+    auto* scan_layout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Ethernet"), this);
     m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_scanButton,
             &QPushButton::clicked,
             this,
             &UserProfileBackupEthernetSettingsPage::onScanEthernet);
-    scanLayout->addWidget(m_scanButton);
+    scan_layout->addWidget(m_scanButton);
     // On a failed scan this label shows raw netsh output (adapter names and error text), so it
     // renders verbatim rather than letting QLabel auto-detect markup inside it.
     m_statusLabel = plainTextLabel(tr("Click Scan Ethernet to begin"), this);
-    scanLayout->addWidget(m_statusLabel, 1);
-    layout->addLayout(scanLayout);
+    scan_layout->addWidget(m_statusLabel, 1);
+    layout->addLayout(scan_layout);
 
     m_scanProgress = new QProgressBar(this);
     m_scanProgress->setVisible(false);
@@ -2337,7 +2340,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
 }
 
 void UserProfileBackupEthernetSettingsPage::setupSelectionButtons(QVBoxLayout* layout) {
-    auto* buttonLayout = new QHBoxLayout();
+    auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
     m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
@@ -2345,7 +2348,7 @@ void UserProfileBackupEthernetSettingsPage::setupSelectionButtons(QVBoxLayout* l
             &QPushButton::clicked,
             this,
             &UserProfileBackupEthernetSettingsPage::onSelectAll);
-    buttonLayout->addWidget(m_selectAllButton);
+    button_layout->addWidget(m_selectAllButton);
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
@@ -2354,9 +2357,9 @@ void UserProfileBackupEthernetSettingsPage::setupSelectionButtons(QVBoxLayout* l
             &QPushButton::clicked,
             this,
             &UserProfileBackupEthernetSettingsPage::onSelectNone);
-    buttonLayout->addWidget(m_selectNoneButton);
-    buttonLayout->addStretch();
-    layout->addLayout(buttonLayout);
+    button_layout->addWidget(m_selectNoneButton);
+    button_layout->addStretch();
+    layout->addLayout(button_layout);
 }
 
 void UserProfileBackupEthernetSettingsPage::initializePage() {
@@ -2449,38 +2452,38 @@ void UserProfileBackupEthernetSettingsPage::populateTable(
         const int row = m_ethernetTable->rowCount();
         m_ethernetTable->insertRow(row);
 
-        auto* checkItem = new QTableWidgetItem();
-        checkItem->setCheckState(Qt::Checked);
-        checkItem->setData(Qt::UserRole, row);  // Index into m_scannedConfigs
-        m_ethernetTable->setItem(row, kEthernetColumnSelect, checkItem);
+        auto* check_item = new QTableWidgetItem();
+        check_item->setCheckState(Qt::Checked);
+        check_item->setData(Qt::UserRole, row);  // Index into m_scannedConfigs
+        m_ethernetTable->setItem(row, kEthernetColumnSelect, check_item);
 
-        auto* nameItem = new QTableWidgetItem(config.adapter_name);
-        nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, kEthernetColumnAdapter, nameItem);
+        auto* name_item = new QTableWidgetItem(config.adapter_name);
+        name_item->setFlags(name_item->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, kEthernetColumnAdapter, name_item);
 
-        auto* dhcpItem = new QTableWidgetItem(config.dhcp_enabled ? tr("Yes") : tr("No"));
-        dhcpItem->setFlags(dhcpItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, kEthernetColumnDhcp, dhcpItem);
+        auto* dhcp_item = new QTableWidgetItem(config.dhcp_enabled ? tr("Yes") : tr("No"));
+        dhcp_item->setFlags(dhcp_item->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, kEthernetColumnDhcp, dhcp_item);
 
-        auto* ipItem = new QTableWidgetItem(config.ip_address);
-        ipItem->setFlags(ipItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, kEthernetColumnIp, ipItem);
+        auto* ip_item = new QTableWidgetItem(config.ip_address);
+        ip_item->setFlags(ip_item->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, kEthernetColumnIp, ip_item);
 
-        auto* subnetItem = new QTableWidgetItem(config.subnet_mask);
-        subnetItem->setFlags(subnetItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, kEthernetColumnSubnet, subnetItem);
+        auto* subnet_item = new QTableWidgetItem(config.subnet_mask);
+        subnet_item->setFlags(subnet_item->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, kEthernetColumnSubnet, subnet_item);
 
-        auto* gwItem = new QTableWidgetItem(config.default_gateway);
-        gwItem->setFlags(gwItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, kEthernetColumnGateway, gwItem);
+        auto* gw_item = new QTableWidgetItem(config.default_gateway);
+        gw_item->setFlags(gw_item->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, kEthernetColumnGateway, gw_item);
 
         QString dns = config.dns_primary;
         if (!config.dns_secondary.isEmpty()) {
             dns += ", " + config.dns_secondary;
         }
-        auto* dnsItem = new QTableWidgetItem(dns);
-        dnsItem->setFlags(dnsItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, kEthernetColumnDns, dnsItem);
+        auto* dns_item = new QTableWidgetItem(dns);
+        dns_item->setFlags(dns_item->flags() & ~Qt::ItemIsEditable);
+        m_ethernetTable->setItem(row, kEthernetColumnDns, dns_item);
     }
 
     m_ethernetTable->blockSignals(false);
@@ -2494,11 +2497,11 @@ void UserProfileBackupEthernetSettingsPage::commitEthernetSelection() {
     Q_ASSERT(m_summaryLabel);
     QVector<EthernetConfigInfo> configs;
     for (int row = 0; row < m_ethernetTable->rowCount(); ++row) {
-        auto* checkItem = m_ethernetTable->item(row, kEthernetColumnSelect);
-        if ((checkItem == nullptr) || checkItem->checkState() != Qt::Checked) {
+        auto* check_item = m_ethernetTable->item(row, kEthernetColumnSelect);
+        if ((check_item == nullptr) || check_item->checkState() != Qt::Checked) {
             continue;
         }
-        const int idx = checkItem->data(Qt::UserRole).toInt();
+        const int idx = check_item->data(Qt::UserRole).toInt();
         EthernetConfigInfo info = (idx >= 0 && idx < m_scannedConfigs.size())
                                       ? m_scannedConfigs[idx]
                                       : EthernetConfigInfo{};
@@ -2527,15 +2530,15 @@ void UserProfileBackupEthernetSettingsPage::updateNextButtonText() {
         return;
     }
 
-    bool hasSelection = false;
+    bool has_selection = false;
     for (int i = 0; i < m_ethernetTable->rowCount(); ++i) {
         if (m_ethernetTable->item(i, kEthernetColumnSelect)->checkState() == Qt::Checked) {
-            hasSelection = true;
+            has_selection = true;
             break;
         }
     }
 
-    wiz->setButtonText(QWizard::NextButton, hasSelection ? tr("Next >") : tr("Skip >"));
+    wiz->setButtonText(QWizard::NextButton, has_selection ? tr("Next >") : tr("Skip >"));
 }
 
 void UserProfileBackupEthernetSettingsPage::onSelectAll() {

@@ -134,13 +134,13 @@ QString themeInputStyles() {
 }
 
 QString themeInputSelectorStyles(bool dark) {
-    const char* buttonBackground = dark ? kColorDarkBgSurface : kColorBgSurface;
-    const char* buttonHover = dark ? kColorDarkBgHover : kColorBgPageHover;
+    const char* button_background = dark ? kColorDarkBgSurface : kColorBgSurface;
+    const char* button_hover = dark ? kColorDarkBgHover : kColorBgPageHover;
     const char* border = dark ? kColorDarkBorderDefault : kColorBorderDefault;
     const char* text = dark ? kColorDarkTextBody : kColorTextSecondary;
     const QString border_color = QString::fromLatin1(border);
-    const QString button_color = QString::fromLatin1(buttonBackground);
-    const QString hover_color = QString::fromLatin1(buttonHover);
+    const QString button_color = QString::fromLatin1(button_background);
+    const QString hover_color = QString::fromLatin1(button_hover);
     const QString text_color = QString::fromLatin1(text);
     const QString down_icon_path = dark ? kIconSelectorChevronDownDark : kIconSelectorChevronDown;
     const QString up_icon_path = dark ? kIconSelectorChevronUpDark : kIconSelectorChevronUp;

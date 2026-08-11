@@ -195,7 +195,7 @@ private:
     /** Render a QR image with an optional location header banner */
     static QImage renderQrWithHeader(const QString& payload,
                                      const QString& location,
-                                     bool showHeader);
+                                     bool show_header);
 
     /** Write a QR image as a full-page A4 PDF; returns true on success */
     static bool exportQrToPdf(const QImage& image, const QString& path, const QString& title);
@@ -236,7 +236,7 @@ private:
 
     void saveCheckedFormats(QDialog* dlg,
                             QrWizardControls ctl,
-                            const QImage& finalImg,
+                            const QImage& final_img,
                             const QrExportContent& content,
                             QStringList& saved);
 
@@ -246,13 +246,13 @@ private:
     /** Execute the batch QR export loop for selected formats */
     void executeBatchQrExport(QDialog* dlg,
                               const QList<WifiConfig>& sources,
-                              const QString& baseDir,
-                              bool showHeader,
+                              const QString& base_dir,
+                              bool show_header,
                               const QrExportFormats& formats);
     /** Export QR images for single network in specified formats */
     bool executeSingleQrNetwork(const WifiConfig& cfg,
-                                const QString& baseDir,
-                                bool showHeader,
+                                const QString& base_dir,
+                                bool show_header,
                                 const QrExportFormats& formats);
 
     // -----------------------------------------------------------------
@@ -274,13 +274,13 @@ private:
     void updateSearchMatches(const QString& text);
     void highlightSearchMatches();
     /** Set all table row checkboxes to the given state */
-    void setAllCheckStates(bool allChecked);
+    void setAllCheckStates(bool all_checked);
     /** Returns true if any visible column in the given row matches @p text */
     bool rowMatchesSearch(int row, const QString& text) const;
     /** Scan Windows known WiFi profile names via netsh */
     static QStringList scanWindowsProfileNames();
     /** Parse a single Windows WiFi profile and return its config */
-    static WifiConfig parseWindowsWifiProfile(const QString& profileName);
+    static WifiConfig parseWindowsWifiProfile(const QString& profile_name);
 
     // -------------------------------------------------------------------------
     // Windows WiFi profile helpers
@@ -311,7 +311,7 @@ private:
     void saveTableToJson(const QString& path);
     /// Atomically (QSaveFile) write the checked-row subset to JSON; fail closed on a short write or
     /// failed commit so a truncated credential table is never reported as saved.
-    void saveCheckedRowsToJson(const QString& path, const QList<int>& checkedRows);
+    void saveCheckedRowsToJson(const QString& path, const QList<int>& checked_rows);
     void loadTableFromJson(const QString& path);
     /// Fail-closed finalize for a QTextStream-backed export: flush and verify no stream/device
     /// error before any success is reported (disk-full / IO failure must fail closed).

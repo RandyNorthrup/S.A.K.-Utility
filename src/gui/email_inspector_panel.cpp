@@ -126,17 +126,17 @@ public:
     }
 
 protected:
-    void paintSection(QPainter* painter, const QRect& rect, int logicalIndex) const override {
+    void paintSection(QPainter* painter, const QRect& rect, int logical_index) const override {
         Q_ASSERT(painter != nullptr);
-        QHeaderView::paintSection(painter, rect, logicalIndex);
-        if (logicalIndex != kEmailSelectHeaderColumn) {
+        QHeaderView::paintSection(painter, rect, logical_index);
+        if (logical_index != kEmailSelectHeaderColumn) {
             return;
         }
 
-        constexpr int side = ui::kUiIconSmall;
-        const int cx = rect.x() + ((rect.width() - side) / 2);
-        const int cy = rect.y() + ((rect.height() - side) / 2);
-        const QRect check_rect(cx, cy, side, side);
+        constexpr int kSide = ui::kUiIconSmall;
+        const int cx = rect.x() + ((rect.width() - kSide) / 2);
+        const int cy = rect.y() + ((rect.height() - kSide) / 2);
+        const QRect check_rect(cx, cy, kSide, kSide);
 
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing);

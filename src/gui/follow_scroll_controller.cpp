@@ -178,14 +178,14 @@ void FollowScrollController::handleMouseButtonEvent(QEvent::Type type, bool scro
 
 void FollowScrollController::handleKeyPress(QEvent* event) {
     const auto* key_event = static_cast<QKeyEvent*>(event);
-    static const QSet<int> scroll_keys = {Qt::Key_Up,
+    static const QSet<int> kScrollKeys = {Qt::Key_Up,
                                           Qt::Key_Down,
                                           Qt::Key_PageUp,
                                           Qt::Key_PageDown,
                                           Qt::Key_Home,
                                           Qt::Key_End,
                                           Qt::Key_Space};
-    if (scroll_keys.contains(key_event->key())) {
+    if (kScrollKeys.contains(key_event->key())) {
         markUserScroll();
     }
 }

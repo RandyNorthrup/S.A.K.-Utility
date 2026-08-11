@@ -100,17 +100,17 @@ QString formatDedupBytes(const qint64 bytes) {
 }
 
 struct DedupSettingsDefaults {
-    int minSizeKb;
+    int min_size_kb;
     bool recursive;
-    bool parallelHashing;
-    int threadCount;
+    bool parallel_hashing;
+    int thread_count;
 };
 
 struct DedupSettingsWidgets {
-    QSpinBox* minSizeSpin{nullptr};
-    QCheckBox* recursiveCheck{nullptr};
-    QCheckBox* parallelCheck{nullptr};
-    QSpinBox* threadSpin{nullptr};
+    QSpinBox* min_size_spin{nullptr};
+    QCheckBox* recursive_check{nullptr};
+    QCheckBox* parallel_check{nullptr};
+    QSpinBox* thread_spin{nullptr};
 };
 
 QString dedupTr(const char* text) {
@@ -119,72 +119,72 @@ QString dedupTr(const char* text) {
 
 void addDialogButtonRow(QFormLayout* layout,
                         QDialog* dialog,
-                        const QString& okText,
-                        const QString& cancelText) {
-    auto* btnLayout = new QHBoxLayout();
-    btnLayout->addStretch();
+                        const QString& ok_text,
+                        const QString& cancel_text) {
+    auto* btn_layout = new QHBoxLayout();
+    btn_layout->addStretch();
 
-    auto* okBtn = new QPushButton(okText, dialog);
-    okBtn->setStyleSheet(ui::kPrimaryButtonStyle);
-    QObject::connect(okBtn, &QPushButton::clicked, dialog, &QDialog::accept);
-    btnLayout->addWidget(okBtn);
+    auto* ok_btn = new QPushButton(ok_text, dialog);
+    ok_btn->setStyleSheet(ui::kPrimaryButtonStyle);
+    QObject::connect(ok_btn, &QPushButton::clicked, dialog, &QDialog::accept);
+    btn_layout->addWidget(ok_btn);
 
-    auto* cancelBtn = new QPushButton(cancelText, dialog);
-    cancelBtn->setStyleSheet(ui::kSecondaryButtonStyle);
-    QObject::connect(cancelBtn, &QPushButton::clicked, dialog, &QDialog::reject);
-    btnLayout->addWidget(cancelBtn);
+    auto* cancel_btn = new QPushButton(cancel_text, dialog);
+    cancel_btn->setStyleSheet(ui::kSecondaryButtonStyle);
+    QObject::connect(cancel_btn, &QPushButton::clicked, dialog, &QDialog::reject);
+    btn_layout->addWidget(cancel_btn);
 
-    layout->addRow(btnLayout);
+    layout->addRow(btn_layout);
 }
 
 DedupSettingsWidgets addDedupSettingsRows(QFormLayout* layout,
                                           QDialog* dialog,
                                           const DedupSettingsDefaults& defaults) {
     DedupSettingsWidgets widgets;
-    widgets.minSizeSpin = new QSpinBox(dialog);
-    widgets.minSizeSpin->setMinimum(0);
-    widgets.minSizeSpin->setMaximum(kDedupMinSizeMaxKb);
-    widgets.minSizeSpin->setValue(defaults.minSizeKb);
-    widgets.minSizeSpin->setSuffix(dedupTr(" KB"));
+    widgets.min_size_spin = new QSpinBox(dialog);
+    widgets.min_size_spin->setMinimum(0);
+    widgets.min_size_spin->setMaximum(kDedupMinSizeMaxKb);
+    widgets.min_size_spin->setValue(defaults.min_size_kb);
+    widgets.min_size_spin->setSuffix(dedupTr(" KB"));
     layout->addRow(InfoButton::createInfoLabel(
                        dedupTr("Minimum File Size:"),
                        dedupTr("Skip tiny files to speed up scanning (0 = check all files)"),
                        dialog),
-                   widgets.minSizeSpin);
+                   widgets.min_size_spin);
 
-    widgets.recursiveCheck = new QCheckBox(dedupTr("Include all nested subfolders"), dialog);
-    widgets.recursiveCheck->setChecked(defaults.recursive);
+    widgets.recursive_check = new QCheckBox(dedupTr("Include all nested subfolders"), dialog);
+    widgets.recursive_check->setChecked(defaults.recursive);
     layout->addRow(
         InfoButton::createInfoLabel(
             dedupTr("Recursive Scan:"),
             dedupTr("Scan all subdirectories recursively, not just the top-level folder"),
             dialog),
-        widgets.recursiveCheck);
+        widgets.recursive_check);
 
-    widgets.parallelCheck = new QCheckBox(dedupTr("Use parallel hashing"), dialog);
-    widgets.parallelCheck->setChecked(defaults.parallelHashing);
+    widgets.parallel_check = new QCheckBox(dedupTr("Use parallel hashing"), dialog);
+    widgets.parallel_check->setChecked(defaults.parallel_hashing);
     layout->addRow(
         InfoButton::createInfoLabel(dedupTr("Parallel Hashing:"),
                                     dedupTr("Use multiple CPU cores for faster hash calculation. "
                                             "Disable for debugging or low-resource systems."),
                                     dialog),
-        widgets.parallelCheck);
+        widgets.parallel_check);
 
-    const int cpuCores = QThread::idealThreadCount();
-    widgets.threadSpin = new QSpinBox(dialog);
-    widgets.threadSpin->setMinimum(0);
-    widgets.threadSpin->setMaximum(kDedupThreadCountMax);
-    widgets.threadSpin->setValue(defaults.threadCount);
-    widgets.threadSpin->setSpecialValueText(
-        dedupTr("Auto (%1 cores)").arg(cpuCores > 0 ? cpuCores : kFallbackCpuCoreCount));
-    widgets.threadSpin->setEnabled(widgets.parallelCheck->isChecked());
+    const int cpu_cores = QThread::idealThreadCount();
+    widgets.thread_spin = new QSpinBox(dialog);
+    widgets.thread_spin->setMinimum(0);
+    widgets.thread_spin->setMaximum(kDedupThreadCountMax);
+    widgets.thread_spin->setValue(defaults.thread_count);
+    widgets.thread_spin->setSpecialValueText(
+        dedupTr("Auto (%1 cores)").arg(cpu_cores > 0 ? cpu_cores : kFallbackCpuCoreCount));
+    widgets.thread_spin->setEnabled(widgets.parallel_check->isChecked());
     QObject::connect(
-        widgets.parallelCheck, &QCheckBox::toggled, widgets.threadSpin, &QSpinBox::setEnabled);
+        widgets.parallel_check, &QCheckBox::toggled, widgets.thread_spin, &QSpinBox::setEnabled);
     layout->addRow(InfoButton::createInfoLabel(dedupTr("Thread Count:"),
                                                dedupTr("Number of threads for parallel hashing. "
                                                        "0 = auto-detect from CPU cores."),
                                                dialog),
-                   widgets.threadSpin);
+                   widgets.thread_spin);
     return widgets;
 }
 
@@ -247,10 +247,10 @@ void OrganizerPanel::updateHeaderForTab(int index) {
 }
 
 void OrganizerPanel::setupUi() {
-    auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(
+    auto* root_layout = new QVBoxLayout(this);
+    root_layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
-    rootLayout->setSpacing(ui::kSpacingDefault);
+    root_layout->setSpacing(ui::kSpacingDefault);
 
     // Dynamic panel header -- updates when sub-tab changes
     m_headerWidgets =
@@ -259,7 +259,7 @@ void OrganizerPanel::setupUi() {
                                       tr("File Organizer"),
                                       tr("Organize files into categorized folders and "
                                          "find duplicate files to reclaim disk space"),
-                                      rootLayout);
+                                      root_layout);
 
     // Tabbed content
     m_tabs = new QTabWidget(this);
@@ -272,7 +272,7 @@ void OrganizerPanel::setupUi() {
         m_tabs,
         tr("File management tools"),
         tr("Switch between file organizer, duplicate finder, file explorer, and advanced search"));
-    rootLayout->addWidget(m_tabs, 1);
+    root_layout->addWidget(m_tabs, 1);
 
     connect(m_file_explorer_panel,
             &FileManagementExplorerPanel::statusMessage,
@@ -293,13 +293,13 @@ void OrganizerPanel::setupUi() {
     });
 
     // Shared status bar with log toggle
-    auto* statusRow = new QHBoxLayout();
-    statusRow->setContentsMargins(
+    auto* status_row = new QHBoxLayout();
+    status_row->setContentsMargins(
         sak::ui::kMarginNone, ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    statusRow->addWidget(m_logToggle);
-    statusRow->addStretch();
-    rootLayout->addLayout(statusRow);
+    status_row->addWidget(m_logToggle);
+    status_row->addStretch();
+    root_layout->addLayout(status_row);
 }
 
 void OrganizerPanel::refreshMountedFileSystemTargets() {
@@ -364,7 +364,7 @@ void OrganizerPanel::addManualFileSystemTarget() {
 }
 
 void OrganizerPanel::populateFileSystemTargetCombos() {
-    const auto fillCombo = [this](QComboBox* combo) {
+    const auto fill_combo = [this](QComboBox* combo) {
         if (!combo) {
             return;
         }
@@ -377,8 +377,8 @@ void OrganizerPanel::populateFileSystemTargetCombos() {
             combo->setCurrentIndex(0);
         }
     };
-    fillCombo(m_organizer_target_combo);
-    fillCombo(m_dedup_target_combo);
+    fill_combo(m_organizer_target_combo);
+    fill_combo(m_dedup_target_combo);
     onOrganizerTargetChanged(
         (m_organizer_target_combo != nullptr) ? m_organizer_target_combo->currentIndex() : -1);
     onDedupTargetChanged((m_dedup_target_combo != nullptr) ? m_dedup_target_combo->currentIndex()
@@ -507,9 +507,9 @@ QGroupBox* OrganizerPanel::createCategoryMappingGroup() {
 
 QWidget* OrganizerPanel::createOrganizerTab() {
     auto* tab = new QWidget(this);
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
 
     auto* layout = new QVBoxLayout(tab);
     layout->setContentsMargins(
@@ -544,16 +544,16 @@ QWidget* OrganizerPanel::createOrganizerTab() {
     m_progress_bar->setAccessibleName(QStringLiteral("Organization Progress"));
     layout->addWidget(m_progress_bar);
 
-    QPushButton* settingsBtn = nullptr;
-    createOrganizerControls(layout, settingsBtn);
+    QPushButton* settings_btn = nullptr;
+    createOrganizerControls(layout, settings_btn);
 
-    connectOrganizerTabSignals(settingsBtn);
+    connectOrganizerTabSignals(settings_btn);
 
-    scrollArea->setWidget(tab);
-    return scrollArea;
+    scroll_area->setWidget(tab);
+    return scroll_area;
 }
 
-void OrganizerPanel::connectOrganizerTabSignals(QPushButton* settingsBtn) {
+void OrganizerPanel::connectOrganizerTabSignals(QPushButton* settings_btn) {
     connect(m_target_path, &QLineEdit::textChanged, this, &OrganizerPanel::onTargetPathChanged);
     connect(m_organizer_target_combo,
             &QComboBox::currentIndexChanged,
@@ -573,7 +573,7 @@ void OrganizerPanel::connectOrganizerTabSignals(QPushButton* settingsBtn) {
     connect(m_preview_button, &QPushButton::clicked, this, &OrganizerPanel::onPreviewClicked);
     connect(m_execute_button, &QPushButton::clicked, this, &OrganizerPanel::onExecuteClicked);
     connect(m_cancel_button, &QPushButton::clicked, this, &OrganizerPanel::onCancelClicked);
-    connect(settingsBtn, &QPushButton::clicked, this, &OrganizerPanel::onSettingsClicked);
+    connect(settings_btn, &QPushButton::clicked, this, &OrganizerPanel::onSettingsClicked);
     connect(
         m_add_category_button, &QPushButton::clicked, this, &OrganizerPanel::onAddCategoryClicked);
     connect(m_remove_category_button,
@@ -586,15 +586,15 @@ void OrganizerPanel::connectOrganizerTabSignals(QPushButton* settingsBtn) {
             &OrganizerPanel::onResetCategoriesClicked);
 }
 
-void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& settingsBtn) {
+void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& settings_btn) {
     Q_ASSERT(layout);
     auto* row = new QHBoxLayout();
 
-    settingsBtn = new QPushButton(tr("Settings"), this);
-    settingsBtn->setAccessibleName(QStringLiteral("Organizer Settings"));
-    settingsBtn->setToolTip(QStringLiteral("Configure collision strategy and preview mode"));
-    settingsBtn->setStyleSheet(ui::kPrimaryButtonStyle);
-    row->addWidget(settingsBtn);
+    settings_btn = new QPushButton(tr("Settings"), this);
+    settings_btn->setAccessibleName(QStringLiteral("Organizer Settings"));
+    settings_btn->setToolTip(QStringLiteral("Configure collision strategy and preview mode"));
+    settings_btn->setStyleSheet(ui::kPrimaryButtonStyle);
+    row->addWidget(settings_btn);
     row->addStretch();
 
     m_preview_button = new QPushButton(tr("Preview"), this);
@@ -673,17 +673,17 @@ QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
     return group;
 }
 
-void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& settingsBtn) {
+void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& settings_btn) {
     Q_ASSERT(layout);
     auto* row = new QHBoxLayout();
 
-    settingsBtn = new QPushButton(tr("Settings"), this);
-    settingsBtn->setAccessibleName(QStringLiteral("Duplicate Finder Settings"));
-    settingsBtn->setToolTip(
+    settings_btn = new QPushButton(tr("Settings"), this);
+    settings_btn->setAccessibleName(QStringLiteral("Duplicate Finder Settings"));
+    settings_btn->setToolTip(
         QStringLiteral("Configure minimum file size, recursion,"
                        " and hashing options"));
-    settingsBtn->setStyleSheet(ui::kPrimaryButtonStyle);
-    row->addWidget(settingsBtn);
+    settings_btn->setStyleSheet(ui::kPrimaryButtonStyle);
+    row->addWidget(settings_btn);
     row->addStretch();
 
     m_dedup_scan_button = new QPushButton(tr("Find Duplicates"), this);
@@ -712,9 +712,9 @@ void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& sett
 
 QWidget* OrganizerPanel::createDuplicateFinderTab() {
     auto* tab = new QWidget(this);
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
     auto* layout = new QVBoxLayout(tab);
     layout->setContentsMargins(
         ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
@@ -758,16 +758,16 @@ QWidget* OrganizerPanel::createDuplicateFinderTab() {
     m_dedup_progress_bar->setAccessibleName(QStringLiteral("Duplicate Scan Progress"));
     layout->addWidget(m_dedup_progress_bar);
 
-    QPushButton* settingsBtn = nullptr;
-    createDedupControls(layout, settingsBtn);
+    QPushButton* settings_btn = nullptr;
+    createDedupControls(layout, settings_btn);
 
-    connectDuplicateFinderTabSignals(settingsBtn);
+    connectDuplicateFinderTabSignals(settings_btn);
 
-    scrollArea->setWidget(tab);
-    return scrollArea;
+    scroll_area->setWidget(tab);
+    return scroll_area;
 }
 
-void OrganizerPanel::connectDuplicateFinderTabSignals(QPushButton* settingsBtn) {
+void OrganizerPanel::connectDuplicateFinderTabSignals(QPushButton* settings_btn) {
     connect(m_dedup_add_button,
             &QPushButton::clicked,
             this,
@@ -785,7 +785,7 @@ void OrganizerPanel::connectDuplicateFinderTabSignals(QPushButton* settingsBtn) 
     connect(m_dedup_scan_button, &QPushButton::clicked, this, &OrganizerPanel::onDedupScanClicked);
     connect(
         m_dedup_cancel_button, &QPushButton::clicked, this, &OrganizerPanel::onDedupCancelClicked);
-    connect(settingsBtn, &QPushButton::clicked, this, &OrganizerPanel::onDedupSettingsClicked);
+    connect(settings_btn, &QPushButton::clicked, this, &OrganizerPanel::onDedupSettingsClicked);
 }
 
 // ============================================================================
@@ -852,29 +852,29 @@ void OrganizerPanel::updateDirectorySummary() {
     }
 
     const auto entries = dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
-    qint64 totalSize = 0;
+    qint64 total_size = 0;
     for (const auto& entry : entries) {
-        totalSize += entry.size();
+        total_size += entry.size();
     }
 
-    QString sizeStr;
-    if (totalSize >= sak::kBytesPerGB) {
-        sizeStr = QString("%1 GB").arg(
-            static_cast<double>(totalSize) / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
-    } else if (totalSize >= sak::kBytesPerMB) {
-        sizeStr =
-            QString("%1 MB").arg(static_cast<double>(totalSize) / sak::kBytesPerMBf, 0, 'f', 1);
+    QString size_str;
+    if (total_size >= sak::kBytesPerGB) {
+        size_str = QString("%1 GB").arg(
+            static_cast<double>(total_size) / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
+    } else if (total_size >= sak::kBytesPerMB) {
+        size_str =
+            QString("%1 MB").arg(static_cast<double>(total_size) / sak::kBytesPerMBf, 0, 'f', 1);
     } else {
-        sizeStr =
-            QString("%1 KB").arg(static_cast<double>(totalSize) / sak::kBytesPerKBf, 0, 'f', 0);
+        size_str =
+            QString("%1 KB").arg(static_cast<double>(total_size) / sak::kBytesPerKBf, 0, 'f', 0);
     }
 
-    const int subdirCount =
+    const int subdir_count =
         static_cast<int>(dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot).size());
     m_dir_summary_label->setText(tr("%1 files (%2) \u2022 %3 subdirectories")
                                      .arg(entries.size())
-                                     .arg(sizeStr)
-                                     .arg(subdirCount));
+                                     .arg(size_str)
+                                     .arg(subdir_count));
 }
 
 void OrganizerPanel::onBrowseClicked() {
@@ -913,8 +913,8 @@ bool OrganizerPanel::validateOrganizerTarget() {
         return false;
     }
 
-    const QDir targetDir(m_target_path->text());
-    if (!targetDir.exists()) {
+    const QDir target_dir(m_target_path->text());
+    if (!target_dir.exists()) {
         sak::logWarning("Organization: target directory does not exist: {}",
                         m_target_path->text().toStdString());
         sak::showWarningLogged(this,
@@ -925,20 +925,20 @@ bool OrganizerPanel::validateOrganizerTarget() {
     return validateCategoryMapping();
 }
 
-bool OrganizerPanel::confirmOrganizerExecution(const QDir& targetDir) {
+bool OrganizerPanel::confirmOrganizerExecution(const QDir& target_dir) {
     if (m_preview_mode_checkbox->isChecked()) {
         return true;
     }
 
-    const int fileCount =
-        static_cast<int>(targetDir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot).size());
+    const int file_count =
+        static_cast<int>(target_dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot).size());
     auto result = sak::showQuestionLogged(
         this,
         tr("Confirm Organization"),
         tr("This will move up to %1 files in:\n%2\n\n"
            "Collision strategy: %3\n\n"
            "This operation cannot be automatically undone. Continue?")
-            .arg(fileCount)
+            .arg(file_count)
             .arg(m_target_path->text(), m_collision_strategy->currentText()),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
@@ -1019,8 +1019,8 @@ void OrganizerPanel::onExecuteClicked() {
         return;
     }
 
-    const QDir targetDir(m_target_path->text());
-    if (!confirmOrganizerExecution(targetDir)) {
+    const QDir target_dir(m_target_path->text());
+    if (!confirmOrganizerExecution(target_dir)) {
         return;
     }
 
@@ -1096,18 +1096,18 @@ void OrganizerPanel::onWorkerFinished() {
     updateDirectorySummary();
 }
 
-void OrganizerPanel::onWorkerFailed(int errorCode, const QString& errorMessage) {
+void OrganizerPanel::onWorkerFailed(int error_code, const QString& error_message) {
     Q_ASSERT(m_progress_bar);
     setOperationRunning(false);
     m_progress_bar->setVisible(false);
-    const QString safe_error = errorMessage.trimmed().isEmpty() ? tr("Unknown error")
-                                                                : errorMessage;
+    const QString safe_error = error_message.trimmed().isEmpty() ? tr("Unknown error")
+                                                                 : error_message;
     Q_EMIT statusMessage(tr("Organization failed"), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, kProgressMaximum);
-    logMessage(QString("Organization failed: Error %1: %2").arg(errorCode).arg(safe_error));
+    logMessage(QString("Organization failed: Error %1: %2").arg(error_code).arg(safe_error));
     sak::showWarningLogged(this,
                            tr("Organization Failed"),
-                           QString("Error %1: %2").arg(errorCode).arg(safe_error));
+                           QString("Error %1: %2").arg(error_code).arg(safe_error));
     logError("Organization failed: {}", safe_error.toStdString());
 }
 
@@ -1119,7 +1119,7 @@ void OrganizerPanel::onWorkerCancelled() {
     Q_EMIT progressUpdate(0, kProgressMaximum);
 }
 
-void OrganizerPanel::onFileProgress(int current, int total, const QString& filePath) {
+void OrganizerPanel::onFileProgress(int current, int total, const QString& file_path) {
     Q_ASSERT(m_progress_bar);
     Q_EMIT progressUpdate(current, total);
 
@@ -1128,15 +1128,15 @@ void OrganizerPanel::onFileProgress(int current, int total, const QString& fileP
         m_progress_bar->setValue(pct);
     }
 
-    const QString filename = QFileInfo(filePath).fileName();
+    const QString filename = QFileInfo(file_path).fileName();
     Q_EMIT statusMessage(QString("Processing: %1").arg(filename), 0);
 }
 
-void OrganizerPanel::onPreviewResults(const QString& summary, int operationCount) {
+void OrganizerPanel::onPreviewResults(const QString& summary, int operation_count) {
     Q_ASSERT(m_progress_bar);
     m_progress_bar->setVisible(false);
     showScrollableResultsDialog(tr("Preview Results"), summary);
-    logMessage(QString("Preview completed: %1 operations planned").arg(operationCount));
+    logMessage(QString("Preview completed: %1 operations planned").arg(operation_count));
 }
 
 QMap<QString, QStringList> OrganizerPanel::getCategoryMapping() const {
@@ -1144,21 +1144,21 @@ QMap<QString, QStringList> OrganizerPanel::getCategoryMapping() const {
     QMap<QString, QStringList> mapping;
 
     for (int row = 0; row < m_category_table->rowCount(); ++row) {
-        auto* categoryItem = m_category_table->item(row, 0);
-        auto* extensionsItem = m_category_table->item(row, 1);
+        auto* category_item = m_category_table->item(row, 0);
+        auto* extensions_item = m_category_table->item(row, 1);
 
-        if ((categoryItem == nullptr) || (extensionsItem == nullptr)) {
+        if ((category_item == nullptr) || (extensions_item == nullptr)) {
             continue;
         }
 
-        const QString category = categoryItem->text().trimmed();
-        const QString extensionsStr = extensionsItem->text().trimmed();
+        const QString category = category_item->text().trimmed();
+        const QString extensions_str = extensions_item->text().trimmed();
 
-        if (category.isEmpty() || extensionsStr.isEmpty()) {
+        if (category.isEmpty() || extensions_str.isEmpty()) {
             continue;
         }
 
-        QStringList extensions = extensionsStr.split(',', Qt::SkipEmptyParts);
+        QStringList extensions = extensions_str.split(',', Qt::SkipEmptyParts);
         for (auto& ext : extensions) {
             ext = ext.trimmed();
         }
@@ -1172,7 +1172,7 @@ void OrganizerPanel::setOperationRunning(bool running) {
     Q_ASSERT(m_target_path);
     Q_ASSERT(m_browse_button);
     m_operation_running = running;
-    const auto organizerTarget = currentOrganizerTarget();
+    const auto organizer_target = currentOrganizerTarget();
 
     // Organizer controls
     m_organizer_target_combo->setEnabled(!running);
@@ -1180,7 +1180,7 @@ void OrganizerPanel::setOperationRunning(bool running) {
     m_target_scan_button->setEnabled(!running);
     m_target_manual_button->setEnabled(!running);
     m_target_path->setEnabled(!running);
-    m_browse_button->setEnabled(!running && organizerTarget.local_file_system);
+    m_browse_button->setEnabled(!running && organizer_target.local_file_system);
     m_category_table->setEnabled(!running);
     m_add_category_button->setEnabled(!running);
     m_remove_category_button->setEnabled(!running);
@@ -1244,15 +1244,15 @@ void OrganizerPanel::showScrollableResultsDialog(const QString& title, const QSt
 
     auto* layout = new QVBoxLayout(&dialog);
 
-    auto* textEdit = new QTextEdit(&dialog);
-    textEdit->setReadOnly(true);
-    textEdit->setPlainText(safe_text);
-    textEdit->setAccessibleName(QStringLiteral("Scan Results"));
-    layout->addWidget(textEdit);
+    auto* text_edit = new QTextEdit(&dialog);
+    text_edit->setReadOnly(true);
+    text_edit->setPlainText(safe_text);
+    text_edit->setAccessibleName(QStringLiteral("Scan Results"));
+    layout->addWidget(text_edit);
 
-    auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
-    connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    layout->addWidget(buttonBox);
+    auto* button_box = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
+    connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    layout->addWidget(button_box);
 
     dialog.exec();
 }
@@ -1266,41 +1266,41 @@ void OrganizerPanel::onSettingsClicked() {
 
     auto* layout = new QFormLayout(&dialog);
 
-    auto* collisionCombo = new QComboBox(&dialog);
-    collisionCombo->addItems({tr("Rename"), tr("Skip"), tr("Overwrite")});
-    collisionCombo->setCurrentIndex(m_collision_strategy->currentIndex());
+    auto* collision_combo = new QComboBox(&dialog);
+    collision_combo->addItems({tr("Rename"), tr("Skip"), tr("Overwrite")});
+    collision_combo->setCurrentIndex(m_collision_strategy->currentIndex());
     layout->addRow(
         InfoButton::createInfoLabel(
             tr("Collision Strategy:"),
             tr("How to handle files when a file with the same name already exists in the "
                "destination folder"),
             &dialog),
-        collisionCombo);
+        collision_combo);
 
-    auto* previewCheck = new QCheckBox(tr("Preview Mode (Dry Run)"), &dialog);
-    previewCheck->setChecked(m_preview_mode_checkbox->isChecked());
-    auto* previewRow = new QHBoxLayout();
-    previewRow->addWidget(previewCheck);
-    previewRow->addWidget(new InfoButton(
+    auto* preview_check = new QCheckBox(tr("Preview Mode (Dry Run)"), &dialog);
+    preview_check->setChecked(m_preview_mode_checkbox->isChecked());
+    auto* preview_row = new QHBoxLayout();
+    preview_row->addWidget(preview_check);
+    preview_row->addWidget(new InfoButton(
         tr("When enabled, shows what would happen without actually moving any files"), &dialog));
-    previewRow->addStretch();
-    layout->addRow(previewRow);
+    preview_row->addStretch();
+    layout->addRow(preview_row);
 
-    auto* subdirCheck = new QCheckBox(tr("Create Subdirectories"), &dialog);
-    subdirCheck->setChecked(m_create_subdirs_checkbox->isChecked());
-    auto* subdirRow = new QHBoxLayout();
-    subdirRow->addWidget(subdirCheck);
-    subdirRow->addWidget(new InfoButton(
+    auto* subdir_check = new QCheckBox(tr("Create Subdirectories"), &dialog);
+    subdir_check->setChecked(m_create_subdirs_checkbox->isChecked());
+    auto* subdir_row = new QHBoxLayout();
+    subdir_row->addWidget(subdir_check);
+    subdir_row->addWidget(new InfoButton(
         tr("Create category subdirectories automatically if they don't exist"), &dialog));
-    subdirRow->addStretch();
-    layout->addRow(subdirRow);
+    subdir_row->addStretch();
+    layout->addRow(subdir_row);
 
     addDialogButtonRow(layout, &dialog, tr("OK"), tr("Cancel"));
 
     if (dialog.exec() == QDialog::Accepted) {
-        m_collision_strategy->setCurrentIndex(collisionCombo->currentIndex());
-        m_preview_mode_checkbox->setChecked(previewCheck->isChecked());
-        m_create_subdirs_checkbox->setChecked(subdirCheck->isChecked());
+        m_collision_strategy->setCurrentIndex(collision_combo->currentIndex());
+        m_preview_mode_checkbox->setChecked(preview_check->isChecked());
+        m_create_subdirs_checkbox->setChecked(subdir_check->isChecked());
     }
 }
 
@@ -1332,18 +1332,18 @@ void OrganizerPanel::updateDedupDirectorySummary() {
         paths.append(m_dedup_directory_list->item(i)->text());
     }
     const DedupScanTotals totals = scanDedupTotals(paths, m_dedup_recursive->isChecked());
-    const QString sizeStr = formatDedupBytes(totals.bytes);
+    const QString size_str = formatDedupBytes(totals.bytes);
     // A truncated walk under-counts, so present files and size as a lower bound
     // rather than a wrong exact figure.
     m_dedup_summary_label->setText(
         totals.truncated ? tr("%1 directory(ies) \u2022 at least %2 files (%3+) to scan")
                                .arg(count)
                                .arg(totals.files)
-                               .arg(sizeStr)
+                               .arg(size_str)
                          : tr("%1 directory(ies) \u2022 %2 files (%3) to scan")
                                .arg(count)
                                .arg(totals.files)
-                               .arg(sizeStr));
+                               .arg(size_str));
 }
 
 void OrganizerPanel::onDedupAddDirectoryClicked() {
@@ -1357,7 +1357,7 @@ void OrganizerPanel::onDedupAddDirectoryClicked() {
             return;
         }
         bool ok = false;
-        const QString virtualPath =
+        const QString virtual_path =
             QInputDialog::getText(this,
                                   tr("Add Target Directory"),
                                   tr("Directory path inside %1:").arg(target.label),
@@ -1365,12 +1365,12 @@ void OrganizerPanel::onDedupAddDirectoryClicked() {
                                   QStringLiteral("/"),
                                   &ok)
                 .trimmed();
-        if (!ok || virtualPath.isEmpty()) {
+        if (!ok || virtual_path.isEmpty()) {
             return;
         }
-        m_dedup_directory_list->addItem(virtualPath);
+        m_dedup_directory_list->addItem(virtual_path);
         updateDedupDirectorySummary();
-        logMessage(QString("Added virtual scan directory: %1").arg(virtualPath));
+        logMessage(QString("Added virtual scan directory: %1").arg(virtual_path));
         return;
     }
 
@@ -1501,18 +1501,18 @@ void OrganizerPanel::onDedupSettingsClicked() {
     dialog.setMinimumWidth(sak::kDialogWidthSmall);
 
     auto* layout = new QFormLayout(&dialog);
-    const DedupSettingsDefaults defaults{.minSizeKb = m_dedup_min_size->value(),
+    const DedupSettingsDefaults defaults{.min_size_kb = m_dedup_min_size->value(),
                                          .recursive = m_dedup_recursive->isChecked(),
-                                         .parallelHashing = m_dedup_parallel_hashing->isChecked(),
-                                         .threadCount = m_dedup_thread_count->value()};
+                                         .parallel_hashing = m_dedup_parallel_hashing->isChecked(),
+                                         .thread_count = m_dedup_thread_count->value()};
     const auto widgets = addDedupSettingsRows(layout, &dialog, defaults);
     addDialogButtonRow(layout, &dialog, tr("OK"), tr("Cancel"));
 
     if (dialog.exec() == QDialog::Accepted) {
-        m_dedup_min_size->setValue(widgets.minSizeSpin->value());
-        m_dedup_recursive->setChecked(widgets.recursiveCheck->isChecked());
-        m_dedup_parallel_hashing->setChecked(widgets.parallelCheck->isChecked());
-        m_dedup_thread_count->setValue(widgets.threadSpin->value());
+        m_dedup_min_size->setValue(widgets.min_size_spin->value());
+        m_dedup_recursive->setChecked(widgets.recursive_check->isChecked());
+        m_dedup_parallel_hashing->setChecked(widgets.parallel_check->isChecked());
+        m_dedup_thread_count->setValue(widgets.thread_spin->value());
         updateDedupDirectorySummary();
     }
 }
@@ -1539,18 +1539,18 @@ void OrganizerPanel::onDedupWorkerFinished() {
     logInfo("Duplicate finder scan completed successfully");
 }
 
-void OrganizerPanel::onDedupWorkerFailed(int errorCode, const QString& errorMessage) {
+void OrganizerPanel::onDedupWorkerFailed(int error_code, const QString& error_message) {
     Q_ASSERT(m_dedup_progress_bar);
     setDedupRunning(false);
     m_dedup_progress_bar->setVisible(false);
-    const QString safe_error = errorMessage.trimmed().isEmpty() ? tr("Unknown error")
-                                                                : errorMessage;
+    const QString safe_error = error_message.trimmed().isEmpty() ? tr("Unknown error")
+                                                                 : error_message;
     Q_EMIT statusMessage(tr("Duplicate scan failed"), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, kProgressMaximum);
-    logMessage(QString("Duplicate scan failed: Error %1: %2").arg(errorCode).arg(safe_error));
+    logMessage(QString("Duplicate scan failed: Error %1: %2").arg(error_code).arg(safe_error));
     sak::showWarningLogged(this,
                            tr("Scan Failed"),
-                           QString("Error %1: %2").arg(errorCode).arg(safe_error));
+                           QString("Error %1: %2").arg(error_code).arg(safe_error));
     logError("Duplicate finder scan failed: {}", safe_error.toStdString());
 }
 
@@ -1576,33 +1576,33 @@ void OrganizerPanel::onDedupScanProgress(int current, int total, const QString& 
 }
 
 void OrganizerPanel::onDedupResultsReady(const QString& summary,
-                                         int duplicateCount,
-                                         qint64 wastedSpace) {
-    QString sizeStr;
-    if (wastedSpace >= sak::kBytesPerGB) {
-        sizeStr = QString("%1 GB").arg(
-            static_cast<double>(wastedSpace) / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
+                                         int duplicate_count,
+                                         qint64 wasted_space) {
+    QString size_str;
+    if (wasted_space >= sak::kBytesPerGB) {
+        size_str = QString("%1 GB").arg(
+            static_cast<double>(wasted_space) / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
     } else {
-        sizeStr = QString("%1 MB").arg(
-            static_cast<double>(wastedSpace) / sak::kBytesPerMBf, 0, 'f', kSizeGbPrecision);
+        size_str = QString("%1 MB").arg(
+            static_cast<double>(wasted_space) / sak::kBytesPerMBf, 0, 'f', kSizeGbPrecision);
     }
 
-    const QString resultsText =
-        tr("Found %1 duplicate file(s), %2 wasted space").arg(duplicateCount).arg(sizeStr);
+    const QString results_text =
+        tr("Found %1 duplicate file(s), %2 wasted space").arg(duplicate_count).arg(size_str);
 
     // Show persistent results label
-    if (duplicateCount > 0) {
+    if (duplicate_count > 0) {
         m_dedup_results_label->setStyleSheet(
             ui::resultBadgeStyle(ui::kColorBgWarningPanel, ui::kColorWarning));
     } else {
         m_dedup_results_label->setStyleSheet(
             ui::resultBadgeStyle(ui::kColorBgInfoPanel, ui::kColorSuccess));
     }
-    m_dedup_results_label->setText(resultsText);
+    m_dedup_results_label->setText(results_text);
     m_dedup_results_label->setVisible(true);
 
-    Q_EMIT statusMessage(resultsText, sak::kTimerHealthPollMs);
-    logMessage(resultsText);
+    Q_EMIT statusMessage(results_text, sak::kTimerHealthPollMs);
+    logMessage(results_text);
 
     showScrollableResultsDialog(tr("Duplicate Scan Results"), summary);
 }

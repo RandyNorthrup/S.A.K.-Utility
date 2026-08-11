@@ -77,7 +77,7 @@ std::shared_ptr<std::atomic_bool> scanCancelFlag(QObject* owner) {
 QMap<QString, QString> computeHashes(const FileManagementTarget& target,
                                      const QString& path,
                                      const QStringList& algorithms,
-                                     const quint64 fullSize,
+                                     const quint64 full_size,
                                      const std::shared_ptr<const std::atomic_bool>& cancel) {
     QMap<QString, QString> hashes;
     if (scanCancelled(cancel)) {
@@ -94,7 +94,7 @@ QMap<QString, QString> computeHashes(const FileManagementTarget& target,
     // Truncation is decided by the bytes actually read, not just the entry's claimed size:
     // if the capped read came back full, the digest covers a prefix and must never be
     // labelled whole-file, even when (untrusted) metadata under-reports the real length.
-    const bool truncated = hashInputTruncated(fullSize, kPropertiesHashMaxBytes) ||
+    const bool truncated = hashInputTruncated(full_size, kPropertiesHashMaxBytes) ||
                            static_cast<uint64_t>(read.data.size()) >= kPropertiesHashMaxBytes;
     static const QMap<QString, QCryptographicHash::Algorithm> kQtAlgorithms = {
         {QStringLiteral("MD5"), QCryptographicHash::Md5},

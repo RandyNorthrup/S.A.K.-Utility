@@ -86,13 +86,13 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
     layout->addWidget(m_logEdit);
     m_logScrollController = new FollowScrollController(m_logEdit, this);
 
-    auto* bottomRow = new QHBoxLayout();
-    auto* clearBtn = new QPushButton(tr("Clear"), this);
-    clearBtn->setAccessibleName(tr("Clear detached log"));
-    clearBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    connect(clearBtn, &QPushButton::clicked, this, &DetachableLogWindow::clearLog);
-    bottomRow->addWidget(clearBtn);
-    bottomRow->addStretch();
+    auto* bottom_row = new QHBoxLayout();
+    auto* clear_btn = new QPushButton(tr("Clear"), this);
+    clear_btn->setAccessibleName(tr("Clear detached log"));
+    clear_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    connect(clear_btn, &QPushButton::clicked, this, &DetachableLogWindow::clearLog);
+    bottom_row->addWidget(clear_btn);
+    bottom_row->addStretch();
     m_jumpToNewestButton = new QPushButton(tr("Jump to newest"), this);
     m_jumpToNewestButton->setToolTip(tr("Scroll to the latest log line and resume auto-scroll"));
     m_jumpToNewestButton->setAccessibleName(tr("Jump to newest log entry"));
@@ -103,8 +103,8 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
             &QPushButton::clicked,
             m_logScrollController,
             &FollowScrollController::jumpToNewest);
-    bottomRow->addWidget(m_jumpToNewestButton);
-    layout->addLayout(bottomRow);
+    bottom_row->addWidget(m_jumpToNewestButton);
+    layout->addLayout(bottom_row);
 
     m_snapTimer = new QTimer(this);
     m_snapTimer->setSingleShot(true);
@@ -194,18 +194,18 @@ void DetachableLogWindow::moveEvent(QMoveEvent* event) {
     }
 
     // If user drags window, check whether it's still close to main window
-    auto* mainWin = findMainWindow();
-    if (mainWin == nullptr) {
+    auto* main_win = findMainWindow();
+    if (main_win == nullptr) {
         return;
     }
 
-    const QRect mainFrame = mainWin->frameGeometry();
-    const int snapThreshold = 40;
-    const int rightEdge = mainFrame.right() + 1;
+    const QRect main_frame = main_win->frameGeometry();
+    const int snap_threshold = 40;
+    const int right_edge = main_frame.right() + 1;
 
     // If within snap threshold of the main window's right edge, re-anchor
-    if (std::abs(pos().x() - rightEdge) < snapThreshold &&
-        std::abs(frameGeometry().top() - mainFrame.top()) < snapThreshold) {
+    if (std::abs(pos().x() - right_edge) < snap_threshold &&
+        std::abs(frameGeometry().top() - main_frame.top()) < snap_threshold) {
         m_anchored = true;
     } else {
         m_anchored = false;
@@ -213,21 +213,21 @@ void DetachableLogWindow::moveEvent(QMoveEvent* event) {
 }
 
 void DetachableLogWindow::snapToMainWindow() {
-    auto* mainWin = findMainWindow();
-    if (mainWin == nullptr) {
+    auto* main_win = findMainWindow();
+    if (main_win == nullptr) {
         return;
     }
 
     m_programmaticMove = true;
 
-    const QRect mainFrame = mainWin->frameGeometry();
-    const QRect mainGeo = mainWin->geometry();
-    const int logWidth = width();
+    const QRect main_frame = main_win->frameGeometry();
+    const QRect main_geo = main_win->geometry();
+    const int log_width = width();
 
     // Snap to right edge of main window, match content height so frames align
-    const int frameTopOffset = mainGeo.top() - mainFrame.top();
-    move(mainFrame.right() + 1, mainGeo.top() - frameTopOffset);
-    resize(logWidth, mainGeo.height());
+    const int frame_top_offset = main_geo.top() - main_frame.top();
+    move(main_frame.right() + 1, main_geo.top() - frame_top_offset);
+    resize(log_width, main_geo.height());
 
     m_anchored = true;
     m_programmaticMove = false;
@@ -312,33 +312,34 @@ void LogToggleSwitch::paintEvent(QPaintEvent* /*event*/) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
-    const int trackHeight = kToggleTrackHeight;
-    const int trackWidth = kToggleTrackWidth;
-    const int knobSize = kToggleKnobSize;
-    const int labelX = trackWidth + kToggleLabelGap;
+    const int track_height = kToggleTrackHeight;
+    const int track_width = kToggleTrackWidth;
+    const int knob_size = kToggleKnobSize;
+    const int label_x = track_width + kToggleLabelGap;
 
     // Track
-    const QRect trackRect(
-        0, (height() - trackHeight) / kToggleTrackRadiusDivisor, trackWidth, trackHeight);
-    const QColor trackColor = m_checked ? QColor(QString::fromLatin1(ui::kColorPrimary))
-                                        : QColor(QString::fromLatin1(ui::kColorBorderMuted));
-    p.setBrush(trackColor);
+    const QRect track_rect(
+        0, (height() - track_height) / kToggleTrackRadiusDivisor, track_width, track_height);
+    const QColor track_color = m_checked ? QColor(QString::fromLatin1(ui::kColorPrimary))
+                                         : QColor(QString::fromLatin1(ui::kColorBorderMuted));
+    p.setBrush(track_color);
     p.setPen(Qt::NoPen);
-    p.drawRoundedRect(trackRect,
-                      trackHeight / kToggleTrackRadiusDivisor,
-                      trackHeight / kToggleTrackRadiusDivisor);
+    p.drawRoundedRect(track_rect,
+                      track_height / kToggleTrackRadiusDivisor,
+                      track_height / kToggleTrackRadiusDivisor);
 
     // Knob
-    const int knobX = m_checked ? (trackWidth - knobSize - kToggleKnobInsetPx) : kToggleKnobInsetPx;
-    const int knobY = (height() - knobSize) / kToggleTrackRadiusDivisor;
+    const int knob_x = m_checked ? (track_width - knob_size - kToggleKnobInsetPx)
+                                 : kToggleKnobInsetPx;
+    const int knob_y = (height() - knob_size) / kToggleTrackRadiusDivisor;
     p.setBrush(QColor(QString::fromLatin1(ui::kColorBgWhite)));
-    p.drawEllipse(knobX, knobY, knobSize, knobSize);
+    p.drawEllipse(knob_x, knob_y, knob_size, knob_size);
 
     // Label
     p.setPen(palette().color(QPalette::WindowText));
     p.setFont(toggleLabelFont(font()));
-    const QRect labelRect(labelX, 0, width() - labelX, height());
-    p.drawText(labelRect, Qt::AlignVCenter | Qt::AlignLeft, m_label);
+    const QRect label_rect(label_x, 0, width() - label_x, height());
+    p.drawText(label_rect, Qt::AlignVCenter | Qt::AlignLeft, m_label);
 }
 
 void LogToggleSwitch::mousePressEvent(QMouseEvent* event) {

@@ -1570,8 +1570,8 @@ QString safePackageToken(const QString& value) {
     // input, so it is rejected rather than carried into a command line.
     constexpr int kMaxPackageIdChars = 128;
     const QString out = value.trimmed().toLower();
-    static const QRegularExpression valid(QStringLiteral(R"(^[a-z0-9_.+-]+$)"));
-    if (out.isEmpty() || out.size() > kMaxPackageIdChars || !valid.match(out).hasMatch()) {
+    static const QRegularExpression kValid(QStringLiteral(R"(^[a-z0-9_.+-]+$)"));
+    if (out.isEmpty() || out.size() > kMaxPackageIdChars || !kValid.match(out).hasMatch()) {
         return {};
     }
     return out;
@@ -2666,7 +2666,7 @@ bool isUsefulEvidenceLine(const QString& line) {
     if (text.isEmpty() || text.startsWith(QStringLiteral("=="))) {
         return false;
     }
-    static const QStringList labels{
+    static const QStringList kLabels{
         QStringLiteral("OsName"),
         QStringLiteral("OsBuildNumber"),
         QStringLiteral("WindowsVersion"),
@@ -2689,7 +2689,7 @@ bool isUsefulEvidenceLine(const QString& line) {
         QStringLiteral("RealTimeProtectionEnabled"),
         QStringLiteral("AntivirusSignatureLastUpdated"),
     };
-    for (const auto& label : labels) {
+    for (const auto& label : kLabels) {
         if (text.startsWith(label + QStringLiteral(" "))) {
             return true;
         }
@@ -3989,25 +3989,25 @@ bool AiAssistantPanel::eventFilter(QObject* watched, QEvent* event) {
 void AiAssistantPanel::setupUi() {
     Q_ASSERT(layout() == nullptr);
 
-    auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium);
-    rootLayout->setSpacing(sak::ui::kSpacingDefault);
+    auto* root_layout = new QVBoxLayout(this);
+    root_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium);
+    root_layout->setSpacing(sak::ui::kSpacingDefault);
 
     m_headerWidgets = sak::createDynamicPanelHeader(
         this,
         QStringLiteral(":/icons/icons/panel_ai.svg"),
         tr("AI Assistant"),
         tr("OpenAI-powered technician assistant with controlled local execution"),
-        rootLayout);
+        root_layout);
 
     auto* workspace = createChatWorkspace();
     setAccessible(workspace, tr("AI Assistant workspace"), tr("AI assistant chat workspace"));
-    rootLayout->addWidget(workspace, 1);
+    root_layout->addWidget(workspace, 1);
 
-    createStatusStrip(rootLayout);
+    createStatusStrip(root_layout);
 }
 
 QWidget* AiAssistantPanel::createChatWorkspace() {
@@ -4067,10 +4067,10 @@ QWidget* AiAssistantPanel::createContextPane() {
 
 void AiAssistantPanel::setupContextPaneBrowserExtensionSection(QVBoxLayout* layout, QWidget* pane) {
     layout->addSpacing(sak::ui::kSpacingMedium);
-    auto* titleRow = new QHBoxLayout();
-    titleRow->setSpacing(sak::ui::kSpacingSmall);
-    titleRow->addWidget(makeRailTitle(pane, tr("Browser Control")));
-    titleRow->addStretch();
+    auto* title_row = new QHBoxLayout();
+    title_row->setSpacing(sak::ui::kSpacingSmall);
+    title_row->addWidget(makeRailTitle(pane, tr("Browser Control")));
+    title_row->addStretch();
     m_browserExtensionButton = new QPushButton(tr("Install extension"), pane);
     configureCompactButton(m_browserExtensionButton);
     m_browserExtensionButton->setToolTip(
@@ -4081,8 +4081,8 @@ void AiAssistantPanel::setupContextPaneBrowserExtensionSection(QVBoxLayout* layo
             &QPushButton::clicked,
             this,
             &AiAssistantPanel::onBrowserExtensionButtonClicked);
-    titleRow->addWidget(m_browserExtensionButton);
-    layout->addLayout(titleRow);
+    title_row->addWidget(m_browserExtensionButton);
+    layout->addLayout(title_row);
 
     m_browserExtensionStatusLabel = new QLabel(pane);
     m_browserExtensionStatusLabel->setWordWrap(true);
@@ -4102,30 +4102,30 @@ void AiAssistantPanel::refreshBrowserExtensionStatus() {
     // act when the setup state has moved since, so an "Install extension" button can
     // never turn into an uninstall.
     m_browserExtensionRenderedState = installer.state();
-    QString statusText;
-    QString buttonText;
+    QString status_text;
+    QString button_text;
     switch (m_browserExtensionRenderedState) {
     case sak::win32mcp::ExtensionInstallState::Installed:
-        statusText = tr("Installed. Restart Chrome if it is open.");
-        buttonText = tr("Uninstall extension");
+        status_text = tr("Installed. Restart Chrome if it is open.");
+        button_text = tr("Uninstall extension");
         break;
     case sak::win32mcp::ExtensionInstallState::Partial:
-        statusText = tr("Partly set up. Click to finish.");
-        buttonText = tr("Finish setup");
+        status_text = tr("Partly set up. Click to finish.");
+        button_text = tr("Finish setup");
         break;
     case sak::win32mcp::ExtensionInstallState::Error:
-        statusText = tr("Setup status could not be read.");
-        buttonText = tr("Install extension");
+        status_text = tr("Setup status could not be read.");
+        button_text = tr("Install extension");
         break;
     case sak::win32mcp::ExtensionInstallState::NotInstalled:
-        statusText = installer.crxPresent()
-                         ? tr("Not installed.")
-                         : tr("Not installed (extension package is missing from this build).");
-        buttonText = tr("Install extension");
+        status_text = installer.crxPresent()
+                          ? tr("Not installed.")
+                          : tr("Not installed (extension package is missing from this build).");
+        button_text = tr("Install extension");
         break;
     }
-    m_browserExtensionStatusLabel->setText(statusText);
-    m_browserExtensionButton->setText(buttonText);
+    m_browserExtensionStatusLabel->setText(status_text);
+    m_browserExtensionButton->setText(button_text);
 }
 
 void AiAssistantPanel::onBrowserExtensionButtonClicked() {
@@ -4196,11 +4196,11 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
             this,
             &AiAssistantPanel::onRenameSessionClicked);
 
-    auto* sessionActionRow = new QHBoxLayout();
-    sessionActionRow->setSpacing(sak::ui::kSpacingSmall);
-    sessionActionRow->addWidget(m_newSessionButton, 1);
-    sessionActionRow->addWidget(m_renameSessionButton, 1);
-    layout->addLayout(sessionActionRow);
+    auto* session_action_row = new QHBoxLayout();
+    session_action_row->setSpacing(sak::ui::kSpacingSmall);
+    session_action_row->addWidget(m_newSessionButton, 1);
+    session_action_row->addWidget(m_renameSessionButton, 1);
+    layout->addLayout(session_action_row);
 
     m_resumeGateButton = new QPushButton(tr("Resume Waiting Run"), pane);
     configureCompactButton(m_resumeGateButton, QStringLiteral(":/icons/icons/icons8-sent.svg"));
@@ -4272,9 +4272,9 @@ void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidg
             &QComboBox::currentIndexChanged,
             this,
             &AiAssistantPanel::onWorkflowTemplatePickerChanged);
-    auto* workflowRow = new QHBoxLayout();
-    workflowRow->setSpacing(sak::ui::kSpacingSmall);
-    workflowRow->addWidget(m_promptTemplateCombo, 1);
+    auto* workflow_row = new QHBoxLayout();
+    workflow_row->setSpacing(sak::ui::kSpacingSmall);
+    workflow_row->addWidget(m_promptTemplateCombo, 1);
 
     m_addWorkflowButton = new QPushButton(tr("Add"), pane);
     configureCompactButton(m_addWorkflowButton,
@@ -4284,9 +4284,9 @@ void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidg
     setAccessible(m_addWorkflowButton, tr("Add selected workflow"));
     connect(
         m_addWorkflowButton, &QPushButton::clicked, this, &AiAssistantPanel::onAddWorkflowClicked);
-    workflowRow->addWidget(m_addWorkflowButton);
+    workflow_row->addWidget(m_addWorkflowButton);
 
-    layout->addLayout(workflowRow);
+    layout->addLayout(workflow_row);
 }
 
 void AiAssistantPanel::onWorkflowTemplatePickerChanged(int index) {
@@ -4333,17 +4333,17 @@ void AiAssistantPanel::setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWid
     m_workflowDetailsPanel->setObjectName(QStringLiteral("aiWorkflowDetailsPanel"));
     m_workflowDetailsPanel->setStyleSheet(sak::ui::aiWorkflowDetailsPanelStyle());
     m_workflowDetailsPanel->setVisible(false);
-    auto* detailsLayout = new QVBoxLayout(m_workflowDetailsPanel);
-    detailsLayout->setContentsMargins(
+    auto* details_layout = new QVBoxLayout(m_workflowDetailsPanel);
+    details_layout->setContentsMargins(
         sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
-    detailsLayout->setSpacing(sak::ui::kSpacingTight);
-    auto* detailsHeaderRow = new QHBoxLayout();
-    detailsHeaderRow->setSpacing(sak::ui::kSpacingSmall);
+    details_layout->setSpacing(sak::ui::kSpacingTight);
+    auto* details_header_row = new QHBoxLayout();
+    details_header_row->setSpacing(sak::ui::kSpacingSmall);
     // Later filled with a workflow title from the workflow library JSON; show it verbatim.
     m_workflowDetailsTitle = sak::plainTextLabel(tr("Workflow"), m_workflowDetailsPanel);
     m_workflowDetailsTitle->setStyleSheet(
         sak::ui::fontWeightAndColorStyle(kFontWeightBold, sak::ui::kColorTextHeading));
-    detailsHeaderRow->addWidget(m_workflowDetailsTitle, 1);
+    details_header_row->addWidget(m_workflowDetailsTitle, 1);
     m_workflowDetailsCloseButton = new QPushButton(tr("Close"), m_workflowDetailsPanel);
     configureCompactButton(m_workflowDetailsCloseButton,
                            QStringLiteral(":/icons/icons/icons8-close-window.svg"));
@@ -4353,8 +4353,8 @@ void AiAssistantPanel::setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWid
             &QPushButton::clicked,
             this,
             &AiAssistantPanel::hideWorkflowDetails);
-    detailsHeaderRow->addWidget(m_workflowDetailsCloseButton);
-    detailsLayout->addLayout(detailsHeaderRow);
+    details_header_row->addWidget(m_workflowDetailsCloseButton);
+    details_layout->addLayout(details_header_row);
 
     m_workflowDetailsBody = new QTextBrowser(m_workflowDetailsPanel);
     m_workflowDetailsBody->setReadOnly(true);
@@ -4364,7 +4364,7 @@ void AiAssistantPanel::setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWid
     m_workflowDetailsBody->setStyleSheet(sak::ui::aiWorkflowDetailsBodyStyle());
     setAccessible(m_workflowDetailsBody, tr("Workflow details preview"));
     requireFocusForWheel(m_workflowDetailsBody, this);
-    detailsLayout->addWidget(m_workflowDetailsBody);
+    details_layout->addWidget(m_workflowDetailsBody);
     layout->addWidget(m_workflowDetailsPanel);
 }
 
@@ -4398,32 +4398,32 @@ void AiAssistantPanel::setupContextPaneAccessSection(QVBoxLayout* layout, QWidge
 
 void AiAssistantPanel::setupContextPaneCredentialSection(QVBoxLayout* layout, QWidget* pane) {
     layout->addSpacing(sak::ui::kSpacingMedium);
-    auto* keyRow = new QHBoxLayout();
-    keyRow->setSpacing(sak::ui::kSpacingSmall);
-    keyRow->addWidget(makeRailTitle(pane, tr("OpenAI API Key")));
-    keyRow->addStretch();
+    auto* key_row = new QHBoxLayout();
+    key_row->setSpacing(sak::ui::kSpacingSmall);
+    key_row->addWidget(makeRailTitle(pane, tr("OpenAI API Key")));
+    key_row->addStretch();
     m_loadKeyButton = new QPushButton(tr("Load Key"), pane);
     configureCompactButton(m_loadKeyButton);
     m_loadKeyButton->setToolTip(tr("Enter an OpenAI API key without displaying it in the panel"));
     setAccessible(m_loadKeyButton, tr("Load OpenAI API key"));
     connect(m_loadKeyButton, &QPushButton::clicked, this, &AiAssistantPanel::onLoadApiKeyClicked);
-    keyRow->addWidget(m_loadKeyButton);
-    layout->addLayout(keyRow);
+    key_row->addWidget(m_loadKeyButton);
+    layout->addLayout(key_row);
 
-    auto* keyStatusRow = new QHBoxLayout();
-    keyStatusRow->setSpacing(sak::ui::kSpacingTight);
+    auto* key_status_row = new QHBoxLayout();
+    key_status_row->setSpacing(sak::ui::kSpacingTight);
     m_connectionStatusIconLabel = new QLabel(pane);
     m_connectionStatusIconLabel->setFixedWidth(kConnectionStatusIconWidth);
     m_connectionStatusIconLabel->setAlignment(Qt::AlignCenter);
     m_connectionStatusIconLabel->setToolTip(tr("OpenAI API key status indicator"));
     setAccessible(m_connectionStatusIconLabel, tr("OpenAI key status indicator"));
-    keyStatusRow->addWidget(m_connectionStatusIconLabel);
+    key_status_row->addWidget(m_connectionStatusIconLabel);
 
     m_connectionStatusLabel = new QLabel(pane);
     m_connectionStatusLabel->setToolTip(tr("OpenAI API key status"));
     setAccessible(m_connectionStatusLabel, tr("AI connection status"));
-    keyStatusRow->addWidget(m_connectionStatusLabel, 1);
-    layout->addLayout(keyStatusRow);
+    key_status_row->addWidget(m_connectionStatusLabel, 1);
+    layout->addLayout(key_status_row);
     setApiKeyStatus(tr("Not loaded"),
                     sak::ui::kStatusColorError,
                     QString(QChar(kStatusMarkerError)),
@@ -4446,25 +4446,25 @@ QWidget* AiAssistantPanel::createConversationPane() {
 }
 
 void AiAssistantPanel::setupConversationHeader(QVBoxLayout* layout, QWidget* pane) {
-    auto* chatHeader = new QFrame(pane);
-    chatHeader->setObjectName(QStringLiteral("aiConversationHeader"));
-    chatHeader->setStyleSheet(sak::ui::aiConversationHeaderStyle());
-    auto* chatHeaderLayout = new QVBoxLayout(chatHeader);
-    chatHeaderLayout->setContentsMargins(sak::ui::kMarginMedium,
-                                         sak::ui::kMarginTight,
-                                         sak::ui::kMarginMedium,
-                                         sak::ui::kMarginTight);
-    chatHeaderLayout->setSpacing(sak::ui::kSpacingTight);
+    auto* chat_header = new QFrame(pane);
+    chat_header->setObjectName(QStringLiteral("aiConversationHeader"));
+    chat_header->setStyleSheet(sak::ui::aiConversationHeaderStyle());
+    auto* chat_header_layout = new QVBoxLayout(chat_header);
+    chat_header_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                           sak::ui::kMarginTight,
+                                           sak::ui::kMarginMedium,
+                                           sak::ui::kMarginTight);
+    chat_header_layout->setSpacing(sak::ui::kSpacingTight);
 
-    setupConversationStatusRow(chatHeaderLayout, chatHeader);
-    setupConversationHeaderActions(chatHeaderLayout, chatHeader);
-    layout->addWidget(chatHeader);
+    setupConversationStatusRow(chat_header_layout, chat_header);
+    setupConversationHeaderActions(chat_header_layout, chat_header);
+    layout->addWidget(chat_header);
 }
 
 void AiAssistantPanel::setupConversationStatusRow(QVBoxLayout* layout, QWidget* header) {
-    auto* statusRow = new QHBoxLayout();
-    statusRow->setSpacing(sak::ui::kSpacingSmall);
-    statusRow->addWidget(makeRailTitle(header, tr("Chat")));
+    auto* status_row = new QHBoxLayout();
+    status_row->setSpacing(sak::ui::kSpacingSmall);
+    status_row->addWidget(makeRailTitle(header, tr("Chat")));
 
     m_workflowProgressBar = new QProgressBar(header);
     m_workflowProgressBar->setVisible(false);
@@ -4481,7 +4481,7 @@ void AiAssistantPanel::setupConversationStatusRow(QVBoxLayout* layout, QWidget* 
     setAccessible(m_workflowProgressBar,
                   tr("AI workflow progress"),
                   tr("Shows live workflow phase progress while a multi-agent workflow runs"));
-    statusRow->addWidget(m_workflowProgressBar, 1);
+    status_row->addWidget(m_workflowProgressBar, 1);
 
     m_agentActivityLabel = new QLabel(header);
     m_agentActivityLabel->setMinimumWidth(kAgentActivityLabelMinWidth);
@@ -4492,15 +4492,15 @@ void AiAssistantPanel::setupConversationStatusRow(QVBoxLayout* layout, QWidget* 
     setAccessible(m_agentActivityLabel,
                   tr("AI background agents"),
                   tr("Shows active and completed background subagents"));
-    statusRow->addWidget(m_agentActivityLabel);
+    status_row->addWidget(m_agentActivityLabel);
     updateRunTelemetryLabels();
-    layout->addLayout(statusRow);
+    layout->addLayout(status_row);
 }
 
 void AiAssistantPanel::setupConversationHeaderActions(QVBoxLayout* layout, QWidget* header) {
-    auto* headerActionRow = new QHBoxLayout();
-    headerActionRow->setSpacing(sak::ui::kSpacingSmall);
-    headerActionRow->addStretch();
+    auto* header_action_row = new QHBoxLayout();
+    header_action_row->setSpacing(sak::ui::kSpacingSmall);
+    header_action_row->addStretch();
 
     m_runDetailsButton = new QPushButton(tr("Details"), header);
     configureCompactButton(m_runDetailsButton, QStringLiteral(":/icons/icons/panel_about.svg"));
@@ -4512,7 +4512,7 @@ void AiAssistantPanel::setupConversationHeaderActions(QVBoxLayout* layout, QWidg
                   tr("Show current run state and recent AI activity"));
     connect(
         m_runDetailsButton, &QPushButton::clicked, this, &AiAssistantPanel::onRunDetailsClicked);
-    headerActionRow->addWidget(m_runDetailsButton);
+    header_action_row->addWidget(m_runDetailsButton);
 
     m_artifactsButton = new QPushButton(tr("Artifacts"), header);
     configureCompactButton(m_artifactsButton,
@@ -4525,7 +4525,7 @@ void AiAssistantPanel::setupConversationHeaderActions(QVBoxLayout* layout, QWidg
                   tr("Open AI artifacts folder"),
                   tr("Open the folder containing artifacts for the current AI session"));
     connect(m_artifactsButton, &QPushButton::clicked, this, &AiAssistantPanel::onArtifactsClicked);
-    headerActionRow->addWidget(m_artifactsButton);
+    header_action_row->addWidget(m_artifactsButton);
     refreshArtifactList();
 
     m_generateReportButton = new QPushButton(tr("Report"), header);
@@ -4539,8 +4539,8 @@ void AiAssistantPanel::setupConversationHeaderActions(QVBoxLayout* layout, QWidg
             &QPushButton::clicked,
             this,
             &AiAssistantPanel::onGenerateReportClicked);
-    headerActionRow->addWidget(m_generateReportButton);
-    layout->addLayout(headerActionRow);
+    header_action_row->addWidget(m_generateReportButton);
+    layout->addLayout(header_action_row);
 }
 
 void AiAssistantPanel::setupConversationTranscript(QVBoxLayout* layout, QWidget* pane) {
@@ -4553,16 +4553,16 @@ void AiAssistantPanel::setupConversationComposer(QVBoxLayout* layout, QWidget* p
     auto* composer = new QFrame(pane);
     composer->setObjectName(QStringLiteral("aiComposer"));
     composer->setStyleSheet(sak::ui::aiComposerStyle());
-    auto* composerLayout = new QVBoxLayout(composer);
-    composerLayout->setContentsMargins(sak::ui::kMarginMedium,
-                                       sak::ui::kMarginSmall,
-                                       sak::ui::kMarginMedium,
-                                       sak::ui::kMarginSmall);
-    composerLayout->setSpacing(sak::ui::kSpacingSmall);
+    auto* composer_layout = new QVBoxLayout(composer);
+    composer_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                        sak::ui::kMarginSmall,
+                                        sak::ui::kMarginMedium,
+                                        sak::ui::kMarginSmall);
+    composer_layout->setSpacing(sak::ui::kSpacingSmall);
 
-    setupComposerInput(composerLayout, composer);
-    setupComposerContextList(composerLayout, composer);
-    setupComposerActions(composerLayout, composer);
+    setupComposerInput(composer_layout, composer);
+    setupComposerContextList(composer_layout, composer);
+    setupComposerActions(composer_layout, composer);
     layout->addWidget(composer);
 }
 
@@ -4609,16 +4609,16 @@ void AiAssistantPanel::setupComposerContextList(QVBoxLayout* layout, QWidget* co
 }
 
 void AiAssistantPanel::setupComposerActions(QVBoxLayout* layout, QWidget* composer) {
-    auto* actionRow = new QHBoxLayout();
-    actionRow->setSpacing(sak::ui::kSpacingSmall);
-    setupComposerContextActions(actionRow, composer);
-    actionRow->addStretch();
-    setupComposerSendActions(actionRow, composer);
+    auto* action_row = new QHBoxLayout();
+    action_row->setSpacing(sak::ui::kSpacingSmall);
+    setupComposerContextActions(action_row, composer);
+    action_row->addStretch();
+    setupComposerSendActions(action_row, composer);
     updatePrimaryActionButton();
-    layout->addLayout(actionRow);
+    layout->addLayout(action_row);
 }
 
-void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* actionRow, QWidget* composer) {
+void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* action_row, QWidget* composer) {
     m_addContextFilesButton = new QPushButton(tr("Attach"), composer);
     configureCompactButton(m_addContextFilesButton,
                            QStringLiteral(":/icons/icons/icons8-attachment.svg"));
@@ -4630,7 +4630,7 @@ void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* actionRow, QWidg
             &QPushButton::clicked,
             this,
             &AiAssistantPanel::onAddContextFilesClicked);
-    actionRow->addWidget(m_addContextFilesButton);
+    action_row->addWidget(m_addContextFilesButton);
 
     m_addInstructionButton = new QPushButton(tr("Instructions"), composer);
     configureCompactButton(m_addInstructionButton,
@@ -4642,7 +4642,7 @@ void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* actionRow, QWidg
             &QPushButton::clicked,
             this,
             &AiAssistantPanel::onAddInstructionContextClicked);
-    actionRow->addWidget(m_addInstructionButton);
+    action_row->addWidget(m_addInstructionButton);
 
     m_clearContextButton = new QPushButton(tr("Clear"), composer);
     configureCompactButton(m_clearContextButton, QStringLiteral(":/icons/icons/icons8-trash.svg"));
@@ -4654,10 +4654,10 @@ void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* actionRow, QWidg
             &QPushButton::clicked,
             this,
             &AiAssistantPanel::onClearContextClicked);
-    actionRow->addWidget(m_clearContextButton);
+    action_row->addWidget(m_clearContextButton);
 }
 
-void AiAssistantPanel::setupComposerSendActions(QHBoxLayout* actionRow, QWidget* composer) {
+void AiAssistantPanel::setupComposerSendActions(QHBoxLayout* action_row, QWidget* composer) {
     m_contextWindowLabel = new QLabel(composer);
     m_contextWindowLabel->setMinimumWidth(kContextWindowLabelMinWidth);
     m_contextWindowLabel->setAlignment(Qt::AlignCenter);
@@ -4667,7 +4667,7 @@ void AiAssistantPanel::setupComposerSendActions(QHBoxLayout* actionRow, QWidget*
     setAccessible(m_contextWindowLabel,
                   tr("AI context window usage"),
                   tr("Shows exact input tokens used against selected model context window"));
-    actionRow->addWidget(m_contextWindowLabel);
+    action_row->addWidget(m_contextWindowLabel);
 
     m_sendButton = new QPushButton(tr("Send"), composer);
     m_sendButton->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
@@ -4683,19 +4683,19 @@ void AiAssistantPanel::setupComposerSendActions(QHBoxLayout* actionRow, QWidget*
         }
         onSendClicked();
     });
-    actionRow->addWidget(m_sendButton);
+    action_row->addWidget(m_sendButton);
 }
 
-void AiAssistantPanel::createStatusStrip(QVBoxLayout* rootLayout) {
-    Q_ASSERT(rootLayout);
+void AiAssistantPanel::createStatusStrip(QVBoxLayout* root_layout) {
+    Q_ASSERT(root_layout);
 
-    auto* statusRow = new QHBoxLayout();
-    statusRow->setContentsMargins(
+    auto* status_row = new QHBoxLayout();
+    status_row->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    statusRow->addWidget(m_logToggle);
-    statusRow->addStretch();
-    rootLayout->addLayout(statusRow);
+    status_row->addWidget(m_logToggle);
+    status_row->addStretch();
+    root_layout->addLayout(status_row);
 }
 
 void AiAssistantPanel::connectAiClient() {
@@ -6035,7 +6035,7 @@ void AiAssistantPanel::recordToolLoopObservation(const QString& tool_name,
 }
 
 QString AiAssistantPanel::toolLoopCapSummary() const {
-    auto topEntry = [](const QHash<QString, int>& counts) {
+    auto top_entry = [](const QHash<QString, int>& counts) {
         QString key;
         int count = 0;
         for (auto it = counts.constBegin(); it != counts.constEnd(); ++it) {
@@ -6046,8 +6046,8 @@ QString AiAssistantPanel::toolLoopCapSummary() const {
         }
         return qMakePair(key, count);
     };
-    const auto top_tool = topEntry(m_toolNamesThisMessage);
-    const auto top_failure = topEntry(m_toolFailureClassesThisMessage);
+    const auto top_tool = top_entry(m_toolNamesThisMessage);
+    const auto top_failure = top_entry(m_toolFailureClassesThisMessage);
     const QString repeated_tools =
         top_tool.first.isEmpty()
             ? tr("none")
@@ -7672,15 +7672,15 @@ static QStringList confirmBatchWarnings(const QJsonObject& action_args, const QJ
 // the batch is never confirmed behind a truncated preview.
 static QString buildActionConfirmDetail(const AppActionDescriptor& descriptor,
                                         const QJsonObject& action_args,
-                                        bool& tooLargeToReview) {
-    tooLargeToReview = false;
+                                        bool& too_large_to_review) {
+    too_large_to_review = false;
     if (action_args.isEmpty()) {
         return {};
     }
     if (action_args.value(QStringLiteral("items")).isArray()) {
         const QJsonArray items = action_args.value(QStringLiteral("items")).toArray();
         if (descriptor.catastrophic && items.size() > kMaxReviewableCatastrophicItems) {
-            tooLargeToReview = true;
+            too_large_to_review = true;
             return {};
         }
         QStringList blocks = confirmBatchWarnings(action_args, items);

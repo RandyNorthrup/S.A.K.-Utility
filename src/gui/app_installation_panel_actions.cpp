@@ -107,7 +107,7 @@ void AppInstallationPanel::onSearch() {
 
 void AppInstallationPanel::onSearchCompleted(bool success,
                                              const QString& output,
-                                             const QString& errorMessage) {
+                                             const QString& error_message) {
     m_search_in_progress = false;
     m_searchButton->setEnabled(true);
 
@@ -119,7 +119,7 @@ void AppInstallationPanel::onSearchCompleted(bool success,
     }
 
     // Show failure in the results table
-    const QString safe_error = sanitizeErrorForDisplay(errorMessage);
+    const QString safe_error = sanitizeErrorForDisplay(error_message);
     m_onlineResultsModel->setRowCount(0);
     m_onlineResultsModel->setRowCount(1);
     auto* item = new QStandardItem(tr("Search failed: %1").arg(safe_error));
@@ -171,51 +171,51 @@ void AppInstallationPanel::onAddToQueue() {
     }
 
     const int row = indexes.first().row();
-    auto* pkgItem = m_onlineResultsModel->item(row, RColPackage);
-    if ((pkgItem == nullptr) || !pkgItem->isEnabled()) {
+    auto* pkg_item = m_onlineResultsModel->item(row, RColPackage);
+    if ((pkg_item == nullptr) || !pkg_item->isEnabled()) {
         return;
     }
 
-    QString packageId = pkgItem->text();
-    if (packageId.isEmpty()) {
+    QString package_id = pkg_item->text();
+    if (package_id.isEmpty()) {
         return;
     }
 
     // Check for duplicates
     const bool duplicate = std::ranges::any_of(m_installQueue,
 
-                                               [&packageId](const QueueEntry& entry) {
-                                                   return entry.package_id == packageId;
+                                               [&package_id](const QueueEntry& entry) {
+                                                   return entry.package_id == package_id;
                                                });
 
     if (duplicate) {
-        Q_EMIT logOutput(QString("Package '%1' already in queue").arg(packageId));
+        Q_EMIT logOutput(QString("Package '%1' already in queue").arg(package_id));
         return;
     }
 
-    auto* versionItem = m_onlineResultsModel->item(row, RColVersion);
-    auto* publisherItem = m_onlineResultsModel->item(row, RColPublisher);
+    auto* version_item = m_onlineResultsModel->item(row, RColVersion);
+    auto* publisher_item = m_onlineResultsModel->item(row, RColPublisher);
 
     QueueEntry entry;
-    entry.package_id = packageId;
-    entry.version = (versionItem != nullptr) ? versionItem->text() : QString();
-    entry.publisher = (publisherItem != nullptr) ? publisherItem->text() : QString();
+    entry.package_id = package_id;
+    entry.version = (version_item != nullptr) ? version_item->text() : QString();
+    entry.publisher = (publisher_item != nullptr) ? publisher_item->text() : QString();
     m_installQueue.append(entry);
 
     updateQueueDisplay();
-    Q_EMIT logOutput(QString("Added '%1' to install queue").arg(packageId));
-    Q_EMIT statusMessage(tr("Added %1 to queue").arg(packageId), kTimerStatusMessageMs);
+    Q_EMIT logOutput(QString("Added '%1' to install queue").arg(package_id));
+    Q_EMIT statusMessage(tr("Added %1 to queue").arg(package_id), kTimerStatusMessageMs);
 }
 
 void AppInstallationPanel::onRemoveFromQueue() {
-    auto selectedItems = m_queueList->selectedItems();
-    if (selectedItems.isEmpty()) {
+    auto selected_items = m_queueList->selectedItems();
+    if (selected_items.isEmpty()) {
         return;
     }
 
     // Collect indices to remove (in reverse order)
     QVector<int> indices;
-    for (auto* item : selectedItems) {
+    for (auto* item : selected_items) {
         indices.append(m_queueList->row(item));
     }
     std::ranges::sort(indices, std::greater<int>());
@@ -247,16 +247,16 @@ void AppInstallationPanel::onClearQueue() {
 std::shared_ptr<MigrationReport> AppInstallationPanel::buildInstallMigrationReport() const {
     auto report = std::make_shared<MigrationReport>();
     for (const auto& entry : m_installQueue) {
-        MigrationReport::MigrationEntry reportEntry;
-        reportEntry.app_name = entry.package_id;
-        reportEntry.choco_package = entry.package_id;
-        reportEntry.available = true;
-        reportEntry.selected = true;
-        reportEntry.available_version = entry.version;
-        reportEntry.confidence = 1.0;
-        reportEntry.match_type = "exact";
-        reportEntry.status = "pending";
-        report->addEntry(reportEntry);
+        MigrationReport::MigrationEntry report_entry;
+        report_entry.app_name = entry.package_id;
+        report_entry.choco_package = entry.package_id;
+        report_entry.available = true;
+        report_entry.selected = true;
+        report_entry.available_version = entry.version;
+        report_entry.confidence = 1.0;
+        report_entry.match_type = "exact";
+        report_entry.status = "pending";
+        report->addEntry(report_entry);
     }
     return report;
 }
@@ -480,9 +480,9 @@ void AppInstallationPanel::onOfflineSearchCompleted(bool success,
     m_offlineResultsModel->setRowCount(display_count);
     for (int row = 0; row < display_count; ++row) {
         const auto& pkg = packages[static_cast<decltype(packages.size())>(row)];
-        auto* pkgItem = new QStandardItem(pkg.package_id);
-        pkgItem->setIcon(publisherIcon(pkg.package_id));
-        m_offlineResultsModel->setItem(row, RColPackage, pkgItem);
+        auto* pkg_item = new QStandardItem(pkg.package_id);
+        pkg_item->setIcon(publisherIcon(pkg.package_id));
+        m_offlineResultsModel->setItem(row, RColPackage, pkg_item);
 
         m_offlineResultsModel->setItem(row, RColVersion, new QStandardItem(pkg.version));
 
@@ -501,12 +501,12 @@ void AppInstallationPanel::onAddToOfflineList() {
     }
 
     const int row = indexes.first().row();
-    auto* pkgItem = m_offlineResultsModel->item(row, RColPackage);
-    if ((pkgItem == nullptr) || !pkgItem->isEnabled()) {
+    auto* pkg_item = m_offlineResultsModel->item(row, RColPackage);
+    if ((pkg_item == nullptr) || !pkg_item->isEnabled()) {
         return;
     }
 
-    const QString package_id = pkgItem->text();
+    const QString package_id = pkg_item->text();
     if (package_id.isEmpty()) {
         return;
     }
@@ -520,8 +520,8 @@ void AppInstallationPanel::onAddToOfflineList() {
         }
     }
 
-    auto* versionItem = m_offlineResultsModel->item(row, RColVersion);
-    const QString version = (versionItem != nullptr) ? versionItem->text() : QString();
+    auto* version_item = m_offlineResultsModel->item(row, RColVersion);
+    const QString version = (version_item != nullptr) ? version_item->text() : QString();
 
     auto* item = new QListWidgetItem(QString("%1  (v%2)").arg(package_id, version));
     item->setData(Qt::UserRole, package_id);

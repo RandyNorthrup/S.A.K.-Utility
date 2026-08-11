@@ -85,18 +85,18 @@ void FileExplorerPane::buildItemViews() {
 
     m_columns_container = new QWidget(this);
     m_columns_container->setObjectName(QStringLiteral("fileExplorerColumnsContainer"));
-    auto* columnsLayout = new QHBoxLayout(m_columns_container);
-    columnsLayout->setContentsMargins(
+    auto* columns_layout = new QHBoxLayout(m_columns_container);
+    columns_layout->setContentsMargins(
         ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
-    columnsLayout->setSpacing(ui::kSpacingSmall);
+    columns_layout->setSpacing(ui::kSpacingSmall);
     m_columns_view = new QListView(m_columns_container);
     configureListView(m_columns_view,
                       QStringLiteral("fileExplorerColumnsView"),
                       QListView::ListMode);
     m_columns_preview_view = new QListView(m_columns_container);
     configureColumnsPreviewView(m_columns_preview_view);
-    columnsLayout->addWidget(m_columns_view, 1);
-    columnsLayout->addWidget(m_columns_preview_view, 1);
+    columns_layout->addWidget(m_columns_view, 1);
+    columns_layout->addWidget(m_columns_preview_view, 1);
     m_view_stack->addWidget(m_columns_container);
 
     // Inline rename (Files BaseLayoutPage): a name-column delegate per view
@@ -423,18 +423,18 @@ void FileExplorerPane::applyLayoutSizes() {
             QSize(kFileExplorerCardsCellW,
                   fileExplorerRowHeight(FileExplorerViewMode::Cards, m_layout_sizes.cards)));
     }
-    const int columnsIcon = fileExplorerIconSize(FileExplorerViewMode::Columns,
-                                                 m_layout_sizes.columns);
-    const QSize columnsCell(kFileExplorerColumnsMinCellW,
-                            fileExplorerRowHeight(FileExplorerViewMode::Columns,
-                                                  m_layout_sizes.columns));
+    const int columns_icon = fileExplorerIconSize(FileExplorerViewMode::Columns,
+                                                  m_layout_sizes.columns);
+    const QSize columns_cell(kFileExplorerColumnsMinCellW,
+                             fileExplorerRowHeight(FileExplorerViewMode::Columns,
+                                                   m_layout_sizes.columns));
     if (m_columns_view != nullptr) {
-        m_columns_view->setIconSize(QSize(columnsIcon, columnsIcon));
-        m_columns_view->setGridSize(columnsCell);
+        m_columns_view->setIconSize(QSize(columns_icon, columns_icon));
+        m_columns_view->setGridSize(columns_cell);
     }
     if (m_columns_preview_view != nullptr) {
-        m_columns_preview_view->setIconSize(QSize(columnsIcon, columnsIcon));
-        m_columns_preview_view->setGridSize(columnsCell);
+        m_columns_preview_view->setIconSize(QSize(columns_icon, columns_icon));
+        m_columns_preview_view->setGridSize(columns_cell);
     }
 }
 

@@ -32,9 +32,9 @@ private Q_SLOTS:
 
 private:
     void setupUi();
-    void setupUi_generalSection(QVBoxLayout* mainLayout);
-    void setupUi_advancedSection(QVBoxLayout* mainLayout);
-    void setupUi_buttonBar(QVBoxLayout* mainLayout);
+    void setupUi_generalSection(QVBoxLayout* main_layout);
+    void setupUi_advancedSection(QVBoxLayout* main_layout);
+    void setupUi_buttonBar(QVBoxLayout* main_layout);
     void loadSettings();
     void saveSettings();
 

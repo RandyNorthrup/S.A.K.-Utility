@@ -45,47 +45,47 @@ void SettingsDialog::setupUi() {
     resize(sak::kDialogWidthXLarge, sak::kDialogHeightLarge);
     setSizeGripEnabled(true);
 
-    auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium);
+    auto* main_layout = new QVBoxLayout(this);
+    main_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium);
 
     // Create tab widget
     m_tabWidget = new QTabWidget(this);
     m_tabWidget->setAccessibleName(tr("Settings tabs"));
     createBackupTab();
 
-    mainLayout->addWidget(m_tabWidget);
+    main_layout->addWidget(m_tabWidget);
 
     // Button layout
-    auto* buttonLayout = new QHBoxLayout();
+    auto* button_layout = new QHBoxLayout();
 
     m_resetButton = new QPushButton(tr("Reset to Defaults"), this);
     m_resetButton->setAccessibleName(tr("Reset settings to defaults"));
     m_resetButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    buttonLayout->addWidget(m_resetButton);
+    button_layout->addWidget(m_resetButton);
 
-    buttonLayout->addStretch();
+    button_layout->addStretch();
 
     m_okButton = new QPushButton(tr("OK"), this);
     m_okButton->setAccessibleName(tr("Save settings"));
     m_okButton->setDefault(true);
     m_okButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    buttonLayout->addWidget(m_okButton);
+    button_layout->addWidget(m_okButton);
 
     m_cancelButton = new QPushButton(tr("Cancel"), this);
     m_cancelButton->setAccessibleName(tr("Cancel settings changes"));
     m_cancelButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    buttonLayout->addWidget(m_cancelButton);
+    button_layout->addWidget(m_cancelButton);
 
     m_applyButton = new QPushButton(tr("Apply"), this);
     m_applyButton->setAccessibleName(tr("Apply settings changes"));
     m_applyButton->setEnabled(false);
     m_applyButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    buttonLayout->addWidget(m_applyButton);
+    button_layout->addWidget(m_applyButton);
 
-    mainLayout->addLayout(buttonLayout);
+    main_layout->addLayout(button_layout);
 
     Q_ASSERT(m_okButton);
 }
@@ -105,35 +105,36 @@ void SettingsDialog::createBackupTab() {
             QOverload<int>::of(&QSpinBox::valueChanged),
             this,
             &SettingsDialog::onSettingChanged);
-    constexpr auto checkBoxChangedSignal = &QCheckBox::toggled;
-    connect(m_backupVerifyMD5, checkBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
+    constexpr auto kCheckBoxChangedSignal = &QCheckBox::toggled;
+    connect(m_backupVerifyMD5, kCheckBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
     connect(m_quickActionsBackupLocation,
             &QLineEdit::textChanged,
             this,
             &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsConfirm, checkBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsConfirm, kCheckBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
     connect(m_quickActionsNotifications,
-            checkBoxChangedSignal,
+            kCheckBoxChangedSignal,
             this,
             &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsLogging, checkBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
-    connect(m_quickActionsCompress, checkBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
+    connect(m_quickActionsLogging, kCheckBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
+    connect(
+        m_quickActionsCompress, kCheckBoxChangedSignal, this, &SettingsDialog::onSettingChanged);
 }
 
 QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
-    auto* backupGroup = new QGroupBox(tr("Backup Settings"));
-    auto* backupLayout = new QFormLayout();
+    auto* backup_group = new QGroupBox(tr("Backup Settings"));
+    auto* backup_layout = new QFormLayout();
 
     m_backupThreadCount = new QSpinBox();
     m_backupThreadCount->setRange(kBackupThreadCountMin, kBackupThreadCountMax);
-    backupLayout->addRow(InfoButton::createInfoLabel(
-                             tr("Thread Count:"),
-                             tr("Higher values speed up backup but use more CPU and disk I/O"),
-                             parent),
-                         m_backupThreadCount);
+    backup_layout->addRow(InfoButton::createInfoLabel(
+                              tr("Thread Count:"),
+                              tr("Higher values speed up backup but use more CPU and disk I/O"),
+                              parent),
+                          m_backupThreadCount);
 
     m_backupVerifyMD5 = new QCheckBox(tr("Verify files using MD5 hash after backup"));
-    backupLayout->addRow(
+    backup_layout->addRow(
         InfoButton::createInfoLabel(tr("Verify MD5:"),
                                     tr("Re-read each copied file and verify its MD5 checksum "
                                        "matches the original -- slower "
@@ -141,12 +142,12 @@ QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
                                     parent),
         m_backupVerifyMD5);
 
-    auto* locationLayout = new QHBoxLayout();
+    auto* location_layout = new QHBoxLayout();
     m_lastBackupLocation = new QLineEdit();
     m_lastBackupLocation->setReadOnly(true);
-    auto* browseButton = new QPushButton(tr("Browse..."));
-    browseButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(browseButton, &QPushButton::clicked, this, [this]() {
+    auto* browse_button = new QPushButton(tr("Browse..."));
+    browse_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    connect(browse_button, &QPushButton::clicked, this, [this]() {
         const QString dir = QFileDialog::getExistingDirectory(this,
                                                               tr("Select Backup Location"),
                                                               m_lastBackupLocation->text());
@@ -155,27 +156,27 @@ QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
             onSettingChanged();
         }
     });
-    locationLayout->addWidget(m_lastBackupLocation);
-    locationLayout->addWidget(browseButton);
-    backupLayout->addRow(
+    location_layout->addWidget(m_lastBackupLocation);
+    location_layout->addWidget(browse_button);
+    backup_layout->addRow(
         InfoButton::createInfoLabel(
             tr("Last Location:"), tr("The most recently used backup destination folder"), parent),
-        locationLayout);
+        location_layout);
 
-    backupGroup->setLayout(backupLayout);
-    return backupGroup;
+    backup_group->setLayout(backup_layout);
+    return backup_group;
 }
 
 QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
-    auto* quickActionsGroup = new QGroupBox(tr("Quick Actions"));
-    auto* quickActionsLayout = new QFormLayout();
+    auto* quick_actions_group = new QGroupBox(tr("Quick Actions"));
+    auto* quick_actions_layout = new QFormLayout();
 
-    auto* qaLocationLayout = new QHBoxLayout();
+    auto* qa_location_layout = new QHBoxLayout();
     m_quickActionsBackupLocation = new QLineEdit();
     m_quickActionsBackupLocation->setPlaceholderText(tr("C:\\SAK_Backups"));
-    auto* qaBrowseButton = new QPushButton(tr("Browse..."));
-    qaBrowseButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(qaBrowseButton, &QPushButton::clicked, this, [this]() {
+    auto* qa_browse_button = new QPushButton(tr("Browse..."));
+    qa_browse_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    connect(qa_browse_button, &QPushButton::clicked, this, [this]() {
         const QString dir = QFileDialog::getExistingDirectory(
             this, tr("Select Quick Actions Backup Location"), m_quickActionsBackupLocation->text());
         if (!dir.isEmpty()) {
@@ -183,16 +184,16 @@ QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
             onSettingChanged();
         }
     });
-    qaLocationLayout->addWidget(m_quickActionsBackupLocation);
-    qaLocationLayout->addWidget(qaBrowseButton);
-    quickActionsLayout->addRow(
+    qa_location_layout->addWidget(m_quickActionsBackupLocation);
+    qa_location_layout->addWidget(qa_browse_button);
+    quick_actions_layout->addRow(
         InfoButton::createInfoLabel(tr("Backup Location:"),
                                     tr("Default location for Quick Actions backup operations"),
                                     parent),
-        qaLocationLayout);
+        qa_location_layout);
 
     m_quickActionsConfirm = new QCheckBox(tr("Confirm before executing actions"));
-    quickActionsLayout->addRow(
+    quick_actions_layout->addRow(
         InfoButton::createInfoLabel(QString(),
                                     tr("Show a confirmation dialog before each "
                                        "action runs to prevent accidental execution"),
@@ -200,7 +201,7 @@ QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
         m_quickActionsConfirm);
 
     m_quickActionsNotifications = new QCheckBox(tr("Show completion notifications"));
-    quickActionsLayout->addRow(
+    quick_actions_layout->addRow(
         InfoButton::createInfoLabel(
             QString(),
             tr("Display a status bar notification when an action finishes or fails"),
@@ -208,7 +209,7 @@ QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
         m_quickActionsNotifications);
 
     m_quickActionsLogging = new QCheckBox(tr("Enable detailed logging"));
-    quickActionsLayout->addRow(
+    quick_actions_layout->addRow(
         InfoButton::createInfoLabel(
             QString(),
             tr("Write detailed progress and scan information to the log window"),
@@ -216,15 +217,15 @@ QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
         m_quickActionsLogging);
 
     m_quickActionsCompress = new QCheckBox(tr("Compress backups (saves space)"));
-    quickActionsLayout->addRow(
+    quick_actions_layout->addRow(
         InfoButton::createInfoLabel(
             QString(),
             tr("Use ZIP compression for backup output files -- slower but uses less disk space"),
             parent),
         m_quickActionsCompress);
 
-    quickActionsGroup->setLayout(quickActionsLayout);
-    return quickActionsGroup;
+    quick_actions_group->setLayout(quick_actions_layout);
+    return quick_actions_group;
 }
 
 void SettingsDialog::loadSettings() {
@@ -239,15 +240,15 @@ void SettingsDialog::loadSettings() {
 
     // Quick Actions
     {
-        const QSettings qaSettings("SAK", "QuickActions");
+        const QSettings qa_settings("SAK", "QuickActions");
         m_quickActionsBackupLocation->setText(
-            qaSettings.value("backup_location", "C:\\SAK_Backups").toString());
+            qa_settings.value("backup_location", "C:\\SAK_Backups").toString());
         m_quickActionsConfirm->setChecked(
-            qaSettings.value("confirm_before_execute", true).toBool());
+            qa_settings.value("confirm_before_execute", true).toBool());
         m_quickActionsNotifications->setChecked(
-            qaSettings.value("show_notifications", true).toBool());
-        m_quickActionsLogging->setChecked(qaSettings.value("enable_logging", true).toBool());
-        m_quickActionsCompress->setChecked(qaSettings.value("compress_backups", true).toBool());
+            qa_settings.value("show_notifications", true).toBool());
+        m_quickActionsLogging->setChecked(qa_settings.value("enable_logging", true).toBool());
+        m_quickActionsCompress->setChecked(qa_settings.value("compress_backups", true).toBool());
     }
 
     m_settingsModified = false;
@@ -266,12 +267,12 @@ void SettingsDialog::saveSettings() {
 
     // Quick Actions
     {
-        QSettings qaSettings("SAK", "QuickActions");
-        qaSettings.setValue("backup_location", m_quickActionsBackupLocation->text());
-        qaSettings.setValue("confirm_before_execute", m_quickActionsConfirm->isChecked());
-        qaSettings.setValue("show_notifications", m_quickActionsNotifications->isChecked());
-        qaSettings.setValue("enable_logging", m_quickActionsLogging->isChecked());
-        qaSettings.setValue("compress_backups", m_quickActionsCompress->isChecked());
+        QSettings qa_settings("SAK", "QuickActions");
+        qa_settings.setValue("backup_location", m_quickActionsBackupLocation->text());
+        qa_settings.setValue("confirm_before_execute", m_quickActionsConfirm->isChecked());
+        qa_settings.setValue("show_notifications", m_quickActionsNotifications->isChecked());
+        qa_settings.setValue("enable_logging", m_quickActionsLogging->isChecked());
+        qa_settings.setValue("compress_backups", m_quickActionsCompress->isChecked());
     }
 
     // Sync to disk

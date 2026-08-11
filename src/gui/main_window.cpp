@@ -320,51 +320,51 @@ constexpr char kTooltipAiAssistant[] =
 
 constexpr int kTabIconSize = 20;
 
-bool IsAccessibilityAuditMode() {
+bool isAccessibilityAuditMode() {
     const auto* app = QCoreApplication::instance();
     return (app != nullptr) && app->property("sakAccessibilityAudit").toBool();
 }
 
-bool IsStartupSmokeMode() {
+bool isStartupSmokeMode() {
     const auto* app = QCoreApplication::instance();
     return (app != nullptr) && app->property("sakStartupSmokeTest").toBool();
 }
 
-void AddTabWithTooltip(QTabWidget* tabWidget,
+void addTabWithTooltip(QTabWidget* tab_widget,
                        QWidget* panel,
-                       const char* tabTitle,
+                       const char* tab_title,
                        const char* tooltip,
-                       const char* iconPath = nullptr) {
-    Q_ASSERT(tabWidget);
+                       const char* icon_path = nullptr) {
+    Q_ASSERT(tab_widget);
     Q_ASSERT(panel);
-    Q_ASSERT(tabTitle);
+    Q_ASSERT(tab_title);
     Q_ASSERT(tooltip);
 
-    const QIcon icon = (iconPath != nullptr) ? QIcon(QString::fromUtf8(iconPath)) : QIcon();
-    const int idx = icon.isNull() ? tabWidget->addTab(panel, QString::fromUtf8(tabTitle))
-                                  : tabWidget->addTab(panel, icon, QString::fromUtf8(tabTitle));
+    const QIcon icon = (icon_path != nullptr) ? QIcon(QString::fromUtf8(icon_path)) : QIcon();
+    const int idx = icon.isNull() ? tab_widget->addTab(panel, QString::fromUtf8(tab_title))
+                                  : tab_widget->addTab(panel, icon, QString::fromUtf8(tab_title));
     if (!icon.isNull()) {
-        tabWidget->setIconSize(QSize(kTabIconSize, kTabIconSize));
+        tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
     }
-    tabWidget->setTabToolTip(idx, QString::fromUtf8(tooltip));
+    tab_widget->setTabToolTip(idx, QString::fromUtf8(tooltip));
     // Base tooltip without the shortcut hint; UpdateTabShortcutHints rebuilds
     // the visible tooltip from this whenever tab positions are final.
-    tabWidget->tabBar()->setTabData(idx, QString::fromUtf8(tooltip));
+    tab_widget->tabBar()->setTabData(idx, QString::fromUtf8(tooltip));
 
     // Set accessible name on the panel widget so screen readers
     // identify each tab's content area
-    const QString title = QString::fromUtf8(tabTitle);
+    const QString title = QString::fromUtf8(tab_title);
     panel->setAccessibleName(title + QStringLiteral(" panel"));
     panel->setAccessibleDescription(QString::fromUtf8(tooltip));
 
     // Also set accessible text on the tab bar tab via tab widget
-    tabWidget->setTabWhatsThis(idx, QString::fromUtf8(tooltip));
+    tab_widget->setTabWhatsThis(idx, QString::fromUtf8(tooltip));
 }
 
 /// Shortcut hint for a tab index, mirroring createKeyboardShortcuts exactly:
 /// Ctrl+1..9 select indices 0..8, Ctrl+0 selects index 9, and Ctrl+Shift+1..5
 /// select indices 10..14.
-QString TabShortcutHint(int index) {
+QString tabShortcutHint(int index) {
     if (index < kDirectTabShortcutCount) {
         return QStringLiteral(" (Ctrl+%1)").arg(index + 1);
     }
@@ -381,24 +381,24 @@ QString TabShortcutHint(int index) {
 /// Rebuild every tab's tooltip as its stored base text plus the shortcut hint
 /// for the index the tab actually occupies, so the advertised Ctrl+N always
 /// selects the tab it is written on regardless of build configuration.
-void UpdateTabShortcutHints(QTabWidget* tabWidget) {
-    Q_ASSERT(tabWidget);
-    const QTabBar* bar = tabWidget->tabBar();
-    for (int idx = 0; idx < tabWidget->count(); ++idx) {
+void updateTabShortcutHints(QTabWidget* tab_widget) {
+    Q_ASSERT(tab_widget);
+    const QTabBar* bar = tab_widget->tabBar();
+    for (int idx = 0; idx < tab_widget->count(); ++idx) {
         const QString base = bar->tabData(idx).toString();
         if (base.isEmpty()) {
             continue;
         }
-        const QString tooltip = base + TabShortcutHint(idx);
-        tabWidget->setTabToolTip(idx, tooltip);
-        tabWidget->setTabWhatsThis(idx, tooltip);
-        if (QWidget* panel = tabWidget->widget(idx)) {
+        const QString tooltip = base + tabShortcutHint(idx);
+        tab_widget->setTabToolTip(idx, tooltip);
+        tab_widget->setTabWhatsThis(idx, tooltip);
+        if (QWidget* panel = tab_widget->widget(idx)) {
             panel->setAccessibleDescription(tooltip);
         }
     }
 }
 
-void ApplyHtmlBrowserTheme(QTextBrowser* browser) {
+void applyHtmlBrowserTheme(QTextBrowser* browser) {
     if (browser == nullptr) {
         return;
     }
@@ -410,29 +410,29 @@ void ApplyHtmlBrowserTheme(QTextBrowser* browser) {
     }
 }
 
-void ApplyThemedHtmlBrowsers(QWidget* root) {
+void applyThemedHtmlBrowsers(QWidget* root) {
     if (root == nullptr) {
         return;
     }
     const auto browsers = root->findChildren<QTextBrowser*>();
     for (QTextBrowser* browser : browsers) {
         if ((browser != nullptr) && browser->property("sakThemedHtmlBrowser").toBool()) {
-            ApplyHtmlBrowserTheme(browser);
+            applyHtmlBrowserTheme(browser);
         }
     }
 }
 
-QTextBrowser* CreateHtmlBrowser(QWidget* parent, const char* html, const QString& accessibleName) {
+QTextBrowser* createHtmlBrowser(QWidget* parent, const char* html, const QString& accessible_name) {
     Q_ASSERT(parent);
     Q_ASSERT(html);
-    Q_ASSERT(!accessibleName.isEmpty());
+    Q_ASSERT(!accessible_name.isEmpty());
 
     auto* browser = new QTextBrowser(parent);
     browser->setOpenExternalLinks(true);
-    browser->setAccessibleName(accessibleName);
+    browser->setAccessibleName(accessible_name);
     browser->setProperty("sakThemedHtmlBrowser", true);
     browser->setProperty("sakHtmlContent", QString::fromUtf8(html));
-    ApplyHtmlBrowserTheme(browser);
+    applyHtmlBrowserTheme(browser);
     return browser;
 }
 
@@ -443,7 +443,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     startup_timer.start();
     setupUi();
     logInfo("MainWindow startup: setupUi took {} ms", startup_timer.restart());
-    if (!IsAccessibilityAuditMode()) {
+    if (!isAccessibilityAuditMode()) {
         loadWindowState();
         logInfo("MainWindow startup: loadWindowState took {} ms", startup_timer.elapsed());
     }
@@ -453,7 +453,7 @@ MainWindow::~MainWindow() {
     // Must be first: stops the tab-change status-bar handlers from running while
     // the window is being destroyed (they would dereference freed tool panels).
     m_shutting_down = true;
-    if (!IsAccessibilityAuditMode()) {
+    if (!isAccessibilityAuditMode()) {
         saveWindowState();
     }
 }
@@ -493,7 +493,7 @@ void MainWindow::setupUi() {
     logInfo("MainWindow startup: panels took {} ms", phase_timer.restart());
     createKeyboardShortcuts();
 
-    if (!IsAccessibilityAuditMode()) {
+    if (!isAccessibilityAuditMode()) {
         // Apply chevron icons to the tab-bar scroll buttons.
         // Qt creates the scroll QToolButtons lazily when tabs overflow, so we
         // re-apply after layout and on tab changes to cover all cases.
@@ -645,8 +645,8 @@ void MainWindow::createPanels() {
         materializeTab(index);
     });
     setupLogRouting();
-    UpdateTabShortcutHints(m_tab_widget);
-    if (IsAccessibilityAuditMode() || IsStartupSmokeMode()) {
+    updateTabShortcutHints(m_tab_widget);
+    if (isAccessibilityAuditMode() || isStartupSmokeMode()) {
         // The accessibility scan needs the full widget tree, and the startup
         // smoke gate must catch a crash in ANY panel constructor - lazy tabs
         // would otherwise leave every tool panel unbuilt in both modes.
@@ -711,10 +711,10 @@ void MainWindow::registerLazyToolTabs() {
                           .wire = [this] { wireNetworkPanels(); }});
 }
 
-void MainWindow::addLazyPlaceholder(const char* title, const char* tooltip, const char* iconPath) {
+void MainWindow::addLazyPlaceholder(const char* title, const char* tooltip, const char* icon_path) {
     Q_ASSERT(m_tab_widget);
     auto* placeholder = new QWidget(this);
-    AddTabWithTooltip(m_tab_widget, placeholder, title, tooltip, iconPath);
+    addTabWithTooltip(m_tab_widget, placeholder, title, tooltip, icon_path);
 }
 
 void MainWindow::materializeTab(int slot) {
@@ -751,13 +751,13 @@ void MainWindow::materializeTab(int slot) {
 
     lazy.wire();  // Panel now occupies its final slot; safe to wire status/logs.
     // The rebuilt tab re-set its base tooltip; re-append the shortcut hint.
-    UpdateTabShortcutHints(m_tab_widget);
+    updateTabShortcutHints(m_tab_widget);
 }
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 void MainWindow::createAiAssistantPanelTab() {
     m_ai_assistant_panel = std::make_unique<AiAssistantPanel>(this);
-    AddTabWithTooltip(m_tab_widget,
+    addTabWithTooltip(m_tab_widget,
                       m_ai_assistant_panel.get(),
                       "AI Assistant",
                       kTooltipAiAssistant,
@@ -768,7 +768,7 @@ void MainWindow::createAiAssistantPanelTab() {
 void MainWindow::createBackupRestorePanel() {
     logInfo("MainWindow: creating Backup and Restore panel");
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
-    AddTabWithTooltip(m_tab_widget,
+    addTabWithTooltip(m_tab_widget,
                       m_user_migration_panel.get(),
                       "Backup and Restore",
                       kTooltipUserMigration,
@@ -781,7 +781,7 @@ void MainWindow::createFileManagementPanel() {
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
     m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
     m_organizer_panel->tabWidget()->addTab(m_advanced_search_panel.get(), tr("Advanced Search"));
-    AddTabWithTooltip(m_tab_widget,
+    addTabWithTooltip(m_tab_widget,
                       m_organizer_panel.get(),
                       "File Management",
                       kTooltipOrganizer,
@@ -792,7 +792,7 @@ void MainWindow::createFileManagementPanel() {
 void MainWindow::createPartitionManagerPanel() {
     logInfo("MainWindow: creating Partition Manager panel");
     m_partition_manager_panel = std::make_unique<PartitionManagerPanel>(this);
-    AddTabWithTooltip(m_tab_widget,
+    addTabWithTooltip(m_tab_widget,
                       m_partition_manager_panel.get(),
                       "Partition Manager",
                       "Manage disks, partitions, SMART status, cloning, migration, boot repair, "
@@ -804,7 +804,7 @@ void MainWindow::createPartitionManagerPanel() {
 void MainWindow::createImageFlasherPanel() {
     logInfo("MainWindow: creating Image Flasher panel");
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
-    AddTabWithTooltip(m_tab_widget,
+    addTabWithTooltip(m_tab_widget,
                       m_image_flasher_panel.get(),
                       "Image Flasher",
                       kTooltipImageFlasher,
@@ -815,7 +815,7 @@ void MainWindow::createImageFlasherPanel() {
 void MainWindow::createDiagnosticPanel() {
     logInfo("MainWindow: creating Benchmark and Diagnostics panel");
     m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
-    AddTabWithTooltip(m_tab_widget,
+    addTabWithTooltip(m_tab_widget,
                       m_diagnostic_benchmark_panel.get(),
                       "Benchmark and Diagnostics",
                       kTooltipDiagnostics,
@@ -828,26 +828,26 @@ void MainWindow::createEmailToolsPanel() {
     m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
     m_ost_converter_widget = std::make_unique<OstConverterWidget>(this);
 
-    auto* emailWrapper = new QWidget(this);
-    auto* emailLayout = new QVBoxLayout(emailWrapper);
-    emailLayout->setContentsMargins(
+    auto* email_wrapper = new QWidget(this);
+    auto* email_layout = new QVBoxLayout(email_wrapper);
+    email_layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
-    emailLayout->setSpacing(ui::kSpacingDefault);
+    email_layout->setSpacing(ui::kSpacingDefault);
 
-    auto emailHdr = sak::createDynamicPanelHeader(
-        emailWrapper,
+    auto email_hdr = sak::createDynamicPanelHeader(
+        email_wrapper,
         QStringLiteral(":/icons/icons/panel_email.svg"),
         tr("Email Tools"),
         tr("Offline email forensics, data extraction, and OST/PST conversion"),
-        emailLayout);
+        email_layout);
 
-    auto* emailTabs = new QTabWidget(emailWrapper);
-    emailTabs->setAccessibleName(tr("Email tools tabs"));
-    emailTabs->addTab(m_email_inspector_panel.get(), tr("Email Inspector"));
-    emailTabs->addTab(m_ost_converter_widget.get(), tr("OST Converter"));
-    emailLayout->addWidget(emailTabs, 1);
+    auto* email_tabs = new QTabWidget(email_wrapper);
+    email_tabs->setAccessibleName(tr("Email tools tabs"));
+    email_tabs->addTab(m_email_inspector_panel.get(), tr("Email Inspector"));
+    email_tabs->addTab(m_ost_converter_widget.get(), tr("OST Converter"));
+    email_layout->addWidget(email_tabs, 1);
 
-    connect(emailTabs, &QTabWidget::currentChanged, this, [emailHdr](int index) {
+    connect(email_tabs, &QTabWidget::currentChanged, this, [email_hdr](int index) {
         struct TabMeta {
             const char* icon;
             const char* title;
@@ -864,7 +864,7 @@ void MainWindow::createEmailToolsPanel() {
         };
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];
-            sak::updatePanelHeader(emailHdr,
+            sak::updatePanelHeader(email_hdr,
                                    QString::fromUtf8(m.icon),
                                    QCoreApplication::translate("MainWindow", m.title),
                                    QCoreApplication::translate("MainWindow", m.subtitle));
@@ -882,8 +882,8 @@ void MainWindow::createEmailToolsPanel() {
             this,
             &MainWindow::updateProgress);
 
-    AddTabWithTooltip(m_tab_widget,
-                      emailWrapper,
+    addTabWithTooltip(m_tab_widget,
+                      email_wrapper,
                       "Email Tools",
                       kTooltipEmailTool,
                       ":/icons/icons/panel_email.svg");
@@ -896,28 +896,28 @@ void MainWindow::createAppManagementPanel() {
     createAppManagementChildPanels();
 
     logInfo("MainWindow: creating Application Management wrapper");
-    auto* appMgmtWrapper = new QWidget(this);
-    auto* appMgmtLayout = new QVBoxLayout(appMgmtWrapper);
-    appMgmtLayout->setContentsMargins(
+    auto* app_mgmt_wrapper = new QWidget(this);
+    auto* app_mgmt_layout = new QVBoxLayout(app_mgmt_wrapper);
+    app_mgmt_layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
-    appMgmtLayout->setSpacing(ui::kSpacingDefault);
+    app_mgmt_layout->setSpacing(ui::kSpacingDefault);
 
-    auto appHdr = sak::createDynamicPanelHeader(
-        appMgmtWrapper,
+    auto app_hdr = sak::createDynamicPanelHeader(
+        app_mgmt_wrapper,
         QStringLiteral(":/icons/icons/panel_app_install.svg"),
         tr("App Installation"),
         tr("Search, queue, and batch-install applications via Chocolatey"),
-        appMgmtLayout);
+        app_mgmt_layout);
 
-    auto* appTabs = new QTabWidget(appMgmtWrapper);
-    appTabs->setAccessibleName(tr("Application management tabs"));
-    m_application_tabs = appTabs;
-    appTabs->addTab(m_app_installation_panel.get(), tr("App Installation"));
-    appTabs->addTab(m_advanced_uninstall_panel.get(), tr("Advanced Uninstall"));
-    appTabs->addTab(m_vulnerability_panel.get(), tr("Vulnerability Scanner"));
-    appMgmtLayout->addWidget(appTabs, 1);
+    auto* app_tabs = new QTabWidget(app_mgmt_wrapper);
+    app_tabs->setAccessibleName(tr("Application management tabs"));
+    m_application_tabs = app_tabs;
+    app_tabs->addTab(m_app_installation_panel.get(), tr("App Installation"));
+    app_tabs->addTab(m_advanced_uninstall_panel.get(), tr("Advanced Uninstall"));
+    app_tabs->addTab(m_vulnerability_panel.get(), tr("Vulnerability Scanner"));
+    app_mgmt_layout->addWidget(app_tabs, 1);
 
-    connect(appTabs, &QTabWidget::currentChanged, this, [this, appHdr](int index) {
+    connect(app_tabs, &QTabWidget::currentChanged, this, [this, app_hdr](int index) {
         struct TabMeta {
             const char* icon;
             const char* title;
@@ -939,7 +939,7 @@ void MainWindow::createAppManagementPanel() {
         };
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];
-            sak::updatePanelHeader(appHdr,
+            sak::updatePanelHeader(app_hdr,
                                    QString::fromUtf8(m.icon),
                                    QCoreApplication::translate("MainWindow", m.title),
                                    QCoreApplication::translate("MainWindow", m.subtitle));
@@ -947,8 +947,8 @@ void MainWindow::createAppManagementPanel() {
         updateVulnerabilityStatusBarVisibility();
     });
 
-    AddTabWithTooltip(m_tab_widget,
-                      appMgmtWrapper,
+    addTabWithTooltip(m_tab_widget,
+                      app_mgmt_wrapper,
                       "Application Management",
                       kTooltipAppManagement,
                       ":/icons/icons/panel_app_install.svg");
@@ -979,30 +979,30 @@ void MainWindow::createNetworkManagementPanel() {
             this,
             &MainWindow::updateStatus);
 
-    auto* netMgmtWrapper = new QWidget(this);
-    auto* netMgmtLayout = new QVBoxLayout(netMgmtWrapper);
-    netMgmtLayout->setContentsMargins(
+    auto* net_mgmt_wrapper = new QWidget(this);
+    auto* net_mgmt_layout = new QVBoxLayout(net_mgmt_wrapper);
+    net_mgmt_layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
-    netMgmtLayout->setSpacing(ui::kSpacingDefault);
+    net_mgmt_layout->setSpacing(ui::kSpacingDefault);
 
-    auto netHdr = sak::createDynamicPanelHeader(
-        netMgmtWrapper,
+    auto net_hdr = sak::createDynamicPanelHeader(
+        net_mgmt_wrapper,
         QStringLiteral(":/icons/icons/panel_network.svg"),
         tr("Network Diagnostics & Troubleshooting"),
         tr("Comprehensive network analysis -- connectivity testing, DNS diagnostics, "
            "port scanning, bandwidth, WiFi analysis, firewall auditing, and more"),
-        netMgmtLayout);
+        net_mgmt_layout);
 
-    auto* netTabs = new QTabWidget(netMgmtWrapper);
-    netTabs->setAccessibleName(tr("Network management tabs"));
-    netTabs->addTab(m_network_diagnostic_panel.get(), tr("Network Diagnostics"));
-    netTabs->addTab(m_network_diagnostic_panel->adapterWidget(), tr("Network Adapters"));
-    netTabs->addTab(m_wifi_manager_panel.get(), tr("WiFi Manager"));
-    netMgmtLayout->addWidget(netTabs, 1);
+    auto* net_tabs = new QTabWidget(net_mgmt_wrapper);
+    net_tabs->setAccessibleName(tr("Network management tabs"));
+    net_tabs->addTab(m_network_diagnostic_panel.get(), tr("Network Diagnostics"));
+    net_tabs->addTab(m_network_diagnostic_panel->adapterWidget(), tr("Network Adapters"));
+    net_tabs->addTab(m_wifi_manager_panel.get(), tr("WiFi Manager"));
+    net_mgmt_layout->addWidget(net_tabs, 1);
 
     connectNetworkAdapterLogToggle();
 
-    connect(netTabs, &QTabWidget::currentChanged, this, [netHdr](int index) {
+    connect(net_tabs, &QTabWidget::currentChanged, this, [net_hdr](int index) {
         struct TabMeta {
             const char* icon;
             const char* title;
@@ -1025,142 +1025,144 @@ void MainWindow::createNetworkManagementPanel() {
         };
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];
-            sak::updatePanelHeader(netHdr,
+            sak::updatePanelHeader(net_hdr,
                                    QString::fromUtf8(m.icon),
                                    QCoreApplication::translate("MainWindow", m.title),
                                    QCoreApplication::translate("MainWindow", m.subtitle));
         }
     });
 
-    AddTabWithTooltip(m_tab_widget,
-                      netMgmtWrapper,
+    addTabWithTooltip(m_tab_widget,
+                      net_mgmt_wrapper,
                       "Network Management",
                       kTooltipNetworkManagement,
                       ":/icons/icons/panel_network.svg");
 }
 
 void MainWindow::connectNetworkAdapterLogToggle() {
-    auto* adapterToggle = m_network_diagnostic_panel->adapterLogToggle();
-    if ((adapterToggle == nullptr) || (m_logWindow == nullptr)) {
+    auto* adapter_toggle = m_network_diagnostic_panel->adapterLogToggle();
+    if ((adapter_toggle == nullptr) || (m_logWindow == nullptr)) {
         return;
     }
-    connect(
-        adapterToggle, &LogToggleSwitch::toggled, m_logWindow, &DetachableLogWindow::setLogVisible);
+    connect(adapter_toggle,
+            &LogToggleSwitch::toggled,
+            m_logWindow,
+            &DetachableLogWindow::setLogVisible);
     connect(m_logWindow,
             &DetachableLogWindow::visibilityChanged,
-            adapterToggle,
+            adapter_toggle,
             &LogToggleSwitch::setChecked);
     // Same paired Dark toggle every other Log switch gets via connectPanelLog.
-    attachThemeToggleToLogToggle(adapterToggle);
+    attachThemeToggleToLogToggle(adapter_toggle);
 }
 
-void MainWindow::loadAboutPanelIcon(QLabel* iconLabel) {
-    Q_ASSERT(iconLabel);
+void MainWindow::loadAboutPanelIcon(QLabel* icon_label) {
+    Q_ASSERT(icon_label);
     Q_ASSERT(!QCoreApplication::applicationDirPath().isEmpty());
-    const QString appDir = QCoreApplication::applicationDirPath();
-    const QStringList splashCandidates = {appDir + "/sak_splash.png",
-                                          appDir + "/resources/sak_splash.png",
-                                          appDir + "/../resources/sak_splash.png",
-                                          appDir + "/../sak_splash.png"};
-    QPixmap splashPix;
-    for (const auto& path : splashCandidates) {
+    const QString app_dir = QCoreApplication::applicationDirPath();
+    const QStringList splash_candidates = {app_dir + "/sak_splash.png",
+                                           app_dir + "/resources/sak_splash.png",
+                                           app_dir + "/../resources/sak_splash.png",
+                                           app_dir + "/../sak_splash.png"};
+    QPixmap splash_pix;
+    for (const auto& path : splash_candidates) {
         if (QFileInfo::exists(path)) {
-            splashPix.load(path);
+            splash_pix.load(path);
             break;
         }
     }
-    if (!splashPix.isNull()) {
-        iconLabel->setPixmap(
-            splashPix.scaled(kIconSize, kIconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    if (!splash_pix.isNull()) {
+        icon_label->setPixmap(
+            splash_pix.scaled(kIconSize, kIconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     } else {
-        iconLabel->setStyleSheet(ui::mainIconFallbackStyle());
+        icon_label->setStyleSheet(ui::mainIconFallbackStyle());
     }
 }
 
 void MainWindow::createAboutPanel() {
     Q_ASSERT(m_tab_widget);
-    auto* aboutPanel = new QWidget(this);
-    auto* aboutLayout = new QVBoxLayout(aboutPanel);
-    aboutLayout->setSpacing(ui::kSpacingLarge);
-    aboutLayout->setContentsMargins(
+    auto* about_panel = new QWidget(this);
+    auto* about_layout = new QVBoxLayout(about_panel);
+    about_layout->setSpacing(ui::kSpacingLarge);
+    about_layout->setContentsMargins(
         ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge);
 
     // Header  --  use splash screen image as icon
-    auto* headerLayout = new QHBoxLayout();
-    auto* iconLabel = new QLabel(aboutPanel);
-    iconLabel->setFixedSize(sak::kIconSize, sak::kIconSize);
-    iconLabel->setAccessibleName(QStringLiteral("S.A.K. Utility application icon"));
-    loadAboutPanelIcon(iconLabel);
-    headerLayout->addWidget(iconLabel);
+    auto* header_layout = new QHBoxLayout();
+    auto* icon_label = new QLabel(about_panel);
+    icon_label->setFixedSize(sak::kIconSize, sak::kIconSize);
+    icon_label->setAccessibleName(QStringLiteral("S.A.K. Utility application icon"));
+    loadAboutPanelIcon(icon_label);
+    header_layout->addWidget(icon_label);
 
-    auto* titleLayout = new QVBoxLayout();
-    auto* title = new QLabel(QStringLiteral("<b>S.A.K. Utility</b>"), aboutPanel);
+    auto* title_layout = new QVBoxLayout();
+    auto* title = new QLabel(QStringLiteral("<b>S.A.K. Utility</b>"), about_panel);
     title->setStyleSheet(ui::fontSizeWeightColorStyle(
         ui::kFontSizeTitle, ui::kFontWeightBold, ui::kColorTextPrimary));
-    titleLayout->addWidget(title);
+    title_layout->addWidget(title);
 
     auto* ver = new QLabel(QString("Version %1 \u2014 %2").arg(get_version(), get_build_date()),
-                           aboutPanel);
+                           about_panel);
     ver->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeBody));
-    titleLayout->addWidget(ver);
+    title_layout->addWidget(ver);
 
-    headerLayout->addLayout(titleLayout);
-    headerLayout->addStretch();
-    aboutLayout->addLayout(headerLayout);
+    header_layout->addLayout(title_layout);
+    header_layout->addStretch();
+    about_layout->addLayout(header_layout);
 
     // Tabs inside about panel  --  all use QTextBrowser for uniform look
-    auto* aboutTabs = new QTabWidget(aboutPanel);
-    aboutTabs->setAccessibleName(tr("About information tabs"));
-    aboutTabs->addTab(CreateHtmlBrowser(aboutPanel, kAboutTabHtml, tr("About S.A.K. Utility")),
-                      QStringLiteral("About"));
-    aboutTabs->addTab(CreateHtmlBrowser(aboutPanel, kLicenseTabHtml, tr("License text")),
-                      QStringLiteral("License"));
-    aboutTabs->addTab(CreateHtmlBrowser(aboutPanel, kCreditsTabHtml, tr("Third-party credits")),
-                      QStringLiteral("Credits"));
+    auto* about_tabs = new QTabWidget(about_panel);
+    about_tabs->setAccessibleName(tr("About information tabs"));
+    about_tabs->addTab(createHtmlBrowser(about_panel, kAboutTabHtml, tr("About S.A.K. Utility")),
+                       QStringLiteral("About"));
+    about_tabs->addTab(createHtmlBrowser(about_panel, kLicenseTabHtml, tr("License text")),
+                       QStringLiteral("License"));
+    about_tabs->addTab(createHtmlBrowser(about_panel, kCreditsTabHtml, tr("Third-party credits")),
+                       QStringLiteral("Credits"));
 
-    aboutLayout->addWidget(aboutTabs);
-    const int aboutIdx =
-        m_tab_widget->addTab(aboutPanel,
+    about_layout->addWidget(about_tabs);
+    const int about_idx =
+        m_tab_widget->addTab(about_panel,
                              QIcon(QStringLiteral(":/icons/icons/panel_about.svg")),
                              QStringLiteral("About"));
     m_tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
-    Q_UNUSED(aboutIdx);
+    Q_UNUSED(about_idx);
 }
 
 void MainWindow::createHelpPanel() {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(!QCoreApplication::applicationName().isEmpty());
 
-    auto* helpPanel = new QWidget(this);
-    auto* helpLayout = new QVBoxLayout(helpPanel);
-    helpLayout->setSpacing(ui::kSpacingLarge);
-    helpLayout->setContentsMargins(
+    auto* help_panel = new QWidget(this);
+    auto* help_layout = new QVBoxLayout(help_panel);
+    help_layout->setSpacing(ui::kSpacingLarge);
+    help_layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
 
     // Panel header -- consistent with other panels
-    auto* headerWidget = new QWidget(helpPanel);
-    auto* headerLayout = new QVBoxLayout(headerWidget);
-    headerLayout->setContentsMargins(
+    auto* header_widget = new QWidget(help_panel);
+    auto* header_layout = new QVBoxLayout(header_widget);
+    header_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
-    sak::createPanelHeader(headerWidget,
+    sak::createPanelHeader(header_widget,
                            QStringLiteral(":/icons/icons/panel_help.svg"),
                            tr("Help and Support"),
                            tr("Get help, report issues, or request features for S.A.K. Utility."),
-                           headerLayout);
-    helpLayout->addWidget(headerWidget);
+                           header_layout);
+    help_layout->addWidget(header_widget);
 
-    helpLayout->addLayout(createHelpRow_requestsAndBugs(helpPanel));
+    help_layout->addLayout(createHelpRow_requestsAndBugs(help_panel));
 
-    helpLayout->addLayout(createHelpRow_wikiAndCommunity(helpPanel));
+    help_layout->addLayout(createHelpRow_wikiAndCommunity(help_panel));
 
-    helpLayout->addStretch();
+    help_layout->addStretch();
 
-    const int helpIdx = m_tab_widget->addTab(helpPanel,
-                                             QIcon(QStringLiteral(":/icons/icons/panel_help.svg")),
-                                             QStringLiteral("Help and Support"));
+    const int help_idx = m_tab_widget->addTab(help_panel,
+                                              QIcon(QStringLiteral(":/icons/icons/panel_help.svg")),
+                                              QStringLiteral("Help and Support"));
     m_tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
-    Q_UNUSED(helpIdx);
+    Q_UNUSED(help_idx);
 }
 
 // ============================================================================
@@ -1173,12 +1175,13 @@ QHBoxLayout* MainWindow::createHelpRow_requestsAndBugs(QWidget* parent) {
     auto* row = new QHBoxLayout();
     row->setSpacing(ui::kSpacingLarge);
 
-    auto* featureBtn = new QPushButton(tr("Request a Feature"), parent);
-    featureBtn->setMinimumHeight(sak::kButtonHeightTall);
-    featureBtn->setStyleSheet(ui::kPrimaryButtonStyle);
-    featureBtn->setAccessibleName(QStringLiteral("Submit feature request on GitHub"));
-    featureBtn->setToolTip(QStringLiteral("Opens a GitHub issue form to submit a feature request"));
-    connect(featureBtn, &QPushButton::clicked, this, []() {
+    auto* feature_btn = new QPushButton(tr("Request a Feature"), parent);
+    feature_btn->setMinimumHeight(sak::kButtonHeightTall);
+    feature_btn->setStyleSheet(ui::kPrimaryButtonStyle);
+    feature_btn->setAccessibleName(QStringLiteral("Submit feature request on GitHub"));
+    feature_btn->setToolTip(
+        QStringLiteral("Opens a GitHub issue form to submit a feature request"));
+    connect(feature_btn, &QPushButton::clicked, this, []() {
         QDesktopServices::openUrl(
             QUrl(QStringLiteral("https://github.com/RandyNorthrup/S.A.K.-Utility/issues/new"
                                 "?template=feature_request.yml&title=%5BFeature+Request%5D%3A+")));
@@ -1189,15 +1192,15 @@ QHBoxLayout* MainWindow::createHelpRow_requestsAndBugs(QWidget* parent) {
                                     tr("Feature Requests"),
                                     tr("Have an idea to improve S.A.K. Utility?"
                                        " Submit a feature request on GitHub."),
-                                    featureBtn)
+                                    feature_btn)
                        .card);
 
-    auto* bugBtn = new QPushButton(tr("Report a Bug"), parent);
-    bugBtn->setMinimumHeight(sak::kButtonHeightTall);
-    bugBtn->setStyleSheet(ui::kDangerButtonStyle);
-    bugBtn->setAccessibleName(QStringLiteral("Report a bug on GitHub"));
-    bugBtn->setToolTip(QStringLiteral("Opens a GitHub issue form to report a bug"));
-    connect(bugBtn, &QPushButton::clicked, this, []() {
+    auto* bug_btn = new QPushButton(tr("Report a Bug"), parent);
+    bug_btn->setMinimumHeight(sak::kButtonHeightTall);
+    bug_btn->setStyleSheet(ui::kDangerButtonStyle);
+    bug_btn->setAccessibleName(QStringLiteral("Report a bug on GitHub"));
+    bug_btn->setToolTip(QStringLiteral("Opens a GitHub issue form to report a bug"));
+    connect(bug_btn, &QPushButton::clicked, this, []() {
         QDesktopServices::openUrl(
             QUrl(QStringLiteral("https://github.com/RandyNorthrup/S.A.K.-Utility/issues/new"
                                 "?template=bug_report.yml&title=%5BBug%5D%3A+")));
@@ -1207,7 +1210,7 @@ QHBoxLayout* MainWindow::createHelpRow_requestsAndBugs(QWidget* parent) {
                                     QStringLiteral(":/icons/icons/bugs.svg"),
                                     tr("Report a Bug"),
                                     tr("Found something broken? Let us know so we can fix it."),
-                                    bugBtn)
+                                    bug_btn)
                        .card);
 
     return row;
@@ -1219,12 +1222,12 @@ QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent) {
     auto* row = new QHBoxLayout();
     row->setSpacing(ui::kSpacingLarge);
 
-    auto* wikiBtn = new QPushButton(tr("Open Help Wiki"), parent);
-    wikiBtn->setMinimumHeight(sak::kButtonHeightTall);
-    wikiBtn->setStyleSheet(ui::kSecondaryButtonStyle);
-    wikiBtn->setAccessibleName(QStringLiteral("Open help wiki on GitHub"));
-    wikiBtn->setToolTip(QStringLiteral("Opens the S.A.K. Utility wiki on GitHub"));
-    connect(wikiBtn, &QPushButton::clicked, this, []() {
+    auto* wiki_btn = new QPushButton(tr("Open Help Wiki"), parent);
+    wiki_btn->setMinimumHeight(sak::kButtonHeightTall);
+    wiki_btn->setStyleSheet(ui::kSecondaryButtonStyle);
+    wiki_btn->setAccessibleName(QStringLiteral("Open help wiki on GitHub"));
+    wiki_btn->setToolTip(QStringLiteral("Opens the S.A.K. Utility wiki on GitHub"));
+    connect(wiki_btn, &QPushButton::clicked, this, []() {
         QDesktopServices::openUrl(
             QUrl(QStringLiteral("https://github.com/RandyNorthrup/S.A.K.-Utility/wiki")));
     });
@@ -1233,7 +1236,7 @@ QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent) {
                                     QStringLiteral(":/icons/icons/help.svg"),
                                     tr("Help & Documentation"),
                                     tr("Browse the wiki for guides, FAQ, and troubleshooting."),
-                                    wikiBtn)
+                                    wiki_btn)
                        .card);
 
     row->addWidget(createCommunityCard(parent));
@@ -1244,12 +1247,12 @@ QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent) {
 QFrame* MainWindow::createCommunityCard(QWidget* parent) {
     Q_ASSERT(parent);
 
-    auto* discordBtn = new QPushButton(tr("Join Discord"), parent);
-    discordBtn->setMinimumHeight(sak::kButtonHeightTall);
-    discordBtn->setStyleSheet(ui::kDiscordCompactButtonStyle);
-    discordBtn->setAccessibleName(QStringLiteral("Join S.A.K. Utility Discord server"));
-    discordBtn->setToolTip(QStringLiteral("Opens the general discussion Discord channel"));
-    connect(discordBtn, &QPushButton::clicked, this, []() {
+    auto* discord_btn = new QPushButton(tr("Join Discord"), parent);
+    discord_btn->setMinimumHeight(sak::kButtonHeightTall);
+    discord_btn->setStyleSheet(ui::kDiscordCompactButtonStyle);
+    discord_btn->setAccessibleName(QStringLiteral("Join S.A.K. Utility Discord server"));
+    discord_btn->setToolTip(QStringLiteral("Opens the general discussion Discord channel"));
+    connect(discord_btn, &QPushButton::clicked, this, []() {
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://discord.gg/pMh2n9kSK3")));
     });
 
@@ -1258,7 +1261,7 @@ QFrame* MainWindow::createCommunityCard(QWidget* parent) {
                             tr("Community"),
                             tr("Join the Discord server for general discussion, help, and "
                                "announcements."),
-                            discordBtn)
+                            discord_btn)
         .card;
 }
 
@@ -1531,10 +1534,10 @@ template <typename PanelT>
 void MainWindow::connectPanelLog(PanelT* panel) {
     Q_ASSERT(panel);
     Q_ASSERT(m_logWindow);
-    const int tabIdx = findPanelTabIndex(panel);
-    connect(panel, &PanelT::logOutput, this, [this, tabIdx](const QString& msg) {
+    const int tab_idx = findPanelTabIndex(panel);
+    connect(panel, &PanelT::logOutput, this, [this, tab_idx](const QString& msg) {
         const QString formatted = QDateTime::currentDateTime().toString("[HH:mm:ss] ") + msg;
-        appendLogIfActive(tabIdx, formatted);
+        appendLogIfActive(tab_idx, formatted);
     });
 
     auto* toggle = panel->logToggle();
@@ -1564,19 +1567,19 @@ void MainWindow::setupLogRouting() {
     });
 }
 
-void MainWindow::attachThemeToggleToLogToggle(LogToggleSwitch* logToggle) {
-    if ((logToggle == nullptr) || (logToggle->parentWidget() == nullptr)) {
+void MainWindow::attachThemeToggleToLogToggle(LogToggleSwitch* log_toggle) {
+    if ((log_toggle == nullptr) || (log_toggle->parentWidget() == nullptr)) {
         return;
     }
 
     int item_index = -1;
     QBoxLayout* box_layout =
-        findBoxLayoutContainingWidget(logToggle->parentWidget()->layout(), logToggle, item_index);
+        findBoxLayoutContainingWidget(log_toggle->parentWidget()->layout(), log_toggle, item_index);
     if ((box_layout == nullptr) || item_index < 0) {
         return;
     }
 
-    auto* theme_toggle = new LogToggleSwitch(tr("Dark"), logToggle->parentWidget());
+    auto* theme_toggle = new LogToggleSwitch(tr("Dark"), log_toggle->parentWidget());
     theme_toggle->setToolTip(tr("Toggle dark mode"));
     theme_toggle->setAccessibleName(tr("Toggle dark mode"));
     theme_toggle->setChecked(m_dark_theme_enabled);
@@ -1604,7 +1607,7 @@ void MainWindow::setDarkThemeEnabled(bool enabled) {
         const QSignalBlocker blocker(toggle);
         toggle->setChecked(enabled);
     }
-    ApplyThemedHtmlBrowsers(this);
+    applyThemedHtmlBrowsers(this);
 }
 
 void MainWindow::updateStatus(const QString& message, int timeout_ms) {
@@ -1656,14 +1659,14 @@ void MainWindow::hideProgressBarIfComplete() {
     }
 }
 
-void MainWindow::appendLogIfActive(int tabIdx, const QString& formatted) {
+void MainWindow::appendLogIfActive(int tab_idx, const QString& formatted) {
     // m_panelLogs is declared last and destroyed first; a panel destructor that
     // emits logOutput during ~MainWindow would write into a destroyed QMap.
     if (m_shutting_down) {
         return;
     }
     Q_ASSERT(m_tab_widget);
-    QStringList& lines = m_panelLogs[tabIdx];
+    QStringList& lines = m_panelLogs[tab_idx];
     lines.append(formatted);
     // Bound the per-tab backing store: evict the oldest lines once the cap is exceeded so
     // heavy untrusted output cannot grow this map without limit for the life of the session.
@@ -1671,7 +1674,7 @@ void MainWindow::appendLogIfActive(int tabIdx, const QString& formatted) {
         const qsizetype overflow = lines.size() - kMaxPanelLogLines;
         lines.erase(lines.cbegin(), lines.cbegin() + overflow);
     }
-    if (m_tab_widget->currentIndex() == tabIdx && m_logWindow->isLogVisible()) {
+    if (m_tab_widget->currentIndex() == tab_idx && m_logWindow->isLogVisible()) {
         // Panel log payloads carry paths, program names and command output; QTextEdit::append()
         // would render markup inside them, so wrap the line to read literally.
         m_logWindow->logTextEdit()->append(sak::ui::asLiteralRichText(formatted));
@@ -1711,10 +1714,10 @@ void MainWindow::onTabChanged(int index) {
 void MainWindow::createKeyboardShortcuts() {
     Q_ASSERT(m_logWindow);
     Q_ASSERT(m_tab_widget);
-    const int tabCount = m_tab_widget->count();
+    const int tab_count = m_tab_widget->count();
 
     // Tab navigation: Ctrl+1..9 switches to tab index 0..8
-    for (int i = 0; i < qMin(tabCount, kDirectTabShortcutCount); ++i) {
+    for (int i = 0; i < qMin(tab_count, kDirectTabShortcutCount); ++i) {
         auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + i)),
                                        this);
         shortcut->setContext(Qt::ApplicationShortcut);
@@ -1724,7 +1727,7 @@ void MainWindow::createKeyboardShortcuts() {
     }
 
     // Ctrl+0: switches to tab index 9 (10th tab) -- browser convention
-    if (tabCount > kTenthTabIndex) {
+    if (tab_count > kTenthTabIndex) {
         auto* tab10 = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), this);
         tab10->setContext(Qt::ApplicationShortcut);
         connect(tab10, &QShortcut::activated, this, [this]() {
@@ -1733,30 +1736,30 @@ void MainWindow::createKeyboardShortcuts() {
     }
 
     // Ctrl+Shift+1..5: switches to tab index 10..14 (tabs beyond 10)
-    for (int i = 0; i < qMin(tabCount - kTabShortcutBaseOffset, kShiftTabShortcutCount); ++i) {
-        const int tabIdx = kTabShortcutBaseOffset + i;
-        if (tabIdx >= tabCount) {
+    for (int i = 0; i < qMin(tab_count - kTabShortcutBaseOffset, kShiftTabShortcutCount); ++i) {
+        const int tab_idx = kTabShortcutBaseOffset + i;
+        if (tab_idx >= tab_count) {
             break;
         }
         auto* shortcut = new QShortcut(
             QKeySequence(Qt::CTRL | Qt::SHIFT | static_cast<Qt::Key>(Qt::Key_1 + i)), this);
         shortcut->setContext(Qt::ApplicationShortcut);
-        connect(shortcut, &QShortcut::activated, this, [this, tabIdx]() {
-            m_tab_widget->setCurrentIndex(tabIdx);
+        connect(shortcut, &QShortcut::activated, this, [this, tab_idx]() {
+            m_tab_widget->setCurrentIndex(tab_idx);
         });
     }
 
     // Ctrl+Tab / Ctrl+Shift+Tab: cycle through tabs
-    auto* nextTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab), this);
-    nextTab->setContext(Qt::ApplicationShortcut);
-    connect(nextTab, &QShortcut::activated, this, [this]() {
+    auto* next_tab = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab), this);
+    next_tab->setContext(Qt::ApplicationShortcut);
+    connect(next_tab, &QShortcut::activated, this, [this]() {
         const int next = (m_tab_widget->currentIndex() + 1) % m_tab_widget->count();
         m_tab_widget->setCurrentIndex(next);
     });
 
-    auto* prevTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab), this);
-    prevTab->setContext(Qt::ApplicationShortcut);
-    connect(prevTab, &QShortcut::activated, this, [this]() {
+    auto* prev_tab = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab), this);
+    prev_tab->setContext(Qt::ApplicationShortcut);
+    connect(prev_tab, &QShortcut::activated, this, [this]() {
         const int prev = (m_tab_widget->currentIndex() - 1 + m_tab_widget->count()) %
                          m_tab_widget->count();
         m_tab_widget->setCurrentIndex(prev);
@@ -1766,9 +1769,9 @@ void MainWindow::createKeyboardShortcuts() {
     // File Explorer omnibar (Files EditPathAction); an application-wide
     // Ctrl+L here made the two ambiguous whenever the explorer had focus and
     // Qt then fired neither shortcut.
-    auto* toggleLog = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+L")), this);
-    toggleLog->setContext(Qt::ApplicationShortcut);
-    connect(toggleLog, &QShortcut::activated, this, [this]() {
+    auto* toggle_log = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+L")), this);
+    toggle_log->setContext(Qt::ApplicationShortcut);
+    connect(toggle_log, &QShortcut::activated, this, [this]() {
         if (m_logWindow) {
             m_logWindow->setLogVisible(!m_logWindow->isLogVisible());
         }

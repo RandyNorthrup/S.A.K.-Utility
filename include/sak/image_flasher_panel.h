@@ -72,10 +72,10 @@ public:
 
     /**
      * @brief Load an image file directly (for drag-drop or command line)
-     * @param filePath Path to image file
+     * @param file_path Path to image file
      * @return true if image loaded successfully
      */
-    bool loadImageFile(const QString& filePath);
+    bool loadImageFile(const QString& file_path);
 
     /** @brief Access the log toggle switch for MainWindow connection */
     LogToggleSwitch* logToggle() const { return m_logToggle; }
@@ -101,9 +101,9 @@ private Q_SLOTS:
     /** @brief Handle a successfully chosen image path; returns false when the image fails
      *         validation (missing/empty/directory/declined-unknown-format) so no selection is made
      *         and navigation stays disabled (fail closed). */
-    bool onImageSelected(const QString& imagePath);
+    bool onImageSelected(const QString& image_path);
     /** @brief Handle a completed Windows ISO download */
-    void onWindowsISODownloaded(const QString& isoPath);
+    void onWindowsISODownloaded(const QString& iso_path);
 
     // Step 2: Drive Selection
     /** @brief Refresh the drive list after a scan completes */
@@ -117,7 +117,7 @@ private Q_SLOTS:
     /** @brief Update progress indicators from the flash coordinator */
     void onFlashProgress(const FlashProgress& progress);
     /** @brief Update the UI when the flash state machine transitions */
-    void onFlashStateChanged(FlashState newState, const QString& message);
+    void onFlashStateChanged(FlashState new_state, const QString& message);
     /** @brief Handle final flash result (success or failure details) */
     void onFlashCompleted(const FlashResult& result);
     /** @brief Display a flash error and transition to error state */
@@ -129,15 +129,15 @@ private:
     /** @brief Build the panel layout and stacked-widget pages */
     void setupUi();
     /** @brief Create and wire up navigation buttons (Back/Next/Flash/Settings) */
-    void setupNavigationButtons(QVBoxLayout* mainLayout);
+    void setupNavigationButtons(QVBoxLayout* main_layout);
     /** @brief Build the image-selection wizard page */
     void createImageSelectionPage();
     /** @brief Create download cards and select-file button */
-    void createDownloadCards(QVBoxLayout* pageLayout);
-    void addMicrosoftDownloadCard(QHBoxLayout* cardRow);
-    void addUupDownloadCard(QHBoxLayout* cardRow);
-    void addLinuxDownloadCard(QHBoxLayout* cardRow);
-    void createSelectImageButton(QVBoxLayout* pageLayout);
+    void createDownloadCards(QVBoxLayout* page_layout);
+    void addMicrosoftDownloadCard(QHBoxLayout* card_row);
+    void addUupDownloadCard(QHBoxLayout* card_row);
+    void addLinuxDownloadCard(QHBoxLayout* card_row);
+    void createSelectImageButton(QVBoxLayout* page_layout);
     /// @brief Configuration for an ISO download card
     struct IsoCardConfig {
         QString icon_path;
@@ -151,7 +151,7 @@ private:
     /** @brief Build a single ISO download card */
     QFrame* buildIsoDownloadCard(QWidget* parent,
                                  const IsoCardConfig& config,
-                                 QPushButton*& buttonOut);
+                                 QPushButton*& button_out);
     /** @brief Build the drive-selection wizard page */
     void createDriveSelectionPage();
     /** @brief Build the flash-progress wizard page */
@@ -164,7 +164,7 @@ private:
     /** @brief Validate the selected image file: returns true only when it exists, is a regular
      *         readable non-empty file and either has a known format or the user confirmed an
      *         unknown format. Fail closed: an invalid image returns false. */
-    [[nodiscard]] bool validateImageFile(const QString& filePath);
+    [[nodiscard]] bool validateImageFile(const QString& file_path);
     /** @brief Re-validate the selected image just before flashing: still exists as a regular file
      *         with the same size and modification time captured at selection (guards a source-file
      *         swap between selection and flash). */
@@ -180,13 +180,13 @@ private:
     void showConfirmationDialog();
     /** @brief Take the UI into the flashing state and hand off to the right writer. Called only
      *         after every refusal gate has passed and the user has confirmed. */
-    void beginConfirmedFlash(bool isWindowsISO);
+    void beginConfirmedFlash(bool is_windows_iso);
     /** @brief Build a formatted list of selected drives and detect system drives */
-    QStringList buildDriveDetailsList(bool& hasSystemDrive) const;
+    QStringList buildDriveDetailsList(bool& has_system_drive) const;
     /** @brief Selected drives at or above the configured large-drive threshold, formatted for
      *         display. A drive whose capacity cannot be read is included: an unreadable capacity
      *         is exactly what the warning guards against, so it is not silently passed. */
-    [[nodiscard]] QStringList selectedDrivesOverThreshold(qint64 thresholdBytes) const;
+    [[nodiscard]] QStringList selectedDrivesOverThreshold(qint64 threshold_bytes) const;
     /** @brief Extra confirmation when a target exceeds the large-drive threshold and the warning
      *         is enabled. Returns true to continue; false when the user declined (or the setting
      *         is off but nothing is oversized). */
@@ -199,30 +199,31 @@ private:
      *         reports a notification it did not show. */
     void notifyFlashFinished(const FlashResult& result);
     /** @brief Build the destructive-operation confirmation message */
-    QString buildFlashConfirmationMessage(const QStringList& driveDetails, bool isWindowsISO) const;
+    QString buildFlashConfirmationMessage(const QStringList& drive_details,
+                                          bool is_windows_iso) const;
 
     /** @brief Return true if the device path belongs to the OS drive */
-    bool isSystemDrive(const QString& devicePath) const;
+    bool isSystemDrive(const QString& device_path) const;
 
     /// @brief Push the persisted Image Flasher settings into the flash coordinator.
     ///        Called immediately before each raw-image flash starts.
     void applyFlasherSettings();
     /** @brief Return true if the ISO is a Windows installer (needs special handling) */
-    bool isWindowsInstallISO(const QString& isoPath) const;
+    bool isWindowsInstallISO(const QString& iso_path) const;
     /** @brief Create a bootable Windows USB instead of raw flash */
     void createWindowsUSB();
     /** @brief Wire signal/slot connections for the Windows USB creator worker */
     void connectWindowsUSBCreatorSignals(WindowsUSBCreator* creator, QThread* thread);
     /** @brief Parse disk number from PhysicalDrive device path; returns empty on failure */
-    QString parseDiskNumberFromDevicePath(const QString& devicePath);
+    QString parseDiskNumberFromDevicePath(const QString& device_path);
     /** @brief Find the display text for a drive by matching its device path in the list widget */
-    QString findDriveDisplayText(const QString& devicePath) const;
+    QString findDriveDisplayText(const QString& device_path) const;
     /** @brief Format a byte count as a human-readable string */
     static QString formatFileSize(qint64 bytes);
     /** @brief Format a transfer speed in MB/s */
     QString formatSpeed(double mbps) const;
     /** @brief Run ISO analysis and populate the info group box */
-    void populateIsoInfo(const QString& imagePath);
+    void populateIsoInfo(const QString& image_path);
 
     // UI Components
     QStackedWidget* m_stackedWidget;
@@ -288,7 +289,7 @@ private:
     // can be detected (size alone would miss a same-size replacement).
     QDateTime m_imageLastModified;
     QStringList m_selectedDrives;
-    // devicePath -> identity signature (name|size|busType|blockSize) captured at selection, so a
+    // device_path -> identity signature (name|size|busType|blockSize) captured at selection, so a
     // removable-drive swap or disk-number reuse before the write can be detected and refused.
     QHash<QString, QString> m_selectedDriveSignatures;
     bool m_isFlashing;

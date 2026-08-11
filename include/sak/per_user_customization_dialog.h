@@ -59,9 +59,9 @@ private Q_SLOTS:
 
 private:
     void setupUi();
-    void setupUi_foldersSection(QVBoxLayout* mainLayout);
-    void setupUi_appDataSection(QVBoxLayout* mainLayout);
-    void setupUi_dialogButtons(QVBoxLayout* mainLayout);
+    void setupUi_foldersSection(QVBoxLayout* main_layout);
+    void setupUi_appDataSection(QVBoxLayout* main_layout);
+    void setupUi_dialogButtons(QVBoxLayout* main_layout);
     void populateTree();
     void addFolderToTree(const FolderSelection& selection, QTreeWidgetItem* parent = nullptr);
     /// @brief Accumulated state for recursive directory tree traversal
@@ -79,7 +79,7 @@ private:
                                DirTraversalState& state);
     static QString formatFileSize(qint64 bytes);
     void calculateDirectorySize(
-        const QDir& dir, qint64& totalSize, int& fileCount, int depth = 0, int maxDepth = 10);
+        const QDir& dir, qint64& total_size, int& file_count, int depth = 0, int max_depth = 10);
     void setChildrenCheckState(QTreeWidgetItem* item, Qt::CheckState state) const;
     void updateParentCheckState(QTreeWidgetItem* item);
     void updateFolderCheckStates(QTreeWidgetItem* item);

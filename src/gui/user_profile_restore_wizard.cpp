@@ -70,22 +70,22 @@ void UserProfileRestoreWelcomePage::setupUi() {
 
     layout->addSpacing(sak::ui::kMarginXLarge);
 
-    auto* selectGroup = new QWidget(this);
-    auto* selectLayout = new QHBoxLayout(selectGroup);
-    selectLayout->setContentsMargins(
+    auto* select_group = new QWidget(this);
+    auto* select_layout = new QHBoxLayout(select_group);
+    select_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
-    auto* backupLabel = new QLabel(tr("Backup Location:"), selectGroup);
-    m_backupPathEdit = new QLineEdit(selectGroup);
+    auto* backup_label = new QLabel(tr("Backup Location:"), select_group);
+    m_backupPathEdit = new QLineEdit(select_group);
     m_backupPathEdit->setPlaceholderText(tr("Select backup directory or manifest.json file..."));
 
-    m_browseButton = new QPushButton(tr("Browse..."), selectGroup);
+    m_browseButton = new QPushButton(tr("Browse..."), select_group);
 
-    selectLayout->addWidget(backupLabel);
-    selectLayout->addWidget(m_backupPathEdit, 1);
-    selectLayout->addWidget(m_browseButton);
+    select_layout->addWidget(backup_label);
+    select_layout->addWidget(m_backupPathEdit, 1);
+    select_layout->addWidget(m_browseButton);
 
-    layout->addWidget(selectGroup);
+    layout->addWidget(select_group);
 
     m_manifestInfoLabel = new QLabel(this);
     m_manifestInfoLabel->setWordWrap(true);
@@ -131,7 +131,7 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     // Drop any backup/manifest previously stored in the wizard. A path that is empty,
     // invalid, or fails to load must not leave a stale valid manifest from an earlier
     // selection behind for the later pages to restore.
-    auto clearStoredBackup = [this]() {
+    auto clear_stored_backup = [this]() {
         if (auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard())) {
             wiz->setBackupPath(QString());
             wiz->setManifest(BackupManifest{});
@@ -139,23 +139,23 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     };
 
     if (path.isEmpty()) {
-        clearStoredBackup();
+        clear_stored_backup();
         m_manifestInfoLabel->hide();
         Q_EMIT completeChanged();
         return;
     }
 
     // Try to load manifest
-    const QFileInfo fileInfo(path);
-    QString manifestPath;
+    const QFileInfo file_info(path);
+    QString manifest_path;
 
-    if (fileInfo.isDir()) {
-        manifestPath = path + "/manifest.json";
-    } else if (fileInfo.fileName() == "manifest.json") {
-        manifestPath = path;
-        m_backupPathEdit->setText(fileInfo.absolutePath());
+    if (file_info.isDir()) {
+        manifest_path = path + "/manifest.json";
+    } else if (file_info.fileName() == "manifest.json") {
+        manifest_path = path;
+        m_backupPathEdit->setText(file_info.absolutePath());
     } else {
-        clearStoredBackup();
+        clear_stored_backup();
         m_manifestInfoLabel->setText(
             tr("[X] Invalid backup path. Please select a backup directory "
                "or manifest.json file."));
@@ -165,9 +165,9 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     }
 
     // Load manifest
-    const BackupManifest manifest = BackupManifest::loadFromFile(manifestPath);
+    const BackupManifest manifest = BackupManifest::loadFromFile(manifest_path);
     if (manifest.version.isEmpty()) {
-        clearStoredBackup();
+        clear_stored_backup();
         m_manifestInfoLabel->setText(
             tr("[X] Failed to load backup manifest. The backup may be "
                "corrupted."));

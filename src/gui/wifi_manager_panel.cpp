@@ -99,25 +99,25 @@ public:
     }
 
 Q_SIGNALS:
-    void checkToggled(bool allChecked);
+    void checkToggled(bool all_checked);
 
 protected:
-    void paintSection(QPainter* painter, const QRect& rect, int logicalIndex) const override {
+    void paintSection(QPainter* painter, const QRect& rect, int logical_index) const override {
         Q_ASSERT(painter);
-        Q_ASSERT(logicalIndex >= 0);
+        Q_ASSERT(logical_index >= 0);
         // Paint default section background first
         painter->save();
-        QHeaderView::paintSection(painter, rect, logicalIndex);
+        QHeaderView::paintSection(painter, rect, logical_index);
         painter->restore();
-        if (logicalIndex != 0) {
+        if (logical_index != 0) {
             return;
         }
 
         // Draw a custom checkbox that matches the table indicator stylesheet tokens.
-        constexpr int side = sak::ui::kUiIconSmall;
-        const int cx = rect.x() + ((rect.width() - side) / 2);
-        const int cy = rect.y() + ((rect.height() - side) / 2);
-        const QRect cbRect(cx, cy, side, side);
+        constexpr int kSide = sak::ui::kUiIconSmall;
+        const int cx = rect.x() + ((rect.width() - kSide) / 2);
+        const int cy = rect.y() + ((rect.height() - kSide) / 2);
+        const QRect cb_rect(cx, cy, kSide, kSide);
 
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing);
@@ -126,12 +126,12 @@ protected:
             painter->setBrush(QColor(QString::fromLatin1(sak::ui::kColorBgSurface)));
             painter->setPen(QPen(QColor(QString::fromLatin1(sak::ui::kColorBorderMuted)),
                                  sak::ui::kCssBorderWidthDefaultPx));
-            painter->drawRoundedRect(cbRect, kHeaderCheckRadiusPx, kHeaderCheckRadiusPx);
+            painter->drawRoundedRect(cb_rect, kHeaderCheckRadiusPx, kHeaderCheckRadiusPx);
         } else {
             // Checked or PartiallyChecked  --  blue fill
             painter->setBrush(QColor(QString::fromLatin1(sak::ui::kColorPrimary)));
             painter->setPen(QPen(QColor(QString::fromLatin1(sak::ui::kColorPrimaryDark)), 1));
-            painter->drawRoundedRect(cbRect, kHeaderCheckRadiusPx, kHeaderCheckRadiusPx);
+            painter->drawRoundedRect(cb_rect, kHeaderCheckRadiusPx, kHeaderCheckRadiusPx);
             painter->setPen(QPen(
                 Qt::white, kHeaderCheckTickPenWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
             painter->setBrush(Qt::NoBrush);
@@ -198,13 +198,13 @@ constexpr ushort kPasswordBulletCharacter = 0x2022;
 // -----------------------------------------------------------------------------
 // Table column indices
 // -----------------------------------------------------------------------------
-static constexpr int COL_SELECT = 0;  // checkbox
-static constexpr int COL_LOCATION = 1;
-static constexpr int COL_SSID = 2;
-static constexpr int COL_PASSWORD = 3;
-static constexpr int COL_SECURITY = 4;
-static constexpr int COL_HIDDEN = 5;
-static constexpr int COL_COUNT = 6;
+static constexpr int kColSelect = 0;  // checkbox
+static constexpr int kColLocation = 1;
+static constexpr int kColSsid = 2;
+static constexpr int kColPassword = 3;
+static constexpr int kColSecurity = 4;
+static constexpr int kColHidden = 5;
+static constexpr int kColCount = 6;
 
 // -----------------------------------------------------------------------------
 // Construction / destruction
@@ -233,22 +233,22 @@ WifiManagerPanel::~WifiManagerPanel() {
 // -----------------------------------------------------------------------------
 void WifiManagerPanel::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
-    auto* outerLayout = new QVBoxLayout(this);
-    outerLayout->setContentsMargins(
+    auto* outer_layout = new QVBoxLayout(this);
+    outer_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
 
-    auto* contentWidget = new QWidget(scrollArea);
-    auto* rootLayout = new QVBoxLayout(contentWidget);
-    rootLayout->setContentsMargins(
+    auto* content_widget = new QWidget(scroll_area);
+    auto* root_layout = new QVBoxLayout(content_widget);
+    root_layout->setContentsMargins(
         sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
-    rootLayout->setSpacing(sak::ui::kSpacingSmall);
+    root_layout->setSpacing(sak::ui::kSpacingSmall);
 
-    scrollArea->setWidget(contentWidget);
-    outerLayout->addWidget(scrollArea);
+    scroll_area->setWidget(content_widget);
+    outer_layout->addWidget(scroll_area);
 
     // Main content: horizontal splitter form | table
     auto* splitter = new QSplitter(Qt::Horizontal, this);
@@ -261,7 +261,7 @@ void WifiManagerPanel::setupUi() {
     splitter->setStretchFactor(0, kFormSplitterStretch);
     splitter->setStretchFactor(1, kTableSplitterStretch);
 
-    rootLayout->addWidget(splitter, 1);
+    root_layout->addWidget(splitter, 1);
 
     setupActionButtons();
 
@@ -303,7 +303,7 @@ void WifiManagerPanel::setupNetworkIdentityFields(QFormLayout* layout) {
 }
 
 void WifiManagerPanel::setupNetworkPasswordField(QFormLayout* layout) {
-    auto* passRow = new QHBoxLayout();
+    auto* pass_row = new QHBoxLayout();
     m_password_input = new QLineEdit(m_form_group);
     m_password_input->setPlaceholderText("Password");
     m_password_input->setEchoMode(QLineEdit::Password);
@@ -315,11 +315,11 @@ void WifiManagerPanel::setupNetworkPasswordField(QFormLayout* layout) {
     m_password_toggle_btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_password_toggle_btn->setToolTip("Show/hide password");
     m_password_toggle_btn->setAccessibleName(QStringLiteral("Toggle password visibility"));
-    passRow->addWidget(m_password_input);
-    passRow->addWidget(m_password_toggle_btn);
-    auto* passWidget = new QWidget(m_form_group);
-    passWidget->setLayout(passRow);
-    layout->addRow("Password:", passWidget);
+    pass_row->addWidget(m_password_input);
+    pass_row->addWidget(m_password_toggle_btn);
+    auto* pass_widget = new QWidget(m_form_group);
+    pass_widget->setLayout(pass_row);
+    layout->addRow("Password:", pass_widget);
 }
 
 void WifiManagerPanel::setupNetworkOptionsFields(QFormLayout* layout) {
@@ -347,16 +347,16 @@ void WifiManagerPanel::setupFormActionButtons(QFormLayout* layout) {
     m_add_table_btn->setToolTip("Add current form entry to the saved networks table");
     m_add_table_btn->setAccessibleName(QStringLiteral("Add to Table"));
     m_add_table_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    auto* formBtnRow = new QHBoxLayout();
-    formBtnRow->setContentsMargins(sak::ui::kMarginNone,
-                                   sak::ui::kSpacingDefault,
-                                   sak::ui::kMarginNone,
-                                   sak::ui::kMarginNone);  // top buffer
-    formBtnRow->addWidget(m_connect_phone_btn);
-    formBtnRow->addWidget(m_add_table_btn);
-    auto* formBtnWidget = new QWidget(m_form_group);
-    formBtnWidget->setLayout(formBtnRow);
-    layout->addRow("", formBtnWidget);
+    auto* form_btn_row = new QHBoxLayout();
+    form_btn_row->setContentsMargins(sak::ui::kMarginNone,
+                                     sak::ui::kSpacingDefault,
+                                     sak::ui::kMarginNone,
+                                     sak::ui::kMarginNone);  // top buffer
+    form_btn_row->addWidget(m_connect_phone_btn);
+    form_btn_row->addWidget(m_add_table_btn);
+    auto* form_btn_widget = new QWidget(m_form_group);
+    form_btn_widget->setLayout(form_btn_row);
+    layout->addRow("", form_btn_widget);
 }
 
 void WifiManagerPanel::setupFormGroup() {
@@ -388,7 +388,7 @@ void WifiManagerPanel::setupTableGroup() {
 }
 
 void WifiManagerPanel::setupTableSearchRow(QVBoxLayout* layout) {
-    auto* searchRow = new QHBoxLayout();
+    auto* search_row = new QHBoxLayout();
     m_search_input = new QLineEdit(m_table_group);
     m_search_input->setPlaceholderText("Search networks\u2026");
     m_search_input->setAccessibleName(QStringLiteral("Search Networks"));
@@ -406,30 +406,30 @@ void WifiManagerPanel::setupTableSearchRow(QVBoxLayout* layout) {
     m_search_down_btn->setToolTip("Next match");
     m_search_down_btn->setAccessibleName(QStringLiteral("Next search match"));
     m_search_down_btn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-    searchRow->addWidget(m_search_input, 1);
-    searchRow->addWidget(m_search_up_btn);
-    searchRow->addWidget(m_search_down_btn);
-    layout->addLayout(searchRow);
+    search_row->addWidget(m_search_input, 1);
+    search_row->addWidget(m_search_up_btn);
+    search_row->addWidget(m_search_down_btn);
+    layout->addLayout(search_row);
 }
 
 void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout) {
     Q_ASSERT(layout);
-    m_network_table = new QTableWidget(0, COL_COUNT, m_table_group);
+    m_network_table = new QTableWidget(0, kColCount, m_table_group);
     m_network_table->setAccessibleName(QStringLiteral("Saved WiFi Networks Table"));
-    auto* checkHeader = new CheckHeaderView(m_table_group);
-    m_network_table->setHorizontalHeader(checkHeader);
+    auto* check_header = new CheckHeaderView(m_table_group);
+    m_network_table->setHorizontalHeader(check_header);
     m_network_table->setHorizontalHeaderLabels(
         {"", "Location", "SSID", "Password", "Security", "Hidden"});
     m_network_table->horizontalHeader()->setStretchLastSection(false);
-    m_network_table->horizontalHeader()->setSectionResizeMode(COL_SELECT, QHeaderView::Fixed);
-    m_network_table->horizontalHeader()->setSectionResizeMode(COL_LOCATION, QHeaderView::Stretch);
-    m_network_table->horizontalHeader()->setSectionResizeMode(COL_SSID, QHeaderView::Stretch);
-    m_network_table->horizontalHeader()->setSectionResizeMode(COL_PASSWORD, QHeaderView::Stretch);
-    m_network_table->horizontalHeader()->setSectionResizeMode(COL_SECURITY,
+    m_network_table->horizontalHeader()->setSectionResizeMode(kColSelect, QHeaderView::Fixed);
+    m_network_table->horizontalHeader()->setSectionResizeMode(kColLocation, QHeaderView::Stretch);
+    m_network_table->horizontalHeader()->setSectionResizeMode(kColSsid, QHeaderView::Stretch);
+    m_network_table->horizontalHeader()->setSectionResizeMode(kColPassword, QHeaderView::Stretch);
+    m_network_table->horizontalHeader()->setSectionResizeMode(kColSecurity,
                                                               QHeaderView::ResizeToContents);
-    m_network_table->horizontalHeader()->setSectionResizeMode(COL_HIDDEN,
+    m_network_table->horizontalHeader()->setSectionResizeMode(kColHidden,
                                                               QHeaderView::ResizeToContents);
-    m_network_table->setColumnWidth(COL_SELECT, kWifiSelectColumnWidth);
+    m_network_table->setColumnWidth(kColSelect, kWifiSelectColumnWidth);
     m_network_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_network_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_network_table->setAlternatingRowColors(true);
@@ -440,7 +440,7 @@ void WifiManagerPanel::setupNetworkTable(QVBoxLayout* layout) {
 }
 
 void WifiManagerPanel::setupTableActionButtons(QVBoxLayout* layout) {
-    auto* tableActions = new QHBoxLayout();
+    auto* table_actions = new QHBoxLayout();
     m_delete_selected_btn = new QPushButton("Delete Selected", m_table_group);
     m_delete_selected_btn->setAccessibleName(QStringLiteral("Delete Selected Networks"));
     m_delete_selected_btn->setStyleSheet(sak::ui::kDangerButtonStyle);
@@ -460,12 +460,12 @@ void WifiManagerPanel::setupTableActionButtons(QVBoxLayout* layout) {
     m_save_table_btn->setToolTip("Save table to a JSON file");
     m_save_table_btn->setEnabled(false);
     m_load_table_btn->setToolTip("Load table from a JSON file");
-    tableActions->addWidget(m_delete_selected_btn);
-    tableActions->addWidget(m_add_to_windows_btn);
-    tableActions->addStretch();
-    tableActions->addWidget(m_save_table_btn);
-    tableActions->addWidget(m_load_table_btn);
-    layout->addLayout(tableActions);
+    table_actions->addWidget(m_delete_selected_btn);
+    table_actions->addWidget(m_add_to_windows_btn);
+    table_actions->addStretch();
+    table_actions->addWidget(m_save_table_btn);
+    table_actions->addWidget(m_load_table_btn);
+    layout->addLayout(table_actions);
 }
 
 void WifiManagerPanel::setupActionButtons() {
@@ -502,10 +502,10 @@ void WifiManagerPanel::setupActionButtons() {
     bar->addWidget(m_logToggle);
     bar->addWidget(m_scan_networks_btn);
 
-    auto* barWidget = new QWidget(this);
-    barWidget->setLayout(bar);
+    auto* bar_widget = new QWidget(this);
+    bar_widget->setLayout(bar);
     if (auto* vbox = qobject_cast<QVBoxLayout*>(layout())) {
-        vbox->addWidget(barWidget);
+        vbox->addWidget(bar_widget);
     } else {
         sak::logError("WiFi panel: parent layout is not a QVBoxLayout");
     }
@@ -562,19 +562,19 @@ void WifiManagerPanel::connectSignals() {
         m_network_table, &QTableWidget::itemChanged, this, &WifiManagerPanel::onTableItemChanged);
 
     // Wire the CheckHeaderView "select all" checkbox
-    auto* checkHdr = qobject_cast<CheckHeaderView*>(m_network_table->horizontalHeader());
-    if (checkHdr != nullptr) {
+    auto* check_hdr = qobject_cast<CheckHeaderView*>(m_network_table->horizontalHeader());
+    if (check_hdr != nullptr) {
         connect(
-            checkHdr, &CheckHeaderView::checkToggled, this, &WifiManagerPanel::setAllCheckStates);
+            check_hdr, &CheckHeaderView::checkToggled, this, &WifiManagerPanel::setAllCheckStates);
     }
 }
 
-void WifiManagerPanel::setAllCheckStates(bool allChecked) {
+void WifiManagerPanel::setAllCheckStates(bool all_checked) {
     m_network_table->blockSignals(true);
     for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
-        auto* item = m_network_table->item(row_index, COL_SELECT);
+        auto* item = m_network_table->item(row_index, kColSelect);
         if (item != nullptr) {
-            item->setCheckState(allChecked ? Qt::Checked : Qt::Unchecked);
+            item->setCheckState(all_checked ? Qt::Checked : Qt::Unchecked);
         }
     }
     m_network_table->blockSignals(false);
@@ -586,10 +586,10 @@ void WifiManagerPanel::setAllCheckStates(bool allChecked) {
 // -----------------------------------------------------------------------------
 
 void WifiManagerPanel::onSecurityChanged(const QString& value) {
-    const bool hasPassword = !value.contains("None", Qt::CaseInsensitive);
-    m_password_input->setEnabled(hasPassword);
-    m_password_toggle_btn->setEnabled(hasPassword);
-    if (!hasPassword) {
+    const bool has_password = !value.contains("None", Qt::CaseInsensitive);
+    m_password_input->setEnabled(has_password);
+    m_password_toggle_btn->setEnabled(has_password);
+    if (!has_password) {
         m_password_input->clear();
     }
 }
@@ -646,7 +646,7 @@ void WifiManagerPanel::onSearchChanged(const QString& text) {
     highlightSearchMatches();
     m_search_index = m_search_matches.isEmpty() ? -1 : 0;
     if (!m_search_matches.isEmpty()) {
-        m_network_table->scrollToItem(m_network_table->item(m_search_matches.first(), COL_SSID));
+        m_network_table->scrollToItem(m_network_table->item(m_search_matches.first(), kColSsid));
     }
 }
 
@@ -656,7 +656,7 @@ void WifiManagerPanel::onFindNext() {
     }
     m_search_index = static_cast<int>((m_search_index + 1) % m_search_matches.size());
     m_network_table->scrollToItem(
-        m_network_table->item(m_search_matches.at(m_search_index), COL_SSID));
+        m_network_table->item(m_search_matches.at(m_search_index), kColSsid));
     m_network_table->selectRow(m_search_matches.at(m_search_index));
 }
 
@@ -667,7 +667,7 @@ void WifiManagerPanel::onFindPrev() {
     m_search_index =
         static_cast<int>((m_search_index - 1 + m_search_matches.size()) % m_search_matches.size());
     m_network_table->scrollToItem(
-        m_network_table->item(m_search_matches.at(m_search_index), COL_SSID));
+        m_network_table->item(m_search_matches.at(m_search_index), kColSsid));
     m_network_table->selectRow(m_search_matches.at(m_search_index));
 }
 
@@ -677,13 +677,13 @@ void WifiManagerPanel::onFindPrev() {
 
 QImage WifiManagerPanel::renderQrWithHeader(const QString& payload,
                                             const QString& location,
-                                            bool showHeader) {
+                                            bool show_header) {
     const QImage base = generateQrImage(payload);
-    if (!showHeader || location.isEmpty()) {
+    if (!show_header || location.isEmpty()) {
         return base;
     }
-    constexpr int HEADER_H = 52;
-    QImage out(base.width(), base.height() + HEADER_H, QImage::Format_RGB32);
+    constexpr int kHeaderH = 52;
+    QImage out(base.width(), base.height() + kHeaderH, QImage::Format_RGB32);
     out.fill(Qt::white);
     QPainter p(&out);
     QFont f = p.font();
@@ -691,8 +691,8 @@ QImage WifiManagerPanel::renderQrWithHeader(const QString& payload,
     f.setBold(true);
     p.setFont(f);
     p.setPen(Qt::black);
-    p.drawText(QRect(0, 0, out.width(), HEADER_H), Qt::AlignHCenter | Qt::AlignVCenter, location);
-    p.drawImage(0, HEADER_H, base);
+    p.drawText(QRect(0, 0, out.width(), kHeaderH), Qt::AlignHCenter | Qt::AlignVCenter, location);
+    p.drawImage(0, kHeaderH, base);
     p.end();
     return out;
 }
@@ -704,14 +704,14 @@ bool WifiManagerPanel::exportQrToPdf(const QImage& image,
     writer.setTitle(title);
     writer.setPageSize(QPageSize(QPageSize::A4));
     writer.setResolution(kPdfExportResolutionDpi);
-    const QRect pageRect = writer.pageLayout().paintRectPixels(writer.resolution());
-    const int side = std::min(pageRect.width(), pageRect.height());
+    const QRect page_rect = writer.pageLayout().paintRectPixels(writer.resolution());
+    const int side = std::min(page_rect.width(), page_rect.height());
     const QImage scaled = image.scaled(side, side, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     QPainter painter(&writer);
     if (!painter.isActive()) {
         return false;
     }
-    painter.drawImage((pageRect.width() - scaled.width()) / kCenteringDivisor, 0, scaled);
+    painter.drawImage((page_rect.width() - scaled.width()) / kCenteringDivisor, 0, scaled);
     painter.end();
     return true;
 }
@@ -720,56 +720,56 @@ QWidget* WifiManagerPanel::buildQrFormatPage(const QString& payload,
                                              const QString& location,
                                              QrWizardControls& ctl) {
     auto* page = new QWidget;
-    auto* topRow = new QHBoxLayout;
+    auto* top_row = new QHBoxLayout;
 
-    const QImage previewImg = renderQrWithHeader(payload, location, true)
-                                  .scaled(sak::kQrImageSize,
-                                          sak::kQrImageSize,
-                                          Qt::KeepAspectRatio,
-                                          Qt::SmoothTransformation);
+    const QImage preview_img = renderQrWithHeader(payload, location, true)
+                                   .scaled(sak::kQrImageSize,
+                                           sak::kQrImageSize,
+                                           Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation);
     ctl.previewLabel = new QLabel(page);
-    ctl.previewLabel->setPixmap(QPixmap::fromImage(previewImg));
+    ctl.previewLabel->setPixmap(QPixmap::fromImage(preview_img));
     ctl.previewLabel->setFixedSize(sak::kQrImageSize, sak::kQrImageSize);
     ctl.previewLabel->setAlignment(Qt::AlignCenter);
     ctl.previewLabel->setStyleSheet(
         sak::ui::borderedPreviewStyle(sak::ui::kColorBorderDefault, sak::ui::kColorBgWhite));
     ctl.previewLabel->setAccessibleName(QStringLiteral("QR code preview"));
 
-    auto* optWidget = new QWidget(page);
-    auto* optLayout = new QVBoxLayout(optWidget);
-    optLayout->setContentsMargins(
+    auto* opt_widget = new QWidget(page);
+    auto* opt_layout = new QVBoxLayout(opt_widget);
+    opt_layout->setContentsMargins(
         sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
-    optLayout->addWidget(new QLabel("Select export format(s):"));
+    opt_layout->addWidget(new QLabel("Select export format(s):"));
     ctl.chkPng = new QCheckBox("PNG");
     ctl.chkPng->setChecked(true);
     ctl.chkPdf = new QCheckBox("PDF");
     ctl.chkJpg = new QCheckBox("JPG");
     ctl.chkBmp = new QCheckBox("BMP");
-    optLayout->addWidget(ctl.chkPng);
-    optLayout->addWidget(ctl.chkPdf);
-    optLayout->addWidget(ctl.chkJpg);
-    optLayout->addWidget(ctl.chkBmp);
-    optLayout->addSpacing(sak::ui::kSpacingDefault);
-    ctl.headerToggle = new LogToggleSwitch(tr("Location header"), optWidget);
+    opt_layout->addWidget(ctl.chkPng);
+    opt_layout->addWidget(ctl.chkPdf);
+    opt_layout->addWidget(ctl.chkJpg);
+    opt_layout->addWidget(ctl.chkBmp);
+    opt_layout->addSpacing(sak::ui::kSpacingDefault);
+    ctl.headerToggle = new LogToggleSwitch(tr("Location header"), opt_widget);
     ctl.headerToggle->setChecked(true);
-    optLayout->addWidget(ctl.headerToggle);
-    optLayout->addStretch();
+    opt_layout->addWidget(ctl.headerToggle);
+    opt_layout->addStretch();
 
-    topRow->addWidget(ctl.previewLabel);
-    topRow->addWidget(optWidget, 1);
+    top_row->addWidget(ctl.previewLabel);
+    top_row->addWidget(opt_widget, 1);
 
-    auto* outerLayout = new QVBoxLayout(page);
-    auto* btnRow = new QHBoxLayout;
+    auto* outer_layout = new QVBoxLayout(page);
+    auto* btn_row = new QHBoxLayout;
     ctl.btnCancel0 = new QPushButton(tr("Cancel"));
     ctl.btnCancel0->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     ctl.btnNext = new QPushButton(tr("Next >"));
     ctl.btnNext->setDefault(true);
     ctl.btnNext->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    btnRow->addStretch();
-    btnRow->addWidget(ctl.btnCancel0);
-    btnRow->addWidget(ctl.btnNext);
-    outerLayout->addLayout(topRow);
-    outerLayout->addLayout(btnRow);
+    btn_row->addStretch();
+    btn_row->addWidget(ctl.btnCancel0);
+    btn_row->addWidget(ctl.btnNext);
+    outer_layout->addLayout(top_row);
+    outer_layout->addLayout(btn_row);
     return page;
 }
 
@@ -777,23 +777,23 @@ QWidget* WifiManagerPanel::buildQrOutputPage(QrWizardControls& ctl) {
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->addWidget(new QLabel(tr("Choose output directory:")));
-    auto* dirRow = new QHBoxLayout;
+    auto* dir_row = new QHBoxLayout;
     ctl.dirEdit = new QLineEdit;
     ctl.dirEdit->setReadOnly(true);
     ctl.dirEdit->setPlaceholderText(tr("Click Browse to select a folder..."));
     ctl.btnBrowse = new QPushButton(tr("Browse..."));
     ctl.btnBrowse->setMinimumWidth(kQrBrowseButtonWidth);
     ctl.btnBrowse->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    dirRow->addWidget(ctl.dirEdit, 1);
-    dirRow->addWidget(ctl.btnBrowse);
-    layout->addLayout(dirRow);
+    dir_row->addWidget(ctl.dirEdit, 1);
+    dir_row->addWidget(ctl.btnBrowse);
+    layout->addLayout(dir_row);
     ctl.subLabel = new QLabel(tr("Files will be saved to: (select a folder first)"));
     ctl.subLabel->setWordWrap(true);
     ctl.subLabel->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeSmall));
     layout->addWidget(ctl.subLabel);
     layout->addStretch();
-    auto* btnRow = new QHBoxLayout;
+    auto* btn_row = new QHBoxLayout;
     ctl.btnBack = new QPushButton("< Back");
     ctl.btnBack->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     ctl.btnCancel1 = new QPushButton("Cancel");
@@ -802,11 +802,11 @@ QWidget* WifiManagerPanel::buildQrOutputPage(QrWizardControls& ctl) {
     ctl.btnGenerate->setDefault(true);
     ctl.btnGenerate->setEnabled(false);
     ctl.btnGenerate->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    btnRow->addWidget(ctl.btnBack);
-    btnRow->addStretch();
-    btnRow->addWidget(ctl.btnCancel1);
-    btnRow->addWidget(ctl.btnGenerate);
-    layout->addLayout(btnRow);
+    btn_row->addWidget(ctl.btnBack);
+    btn_row->addStretch();
+    btn_row->addWidget(ctl.btnCancel1);
+    btn_row->addWidget(ctl.btnGenerate);
+    layout->addLayout(btn_row);
     return page;
 }
 
@@ -836,7 +836,7 @@ void WifiManagerPanel::connectSingleQrWizard(QDialog* dlg,
     QObject::connect(ctl.btnCancel1, &QPushButton::clicked, dlg, &QDialog::reject);
     QObject::connect(ctl.btnBack, &QPushButton::clicked, [stack]() { stack->setCurrentIndex(0); });
     QObject::connect(
-        ctl.btnBrowse, &QPushButton::clicked, [dlg, ctl, subName = content.sub_name]() {
+        ctl.btnBrowse, &QPushButton::clicked, [dlg, ctl, sub_name = content.sub_name]() {
             const QString start =
                 ctl.dirEdit->text().isEmpty()
                     ? QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)
@@ -847,7 +847,7 @@ void WifiManagerPanel::connectSingleQrWizard(QDialog* dlg,
                 return;
             }
             ctl.dirEdit->setText(chosen);
-            ctl.subLabel->setText(QString("Files will be saved to: %1/%2/").arg(chosen, subName));
+            ctl.subLabel->setText(QString("Files will be saved to: %1/%2/").arg(chosen, sub_name));
             ctl.btnGenerate->setEnabled(true);
         });
     QObject::connect(ctl.btnGenerate, &QPushButton::clicked, [this, dlg, ctl, content]() {
@@ -857,13 +857,13 @@ void WifiManagerPanel::connectSingleQrWizard(QDialog* dlg,
 
 void WifiManagerPanel::saveCheckedFormats(QDialog* dlg,
                                           QrWizardControls ctl,
-                                          const QImage& finalImg,
+                                          const QImage& final_img,
                                           const QrExportContent& content,
                                           QStringList& saved) {
-    const QString outDir = ctl.dirEdit->text() + "/" + content.sub_name;
-    auto savePlain = [&](const QString& ext, const QString& fmt) {
-        const QString path = outDir + "/" + content.sub_name + "." + ext;
-        if (!finalImg.save(path, fmt.toUtf8().constData())) {
+    const QString out_dir = ctl.dirEdit->text() + "/" + content.sub_name;
+    auto save_plain = [&](const QString& ext, const QString& fmt) {
+        const QString path = out_dir + "/" + content.sub_name + "." + ext;
+        if (!final_img.save(path, fmt.toUtf8().constData())) {
             sak::logWarning(("Failed to save " + ext.toUpper() + ": " + path).toStdString());
             sak::showWarningLogged(dlg,
                                    "Export Error",
@@ -873,19 +873,19 @@ void WifiManagerPanel::saveCheckedFormats(QDialog* dlg,
         }
     };
     if (ctl.chkPng->isChecked()) {
-        savePlain("png", "PNG");
+        save_plain("png", "PNG");
     }
     if (ctl.chkJpg->isChecked()) {
-        savePlain("jpg", "JPEG");
+        save_plain("jpg", "JPEG");
     }
     if (ctl.chkBmp->isChecked()) {
-        savePlain("bmp", "BMP");
+        save_plain("bmp", "BMP");
     }
     if (ctl.chkPdf->isChecked()) {
-        const QString pdfPath = outDir + "/" + content.sub_name + ".pdf";
+        const QString pdf_path = out_dir + "/" + content.sub_name + ".pdf";
         const QString title = content.ssid.isEmpty() ? QStringLiteral("WiFi QR Code")
                                                      : content.ssid + " WiFi QR Code";
-        if (exportQrToPdf(finalImg, pdfPath, title)) {
+        if (exportQrToPdf(final_img, pdf_path, title)) {
             saved.append("PDF");
         }
     }
@@ -894,23 +894,23 @@ void WifiManagerPanel::saveCheckedFormats(QDialog* dlg,
 void WifiManagerPanel::executeSingleQrExport(QDialog* dlg,
                                              QrWizardControls ctl,
                                              const QrExportContent& content) {
-    const QString baseDir = ctl.dirEdit->text();
-    if (baseDir.isEmpty()) {
+    const QString base_dir = ctl.dirEdit->text();
+    if (base_dir.isEmpty()) {
         return;
     }
-    const QString outDir = baseDir + "/" + content.sub_name;
-    if (!QDir().mkpath(outDir)) {
-        sak::logWarning(("Could not create output folder: " + outDir).toStdString());
-        sak::showWarningLogged(dlg, "Error", "Could not create output folder:\n" + outDir);
+    const QString out_dir = base_dir + "/" + content.sub_name;
+    if (!QDir().mkpath(out_dir)) {
+        sak::logWarning(("Could not create output folder: " + out_dir).toStdString());
+        sak::showWarningLogged(dlg, "Error", "Could not create output folder:\n" + out_dir);
         return;
     }
-    const bool showHeader = ctl.headerToggle->isChecked();
-    const QImage finalImg = renderQrWithHeader(content.payload, content.location, showHeader);
+    const bool show_header = ctl.headerToggle->isChecked();
+    const QImage final_img = renderQrWithHeader(content.payload, content.location, show_header);
     QStringList saved;
-    saveCheckedFormats(dlg, ctl, finalImg, content, saved);
+    saveCheckedFormats(dlg, ctl, final_img, content, saved);
     dlg->accept();
     if (!saved.isEmpty()) {
-        Q_EMIT statusMessage(QString("Saved %1 to: %2").arg(saved.join(", "), outDir),
+        Q_EMIT statusMessage(QString("Saved %1 to: %2").arg(saved.join(", "), out_dir),
                              sak::kTimerStatusMessageMs);
     }
 }
@@ -929,173 +929,173 @@ void WifiManagerPanel::showSingleQrWizard(const WifiConfig& cfg) {
     dlg.setWindowTitle("Generate QR Code");
     dlg.setMinimumWidth(sak::kDialogWidthMedium);
 
-    auto* mainLayout = new QVBoxLayout(&dlg);
+    auto* main_layout = new QVBoxLayout(&dlg);
     auto* stack = new QStackedWidget(&dlg);
-    mainLayout->addWidget(stack);
+    main_layout->addWidget(stack);
 
     QrWizardControls ctl;
     stack->addWidget(buildQrFormatPage(payload, location, ctl));
     stack->addWidget(buildQrOutputPage(ctl));
 
-    const QString rawName = location.isEmpty() ? ssid : location + "_" + ssid;
-    const QString subName = QString(rawName).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+    const QString raw_name = location.isEmpty() ? ssid : location + "_" + ssid;
+    const QString sub_name = QString(raw_name).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
 
     connectSingleQrWizard(
         &dlg,
         stack,
         ctl,
-        {.payload = payload, .ssid = ssid, .location = location, .sub_name = subName});
+        {.payload = payload, .ssid = ssid, .location = location, .sub_name = sub_name});
     dlg.exec();
 }
 
 bool WifiManagerPanel::executeSingleQrNetwork(const WifiConfig& cfg,
-                                              const QString& baseDir,
-                                              bool showHeader,
+                                              const QString& base_dir,
+                                              bool show_header,
                                               const QrExportFormats& formats) {
-    const QString cfgPayload = buildWifiPayloadFromConfig(cfg);
-    const QString rawName = cfg.location.isEmpty() ? cfg.ssid : cfg.location + "_" + cfg.ssid;
-    const QString subName = QString(rawName).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
-    const QString outDir = baseDir + "/" + subName;
-    if (!QDir().mkpath(outDir)) {
+    const QString cfg_payload = buildWifiPayloadFromConfig(cfg);
+    const QString raw_name = cfg.location.isEmpty() ? cfg.ssid : cfg.location + "_" + cfg.ssid;
+    const QString sub_name = QString(raw_name).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+    const QString out_dir = base_dir + "/" + sub_name;
+    if (!QDir().mkpath(out_dir)) {
         return false;
     }
-    const QImage img = renderQrWithHeader(cfgPayload, cfg.location, showHeader);
-    bool anySaved = false;
-    if (formats.png && img.save(outDir + "/" + subName + ".png", "PNG")) {
-        anySaved = true;
+    const QImage img = renderQrWithHeader(cfg_payload, cfg.location, show_header);
+    bool any_saved = false;
+    if (formats.png && img.save(out_dir + "/" + sub_name + ".png", "PNG")) {
+        any_saved = true;
     }
-    if (formats.jpg && img.save(outDir + "/" + subName + ".jpg", "JPEG")) {
-        anySaved = true;
+    if (formats.jpg && img.save(out_dir + "/" + sub_name + ".jpg", "JPEG")) {
+        any_saved = true;
     }
-    if (formats.bmp && img.save(outDir + "/" + subName + ".bmp", "BMP")) {
-        anySaved = true;
+    if (formats.bmp && img.save(out_dir + "/" + sub_name + ".bmp", "BMP")) {
+        any_saved = true;
     }
     if (formats.pdf) {
-        exportQrToPdf(img, outDir + "/" + subName + ".pdf", cfg.ssid + " WiFi QR Code");
-        anySaved = true;
+        exportQrToPdf(img, out_dir + "/" + sub_name + ".pdf", cfg.ssid + " WiFi QR Code");
+        any_saved = true;
     }
-    return anySaved;
+    return any_saved;
 }
 
 void WifiManagerPanel::executeBatchQrExport(QDialog* dlg,
                                             const QList<WifiConfig>& sources,
-                                            const QString& baseDir,
-                                            bool showHeader,
+                                            const QString& base_dir,
+                                            bool show_header,
                                             const QrExportFormats& formats) {
     Q_ASSERT(!sources.isEmpty());
-    Q_ASSERT(!baseDir.isEmpty());
+    Q_ASSERT(!base_dir.isEmpty());
     int saved = 0;
     int failed = 0;
     for (const WifiConfig& cfg : sources) {
         if (cfg.ssid.isEmpty()) {
             continue;
         }
-        executeSingleQrNetwork(cfg, baseDir, showHeader, formats) ? ++saved : ++failed;
+        executeSingleQrNetwork(cfg, base_dir, show_header, formats) ? ++saved : ++failed;
     }
     dlg->accept();
     const QString msg =
         failed > 0 ? QString("Batch QR: saved %1 network(s) to %2 (%3 failed).")
                          .arg(saved)
-                         .arg(baseDir)
+                         .arg(base_dir)
                          .arg(failed)
-                   : QString("Batch QR: saved %1 network(s) to: %2").arg(saved).arg(baseDir);
+                   : QString("Batch QR: saved %1 network(s) to: %2").arg(saved).arg(base_dir);
     Q_EMIT statusMessage(msg, sak::kTimerStatusExtendedMs);
 }
 
 namespace {
 
 struct BatchQrDialogUi {
-    QCheckBox* chkPng{nullptr};
-    QCheckBox* chkPdf{nullptr};
-    QCheckBox* chkJpg{nullptr};
-    QCheckBox* chkBmp{nullptr};
-    LogToggleSwitch* headerToggle{nullptr};
-    QLineEdit* dirEdit{nullptr};
-    QLabel* subLabel{nullptr};
-    QPushButton* btnBrowse{nullptr};
-    QPushButton* btnCancel{nullptr};
-    QPushButton* btnGen{nullptr};
+    QCheckBox* chk_png{nullptr};
+    QCheckBox* chk_pdf{nullptr};
+    QCheckBox* chk_jpg{nullptr};
+    QCheckBox* chk_bmp{nullptr};
+    LogToggleSwitch* header_toggle{nullptr};
+    QLineEdit* dir_edit{nullptr};
+    QLabel* sub_label{nullptr};
+    QPushButton* btn_browse{nullptr};
+    QPushButton* btn_cancel{nullptr};
+    QPushButton* btn_gen{nullptr};
 };
 
-BatchQrDialogUi buildBatchQrDialogUi(QDialog* dlg, int networkCount) {
-    Q_ASSERT(networkCount >= 0);
+BatchQrDialogUi buildBatchQrDialogUi(QDialog* dlg, int network_count) {
+    Q_ASSERT(network_count >= 0);
     Q_ASSERT(dlg);
 
     BatchQrDialogUi ui;
-    dlg->setWindowTitle(QString("Batch QR Export (%1 networks)").arg(networkCount));
+    dlg->setWindowTitle(QString("Batch QR Export (%1 networks)").arg(network_count));
     dlg->setMinimumWidth(kBatchQrDialogMinWidth);
 
     auto* layout = new QVBoxLayout(dlg);
     layout->addWidget(
-        new QLabel(QString("Generate QR codes for %1 selected networks:").arg(networkCount), dlg));
+        new QLabel(QString("Generate QR codes for %1 selected networks:").arg(network_count), dlg));
     layout->addSpacing(sak::ui::kSpacingSmall);
     layout->addWidget(new QLabel("Export format(s):", dlg));
 
-    ui.chkPng = new QCheckBox("PNG", dlg);
-    ui.chkPng->setChecked(true);
-    ui.chkPdf = new QCheckBox("PDF", dlg);
-    ui.chkJpg = new QCheckBox("JPG", dlg);
-    ui.chkBmp = new QCheckBox("BMP", dlg);
-    for (auto* chk : {ui.chkPng, ui.chkPdf, ui.chkJpg, ui.chkBmp}) {
+    ui.chk_png = new QCheckBox("PNG", dlg);
+    ui.chk_png->setChecked(true);
+    ui.chk_pdf = new QCheckBox("PDF", dlg);
+    ui.chk_jpg = new QCheckBox("JPG", dlg);
+    ui.chk_bmp = new QCheckBox("BMP", dlg);
+    for (auto* chk : {ui.chk_png, ui.chk_pdf, ui.chk_jpg, ui.chk_bmp}) {
         layout->addWidget(chk);
     }
 
     layout->addSpacing(sak::ui::kSpacingMedium);
-    ui.headerToggle = new LogToggleSwitch(QObject::tr("Location header"), dlg);
-    ui.headerToggle->setChecked(true);
-    layout->addWidget(ui.headerToggle);
+    ui.header_toggle = new LogToggleSwitch(QObject::tr("Location header"), dlg);
+    ui.header_toggle->setChecked(true);
+    layout->addWidget(ui.header_toggle);
     layout->addSpacing(sak::ui::kSpacingMedium);
 
     layout->addWidget(
         new QLabel(QObject::tr("Output directory (one subfolder per network):"), dlg));
-    auto* dirRow = new QHBoxLayout;
-    ui.dirEdit = new QLineEdit(dlg);
-    ui.dirEdit->setReadOnly(true);
-    ui.dirEdit->setPlaceholderText(QObject::tr("Click Browse..."));
-    ui.btnBrowse = new QPushButton(QObject::tr("Browse..."), dlg);
-    ui.btnBrowse->setMinimumWidth(kQrBrowseButtonWidth);
-    ui.btnBrowse->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    dirRow->addWidget(ui.dirEdit, 1);
-    dirRow->addWidget(ui.btnBrowse);
-    layout->addLayout(dirRow);
+    auto* dir_row = new QHBoxLayout;
+    ui.dir_edit = new QLineEdit(dlg);
+    ui.dir_edit->setReadOnly(true);
+    ui.dir_edit->setPlaceholderText(QObject::tr("Click Browse..."));
+    ui.btn_browse = new QPushButton(QObject::tr("Browse..."), dlg);
+    ui.btn_browse->setMinimumWidth(kQrBrowseButtonWidth);
+    ui.btn_browse->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    dir_row->addWidget(ui.dir_edit, 1);
+    dir_row->addWidget(ui.btn_browse);
+    layout->addLayout(dir_row);
 
-    ui.subLabel = new QLabel("", dlg);
-    ui.subLabel->setWordWrap(true);
-    ui.subLabel->setStyleSheet(
+    ui.sub_label = new QLabel("", dlg);
+    ui.sub_label->setWordWrap(true);
+    ui.sub_label->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeSmall));
-    layout->addWidget(ui.subLabel);
+    layout->addWidget(ui.sub_label);
 
     layout->addStretch();
-    auto* btnRow = new QHBoxLayout;
-    ui.btnCancel = new QPushButton("Cancel", dlg);
-    ui.btnCancel->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    ui.btnGen = new QPushButton("Batch Generate", dlg);
-    ui.btnGen->setDefault(true);
-    ui.btnGen->setEnabled(false);
-    ui.btnGen->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    btnRow->addStretch();
-    btnRow->addWidget(ui.btnCancel);
-    btnRow->addWidget(ui.btnGen);
-    layout->addLayout(btnRow);
+    auto* btn_row = new QHBoxLayout;
+    ui.btn_cancel = new QPushButton("Cancel", dlg);
+    ui.btn_cancel->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    ui.btn_gen = new QPushButton("Batch Generate", dlg);
+    ui.btn_gen->setDefault(true);
+    ui.btn_gen->setEnabled(false);
+    ui.btn_gen->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    btn_row->addStretch();
+    btn_row->addWidget(ui.btn_cancel);
+    btn_row->addWidget(ui.btn_gen);
+    layout->addLayout(btn_row);
 
     return ui;
 }
 
 struct MultiNetworkQrDialogUi {
-    QLabel* idxLbl{nullptr};
-    QLabel* titleLbl{nullptr};
-    QLabel* imgLbl{nullptr};
-    QPushButton* prevBtn{nullptr};
-    QPushButton* nextBtn{nullptr};
-    QPushButton* closeBtn{nullptr};
+    QLabel* idx_lbl{nullptr};
+    QLabel* title_lbl{nullptr};
+    QLabel* img_lbl{nullptr};
+    QPushButton* prev_btn{nullptr};
+    QPushButton* next_btn{nullptr};
+    QPushButton* close_btn{nullptr};
 };
 
-MultiNetworkQrDialogUi buildMultiNetworkQrDialogUi(QDialog* dlg, int networkCount) {
-    Q_ASSERT(networkCount >= 0);
+MultiNetworkQrDialogUi buildMultiNetworkQrDialogUi(QDialog* dlg, int network_count) {
+    Q_ASSERT(network_count >= 0);
     Q_ASSERT(dlg);
 
     MultiNetworkQrDialogUi ui;
-    dlg->setWindowTitle(QString("Connect with Phone / Tablet (%1 networks)").arg(networkCount));
+    dlg->setWindowTitle(QString("Connect with Phone / Tablet (%1 networks)").arg(network_count));
     dlg->setMinimumSize(kQrMultiDialogWidth, kQrMultiDialogHeight);
     dlg->resize(kQrMultiDialogWidth, kQrMultiDialogHeight);
 
@@ -1106,49 +1106,49 @@ MultiNetworkQrDialogUi buildMultiNetworkQrDialogUi(QDialog* dlg, int networkCoun
                                sak::ui::kMarginLarge);
     layout->setSpacing(sak::ui::kSpacingMedium);
 
-    ui.idxLbl = new QLabel(dlg);
-    ui.idxLbl->setAlignment(Qt::AlignCenter);
-    ui.idxLbl->setStyleSheet(
+    ui.idx_lbl = new QLabel(dlg);
+    ui.idx_lbl->setAlignment(Qt::AlignCenter);
+    ui.idx_lbl->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeNote));
-    layout->addWidget(ui.idxLbl);
+    layout->addWidget(ui.idx_lbl);
 
-    ui.titleLbl = new QLabel(dlg);
-    ui.titleLbl->setAlignment(Qt::AlignCenter);
-    ui.titleLbl->setStyleSheet(sak::ui::fontSizeStyle(sak::ui::kFontSizeSection));
-    layout->addWidget(ui.titleLbl);
+    ui.title_lbl = new QLabel(dlg);
+    ui.title_lbl->setAlignment(Qt::AlignCenter);
+    ui.title_lbl->setStyleSheet(sak::ui::fontSizeStyle(sak::ui::kFontSizeSection));
+    layout->addWidget(ui.title_lbl);
 
-    ui.imgLbl = new QLabel(dlg);
-    ui.imgLbl->setAlignment(Qt::AlignCenter);
-    ui.imgLbl->setStyleSheet(
+    ui.img_lbl = new QLabel(dlg);
+    ui.img_lbl->setAlignment(Qt::AlignCenter);
+    ui.img_lbl->setStyleSheet(
         sak::ui::imagePreviewStyle(sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
-    ui.imgLbl->setFixedSize(kQrDisplaySize, kQrDisplaySize);
-    ui.imgLbl->setAccessibleName(QStringLiteral("WiFi QR code"));
-    layout->addWidget(ui.imgLbl, 0, Qt::AlignHCenter);
+    ui.img_lbl->setFixedSize(kQrDisplaySize, kQrDisplaySize);
+    ui.img_lbl->setAccessibleName(QStringLiteral("WiFi QR code"));
+    layout->addWidget(ui.img_lbl, 0, Qt::AlignHCenter);
 
-    auto* hintLbl = new QLabel(
+    auto* hint_lbl = new QLabel(
         "Scan this QR code with your phone or tablet\n"
         "to connect to the network.",
         dlg);
-    hintLbl->setAlignment(Qt::AlignCenter);
-    hintLbl->setStyleSheet(
+    hint_lbl->setAlignment(Qt::AlignCenter);
+    hint_lbl->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextSecondary, sak::ui::kFontSizeNote));
-    layout->addWidget(hintLbl);
+    layout->addWidget(hint_lbl);
 
-    auto* navBar = new QHBoxLayout();
-    ui.prevBtn = new QPushButton(QObject::tr("< Prev"), dlg);
-    ui.nextBtn = new QPushButton(QObject::tr("Next >"), dlg);
-    ui.closeBtn = new QPushButton("Close", dlg);
-    ui.prevBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    ui.nextBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    ui.closeBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    ui.prevBtn->setMinimumWidth(kQrNavButtonWidth);
-    ui.nextBtn->setMinimumWidth(kQrNavButtonWidth);
-    navBar->addWidget(ui.prevBtn);
-    navBar->addStretch();
-    navBar->addWidget(ui.closeBtn);
-    navBar->addStretch();
-    navBar->addWidget(ui.nextBtn);
-    layout->addLayout(navBar);
+    auto* nav_bar = new QHBoxLayout();
+    ui.prev_btn = new QPushButton(QObject::tr("< Prev"), dlg);
+    ui.next_btn = new QPushButton(QObject::tr("Next >"), dlg);
+    ui.close_btn = new QPushButton("Close", dlg);
+    ui.prev_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    ui.next_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    ui.close_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    ui.prev_btn->setMinimumWidth(kQrNavButtonWidth);
+    ui.next_btn->setMinimumWidth(kQrNavButtonWidth);
+    nav_bar->addWidget(ui.prev_btn);
+    nav_bar->addStretch();
+    nav_bar->addWidget(ui.close_btn);
+    nav_bar->addStretch();
+    nav_bar->addWidget(ui.next_btn);
+    layout->addLayout(nav_bar);
 
     return ui;
 }
@@ -1160,41 +1160,41 @@ void WifiManagerPanel::showBatchQrDialog(const QList<WifiConfig>& sources) {
     QDialog dlg(this);
     const BatchQrDialogUi ui = buildBatchQrDialogUi(&dlg, static_cast<int>(sources.size()));
 
-    QObject::connect(ui.btnCancel, &QPushButton::clicked, &dlg, &QDialog::reject);
-    QObject::connect(ui.btnBrowse, &QPushButton::clicked, &dlg, [&]() {
-        const QString start = ui.dirEdit->text().isEmpty() ? QStandardPaths::writableLocation(
-                                                                 QStandardPaths::DesktopLocation)
-                                                           : ui.dirEdit->text();
+    QObject::connect(ui.btn_cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+    QObject::connect(ui.btn_browse, &QPushButton::clicked, &dlg, [&]() {
+        const QString start = ui.dir_edit->text().isEmpty() ? QStandardPaths::writableLocation(
+                                                                  QStandardPaths::DesktopLocation)
+                                                            : ui.dir_edit->text();
         const QString chosen =
             QFileDialog::getExistingDirectory(&dlg, "Select Output Directory", start);
         if (chosen.isEmpty()) {
             return;
         }
-        ui.dirEdit->setText(chosen);
-        ui.subLabel->setText(
+        ui.dir_edit->setText(chosen);
+        ui.sub_label->setText(
             QString("One subfolder will be created per network under: %1").arg(chosen));
-        ui.btnGen->setEnabled(true);
+        ui.btn_gen->setEnabled(true);
     });
 
-    QObject::connect(ui.btnGen, &QPushButton::clicked, &dlg, [&]() {
-        const QString baseDir = ui.dirEdit->text();
-        if (baseDir.isEmpty()) {
+    QObject::connect(ui.btn_gen, &QPushButton::clicked, &dlg, [&]() {
+        const QString base_dir = ui.dir_edit->text();
+        if (base_dir.isEmpty()) {
             return;
         }
-        if (!ui.chkPng->isChecked() && !ui.chkPdf->isChecked() && !ui.chkJpg->isChecked() &&
-            !ui.chkBmp->isChecked()) {
+        if (!ui.chk_png->isChecked() && !ui.chk_pdf->isChecked() && !ui.chk_jpg->isChecked() &&
+            !ui.chk_bmp->isChecked()) {
             sak::logWarning("Select at least one export format.");
             sak::showWarningLogged(&dlg, "No Format", "Select at least one export format.");
             return;
         }
         executeBatchQrExport(&dlg,
                              sources,
-                             baseDir,
-                             ui.headerToggle->isChecked(),
-                             {.png = ui.chkPng->isChecked(),
-                              .pdf = ui.chkPdf->isChecked(),
-                              .jpg = ui.chkJpg->isChecked(),
-                              .bmp = ui.chkBmp->isChecked()});
+                             base_dir,
+                             ui.header_toggle->isChecked(),
+                             {.png = ui.chk_png->isChecked(),
+                              .pdf = ui.chk_pdf->isChecked(),
+                              .jpg = ui.chk_jpg->isChecked(),
+                              .bmp = ui.chk_bmp->isChecked()});
     });
     dlg.exec();
 }
@@ -1246,11 +1246,11 @@ void WifiManagerPanel::exportSingleWindowsScript(const WifiConfig& cfg) {
                                "Windows script (a quote or a control character).");
         return;
     }
-    const QString defaultName = cfg.ssid + "_wifi_connect.cmd";
+    const QString default_name = cfg.ssid + "_wifi_connect.cmd";
     const QString path = QFileDialog::getSaveFileName(
         this,
         "Save Windows Script",
-        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) + "/" + defaultName,
+        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) + "/" + default_name,
         "Windows Batch Script (*.cmd *.bat)");
     if (path.isEmpty()) {
         return;
@@ -1276,11 +1276,11 @@ void WifiManagerPanel::exportSingleWindowsScript(const WifiConfig& cfg) {
 void WifiManagerPanel::exportMultipleWindowsScripts(const QList<WifiConfig>& sources) {
     Q_ASSERT(!sources.isEmpty());
 
-    const QString outDir = QFileDialog::getExistingDirectory(
+    const QString out_dir = QFileDialog::getExistingDirectory(
         this,
         "Select Output Folder for Windows Scripts",
         QStandardPaths::writableLocation(QStandardPaths::DesktopLocation));
-    if (outDir.isEmpty()) {
+    if (out_dir.isEmpty()) {
         return;
     }
 
@@ -1294,9 +1294,9 @@ void WifiManagerPanel::exportMultipleWindowsScripts(const QList<WifiConfig>& sou
             ++failed;
             continue;
         }
-        const QString safeName = QString(cfg.ssid).replace(QRegularExpression("[\\\\/:*?\"<>|]"),
-                                                           "_");
-        const QString path = outDir + "/" + safeName + "_wifi_connect.cmd";
+        const QString safe_name = QString(cfg.ssid).replace(QRegularExpression("[\\\\/:*?\"<>|]"),
+                                                            "_");
+        const QString path = out_dir + "/" + safe_name + "_wifi_connect.cmd";
         QFile file(path);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
             ++failed;
@@ -1314,8 +1314,8 @@ void WifiManagerPanel::exportMultipleWindowsScripts(const QList<WifiConfig>& sou
     }
     const QString msg =
         failed > 0
-            ? QString("Saved %1 script(s) to %2 (%3 failed).").arg(saved).arg(outDir).arg(failed)
-            : QString("Saved %1 Windows script(s) to: %2").arg(saved).arg(outDir);
+            ? QString("Saved %1 script(s) to %2 (%3 failed).").arg(saved).arg(out_dir).arg(failed)
+            : QString("Saved %1 Windows script(s) to: %2").arg(saved).arg(out_dir);
     Q_EMIT statusMessage(msg, sak::kTimerStatusLongMs);
 }
 
@@ -1334,14 +1334,14 @@ void WifiManagerPanel::onExportMacosProfileClicked() {
     const QString xml = buildMacosProfile(sources);
 
     // Derive a sensible default filename
-    const QString defaultName = (sources.size() == 1)
-                                    ? sources.first().ssid + "_wifi.mobileconfig"
-                                    : QString("wifi_%1_networks.mobileconfig").arg(sources.size());
+    const QString default_name = (sources.size() == 1)
+                                     ? sources.first().ssid + "_wifi.mobileconfig"
+                                     : QString("wifi_%1_networks.mobileconfig").arg(sources.size());
 
     const QString path = QFileDialog::getSaveFileName(
         this,
         "Save macOS Profile",
-        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) + "/" + defaultName,
+        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) + "/" + default_name,
         "macOS Configuration Profile (*.mobileconfig)");
     if (path.isEmpty()) {
         return;
@@ -1372,11 +1372,11 @@ void WifiManagerPanel::onExportMacosProfileClicked() {
 void WifiManagerPanel::onSaveTableClicked() {
     Q_ASSERT(m_network_table);
     // Collect checked rows
-    QList<int> checkedRows;
+    QList<int> checked_rows;
     for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
-        auto* item = m_network_table->item(row_index, COL_SELECT);
+        auto* item = m_network_table->item(row_index, kColSelect);
         if ((item != nullptr) && item->checkState() == Qt::Checked) {
-            checkedRows.append(row_index);
+            checked_rows.append(row_index);
         }
     }
 
@@ -1394,16 +1394,16 @@ void WifiManagerPanel::onSaveTableClicked() {
     }
     m_save_path = QFileInfo(path).absolutePath();
 
-    if (!checkedRows.isEmpty()) {
-        saveCheckedRowsToJson(path, checkedRows);
+    if (!checked_rows.isEmpty()) {
+        saveCheckedRowsToJson(path, checked_rows);
     } else {
         saveTableToJson(path);
     }
 }
 
-void WifiManagerPanel::saveCheckedRowsToJson(const QString& path, const QList<int>& checkedRows) {
+void WifiManagerPanel::saveCheckedRowsToJson(const QString& path, const QList<int>& checked_rows) {
     QJsonArray arr;
-    for (const int row_index : checkedRows) {
+    for (const int row_index : checked_rows) {
         const WifiConfig cfg = configFromRow(row_index);
         QJsonObject obj;
         obj["location"] = cfg.location;
@@ -1473,7 +1473,7 @@ void WifiManagerPanel::onConnectWithPhoneClicked() {
 void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg) {
     Q_ASSERT(!cfg.ssid.isEmpty());
     const QString payload = buildWifiPayloadFromConfig(cfg);
-    const QImage qrImg = generateQrImage(payload).scaled(
+    const QImage qr_img = generateQrImage(payload).scaled(
         kQrLargeDisplaySize, kQrLargeDisplaySize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 
     QDialog dlg(this);
@@ -1488,32 +1488,32 @@ void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg) {
                                sak::ui::kMarginXLarge);
     layout->setSpacing(sak::ui::kSpacingDefault);
 
-    auto* titleLbl = new QLabel(QString("<b>%1</b>").arg(cfg.ssid.toHtmlEscaped()), &dlg);
-    titleLbl->setAlignment(Qt::AlignCenter);
-    titleLbl->setStyleSheet(sak::ui::fontSizeStyle(sak::ui::kFontSizeSection));
-    layout->addWidget(titleLbl);
+    auto* title_lbl = new QLabel(QString("<b>%1</b>").arg(cfg.ssid.toHtmlEscaped()), &dlg);
+    title_lbl->setAlignment(Qt::AlignCenter);
+    title_lbl->setStyleSheet(sak::ui::fontSizeStyle(sak::ui::kFontSizeSection));
+    layout->addWidget(title_lbl);
 
-    auto* imgLbl = new QLabel(&dlg);
-    imgLbl->setPixmap(QPixmap::fromImage(qrImg));
-    imgLbl->setAlignment(Qt::AlignCenter);
-    imgLbl->setStyleSheet(
+    auto* img_lbl = new QLabel(&dlg);
+    img_lbl->setPixmap(QPixmap::fromImage(qr_img));
+    img_lbl->setAlignment(Qt::AlignCenter);
+    img_lbl->setStyleSheet(
         sak::ui::imagePreviewStyle(sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
-    imgLbl->setAccessibleName(QStringLiteral("WiFi QR code"));
-    layout->addWidget(imgLbl);
+    img_lbl->setAccessibleName(QStringLiteral("WiFi QR code"));
+    layout->addWidget(img_lbl);
 
-    auto* hintLbl = new QLabel(
+    auto* hint_lbl = new QLabel(
         "Scan this QR code with your phone or tablet\nto connect to the "
         "network.",
         &dlg);
-    hintLbl->setAlignment(Qt::AlignCenter);
-    hintLbl->setStyleSheet(
+    hint_lbl->setAlignment(Qt::AlignCenter);
+    hint_lbl->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextSecondary, sak::ui::kFontSizeNote));
-    layout->addWidget(hintLbl);
+    layout->addWidget(hint_lbl);
 
-    auto* closeBtn = new QPushButton("Close", &dlg);
-    closeBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
-    layout->addWidget(closeBtn);
+    auto* close_btn = new QPushButton("Close", &dlg);
+    close_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    connect(close_btn, &QPushButton::clicked, &dlg, &QDialog::accept);
+    layout->addWidget(close_btn);
 
     dlg.exec();
 }
@@ -1524,35 +1524,35 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
     const MultiNetworkQrDialogUi ui = buildMultiNetworkQrDialogUi(&dlg,
                                                                   static_cast<int>(sources.size()));
 
-    int currentIdx = 0;
+    int current_idx = 0;
 
-    auto updatePage = [&sources, &ui](int idx) {
+    auto update_page = [&sources, &ui](int idx) {
         Q_ASSERT(idx >= 0);
         Q_ASSERT(idx < sources.size());
 
         const WifiConfig& cfg = sources[idx];
         const QString payload = buildWifiPayloadFromConfig(cfg);
-        const QImage qrImg = generateQrImage(payload).scaled(
+        const QImage qr_img = generateQrImage(payload).scaled(
             360, 360, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        ui.imgLbl->setPixmap(QPixmap::fromImage(qrImg));
+        ui.img_lbl->setPixmap(QPixmap::fromImage(qr_img));
 
-        ui.titleLbl->setText(QString("<b>%1</b>")
-                                 .arg(cfg.ssid.isEmpty() ? QStringLiteral("WiFi Network")
-                                                         : cfg.ssid.toHtmlEscaped()));
-        ui.idxLbl->setText(QString("Network %1 of %2").arg(idx + 1).arg(sources.size()));
-        ui.prevBtn->setEnabled(idx > 0);
-        ui.nextBtn->setEnabled(idx < static_cast<int>(sources.size()) - 1);
+        ui.title_lbl->setText(QString("<b>%1</b>")
+                                  .arg(cfg.ssid.isEmpty() ? QStringLiteral("WiFi Network")
+                                                          : cfg.ssid.toHtmlEscaped()));
+        ui.idx_lbl->setText(QString("Network %1 of %2").arg(idx + 1).arg(sources.size()));
+        ui.prev_btn->setEnabled(idx > 0);
+        ui.next_btn->setEnabled(idx < static_cast<int>(sources.size()) - 1);
     };
 
-    connect(ui.prevBtn, &QPushButton::clicked, &dlg, [&currentIdx, &updatePage]() {
-        updatePage(--currentIdx);
+    connect(ui.prev_btn, &QPushButton::clicked, &dlg, [&current_idx, &update_page]() {
+        update_page(--current_idx);
     });
-    connect(ui.nextBtn, &QPushButton::clicked, &dlg, [&currentIdx, &updatePage]() {
-        updatePage(++currentIdx);
+    connect(ui.next_btn, &QPushButton::clicked, &dlg, [&current_idx, &update_page]() {
+        update_page(++current_idx);
     });
-    connect(ui.closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+    connect(ui.close_btn, &QPushButton::clicked, &dlg, &QDialog::accept);
 
-    updatePage(0);
+    update_page(0);
     dlg.exec();
 }
 
@@ -1627,28 +1627,29 @@ QStringList WifiManagerPanel::scanWindowsProfileNames() {
         return {};
     }
     const QString output = result.std_out;
-    QStringList profileNames;
-    const QRegularExpression nameRe(R"(:\s+(.+)$)");
+    QStringList profile_names;
+    const QRegularExpression name_re(R"(:\s+(.+)$)");
     for (const QString& line : output.split('\n')) {
         const QString trimmed = line.trimmed();
         if (!trimmed.contains("All User Profile", Qt::CaseInsensitive) &&
             !trimmed.contains("Current User Profile", Qt::CaseInsensitive)) {
             continue;
         }
-        const auto match = nameRe.match(trimmed);
+        const auto match = name_re.match(trimmed);
         if (!match.hasMatch()) {
             continue;
         }
         const QString name = match.captured(1).trimmed();
         if (!name.isEmpty()) {
-            profileNames.append(name);
+            profile_names.append(name);
         }
     }
-    return profileNames;
+    return profile_names;
 }
 
-WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(const QString& profileName) {
-    Q_ASSERT(!profileName.isEmpty());
+WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(
+    const QString& profile_name) {
+    Q_ASSERT(!profile_name.isEmpty());
     const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
     if (netsh_exe.isEmpty()) {
         sak::logError("Cannot resolve the System32 netsh.exe path; WiFi profile read aborted");
@@ -1658,11 +1659,11 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(const QSt
                                         {QStringLiteral("wlan"),
                                          QStringLiteral("show"),
                                          QStringLiteral("profile"),
-                                         QStringLiteral("name=") + profileName,
+                                         QStringLiteral("name=") + profile_name,
                                          QStringLiteral("key=clear")},
                                         sak::kTimeoutProcessShortMs);
     if (!result.succeeded()) {
-        sak::logWarning("Timed out parsing WiFi profile: {}", profileName.toStdString());
+        sak::logWarning("Timed out parsing WiFi profile: {}", profile_name.toStdString());
         return {};
     }
     const QString detail = result.std_out;
@@ -1671,18 +1672,18 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(const QSt
     QString security = "WPA/WPA2/WPA3";
     bool hidden = false;
 
-    const QRegularExpression keyRe(R"(Key Content\s*:\s+(.+))",
-                                   QRegularExpression::CaseInsensitiveOption);
-    const auto keyMatch = keyRe.match(detail);
-    if (keyMatch.hasMatch()) {
-        password = keyMatch.captured(1).trimmed();
+    const QRegularExpression key_re(R"(Key Content\s*:\s+(.+))",
+                                    QRegularExpression::CaseInsensitiveOption);
+    const auto key_match = key_re.match(detail);
+    if (key_match.hasMatch()) {
+        password = key_match.captured(1).trimmed();
     }
 
-    const QRegularExpression authRe(R"(Authentication\s*:\s+(.+))",
-                                    QRegularExpression::CaseInsensitiveOption);
-    const auto authMatch = authRe.match(detail);
-    if (authMatch.hasMatch()) {
-        const QString auth = authMatch.captured(1).trimmed().toUpper();
+    const QRegularExpression auth_re(R"(Authentication\s*:\s+(.+))",
+                                     QRegularExpression::CaseInsensitiveOption);
+    const auto auth_match = auth_re.match(detail);
+    if (auth_match.hasMatch()) {
+        const QString auth = auth_match.captured(1).trimmed().toUpper();
         if (auth.contains("WEP")) {
             security = "WEP";
         } else if (auth == "OPEN" || auth.contains("NONE")) {
@@ -1690,18 +1691,18 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(const QSt
         }
     }
 
-    const QRegularExpression nonBcRe(R"(Network broadcast\s*:\s+(.+))",
-                                     QRegularExpression::CaseInsensitiveOption);
-    const auto nbMatch = nonBcRe.match(detail);
-    if (nbMatch.hasMatch()) {
+    const QRegularExpression non_bc_re(R"(Network broadcast\s*:\s+(.+))",
+                                       QRegularExpression::CaseInsensitiveOption);
+    const auto nb_match = non_bc_re.match(detail);
+    if (nb_match.hasMatch()) {
         hidden =
-            nbMatch.captured(1).trimmed().compare("Don't broadcast", Qt::CaseInsensitive) == 0 ||
-            nbMatch.captured(1).trimmed().compare("Not broadcasting", Qt::CaseInsensitive) == 0;
+            nb_match.captured(1).trimmed().compare("Don't broadcast", Qt::CaseInsensitive) == 0 ||
+            nb_match.captured(1).trimmed().compare("Not broadcasting", Qt::CaseInsensitive) == 0;
     }
 
     WifiConfig cfg;
     cfg.location = {};
-    cfg.ssid = profileName;
+    cfg.ssid = profile_name;
     cfg.password = password;
     cfg.security = security;
     cfg.hidden = hidden;
@@ -1714,21 +1715,21 @@ void WifiManagerPanel::onSelectionChanged() {
     const int total = m_network_table->rowCount();
     int checked = 0;
     for (int row_index = 0; row_index < total; ++row_index) {
-        auto* item = m_network_table->item(row_index, COL_SELECT);
+        auto* item = m_network_table->item(row_index, kColSelect);
         if ((item != nullptr) && item->checkState() == Qt::Checked) {
             ++checked;
         }
     }
 
     // Update header checkbox tri-state
-    auto* checkHdr = qobject_cast<CheckHeaderView*>(m_network_table->horizontalHeader());
-    if (checkHdr != nullptr) {
+    auto* check_hdr = qobject_cast<CheckHeaderView*>(m_network_table->horizontalHeader());
+    if (check_hdr != nullptr) {
         if (total == 0 || checked == 0) {
-            checkHdr->setTriState(Qt::Unchecked);
+            check_hdr->setTriState(Qt::Unchecked);
         } else if (checked == total) {
-            checkHdr->setTriState(Qt::Checked);
+            check_hdr->setTriState(Qt::Checked);
         } else {
-            checkHdr->setTriState(Qt::PartiallyChecked);
+            check_hdr->setTriState(Qt::PartiallyChecked);
         }
     }
 
@@ -1770,7 +1771,7 @@ void WifiManagerPanel::onSelectionChanged() {
 }
 
 void WifiManagerPanel::onTableItemChanged(QTableWidgetItem* item) {
-    if ((item != nullptr) && item->column() == COL_SELECT) {
+    if ((item != nullptr) && item->column() == kColSelect) {
         onSelectionChanged();
     }
 }
@@ -1783,13 +1784,13 @@ void WifiManagerPanel::onAddToWindowsClicked() {
     Q_EMIT statusMessage("Add to Windows is only supported on Windows.", sak::kTimerStatusWarnMs);
     return;
 #else
-    const QList<int> checkedRows = checkedWifiRows();
-    if (checkedRows.isEmpty()) {
+    const QList<int> checked_rows = checkedWifiRows();
+    if (checked_rows.isEmpty()) {
         Q_EMIT statusMessage("Check at least one network row first.", sak::kTimerStatusMessageMs);
         return;
     }
 
-    const QList<WifiConfig> configs = configsFromRows(checkedRows);
+    const QList<WifiConfig> configs = configsFromRows(checked_rows);
     if (configs.isEmpty()) {
         Q_EMIT statusMessage("Checked rows do not contain any SSIDs.", sak::kTimerStatusMessageMs);
         return;
@@ -1800,14 +1801,14 @@ void WifiManagerPanel::onAddToWindowsClicked() {
 }
 
 QList<int> WifiManagerPanel::checkedWifiRows() const {
-    QList<int> checkedRows;
+    QList<int> checked_rows;
     for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
-        auto* item = m_network_table->item(row_index, COL_SELECT);
+        auto* item = m_network_table->item(row_index, kColSelect);
         if ((item != nullptr) && item->checkState() == Qt::Checked) {
-            checkedRows.append(row_index);
+            checked_rows.append(row_index);
         }
     }
-    return checkedRows;
+    return checked_rows;
 }
 
 QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::configsFromRows(
@@ -1964,25 +1965,25 @@ bool WifiManagerPanel::installWlanProfile(const QString& xml, int row) {
     }
 
     // Use QTemporaryFile with .xml suffix for secure unique temp file
-    QTemporaryFile tmpFile(QDir::tempPath() + QStringLiteral("/sak_wifi_XXXXXX.xml"));
-    tmpFile.setAutoRemove(true);
-    if (!tmpFile.open()) {
+    QTemporaryFile tmp_file(QDir::tempPath() + QStringLiteral("/sak_wifi_XXXXXX.xml"));
+    tmp_file.setAutoRemove(true);
+    if (!tmp_file.open()) {
         return false;
     }
     {
-        QTextStream ts(&tmpFile);
+        QTextStream ts(&tmp_file);
         ts.setEncoding(QStringConverter::Utf8);
         ts << xml;
     }
-    tmpFile.close();
+    tmp_file.close();
 
-    const QString tmpPath = tmpFile.fileName();
+    const QString tmp_path = tmp_file.fileName();
 
     const auto result = sak::runProcess(netsh_exe,
                                         {QStringLiteral("wlan"),
                                          QStringLiteral("add"),
                                          QStringLiteral("profile"),
-                                         QStringLiteral("filename=") + tmpPath,
+                                         QStringLiteral("filename=") + tmp_path,
                                          QStringLiteral("user=all")},
                                         sak::kTimerNetshWaitMs);
     if (result.timed_out) {
@@ -2062,10 +2063,10 @@ QString WifiManagerPanel::buildWifiPayloadFromConfig(const WifiConfig& cfg) {
 // -----------------------------------------------------------------------------
 // QR drawing helper (extracted to keep generateQrImage nesting = 3)
 // -----------------------------------------------------------------------------
-static void drawQrModules(QImage& out, const QString& payload, int imageSize) {
+static void drawQrModules(QImage& out, const QString& payload, int image_size) {
     Q_ASSERT(!payload.isEmpty());
-    Q_ASSERT(imageSize >= 0);
-    constexpr int BORDER = 4;
+    Q_ASSERT(image_size >= 0);
+    constexpr int kBorder = 4;
     // HIGH ECC trades capacity for resilience -- critical because phone cameras
     // often scan QR codes at oblique angles or in poor lighting.
     const qrcodegen::QrCode qr = qrcodegen::QrCode::encodeText(payload.toUtf8().constData(),
@@ -2074,8 +2075,8 @@ static void drawQrModules(QImage& out, const QString& payload, int imageSize) {
     const int modules = qr.getSize();
     // The quiet zone (BORDER) around the QR is required by the spec so
     // scanners can reliably detect the code boundaries.
-    const int totalModules = modules + (BORDER * 2);
-    const double cellSize = static_cast<double>(imageSize) / totalModules;
+    const int total_modules = modules + (kBorder * 2);
+    const double cell_size = static_cast<double>(image_size) / total_modules;
 
     QPainter painter(&out);
     // Antialiasing must be OFF -- sub-pixel blending produces grey edges
@@ -2092,10 +2093,10 @@ static void drawQrModules(QImage& out, const QString& payload, int imageSize) {
             // Compute each cell's pixel rect from (x+1)*cellSize - x*cellSize
             // rather than using a fixed integer cell width; this prevents
             // cumulative rounding drift that would create visible gaps.
-            const int px = static_cast<int>((x + BORDER) * cellSize);
-            const int py = static_cast<int>((y + BORDER) * cellSize);
-            const int pw = static_cast<int>((x + BORDER + 1) * cellSize) - px;
-            const int ph = static_cast<int>((y + BORDER + 1) * cellSize) - py;
+            const int px = static_cast<int>((x + kBorder) * cell_size);
+            const int py = static_cast<int>((y + kBorder) * cell_size);
+            const int pw = static_cast<int>((x + kBorder + 1) * cell_size) - px;
+            const int ph = static_cast<int>((y + kBorder + 1) * cell_size) - py;
             painter.drawRect(px, py, pw, ph);
         }
     }
@@ -2103,16 +2104,16 @@ static void drawQrModules(QImage& out, const QString& payload, int imageSize) {
 
 // static
 QImage WifiManagerPanel::generateQrImage(const QString& payload) {
-    constexpr int IMAGE_SIZE = 640;
+    constexpr int kImageSize = 640;
 
-    QImage out(IMAGE_SIZE, IMAGE_SIZE, QImage::Format_RGB32);
+    QImage out(kImageSize, kImageSize, QImage::Format_RGB32);
     out.fill(Qt::white);
     if (payload.isEmpty()) {
         return out;
     }
 
     try {
-        drawQrModules(out, payload, IMAGE_SIZE);
+        drawQrModules(out, payload, kImageSize);
     } catch (const std::exception& ex) {
         sak::logWarning("QR code generation failed: {}", ex.what());
         QPainter p(&out);
@@ -2139,8 +2140,8 @@ QString WifiManagerPanel::buildWindowsScript(const QString& ssid,
 
 // static
 QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks) {
-    const QString profileUuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toUpper();
-    const QString payloadId = "com.sak.wifi." + profileUuid.left(8).toLower();
+    const QString profile_uuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toUpper();
+    const QString payload_id = "com.sak.wifi." + profile_uuid.left(8).toLower();
     const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
 
     QString plist;
@@ -2152,33 +2153,33 @@ QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks) {
     plist += "  <key>PayloadContent</key>\n  <array>\n";
 
     for (const auto& cfg : networks) {
-        const QString netUuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toUpper();
+        const QString net_uuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toUpper();
         const QString upper = cfg.security.toUpper();
-        QString encType;
+        QString enc_type;
         if (upper.contains("WEP")) {
-            encType = "WEP";
+            enc_type = "WEP";
         } else if (upper.contains("NONE") || upper.contains("OPEN")) {
-            encType = "None";
+            enc_type = "None";
         } else {
-            encType = "WPA";
+            enc_type = "WPA";
         }
 
         plist += "    <dict>\n";
         plist += "      <key>AutoJoin</key><true/>\n";
-        plist += "      <key>EncryptionType</key><string>" + encType + "</string>\n";
+        plist += "      <key>EncryptionType</key><string>" + enc_type + "</string>\n";
         plist += "      <key>HIDDEN_NETWORK</key>";
         plist += cfg.hidden ? "<true/>\n" : "<false/>\n";
-        if (encType != "None" && !cfg.password.isEmpty()) {
+        if (enc_type != "None" && !cfg.password.isEmpty()) {
             plist += "      <key>Password</key><string>" + cfg.password.toHtmlEscaped() +
                      "</"
                      "string>\n";
         }
         plist += "      <key>PayloadDisplayName</key><string>WiFi (" + cfg.ssid.toHtmlEscaped() +
                  ")</string>\n";
-        plist += "      <key>PayloadIdentifier</key><string>com.sak.wifi." + netUuid.toLower() +
+        plist += "      <key>PayloadIdentifier</key><string>com.sak.wifi." + net_uuid.toLower() +
                  "</string>\n";
         plist += "      <key>PayloadType</key><string>com.apple.wifi.managed</string>\n";
-        plist += "      <key>PayloadUUID</key><string>" + netUuid + "</string>\n";
+        plist += "      <key>PayloadUUID</key><string>" + net_uuid + "</string>\n";
         plist += "      <key>PayloadVersion</key><integer>1</integer>\n";
         plist += "      <key>SSID_STR</key><string>" + cfg.ssid.toHtmlEscaped() + "</string>\n";
         plist += "    </dict>\n";
@@ -2187,14 +2188,14 @@ QString WifiManagerPanel::buildMacosProfile(const QList<WifiConfig>& networks) {
     plist += "  </array>\n";
     plist += "  <key>PayloadDescription</key><string>WiFi config by S.A.K. Utility on " + now +
              "</string>\n";
-    const QString displayName = networks.isEmpty() ? "WiFi Networks" : networks.first().ssid;
-    plist += "  <key>PayloadDisplayName</key><string>" + displayName.toHtmlEscaped() +
+    const QString display_name = networks.isEmpty() ? "WiFi Networks" : networks.first().ssid;
+    plist += "  <key>PayloadDisplayName</key><string>" + display_name.toHtmlEscaped() +
              " WiFi</"
              "string>\n";
-    plist += "  <key>PayloadIdentifier</key><string>" + payloadId + "</string>\n";
+    plist += "  <key>PayloadIdentifier</key><string>" + payload_id + "</string>\n";
     plist += "  <key>PayloadRemovalDisallowed</key><false/>\n";
     plist += "  <key>PayloadType</key><string>Configuration</string>\n";
-    plist += "  <key>PayloadUUID</key><string>" + profileUuid + "</string>\n";
+    plist += "  <key>PayloadUUID</key><string>" + profile_uuid + "</string>\n";
     plist += "  <key>PayloadVersion</key><integer>1</integer>\n";
     plist += "</dict>\n</plist>\n";
     return plist;
@@ -2228,13 +2229,13 @@ void WifiManagerPanel::addRowToTable(const WifiConfig& cfg) {
     m_network_table->insertRow(row);
 
     // Checkbox cell (COL_SELECT)
-    auto* checkItem = new QTableWidgetItem();
-    checkItem->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
-    checkItem->setCheckState(Qt::Unchecked);
-    m_network_table->setItem(row, COL_SELECT, checkItem);
+    auto* check_item = new QTableWidgetItem();
+    check_item->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
+    check_item->setCheckState(Qt::Unchecked);
+    m_network_table->setItem(row, kColSelect, check_item);
 
-    m_network_table->setItem(row, COL_LOCATION, new QTableWidgetItem(cfg.location));
-    m_network_table->setItem(row, COL_SSID, new QTableWidgetItem(cfg.ssid));
+    m_network_table->setItem(row, kColLocation, new QTableWidgetItem(cfg.location));
+    m_network_table->setItem(row, kColSsid, new QTableWidgetItem(cfg.ssid));
 
     // Password cell: store real value in item's UserRole; cell widget shows dots + eye toggle
     {
@@ -2243,9 +2244,9 @@ void WifiManagerPanel::addRowToTable(const WifiConfig& cfg) {
                                            : QString(pwd.length(), QChar(kPasswordBulletCharacter));
 
         // Item holds the real password for configFromRow() retrieval
-        auto* pwItem = new QTableWidgetItem(QString{});
-        pwItem->setData(Qt::UserRole, pwd);
-        m_network_table->setItem(row, COL_PASSWORD, pwItem);
+        auto* pw_item = new QTableWidgetItem(QString{});
+        pw_item->setData(Qt::UserRole, pwd);
+        m_network_table->setItem(row, kColPassword, pw_item);
 
         // Visual widget: [dots label] [eye button]
         auto* container = new QWidget;
@@ -2260,31 +2261,32 @@ void WifiManagerPanel::addRowToTable(const WifiConfig& cfg) {
         auto* lbl = new QLabel(dots, container);
         lbl->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
 
-        auto* eyeBtn = new QToolButton(container);
-        eyeBtn->setIcon(QIcon(ui::kIconPasswordEyeOpen));
-        eyeBtn->setIconSize(QSize(kPasswordRevealIconSize, kPasswordRevealIconSize));
-        eyeBtn->setCheckable(true);
-        eyeBtn->setFixedSize(sak::kEyeButtonSize, sak::kEyeButtonSize);
-        eyeBtn->setToolTip("Show/hide password");
-        eyeBtn->setAccessibleName(QStringLiteral("Toggle password visibility"));
-        eyeBtn->setStyleSheet(sak::ui::passwordRevealButtonStyle());
-        eyeBtn->setEnabled(!pwd.isEmpty());
+        auto* eye_btn = new QToolButton(container);
+        eye_btn->setIcon(QIcon(ui::kIconPasswordEyeOpen));
+        eye_btn->setIconSize(QSize(kPasswordRevealIconSize, kPasswordRevealIconSize));
+        eye_btn->setCheckable(true);
+        eye_btn->setFixedSize(sak::kEyeButtonSize, sak::kEyeButtonSize);
+        eye_btn->setToolTip("Show/hide password");
+        eye_btn->setAccessibleName(QStringLiteral("Toggle password visibility"));
+        eye_btn->setStyleSheet(sak::ui::passwordRevealButtonStyle());
+        eye_btn->setEnabled(!pwd.isEmpty());
 
-        QObject::connect(eyeBtn, &QToolButton::toggled, [lbl, eyeBtn, pwd](bool showing) {
+        QObject::connect(eye_btn, &QToolButton::toggled, [lbl, eye_btn, pwd](bool showing) {
             lbl->setText(showing ? pwd
                                  : (pwd.isEmpty()
                                         ? QString{}
                                         : QString(pwd.length(), QChar(kPasswordBulletCharacter))));
-            eyeBtn->setIcon(QIcon(showing ? ui::kIconPasswordEyeClosed : ui::kIconPasswordEyeOpen));
+            eye_btn->setIcon(
+                QIcon(showing ? ui::kIconPasswordEyeClosed : ui::kIconPasswordEyeOpen));
         });
 
         hbox->addWidget(lbl, 1);
-        hbox->addWidget(eyeBtn);
-        m_network_table->setCellWidget(row, COL_PASSWORD, container);
+        hbox->addWidget(eye_btn);
+        m_network_table->setCellWidget(row, kColPassword, container);
     }
 
-    m_network_table->setItem(row, COL_SECURITY, new QTableWidgetItem(cfg.security));
-    m_network_table->setItem(row, COL_HIDDEN, new QTableWidgetItem(cfg.hidden ? "Yes" : "No"));
+    m_network_table->setItem(row, kColSecurity, new QTableWidgetItem(cfg.security));
+    m_network_table->setItem(row, kColHidden, new QTableWidgetItem(cfg.hidden ? "Yes" : "No"));
     m_network_table->scrollToBottom();
     onSelectionChanged();
 }
@@ -2297,13 +2299,13 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::configFromRow(int row) const {
         return item ? item->text() : QString{};
     };
     WifiConfig cfg;
-    cfg.location = text(COL_LOCATION);
-    cfg.ssid = text(COL_SSID);
+    cfg.location = text(kColLocation);
+    cfg.ssid = text(kColSsid);
     // Real password is stored in UserRole (display shows dots)
-    auto* pwItem = m_network_table->item(row, COL_PASSWORD);
-    cfg.password = (pwItem != nullptr) ? pwItem->data(Qt::UserRole).toString() : QString{};
-    cfg.security = text(COL_SECURITY);
-    cfg.hidden = text(COL_HIDDEN).compare("Yes", Qt::CaseInsensitive) == 0;
+    auto* pw_item = m_network_table->item(row, kColPassword);
+    cfg.password = (pw_item != nullptr) ? pw_item->data(Qt::UserRole).toString() : QString{};
+    cfg.security = text(kColSecurity);
+    cfg.hidden = text(kColHidden).compare("Yes", Qt::CaseInsensitive) == 0;
     return cfg;
 }
 
@@ -2319,7 +2321,7 @@ QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::allConfigs() const {
 QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::checkedConfigs() const {
     QList<WifiConfig> list;
     for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
-        auto* item = m_network_table->item(row_index, COL_SELECT);
+        auto* item = m_network_table->item(row_index, kColSelect);
         if ((item != nullptr) && item->checkState() == Qt::Checked) {
             list.append(configFromRow(row_index));
         }
@@ -2331,7 +2333,7 @@ QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::checkedConfigs() const {
 // Search
 // -----------------------------------------------------------------------------
 bool WifiManagerPanel::rowMatchesSearch(int row, const QString& text) const {
-    for (int col = COL_LOCATION; col < COL_COUNT; ++col) {
+    for (int col = kColLocation; col < kColCount; ++col) {
         auto* item = m_network_table->item(row, col);
         if ((item != nullptr) && item->text().contains(text, Qt::CaseInsensitive)) {
             return true;
@@ -2353,7 +2355,7 @@ void WifiManagerPanel::updateSearchMatches(const QString& text) {
 }
 
 static void setRowBackground(QTableWidget* table, int row, const QBrush& brush) {
-    for (int col = COL_LOCATION; col < COL_COUNT; ++col) {
+    for (int col = kColLocation; col < kColCount; ++col) {
         auto* item = table->item(row, col);
         if (item != nullptr) {
             item->setBackground(brush);

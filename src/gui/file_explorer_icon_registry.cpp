@@ -260,8 +260,8 @@ private:
 }
 
 [[nodiscard]] const QVector<IconDescriptor>& iconDescriptors() {
-    static const QVector<IconDescriptor> items = buildIconDescriptors();
-    return items;
+    static const QVector<IconDescriptor> kItems = buildIconDescriptors();
+    return kItems;
 }
 
 }  // namespace

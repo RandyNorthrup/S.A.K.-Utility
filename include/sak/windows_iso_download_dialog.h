@@ -52,14 +52,16 @@ Q_SIGNALS:
 private Q_SLOTS:
     // API result handlers
     void onBuildsFetched(const QList<UupDumpApi::BuildInfo>& builds);
-    void onLanguagesFetched(const QStringList& langCodes, const QMap<QString, QString>& langNames);
-    void onEditionsFetched(const QStringList& editions, const QMap<QString, QString>& editionNames);
+    void onLanguagesFetched(const QStringList& lang_codes,
+                            const QMap<QString, QString>& lang_names);
+    void onEditionsFetched(const QStringList& editions,
+                           const QMap<QString, QString>& edition_names);
 
     // Build progress handlers
     void onPhaseChanged(UupIsoBuilder::Phase phase, const QString& description);
-    void onProgressUpdated(int overallPercent, const QString& detail);
-    void onSpeedUpdated(double downloadSpeedMBps);
-    void onDownloadComplete(const QString& isoPath, qint64 fileSize);
+    void onProgressUpdated(int overall_percent, const QString& detail);
+    void onSpeedUpdated(double download_speed_m_bps);
+    void onDownloadComplete(const QString& iso_path, qint64 file_size);
     void onDownloadError(const QString& error);
     void onStatusMessage(const QString& message);
 
@@ -73,12 +75,12 @@ private Q_SLOTS:
 
 private:
     void setupUi();
-    void setupUi_formSections(QVBoxLayout* mainLayout);
-    void setupUi_buildConfig(QVBoxLayout* mainLayout);
-    void setupUi_buildSelection(QVBoxLayout* mainLayout);
-    void setupUi_languageEdition(QVBoxLayout* mainLayout);
-    void setupUi_saveLocation(QVBoxLayout* mainLayout);
-    void setupUi_progressAndButtons(QVBoxLayout* mainLayout);
+    void setupUi_formSections(QVBoxLayout* main_layout);
+    void setupUi_buildConfig(QVBoxLayout* main_layout);
+    void setupUi_buildSelection(QVBoxLayout* main_layout);
+    void setupUi_languageEdition(QVBoxLayout* main_layout);
+    void setupUi_saveLocation(QVBoxLayout* main_layout);
+    void setupUi_progressAndButtons(QVBoxLayout* main_layout);
     void connectSignals();
     void updateStartButton();
     QString getDefaultSavePath();

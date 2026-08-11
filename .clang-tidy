@@ -94,11 +94,30 @@ CheckOptions:
   - key: readability-identifier-naming.MethodCase
     value: camelBack
 
-  # Members: m_ prefix + snake_case (match existing codebase)
+  # Members: PRIVATE / PROTECTED class members use m_ + snake_case; PUBLIC struct/DTO
+  # members (aggregate result types -- PartitionTarget, PartitionExecutionResult, the
+  # local wizard/widget result structs) use bare snake_case with NO prefix. That split
+  # IS the established codebase convention. Without the Public/Private/Protected overrides
+  # the generic MemberPrefix 'm_' applied to EVERY data member and wrongly demanded m_ on
+  # every public aggregate field -- the same too-broad-config class as the LocalConstant
+  # bug above. The generic Member* keys are kept only as a fallback for members with no
+  # access specifier (e.g. a union); the specific access-scoped keys win everywhere else.
   - key: readability-identifier-naming.MemberPrefix
     value: 'm_'
   - key: readability-identifier-naming.MemberCase
     value: lower_case
+  - key: readability-identifier-naming.PublicMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.PublicMemberPrefix
+    value: ''
+  - key: readability-identifier-naming.PrivateMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.PrivateMemberPrefix
+    value: 'm_'
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.ProtectedMemberPrefix
+    value: 'm_'
 
   # Constants: k prefix + CamelCase
   - key: readability-identifier-naming.ConstantCase

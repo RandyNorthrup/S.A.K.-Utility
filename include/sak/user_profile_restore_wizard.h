@@ -208,9 +208,9 @@ private:
     void loadApps();
     void populateTree(const QVector<RestoreAppInfo>& apps);
     /// @brief Populate one category's app items; returns count of selected apps
-    int populateCategoryApps(QTreeWidgetItem* categoryItem,
+    int populateCategoryApps(QTreeWidgetItem* category_item,
                              const QVector<const RestoreAppInfo*>& apps,
-                             int& totalWithPackage);
+                             int& total_with_package);
     void updateParentCheckState(QTreeWidgetItem* parent);
     /// @brief Collect checked apps from the tree widget
     QVector<RestoreAppInfo> collectSelectedApps() const;
@@ -370,10 +370,10 @@ private:
 private Q_SLOTS:
     void onStartRestore();
     void onCancelRestore();
-    void onOverallProgress(int current, int total, qint64 bytes, qint64 totalBytes);
+    void onOverallProgress(int current, int total, qint64 bytes, qint64 total_bytes);
     void onFileProgress(int current, int total);
     void onStatusUpdate(const QString& username, const QString& operation);
-    void onLogMessage(const QString& message, bool isWarning);
+    void onLogMessage(const QString& message, bool is_warning);
     void onRestoreComplete(bool success, const QString& message);
     void onViewLog();
 };

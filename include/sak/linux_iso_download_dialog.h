@@ -62,21 +62,21 @@ private Q_SLOTS:
     // Downloader progress handlers
     void onPhaseChanged(LinuxISODownloader::Phase phase, const QString& description);
     void onProgressUpdated(int percent, const QString& detail);
-    void onSpeedUpdated(double speedMBps);
-    void onDownloadComplete(const QString& isoPath, qint64 fileSize);
+    void onSpeedUpdated(double speed_m_bps);
+    void onDownloadComplete(const QString& iso_path, qint64 file_size);
     void onDownloadError(const QString& error);
     void onStatusMessage(const QString& message);
 
 private:
     void setupUi();
-    void setupUi_selectionGroup(QVBoxLayout* mainLayout);
-    void setupUi_progressAndButtons(QVBoxLayout* mainLayout);
+    void setupUi_selectionGroup(QVBoxLayout* main_layout);
+    void setupUi_progressAndButtons(QVBoxLayout* main_layout);
     void connectSignals();
     void populateDistroList();
     void updateDistroDetails();
     void updateStartButton();
     void setInputsEnabled(bool enabled);
-    QString getDefaultSavePath(const QString& fileName) const;
+    QString getDefaultSavePath(const QString& file_name) const;
     static QString formatSize(qint64 bytes);
 
     LinuxISODownloader* m_downloader;

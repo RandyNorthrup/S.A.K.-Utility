@@ -569,7 +569,7 @@ void DiagnosticBenchmarkPanel::onSkipStepClicked() {
 
 void DiagnosticBenchmarkPanel::onSuiteStateChanged(DiagnosticController::SuiteState state) {
     // Map state to step index
-    static constexpr int state_to_step[] = {
+    static constexpr int kStateToStep[] = {
         -1,  // Idle
         0,   // HardwareScan
         1,   // SmartAnalysis
@@ -582,10 +582,10 @@ void DiagnosticBenchmarkPanel::onSuiteStateChanged(DiagnosticController::SuiteSt
     };
 
     const int state_idx = static_cast<int>(state);
-    if (state_idx < 0 || state_idx >= static_cast<int>(std::size(state_to_step))) {
+    if (state_idx < 0 || state_idx >= static_cast<int>(std::size(kStateToStep))) {
         return;  // Invalid state -- ignore
     }
-    const int step = state_to_step[state_idx];
+    const int step = kStateToStep[state_idx];
     if (step >= 0) {
         m_current_suite_step = step;
     }
@@ -705,7 +705,7 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
     }
 
     // Color code by thermal warning thresholds.
-    const auto tempHtml = [](int temp) {
+    const auto temp_html = [](int temp) {
         QString color = sak::ui::kStatusColorSuccess;
         if (temp >= kTemperatureCriticalCelsius) {
             color = sak::ui::kStatusColorError;
@@ -726,7 +726,7 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
 
     const auto render = [&](QLabel* label, QProgressBar* bar, bool found, int temp) {
         if (found) {
-            label->setText(tempHtml(temp));
+            label->setText(temp_html(temp));
             bar->setValue(temp);
         } else {
             label->setText(not_available);

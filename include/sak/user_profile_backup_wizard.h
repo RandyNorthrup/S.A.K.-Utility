@@ -435,7 +435,7 @@ class UserProfileBackupExecutePage : public QWizardPage {
 public:
     explicit UserProfileBackupExecutePage(BackupManifest& manifest,
                                           const QVector<UserProfile>& users,
-                                          const QString& destinationPath,
+                                          const QString& destination_path,
                                           QWidget* parent = nullptr);
 
     void initializePage() override;
@@ -443,7 +443,7 @@ public:
 
 private Q_SLOTS:
     void onStartBackup();
-    void onBackupProgress(int current, int total, qint64 bytes, qint64 totalBytes);
+    void onBackupProgress(int current, int total, qint64 bytes, qint64 total_bytes);
     void onBackupComplete(bool success, const QString& message);
     void onLogMessage(const QString& message);
 
@@ -470,7 +470,7 @@ private:
     void recordNetworkSelectionsInManifest(UserProfileBackupWizard* wiz);
 
     /// @brief Save installed apps list to backup directory; false on write failure
-    bool saveInstalledAppsToBackup(const QVector<InstalledAppInfo>& installedApps);
+    bool saveInstalledAppsToBackup(const QVector<InstalledAppInfo>& installed_apps);
 
     /// @brief Save WiFi profiles to backup directory; false on write failure
     bool saveWifiProfilesToBackup(const QVector<WifiProfileInfo>& profiles);
@@ -482,7 +482,7 @@ private:
     bool saveAppDataSourcesToBackup(const QVector<AppDataSourceInfo>& sources);
 
     /// @brief Create, connect, and start the backup worker
-    void connectAndStartBackupWorker(SmartFilter smartFilter, PermissionMode permissionMode);
+    void connectAndStartBackupWorker(SmartFilter smart_filter, PermissionMode permission_mode);
 
     BackupManifest& m_manifest;
     QVector<UserProfile> m_users;  // Owned copy: the source list may not outlive this page

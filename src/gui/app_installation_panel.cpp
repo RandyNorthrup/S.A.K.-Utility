@@ -79,10 +79,10 @@ AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     sak::logInfo("[AppInstallationPanel] setupConnections complete");
 
     // Initialize Chocolatey on startup
-    const QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
+    const QString choco_path = QApplication::applicationDirPath() + "/tools/chocolatey";
     sak::logInfo("[AppInstallationPanel] Initializing Chocolatey from: {}",
-                 chocoPath.toStdString());
-    const bool init_success = m_choco_manager->initialize(chocoPath);
+                 choco_path.toStdString());
+    const bool init_success = m_choco_manager->initialize(choco_path);
     sak::logInfo("[AppInstallationPanel] Chocolatey initialize returned");
     if (!init_success) {
         sak::logWarning("[AppInstallationPanel] Chocolatey initialization failed");
@@ -116,25 +116,25 @@ AppInstallationPanel::~AppInstallationPanel() {
 
 void AppInstallationPanel::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
-    auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(
+    auto* root_layout = new QVBoxLayout(this);
+    root_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
 
-    auto* contentWidget = new QWidget(scrollArea);
-    auto* mainLayout = new QVBoxLayout(contentWidget);
-    mainLayout->setSpacing(sak::ui::kSpacingDefault);
-    mainLayout->setContentsMargins(sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium);
+    auto* content_widget = new QWidget(scroll_area);
+    auto* main_layout = new QVBoxLayout(content_widget);
+    main_layout->setSpacing(sak::ui::kSpacingDefault);
+    main_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium);
 
     // Elevation info banner (hidden when already admin)
-    if (auto* banner = sak::createElevationBanner(contentWidget)) {
-        mainLayout->addWidget(banner);
+    if (auto* banner = sak::createElevationBanner(content_widget)) {
+        main_layout->addWidget(banner);
     }
 
     // === Tab Widget: Online Install | Offline Deploy ===
@@ -142,37 +142,37 @@ void AppInstallationPanel::setupUi() {
     m_tabWidget->setAccessibleName(tr("Application installation mode tabs"));
 
     // --- Tab 0: Online Install ---
-    auto* onlineTab = new QWidget(this);
-    auto* onlineLayout = new QVBoxLayout(onlineTab);
-    onlineLayout->setContentsMargins(
+    auto* online_tab = new QWidget(this);
+    auto* online_layout = new QVBoxLayout(online_tab);
+    online_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone);
-    onlineLayout->setSpacing(sak::ui::kSpacingDefault);
+    online_layout->setSpacing(sak::ui::kSpacingDefault);
 
-    setupUi_searchBar(onlineLayout);
+    setupUi_searchBar(online_layout);
 
-    auto* sideBySide = new QHBoxLayout();
-    sideBySide->setSpacing(sak::ui::kSpacingDefault);
-    setupUi_packageTable(sideBySide);
-    setupUi_queueSection(sideBySide);
-    onlineLayout->addLayout(sideBySide, 1);
+    auto* side_by_side = new QHBoxLayout();
+    side_by_side->setSpacing(sak::ui::kSpacingDefault);
+    setupUi_packageTable(side_by_side);
+    setupUi_queueSection(side_by_side);
+    online_layout->addLayout(side_by_side, 1);
 
-    m_tabWidget->addTab(onlineTab, tr("Online Install"));
+    m_tabWidget->addTab(online_tab, tr("Online Install"));
 
     setupUi_offlineTab(m_tabWidget);
 
-    mainLayout->addWidget(m_tabWidget, 1);
+    main_layout->addWidget(m_tabWidget, 1);
 
-    setupUi_bottomBar(mainLayout);
+    setupUi_bottomBar(main_layout);
 
-    scrollArea->setWidget(contentWidget);
-    rootLayout->addWidget(scrollArea);
+    scroll_area->setWidget(content_widget);
+    root_layout->addWidget(scroll_area);
 }
 
-void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout) {
-    auto* topRow = new QHBoxLayout();
+void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* main_layout) {
+    auto* top_row = new QHBoxLayout();
 
-    auto* presetLabel = new QLabel(tr("Preset:"), this);
-    topRow->addWidget(presetLabel);
+    auto* preset_label = new QLabel(tr("Preset:"), this);
+    top_row->addWidget(preset_label);
 
     m_onlinePresetCombo = new QComboBox(this);
     m_onlinePresetCombo->addItem(tr("-- Select Preset --"));
@@ -181,28 +181,28 @@ void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout) {
     }
     m_onlinePresetCombo->setAccessibleName(QStringLiteral("Preset Package List"));
     m_onlinePresetCombo->setToolTip(tr("Select a preset package list to populate the queue"));
-    topRow->addWidget(m_onlinePresetCombo, 1);
+    top_row->addWidget(m_onlinePresetCombo, 1);
 
-    mainLayout->addLayout(topRow);
+    main_layout->addLayout(top_row);
 }
 
-void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* sideBySide) {
-    auto* searchGroup = new QGroupBox(tr("Search Packages"), this);
-    auto* searchLayout = new QVBoxLayout(searchGroup);
+void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* side_by_side) {
+    auto* search_group = new QGroupBox(tr("Search Packages"), this);
+    auto* search_layout = new QVBoxLayout(search_group);
 
-    auto* searchRow = new QHBoxLayout();
+    auto* search_row = new QHBoxLayout();
     m_searchEdit = new QLineEdit(this);
     m_searchEdit->setPlaceholderText(tr("Search for packages (e.g., chrome, firefox)"));
     m_searchEdit->setClearButtonEnabled(true);
     m_searchEdit->setAccessibleName(QStringLiteral("Package Search"));
-    searchRow->addWidget(m_searchEdit, 1);
+    search_row->addWidget(m_searchEdit, 1);
 
     m_searchButton = new QPushButton(tr("Search"), this);
     m_searchButton->setAccessibleName(QStringLiteral("Search Packages"));
     m_searchButton->setToolTip(QStringLiteral("Search the Chocolatey repository"));
     m_searchButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    searchRow->addWidget(m_searchButton);
-    searchLayout->addLayout(searchRow);
+    search_row->addWidget(m_searchButton);
+    search_layout->addLayout(search_row);
 
     m_onlineResultsModel = new QStandardItemModel(0, kPackageResultColumnCount, this);
     m_onlineResultsModel->setHorizontalHeaderLabels(
@@ -218,56 +218,56 @@ void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* sideBySide) {
                                                                    QHeaderView::Interactive);
     m_onlineResultsTable->setAccessibleName(QStringLiteral("Package Search Results"));
     m_onlineResultsTable->setToolTip(tr("Select a package and click Add to Queue"));
-    searchLayout->addWidget(m_onlineResultsTable, 1);
+    search_layout->addWidget(m_onlineResultsTable, 1);
 
     m_addToQueueButton = new QPushButton(tr("Add Selected to Queue  \u25b6"), this);
     m_addToQueueButton->setEnabled(false);
     m_addToQueueButton->setAccessibleName(QStringLiteral("Add to Queue"));
     m_addToQueueButton->setToolTip(QStringLiteral("Add the selected package to the install queue"));
     m_addToQueueButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    searchLayout->addWidget(m_addToQueueButton);
+    search_layout->addWidget(m_addToQueueButton);
 
-    sideBySide->addWidget(searchGroup, 1);
+    side_by_side->addWidget(search_group, 1);
 }
 
-void AppInstallationPanel::setupUi_queueSection(QHBoxLayout* sideBySide) {
-    auto* queueGroup = new QGroupBox(tr("Install Queue"), this);
-    auto* queueLayout = new QVBoxLayout(queueGroup);
+void AppInstallationPanel::setupUi_queueSection(QHBoxLayout* side_by_side) {
+    auto* queue_group = new QGroupBox(tr("Install Queue"), this);
+    auto* queue_layout = new QVBoxLayout(queue_group);
 
     m_queueList = new QListWidget(this);
     m_queueList->setAlternatingRowColors(true);
     m_queueList->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_queueList->setAccessibleName(QStringLiteral("Install Queue List"));
     m_queueList->setToolTip(QStringLiteral("Packages queued for installation"));
-    queueLayout->addWidget(m_queueList, 1);
+    queue_layout->addWidget(m_queueList, 1);
 
-    setupUi_queueButtons(queueLayout);
-    setupUi_queueProgress(queueLayout);
-    sideBySide->addWidget(queueGroup, 1);
+    setupUi_queueButtons(queue_layout);
+    setupUi_queueProgress(queue_layout);
+    side_by_side->addWidget(queue_group, 1);
 }
 
-void AppInstallationPanel::setupUi_queueButtons(QVBoxLayout* queueLayout) {
-    auto* queueBtnRow = new QHBoxLayout();
+void AppInstallationPanel::setupUi_queueButtons(QVBoxLayout* queue_layout) {
+    auto* queue_btn_row = new QHBoxLayout();
     m_removeFromQueueButton = new QPushButton(tr("Remove"), this);
     m_removeFromQueueButton->setEnabled(false);
     m_removeFromQueueButton->setAccessibleName(QStringLiteral("Remove from Queue"));
     m_removeFromQueueButton->setToolTip(QStringLiteral("Remove selected packages from the queue"));
     applyCompactQueueButton(m_removeFromQueueButton, sak::ui::kCompactPrimaryButtonStyle);
-    queueBtnRow->addWidget(m_removeFromQueueButton);
+    queue_btn_row->addWidget(m_removeFromQueueButton);
 
     m_clearQueueButton = new QPushButton(tr("Clear All"), this);
     m_clearQueueButton->setEnabled(false);
     m_clearQueueButton->setAccessibleName(QStringLiteral("Clear Queue"));
     m_clearQueueButton->setToolTip(QStringLiteral("Remove all packages from the queue"));
     applyCompactQueueButton(m_clearQueueButton, sak::ui::kCompactPrimaryButtonStyle);
-    queueBtnRow->addWidget(m_clearQueueButton);
+    queue_btn_row->addWidget(m_clearQueueButton);
 
     m_installButton = new QPushButton(tr("Install All"), this);
     m_installButton->setEnabled(false);
     m_installButton->setAccessibleName(QStringLiteral("Install All Packages"));
     m_installButton->setToolTip(QStringLiteral("Install all queued packages"));
     applyCompactQueueButton(m_installButton, sak::ui::kCompactPrimaryButtonStyle);
-    queueBtnRow->addWidget(m_installButton);
+    queue_btn_row->addWidget(m_installButton);
 
     m_cancelButton = new QPushButton(tr("Cancel"), this);
     m_cancelButton->setEnabled(false);
@@ -275,9 +275,9 @@ void AppInstallationPanel::setupUi_queueButtons(QVBoxLayout* queueLayout) {
     m_cancelButton->setAccessibleName(QStringLiteral("Cancel Installation"));
     m_cancelButton->setToolTip(QStringLiteral("Cancel the current installation process"));
     applyCompactQueueButton(m_cancelButton, sak::ui::kCompactDangerButtonStyle);
-    queueBtnRow->addWidget(m_cancelButton);
+    queue_btn_row->addWidget(m_cancelButton);
 
-    queueBtnRow->addStretch();
+    queue_btn_row->addStretch();
 
     m_saveQueueButton = new QPushButton(tr("Save List"), this);
     m_saveQueueButton->setAccessibleName(QStringLiteral("Save Install List"));
@@ -286,40 +286,40 @@ void AppInstallationPanel::setupUi_queueButtons(QVBoxLayout* queueLayout) {
     m_saveQueueButton->setEnabled(false);
     applyCompactQueueButton(m_saveQueueButton, sak::ui::kCompactSecondaryButtonStyle);
     connect(m_saveQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::saveQueueToFile);
-    queueBtnRow->addWidget(m_saveQueueButton);
+    queue_btn_row->addWidget(m_saveQueueButton);
 
-    auto* loadQueueBtn = new QPushButton(tr("Load List"), this);
-    loadQueueBtn->setAccessibleName(QStringLiteral("Load Install List"));
-    loadQueueBtn->setToolTip(tr("Load a previously saved app list into the install queue"));
-    applyCompactQueueButton(loadQueueBtn, sak::ui::kCompactSecondaryButtonStyle);
-    connect(loadQueueBtn, &QPushButton::clicked, this, &AppInstallationPanel::loadQueueFromFile);
-    queueBtnRow->addWidget(loadQueueBtn);
+    auto* load_queue_btn = new QPushButton(tr("Load List"), this);
+    load_queue_btn->setAccessibleName(QStringLiteral("Load Install List"));
+    load_queue_btn->setToolTip(tr("Load a previously saved app list into the install queue"));
+    applyCompactQueueButton(load_queue_btn, sak::ui::kCompactSecondaryButtonStyle);
+    connect(load_queue_btn, &QPushButton::clicked, this, &AppInstallationPanel::loadQueueFromFile);
+    queue_btn_row->addWidget(load_queue_btn);
 
-    queueLayout->addLayout(queueBtnRow);
+    queue_layout->addLayout(queue_btn_row);
 }
 
-void AppInstallationPanel::setupUi_queueProgress(QVBoxLayout* queueLayout) {
+void AppInstallationPanel::setupUi_queueProgress(QVBoxLayout* queue_layout) {
     m_progressLabel = new QLabel(this);
     m_progressLabel->setAccessibleName(QStringLiteral("Installation Progress Status"));
     m_progressLabel->setVisible(false);
-    queueLayout->addWidget(m_progressLabel);
+    queue_layout->addWidget(m_progressLabel);
 
     m_progressBar = new QProgressBar(this);
     m_progressBar->setAccessibleName(QStringLiteral("Installation Progress"));
     m_progressBar->setVisible(false);
     m_progressBar->setTextVisible(true);
     m_progressBar->setFormat("%v / %m");
-    queueLayout->addWidget(m_progressBar);
+    queue_layout->addWidget(m_progressBar);
 }
 
-void AppInstallationPanel::setupUi_bottomBar(QVBoxLayout* mainLayout) {
+void AppInstallationPanel::setupUi_bottomBar(QVBoxLayout* main_layout) {
     m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
-    auto* bottomLayout = new QHBoxLayout();
-    bottomLayout->setContentsMargins(
+    auto* bottom_layout = new QHBoxLayout();
+    bottom_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
-    bottomLayout->addWidget(m_logToggle);
-    bottomLayout->addStretch();
-    mainLayout->addLayout(bottomLayout);
+    bottom_layout->addWidget(m_logToggle);
+    bottom_layout->addStretch();
+    main_layout->addLayout(bottom_layout);
 }
 
 void AppInstallationPanel::setupConnections() {
@@ -381,15 +381,15 @@ void AppInstallationPanel::setupWorkerConnections() {
 }
 
 void AppInstallationPanel::setupWorkerLifecycleConnections() {
-    connect(m_worker.get(), &AppInstallationWorker::migrationStarted, this, [this](int totalJobs) {
-        m_progressBar->setRange(0, totalJobs);
+    connect(m_worker.get(), &AppInstallationWorker::migrationStarted, this, [this](int total_jobs) {
+        m_progressBar->setRange(0, total_jobs);
         m_progressBar->setValue(0);
         m_progressBar->setVisible(true);
-        m_progressLabel->setText(tr("Installing 0 of %1...").arg(totalJobs));
+        m_progressLabel->setText(tr("Installing 0 of %1...").arg(total_jobs));
         m_progressLabel->setVisible(true);
-        Q_EMIT progressUpdated(0, totalJobs);
+        Q_EMIT progressUpdated(0, total_jobs);
         Q_EMIT statusMessage("App Installation: Installing packages...", 0);
-        Q_EMIT logOutput(QString("Installation started: %1 package(s)").arg(totalJobs));
+        Q_EMIT logOutput(QString("Installation started: %1 package(s)").arg(total_jobs));
     });
 
     connect(m_worker.get(),
@@ -430,8 +430,8 @@ void AppInstallationPanel::setupWorkerJobConnections() {
     connect(m_worker.get(),
             &AppInstallationWorker::jobProgress,
             this,
-            [this](int entryIndex, const QString& message) {
-                Q_UNUSED(entryIndex);
+            [this](int entry_index, const QString& message) {
+                Q_UNUSED(entry_index);
                 Q_EMIT logOutput(message);
                 Q_EMIT statusMessage(message, 0);
             });
@@ -440,8 +440,8 @@ void AppInstallationPanel::setupWorkerJobConnections() {
         m_worker.get(),
         &AppInstallationWorker::jobStatusChanged,
         this,
-        [this](int entryIndex, const MigrationJob& job) {
-            Q_UNUSED(entryIndex);
+        [this](int entry_index, const MigrationJob& job) {
+            Q_UNUSED(entry_index);
             switch (job.status) {
             case MigrationStatus::Installing:
                 Q_EMIT statusMessage(tr("Installing %1...").arg(job.packageId), 0);
@@ -468,10 +468,10 @@ void AppInstallationPanel::setupWorkerJobConnections() {
 // Offline Deployment Tab
 // ============================================================================
 
-void AppInstallationPanel::setupOfflinePresetRow(QVBoxLayout* offlineLayout) {
-    auto* presetRow = new QHBoxLayout();
-    auto* presetLabel = new QLabel(tr("Preset:"), this);
-    presetRow->addWidget(presetLabel);
+void AppInstallationPanel::setupOfflinePresetRow(QVBoxLayout* offline_layout) {
+    auto* preset_row = new QHBoxLayout();
+    auto* preset_label = new QLabel(tr("Preset:"), this);
+    preset_row->addWidget(preset_label);
 
     m_presetCombo = new QComboBox(this);
     m_presetCombo->addItem(tr("-- Select Preset --"));
@@ -480,27 +480,27 @@ void AppInstallationPanel::setupOfflinePresetRow(QVBoxLayout* offlineLayout) {
     }
     m_presetCombo->setAccessibleName(QStringLiteral("Preset Package List"));
     m_presetCombo->setToolTip(tr("Select a preset package list to populate"));
-    presetRow->addWidget(m_presetCombo, 1);
-    offlineLayout->addLayout(presetRow);
+    preset_row->addWidget(m_presetCombo, 1);
+    offline_layout->addLayout(preset_row);
 }
 
-void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* sideBySide) {
-    auto* searchGroup = new QGroupBox(tr("Search Packages"), this);
-    auto* searchLayout = new QVBoxLayout(searchGroup);
+void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* side_by_side) {
+    auto* search_group = new QGroupBox(tr("Search Packages"), this);
+    auto* search_layout = new QVBoxLayout(search_group);
 
-    auto* searchRow = new QHBoxLayout();
+    auto* search_row = new QHBoxLayout();
     m_offlinePackageEdit = new QLineEdit(this);
     m_offlinePackageEdit->setPlaceholderText(tr("Search for packages (e.g., chrome, firefox)"));
     m_offlinePackageEdit->setClearButtonEnabled(true);
     m_offlinePackageEdit->setAccessibleName(QStringLiteral("Package Search Input"));
-    searchRow->addWidget(m_offlinePackageEdit, 1);
+    search_row->addWidget(m_offlinePackageEdit, 1);
 
     m_offlineSearchButton = new QPushButton(tr("Search"), this);
     m_offlineSearchButton->setAccessibleName(QStringLiteral("Search Packages"));
     m_offlineSearchButton->setToolTip(tr("Search the Chocolatey repository for matching packages"));
     m_offlineSearchButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    searchRow->addWidget(m_offlineSearchButton);
-    searchLayout->addLayout(searchRow);
+    search_row->addWidget(m_offlineSearchButton);
+    search_layout->addLayout(search_row);
 
     m_offlineResultsModel = new QStandardItemModel(0, kPackageResultColumnCount, this);
     m_offlineResultsModel->setHorizontalHeaderLabels(
@@ -516,7 +516,7 @@ void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* sideBySide) {
                                                                     QHeaderView::Interactive);
     m_offlineResultsTable->setAccessibleName(QStringLiteral("Package Search Results"));
     m_offlineResultsTable->setToolTip(tr("Select a package from the search results and click Add"));
-    searchLayout->addWidget(m_offlineResultsTable, 1);
+    search_layout->addWidget(m_offlineResultsTable, 1);
 
     m_offlineAddButton = new QPushButton(tr("Add Selected"), this);
     m_offlineAddButton->setAccessibleName(QStringLiteral("Add Package to List"));
@@ -524,58 +524,58 @@ void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* sideBySide) {
         tr("Add the selected search result to the offline deployment list"));
     m_offlineAddButton->setEnabled(false);
     m_offlineAddButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    searchLayout->addWidget(m_offlineAddButton);
+    search_layout->addWidget(m_offlineAddButton);
 
-    sideBySide->addWidget(searchGroup, 1);
+    side_by_side->addWidget(search_group, 1);
 }
 
-void AppInstallationPanel::setupOfflineDeployListGroup(QHBoxLayout* sideBySide) {
-    auto* listGroup = new QGroupBox(tr("Packages to Deploy"), this);
-    auto* listLayout = new QVBoxLayout(listGroup);
+void AppInstallationPanel::setupOfflineDeployListGroup(QHBoxLayout* side_by_side) {
+    auto* list_group = new QGroupBox(tr("Packages to Deploy"), this);
+    auto* list_layout = new QVBoxLayout(list_group);
 
     m_offlineListWidget = new QListWidget(this);
     m_offlineListWidget->setAlternatingRowColors(true);
     m_offlineListWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_offlineListWidget->setAccessibleName(QStringLiteral("Offline Package List"));
     m_offlineListWidget->setToolTip(tr("Packages that will be included in the deployment bundle"));
-    listLayout->addWidget(m_offlineListWidget, 1);
+    list_layout->addWidget(m_offlineListWidget, 1);
 
-    auto* listBtnRow = new QHBoxLayout();
+    auto* list_btn_row = new QHBoxLayout();
     m_offlineRemoveButton = new QPushButton(tr("Remove"), this);
     m_offlineRemoveButton->setEnabled(false);
     m_offlineRemoveButton->setAccessibleName(QStringLiteral("Remove from List"));
     m_offlineRemoveButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    listBtnRow->addWidget(m_offlineRemoveButton);
+    list_btn_row->addWidget(m_offlineRemoveButton);
 
     m_offlineClearButton = new QPushButton(tr("Clear All"), this);
     m_offlineClearButton->setEnabled(false);
     m_offlineClearButton->setAccessibleName(QStringLiteral("Clear Offline List"));
     m_offlineClearButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    listBtnRow->addWidget(m_offlineClearButton);
-    listBtnRow->addStretch();
+    list_btn_row->addWidget(m_offlineClearButton);
+    list_btn_row->addStretch();
 
     m_saveOfflineListButton = new QPushButton(tr("Save List"), this);
     m_saveOfflineListButton->setAccessibleName(QStringLiteral("Save Offline List"));
     m_saveOfflineListButton->setToolTip(tr("Save the offline package list to a JSON file"));
     m_saveOfflineListButton->setEnabled(false);
     m_saveOfflineListButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    listBtnRow->addWidget(m_saveOfflineListButton);
+    list_btn_row->addWidget(m_saveOfflineListButton);
 
     m_loadOfflineListButton = new QPushButton(tr("Load List"), this);
     m_loadOfflineListButton->setAccessibleName(QStringLiteral("Load Offline List"));
     m_loadOfflineListButton->setToolTip(tr("Load a package list from a JSON file"));
     m_loadOfflineListButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    listBtnRow->addWidget(m_loadOfflineListButton);
+    list_btn_row->addWidget(m_loadOfflineListButton);
 
-    listLayout->addLayout(listBtnRow);
-    sideBySide->addWidget(listGroup, 1);
+    list_layout->addLayout(list_btn_row);
+    side_by_side->addWidget(list_group, 1);
 }
 
-void AppInstallationPanel::setupPayloadModeControls(QVBoxLayout* actionsLayout) {
+void AppInstallationPanel::setupPayloadModeControls(QVBoxLayout* actions_layout) {
     // Payload type selector + air-gap switch. (Provisional labels -- the final
     // user-facing naming is being workshopped; see docs Batch 14 B14-14.)
-    auto* payloadRow = new QHBoxLayout();
-    payloadRow->addWidget(new QLabel(tr("Payload type:"), this));
+    auto* payload_row = new QHBoxLayout();
+    payload_row->addWidget(new QLabel(tr("Payload type:"), this));
     m_payloadModeCombo = new QComboBox(this);
     m_payloadModeCombo->addItem(tr("Full Bundle (installers packed in)"),
                                 static_cast<int>(sak::PayloadMode::Bundle));
@@ -585,23 +585,23 @@ void AppInstallationPanel::setupPayloadModeControls(QVBoxLayout* actionsLayout) 
         tr("Full Bundle: download and pack every installer now (bundle once, deploy many; "
            "minimal bandwidth at deploy).\nThin Bundle: record only package names/versions; the "
            "target fetches each installer at install time."));
-    payloadRow->addWidget(m_payloadModeCombo, 1);
+    payload_row->addWidget(m_payloadModeCombo, 1);
 
     m_airGapCheck = new QCheckBox(tr("Air-gap install (packed only)"), this);
     m_airGapCheck->setToolTip(
         tr("When installing on a disconnected machine, install only fully-packed packages and "
            "skip any that would still need to download."));
-    payloadRow->addWidget(m_airGapCheck);
-    actionsLayout->addLayout(payloadRow);
+    payload_row->addWidget(m_airGapCheck);
+    actions_layout->addLayout(payload_row);
 }
 
-void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offlineLayout) {
-    auto* actionsGroup = new QGroupBox(tr("Deployment Actions"), this);
-    auto* actionsLayout = new QVBoxLayout(actionsGroup);
+void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offline_layout) {
+    auto* actions_group = new QGroupBox(tr("Deployment Actions"), this);
+    auto* actions_layout = new QVBoxLayout(actions_group);
 
-    setupPayloadModeControls(actionsLayout);
+    setupPayloadModeControls(actions_layout);
 
-    auto* actionBtnRow = new QHBoxLayout();
+    auto* action_btn_row = new QHBoxLayout();
 
     m_buildBundleButton = new QPushButton(tr("Build Offline Bundle"), this);
     m_buildBundleButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
@@ -609,7 +609,7 @@ void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offlineLayout) 
     m_buildBundleButton->setAccessibleName(QStringLiteral("Build Offline Bundle"));
     m_buildBundleButton->setToolTip(
         tr("Download and internalize all listed packages into a portable bundle"));
-    actionBtnRow->addWidget(m_buildBundleButton);
+    action_btn_row->addWidget(m_buildBundleButton);
 
     m_directDownloadButton = new QPushButton(tr("Direct Download"), this);
     m_directDownloadButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
@@ -618,58 +618,58 @@ void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offlineLayout) 
     m_directDownloadButton->setToolTip(
         tr("Download the raw installer binaries (.exe/.msi) for each package -- for manual "
            "install, not a deployable offline bundle"));
-    actionBtnRow->addWidget(m_directDownloadButton);
+    action_btn_row->addWidget(m_directDownloadButton);
 
     m_installFromBundleButton = new QPushButton(tr("Install from Bundle"), this);
     m_installFromBundleButton->setStyleSheet(sak::ui::kSuccessButtonStyle);
     m_installFromBundleButton->setAccessibleName(QStringLiteral("Install from Bundle"));
     m_installFromBundleButton->setToolTip(
         tr("Install packages from a previously built offline bundle"));
-    actionBtnRow->addWidget(m_installFromBundleButton);
+    action_btn_row->addWidget(m_installFromBundleButton);
 
-    actionsLayout->addLayout(actionBtnRow);
+    actions_layout->addLayout(action_btn_row);
 
     m_offlineProgressLabel = new QLabel(this);
     m_offlineProgressLabel->setVisible(false);
-    actionsLayout->addWidget(m_offlineProgressLabel);
+    actions_layout->addWidget(m_offlineProgressLabel);
 
     m_offlineProgressBar = new QProgressBar(this);
     m_offlineProgressBar->setVisible(false);
     m_offlineProgressBar->setTextVisible(true);
     m_offlineProgressBar->setFormat(QStringLiteral("%v / %m"));
-    actionsLayout->addWidget(m_offlineProgressBar);
+    actions_layout->addWidget(m_offlineProgressBar);
 
     m_offlineStatusLabel = new QLabel(this);
     m_offlineStatusLabel->setVisible(false);
     m_offlineStatusLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
-    actionsLayout->addWidget(m_offlineStatusLabel);
+    actions_layout->addWidget(m_offlineStatusLabel);
 
     m_cancelOfflineButton = new QPushButton(tr("Cancel"), this);
     m_cancelOfflineButton->setStyleSheet(sak::ui::kDangerButtonStyle);
     m_cancelOfflineButton->setVisible(false);
     m_cancelOfflineButton->setAccessibleName(QStringLiteral("Cancel Offline Operation"));
-    actionsLayout->addWidget(m_cancelOfflineButton);
+    actions_layout->addWidget(m_cancelOfflineButton);
 
-    offlineLayout->addWidget(actionsGroup);
+    offline_layout->addWidget(actions_group);
 }
 
 void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
-    auto* offlineTab = new QWidget(this);
-    auto* offlineLayout = new QVBoxLayout(offlineTab);
-    offlineLayout->setContentsMargins(
+    auto* offline_tab = new QWidget(this);
+    auto* offline_layout = new QVBoxLayout(offline_tab);
+    offline_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone);
-    offlineLayout->setSpacing(sak::ui::kSpacingDefault);
+    offline_layout->setSpacing(sak::ui::kSpacingDefault);
 
-    setupOfflinePresetRow(offlineLayout);
+    setupOfflinePresetRow(offline_layout);
 
-    auto* sideBySide = new QHBoxLayout();
-    sideBySide->setSpacing(sak::ui::kSpacingDefault);
-    setupOfflineSearchGroup(sideBySide);
-    setupOfflineDeployListGroup(sideBySide);
-    offlineLayout->addLayout(sideBySide, 1);
-    setupOfflineActionsGroup(offlineLayout);
+    auto* side_by_side = new QHBoxLayout();
+    side_by_side->setSpacing(sak::ui::kSpacingDefault);
+    setupOfflineSearchGroup(side_by_side);
+    setupOfflineDeployListGroup(side_by_side);
+    offline_layout->addLayout(side_by_side, 1);
+    setupOfflineActionsGroup(offline_layout);
 
-    tabs->addTab(offlineTab, tr("Offline Deploy"));
+    tabs->addTab(offline_tab, tr("Offline Deploy"));
 }
 
 // ============================================================================

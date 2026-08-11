@@ -57,7 +57,7 @@ void applyCompactOstButton(QPushButton* button, const QString& style) {
     button->setStyleSheet(style);
 }
 
-bool IsAccessibilityAuditMode() {
+bool isAccessibilityAuditMode() {
     const auto* app = QCoreApplication::instance();
     return (app != nullptr) && app->property("sakAccessibilityAudit").toBool();
 }
@@ -72,13 +72,13 @@ OstConverterWidget::OstConverterWidget(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<OstConverterController>(this)) {
     setupUi();
     connectController();
-    if (!IsAccessibilityAuditMode()) {
+    if (!isAccessibilityAuditMode()) {
         loadSettings();
     }
 }
 
 OstConverterWidget::~OstConverterWidget() {
-    if (!IsAccessibilityAuditMode()) {
+    if (!isAccessibilityAuditMode()) {
         saveSettings();
     }
 }

@@ -116,9 +116,9 @@ void UserProfileBackupWelcomePage::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
     // Welcome message
-    auto* welcomeLabel = new QLabel(this);
-    welcomeLabel->setWordWrap(true);
-    welcomeLabel->setText(tr(
+    auto* welcome_label = new QLabel(this);
+    welcome_label->setWordWrap(true);
+    welcome_label->setText(tr(
         "<h3>What This Wizard Does</h3>"
         "<p>This wizard will help you create a complete backup of Windows user profiles, "
         "including:</p>"
@@ -155,7 +155,7 @@ void UserProfileBackupWelcomePage::setupUi() {
 
         "<p><b>Click Next to begin scanning for Windows user accounts.</b></p>"));
 
-    layout->addWidget(welcomeLabel);
+    layout->addWidget(welcome_label);
     layout->addStretch();
 }
 
@@ -185,12 +185,12 @@ UserProfileBackupSelectUsersPage::UserProfileBackupSelectUsersPage(QVector<UserP
 void UserProfileBackupSelectUsersPage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
-    auto* instructionLabel = new QLabel(
+    auto* instruction_label = new QLabel(
         tr("Click <b>Scan Users</b> to detect all Windows user accounts on this computer. "
            "Then select which users you want to backup."),
         this);
-    instructionLabel->setWordWrap(true);
-    layout->addWidget(instructionLabel);
+    instruction_label->setWordWrap(true);
+    layout->addWidget(instruction_label);
 
     setupScanControls(layout);
     setupUserTable(layout);
@@ -204,17 +204,17 @@ void UserProfileBackupSelectUsersPage::setupUi() {
 }
 
 void UserProfileBackupSelectUsersPage::setupScanControls(QVBoxLayout* layout) {
-    auto* scanLayout = new QHBoxLayout();
+    auto* scan_layout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Users"), this);
     m_scanButton->setIcon(QIcon::fromTheme("view-refresh"));
     m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(
         m_scanButton, &QPushButton::clicked, this, &UserProfileBackupSelectUsersPage::onScanUsers);
-    scanLayout->addWidget(m_scanButton);
+    scan_layout->addWidget(m_scanButton);
 
     m_statusLabel = new QLabel(tr("Click Scan Users to begin"), this);
-    scanLayout->addWidget(m_statusLabel, 1);
-    layout->addLayout(scanLayout);
+    scan_layout->addWidget(m_statusLabel, 1);
+    layout->addLayout(scan_layout);
 
     m_scanProgress = new QProgressBar(this);
     m_scanProgress->setVisible(false);
@@ -243,7 +243,7 @@ void UserProfileBackupSelectUsersPage::setupUserTable(QVBoxLayout* layout) {
 }
 
 void UserProfileBackupSelectUsersPage::setupSelectionControls(QVBoxLayout* layout) {
-    auto* buttonLayout = new QHBoxLayout();
+    auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
     m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
@@ -251,7 +251,7 @@ void UserProfileBackupSelectUsersPage::setupSelectionControls(QVBoxLayout* layou
             &QPushButton::clicked,
             this,
             &UserProfileBackupSelectUsersPage::onSelectAll);
-    buttonLayout->addWidget(m_selectAllButton);
+    button_layout->addWidget(m_selectAllButton);
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
@@ -260,9 +260,9 @@ void UserProfileBackupSelectUsersPage::setupSelectionControls(QVBoxLayout* layou
             &QPushButton::clicked,
             this,
             &UserProfileBackupSelectUsersPage::onSelectNone);
-    buttonLayout->addWidget(m_selectNoneButton);
-    buttonLayout->addStretch();
-    layout->addLayout(buttonLayout);
+    button_layout->addWidget(m_selectNoneButton);
+    button_layout->addStretch();
+    layout->addLayout(button_layout);
 }
 
 void UserProfileBackupSelectUsersPage::initializePage() {
@@ -325,33 +325,33 @@ void UserProfileBackupSelectUsersPage::populateTable() {
         auto& user = m_users[i];
 
         // Checkbox
-        auto* checkItem = new QTableWidgetItem();
-        checkItem->setCheckState(user.is_selected ? Qt::Checked : Qt::Unchecked);
-        checkItem->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
-        m_userTable->setItem(i, UserProfileColSelect, checkItem);
+        auto* check_item = new QTableWidgetItem();
+        check_item->setCheckState(user.is_selected ? Qt::Checked : Qt::Unchecked);
+        check_item->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
+        m_userTable->setItem(i, UserProfileColSelect, check_item);
 
         // Username (mark current user)
         QString username = user.username;
         if (user.is_current_user) {
             username += tr(" (Current)");
         }
-        auto* nameItem = new QTableWidgetItem(username);
-        m_userTable->setItem(i, UserProfileColUsername, nameItem);
+        auto* name_item = new QTableWidgetItem(username);
+        m_userTable->setItem(i, UserProfileColUsername, name_item);
 
         // Profile path
-        auto* pathItem = new QTableWidgetItem(user.profile_path);
-        m_userTable->setItem(i, UserProfileColPath, pathItem);
+        auto* path_item = new QTableWidgetItem(user.profile_path);
+        m_userTable->setItem(i, UserProfileColPath, path_item);
 
         // Size estimate
-        QString sizeText = tr("Calculating...");
+        QString size_text = tr("Calculating...");
         if (user.total_size_estimated > 0) {
-            const double sizeGB = static_cast<double>(user.total_size_estimated) /
-                                  sak::kBytesPerGBf;
-            sizeText = QString("%1 GB").arg(sizeGB, 0, 'f', kProfileSizeDisplayPrecision);
+            const double size_gb = static_cast<double>(user.total_size_estimated) /
+                                   sak::kBytesPerGBf;
+            size_text = QString("%1 GB").arg(size_gb, 0, 'f', kProfileSizeDisplayPrecision);
         }
-        auto* sizeItem = new QTableWidgetItem(sizeText);
-        sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        m_userTable->setItem(i, UserProfileColEstimatedSize, sizeItem);
+        auto* size_item = new QTableWidgetItem(size_text);
+        size_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        m_userTable->setItem(i, UserProfileColEstimatedSize, size_item);
     }
 
     m_userTable->blockSignals(false);
@@ -388,23 +388,23 @@ void UserProfileBackupSelectUsersPage::updateSummary() {
     }
 
     // Count selected users and total size
-    int selectedCount = 0;
-    qint64 totalSizeBytes = 0;
+    int selected_count = 0;
+    qint64 total_size_bytes = 0;
     for (const auto& user : m_users) {
         if (user.is_selected) {
-            selectedCount++;
-            totalSizeBytes += user.total_size_estimated;
+            selected_count++;
+            total_size_bytes += user.total_size_estimated;
         }
     }
 
-    const double totalGB = static_cast<double>(totalSizeBytes) / sak::kBytesPerGBf;
+    const double total_gb = static_cast<double>(total_size_bytes) / sak::kBytesPerGBf;
 
-    if (selectedCount == 0) {
+    if (selected_count == 0) {
         m_summaryLabel->setText(tr("No users selected"));
     } else {
         m_summaryLabel->setText(tr("%1 user(s) selected | Estimated total size: %2 GB")
-                                    .arg(selectedCount)
-                                    .arg(totalGB, 0, 'f', 1));
+                                    .arg(selected_count)
+                                    .arg(total_gb, 0, 'f', 1));
     }
 
     // Notify wizard that completion state may have changed

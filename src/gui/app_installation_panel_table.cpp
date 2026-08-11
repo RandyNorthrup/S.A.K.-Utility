@@ -135,20 +135,20 @@ QIcon iconForPublisher(const QString& publisher) {
 }
 }  // namespace
 
-QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const {
-    if (packageId.isEmpty()) {
+QIcon AppInstallationPanel::publisherIcon(const QString& package_id) const {
+    if (package_id.isEmpty()) {
         return QApplication::style()->standardIcon(QStyle::SP_FileIcon);
     }
-    const QString lowerPkg = packageId.toLower();
+    const QString lower_pkg = package_id.toLower();
 
     // Try exact match first
-    if (s_publisherMap.contains(lowerPkg)) {
-        return iconForPublisher(s_publisherMap[lowerPkg]);
+    if (s_publisherMap.contains(lower_pkg)) {
+        return iconForPublisher(s_publisherMap[lower_pkg]);
     }
 
     // Try prefix match
     for (auto it = s_publisherMap.constBegin(); it != s_publisherMap.constEnd(); ++it) {
-        if (lowerPkg.startsWith(it.key())) {
+        if (lower_pkg.startsWith(it.key())) {
             return iconForPublisher(it.value());
         }
     }
@@ -157,8 +157,8 @@ QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const {
     return QApplication::style()->standardIcon(QStyle::SP_FileIcon);
 }
 
-QString AppInstallationPanel::lookupPublisher(const QString& packageId) {
-    const QString lower = packageId.toLower();
+QString AppInstallationPanel::lookupPublisher(const QString& package_id) {
+    const QString lower = package_id.toLower();
     if (s_publisherMap.contains(lower)) {
         return s_publisherMap[lower];
     }
@@ -181,9 +181,9 @@ void AppInstallationPanel::updateResultsFromSearch(const QString& output) {
 
     int row = 0;
     for (const auto& pkg : packages) {
-        auto* pkgItem = new QStandardItem(pkg.package_id);
-        pkgItem->setIcon(publisherIcon(pkg.package_id));
-        m_onlineResultsModel->setItem(row, RColPackage, pkgItem);
+        auto* pkg_item = new QStandardItem(pkg.package_id);
+        pkg_item->setIcon(publisherIcon(pkg.package_id));
+        m_onlineResultsModel->setItem(row, RColPackage, pkg_item);
 
         m_onlineResultsModel->setItem(row, RColVersion, new QStandardItem(pkg.version));
 
@@ -219,14 +219,14 @@ void AppInstallationPanel::updateQueueDisplay() {
         m_queueList->addItem(item);
     }
 
-    const bool hasItems = !m_installQueue.isEmpty();
+    const bool has_items = !m_installQueue.isEmpty();
     // Gate on the single in-flight authority, not the online flag alone: an offline
     // deployment operation drives the same Chocolatey install root, so Install must stay
     // disabled while it runs.
     const bool idle = !packageOperationInFlight();
-    m_clearQueueButton->setEnabled(hasItems && idle);
-    m_installButton->setEnabled(hasItems && idle);
-    m_saveQueueButton->setEnabled(hasItems);
+    m_clearQueueButton->setEnabled(has_items && idle);
+    m_installButton->setEnabled(has_items && idle);
+    m_saveQueueButton->setEnabled(has_items);
     m_removeFromQueueButton->setEnabled(false);  // Reset until selection
 }
 
@@ -256,9 +256,9 @@ void AppInstallationPanel::saveQueueToFile() {
         return;
     }
 
-    const QString filePath = QFileDialog::getSaveFileName(
+    const QString file_path = QFileDialog::getSaveFileName(
         this, tr("Save App List"), QString(), tr("JSON Files (*.json)"));
-    if (filePath.isEmpty()) {
+    if (file_path.isEmpty()) {
         return;
     }
 
@@ -272,41 +272,42 @@ void AppInstallationPanel::saveQueueToFile() {
     }
 
     const QJsonDocument doc(arr);
-    QFile file(filePath);
+    QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        sak::logWarning(("Save Failed: Could not write to file: " + filePath).toStdString());
+        sak::logWarning(("Save Failed: Could not write to file: " + file_path).toStdString());
         sak::showWarningLogged(this,
                                tr("Save Failed"),
-                               tr("Could not write to file:\n%1").arg(filePath));
+                               tr("Could not write to file:\n%1").arg(file_path));
         return;
     }
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
     // Fail closed: a short write or a failed flush leaves a truncated/corrupt file on
     // disk. Surface it as a save failure instead of reporting a clean "Saved".
     if (file.write(json_bytes) != json_bytes.size() || !file.flush()) {
-        sak::logWarning("Incomplete write to file: {}", filePath.toStdString());
+        sak::logWarning("Incomplete write to file: {}", file_path.toStdString());
         file.close();
         sak::showWarningLogged(this,
                                tr("Save Failed"),
-                               tr("Could not write the full app list to file:\n%1").arg(filePath));
+                               tr("Could not write the full app list to file:\n%1").arg(file_path));
         return;
     }
     file.close();
 
-    Q_EMIT logOutput(QString("Saved %1 package(s) to %2").arg(m_installQueue.size()).arg(filePath));
+    Q_EMIT logOutput(
+        QString("Saved %1 package(s) to %2").arg(m_installQueue.size()).arg(file_path));
     Q_EMIT statusMessage(QString("App list saved (%1 packages)").arg(m_installQueue.size()),
                          kQueueSaveStatusMessageMs);
 }
 
 void AppInstallationPanel::loadQueueFromFile() {
-    const QString filePath = QFileDialog::getOpenFileName(
+    const QString file_path = QFileDialog::getOpenFileName(
         this, tr("Load App List"), QString(), tr("JSON Files (*.json)"));
-    if (filePath.isEmpty()) {
+    if (file_path.isEmpty()) {
         return;
     }
 
     QJsonArray arr;
-    if (!parseQueueFile(filePath, arr)) {
+    if (!parseQueueFile(file_path, arr)) {
         return;
     }
 
@@ -320,17 +321,17 @@ void AppInstallationPanel::loadQueueFromFile() {
     if (skipped > 0) {
         msg += QString(", %1 skipped (duplicate or invalid)").arg(skipped);
     }
-    Q_EMIT logOutput(msg + QString(" from %1").arg(filePath));
+    Q_EMIT logOutput(msg + QString(" from %1").arg(file_path));
     Q_EMIT statusMessage(msg, sak::kTimerStatusMessageMs);
 }
 
-bool AppInstallationPanel::parseQueueFile(const QString& filePath, QJsonArray& out_array) {
-    QFile file(filePath);
+bool AppInstallationPanel::parseQueueFile(const QString& file_path, QJsonArray& out_array) {
+    QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        sak::logWarning(("Load Failed: Could not read file: " + filePath).toStdString());
+        sak::logWarning(("Load Failed: Could not read file: " + file_path).toStdString());
         sak::showWarningLogged(this,
                                tr("Load Failed"),
-                               tr("Could not read file:\n%1").arg(filePath));
+                               tr("Could not read file:\n%1").arg(file_path));
         return false;
     }
 
@@ -341,23 +342,23 @@ bool AppInstallationPanel::parseQueueFile(const QString& filePath, QJsonArray& o
     const qint64 file_size = file.size();
     if (file_size < 0 || file_size > kMaxQueueFileBytes) {
         sak::logWarning(
-            ("Load Failed: App list file too large or unreadable: " + filePath).toStdString());
+            ("Load Failed: App list file too large or unreadable: " + file_path).toStdString());
         sak::showWarningLogged(this,
                                tr("Load Failed"),
-                               tr("App list file is too large or unreadable:\n%1").arg(filePath));
+                               tr("App list file is too large or unreadable:\n%1").arg(file_path));
         file.close();
         return false;
     }
 
-    QJsonParseError parseError;
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    QJsonParseError parse_error;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
     file.close();
 
-    if (parseError.error != QJsonParseError::NoError) {
-        sak::logWarning(("Load Failed: Invalid JSON: " + parseError.errorString()).toStdString());
+    if (parse_error.error != QJsonParseError::NoError) {
+        sak::logWarning(("Load Failed: Invalid JSON: " + parse_error.errorString()).toStdString());
         sak::showWarningLogged(this,
                                tr("Load Failed"),
-                               tr("Invalid JSON:\n%1").arg(parseError.errorString()));
+                               tr("Invalid JSON:\n%1").arg(parse_error.errorString()));
         return false;
     }
 
@@ -380,11 +381,11 @@ void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added,
             continue;
         }
         QJsonObject obj = val.toObject();
-        QString pkgId = obj["package_id"].toString().trimmed();
+        QString pkg_id = obj["package_id"].toString().trimmed();
         // Fail closed on a malformed/option-like id or version rather than letting it
         // reach the privileged install queue; count it as skipped so a partial import
         // is never reported as a clean load.
-        if (!queuePackageIdIsValid(pkgId)) {
+        if (!queuePackageIdIsValid(pkg_id)) {
             skipped++;
             continue;
         }
@@ -396,8 +397,8 @@ void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added,
 
         const bool duplicate = std::ranges::any_of(m_installQueue,
 
-                                                   [&pkgId](const auto& existing) {
-                                                       return existing.package_id == pkgId;
+                                                   [&pkg_id](const auto& existing) {
+                                                       return existing.package_id == pkg_id;
                                                    });
         if (duplicate) {
             skipped++;
@@ -405,7 +406,7 @@ void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added,
         }
 
         QueueEntry entry;
-        entry.package_id = pkgId;
+        entry.package_id = pkg_id;
         entry.version = version;
         entry.publisher = obj["publisher"].toString();
         m_installQueue.append(entry);

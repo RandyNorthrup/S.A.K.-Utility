@@ -761,7 +761,7 @@ QString EmailAttachmentsBrowserDialog::formatBytes(qint64 bytes) {
 
 // Data-driven extension -> category mapping
 static const QHash<QString, QString>& extensionCategories() {
-    static const QHash<QString, QString> map = {
+    static const QHash<QString, QString> kMap = {
         // Images
         {".jpg", kFilterImages},
         {".jpeg", kFilterImages},
@@ -792,7 +792,7 @@ static const QHash<QString, QString>& extensionCategories() {
         {".csv", kFilterDocuments},
         {".rtf", kFilterDocuments},
     };
-    return map;
+    return kMap;
 }
 
 struct MimePrefix {
@@ -801,34 +801,34 @@ struct MimePrefix {
 };
 
 static QString classifyByMime(const QString& lower_mime) {
-    static const MimePrefix prefixes[] = {
+    static const MimePrefix kPrefixes[] = {
         {.prefix = "image/", .category = &kFilterImages},
         {.prefix = "audio/", .category = &kFilterAudio},
         {.prefix = "video/", .category = &kFilterAudio},
     };
-    for (const auto& [prefix, category] : prefixes) {
+    for (const auto& [prefix, category] : kPrefixes) {
         if (lower_mime.startsWith(QLatin1String(prefix))) {
             return *category;
         }
     }
 
-    static const QStringList archive_tokens = {QStringLiteral("zip"),
+    static const QStringList kArchiveTokens = {QStringLiteral("zip"),
                                                QStringLiteral("compressed"),
                                                QStringLiteral("archive")};
-    for (const auto& token : archive_tokens) {
+    for (const auto& token : kArchiveTokens) {
         if (lower_mime.contains(token)) {
             return kFilterArchives;
         }
     }
 
-    static const QStringList doc_tokens = {QStringLiteral("pdf"),
+    static const QStringList kDocTokens = {QStringLiteral("pdf"),
                                            QStringLiteral("document"),
                                            QStringLiteral("spreadsheet"),
                                            QStringLiteral("presentation"),
                                            QStringLiteral("msword"),
                                            QStringLiteral("ms-excel"),
                                            QStringLiteral("ms-powerpoint")};
-    for (const auto& token : doc_tokens) {
+    for (const auto& token : kDocTokens) {
         if (lower_mime.contains(token)) {
             return kFilterDocuments;
         }

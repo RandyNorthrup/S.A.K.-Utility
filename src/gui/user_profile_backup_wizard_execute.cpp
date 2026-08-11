@@ -49,12 +49,12 @@ bool writeJsonSidecarAtomic(const QString& path, const QJsonDocument& doc, QStri
 
 UserProfileBackupExecutePage::UserProfileBackupExecutePage(BackupManifest& manifest,
                                                            const QVector<UserProfile>& users,
-                                                           const QString& destinationPath,
+                                                           const QString& destination_path,
                                                            QWidget* parent)
     : QWizardPage(parent)
     , m_manifest(manifest)
     , m_users(users)
-    , m_destinationPath(destinationPath) {
+    , m_destinationPath(destination_path) {
     setTitle(tr("Execute Backup"));
     setSubTitle(tr("Backup in progress..."));
 
@@ -138,15 +138,15 @@ void UserProfileBackupExecutePage::onStartBackup() {
         return;
     }
 
-    const SmartFilter smartFilter = wiz->getSmartFilter();
-    const PermissionMode permissionMode = wiz->getPermissionMode();
+    const SmartFilter smart_filter = wiz->getSmartFilter();
+    const PermissionMode permission_mode = wiz->getPermissionMode();
 
     // The sidecars are written into the destination directory, so it must exist
     // and be writable before anything is saved (previously they were written
     // first and silently failed when the directory did not yet exist).
-    QString destinationError;
-    if (!ensureDestinationDirectory(destinationError)) {
-        failBackupPreflight(destinationError);
+    QString destination_error;
+    if (!ensureDestinationDirectory(destination_error)) {
+        failBackupPreflight(destination_error);
         return;
     }
 
@@ -159,7 +159,7 @@ void UserProfileBackupExecutePage::onStartBackup() {
         return;
     }
 
-    connectAndStartBackupWorker(smartFilter, permissionMode);
+    connectAndStartBackupWorker(smart_filter, permission_mode);
 }
 
 bool UserProfileBackupExecutePage::saveAllSidecars(UserProfileBackupWizard* wiz) {
@@ -197,17 +197,17 @@ void UserProfileBackupExecutePage::recordNetworkSelectionsInManifest(UserProfile
 }
 
 QString UserProfileBackupExecutePage::screenRunDestination() const {
-    QStringList sourceRoots;
-    QStringList folderNames;
+    QStringList source_roots;
+    QStringList folder_names;
     for (const auto& user : m_users) {
         if (user.is_selected && !user.profile_path.trimmed().isEmpty()) {
-            sourceRoots.append(user.profile_path);
-            folderNames.append(user.username);
+            source_roots.append(user.profile_path);
+            folder_names.append(user.username);
         }
     }
 
     const BackupDestinationCheck check =
-        screenBackupDestination(m_destinationPath, sourceRoots, folderNames);
+        screenBackupDestination(m_destinationPath, source_roots, folder_names);
     if (!check.accepted) {
         return check.refusal;
     }
@@ -255,30 +255,30 @@ void UserProfileBackupExecutePage::failBackupPreflight(const QString& message) {
 }
 
 bool UserProfileBackupExecutePage::saveInstalledAppsToBackup(
-    const QVector<InstalledAppInfo>& installedApps) {
-    if (installedApps.isEmpty()) {
+    const QVector<InstalledAppInfo>& installed_apps) {
+    if (installed_apps.isEmpty()) {
         return true;
     }
 
-    QJsonArray appsArray;
-    for (const auto& app : installedApps) {
-        QJsonObject appObj;
-        appObj["name"] = app.name;
-        appObj["version"] = app.version;
-        appObj["publisher"] = app.publisher;
-        appObj["choco_package"] = app.choco_package;
-        appObj["category"] = app.category;
-        appsArray.append(appObj);
+    QJsonArray apps_array;
+    for (const auto& app : installed_apps) {
+        QJsonObject app_obj;
+        app_obj["name"] = app.name;
+        app_obj["version"] = app.version;
+        app_obj["publisher"] = app.publisher;
+        app_obj["choco_package"] = app.choco_package;
+        app_obj["category"] = app.category;
+        apps_array.append(app_obj);
     }
 
     QString error;
     if (!writeJsonSidecarAtomic(
-            m_destinationPath + "/installed_apps.json", QJsonDocument(appsArray), error)) {
+            m_destinationPath + "/installed_apps.json", QJsonDocument(apps_array), error)) {
         sak::logError("Could not save installed apps list: {}", error.toStdString());
         appendLog(tr("ERROR: Could not save installed applications list: %1").arg(error));
         return false;
     }
-    appendLog(tr("Saved %1 installed application(s) to backup").arg(installedApps.size()));
+    appendLog(tr("Saved %1 installed application(s) to backup").arg(installed_apps.size()));
     return true;
 }
 
@@ -363,8 +363,8 @@ bool UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
     return true;
 }
 
-void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smartFilter,
-                                                               PermissionMode permissionMode) {
+void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart_filter,
+                                                               PermissionMode permission_mode) {
     auto* worker = new UserProfileBackupWorker(this);
 
     connect(worker,
@@ -374,8 +374,8 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
     connect(worker,
             &UserProfileBackupWorker::logMessage,
             this,
-            [this](const QString& message, bool isWarning) {
-                appendLog(isWarning ? QString("[WARNING] %1").arg(message) : message);
+            [this](const QString& message, bool is_warning) {
+                appendLog(is_warning ? QString("[WARNING] %1").arg(message) : message);
             });
     connect(worker,
             &UserProfileBackupWorker::statusUpdate,
@@ -392,7 +392,7 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
             });
 
     UserProfileBackupWorker::BackupOptions backup_options;
-    backup_options.permission_mode = permissionMode;
+    backup_options.permission_mode = permission_mode;
     if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
         const BackupCodecOptions codec = wiz->getCodecOptions();
         backup_options.compress = codec.compress;
@@ -400,7 +400,7 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
         backup_options.encrypt = codec.encrypt;
         backup_options.password = codec.password;
     }
-    worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, backup_options);
+    worker->startBackup(m_manifest, m_users, m_destinationPath, smart_filter, backup_options);
 
     m_overallProgress->setRange(0, static_cast<int>(m_users.size()));
     m_currentProgress->setRange(0, 0);
@@ -409,9 +409,9 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
 void UserProfileBackupExecutePage::onBackupProgress(int current,
                                                     int total,
                                                     qint64 bytes,
-                                                    qint64 totalBytes) {
+                                                    qint64 total_bytes) {
     (void)bytes;
-    (void)totalBytes;
+    (void)total_bytes;
     m_overallProgress->setMaximum(total);
     m_overallProgress->setValue(current);
 }
