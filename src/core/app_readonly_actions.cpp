@@ -5171,7 +5171,7 @@ void registerDiagnosticsReadOnlyOps(const AddActionFn& add) {
 
 // Register the read-only email ops (MBOX + PST/OST readers). Split out to keep
 // registerReadOnlyAppActionsInto within the length budget.
-void registerEmailReadOnlyOps(const AddActionFn& add) {
+static void registerEmailReadOnlyOps(const AddActionFn& add) {
     add(makeDescriptor(QStringLiteral("email.read_mbox"),
                        QStringLiteral("Read an MBOX mailbox"),
                        QStringLiteral("List messages (headers) from an MBOX email file"),
@@ -5233,7 +5233,7 @@ void registerEmailReadOnlyOps(const AddActionFn& add) {
 // registerReadOnlyAppActionsInto within the length budget.
 // Register the imaging read-only ops. Split out to keep registerReadOnlyAppActionsInto within the
 // length budget as the set grows.
-void registerImagingReadOnlyOps(const AddActionFn& add) {
+static void registerImagingReadOnlyOps(const AddActionFn& add) {
     add(makeDescriptor(QStringLiteral("imaging.identify_image"),
                        QStringLiteral("Identify a disk image"),
                        QStringLiteral(
@@ -5271,7 +5271,7 @@ void registerImagingReadOnlyOps(const AddActionFn& add) {
         listDrives);
 }
 
-void registerFileReadOnlyOps(const AddActionFn& add) {
+static void registerFileReadOnlyOps(const AddActionFn& add) {
     add(makeDescriptor(QStringLiteral("search.find_in_files"),
                        QStringLiteral("Search files"),
                        QStringLiteral("Search a directory tree for text/regex matches in files"),

@@ -706,7 +706,7 @@ bool isMutatingPackageOperation(const QString& operation) {
            op == QLatin1String("install_bundle");
 }
 
-QString shellEscapeStrippedPreview(const QString& preview) {
+static QString shellEscapeStrippedPreview(const QString& preview) {
     // cmd.exe removes its escape character (U+005E) and PowerShell removes its own
     // (U+0060) before parsing. Both are written as hex escapes rather than literal
     // characters so the complexity gate's tokenizer does not mistake them for delimiters.
@@ -743,7 +743,7 @@ QString shellEscapeStrippedPreview(const QString& preview) {
     return stripped;
 }
 
-QString shellCommandNormalizedPreview(const QString& preview) {
+static QString shellCommandNormalizedPreview(const QString& preview) {
     // Windows resolves "format.com", "cipher.exe" and "wbadmin.exe" to exactly the programs
     // the bare names name, but every whole-word pattern below is written for the bare name
     // and expects a space after it, so the suffixed spelling matched NOTHING: "format.com D:"

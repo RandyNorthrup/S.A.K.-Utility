@@ -1463,7 +1463,7 @@ void AdvancedUninstallPanel::applyFilter() {
     m_batch_button->setEnabled(!m_filteredPrograms.isEmpty());
 }
 
-bool passesViewFilter(const ProgramInfo& program, ViewFilter view_filter) {
+static bool passesViewFilter(const ProgramInfo& program, ViewFilter view_filter) {
     switch (view_filter) {
     case ViewFilter::All:
         return true;

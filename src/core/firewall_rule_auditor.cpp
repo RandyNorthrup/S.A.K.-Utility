@@ -681,7 +681,7 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
     return rules;
 }
 
-bool protocolsOverlap(FirewallRule::Protocol proto_a, FirewallRule::Protocol proto_b) {
+static bool protocolsOverlap(FirewallRule::Protocol proto_a, FirewallRule::Protocol proto_b) {
     // Two Other==Other rules (e.g. GRE vs ESP) may be different unmodeled protocols
     // yet compare equal, producing a phantom conflict. This is a conservative
     // OVER-report that never HIDES a real conflict, so it stays fail-safe. Proving
@@ -694,7 +694,7 @@ bool protocolsOverlap(FirewallRule::Protocol proto_a, FirewallRule::Protocol pro
     return proto_a == FirewallRule::Protocol::Any || proto_b == FirewallRule::Protocol::Any;
 }
 
-bool profilesOverlap(int profiles_a, int profiles_b) {
+static bool profilesOverlap(int profiles_a, int profiles_b) {
     // 0 means the profile mask was not read; treat as "overlaps everything" (conservative -- never
     // hide a real conflict). Two disjoint masks (e.g. Domain=1 vs Public=4) never apply together.
     if (profiles_a == 0 || profiles_b == 0) {
@@ -703,7 +703,7 @@ bool profilesOverlap(int profiles_a, int profiles_b) {
     return (profiles_a & profiles_b) != 0;
 }
 
-bool applicationPathsMatch(const QString& path_a, const QString& path_b) {
+static bool applicationPathsMatch(const QString& path_a, const QString& path_b) {
     if (path_a.isEmpty() || path_b.isEmpty()) {
         return true;
     }
@@ -712,7 +712,7 @@ bool applicationPathsMatch(const QString& path_a, const QString& path_b) {
 
 // Two rules bound to DIFFERENT non-empty services do not apply to the same
 // traffic, so they cannot conflict. An empty service means "any" and matches.
-bool servicesMatch(const QString& svc_a, const QString& svc_b) {
+static bool servicesMatch(const QString& svc_a, const QString& svc_b) {
     if (svc_a.isEmpty() || svc_b.isEmpty()) {
         return true;
     }
@@ -743,7 +743,7 @@ bool FirewallRuleAuditor::rulesConflict(const FirewallRule& a, const FirewallRul
            servicesMatch(a.serviceName, b.serviceName);
 }
 
-FirewallConflict buildConflict(const FirewallRule& a, const FirewallRule& b) {
+static FirewallConflict buildConflict(const FirewallRule& a, const FirewallRule& b) {
     FirewallConflict conflict;
     conflict.ruleA = a;
     conflict.ruleB = b;

@@ -77,11 +77,11 @@ static const QString kFilterArchives = QStringLiteral("Archives");
 static const QString kFilterAudio = QStringLiteral("Audio/Video");
 static const QString kFilterOther = QStringLiteral("Other");
 
-QString attachmentKey(const AttachmentEntry& entry) {
+static QString attachmentKey(const AttachmentEntry& entry) {
     return QStringLiteral("%1:%2").arg(entry.message_node_id).arg(entry.attachment_index);
 }
 
-QTableWidgetItem* makeAttachmentSelectItem(const AttachmentEntry& entry, bool checked) {
+static QTableWidgetItem* makeAttachmentSelectItem(const AttachmentEntry& entry, bool checked) {
     auto* item = new QTableWidgetItem();
     item->setFlags((item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEnabled) &
                    ~Qt::ItemIsEditable);

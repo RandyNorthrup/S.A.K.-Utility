@@ -2004,9 +2004,9 @@ PartitionValidationResult PartitionSafetyValidator::validate(
     return result;
 }
 
-void validateDiskStateBlockers(const PartitionDiskInfo& disk,
-                               const PartitionOperation& operation,
-                               PartitionValidationResult* result) {
+static void validateDiskStateBlockers(const PartitionDiskInfo& disk,
+                                      const PartitionOperation& operation,
+                                      PartitionValidationResult* result) {
     addBlockerIf(result, disk.is_read_only, QStringLiteral("Target disk is read-only"));
     addBlockerIf(result,
                  (disk.is_dynamic && !allowsDynamicDiskOperation(operation.type)) ||
@@ -2021,9 +2021,9 @@ void validateDiskStateBlockers(const PartitionDiskInfo& disk,
                  QStringLiteral("Current OS disk wipe is blocked"));
 }
 
-void validateDynamicToBasicBlockers(const PartitionDiskInfo& disk,
-                                    const PartitionOperation& operation,
-                                    PartitionValidationResult* result) {
+static void validateDynamicToBasicBlockers(const PartitionDiskInfo& disk,
+                                           const PartitionOperation& operation,
+                                           PartitionValidationResult* result) {
     addBlockerIf(result,
                  dynamicToBasicUnsupportedDisk(disk, operation),
                  QStringLiteral(
@@ -2051,9 +2051,9 @@ void validateDynamicToBasicBlockers(const PartitionDiskInfo& disk,
             "Dynamic-to-basic conversion requires destructive backup/restore confirmation"));
 }
 
-void validateDiskStyleBlockers(const PartitionDiskInfo& disk,
-                               const PartitionOperation& operation,
-                               PartitionValidationResult* result) {
+static void validateDiskStyleBlockers(const PartitionDiskInfo& disk,
+                                      const PartitionOperation& operation,
+                                      PartitionValidationResult* result) {
     addBlockerIf(result,
                  blocksDataDiskStyleConversion(disk, operation.type),
                  QStringLiteral(
@@ -2071,9 +2071,9 @@ void validateDiskStyleBlockers(const PartitionDiskInfo& disk,
                  QStringLiteral("System disk conversion must use MBR2GPT to GPT"));
 }
 
-void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
-                                    const PartitionOperation& operation,
-                                    PartitionValidationResult* result) {
+static void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
+                                           const PartitionOperation& operation,
+                                           PartitionValidationResult* result) {
     addBlockerIf(result,
                  operation.type == PartitionOperationType::MigrateOs &&
                      !(disk.is_system || disk.is_boot),
@@ -2102,9 +2102,9 @@ void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
                  QStringLiteral("Create Image destination cannot be on the source disk"));
 }
 
-void validateDiskRecoveryBlockers(const PartitionDiskInfo& disk,
-                                  const PartitionOperation& operation,
-                                  PartitionValidationResult* result) {
+static void validateDiskRecoveryBlockers(const PartitionDiskInfo& disk,
+                                         const PartitionOperation& operation,
+                                         PartitionValidationResult* result) {
     addBlockerIf(result,
                  requiresRecoveryRestoreAcknowledgement(operation),
                  QStringLiteral("Recovered partition restore acknowledgement is required"));

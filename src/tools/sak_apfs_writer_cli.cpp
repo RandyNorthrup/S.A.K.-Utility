@@ -2261,7 +2261,7 @@ std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser
 #ifdef _WIN32
 // Physical drive number backing the OS system volume, or -1 if it cannot be
 // determined. Native (no elevation needed).
-int osSystemPhysicalDrive() {
+static int osSystemPhysicalDrive() {
     wchar_t winDir[MAX_PATH] = {};
     const UINT len = GetWindowsDirectoryW(winDir, MAX_PATH);
     if (len == 0 || len >= MAX_PATH || winDir[1] != L':') {
@@ -2296,7 +2296,7 @@ int osSystemPhysicalDrive() {
 // Physical drive numbers backing a volume/device alias (\\.\C:, \\?\Volume{GUID},
 // \\.\GLOBALROOT\Device\HarddiskVolumeN). Empty when the path cannot be opened or
 // its disk extents cannot be queried. Native (no elevation needed).
-std::vector<int> volumeBackingPhysicalDrives(const QString& path) {
+static std::vector<int> volumeBackingPhysicalDrives(const QString& path) {
     std::vector<int> drives;
     const std::wstring wide = path.toStdWString();
     HANDLE handle = CreateFileW(
@@ -2329,7 +2329,7 @@ std::vector<int> volumeBackingPhysicalDrives(const QString& path) {
 #endif
 
 // A \\.\X: or \\?\X: whole-volume handle addressed by drive letter.
-bool isDriveLetterVolumePath(const QString& path) {
+static bool isDriveLetterVolumePath(const QString& path) {
     if (path.size() != kDriveLetterVolumePathLength ||
         path[kDriveLetterVolumeColonIndex] != QLatin1Char(':') ||
         !path[kDriveLetterVolumeLetterIndex].isLetter()) {
@@ -2342,7 +2342,7 @@ bool isDriveLetterVolumePath(const QString& path) {
 // \\.\PhysicalDriveN form the numeric guard covers: drive-letter volumes,
 // \Volume{GUID} handles, and GLOBALROOT device paths. A \\.\C: alias resolves to
 // the OS volume yet slips past a PhysicalDrive-prefix-only check.
-bool isWindowsRawVolumeAliasPath(const QString& path) {
+static bool isWindowsRawVolumeAliasPath(const QString& path) {
     if (isDriveLetterVolumePath(path)) {
         return true;
     }
@@ -2355,7 +2355,7 @@ bool isWindowsRawVolumeAliasPath(const QString& path) {
 
 // Refuse a \\.\PhysicalDriveN target that is PhysicalDrive0 or the OS system disk.
 // Fails closed when the number cannot be parsed or the OS identity is unknown.
-QString physicalDriveTargetRefusal(const QString& path, const QString& prefix) {
+static QString physicalDriveTargetRefusal(const QString& path, const QString& prefix) {
     bool ok = false;
     const int drive = path.mid(prefix.size()).toInt(&ok);
     if (!ok || drive < 0) {
@@ -2383,7 +2383,7 @@ QString physicalDriveTargetRefusal(const QString& path, const QString& prefix) {
 // Refuse a volume/device alias (\\.\C:, \Volume{GUID}, GLOBALROOT) whose backing
 // disk is PhysicalDrive0 or the OS system disk. Fails closed when the OS identity
 // or the alias's backing drive cannot be resolved.
-QString volumeAliasTargetRefusal(const QString& path) {
+static QString volumeAliasTargetRefusal(const QString& path) {
 #ifdef _WIN32
     const int osDrive = osSystemPhysicalDrive();
     if (osDrive < 0) {
@@ -2417,7 +2417,7 @@ QString volumeAliasTargetRefusal(const QString& path) {
 // the OS volume yet bypass a PhysicalDrive-prefix-only check. Returns a refusal
 // reason, or an empty string when the target is provably a different disk / not a
 // raw whole-disk form this guard covers.
-QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
+static QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
     if (!invocation.allow_raw_target) {
         return QString();
     }

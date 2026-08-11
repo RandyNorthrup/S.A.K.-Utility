@@ -9896,22 +9896,22 @@ struct NonNativeCheckAction {
     QString status;
 };
 
-QString metadataConsistencyStatusText(const NonNativeFilesystemCheckState& state) {
+static QString metadataConsistencyStatusText(const NonNativeFilesystemCheckState& state) {
     if (hasMetadataSanityWarnings(state.metadata_details)) {
         return QObject::tr("Reviewed %1 metadata check warnings").arg(state.file_system);
     }
     return QObject::tr("Reviewed %1 metadata consistency").arg(state.file_system);
 }
 
-void showMetadataConsistencyWithStatus(QWidget* parent,
-                                       const NonNativeFilesystemCheckState& state,
-                                       QString* status) {
+static void showMetadataConsistencyWithStatus(QWidget* parent,
+                                              const NonNativeFilesystemCheckState& state,
+                                              QString* status) {
     showMetadataConsistencyDialog(parent, state);
     *status = metadataConsistencyStatusText(state);
 }
 
-std::optional<QString> showImmediateMetadataCheck(QWidget* parent,
-                                                  const NonNativeFilesystemCheckState& state) {
+static std::optional<QString> showImmediateMetadataCheck(
+    QWidget* parent, const NonNativeFilesystemCheckState& state) {
     if (!state.internal_metadata_check || state.repair_available) {
         return std::nullopt;
     }
@@ -9920,15 +9920,16 @@ std::optional<QString> showImmediateMetadataCheck(QWidget* parent,
     return status;
 }
 
-QJsonObject nonNativeRepairPayload(const NonNativeFilesystemCheckState& state,
-                                   const NonNativeFilesystemCheckRequest& request) {
+static QJsonObject nonNativeRepairPayload(const NonNativeFilesystemCheckState& state,
+                                          const NonNativeFilesystemCheckRequest& request) {
     return QJsonObject{{QStringLiteral("non_native_file_system_tool"), true},
                        {QStringLiteral("file_system"), state.file_system},
                        {QStringLiteral("target_path"), request.target_path},
                        {QStringLiteral("target_wipe_confirmed"), request.destructive_confirmed}};
 }
 
-QString showHfsConsistencyWithStatus(QWidget* parent, const NonNativeFilesystemCheckState& state) {
+static QString showHfsConsistencyWithStatus(QWidget* parent,
+                                            const NonNativeFilesystemCheckState& state) {
     const auto result = showHfsConsistencyDialog(parent, state);
     if (result.ok) {
         return QObject::tr("Reviewed %1 catalog and attribute keys").arg(state.file_system);
@@ -9936,9 +9937,10 @@ QString showHfsConsistencyWithStatus(QWidget* parent, const NonNativeFilesystemC
     return QObject::tr("Reviewed %1 catalog/attribute blockers").arg(state.file_system);
 }
 
-NonNativeCheckAction resolveNonNativeCheckAction(QWidget* parent,
-                                                 const NonNativeFilesystemCheckState& state,
-                                                 const NonNativeFilesystemCheckRequest& request) {
+static NonNativeCheckAction resolveNonNativeCheckAction(
+    QWidget* parent,
+    const NonNativeFilesystemCheckState& state,
+    const NonNativeFilesystemCheckRequest& request) {
     if (request.mode == PartitionFileSystemToolRunner::repairOperation()) {
         return {NonNativeCheckActionKind::QueueRepair, nonNativeRepairPayload(state, request)};
     }
@@ -9969,7 +9971,7 @@ struct ApfsRootFileMutationRequest {
     QString name;
 };
 
-PartitionOperationType apfsMutationTypeForMode(const QString& mode) {
+static PartitionOperationType apfsMutationTypeForMode(const QString& mode) {
     static const QHash<QString, PartitionOperationType> kModes = {
         {QString::fromLatin1(kApfsSnapshotCreateMode), PartitionOperationType::ApfsSnapshotCreate},
         {QString::fromLatin1(kApfsSnapshotDeleteMode), PartitionOperationType::ApfsSnapshotDelete},
@@ -9980,19 +9982,19 @@ PartitionOperationType apfsMutationTypeForMode(const QString& mode) {
     return kModes.value(mode, PartitionOperationType::ApfsSnapshotCreate);
 }
 
-bool apfsMutationIsSnapshot(PartitionOperationType type) {
+static bool apfsMutationIsSnapshot(PartitionOperationType type) {
     return type == PartitionOperationType::ApfsSnapshotCreate ||
            type == PartitionOperationType::ApfsSnapshotDelete ||
            type == PartitionOperationType::ApfsSnapshotRevert;
 }
 
-bool apfsMutationIsResize(PartitionOperationType type) {
+static bool apfsMutationIsResize(PartitionOperationType type) {
     return type == PartitionOperationType::ApfsResizeContainer;
 }
 
-QString apfsMutationPreview(PartitionOperationType type,
-                            const QString& name,
-                            uint64_t partitionSizeBytes) {
+static QString apfsMutationPreview(PartitionOperationType type,
+                                   const QString& name,
+                                   uint64_t partitionSizeBytes) {
     switch (type) {
     case PartitionOperationType::ApfsSnapshotCreate:
         return QObject::tr("Queue APFS snapshot create named %1.").arg(name);
@@ -10010,29 +10012,29 @@ QString apfsMutationPreview(PartitionOperationType type,
     }
 }
 
-QString apfsMutationNamePlaceholder(PartitionOperationType type) {
+static QString apfsMutationNamePlaceholder(PartitionOperationType type) {
     if (apfsMutationIsSnapshot(type)) {
         return QObject::tr("Snapshot name");
     }
     return QObject::tr("(not used for resize)");
 }
 
-QString apfsMutationFallbackName(PartitionOperationType type) {
+static QString apfsMutationFallbackName(PartitionOperationType type) {
     if (apfsMutationIsSnapshot(type)) {
         return QObject::tr("(snapshot)");
     }
     return QObject::tr("(container)");
 }
 
-bool apfsMutationDialogCanAccept(const ApfsRootFileMutationDialogWidgets& widgets,
-                                 PartitionOperationType type,
-                                 const QString& name) {
+static bool apfsMutationDialogCanAccept(const ApfsRootFileMutationDialogWidgets& widgets,
+                                        PartitionOperationType type,
+                                        const QString& name) {
     // Resize takes no name; snapshot modes need one.
     const bool hasName = apfsMutationIsResize(type) || !name.isEmpty();
     return hasName && widgets.confirm->isChecked();
 }
 
-void syncApfsRootFileMutationDialog(const ApfsRootFileMutationDialogWidgets& widgets) {
+static void syncApfsRootFileMutationDialog(const ApfsRootFileMutationDialogWidgets& widgets) {
     const auto type = apfsMutationTypeForMode(widgets.mode->currentData().toString());
     const bool resizeMode = apfsMutationIsResize(type);
     widgets.name->setEnabled(!resizeMode);
@@ -10047,7 +10049,7 @@ void syncApfsRootFileMutationDialog(const ApfsRootFileMutationDialogWidgets& wid
                             widgets.partition_size_bytes));
 }
 
-void populateApfsRootFileMutationModes(QComboBox* mode) {
+static void populateApfsRootFileMutationModes(QComboBox* mode) {
     mode->setAccessibleName(QObject::tr("APFS container action mode"));
     mode->addItem(QObject::tr("Create snapshot"), QString::fromLatin1(kApfsSnapshotCreateMode));
     mode->addItem(QObject::tr("Delete snapshot"), QString::fromLatin1(kApfsSnapshotDeleteMode));
@@ -10056,8 +10058,8 @@ void populateApfsRootFileMutationModes(QComboBox* mode) {
                   QString::fromLatin1(kApfsResizeContainerMode));
 }
 
-void connectApfsRootFileMutationDialog(PartitionOperationDialog& dialog,
-                                       const ApfsRootFileMutationDialogWidgets& widgets) {
+static void connectApfsRootFileMutationDialog(PartitionOperationDialog& dialog,
+                                              const ApfsRootFileMutationDialogWidgets& widgets) {
     auto updatePreview = [widgets]() {
         syncApfsRootFileMutationDialog(widgets);
     };
@@ -10067,7 +10069,7 @@ void connectApfsRootFileMutationDialog(PartitionOperationDialog& dialog,
     syncApfsRootFileMutationDialog(widgets);
 }
 
-std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
+static std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
     QWidget* parent, const ApfsRootFileMutationState& state) {
     PartitionOperationDialog dialog(QObject::tr("APFS Container"),
                                     state.target_path,
@@ -10100,8 +10102,8 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
     return ApfsRootFileMutationRequest{type, name->text().trimmed()};
 }
 
-QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
-                                        const ApfsRootFileMutationRequest& request) {
+static QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
+                                               const ApfsRootFileMutationRequest& request) {
     QJsonObject payload = apfsContainerBasePayload(state.target_path);
     if (apfsMutationIsSnapshot(request.type)) {
         payload[QStringLiteral("apfs_snapshot_name")] = request.name;
@@ -11385,9 +11387,9 @@ void PartitionManagerPanel::onOptimizeSsd() {
 // Lets the user pick the wipe scope explicitly instead of inferring it from mount state:
 // a disk wipe erases the whole disk; a partition wipe is either free-space-only (keeps the
 // existing files) or the entire partition. Returns nullopt if the user cancels.
-std::optional<PartitionOperationType> showWipeSelectionDialog(QWidget* parent,
-                                                              const PartitionTarget& target,
-                                                              const QString& targetText) {
+static std::optional<PartitionOperationType> showWipeSelectionDialog(QWidget* parent,
+                                                                     const PartitionTarget& target,
+                                                                     const QString& targetText) {
     if (target.kind == PartitionTargetKind::Disk) {
         PartitionOperationDialog dialog(
             QObject::tr("Wipe Disk"),

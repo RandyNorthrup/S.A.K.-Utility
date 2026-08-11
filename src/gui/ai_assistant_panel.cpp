@@ -4853,24 +4853,24 @@ void AiAssistantPanel::updateReportButton(bool busy) {
                         "a report"));
 }
 
-bool canResumeWorkflowInputGate(const ai::AiHumanGate& gate) {
+static bool canResumeWorkflowInputGate(const ai::AiHumanGate& gate) {
     return gate.kind == QLatin1String("workflow_input") &&
            gate.name == QLatin1String("required_input");
 }
 
-bool canResumeApprovalGate(const ai::AiHumanGate& gate) {
+static bool canResumeApprovalGate(const ai::AiHumanGate& gate) {
     return gate.kind == QLatin1String("approval") &&
            (gate.name == QLatin1String("command_approval") ||
             gate.name == QLatin1String("restore_point_offer") ||
             gate.name == QLatin1String("restore_point_failure_continue"));
 }
 
-bool canResumeRecoveryGate(const ai::AiHumanGate& gate) {
+static bool canResumeRecoveryGate(const ai::AiHumanGate& gate) {
     return gate.kind == QLatin1String("workflow_recovery") &&
            gate.name == QLatin1String("phase_needs_human");
 }
 
-bool canResumeHumanGate(const ai::AiHumanGate& gate) {
+static bool canResumeHumanGate(const ai::AiHumanGate& gate) {
     return gate.isPending() && (canResumeWorkflowInputGate(gate) || canResumeApprovalGate(gate) ||
                                 canResumeRecoveryGate(gate));
 }
@@ -5370,7 +5370,7 @@ QString AiAssistantPanel::workflowTemplateComboLabel(const ai::WorkflowTemplate&
     return tr("%1 - %2 (%3 phases)").arg(category, workflow.title).arg(workflow.phases.size());
 }
 
-QStringList limitedWorkflowTools(const ai::WorkflowTemplate& workflow) {
+static QStringList limitedWorkflowTools(const ai::WorkflowTemplate& workflow) {
     QStringList tools;
     for (const auto& requirement : workflow.required_software) {
         if (!requirement.id.trimmed().isEmpty()) {
@@ -5383,7 +5383,7 @@ QStringList limitedWorkflowTools(const ai::WorkflowTemplate& workflow) {
     return tools;
 }
 
-QStringList limitedWorkflowInputs(const ai::WorkflowTemplate& workflow) {
+static QStringList limitedWorkflowInputs(const ai::WorkflowTemplate& workflow) {
     QStringList inputs;
     for (const auto& input : workflow.required_inputs) {
         inputs << (input.label.trimmed().isEmpty() ? input.id.trimmed() : input.label.trimmed());

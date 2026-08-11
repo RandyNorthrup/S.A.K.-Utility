@@ -509,7 +509,7 @@ QString validateCsvConfig(const QStringList& columns, QChar delimiter) {
 }  // namespace
 
 /// Append a vCard field line only if value is non-empty
-void appendVcfField(QByteArray& vcf, const char* tag, const QString& value) {
+static void appendVcfField(QByteArray& vcf, const char* tag, const QString& value) {
     if (!value.isEmpty()) {
         vcf += tag + escapeCalendarText(value).toUtf8() + "\r\n";
     }

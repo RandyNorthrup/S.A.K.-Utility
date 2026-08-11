@@ -2655,7 +2655,8 @@ struct ExternalFileSystemToolScriptRequest {
     PartitionFileSystemToolCommand command;
 };
 
-PartitionScript buildNativeResizeScript(const PartitionOperation& operation, uint64_t targetSize) {
+static PartitionScript buildNativeResizeScript(const PartitionOperation& operation,
+                                               uint64_t targetSize) {
     PartitionScript out;
     out.preview = QStringLiteral("Resize Disk %1 Partition %2 to %3")
                       .arg(operation.target.disk_number)
@@ -2674,7 +2675,8 @@ PartitionScript buildNativeResizeScript(const PartitionOperation& operation, uin
     return out;
 }
 
-QString growExtResizePreToolScript(const PartitionOperation& operation, uint64_t targetSize) {
+static QString growExtResizePreToolScript(const PartitionOperation& operation,
+                                          uint64_t targetSize) {
     return QStringLiteral(
                "$targetSizeBytes = [uint64]%1\n"
                "Resize-Partition -DiskNumber %2 -PartitionNumber %3 -Size $targetSizeBytes\n"
@@ -2687,10 +2689,10 @@ QString growExtResizePreToolScript(const PartitionOperation& operation, uint64_t
         .arg(operation.target.partition_number);
 }
 
-ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionOperation& operation,
-                                                         const QString& fs,
-                                                         const QString& targetPath,
-                                                         uint64_t targetSize) {
+static ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionOperation& operation,
+                                                                const QString& fs,
+                                                                const QString& targetPath,
+                                                                uint64_t targetSize) {
     ExternalFileSystemToolScriptRequest request;
     request.operation_name = PartitionFileSystemToolRunner::resizeOperation();
     request.preview =
@@ -2705,7 +2707,7 @@ ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionOperatio
     return request;
 }
 
-QString extShrinkPreToolScript(uint64_t targetSize) {
+static QString extShrinkPreToolScript(uint64_t targetSize) {
     return QStringLiteral(
                "$targetSizeBytes = [uint64]%1\n"
                "$volume = $null\n"
@@ -2716,7 +2718,7 @@ QString extShrinkPreToolScript(uint64_t targetSize) {
         .arg(uintArg(targetSize));
 }
 
-QString extShrinkPartitionScript(const PartitionOperation& operation) {
+static QString extShrinkPartitionScript(const PartitionOperation& operation) {
     return QStringLiteral(
                "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size $targetSizeBytes\n"
                "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
@@ -2727,10 +2729,10 @@ QString extShrinkPartitionScript(const PartitionOperation& operation) {
         .arg(operation.target.partition_number);
 }
 
-PartitionScript buildExtShrinkResizeScript(const PartitionOperation& operation,
-                                           const QString& fs,
-                                           const QString& targetPath,
-                                           uint64_t targetSize) {
+static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& operation,
+                                                  const QString& fs,
+                                                  const QString& targetPath,
+                                                  uint64_t targetSize) {
     if (targetSize < kMinimumExtShrinkTargetBytes) {
         return invalidPartitionScript(QStringLiteral("Ext shrink target is too small"));
     }
@@ -2787,7 +2789,7 @@ PartitionScript buildExtShrinkResizeScript(const PartitionOperation& operation,
     return out;
 }
 
-QString robocopyManifestFunctionsScript() {
+static QString robocopyManifestFunctionsScript() {
     return sakShadowBackupFunctionScript() +
            QStringLiteral(
                "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
@@ -2822,7 +2824,7 @@ struct AllocateFreeSpacePayload {
     QString backup_directory;
 };
 
-AllocateFreeSpacePayload allocateFreeSpacePayload(const PartitionOperation& operation) {
+static AllocateFreeSpacePayload allocateFreeSpacePayload(const PartitionOperation& operation) {
     AllocateFreeSpacePayload payload;
     payload.source_partition =
         static_cast<uint32_t>(payloadUInt64(operation, QStringLiteral("source_partition_number")));
@@ -2841,8 +2843,8 @@ AllocateFreeSpacePayload allocateFreeSpacePayload(const PartitionOperation& oper
     return payload;
 }
 
-QString allocateFreeSpacePayloadError(const AllocateFreeSpacePayload& payload,
-                                      const PartitionOperation& operation) {
+static QString allocateFreeSpacePayloadError(const AllocateFreeSpacePayload& payload,
+                                             const PartitionOperation& operation) {
     if (payload.source_partition == 0 || payload.source_size == 0 ||
         payload.bytes_to_allocate == 0) {
         return QStringLiteral("Allocate Free Space requires source partition, size, and bytes");
@@ -2865,10 +2867,10 @@ QString allocateFreeSpacePayloadError(const AllocateFreeSpacePayload& payload,
     return {};
 }
 
-QString allocateSetupScript(const PartitionOperation& operation,
-                            const AllocateFreeSpacePayload& payload,
-                            uint64_t targetSize,
-                            uint64_t donorRemainingBytes) {
+static QString allocateSetupScript(const PartitionOperation& operation,
+                                   const AllocateFreeSpacePayload& payload,
+                                   uint64_t targetSize,
+                                   uint64_t donorRemainingBytes) {
     return QStringLiteral(
                "$target = $p\n"
                "$source = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
@@ -2920,8 +2922,8 @@ QString allocateSetupScript(const PartitionOperation& operation,
                  QDir::toNativeSeparators(payload.backup_directory)));
 }
 
-QString allocateExecutionScript(const PartitionOperation& operation,
-                                const AllocateFreeSpacePayload& payload) {
+static QString allocateExecutionScript(const PartitionOperation& operation,
+                                       const AllocateFreeSpacePayload& payload) {
     return QStringLiteral(
                "Write-Output ('Backing up donor {0} to {1}' -f $sourceRoot, $backupPath)\n"
                "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
@@ -2957,7 +2959,7 @@ struct ClusterSizePayload {
     QString backup_directory;
 };
 
-ClusterSizePayload clusterSizePayload(const PartitionOperation& operation) {
+static ClusterSizePayload clusterSizePayload(const PartitionOperation& operation) {
     ClusterSizePayload payload;
     payload.drive = validatedDriveLetter(operation).left(1);
     payload.file_system =
@@ -2971,8 +2973,8 @@ ClusterSizePayload clusterSizePayload(const PartitionOperation& operation) {
     return payload;
 }
 
-QString clusterSizePayloadError(const ClusterSizePayload& payload,
-                                const PartitionOperation& operation) {
+static QString clusterSizePayloadError(const ClusterSizePayload& payload,
+                                       const PartitionOperation& operation) {
     if (!PartitionScriptBuilder::isValidDriveLetter(payload.drive)) {
         return QStringLiteral("Cluster-size change requires a drive letter");
     }
@@ -2993,7 +2995,7 @@ QString clusterSizePayloadError(const ClusterSizePayload& payload,
     return {};
 }
 
-QString clusterSetupScript(const ClusterSizePayload& payload) {
+static QString clusterSetupScript(const ClusterSizePayload& payload) {
     return QStringLiteral(
                "$drive = %1\n"
                "$fileSystem = %2\n"
@@ -3027,7 +3029,7 @@ QString clusterSetupScript(const ClusterSizePayload& payload) {
                  QDir::toNativeSeparators(payload.backup_directory)));
 }
 
-QString clusterExecutionScript() {
+static QString clusterExecutionScript() {
     return QStringLiteral(
         "Write-Output ('Backing up {0} to {1}' -f $targetRoot, $backupPath)\n"
         "Invoke-SakBackupViaShadow $targetRoot $backupPath\n"
@@ -3045,18 +3047,18 @@ QString clusterExecutionScript() {
         "if ($fileSystem -eq 'NTFS') { fsutil.exe fsinfo ntfsinfo $targetDrive }\n");
 }
 
-bool isNativeRawDevicePath(const QString& path) {
+static bool isNativeRawDevicePath(const QString& path) {
     const QString trimmed = path.trimmed();
     return trimmed.startsWith(QStringLiteral("\\\\?\\")) ||
            trimmed.startsWith(QStringLiteral("\\\\.\\"));
 }
 
-bool isHfsToolFileSystem(const QString& fileSystem) {
+static bool isHfsToolFileSystem(const QString& fileSystem) {
     return fileSystem.compare(QStringLiteral("hfs+"), Qt::CaseInsensitive) == 0 ||
            fileSystem.compare(QStringLiteral("hfsx"), Qt::CaseInsensitive) == 0;
 }
 
-QString hfsCheckedToolFunctionScript() {
+static QString hfsCheckedToolFunctionScript() {
     return QStringLiteral(
         "function Invoke-SakCheckedHfsTool {\n"
         "  param([string]$Name, [string]$FilePath, [string]$ExpectedHash, "
@@ -3081,7 +3083,7 @@ QString hfsCheckedToolFunctionScript() {
         "}\n");
 }
 
-QString hfsSparseFileFunctionsScript() {
+static QString hfsSparseFileFunctionsScript() {
     return QStringLiteral(
         "function New-SakSparseImageFile {\n"
         "  param([string]$Path, [uint64]$SizeBytes)\n"
@@ -3112,7 +3114,7 @@ QString hfsSparseFileFunctionsScript() {
         "}\n");
 }
 
-QString hfsVolumeEndianFunctionScript() {
+static QString hfsVolumeEndianFunctionScript() {
     return QStringLiteral(
         "function Read-SakBigEndianUInt16 {\n"
         "  param([byte[]]$Buffer, [int]$Offset)\n"
@@ -3132,7 +3134,7 @@ QString hfsVolumeEndianFunctionScript() {
         "}\n");
 }
 
-QString hfsVolumeHeaderStagingFunctionScript() {
+static QString hfsVolumeHeaderStagingFunctionScript() {
     return QStringLiteral(
         "function Get-SakHfsStagingSizeFromHeader {\n"
         "  param([System.IO.FileStream]$Stream, [uint64]$HeaderOffset, "
@@ -3166,7 +3168,7 @@ QString hfsVolumeHeaderStagingFunctionScript() {
         "}\n");
 }
 
-QString hfsVolumeStagingResolverFunctionScript() {
+static QString hfsVolumeStagingResolverFunctionScript() {
     return QStringLiteral(
         "function Get-SakHfsVolumeStagingSizeBytes {\n"
         "  param([string]$RawTarget, [uint64]$PartitionSizeBytes)\n"
@@ -3211,12 +3213,12 @@ QString hfsVolumeStagingResolverFunctionScript() {
         "}\n");
 }
 
-QString hfsVolumeStagingSizeFunctionScript() {
+static QString hfsVolumeStagingSizeFunctionScript() {
     return hfsVolumeEndianFunctionScript() + hfsVolumeHeaderStagingFunctionScript() +
            hfsVolumeStagingResolverFunctionScript();
 }
 
-QString hfsRangeCopyFunctionsScript() {
+static QString hfsRangeCopyFunctionsScript() {
     return QStringLiteral(
                "function Test-SakZeroBuffer {\n"
                "  param([byte[]]$Buffer, [int]$Count)\n"
@@ -3285,7 +3287,7 @@ QString hfsRangeCopyFunctionsScript() {
         .arg(uintArg(kHfsStagedCopyBufferBytes));
 }
 
-QString hfsSparseImageWritebackFunctionScript() {
+static QString hfsSparseImageWritebackFunctionScript() {
     return QStringLiteral(
                "function Copy-SakSparseImageToRawTarget {\n"
                "  param([string]$ImagePath, [string]$RawTarget, [uint64]$TargetSizeBytes)\n"
@@ -3338,7 +3340,7 @@ QString hfsSparseImageWritebackFunctionScript() {
         .arg(uintArg(kHfsStaleSignatureClearBytes));
 }
 
-QString hfsRawTargetStagingFunctionScript() {
+static QString hfsRawTargetStagingFunctionScript() {
     return QStringLiteral(
                "function Copy-SakRawTargetToImage {\n"
                "  param([string]$RawTarget, [string]$ImagePath, [uint64]$SizeBytes)\n"
@@ -3375,7 +3377,7 @@ QString hfsRawTargetStagingFunctionScript() {
         .arg(uintArg(kHfsStagedCopyBufferBytes));
 }
 
-QString hfsRepairFunctionScript() {
+static QString hfsRepairFunctionScript() {
     return QStringLiteral(
         "function Invoke-SakHfsRepairUntilClean {\n"
         "  param([string]$FsckPath, [string]$ExpectedHash, [string]$ImagePath, "
@@ -3407,21 +3409,21 @@ QString hfsRepairFunctionScript() {
         "}\n");
 }
 
-QString hfsStagedFunctionsScript() {
+static QString hfsStagedFunctionsScript() {
     return hfsCheckedToolFunctionScript() + hfsSparseFileFunctionsScript() +
            hfsVolumeStagingSizeFunctionScript() + hfsRangeCopyFunctionsScript() +
            hfsSparseImageWritebackFunctionScript() + hfsRawTargetStagingFunctionScript() +
            hfsRepairFunctionScript();
 }
 
-QString hfsStagedImagePathScript(const QString& prefix) {
+static QString hfsStagedImagePathScript(const QString& prefix) {
     return QStringLiteral(
                "$stagedImagePath = Join-Path ([System.IO.Path]::GetTempPath()) "
                "('%1-' + [guid]::NewGuid().ToString('N') + '.img')\n")
         .arg(prefix);
 }
 
-PartitionScript buildStagedHfsFormatScript(
+static PartitionScript buildStagedHfsFormatScript(
     const PartitionOperation& operation,
     const ExternalFileSystemToolScriptRequest& request,
     const PartitionFileSystemToolResolution& formatResolution,
@@ -3471,10 +3473,11 @@ PartitionScript buildStagedHfsFormatScript(
     return out;
 }
 
-PartitionScript buildStagedHfsRepairScript(const PartitionOperation& operation,
-                                           const ExternalFileSystemToolScriptRequest& request,
-                                           const PartitionFileSystemToolResolution& fsckResolution,
-                                           const QString& rawTargetPath) {
+static PartitionScript buildStagedHfsRepairScript(
+    const PartitionOperation& operation,
+    const ExternalFileSystemToolScriptRequest& request,
+    const PartitionFileSystemToolResolution& fsckResolution,
+    const QString& rawTargetPath) {
     PartitionScript out;
     out.preview = request.preview + QStringLiteral(" using sparse staging");
     out.script =
@@ -3511,19 +3514,19 @@ PartitionScript buildStagedHfsRepairScript(const PartitionOperation& operation,
     return out;
 }
 
-bool isHfsFormatRequest(const ExternalFileSystemToolScriptRequest& request) {
+static bool isHfsFormatRequest(const ExternalFileSystemToolScriptRequest& request) {
     return request.operation_name == PartitionFileSystemToolRunner::formatOperation() &&
            request.command.tool_id == QStringLiteral("newfs_hfs");
 }
 
-bool isHfsRepairRequest(const ExternalFileSystemToolScriptRequest& request) {
+static bool isHfsRepairRequest(const ExternalFileSystemToolScriptRequest& request) {
     return request.operation_name == PartitionFileSystemToolRunner::repairOperation() &&
            request.command.tool_id == QStringLiteral("fsck_hfs");
 }
 
-PartitionFileSystemToolResolution resolveFsckHfsTool(const QString& manifestPath,
-                                                     const QString& toolsRoot,
-                                                     const QString& fileSystem) {
+static PartitionFileSystemToolResolution resolveFsckHfsTool(const QString& manifestPath,
+                                                            const QString& toolsRoot,
+                                                            const QString& fileSystem) {
     return PartitionFileSystemToolRunner::resolveApprovedTool(
         manifestPath,
         toolsRoot,
@@ -3541,7 +3544,7 @@ struct StagedRawHfsScriptRequest {
     QString raw_target_path;
 };
 
-std::optional<PartitionScript> maybeBuildStagedRawHfsScript(
+static std::optional<PartitionScript> maybeBuildStagedRawHfsScript(
     const StagedRawHfsScriptRequest& input) {
     const auto& request = *input.request;
     if (!isNativeRawDevicePath(input.raw_target_path) ||
@@ -3570,9 +3573,10 @@ struct ExternalToolPostScript {
     QStringList blockers;
 };
 
-ExternalToolPostScript hfsPostFormatRepairScript(const ExternalFileSystemToolScriptRequest& request,
-                                                 const QString& manifestPath,
-                                                 const QString& toolsRoot) {
+static ExternalToolPostScript hfsPostFormatRepairScript(
+    const ExternalFileSystemToolScriptRequest& request,
+    const QString& manifestPath,
+    const QString& toolsRoot) {
     if (!isHfsFormatRequest(request) || request.command.arguments.isEmpty()) {
         return {};
     }
@@ -3610,17 +3614,17 @@ ExternalToolPostScript hfsPostFormatRepairScript(const ExternalFileSystemToolScr
                      powerShellArrayLiteral(repairArguments))};
 }
 
-QString newPartitionCommandScript(const PartitionOperation& operation,
-                                  const CreateScriptSpec& spec,
-                                  const QString& driveArg) {
+static QString newPartitionCommandScript(const PartitionOperation& operation,
+                                         const CreateScriptSpec& spec,
+                                         const QString& driveArg) {
     return QStringLiteral("$p = New-Partition -DiskNumber %1 -Size %2%3%4%5\n")
         .arg(operation.target.disk_number)
         .arg(uintArg(spec.size))
         .arg(driveArg, partitionTypeArg(operation), createOffsetArg(operation));
 }
 
-QString refreshCreatedPartitionAndRawTargetScript(const PartitionOperation& operation,
-                                                  const CreateScriptSpec& spec) {
+static QString refreshCreatedPartitionAndRawTargetScript(const PartitionOperation& operation,
+                                                         const CreateScriptSpec& spec) {
     return QStringLiteral(
                "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
                "$p = Get-Partition -DiskNumber %1 -PartitionNumber $p.PartitionNumber "
@@ -3634,8 +3638,8 @@ QString refreshCreatedPartitionAndRawTargetScript(const PartitionOperation& oper
         .arg(uintArg(spec.size));
 }
 
-PartitionScript buildCreateLinuxSwapScript(const PartitionOperation& operation,
-                                           const CreateScriptSpec& spec) {
+static PartitionScript buildCreateLinuxSwapScript(const PartitionOperation& operation,
+                                                  const CreateScriptSpec& spec) {
     const uint64_t pageSize = linuxSwapPageSize(operation);
     if (!isSupportedLinuxSwapPageSize(pageSize)) {
         return invalidPartitionScript(QStringLiteral("Unsupported Linux swap page size"));
@@ -3664,8 +3668,8 @@ PartitionScript buildCreateLinuxSwapScript(const PartitionOperation& operation,
     return out;
 }
 
-PartitionScript buildCreateApfsScript(const PartitionOperation& operation,
-                                      const CreateScriptSpec& spec) {
+static PartitionScript buildCreateApfsScript(const PartitionOperation& operation,
+                                             const CreateScriptSpec& spec) {
     PartitionScript out;
     out.preview = QStringLiteral("Create %1 APFS partition on Disk %2 with S.A.K. APFS writer")
                       .arg(formatPartitionBytes(spec.size),
@@ -3687,10 +3691,10 @@ PartitionScript buildCreateApfsScript(const PartitionOperation& operation,
     return out;
 }
 
-PartitionScript buildCreateExtScript(const PartitionOperation& operation,
-                                     const CreateScriptSpec& spec,
-                                     const PartitionFileSystemToolCommand& command,
-                                     const PartitionFileSystemToolResolution& resolution) {
+static PartitionScript buildCreateExtScript(const PartitionOperation& operation,
+                                            const CreateScriptSpec& spec,
+                                            const PartitionFileSystemToolCommand& command,
+                                            const PartitionFileSystemToolResolution& resolution) {
     PartitionScript out;
     out.preview = QStringLiteral("Create %1 %2 partition on Disk %3 with bundled %4")
                       .arg(formatPartitionBytes(spec.size),
@@ -3722,7 +3726,7 @@ PartitionScript buildCreateExtScript(const PartitionOperation& operation,
     return out;
 }
 
-PartitionScript buildCreateStagedHfsScript(
+static PartitionScript buildCreateStagedHfsScript(
     const PartitionOperation& operation,
     const CreateScriptSpec& spec,
     const PartitionFileSystemToolCommand& command,
@@ -3775,8 +3779,8 @@ PartitionScript buildCreateStagedHfsScript(
     return out;
 }
 
-PartitionScript buildCreateNonNativeFormatScript(const PartitionOperation& operation,
-                                                 const CreateScriptSpec& spec) {
+static PartitionScript buildCreateNonNativeFormatScript(const PartitionOperation& operation,
+                                                        const CreateScriptSpec& spec) {
     if (isLinuxSwapFileSystemToken(spec.file_system)) {
         return buildCreateLinuxSwapScript(operation, spec);
     }
@@ -4747,7 +4751,7 @@ PartitionScript PartitionScriptBuilder::buildConvertStyleScript(
 // still: it resolves $destination to the target volume ROOT, so robocopy /E overwrites the
 // surviving volume's own tree before the source partition is deleted. Return the rejection message
 // for anything that is not a plain name, or an empty string when 'folder' is acceptable.
-QString mergeFolderRejectReason(const QString& folder) {
+static QString mergeFolderRejectReason(const QString& folder) {
     bool bare = !folder.isEmpty() && folder != QStringLiteral(".") &&
                 folder != QStringLiteral("..") && !folder.contains(QStringLiteral(".."));
     for (const QChar reserved : QStringLiteral("/\\:<>\"|?*")) {

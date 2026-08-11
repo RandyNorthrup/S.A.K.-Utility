@@ -4064,7 +4064,7 @@ PartitionApplyResolution resolvePartitionApplyTarget(const PartitionInventory& i
 // bound here (schema + op guard) so the op never reports a full description the engine shortened.
 constexpr int kMaxRestorePointDescriptionChars = 64;
 
-QJsonObject createRestorePointParamsSchema() {
+static QJsonObject createRestorePointParamsSchema() {
     QJsonObject desc_prop{
         {QStringLiteral("type"), QStringLiteral("string")},
         {QStringLiteral("minLength"), 1},
@@ -4089,7 +4089,7 @@ QJsonObject createRestorePointParamsSchema() {
 // gate fires at the Assisted-confirm tier. Honesty: a disabled System Restore, a missing elevation,
 // the once-per-24h throttle, or any PowerShell failure are each reported as an honest failure via
 // the captured restorePointFailed signal, never a false success.
-AppActionResult createRestorePoint(const QJsonObject& args) {
+static AppActionResult createRestorePoint(const QJsonObject& args) {
     const QString description = args.value(QStringLiteral("description")).toString().trimmed();
     if (description.isEmpty()) {
         return {false,
@@ -4136,7 +4136,7 @@ AppActionResult createRestorePoint(const QJsonObject& args) {
 
 // Register the diagnostics-mutating ops. Split out to keep registerMutatingAppActionsInto within
 // the length budget.
-void registerDiagnosticsMutatingOps(const AddMutatingActionFn& add) {
+static void registerDiagnosticsMutatingOps(const AddMutatingActionFn& add) {
     // diagnostics.create_restore_point: creates a System Restore checkpoint -> mutating +
     // requires_admin, but NOT destructive (it adds a recovery point, removes nothing) and not
     // catastrophic. The gate fires at the Assisted-confirm tier.
@@ -4154,7 +4154,7 @@ void registerDiagnosticsMutatingOps(const AddMutatingActionFn& add) {
 
 // Register the imaging-mutating ops. Split out to keep registerMutatingAppActionsInto within the
 // length budget.
-void registerImagingMutatingOps(const AddMutatingActionFn& add) {
+static void registerImagingMutatingOps(const AddMutatingActionFn& add) {
     // imaging.flash_image: OVERWRITES an entire physical disk with a disk image ->
     // destructive + CATASTROPHIC (forces a human confirm even in Unattended) +
     // requires_admin (raw disk write). The system/boot disk and read-only disks are

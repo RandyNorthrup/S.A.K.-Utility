@@ -2134,6 +2134,24 @@ Release build + ctest 225/225, then commit):
   TODO: run misc-const-correctness on partition_apfs_writer.cpp as a targeted,
   per-declaration review (skip any local whose address is passed to a non-const
   pointer parameter).
+    * wave 4 misc-use-internal-linkage, 228 free functions across 21 files given
+      the static keyword (internal linkage). Adding static exposed two functions
+      in partition_apfs_writer.cpp as dead (C4505 unreferenced-with-internal-
+      linkage, warning-as-error): assignedRootDirectoryPayloads and
+      rootDirectoryReadbackEntry, the never-wired directory-side analogues of the
+      file-payload / file-readback helpers. Confirmed truly dead (tree-wide grep:
+      definition only, no call, no address-of); on the owner's authorization they
+      were REMOVED, together with struct ApfsRootDirectoryInput which only that
+      dead path constructed. The live directory type (ApfsRootDirectoryPayload)
+      and the shared reader (listDirectoryFromImage) remain. FIVE functions the
+      check flagged were kept external because a unit test links the production
+      object and calls them via a forward declaration (a white-box seam the
+      single-TU clang analysis cannot see, so static breaks the test link,
+      LNK2001): leftover_scanner.cpp parseFirstCsvField / firewallDumpHeaderMissing
+      / applyFirewallField / growRunValueBuffers and
+      file_explorer_properties_dialog.cpp makeCancelableLister. LESSON: for
+      use-internal-linkage the LINK stage -- not ctest, not the clang run -- is the
+      gate; many production helpers here are deliberately test-visible seams.
 
 ### G2 - re-enable the 30 disabled clang-tidy checks
 

@@ -570,7 +570,7 @@ PartitionInventory StorageInventoryWorker::parseInventoryJson(const QByteArray& 
     return inventory;
 }
 
-QString inventoryPowerShellHeaderScript() {
+static QString inventoryPowerShellHeaderScript() {
     return QStringLiteral(R"PS(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -579,7 +579,7 @@ $physicalDisks = @(Get-PhysicalDisk -ErrorAction SilentlyContinue)
 )PS");
 }
 
-QString inventoryPowerShellVolumeLookupScript() {
+static QString inventoryPowerShellVolumeLookupScript() {
     return QStringLiteral(R"PS(
 function Get-SakVolumeForPartition {
   param([Parameter(Mandatory = $true)]$Partition)
@@ -601,7 +601,7 @@ function Get-SakVolumeForPartition {
 )PS");
 }
 
-QString inventoryPowerShellDiskPrefixScript() {
+static QString inventoryPowerShellDiskPrefixScript() {
     return QStringLiteral(R"PS(
 $disks = Get-Disk | ForEach-Object {
   $disk = $_
@@ -639,7 +639,7 @@ $disks = Get-Disk | ForEach-Object {
 )PS");
 }
 
-QString inventoryPowerShellPartitionScript() {
+static QString inventoryPowerShellPartitionScript() {
     return QStringLiteral(R"PS(
     PartitionQueryFailed = [bool]$partitionQuery.Failed
     PartitionQueryError = "$($partitionQuery.Error)"
@@ -685,7 +685,7 @@ QString inventoryPowerShellPartitionScript() {
 )PS");
 }
 
-QString inventoryPowerShellFooterScript() {
+static QString inventoryPowerShellFooterScript() {
     return QStringLiteral(R"PS(
   }
 }
@@ -697,7 +697,7 @@ $disks | ConvertTo-Json -Depth 8 -Compress
 // legitimately yields no objects (CmdletizationQuery_NotFound); EVERY other failure (access
 // denied, WMI/RPC error) is carried out as Failed/Error instead of being swallowed into an
 // empty partition list, which the parser would otherwise render as a fully unallocated disk.
-QString inventoryPowerShellPartitionQueryScript() {
+static QString inventoryPowerShellPartitionQueryScript() {
     return QStringLiteral(R"PS(
 function Get-SakPartitionsForDisk {
   param([Parameter(Mandatory = $true)]$DiskNumber)

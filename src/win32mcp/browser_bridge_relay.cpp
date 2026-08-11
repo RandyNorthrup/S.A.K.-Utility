@@ -275,10 +275,10 @@ bool relayHandshake(HANDLE pipe, const QString& token, int protocol, QString* er
 // caller of browser_write). That is what makes this safe without CancelIoEx on a
 // synchronous handle. The reply thread is ALWAYS joined -- an early return that abandoned
 // a thread still reading stdin would leave it writing into a destroyed frame.
-bool awaitBrowserReply(HANDLE pipe,
-                       const BrowserReadFn& browser_read,
-                       const BrowserWriteFn& browser_write,
-                       QJsonObject* reply) {
+static bool awaitBrowserReply(HANDLE pipe,
+                              const BrowserReadFn& browser_read,
+                              const BrowserWriteFn& browser_write,
+                              QJsonObject* reply) {
     std::atomic<bool> finished{false};
     bool read_ok = false;
     std::thread reader([&] {

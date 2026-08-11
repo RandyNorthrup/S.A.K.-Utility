@@ -1197,11 +1197,11 @@ private:
     bool m_finished{false};
 };
 
-LanUploadOutcome runLanUpload(const QString& targetAddr,
-                              uint16_t port,
-                              int durationSec,
-                              int blockSizeKB,
-                              const std::function<void(double, double, qint64)>& progress) {
+static LanUploadOutcome runLanUpload(const QString& targetAddr,
+                                     uint16_t port,
+                                     int durationSec,
+                                     int blockSizeKB,
+                                     const std::function<void(double, double, qint64)>& progress) {
     LanUploadOutcome outcome;
     QThread thread;
     QSemaphore done;

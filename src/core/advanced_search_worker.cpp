@@ -977,7 +977,7 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
 
 // -- File Search Dispatcher --------------------------------------------------
 
-bool shouldSearchText(const QString& ext, bool handled_as_special) {
+static bool shouldSearchText(const QString& ext, bool handled_as_special) {
     if (handled_as_special && kArchiveExtensions.contains(ext)) {
         return false;
     }
@@ -1724,7 +1724,7 @@ bool collectFieldMatches(const MetadataMatchContext& ctx,
 
 /// @brief Extract TIFF metadata (IFD tags) from a raw TIFF file.
 ///        TIFF files use the same IFD structure as JPEG EXIF.
-[[nodiscard]] QMap<QString, QString> extractTiffMetadata(const QByteArray& fileData) {
+[[nodiscard]] static QMap<QString, QString> extractTiffMetadata(const QByteArray& fileData) {
     QMap<QString, QString> metadata;
     constexpr int kMinTiffSize = 8;
     if (fileData.size() < kMinTiffSize) {
@@ -1740,9 +1740,9 @@ bool collectFieldMatches(const MetadataMatchContext& ctx,
     return metadata;
 }
 
-void gatherFormatMetadata(const QByteArray& file_data,
-                          const QString& ext,
-                          QMap<QString, QString>& metadata) {
+static void gatherFormatMetadata(const QByteArray& file_data,
+                                 const QString& ext,
+                                 QMap<QString, QString>& metadata) {
     if (ext == "jpg" || ext == "jpeg") {
         metadata = extractJpegExif(file_data);
     } else if (ext == "png") {
@@ -1760,10 +1760,10 @@ void gatherFormatMetadata(const QByteArray& file_data,
 /// instead: QImageReader would otherwise open the share itself with a plain
 /// synchronous read, which is exactly the unbounded hang the bounded reader
 /// exists to prevent.
-[[nodiscard]] bool supplementWithImageReader(const QString& file_path,
-                                             const QByteArray& bounded_data,
-                                             bool over_network,
-                                             QMap<QString, QString>& metadata) {
+[[nodiscard]] static bool supplementWithImageReader(const QString& file_path,
+                                                    const QByteArray& bounded_data,
+                                                    bool over_network,
+                                                    QMap<QString, QString>& metadata) {
     QBuffer buffer;
     QImageReader reader;
     if (over_network) {

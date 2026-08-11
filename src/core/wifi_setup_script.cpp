@@ -265,9 +265,9 @@ bool wifiSecurityUsesPassphrase(const QString& security) {
 // Fail closed on empty / unsafe (quote or control char) / over-length SSID and on
 // an unsupported enterprise/802.1X security type BEFORE touching a temp file or
 // running netsh. Returns the resolved auth, or nullopt with @p error set.
-std::optional<WlanAuthConfig> validateConnectInputs(const QString& ssid,
-                                                    const QString& security,
-                                                    QString& error) {
+static std::optional<WlanAuthConfig> validateConnectInputs(const QString& ssid,
+                                                           const QString& security,
+                                                           QString& error) {
     if (ssid.isEmpty() || !ssidIsBatchSafe(ssid)) {
         error = QStringLiteral("SSID is empty or contains a double quote / control character");
         return std::nullopt;

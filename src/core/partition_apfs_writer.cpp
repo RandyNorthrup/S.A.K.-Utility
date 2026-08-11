@@ -21054,7 +21054,8 @@ PartitionApfsImageMutationPlan PartitionApfsWriter::planImageOnlyFormat(
 
 using ApfsImageBlock = std::pair<uint64_t, QByteArray>;
 
-PartitionApfsImageBuildResult formatBuildResult(const PartitionApfsImageFormatRequest& request) {
+static PartitionApfsImageBuildResult formatBuildResult(
+    const PartitionApfsImageFormatRequest& request) {
     PartitionApfsImageBuildResult result;
     result.image_path = request.image_path.trimmed();
     result.plan = PartitionApfsWriter::planImageOnlyFormat(request.target_container_bytes,
@@ -21079,8 +21080,8 @@ PartitionApfsImageBuildResult formatBuildResult(const PartitionApfsImageFormatRe
 // volume (so 2 volumes need > 512 MiB, etc.). The additional volumes' six-block sets
 // share chunk 0's reserved prefix, so the metadata-overflow tier (whose prefix spills
 // past chunk 0) is fail-closed for multi-volume until separately certified.
-bool appendMultiVolumeFormatBlockers(const PartitionApfsImageFormatRequest& request,
-                                     PartitionApfsImageBuildResult* result) {
+static bool appendMultiVolumeFormatBlockers(const PartitionApfsImageFormatRequest& request,
+                                            PartitionApfsImageBuildResult* result) {
     const qsizetype extraVolumes = request.additional_volume_names.size();
     if (extraVolumes == 0) {
         return true;
@@ -21131,8 +21132,8 @@ bool appendMultiVolumeFormatBlockers(const PartitionApfsImageFormatRequest& requ
     return true;
 }
 
-bool appendFormatGeometryBlockers(const PartitionApfsImageFormatRequest& request,
-                                  PartitionApfsImageBuildResult* result) {
+static bool appendFormatGeometryBlockers(const PartitionApfsImageFormatRequest& request,
+                                         PartitionApfsImageBuildResult* result) {
     if (request.target_container_bytes % request.block_size_bytes != 0) {
         result->blockers.append(
             QStringLiteral("APFS format target size must be an exact multiple of block size"));
@@ -21146,17 +21147,17 @@ bool appendFormatGeometryBlockers(const PartitionApfsImageFormatRequest& request
     return appendMultiVolumeFormatBlockers(request, result);
 }
 
-bool appendFormatCreateBlockers(const PartitionApfsImageFormatRequest& request,
-                                PartitionApfsImageBuildResult* result) {
+static bool appendFormatCreateBlockers(const PartitionApfsImageFormatRequest& request,
+                                       PartitionApfsImageBuildResult* result) {
     if (!imagePathIsSafeForCreate(result->image_path, &result->blockers)) {
         return false;
     }
     return appendFormatGeometryBlockers(request, result);
 }
 
-bool appendRawFormatTargetBlockers(const PartitionApfsImageFormatRequest& request,
-                                   bool rawTarget,
-                                   PartitionApfsImageBuildResult* result) {
+static bool appendRawFormatTargetBlockers(const PartitionApfsImageFormatRequest& request,
+                                          bool rawTarget,
+                                          PartitionApfsImageBuildResult* result) {
     if (!rawTarget) {
         return true;
     }
@@ -21173,9 +21174,9 @@ bool appendRawFormatTargetBlockers(const PartitionApfsImageFormatRequest& reques
     return true;
 }
 
-bool appendFileFormatTargetBlockers(const PartitionApfsImageFormatRequest& request,
-                                    bool rawTarget,
-                                    PartitionApfsImageBuildResult* result) {
+static bool appendFileFormatTargetBlockers(const PartitionApfsImageFormatRequest& request,
+                                           bool rawTarget,
+                                           PartitionApfsImageBuildResult* result) {
     if (rawTarget) {
         return true;
     }
@@ -21192,8 +21193,8 @@ bool appendFileFormatTargetBlockers(const PartitionApfsImageFormatRequest& reque
     return true;
 }
 
-bool appendFormatWipeConfirmationBlocker(const PartitionApfsImageFormatRequest& request,
-                                         PartitionApfsImageBuildResult* result) {
+static bool appendFormatWipeConfirmationBlocker(const PartitionApfsImageFormatRequest& request,
+                                                PartitionApfsImageBuildResult* result) {
     if (!request.target_wipe_confirmed) {
         result->blockers.append(
             QStringLiteral("APFS existing-image format requires destructive wipe confirmation"));
@@ -21202,8 +21203,8 @@ bool appendFormatWipeConfirmationBlocker(const PartitionApfsImageFormatRequest& 
     return true;
 }
 
-bool appendExistingFormatTargetBlockers(const PartitionApfsImageFormatRequest& request,
-                                        PartitionApfsImageBuildResult* result) {
+static bool appendExistingFormatTargetBlockers(const PartitionApfsImageFormatRequest& request,
+                                               PartitionApfsImageBuildResult* result) {
     if (!appendFormatGeometryBlockers(request, result)) {
         return false;
     }
@@ -21218,14 +21219,14 @@ bool appendExistingFormatTargetBlockers(const PartitionApfsImageFormatRequest& r
 // only the metadata blocks actually written rather than its full logical size. Best
 // effort: on a file system without sparse support the subsequent resize still works
 // when the volume has room. On POSIX, ftruncate already produces a sparse file.
-void markImageSparse(QFile* image) {
+static void markImageSparse(QFile* image) {
     markFileSparse(image->handle());
 }
 
-bool createSizedApfsImage(const QString& path,
-                          uint64_t sizeBytes,
-                          QFile* image,
-                          QStringList* blockers) {
+static bool createSizedApfsImage(const QString& path,
+                                 uint64_t sizeBytes,
+                                 QFile* image,
+                                 QStringList* blockers) {
     image->setFileName(path);
     // NewOnly closes the check-then-open TOCTOU: imagePathIsSafeForCreate's QFileInfo::exists
     // is non-atomic, so a plain WriteOnly would truncate (then failure-cleanup delete) a file
@@ -21269,7 +21270,7 @@ struct ExtraApfsVolumes {
 // volume owns OIDs 1026 (superblock) and 1028 (root tree); each additional volume k
 // (1-based) takes superblock OID 1030+2*(k-1) and root-tree OID one above it, keeping
 // every assigned OID below nx_next_oid.
-ExtraApfsVolumes layOutExtraApfsVolumes(const QStringList& names, uint64_t baseBlock) {
+static ExtraApfsVolumes layOutExtraApfsVolumes(const QStringList& names, uint64_t baseBlock) {
     ExtraApfsVolumes out;
     uint64_t block = baseBlock;
     for (qsizetype i = 0; i < names.size(); ++i) {
@@ -21323,10 +21324,10 @@ struct ApfsEncryptionInputs {
 
 /// @brief Fletcher-stamp a plaintext keybag block then AES-XTS-encrypt the whole
 /// 4096B block with @p uuid||uuid (tweak base = blockAddr * 8).
-QByteArray sealKeybagBlock(QByteArray plaintext,
-                           const QByteArray& uuid,
-                           uint64_t blockAddr,
-                           QStringList* blockers) {
+static QByteArray sealKeybagBlock(QByteArray plaintext,
+                                  const QByteArray& uuid,
+                                  uint64_t blockAddr,
+                                  QStringList* blockers) {
     if (!stampApfsObjectBlock(&plaintext, blockers)) {
         return {};
     }
@@ -21335,10 +21336,10 @@ QByteArray sealKeybagBlock(QByteArray plaintext,
 
 /// @brief Build one per-volume-keybag unlock record: the volume KEK wrapped by a
 /// credential (password or recovery key) via PBKDF2-HMAC-SHA256, keyed by @p uuid.
-sak::apfs_keybag::KeybagEntry buildVolumeUnlockRecord(const QByteArray& kek,
-                                                      const QByteArray& credential,
-                                                      const QByteArray& uuid,
-                                                      QStringList* blockers) {
+static sak::apfs_keybag::KeybagEntry buildVolumeUnlockRecord(const QByteArray& kek,
+                                                             const QByteArray& credential,
+                                                             const QByteArray& uuid,
+                                                             QStringList* blockers) {
     using namespace sak::apfs_crypto;
     const QByteArray salt = randomBytes(16);
     const QByteArray derived = pbkdf2Sha256(credential, salt, kApfsEncryptionIterations, 32);
@@ -21361,8 +21362,8 @@ sak::apfs_keybag::KeybagEntry buildVolumeUnlockRecord(const QByteArray& kek,
 /// user password (and optional recovery key), and return both keybag blocks
 /// encrypted + ready to place. With a recovery key the volume keybag gets a second
 /// unlock record so the volume unlocks by EITHER the password or the recovery key.
-ApfsEncryptionMaterial buildApfsEncryptionMaterial(const ApfsEncryptionInputs& in,
-                                                   QStringList* blockers) {
+static ApfsEncryptionMaterial buildApfsEncryptionMaterial(const ApfsEncryptionInputs& in,
+                                                          QStringList* blockers) {
     using namespace sak::apfs_crypto;
     using namespace sak::apfs_keybag;
     const QByteArray& volumeUuid = in.volumeUuid;
@@ -21443,11 +21444,11 @@ struct ApfsFormatEncryption {
 
 /// @brief Resolve the encryption plan for a format request. The two keybags take
 /// the next blocks after the reserved metadata prefix at @p baseReserved.
-ApfsFormatEncryption prepareFormatEncryption(const PartitionApfsImageFormatRequest& request,
-                                             uint64_t baseReserved,
-                                             const QByteArray& containerUuid,
-                                             const QByteArray& volumeUuid,
-                                             QStringList* blockers) {
+static ApfsFormatEncryption prepareFormatEncryption(const PartitionApfsImageFormatRequest& request,
+                                                    uint64_t baseReserved,
+                                                    const QByteArray& containerUuid,
+                                                    const QByteArray& volumeUuid,
+                                                    QStringList* blockers) {
     ApfsFormatEncryption enc;
     if (request.volume_password.isEmpty()) {
         return enc;
@@ -21493,7 +21494,7 @@ ApfsFormatEncryption prepareFormatEncryption(const PartitionApfsImageFormatReque
 /// and recompute its Fletcher-64 checksum. Per-file volumes flag the (plaintext)
 /// fs-tree object rather than XTS-encrypting it, which apfsck requires for a
 /// v_encrypted volume's fs-tree object.
-void setApfsObjectEncryptedFlag(QByteArray* block, QStringList* blockers) {
+static void setApfsObjectEncryptedFlag(QByteArray* block, QStringList* blockers) {
     writeLe32(block,
               kApfsObjectTypeOffset,
               le32(*block, kApfsObjectTypeOffset) | kApfsObjEncryptedFlag);
@@ -21503,9 +21504,9 @@ void setApfsObjectEncryptedFlag(QByteArray* block, QStringList* blockers) {
 /// @brief ONEKEY: AES-XTS-encrypt the volume fs-tree with the VEK. Per-file: leave
 /// the fs-tree plaintext but set its object ENCRYPTED flag. Then append the two
 /// keybag blocks. No-op for an unencrypted (or failed) format.
-void applyFormatEncryption(QVector<ApfsImageBlock>* blocks,
-                           const ApfsFormatEncryption& enc,
-                           uint64_t rootTree) {
+static void applyFormatEncryption(QVector<ApfsImageBlock>* blocks,
+                                  const ApfsFormatEncryption& enc,
+                                  uint64_t rootTree) {
     if (!enc.enabled || !enc.ok) {
         return;
     }
@@ -21529,10 +21530,10 @@ void applyFormatEncryption(QVector<ApfsImageBlock>* blocks,
 // object map (a physical object, OID = block) resolves its own root-tree OID to
 // its empty root tree; the extent-ref and snap-meta trees are physical objects.
 // Byte-identical to the inline loop it replaces (no-op when extras is empty).
-void appendExtraVolumeBlocks(QVector<ApfsImageBlock>* blocks,
-                             const PartitionApfsImageFormatRequest& request,
-                             const ExtraApfsVolumes& extras,
-                             QStringList* blockers) {
+static void appendExtraVolumeBlocks(QVector<ApfsImageBlock>* blocks,
+                                    const PartitionApfsImageFormatRequest& request,
+                                    const ExtraApfsVolumes& extras,
+                                    QStringList* blockers) {
     for (const auto& extra : extras.volumes) {
         const QVector<ApfsObjectMapEntry> extraVolumeMappings{
             {extra.rootTreeOid, kApfsFormatXid, extra.rootTree}};
@@ -21591,9 +21592,9 @@ struct ApfsSpacemanContinuationParams {
 // fletcher64 stamped over the whole object live in the first block (already in the
 // list); these are the raw remaining blocks of the same contiguous object.
 // Byte-identical to the inline loop it replaces (no-op when spacemanBlocks == 1).
-void appendSpacemanContinuationBlocks(QVector<ApfsImageBlock>* blocks,
-                                      const PartitionApfsImageFormatRequest& request,
-                                      const ApfsSpacemanContinuationParams& p) {
+static void appendSpacemanContinuationBlocks(QVector<ApfsImageBlock>* blocks,
+                                             const PartitionApfsImageFormatRequest& request,
+                                             const ApfsSpacemanContinuationParams& p) {
     for (uint64_t i = 1; i < p.spacemanBlocks; ++i) {
         const qsizetype off = static_cast<qsizetype>(i * request.block_size_bytes);
         blocks->append(
@@ -21625,7 +21626,7 @@ struct ApfsInternalPoolBlocksParams {
 // slots; cib 1..N-1 describe the all-free upper chunks and are emitted ONCE as
 // immutable blocks. Single-CIB reduces to the certified {185,186} ghost / {187,188}
 // live blocks (no immutable cibs). Byte-identical to the inline sequence it replaces.
-void appendChunkInfoBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* blockers) {
+static void appendChunkInfoBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* blockers) {
     const PartitionApfsImageFormatRequest& request = p.request;
     const ApfsMultiCibLayout& mcib = p.mcib;
     QVector<ApfsImageBlock>* blocks = p.blocks;
@@ -21689,7 +21690,7 @@ void appendChunkInfoBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* b
 // Per-chunk allocation bitmaps: chunk-0 genesis/live, the overflow chunks 1..M-1,
 // and the boundary chunk's genesis/live rotating bitmaps. Each marks that chunk's
 // slice of the reserved prefix. Byte-identical to the inline sequence it replaces.
-void appendChunkBitmapBlocks(const ApfsInternalPoolBlocksParams& p) {
+static void appendChunkBitmapBlocks(const ApfsInternalPoolBlocksParams& p) {
     const PartitionApfsImageFormatRequest& request = p.request;
     const ApfsMultiCibLayout& mcib = p.mcib;
     QVector<ApfsImageBlock>* blocks = p.blocks;
@@ -21730,7 +21731,7 @@ void appendChunkBitmapBlocks(const ApfsInternalPoolBlocksParams& p) {
 // checkpoint's cib list - only cib 0 differs genesis vs live, so the immutable
 // cabs are identical in both lists and emitted once. Byte-identical to the inline
 // branch it replaces (no-op below the CAB tier).
-void appendCabAddrBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* blockers) {
+static void appendCabAddrBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* blockers) {
     const PartitionApfsImageFormatRequest& request = p.request;
     const ApfsMultiCibLayout& mcib = p.mcib;
     QVector<ApfsImageBlock>* blocks = p.blocks;
@@ -21767,7 +21768,7 @@ void appendCabAddrBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* blo
     }
 }
 
-void appendInternalPoolBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* blockers) {
+static void appendInternalPoolBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* blockers) {
     appendChunkInfoBlocks(p, blockers);
     appendChunkBitmapBlocks(p);
     appendCabAddrBlocks(p, blockers);
@@ -21819,9 +21820,9 @@ struct ApfsEmptyFormatPlan {
 // Fills the random UUIDs, multi-CIB/CAB layout, ephemeral spaceman/reaper/free-queue
 // block numbers, and every post-internal-pool object's block number into *p.
 // Byte-identical to the inline prologue it replaces.
-void resolveEmptyFormatBlockNumbers(const PartitionApfsImageFormatRequest& request,
-                                    uint64_t blockCount,
-                                    ApfsEmptyFormatPlan* p) {
+static void resolveEmptyFormatBlockNumbers(const PartitionApfsImageFormatRequest& request,
+                                           uint64_t blockCount,
+                                           ApfsEmptyFormatPlan* p) {
     p->containerUuid = randomApfsUuid();
     p->volumeUuid = randomApfsUuid();
     // The internal pool grows to 3*(chunk_count+cib_count) blocks; every object
@@ -21877,10 +21878,10 @@ struct ApfsEmptyFormatNxsbInputs {
 // Builds the live + genesis nx superblocks into *pp from the resolved extras, enc
 // plan, and container mappings. fsOids/containerNextOid are the caller's already
 // computed values. Byte-identical to the inline nxsb builds it replaces.
-void buildEmptyFormatNxsbs(const PartitionApfsImageFormatRequest& request,
-                           const ApfsEmptyFormatNxsbInputs& in,
-                           ApfsEmptyFormatPlan* pp,
-                           QStringList* blockers) {
+static void buildEmptyFormatNxsbs(const PartitionApfsImageFormatRequest& request,
+                                  const ApfsEmptyFormatNxsbInputs& in,
+                                  ApfsEmptyFormatPlan* pp,
+                                  QStringList* blockers) {
     ApfsEmptyFormatPlan& p = *pp;
     const uint64_t blockCount = in.blockCount;
     const QVector<uint64_t>& fsOids = in.fsOids;
@@ -21924,10 +21925,10 @@ void buildEmptyFormatNxsbs(const PartitionApfsImageFormatRequest& request,
 // continuation block is appended after (writeBlock takes one block at a time, but
 // the object header + fletcher64 already cover the whole object). Byte-identical to
 // the inline buildSpacemanBlock calls it replaces.
-void buildEmptyFormatSpacemanObjects(const PartitionApfsImageFormatRequest& request,
-                                     uint64_t blockCount,
-                                     ApfsEmptyFormatPlan* pp,
-                                     QStringList* blockers) {
+static void buildEmptyFormatSpacemanObjects(const PartitionApfsImageFormatRequest& request,
+                                            uint64_t blockCount,
+                                            ApfsEmptyFormatPlan* pp,
+                                            QStringList* blockers) {
     ApfsEmptyFormatPlan& p = *pp;
     p.genesisSpacemanObj = buildSpacemanBlock({.blockSize = request.block_size_bytes,
                                                .blockCount = blockCount,
@@ -21950,10 +21951,10 @@ void buildEmptyFormatSpacemanObjects(const PartitionApfsImageFormatRequest& requ
                                            blockers);
 }
 
-void resolveEmptyFormatSuperblocks(const PartitionApfsImageFormatRequest& request,
-                                   uint64_t blockCount,
-                                   ApfsEmptyFormatPlan* pp,
-                                   QStringList* blockers) {
+static void resolveEmptyFormatSuperblocks(const PartitionApfsImageFormatRequest& request,
+                                          uint64_t blockCount,
+                                          ApfsEmptyFormatPlan* pp,
+                                          QStringList* blockers) {
     ApfsEmptyFormatPlan& p = *pp;
     const uint32_t spacemanByteSize =
         static_cast<uint32_t>(request.block_size_bytes * p.spacemanBlocks);
@@ -22006,9 +22007,9 @@ void resolveEmptyFormatSuperblocks(const PartitionApfsImageFormatRequest& reques
     buildEmptyFormatSpacemanObjects(request, blockCount, pp, blockers);
 }
 
-ApfsEmptyFormatPlan computeEmptyFormatPlan(const PartitionApfsImageFormatRequest& request,
-                                           uint64_t blockCount,
-                                           QStringList* blockers) {
+static ApfsEmptyFormatPlan computeEmptyFormatPlan(const PartitionApfsImageFormatRequest& request,
+                                                  uint64_t blockCount,
+                                                  QStringList* blockers) {
     ApfsEmptyFormatPlan p;
     resolveEmptyFormatBlockNumbers(request, blockCount, &p);
     resolveEmptyFormatSuperblocks(request, blockCount, &p, blockers);
@@ -22018,7 +22019,7 @@ ApfsEmptyFormatPlan computeEmptyFormatPlan(const PartitionApfsImageFormatRequest
 // The container/checkpoint blocks: block 0, the genesis + live checkpoint maps and
 // nxsb copies, the spaceman/reaper first blocks, and the two free-queue trees.
 // Byte-identical to the head of the inline initializer list it replaces.
-QVector<ApfsImageBlock> buildEmptyFormatCheckpointBlocks(
+static QVector<ApfsImageBlock> buildEmptyFormatCheckpointBlocks(
     const ApfsEmptyFormatPlan& p,
     const PartitionApfsImageFormatRequest& request,
     QStringList* blockers) {
@@ -22059,10 +22060,11 @@ QVector<ApfsImageBlock> buildEmptyFormatCheckpointBlocks(
 // The volume/object-map blocks: the ghost + live + container object maps and trees,
 // the extent-ref / snap-meta trees, the root tree, and the volume superblock.
 // Byte-identical to the tail of the inline initializer list it replaces.
-QVector<ApfsImageBlock> buildEmptyFormatVolumeBlocks(const ApfsEmptyFormatPlan& p,
-                                                     const PartitionApfsImageFormatRequest& request,
-                                                     const QString& volumeName,
-                                                     QStringList* blockers) {
+static QVector<ApfsImageBlock> buildEmptyFormatVolumeBlocks(
+    const ApfsEmptyFormatPlan& p,
+    const PartitionApfsImageFormatRequest& request,
+    const QString& volumeName,
+    QStringList* blockers) {
     return {
         {p.ghostOmap,
          buildObjectMapBlock({.blockSize = request.block_size_bytes,
@@ -22119,20 +22121,22 @@ QVector<ApfsImageBlock> buildEmptyFormatVolumeBlocks(const ApfsEmptyFormatPlan& 
 // Builds the base block set (block 0 through the container object-map tree) for an
 // empty container from the resolved plan. Byte-identical to the inline initializer
 // list it replaces.
-QVector<ApfsImageBlock> buildEmptyFormatBaseBlocks(const ApfsEmptyFormatPlan& p,
-                                                   const PartitionApfsImageFormatRequest& request,
-                                                   const QString& volumeName,
-                                                   QStringList* blockers) {
+static QVector<ApfsImageBlock> buildEmptyFormatBaseBlocks(
+    const ApfsEmptyFormatPlan& p,
+    const PartitionApfsImageFormatRequest& request,
+    const QString& volumeName,
+    QStringList* blockers) {
     QVector<ApfsImageBlock> blocks = buildEmptyFormatCheckpointBlocks(p, request, blockers);
     blocks += buildEmptyFormatVolumeBlocks(p, request, volumeName, blockers);
     return blocks;
 }
 
-QVector<ApfsImageBlock> emptyFormatBlocksFromPlan(const ApfsEmptyFormatPlan& p,
-                                                  const PartitionApfsImageFormatRequest& request,
-                                                  uint64_t blockCount,
-                                                  const QString& volumeName,
-                                                  QStringList* blockers) {
+static QVector<ApfsImageBlock> emptyFormatBlocksFromPlan(
+    const ApfsEmptyFormatPlan& p,
+    const PartitionApfsImageFormatRequest& request,
+    uint64_t blockCount,
+    const QString& volumeName,
+    QStringList* blockers) {
     QVector<ApfsImageBlock> blocks = buildEmptyFormatBaseBlocks(p, request, volumeName, blockers);
     appendExtraVolumeBlocks(&blocks, request, p.extras, blockers);
     appendSpacemanContinuationBlocks(&blocks,
@@ -22159,18 +22163,18 @@ QVector<ApfsImageBlock> emptyFormatBlocksFromPlan(const ApfsEmptyFormatPlan& p,
     return blocks;
 }
 
-QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest& request,
-                                          uint64_t blockCount,
-                                          const QString& volumeName,
-                                          QStringList* blockers) {
+static QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest& request,
+                                                 uint64_t blockCount,
+                                                 const QString& volumeName,
+                                                 QStringList* blockers) {
     const ApfsEmptyFormatPlan p = computeEmptyFormatPlan(request, blockCount, blockers);
     return emptyFormatBlocksFromPlan(p, request, blockCount, volumeName, blockers);
 }
 
-bool writeImageBlocks(QIODevice* device,
-                      const ApfsBlockWriteBounds& bounds,
-                      const QVector<ApfsImageBlock>& blocks,
-                      QStringList* blockers) {
+static bool writeImageBlocks(QIODevice* device,
+                             const ApfsBlockWriteBounds& bounds,
+                             const QVector<ApfsImageBlock>& blocks,
+                             QStringList* blockers) {
     for (const auto& block : blocks) {
         if (!writeBlock(device, block.first, bounds, block.second, blockers)) {
             return false;
@@ -22179,7 +22183,10 @@ bool writeImageBlocks(QIODevice* device,
     return true;
 }
 
-bool writeZeroRange(QIODevice* device, uint64_t offset, uint64_t length, QStringList* blockers) {
+static bool writeZeroRange(QIODevice* device,
+                           uint64_t offset,
+                           uint64_t length,
+                           QStringList* blockers) {
     if (!device || offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max())) {
         blockers->append(QStringLiteral("APFS zero-fill target offset is invalid"));
         return false;
@@ -22205,9 +22212,9 @@ bool writeZeroRange(QIODevice* device, uint64_t offset, uint64_t length, QString
     return true;
 }
 
-bool zeroFormatStaleSignatureRanges(QIODevice* device,
-                                    uint64_t targetBytes,
-                                    QStringList* blockers) {
+static bool zeroFormatStaleSignatureRanges(QIODevice* device,
+                                           uint64_t targetBytes,
+                                           QStringList* blockers) {
     const uint64_t edgeBytes = std::min(kApfsFormatStaleSignatureClearBytes, targetBytes);
     if (!writeZeroRange(device, 0, edgeBytes, blockers)) {
         return false;
@@ -22222,7 +22229,7 @@ bool zeroFormatStaleSignatureRanges(QIODevice* device,
     return writeZeroRange(device, tailOffset, edgeBytes, blockers);
 }
 
-void finalizeBuildResult(PartitionApfsImageBuildResult* result) {
+static void finalizeBuildResult(PartitionApfsImageBuildResult* result) {
     result->ok = result->blockers.isEmpty();
     if (result->ok) {
         // The whole-image SHA-256 scans the entire container. Above the single-chunk
@@ -22242,9 +22249,9 @@ void finalizeBuildResult(PartitionApfsImageBuildResult* result) {
     }
 }
 
-bool appendSeedFileBlockers(const PartitionApfsImageFormatRequest& request,
-                            const QString& cleanFileName,
-                            PartitionApfsImageBuildResult* result) {
+static bool appendSeedFileBlockers(const PartitionApfsImageFormatRequest& request,
+                                   const QString& cleanFileName,
+                                   PartitionApfsImageBuildResult* result) {
     if (!isSafeSeedFileName(cleanFileName)) {
         result->blockers.append(QStringLiteral(
             "APFS seed-file format supports one root file name without path traversal"));
@@ -22266,11 +22273,8 @@ struct ApfsRootFileInput {
     QByteArray data;
 };
 
-struct ApfsRootDirectoryInput {
-    QString directoryName;
-};
-
-uint64_t allocatedBlocksForFiles(const QVector<ApfsRootFilePayload>& files, uint32_t blockSize) {
+static uint64_t allocatedBlocksForFiles(const QVector<ApfsRootFilePayload>& files,
+                                        uint32_t blockSize) {
     uint64_t allocatedBlocks = kApfsFormatSeedFileDataBlock;
     for (const auto& file : files) {
         allocatedBlocks =
@@ -22281,23 +22285,9 @@ uint64_t allocatedBlocksForFiles(const QVector<ApfsRootFilePayload>& files, uint
     return allocatedBlocks;
 }
 
-QVector<ApfsRootDirectoryPayload> assignedRootDirectoryPayloads(
-    const QVector<ApfsRootDirectoryInput>& inputs, qsizetype fileCount) {
-    QVector<ApfsRootDirectoryPayload> directories;
-    directories.reserve(inputs.size());
-    for (qsizetype index = 0; index < inputs.size(); ++index) {
-        const auto& input = inputs.at(index);
-        const uint64_t objectId = kApfsSeedFileId + static_cast<uint64_t>(fileCount) +
-                                  static_cast<uint64_t>(index);
-        directories.append(
-            {.directoryName = input.directoryName, .directoryId = objectId, .privateId = objectId});
-    }
-    return directories;
-}
-
-uint64_t parentDirectoryIdForFile(const ApfsRootFileInput& input,
-                                  const QVector<ApfsRootDirectoryPayload>& directories,
-                                  QStringList* blockers) {
+static uint64_t parentDirectoryIdForFile(const ApfsRootFileInput& input,
+                                         const QVector<ApfsRootDirectoryPayload>& directories,
+                                         QStringList* blockers) {
     if (input.parentDirectoryName.trimmed().isEmpty()) {
         return kApfsRootDirectoryId;
     }
@@ -22311,7 +22301,7 @@ uint64_t parentDirectoryIdForFile(const ApfsRootFileInput& input,
     return 0;
 }
 
-QVector<ApfsRootFilePayload> assignedRootFilePayloads(
+static QVector<ApfsRootFilePayload> assignedRootFilePayloads(
     const QVector<ApfsRootFileInput>& inputs,
     uint32_t blockSize,
     const QVector<ApfsRootDirectoryPayload>& directories,
@@ -22337,9 +22327,9 @@ QVector<ApfsRootFilePayload> assignedRootFilePayloads(
     return files;
 }
 
-void appendFilePayloadDataBlocks(QVector<ApfsImageBlock>* blocks,
-                                 const ApfsRootFilePayload& file,
-                                 uint32_t blockSize) {
+static void appendFilePayloadDataBlocks(QVector<ApfsImageBlock>* blocks,
+                                        const ApfsRootFilePayload& file,
+                                        uint32_t blockSize) {
     uint64_t bytesCopied = 0;
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(file.data.size()),
                                                   blockSize);
@@ -22372,7 +22362,8 @@ struct ApfsSeedRewrite {
     QByteArray volumeUuid;
 };
 
-QVector<ApfsImageBlock> seedRewriteBlocks(const ApfsSeedRewrite& rewrite, QStringList* blockers) {
+static QVector<ApfsImageBlock> seedRewriteBlocks(const ApfsSeedRewrite& rewrite,
+                                                 QStringList* blockers) {
     const uint64_t allocatedBlocks = allocatedBlocksForFiles(rewrite.files, rewrite.blockSize);
     // Volume-owned blocks: the five metadata blocks plus every file-extent
     // block (fsck cross-checks this against its extent traversal).
@@ -22432,9 +22423,9 @@ QVector<ApfsImageBlock> seedRewriteBlocks(const ApfsSeedRewrite& rewrite, QStrin
 // mutation rewrite preserves the container identity instead of minting a new
 // one. Mutations are gated to the certified single-chunk layout, where the
 // volume superblock sits at the fixed block.
-QByteArray readGeneratedVolumeUuid(QIODevice* image,
-                                   const ApfsRepairGeometry& geometry,
-                                   QStringList* blockers) {
+static QByteArray readGeneratedVolumeUuid(QIODevice* image,
+                                          const ApfsRepairGeometry& geometry,
+                                          QStringList* blockers) {
     QByteArray volumeBlock;
     if (!readGeneratedLayoutBlock(
             image, geometry, kApfsFormatVolumeSuperblockBlock, &volumeBlock, blockers)) {
@@ -22443,9 +22434,9 @@ QByteArray readGeneratedVolumeUuid(QIODevice* image,
     return volumeBlock.mid(kApfsVolumeUuidOffset, kApfsUuidBytes);
 }
 
-QVector<ApfsImageBlock> rewriteGeneratedBlocks(QIODevice* image,
-                                               ApfsSeedRewrite rewrite,
-                                               QStringList* blockers) {
+static QVector<ApfsImageBlock> rewriteGeneratedBlocks(QIODevice* image,
+                                                      ApfsSeedRewrite rewrite,
+                                                      QStringList* blockers) {
     rewrite.volumeUuid = readGeneratedVolumeUuid(
         image, {.blockSize = rewrite.blockSize, .blockCount = rewrite.blockCount}, blockers);
     return seedRewriteBlocks(rewrite, blockers);
@@ -22476,7 +22467,8 @@ struct ApfsPerFileSeedRewrite {
 // per-file crypto-state), then either flagged ENCRYPTED (apfsck variant, metadata stays
 // plaintext) or AES-XTS-encrypted with the VEK (kernel variant, metadata truly encrypted
 // like ONEKEY, plus the default whole-volume crypto-state record at CRYPTO_SW_ID).
-QByteArray buildPerFileSeedRootTree(const ApfsPerFileSeedRewrite& rewrite, QStringList* blockers) {
+static QByteArray buildPerFileSeedRootTree(const ApfsPerFileSeedRewrite& rewrite,
+                                           QStringList* blockers) {
     QByteArray rootTree = buildRootTreeBlock(rewrite.blockSize,
                                              {rewrite.file},
                                              {},
@@ -22489,8 +22481,8 @@ QByteArray buildPerFileSeedRootTree(const ApfsPerFileSeedRewrite& rewrite, QStri
     return rootTree;
 }
 
-QVector<ApfsImageBlock> perFileSeedRewriteBlocks(const ApfsPerFileSeedRewrite& rewrite,
-                                                 QStringList* blockers) {
+static QVector<ApfsImageBlock> perFileSeedRewriteBlocks(const ApfsPerFileSeedRewrite& rewrite,
+                                                        QStringList* blockers) {
     const ApfsRootFilePayload& file = rewrite.file;
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(file.data.size()),
                                                   rewrite.blockSize);
@@ -22542,10 +22534,11 @@ QVector<ApfsImageBlock> perFileSeedRewriteBlocks(const ApfsPerFileSeedRewrite& r
 // the XTS-encrypted seed data). The resolved plan yields the one VEK the empty format
 // bakes into the keybags and the seed rewrite wraps the per-file key with. Empty (with
 // a blocker) on a key-material or capacity failure.
-QVector<ApfsImageBlock> perFileEncryptedSeedBlocks(const PartitionApfsImageFormatRequest& request,
-                                                   const QString& volumeName,
-                                                   const QString& fileName,
-                                                   QStringList* blockers) {
+static QVector<ApfsImageBlock> perFileEncryptedSeedBlocks(
+    const PartitionApfsImageFormatRequest& request,
+    const QString& volumeName,
+    const QString& fileName,
+    QStringList* blockers) {
     auto perFileRequest = request;
     perFileRequest.per_file_encryption = true;
     const bool kernelVariant = request.per_file_kernel_variant;
@@ -22595,10 +22588,10 @@ struct ApfsImageSource {
     bool ok{false};
 };
 
-ApfsImageSource validateImageOnlySource(const QString& path,
-                                        QLatin1StringView purpose,
-                                        QStringList* blockers,
-                                        uint64_t maxBytes = kDefaultMaxApfsPayloadBytes) {
+static ApfsImageSource validateImageOnlySource(const QString& path,
+                                               QLatin1StringView purpose,
+                                               QStringList* blockers,
+                                               uint64_t maxBytes = kDefaultMaxApfsPayloadBytes) {
     ApfsImageSource source{QFileInfo(path), false};
     if (!source.info.exists() || !source.info.isFile()) {
         blockers->append(QStringLiteral("APFS %1 source image is required").arg(purpose));
@@ -22618,10 +22611,10 @@ ApfsImageSource validateImageOnlySource(const QString& path,
     return source;
 }
 
-bool appendSeparateOutputBlockers(const QFileInfo& sourceInfo,
-                                  const QString& outputPath,
-                                  QLatin1StringView purpose,
-                                  QStringList* blockers) {
+static bool appendSeparateOutputBlockers(const QFileInfo& sourceInfo,
+                                         const QString& outputPath,
+                                         QLatin1StringView purpose,
+                                         QStringList* blockers) {
     if (!imagePathIsSafeForCreate(outputPath, blockers)) {
         return false;
     }
@@ -22634,10 +22627,10 @@ bool appendSeparateOutputBlockers(const QFileInfo& sourceInfo,
     return true;
 }
 
-std::optional<PartitionFileSystemDetection> detectApfsImageSource(const QString& imagePath,
-                                                                  uint64_t imageSize,
-                                                                  QLatin1StringView purpose,
-                                                                  QStringList* blockers) {
+static std::optional<PartitionFileSystemDetection> detectApfsImageSource(const QString& imagePath,
+                                                                         uint64_t imageSize,
+                                                                         QLatin1StringView purpose,
+                                                                         QStringList* blockers) {
     QString detectError;
     const auto detection =
         PartitionFileSystemDetector::detectFromDevicePath(imagePath, 0, imageSize, &detectError);
@@ -22651,10 +22644,10 @@ std::optional<PartitionFileSystemDetection> detectApfsImageSource(const QString&
     return std::nullopt;
 }
 
-bool copyToScratchImage(const QString& sourcePath,
-                        const QString& outputPath,
-                        QLatin1StringView purpose,
-                        QStringList* blockers) {
+static bool copyToScratchImage(const QString& sourcePath,
+                               const QString& outputPath,
+                               QLatin1StringView purpose,
+                               QStringList* blockers) {
     // Preserve sparseness: a multi-TiB container has only its metadata written, so the
     // scratch copies in the size of its allocated data, not its logical size.
     QString copyError;
@@ -22666,10 +22659,10 @@ bool copyToScratchImage(const QString& sourcePath,
     return false;
 }
 
-bool openScratchImage(const QString& imagePath,
-                      QLatin1StringView purpose,
-                      QFile* image,
-                      QStringList* blockers) {
+static bool openScratchImage(const QString& imagePath,
+                             QLatin1StringView purpose,
+                             QFile* image,
+                             QStringList* blockers) {
     image->setFileName(imagePath);
     if (image->open(QIODevice::ReadWrite)) {
         return true;
@@ -22680,17 +22673,17 @@ bool openScratchImage(const QString& imagePath,
     return false;
 }
 
-bool appendPlanResult(const PartitionApfsImageMutationPlan& plan,
-                      QStringList* blockers,
-                      QStringList* warnings) {
+static bool appendPlanResult(const PartitionApfsImageMutationPlan& plan,
+                             QStringList* blockers,
+                             QStringList* warnings) {
     blockers->append(plan.preflight.blockers);
     warnings->append(plan.preflight.warnings);
     return plan.buildable;
 }
 
-bool runChecksumRepairOnScratch(QFile* image,
-                                PartitionApfsImageRepairResult* result,
-                                QStringList* blockers) {
+static bool runChecksumRepairOnScratch(QFile* image,
+                                       PartitionApfsImageRepairResult* result,
+                                       QStringList* blockers) {
     uint32_t blockSize = 0;
     uint64_t blockCount = 0;
     if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
@@ -22711,9 +22704,9 @@ bool runChecksumRepairOnScratch(QFile* image,
     return blockers->isEmpty();
 }
 
-bool appendRootFileNameBlockers(const QString& cleanFileName,
-                                QLatin1StringView purpose,
-                                QStringList* blockers) {
+static bool appendRootFileNameBlockers(const QString& cleanFileName,
+                                       QLatin1StringView purpose,
+                                       QStringList* blockers) {
     if (!isSafeSeedFileName(cleanFileName)) {
         blockers->append(
             QStringLiteral(
@@ -22723,9 +22716,9 @@ bool appendRootFileNameBlockers(const QString& cleanFileName,
     return blockers->isEmpty();
 }
 
-bool appendRootDirectoryNameBlockers(const QString& cleanDirectoryName,
-                                     QLatin1StringView purpose,
-                                     QStringList* blockers) {
+static bool appendRootDirectoryNameBlockers(const QString& cleanDirectoryName,
+                                            QLatin1StringView purpose,
+                                            QStringList* blockers) {
     if (!isSafeSeedFileName(cleanDirectoryName)) {
         blockers->append(
             QStringLiteral(
@@ -22735,7 +22728,7 @@ bool appendRootDirectoryNameBlockers(const QString& cleanDirectoryName,
     return blockers->isEmpty();
 }
 
-void finalizeRepairResult(PartitionApfsImageRepairResult* result) {
+static void finalizeRepairResult(PartitionApfsImageRepairResult* result) {
     if (result->blockers.isEmpty()) {
         result->repaired_image_sha256 = fileSha256Hex(result->repaired_image_path,
                                                       &result->blockers);
@@ -22746,7 +22739,7 @@ void finalizeRepairResult(PartitionApfsImageRepairResult* result) {
     }
 }
 
-void finalizeVolumeLabelResult(PartitionApfsImageVolumeLabelResult* result) {
+static void finalizeVolumeLabelResult(PartitionApfsImageVolumeLabelResult* result) {
     if (result->blockers.isEmpty()) {
         result->written_image_sha256 = fileSha256Hex(result->written_image_path, &result->blockers);
     }
@@ -22756,29 +22749,10 @@ void finalizeVolumeLabelResult(PartitionApfsImageVolumeLabelResult* result) {
     }
 }
 
-std::optional<PartitionApfsFileEntry> rootDirectoryReadbackEntry(const QString& imagePath,
-                                                                 const QString& cleanDirectoryName,
-                                                                 QLatin1StringView purpose,
-                                                                 QStringList* blockers) {
-    const auto rootListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
-        imagePath, QStringLiteral("/"), kApfsWriteRootListingMaxEntries);
-    if (!rootListing.ok) {
-        blockers->append(QStringLiteral("APFS %1 root listing read-back failed: %2")
-                             .arg(purpose, rootListing.blockers.join(QStringLiteral("; "))));
-        return std::nullopt;
-    }
-    for (const auto& entry : rootListing.entries) {
-        if (entry.name.compare(cleanDirectoryName, Qt::CaseInsensitive) == 0) {
-            return entry;
-        }
-    }
-    return std::nullopt;
-}
-
-bool appendVolumeLabelReadback(const QString& targetPath,
-                               const QString& expectedVolumeName,
-                               QLatin1StringView purpose,
-                               QStringList* blockers) {
+static bool appendVolumeLabelReadback(const QString& targetPath,
+                                      const QString& expectedVolumeName,
+                                      QLatin1StringView purpose,
+                                      QStringList* blockers) {
     const auto rootListing =
         PartitionApfsFileSystemReader::listDirectoryFromImage(targetPath, QStringLiteral("/"), 1);
     if (!rootListing.ok) {
@@ -22795,7 +22769,8 @@ bool appendVolumeLabelReadback(const QString& targetPath,
     return true;
 }
 
-void finalizeExistingFormatResult(PartitionApfsImageBuildResult* result, bool hashWholeTarget) {
+static void finalizeExistingFormatResult(PartitionApfsImageBuildResult* result,
+                                         bool hashWholeTarget) {
     result->ok = result->blockers.isEmpty();
     if (result->ok && hashWholeTarget) {
         result->image_sha256 = fileSha256Hex(result->image_path, &result->blockers);
@@ -22818,18 +22793,18 @@ struct RawTargetMutationBlockersContext {
 // temporary file while every other production guard (explicit confirmation, raw opt-in,
 // non-image-only options, size alignment, APFS detection) still runs unchanged. Null in
 // production, where the real Windows raw-device rule is the sole classifier.
-std::function<bool(const QString&)>& rawDeviceTargetPredicate() {
+static std::function<bool(const QString&)>& rawDeviceTargetPredicate() {
     static std::function<bool(const QString&)> predicate;
     return predicate;
 }
 
-bool rawTargetPathAccepted(const QString& path) {
+static bool rawTargetPathAccepted(const QString& path) {
     const auto& predicate = rawDeviceTargetPredicate();
     return predicate ? predicate(path) : isWindowsRawDevicePath(path);
 }
 
-void appendRawTargetMutationBlockers(const RawTargetMutationBlockersContext& context,
-                                     QStringList* blockers) {
+static void appendRawTargetMutationBlockers(const RawTargetMutationBlockersContext& context,
+                                            QStringList* blockers) {
     if (context.targetPath.trimmed().isEmpty()) {
         blockers->append(
             QStringLiteral("APFS raw %1 target path is required").arg(context.purpose));
@@ -22862,10 +22837,10 @@ void appendRawTargetMutationBlockers(const RawTargetMutationBlockersContext& con
     }
 }
 
-std::optional<PartitionFileSystemDetection> detectApfsRawTarget(const QString& targetPath,
-                                                                uint64_t targetBytes,
-                                                                QLatin1StringView purpose,
-                                                                QStringList* blockers) {
+static std::optional<PartitionFileSystemDetection> detectApfsRawTarget(const QString& targetPath,
+                                                                       uint64_t targetBytes,
+                                                                       QLatin1StringView purpose,
+                                                                       QStringList* blockers) {
     QString detectError;
     const auto detection =
         PartitionFileSystemDetector::detectFromDevicePath(targetPath, 0, targetBytes, &detectError);
@@ -22885,10 +22860,10 @@ std::optional<PartitionFileSystemDetection> detectApfsRawTarget(const QString& t
 // at the tail. A file must be exactly the requested size; a raw device (whose true length
 // comes from IOCTL_DISK_GET_LENGTH_INFO via QIODevice::size()) must span it. An unknown length
 // (size() <= 0) fails closed.
-bool verifyFormatTargetSize(QIODevice* target,
-                            bool rawTarget,
-                            uint64_t containerBytes,
-                            QStringList* blockers) {
+static bool verifyFormatTargetSize(QIODevice* target,
+                                   bool rawTarget,
+                                   uint64_t containerBytes,
+                                   QStringList* blockers) {
     const qint64 openedSize = target->size();
     if (openedSize <= 0) {
         blockers->append(QStringLiteral("APFS format target size could not be determined"));
@@ -22908,8 +22883,8 @@ bool verifyFormatTargetSize(QIODevice* target,
 // whole-image hashed): re-detect the written bytes as APFS and read the root listing back,
 // confirming the requested volume name. Any failure appends a blocker so the format fails
 // closed instead of claiming an unverified success.
-void verifyRawFormatReadback(PartitionApfsImageBuildResult* result,
-                             const PartitionApfsImageFormatRequest& request) {
+static void verifyRawFormatReadback(PartitionApfsImageBuildResult* result,
+                                    const PartitionApfsImageFormatRequest& request) {
     if (!detectApfsRawTarget(result->image_path,
                              request.target_container_bytes,
                              QLatin1StringView("format"),
@@ -22929,9 +22904,9 @@ void verifyRawFormatReadback(PartitionApfsImageBuildResult* result,
 
 // Certify the written format target: a small generated file by whole-image SHA-256, and a raw
 // device by a real post-write APFS detection + root-listing read-back.
-void finalizeFormatTargetResult(PartitionApfsImageBuildResult* result,
-                                const PartitionApfsImageFormatRequest& request,
-                                bool rawTarget) {
+static void finalizeFormatTargetResult(PartitionApfsImageBuildResult* result,
+                                       const PartitionApfsImageFormatRequest& request,
+                                       bool rawTarget) {
     if (rawTarget) {
         if (result->blockers.isEmpty()) {
             verifyRawFormatReadback(result, request);
@@ -22989,7 +22964,7 @@ PartitionApfsImageBuildResult PartitionApfsWriter::formatExistingImageOnlyContai
 // write-cache failure, device yanked mid-commit). WindowsRawDevice::close()'s teardown
 // FlushFileBuffers is best-effort and cannot surface a failure, so every commit path routes its
 // close through this checked flush -- matching the format path's flushDeviceBuffers gate.
-void flushCommitTargetThenClose(QIODevice* target, QStringList* blockers) {
+static void flushCommitTargetThenClose(QIODevice* target, QStringList* blockers) {
     QString flushError;
     if (!flushDeviceBuffers(target, &flushError)) {
         blockers->append(
@@ -23002,10 +22977,10 @@ void flushCommitTargetThenClose(QIODevice* target, QStringList* blockers) {
 // zero the target's stale signatures and write the blocks. Ordering matters: a
 // construction failure must never leave the (possibly raw-device) target zeroed
 // into a destroyed, unformatted state. A short/failed write records its own blocker.
-void constructZeroAndWriteFormatTarget(const PartitionApfsImageFormatRequest& request,
-                                       const PartitionApfsImageMutationPlan& plan,
-                                       QIODevice* target,
-                                       QStringList* writeBlockers) {
+static void constructZeroAndWriteFormatTarget(const PartitionApfsImageFormatRequest& request,
+                                              const PartitionApfsImageMutationPlan& plan,
+                                              QIODevice* target,
+                                              QStringList* writeBlockers) {
     const uint64_t containerBlockCount = plan.target_container_bytes / plan.block_size_bytes;
     const auto blocks =
         emptyFormatBlocks(request, containerBlockCount, plan.volume_name, writeBlockers);
@@ -23238,7 +23213,7 @@ PartitionApfsImageRepairResult PartitionApfsWriter::repairImageOnlyObjectChecksu
 // fs-tree is preserved and the COW'd volume superblock's name field is rewritten (no legacy
 // scratch rewrite). The source's live label is captured for the result summary, the source is
 // copied to the written image, and the commit + a read-back verify the new name.
-void runImageOnlyVolumeLabelCommit(PartitionApfsImageVolumeLabelResult* result) {
+static void runImageOnlyVolumeLabelCommit(PartitionApfsImageVolumeLabelResult* result) {
     const QLatin1StringView purpose("volume-label");
     QVector<ApfsRootFilePayload> files;
     QVector<ApfsRootDirectoryPayload> directories;
@@ -23392,9 +23367,9 @@ PartitionApfsRawVolumeLabelResult PartitionApfsWriter::changeRawVolumeLabel(
 // container size, and (if the generated-layout guard passes) repairs the object
 // checksums, recording the scanned/repaired counts. Appends any repair blockers to
 // result->blockers. Byte-identical to the inline scan body it replaces.
-void runRawRepairChecksumScanOnTarget(QIODevice* target,
-                                      uint64_t targetContainerBytes,
-                                      PartitionApfsRawRepairResult* result) {
+static void runRawRepairChecksumScanOnTarget(QIODevice* target,
+                                             uint64_t targetContainerBytes,
+                                             PartitionApfsRawRepairResult* result) {
     uint32_t blockSize = 0;
     uint64_t blockCount = 0;
     QStringList repairBlockers;
@@ -23577,10 +23552,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyChe
 
 // Dispatch an opened scratch image to the grow or shrink commit by comparing the requested size
 // to the current one. Returns whether a resize committed; commitBlockers explains any failure.
-bool runResizeCommit(QIODevice* image,
-                     uint64_t newSizeBytes,
-                     ApfsInPlaceCheckpointResult* commit,
-                     QStringList* commitBlockers) {
+static bool runResizeCommit(QIODevice* image,
+                            uint64_t newSizeBytes,
+                            ApfsInPlaceCheckpointResult* commit,
+                            QStringList* commitBlockers) {
     uint32_t blockSize = 0;
     uint64_t oldBlockCount = 0;
     if (!readApfsRepairGeometry(image, &blockSize, &oldBlockCount, commitBlockers)) {
@@ -24081,8 +24056,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     return result;
 }
 
-bool validateImageOnlyCommitSource(QLatin1StringView operation,
-                                   PartitionApfsImageCheckpointCommitResult* result);
+static bool validateImageOnlyCommitSource(QLatin1StringView operation,
+                                          PartitionApfsImageCheckpointCommitResult* result);
 
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileWrite(
     const PartitionApfsImageFileInsertCommitRequest& request) {
