@@ -31,7 +31,13 @@ param(
     [switch]$Fix,
     [int]$Jobs = 6,
     [string]$LogPath = "",
-    [string]$FileFilter = ""
+    [string]$FileFilter = "",
+    # Drop translation units whose (forward-slashed) path matches this regex BEFORE the
+    # database is written, so they are never analyzed. Applied in PowerShell, not as a
+    # run-clang-tidy positional regex, because a negative-lookahead file filter does not
+    # survive the PowerShell -> cmd.exe -> python round-trip. Used by the naming gate to
+    # exclude src/core (the documented readability-identifier-naming carve-out).
+    [string]$ExcludeFilter = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,6 +58,7 @@ try {
     foreach ($e in $entries) {
         $f = ($e.file -replace '\\', '/')
         if ($f -notmatch $want -or $f -match $skip) { continue }
+        if ($ExcludeFilter -and $f -match $ExcludeFilter) { continue }
         $key = $f.ToLowerInvariant()
         if ($seen.Add($key)) { $kept.Add($e) }
     }

@@ -146,6 +146,26 @@ repos:
         exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
+      # 6a. clang-tidy naming regression gate (MANUAL stage)
+      #     readability-identifier-naming reached zero in every first-party
+      #     directory except src/core (a documented carve-out; see
+      #     src/core/.clang-tidy). A full run is ~5 minutes over 147 TUs and
+      #     needs a reconstructed compile database, too slow for every commit,
+      #     so it is manual-stage -- CI runs it automatically on every build.
+      #     Check locally with:
+      #       pre-commit run --hook-stage manual clang-tidy-naming --all-files
+      # -------------------------------------------------------------------
+      - id: clang-tidy-naming
+        name: "clang-tidy naming regression gate (non-core)"
+        description: "readability-identifier-naming must stay at zero outside src/core"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/clang_tidy_naming_gate.ps1
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+
+      # -------------------------------------------------------------------
       # 6b. Nested event loops and unbounded blocking waits
       #     Debt reached zero, so this one is now wired. Every gated site
       #     carries a SAK-ALLOW-BLOCKING justification; see the script header.

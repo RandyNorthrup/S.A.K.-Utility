@@ -2060,7 +2060,23 @@ been installed into the repo venv to produce a compilation database.
       scripts/run_clang_tidy.ps1 de-duplicates to 301 first-party translation
       units and runs clang-tidy inside the MSVC environment.
 - [ ] R5-G1-3 Fix every clang-tidy finding -- IN PROGRESS (tiered gated waves; see plan below)
-- [ ] R5-G1-4 Wire clang-tidy into .pre-commit-config.yaml and CI so it cannot silently stop running
+- [x] R5-G1-4 Wire clang-tidy into .pre-commit-config.yaml and CI so it cannot silently stop running
+      DONE for the readability-identifier-naming check -- the one check driven to zero
+      tree-wide (0 findings in all 147 non-core first-party TUs; the 5183 residual are all
+      in src/core, the documented carve-out). scripts/clang_tidy_naming_gate.ps1 reconstructs
+      the Ninja compile DB, runs the check with -ExcludeFilter 'src/core/' (a new PowerShell
+      -side filter on run_clang_tidy.ps1, since a negative-lookahead file regex does not
+      survive PS->cmd->python), and fails deterministically by grepping the log for "invalid
+      case style" (run-clang-tidy's own exit code only means "findings remain"). Wired into
+      CI as a build-windows step after Build (fails the build on any regression) and into
+      .pre-commit-config.yaml as a MANUAL-stage hook (clang-tidy-naming; a full run is ~5 min,
+      too slow for every commit -- CI enforces it automatically). The other enabled checks are
+      NOT yet at zero (function-size 886, avoid-c-arrays ~187, pro-bounds container 2384-all-
+      benign, use-ranges 1-intentional) so they are deliberately out of the gate's -checks set;
+      each is added as its debt reaches zero. NOTE: clang-on-MSVC emits ~48 non-fatal parse
+      diagnostics (missing-field / default-member-initializer) on 17 designated-init TUs; these
+      do NOT truncate the AST (partition_manager_panel.cpp is among them yet yielded all 535 of
+      its findings during remediation), so naming coverage is complete.
 
 MEASURED 2026-08-10 (301 first-party TUs, deduped by file:line:col:check;
 build-tidy database, SCAN_FOR_MODULES=OFF): ~26,260 unique first-party findings.
