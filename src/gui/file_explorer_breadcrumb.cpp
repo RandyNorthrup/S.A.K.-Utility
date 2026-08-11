@@ -81,15 +81,15 @@ QVector<FileExplorerBreadcrumb::Segment> splitUncSegments(const QString& path) {
     QString accumulated = QStringLiteral("\\\\") + parts.at(0);
     if (parts.size() == 1) {
         // Only the host is known; the share is still required to navigate.
-        segments.append(Segment{accumulated, accumulated});
+        segments.append(Segment{.label = accumulated, .target_path = accumulated});
         return segments;
     }
     accumulated += QLatin1Char('\\') + parts.at(1);
-    segments.append(
-        Segment{QStringLiteral("\\\\%1\\%2").arg(parts.at(0), parts.at(1)), accumulated});
+    segments.append(Segment{.label = QStringLiteral("\\\\%1\\%2").arg(parts.at(0), parts.at(1)),
+                            .target_path = accumulated});
     for (int i = kFirstUncPathSegmentIndex; i < parts.size(); ++i) {
         accumulated += QLatin1Char('\\') + parts.at(i);
-        segments.append(Segment{parts.at(i), accumulated});
+        segments.append(Segment{.label = parts.at(i), .target_path = accumulated});
     }
     return segments;
 }
@@ -107,7 +107,7 @@ QVector<FileExplorerBreadcrumb::Segment> FileExplorerBreadcrumb::splitPathSegmen
     // INT_MAX, so the int component indexes below cannot narrow or wrap.
     constexpr int kMaxBreadcrumbPathChars = 32'768;
     if (path.size() > kMaxBreadcrumbPathChars) {
-        return {Segment{path, path}};
+        return {Segment{.label = path, .target_path = path}};
     }
 
     if (path.startsWith(QStringLiteral("\\\\")) || path.startsWith(QStringLiteral("//"))) {
@@ -119,7 +119,7 @@ QVector<FileExplorerBreadcrumb::Segment> FileExplorerBreadcrumb::splitPathSegmen
     const bool rooted = normalized.startsWith(QLatin1Char('/'));
     QString accumulated = rooted ? QStringLiteral("/") : QString();
     if (rooted) {
-        segments.append(Segment{QStringLiteral("/"), accumulated});
+        segments.append(Segment{.label = QStringLiteral("/"), .target_path = accumulated});
     }
     const QStringList parts = normalized.split(QLatin1Char('/'), Qt::SkipEmptyParts);
     for (const QString& part : parts) {
@@ -127,7 +127,7 @@ QVector<FileExplorerBreadcrumb::Segment> FileExplorerBreadcrumb::splitPathSegmen
             accumulated += QLatin1Char('/');
         }
         accumulated += part;
-        segments.append(Segment{part, accumulated});
+        segments.append(Segment{.label = part, .target_path = accumulated});
     }
     return segments;
 }

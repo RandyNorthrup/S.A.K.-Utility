@@ -332,19 +332,23 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::exactMatch(const QStr
     // Check direct mapping
     if (m_exact_mappings.contains(normalized)) {
         const QString choco_pkg = m_exact_mappings[normalized];
-        return MatchResult{choco_pkg,
-                           normalized,
-                           1.0,   // Perfect confidence
-                           "exact",
-                           true,  // Assume available (will be verified if requested)
-                           ""};
+        return MatchResult{.choco_package = choco_pkg,
+                           .matched_name = normalized,
+                           .confidence = 1.0,  // Perfect confidence
+                           .match_type = "exact",
+                           .available = true,  // Assume available (will be verified if requested)
+                           .version = ""};
     }
 
     // Check case-insensitive
     for (auto it = m_exact_mappings.begin(); it != m_exact_mappings.end(); ++it) {
         if (it.key().compare(normalized, Qt::CaseInsensitive) == 0) {
-            return MatchResult{
-                it.value(), it.key(), kCaseInsensitiveExactConfidence, "exact", true, ""};
+            return MatchResult{.choco_package = it.value(),
+                               .matched_name = it.key(),
+                               .confidence = kCaseInsensitiveExactConfidence,
+                               .match_type = "exact",
+                               .available = true,
+                               .version = ""};
         }
     }
 
@@ -410,7 +414,12 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::fuzzyMatch(
     }
 
     if (best_similarity >= kFuzzyMatchThreshold) {
-        return MatchResult{best_package, best_matched_name, best_similarity, "fuzzy", true, ""};
+        return MatchResult{.choco_package = best_package,
+                           .matched_name = best_matched_name,
+                           .confidence = best_similarity,
+                           .match_type = "fuzzy",
+                           .available = true,
+                           .version = ""};
     }
 
     return std::nullopt;
@@ -453,12 +462,12 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::searchMatch(const QSt
     }
 
     if (best_score >= kSearchMatchThreshold) {
-        return MatchResult{best_package.package_id,
-                           best_package.title,
-                           best_score,
-                           "search",
-                           true,
-                           best_package.version};
+        return MatchResult{.choco_package = best_package.package_id,
+                           .matched_name = best_package.title,
+                           .confidence = best_score,
+                           .match_type = "search",
+                           .available = true,
+                           .version = best_package.version};
     }
 
     return std::nullopt;

@@ -1088,11 +1088,12 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
         QString label;
         sak::ExportFormat format;
     };
-    const QVector<AllExportChoice> all_choices{{tr("EML..."), sak::ExportFormat::Eml},
-                                               {tr("HTML..."), sak::ExportFormat::Html},
-                                               {tr("Text..."), sak::ExportFormat::Text},
-                                               {tr("PDF..."), sak::ExportFormat::Pdf},
-                                               {tr("CSV..."), sak::ExportFormat::CsvEmails}};
+    const QVector<AllExportChoice> all_choices{
+        {.label = tr("EML..."), .format = sak::ExportFormat::Eml},
+        {.label = tr("HTML..."), .format = sak::ExportFormat::Html},
+        {.label = tr("Text..."), .format = sak::ExportFormat::Text},
+        {.label = tr("PDF..."), .format = sak::ExportFormat::Pdf},
+        {.label = tr("CSV..."), .format = sak::ExportFormat::CsvEmails}};
     for (const AllExportChoice& choice : all_choices) {
         all_menu->addAction(choice.label, this, [this, format = choice.format] {
             exportAllMailFoldersAs(format);
@@ -1428,8 +1429,8 @@ void EmailInspectorPanel::onSaveAttachmentClicked() {
     if (dir.isEmpty()) {
         return;
     }
-    const QVector<sak::AttachmentRef> refs{
-        sak::AttachmentRef{*source, m_current_detail.attachments.at(row).index}};
+    const QVector<sak::AttachmentRef> refs{sak::AttachmentRef{
+        .message_id = *source, .index = m_current_detail.attachments.at(row).index}};
     startAttachmentBatch(dir, refs);
 }
 
@@ -1448,7 +1449,7 @@ void EmailInspectorPanel::onSaveAllAttachmentsClicked() {
     QVector<sak::AttachmentRef> refs;
     refs.reserve(m_current_detail.attachments.size());
     for (const auto& attachment : m_current_detail.attachments) {
-        refs.append(sak::AttachmentRef{*source, attachment.index});
+        refs.append(sak::AttachmentRef{.message_id = *source, .index = attachment.index});
     }
     startAttachmentBatch(dir, refs);
 }
@@ -1602,7 +1603,7 @@ void EmailInspectorPanel::onAttachmentContentReady(uint64_t message_id,
     if (m_dialog_active) {
         return;
     }
-    const sak::AttachmentRef ref{message_id, index};
+    const sak::AttachmentRef ref{.message_id = message_id, .index = index};
 
     // Save operation: record only what this batch actually asked for. A stray
     // arrival -- an inline-image fetch, or a leftover from an earlier batch --

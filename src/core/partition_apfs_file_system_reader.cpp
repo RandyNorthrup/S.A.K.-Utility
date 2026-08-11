@@ -403,10 +403,10 @@ struct ApfsObjectHeader {
 };
 
 ApfsObjectHeader objectHeader(const QByteArray& block) {
-    return {le64(block, kApfsObjectOidOffset),
-            le64(block, kApfsObjectXidOffset),
-            le32(block, kApfsObjectTypeOffset),
-            le32(block, kApfsObjectSubtypeOffset)};
+    return {.oid = le64(block, kApfsObjectOidOffset),
+            .xid = le64(block, kApfsObjectXidOffset),
+            .type = le32(block, kApfsObjectTypeOffset),
+            .subtype = le32(block, kApfsObjectSubtypeOffset)};
 }
 
 struct BtreeInfo {
@@ -943,8 +943,11 @@ private:
                 QStringLiteral("APFS file read truncated at %1 bytes").arg(bytesToRead));
             result->truncated = true;
         }
-        return FileReadTarget{
-            inode, bytesToRead, true, attribute, resourceForkObjIdByInode_.value(fileId, 0)};
+        return FileReadTarget{.inode = inode,
+                              .bytes_to_read = bytesToRead,
+                              .compressed = true,
+                              .decmpfs_xattr = attribute,
+                              .resource_fork_obj_id = resourceForkObjIdByInode_.value(fileId, 0)};
     }
 
     // Non-const: a DSTREAM-backed decmpfs attribute is assembled from its stream extents here.
@@ -985,7 +988,7 @@ private:
                 QStringLiteral("APFS file read truncated at %1 bytes").arg(bytesToRead));
             result->truncated = true;
         }
-        return FileReadTarget{*inode, bytesToRead};
+        return FileReadTarget{.inode = *inode, .bytes_to_read = bytesToRead};
     }
 
     // Decode a transparently-compressed file's content from its inline decmpfs
@@ -1442,11 +1445,12 @@ private:
             const uint64_t keyXid = le64(node, entry.key_offset + kApfsOmapKeyXidOffset);
             if (keyOid == oid && keyXid <= xid && (!best.has_value() || keyXid > best->xid)) {
                 const uint32_t valueFlags = le32(node, entry.value_offset);
-                best = ObjectMapValue{valueFlags,
-                                      le32(node, entry.value_offset + kApfsOmapValueSizeOffset),
-                                      le64(node, entry.value_offset + kApfsOmapValuePaddrOffset),
-                                      keyXid,
-                                      (valueFlags & kApfsOmapValueEncrypted) != 0};
+                best = ObjectMapValue{
+                    .flags = valueFlags,
+                    .size = le32(node, entry.value_offset + kApfsOmapValueSizeOffset),
+                    .physical_address = le64(node, entry.value_offset + kApfsOmapValuePaddrOffset),
+                    .xid = keyXid,
+                    .encrypted = (valueFlags & kApfsOmapValueEncrypted) != 0};
             }
         }
         return best;
@@ -1514,7 +1518,8 @@ private:
             result->blockers.append(QStringLiteral("APFS root file-system tree is invalid"));
             return false;
         }
-        FsTreeScanState state{btreeInfo(root), {}, 0, 0};
+        FsTreeScanState state{
+            .info = btreeInfo(root), .seen_nodes = {}, .nodes_visited = 0, .records_visited = 0};
         if (!visitFileSystemTreeNode(rootTreeAddress_, rootTreeEncrypted_, 0, &state, result)) {
             return false;
         }
@@ -2096,12 +2101,12 @@ private:
 
     [[nodiscard]] BtreeInfo btreeInfo(const QByteArray& rootBlock) const {
         const qsizetype offset = static_cast<qsizetype>(blockSize_) - kApfsBtreeInfoBytes;
-        return {le32(rootBlock, offset),
-                le32(rootBlock, offset + kApfsBtreeInfoNodeSizeOffset),
-                le32(rootBlock, offset + kApfsBtreeInfoKeySizeOffset),
-                le32(rootBlock, offset + kApfsBtreeInfoValueSizeOffset),
-                le64(rootBlock, offset + kApfsBtreeInfoKeyCountOffset),
-                le64(rootBlock, offset + kApfsBtreeInfoNodeCountOffset)};
+        return {.flags = le32(rootBlock, offset),
+                .node_size = le32(rootBlock, offset + kApfsBtreeInfoNodeSizeOffset),
+                .key_size = le32(rootBlock, offset + kApfsBtreeInfoKeySizeOffset),
+                .value_size = le32(rootBlock, offset + kApfsBtreeInfoValueSizeOffset),
+                .key_count = le64(rootBlock, offset + kApfsBtreeInfoKeyCountOffset),
+                .node_count = le64(rootBlock, offset + kApfsBtreeInfoNodeCountOffset)};
     }
 
     // wellFormed is set false when the node's table-of-contents or any entry is out of bounds.
@@ -2131,7 +2136,10 @@ private:
             return entries;
         }
         entries.reserve(static_cast<int>(std::min<uint32_t>(count, kApfsBtreeMaxEntryCount)));
-        const BtreeEntryContext context{keyAreaStart, valueAreaEnd, level, info};
+        const BtreeEntryContext context{.key_area_start = keyAreaStart,
+                                        .value_area_end = valueAreaEnd,
+                                        .level = level,
+                                        .info = info};
         for (uint32_t index = 0; index < count; ++index) {
             const qsizetype toc = tableStart + (static_cast<qsizetype>(index) * tocEntryBytes);
             const auto entry = fixed ? fixedBtreeEntry(node, toc, context)
@@ -2159,11 +2167,11 @@ private:
         const QByteArray& node, qsizetype toc, const BtreeEntryContext& context) const {
         const uint16_t keyOffset = le16(node, toc);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeFixedTocValueOffset);
-        return BtreeEntryView{context.key_area_start + keyOffset,
-                              context.info.key_size,
-                              context.value_area_end - valueOffset,
-                              context.level > 0 ? kApfsBtreeChildPointerBytes
-                                                : context.info.value_size};
+        return BtreeEntryView{.key_offset = context.key_area_start + keyOffset,
+                              .key_length = context.info.key_size,
+                              .value_offset = context.value_area_end - valueOffset,
+                              .value_length = context.level > 0 ? kApfsBtreeChildPointerBytes
+                                                                : context.info.value_size};
     }
 
     [[nodiscard]] std::optional<BtreeEntryView> variableBtreeEntry(
@@ -2172,10 +2180,10 @@ private:
         const uint16_t keyLength = le16(node, toc + kApfsBtreeVariableTocKeyLengthOffset);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
         const uint16_t valueLength = le16(node, toc + kApfsBtreeVariableTocValueLengthOffset);
-        return BtreeEntryView{context.key_area_start + keyOffset,
-                              keyLength,
-                              context.value_area_end - valueOffset,
-                              valueLength};
+        return BtreeEntryView{.key_offset = context.key_area_start + keyOffset,
+                              .key_length = keyLength,
+                              .value_offset = context.value_area_end - valueOffset,
+                              .value_length = valueLength};
     }
 
     [[nodiscard]] bool btreeEntryInBounds(const QByteArray& node,
@@ -2368,9 +2376,9 @@ public:
 
     PartitionApfsDirectoryExportResult run(const QString& sourcePath,
                                            const QString& outputDirectory) {
-        pending_.append(
-            {sourcePath.trimmed().isEmpty() ? QStringLiteral("/") : sourcePath.trimmed(),
-             outputDirectory});
+        pending_.append({.source_path = sourcePath.trimmed().isEmpty() ? QStringLiteral("/")
+                                                                       : sourcePath.trimmed(),
+                         .output_directory = outputDirectory});
         while (!pending_.isEmpty()) {
             if (!processFrame(pending_.takeLast())) {
                 break;
@@ -2463,7 +2471,9 @@ private:
             return false;
         }
         ++result_.directories_exported;
-        pending_.append({entry.path, targetPath, entry.object_id});
+        pending_.append({.source_path = entry.path,
+                         .output_directory = targetPath,
+                         .object_id = entry.object_id});
         return true;
     }
 

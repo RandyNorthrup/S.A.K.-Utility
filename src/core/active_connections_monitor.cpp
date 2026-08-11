@@ -47,18 +47,18 @@ constexpr int kMaxHostnameLen = 256;
         const char* name;
     };
     static constexpr StateEntry kStates[] = {
-        {MIB_TCP_STATE_CLOSED, "CLOSED"},
-        {MIB_TCP_STATE_LISTEN, "LISTEN"},
-        {MIB_TCP_STATE_SYN_SENT, "SYN_SENT"},
-        {MIB_TCP_STATE_SYN_RCVD, "SYN_RCVD"},
-        {MIB_TCP_STATE_ESTAB, "ESTABLISHED"},
-        {MIB_TCP_STATE_FIN_WAIT1, "FIN_WAIT1"},
-        {MIB_TCP_STATE_FIN_WAIT2, "FIN_WAIT2"},
-        {MIB_TCP_STATE_CLOSE_WAIT, "CLOSE_WAIT"},
-        {MIB_TCP_STATE_CLOSING, "CLOSING"},
-        {MIB_TCP_STATE_LAST_ACK, "LAST_ACK"},
-        {MIB_TCP_STATE_TIME_WAIT, "TIME_WAIT"},
-        {MIB_TCP_STATE_DELETE_TCB, "DELETE_TCB"},
+        {.code = MIB_TCP_STATE_CLOSED, .name = "CLOSED"},
+        {.code = MIB_TCP_STATE_LISTEN, .name = "LISTEN"},
+        {.code = MIB_TCP_STATE_SYN_SENT, .name = "SYN_SENT"},
+        {.code = MIB_TCP_STATE_SYN_RCVD, .name = "SYN_RCVD"},
+        {.code = MIB_TCP_STATE_ESTAB, .name = "ESTABLISHED"},
+        {.code = MIB_TCP_STATE_FIN_WAIT1, .name = "FIN_WAIT1"},
+        {.code = MIB_TCP_STATE_FIN_WAIT2, .name = "FIN_WAIT2"},
+        {.code = MIB_TCP_STATE_CLOSE_WAIT, .name = "CLOSE_WAIT"},
+        {.code = MIB_TCP_STATE_CLOSING, .name = "CLOSING"},
+        {.code = MIB_TCP_STATE_LAST_ACK, .name = "LAST_ACK"},
+        {.code = MIB_TCP_STATE_TIME_WAIT, .name = "TIME_WAIT"},
+        {.code = MIB_TCP_STATE_DELETE_TCB, .name = "DELETE_TCB"},
     };
     for (const auto& entry : kStates) {
         if (entry.code == state) {

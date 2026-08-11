@@ -461,13 +461,15 @@ ApfsFormatEncryptionArg resolveApfsFormatEncryption(const PartitionOperation& op
         out.blocker = QStringLiteral("APFS encrypted format requires a volume password");
         return out;
     }
-    out.credentials.append({QString::fromLatin1(kApfsVolumePasswordPlaceholder), password});
+    out.credentials.append(
+        {.placeholder = QString::fromLatin1(kApfsVolumePasswordPlaceholder), .secret = password});
     out.powershell_args = QStringLiteral(" -VolumePasswordFile '%1'")
                               .arg(QString::fromLatin1(kApfsVolumePasswordPlaceholder));
     const QString recoveryKey = payloadString(operation,
                                               QString::fromLatin1(kApfsRecoveryKeyPayload));
     if (!recoveryKey.isEmpty()) {
-        out.credentials.append({QString::fromLatin1(kApfsRecoveryKeyPlaceholder), recoveryKey});
+        out.credentials.append({.placeholder = QString::fromLatin1(kApfsRecoveryKeyPlaceholder),
+                                .secret = recoveryKey});
         out.powershell_args += QStringLiteral(" -RecoveryKeyFile '%1'")
                                    .arg(QString::fromLatin1(kApfsRecoveryKeyPlaceholder));
     }
@@ -776,104 +778,104 @@ struct HfsFileMutationSpec {
 
 void appendHfsFileForkMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
     specs.insert(static_cast<int>(PartitionOperationType::HfsOverwriteFile),
-                 {QStringLiteral("overwrite-image"),
-                  QStringLiteral("ui.hfs.raw-file-overwrite"),
-                  QStringLiteral("Overwrite")});
+                 {.command = QStringLiteral("overwrite-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-file-overwrite"),
+                  .verb = QStringLiteral("Overwrite")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsReplaceFile),
-                 {QStringLiteral("replace-image"),
-                  QStringLiteral("ui.hfs.raw-file-replace"),
-                  QStringLiteral("Replace")});
+                 {.command = QStringLiteral("replace-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-file-replace"),
+                  .verb = QStringLiteral("Replace")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsGrowFile),
-                 {QStringLiteral("grow-image"),
-                  QStringLiteral("ui.hfs.raw-file-allocation-growth"),
-                  QStringLiteral("Grow file")});
+                 {.command = QStringLiteral("grow-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-file-allocation-growth"),
+                  .verb = QStringLiteral("Grow file")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsTruncateFile),
-                 {QStringLiteral("truncate-image"),
-                  QStringLiteral("ui.hfs.raw-file-truncate"),
-                  QStringLiteral("Truncate")});
+                 {.command = QStringLiteral("truncate-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-file-truncate"),
+                  .verb = QStringLiteral("Truncate")});
 }
 
 void appendHfsResourceForkMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
     specs.insert(static_cast<int>(PartitionOperationType::HfsReplaceResourceFork),
-                 {QStringLiteral("replace-resource-fork-image"),
-                  QStringLiteral("ui.hfs.raw-resource-fork-replace"),
-                  QStringLiteral("Replace resource fork")});
+                 {.command = QStringLiteral("replace-resource-fork-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-resource-fork-replace"),
+                  .verb = QStringLiteral("Replace resource fork")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsGrowResourceFork),
-                 {QStringLiteral("grow-resource-fork-image"),
-                  QStringLiteral("ui.hfs.raw-resource-fork-allocation-growth"),
-                  QStringLiteral("Grow resource fork")});
+                 {.command = QStringLiteral("grow-resource-fork-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-resource-fork-allocation-growth"),
+                  .verb = QStringLiteral("Grow resource fork")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsTruncateResourceFork),
-                 {QStringLiteral("truncate-resource-fork-image"),
-                  QStringLiteral("ui.hfs.raw-resource-fork-truncate"),
-                  QStringLiteral("Truncate resource fork")});
+                 {.command = QStringLiteral("truncate-resource-fork-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-resource-fork-truncate"),
+                  .verb = QStringLiteral("Truncate resource fork")});
 }
 
 void appendHfsFileLifecycleMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
     specs.insert(static_cast<int>(PartitionOperationType::HfsCreateEmptyFile),
-                 {QStringLiteral("create-empty-file-image"),
-                  QStringLiteral("ui.hfs.raw-empty-file-create"),
-                  QStringLiteral("Create empty file")});
+                 {.command = QStringLiteral("create-empty-file-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-empty-file-create"),
+                  .verb = QStringLiteral("Create empty file")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsCreateFile),
-                 {QStringLiteral("create-file-image"),
-                  QStringLiteral("ui.hfs.raw-file-create"),
-                  QStringLiteral("Create file")});
+                 {.command = QStringLiteral("create-file-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-file-create"),
+                  .verb = QStringLiteral("Create file")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsDeleteEmptyFile),
-                 {QStringLiteral("delete-empty-file-image"),
-                  QStringLiteral("ui.hfs.raw-empty-file-delete"),
-                  QStringLiteral("Delete empty file")});
+                 {.command = QStringLiteral("delete-empty-file-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-empty-file-delete"),
+                  .verb = QStringLiteral("Delete empty file")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsDeleteFile),
-                 {QStringLiteral("delete-file-image"),
-                  QStringLiteral("ui.hfs.raw-file-delete"),
-                  QStringLiteral("Delete file")});
+                 {.command = QStringLiteral("delete-file-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-file-delete"),
+                  .verb = QStringLiteral("Delete file")});
 }
 
 void appendHfsFolderMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
     specs.insert(static_cast<int>(PartitionOperationType::HfsCreateEmptyFolder),
-                 {QStringLiteral("create-empty-folder-image"),
-                  QStringLiteral("ui.hfs.raw-empty-folder-create"),
-                  QStringLiteral("Create empty folder")});
+                 {.command = QStringLiteral("create-empty-folder-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-empty-folder-create"),
+                  .verb = QStringLiteral("Create empty folder")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsDeleteEmptyFolder),
-                 {QStringLiteral("delete-empty-folder-image"),
-                  QStringLiteral("ui.hfs.raw-empty-folder-delete"),
-                  QStringLiteral("Delete empty folder")});
+                 {.command = QStringLiteral("delete-empty-folder-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-empty-folder-delete"),
+                  .verb = QStringLiteral("Delete empty folder")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsDeleteFolderTree),
-                 {QStringLiteral("delete-folder-tree-image"),
-                  QStringLiteral("ui.hfs.raw-folder-tree-delete"),
-                  QStringLiteral("Delete folder tree")});
+                 {.command = QStringLiteral("delete-folder-tree-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-folder-tree-delete"),
+                  .verb = QStringLiteral("Delete folder tree")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsRenameMoveCatalogEntry),
-                 {QStringLiteral("rename-catalog-entry-image"),
-                  QStringLiteral("ui.hfs.raw-catalog-rename-move"),
-                  QStringLiteral("Rename/move catalog entry")});
+                 {.command = QStringLiteral("rename-catalog-entry-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-catalog-rename-move"),
+                  .verb = QStringLiteral("Rename/move catalog entry")});
 }
 
 void appendHfsAttributeMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
     specs.insert(static_cast<int>(PartitionOperationType::HfsReplaceInlineAttribute),
-                 {QStringLiteral("replace-inline-attribute-image"),
-                  QStringLiteral("ui.hfs.raw-inline-attribute-replace"),
-                  QStringLiteral("Replace inline attribute")});
+                 {.command = QStringLiteral("replace-inline-attribute-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-inline-attribute-replace"),
+                  .verb = QStringLiteral("Replace inline attribute")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsReplaceForkAttribute),
-                 {QStringLiteral("replace-fork-attribute-image"),
-                  QStringLiteral("ui.hfs.raw-fork-attribute-replace"),
-                  QStringLiteral("Replace fork attribute")});
+                 {.command = QStringLiteral("replace-fork-attribute-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-fork-attribute-replace"),
+                  .verb = QStringLiteral("Replace fork attribute")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsGrowForkAttribute),
-                 {QStringLiteral("grow-fork-attribute-image"),
-                  QStringLiteral("ui.hfs.raw-fork-attribute-allocation-growth"),
-                  QStringLiteral("Grow fork attribute")});
+                 {.command = QStringLiteral("grow-fork-attribute-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-fork-attribute-allocation-growth"),
+                  .verb = QStringLiteral("Grow fork attribute")});
 }
 
 void appendHfsLinkMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
     specs.insert(static_cast<int>(PartitionOperationType::HfsCreateSymlink),
-                 {QStringLiteral("create-symlink-image"),
-                  QStringLiteral("ui.hfs.raw-symlink-create"),
-                  QStringLiteral("Create symlink")});
+                 {.command = QStringLiteral("create-symlink-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-symlink-create"),
+                  .verb = QStringLiteral("Create symlink")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsCreateHardlink),
-                 {QStringLiteral("create-hardlink-image"),
-                  QStringLiteral("ui.hfs.raw-hardlink-create"),
-                  QStringLiteral("Create hardlink")});
+                 {.command = QStringLiteral("create-hardlink-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-hardlink-create"),
+                  .verb = QStringLiteral("Create hardlink")});
     specs.insert(static_cast<int>(PartitionOperationType::HfsDeleteHardlink),
-                 {QStringLiteral("delete-hardlink-image"),
-                  QStringLiteral("ui.hfs.raw-hardlink-delete"),
-                  QStringLiteral("Delete hardlink")});
+                 {.command = QStringLiteral("delete-hardlink-image"),
+                  .evidence_id = QStringLiteral("ui.hfs.raw-hardlink-delete"),
+                  .verb = QStringLiteral("Delete hardlink")});
 }
 
 const QHash<int, HfsFileMutationSpec>& hfsFileMutationSpecs() {
@@ -4388,8 +4390,12 @@ PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
     }
 
     const QString rawTargetPath = payloadString(operation, QStringLiteral("target_path")).trimmed();
-    if (const auto hfsScript = maybeBuildStagedRawHfsScript(
-            {&operation, &request, manifestPath, toolsRoot, &resolution, rawTargetPath})) {
+    if (const auto hfsScript = maybeBuildStagedRawHfsScript({.operation = &operation,
+                                                             .request = &request,
+                                                             .manifest_path = manifestPath,
+                                                             .tools_root = toolsRoot,
+                                                             .resolution = &resolution,
+                                                             .raw_target_path = rawTargetPath})) {
         return *hfsScript;
     }
 
@@ -5049,7 +5055,8 @@ PartitionScript PartitionScriptBuilder::buildBitLockerScript(
         // a variable, and the in-process Unlock-BitLocker cmdlet consumes it (unlike
         // manage-bde.exe -RecoveryPassword, which exposes the value as a child-process argv).
         out.credential_files.append(
-            {QString::fromLatin1(kBitLockerRecoveryPlaceholder), recoveryPassword});
+            {.placeholder = QString::fromLatin1(kBitLockerRecoveryPlaceholder),
+             .secret = recoveryPassword});
         out.script += QStringLiteral(
                           "$recoveryPassword = (Get-Content -Raw -LiteralPath '%1').Trim()\n"
                           "Unlock-BitLocker -MountPoint $mountPoint "

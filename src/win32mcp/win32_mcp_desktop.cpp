@@ -39,13 +39,14 @@ namespace {
 // -- result + schema helpers (module-local, mirroring win32_mcp_tools) -------
 
 ToolResult jsonResult(const QJsonObject& object) {
-    return {QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)), false};
+    return {.text = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)),
+            .is_error = false};
 }
 
 ToolResult errorResult(const QString& message) {
-    return {QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
-                .toJson(QJsonDocument::Compact),
-            true};
+    return {.text = QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
+                        .toJson(QJsonDocument::Compact),
+            .is_error = true};
 }
 
 ToolResult imageResult(const QString& base64, const QString& summary) {
@@ -117,7 +118,7 @@ BOOL CALLBACK collectMatchProc(HWND hwnd, LPARAM param) {
     if (title.isEmpty() || !lower.contains(find->needle_lower)) {
         return TRUE;
     }
-    find->matches.append(WindowMatch{hwnd, lower});
+    find->matches.append(WindowMatch{.hwnd = hwnd, .title_lower = lower});
     return TRUE;  // collect every match, then disambiguate rather than taking the first
 }
 
@@ -152,7 +153,7 @@ HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
 }
 
 HWND findVisibleWindowByTitle(const QString& needle_lower, QString& err) {
-    FindState state{needle_lower, {}};
+    FindState state{.needle_lower = needle_lower, .matches = {}};
     EnumWindows(collectMatchProc, reinterpret_cast<LPARAM>(&state));
     return pickUniqueWindow(state.matches, needle_lower, err);
 }
@@ -205,7 +206,12 @@ QString encodePng(const uchar* bits, int width, int height) {
 // grab primitive. Returns empty and sets *err on failure or an over-cap result.
 QString captureToBase64(void* hwnd, const RECT& rect, QString* err) {
     CaptureBits bits;
-    const CaptureRequest req{hwnd, rect.left, rect.top, rect.right, rect.bottom, kCaptureFullEdge};
+    const CaptureRequest req{.hwnd = hwnd,
+                             .left = rect.left,
+                             .top = rect.top,
+                             .right = rect.right,
+                             .bottom = rect.bottom,
+                             .max_edge = kCaptureFullEdge};
     if (!captureBgra(req, bits, *err)) {
         return {};
     }
@@ -255,7 +261,7 @@ ToolResult toolCaptureScreen(const QJsonObject&) {
     const int w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     const int h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     QString err;
-    const RECT rc{x, y, x + w, y + h};
+    const RECT rc{.left = x, .top = y, .right = x + w, .bottom = y + h};
     const QString b64 = captureToBase64(nullptr, rc, &err);
     if (b64.isEmpty()) {
         return errorResult(err);
@@ -366,42 +372,42 @@ const char* controlTypeName(CONTROLTYPEID id) {
         const char* name;
     };
     static const Row kRows[] = {
-        {UIA_ButtonControlTypeId, "button"},
-        {UIA_CheckBoxControlTypeId, "checkbox"},
-        {UIA_ComboBoxControlTypeId, "combobox"},
-        {UIA_EditControlTypeId, "edit"},
-        {UIA_HyperlinkControlTypeId, "link"},
-        {UIA_ImageControlTypeId, "image"},
-        {UIA_ListItemControlTypeId, "listitem"},
-        {UIA_ListControlTypeId, "list"},
-        {UIA_MenuControlTypeId, "menu"},
-        {UIA_MenuBarControlTypeId, "menubar"},
-        {UIA_MenuItemControlTypeId, "menuitem"},
-        {UIA_ProgressBarControlTypeId, "progressbar"},
-        {UIA_RadioButtonControlTypeId, "radio"},
-        {UIA_ScrollBarControlTypeId, "scrollbar"},
-        {UIA_SliderControlTypeId, "slider"},
-        {UIA_SpinnerControlTypeId, "spinner"},
-        {UIA_StatusBarControlTypeId, "statusbar"},
-        {UIA_TabControlTypeId, "tab"},
-        {UIA_TabItemControlTypeId, "tabitem"},
-        {UIA_TextControlTypeId, "text"},
-        {UIA_ToolBarControlTypeId, "toolbar"},
-        {UIA_ToolTipControlTypeId, "tooltip"},
-        {UIA_TreeControlTypeId, "tree"},
-        {UIA_TreeItemControlTypeId, "treeitem"},
-        {UIA_GroupControlTypeId, "group"},
-        {UIA_DataGridControlTypeId, "datagrid"},
-        {UIA_DataItemControlTypeId, "dataitem"},
-        {UIA_DocumentControlTypeId, "document"},
-        {UIA_SplitButtonControlTypeId, "splitbutton"},
-        {UIA_WindowControlTypeId, "window"},
-        {UIA_PaneControlTypeId, "pane"},
-        {UIA_HeaderControlTypeId, "header"},
-        {UIA_HeaderItemControlTypeId, "headeritem"},
-        {UIA_TableControlTypeId, "table"},
-        {UIA_TitleBarControlTypeId, "titlebar"},
-        {UIA_SeparatorControlTypeId, "separator"},
+        {.id = UIA_ButtonControlTypeId, .name = "button"},
+        {.id = UIA_CheckBoxControlTypeId, .name = "checkbox"},
+        {.id = UIA_ComboBoxControlTypeId, .name = "combobox"},
+        {.id = UIA_EditControlTypeId, .name = "edit"},
+        {.id = UIA_HyperlinkControlTypeId, .name = "link"},
+        {.id = UIA_ImageControlTypeId, .name = "image"},
+        {.id = UIA_ListItemControlTypeId, .name = "listitem"},
+        {.id = UIA_ListControlTypeId, .name = "list"},
+        {.id = UIA_MenuControlTypeId, .name = "menu"},
+        {.id = UIA_MenuBarControlTypeId, .name = "menubar"},
+        {.id = UIA_MenuItemControlTypeId, .name = "menuitem"},
+        {.id = UIA_ProgressBarControlTypeId, .name = "progressbar"},
+        {.id = UIA_RadioButtonControlTypeId, .name = "radio"},
+        {.id = UIA_ScrollBarControlTypeId, .name = "scrollbar"},
+        {.id = UIA_SliderControlTypeId, .name = "slider"},
+        {.id = UIA_SpinnerControlTypeId, .name = "spinner"},
+        {.id = UIA_StatusBarControlTypeId, .name = "statusbar"},
+        {.id = UIA_TabControlTypeId, .name = "tab"},
+        {.id = UIA_TabItemControlTypeId, .name = "tabitem"},
+        {.id = UIA_TextControlTypeId, .name = "text"},
+        {.id = UIA_ToolBarControlTypeId, .name = "toolbar"},
+        {.id = UIA_ToolTipControlTypeId, .name = "tooltip"},
+        {.id = UIA_TreeControlTypeId, .name = "tree"},
+        {.id = UIA_TreeItemControlTypeId, .name = "treeitem"},
+        {.id = UIA_GroupControlTypeId, .name = "group"},
+        {.id = UIA_DataGridControlTypeId, .name = "datagrid"},
+        {.id = UIA_DataItemControlTypeId, .name = "dataitem"},
+        {.id = UIA_DocumentControlTypeId, .name = "document"},
+        {.id = UIA_SplitButtonControlTypeId, .name = "splitbutton"},
+        {.id = UIA_WindowControlTypeId, .name = "window"},
+        {.id = UIA_PaneControlTypeId, .name = "pane"},
+        {.id = UIA_HeaderControlTypeId, .name = "header"},
+        {.id = UIA_HeaderItemControlTypeId, .name = "headeritem"},
+        {.id = UIA_TableControlTypeId, .name = "table"},
+        {.id = UIA_TitleBarControlTypeId, .name = "titlebar"},
+        {.id = UIA_SeparatorControlTypeId, .name = "separator"},
     };
     for (const auto& row : kRows) {
         if (row.id == id) {
@@ -563,7 +569,11 @@ QString inspectHwnd(HWND hwnd,
     if (FAILED(automation->get_ControlViewWalker(&walker)) || (walker == nullptr)) {
         return QStringLiteral("The UI Automation control view is unavailable.");
     }
-    WalkState state{&out, walker.Get(), max_depth, false, elements};
+    WalkState state{.nodes = &out,
+                    .walker = walker.Get(),
+                    .max_depth = max_depth,
+                    .truncated = false,
+                    .elements = elements};
     walkElement(state, root.Get(), 0);
     truncated = state.truncated;
     return {};
@@ -629,7 +639,8 @@ QVector<UiaRefNode> toRefNodes(const QVector<UiaNode>& nodes) {
     QVector<UiaRefNode> out;
     out.reserve(nodes.size());
     for (const UiaNode& node : nodes) {
-        out.append(UiaRefNode{node.role, node.name, node.left, node.top});
+        out.append(
+            UiaRefNode{.role = node.role, .name = node.name, .left = node.left, .top = node.top});
     }
     return out;
 }
@@ -648,7 +659,8 @@ ToolResult toolUiaInspectWindow(const QJsonObject& args) {
     if (!err.isEmpty()) {
         return errorResult(err);
     }
-    g_uia_snapshot = UiaSnapshot{hwnd, windowTitleOf(hwnd), nodes, depth};
+    g_uia_snapshot =
+        UiaSnapshot{.hwnd = hwnd, .title = windowTitleOf(hwnd), .nodes = nodes, .depth = depth};
     return jsonResult(
         QJsonObject{{QStringLiteral("window"), windowTitleOf(hwnd)},
                     {QStringLiteral("hwnd"), QString::number(reinterpret_cast<quintptr>(hwnd))},
@@ -676,7 +688,7 @@ ToolResult toolUiaFindControl(const QJsonObject& args) {
     if (!err.isEmpty()) {
         return errorResult(err);
     }
-    g_uia_snapshot = UiaSnapshot{hwnd, windowTitleOf(hwnd), nodes};
+    g_uia_snapshot = UiaSnapshot{.hwnd = hwnd, .title = windowTitleOf(hwnd), .nodes = nodes};
     const QString needle = query.toLower();
     QJsonArray matches;
     for (int i = 0; i < nodes.size(); ++i) {
@@ -882,7 +894,10 @@ QVector<DialogButton> buttonsFromNodes(const QVector<UiaNode>& nodes) {
     QVector<ButtonNode> views;
     views.reserve(nodes.size());
     for (const UiaNode& node : nodes) {
-        views.append(ButtonNode{node.role, node.name, node.enabled, node.offscreen});
+        views.append(ButtonNode{.role = node.role,
+                                .name = node.name,
+                                .enabled = node.enabled,
+                                .offscreen = node.offscreen});
     }
     return collectButtons(views);
 }
@@ -1048,15 +1063,15 @@ struct DesktopHandler {
 };
 
 const DesktopHandler kDesktopHandlers[] = {
-    {QLatin1String("capture_window"), toolCaptureWindow},
-    {QLatin1String("capture_screen"), toolCaptureScreen},
-    {QLatin1String("capture_monitor"), toolCaptureMonitor},
-    {QLatin1String("uia_inspect_window"), toolUiaInspectWindow},
-    {QLatin1String("uia_find_control"), toolUiaFindControl},
-    {QLatin1String("uia_get_control_value"), toolUiaGetControlValue},
-    {QLatin1String("uia_get_focused"), toolUiaGetFocused},
-    {QLatin1String("uia_click_control"), toolUiaClickControl},
-    {QLatin1String("dismiss_dialog"), toolDismissDialog},
+    {.name = QLatin1String("capture_window"), .fn = toolCaptureWindow},
+    {.name = QLatin1String("capture_screen"), .fn = toolCaptureScreen},
+    {.name = QLatin1String("capture_monitor"), .fn = toolCaptureMonitor},
+    {.name = QLatin1String("uia_inspect_window"), .fn = toolUiaInspectWindow},
+    {.name = QLatin1String("uia_find_control"), .fn = toolUiaFindControl},
+    {.name = QLatin1String("uia_get_control_value"), .fn = toolUiaGetControlValue},
+    {.name = QLatin1String("uia_get_focused"), .fn = toolUiaGetFocused},
+    {.name = QLatin1String("uia_click_control"), .fn = toolUiaClickControl},
+    {.name = QLatin1String("dismiss_dialog"), .fn = toolDismissDialog},
 };
 
 }  // namespace

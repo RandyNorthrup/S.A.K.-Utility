@@ -496,17 +496,17 @@ FileManagementListResult fromExtResult(const PartitionExtFileReadResult& input) 
     result.warnings = input.warnings;
     result.entries.reserve(input.entries.size());
     for (const auto& item : input.entries) {
-        result.entries.append({item.name,
-                               item.path,
-                               item.type,
-                               item.size_bytes,
-                               {},
-                               {},
-                               QString::number(item.inode),
-                               item.symlink_target,
-                               item.directory,
-                               item.regular_file,
-                               item.symlink});
+        result.entries.append({.name = item.name,
+                               .path = item.path,
+                               .type = item.type,
+                               .size_bytes = item.size_bytes,
+                               .modified_time = {},
+                               .created_time = {},
+                               .identifier = QString::number(item.inode),
+                               .link_target = item.symlink_target,
+                               .directory = item.directory,
+                               .regular_file = item.regular_file,
+                               .symlink = item.symlink});
     }
     return result;
 }
@@ -627,11 +627,21 @@ FileManagementReadResult readLocalFile(const QString& path, uint64_t maxBytes) {
 // ext and HFS+ both FAIL CLOSED above their read cap rather than returning a prefix, so a
 // successful read from either is complete by construction and truncated stays false.
 FileManagementReadResult fromExtReadResult(const PartitionExtFileReadResult& input) {
-    return {input.ok, input.file_system, input.blockers, input.warnings, input.data, false};
+    return {.ok = input.ok,
+            .file_system = input.file_system,
+            .blockers = input.blockers,
+            .warnings = input.warnings,
+            .data = input.data,
+            .truncated = false};
 }
 
 FileManagementReadResult fromHfsReadResult(const PartitionHfsFileReadResult& input) {
-    return {input.ok, input.file_system, input.blockers, input.warnings, input.data, false};
+    return {.ok = input.ok,
+            .file_system = input.file_system,
+            .blockers = input.blockers,
+            .warnings = input.warnings,
+            .data = input.data,
+            .truncated = false};
 }
 
 // APFS is the exception: it returns a PREFIX with truncated set instead of failing. That flag
@@ -640,8 +650,12 @@ FileManagementReadResult fromHfsReadResult(const PartitionHfsFileReadResult& inp
 // tell a complete 512 MiB file from a cut 700 MB one. Dropping it here is what let a hash
 // report itself uncapped over a prefix, and let a move delete the intact source.
 FileManagementReadResult fromApfsReadResult(const PartitionApfsFileReadResult& input) {
-    return {
-        input.ok, input.file_system, input.blockers, input.warnings, input.data, input.truncated};
+    return {.ok = input.ok,
+            .file_system = input.file_system,
+            .blockers = input.blockers,
+            .warnings = input.warnings,
+            .data = input.data,
+            .truncated = input.truncated};
 }
 
 FileManagementMutationResult fromHfsWriteResult(const PartitionHfsFileWriteResult& input) {
@@ -1536,7 +1550,8 @@ FileManagementDirectoryExportResult FileManagementFileSystemBridge::exportDirect
             QStringLiteral("Could not create destination directory %1.").arg(destination_dir));
         return result;
     }
-    const DirectoryExportContext ctx{target, max_file_bytes, result, observer};
+    const DirectoryExportContext ctx{
+        .target = target, .max_file_bytes = max_file_bytes, .result = result, .observer = observer};
     exportDirectoryLevel(ctx, source_path, QDir(destination_dir), 0);
     // ok == "the walk hit no hard blocker"; it is NOT a wholeness claim BY DESIGN.
     // A caller that must distinguish a whole transfer from a partial one reads
@@ -1693,7 +1708,7 @@ FileManagementDirectoryImportResult FileManagementFileSystemBridge::importDirect
                 : created.blockers.join(QStringLiteral("; ")));
         return result;
     }
-    const DirectoryImportContext ctx{target, result, observer};
+    const DirectoryImportContext ctx{.target = target, .result = result, .observer = observer};
     importDirectoryLevel(ctx, source.absoluteFilePath(), destination_path, 0);
     result.ok = result.blockers.isEmpty();
     result.complete = result.ok && result.symlinks_skipped == 0 && result.entries_skipped == 0;

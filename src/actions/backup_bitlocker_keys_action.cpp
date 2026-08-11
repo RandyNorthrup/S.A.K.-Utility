@@ -56,28 +56,28 @@ struct CodeDescriptionEntry {
 };
 
 static constexpr CodeDescriptionEntry kEncryptionMethods[] = {
-    {0, "None"},
-    {1, "AES-128 with Diffuser"},
-    {2, "AES-256 with Diffuser"},
-    {3, "AES-128"},
-    {4, "AES-256"},
-    {5, "Hardware Encryption"},
-    {6, "XTS-AES-128"},
-    {7, "XTS-AES-256"},
+    {.code = 0, .description = "None"},
+    {.code = 1, .description = "AES-128 with Diffuser"},
+    {.code = 2, .description = "AES-256 with Diffuser"},
+    {.code = 3, .description = "AES-128"},
+    {.code = 4, .description = "AES-256"},
+    {.code = 5, .description = "Hardware Encryption"},
+    {.code = 6, .description = "XTS-AES-128"},
+    {.code = 7, .description = "XTS-AES-256"},
 };
 
 static constexpr CodeDescriptionEntry kProtectorTypes[] = {
-    {0, "Unknown or Other"},
-    {1, "TPM"},
-    {2, "External Key (USB)"},
-    {3, "Numerical Password (Recovery Password)"},
-    {4, "TPM + PIN"},
-    {5, "TPM + Startup Key"},
-    {6, "TPM + PIN + Startup Key"},
-    {7, "Public Key (Certificate)"},
-    {8, "Passphrase"},
-    {9, "TPM + Certificate"},
-    {10, "Clear Key (Unprotected)"},
+    {.code = 0, .description = "Unknown or Other"},
+    {.code = 1, .description = "TPM"},
+    {.code = 2, .description = "External Key (USB)"},
+    {.code = 3, .description = "Numerical Password (Recovery Password)"},
+    {.code = 4, .description = "TPM + PIN"},
+    {.code = 5, .description = "TPM + Startup Key"},
+    {.code = 6, .description = "TPM + PIN + Startup Key"},
+    {.code = 7, .description = "Public Key (Certificate)"},
+    {.code = 8, .description = "Passphrase"},
+    {.code = 9, .description = "TPM + Certificate"},
+    {.code = 10, .description = "Clear Key (Unprotected)"},
 };
 
 constexpr int kVolumeTypeOperatingSystem = 0;

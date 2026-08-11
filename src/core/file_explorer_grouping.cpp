@@ -67,28 +67,30 @@ struct SizeBucket {
 // units (GB/MB/KB) to match -- previously they read GiB/MiB/KiB, which name the
 // binary (1024-based) sizes and so misdescribed every bucket boundary (B8-24).
 constexpr SizeBucket kSizeBuckets[] = {
-    {5'000'000'000ULL, "Huge", "5 GB +"},
-    {1'000'000'000ULL, "Very large", "1 GB - 5 GB"},
-    {128'000'000ULL, "Large", "128 MB - 1 GB"},
-    {1'000'000ULL, "Medium", "1 MB - 128 MB"},
-    {16'000ULL, "Small", "16 KB - 1 MB"},
+    {.threshold = 5'000'000'000ULL, .name = "Huge", .range = "5 GB +"},
+    {.threshold = 1'000'000'000ULL, .name = "Very large", .range = "1 GB - 5 GB"},
+    {.threshold = 128'000'000ULL, .name = "Large", .range = "128 MB - 1 GB"},
+    {.threshold = 1'000'000ULL, .name = "Medium", .range = "1 MB - 128 MB"},
+    {.threshold = 16'000ULL, .name = "Small", .range = "16 KB - 1 MB"},
 };
 
 FileExplorerGroupInfo sizeGroupInfo(const FileExplorerGroupSource& source) {
     if (source.directory) {
         // Files keys folders by their (usually empty) FileSizeDisplay, which
         // collapses them into one unlabeled group; a named group reads better.
-        return {trGroup("Folders"), -1};
+        return {.text = trGroup("Folders"), .sort_index = -1};
     }
     int index = static_cast<int>(std::size(kSizeBuckets));
     for (const SizeBucket& bucket : kSizeBuckets) {
         if (source.size_bytes > bucket.threshold) {
-            return {QStringLiteral("%1 (%2)").arg(trGroup(bucket.name), trGroup(bucket.range)),
-                    index};
+            return {.text = QStringLiteral("%1 (%2)").arg(trGroup(bucket.name),
+                                                          trGroup(bucket.range)),
+                    .sort_index = index};
         }
         --index;
     }
-    return {QStringLiteral("%1 (%2)").arg(trGroup("Tiny"), trGroup("0 B - 16 KB")), 0};
+    return {.text = QStringLiteral("%1 (%2)").arg(trGroup("Tiny"), trGroup("0 B - 16 KB")),
+            .sort_index = 0};
 }
 
 // Files AbstractDateTimeFormatter.ToTimeSpanLabel ladder, split by rung. The
@@ -103,12 +105,13 @@ std::optional<FileExplorerGroupInfo> weekDateGroup(const QDate& date,
     const int week = date.weekNumber(&week_year);
     const int now_week = today.weekNumber(&now_week_year);
     if (day_diff <= kDaysPerWeek && week == now_week && week_year == now_week_year) {
-        return FileExplorerGroupInfo{trGroup("Earlier this week"), kSortEarlierThisWeek};
+        return FileExplorerGroupInfo{.text = trGroup("Earlier this week"),
+                                     .sort_index = kSortEarlierThisWeek};
     }
     int last_week_year = 0;
     const int last_week = today.addDays(-kDaysPerWeek).weekNumber(&last_week_year);
     if (day_diff <= kDaysPerTwoWeeks && week == last_week && week_year == last_week_year) {
-        return FileExplorerGroupInfo{trGroup("Last week"), kSortLastWeek};
+        return FileExplorerGroupInfo{.text = trGroup("Last week"), .sort_index = kSortLastWeek};
     }
     return std::nullopt;
 }
@@ -120,24 +123,24 @@ FileExplorerGroupInfo monthAndYearDateGroup(const QDate& date,
     const qint64 month_diff = std::clamp<qint64>(
         (year_delta * kMonthsPerYear) + (today.month() - date.month()), 0, kMaxDateSortIndex);
     if (month_diff == 0) {
-        return {trGroup("Earlier this month"), kSortEarlierThisMonth};
+        return {.text = trGroup("Earlier this month"), .sort_index = kSortEarlierThisMonth};
     }
     if (month_diff == 1) {
-        return {trGroup("Last month"), kSortLastMonth};
+        return {.text = trGroup("Last month"), .sort_index = kSortLastMonth};
     }
     if (unit == FileExplorerGroupDateUnit::Month) {
-        return {QLocale().toString(date, QStringLiteral("MMMM yyyy")),
-                static_cast<int>(
+        return {.text = QLocale().toString(date, QStringLiteral("MMMM yyyy")),
+                .sort_index = static_cast<int>(
                     std::min<qint64>(kSortMonthBucketBase + month_diff, kMaxDateSortIndex))};
     }
     if (date.year() == today.year()) {
-        return {trGroup("Earlier this year"), kSortEarlierThisYear};
+        return {.text = trGroup("Earlier this year"), .sort_index = kSortEarlierThisYear};
     }
     if (date.year() == today.year() - 1) {
-        return {trGroup("Last year"), kSortLastYear};
+        return {.text = trGroup("Last year"), .sort_index = kSortLastYear};
     }
-    return {QString::number(date.year()),
-            static_cast<int>(
+    return {.text = QString::number(date.year()),
+            .sort_index = static_cast<int>(
                 std::clamp<qint64>(kSortYearBucketBase + year_delta, 0, kMaxDateSortIndex))};
 }
 
@@ -145,24 +148,24 @@ FileExplorerGroupInfo dateGroupInfo(const QDateTime& time,
                                     const FileExplorerGroupDateUnit unit,
                                     const QDateTime& now) {
     if (!time.isValid()) {
-        return {trGroup("Unknown"), kSortUnknown};
+        return {.text = trGroup("Unknown"), .sort_index = kSortUnknown};
     }
     const QDate date = time.date();
     const QDate today = now.date();
     const qint64 day_diff = date.daysTo(today);
     if (day_diff < 0) {
-        return {trGroup("Future"), -1};
+        return {.text = trGroup("Future"), .sort_index = -1};
     }
     if (day_diff == 0) {
-        return {trGroup("Today"), 0};
+        return {.text = trGroup("Today"), .sort_index = 0};
     }
     if (day_diff == 1) {
-        return {trGroup("Yesterday"), 1};
+        return {.text = trGroup("Yesterday"), .sort_index = 1};
     }
     if (unit == FileExplorerGroupDateUnit::Day) {
-        return {QLocale().toString(date, QLocale::LongFormat),
-                kSortDayBucketBase +
-                    static_cast<int>(std::min<qint64>(day_diff, kMaxDateSortIndex))};
+        return {.text = QLocale().toString(date, QLocale::LongFormat),
+                .sort_index = kSortDayBucketBase +
+                              static_cast<int>(std::min<qint64>(day_diff, kMaxDateSortIndex))};
     }
     if (const auto week_group = weekDateGroup(date, today, day_diff)) {
         return *week_group;
@@ -174,10 +177,10 @@ FileExplorerGroupInfo typeGroupInfo(const FileExplorerGroupSource& source) {
     // Files GroupingHelper: folders group by ItemType and sort above files
     // (SortIndexOverride); files group by lower-cased extension.
     if (source.directory) {
-        return {source.type, 0};
+        return {.text = source.type, .sort_index = 0};
     }
     const QString extension = QFileInfo(source.name).suffix().toLower();
-    return {extension.isEmpty() ? source.type : extension, 1};
+    return {.text = extension.isEmpty() ? source.type : extension, .sort_index = 1};
 }
 
 }  // namespace
@@ -189,8 +192,9 @@ FileExplorerGroupInfo fileExplorerGroupInfo(const FileExplorerGroupSource& sourc
     switch (option) {
     case FileExplorerGroupOption::Name:
         // Files: the first character uppercased, digits and symbols as-is.
-        return {source.name.isEmpty() ? QStringLiteral("?") : QString(source.name.at(0)).toUpper(),
-                0};
+        return {.text = source.name.isEmpty() ? QStringLiteral("?")
+                                              : QString(source.name.at(0)).toUpper(),
+                .sort_index = 0};
     case FileExplorerGroupOption::DateModified:
         return dateGroupInfo(source.modified_time, date_unit, now);
     case FileExplorerGroupOption::DateCreated:
@@ -201,8 +205,9 @@ FileExplorerGroupInfo fileExplorerGroupInfo(const FileExplorerGroupSource& sourc
         return typeGroupInfo(source);
     case FileExplorerGroupOption::FileTag:
         // Files: the first tag, or the literal Untagged bucket below tagged.
-        return source.tags.isEmpty() ? FileExplorerGroupInfo{trGroup("Untagged"), 1}
-                                     : FileExplorerGroupInfo{source.tags.first(), 0};
+        return source.tags.isEmpty()
+                   ? FileExplorerGroupInfo{.text = trGroup("Untagged"), .sort_index = 1}
+                   : FileExplorerGroupInfo{.text = source.tags.first(), .sort_index = 0};
     case FileExplorerGroupOption::None:
         break;
     }

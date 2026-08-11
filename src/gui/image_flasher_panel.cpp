@@ -407,16 +407,17 @@ QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
 }
 
 void ImageFlasherPanel::addMicrosoftDownloadCard(QHBoxLayout* cardRow) {
-    auto* msCard = buildIsoDownloadCard(m_imageSelectionPage,
-                                        {QStringLiteral(":/icons/icons/microsoft_logo.svg"),
-                                         tr("Windows from Microsoft"),
-                                         tr("Download an official Windows ISO directly"
-                                            " from the Microsoft website."),
-                                         tr("Open Microsoft Download"),
-                                         QStringLiteral("Microsoft ISO Download"),
-                                         QStringLiteral("Open the official Microsoft Windows ISO"
-                                                        " download page")},
-                                        m_microsoftWindowsDownloadButton);
+    auto* msCard =
+        buildIsoDownloadCard(m_imageSelectionPage,
+                             {.icon_path = QStringLiteral(":/icons/icons/microsoft_logo.svg"),
+                              .title = tr("Windows from Microsoft"),
+                              .description = tr("Download an official Windows ISO directly"
+                                                " from the Microsoft website."),
+                              .button_text = tr("Open Microsoft Download"),
+                              .access_name = QStringLiteral("Microsoft ISO Download"),
+                              .tip = QStringLiteral("Open the official Microsoft Windows ISO"
+                                                    " download page")},
+                             m_microsoftWindowsDownloadButton);
 
     // Add a tip label to the MS card
     auto* msTip = new QLabel(tr("Tip: Downloading directly from Microsoft is often faster "
@@ -441,13 +442,13 @@ void ImageFlasherPanel::addMicrosoftDownloadCard(QHBoxLayout* cardRow) {
 void ImageFlasherPanel::addUupDownloadCard(QHBoxLayout* cardRow) {
     cardRow->addWidget(
         buildIsoDownloadCard(m_imageSelectionPage,
-                             {QStringLiteral(":/icons/icons/uup_logo.svg"),
-                              tr("Windows via UUP"),
-                              tr("Build a custom Windows ISO from UUP update"
-                                 " packages with edition selection."),
-                              tr("Download and Build ISO"),
-                              QStringLiteral("Download Windows ISO via UUP"),
-                              QStringLiteral("Download a Windows 11 ISO using UUP dump")},
+                             {.icon_path = QStringLiteral(":/icons/icons/uup_logo.svg"),
+                              .title = tr("Windows via UUP"),
+                              .description = tr("Build a custom Windows ISO from UUP update"
+                                                " packages with edition selection."),
+                              .button_text = tr("Download and Build ISO"),
+                              .access_name = QStringLiteral("Download Windows ISO via UUP"),
+                              .tip = QStringLiteral("Download a Windows 11 ISO using UUP dump")},
                              m_downloadWindowsButton));
     connect(m_downloadWindowsButton,
             &QPushButton::clicked,
@@ -458,13 +459,13 @@ void ImageFlasherPanel::addUupDownloadCard(QHBoxLayout* cardRow) {
 void ImageFlasherPanel::addLinuxDownloadCard(QHBoxLayout* cardRow) {
     cardRow->addWidget(
         buildIsoDownloadCard(m_imageSelectionPage,
-                             {QStringLiteral(":/icons/icons/tux_logo.svg"),
-                              tr("Linux ISO"),
-                              tr("Download a Linux distribution ISO"
-                                 " -- Ubuntu, Fedora, Debian, and more."),
-                              tr("Download Linux ISO"),
-                              QStringLiteral("Download Linux ISO"),
-                              QStringLiteral("Download a Linux distribution ISO image")},
+                             {.icon_path = QStringLiteral(":/icons/icons/tux_logo.svg"),
+                              .title = tr("Linux ISO"),
+                              .description = tr("Download a Linux distribution ISO"
+                                                " -- Ubuntu, Fedora, Debian, and more."),
+                              .button_text = tr("Download Linux ISO"),
+                              .access_name = QStringLiteral("Download Linux ISO"),
+                              .tip = QStringLiteral("Download a Linux distribution ISO image")},
                              m_downloadLinuxButton));
     connect(m_downloadLinuxButton,
             &QPushButton::clicked,

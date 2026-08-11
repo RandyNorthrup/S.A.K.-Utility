@@ -191,9 +191,10 @@ struct ResolvedConfigSource {
 [[nodiscard]] ResolvedConfigSource resolveConfigSource(const QString& file_path,
                                                        const QString& resource_path) {
     const bool file_exists = diskPolicyOverrideAuthorized() && QFileInfo::exists(file_path);
-    return {file_exists ? file_path : resource_path,
-            file_exists ? QFileInfo(file_path).lastModified().toUTC() : QDateTime{},
-            file_exists};
+    return {.path = file_exists ? file_path : resource_path,
+            .last_modified_utc = file_exists ? QFileInfo(file_path).lastModified().toUTC()
+                                             : QDateTime{},
+            .file_exists = file_exists};
 }
 
 }  // namespace

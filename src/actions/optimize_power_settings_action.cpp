@@ -165,12 +165,12 @@ void OptimizePowerSettingsAction::finalizeDiscoveryFailure(const QDateTime& star
                   .leftJustified(kReportInnerWidth, ' ') +
               "|\n";
     report += "+================================================================+\n";
-    finalizePowerOptimizationResult({/*.start_time =*/start_time,
-                                     /*.report =*/report,
-                                     /*.previous_plan_name =*/previous_plan_name,
-                                     /*.high_perf_guid =*/QString(),
-                                     /*.already_optimized =*/false,
-                                     /*.success =*/false});
+    finalizePowerOptimizationResult({.start_time = start_time,
+                                     .report = report,
+                                     .previous_plan_name = previous_plan_name,
+                                     .high_perf_guid = QString(),
+                                     .already_optimized = false,
+                                     .success = false});
 }
 
 bool OptimizePowerSettingsAction::resolveHighPerformancePlan(const QVector<PowerPlan>& plans,
@@ -408,12 +408,12 @@ void OptimizePowerSettingsAction::execute() {
     }
 
     report += "+================================================================+\n";
-    finalizePowerOptimizationResult({/*.start_time =*/start_time,
-                                     /*.report =*/report,
-                                     /*.previous_plan_name =*/current_plan.name,
-                                     /*.high_perf_guid =*/high_perf_plan.guid,
-                                     /*.already_optimized =*/already_optimized,
-                                     /*.success =*/success});
+    finalizePowerOptimizationResult({.start_time = start_time,
+                                     .report = report,
+                                     .previous_plan_name = current_plan.name,
+                                     .high_perf_guid = high_perf_plan.guid,
+                                     .already_optimized = already_optimized,
+                                     .success = success});
 }
 
 }  // namespace sak

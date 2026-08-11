@@ -90,15 +90,15 @@ FileExplorerCommand makeCommand(const FileExplorerCommandId id,
                                 const QString& status_text,
                                 const QString& shortcut = {},
                                 const MakeCommandFlags flags = {}) {
-    return FileExplorerCommand{id,
-                               text,
-                               text,
-                               status_text,
-                               shortcut,
-                               groupFor(id),
-                               flags.destructive,
-                               flags.selection_required,
-                               flags.write_operation};
+    return FileExplorerCommand{.id = id,
+                               .text = text,
+                               .accessible_name = text,
+                               .status_text = status_text,
+                               .shortcut = shortcut,
+                               .group = groupFor(id),
+                               .destructive = flags.destructive,
+                               .selection_required = flags.selection_required,
+                               .write_operation = flags.write_operation};
 }
 
 bool hasSelectedTarget(const FileExplorerCommandContext& context) {

@@ -201,10 +201,12 @@ void FileExplorerArchiveWorker::runExtract() {
 bool FileExplorerArchiveWorker::extractOne(const FileExplorerArchiveExtractItem& archive,
                                            const QString& staging_dir) {
     const bool local = m_request.target.local_file_system;
-    const QString host_zip =
-        local
-            ? archive.source_path
-            : stageSource({archive.source_path, QString(), archive.size_bytes, false}, staging_dir);
+    const QString host_zip = local ? archive.source_path
+                                   : stageSource({.source_path = archive.source_path,
+                                                  .destination_path = QString(),
+                                                  .size_bytes = archive.size_bytes,
+                                                  .directory = false},
+                                                 staging_dir);
     if (host_zip.isEmpty()) {
         return false;
     }
@@ -350,11 +352,11 @@ bool FileExplorerArchiveWorker::deliverFlattened(const QString& host_out_dir) {
         FileExplorerTransferEngine engine(FileManagementFileSystemBridge::localTarget(QString()),
                                           m_request.target,
                                           m_request.raw_read_cap);
-        const bool delivered =
-            engine.transferEntry({info.absoluteFilePath(),
-                                  childPath(name),
-                                  static_cast<quint64>(std::max<qint64>(info.size(), 0)),
-                                  info.isDir()});
+        const bool delivered = engine.transferEntry(
+            {.source_path = info.absoluteFilePath(),
+             .destination_path = childPath(name),
+             .size_bytes = static_cast<quint64>(std::max<qint64>(info.size(), 0)),
+             .directory = info.isDir()});
         // A copy that landed but dropped entries (skipped links, depth/entry-cap overflow) is not
         // a delivered entry: fail closed rather than counting a partial extraction as delivered.
         if (!delivered || !engine.lastTransferComplete()) {
@@ -374,8 +376,10 @@ QString FileExplorerArchiveWorker::stageSource(const FileExplorerTransferItem& i
     FileExplorerTransferEngine engine(m_request.target,
                                       FileManagementFileSystemBridge::localTarget(QString()),
                                       m_request.raw_read_cap);
-    const bool ok =
-        engine.transferEntry({item.source_path, staged, item.size_bytes, item.directory});
+    const bool ok = engine.transferEntry({.source_path = item.source_path,
+                                          .destination_path = staged,
+                                          .size_bytes = item.size_bytes,
+                                          .directory = item.directory});
     m_blockers.append(engine.blockers());
     m_warnings.append(engine.warnings());
     // A copy that landed but dropped entries (depth/entry caps, skipped links) is not complete

@@ -396,7 +396,7 @@ auto DuplicateFinderWorker::collectVirtualEntry(const sak::FileManagementEntry& 
                                                 int depth) -> std::expected<void, sak::error_code> {
     const qint64 size = static_cast<qint64>(entry.size_bytes);
     if (entry.regular_file && size >= m_config.minimum_file_size) {
-        state.files.append({entry.path, size});
+        state.files.append({.path = entry.path, .size = size});
     }
     if (!m_config.recursive_scan || !entry.directory) {
         return {};

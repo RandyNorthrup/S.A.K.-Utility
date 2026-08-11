@@ -1197,9 +1197,9 @@ public:
 
     PartitionExtDirectoryExportResult run(const QString& sourcePath,
                                           const QString& outputDirectory) {
-        pending_.append(
-            {sourcePath.trimmed().isEmpty() ? QStringLiteral("/") : sourcePath.trimmed(),
-             outputDirectory});
+        pending_.append({.source_path = sourcePath.trimmed().isEmpty() ? QStringLiteral("/")
+                                                                       : sourcePath.trimmed(),
+                         .output_directory = outputDirectory});
         while (!pending_.isEmpty()) {
             if (!processFrame(pending_.takeLast())) {
                 break;
@@ -1286,7 +1286,8 @@ private:
             return false;
         }
         ++result_.directories_exported;
-        pending_.append({entry.path, targetPath, entry.inode});
+        pending_.append(
+            {.source_path = entry.path, .output_directory = targetPath, .inode = entry.inode});
         return true;
     }
 

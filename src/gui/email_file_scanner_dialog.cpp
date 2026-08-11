@@ -69,8 +69,9 @@ QVector<ScannedFile> scanPathsWorker(const QStringList& paths) {
     auto harvest = [&](const QDir& dir) {
         const auto entries = dir.entryInfoList(kFilters, QDir::Files | QDir::Readable);
         for (const auto& entry : entries) {
-            results.append(ScannedFile{
-                entry.absoluteFilePath(), entry.size(), classifySuffix(entry.suffix().toLower())});
+            results.append(ScannedFile{.path = entry.absoluteFilePath(),
+                                       .size_bytes = entry.size(),
+                                       .type = classifySuffix(entry.suffix().toLower())});
         }
     };
 

@@ -297,7 +297,7 @@ CheckDiskErrorsAction::DiskCheckOutcome CheckDiskErrorsAction::evaluateDiskCheck
     const int failed = (total_drives > drives_scanned) ? (total_drives - drives_scanned) : 0;
     // Success requires every enumerated drive to have been scanned; a single
     // successful drive must not mask others that timed out or failed to scan.
-    return DiskCheckOutcome{total_drives > 0 && failed == 0, failed};
+    return DiskCheckOutcome{.success = total_drives > 0 && failed == 0, .drives_failed = failed};
 }
 
 void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,

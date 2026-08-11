@@ -138,22 +138,23 @@ QString renderToBytes(const Surface& s,
     if (!blitSource(req.hwnd, s.memDC, s.screen, rect)) {
         return QStringLiteral("The capture failed (the window may be minimized or protected).");
     }
-    const Size src{static_cast<int>(rect.right - rect.left),
-                   static_cast<int>(rect.bottom - rect.top)};
+    const Size src{.w = static_cast<int>(rect.right - rect.left),
+                   .h = static_cast<int>(rect.bottom - rect.top)};
     const Scaled sc = scaledSize(src.w, src.h, req.max_edge);
-    QByteArray bytes = (sc.scale < 1.0) ? stretchToBytes(s.screen, s.memDC, src, Size{sc.w, sc.h})
-                                        : copyDibBytes(s.bits, src.w, src.h);
+    QByteArray bytes = (sc.scale < 1.0)
+                           ? stretchToBytes(s.screen, s.memDC, src, Size{.w = sc.w, .h = sc.h})
+                           : copyDibBytes(s.bits, src.w, src.h);
     if (bytes.isEmpty()) {
         return QStringLiteral("The capture could not be read.");
     }
-    out = CaptureBits{std::move(bytes), sc.w, sc.h, sc.scale};
+    out = CaptureBits{.bgra = std::move(bytes), .width = sc.w, .height = sc.h, .scale = sc.scale};
     return {};
 }
 
 }  // namespace
 
 bool captureBgra(const CaptureRequest& req, CaptureBits& out, QString& err) {
-    const RECT rect{req.left, req.top, req.right, req.bottom};
+    const RECT rect{.left = req.left, .top = req.top, .right = req.right, .bottom = req.bottom};
     err = validateCaptureRect(static_cast<int>(rect.right - rect.left),
                               static_cast<int>(rect.bottom - rect.top));
     if (!err.isEmpty()) {
@@ -213,7 +214,7 @@ BOOL CALLBACK findWindowProc(HWND hwnd, LPARAM param) {
     if (title.isEmpty() || !lower.contains(find->needle_lower)) {
         return TRUE;
     }
-    find->matches.append(WindowMatch{hwnd, lower});
+    find->matches.append(WindowMatch{.hwnd = hwnd, .title_lower = lower});
     return TRUE;  // collect every match, then disambiguate rather than blindly taking the first
 }
 
@@ -257,7 +258,7 @@ bool windowRectByTitle(const QString& needle_lower, WindowRect& out, QString& er
         err = QStringLiteral("No window title was provided.");
         return false;
     }
-    FindWindowState state{needle_lower, {}};
+    FindWindowState state{.needle_lower = needle_lower, .matches = {}};
     EnumWindows(findWindowProc, reinterpret_cast<LPARAM>(&state));
     HWND match = pickUniqueWindow(state.matches, needle_lower, err);
     if (match == nullptr) {

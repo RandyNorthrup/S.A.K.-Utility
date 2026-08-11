@@ -1617,7 +1617,8 @@ std::expected<void, error_code> PstParser::loadBlockBTreeGuarded(uint64_t page_o
             }
 
             auto entry = readBlockLeafEntry(data, off, m_is_unicode);
-            m_bbt_cache.insert(entry.bid, BbtEntry{entry.file_offset, entry.cb});
+            m_bbt_cache.insert(entry.bid,
+                               BbtEntry{.file_offset = entry.file_offset, .cb = entry.cb});
         }
     } else {
         for (int idx = 0; idx < page->entry_count; ++idx) {
@@ -1710,7 +1711,9 @@ std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
                                                               QVector<int>* block_offsets,
                                                               int depth) {
     QSet<uint64_t> visited;
-    return readDataTreeGuarded(bid, block_offsets, DataTreeGuard{depth, visited});
+    return readDataTreeGuarded(bid,
+                               block_offsets,
+                               DataTreeGuard{.depth = depth, .visited = visited});
 }
 
 std::expected<QByteArray, error_code> PstParser::readDataTreeGuarded(uint64_t bid,
@@ -1772,7 +1775,7 @@ std::expected<QByteArray, error_code> PstParser::readInternalDataBlock(const QBy
                                                                        uint16_t entry_count,
                                                                        QVector<int>* block_offsets,
                                                                        DataTreeGuard guard) {
-    const DataTreeGuard child_guard{guard.depth + 1, guard.visited};
+    const DataTreeGuard child_guard{.depth = guard.depth + 1, .visited = guard.visited};
     QByteArray result;
     if (block_level == kDataTreeXBlockLevel) {
         auto status = readXblockChildren(data, entry_count, result, block_offsets, child_guard);
@@ -1991,7 +1994,10 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafData(
     QSet<uint32_t> visited_hids;
     return readBthLeafDataGuarded(node_hid,
                                   level,
-                                  BthWalk{heap_data, key_size, block_offsets, visited_hids});
+                                  BthWalk{.heap_data = heap_data,
+                                          .key_size = key_size,
+                                          .block_offsets = block_offsets,
+                                          .visited_hids = visited_hids});
 }
 
 std::expected<QByteArray, error_code> PstParser::readBthLeafDataGuarded(uint32_t node_hid,
@@ -2083,7 +2089,9 @@ std::expected<PstParser::BthLeafResult, error_code> PstParser::collectBthLeafDat
     if (!leaf_result) {
         return std::unexpected(leaf_result.error());
     }
-    return BthLeafResult{std::move(*leaf_result), key_size, data_size};
+    return BthLeafResult{.leaf_data = std::move(*leaf_result),
+                         .key_size = key_size,
+                         .data_size = data_size};
 }
 
 QVector<sak::MapiProperty> PstParser::parsePropertyRecords(const BthLeafResult& bth,
@@ -2341,7 +2349,9 @@ QVector<sak::MapiProperty> PstParser::materializeTcRow(const QByteArray& row_dat
                                                        const HeapContext& ctx) {
     QVector<sak::MapiProperty> row_props;
     row_props.reserve(tc.columns.size());
-    const TcRowView row_view{row_off, row_size, row_off + tc.rgib_tci_1b};
+    const TcRowView row_view{.row_off = row_off,
+                             .row_size = row_size,
+                             .ceb_off = row_off + tc.rgib_tci_1b};
     for (const auto& col : tc.columns) {
         row_props.append(buildTcCell(row_data, row_view, col, ctx));
     }
@@ -3330,17 +3340,17 @@ sak::EmailItemType PstParser::classifyMessageClass(const QString& message_class)
         sak::EmailItemType type;
     };
     static constexpr Mapping kMappings[] = {
-        {"IPM.Note", sak::EmailItemType::Email},
-        {"IPM.Post", sak::EmailItemType::Email},
-        {"IPM.Report", sak::EmailItemType::Email},
-        {"IPM.Contact", sak::EmailItemType::Contact},
-        {"IPM.Appointment", sak::EmailItemType::Calendar},
-        {"IPM.Task", sak::EmailItemType::Task},
-        {"IPM.StickyNote", sak::EmailItemType::StickyNote},
-        {"IPM.Activity", sak::EmailItemType::JournalEntry},
-        {"IPM.DistList", sak::EmailItemType::DistList},
-        {"IPM.Schedule.Meeting", sak::EmailItemType::MeetingRequest},
-        {"IPM", sak::EmailItemType::Email},
+        {.prefix = "IPM.Note", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Post", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Report", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Contact", .type = sak::EmailItemType::Contact},
+        {.prefix = "IPM.Appointment", .type = sak::EmailItemType::Calendar},
+        {.prefix = "IPM.Task", .type = sak::EmailItemType::Task},
+        {.prefix = "IPM.StickyNote", .type = sak::EmailItemType::StickyNote},
+        {.prefix = "IPM.Activity", .type = sak::EmailItemType::JournalEntry},
+        {.prefix = "IPM.DistList", .type = sak::EmailItemType::DistList},
+        {.prefix = "IPM.Schedule.Meeting", .type = sak::EmailItemType::MeetingRequest},
+        {.prefix = "IPM", .type = sak::EmailItemType::Email},
     };
 
     for (const auto& m : kMappings) {

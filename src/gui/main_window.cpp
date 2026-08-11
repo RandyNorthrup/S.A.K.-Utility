@@ -660,51 +660,55 @@ void MainWindow::registerLazyToolTabs() {
     Q_ASSERT(m_tab_widget);
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     addLazyPlaceholder("AI Assistant", kTooltipAiAssistant, ":/icons/icons/panel_ai.svg");
-    m_lazyTabs.push_back({[this] { createAiAssistantPanelTab(); }, [this] { wireAiPanel(); }});
+    m_lazyTabs.push_back(
+        {.build = [this] { createAiAssistantPanelTab(); }, .wire = [this] { wireAiPanel(); }});
 #endif
     addLazyPlaceholder("Backup and Restore",
                        kTooltipUserMigration,
                        ":/icons/icons/panel_backup_restore.svg");
-    m_lazyTabs.push_back({[this] { createBackupRestorePanel(); }, [this] { wireBackupPanel(); }});
+    m_lazyTabs.push_back(
+        {.build = [this] { createBackupRestorePanel(); }, .wire = [this] { wireBackupPanel(); }});
 
     addLazyPlaceholder("File Management", kTooltipOrganizer, ":/icons/icons/panel_organizer.svg");
-    m_lazyTabs.push_back(
-        {[this] { createFileManagementPanel(); }, [this] { wireFileManagementPanels(); }});
+    m_lazyTabs.push_back({.build = [this] { createFileManagementPanel(); },
+                          .wire = [this] { wireFileManagementPanels(); }});
 
     addLazyPlaceholder("Partition Manager",
                        "Manage disks, partitions, SMART status, cloning, migration, boot repair, "
                        "SSD optimization, and wipe operations",
                        ":/icons/icons/icons8-pm-disk.svg");
-    m_lazyTabs.push_back(
-        {[this] { createPartitionManagerPanel(); }, [this] { wirePartitionPanel(); }});
+    m_lazyTabs.push_back({.build = [this] { createPartitionManagerPanel(); },
+                          .wire = [this] { wirePartitionPanel(); }});
 
     m_slotImageFlasher = static_cast<int>(m_lazyTabs.size());
     addLazyPlaceholder("Image Flasher",
                        kTooltipImageFlasher,
                        ":/icons/icons/panel_image_flasher.svg");
-    m_lazyTabs.push_back(
-        {[this] { createImageFlasherPanel(); }, [this] { wireImageFlasherPanel(); }});
+    m_lazyTabs.push_back({.build = [this] { createImageFlasherPanel(); },
+                          .wire = [this] { wireImageFlasherPanel(); }});
 
     m_slotDiagnostic = static_cast<int>(m_lazyTabs.size());
     addLazyPlaceholder("Benchmark and Diagnostics",
                        kTooltipDiagnostics,
                        ":/icons/icons/panel_diagnostic.svg");
-    m_lazyTabs.push_back({[this] { createDiagnosticPanel(); }, [this] { wireDiagnosticPanel(); }});
+    m_lazyTabs.push_back(
+        {.build = [this] { createDiagnosticPanel(); }, .wire = [this] { wireDiagnosticPanel(); }});
 
     addLazyPlaceholder("Email Tools", kTooltipEmailTool, ":/icons/icons/panel_email.svg");
-    m_lazyTabs.push_back({[this] { createEmailToolsPanel(); }, [this] { wireEmailPanels(); }});
+    m_lazyTabs.push_back(
+        {.build = [this] { createEmailToolsPanel(); }, .wire = [this] { wireEmailPanels(); }});
 
     addLazyPlaceholder("Application Management",
                        kTooltipAppManagement,
                        ":/icons/icons/panel_app_install.svg");
-    m_lazyTabs.push_back(
-        {[this] { createAppManagementPanel(); }, [this] { wireAppManagementPanels(); }});
+    m_lazyTabs.push_back({.build = [this] { createAppManagementPanel(); },
+                          .wire = [this] { wireAppManagementPanels(); }});
 
     addLazyPlaceholder("Network Management",
                        kTooltipNetworkManagement,
                        ":/icons/icons/panel_network.svg");
-    m_lazyTabs.push_back(
-        {[this] { createNetworkManagementPanel(); }, [this] { wireNetworkPanels(); }});
+    m_lazyTabs.push_back({.build = [this] { createNetworkManagementPanel(); },
+                          .wire = [this] { wireNetworkPanels(); }});
 }
 
 void MainWindow::addLazyPlaceholder(const char* title, const char* tooltip, const char* iconPath) {
@@ -850,13 +854,13 @@ void MainWindow::createEmailToolsPanel() {
             const char* subtitle;
         };
         static constexpr TabMeta kTabs[] = {
-            {":/icons/icons/panel_email.svg",
-             "Email Inspector",
-             "Offline email forensics and data extraction "
-             "\xe2\x80\x94 inspect PST, OST, and MBOX files"},
-            {":/icons/icons/panel_email.svg",
-             "OST Converter",
-             "Bulk OST/PST file conversion to EML, MSG, MBOX, and more"},
+            {.icon = ":/icons/icons/panel_email.svg",
+             .title = "Email Inspector",
+             .subtitle = "Offline email forensics and data extraction "
+                         "\xe2\x80\x94 inspect PST, OST, and MBOX files"},
+            {.icon = ":/icons/icons/panel_email.svg",
+             .title = "OST Converter",
+             .subtitle = "Bulk OST/PST file conversion to EML, MSG, MBOX, and more"},
         };
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];
@@ -920,17 +924,18 @@ void MainWindow::createAppManagementPanel() {
             const char* subtitle;
         };
         static constexpr TabMeta kTabs[] = {
-            {":/icons/icons/panel_app_install.svg",
-             "App Installation",
-             "Search, queue, and batch-install applications via Chocolatey"},
-            {":/icons/icons/panel_uninstall.svg",
-             "Advanced Uninstall",
-             "Deep application removal with registry cleanup, leftover scanning, "
-             "and batch uninstall support"},
-            {":/icons/icons/icons8-warning-shield.svg",
-             "Vulnerability Scanner",
-             "Check installed software and packages against CISA KEV, NVD, GitHub Advisories, "
-             "and OSV"},
+            {.icon = ":/icons/icons/panel_app_install.svg",
+             .title = "App Installation",
+             .subtitle = "Search, queue, and batch-install applications via Chocolatey"},
+            {.icon = ":/icons/icons/panel_uninstall.svg",
+             .title = "Advanced Uninstall",
+             .subtitle = "Deep application removal with registry cleanup, leftover scanning, "
+                         "and batch uninstall support"},
+            {.icon = ":/icons/icons/icons8-warning-shield.svg",
+             .title = "Vulnerability Scanner",
+             .subtitle =
+                 "Check installed software and packages against CISA KEV, NVD, GitHub Advisories, "
+                 "and OSV"},
         };
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];
@@ -1004,19 +1009,19 @@ void MainWindow::createNetworkManagementPanel() {
             const char* subtitle;
         };
         static constexpr TabMeta kTabs[] = {
-            {":/icons/icons/panel_network.svg",
-             "Network Diagnostics & Troubleshooting",
-             "Comprehensive network analysis "
-             "\xe2\x80\x94 connectivity testing, DNS diagnostics, "
-             "port scanning, bandwidth, WiFi analysis, "
-             "firewall auditing, and more"},
-            {":/icons/icons/icons8-network-card.svg",
-             "Network Adapters",
-             "View and manage network adapter configurations, "
-             "backup and restore Ethernet settings"},
-            {":/icons/icons/panel_wifi.svg",
-             "WiFi Manager",
-             "Manage, share, and deploy Wi-Fi network profiles"},
+            {.icon = ":/icons/icons/panel_network.svg",
+             .title = "Network Diagnostics & Troubleshooting",
+             .subtitle = "Comprehensive network analysis "
+                         "\xe2\x80\x94 connectivity testing, DNS diagnostics, "
+                         "port scanning, bandwidth, WiFi analysis, "
+                         "firewall auditing, and more"},
+            {.icon = ":/icons/icons/icons8-network-card.svg",
+             .title = "Network Adapters",
+             .subtitle = "View and manage network adapter configurations, "
+                         "backup and restore Ethernet settings"},
+            {.icon = ":/icons/icons/panel_wifi.svg",
+             .title = "WiFi Manager",
+             .subtitle = "Manage, share, and deploy Wi-Fi network profiles"},
         };
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];

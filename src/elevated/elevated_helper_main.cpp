@@ -171,7 +171,9 @@ sak::TaskHandlerResult runQuickAction(const QJsonObject& payload,
     // execute() has begun, so a cancel that was already requested must stop the privileged work
     // from starting at all.
     if (is_cancelled()) {
-        return {false, {}, QStringLiteral("Task cancelled before it started")};
+        return {.success = false,
+                .data = {},
+                .error_message = QStringLiteral("Task cancelled before it started")};
     }
 
     auto action = std::make_unique<ActionT>(std::forward<CtorArgs>(ctor_args)...);
@@ -256,19 +258,23 @@ sak::TaskHandlerResult runPermissionTask(const QJsonObject& payload,
                                          const PermissionTaskSpec& spec) {
     const QJsonValue path_value = payload.value(QStringLiteral("path"));
     if (!path_value.isString() || path_value.toString().trimmed().isEmpty()) {
-        return {false, {}, "Missing or invalid path in payload"};
+        return {.success = false,
+                .data = {},
+                .error_message = "Missing or invalid path in payload"};
     }
     const QString path = path_value.toString();
     QString user_sid;
     if (spec.needs_user_sid) {
         const QJsonValue sid_value = payload.value(QStringLiteral("user_sid"));
         if (!sid_value.isString() || sid_value.toString().trimmed().isEmpty()) {
-            return {false, {}, "Missing or invalid user_sid in payload"};
+            return {.success = false,
+                    .data = {},
+                    .error_message = "Missing or invalid user_sid in payload"};
         }
         user_sid = sid_value.toString();
     }
     if (is_cancelled()) {
-        return {false, {}, "Task cancelled before it started"};
+        return {.success = false, .data = {}, .error_message = "Task cancelled before it started"};
     }
     progress(0, spec.action_label + path);
     sak::PermissionManager pm;
@@ -280,10 +286,10 @@ sak::TaskHandlerResult runPermissionTask(const QJsonObject& payload,
         if (message.isEmpty()) {
             message = QString::fromStdString(std::string(sak::to_string(result.error())));
         }
-        return {false, {}, message};
+        return {.success = false, .data = {}, .error_message = message};
     }
     progress(sak::kPercentMax, spec.action_label + QStringLiteral("done"));
-    return {true, {}, {}};
+    return {.success = true, .data = {}, .error_message = {}};
 }
 
 QString cappedTaskOutput(const QString& value, int max_bytes, bool* truncated = nullptr) {
@@ -799,7 +805,7 @@ struct PartitionProbeRequest {
 };
 
 sak::TaskHandlerResult partitionProbeFailure(const QString& message) {
-    return {false, {}, message};
+    return {.success = false, .data = {}, .error_message = message};
 }
 
 // Resolve the optional max_bytes override. Absent means "the 2 MiB ceiling"; present means it
@@ -851,7 +857,9 @@ std::optional<PartitionProbeRequest> partitionProbeRequest(const QJsonObject& pa
         *errorMessage = QStringLiteral("Raw probe byte limit is invalid");
         return std::nullopt;
     }
-    return PartitionProbeRequest{devicePath, *offset, readLimit};
+    return PartitionProbeRequest{.device_path = devicePath,
+                                 .offset_bytes = *offset,
+                                 .read_limit = readLimit};
 }
 
 std::optional<QByteArray> readPartitionProbeBytes(const PartitionProbeRequest& request,
@@ -886,7 +894,7 @@ sak::TaskHandlerResult partitionProbeSuccess(const PartitionProbeRequest& reques
     data[QStringLiteral("device_path")] = request.device_path;
     data[QStringLiteral("bytes_read")] = static_cast<double>(bytes.size());
     data[QStringLiteral("bytes_base64")] = QString::fromLatin1(bytes.toBase64());
-    return {true, data, {}};
+    return {.success = true, .data = data, .error_message = {}};
 }
 
 sak::TaskHandlerResult runPartitionProbeReadTask(const QJsonObject& payload,
@@ -952,7 +960,9 @@ void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
             // creates anything.
             const QJsonValue raw = payload.value(QStringLiteral("backup_location"));
             if (!raw.isString() || raw.toString().trimmed().isEmpty()) {
-                return {false, {}, "Missing or invalid backup_location in payload"};
+                return {.success = false,
+                        .data = {},
+                        .error_message = "Missing or invalid backup_location in payload"};
             }
             return runQuickAction<sak::BackupBitlockerKeysAction>(
                 payload, std::move(progress), std::move(is_cancelled), raw.toString());
@@ -960,39 +970,41 @@ void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
 }
 
 void registerPermissionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
-    dispatcher.registerHandler(QStringLiteral("TakeOwnership"),
-                               [](const QJsonObject& payload,
-                                  sak::ProgressCallback progress,
-                                  sak::CancelCheck is_cancelled) -> sak::TaskHandlerResult {
-                                   return runPermissionTask(
-                                       payload,
-                                       std::move(progress),
-                                       is_cancelled,
-                                       PermissionTaskSpec{[](sak::PermissionManager& pm,
-                                                             const QString& path,
-                                                             const QString& sid) {
-                                                              return pm.tryTakeOwnership(path, sid);
-                                                          },
-                                                          QStringLiteral("Taking ownership of: "),
-                                                          true});
-                               });
+    dispatcher.registerHandler(
+        QStringLiteral("TakeOwnership"),
+        [](const QJsonObject& payload,
+           sak::ProgressCallback progress,
+           sak::CancelCheck is_cancelled) -> sak::TaskHandlerResult {
+            return runPermissionTask(
+                payload,
+                std::move(progress),
+                is_cancelled,
+                PermissionTaskSpec{
+                    .operation = [](sak::PermissionManager& pm,
+                                    const QString& path,
+                                    const QString& sid) { return pm.tryTakeOwnership(path, sid); },
+                    .action_label = QStringLiteral("Taking ownership of: "),
+                    .needs_user_sid = true});
+        });
 
-    dispatcher.registerHandler(QStringLiteral("StripPermissions"),
-                               [](const QJsonObject& payload,
-                                  sak::ProgressCallback progress,
-                                  sak::CancelCheck is_cancelled) -> sak::TaskHandlerResult {
-                                   return runPermissionTask(
-                                       payload,
-                                       std::move(progress),
-                                       is_cancelled,
-                                       PermissionTaskSpec{[](sak::PermissionManager& pm,
-                                                             const QString& path,
-                                                             const QString& /*sid*/) {
-                                                              return pm.tryStripPermissions(path);
-                                                          },
-                                                          QStringLiteral("Stripping permissions: "),
-                                                          false});
-                               });
+    dispatcher.registerHandler(
+        QStringLiteral("StripPermissions"),
+        [](const QJsonObject& payload,
+           sak::ProgressCallback progress,
+           sak::CancelCheck is_cancelled) -> sak::TaskHandlerResult {
+            return runPermissionTask(
+                payload,
+                std::move(progress),
+                is_cancelled,
+                PermissionTaskSpec{.operation =
+                                       [](sak::PermissionManager& pm,
+                                          const QString& path,
+                                          const QString& /*sid*/) {
+                                           return pm.tryStripPermissions(path);
+                                       },
+                                   .action_label = QStringLiteral("Stripping permissions: "),
+                                   .needs_user_sid = false});
+        });
 
     dispatcher.registerHandler(
         QStringLiteral("SetStandardPermissions"),
@@ -1004,11 +1016,12 @@ void registerPermissionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
                 std::move(progress),
                 is_cancelled,
                 PermissionTaskSpec{
-                    [](sak::PermissionManager& pm, const QString& path, const QString& sid) {
-                        return pm.trySetStandardUserPermissions(path, sid);
-                    },
-                    QStringLiteral("Setting permissions: "),
-                    true});
+                    .operation =
+                        [](sak::PermissionManager& pm, const QString& path, const QString& sid) {
+                            return pm.trySetStandardUserPermissions(path, sid);
+                        },
+                    .action_label = QStringLiteral("Setting permissions: "),
+                    .needs_user_sid = true});
         });
 }
 
@@ -1038,7 +1051,7 @@ sak::TaskHandlerResult runThermalDataTask(const QJsonObject& /*payload*/,
                                           sak::ProgressCallback progress,
                                           sak::CancelCheck is_cancelled) {
     if (is_cancelled()) {
-        return {false, {}, "Task cancelled before it started"};
+        return {.success = false, .data = {}, .error_message = "Task cancelled before it started"};
     }
     progress(0, QStringLiteral("Querying thermal sensors..."));
 
@@ -1048,7 +1061,9 @@ sak::TaskHandlerResult runThermalDataTask(const QJsonObject& /*payload*/,
     // run arbitrary code elevated. Fail closed if it cannot be resolved.
     const QString powershell_path = resolveSystemPowerShellPath();
     if (powershell_path.isEmpty()) {
-        return {false, {}, "Could not resolve system PowerShell path"};
+        return {.success = false,
+                .data = {},
+                .error_message = "Could not resolve system PowerShell path"};
     }
 
     const auto result = sak::runProcess(powershell_path,
@@ -1061,15 +1076,15 @@ sak::TaskHandlerResult runThermalDataTask(const QJsonObject& /*payload*/,
     // Report what actually went wrong: a start failure, a crash and a non-zero exit are not
     // timeouts, and the child's stderr is the only description of the real fault.
     if (result.cancelled) {
-        return {false, {}, "Thermal query cancelled"};
+        return {.success = false, .data = {}, .error_message = "Thermal query cancelled"};
     }
     if (result.timed_out) {
-        return {false, {}, "Thermal query timed out"};
+        return {.success = false, .data = {}, .error_message = "Thermal query timed out"};
     }
     if (!result.succeeded()) {
-        return {false,
-                {},
-                withThermalDetail(
+        return {.success = false,
+                .data = {},
+                .error_message = withThermalDetail(
                     QStringLiteral("Thermal query failed with exit code %1").arg(result.exit_code),
                     result)};
     }
@@ -1078,13 +1093,16 @@ sak::TaskHandlerResult runThermalDataTask(const QJsonObject& /*payload*/,
     bool ok = false;
     const double temp = output.toDouble(&ok);
     if (!ok || temp <= 0) {
-        return {false, {}, withThermalDetail(QStringLiteral("No thermal data available"), result)};
+        return {.success = false,
+                .data = {},
+                .error_message = withThermalDetail(QStringLiteral("No thermal data available"),
+                                                   result)};
     }
 
     QJsonObject data;
     data["cpu_temperature"] = temp;
     progress(sak::kPercentMax, QStringLiteral("Thermal data retrieved"));
-    return {true, data, {}};
+    return {.success = true, .data = data, .error_message = {}};
 }
 
 void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
@@ -1099,21 +1117,27 @@ void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
             const QJsonValue destination_value = payload.value(QStringLiteral("destination"));
             if (!source_value.isString() || source_value.toString().isEmpty() ||
                 !destination_value.isString() || destination_value.toString().isEmpty()) {
-                return {false, {}, "Missing or invalid source or destination in payload"};
+                return {.success = false,
+                        .data = {},
+                        .error_message = "Missing or invalid source or destination in payload"};
             }
             const QString source = source_value.toString();
             const QString destination = destination_value.toString();
             // QFile::copy is a single uninterruptible call, so a cancel can only be honored
             // before it starts.
             if (is_cancelled()) {
-                return {false, {}, "Task cancelled before it started"};
+                return {.success = false,
+                        .data = {},
+                        .error_message = "Task cancelled before it started"};
             }
             progress(0, QStringLiteral("Copying: ") + source);
             if (!QFile::copy(source, destination)) {
-                return {false, {}, QStringLiteral("Failed to copy: ") + source};
+                return {.success = false,
+                        .data = {},
+                        .error_message = QStringLiteral("Failed to copy: ") + source};
             }
             progress(sak::kPercentMax, QStringLiteral("File copied"));
-            return {true, {}, {}};
+            return {.success = true, .data = {}, .error_message = {}};
         });
 
     dispatcher.registerHandler(QStringLiteral("ReadThermalData"), runThermalDataTask);

@@ -64,7 +64,13 @@ int runMatch(
         y1 = std::max(y1, h.y + h.h);
         joined << h.text;
     }
-    m = TextMatch{joined.join(QLatin1Char(' ')), x0, y0, x1 - x0, y1 - y0, line, 0};
+    m = TextMatch{.text = joined.join(QLatin1Char(' ')),
+                  .x = x0,
+                  .y = y0,
+                  .w = x1 - x0,
+                  .h = y1 - y0,
+                  .line = line,
+                  .score = 0};
     return strength;
 }
 

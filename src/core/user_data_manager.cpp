@@ -496,24 +496,24 @@ std::vector<UserDataManager::DataLocation> UserDataManager::getCommonDataLocatio
     const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 
     // Chrome
-    locations.push_back({"Google Chrome",
-                         {appdata_local + "/../Google/Chrome/User Data"},
-                         "Browser profile, history, bookmarks, extensions"});
+    locations.push_back({.pattern = "Google Chrome",
+                         .paths = {appdata_local + "/../Google/Chrome/User Data"},
+                         .description = "Browser profile, history, bookmarks, extensions"});
 
     // Firefox
-    locations.push_back({"Mozilla Firefox",
-                         {appdata_roaming + "/../Mozilla/Firefox/Profiles"},
-                         "Browser profile, history, bookmarks, extensions"});
+    locations.push_back({.pattern = "Mozilla Firefox",
+                         .paths = {appdata_roaming + "/../Mozilla/Firefox/Profiles"},
+                         .description = "Browser profile, history, bookmarks, extensions"});
 
     // VS Code
-    locations.push_back({"Visual Studio Code",
-                         {appdata_roaming + "/../Code/User"},
-                         "Settings, keybindings, extensions, snippets"});
+    locations.push_back({.pattern = "Visual Studio Code",
+                         .paths = {appdata_roaming + "/../Code/User"},
+                         .description = "Settings, keybindings, extensions, snippets"});
 
     // BitLocker Recovery Keys (sentinel path -- handled specially by backup wizard)
-    locations.push_back({"BitLocker Recovery Keys",
-                         {"bitlocker://recovery-keys"},
-                         "BitLocker recovery keys for all encrypted volumes"});
+    locations.push_back({.pattern = "BitLocker Recovery Keys",
+                         .paths = {"bitlocker://recovery-keys"},
+                         .description = "BitLocker recovery keys for all encrypted volumes"});
 
     return locations;
 }

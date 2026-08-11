@@ -547,10 +547,11 @@ auto PermissionManager::tryStripPermissions(const QString& path)
         return std::unexpected(sak::error_code::permission_update_failed);
     }
 
-    const SecurityChange change{DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
-                                nullptr,
-                                nullptr,
-                                &emptyDacl};
+    const SecurityChange change{.si = DACL_SECURITY_INFORMATION |
+                                      UNPROTECTED_DACL_SECURITY_INFORMATION,
+                                .owner = nullptr,
+                                .group = nullptr,
+                                .dacl = &emptyDacl};
     const DWORD result = applySecurityNoFollow(path, WRITE_DAC | READ_CONTROL, change);
     return interpretSecurityResult(result, "Failed to strip permissions", m_lastError);
 #else
@@ -578,7 +579,8 @@ auto PermissionManager::tryTakeOwnership(const QString& path, const QString& use
         return std::unexpected(sak::error_code::invalid_argument);
     }
 
-    const SecurityChange change{OWNER_SECURITY_INFORMATION, pSid, nullptr, nullptr};
+    const SecurityChange change{
+        .si = OWNER_SECURITY_INFORMATION, .owner = pSid, .group = nullptr, .dacl = nullptr};
     const DWORD result = applySecurityNoFollow(path, WRITE_OWNER, change);
     LocalFree(pSid);
     return interpretSecurityResult(result, "Failed to take ownership", m_lastError);
@@ -612,8 +614,11 @@ auto PermissionManager::trySetStandardUserPermissions(const QString& path, const
         return std::unexpected(sak::error_code::permission_update_failed);
     }
 
-    const SecurityChange change{
-        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, pNewAcl};
+    const SecurityChange change{.si = DACL_SECURITY_INFORMATION |
+                                      PROTECTED_DACL_SECURITY_INFORMATION,
+                                .owner = nullptr,
+                                .group = nullptr,
+                                .dacl = pNewAcl};
     result = applySecurityNoFollow(path, WRITE_DAC | READ_CONTROL, change);
     LocalFree(pNewAcl);
     LocalFree(pSid);

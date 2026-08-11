@@ -250,15 +250,18 @@ QVector<ThermalReading> ThermalMonitor::parseThermalOutput(const QString& output
         }
 
         if (key == QLatin1String("cpu")) {
-            readings.append({"CPU Package", temp, now});
+            readings.append(
+                {.component = "CPU Package", .temperature_celsius = temp, .timestamp = now});
         } else if (key == QLatin1String("gpu")) {
-            readings.append({"GPU", temp, now});
+            readings.append({.component = "GPU", .temperature_celsius = temp, .timestamp = now});
         } else if (key.startsWith(QLatin1String("disk"))) {
             const QString device_id = key.mid(kDiskKeyPrefixLength);
             if (!isDiskDeviceId(device_id)) {
                 continue;
             }
-            readings.append({QString("Disk %1").arg(device_id), temp, now});
+            readings.append({.component = QString("Disk %1").arg(device_id),
+                             .temperature_celsius = temp,
+                             .timestamp = now});
         }
     }
     return readings;

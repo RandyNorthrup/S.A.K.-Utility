@@ -69,7 +69,7 @@ bool AppActionRegistry::registerAction(const AppActionDescriptor& descriptor,
     }
     AppActionDescriptor stored = descriptor;
     stored.id = id;
-    m_actions.insert(id, Entry{stored, std::move(invoke)});
+    m_actions.insert(id, Entry{.descriptor = stored, .invoke = std::move(invoke)});
     if (error != nullptr) {
         error->clear();
     }
@@ -120,7 +120,9 @@ AppActionResult AppActionRegistry::invoke(const QString& id,
             if (error != nullptr) {
                 *error = QStringLiteral("Unknown app action: %1").arg(id.trimmed());
             }
-            return {false, QStringLiteral("Unknown app action: %1").arg(id.trimmed()), {}};
+            return {.success = false,
+                    .message = QStringLiteral("Unknown app action: %1").arg(id.trimmed()),
+                    .data = {}};
         }
         handler = it->invoke;  // copy the thunk so we can call it lock-free
     }

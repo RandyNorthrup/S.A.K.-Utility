@@ -273,7 +273,11 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     const int MAX_DEPTH = kInitialFolderScanMaxDepth;
     addDirectoryContents(dir,
                          folderItem,
-                         {totalSize, totalFiles, selection.selected, 0, MAX_DEPTH});
+                         {.total_size = totalSize,
+                          .total_files = totalFiles,
+                          .checked = selection.selected,
+                          .depth = 0,
+                          .max_depth = MAX_DEPTH});
 
     // Column 2: Size
     QString sizeStr;
@@ -533,10 +537,13 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
         qint64 subDirSize = 0;
         int subDirFiles = 0;
         const QDir subDir(entry.filePath());
-        addDirectoryContents(
-            subDir,
-            childItem,
-            {subDirSize, subDirFiles, state.checked, state.depth + 1, state.max_depth});
+        addDirectoryContents(subDir,
+                             childItem,
+                             {.total_size = subDirSize,
+                              .total_files = subDirFiles,
+                              .checked = state.checked,
+                              .depth = state.depth + 1,
+                              .max_depth = state.max_depth});
 
         state.total_size += subDirSize;
         state.total_files += subDirFiles;

@@ -147,12 +147,13 @@ QString themeInputSelectorStyles(bool dark) {
     const QString calendar_icon_path = dark ? kIconSelectorCalendarDark : kIconSelectorCalendar;
     const QString panel_color = QString::fromLatin1(dark ? kColorDarkBgPanel : kColorBgWhite);
     const QString selection_color = QString::fromLatin1(kColorPrimary);
-    const CalendarPopupSelectorTone calendar_tone{panel_color,
-                                                  border_color,
-                                                  hover_color,
-                                                  text_color,
-                                                  selection_color,
-                                                  QString::fromLatin1(kColorButtonTextOnTone)};
+    const CalendarPopupSelectorTone calendar_tone{.panel = panel_color,
+                                                  .border = border_color,
+                                                  .hoverBackground = hover_color,
+                                                  .text = text_color,
+                                                  .selection = selection_color,
+                                                  .selectionText =
+                                                      QString::fromLatin1(kColorButtonTextOnTone)};
     return comboBoxSelectorStyle(border_color, button_color, hover_color, down_icon_path) +
            spinBoxSelectorStyle(
                border_color, button_color, hover_color, up_icon_path, down_icon_path) +
@@ -277,31 +278,31 @@ struct ThemePaletteSpec {
     const char* shadow;
 };
 
-inline constexpr ThemePaletteSpec kLightPaletteSpec{kColorBgPage,
-                                                    kColorBgPageHover,
-                                                    kColorBgWhite,
-                                                    kColorBgSurface,
-                                                    kColorTextPrimary,
-                                                    kColorTextBody,
-                                                    kColorTextMuted,
-                                                    kColorTextDisabled,
-                                                    kColorBorderDefault,
-                                                    kColorBgWhite,
-                                                    kColorBorderMuted,
-                                                    kColorTextPrimary};
+inline constexpr ThemePaletteSpec kLightPaletteSpec{.window = kColorBgPage,
+                                                    .chrome = kColorBgPageHover,
+                                                    .base = kColorBgWhite,
+                                                    .alternate = kColorBgSurface,
+                                                    .text = kColorTextPrimary,
+                                                    .body = kColorTextBody,
+                                                    .muted = kColorTextMuted,
+                                                    .disabled = kColorTextDisabled,
+                                                    .border = kColorBorderDefault,
+                                                    .light = kColorBgWhite,
+                                                    .dark = kColorBorderMuted,
+                                                    .shadow = kColorTextPrimary};
 
-inline constexpr ThemePaletteSpec kDarkPaletteSpec{kColorDarkBgPage,
-                                                   kColorDarkBgChrome,
-                                                   kColorDarkBgInput,
-                                                   kColorDarkBgSurface,
-                                                   kColorDarkTextPrimary,
-                                                   kColorDarkTextBody,
-                                                   kColorDarkTextSecondary,
-                                                   kColorDarkTextDisabled,
-                                                   kColorDarkBorderDefault,
-                                                   kColorDarkBgHover,
-                                                   kColorDarkBgPressed,
-                                                   kColorDarkBgInputFocus};
+inline constexpr ThemePaletteSpec kDarkPaletteSpec{.window = kColorDarkBgPage,
+                                                   .chrome = kColorDarkBgChrome,
+                                                   .base = kColorDarkBgInput,
+                                                   .alternate = kColorDarkBgSurface,
+                                                   .text = kColorDarkTextPrimary,
+                                                   .body = kColorDarkTextBody,
+                                                   .muted = kColorDarkTextSecondary,
+                                                   .disabled = kColorDarkTextDisabled,
+                                                   .border = kColorDarkBorderDefault,
+                                                   .light = kColorDarkBgHover,
+                                                   .dark = kColorDarkBgPressed,
+                                                   .shadow = kColorDarkBgInputFocus};
 
 const ThemePaletteSpec& themePaletteSpec(AppThemeMode mode) {
     return mode == AppThemeMode::Dark ? kDarkPaletteSpec : kLightPaletteSpec;

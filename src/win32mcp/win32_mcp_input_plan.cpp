@@ -76,18 +76,22 @@ QVector<KeyStroke> planTypeText(const QString& text) {
             if (i + 1 < count && text.at(i + 1) == QLatin1Char('\n')) {
                 continue;
             }
-            strokes.append(KeyStroke{static_cast<unsigned short>(VK_RETURN), true, false});
-            strokes.append(KeyStroke{static_cast<unsigned short>(VK_RETURN), true, true});
+            strokes.append(KeyStroke{
+                .code = static_cast<unsigned short>(VK_RETURN), .is_vk = true, .key_up = false});
+            strokes.append(KeyStroke{
+                .code = static_cast<unsigned short>(VK_RETURN), .is_vk = true, .key_up = true});
             continue;
         }
         if (ch == QLatin1Char('\n')) {
-            strokes.append(KeyStroke{static_cast<unsigned short>(VK_RETURN), true, false});
-            strokes.append(KeyStroke{static_cast<unsigned short>(VK_RETURN), true, true});
+            strokes.append(KeyStroke{
+                .code = static_cast<unsigned short>(VK_RETURN), .is_vk = true, .key_up = false});
+            strokes.append(KeyStroke{
+                .code = static_cast<unsigned short>(VK_RETURN), .is_vk = true, .key_up = true});
             continue;
         }
         const unsigned short unit = ch.unicode();
-        strokes.append(KeyStroke{unit, false, false});
-        strokes.append(KeyStroke{unit, false, true});
+        strokes.append(KeyStroke{.code = unit, .is_vk = false, .key_up = false});
+        strokes.append(KeyStroke{.code = unit, .is_vk = false, .key_up = true});
     }
     return strokes;
 }

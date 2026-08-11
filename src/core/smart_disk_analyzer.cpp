@@ -41,14 +41,14 @@ struct SmartThreshold {
 
 /// Key SATA attributes monitored for health assessment
 constexpr SmartThreshold kSataThresholds[] = {
-    {5, 1, 50},      // Reallocated_Sector_Ct
-    {10, 1, 10},     // Spin_Retry_Count
-    {187, 1, 10},    // Reported_Uncorrect
-    {188, 5, 50},    // Command_Timeout
-    {196, 1, 50},    // Reallocated_Event_Count
-    {197, 1, 10},    // Current_Pending_Sector
-    {198, 1, 10},    // Offline_Uncorrectable
-    {199, 10, 100},  // UDMA_CRC_Error_Count
+    {.id = 5, .warning_raw = 1, .critical_raw = 50},      // Reallocated_Sector_Ct
+    {.id = 10, .warning_raw = 1, .critical_raw = 10},     // Spin_Retry_Count
+    {.id = 187, .warning_raw = 1, .critical_raw = 10},    // Reported_Uncorrect
+    {.id = 188, .warning_raw = 5, .critical_raw = 50},    // Command_Timeout
+    {.id = 196, .warning_raw = 1, .critical_raw = 50},    // Reallocated_Event_Count
+    {.id = 197, .warning_raw = 1, .critical_raw = 10},    // Current_Pending_Sector
+    {.id = 198, .warning_raw = 1, .critical_raw = 10},    // Offline_Uncorrectable
+    {.id = 199, .warning_raw = 10, .critical_raw = 100},  // UDMA_CRC_Error_Count
 };
 
 /// @brief NVMe percentage_used threshold values

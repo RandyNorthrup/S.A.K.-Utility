@@ -56,13 +56,14 @@ constexpr int kCenterHalfDivisor = 2;
 // -- result + schema helpers (module-local, mirroring win32_mcp_tools) -------
 
 ToolResult jsonResult(const QJsonObject& object) {
-    return {QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)), false};
+    return {.text = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)),
+            .is_error = false};
 }
 
 ToolResult errorResult(const QString& message) {
-    return {QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
-                .toJson(QJsonDocument::Compact),
-            true};
+    return {.text = QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
+                        .toJson(QJsonDocument::Compact),
+            .is_error = true};
 }
 
 QJsonObject stringProperty(const QString& description) {
@@ -141,7 +142,7 @@ QJsonObject buildPlain(const OcrResult& result) {
 
 // The OCR engine's bounding rect as the geometry seam's plain float rect.
 WordRectF toWordRect(const winrt::Windows::Foundation::Rect& rect) {
-    return WordRectF{rect.X, rect.Y, rect.Width, rect.Height};
+    return WordRectF{.x = rect.X, .y = rect.Y, .w = rect.Width, .h = rect.Height};
 }
 
 // Map a recognized word's bounding rect (in downscaled capture pixels) back to absolute
@@ -237,7 +238,12 @@ bool resolveRegion(const QJsonObject& args, CaptureRequest& req, QString& err) {
         err = QStringLiteral("capture region coordinates are out of range");
         return false;
     }
-    req = CaptureRequest{nullptr, x, y, static_cast<int>(right), static_cast<int>(bottom), 0};
+    req = CaptureRequest{.hwnd = nullptr,
+                         .left = x,
+                         .top = y,
+                         .right = static_cast<int>(right),
+                         .bottom = static_cast<int>(bottom),
+                         .max_edge = 0};
     return true;
 }
 
@@ -246,7 +252,8 @@ CaptureRequest screenRequest() {
     const int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
     const int w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     const int h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    return CaptureRequest{nullptr, x, y, x + w, y + h, 0};
+    return CaptureRequest{
+        .hwnd = nullptr, .left = x, .top = y, .right = x + w, .bottom = y + h, .max_edge = 0};
 }
 
 ToolResult toolOcrWindow(const QJsonObject& args) {
@@ -262,7 +269,13 @@ ToolResult toolOcrWindow(const QJsonObject& args) {
     if (!ok) {
         return errorResult(err);
     }
-    return runOcrCapture(CaptureRequest{wr.hwnd, wr.left, wr.top, wr.right, wr.bottom, 0}, false);
+    return runOcrCapture(CaptureRequest{.hwnd = wr.hwnd,
+                                        .left = wr.left,
+                                        .top = wr.top,
+                                        .right = wr.right,
+                                        .bottom = wr.bottom,
+                                        .max_edge = 0},
+                         false);
 }
 
 ToolResult toolOcrRegion(const QJsonObject& args) {
@@ -298,8 +311,12 @@ void appendWords(const OcrResult& result, long ox, long oy, double inv, QVector<
     for (const auto& line : result.Lines()) {
         for (const auto& word : line.Words()) {
             const AbsBox box = mapWordBox(toWordRect(word.BoundingRect()), ox, oy, inv);
-            out.append(
-                WordHit{hstringToQString(word.Text()), box.x, box.y, box.w, box.h, line_idx});
+            out.append(WordHit{.text = hstringToQString(word.Text()),
+                               .x = box.x,
+                               .y = box.y,
+                               .w = box.w,
+                               .h = box.h,
+                               .line = line_idx});
         }
         ++line_idx;
     }
@@ -336,7 +353,12 @@ bool resolveTextTarget(const QJsonObject& args, CaptureRequest& req, QString& er
         if (!foregroundWindowRect(wr, err)) {
             return false;
         }
-        req = CaptureRequest{wr.hwnd, wr.left, wr.top, wr.right, wr.bottom, 0};
+        req = CaptureRequest{.hwnd = wr.hwnd,
+                             .left = wr.left,
+                             .top = wr.top,
+                             .right = wr.right,
+                             .bottom = wr.bottom,
+                             .max_edge = 0};
         return true;
     }
     const QString title = args.value(QStringLiteral("window_title")).toString().trimmed();
@@ -347,7 +369,12 @@ bool resolveTextTarget(const QJsonObject& args, CaptureRequest& req, QString& er
     if (!windowRectByTitle(title.toLower(), wr, err)) {
         return false;
     }
-    req = CaptureRequest{wr.hwnd, wr.left, wr.top, wr.right, wr.bottom, 0};
+    req = CaptureRequest{.hwnd = wr.hwnd,
+                         .left = wr.left,
+                         .top = wr.top,
+                         .right = wr.right,
+                         .bottom = wr.bottom,
+                         .max_edge = 0};
     return true;
 }
 
@@ -397,7 +424,8 @@ ToolResult textQuery(const QJsonObject& args, bool assert_mode) {
         // asserted state.
         out.insert(QStringLiteral("error"),
                    QStringLiteral("Asserted text is not visible on screen: %1").arg(query));
-        return {QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)), true};
+        return {.text = QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)),
+                .is_error = true};
     }
     return jsonResult(out);
 }
@@ -542,14 +570,14 @@ struct OcrHandler {
 };
 
 const OcrHandler kOcrHandlers[] = {
-    {QLatin1String("ocr_window"), toolOcrWindow},
-    {QLatin1String("ocr_region"), toolOcrRegion},
-    {QLatin1String("ocr_region_structured"), toolOcrRegionStructured},
-    {QLatin1String("ocr_screen"), toolOcrScreen},
-    {QLatin1String("ocr_screen_structured"), toolOcrScreenStructured},
-    {QLatin1String("find_text_on_screen"), toolFindText},
-    {QLatin1String("assert_text_visible"), toolAssertText},
-    {QLatin1String("wait_for_text"), toolWaitForText},
+    {.name = QLatin1String("ocr_window"), .fn = toolOcrWindow},
+    {.name = QLatin1String("ocr_region"), .fn = toolOcrRegion},
+    {.name = QLatin1String("ocr_region_structured"), .fn = toolOcrRegionStructured},
+    {.name = QLatin1String("ocr_screen"), .fn = toolOcrScreen},
+    {.name = QLatin1String("ocr_screen_structured"), .fn = toolOcrScreenStructured},
+    {.name = QLatin1String("find_text_on_screen"), .fn = toolFindText},
+    {.name = QLatin1String("assert_text_visible"), .fn = toolAssertText},
+    {.name = QLatin1String("wait_for_text"), .fn = toolWaitForText},
 };
 
 }  // namespace

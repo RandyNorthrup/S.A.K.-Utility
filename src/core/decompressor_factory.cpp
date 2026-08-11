@@ -75,12 +75,12 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
     // returned nullptr, an inconsistency a guard-then-create caller would trip on
     // (B8-23).
     static constexpr ExtEntry kExtensions[] = {
-        {"gz", "gzip"},
-        {"gzip", "gzip"},
-        {"bz2", "bzip2"},
-        {"bzip2", "bzip2"},
-        {"xz", "xz"},
-        {"lzma", "xz"},
+        {.ext = "gz", .format = "gzip"},
+        {.ext = "gzip", .format = "gzip"},
+        {.ext = "bz2", .format = "bzip2"},
+        {.ext = "bzip2", .format = "bzip2"},
+        {.ext = "xz", .format = "xz"},
+        {.ext = "lzma", .format = "xz"},
     };
 
     const auto* it =
@@ -94,9 +94,9 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
     // Handle compound extensions like .tar.gz
     QString completeSuffix = fileInfo.completeSuffix().toLower();
     static constexpr ExtEntry kCompound[] = {
-        {".gz", "gzip"},
-        {".bz2", "bzip2"},
-        {".xz", "xz"},
+        {.ext = ".gz", .format = "gzip"},
+        {.ext = ".bz2", .format = "bzip2"},
+        {.ext = ".xz", .format = "xz"},
     };
     const auto* compound_it = std::find_if(
         std::begin(kCompound), std::end(kCompound), [&completeSuffix](const auto& entry) {
@@ -127,10 +127,10 @@ QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
     // No zip ("PK") entry: this factory only produces single-stream decompressors,
     // and create() cannot build one for a zip archive (B8-23).
     static constexpr MagicEntry kMagicTable[] = {
-        {{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}, 6, "xz"},
-        {{0x42, 0x5A, 0x68, 0, 0, 0}, 3, "bzip2"},
-        {{0x5D, 0x00, 0x00, 0, 0, 0}, 3, "xz"},
-        {{0x1F, 0x8B, 0, 0, 0, 0}, 2, "gzip"},
+        {.bytes = {0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}, .length = 6, .format = "xz"},
+        {.bytes = {0x42, 0x5A, 0x68, 0, 0, 0}, .length = 3, .format = "bzip2"},
+        {.bytes = {0x5D, 0x00, 0x00, 0, 0, 0}, .length = 3, .format = "xz"},
+        {.bytes = {0x1F, 0x8B, 0, 0, 0, 0}, .length = 2, .format = "gzip"},
     };
 
     for (const auto& entry : kMagicTable) {

@@ -484,17 +484,17 @@ struct FolderTypeEntry {
 };
 
 static constexpr FolderTypeEntry kFolderTypes[] = {
-    {FolderType::Documents, "Documents"},
-    {FolderType::Desktop, "Desktop"},
-    {FolderType::Pictures, "Pictures"},
-    {FolderType::Videos, "Videos"},
-    {FolderType::Music, "Music"},
-    {FolderType::Downloads, "Downloads"},
-    {FolderType::AppData_Roaming, "AppData_Roaming"},
-    {FolderType::AppData_Local, "AppData_Local"},
-    {FolderType::Favorites, "Favorites"},
-    {FolderType::StartMenu, "StartMenu"},
-    {FolderType::Custom, "Custom"},
+    {.type = FolderType::Documents, .name = "Documents"},
+    {.type = FolderType::Desktop, .name = "Desktop"},
+    {.type = FolderType::Pictures, .name = "Pictures"},
+    {.type = FolderType::Videos, .name = "Videos"},
+    {.type = FolderType::Music, .name = "Music"},
+    {.type = FolderType::Downloads, .name = "Downloads"},
+    {.type = FolderType::AppData_Roaming, .name = "AppData_Roaming"},
+    {.type = FolderType::AppData_Local, .name = "AppData_Local"},
+    {.type = FolderType::Favorites, .name = "Favorites"},
+    {.type = FolderType::StartMenu, .name = "StartMenu"},
+    {.type = FolderType::Custom, .name = "Custom"},
 };
 
 }  // namespace

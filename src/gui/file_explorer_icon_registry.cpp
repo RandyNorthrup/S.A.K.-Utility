@@ -31,19 +31,20 @@ constexpr int kIconCacheHeightShift = 32;
                                         const char* file_name,
                                         const char* upstream_key,
                                         const char* upstream_source) {
-    return {QString::fromLatin1(key),
-            ui::kIconExplorerFilesTemplate.arg(QString::fromLatin1(file_name)),
-            QString::fromLatin1(upstream_key),
-            QString::fromLatin1(upstream_source),
-            QStringLiteral("MIT")};
+    return {.key = QString::fromLatin1(key),
+            .resource_path = ui::kIconExplorerFilesTemplate.arg(QString::fromLatin1(file_name)),
+            .upstream_key = QString::fromLatin1(upstream_key),
+            .upstream_source = QString::fromLatin1(upstream_source),
+            .license = QStringLiteral("MIT")};
 }
 
 [[nodiscard]] IconDescriptor fluentDescriptor(const char* key) {
-    return {QString::fromLatin1(key),
-            ui::kIconExplorerFluentTemplate.arg(QString::fromLatin1(key)),
-            QString(),
-            QStringLiteral("S.A.K.-Utility original, Fluent-style outline glyph"),
-            QStringLiteral("AGPL-3.0-or-later")};
+    return {.key = QString::fromLatin1(key),
+            .resource_path = ui::kIconExplorerFluentTemplate.arg(QString::fromLatin1(key)),
+            .upstream_key = QString(),
+            .upstream_source =
+                QStringLiteral("S.A.K.-Utility original, Fluent-style outline glyph"),
+            .license = QStringLiteral("AGPL-3.0-or-later")};
 }
 
 // The bundled SVGs carry a fixed dark fill, so a raw QIcon disappears on dark

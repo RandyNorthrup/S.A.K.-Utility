@@ -37,13 +37,14 @@ constexpr char kServerName[] = "sak-win32-mcp";
 constexpr char kServerVersion[] = "1.0.0";
 
 ToolResult jsonResult(const QJsonObject& object) {
-    return {QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)), false};
+    return {.text = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)),
+            .is_error = false};
 }
 
 ToolResult errorResult(const QString& message) {
-    return {QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
-                .toJson(QJsonDocument::Compact),
-            true};
+    return {.text = QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
+                        .toJson(QJsonDocument::Compact),
+            .is_error = true};
 }
 
 QString wideToQString(const wchar_t* text, int length) {
@@ -84,7 +85,7 @@ QJsonObject rectObject(const RECT& rect) {
 }
 
 QJsonObject describeWindow(HWND hwnd) {
-    RECT rect = {0, 0, 0, 0};
+    RECT rect = {.left = 0, .top = 0, .right = 0, .bottom = 0};
     GetWindowRect(hwnd, &rect);
     return QJsonObject{{QStringLiteral("title"), windowTitle(hwnd)},
                        {QStringLiteral("class"), windowClassName(hwnd)},
@@ -137,7 +138,7 @@ BOOL CALLBACK collectMatchProc(HWND hwnd, LPARAM param) {
     if (title.isEmpty() || !lower.contains(find->needle_lower)) {
         return TRUE;
     }
-    find->matches.append(WindowMatch{hwnd, lower});
+    find->matches.append(WindowMatch{.hwnd = hwnd, .title_lower = lower});
     return TRUE;  // collect every match, then disambiguate rather than taking the first
 }
 
@@ -172,7 +173,7 @@ HWND pickUniqueWindow(const QVector<WindowMatch>& matches,
 }
 
 HWND findWindowByTitle(const QString& needle_lower, QString& err) {
-    FindState state{needle_lower, {}};
+    FindState state{.needle_lower = needle_lower, .matches = {}};
     EnumWindows(collectMatchProc, reinterpret_cast<LPARAM>(&state));
     return pickUniqueWindow(state.matches, needle_lower, err);
 }
@@ -269,7 +270,7 @@ ToolResult toolListMonitors(const QJsonObject&) {
 }
 
 ToolResult toolMousePosition(const QJsonObject&) {
-    POINT point = {0, 0};
+    POINT point = {.x = 0, .y = 0};
     if (GetCursorPos(&point) == FALSE) {
         return errorResult(QStringLiteral("GetCursorPos failed"));
     }
@@ -536,17 +537,17 @@ ToolResult invokeTool(const QString& name, const QJsonObject& arguments) {
         Handler fn;
     };
     static const Entry kHandlers[] = {
-        {QLatin1String("health_check"), toolHealthCheck},
-        {QLatin1String("list_windows"), toolListWindows},
-        {QLatin1String("get_window_info"), toolGetWindowInfo},
-        {QLatin1String("close_window"), toolCloseWindow},
-        {QLatin1String("list_monitors"), toolListMonitors},
-        {QLatin1String("mouse_position"), toolMousePosition},
-        {QLatin1String("clipboard_read"), toolClipboardRead},
-        {QLatin1String("clipboard_write"), toolClipboardWrite},
-        {QLatin1String("browser_extension_install"), toolBrowserExtensionInstall},
-        {QLatin1String("browser_extension_uninstall"), toolBrowserExtensionUninstall},
-        {QLatin1String("browser_extension_status"), toolBrowserExtensionStatus},
+        {.name = QLatin1String("health_check"), .fn = toolHealthCheck},
+        {.name = QLatin1String("list_windows"), .fn = toolListWindows},
+        {.name = QLatin1String("get_window_info"), .fn = toolGetWindowInfo},
+        {.name = QLatin1String("close_window"), .fn = toolCloseWindow},
+        {.name = QLatin1String("list_monitors"), .fn = toolListMonitors},
+        {.name = QLatin1String("mouse_position"), .fn = toolMousePosition},
+        {.name = QLatin1String("clipboard_read"), .fn = toolClipboardRead},
+        {.name = QLatin1String("clipboard_write"), .fn = toolClipboardWrite},
+        {.name = QLatin1String("browser_extension_install"), .fn = toolBrowserExtensionInstall},
+        {.name = QLatin1String("browser_extension_uninstall"), .fn = toolBrowserExtensionUninstall},
+        {.name = QLatin1String("browser_extension_status"), .fn = toolBrowserExtensionStatus},
     };
     for (const auto& entry : kHandlers) {
         if (name == entry.name) {

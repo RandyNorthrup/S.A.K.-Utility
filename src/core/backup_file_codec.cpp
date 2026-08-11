@@ -380,7 +380,7 @@ auto writeBackupFile(const QString& source_path,
         sink.discard();
         return std::unexpected(closed.error());
     }
-    return BackupCodecResult{plain_bytes, sink.bytesWritten()};
+    return BackupCodecResult{.plain_bytes = plain_bytes, .stored_bytes = sink.bytesWritten()};
 }
 
 namespace {
@@ -624,7 +624,8 @@ auto readBackupFile(const QString& source_path,
     if (auto published = publishRestored(staged_path, dest_path); !published.has_value()) {
         return fail(published.error());
     }
-    return BackupCodecResult{ctx.plain_bytes, QFileInfo(source_path).size()};
+    return BackupCodecResult{.plain_bytes = ctx.plain_bytes,
+                             .stored_bytes = QFileInfo(source_path).size()};
 }
 
 }  // namespace sak

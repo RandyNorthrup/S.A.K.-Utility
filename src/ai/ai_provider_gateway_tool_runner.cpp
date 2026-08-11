@@ -503,14 +503,14 @@ QJsonObject runAppAction(const QJsonObject& args,
     if (!error.isEmpty()) {
         return toolError(error);
     }
-    const AiAppActionPlan plan =
-        AiAppActionPlanner::buildPlan(app_id,
-                                      action,
-                                      manifest,
-                                      args.value(QStringLiteral("arguments")).toObject(),
-                                      AiAppActionPlanner::Options{options.default_output_bytes,
-                                                                  options.min_output_bytes,
-                                                                  options.max_output_bytes});
+    const AiAppActionPlan plan = AiAppActionPlanner::buildPlan(
+        app_id,
+        action,
+        manifest,
+        args.value(QStringLiteral("arguments")).toObject(),
+        AiAppActionPlanner::Options{.default_output_bytes = options.default_output_bytes,
+                                    .min_output_bytes = options.min_output_bytes,
+                                    .max_output_bytes = options.max_output_bytes});
     if (!plan.ok()) {
         return toolError(plan.error_message);
     }

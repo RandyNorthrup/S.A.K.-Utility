@@ -748,7 +748,11 @@ void MboxParser::processMimePart(const QByteArray& part,
                              !part_ct.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive);
 
     if (is_attachment || is_non_text) {
-        const MimePartInfo mime_part{part_body, part_ct, part_enc, part_disp, part_headers};
+        const MimePartInfo mime_part{.body = part_body,
+                                     .content_type = part_ct,
+                                     .encoding = part_enc,
+                                     .disposition = part_disp,
+                                     .headers = part_headers};
         appendAttachment(mime_part, detail, attachment_idx);
         return;
     }
@@ -792,7 +796,11 @@ void MboxParser::parseMimeMessage(const QByteArray& raw_message, sak::MboxMessag
             // A single-part message that is itself a file (e.g. a lone PDF, or one
             // marked Content-Disposition: attachment) must be exposed as an
             // attachment, not decoded into garbled body text (B7-33).
-            const MimePartInfo mime_part{body, content_type, transfer_enc, disposition, headers};
+            const MimePartInfo mime_part{.body = body,
+                                         .content_type = content_type,
+                                         .encoding = transfer_enc,
+                                         .disposition = disposition,
+                                         .headers = headers};
             int attachment_idx = 0;
             appendAttachment(mime_part, detail, attachment_idx);
             return;
@@ -861,7 +869,8 @@ std::expected<QVector<MboxAttachmentPayload>, error_code> MboxParser::readAllAtt
         const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
         // Defensive: the two lists are appended in lock-step, so sizes match; guard anyway so a
         // future divergence yields empty bytes rather than an out-of-range read.
-        out.append({name, i < payload_bytes.size() ? payload_bytes[i] : QByteArray()});
+        out.append(
+            {.filename = name, .data = i < payload_bytes.size() ? payload_bytes[i] : QByteArray()});
     }
     return out;
 }

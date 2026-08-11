@@ -915,7 +915,10 @@ sak::ValidationResult FlashWorker::verifySample() {
     }
 
     const int samplesVerified = verifySampleBlocks(result,
-                                                   {numSamples, blockSize, totalBlocks, sampleSize},
+                                                   {.num_samples = numSamples,
+                                                    .block_size = blockSize,
+                                                    .total_blocks = totalBlocks,
+                                                    .sample_size = sampleSize},
                                                    sourceBuffer.data(),
                                                    targetBuffer.data());
 

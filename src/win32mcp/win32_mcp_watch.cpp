@@ -39,13 +39,14 @@ constexpr qint64 kMaxWaitMs = 7'200'000;  // 2 hours
 // -- result + schema helpers (module-local, mirroring win32_mcp_tools) -------
 
 ToolResult jsonResult(const QJsonObject& object) {
-    return {QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)), false};
+    return {.text = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)),
+            .is_error = false};
 }
 
 ToolResult errorResult(const QString& message) {
-    return {QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
-                .toJson(QJsonDocument::Compact),
-            true};
+    return {.text = QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
+                        .toJson(QJsonDocument::Compact),
+            .is_error = true};
 }
 
 QJsonObject stringProperty(const QString& description) {
@@ -82,7 +83,12 @@ QString captureFingerprint(const QString& title, QByteArray& fp, int& width, int
         return err;
     }
     CaptureBits bits;
-    const CaptureRequest req{wr.hwnd, wr.left, wr.top, wr.right, wr.bottom, kFpMaxEdge};
+    const CaptureRequest req{.hwnd = wr.hwnd,
+                             .left = wr.left,
+                             .top = wr.top,
+                             .right = wr.right,
+                             .bottom = wr.bottom,
+                             .max_edge = kFpMaxEdge};
     if (!captureBgra(req, bits, err)) {
         return err;
     }
@@ -125,7 +131,7 @@ BOOL CALLBACK existProc(HWND hwnd, LPARAM param) {
 // match" via enum_ok: EnumWindows returns FALSE both when a callback stops it (our found-and-stop)
 // and on a genuine failure, so a FALSE return is only an error when nothing was found.
 bool windowVisibleExists(const QString& needle_lower, bool& enum_ok) {
-    ExistState state{needle_lower, false};
+    ExistState state{.needle_lower = needle_lower, .found = false};
     const BOOL enum_ret = EnumWindows(existProc, reinterpret_cast<LPARAM>(&state));
     enum_ok = state.found || enum_ret != FALSE;
     return state.found;
@@ -349,11 +355,11 @@ struct WatchHandler {
 };
 
 const WatchHandler kWatchHandlers[] = {
-    {QLatin1String("get_pixel_color"), toolGetPixelColor},
-    {QLatin1String("get_window_snapshot"), toolGetWindowSnapshot},
-    {QLatin1String("compare_screenshots"), toolCompareScreenshots},
-    {QLatin1String("wait_for_window"), toolWaitForWindow},
-    {QLatin1String("wait_for_idle"), toolWaitForIdle},
+    {.name = QLatin1String("get_pixel_color"), .fn = toolGetPixelColor},
+    {.name = QLatin1String("get_window_snapshot"), .fn = toolGetWindowSnapshot},
+    {.name = QLatin1String("compare_screenshots"), .fn = toolCompareScreenshots},
+    {.name = QLatin1String("wait_for_window"), .fn = toolWaitForWindow},
+    {.name = QLatin1String("wait_for_idle"), .fn = toolWaitForIdle},
 };
 
 }  // namespace

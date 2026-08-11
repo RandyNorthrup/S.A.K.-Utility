@@ -372,20 +372,29 @@ QString ChocolateyManager::versionLockError(const InstallConfig& config) {
 
 ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig& config) {
     if (!m_initialized) {
-        return {false, "", "ChocolateyManager not initialized", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "ChocolateyManager not initialized",
+                .exit_code = -1};
     }
 
     if (!validatePackageName(config.package_name)) {
-        return {false, "", "Invalid package name: " + config.package_name, -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "Invalid package name: " + config.package_name,
+                .exit_code = -1};
     }
 
     const QString version_error = versionLockError(config);
     if (!version_error.isEmpty()) {
-        return {false, "", version_error, -1};
+        return {.success = false, .output = "", .error_message = version_error, .exit_code = -1};
     }
 
     if (!validateExtraArgs(config.extra_args)) {
-        return {false, "", "extra_args contains a forbidden security override", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "extra_args contains a forbidden security override",
+                .exit_code = -1};
     }
 
     Q_EMIT installStarted(config.package_name);
@@ -410,11 +419,17 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
 ChocolateyManager::Result ChocolateyManager::uninstallPackage(const QString& package_name,
                                                               bool auto_confirm) {
     if (!m_initialized) {
-        return {false, "", "ChocolateyManager not initialized", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "ChocolateyManager not initialized",
+                .exit_code = -1};
     }
 
     if (!validatePackageName(package_name)) {
-        return {false, "", "Invalid package name: " + package_name, -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "Invalid package name: " + package_name,
+                .exit_code = -1};
     }
 
     QStringList args = {"uninstall", package_name};
@@ -429,11 +444,17 @@ ChocolateyManager::Result ChocolateyManager::uninstallPackage(const QString& pac
 ChocolateyManager::Result ChocolateyManager::upgradePackage(const QString& package_name,
                                                             bool auto_confirm) {
     if (!m_initialized) {
-        return {false, "", "ChocolateyManager not initialized", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "ChocolateyManager not initialized",
+                .exit_code = -1};
     }
 
     if (!validatePackageName(package_name)) {
-        return {false, "", "Invalid package name: " + package_name, -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "Invalid package name: " + package_name,
+                .exit_code = -1};
     }
 
     QStringList args = {"upgrade", package_name};
@@ -447,20 +468,32 @@ ChocolateyManager::Result ChocolateyManager::upgradePackage(const QString& packa
 
 ChocolateyManager::Result ChocolateyManager::searchPackage(const QString& query, int max_results) {
     if (query.isEmpty()) {
-        return {false, "", "Search query is empty", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "Search query is empty",
+                .exit_code = -1};
     }
     // Fail closed: a query beginning with '-' would be parsed by choco as an option
     // (e.g. "--source"), not a search term, since it becomes a bare argv element.
     if (query.trimmed().startsWith(QLatin1Char('-'))) {
-        return {false, "", "Search query must not start with '-'", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "Search query must not start with '-'",
+                .exit_code = -1};
     }
     // Fail closed: a negative limit previously coerced to 0, which drops the
     // --page-size flag and silently returns an UNBOUNDED result set.
     if (max_results < 0) {
-        return {false, "", "max_results must not be negative", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "max_results must not be negative",
+                .exit_code = -1};
     }
     if (!m_initialized) {
-        return {false, "", "ChocolateyManager not initialized", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "ChocolateyManager not initialized",
+                .exit_code = -1};
     }
 
     Q_EMIT searchStarted(query);
@@ -604,10 +637,16 @@ ChocolateyManager::Result ChocolateyManager::installWithRetry(const InstallConfi
     // otherwise return an empty-error failure, and a negative delay would convert to
     // a huge unsigned value in QThread::sleep and hang the operation indefinitely.
     if (max_attempts <= 0) {
-        return {false, "", "installWithRetry: max_attempts must be positive", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "installWithRetry: max_attempts must be positive",
+                .exit_code = -1};
     }
     if (delay_seconds < 0) {
-        return {false, "", "installWithRetry: delay_seconds must not be negative", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "installWithRetry: delay_seconds must not be negative",
+                .exit_code = -1};
     }
 
     Result last_result;
@@ -661,14 +700,20 @@ bool ChocolateyManager::getAutoConfirm() const {
 
 ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& args, int timeout_ms) {
     if (args.isEmpty()) {
-        return {false, "", "No arguments provided to Chocolatey", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "No arguments provided to Chocolatey",
+                .exit_code = -1};
     }
     timeout_ms = std::max(timeout_ms, 0);
     // Fail closed: never launch the bundled choco.exe unless it has been proven a
     // genuine, Chocolatey-signed binary. This is the single execution choke point,
     // so the authenticity gate covers every choco invocation, not just install.
     if (!ensureChocoAuthentic()) {
-        return {false, "", "Bundled choco.exe failed authenticity verification", -1};
+        return {.success = false,
+                .output = "",
+                .error_message = "Bundled choco.exe failed authenticity verification",
+                .exit_code = -1};
     }
     // Set up environment
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
@@ -682,7 +727,8 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
         sak::runProcessWithEnvironment(program, args, effective_timeout_ms, env);
 
     if (process_result.timed_out) {
-        return {false, "", "Command timed out", -1};
+        return {
+            .success = false, .output = "", .error_message = "Command timed out", .exit_code = -1};
     }
 
     // Get output
@@ -701,7 +747,10 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
         }
     }
 
-    return {success, combined_output, error_msg, exit_code};
+    return {.success = success,
+            .output = combined_output,
+            .error_message = error_msg,
+            .exit_code = exit_code};
 }
 
 bool ChocolateyManager::parseExitCode(int exit_code) const {

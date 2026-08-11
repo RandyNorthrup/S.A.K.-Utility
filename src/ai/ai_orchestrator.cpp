@@ -696,14 +696,19 @@ AiPhaseExecution AiOrchestrator::executeWithRecovery(const WorkflowTemplate& wor
     const AiRecoveryDecision decision = recoveryDecisionFor(workflow, phase, execution);
     attachRecoveryDecision(&execution, decision);
     if (decision.action == AiRecoveryAction::Reassign) {
-        return executeReassignmentRecovery(
-            workflow, phase, {std::move(execution), decision}, state, root_token);
+        return executeReassignmentRecovery(workflow,
+                                           phase,
+                                           {.execution = std::move(execution),
+                                            .decision = decision},
+                                           state,
+                                           root_token);
     }
     if (decision.action != AiRecoveryAction::Retry || !decision.retry_allowed ||
         (root_token.isValid() && root_token.isCancellationRequested())) {
         return execution;
     }
-    return executeRetryRecovery(workflow, phase, {execution, decision}, state, root_token);
+    return executeRetryRecovery(
+        workflow, phase, {.execution = execution, .decision = decision}, state, root_token);
 }
 
 AiPhaseExecution AiOrchestrator::executeReassignmentRecovery(

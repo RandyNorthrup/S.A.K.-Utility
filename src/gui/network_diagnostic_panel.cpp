@@ -3530,12 +3530,12 @@ void NetworkDiagnosticPanel::onStartPing() {
     m_pingStartBtn->setEnabled(false);
     m_pingStopBtn->setEnabled(true);
 
-    m_controller->ping({target,
-                        m_pingCount->value(),
-                        m_pingInterval->value(),
-                        m_pingTimeout->value(),
-                        m_pingPacketSize->value(),
-                        kDefaultPingTtl});
+    m_controller->ping({.target = target,
+                        .count = m_pingCount->value(),
+                        .interval_ms = m_pingInterval->value(),
+                        .timeout_ms = m_pingTimeout->value(),
+                        .packet_size = m_pingPacketSize->value(),
+                        .ttl = kDefaultPingTtl});
 }
 
 void NetworkDiagnosticPanel::onStopPing() {
@@ -4063,13 +4063,13 @@ void NetworkDiagnosticPanel::onStartPortScan() {
         ports = parseCustomPorts(m_portCustomRange->text().trimmed(), range);
     }
 
-    m_controller->scanPorts({target,
-                             ports,
-                             range.start,
-                             range.end,
-                             m_portTimeout->value(),
-                             m_portConcurrent->value(),
-                             m_portBannerGrab->isChecked()});
+    m_controller->scanPorts({.target = target,
+                             .ports = ports,
+                             .range_start = range.start,
+                             .range_end = range.end,
+                             .timeout_ms = m_portTimeout->value(),
+                             .max_concurrent = m_portConcurrent->value(),
+                             .grab_banners = m_portBannerGrab->isChecked()});
 }
 
 void NetworkDiagnosticPanel::onStopPortScan() {
@@ -4165,12 +4165,12 @@ void NetworkDiagnosticPanel::onStartBandwidthTest() {
     m_bwResultLabel->setText(tr("Running bandwidth test..."));
     m_bwTestBtn->setEnabled(false);
 
-    m_controller->runBandwidthTest({server,
-                                    static_cast<uint16_t>(m_bwPort->value()),
-                                    m_bwDuration->value(),
-                                    m_bwStreams->value(),
-                                    m_bwBidirectional->isChecked(),
-                                    false});  // TCP mode
+    m_controller->runBandwidthTest({.server_addr = server,
+                                    .port = static_cast<uint16_t>(m_bwPort->value()),
+                                    .duration_sec = m_bwDuration->value(),
+                                    .streams = m_bwStreams->value(),
+                                    .bidirectional = m_bwBidirectional->isChecked(),
+                                    .udp = false});  // TCP mode
 }
 
 void NetworkDiagnosticPanel::onStartIperfServer() {

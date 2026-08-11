@@ -118,9 +118,10 @@ struct ShareServer {
 // shown as "localhost". A remote host is passed through verbatim.
 [[nodiscard]] ShareServer resolveShareServer(const QString& hostname) {
     if (isLocalShareHost(hostname)) {
-        return {hostname.isEmpty() ? QStringLiteral("localhost") : hostname, std::wstring()};
+        return {.displayHost = hostname.isEmpty() ? QStringLiteral("localhost") : hostname,
+                .serverName = std::wstring()};
     }
-    return {hostname, hostname.toStdWString()};
+    return {.displayHost = hostname, .serverName = hostname.toStdWString()};
 }
 
 // Build the model-facing record for one SHARE_INFO_1 entry (no access probe).

@@ -404,7 +404,8 @@ void BrowserBridgePipeServer::run() {
 bool BrowserBridgePipeServer::handshake() {
     // One absolute budget for the whole handshake, so a dribbling peer cannot hold the
     // sole pipe instance open past the deadline by restarting a per-read timer.
-    const IoDeadline deadline{GetTickCount64() + options_.io_timeout_ms, shutdown_event_};
+    const IoDeadline deadline{.deadline_tick = GetTickCount64() + options_.io_timeout_ms,
+                              .cancel_event = shutdown_event_};
     QJsonObject hello;
     if (!readFrame(pipe_, deadline, &hello)) {
         return false;
@@ -468,7 +469,8 @@ void BrowserBridgePipeServer::serveConnected() {
         has_request_ = false;
         lock.unlock();
 
-        const IoDeadline deadline{GetTickCount64() + options_.io_timeout_ms, shutdown_event_};
+        const IoDeadline deadline{.deadline_tick = GetTickCount64() + options_.io_timeout_ms,
+                                  .cancel_event = shutdown_event_};
         QJsonObject reply;
         Exchange result;
         if (!writeFrame(pipe_, request, deadline)) {
@@ -483,16 +485,18 @@ void BrowserBridgePipeServer::serveConnected() {
             // extension retires the command generation, and the poll loop stops on its next
             // iteration. Best effort on a fresh short budget: the deadline above has already
             // elapsed, and a peer that will not take the frame is being torn down anyway.
-            const IoDeadline cancel_deadline{GetTickCount64() + kCancelWriteBudgetMs,
-                                             shutdown_event_};
+            const IoDeadline cancel_deadline{.deadline_tick = GetTickCount64() +
+                                                              kCancelWriteBudgetMs,
+                                             .cancel_event = shutdown_event_};
             if (writeFrame(pipe_,
                            QJsonObject{{QStringLiteral("type"), QStringLiteral("cancel")}},
                            cancel_deadline)) {
                 // Do not tear down until the relay has had the chance to act on it. The
                 // late reply is the proof it did; it belongs to a command this exchange has
                 // already failed, so it is read only to be discarded.
-                const IoDeadline drain_deadline{GetTickCount64() + kCancelDrainBudgetMs,
-                                                shutdown_event_};
+                const IoDeadline drain_deadline{.deadline_tick = GetTickCount64() +
+                                                                 kCancelDrainBudgetMs,
+                                                .cancel_event = shutdown_event_};
                 QJsonObject discarded;
                 readFrame(pipe_, drain_deadline, &discarded);
             }
@@ -517,10 +521,12 @@ BrowserBridgePipeServer::Exchange BrowserBridgePipeServer::sendCommandAwaitReply
     const QJsonObject& frame) {
     std::unique_lock<std::mutex> lock(mutex_);
     if (!connected_ || !running_) {
-        return {false, {}, QStringLiteral("Browser not connected.")};
+        return {.ok = false, .reply = {}, .error = QStringLiteral("Browser not connected.")};
     }
     if (has_request_) {
-        return {false, {}, QStringLiteral("A browser action is already in progress.")};
+        return {.ok = false,
+                .reply = {},
+                .error = QStringLiteral("A browser action is already in progress.")};
     }
     // Pin the connection identity: if the relay disconnects and a fresh one replaces
     // it while we wait, the generation changes. Waking on a generation change (not on
@@ -542,7 +548,9 @@ BrowserBridgePipeServer::Exchange BrowserBridgePipeServer::sendCommandAwaitReply
     Exchange result =
         got_response
             ? response_
-            : Exchange{false, {}, QStringLiteral("Browser connection closed before it replied.")};
+            : Exchange{.ok = false,
+                       .reply = {},
+                       .error = QStringLiteral("Browser connection closed before it replied.")};
     has_request_ = false;
     has_response_ = false;
     return result;

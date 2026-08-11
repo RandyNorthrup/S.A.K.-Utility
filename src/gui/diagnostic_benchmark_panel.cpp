@@ -138,12 +138,12 @@ void DiagnosticBenchmarkPanel::setupUi() {
             const char* subtitle;
         };
         static constexpr TabMeta kTabs[] = {
-            {":/icons/icons/panel_diagnostic.svg",
-             "Diagnostics",
-             "Hardware inventory, SMART analysis, and thermal monitoring"},
-            {":/icons/icons/icons8-benchmark.svg",
-             "Benchmarks",
-             "CPU, disk, and memory benchmarks with stress testing"},
+            {.icon = ":/icons/icons/panel_diagnostic.svg",
+             .title = "Diagnostics",
+             .subtitle = "Hardware inventory, SMART analysis, and thermal monitoring"},
+            {.icon = ":/icons/icons/icons8-benchmark.svg",
+             .title = "Benchmarks",
+             .subtitle = "CPU, disk, and memory benchmarks with stress testing"},
         };
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& meta = kTabs[index];

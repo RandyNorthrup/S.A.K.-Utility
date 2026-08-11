@@ -156,7 +156,7 @@ RewrittenScript ScriptRewriter::rewriteToFile(const ParsedInstallScript& parsed,
 ScriptRewriter::ReplacementSpan ScriptRewriter::urlReplacementSpan(const QString& script,
                                                                    int found_pos,
                                                                    int url_len) {
-    ReplacementSpan span{found_pos, url_len};
+    ReplacementSpan span{.start = found_pos, .length = url_len};
     // An out-of-range index is not a wrapping pair to swallow; return the bare span. Compute the
     // end position in a wide type so found_pos + url_len cannot overflow int on a multi-GB script
     // (signed overflow is UB), and reject a negative index/length outright.

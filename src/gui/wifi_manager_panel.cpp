@@ -937,7 +937,11 @@ void WifiManagerPanel::showSingleQrWizard(const WifiConfig& cfg) {
     const QString rawName = location.isEmpty() ? ssid : location + "_" + ssid;
     const QString subName = QString(rawName).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
 
-    connectSingleQrWizard(&dlg, stack, ctl, {payload, ssid, location, subName});
+    connectSingleQrWizard(
+        &dlg,
+        stack,
+        ctl,
+        {.payload = payload, .ssid = ssid, .location = location, .sub_name = subName});
     dlg.exec();
 }
 
@@ -1184,10 +1188,10 @@ void WifiManagerPanel::showBatchQrDialog(const QList<WifiConfig>& sources) {
                              sources,
                              baseDir,
                              ui.headerToggle->isChecked(),
-                             {ui.chkPng->isChecked(),
-                              ui.chkPdf->isChecked(),
-                              ui.chkJpg->isChecked(),
-                              ui.chkBmp->isChecked()});
+                             {.png = ui.chkPng->isChecked(),
+                              .pdf = ui.chkPdf->isChecked(),
+                              .jpg = ui.chkJpg->isChecked(),
+                              .bmp = ui.chkBmp->isChecked()});
     });
     dlg.exec();
 }

@@ -1297,12 +1297,12 @@ void NetworkDiagnosticController::runLanTransferTest(const QString& targetAddr,
                 Q_EMIT errorOccurred(outcome.error);
                 return;
             }
-            finalizeLanTransfer({targetAddr,
-                                 port,
-                                 outcome.total_sent,
-                                 outcome.elapsed_ms,
-                                 outcome.peak_mbps,
-                                 outcome.speed_samples});
+            finalizeLanTransfer({.target_addr = targetAddr,
+                                 .port = port,
+                                 .total_sent = outcome.total_sent,
+                                 .elapsed_ms = outcome.elapsed_ms,
+                                 .peak_mbps = outcome.peak_mbps,
+                                 .speed_samples = outcome.speed_samples});
         },
         State::RunningLanTransfer);
 }

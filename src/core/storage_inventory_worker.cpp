@@ -137,13 +137,16 @@ void appendUnallocatedRegions(PartitionDiskInfo* disk) {
     uint64_t cursor = 0;
     for (const auto& partition : disk->partitions) {
         if (partition.offset_bytes > cursor) {
-            disk->unallocated_regions.append(
-                {disk->disk_number, cursor, partition.offset_bytes - cursor});
+            disk->unallocated_regions.append({.disk_number = disk->disk_number,
+                                              .offset_bytes = cursor,
+                                              .size_bytes = partition.offset_bytes - cursor});
         }
         cursor = std::max(cursor, partition.offset_bytes + partition.size_bytes);
     }
     if (disk->size_bytes > cursor) {
-        disk->unallocated_regions.append({disk->disk_number, cursor, disk->size_bytes - cursor});
+        disk->unallocated_regions.append({.disk_number = disk->disk_number,
+                                          .offset_bytes = cursor,
+                                          .size_bytes = disk->size_bytes - cursor});
     }
 }
 

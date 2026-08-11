@@ -48,29 +48,34 @@ void BrowserControl::syncSessionToConnection() {
 
 ToolResult BrowserControl::invoke(const QString& name, const QJsonObject& arguments) {
     if (!started_) {
-        return {QStringLiteral("Browser control is unavailable: the bridge pipe failed to start."),
-                true};
+        return {.text = QStringLiteral(
+                    "Browser control is unavailable: the bridge pipe failed to start."),
+                .is_error = true};
     }
     syncSessionToConnection();
     const browser::BrowserBridgeSession::Outgoing outgoing = session_.beginCommand(name, arguments);
     if (!outgoing.ok) {
-        return {outgoing.error, true};
+        return {.text = outgoing.error, .is_error = true};
     }
     const BrowserBridgePipeServer::Exchange exchange = pipe_.sendCommandAwaitReply(outgoing.frame);
     if (!exchange.ok) {
         // The transport failed (no relay, or a deadline/reset). Retire the outstanding
         // op so a late-arriving reply for it can never be mis-paired to the next call.
         session_.retireOutstanding();
-        return {exchange.error, true};
+        return {.text = exchange.error, .is_error = true};
     }
     const browser::BrowserBridgeSession::Incoming incoming = session_.onReply(exchange.reply);
     if (!incoming.matched) {
-        return {QStringLiteral("The browser reply did not correlate to the request."), true};
+        return {.text = QStringLiteral("The browser reply did not correlate to the request."),
+                .is_error = true};
     }
     if (incoming.is_error) {
-        return {incoming.error, true};
+        return {.text = incoming.error, .is_error = true};
     }
-    return {incoming.text, false, incoming.image_base64, incoming.image_mime};
+    return {.text = incoming.text,
+            .is_error = false,
+            .image_base64 = incoming.image_base64,
+            .image_mime = incoming.image_mime};
 }
 
 }  // namespace sak::win32mcp

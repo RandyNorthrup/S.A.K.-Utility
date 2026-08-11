@@ -206,7 +206,7 @@ auto ElevationManager::restartElevated(bool wait_for_exit) -> std::expected<void
 auto ElevationManager::executeElevated(const std::wstring& executable,
                                        const std::wstring& arguments,
                                        bool wait_for_exit) -> std::expected<void, sak::error_code> {
-    SHELLEXECUTEINFOW sei = {sizeof(SHELLEXECUTEINFOW)};
+    SHELLEXECUTEINFOW sei = {.cbSize = sizeof(SHELLEXECUTEINFOW)};
     sei.lpVerb = L"runas";  // Request elevation
     sei.lpFile = executable.c_str();
     sei.lpParameters = arguments.empty() ? nullptr : arguments.c_str();

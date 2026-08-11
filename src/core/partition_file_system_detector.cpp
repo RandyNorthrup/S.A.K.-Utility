@@ -502,11 +502,11 @@ std::optional<HfsWrapperInfo> hfsWrapperInfo(const QByteArray& bytes) {
         *embeddedOffset > static_cast<uint64_t>(std::numeric_limits<qsizetype>::max())) {
         return std::nullopt;
     }
-    return HfsWrapperInfo{*embeddedOffset,
-                          extentStartBlock,
-                          extentBlockCount,
-                          allocationBlockSize,
-                          allocationStartSector};
+    return HfsWrapperInfo{.embedded_offset_bytes = *embeddedOffset,
+                          .extent_start_block = extentStartBlock,
+                          .extent_block_count = extentBlockCount,
+                          .allocation_block_size = allocationBlockSize,
+                          .allocation_block_start_sector = allocationStartSector};
 }
 
 bool hasExtMagic(const QByteArray& bytes) {
@@ -609,8 +609,9 @@ std::optional<PartitionFileSystemDetection> detectExtFamily(const QByteArray& by
     const uint32_t compat = littleEndian32(bytes, superblock + kExtFeatureCompatOffset);
     const uint32_t incompat = littleEndian32(bytes, superblock + kExtFeatureIncompatOffset);
     const uint32_t roCompat = littleEndian32(bytes, superblock + kExtFeatureRoCompatOffset);
-    PartitionFileSystemDetection detection{extFamilyName(compat, incompat, roCompat),
-                                           PartitionFileSystemDetector::rawSignatureSource()};
+    PartitionFileSystemDetection detection{.file_system = extFamilyName(compat, incompat, roCompat),
+                                           .source =
+                                               PartitionFileSystemDetector::rawSignatureSource()};
     appendExtSuperblockDetails(&detection, bytes, compat, incompat, roCompat);
     return detection;
 }
@@ -644,8 +645,8 @@ std::optional<PartitionFileSystemDetection> detectHfsHeaderAt(
         return std::nullopt;
     }
 
-    PartitionFileSystemDetection detection{familyName,
-                                           PartitionFileSystemDetector::rawSignatureSource()};
+    PartitionFileSystemDetection detection{
+        .file_system = familyName, .source = PartitionFileSystemDetector::rawSignatureSource()};
     const uint16_t version = bigEndian16(bytes, headerOffset + kHfsVersionOffset);
     const uint32_t attributes = bigEndian32(bytes, headerOffset + kHfsAttributesOffset);
     const uint32_t fileCount = bigEndian32(bytes, headerOffset + kHfsFileCountOffset);
@@ -709,10 +710,12 @@ std::optional<SwapSignatureInfo> swapSignatureInfo(const QByteArray& bytes,
         }
         const qsizetype offset = pageSize - kSwapSignatureSize;
         if (matchesBytes(bytes, offset, "SWAPSPACE2", kSwapSignatureSize)) {
-            return SwapSignatureInfo{pageSize, QStringLiteral("SWAPSPACE2")};
+            return SwapSignatureInfo{.page_size = pageSize,
+                                     .signature = QStringLiteral("SWAPSPACE2")};
         }
         if (matchesBytes(bytes, offset, "SWAP-SPACE", kSwapSignatureSize)) {
-            return SwapSignatureInfo{pageSize, QStringLiteral("SWAP-SPACE")};
+            return SwapSignatureInfo{.page_size = pageSize,
+                                     .signature = QStringLiteral("SWAP-SPACE")};
         }
     }
     return std::nullopt;
@@ -835,8 +838,9 @@ std::optional<PartitionFileSystemDetection> detectXfsFamily(const QByteArray& by
         return std::nullopt;
     }
 
-    PartitionFileSystemDetection detection{QStringLiteral("XFS"),
-                                           PartitionFileSystemDetector::rawSignatureSource()};
+    PartitionFileSystemDetection detection{.file_system = QStringLiteral("XFS"),
+                                           .source =
+                                               PartitionFileSystemDetector::rawSignatureSource()};
     const uint32_t blockSize = bigEndian32(bytes, kXfsBlockSizeOffset);
     const uint64_t dataBlocks = bigEndian64(bytes, kXfsDataBlocksOffset);
     const uint64_t freeDataBlocks = bigEndian64(bytes, kXfsFreeDataBlocksOffset);
@@ -885,8 +889,9 @@ std::optional<PartitionFileSystemDetection> detectBtrfsFamily(const QByteArray& 
         return std::nullopt;
     }
 
-    PartitionFileSystemDetection detection{QStringLiteral("Btrfs"),
-                                           PartitionFileSystemDetector::rawSignatureSource()};
+    PartitionFileSystemDetection detection{.file_system = QStringLiteral("Btrfs"),
+                                           .source =
+                                               PartitionFileSystemDetector::rawSignatureSource()};
     const qsizetype superblock = kBtrfsSuperblockOffset;
     const BtrfsSuperblockValues values{
         .total_bytes = littleEndian64(bytes, superblock + kBtrfsTotalBytesOffset),
@@ -1062,7 +1067,7 @@ void appendApfsObjectReference(std::vector<ApfsObjectReference>* references,
                                const QString& label,
                                uint64_t oid) {
     if (oid > 0) {
-        references->push_back(ApfsObjectReference{label, oid});
+        references->push_back(ApfsObjectReference{.label = label, .oid = oid});
     }
 }
 
@@ -1357,7 +1362,8 @@ bool appendApfsSpaceManagerDetails(PartitionFileSystemDetection* detection,
         return false;
     }
 
-    const ApfsSpaceManagerContext context{blockSize, blockCount};
+    const ApfsSpaceManagerContext context{.containerBlockSize = blockSize,
+                                          .containerBlockCount = blockCount};
     const QStringList warnings = apfsSpaceManagerWarnings(context, *candidate);
     if (!warnings.isEmpty()) {
         detection->details.append(
@@ -1518,13 +1524,13 @@ std::optional<ApfsSupplementalReadContext> apfsSupplementalReadContext(
         return std::nullopt;
     }
 
-    return ApfsSupplementalReadContext{device,
-                                       partitionOffsetBytes,
-                                       partitionSizeBytes,
-                                       blockSize,
-                                       blockCount,
-                                       expectedOid,
-                                       checkpoint};
+    return ApfsSupplementalReadContext{.device = device,
+                                       .partitionOffsetBytes = partitionOffsetBytes,
+                                       .partitionSizeBytes = partitionSizeBytes,
+                                       .blockSize = blockSize,
+                                       .blockCount = blockCount,
+                                       .expectedOid = expectedOid,
+                                       .checkpoint = checkpoint};
 }
 
 void setFirstSupplementalError(QString* target, const QString& error) {
@@ -1536,7 +1542,8 @@ void setFirstSupplementalError(QString* target, const QString& error) {
 bool appendApfsSupplementalCandidate(PartitionFileSystemDetection* detection,
                                      const ApfsSupplementalReadContext& context,
                                      const ApfsSpaceManagerCandidate& candidate) {
-    const ApfsSpaceManagerContext spaceContext{context.blockSize, context.blockCount};
+    const ApfsSpaceManagerContext spaceContext{.containerBlockSize = context.blockSize,
+                                               .containerBlockCount = context.blockCount};
     const QStringList warnings = apfsSpaceManagerWarnings(spaceContext, candidate);
     if (!warnings.isEmpty()) {
         detection->details.append(
@@ -1973,8 +1980,9 @@ std::optional<PartitionFileSystemDetection> detectApfsFamily(const QByteArray& b
         return std::nullopt;
     }
 
-    PartitionFileSystemDetection detection{QStringLiteral("APFS"),
-                                           PartitionFileSystemDetector::rawSignatureSource()};
+    PartitionFileSystemDetection detection{.file_system = QStringLiteral("APFS"),
+                                           .source =
+                                               PartitionFileSystemDetector::rawSignatureSource()};
     const uint32_t blockSize = littleEndian32(bytes, kApfsBlockSizeOffset);
     const uint64_t blockCount = littleEndian64(bytes, kApfsBlockCountOffset);
     const ApfsCheckpointValues checkpoint = apfsCheckpointValues(bytes);
@@ -2022,8 +2030,8 @@ std::optional<PartitionFileSystemDetection> rawDetection(const QString& fileSyst
     if (fileSystem.isEmpty()) {
         return std::nullopt;
     }
-    return PartitionFileSystemDetection{fileSystem,
-                                        PartitionFileSystemDetector::rawSignatureSource()};
+    return PartitionFileSystemDetection{
+        .file_system = fileSystem, .source = PartitionFileSystemDetector::rawSignatureSource()};
 }
 
 std::optional<PartitionFileSystemDetection> detectSwapFamily(const QByteArray& bytes,
@@ -2237,8 +2245,10 @@ std::optional<PartitionFileSystemDetection> PartitionFileSystemDetector::detectF
         setProbeError(error_message, QStringLiteral("No filesystem signature detected"));
         return std::nullopt;
     }
-    const ApfsSupplementalInput supplementalInput{
-        &*bytes, device, partition_offset_bytes, partition_size_bytes};
+    const ApfsSupplementalInput supplementalInput{.probeBytes = &*bytes,
+                                                  .device = device,
+                                                  .partitionOffsetBytes = partition_offset_bytes,
+                                                  .partitionSizeBytes = partition_size_bytes};
     appendApfsSupplementalSpaceManagerDetails(&*detection, supplementalInput, error_message);
     if (error_message != nullptr) {
         error_message->clear();

@@ -50,14 +50,16 @@ struct OfflineReadinessInfo {
 OfflineReadinessInfo readinessInfo(OfflineReadiness readiness) {
     switch (readiness) {
     case OfflineReadiness::Internalized:
-        return {true, QStringLiteral("installer binaries internalized")};
+        return {.ready = true, .note = QStringLiteral("installer binaries internalized")};
     case OfflineReadiness::SelfContained:
-        return {true, QStringLiteral("self-contained (no external download needed)")};
+        return {.ready = true,
+                .note = QStringLiteral("self-contained (no external download needed)")};
     case OfflineReadiness::RequiresNetwork:
         break;
     }
-    return {false,
-            QStringLiteral("requires internet at install time (installer not internalized)")};
+    return {.ready = false,
+            .note =
+                QStringLiteral("requires internet at install time (installer not internalized)")};
 }
 
 /// @brief Honest one-line summary of a completed bundle build.
@@ -1021,13 +1023,17 @@ BundleInstallContext OfflineDeploymentWorker::installContextForMode(
     if (mode == PayloadMode::List) {
         // Metadata-only payload: install straight from the Chocolatey feed and let
         // choco resolve + download dependencies. No local .nupkg to verify.
-        return {offline::kNuGetBaseUrl, /*ignore_dependencies=*/false, /*verify_local=*/false};
+        return {.source = offline::kNuGetBaseUrl,
+                /*ignore_dependencies=*/.ignore_dependencies = false,
+                /*verify_local=*/.verify_local = false};
     }
     // Self-contained bundle: install from the local packages dir. We install every
     // closure member ourselves (in topological order), so choco must NOT re-resolve
     // dependencies -- otherwise it would demand the excluded 'chocolatey' framework
     // from a local-only source and fail. Verify each local .nupkg first.
-    return {local_source_dir, /*ignore_dependencies=*/true, /*verify_local=*/true};
+    return {.source = local_source_dir,
+            /*ignore_dependencies=*/.ignore_dependencies = true,
+            /*verify_local=*/.verify_local = true};
 }
 
 void OfflineDeploymentWorker::installFromBundle(const QString& manifest_path,
@@ -1626,7 +1632,7 @@ QVector<InstallerDownload> OfflineDeploymentWorker::collectInstallerDownloads(
             return;
         }
         seen.insert(url);
-        downloads.append(InstallerDownload{url, sum, type});
+        downloads.append(InstallerDownload{.url = url, .checksum = sum, .checksum_type = type});
     };
     for (const auto& resource : parsed.resources) {
         add(resource.url, resource.checksum, resource.checksum_type);

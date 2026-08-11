@@ -245,12 +245,12 @@ struct AuthEntry {
 };
 
 static constexpr AuthEntry kAuthTable[] = {
-    {DOT11_AUTH_ALGO_80211_OPEN, "Open"},
-    {DOT11_AUTH_ALGO_80211_SHARED_KEY, "Shared Key"},
-    {DOT11_AUTH_ALGO_WPA, "WPA-Enterprise"},
-    {DOT11_AUTH_ALGO_WPA_PSK, "WPA-Personal"},
-    {DOT11_AUTH_ALGO_RSNA, "WPA2-Enterprise"},
-    {DOT11_AUTH_ALGO_RSNA_PSK, "WPA2-Personal"},
+    {.algo = DOT11_AUTH_ALGO_80211_OPEN, .label = "Open"},
+    {.algo = DOT11_AUTH_ALGO_80211_SHARED_KEY, .label = "Shared Key"},
+    {.algo = DOT11_AUTH_ALGO_WPA, .label = "WPA-Enterprise"},
+    {.algo = DOT11_AUTH_ALGO_WPA_PSK, .label = "WPA-Personal"},
+    {.algo = DOT11_AUTH_ALGO_RSNA, .label = "WPA2-Enterprise"},
+    {.algo = DOT11_AUTH_ALGO_RSNA_PSK, .label = "WPA2-Personal"},
 };
 
 constexpr int kWpa3AuthThreshold = 9;
@@ -274,12 +274,12 @@ struct CipherEntry {
 };
 
 static constexpr CipherEntry kCipherTable[] = {
-    {DOT11_CIPHER_ALGO_NONE, "None", false},
-    {DOT11_CIPHER_ALGO_WEP40, "WEP", true},
-    {DOT11_CIPHER_ALGO_WEP104, "WEP", true},
-    {DOT11_CIPHER_ALGO_WEP, "WEP", true},
-    {DOT11_CIPHER_ALGO_TKIP, "TKIP", true},
-    {DOT11_CIPHER_ALGO_CCMP, "AES-CCMP", true},
+    {.algo = DOT11_CIPHER_ALGO_NONE, .label = "None", .secure = false},
+    {.algo = DOT11_CIPHER_ALGO_WEP40, .label = "WEP", .secure = true},
+    {.algo = DOT11_CIPHER_ALGO_WEP104, .label = "WEP", .secure = true},
+    {.algo = DOT11_CIPHER_ALGO_WEP, .label = "WEP", .secure = true},
+    {.algo = DOT11_CIPHER_ALGO_TKIP, .label = "TKIP", .secure = true},
+    {.algo = DOT11_CIPHER_ALGO_CCMP, .label = "AES-CCMP", .secure = true},
 };
 
 void mapCipherAlgorithm(DOT11_CIPHER_ALGORITHM algo, QString& encryption, bool& is_secure) {

@@ -43,23 +43,36 @@ AiRecoveryDecision decision(const DecisionSeed& seed) {
 }
 
 AiRecoveryDecision abortDecision(const QString& reason) {
-    return decision({AiRecoveryAction::Abort, reason});
+    return decision({.action = AiRecoveryAction::Abort, .reason = reason});
 }
 
 AiRecoveryDecision askHumanDecision(const QString& reason) {
-    return decision({AiRecoveryAction::AskHuman, reason, true});
+    return decision(
+        {.action = AiRecoveryAction::AskHuman, .reason = reason, .requires_human = true});
 }
 
 AiRecoveryDecision retryDecision(const QString& reason) {
-    return decision({AiRecoveryAction::Retry, reason, false, true});
+    return decision({.action = AiRecoveryAction::Retry,
+                     .reason = reason,
+                     .requires_human = false,
+                     .retry_allowed = true});
 }
 
 AiRecoveryDecision continueDecision(const QString& reason) {
-    return decision({AiRecoveryAction::ContinueDegraded, reason, false, false, true});
+    return decision({.action = AiRecoveryAction::ContinueDegraded,
+                     .reason = reason,
+                     .requires_human = false,
+                     .retry_allowed = false,
+                     .safe_to_continue = true});
 }
 
 AiRecoveryDecision reassignDecision(const QString& reason, const QString& suggested_agent) {
-    return decision({AiRecoveryAction::Reassign, reason, false, false, true, suggested_agent});
+    return decision({.action = AiRecoveryAction::Reassign,
+                     .reason = reason,
+                     .requires_human = false,
+                     .retry_allowed = false,
+                     .safe_to_continue = true,
+                     .suggested_agent = suggested_agent});
 }
 
 bool isMissingInputError(const QString& error) {

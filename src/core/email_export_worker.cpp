@@ -155,18 +155,18 @@ struct ExportFormatName {
 };
 
 constexpr ExportFormatName kExportFormatNames[] = {
-    {sak::ExportFormat::Eml, "EML"},
-    {sak::ExportFormat::Html, "HTML"},
-    {sak::ExportFormat::Text, "TXT"},
-    {sak::ExportFormat::Pdf, "PDF"},
-    {sak::ExportFormat::CsvEmails, "CSV (Emails)"},
-    {sak::ExportFormat::Vcf, "VCF"},
-    {sak::ExportFormat::CsvContacts, "CSV (Contacts)"},
-    {sak::ExportFormat::Ics, "ICS"},
-    {sak::ExportFormat::CsvCalendar, "CSV (Calendar)"},
-    {sak::ExportFormat::CsvTasks, "CSV (Tasks)"},
-    {sak::ExportFormat::PlainTextNotes, "TXT"},
-    {sak::ExportFormat::Attachments, "Attachments"},
+    {.format = sak::ExportFormat::Eml, .display_name = "EML"},
+    {.format = sak::ExportFormat::Html, .display_name = "HTML"},
+    {.format = sak::ExportFormat::Text, .display_name = "TXT"},
+    {.format = sak::ExportFormat::Pdf, .display_name = "PDF"},
+    {.format = sak::ExportFormat::CsvEmails, .display_name = "CSV (Emails)"},
+    {.format = sak::ExportFormat::Vcf, .display_name = "VCF"},
+    {.format = sak::ExportFormat::CsvContacts, .display_name = "CSV (Contacts)"},
+    {.format = sak::ExportFormat::Ics, .display_name = "ICS"},
+    {.format = sak::ExportFormat::CsvCalendar, .display_name = "CSV (Calendar)"},
+    {.format = sak::ExportFormat::CsvTasks, .display_name = "CSV (Tasks)"},
+    {.format = sak::ExportFormat::PlainTextNotes, .display_name = "TXT"},
+    {.format = sak::ExportFormat::Attachments, .display_name = "Attachments"},
 };
 
 sak::ExportFormat messageFormatOrEml(sak::ExportFormat format) {
@@ -628,8 +628,11 @@ void EmailExportWorker::exportPerItemFormats(PstParser* parser,
     std::unique_ptr<sak::HtmlEmailWriter> html_writer;
     std::unique_ptr<sak::PdfEmailWriter> pdf_writer;
     prepareMessageWriters(config.format, config, eml_writer, html_writer, pdf_writer);
-    const PerItemWriterSet writers{eml_writer.get(), html_writer.get(), pdf_writer.get()};
-    const PstItemExportContext context{parser, config, result, writers};
+    const PerItemWriterSet writers{.eml = eml_writer.get(),
+                                   .html = html_writer.get(),
+                                   .pdf = pdf_writer.get()};
+    const PstItemExportContext context{
+        .parser = parser, .config = config, .result = result, .writers = writers};
 
     for (int index = 0; index < item_ids.size(); ++index) {
         if (m_cancelled.load()) {
@@ -692,12 +695,12 @@ bool EmailExportWorker::writePstItemFormat(
         return writeHtml(
             *context.writers.html, detail, attachment_data, context.result.total_bytes);
     case sak::ExportFormat::Text:
-        return writePlainText({detail,
-                               context.config.output_path,
-                               index,
-                               attachment_data,
-                               context.config.save_attachments_with_messages,
-                               context.config.flatten_attachments},
+        return writePlainText({.item = detail,
+                               .output_dir = context.config.output_path,
+                               .index = index,
+                               .attachment_data = attachment_data,
+                               .save_attachments = context.config.save_attachments_with_messages,
+                               .flatten_attachments = context.config.flatten_attachments},
                               context.result.total_bytes);
     case sak::ExportFormat::Pdf:
         return writePdf(*context.writers.pdf,
@@ -708,12 +711,12 @@ bool EmailExportWorker::writePstItemFormat(
     case sak::ExportFormat::Vcf:
         return writeVcf(detail, context.config.output_path, index);
     case sak::ExportFormat::PlainTextNotes:
-        return writePlainText({detail,
-                               context.config.output_path,
-                               index,
-                               attachment_data,
-                               false,
-                               context.config.flatten_attachments},
+        return writePlainText({.item = detail,
+                               .output_dir = context.config.output_path,
+                               .index = index,
+                               .attachment_data = attachment_data,
+                               .save_attachments = false,
+                               .flatten_attachments = context.config.flatten_attachments},
                               context.result.total_bytes);
     case sak::ExportFormat::Attachments:
         return exportAttachments(
@@ -862,8 +865,14 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
     std::unique_ptr<sak::HtmlEmailWriter> html_writer;
     std::unique_ptr<sak::PdfEmailWriter> pdf_writer;
     prepareMessageWriters(effective_format, config, eml_writer, html_writer, pdf_writer);
-    const PerItemWriterSet writers{eml_writer.get(), html_writer.get(), pdf_writer.get()};
-    const MboxItemExportContext context{parser, config, result, writers, effective_format};
+    const PerItemWriterSet writers{.eml = eml_writer.get(),
+                                   .html = html_writer.get(),
+                                   .pdf = pdf_writer.get()};
+    const MboxItemExportContext context{.parser = parser,
+                                        .config = config,
+                                        .result = result,
+                                        .writers = writers,
+                                        .effective_format = effective_format};
 
     for (int idx = 0; idx < indices.size(); ++idx) {
         if (m_cancelled.load()) {
@@ -912,12 +921,12 @@ bool EmailExportWorker::exportOneMboxItem(const MboxItemExportContext& context,
             return writeHtml(
                 *context.writers.html, item, attachment_data, context.result.total_bytes);
         case sak::ExportFormat::Text:
-            return writePlainText({item,
-                                   context.config.output_path,
-                                   loop_index,
-                                   attachment_data,
-                                   false,
-                                   context.config.flatten_attachments},
+            return writePlainText({.item = item,
+                                   .output_dir = context.config.output_path,
+                                   .index = loop_index,
+                                   .attachment_data = attachment_data,
+                                   .save_attachments = false,
+                                   .flatten_attachments = context.config.flatten_attachments},
                                   context.result.total_bytes);
         case sak::ExportFormat::Pdf:
             return writePdf(*context.writers.pdf,

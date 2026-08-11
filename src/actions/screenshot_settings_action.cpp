@@ -147,11 +147,11 @@ void ScreenshotSettingsAction::execute() {
         generateReport(output_dir.absolutePath(), timestamp, monitor_count, capture);
     Q_EMIT executionProgress("Screenshots complete", progress::kComplete);
 
-    const CaptureContext context{static_cast<int>(settings_pages.size()),
-                                 monitor_count,
-                                 timestamp,
-                                 start_time,
-                                 report_written};
+    const CaptureContext context{.total_pages = static_cast<int>(settings_pages.size()),
+                                 .monitor_count = monitor_count,
+                                 .timestamp = timestamp,
+                                 .start_time = start_time,
+                                 .report_written = report_written};
     buildExecutionResult(capture, output_dir, context);
 }
 

@@ -172,22 +172,22 @@ std::optional<CandidateMatch> matchAt(const QByteArray& data,
                                       uint64_t maxCandidateBytes,
                                       uint64_t* work) {
     if (const auto size = pngSizeAt(data, offset, maxCandidateBytes, work)) {
-        return CandidateMatch{QStringLiteral("PNG image"),
-                              QStringLiteral("png"),
-                              static_cast<uint64_t>(offset),
-                              *size};
+        return CandidateMatch{.format = QStringLiteral("PNG image"),
+                              .extension = QStringLiteral("png"),
+                              .offset = static_cast<uint64_t>(offset),
+                              .size = *size};
     }
     if (const auto size = jpegSizeAt(data, offset, maxCandidateBytes, work)) {
-        return CandidateMatch{QStringLiteral("JPEG image"),
-                              QStringLiteral("jpg"),
-                              static_cast<uint64_t>(offset),
-                              *size};
+        return CandidateMatch{.format = QStringLiteral("JPEG image"),
+                              .extension = QStringLiteral("jpg"),
+                              .offset = static_cast<uint64_t>(offset),
+                              .size = *size};
     }
     if (const auto size = pdfSizeAt(data, offset, maxCandidateBytes, work)) {
-        return CandidateMatch{QStringLiteral("PDF document"),
-                              QStringLiteral("pdf"),
-                              static_cast<uint64_t>(offset),
-                              *size};
+        return CandidateMatch{.format = QStringLiteral("PDF document"),
+                              .extension = QStringLiteral("pdf"),
+                              .offset = static_cast<uint64_t>(offset),
+                              .size = *size};
     }
     return std::nullopt;
 }
@@ -627,7 +627,10 @@ FileRecoveryRestoreResult FileRecoveryEngine::restoreCandidates(
         return result;
     }
 
-    const RestoreContext context{&image, *destination, options.overwrite_existing, &result};
+    const RestoreContext context{.image = &image,
+                                 .destination = *destination,
+                                 .overwrite_existing = options.overwrite_existing,
+                                 .result = &result};
     for (const auto& candidate : options.candidates) {
         restoreCandidate(context, candidate);
     }

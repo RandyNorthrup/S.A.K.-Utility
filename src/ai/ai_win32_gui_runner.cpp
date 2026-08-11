@@ -43,24 +43,28 @@ Rejection rejectionFor(const Win32StepOutcome& outcome, int index, const QString
         // otherwise slip through as a successful step.
         const QString reason = outcome.error.isEmpty() ? QStringLiteral("tool could not be planned")
                                                        : outcome.error;
-        return {
-            reason,
-            QStringLiteral("Step %1 (%2) could not be planned: %3").arg(index).arg(tool, reason)};
+        return {.short_error = reason,
+                .detail = QStringLiteral("Step %1 (%2) could not be planned: %3")
+                              .arg(index)
+                              .arg(tool, reason)};
     }
     if (outcome.high_risk) {
-        return {QStringLiteral("high-risk tool not allowed in recipe"),
-                QStringLiteral("Step %1 (%2) uses a high-risk tool, which a win32_gui recipe may "
-                               "not call")
-                    .arg(index)
-                    .arg(tool)};
+        return {.short_error = QStringLiteral("high-risk tool not allowed in recipe"),
+                .detail = QStringLiteral(
+                              "Step %1 (%2) uses a high-risk tool, which a win32_gui recipe may "
+                              "not call")
+                              .arg(index)
+                              .arg(tool)};
     }
     if (outcome.disallowed) {
-        return {outcome.error.isEmpty() ? QStringLiteral("tool not permitted in recipe")
-                                        : outcome.error,
-                QStringLiteral("Step %1 (%2) uses a tool that is not permitted in a win32_gui "
-                               "recipe (only read-only and input-tier desktop tools are)")
-                    .arg(index)
-                    .arg(tool)};
+        return {.short_error = outcome.error.isEmpty()
+                                   ? QStringLiteral("tool not permitted in recipe")
+                                   : outcome.error,
+                .detail = QStringLiteral(
+                              "Step %1 (%2) uses a tool that is not permitted in a win32_gui "
+                              "recipe (only read-only and input-tier desktop tools are)")
+                              .arg(index)
+                              .arg(tool)};
     }
     return {};
 }
@@ -92,10 +96,12 @@ std::optional<QString> win32WaitExpectationFailure(const QJsonObject& payload,
     };
     bool any_satisfied = false;
     for (const WaitFlag& flag :
-         {WaitFlag{QLatin1String("found"), QLatin1String("awaited text did not appear")},
-          WaitFlag{QLatin1String("satisfied"),
-                   QLatin1String("awaited window state was not reached")},
-          WaitFlag{QLatin1String("idle"), QLatin1String("window did not settle")}}) {
+         {WaitFlag{.key = QLatin1String("found"),
+                   .message = QLatin1String("awaited text did not appear")},
+          WaitFlag{.key = QLatin1String("satisfied"),
+                   .message = QLatin1String("awaited window state was not reached")},
+          WaitFlag{.key = QLatin1String("idle"),
+                   .message = QLatin1String("window did not settle")}}) {
         const QJsonValue value = payload.value(flag.key);
         if (value.isUndefined()) {
             continue;

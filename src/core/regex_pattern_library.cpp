@@ -52,27 +52,42 @@ RegexPatternLibrary::RegexPatternLibrary(QObject* parent) : QObject(parent) {
 
 void RegexPatternLibrary::initBuiltinPatterns() {
     m_builtin_patterns = {
-        {"emails",
-         "Email addresses",
-         R"(\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)",
-         false},
+        {.key = "emails",
+         .label = "Email addresses",
+         .pattern = R"(\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)",
+         .enabled = false},
 
-        {"urls", "URLs (http/https)", R"(https?://[^\s]+)", false},
+        {.key = "urls",
+         .label = "URLs (http/https)",
+         .pattern = R"(https?://[^\s]+)",
+         .enabled = false},
 
-        {"ipv4", "IPv4 addresses", R"(\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b)", false},
+        {.key = "ipv4",
+         .label = "IPv4 addresses",
+         .pattern = R"(\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b)",
+         .enabled = false},
 
-        {"phone",
-         "Phone numbers",
-         R"(\b(?:\+?1[-.]?)?(?:\(?[0-9]{3}\)?[-.]?)?[0-9]{3}[-.]?[0-9]{4}\b)",
-         false},
+        {.key = "phone",
+         .label = "Phone numbers",
+         .pattern = R"(\b(?:\+?1[-.]?)?(?:\(?[0-9]{3}\)?[-.]?)?[0-9]{3}[-.]?[0-9]{4}\b)",
+         .enabled = false},
 
-        {"dates", "Dates (various)", R"(\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b)", false},
+        {.key = "dates",
+         .label = "Dates (various)",
+         .pattern = R"(\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b)",
+         .enabled = false},
 
-        {"numbers", "Numbers", R"(\b\d+\b)", false},
+        {.key = "numbers", .label = "Numbers", .pattern = R"(\b\d+\b)", .enabled = false},
 
-        {"hex", "Hex values", R"(\b0x[0-9A-Fa-f]+\b|#[0-9A-Fa-f]{6}\b)", false},
+        {.key = "hex",
+         .label = "Hex values",
+         .pattern = R"(\b0x[0-9A-Fa-f]+\b|#[0-9A-Fa-f]{6}\b)",
+         .enabled = false},
 
-        {"words", "Words/identifiers", R"(\b[A-Za-z_]\w*\b)", false},
+        {.key = "words",
+         .label = "Words/identifiers",
+         .pattern = R"(\b[A-Za-z_]\w*\b)",
+         .enabled = false},
     };
 }
 

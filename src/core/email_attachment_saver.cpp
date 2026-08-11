@@ -58,21 +58,21 @@ AttachmentSaveResult saveAttachmentToPath(const QString& path, const QByteArray&
     if (!file.open(QIODevice::WriteOnly)) {
         const QString error = QStringLiteral("Failed to save attachment: %1").arg(path);
         sak::logError("Failed to save attachment: {}", path.toStdString());
-        return {false, path, error};
+        return {.success = false, .saved_path = path, .error_message = error};
     }
     const qint64 written = file.write(data);
     if (written != static_cast<qint64>(data.size())) {
         file.cancelWriting();
         const QString error = QStringLiteral("Short write saving attachment: %1").arg(path);
         sak::logError("Short write saving attachment: {}", path.toStdString());
-        return {false, path, error};
+        return {.success = false, .saved_path = path, .error_message = error};
     }
     if (!file.commit()) {
         const QString error = QStringLiteral("Failed to finalize attachment: %1").arg(path);
         sak::logError("Failed to finalize attachment: {}", path.toStdString());
-        return {false, path, error};
+        return {.success = false, .saved_path = path, .error_message = error};
     }
-    return {true, path, {}};
+    return {.success = true, .saved_path = path, .error_message = {}};
 }
 
 // ============================================================================
@@ -85,13 +85,17 @@ AttachmentSaveResult saveAttachmentToDirectory(const QString& dir,
     if (dir.isEmpty()) {
         // An empty dir would produce a root-relative "/<name>" target. Refuse rather than
         // write to a guessed location.
-        return {false, {}, QStringLiteral("No attachment directory specified")};
+        return {.success = false,
+                .saved_path = {},
+                .error_message = QStringLiteral("No attachment directory specified")};
     }
     if (data.isNull()) {
         // A null (absent) payload means the content was never delivered. Saving a zero-byte
         // file and reporting success would hide that failure. A genuinely empty attachment
         // arrives as a non-null zero-length QByteArray and is still saved.
-        return {false, {}, QStringLiteral("No attachment content to save")};
+        return {.success = false,
+                .saved_path = {},
+                .error_message = QStringLiteral("No attachment content to save")};
     }
     const QString safe_name = sanitizeAttachmentFilename(filename);
     QString file_path = dir + QStringLiteral("/") + safe_name;
@@ -114,7 +118,7 @@ AttachmentSaveResult saveAttachmentToDirectory(const QString& dir,
     if (QFile::exists(file_path)) {
         const QString error = QStringLiteral("No unique attachment name available in: %1").arg(dir);
         sak::logError("No unique attachment name available in: {}", dir.toStdString());
-        return {false, file_path, error};
+        return {.success = false, .saved_path = file_path, .error_message = error};
     }
 
     return saveAttachmentToPath(file_path, data);
@@ -154,11 +158,12 @@ AttachmentSaveResult AttachmentBatchSave::recordOne(const AttachmentRef& ref,
     // outright. Writing it would put the wrong payload in one of the batch's
     // slots and let the batch report a full count it never actually filled.
     if (!expects(ref)) {
-        return {false,
-                {},
-                QStringLiteral("Attachment %1 of message %2 is not outstanding in this batch")
-                    .arg(ref.index)
-                    .arg(ref.message_id)};
+        return {.success = false,
+                .saved_path = {},
+                .error_message =
+                    QStringLiteral("Attachment %1 of message %2 is not outstanding in this batch")
+                        .arg(ref.index)
+                        .arg(ref.message_id)};
     }
     m_outstanding.remove(ref);
     auto result = saveAttachmentToDirectory(m_dir, filename, data);

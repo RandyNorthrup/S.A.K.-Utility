@@ -502,7 +502,7 @@ std::optional<CliNumericInputs> numericInputsFromParser(const QCommandLineParser
     if (blockSize == 0) {
         return std::nullopt;
     }
-    return CliNumericInputs{*size, blockSize};
+    return CliNumericInputs{.size = *size, .block_size = blockSize};
 }
 
 std::optional<CliMutationInputs> mutationInputsFromParser(const QCommandLineParser& parser,
@@ -525,8 +525,11 @@ std::optional<CliMutationInputs> mutationInputsFromParser(const QCommandLinePars
     QString patchOffsetError;
     const auto patchOffset =
         patchOffsetForCommand(parser, *options.patch_offset, command, &patchOffsetError);
-    return CliMutationInputs{
-        *fileName, *directoryName, *payload, patchOffset.value_or(0), patchOffsetError};
+    return CliMutationInputs{.file_name = *fileName,
+                             .directory_name = *directoryName,
+                             .payload = *payload,
+                             .patch_offset = patchOffset.value_or(0),
+                             .patch_offset_error = patchOffsetError};
 }
 
 // Read a credential file's exact bytes and STRICT-UTF-8 decode them. Fails closed on an
@@ -979,7 +982,7 @@ std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocatio
         return std::nullopt;
     }
     if (!invocation.file_name.trimmed().isEmpty()) {
-        files.append({invocation.file_name, invocation.payload});
+        files.append({.name = invocation.file_name, .data = invocation.payload});
     }
 
     QTemporaryDir scratch;

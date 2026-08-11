@@ -347,7 +347,7 @@ void FileExplorerGroupProxyModel::rebuildGroups() {
             return b.info == info;
         });
         if (it == buckets.end()) {
-            buckets.append(GroupBucket{info, {}});
+            buckets.append(GroupBucket{.info = info, .source_rows = {}});
             it = buckets.end() - 1;
         }
         it->source_rows.append(row);
@@ -359,10 +359,10 @@ void FileExplorerGroupProxyModel::rebuildGroups() {
 
     m_source_to_proxy.resize(count);
     for (const GroupBucket& bucket : buckets) {
-        m_rows.append(ProxyRow{-1, bucket.info.text});
+        m_rows.append(ProxyRow{.source_row = -1, .header_text = bucket.info.text});
         for (const int source_row : bucket.source_rows) {
             m_source_to_proxy[source_row] = m_rows.size();
-            m_rows.append(ProxyRow{source_row, {}});
+            m_rows.append(ProxyRow{.source_row = source_row, .header_text = {}});
         }
     }
 }

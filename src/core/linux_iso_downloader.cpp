@@ -393,16 +393,16 @@ struct Aria2cExitEntry {
 };
 
 static constexpr Aria2cExitEntry kAria2cExitCodes[] = {
-    {1, "Unknown error occurred"},
-    {2, "Connection timed out"},
-    {3, "Resource not found (404)"},
-    {4, "Max retries reached \xe2\x80\x94 check your internet connection"},
-    {5, "Download speed too slow"},
-    {6, "Network error"},
-    {7, "Download incomplete \xe2\x80\x94 some files could not be finished"},
-    {9, "Disk space insufficient"},
-    {13, "File already exists and could not be overwritten"},
-    {24, "DNS resolution failed"},
+    {.code = 1, .message = "Unknown error occurred"},
+    {.code = 2, .message = "Connection timed out"},
+    {.code = 3, .message = "Resource not found (404)"},
+    {.code = 4, .message = "Max retries reached \xe2\x80\x94 check your internet connection"},
+    {.code = 5, .message = "Download speed too slow"},
+    {.code = 6, .message = "Network error"},
+    {.code = 7, .message = "Download incomplete \xe2\x80\x94 some files could not be finished"},
+    {.code = 9, .message = "Disk space insufficient"},
+    {.code = 13, .message = "File already exists and could not be overwritten"},
+    {.code = 24, .message = "DNS resolution failed"},
 };
 
 }  // namespace

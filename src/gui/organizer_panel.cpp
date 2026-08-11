@@ -224,18 +224,19 @@ void OrganizerPanel::updateHeaderForTab(int index) {
         const char* subtitle;
     };
     static constexpr TabMeta kTabs[] = {
-        {":/icons/icons/panel_organizer.svg",
-         "File Organizer",
-         "Organize files into categorized folders"},
-        {":/icons/icons/icons8-duplicate.svg",
-         "Duplicate Finder",
-         "Find duplicate files to reclaim disk space"},
-        {":/icons/icons/panel_search.svg",
-         "File Explorer",
-         "Browse mounted and supported non-Windows file systems"},
-        {":/icons/icons/panel_search.svg",
-         "Advanced Search",
-         "Search file contents, metadata, archives, and binary data across directory trees"},
+        {.icon = ":/icons/icons/panel_organizer.svg",
+         .title = "File Organizer",
+         .subtitle = "Organize files into categorized folders"},
+        {.icon = ":/icons/icons/icons8-duplicate.svg",
+         .title = "Duplicate Finder",
+         .subtitle = "Find duplicate files to reclaim disk space"},
+        {.icon = ":/icons/icons/panel_search.svg",
+         .title = "File Explorer",
+         .subtitle = "Browse mounted and supported non-Windows file systems"},
+        {.icon = ":/icons/icons/panel_search.svg",
+         .title = "Advanced Search",
+         .subtitle =
+             "Search file contents, metadata, archives, and binary data across directory trees"},
     };
     if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
         const auto& meta = kTabs[index];
@@ -1494,10 +1495,10 @@ void OrganizerPanel::onDedupSettingsClicked() {
     dialog.setMinimumWidth(sak::kDialogWidthSmall);
 
     auto* layout = new QFormLayout(&dialog);
-    const DedupSettingsDefaults defaults{m_dedup_min_size->value(),
-                                         m_dedup_recursive->isChecked(),
-                                         m_dedup_parallel_hashing->isChecked(),
-                                         m_dedup_thread_count->value()};
+    const DedupSettingsDefaults defaults{.minSizeKb = m_dedup_min_size->value(),
+                                         .recursive = m_dedup_recursive->isChecked(),
+                                         .parallelHashing = m_dedup_parallel_hashing->isChecked(),
+                                         .threadCount = m_dedup_thread_count->value()};
     const auto widgets = addDedupSettingsRows(layout, &dialog, defaults);
     addDialogButtonRow(layout, &dialog, tr("OK"), tr("Cancel"));
 

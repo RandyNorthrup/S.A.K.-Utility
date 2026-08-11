@@ -110,14 +110,14 @@ WORD mapRecordType(const QString& recordType) {
         WORD type;
     };
     static constexpr TypeMapping kTypes[] = {
-        {"AAAA", DNS_TYPE_AAAA},
-        {"MX", DNS_TYPE_MX},
-        {"CNAME", DNS_TYPE_CNAME},
-        {"TXT", DNS_TYPE_TEXT},
-        {"SOA", DNS_TYPE_SOA},
-        {"NS", DNS_TYPE_NS},
-        {"SRV", DNS_TYPE_SRV},
-        {"PTR", DNS_TYPE_PTR},
+        {.name = "AAAA", .type = DNS_TYPE_AAAA},
+        {.name = "MX", .type = DNS_TYPE_MX},
+        {.name = "CNAME", .type = DNS_TYPE_CNAME},
+        {.name = "TXT", .type = DNS_TYPE_TEXT},
+        {.name = "SOA", .type = DNS_TYPE_SOA},
+        {.name = "NS", .type = DNS_TYPE_NS},
+        {.name = "SRV", .type = DNS_TYPE_SRV},
+        {.name = "PTR", .type = DNS_TYPE_PTR},
     };
     for (const auto& entry : kTypes) {
         if (recordType == QLatin1String(entry.name)) {

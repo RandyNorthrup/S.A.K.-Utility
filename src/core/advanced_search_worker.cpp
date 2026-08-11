@@ -283,8 +283,11 @@ struct BoundedReadWindow {
     while (filled < max_bytes) {
         const qint64 window = std::min(kNetworkReadWindowBytes, max_bytes - filled);
         data.resize(filled + window);
-        const BoundedReadWindow request{
-            file.get(), event.get(), filled, static_cast<DWORD>(window), timeout_ms};
+        const BoundedReadWindow request{.file = file.get(),
+                                        .event = event.get(),
+                                        .offset = filled,
+                                        .bytes = static_cast<DWORD>(window),
+                                        .timeout_ms = timeout_ms};
         DWORD landed = 0;
         const auto step = readBoundedWindow(request, data.data() + filled, landed);
         if (step == AdvancedSearchWorker::NetworkReadStep::TimedOut) {
@@ -1224,86 +1227,86 @@ struct ExifTagEntry {
 
 static constexpr ExifTagEntry kExifTagNames[] = {
     // IFD0 / IFD1 tags
-    {0x010E, "ImageDescription"},
-    {0x010F, "CameraMake"},
-    {0x0110, "CameraModel"},
-    {0x0112, "Orientation"},
-    {0x011A, "XResolution"},
-    {0x011B, "YResolution"},
-    {0x0128, "ResolutionUnit"},
-    {0x0131, "Software"},
-    {0x0132, "DateTime"},
-    {0x013B, "Artist"},
-    {0x0213, "YCbCrPositioning"},
-    {0x8298, "Copyright"},
+    {.tag_id = 0x010E, .name = "ImageDescription"},
+    {.tag_id = 0x010F, .name = "CameraMake"},
+    {.tag_id = 0x0110, .name = "CameraModel"},
+    {.tag_id = 0x0112, .name = "Orientation"},
+    {.tag_id = 0x011A, .name = "XResolution"},
+    {.tag_id = 0x011B, .name = "YResolution"},
+    {.tag_id = 0x0128, .name = "ResolutionUnit"},
+    {.tag_id = 0x0131, .name = "Software"},
+    {.tag_id = 0x0132, .name = "DateTime"},
+    {.tag_id = 0x013B, .name = "Artist"},
+    {.tag_id = 0x0213, .name = "YCbCrPositioning"},
+    {.tag_id = 0x8298, .name = "Copyright"},
     // Sub-IFD pointers
-    {0x8769, "ExifOffset"},
-    {0x8825, "GPSInfo"},
+    {.tag_id = 0x8769, .name = "ExifOffset"},
+    {.tag_id = 0x8825, .name = "GPSInfo"},
     // Exif sub-IFD tags
-    {0x829A, "ExposureTime"},
-    {0x829D, "FNumber"},
-    {0x8827, "ISOSpeed"},
-    {0x9000, "ExifVersion"},
-    {0x9003, "DateTimeOriginal"},
-    {0x9004, "DateTimeDigitized"},
-    {0x9101, "ComponentsConfig"},
-    {0x9102, "CompressedBitsPerPixel"},
-    {0x9201, "ShutterSpeed"},
-    {0x9202, "Aperture"},
-    {0x9203, "Brightness"},
-    {0x9204, "ExposureBias"},
-    {0x9205, "MaxAperture"},
-    {0x9206, "SubjectDistance"},
-    {0x9207, "MeteringMode"},
-    {0x9208, "LightSource"},
-    {0x9209, "Flash"},
-    {0x920A, "FocalLength"},
-    {0x9286, "UserComment"},
-    {0x927C, "MakerNote"},
-    {0xA001, "ColorSpace"},
-    {0xA002, "PixelXDimension"},
-    {0xA003, "PixelYDimension"},
-    {0xA005, "InteropOffset"},
-    {0xA210, "FocalPlaneResUnit"},
-    {0xA217, "SensingMethod"},
-    {0xA300, "FileSource"},
-    {0xA301, "SceneType"},
-    {0xA401, "CustomRendered"},
-    {0xA402, "ExposureMode"},
-    {0xA403, "WhiteBalance"},
-    {0xA404, "DigitalZoomRatio"},
-    {0xA405, "FocalLengthIn35mm"},
-    {0xA406, "SceneCaptureType"},
-    {0xA407, "GainControl"},
-    {0xA408, "Contrast"},
-    {0xA409, "Saturation"},
-    {0xA40A, "Sharpness"},
-    {0xA420, "ImageUniqueID"},
-    {0xA432, "LensInfo"},
-    {0xA433, "LensMake"},
-    {0xA434, "LensModel"},
-    {0xA435, "LensSerialNumber"},
+    {.tag_id = 0x829A, .name = "ExposureTime"},
+    {.tag_id = 0x829D, .name = "FNumber"},
+    {.tag_id = 0x8827, .name = "ISOSpeed"},
+    {.tag_id = 0x9000, .name = "ExifVersion"},
+    {.tag_id = 0x9003, .name = "DateTimeOriginal"},
+    {.tag_id = 0x9004, .name = "DateTimeDigitized"},
+    {.tag_id = 0x9101, .name = "ComponentsConfig"},
+    {.tag_id = 0x9102, .name = "CompressedBitsPerPixel"},
+    {.tag_id = 0x9201, .name = "ShutterSpeed"},
+    {.tag_id = 0x9202, .name = "Aperture"},
+    {.tag_id = 0x9203, .name = "Brightness"},
+    {.tag_id = 0x9204, .name = "ExposureBias"},
+    {.tag_id = 0x9205, .name = "MaxAperture"},
+    {.tag_id = 0x9206, .name = "SubjectDistance"},
+    {.tag_id = 0x9207, .name = "MeteringMode"},
+    {.tag_id = 0x9208, .name = "LightSource"},
+    {.tag_id = 0x9209, .name = "Flash"},
+    {.tag_id = 0x920A, .name = "FocalLength"},
+    {.tag_id = 0x9286, .name = "UserComment"},
+    {.tag_id = 0x927C, .name = "MakerNote"},
+    {.tag_id = 0xA001, .name = "ColorSpace"},
+    {.tag_id = 0xA002, .name = "PixelXDimension"},
+    {.tag_id = 0xA003, .name = "PixelYDimension"},
+    {.tag_id = 0xA005, .name = "InteropOffset"},
+    {.tag_id = 0xA210, .name = "FocalPlaneResUnit"},
+    {.tag_id = 0xA217, .name = "SensingMethod"},
+    {.tag_id = 0xA300, .name = "FileSource"},
+    {.tag_id = 0xA301, .name = "SceneType"},
+    {.tag_id = 0xA401, .name = "CustomRendered"},
+    {.tag_id = 0xA402, .name = "ExposureMode"},
+    {.tag_id = 0xA403, .name = "WhiteBalance"},
+    {.tag_id = 0xA404, .name = "DigitalZoomRatio"},
+    {.tag_id = 0xA405, .name = "FocalLengthIn35mm"},
+    {.tag_id = 0xA406, .name = "SceneCaptureType"},
+    {.tag_id = 0xA407, .name = "GainControl"},
+    {.tag_id = 0xA408, .name = "Contrast"},
+    {.tag_id = 0xA409, .name = "Saturation"},
+    {.tag_id = 0xA40A, .name = "Sharpness"},
+    {.tag_id = 0xA420, .name = "ImageUniqueID"},
+    {.tag_id = 0xA432, .name = "LensInfo"},
+    {.tag_id = 0xA433, .name = "LensMake"},
+    {.tag_id = 0xA434, .name = "LensModel"},
+    {.tag_id = 0xA435, .name = "LensSerialNumber"},
     // GPS sub-IFD tags
-    {0x0000, "GPSVersionID"},
-    {0x0001, "GPSLatitudeRef"},
-    {0x0002, "GPSLatitude"},
-    {0x0003, "GPSLongitudeRef"},
-    {0x0004, "GPSLongitude"},
-    {0x0005, "GPSAltitudeRef"},
-    {0x0006, "GPSAltitude"},
-    {0x0007, "GPSTimeStamp"},
-    {0x0008, "GPSSatellites"},
-    {0x0009, "GPSStatus"},
-    {0x000A, "GPSMeasureMode"},
-    {0x000B, "GPSDOP"},
-    {0x000C, "GPSSpeedRef"},
-    {0x000D, "GPSSpeed"},
-    {0x000E, "GPSTrackRef"},
-    {0x000F, "GPSTrack"},
-    {0x0010, "GPSImgDirRef"},
-    {0x0011, "GPSImgDirection"},
-    {0x0012, "GPSMapDatum"},
-    {0x001D, "GPSDateStamp"},
+    {.tag_id = 0x0000, .name = "GPSVersionID"},
+    {.tag_id = 0x0001, .name = "GPSLatitudeRef"},
+    {.tag_id = 0x0002, .name = "GPSLatitude"},
+    {.tag_id = 0x0003, .name = "GPSLongitudeRef"},
+    {.tag_id = 0x0004, .name = "GPSLongitude"},
+    {.tag_id = 0x0005, .name = "GPSAltitudeRef"},
+    {.tag_id = 0x0006, .name = "GPSAltitude"},
+    {.tag_id = 0x0007, .name = "GPSTimeStamp"},
+    {.tag_id = 0x0008, .name = "GPSSatellites"},
+    {.tag_id = 0x0009, .name = "GPSStatus"},
+    {.tag_id = 0x000A, .name = "GPSMeasureMode"},
+    {.tag_id = 0x000B, .name = "GPSDOP"},
+    {.tag_id = 0x000C, .name = "GPSSpeedRef"},
+    {.tag_id = 0x000D, .name = "GPSSpeed"},
+    {.tag_id = 0x000E, .name = "GPSTrackRef"},
+    {.tag_id = 0x000F, .name = "GPSTrack"},
+    {.tag_id = 0x0010, .name = "GPSImgDirRef"},
+    {.tag_id = 0x0011, .name = "GPSImgDirection"},
+    {.tag_id = 0x0012, .name = "GPSMapDatum"},
+    {.tag_id = 0x001D, .name = "GPSDateStamp"},
 };
 
 /// @brief EXIF tag ID -> human-readable name mapping
@@ -1323,14 +1326,14 @@ int exifTypeUnitSize(uint16_t type) {
         int size;
     };
     static constexpr TypeSize kSizes[] = {
-        {1, 1},
-        {2, 1},
-        {3, 2},
-        {4, 4},
-        {5, 8},
-        {7, 1},
-        {9, 4},
-        {10, 8},
+        {.type = 1, .size = 1},
+        {.type = 2, .size = 1},
+        {.type = 3, .size = 2},
+        {.type = 4, .size = 4},
+        {.type = 5, .size = 8},
+        {.type = 7, .size = 1},
+        {.type = 9, .size = 4},
+        {.type = 10, .size = 8},
     };
     const auto* it = std::find_if(std::begin(kSizes), std::end(kSizes), [type](const auto& entry) {
         return entry.type == type;
@@ -1829,7 +1832,10 @@ QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(const QString& fi
             return matches;
         }
 
-        const MetadataMatchContext ctx{filePath, it.key(), it.value(), field_index};
+        const MetadataMatchContext ctx{.file_path = filePath,
+                                       .key = it.key(),
+                                       .value = it.value(),
+                                       .field_index = field_index};
         if (collectFieldMatches(ctx, regex, m_config.max_results, matches)) {
             return matches;
         }
@@ -2313,7 +2319,8 @@ QVector<SearchMatch> AdvancedSearchWorker::collectMetadataMatches(
         }
 
         const QString& value = it.value();
-        const MetadataMatchContext ctx{file_path, it.key(), value, fieldIndex};
+        const MetadataMatchContext ctx{
+            .file_path = file_path, .key = it.key(), .value = value, .field_index = fieldIndex};
 
         if (collectFieldMatches(ctx, regex, m_config.max_results, matches)) {
             return matches;

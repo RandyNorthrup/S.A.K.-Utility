@@ -331,7 +331,7 @@ private:
         painter.drawText(text_rect, Qt::AlignVCenter, elided);
 
         // Store hit rect for click detection
-        m_event_rects.append({bar_rect, evt->node_id});
+        m_event_rects.append({.rect = bar_rect, .node_id = evt->node_id});
     }
 
     static QString buildBarLabel(const CalendarEvent* evt) {
@@ -659,7 +659,7 @@ private:
             painter.fillRect(
                 QRect(bar.left(), bar.top(), email::kCalendarBarBorderWidth, bar.height()), border);
             drawBarText(painter, bar, evt);
-            m_event_rects.append({bar, evt->node_id});
+            m_event_rects.append({.rect = bar, .node_id = evt->node_id});
             break;  // Only one all-day bar per column in header
         }
     }
@@ -716,7 +716,7 @@ private:
         painter.fillRect(QRect(bar.left(), bar.top(), email::kCalendarBarBorderWidth, bar.height()),
                          border);
         drawBarText(painter, bar, evt);
-        m_event_rects.append({bar, evt->node_id});
+        m_event_rects.append({.rect = bar, .node_id = evt->node_id});
     }
 
     void drawBarText(QPainter& painter, const QRect& bar, const CalendarEvent* evt) {

@@ -44,7 +44,7 @@ void flattenFolderTree(const sak::PstFolderTree& tree,
                                         ? folder.display_name
                                         : parent_path + QLatin1Char('/') + folder.display_name;
         if (scope_id == 0 || scope_id == folder.node_id) {
-            result.append({folder, folder_path});
+            result.append({.folder = folder, .path = folder_path});
         }
         flattenFolderTree(folder.children, folder_path, scope_id, result);
     }
@@ -387,10 +387,10 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstSubject
         !matchesQuery(item.subject, criteria.query_text, criteria.case_sensitive)) {
         return std::nullopt;
     }
-    return MatchResult{QStringLiteral("subject"),
-                       extractContextSnippet(item.subject,
-                                             criteria.query_text,
-                                             sak::email::kSearchContextSnippetChars)};
+    return MatchResult{.field = QStringLiteral("subject"),
+                       .context = extractContextSnippet(item.subject,
+                                                        criteria.query_text,
+                                                        sak::email::kSearchContextSnippetChars)};
 }
 
 std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstSender(
@@ -402,9 +402,9 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstSender(
         !matchesQuery(item.sender_email, criteria.query_text, criteria.case_sensitive)) {
         return std::nullopt;
     }
-    return MatchResult{QStringLiteral("sender"),
-                       item.sender_name + QStringLiteral(" <") + item.sender_email +
-                           QStringLiteral(">")};
+    return MatchResult{.field = QStringLiteral("sender"),
+                       .context = item.sender_name + QStringLiteral(" <") + item.sender_email +
+                                  QStringLiteral(">")};
 }
 
 std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemRecipients(
@@ -415,7 +415,7 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemRec
     const QStringList fields = {detail.display_to, detail.display_cc, detail.display_bcc};
     for (const QString& field : fields) {
         if (!field.isEmpty() && matchesQuery(field, criteria.query_text, criteria.case_sensitive)) {
-            return MatchResult{QStringLiteral("recipient"), field};
+            return MatchResult{.field = QStringLiteral("recipient"), .context = field};
         }
     }
     return std::nullopt;
@@ -441,7 +441,8 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemMap
         if (criteria.mapi_property_value.isEmpty() || matchesQuery(prop.display_value,
                                                                    criteria.mapi_property_value,
                                                                    criteria.case_sensitive)) {
-            return MatchResult{QStringLiteral("mapi_property"), prop.display_value};
+            return MatchResult{.field = QStringLiteral("mapi_property"),
+                               .context = prop.display_value};
         }
     }
     return std::nullopt;
@@ -456,9 +457,9 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemBod
     if (!matchesQuery(body, criteria.query_text, criteria.case_sensitive)) {
         return std::nullopt;
     }
-    return MatchResult{
-        QStringLiteral("body"),
-        extractContextSnippet(body, criteria.query_text, sak::email::kSearchContextSnippetChars)};
+    return MatchResult{.field = QStringLiteral("body"),
+                       .context = extractContextSnippet(
+                           body, criteria.query_text, sak::email::kSearchContextSnippetChars)};
 }
 
 std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemAttachments(
@@ -469,7 +470,7 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchPstItemAtt
     for (const auto& att : detail.attachments) {
         const QString& att_name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
         if (matchesQuery(att_name, criteria.query_text, criteria.case_sensitive)) {
-            return MatchResult{QStringLiteral("attachment"), att_name};
+            return MatchResult{.field = QStringLiteral("attachment"), .context = att_name};
         }
     }
     return std::nullopt;
@@ -496,15 +497,16 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxItem(
     MboxParser* parser) const {
     if (criteria.search_subject &&
         matchesQuery(msg.subject, criteria.query_text, criteria.case_sensitive)) {
-        return MatchResult{QStringLiteral("subject"),
-                           extractContextSnippet(msg.subject,
-                                                 criteria.query_text,
-                                                 sak::email::kSearchContextSnippetChars)};
+        return MatchResult{.field = QStringLiteral("subject"),
+                           .context =
+                               extractContextSnippet(msg.subject,
+                                                     criteria.query_text,
+                                                     sak::email::kSearchContextSnippetChars)};
     }
 
     if (criteria.search_sender &&
         matchesQuery(msg.from, criteria.query_text, criteria.case_sensitive)) {
-        return MatchResult{QStringLiteral("sender"), msg.from};
+        return MatchResult{.field = QStringLiteral("sender"), .context = msg.from};
     }
 
     // Body/recipient/attachment-name all live in the message detail: load it ONCE and
@@ -535,9 +537,9 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxBody(
     if (!matchesQuery(body, criteria.query_text, criteria.case_sensitive)) {
         return std::nullopt;
     }
-    return MatchResult{
-        QStringLiteral("body"),
-        extractContextSnippet(body, criteria.query_text, sak::email::kSearchContextSnippetChars)};
+    return MatchResult{.field = QStringLiteral("body"),
+                       .context = extractContextSnippet(
+                           body, criteria.query_text, sak::email::kSearchContextSnippetChars)};
 }
 
 std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxRecipients(
@@ -548,7 +550,7 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxRecipi
     const QStringList fields = {detail.to, detail.cc, detail.bcc};
     for (const QString& field : fields) {
         if (!field.isEmpty() && matchesQuery(field, criteria.query_text, criteria.case_sensitive)) {
-            return MatchResult{QStringLiteral("recipient"), field};
+            return MatchResult{.field = QStringLiteral("recipient"), .context = field};
         }
     }
     return std::nullopt;
@@ -562,7 +564,7 @@ std::optional<EmailSearchWorker::MatchResult> EmailSearchWorker::matchMboxAttach
     for (const auto& att : detail.attachments) {
         const QString& att_name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
         if (matchesQuery(att_name, criteria.query_text, criteria.case_sensitive)) {
-            return MatchResult{QStringLiteral("attachment"), att_name};
+            return MatchResult{.field = QStringLiteral("attachment"), .context = att_name};
         }
     }
     return std::nullopt;

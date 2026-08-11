@@ -460,8 +460,12 @@ bool ExecutionBroker::startPowerShell(const AiCommandRequest& request, const QSt
     QStringList args;
     args << QStringLiteral("-NoProfile") << QStringLiteral("-ExecutionPolicy")
          << QStringLiteral("Bypass") << QStringLiteral("-Command") << request.command;
-    return launchProcess(
-        {powershell, args, request.timeout_seconds, request.max_output_bytes, command_id, false});
+    return launchProcess({.program = powershell,
+                          .arguments = args,
+                          .timeout_seconds = request.timeout_seconds,
+                          .max_output_bytes = request.max_output_bytes,
+                          .command_id = command_id,
+                          .already_running_check = false});
 }
 
 bool ExecutionBroker::startCmd(const AiCommandRequest& request, const QString& command_id) {
@@ -506,8 +510,12 @@ bool ExecutionBroker::startCmd(const AiCommandRequest& request, const QString& c
     }
     QStringList args;
     args << QStringLiteral("/c") << request.command;
-    return launchProcess(
-        {shell, args, request.timeout_seconds, request.max_output_bytes, command_id, false});
+    return launchProcess({.program = shell,
+                          .arguments = args,
+                          .timeout_seconds = request.timeout_seconds,
+                          .max_output_bytes = request.max_output_bytes,
+                          .command_id = command_id,
+                          .already_running_check = false});
 }
 
 bool ExecutionBroker::startProcess(const AiCommandRequest& request, const QString& command_id) {
@@ -556,12 +564,12 @@ bool ExecutionBroker::startProcess(const AiCommandRequest& request, const QStrin
         }
         program = resolved;
     }
-    return launchProcess({program,
-                          request.arguments,
-                          request.timeout_seconds,
-                          request.max_output_bytes,
-                          command_id,
-                          false});
+    return launchProcess({.program = program,
+                          .arguments = request.arguments,
+                          .timeout_seconds = request.timeout_seconds,
+                          .max_output_bytes = request.max_output_bytes,
+                          .command_id = command_id,
+                          .already_running_check = false});
 }
 
 namespace {

@@ -612,7 +612,8 @@ void EmailAttachmentsBrowserDialog::saveOneAttachment(const AttachmentEntry& ent
     if (dir.isEmpty()) {
         return;
     }
-    const QVector<AttachmentRef> refs{AttachmentRef{entry.message_node_id, entry.attachment_index}};
+    const QVector<AttachmentRef> refs{
+        AttachmentRef{.message_id = entry.message_node_id, .index = entry.attachment_index}};
     startBatch(dir, refs);
 }
 
@@ -632,7 +633,8 @@ void EmailAttachmentsBrowserDialog::onSaveSelectedClicked() {
         if (!m_checked_attachment_keys.contains(attachmentKey(entry))) {
             continue;
         }
-        refs.append(AttachmentRef{entry.message_node_id, entry.attachment_index});
+        refs.append(
+            AttachmentRef{.message_id = entry.message_node_id, .index = entry.attachment_index});
     }
     if (refs.isEmpty()) {
         return;
@@ -679,7 +681,8 @@ bool EmailAttachmentsBrowserDialog::collectVisibleAttachmentRefs(QVector<Attachm
             return false;
         }
         const auto& entry = m_all_attachments[att_idx];
-        refs->append(AttachmentRef{entry.message_node_id, entry.attachment_index});
+        refs->append(
+            AttachmentRef{.message_id = entry.message_node_id, .index = entry.attachment_index});
     }
     return true;
 }
@@ -691,7 +694,7 @@ void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t message_id
     // Record only what this batch asked for. A stray arrival -- a leftover from a
     // previous batch, or one requested by another view -- would otherwise be
     // written into one of this batch's slots and counted as that slot's save.
-    const AttachmentRef ref{message_id, index};
+    const AttachmentRef ref{.message_id = message_id, .index = index};
     if (!m_batch_save.expects(ref)) {
         return;
     }
@@ -799,9 +802,9 @@ struct MimePrefix {
 
 static QString classifyByMime(const QString& lower_mime) {
     static const MimePrefix prefixes[] = {
-        {"image/", &kFilterImages},
-        {"audio/", &kFilterAudio},
-        {"video/", &kFilterAudio},
+        {.prefix = "image/", .category = &kFilterImages},
+        {.prefix = "audio/", .category = &kFilterAudio},
+        {.prefix = "video/", .category = &kFilterAudio},
     };
     for (const auto& [prefix, category] : prefixes) {
         if (lower_mime.startsWith(QLatin1String(prefix))) {

@@ -814,11 +814,13 @@ validation_result input_validator::validate_thread_count(std::size_t requested_t
 // ============================================
 
 validation_result input_validator::success() noexcept {
-    return validation_result{true, error_code::success, ""};
+    return validation_result{.is_valid = true, .error = error_code::success, .error_message = ""};
 }
 
 validation_result input_validator::failure(error_code err, std::string_view message) {
-    return validation_result{false, err, std::string(message)};
+    return validation_result{.is_valid = false,
+                             .error = err,
+                             .error_message = std::string(message)};
 }
 
 // ============================================

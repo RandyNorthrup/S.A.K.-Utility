@@ -41,14 +41,21 @@ WORD namedKeyVk(const QString& low) {
         const char* name;
         WORD vk;
     } kKeys[] = {
-        {"enter", VK_RETURN},  {"return", VK_RETURN}, {"tab", VK_TAB},        {"escape", VK_ESCAPE},
-        {"esc", VK_ESCAPE},    {"space", VK_SPACE},   {"backspace", VK_BACK}, {"delete", VK_DELETE},
-        {"del", VK_DELETE},    {"up", VK_UP},         {"down", VK_DOWN},      {"left", VK_LEFT},
-        {"right", VK_RIGHT},   {"home", VK_HOME},     {"end", VK_END},        {"pageup", VK_PRIOR},
-        {"pagedown", VK_NEXT}, {"insert", VK_INSERT}, {"f1", VK_F1},          {"f2", VK_F2},
-        {"f3", VK_F3},         {"f4", VK_F4},         {"f5", VK_F5},          {"f6", VK_F6},
-        {"f7", VK_F7},         {"f8", VK_F8},         {"f9", VK_F9},          {"f10", VK_F10},
-        {"f11", VK_F11},       {"f12", VK_F12},
+        {.name = "enter", .vk = VK_RETURN},   {.name = "return", .vk = VK_RETURN},
+        {.name = "tab", .vk = VK_TAB},        {.name = "escape", .vk = VK_ESCAPE},
+        {.name = "esc", .vk = VK_ESCAPE},     {.name = "space", .vk = VK_SPACE},
+        {.name = "backspace", .vk = VK_BACK}, {.name = "delete", .vk = VK_DELETE},
+        {.name = "del", .vk = VK_DELETE},     {.name = "up", .vk = VK_UP},
+        {.name = "down", .vk = VK_DOWN},      {.name = "left", .vk = VK_LEFT},
+        {.name = "right", .vk = VK_RIGHT},    {.name = "home", .vk = VK_HOME},
+        {.name = "end", .vk = VK_END},        {.name = "pageup", .vk = VK_PRIOR},
+        {.name = "pagedown", .vk = VK_NEXT},  {.name = "insert", .vk = VK_INSERT},
+        {.name = "f1", .vk = VK_F1},          {.name = "f2", .vk = VK_F2},
+        {.name = "f3", .vk = VK_F3},          {.name = "f4", .vk = VK_F4},
+        {.name = "f5", .vk = VK_F5},          {.name = "f6", .vk = VK_F6},
+        {.name = "f7", .vk = VK_F7},          {.name = "f8", .vk = VK_F8},
+        {.name = "f9", .vk = VK_F9},          {.name = "f10", .vk = VK_F10},
+        {.name = "f11", .vk = VK_F11},        {.name = "f12", .vk = VK_F12},
     };
     for (const auto& key : kKeys) {
         if (low == QLatin1String(key.name)) {

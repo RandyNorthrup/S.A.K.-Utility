@@ -465,22 +465,26 @@ QString partitionFileSystemName(const PartitionInfoEx* partition) {
 PartitionActionAvailability fileSystemActionAvailability(const QString& fileSystem,
                                                          const PartitionActionPolicy& policy) {
     if (fileSystem.isEmpty()) {
-        return {false, QObject::tr("Selected partition does not report a file system.")};
+        return {.enabled = false,
+                .reason = QObject::tr("Selected partition does not report a file system.")};
     }
 
     const auto capability = PartitionFileSystemRegistry::capabilityFor(fileSystem);
     if (policy.windows_native_filesystem && capability.non_native) {
-        return {false,
-                QObject::tr("Use the Non-Windows filesystem actions for %1; Windows-native "
-                            "file-system action is disabled.")
-                    .arg(fileSystem)};
+        return {.enabled = false,
+                .reason = QObject::tr(
+                              "Use the Non-Windows filesystem actions for %1; Windows-native "
+                              "file-system action is disabled.")
+                              .arg(fileSystem)};
     }
 
     if (policy.resize_filesystem && capability.non_native && !isExtFilesystem(fileSystem)) {
-        return {false,
-                QObject::tr("%1 resize is not supported yet. Non-Windows resize currently supports "
-                            "ext2/ext3/ext4 only.")
-                    .arg(fileSystem)};
+        return {.enabled = false,
+                .reason =
+                    QObject::tr(
+                        "%1 resize is not supported yet. Non-Windows resize currently supports "
+                        "ext2/ext3/ext4 only.")
+                        .arg(fileSystem)};
     }
 
     return {};
@@ -489,7 +493,8 @@ PartitionActionAvailability fileSystemActionAvailability(const QString& fileSyst
 PartitionActionAvailability partitionActionAvailability(const PartitionInfoEx* partition,
                                                         const PartitionActionPolicy& policy) {
     if (policy.requires_drive_letter && !partitionHasDriveLetter(partition)) {
-        return {false, QObject::tr("Selected partition has no mounted drive letter.")};
+        return {.enabled = false,
+                .reason = QObject::tr("Selected partition has no mounted drive letter.")};
     }
 
     if (!policy.windows_native_filesystem && !policy.resize_filesystem) {
@@ -503,16 +508,19 @@ PartitionActionAvailability buttonActionAvailability(const QAbstractButton* butt
                                                      const std::optional<PartitionTarget>& target,
                                                      const PartitionInfoEx* partition) {
     if ((button == nullptr) || !target) {
-        return {false, QObject::tr("Select a disk, partition, or unallocated region first.")};
+        return {.enabled = false,
+                .reason = QObject::tr("Select a disk, partition, or unallocated region first.")};
     }
     if (!buttonAllowsTarget(button, target)) {
-        return {false, QObject::tr("Selected target does not support this action.")};
+        return {.enabled = false,
+                .reason = QObject::tr("Selected target does not support this action.")};
     }
     return partitionActionAvailability(
         partition,
-        {button->property(kActionRequiresDriveLetterProperty).toBool(),
-         button->property(kActionWindowsNativeFilesystemProperty).toBool(),
-         button->property(kActionResizeFilesystemProperty).toBool()});
+        {.requires_drive_letter = button->property(kActionRequiresDriveLetterProperty).toBool(),
+         .windows_native_filesystem =
+             button->property(kActionWindowsNativeFilesystemProperty).toBool(),
+         .resize_filesystem = button->property(kActionResizeFilesystemProperty).toBool()});
 }
 
 ContextActionSpec partitionContextActionSpec(const QString& text,
@@ -520,7 +528,10 @@ ContextActionSpec partitionContextActionSpec(const QString& text,
                                              const PartitionInfoEx* partition,
                                              const PartitionActionPolicy& policy = {}) {
     const auto availability = partitionActionAvailability(partition, policy);
-    return {text, iconPath, availability.enabled, availability.reason};
+    return {.text = text,
+            .icon_path = iconPath,
+            .enabled = availability.enabled,
+            .disabled_reason = availability.reason};
 }
 
 struct NonNativeFilesystemCheckState {
@@ -898,7 +909,7 @@ PartitionActionAvailability changeLabelAvailability(const PartitionInfoEx* parti
     }
     const auto apfs = apfsVolumeLabelMutationState(partition);
     if (apfs.enabled) {
-        return {true, apfs.reason};
+        return {.enabled = true, .reason = apfs.reason};
     }
     // Neither path applies; surface the Windows-native reason as the default explanation.
     return windowsAvailability;
@@ -1916,8 +1927,10 @@ private:
             segments.append(partitionSegment(partition));
         }
         for (const auto& region : m_source_disk->unallocated_regions) {
-            segments.append(
-                {tr("Unallocated"), region.size_bytes, palette().color(QPalette::Midlight), 0});
+            segments.append({.label = tr("Unallocated"),
+                             .bytes = region.size_bytes,
+                             .color = palette().color(QPalette::Midlight),
+                             .used_percent = 0});
         }
         return segments;
     }
@@ -1926,10 +1939,10 @@ private:
         const uint64_t sourceBytes = sourceTotalBytes();
         const uint64_t targetBytes = targetTotalBytes();
         if (targetBytes != 0 && sourceBytes > targetBytes) {
-            return {{tr("Target too small"),
-                     targetBytes,
-                     QColor(QString::fromLatin1(ui::kColorError)),
-                     0}};
+            return {{.label = tr("Target too small"),
+                     .bytes = targetBytes,
+                     .color = QColor(QString::fromLatin1(ui::kColorError)),
+                     .used_percent = 0}};
         }
         return m_layout_mode.startsWith(QStringLiteral("Fit")) ? fittedTargetSegments()
                                                                : keptTargetSegments();
@@ -1950,10 +1963,10 @@ private:
         const uint64_t sourceBytes = sourceTotalBytes();
         const uint64_t targetBytes = targetTotalBytes();
         if (targetBytes > sourceBytes) {
-            segments.append({tr("Unallocated"),
-                             targetBytes - sourceBytes,
-                             palette().color(QPalette::Midlight),
-                             0});
+            segments.append({.label = tr("Unallocated"),
+                             .bytes = targetBytes - sourceBytes,
+                             .color = palette().color(QPalette::Midlight),
+                             .used_percent = 0});
         }
         return segments;
     }
@@ -1965,7 +1978,10 @@ private:
         const QColor color = partition.is_efi || partition.is_msr || partition.is_recovery
                                  ? QColor(QString::fromLatin1(ui::kColorPrimary))
                                  : QColor(QString::fromLatin1(ui::kColorSuccess));
-        return {label, partition.size_bytes, color, partitionUsedPercent(partition)};
+        return {.label = label,
+                .bytes = partition.size_bytes,
+                .color = color,
+                .used_percent = partitionUsedPercent(partition)};
     }
 
     [[nodiscard]] static int partitionUsedPercent(const PartitionInfoEx& partition) {
@@ -2156,24 +2172,24 @@ private:
             const QString label = partition.volume && !partition.volume->drive_letter.isEmpty()
                                       ? tr("%1:").arg(partition.volume->drive_letter)
                                       : segmentPartitionLabel(partition);
-            segments.append({label,
-                             partition.offset_bytes,
-                             partition.size_bytes,
-                             segmentPartitionColor(partition),
-                             segmentUsedPercent(partition),
-                             static_cast<int>(partition.partition_number),
-                             false,
-                             false});
+            segments.append({.label = label,
+                             .offset = partition.offset_bytes,
+                             .bytes = partition.size_bytes,
+                             .color = segmentPartitionColor(partition),
+                             .used_percent = segmentUsedPercent(partition),
+                             .partition_number = static_cast<int>(partition.partition_number),
+                             .unallocated = false,
+                             .changed = false});
         }
         for (const auto& region : disk.unallocated_regions) {
-            segments.append({tr("Free"),
-                             region.offset_bytes,
-                             region.size_bytes,
-                             segmentUnallocatedColor(),
-                             0,
-                             0,
-                             true,
-                             false});
+            segments.append({.label = tr("Free"),
+                             .offset = region.offset_bytes,
+                             .bytes = region.size_bytes,
+                             .color = segmentUnallocatedColor(),
+                             .used_percent = 0,
+                             .partition_number = 0,
+                             .unallocated = true,
+                             .changed = false});
         }
         sortSegments(&segments);
         return segments;
@@ -2333,14 +2349,14 @@ private:
             if (targetSize > previousSize) {
                 consumeFreeSpan(segments, segment.offset + previousSize, targetSize - previousSize);
             } else if (targetSize < previousSize) {
-                segments->append({tr("Free"),
-                                  segment.offset + targetSize,
-                                  previousSize - targetSize,
-                                  segmentUnallocatedColor(),
-                                  0,
-                                  0,
-                                  true,
-                                  true});
+                segments->append({.label = tr("Free"),
+                                  .offset = segment.offset + targetSize,
+                                  .bytes = previousSize - targetSize,
+                                  .color = segmentUnallocatedColor(),
+                                  .used_percent = 0,
+                                  .partition_number = 0,
+                                  .unallocated = true,
+                                  .changed = true});
             }
             sortSegments(segments);
             return;
@@ -2382,24 +2398,24 @@ private:
         const uint64_t oldEnd = saturatingAdd(oldOffset, oldSize);
         const uint64_t targetEnd = saturatingAdd(targetOffset, targetSize);
         if (oldOffset < std::min(targetOffset, oldEnd)) {
-            segments->append({tr("Free"),
-                              oldOffset,
-                              std::min(targetOffset, oldEnd) - oldOffset,
-                              segmentUnallocatedColor(),
-                              0,
-                              0,
-                              true,
-                              true});
+            segments->append({.label = tr("Free"),
+                              .offset = oldOffset,
+                              .bytes = std::min(targetOffset, oldEnd) - oldOffset,
+                              .color = segmentUnallocatedColor(),
+                              .used_percent = 0,
+                              .partition_number = 0,
+                              .unallocated = true,
+                              .changed = true});
         }
         if (targetEnd < oldEnd) {
-            segments->append({tr("Free"),
-                              targetEnd,
-                              oldEnd - targetEnd,
-                              segmentUnallocatedColor(),
-                              0,
-                              0,
-                              true,
-                              true});
+            segments->append({.label = tr("Free"),
+                              .offset = targetEnd,
+                              .bytes = oldEnd - targetEnd,
+                              .color = segmentUnallocatedColor(),
+                              .used_percent = 0,
+                              .partition_number = 0,
+                              .unallocated = true,
+                              .changed = true});
         }
         sortSegments(segments);
     }
@@ -2444,14 +2460,14 @@ private:
             segment.bytes = firstSize;
             segment.label = tr("Split A");
             segment.changed = true;
-            const ApplyDiffSegment second{tr("Split B"),
-                                          segment.offset + firstSize,
-                                          operation.target.size_bytes - firstSize,
-                                          QColor(QString::fromLatin1(ui::kColorSuccess)),
-                                          0,
-                                          0,
-                                          false,
-                                          true};
+            const ApplyDiffSegment second{.label = tr("Split B"),
+                                          .offset = segment.offset + firstSize,
+                                          .bytes = operation.target.size_bytes - firstSize,
+                                          .color = QColor(QString::fromLatin1(ui::kColorSuccess)),
+                                          .used_percent = 0,
+                                          .partition_number = 0,
+                                          .unallocated = false,
+                                          .changed = true};
             (*segments)[i] = segment;
             segments->insert(i + 1, second);
             return;
@@ -2474,24 +2490,24 @@ private:
 
             QVector<ApplyDiffSegment> replacement;
             if (segment.offset < offset) {
-                replacement.append({tr("Free"),
-                                    segment.offset,
-                                    offset - segment.offset,
-                                    segmentUnallocatedColor(),
-                                    0,
-                                    0,
-                                    true,
-                                    segment.changed});
+                replacement.append({.label = tr("Free"),
+                                    .offset = segment.offset,
+                                    .bytes = offset - segment.offset,
+                                    .color = segmentUnallocatedColor(),
+                                    .used_percent = 0,
+                                    .partition_number = 0,
+                                    .unallocated = true,
+                                    .changed = segment.changed});
             }
             if (end < segmentEnd) {
-                replacement.append({tr("Free"),
-                                    end,
-                                    segmentEnd - end,
-                                    segmentUnallocatedColor(),
-                                    0,
-                                    0,
-                                    true,
-                                    segment.changed});
+                replacement.append({.label = tr("Free"),
+                                    .offset = end,
+                                    .bytes = segmentEnd - end,
+                                    .color = segmentUnallocatedColor(),
+                                    .used_percent = 0,
+                                    .partition_number = 0,
+                                    .unallocated = true,
+                                    .changed = segment.changed});
             }
             segments->removeAt(i);
             for (qsizetype j = replacement.size() - 1; j >= 0; --j) {
@@ -2535,26 +2551,33 @@ private:
             }
             QVector<ApplyDiffSegment> replacement;
             if (offset > segment.offset) {
-                replacement.append({tr("Free"),
-                                    segment.offset,
-                                    offset - segment.offset,
-                                    segmentUnallocatedColor(),
-                                    0,
-                                    0,
-                                    true,
-                                    false});
+                replacement.append({.label = tr("Free"),
+                                    .offset = segment.offset,
+                                    .bytes = offset - segment.offset,
+                                    .color = segmentUnallocatedColor(),
+                                    .used_percent = 0,
+                                    .partition_number = 0,
+                                    .unallocated = true,
+                                    .changed = false});
             }
-            replacement.append({label, offset, size, color, 0, 0, false, true});
+            replacement.append({.label = label,
+                                .offset = offset,
+                                .bytes = size,
+                                .color = color,
+                                .used_percent = 0,
+                                .partition_number = 0,
+                                .unallocated = false,
+                                .changed = true});
             const uint64_t newEnd = offset + size;
             if (newEnd < segmentEnd) {
-                replacement.append({tr("Free"),
-                                    newEnd,
-                                    segmentEnd - newEnd,
-                                    segmentUnallocatedColor(),
-                                    0,
-                                    0,
-                                    true,
-                                    false});
+                replacement.append({.label = tr("Free"),
+                                    .offset = newEnd,
+                                    .bytes = segmentEnd - newEnd,
+                                    .color = segmentUnallocatedColor(),
+                                    .used_percent = 0,
+                                    .partition_number = 0,
+                                    .unallocated = true,
+                                    .changed = false});
             }
             segments->removeAt(i);
             for (qsizetype j = replacement.size() - 1; j >= 0; --j) {
@@ -2591,14 +2614,14 @@ private:
                 (*segments)[i] = segment;
                 return;
             }
-            const ApplyDiffSegment after{tr("Free"),
-                                         offset + size,
-                                         segmentEnd - (offset + size),
-                                         segmentUnallocatedColor(),
-                                         0,
-                                         0,
-                                         true,
-                                         false};
+            const ApplyDiffSegment after{.label = tr("Free"),
+                                         .offset = offset + size,
+                                         .bytes = segmentEnd - (offset + size),
+                                         .color = segmentUnallocatedColor(),
+                                         .used_percent = 0,
+                                         .partition_number = 0,
+                                         .unallocated = true,
+                                         .changed = false};
             segment.bytes = offset - segment.offset;
             (*segments)[i] = segment;
             segments->insert(i + 1, after);
@@ -2627,15 +2650,15 @@ private:
                                                    const PartitionDiskInfo& disk) const {
         const bool leavesFreeSpace = operation.type == PartitionOperationType::InitializeDisk ||
                                      operation.type == PartitionOperationType::DeleteAllPartitions;
-        return {toDisplayString(operation.type),
-                0,
-                disk.size_bytes,
-                leavesFreeSpace ? segmentUnallocatedColor()
-                                : QColor(QString::fromLatin1(ui::kColorWarning)),
-                0,
-                0,
-                leavesFreeSpace,
-                true};
+        return {.label = toDisplayString(operation.type),
+                .offset = 0,
+                .bytes = disk.size_bytes,
+                .color = leavesFreeSpace ? segmentUnallocatedColor()
+                                         : QColor(QString::fromLatin1(ui::kColorWarning)),
+                .used_percent = 0,
+                .partition_number = 0,
+                .unallocated = leavesFreeSpace,
+                .changed = true};
     }
 
     [[nodiscard]] static const PartitionInfoEx* findPartition(const PartitionDiskInfo& disk,
@@ -3173,13 +3196,13 @@ std::optional<NonNativeFilesystemCheckRequest> showNonNativeCheckRequestDialog(
         mode->setToolTip(state.repair_reason);
     }
 
-    const NonNativeCheckDialogControls controls{&dialog,
-                                                mode,
-                                                targetPath,
-                                                repairConfirm,
-                                                state.target_path,
-                                                writeTarget,
-                                                state.file_system};
+    const NonNativeCheckDialogControls controls{.dialog = &dialog,
+                                                .mode = mode,
+                                                .target_path = targetPath,
+                                                .repair_confirm = repairConfirm,
+                                                .read_only_target = state.target_path,
+                                                .write_target = writeTarget,
+                                                .file_system = state.file_system};
     auto updatePreview = [&controls]() {
         syncNonNativeCheckDialog(controls);
     };
@@ -3191,9 +3214,9 @@ std::optional<NonNativeFilesystemCheckRequest> showNonNativeCheckRequestDialog(
     if (dialog.exec() != QDialog::Accepted) {
         return std::nullopt;
     }
-    return NonNativeFilesystemCheckRequest{mode->currentData().toString(),
-                                           targetPath->text().trimmed(),
-                                           repairConfirm->isChecked()};
+    return NonNativeFilesystemCheckRequest{.mode = mode->currentData().toString(),
+                                           .target_path = targetPath->text().trimmed(),
+                                           .destructive_confirmed = repairConfirm->isChecked()};
 }
 
 struct CreatePartitionWidgets {
@@ -3553,14 +3576,15 @@ void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
                                  kMegabyteBytes;
     const uint64_t usedBytes = beforeBytes + requestedBytes;
     const uint64_t afterBytes = free_bytes > usedBytes ? free_bytes - usedBytes : 0;
-    widgets.size_preview->setRows({{QObject::tr("Free space"),
-                                    free_bytes,
-                                    requestedBytes,
-                                    QColor(QString::fromLatin1(ui::kColorSuccess)),
-                                    QObject::tr("New %1 | Remaining %2")
-                                        .arg(formatPartitionBytes(requestedBytes),
-                                             formatPartitionBytes(beforeBytes + afterBytes)),
-                                    beforeBytes}});
+    widgets.size_preview->setRows(
+        {{.label = QObject::tr("Free space"),
+          .total_bytes = free_bytes,
+          .filled_bytes = requestedBytes,
+          .fill_color = QColor(QString::fromLatin1(ui::kColorSuccess)),
+          .text = QObject::tr("New %1 | Remaining %2")
+                      .arg(formatPartitionBytes(requestedBytes),
+                           formatPartitionBytes(beforeBytes + afterBytes)),
+          .offset_bytes = beforeBytes}});
     const QString formatText =
         QObject::tr(" Format with %1.").arg(selectedAllocationUnitText(widgets.allocation_unit));
     dialog.setPreviewText(QObject::tr("Create %1 MB %2 %3 partition labeled \"%4\".")
@@ -4346,10 +4370,14 @@ QVector<FreeSpaceAllocationChoice> freeSpaceAllocationChoices(const PartitionInf
                                                               const PartitionInfoEx* next) {
     QVector<FreeSpaceAllocationChoice> choices;
     if (previous != nullptr) {
-        choices.append({previous->partition_number, freeSpaceChoiceLabel(*previous, false), false});
+        choices.append({.partition_number = previous->partition_number,
+                        .label = freeSpaceChoiceLabel(*previous, false),
+                        .move_partition_start = false});
     }
     if (next != nullptr) {
-        choices.append({next->partition_number, freeSpaceChoiceLabel(*next, true), true});
+        choices.append({.partition_number = next->partition_number,
+                        .label = freeSpaceChoiceLabel(*next, true),
+                        .move_partition_start = true});
     }
     return choices;
 }
@@ -4445,17 +4473,19 @@ void updateFreeSpaceAllocationPreview(PartitionOperationDialog& dialog,
                                         widgets.backup.confirmation->isChecked());
     updateFreeSpaceBackupControls(widgets.backup, moveMode);
     widgets.preview->setRows(
-        {{QObject::tr("Target"),
-          saturatingAdd(partition->size_bytes, amountBytes),
-          saturatingAdd(partition->size_bytes, amountBytes),
-          QColor(QString::fromLatin1(ui::kColorSuccess)),
-          QObject::tr("%1 after allocation")
-              .arg(formatPartitionBytes(saturatingAdd(partition->size_bytes, amountBytes)))},
-         {QObject::tr("Free"),
-          widgets.free_bytes,
-          widgets.free_bytes - amountBytes,
-          QApplication::palette().color(QPalette::Midlight),
-          QObject::tr("%1 remains").arg(formatPartitionBytes(widgets.free_bytes - amountBytes))}});
+        {{.label = QObject::tr("Target"),
+          .total_bytes = saturatingAdd(partition->size_bytes, amountBytes),
+          .filled_bytes = saturatingAdd(partition->size_bytes, amountBytes),
+          .fill_color = QColor(QString::fromLatin1(ui::kColorSuccess)),
+          .text =
+              QObject::tr("%1 after allocation")
+                  .arg(formatPartitionBytes(saturatingAdd(partition->size_bytes, amountBytes)))},
+         {.label = QObject::tr("Free"),
+          .total_bytes = widgets.free_bytes,
+          .filled_bytes = widgets.free_bytes - amountBytes,
+          .fill_color = QApplication::palette().color(QPalette::Midlight),
+          .text = QObject::tr("%1 remains")
+                      .arg(formatPartitionBytes(widgets.free_bytes - amountBytes))}});
     dialog.setAcceptEnabled(canQueue);
     dialog.setPreviewText(
         moveMode ? QObject::tr("Back up partition %1, recreate it %2 earlier and %3 larger, "
@@ -4577,16 +4607,16 @@ void updateAllocateFreeSpacePreview(PartitionOperationDialog& dialog,
         widgets.donor_bytes > amountBytes ? widgets.donor_bytes - amountBytes : 0;
     const uint64_t scaleBytes = std::max(targetAfter, widgets.donor_bytes);
     widgets.size_preview->setRows(
-        {{QObject::tr("Target"),
-          scaleBytes,
-          targetAfter,
-          QColor(QString::fromLatin1(ui::kColorSuccess)),
-          QObject::tr("%1 after allocation").arg(formatPartitionBytes(targetAfter))},
-         {QObject::tr("Donor"),
-          scaleBytes,
-          donorAfter,
-          QColor(QString::fromLatin1(ui::kColorWarning)),
-          QObject::tr("%1 after restore").arg(formatPartitionBytes(donorAfter))}});
+        {{.label = QObject::tr("Target"),
+          .total_bytes = scaleBytes,
+          .filled_bytes = targetAfter,
+          .fill_color = QColor(QString::fromLatin1(ui::kColorSuccess)),
+          .text = QObject::tr("%1 after allocation").arg(formatPartitionBytes(targetAfter))},
+         {.label = QObject::tr("Donor"),
+          .total_bytes = scaleBytes,
+          .filled_bytes = donorAfter,
+          .fill_color = QColor(QString::fromLatin1(ui::kColorWarning)),
+          .text = QObject::tr("%1 after restore").arg(formatPartitionBytes(donorAfter))}});
     const QString donorLetter = donor.volume ? donor.volume->drive_letter.left(1).toUpper()
                                              : QStringLiteral("?");
     widgets.donor_status->setText(
@@ -5396,23 +5426,24 @@ QString resizeActionText(uint64_t targetBytes, uint64_t currentBytes) {
 void updateResizePreviewRows(const ResizePartitionWidgets& widgets,
                              uint64_t targetBytes,
                              uint64_t scaleBytes) {
-    widgets.size_preview->setRows({{QObject::tr("Current"),
-                                    scaleBytes,
-                                    widgets.current_bytes,
-                                    QColor(QString::fromLatin1(ui::kColorPrimary)),
-                                    formatPartitionBytes(widgets.current_bytes)},
-                                   {QObject::tr("Target"),
-                                    scaleBytes,
-                                    targetBytes,
-                                    QColor(QString::fromLatin1(ui::kColorSuccess)),
-                                    formatPartitionBytes(targetBytes)},
-                                   {QObject::tr("Max online"),
-                                    scaleBytes,
-                                    widgets.max_online_bytes,
-                                    QColor(QString::fromLatin1(ui::kColorWarning)),
-                                    QObject::tr("%1 current + %2 free")
-                                        .arg(formatPartitionBytes(widgets.current_bytes),
-                                             formatPartitionBytes(widgets.adjacent_free_bytes))}});
+    widgets.size_preview->setRows(
+        {{.label = QObject::tr("Current"),
+          .total_bytes = scaleBytes,
+          .filled_bytes = widgets.current_bytes,
+          .fill_color = QColor(QString::fromLatin1(ui::kColorPrimary)),
+          .text = formatPartitionBytes(widgets.current_bytes)},
+         {.label = QObject::tr("Target"),
+          .total_bytes = scaleBytes,
+          .filled_bytes = targetBytes,
+          .fill_color = QColor(QString::fromLatin1(ui::kColorSuccess)),
+          .text = formatPartitionBytes(targetBytes)},
+         {.label = QObject::tr("Max online"),
+          .total_bytes = scaleBytes,
+          .filled_bytes = widgets.max_online_bytes,
+          .fill_color = QColor(QString::fromLatin1(ui::kColorWarning)),
+          .text = QObject::tr("%1 current + %2 free")
+                      .arg(formatPartitionBytes(widgets.current_bytes),
+                           formatPartitionBytes(widgets.adjacent_free_bytes))}});
 }
 
 bool resizeMoveReady(const ResizePartitionWidgets& widgets,
@@ -5496,10 +5527,12 @@ void connectResizePartitionControls(PartitionOperationDialog& dialog,
     QObject::connect(widgets.backup_directory, &QLineEdit::textChanged, &dialog, updatePreview);
     QObject::connect(widgets.confirmation, &QCheckBox::toggled, &dialog, updatePreview);
     QObject::connect(widgets.non_native_confirmation, &QCheckBox::toggled, &dialog, updatePreview);
-    connectBackupBrowse(
-        dialog,
-        {widgets.backup_directory, widgets.browse_backup, widgets.confirmation, nullptr},
-        QObject::tr("Move Partition Backup Directory"));
+    connectBackupBrowse(dialog,
+                        {.backup_directory = widgets.backup_directory,
+                         .browse_backup = widgets.browse_backup,
+                         .confirmation = widgets.confirmation,
+                         .status = nullptr},
+                        QObject::tr("Move Partition Backup Directory"));
     widgets.size_preview->setInteractiveSegment(
         kSizePreviewTargetRow, false, true, [widgets](uint64_t, uint64_t sizeBytes) {
             widgets.target_size_mb->setValue(inputMegabytesFromBytes(
@@ -5580,11 +5613,11 @@ QString bytesProperty(uint64_t bytes) {
 }
 
 void addProperty(QVector<PropertyRow>* rows, const QString& name, const QString& value) {
-    rows->append({name, propertyValue(value)});
+    rows->append({.name = name, .value = propertyValue(value)});
 }
 
 void addProperty(QVector<PropertyRow>* rows, const QString& name, uint64_t bytes) {
-    rows->append({name, bytesProperty(bytes)});
+    rows->append({.name = name, .value = bytesProperty(bytes)});
 }
 
 QString partitionFlagsText(const PartitionInfoEx& partition) {
@@ -5909,7 +5942,8 @@ std::optional<NonNativeBrowseRequest> showNonNativeBrowseRequestDialog(
     if (dialog.exec() != QDialog::Accepted) {
         return std::nullopt;
     }
-    return NonNativeBrowseRequest{target->text().trimmed(), path->text().trimmed()};
+    return NonNativeBrowseRequest{.target_path = target->text().trimmed(),
+                                  .file_system_path = path->text().trimmed()};
 }
 
 QString extBrowserClipboardText(const PartitionExtFileReadResult& result) {
@@ -5988,9 +6022,10 @@ void exportExtDirectory(QWidget* parent, const QString& targetPath, const QStrin
         return;
     }
 
-    const PartitionExtDirectoryExportOptions options{kNonNativeBrowserExportMaxEntries,
-                                                     kExtBrowserExtractMaxBytes,
-                                                     kNonNativeBrowserExportMaxTotalBytes};
+    const PartitionExtDirectoryExportOptions options{
+        .max_entries = kNonNativeBrowserExportMaxEntries,
+        .max_file_bytes = kExtBrowserExtractMaxBytes,
+        .max_total_bytes = kNonNativeBrowserExportMaxTotalBytes};
     const auto result = PartitionExtFileSystemReader::exportDirectoryFromImage(
         targetPath, extPath, outputDirectory, options);
     if (!result.ok) {
@@ -6281,9 +6316,10 @@ void exportHfsDirectory(QWidget* parent, const QString& targetPath, const QStrin
         return;
     }
 
-    const PartitionHfsDirectoryExportOptions options{kNonNativeBrowserExportMaxEntries,
-                                                     kExtBrowserExtractMaxBytes,
-                                                     kNonNativeBrowserExportMaxTotalBytes};
+    const PartitionHfsDirectoryExportOptions options{
+        .max_entries = kNonNativeBrowserExportMaxEntries,
+        .max_file_bytes = kExtBrowserExtractMaxBytes,
+        .max_total_bytes = kNonNativeBrowserExportMaxTotalBytes};
     const auto result = PartitionHfsFileSystemReader::exportDirectoryFromImage(
         targetPath, hfsPath, outputDirectory, options);
     if (!result.ok) {
@@ -6432,7 +6468,7 @@ void showHfsDirectoryListingDialog(QWidget* parent,
     addHfsBrowserSummary(layout, &dialog, targetPath, hfsPath);
     auto* table = createHfsBrowserTable(&dialog, result);
     layout->addWidget(table, 1);
-    const NonNativeBrowseRequest request{targetPath, hfsPath};
+    const NonNativeBrowseRequest request{.target_path = targetPath, .file_system_path = hfsPath};
     layout->addWidget(createHfsBrowserButtons(&dialog, table, request, result));
     dialog.exec();
 }
@@ -6515,9 +6551,10 @@ void exportApfsDirectory(QWidget* parent, const QString& targetPath, const QStri
         return;
     }
 
-    const PartitionApfsDirectoryExportOptions options{kNonNativeBrowserExportMaxEntries,
-                                                      kExtBrowserExtractMaxBytes,
-                                                      kNonNativeBrowserExportMaxTotalBytes};
+    const PartitionApfsDirectoryExportOptions options{
+        .max_entries = kNonNativeBrowserExportMaxEntries,
+        .max_file_bytes = kExtBrowserExtractMaxBytes,
+        .max_total_bytes = kNonNativeBrowserExportMaxTotalBytes};
     const auto result = PartitionApfsFileSystemReader::exportDirectoryFromImage(
         targetPath, apfsPath, outputDirectory, options);
     if (!result.ok) {
@@ -6635,7 +6672,7 @@ void showApfsDirectoryListingDialog(QWidget* parent,
     addApfsBrowserSummary(layout, &dialog, targetPath, apfsPath, result);
     auto* table = createApfsBrowserTable(&dialog, result);
     layout->addWidget(table, 1);
-    const NonNativeBrowseRequest request{targetPath, apfsPath};
+    const NonNativeBrowseRequest request{.target_path = targetPath, .file_system_path = apfsPath};
     layout->addWidget(createApfsBrowserButtons(&dialog, table, request, result));
     dialog.exec();
 }
@@ -6655,11 +6692,11 @@ NonNativeBrowseResult browseHfsFileSystem(QWidget* parent,
     const auto result = PartitionHfsFileSystemReader::listDirectoryFromImage(
         request.target_path, request.file_system_path, kPartitionHfsDefaultBrowseEntryLimit);
     if (!result.ok) {
-        return {0, result.blockers};
+        return {.entries = 0, .blockers = result.blockers};
     }
     showHfsDirectoryListingDialog(
         parent, nonNativeBrowseTitle(state), request.target_path, request.file_system_path, result);
-    return {static_cast<int>(result.entries.size()), {}};
+    return {.entries = static_cast<int>(result.entries.size()), .blockers = {}};
 }
 
 NonNativeBrowseResult browseApfsFileSystem(QWidget* parent,
@@ -6668,11 +6705,11 @@ NonNativeBrowseResult browseApfsFileSystem(QWidget* parent,
     const auto result = PartitionApfsFileSystemReader::listDirectoryFromImage(
         request.target_path, request.file_system_path, kPartitionApfsDefaultBrowseEntryLimit);
     if (!result.ok) {
-        return {0, result.blockers};
+        return {.entries = 0, .blockers = result.blockers};
     }
     showApfsDirectoryListingDialog(
         parent, nonNativeBrowseTitle(state), request.target_path, request.file_system_path, result);
-    return {static_cast<int>(result.entries.size()), {}};
+    return {.entries = static_cast<int>(result.entries.size()), .blockers = {}};
 }
 
 NonNativeBrowseResult browseExtFileSystem(QWidget* parent,
@@ -6681,11 +6718,11 @@ NonNativeBrowseResult browseExtFileSystem(QWidget* parent,
     const auto result = PartitionExtFileSystemReader::listDirectoryFromImage(
         request.target_path, request.file_system_path, kPartitionExtDefaultBrowseEntryLimit);
     if (!result.ok) {
-        return {0, result.blockers};
+        return {.entries = 0, .blockers = result.blockers};
     }
     showExtDirectoryListingDialog(
         parent, nonNativeBrowseTitle(state), request.target_path, request.file_system_path, result);
-    return {static_cast<int>(result.entries.size()), {}};
+    return {.entries = static_cast<int>(result.entries.size()), .blockers = {}};
 }
 
 NonNativeBrowseResult browseNonNativeFileSystem(QWidget* parent,
@@ -7707,12 +7744,12 @@ void updateDiskWizardReview(const DiskCopyWizardConfig& config,
                                       selectedDiskWizardTargetSize(widgets),
                                       widgets.layout_mode->currentText());
     syncWizardReview(widgets.review,
-                     {config.title,
-                      physicalDrivePath(config.source_disk),
-                      selectedDiskWizardTarget(widgets),
-                      widgets.layout_mode->currentText(),
-                      widgets.verify_mode->currentText(),
-                      diskWizardSizingText(config, widgets)});
+                     {.operation = config.title,
+                      .source = physicalDrivePath(config.source_disk),
+                      .target = selectedDiskWizardTarget(widgets),
+                      .mode = widgets.layout_mode->currentText(),
+                      .verify = widgets.verify_mode->currentText(),
+                      .sizing = diskWizardSizingText(config, widgets)});
 }
 
 void connectDiskWizardReviewSignals(QWizard* wizard,
@@ -7904,24 +7941,24 @@ void updatePartitionCopyPreview(const QString& sourcePath,
     const QColor targetColor = targetSize != 0 && sourceSize > targetSize
                                    ? QColor(QString::fromLatin1(ui::kColorError))
                                    : QColor(QString::fromLatin1(ui::kColorSuccess));
-    widgets.size_preview->setRows(
-        {{QObject::tr("Source"),
-          scaleBytes,
-          sourceSize,
-          QColor(QString::fromLatin1(ui::kColorPrimary)),
-          formatPartitionBytes(sourceSize)},
-         {QObject::tr("Target"),
-          scaleBytes,
-          targetSize,
-          targetColor,
-          targetSize == 0 ? QObject::tr("custom/unknown") : formatPartitionBytes(targetSize)}});
+    widgets.size_preview->setRows({{.label = QObject::tr("Source"),
+                                    .total_bytes = scaleBytes,
+                                    .filled_bytes = sourceSize,
+                                    .fill_color = QColor(QString::fromLatin1(ui::kColorPrimary)),
+                                    .text = formatPartitionBytes(sourceSize)},
+                                   {.label = QObject::tr("Target"),
+                                    .total_bytes = scaleBytes,
+                                    .filled_bytes = targetSize,
+                                    .fill_color = targetColor,
+                                    .text = targetSize == 0 ? QObject::tr("custom/unknown")
+                                                            : formatPartitionBytes(targetSize)}});
     syncWizardReview(widgets.review,
-                     {QStringLiteral("Copy Partition Wizard"),
-                      sourcePath,
-                      selectedPartitionCopyTargetPath(widgets),
-                      QStringLiteral("Partition copy"),
-                      widgets.verify_mode->currentText(),
-                      partitionCopySizingText(widgets, sourceSize)});
+                     {.operation = QStringLiteral("Copy Partition Wizard"),
+                      .source = sourcePath,
+                      .target = selectedPartitionCopyTargetPath(widgets),
+                      .mode = QStringLiteral("Partition copy"),
+                      .verify = widgets.verify_mode->currentText(),
+                      .sizing = partitionCopySizingText(widgets, sourceSize)});
 }
 
 void connectPartitionCopyWizardSignals(QWizard* wizard,
@@ -8300,7 +8337,8 @@ PartitionManagerPanel::ActionLinkSpec PartitionManagerPanel::makeActionSpec(
     const QString& tooltip,
     void (PartitionManagerPanel::*slot)(),
     const ActionLinkOptions& options) const {
-    return {text, icon_path, tooltip, slot, options};
+    return {
+        .text = text, .icon_path = icon_path, .tooltip = tooltip, .slot = slot, .options = options};
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::wizardActionSpecs() const {
@@ -8308,33 +8346,33 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::wizardActi
                            kIconOsDrive,
                            tr("Queue OS migration plan"),
                            &PartitionManagerPanel::onMigrateOs,
-                           {actionTargetKindList({kActionTargetDisk})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Copy Partition Wizard"),
                            kIconCopy,
                            tr("Create a partition image"),
                            &PartitionManagerPanel::onCopyPartitionWizard,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Copy Disk Wizard"),
                            kIconDisk,
                            tr("Queue disk clone plan"),
                            &PartitionManagerPanel::onCloneDisk,
-                           {actionTargetKindList({kActionTargetDisk})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Partition Recovery Wizard"),
                            kIconRecovery,
                            tr("Scan and recover lost partitions"),
                            &PartitionManagerPanel::onPartitionRecoveryWizard,
-                           {actionTargetKindList({kActionTargetDisk})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Data Recovery"),
                            kIconRecovery,
                            tr("Standalone tool: scan an image or raw volume and restore found "
                               "files now (runs immediately, not added to the queue)"),
                            &PartitionManagerPanel::onDataRecovery,
-                           {actionTargetKindList({kActionTargetAny})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetAny})}),
             makeActionSpec(tr("Extend Partition Wizard"),
                            kIconResize,
                            tr("Extend into adjacent free space"),
                            &PartitionManagerPanel::onExtendPartitionWizard,
-                           {actionTargetKindList({kActionTargetPartition})})};
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})})};
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec>
@@ -8352,53 +8390,57 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::layoutOper
                            kIconResize,
                            tr("Resize partition"),
                            &PartitionManagerPanel::onResizePartition,
-                           {actionTargetKindList({kActionTargetPartition}), false, false, true}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = false,
+                            .windows_native_filesystem = false,
+                            .resize_filesystem = true}),
             makeActionSpec(
                 tr("Allocate Free Space"),
                 kIconResize,
                 tr("Back up adjacent donor, extend target, recreate donor, restore, and verify"),
                 &PartitionManagerPanel::onAllocateFreeSpace,
-                {actionTargetKindList({kActionTargetPartition, kActionTargetUnallocated})}),
+                {.target_kinds =
+                     actionTargetKindList({kActionTargetPartition, kActionTargetUnallocated})}),
             makeActionSpec(tr("Merge Partitions"),
                            kIconSplit,
                            tr("Merge adjacent partitions"),
                            &PartitionManagerPanel::onMergePartitions,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Split Partition"),
                            kIconSplit,
                            tr("Split selected partition"),
                            &PartitionManagerPanel::onSplitPartition,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Quick Partition"),
                            kIconCreate,
                            tr("Queue custom or equal-size disk layout"),
                            &PartitionManagerPanel::onQuickPartition,
-                           {actionTargetKindList({kActionTargetDisk})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Create Partition"),
                            kIconCreate,
                            tr("Create partition"),
                            &PartitionManagerPanel::onCreatePartition,
-                           {actionTargetKindList({kActionTargetUnallocated})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetUnallocated})}),
             makeActionSpec(tr("Delete Partition"),
                            kIconDelete,
                            tr("Delete partition"),
                            &PartitionManagerPanel::onDeletePartition,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Convert MBR/GPT"),
                            kIconConvert,
                            tr("Convert partition table"),
                            &PartitionManagerPanel::onConvertStyle,
-                           {actionTargetKindList({kActionTargetDisk})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Initialize Disk"),
                            kIconDisk,
                            tr("Initialize empty disk"),
                            &PartitionManagerPanel::onInitializeDisk,
-                           {actionTargetKindList({kActionTargetDisk})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Delete All Partitions"),
                            kIconDelete,
                            tr("Delete all disk partitions"),
                            &PartitionManagerPanel::onDeleteAllPartitions,
-                           {actionTargetKindList({kActionTargetDisk})})};
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk})})};
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::nativeFilesystemActionSpecs()
@@ -8407,27 +8449,32 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::nativeFile
                            kIconDisk,
                            tr("Format partition"),
                            &PartitionManagerPanel::onFormatPartition,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Explore Partition"),
                            kIconProperties,
                            tr("Open in Explorer"),
                            &PartitionManagerPanel::onExploreSelected,
-                           {actionTargetKindList({kActionTargetPartition}), true}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = true}),
             makeActionSpec(tr("Convert File System"),
                            kIconConvert,
                            tr("Convert partition file system"),
                            &PartitionManagerPanel::onConvertFileSystem,
-                           {actionTargetKindList({kActionTargetPartition}), true, true}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = true,
+                            .windows_native_filesystem = true}),
             makeActionSpec(tr("Change Cluster Size"),
                            kIconProperties,
                            tr("Back up, reformat with selected cluster size, restore, and verify"),
                            &PartitionManagerPanel::onChangeClusterSize,
-                           {actionTargetKindList({kActionTargetPartition}), true, true}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = true,
+                            .windows_native_filesystem = true}),
             makeActionSpec(tr("Change Drive Letter"),
                            kIconProperties,
                            tr("Set drive letter"),
                            &PartitionManagerPanel::onSetDriveLetter,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Change Label"),
                            kIconProperties,
                            tr("Rename the selected volume"),
@@ -8438,46 +8485,55 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::nativeFile
                            kIconSurface,
                            tr("Scan file system"),
                            &PartitionManagerPanel::onCheckFileSystem,
-                           {actionTargetKindList({kActionTargetPartition}), true, true})};
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = true,
+                            .windows_native_filesystem = true})};
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec>
 PartitionManagerPanel::nonNativeFilesystemActionSpecs() const {
-    return {
-        makeActionSpec(tr("Inspect Non-Windows File System"),
-                       kIconProperties,
-                       tr("Inspect captured read-only filesystem metadata"),
-                       &PartitionManagerPanel::onInspectNonNativeFileSystem,
-                       {actionTargetKindList({kActionTargetPartition}), false, false, false, true}),
-        makeActionSpec(
-            tr("Browse Non-Windows File System"),
-            kIconProperties,
-            tr("List supported non-Windows directory entries without mounting"),
-            &PartitionManagerPanel::onBrowseNonNativeFileSystem,
-            {actionTargetKindList({kActionTargetPartition}), false, false, false, false, true}),
-        makeActionSpec(tr("Check Non-Windows File System"),
-                       kIconSurface,
-                       tr("Requires manifest-approved bundled filesystem tools"),
-                       &PartitionManagerPanel::onCheckNonNativeFileSystem,
-                       {actionTargetKindList({kActionTargetPartition}),
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        true}),
-        makeActionSpec(tr("APFS Container"),
-                       kIconProperties,
-                       tr("Queue an APFS container action: snapshot or resize"),
-                       &PartitionManagerPanel::onApfsRootFileMutation,
-                       {actionTargetKindList({kActionTargetPartition}),
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        true})};
+    return {makeActionSpec(tr("Inspect Non-Windows File System"),
+                           kIconProperties,
+                           tr("Inspect captured read-only filesystem metadata"),
+                           &PartitionManagerPanel::onInspectNonNativeFileSystem,
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = false,
+                            .windows_native_filesystem = false,
+                            .resize_filesystem = false,
+                            .inspect_non_native_filesystem = true}),
+            makeActionSpec(tr("Browse Non-Windows File System"),
+                           kIconProperties,
+                           tr("List supported non-Windows directory entries without mounting"),
+                           &PartitionManagerPanel::onBrowseNonNativeFileSystem,
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = false,
+                            .windows_native_filesystem = false,
+                            .resize_filesystem = false,
+                            .inspect_non_native_filesystem = false,
+                            .browse_non_native_filesystem = true}),
+            makeActionSpec(tr("Check Non-Windows File System"),
+                           kIconSurface,
+                           tr("Requires manifest-approved bundled filesystem tools"),
+                           &PartitionManagerPanel::onCheckNonNativeFileSystem,
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = false,
+                            .windows_native_filesystem = false,
+                            .resize_filesystem = false,
+                            .inspect_non_native_filesystem = false,
+                            .browse_non_native_filesystem = false,
+                            .check_non_native_filesystem = true}),
+            makeActionSpec(tr("APFS Container"),
+                           kIconProperties,
+                           tr("Queue an APFS container action: snapshot or resize"),
+                           &PartitionManagerPanel::onApfsRootFileMutation,
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = false,
+                            .windows_native_filesystem = false,
+                            .resize_filesystem = false,
+                            .inspect_non_native_filesystem = false,
+                            .browse_non_native_filesystem = false,
+                            .check_non_native_filesystem = false,
+                            .apfs_root_file_mutation = true})};
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec>
@@ -8493,48 +8549,53 @@ PartitionManagerPanel::maintenanceOperationActionSpecs() const {
                            kIconAlign,
                            tr("Run SSD optimization"),
                            &PartitionManagerPanel::onOptimizeSsd,
-                           {actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
+                           {.target_kinds =
+                                actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
             makeActionSpec(tr("Wipe Partition"),
                            kIconWipe,
                            tr("Wipe selected target"),
                            &PartitionManagerPanel::onWipeSelected,
-                           {actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
+                           {.target_kinds =
+                                actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
             makeActionSpec(tr("Surface Test"),
                            kIconSurface,
                            tr("Run read-only surface test"),
                            &PartitionManagerPanel::onSurfaceTest,
-                           {actionTargetKindList({kActionTargetAny})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetAny})}),
             makeActionSpec(tr("Disk Benchmark"),
                            kIconSurface,
                            tr("Open Benchmark and Diagnostics"),
                            &PartitionManagerPanel::onOpenDiskBenchmark,
-                           {actionTargetKindList({kActionTargetAny})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetAny})}),
             makeActionSpec(tr("Space Analyzer"),
                            kIconSurface,
                            tr("Analyze tree, file, and file-type usage"),
                            &PartitionManagerPanel::onSpaceAnalyzer,
-                           {actionTargetKindList({kActionTargetPartition}), true}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = true}),
             makeActionSpec(tr("Disk Defrag"),
                            kIconAlign,
                            tr("Review defrag/ReTrim commands and open Windows Optimize Drives"),
                            &PartitionManagerPanel::onOpenOptimizeDrives,
-                           {actionTargetKindList({kActionTargetDisk, kActionTargetPartition}),
-                            true}),
+                           {.target_kinds =
+                                actionTargetKindList({kActionTargetDisk, kActionTargetPartition}),
+                            .requires_drive_letter = true}),
             makeActionSpec(tr("SSD Secure Erase"),
                            kIconWipe,
                            tr("Queue SSD/NVMe ReTrim plus clear-level wipe"),
                            &PartitionManagerPanel::onSsdSecureErase,
-                           {actionTargetKindList({kActionTargetDisk})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Manage BitLocker"),
                            kIconProperties,
                            tr("Review BitLocker status and open Windows management"),
                            &PartitionManagerPanel::onManageBitLocker,
-                           {actionTargetKindList({kActionTargetPartition}), true}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = true}),
             makeActionSpec(tr("Make Bootable Media"),
                            kIconOsDrive,
                            tr("Open Image Flasher"),
                            &PartitionManagerPanel::onOpenBootableMedia,
-                           {actionTargetKindList({kActionTargetAny})})};
+                           {.target_kinds = actionTargetKindList({kActionTargetAny})})};
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::advancedOperationActionSpecs()
@@ -8543,37 +8604,37 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::advancedOp
                            kIconProperties,
                            tr("Toggle hidden flag"),
                            &PartitionManagerPanel::onSetPartitionHidden,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Set Active/Inactive"),
                            kIconProperties,
                            tr("Toggle MBR active flag"),
                            &PartitionManagerPanel::onSetPartitionActive,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Change Partition Type ID"),
                            kIconProperties,
                            tr("Set partition type ID"),
                            &PartitionManagerPanel::onSetPartitionTypeId,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Convert Primary/Logical"),
                            kIconConvert,
                            tr("Back up, rebuild MBR primary/logical layout, restore, and verify"),
                            &PartitionManagerPanel::onConvertPrimaryLogical,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Change Serial Number"),
                            kIconProperties,
                            tr("Back up, reformat to regenerate volume serial, restore, and verify"),
                            &PartitionManagerPanel::onChangeVolumeSerialNumber,
-                           {actionTargetKindList({kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Convert Dynamic Disk to Basic"),
                            kIconConvert,
                            tr("Back up dynamic volume, convert disk to basic, restore, and verify"),
                            &PartitionManagerPanel::onConvertDynamicDiskToBasic,
-                           {actionTargetKindList({kActionTargetDisk})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Properties"),
                            kIconProperties,
                            tr("Show selected properties"),
                            &PartitionManagerPanel::onShowProperties,
-                           {actionTargetKindList({kActionTargetAny})})};
+                           {.target_kinds = actionTargetKindList({kActionTargetAny})})};
 }
 
 QWidget* PartitionManagerPanel::createWorkspace(QWidget* parent) {
@@ -8920,13 +8981,14 @@ void PartitionManagerPanel::addOrderedDiskMapSegments(
     QVector<MapSegment> ordered;
     ordered.reserve(disk.partitions.size() + disk.unallocated_regions.size());
     for (const auto& partition : disk.partitions) {
-        ordered.append({partition.offset_bytes,
-                        partition.size_bytes,
-                        createPartitionSegment(disk, partition, selected)});
+        ordered.append({.offset = partition.offset_bytes,
+                        .size = partition.size_bytes,
+                        .widget = createPartitionSegment(disk, partition, selected)});
     }
     for (const auto& region : disk.unallocated_regions) {
-        ordered.append(
-            {region.offset_bytes, region.size_bytes, createUnallocatedSegment(region, selected)});
+        ordered.append({.offset = region.offset_bytes,
+                        .size = region.size_bytes,
+                        .widget = createUnallocatedSegment(region, selected)});
     }
     std::sort(ordered.begin(), ordered.end(), [](const MapSegment& lhs, const MapSegment& rhs) {
         return lhs.offset < rhs.offset;
@@ -8960,16 +9022,15 @@ QWidget* PartitionManagerPanel::createPartitionSegment(
                                 .arg(partition.volume ? partition.volume->file_system
                                                       : partition.type_name,
                                      formatPartitionBytes(partition.size_bytes));
-    auto* segment = new PartitionSegmentWidget({label,
-                                                tooltip,
-                                                partitionColorRole(disk, partition),
-                                                partitionColor(disk, partition),
-                                                usedPercent(partition),
-                                                targetMatchesPartition(selected, disk, partition),
-                                                [this, segmentTarget]() {
-                                                    selectTargetInTable(segmentTarget);
-                                                }},
-                                               m_diskMapContainer);
+    auto* segment = new PartitionSegmentWidget(
+        {.text = label,
+         .tooltip = tooltip,
+         .color_role = partitionColorRole(disk, partition),
+         .color = partitionColor(disk, partition),
+         .used_percent = usedPercent(partition),
+         .selected = targetMatchesPartition(selected, disk, partition),
+         .on_activated = [this, segmentTarget]() { selectTargetInTable(segmentTarget); }},
+        m_diskMapContainer);
     attachDiskMapContextMenu(segment, segmentTarget);
     return segment;
 }
@@ -8982,13 +9043,13 @@ QWidget* PartitionManagerPanel::createUnallocatedSegment(
     segmentTarget.offset_bytes = region.offset_bytes;
     segmentTarget.size_bytes = region.size_bytes;
     auto* segment = new PartitionSegmentWidget(
-        {tr("Unallocated %1").arg(formatPartitionBytes(region.size_bytes)),
-         tr("Disk %1 unallocated space").arg(region.disk_number),
-         QStringLiteral("Unallocated"),
-         unallocatedColor(),
-         0,
-         targetMatchesRegion(selected, region),
-         [this, segmentTarget]() { selectTargetInTable(segmentTarget); }},
+        {.text = tr("Unallocated %1").arg(formatPartitionBytes(region.size_bytes)),
+         .tooltip = tr("Disk %1 unallocated space").arg(region.disk_number),
+         .color_role = QStringLiteral("Unallocated"),
+         .color = unallocatedColor(),
+         .used_percent = 0,
+         .selected = targetMatchesRegion(selected, region),
+         .on_activated = [this, segmentTarget]() { selectTargetInTable(segmentTarget); }},
         m_diskMapContainer);
     attachDiskMapContextMenu(segment, segmentTarget);
     return segment;
@@ -9413,39 +9474,44 @@ void PartitionManagerPanel::showSelectedTargetContextMenuAt(const QPoint& global
     }
     addContextMenuAction(menu,
                          this,
-                         {tr("Properties"),
-                          kIconProperties,
-                          target.has_value(),
-                          tr("Select a disk, partition, or unallocated region first.")},
+                         {.text = tr("Properties"),
+                          .icon_path = kIconProperties,
+                          .enabled = target.has_value(),
+                          .disabled_reason =
+                              tr("Select a disk, partition, or unallocated region first.")},
                          [this]() { onShowProperties(); });
     menu.exec(global_position);
 }
 
 void PartitionManagerPanel::addUnallocatedContextMenuActions(QMenu& menu) {
-    addContextMenuAction(menu, this, {tr("Create Partition"), kIconCreate}, [this]() {
-        onCreatePartition();
-    });
-    addContextMenuAction(
-        menu,
-        this,
-        {tr("Allocate Free Space To"),
-         kIconResize,
-         true,
-         tr("Extend the previous partition or move the following partition into this free space.")},
-        [this]() { onAllocateFreeSpace(); });
-    addContextMenuAction(menu, this, {tr("Partition Recovery Wizard"), kIconRecovery}, [this]() {
-        onPartitionRecoveryWizard();
-    });
     addContextMenuAction(menu,
                          this,
-                         {tr("Data Recovery"),
-                          kIconRecovery,
-                          true,
-                          tr("Recover files from an image or raw volume/device path.")},
+                         {.text = tr("Create Partition"), .icon_path = kIconCreate},
+                         [this]() { onCreatePartition(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Allocate Free Space To"),
+                          .icon_path = kIconResize,
+                          .enabled = true,
+                          .disabled_reason = tr("Extend the previous partition or move the "
+                                                "following partition into this free space.")},
+                         [this]() { onAllocateFreeSpace(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Partition Recovery Wizard"), .icon_path = kIconRecovery},
+                         [this]() { onPartitionRecoveryWizard(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Data Recovery"),
+                          .icon_path = kIconRecovery,
+                          .enabled = true,
+                          .disabled_reason =
+                              tr("Recover files from an image or raw volume/device path.")},
                          [this]() { onDataRecovery(); });
-    addContextMenuAction(menu, this, {tr("Surface Test"), kIconSurface}, [this]() {
-        onSurfaceTest();
-    });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Surface Test"), .icon_path = kIconSurface},
+                         [this]() { onSurfaceTest(); });
     menu.addSeparator();
 }
 
@@ -9480,47 +9546,58 @@ void PartitionManagerPanel::addPartitionLayoutContextMenuActions(QMenu& menu,
                                                     partition,
                                                     resizeFilesystemPolicy()),
                          [this]() { onResizePartition(); });
-    addContextMenuAction(menu, this, {tr("Allocate Free Space"), kIconResize}, [this]() {
-        onAllocateFreeSpace();
-    });
-    addContextMenuAction(menu, this, {tr("Merge Partitions"), kIconSplit}, [this]() {
-        onMergePartitions();
-    });
-    addContextMenuAction(menu, this, {tr("Split Partition"), kIconSplit}, [this]() {
-        onSplitPartition();
-    });
-    addContextMenuAction(menu, this, {tr("Copy Partition Wizard"), kIconCopy}, [this]() {
-        onCopyPartitionWizard();
-    });
     addContextMenuAction(menu,
                          this,
-                         {tr("Data Recovery"),
-                          kIconRecovery,
-                          true,
-                          tr("Recover files from an image or raw volume/device path.")},
+                         {.text = tr("Allocate Free Space"), .icon_path = kIconResize},
+                         [this]() { onAllocateFreeSpace(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Merge Partitions"), .icon_path = kIconSplit},
+                         [this]() { onMergePartitions(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Split Partition"), .icon_path = kIconSplit},
+                         [this]() { onSplitPartition(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Copy Partition Wizard"), .icon_path = kIconCopy},
+                         [this]() { onCopyPartitionWizard(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Data Recovery"),
+                          .icon_path = kIconRecovery,
+                          .enabled = true,
+                          .disabled_reason =
+                              tr("Recover files from an image or raw volume/device path.")},
                          [this]() { onDataRecovery(); });
-    addContextMenuAction(menu, this, {tr("Create Partition Image"), kIconCopy}, [this]() {
-        onCreateImage();
-    });
-    addContextMenuAction(menu, this, {tr("Delete Partition"), kIconDelete}, [this]() {
-        onDeletePartition();
-    });
-    addContextMenuAction(menu, this, {tr("Format Partition"), kIconDisk}, [this]() {
-        onFormatPartition();
-    });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Create Partition Image"), .icon_path = kIconCopy},
+                         [this]() { onCreateImage(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Delete Partition"), .icon_path = kIconDelete},
+                         [this]() { onDeletePartition(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Format Partition"), .icon_path = kIconDisk},
+                         [this]() { onFormatPartition(); });
 }
 
 void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
     QMenu& menu, const PartitionInfoEx* partition) {
-    addContextMenuAction(menu, this, {tr("Change Drive Letter"), kIconProperties}, [this]() {
-        onSetDriveLetter();
-    });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Change Drive Letter"), .icon_path = kIconProperties},
+                         [this]() { onSetDriveLetter(); });
     const auto changeLabel = changeLabelAvailability(partition);
-    addContextMenuAction(
-        menu,
-        this,
-        {tr("Change Label"), kIconProperties, changeLabel.enabled, changeLabel.reason},
-        [this]() { onSetPartitionLabel(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Change Label"),
+                          .icon_path = kIconProperties,
+                          .enabled = changeLabel.enabled,
+                          .disabled_reason = changeLabel.reason},
+                         [this]() { onSetPartitionLabel(); });
     addContextMenuAction(menu,
                          this,
                          partitionContextActionSpec(tr("Convert File System"),
@@ -9545,59 +9622,66 @@ void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
     const auto nonNativeInspect = nonNativeFilesystemInspectState(selectedPartition());
     addContextMenuAction(menu,
                          this,
-                         {tr("Inspect Non-Windows File System"),
-                          kIconProperties,
-                          nonNativeInspect.enabled,
-                          nonNativeInspect.reason},
+                         {.text = tr("Inspect Non-Windows File System"),
+                          .icon_path = kIconProperties,
+                          .enabled = nonNativeInspect.enabled,
+                          .disabled_reason = nonNativeInspect.reason},
                          [this]() { onInspectNonNativeFileSystem(); });
     const auto nonNativeBrowse = nonNativeFilesystemBrowseState(selectedTarget(),
                                                                 selectedPartition());
     addContextMenuAction(menu,
                          this,
-                         {tr("Browse Non-Windows File System"),
-                          kIconProperties,
-                          nonNativeBrowse.enabled,
-                          nonNativeBrowse.reason},
+                         {.text = tr("Browse Non-Windows File System"),
+                          .icon_path = kIconProperties,
+                          .enabled = nonNativeBrowse.enabled,
+                          .disabled_reason = nonNativeBrowse.reason},
                          [this]() { onBrowseNonNativeFileSystem(); });
     const auto nonNativeCheck = nonNativeFilesystemCheckState(selectedTarget(),
                                                               selectedPartition());
     addContextMenuAction(menu,
                          this,
-                         {tr("Check Non-Windows File System"),
-                          kIconSurface,
-                          nonNativeCheck.enabled,
-                          nonNativeCheck.reason},
+                         {.text = tr("Check Non-Windows File System"),
+                          .icon_path = kIconSurface,
+                          .enabled = nonNativeCheck.enabled,
+                          .disabled_reason = nonNativeCheck.reason},
                          [this]() { onCheckNonNativeFileSystem(); });
     const auto apfsMutation = apfsRootFileMutationState(selectedTarget(), selectedPartition());
-    addContextMenuAction(
-        menu,
-        this,
-        {tr("APFS Container"), kIconProperties, apfsMutation.enabled, apfsMutation.reason},
-        [this]() { onApfsRootFileMutation(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("APFS Container"),
+                          .icon_path = kIconProperties,
+                          .enabled = apfsMutation.enabled,
+                          .disabled_reason = apfsMutation.reason},
+                         [this]() { onApfsRootFileMutation(); });
 }
 
 void PartitionManagerPanel::addPartitionMaintenanceContextMenuActions(
     QMenu& menu, const PartitionInfoEx* partition) {
-    addContextMenuAction(menu, this, {tr("Align Partition"), kIconAlign}, [this]() {
-        onOptimizeSsd();
-    });
-    addContextMenuAction(menu, this, {tr("Wipe Partition / Free Space"), kIconWipe}, [this]() {
-        onWipeSelected();
-    });
-    addContextMenuAction(menu, this, {tr("Surface Test"), kIconSurface}, [this]() {
-        onSurfaceTest();
-    });
-    addContextMenuAction(menu, this, {tr("Disk Benchmark"), kIconSurface}, [this]() {
-        onOpenDiskBenchmark();
-    });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Align Partition"), .icon_path = kIconAlign},
+                         [this]() { onOptimizeSsd(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Wipe Partition / Free Space"), .icon_path = kIconWipe},
+                         [this]() { onWipeSelected(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Surface Test"), .icon_path = kIconSurface},
+                         [this]() { onSurfaceTest(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Disk Benchmark"), .icon_path = kIconSurface},
+                         [this]() { onOpenDiskBenchmark(); });
     addContextMenuAction(menu,
                          this,
                          partitionContextActionSpec(
                              tr("Space Analyzer"), kIconSurface, partition, driveLetterPolicy()),
                          [this]() { onSpaceAnalyzer(); });
-    addContextMenuAction(menu, this, {tr("Hide/Unhide Partition"), kIconProperties}, [this]() {
-        onSetPartitionHidden();
-    });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Hide/Unhide Partition"), .icon_path = kIconProperties},
+                         [this]() { onSetPartitionHidden(); });
     addContextMenuAction(menu,
                          this,
                          partitionContextActionSpec(tr("Manage BitLocker"),
@@ -9608,18 +9692,22 @@ void PartitionManagerPanel::addPartitionMaintenanceContextMenuActions(
 }
 
 void PartitionManagerPanel::addPartitionAdvancedContextMenuActions(QMenu& menu) {
-    addContextMenuAction(menu, this, {tr("Set Active/Inactive"), kIconProperties}, [this]() {
-        onSetPartitionActive();
-    });
-    addContextMenuAction(menu, this, {tr("Change Partition Type ID"), kIconProperties}, [this]() {
-        onSetPartitionTypeId();
-    });
-    addContextMenuAction(menu, this, {tr("Convert Primary/Logical"), kIconConvert}, [this]() {
-        onConvertPrimaryLogical();
-    });
-    addContextMenuAction(menu, this, {tr("Change Serial Number"), kIconProperties}, [this]() {
-        onChangeVolumeSerialNumber();
-    });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Set Active/Inactive"), .icon_path = kIconProperties},
+                         [this]() { onSetPartitionActive(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Change Partition Type ID"), .icon_path = kIconProperties},
+                         [this]() { onSetPartitionTypeId(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Convert Primary/Logical"), .icon_path = kIconConvert},
+                         [this]() { onConvertPrimaryLogical(); });
+    addContextMenuAction(menu,
+                         this,
+                         {.text = tr("Change Serial Number"), .icon_path = kIconProperties},
+                         [this]() { onChangeVolumeSerialNumber(); });
 }
 
 void PartitionManagerPanel::addDiskContextMenuActions(QMenu& menu) {
@@ -9964,20 +10052,26 @@ static NonNativeCheckAction resolveNonNativeCheckAction(
     const NonNativeFilesystemCheckState& state,
     const NonNativeFilesystemCheckRequest& request) {
     if (request.mode == PartitionFileSystemToolRunner::repairOperation()) {
-        return {NonNativeCheckActionKind::QueueRepair, nonNativeRepairPayload(state, request)};
+        return {.kind = NonNativeCheckActionKind::QueueRepair,
+                .payload = nonNativeRepairPayload(state, request)};
     }
     if (nonNativeCheckHfsCatalogMode(request.mode)) {
-        return {NonNativeCheckActionKind::StatusOnly,
-                {},
-                {},
-                showHfsConsistencyWithStatus(parent, state)};
+        return {.kind = NonNativeCheckActionKind::StatusOnly,
+                .payload = {},
+                .target_path = {},
+                .status = showHfsConsistencyWithStatus(parent, state)};
     }
     if (state.internal_metadata_check) {
         QString status;
         showMetadataConsistencyWithStatus(parent, state, &status);
-        return {NonNativeCheckActionKind::StatusOnly, {}, {}, status};
+        return {.kind = NonNativeCheckActionKind::StatusOnly,
+                .payload = {},
+                .target_path = {},
+                .status = status};
     }
-    return {NonNativeCheckActionKind::RunReadOnlyTool, {}, request.target_path};
+    return {.kind = NonNativeCheckActionKind::RunReadOnlyTool,
+            .payload = {},
+            .target_path = request.target_path};
 }
 
 struct ApfsRootFileMutationDialogWidgets {
@@ -10112,8 +10206,12 @@ static std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog
     dialog.formLayout()->addRow(QObject::tr("Name:"), name);
     dialog.formLayout()->addRow(QString(), confirm);
 
-    const ApfsRootFileMutationDialogWidgets widgets{
-        &dialog, mode, name, confirm, state.partition_size_bytes};
+    const ApfsRootFileMutationDialogWidgets widgets{.dialog = &dialog,
+                                                    .mode = mode,
+                                                    .name = name,
+                                                    .confirm = confirm,
+                                                    .partition_size_bytes =
+                                                        state.partition_size_bytes};
     connectApfsRootFileMutationDialog(dialog, widgets);
 
     if (dialog.exec() != QDialog::Accepted) {
@@ -10121,7 +10219,7 @@ static std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog
     }
 
     const auto type = apfsMutationTypeForMode(mode->currentData().toString());
-    return ApfsRootFileMutationRequest{type, name->text().trimmed()};
+    return ApfsRootFileMutationRequest{.type = type, .name = name->text().trimmed()};
 }
 
 static QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
@@ -10314,11 +10412,11 @@ void PartitionManagerPanel::onOpenOptimizeDrives() {
     const QStringList commands = optimizeCommandLines(disk, volume);
     const bool canQueue = (volume != nullptr) && !optimizeMountPoint(volume).isEmpty();
     const auto action = showOptimizeDrivesDialog(this,
-                                                 {optimizeRows(disk, partition),
-                                                  commands,
-                                                  canQueue,
-                                                  diskLooksSsd(disk),
-                                                  diskLooksHdd(disk)});
+                                                 {.rows = optimizeRows(disk, partition),
+                                                  .command_lines = commands,
+                                                  .can_queue = canQueue,
+                                                  .ssd_mode = diskLooksSsd(disk),
+                                                  .hdd_mode = diskLooksHdd(disk)});
     if (action == OptimizeDialogAction::None) {
         Q_EMIT statusMessage(tr("Reviewed disk optimization guidance"), sak::kTimerStatusDefaultMs);
         return;
@@ -10737,8 +10835,14 @@ void PartitionManagerPanel::onConvertDynamicDiskToBasic() {
                           tr("Only one mounted simple dynamic volume can be converted directly."));
         return;
     }
-    const PartitionTarget diskTarget{
-        PartitionTargetKind::Disk, disk.disk_number, 0, {}, {}, {}, 0, disk.size_bytes};
+    const PartitionTarget diskTarget{.kind = PartitionTargetKind::Disk,
+                                     .disk_number = disk.disk_number,
+                                     .partition_number = 0,
+                                     .partition_guid = {},
+                                     .volume_guid = {},
+                                     .drive_letter = {},
+                                     .offset_bytes = 0,
+                                     .size_bytes = disk.size_bytes};
     PartitionOperationDialog dialog(
         tr("Convert Dynamic Disk to Basic"),
         targetIdentityText(diskTarget, &disk, nullptr),
@@ -10997,12 +11101,13 @@ void PartitionManagerPanel::onCloneDisk() {
         Q_EMIT statusMessage(tr("Select a source disk first"), sak::kTimerStatusDefaultMs);
         return;
     }
-    const auto result = runDiskCopyWizard({this,
-                                           tr("Copy Disk Wizard"),
-                                           targetIdentityText(selected, selectedDisk(), nullptr),
-                                           &m_controller->inventory(),
-                                           selected->disk_number,
-                                           false});
+    const auto result =
+        runDiskCopyWizard({.parent = this,
+                           .title = tr("Copy Disk Wizard"),
+                           .source_identity = targetIdentityText(selected, selectedDisk(), nullptr),
+                           .inventory = &m_controller->inventory(),
+                           .source_disk = selected->disk_number,
+                           .os_migration = false});
     if (!result) {
         return;
     }
@@ -11356,12 +11461,13 @@ void PartitionManagerPanel::onMigrateOs() {
         Q_EMIT statusMessage(tr("Select a source system disk first"), sak::kTimerStatusDefaultMs);
         return;
     }
-    const auto result = runDiskCopyWizard({this,
-                                           tr("Migrate OS to SSD/HDD Wizard"),
-                                           targetIdentityText(selected, selectedDisk(), nullptr),
-                                           &m_controller->inventory(),
-                                           selected->disk_number,
-                                           true});
+    const auto result =
+        runDiskCopyWizard({.parent = this,
+                           .title = tr("Migrate OS to SSD/HDD Wizard"),
+                           .source_identity = targetIdentityText(selected, selectedDisk(), nullptr),
+                           .inventory = &m_controller->inventory(),
+                           .source_disk = selected->disk_number,
+                           .os_migration = true});
     if (!result) {
         return;
     }

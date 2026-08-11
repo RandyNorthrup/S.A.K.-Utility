@@ -112,7 +112,7 @@ QList<DerField> derParse(const QByteArray& buf) {
         if (len < 0 || i + len > buf.size()) {
             break;
         }
-        out.append({tag, buf.mid(i, len)});
+        out.append({.tag = tag, .value = buf.mid(i, len)});
         i += len;
     }
     return out;
@@ -160,7 +160,9 @@ QList<KeybagEntry> parseKeybagBlock(const QByteArray& block, bool align16) {
         if (p + 0x18 + klen > block.size()) {
             break;
         }
-        out.append({block.mid(p, 16), getLe16(block, p + 0x10), block.mid(p + 0x18, klen)});
+        out.append({.uuid = block.mid(p, 16),
+                    .tag = getLe16(block, p + 0x10),
+                    .keydata = block.mid(p + 0x18, klen)});
         p += align16 ? ((0x18 + klen + 15) & ~15) : (0x18 + klen);
     }
     return out;

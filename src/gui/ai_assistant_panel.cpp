@@ -414,24 +414,44 @@ ModelContextWindow modelContextWindowInfo(const QString& model_id) {
         return {};
     }
     const QVector<ModelContextRule> rules{
-        {{QStringLiteral("gpt-5.6"), QStringLiteral("gpt-5.5"), QStringLiteral("gpt-5.4")},
-         {},
-         {QStringLiteral("gpt-5.4-mini"), QStringLiteral("gpt-5.4-nano")},
-         kGptFiveFrontierContextWindowTokens},
-        {{}, {QStringLiteral("gpt-5"), QStringLiteral("chat")}, {}, kGptFiveContextWindowTokens},
-        {{QStringLiteral("gpt-5")}, {}, {}, kGptFiveContextWindowTokens},
-        {{QStringLiteral("gpt-4.1")}, {}, {}, kGptFourOneContextWindowTokens},
-        {{QStringLiteral("o3"), QStringLiteral("o4")}, {}, {}, kReasoningContextWindowTokens},
-        {{}, {QStringLiteral("deep-research")}, {}, kReasoningContextWindowTokens},
-        {{QStringLiteral("gpt-4o"), QStringLiteral("gpt-4-turbo")},
-         {},
-         {},
-         kDefaultContextWindowTokens},
-        {{QStringLiteral("gpt-4")}, {}, {}, kLegacyGptFourContextWindowTokens},
+        {.starts_with = {QStringLiteral("gpt-5.6"),
+                         QStringLiteral("gpt-5.5"),
+                         QStringLiteral("gpt-5.4")},
+         .contains_all = {},
+         .starts_with_excluded = {QStringLiteral("gpt-5.4-mini"), QStringLiteral("gpt-5.4-nano")},
+         .tokens = kGptFiveFrontierContextWindowTokens},
+        {.starts_with = {},
+         .contains_all = {QStringLiteral("gpt-5"), QStringLiteral("chat")},
+         .starts_with_excluded = {},
+         .tokens = kGptFiveContextWindowTokens},
+        {.starts_with = {QStringLiteral("gpt-5")},
+         .contains_all = {},
+         .starts_with_excluded = {},
+         .tokens = kGptFiveContextWindowTokens},
+        {.starts_with = {QStringLiteral("gpt-4.1")},
+         .contains_all = {},
+         .starts_with_excluded = {},
+         .tokens = kGptFourOneContextWindowTokens},
+        {.starts_with = {QStringLiteral("o3"), QStringLiteral("o4")},
+         .contains_all = {},
+         .starts_with_excluded = {},
+         .tokens = kReasoningContextWindowTokens},
+        {.starts_with = {},
+         .contains_all = {QStringLiteral("deep-research")},
+         .starts_with_excluded = {},
+         .tokens = kReasoningContextWindowTokens},
+        {.starts_with = {QStringLiteral("gpt-4o"), QStringLiteral("gpt-4-turbo")},
+         .contains_all = {},
+         .starts_with_excluded = {},
+         .tokens = kDefaultContextWindowTokens},
+        {.starts_with = {QStringLiteral("gpt-4")},
+         .contains_all = {},
+         .starts_with_excluded = {},
+         .tokens = kLegacyGptFourContextWindowTokens},
     };
     for (const auto& rule : rules) {
         if (modelMatchesRule(model, rule)) {
-            return {rule.tokens, true};
+            return {.tokens = rule.tokens, .documented = true};
         }
     }
     return {};
@@ -2319,7 +2339,9 @@ bool downloadUrlBytes(const QUrl& url,
     worker->moveToThread(&network_thread);
     QObject::connect(&network_thread, &QThread::finished, worker, &QObject::deleteLater);
     QObject::connect(&network_thread, &QThread::started, worker, [&, worker]() {
-        const DownloadWorkerContext ctx{&state, &done, &network_thread};
+        const DownloadWorkerContext ctx{.state = &state,
+                                        .done = &done,
+                                        .network_thread = &network_thread};
         startDownloadOnWorker(worker, url, ctx, cancel_requested);
     });
     network_thread.start();
@@ -2520,9 +2542,9 @@ void appendReportFinding(QVector<PanelReportFinding>* findings,
             return;
         }
     }
-    findings->append({cleanReportText(severity, kReportFindingSeverityMaxChars),
-                      clean_title,
-                      cleanReportText(detail, kReportFindingDetailMaxChars)});
+    findings->append({.severity = cleanReportText(severity, kReportFindingSeverityMaxChars),
+                      .title = clean_title,
+                      .detail = cleanReportText(detail, kReportFindingDetailMaxChars)});
 }
 
 void appendReportRisk(PanelReportData* data, const QString& risk) {
@@ -2550,9 +2572,10 @@ QVector<PanelReportArtifact> collectReportArtifacts(const QString& artifact_root
             continue;
         }
         const QString folder = artifact_root.relativeFilePath(path).section(QLatin1Char('/'), 0, 0);
-        artifacts.append({QStringLiteral("[%1] %2").arg(folder, QFileInfo(path).fileName()),
-                          path,
-                          QStringLiteral("file")});
+        artifacts.append(
+            {.label = QStringLiteral("[%1] %2").arg(folder, QFileInfo(path).fileName()),
+             .target = path,
+             .type = QStringLiteral("file")});
     }
     return artifacts;
 }
@@ -2568,7 +2591,7 @@ QVector<PanelReportArtifact> collectReportSources(const QVector<ai::OpenAIUrlCit
         const QString label = citation.title.isEmpty()
                                   ? citation.url
                                   : QStringLiteral("%1 - %2").arg(citation.title, citation.url);
-        sources.append({label, citation.url, QStringLiteral("url")});
+        sources.append({.label = label, .target = citation.url, .type = QStringLiteral("url")});
     }
     return sources;
 }
@@ -6428,17 +6451,21 @@ QString AiAssistantPanel::beginCommandApprovalGate(QJsonObject* metadata) {
 bool AiAssistantPanel::requestCommandApprovalFromUser(const QString& shell,
                                                       const QString& preview) {
     const auto approval = showApprovalPrompt(
-        {this,
-         tr("Approve AI Command"),
-         tr("Do you approve this %1 command?").arg(shell),
-         tr("Review the exact command before allowing the AI assistant to run it on this PC."),
-         preview,
-         QVector<ApprovalPromptButton>{
-             {tr("Approve"),
-              ApprovalPromptChoice::Accept,
-              ApprovalPromptButtonStyle::Primary,
-              false},
-             {tr("Reject"), ApprovalPromptChoice::Reject, ApprovalPromptButtonStyle::Danger, true},
+        {.parent = this,
+         .window_title = tr("Approve AI Command"),
+         .heading = tr("Do you approve this %1 command?").arg(shell),
+         .body =
+             tr("Review the exact command before allowing the AI assistant to run it on this PC."),
+         .command_text = preview,
+         .buttons = QVector<ApprovalPromptButton>{
+             {.text = tr("Approve"),
+              .choice = ApprovalPromptChoice::Accept,
+              .style = ApprovalPromptButtonStyle::Primary,
+              .default_button = false},
+             {.text = tr("Reject"),
+              .choice = ApprovalPromptChoice::Reject,
+              .style = ApprovalPromptButtonStyle::Danger,
+              .default_button = true},
          }});
     return approval == ApprovalPromptChoice::Accept;
 }
@@ -6536,25 +6563,25 @@ bool AiAssistantPanel::offerRestorePointIfNeeded(const QString& preview,
     restoreRunStatusAfterHumanDecision(ai::AiRunStatus::WaitingForHuman,
                                        metadata.value(QStringLiteral("summary")).toString());
 
-    const auto choice =
-        showApprovalPrompt({this,
-                            tr("Create Restore Point?"),
-                            tr("Do you want to create a restore point before this command?"),
-                            tr("This AI command may change the PC. A restore point gives you a "
-                               "rollback option before continuing."),
-                            preview,
-                            QVector<ApprovalPromptButton>{{tr("Create Restore Point"),
-                                                           ApprovalPromptChoice::Accept,
-                                                           ApprovalPromptButtonStyle::Primary,
-                                                           true},
-                                                          {tr("Proceed Without"),
-                                                           ApprovalPromptChoice::Secondary,
-                                                           ApprovalPromptButtonStyle::Danger,
-                                                           false},
-                                                          {tr("Cancel"),
-                                                           ApprovalPromptChoice::Cancel,
-                                                           ApprovalPromptButtonStyle::Secondary,
-                                                           false}}});
+    const auto choice = showApprovalPrompt(
+        {.parent = this,
+         .window_title = tr("Create Restore Point?"),
+         .heading = tr("Do you want to create a restore point before this command?"),
+         .body = tr("This AI command may change the PC. A restore point gives you a "
+                    "rollback option before continuing."),
+         .command_text = preview,
+         .buttons = QVector<ApprovalPromptButton>{{.text = tr("Create Restore Point"),
+                                                   .choice = ApprovalPromptChoice::Accept,
+                                                   .style = ApprovalPromptButtonStyle::Primary,
+                                                   .default_button = true},
+                                                  {.text = tr("Proceed Without"),
+                                                   .choice = ApprovalPromptChoice::Secondary,
+                                                   .style = ApprovalPromptButtonStyle::Danger,
+                                                   .default_button = false},
+                                                  {.text = tr("Cancel"),
+                                                   .choice = ApprovalPromptChoice::Cancel,
+                                                   .style = ApprovalPromptButtonStyle::Secondary,
+                                                   .default_button = false}}});
     return handleRestorePointOfferChoice(
         static_cast<int>(choice), gate_id, metadata, previous_status, preview);
 }
@@ -6682,21 +6709,21 @@ bool AiAssistantPanel::handleRestorePointFailure(const QString& gate_id,
     restoreRunStatusAfterHumanDecision(ai::AiRunStatus::WaitingForHuman,
                                        metadata.value(QStringLiteral("summary")).toString());
 
-    const auto failure_choice =
-        showApprovalPrompt({this,
-                            tr("Restore Point Failed"),
-                            tr("Do you approve continuing without a restore point?"),
-                            tr("The restore point was not created. Review the command again before "
-                               "deciding whether to continue."),
-                            preview,
-                            QVector<ApprovalPromptButton>{{tr("Continue Anyway"),
-                                                           ApprovalPromptChoice::Accept,
-                                                           ApprovalPromptButtonStyle::Danger,
-                                                           false},
-                                                          {tr("Stop"),
-                                                           ApprovalPromptChoice::Reject,
-                                                           ApprovalPromptButtonStyle::Secondary,
-                                                           true}}});
+    const auto failure_choice = showApprovalPrompt(
+        {.parent = this,
+         .window_title = tr("Restore Point Failed"),
+         .heading = tr("Do you approve continuing without a restore point?"),
+         .body = tr("The restore point was not created. Review the command again before "
+                    "deciding whether to continue."),
+         .command_text = preview,
+         .buttons = QVector<ApprovalPromptButton>{{.text = tr("Continue Anyway"),
+                                                   .choice = ApprovalPromptChoice::Accept,
+                                                   .style = ApprovalPromptButtonStyle::Danger,
+                                                   .default_button = false},
+                                                  {.text = tr("Stop"),
+                                                   .choice = ApprovalPromptChoice::Reject,
+                                                   .style = ApprovalPromptButtonStyle::Secondary,
+                                                   .default_button = true}}});
     const bool proceed = failure_choice == ApprovalPromptChoice::Accept;
     metadata[QStringLiteral("decision")] = proceed ? QStringLiteral("continue_anyway")
                                                    : QStringLiteral("stop");
@@ -7014,9 +7041,9 @@ QJsonObject AiAssistantPanel::runWorkflowPowerShellTool(const QJsonObject& args,
         args,
         command_preview,
         callbacks,
-        ai::AiWorkflowPowerShellToolOptions{static_cast<int>(kDefaultOutputCapKb *
-                                                             sak::kBytesPerKB),
-                                            static_cast<int>(sak::kBytesPerKB)});
+        ai::AiWorkflowPowerShellToolOptions{
+            .default_output_bytes = static_cast<int>(kDefaultOutputCapKb * sak::kBytesPerKB),
+            .min_output_bytes = static_cast<int>(sak::kBytesPerKB)});
 }
 
 ai::AiCommandResult AiAssistantPanel::executeWorkflowPowerShellRequest(
@@ -7250,9 +7277,10 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
         &gateway,
         access,
         callbacks,
-        ai::AiProviderGatewayToolOptions{static_cast<int>(kDefaultOutputCapKb * sak::kBytesPerKB),
-                                         static_cast<int>(sak::kBytesPerKB),
-                                         kToolOutputMaxBytes});
+        ai::AiProviderGatewayToolOptions{.default_output_bytes = static_cast<int>(
+                                             kDefaultOutputCapKb * sak::kBytesPerKB),
+                                         .min_output_bytes = static_cast<int>(sak::kBytesPerKB),
+                                         .max_output_bytes = kToolOutputMaxBytes});
 }
 
 QJsonObject AiAssistantPanel::runSessionSearchTool(const QJsonObject& args) const {
@@ -8965,9 +8993,9 @@ void AiAssistantPanel::refreshContextList() {
 
 AiAssistantPanel::ContextChipPalette AiAssistantPanel::contextChipPalette(
     ContextItem::Type type) const {
-    ContextChipPalette palette{QString::fromLatin1(sak::ui::kColorBgWhite),
-                               QString::fromLatin1(sak::ui::kColorBorderDefault),
-                               QString::fromLatin1(sak::ui::kColorTextBody)};
+    ContextChipPalette palette{.background = QString::fromLatin1(sak::ui::kColorBgWhite),
+                               .border = QString::fromLatin1(sak::ui::kColorBorderDefault),
+                               .text_color = QString::fromLatin1(sak::ui::kColorTextBody)};
     switch (type) {
     case ContextItem::Type::Workflow:
         palette.border = QString::fromLatin1(sak::ui::kColorPrimary);
@@ -10900,18 +10928,18 @@ void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workfl
     const QJsonObject resume_state_copy = resume_state;
     const QPointer<AiAssistantPanel> panel_guard(this);
     PanelToolExecutor* executor = new PanelToolExecutor(this);
-    const WorkflowRunLaunch launch{panel_guard,
-                                   workflow_copy,
-                                   run_id,
-                                   token,
-                                   api_key,
-                                   model,
-                                   reasoning,
-                                   input_values_copy,
-                                   resume_state_copy,
-                                   user_message,
-                                   currentAccessToolPolicy(),
-                                   executor};
+    const WorkflowRunLaunch launch{.panel_guard = panel_guard,
+                                   .workflow = workflow_copy,
+                                   .run_id = run_id,
+                                   .token = token,
+                                   .api_key = api_key,
+                                   .model = model,
+                                   .reasoning = reasoning,
+                                   .input_values = input_values_copy,
+                                   .resume_state = resume_state_copy,
+                                   .user_message = user_message,
+                                   .session_policy_ceiling = currentAccessToolPolicy(),
+                                   .executor = executor};
 
     const QFuture<ai::AiOrchestratorResult> future =
         QtConcurrent::run([launch]() { return AiAssistantPanel::executeWorkflowRun(launch); });
@@ -11242,7 +11270,8 @@ void AiAssistantPanel::appendTraceEventRecord(const QString& run_id,
                                               const QString& status,
                                               const QJsonObject& metadata) {
     QString error;
-    const auto event = ai::TraceStore::event({run_id, kind, name, status, metadata});
+    const auto event = ai::TraceStore::event(
+        {.run_id = run_id, .kind = kind, .name = name, .status = status, .metadata = metadata});
     if (!m_traceStore->appendEvent(event, &error) && !error.isEmpty()) {
         Q_EMIT logOutput(
             ai::CredentialStore::redactSecrets(tr("AI trace write failed: %1").arg(error)));
@@ -11267,12 +11296,12 @@ void AiAssistantPanel::appendTraceActivityRecord(const ai::AiTraceEvent& event) 
     const QString session_id = m_conversationStore ? m_conversationStore->currentSessionId()
                                                    : QString();
     auto activity = ai::TraceStore::activityEvent(
-        {session_id,
-         event.run_id,
-         event.kind,
-         activityStateFromTrace(event.kind, event.status),
-         activitySummaryFromTrace(event.name, event.status, event.metadata),
-         event.metadata});
+        {.session_id = session_id,
+         .run_id = event.run_id,
+         .kind = event.kind,
+         .state = activityStateFromTrace(event.kind, event.status),
+         .summary = activitySummaryFromTrace(event.name, event.status, event.metadata),
+         .metadata = event.metadata});
     activity.token_usage = event.token_usage;
     QString error;
     error.clear();

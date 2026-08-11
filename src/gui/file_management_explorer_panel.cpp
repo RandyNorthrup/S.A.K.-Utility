@@ -2874,7 +2874,10 @@ void FileManagementExplorerPanel::copySelectedFileOut() {
     // CopyItem to a picked destination). Explicit capped semantics: an
     // oversized raw file copies capped and marked instead of failing.
     startExportWorker(currentTarget(),
-                      {entry.path, destination, entry.size_bytes, false},
+                      {.source_path = entry.path,
+                       .destination_path = destination,
+                       .size_bytes = entry.size_bytes,
+                       .directory = false},
                       QFileInfo(destination).absolutePath());
 }
 
@@ -3186,9 +3189,10 @@ void FileManagementExplorerPanel::appendPayloadItems(const QJsonArray& items,
         if (source_is_local) {
             sources.host_files.append(path);
         } else {
-            sources.raw_items.append({path,
-                                      item.value(QStringLiteral("size")).toString().toULongLong(),
-                                      item.value(QStringLiteral("dir")).toBool()});
+            sources.raw_items.append(
+                {.path = path,
+                 .size_bytes = item.value(QStringLiteral("size")).toString().toULongLong(),
+                 .directory = item.value(QStringLiteral("dir")).toBool()});
         }
     }
 }
@@ -3473,7 +3477,9 @@ QList<FileManagementExplorerPanel::PasteItem> FileManagementExplorerPanel::paste
     items.reserve(sources.host_files.size() + sources.raw_items.size());
     for (const QString& path : sources.host_files) {
         const QFileInfo info(path);
-        items.append({path, static_cast<quint64>(std::max<qint64>(info.size(), 0)), info.isDir()});
+        items.append({.path = path,
+                      .size_bytes = static_cast<quint64>(std::max<qint64>(info.size(), 0)),
+                      .directory = info.isDir()});
     }
     items.append(sources.raw_items);
     return items;
@@ -3558,8 +3564,12 @@ void FileManagementExplorerPanel::executePasteTo(const FileManagementTarget& tar
     const bool same_namespace = (source_target.local_file_system && target.local_file_system) ||
                                 FileExplorerTargetId::fromTarget(source_target).value ==
                                     FileExplorerTargetId::fromTarget(target).value;
-    const PasteBatch batch{
-        source_target, target, destination_dir, sources.move, items.size() > 1, same_namespace};
+    const PasteBatch batch{.source_target = source_target,
+                           .target = target,
+                           .destination_dir = destination_dir,
+                           .move = sources.move,
+                           .multiple = items.size() > 1,
+                           .same_namespace = same_namespace};
     QStringList blockers;
     PasteCollisionPolicy policy;
     const QList<FileExplorerTransferItem> resolved =
@@ -3609,7 +3619,8 @@ QList<FileExplorerTransferItem> FileManagementExplorerPanel::resolveTransferItem
             continue;
         }
         PasteDestination destination{
-            childPathFor(batch.destination_dir, name, batch.target.local_file_system), false};
+            .path = childPathFor(batch.destination_dir, name, batch.target.local_file_system),
+            .replace = false};
         if (batch.same_namespace && destination.path == item.path) {
             if (batch.move) {
                 // Files FilesystemOperations.MoveAsync: same path is a no-op success.
@@ -3630,8 +3641,11 @@ QList<FileExplorerTransferItem> FileManagementExplorerPanel::resolveTransferItem
                        batch.target, batch.multiple, policy, &destination, blockers)) {
             continue;
         }
-        resolved.append(
-            {item.path, destination.path, item.size_bytes, item.directory, destination.replace});
+        resolved.append({.source_path = item.path,
+                         .destination_path = destination.path,
+                         .size_bytes = item.size_bytes,
+                         .directory = item.directory,
+                         .replace_destination = destination.replace});
     }
     return resolved;
 }
@@ -3803,7 +3817,9 @@ void FileManagementExplorerPanel::recordTransferHistory(const FileExplorerTransf
                                                         const TransferCompletion& completion) {
     QList<FileExplorerHistoryItem> journal;
     for (const FileExplorerTransferItem& item : worker->completedItems()) {
-        journal.append({item.source_path, item.destination_path, item.directory});
+        journal.append({.source_path = item.source_path,
+                        .destination_path = item.destination_path,
+                        .directory = item.directory});
     }
     recordHistory(completion.history_op,
                   completion.source_target,
@@ -3904,7 +3920,12 @@ bool FileManagementExplorerPanel::pasteSameTargetMove(const FileManagementTarget
     }
     PasteCollisionPolicy policy;
     QStringList blockers;
-    const PasteBatch batch{target, target, destination_dir, true, items.size() > 1, true};
+    const PasteBatch batch{.source_target = target,
+                           .target = target,
+                           .destination_dir = destination_dir,
+                           .move = true,
+                           .multiple = items.size() > 1,
+                           .same_namespace = true};
     const QList<FileExplorerTransferItem> resolved =
         resolveTransferItems(batch, items, &policy, &blockers);
     if (!blockers.isEmpty()) {
@@ -3995,8 +4016,9 @@ int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTar
     int moved = 0;
     for (const PasteItem& item : items) {
         const QString name = nameForPath(item.path, target.local_file_system);
-        PasteDestination destination{childPathFor(destination_dir, name, target.local_file_system),
-                                     false};
+        PasteDestination destination{
+            .path = childPathFor(destination_dir, name, target.local_file_system),
+            .replace = false};
         if (destination.path == item.path) {
             // Files FilesystemOperations.MoveAsync: same path is a no-op success.
             ++moved;
@@ -4030,7 +4052,9 @@ int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTar
         }
         ++moved;
         m_last_mutation = result;
-        m_transfer_journal.append({item.path, destination.path, item.directory});
+        m_transfer_journal.append({.source_path = item.path,
+                                   .destination_path = destination.path,
+                                   .directory = item.directory});
     }
     return moved;
 }
@@ -4287,7 +4311,10 @@ bool FileManagementExplorerPanel::executeHistoryTransfer(const FileExplorerStora
         if (to_parent.isEmpty()) {
             to_parent = historyParentPath(to_path);
         }
-        applyHistoryTransferItem(HistoryTransferLeg{from_target, to_target, move, same_target},
+        applyHistoryTransferItem(HistoryTransferLeg{.from_target = from_target,
+                                                    .to_target = to_target,
+                                                    .move = move,
+                                                    .same_target = same_target},
                                  item.directory,
                                  from_path,
                                  to_path,
@@ -4351,7 +4378,10 @@ void FileManagementExplorerPanel::applyHistoryTransferItem(const HistoryTransfer
         return;
     }
     FileExplorerTransferEngine engine(leg.from_target, leg.to_target, kExplorerHashMaxBytes);
-    const FileExplorerTransferItem item{from_path, to_path, 0, directory};
+    const FileExplorerTransferItem item{.source_path = from_path,
+                                        .destination_path = to_path,
+                                        .size_bytes = 0,
+                                        .directory = directory};
     if (leg.move && leg.same_target) {
         std::ignore = engine.renameWithinTarget(item);
     } else if (engine.transferEntry(item) && leg.move) {
@@ -4570,10 +4600,12 @@ void FileManagementExplorerPanel::exportSelectedDirectoryOut(const FileManagemen
     }
     // Folder export runs on the transfer worker with a status-center card;
     // the tree lands under <picked dir>/<folder name> as before.
-    startExportWorker(
-        currentTarget(),
-        {entry.path, QDir(destination_root).filePath(entry.name), entry.size_bytes, true},
-        destination_root);
+    startExportWorker(currentTarget(),
+                      {.source_path = entry.path,
+                       .destination_path = QDir(destination_root).filePath(entry.name),
+                       .size_bytes = entry.size_bytes,
+                       .directory = true},
+                      destination_root);
 }
 
 FileManagementTarget FileManagementExplorerPanel::otherPaneTarget() const {
@@ -4643,7 +4675,10 @@ bool FileManagementExplorerPanel::resolveCrossPaneCopyItem(const PasteBatch& bat
             tr("Skipped %1: an item with that name is already in the other pane.").arg(entry.name));
         return false;
     }
-    *item = {entry.path, destination_path, entry.size_bytes, entry.directory};
+    *item = {.source_path = entry.path,
+             .destination_path = destination_path,
+             .size_bytes = entry.size_bytes,
+             .directory = entry.directory};
     return true;
 }
 
@@ -4677,7 +4712,12 @@ void FileManagementExplorerPanel::crossPaneCopySelection() {
     const bool same_namespace = (source.local_file_system && destination.local_file_system) ||
                                 FileExplorerTargetId::fromTarget(source).value ==
                                     FileExplorerTargetId::fromTarget(destination).value;
-    const PasteBatch batch{source, destination, destination_dir, false, false, same_namespace};
+    const PasteBatch batch{.source_target = source,
+                           .target = destination,
+                           .destination_dir = destination_dir,
+                           .move = false,
+                           .multiple = false,
+                           .same_namespace = same_namespace};
     QStringList blockers;
     const QList<FileExplorerTransferItem> items = resolveCrossPaneCopyItems(batch, &blockers);
     if (!blockers.isEmpty()) {
@@ -5387,7 +5427,9 @@ void FileManagementExplorerPanel::commitPropertiesRename(const QString& captured
         recordHistory(FileExplorerHistoryOperation::Rename,
                       target,
                       target,
-                      {FileExplorerHistoryItem{source_path, destination_path, false}});
+                      {FileExplorerHistoryItem{.source_path = source_path,
+                                               .destination_path = destination_path,
+                                               .directory = false}});
         loadDirectory(m_current_path);
     }
 }
@@ -5585,11 +5627,14 @@ void FileManagementExplorerPanel::createFolderAndMoveSelection(
     recordHistory(FileExplorerHistoryOperation::CreateNew,
                   target,
                   target,
-                  {FileExplorerHistoryItem{QString(), folder_path, true}});
+                  {FileExplorerHistoryItem{.source_path = QString(),
+                                           .destination_path = folder_path,
+                                           .directory = true}});
     QList<PasteItem> items;
     items.reserve(selection.entries.size());
     for (const FileManagementEntry& entry : selection.entries) {
-        items.append({entry.path, entry.size_bytes, entry.directory});
+        items.append(
+            {.path = entry.path, .size_bytes = entry.size_bytes, .directory = entry.directory});
     }
     PasteCollisionPolicy policy;
     QStringList blockers;
@@ -5752,7 +5797,10 @@ void FileManagementExplorerPanel::compressSelectionToZip() {
     request.raw_read_cap = kExplorerHashMaxBytes;
     const FileExplorerSelection selection = currentSelection();
     for (const FileManagementEntry& entry : selection.entries) {
-        request.sources.append({entry.path, QString(), entry.size_bytes, entry.directory});
+        request.sources.append({.source_path = entry.path,
+                                .destination_path = QString(),
+                                .size_bytes = entry.size_bytes,
+                                .directory = entry.directory});
     }
     startArchiveWorker(request, tr("Compress"));
 }
@@ -5803,7 +5851,10 @@ QList<FileExplorerArchiveExtractItem> FileManagementExplorerPanel::extractArchiv
     QList<FileExplorerArchiveExtractItem> items;
     const FileExplorerSelection selection = currentSelection();
     for (const FileManagementEntry& entry : selection.entries) {
-        FileExplorerArchiveExtractItem item{entry.path, entry.name, entry.size_bytes, QString()};
+        FileExplorerArchiveExtractItem item{.source_path = entry.path,
+                                            .name = entry.name,
+                                            .size_bytes = entry.size_bytes,
+                                            .dialog_destination = QString()};
         if (mode == ExtractMode::Dialog) {
             const QString start = target.local_file_system ? QFileInfo(entry.path).absolutePath()
                                                            : QDir::homePath();
@@ -7724,7 +7775,8 @@ void FileManagementExplorerPanel::onNewFolderClicked() {
         recordHistory(FileExplorerHistoryOperation::CreateNew,
                       target,
                       target,
-                      {FileExplorerHistoryItem{QString(), path, true}});
+                      {FileExplorerHistoryItem{
+                          .source_path = QString(), .destination_path = path, .directory = true}});
         loadDirectory(m_current_path);
     }
 }
@@ -7785,7 +7837,8 @@ void FileManagementExplorerPanel::onCreateFileClicked() {
         recordHistory(FileExplorerHistoryOperation::CreateNew,
                       target,
                       target,
-                      {FileExplorerHistoryItem{QString(), path, false}});
+                      {FileExplorerHistoryItem{
+                          .source_path = QString(), .destination_path = path, .directory = false}});
         loadDirectory(m_current_path);
     }
 }
@@ -7983,7 +8036,9 @@ void FileManagementExplorerPanel::performInlineRename(const int row,
         recordHistory(FileExplorerHistoryOperation::Rename,
                       target,
                       target,
-                      {FileExplorerHistoryItem{sourcePath, destinationPath, is_directory}});
+                      {FileExplorerHistoryItem{.source_path = sourcePath,
+                                               .destination_path = destinationPath,
+                                               .directory = is_directory}});
         loadDirectory(m_current_path);
     }
 }
@@ -8047,7 +8102,10 @@ void FileManagementExplorerPanel::deleteSelectionWithConfirmation(const bool per
     request.destination_target = target;
     request.kind = recycle ? FileExplorerTransferKind::Recycle : FileExplorerTransferKind::Delete;
     for (const FileManagementEntry& entry : selection.entries) {
-        request.items.append({entry.path, QString(), entry.size_bytes, entry.directory});
+        request.items.append({.source_path = entry.path,
+                              .destination_path = QString(),
+                              .size_bytes = entry.size_bytes,
+                              .directory = entry.directory});
     }
     TransferCompletion completion;
     completion.card_operation = recycle ? FileExplorerOperationType::Recycle

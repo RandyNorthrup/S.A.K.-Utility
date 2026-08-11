@@ -77,7 +77,9 @@ IAiModelClient::Response modelResponseFromState(const ModelInvokeState& state,
         response.response_id = state.result.id;
         response.tool_calls.reserve(state.result.function_calls.size());
         for (const auto& call : state.result.function_calls) {
-            response.tool_calls.append({call.call_id, call.name, call.arguments_json});
+            response.tool_calls.append({.call_id = call.call_id,
+                                        .name = call.name,
+                                        .arguments_json = call.arguments_json});
         }
         return response;
     }
@@ -204,7 +206,7 @@ IAiModelClient::Response OpenAIResponsesModelClient::continueWithToolOutputs(
     req.previous_response_id = response_id;
     req.function_outputs.reserve(outputs.size());
     for (const auto& output : outputs) {
-        req.function_outputs.append({output.call_id, output.output_json});
+        req.function_outputs.append({.call_id = output.call_id, .output = output.output_json});
     }
     return runResponseRequest(req, token);
 }

@@ -408,7 +408,11 @@ void OstConversionWorker::processFolder(PstParser* parser,
     loadAndProcessFolderItems(parser, folder, folder_path, config, result);
 
     for (const auto& child : folder.children) {
-        processFolder(parser, child, {folder_path, position.depth + 1}, config, result);
+        processFolder(parser,
+                      child,
+                      {.parent_path = folder_path, .depth = position.depth + 1},
+                      config,
+                      result);
     }
 }
 

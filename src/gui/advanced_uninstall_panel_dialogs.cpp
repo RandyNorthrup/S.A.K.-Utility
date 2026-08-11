@@ -439,7 +439,11 @@ void AdvancedUninstallPanel::showBatchUninstallDialog() {
     auto* restoreCheck = addBatchUninstallOptions(&dialog, layout);
     auto* buttonBox = addBatchUninstallButtons(&dialog, layout);
 
-    wireBatchUninstallQueueActions({queueList, headerLabel, totalLabel, removeBtn, clearBtn},
+    wireBatchUninstallQueueActions({.queue_list = queueList,
+                                    .header_label = headerLabel,
+                                    .total_label = totalLabel,
+                                    .remove_btn = removeBtn,
+                                    .clear_btn = clearBtn},
                                    &dialog);
 
     connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);

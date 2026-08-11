@@ -60,9 +60,9 @@ SplitTargetPath splitTargetPath(const QString& path) {
     }
     const qsizetype slash = clean.lastIndexOf(QLatin1Char('/'));
     if (slash < 0) {
-        return {QString(), clean};
+        return {.parent = QString(), .name = clean};
     }
-    return {clean.left(slash), clean.mid(slash + 1)};
+    return {.parent = clean.left(slash), .name = clean.mid(slash + 1)};
 }
 
 }  // namespace

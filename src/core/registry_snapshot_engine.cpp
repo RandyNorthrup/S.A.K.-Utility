@@ -145,7 +145,7 @@ QSet<QString> RegistrySnapshotEngine::captureSnapshot(bool* reliable) {
     bool ok = true;
 
 #ifdef Q_OS_WIN
-    const SnapshotSink sink{snapshot, ok};
+    const SnapshotSink sink{.keys = snapshot, .reliable = ok};
     for (const auto& path : kMonitoredPaths) {
         HKEY hive = nullptr;
         QString subkey;

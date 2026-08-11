@@ -117,28 +117,29 @@ void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layo
     auto* row = new QHBoxLayout();
     row->setSpacing(sak::ui::kSpacingLarge);
 
-    row->addWidget(createMigrationCard(parent,
-                                       {QStringLiteral(":/icons/icons/backup.svg"),
-                                        tr("Backup User Profiles"),
-                                        tr("Scan and select users, choose folders, configure"
-                                           " filters, and create backup packages."),
-                                        tr("Start Backup Wizard..."),
-                                        sak::ui::kSecondaryButtonStyle,
-                                        tr("Step-by-step wizard to select apps, configure"
-                                           " options, and create backups"),
-                                        QStringLiteral("Start Backup Wizard")},
-                                       m_backupButton));
+    row->addWidget(
+        createMigrationCard(parent,
+                            {.icon = QStringLiteral(":/icons/icons/backup.svg"),
+                             .title = tr("Backup User Profiles"),
+                             .desc = tr("Scan and select users, choose folders, configure"
+                                        " filters, and create backup packages."),
+                             .btn_text = tr("Start Backup Wizard..."),
+                             .btn_style = sak::ui::kSecondaryButtonStyle,
+                             .tip = tr("Step-by-step wizard to select apps, configure"
+                                       " options, and create backups"),
+                             .acc = QStringLiteral("Start Backup Wizard")},
+                            m_backupButton));
 
     row->addWidget(createMigrationCard(parent,
-                                       {QStringLiteral(":/icons/icons/restore.svg"),
-                                        tr("Restore User Profiles"),
-                                        tr("Select backup, map users, configure merge"
-                                           " options, and restore data with permissions."),
-                                        tr("Start Restore Wizard..."),
-                                        sak::ui::kSecondaryButtonStyle,
-                                        tr("Step-by-step wizard to select backups, map"
-                                           " users, and restore data"),
-                                        QStringLiteral("Start Restore Wizard")},
+                                       {.icon = QStringLiteral(":/icons/icons/restore.svg"),
+                                        .title = tr("Restore User Profiles"),
+                                        .desc = tr("Select backup, map users, configure merge"
+                                                   " options, and restore data with permissions."),
+                                        .btn_text = tr("Start Restore Wizard..."),
+                                        .btn_style = sak::ui::kSecondaryButtonStyle,
+                                        .tip = tr("Step-by-step wizard to select backups, map"
+                                                  " users, and restore data"),
+                                        .acc = QStringLiteral("Start Restore Wizard")},
                                        m_restoreButton));
 
     layout->addLayout(row);

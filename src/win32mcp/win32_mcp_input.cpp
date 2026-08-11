@@ -41,13 +41,14 @@ constexpr int kInputEventsPerChar = 2;
 // -- result + schema helpers (module-local, mirroring win32_mcp_tools) -------
 
 ToolResult jsonResult(const QJsonObject& object) {
-    return {QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)), false};
+    return {.text = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)),
+            .is_error = false};
 }
 
 ToolResult errorResult(const QString& message) {
-    return {QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
-                .toJson(QJsonDocument::Compact),
-            true};
+    return {.text = QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
+                        .toJson(QJsonDocument::Compact),
+            .is_error = true};
 }
 
 QJsonObject stringProperty(const QString& description) {
@@ -81,10 +82,10 @@ QJsonObject toolEntry(const QString& name, const QString& description, const QJs
 // -- SendInput primitives ----------------------------------------------------
 
 ScreenBox virtualScreen() {
-    return ScreenBox{GetSystemMetrics(SM_XVIRTUALSCREEN),
-                     GetSystemMetrics(SM_YVIRTUALSCREEN),
-                     GetSystemMetrics(SM_CXVIRTUALSCREEN),
-                     GetSystemMetrics(SM_CYVIRTUALSCREEN)};
+    return ScreenBox{.x = GetSystemMetrics(SM_XVIRTUALSCREEN),
+                     .y = GetSystemMetrics(SM_YVIRTUALSCREEN),
+                     .w = GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                     .h = GetSystemMetrics(SM_CYVIRTUALSCREEN)};
 }
 
 INPUT mouseInput(DWORD flags, LONG nx, LONG ny) {
@@ -506,11 +507,11 @@ struct InputHandler {
 };
 
 const InputHandler kInputHandlers[] = {
-    {QLatin1String("mouse_click"), toolMouseClick},
-    {QLatin1String("click_text"), toolClickText},
-    {QLatin1String("type_text"), toolTypeText},
-    {QLatin1String("send_keys"), toolSendKeys},
-    {QLatin1String("focus_window"), toolFocusWindow},
+    {.name = QLatin1String("mouse_click"), .fn = toolMouseClick},
+    {.name = QLatin1String("click_text"), .fn = toolClickText},
+    {.name = QLatin1String("type_text"), .fn = toolTypeText},
+    {.name = QLatin1String("send_keys"), .fn = toolSendKeys},
+    {.name = QLatin1String("focus_window"), .fn = toolFocusWindow},
 };
 
 }  // namespace

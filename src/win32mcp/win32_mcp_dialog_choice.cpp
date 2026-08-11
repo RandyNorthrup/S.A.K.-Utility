@@ -14,7 +14,7 @@ QVector<DialogButton> collectButtons(const QVector<ButtonNode>& nodes) {
     for (int i = 0; i < nodes.size(); ++i) {
         const ButtonNode& node = nodes.at(i);
         if (node.role == QLatin1String("button") && node.enabled && !node.offscreen) {
-            buttons.append(DialogButton{i, node.name});
+            buttons.append(DialogButton{.element_index = i, .name = node.name});
         }
     }
     return buttons;

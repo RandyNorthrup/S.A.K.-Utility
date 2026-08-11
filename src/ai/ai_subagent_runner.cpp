@@ -544,7 +544,7 @@ struct ActingLoopOutcome {
 // Terminates the batch: `result` becomes the attempt's final outcome.
 bool stopBatch(ActingLoopOutcome* outcome, AiSubagentResult result) {
     outcome->early_return = true;
-    outcome->early_attempt = {std::move(result), false};
+    outcome->early_attempt = {.result = std::move(result), .retryable = false};
     return false;
 }
 
@@ -736,11 +736,11 @@ ActingLoopOutcome runToolCallLoop(const AttemptContext& ctx,
         }
         if (iterations >= ctx.tools.max_iterations) {
             outcome.early_return = true;
-            outcome.early_attempt = {toolIterationCapResult(task,
-                                                            ctx.tools.max_iterations,
-                                                            outcome.executed_tools,
-                                                            accumulated),
-                                     false};
+            outcome.early_attempt = {.result = toolIterationCapResult(task,
+                                                                      ctx.tools.max_iterations,
+                                                                      outcome.executed_tools,
+                                                                      accumulated),
+                                     .retryable = false};
             return outcome;
         }
         if (!executeToolCallsForTurn(ctx, agent_token, deadline, accumulated, &outcome)) {
@@ -778,7 +778,7 @@ SubagentAttempt invokeSubagentAttempt(const AttemptContext& ctx,
             baseResult(task, AiSubagentStatus::Cancelled, agent_token.cancelReason());
         cancelled.usage = response.usage;
         recordExecutedTools(&cancelled, loop.executed_tools);
-        return {cancelled, false};
+        return {.result = cancelled, .retryable = false};
     }
     if (!response.success) {
         AiSubagentResult failed = baseResult(task,
@@ -788,12 +788,12 @@ SubagentAttempt invokeSubagentAttempt(const AttemptContext& ctx,
                                                  : response.error_message);
         failed.usage = response.usage;
         recordExecutedTools(&failed, loop.executed_tools);
-        return {failed, !tools_ran};
+        return {.result = failed, .retryable = !tools_ran};
     }
     bool retryable = false;
     AiSubagentResult parsed = parseSubagentJsonResult(task, response, &retryable);
     recordExecutedTools(&parsed, loop.executed_tools);
-    return {parsed, retryable && !tools_ran};
+    return {.result = parsed, .retryable = retryable && !tools_ran};
 }
 
 // The retry backoff must not outlive the run: sleep in short slices so a cancel

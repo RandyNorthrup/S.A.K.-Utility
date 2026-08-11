@@ -156,7 +156,7 @@ void BrowserBridgeSession::onDetached() {
 }
 
 BrowserBridgeSession::Outgoing BrowserBridgeSession::refuse(const QString& reason) const {
-    return {QJsonObject{}, false, reason};
+    return {.frame = QJsonObject{}, .ok = false, .error = reason};
 }
 
 BrowserBridgeSession::Outgoing BrowserBridgeSession::beginCommand(const QString& tool,

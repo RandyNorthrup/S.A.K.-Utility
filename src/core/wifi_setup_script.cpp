@@ -73,15 +73,15 @@ std::optional<WlanAuthConfig> resolveWlanAuth(const QString& security) {
     // WEP only when the label names WEP and no WPA variant: a mixed label like "WPA2, not WEP"
     // is a WPA2 network, not an (insecure) open/WEP one.
     if (upper.contains("WEP") && !upper.contains("WPA")) {
-        return WlanAuthConfig{"open", "WEP"};
+        return WlanAuthConfig{.auth_type = "open", .enc_type = "WEP"};
     }
     if (upper.contains("NONE") || upper.contains("OPEN") || upper.contains("OWE")) {
-        return WlanAuthConfig{"open", "none"};
+        return WlanAuthConfig{.auth_type = "open", .enc_type = "none"};
     }
     if (isWpa3SaeOnly(upper)) {
-        return WlanAuthConfig{"WPA3SAE", "AES"};
+        return WlanAuthConfig{.auth_type = "WPA3SAE", .enc_type = "AES"};
     }
-    return WlanAuthConfig{"WPA2PSK", "AES"};
+    return WlanAuthConfig{.auth_type = "WPA2PSK", .enc_type = "AES"};
 }
 
 QString buildWlanXmlContent(const QString& ssid,

@@ -188,7 +188,9 @@ TcpProbeResult runTcpProbe(const QString& target,
     QSemaphore done;
     auto* context = new QObject();
     context->moveToThread(&thread);
-    TcpProbeSettings settings{target, bannerTimeoutMs, grabBanner};
+    TcpProbeSettings settings{.target = target,
+                              .banner_timeout_ms = bannerTimeoutMs,
+                              .grab_banner = grabBanner};
     auto probe = std::make_shared<TcpProbeContext>(result, thread, done, std::move(settings));
     probe->owner = context;
 
@@ -317,22 +319,25 @@ const QHash<uint16_t, QString> kServiceDatabase = {
 };
 
 const QVector<PortPreset> kPortPresets = {
-    {QStringLiteral("Common Services"), {20,  21,  22,  23,  25,  53,   80,   110,  115,  135, 139,
-                                         143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080}},
-    {QStringLiteral("Web Servers"), {80, 443, 8080, 8443, 8000, 8888, 9000, 9090}},
-    {QStringLiteral("Database"), {1433, 1521, 3306, 5432, 6379, 27'017, 9200}},
-    {QStringLiteral("File Sharing"), {20, 21, 22, 69, 111, 137, 138, 139, 445, 873, 2049}},
-    {QStringLiteral("Email"), {25, 110, 143, 465, 587, 993, 995}},
-    {QStringLiteral("Remote Access"), {22, 23, 3389, 5900, 5901, 5938, 8291}},
-    {QStringLiteral("Top 100"),
-     {7,    9,    13,     21,     22,     23,     25,    26,   37,   53,   79,   80,   81,
-      88,   106,  110,    111,    113,    119,    135,   139,  143,  144,  179,  199,  389,
-      427,  443,  444,    445,    465,    513,    514,   515,  543,  544,  548,  554,  587,
-      631,  646,  873,    990,    993,    995,    1025,  1026, 1027, 1028, 1029, 1110, 1433,
-      1720, 1723, 1755,   1900,   2000,   2001,   2049,  2121, 2717, 3000, 3128, 3306, 3389,
-      3986, 4899, 5000,   5009,   5051,   5060,   5101,  5190, 5357, 5432, 5631, 5666, 5800,
-      5900, 5901, 6000,   6001,   6646,   7070,   8000,  8008, 8009, 8080, 8081, 8443, 8888,
-      9100, 9999, 10'000, 32'768, 49'152, 49'153, 49'154}},
+    {.name = QStringLiteral("Common Services"),
+     .ports = {20,  21,  22,  23,  25,  53,   80,   110,  115,  135, 139,
+               143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080}},
+    {.name = QStringLiteral("Web Servers"), .ports = {80, 443, 8080, 8443, 8000, 8888, 9000, 9090}},
+    {.name = QStringLiteral("Database"), .ports = {1433, 1521, 3306, 5432, 6379, 27'017, 9200}},
+    {.name = QStringLiteral("File Sharing"),
+     .ports = {20, 21, 22, 69, 111, 137, 138, 139, 445, 873, 2049}},
+    {.name = QStringLiteral("Email"), .ports = {25, 110, 143, 465, 587, 993, 995}},
+    {.name = QStringLiteral("Remote Access"), .ports = {22, 23, 3389, 5900, 5901, 5938, 8291}},
+    {.name = QStringLiteral("Top 100"),
+     .ports = {7,    9,    13,   21,   22,   23,     25,     26,     37,     53,    79,
+               80,   81,   88,   106,  110,  111,    113,    119,    135,    139,   143,
+               144,  179,  199,  389,  427,  443,    444,    445,    465,    513,   514,
+               515,  543,  544,  548,  554,  587,    631,    646,    873,    990,   993,
+               995,  1025, 1026, 1027, 1028, 1029,   1110,   1433,   1720,   1723,  1755,
+               1900, 2000, 2001, 2049, 2121, 2717,   3000,   3128,   3306,   3389,  3986,
+               4899, 5000, 5009, 5051, 5060, 5101,   5190,   5357,   5432,   5631,  5666,
+               5800, 5900, 5901, 6000, 6001, 6646,   7070,   8000,   8008,   8009,  8080,
+               8081, 8443, 8888, 9100, 9999, 10'000, 32'768, 49'152, 49'153, 49'154}},
 };
 }  // namespace
 

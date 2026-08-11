@@ -210,15 +210,15 @@ sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
         sak::ImageFormat format;
     };
     static constexpr FormatEntry kFormats[] = {
-        {"iso", sak::ImageFormat::ISO},
-        {"img", sak::ImageFormat::IMG},
-        {"wic", sak::ImageFormat::WIC},
-        {"zip", sak::ImageFormat::ZIP},
-        {"gz", sak::ImageFormat::GZIP},
-        {"bz2", sak::ImageFormat::BZIP2},
-        {"xz", sak::ImageFormat::XZ},
-        {"dmg", sak::ImageFormat::DMG},
-        {"dsk", sak::ImageFormat::DSK},
+        {.ext = "iso", .format = sak::ImageFormat::ISO},
+        {.ext = "img", .format = sak::ImageFormat::IMG},
+        {.ext = "wic", .format = sak::ImageFormat::WIC},
+        {.ext = "zip", .format = sak::ImageFormat::ZIP},
+        {.ext = "gz", .format = sak::ImageFormat::GZIP},
+        {.ext = "bz2", .format = sak::ImageFormat::BZIP2},
+        {.ext = "xz", .format = sak::ImageFormat::XZ},
+        {.ext = "dmg", .format = sak::ImageFormat::DMG},
+        {.ext = "dsk", .format = sak::ImageFormat::DSK},
     };
     const auto* const it =
         std::find_if(std::begin(kFormats), std::end(kFormats), [&ext](const auto& entry) {
@@ -234,9 +234,9 @@ sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
         sak::ImageFormat format;
     };
     static constexpr CompoundEntry kCompound[] = {
-        {".gz", sak::ImageFormat::GZIP},
-        {".bz2", sak::ImageFormat::BZIP2},
-        {".xz", sak::ImageFormat::XZ},
+        {.suffix = ".gz", .format = sak::ImageFormat::GZIP},
+        {.suffix = ".bz2", .format = sak::ImageFormat::BZIP2},
+        {.suffix = ".xz", .format = sak::ImageFormat::XZ},
     };
     QString fullExt = QFileInfo(filePath).completeSuffix().toLower();
     const auto* const cit =
