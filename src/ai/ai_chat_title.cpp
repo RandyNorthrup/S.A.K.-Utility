@@ -8,6 +8,7 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <array>
 #include <initializer_list>
 
 namespace sak::ai {
@@ -153,10 +154,11 @@ QString offlineInstallerTitle(const QString& text) {
 
 QString domainTitle(const QString& text) {
     const QString lower = text.toLower();
-    const struct {
+    struct DomainRule {
         const char* m_title;
         std::initializer_list<const char*> m_terms;
-    } rules[] = {
+    };
+    const std::array<DomainRule, 9> rules = {{
         {.m_title = "AI Panel Quality Pass", .m_terms = {"ai panel", "assistant panel"}},
         {.m_title = "Windows Update Repair", .m_terms = {"windows update"}},
         {.m_title = "BSOD Investigation", .m_terms = {"blue screen", "bsod"}},
@@ -166,7 +168,7 @@ QString domainTitle(const QString& text) {
         {.m_title = "Network Connectivity Repair", .m_terms = {"network", "wifi", "wi-fi"}},
         {.m_title = "Printer Troubleshooting", .m_terms = {"printer"}},
         {.m_title = "Partition Manager", .m_terms = {"partition"}},
-    };
+    }};
     for (const auto& rule : rules) {
         if (containsAnyTerm(lower, rule.m_terms)) {
             return QString::fromLatin1(rule.m_title);

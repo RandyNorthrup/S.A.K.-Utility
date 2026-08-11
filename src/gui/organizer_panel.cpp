@@ -40,6 +40,8 @@
 #include <QThread>
 #include <QVBoxLayout>
 
+#include <array>
+
 namespace sak {
 
 namespace {
@@ -224,7 +226,7 @@ void OrganizerPanel::updateHeaderForTab(int index) {
         const char* title;
         const char* subtitle;
     };
-    static constexpr TabMeta kTabs[] = {
+    static constexpr std::array<TabMeta, 4> kTabs = {{
         {.icon = ":/icons/icons/panel_organizer.svg",
          .title = "File Organizer",
          .subtitle = "Organize files into categorized folders"},
@@ -238,7 +240,7 @@ void OrganizerPanel::updateHeaderForTab(int index) {
          .title = "Advanced Search",
          .subtitle =
              "Search file contents, metadata, archives, and binary data across directory trees"},
-    };
+    }};
     if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
         const auto& meta = kTabs[index];
         sak::updatePanelHeader(

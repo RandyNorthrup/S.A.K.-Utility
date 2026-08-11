@@ -137,14 +137,14 @@ void DiagnosticBenchmarkPanel::setupUi() {
             const char* title;
             const char* subtitle;
         };
-        static constexpr TabMeta kTabs[] = {
+        static constexpr auto kTabs = std::to_array<TabMeta>({
             {.icon = ":/icons/icons/panel_diagnostic.svg",
              .title = "Diagnostics",
              .subtitle = "Hardware inventory, SMART analysis, and thermal monitoring"},
             {.icon = ":/icons/icons/icons8-benchmark.svg",
              .title = "Benchmarks",
              .subtitle = "CPU, disk, and memory benchmarks with stress testing"},
-        };
+        });
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& meta = kTabs[index];
             sak::updatePanelHeader(

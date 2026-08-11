@@ -55,7 +55,7 @@ struct CodeDescriptionEntry {
     const char* m_description;
 };
 
-static constexpr CodeDescriptionEntry kEncryptionMethods[] = {
+static constexpr std::array<CodeDescriptionEntry, 8> kEncryptionMethods = {{
     {.m_code = 0, .m_description = "None"},
     {.m_code = 1, .m_description = "AES-128 with Diffuser"},
     {.m_code = 2, .m_description = "AES-256 with Diffuser"},
@@ -64,9 +64,9 @@ static constexpr CodeDescriptionEntry kEncryptionMethods[] = {
     {.m_code = 5, .m_description = "Hardware Encryption"},
     {.m_code = 6, .m_description = "XTS-AES-128"},
     {.m_code = 7, .m_description = "XTS-AES-256"},
-};
+}};
 
-static constexpr CodeDescriptionEntry kProtectorTypes[] = {
+static constexpr std::array<CodeDescriptionEntry, 11> kProtectorTypes = {{
     {.m_code = 0, .m_description = "Unknown or Other"},
     {.m_code = 1, .m_description = "TPM"},
     {.m_code = 2, .m_description = "External Key (USB)"},
@@ -78,7 +78,7 @@ static constexpr CodeDescriptionEntry kProtectorTypes[] = {
     {.m_code = 8, .m_description = "Passphrase"},
     {.m_code = 9, .m_description = "TPM + Certificate"},
     {.m_code = 10, .m_description = "Clear Key (Unprotected)"},
-};
+}};
 
 constexpr int kVolumeTypeOperatingSystem = 0;
 constexpr int kVolumeTypeFixedData = 1;
@@ -267,7 +267,7 @@ try {
 )PS";
 
 template <std::size_t N>
-QString lookupCodeDescription(const CodeDescriptionEntry (&table)[N], int code) {
+QString lookupCodeDescription(const std::array<CodeDescriptionEntry, N>& table, int code) {
     auto it = std::find_if(std::begin(table), std::end(table), [code](const auto& e) {
         return e.m_code == code;
     });

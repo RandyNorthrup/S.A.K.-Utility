@@ -31,6 +31,7 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 
+#include <array>
 #include <iterator>
 
 
@@ -569,7 +570,7 @@ void DiagnosticBenchmarkPanel::onSkipStepClicked() {
 
 void DiagnosticBenchmarkPanel::onSuiteStateChanged(DiagnosticController::SuiteState state) {
     // Map state to step index
-    static constexpr int kStateToStep[] = {
+    static constexpr std::array<int, 9> kStateToStep = {
         -1,  // Idle
         0,   // HardwareScan
         1,   // SmartAnalysis

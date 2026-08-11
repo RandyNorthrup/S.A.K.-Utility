@@ -69,6 +69,8 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
+#include <array>
+
 namespace sak {
 
 namespace {
@@ -853,7 +855,7 @@ void MainWindow::createEmailToolsPanel() {
             const char* title;
             const char* subtitle;
         };
-        static constexpr TabMeta kTabs[] = {
+        static constexpr std::array<TabMeta, 2> kTabs = {{
             {.icon = ":/icons/icons/panel_email.svg",
              .title = "Email Inspector",
              .subtitle = "Offline email forensics and data extraction "
@@ -861,7 +863,7 @@ void MainWindow::createEmailToolsPanel() {
             {.icon = ":/icons/icons/panel_email.svg",
              .title = "OST Converter",
              .subtitle = "Bulk OST/PST file conversion to EML, MSG, MBOX, and more"},
-        };
+        }};
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];
             sak::updatePanelHeader(email_hdr,
@@ -923,7 +925,7 @@ void MainWindow::createAppManagementPanel() {
             const char* title;
             const char* subtitle;
         };
-        static constexpr TabMeta kTabs[] = {
+        static constexpr std::array<TabMeta, 3> kTabs = {{
             {.icon = ":/icons/icons/panel_app_install.svg",
              .title = "App Installation",
              .subtitle = "Search, queue, and batch-install applications via Chocolatey"},
@@ -936,7 +938,7 @@ void MainWindow::createAppManagementPanel() {
              .subtitle =
                  "Check installed software and packages against CISA KEV, NVD, GitHub Advisories, "
                  "and OSV"},
-        };
+        }};
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];
             sak::updatePanelHeader(app_hdr,
@@ -1008,7 +1010,7 @@ void MainWindow::createNetworkManagementPanel() {
             const char* title;
             const char* subtitle;
         };
-        static constexpr TabMeta kTabs[] = {
+        static constexpr std::array<TabMeta, 3> kTabs = {{
             {.icon = ":/icons/icons/panel_network.svg",
              .title = "Network Diagnostics & Troubleshooting",
              .subtitle = "Comprehensive network analysis "
@@ -1022,7 +1024,7 @@ void MainWindow::createNetworkManagementPanel() {
             {.icon = ":/icons/icons/panel_wifi.svg",
              .title = "WiFi Manager",
              .subtitle = "Manage, share, and deploy Wi-Fi network profiles"},
-        };
+        }};
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];
             sak::updatePanelHeader(net_hdr,

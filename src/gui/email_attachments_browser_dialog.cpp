@@ -30,6 +30,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <array>
+
 namespace sak {
 
 namespace {
@@ -801,11 +803,11 @@ struct MimePrefix {
 };
 
 static QString classifyByMime(const QString& lower_mime) {
-    static const MimePrefix kPrefixes[] = {
+    static const std::array<MimePrefix, 3> kPrefixes = {{
         {.prefix = "image/", .category = &kFilterImages},
         {.prefix = "audio/", .category = &kFilterAudio},
         {.prefix = "video/", .category = &kFilterAudio},
-    };
+    }};
     for (const auto& [prefix, category] : kPrefixes) {
         if (lower_mime.startsWith(QLatin1String(prefix))) {
             return *category;

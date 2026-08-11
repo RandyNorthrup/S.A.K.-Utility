@@ -52,6 +52,7 @@
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <array>
 
 namespace sak {
 
@@ -59,13 +60,13 @@ namespace sak {
 // Day-of-week column headers
 // ============================================================================
 
-static const QString kDayHeaders[] = {QStringLiteral("Sun"),
-                                      QStringLiteral("Mon"),
-                                      QStringLiteral("Tue"),
-                                      QStringLiteral("Wed"),
-                                      QStringLiteral("Thu"),
-                                      QStringLiteral("Fri"),
-                                      QStringLiteral("Sat")};
+static const std::array<QString, 7> kDayHeaders = {{QStringLiteral("Sun"),
+                                                    QStringLiteral("Mon"),
+                                                    QStringLiteral("Tue"),
+                                                    QStringLiteral("Wed"),
+                                                    QStringLiteral("Thu"),
+                                                    QStringLiteral("Fri"),
+                                                    QStringLiteral("Sat")}};
 
 constexpr int kDaysPerWeek = 7;
 constexpr int kMonthGridRows = 6;
@@ -113,7 +114,8 @@ enum DayListColumn {
 // Busy-status label strings
 // ============================================================================
 
-static const char* const kBusyLabels[] = {"Free", "Tentative", "Busy", "Out of Office"};
+static const std::array<const char*, 4> kBusyLabels = {
+    "Free", "Tentative", "Busy", "Out of Office"};
 
 // ============================================================================
 // CalendarMonthView -- custom-painted month grid

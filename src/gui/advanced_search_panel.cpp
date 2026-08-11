@@ -45,6 +45,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 
 #include <windows.h>
 
@@ -476,78 +477,83 @@ struct MetadataCategory {
     int count;
 };
 
-constexpr MetadataField kFileFields[] = {{.key = "FileName", .display = "Name"},
-                                         {.key = "FileSize", .display = "Size"},
-                                         {.key = "FileType", .display = "Type"},
-                                         {.key = "Created", .display = "Created"},
-                                         {.key = "LastModified", .display = "Modified"}};
+constexpr auto kFileFields =
+    std::to_array<MetadataField>({{.key = "FileName", .display = "Name"},
+                                  {.key = "FileSize", .display = "Size"},
+                                  {.key = "FileType", .display = "Type"},
+                                  {.key = "Created", .display = "Created"},
+                                  {.key = "LastModified", .display = "Modified"}});
 
-constexpr MetadataField kImageFields[] = {{.key = "Width", .display = "Width"},
-                                          {.key = "Height", .display = "Height"},
-                                          {.key = "Dimensions", .display = "Dimensions"},
-                                          {.key = "Format", .display = "Format"},
-                                          {.key = "ColorDepth", .display = "Color Depth"}};
+constexpr auto kImageFields =
+    std::to_array<MetadataField>({{.key = "Width", .display = "Width"},
+                                  {.key = "Height", .display = "Height"},
+                                  {.key = "Dimensions", .display = "Dimensions"},
+                                  {.key = "Format", .display = "Format"},
+                                  {.key = "ColorDepth", .display = "Color Depth"}});
 
-constexpr MetadataField kCameraFields[] = {
-    {.key = "CameraMake", .display = "Make"},
-    {.key = "CameraModel", .display = "Model"},
-    {.key = "ExposureTime", .display = "Exposure"},
-    {.key = "FNumber", .display = "Aperture"},
-    {.key = "ISOSpeed", .display = "ISO"},
-    {.key = "FocalLength", .display = "Focal Length"},
-    {.key = "FocalLengthIn35mm", .display = "Focal Length (35mm)"},
-    {.key = "Flash", .display = "Flash"},
-    {.key = "MeteringMode", .display = "Metering"},
-    {.key = "WhiteBalance", .display = "White Balance"},
-    {.key = "DateTimeOriginal", .display = "Date Taken"},
-    {.key = "DateTimeDigitized", .display = "Date Digitized"},
-    {.key = "Software", .display = "Software"},
-    {.key = "Artist", .display = "Artist"},
-    {.key = "Copyright", .display = "Copyright"},
-    {.key = "Orientation", .display = "Orientation"},
-    {.key = "ImageDescription", .display = "Description"},
-    {.key = "LensMake", .display = "Lens Make"},
-    {.key = "LensModel", .display = "Lens Model"}};
+constexpr auto kCameraFields =
+    std::to_array<MetadataField>({{.key = "CameraMake", .display = "Make"},
+                                  {.key = "CameraModel", .display = "Model"},
+                                  {.key = "ExposureTime", .display = "Exposure"},
+                                  {.key = "FNumber", .display = "Aperture"},
+                                  {.key = "ISOSpeed", .display = "ISO"},
+                                  {.key = "FocalLength", .display = "Focal Length"},
+                                  {.key = "FocalLengthIn35mm", .display = "Focal Length (35mm)"},
+                                  {.key = "Flash", .display = "Flash"},
+                                  {.key = "MeteringMode", .display = "Metering"},
+                                  {.key = "WhiteBalance", .display = "White Balance"},
+                                  {.key = "DateTimeOriginal", .display = "Date Taken"},
+                                  {.key = "DateTimeDigitized", .display = "Date Digitized"},
+                                  {.key = "Software", .display = "Software"},
+                                  {.key = "Artist", .display = "Artist"},
+                                  {.key = "Copyright", .display = "Copyright"},
+                                  {.key = "Orientation", .display = "Orientation"},
+                                  {.key = "ImageDescription", .display = "Description"},
+                                  {.key = "LensMake", .display = "Lens Make"},
+                                  {.key = "LensModel", .display = "Lens Model"}});
 
-constexpr MetadataField kGpsFields[] = {{.key = "GPSLatitude", .display = "Latitude"},
-                                        {.key = "GPSLatitudeRef", .display = "Lat Ref"},
-                                        {.key = "GPSLongitude", .display = "Longitude"},
-                                        {.key = "GPSLongitudeRef", .display = "Lon Ref"},
-                                        {.key = "GPSAltitude", .display = "Altitude"},
-                                        {.key = "GPSAltitudeRef", .display = "Alt Ref"},
-                                        {.key = "GPSDateStamp", .display = "Date Stamp"},
-                                        {.key = "GPSTimeStamp", .display = "Time Stamp"}};
+constexpr auto kGpsFields =
+    std::to_array<MetadataField>({{.key = "GPSLatitude", .display = "Latitude"},
+                                  {.key = "GPSLatitudeRef", .display = "Lat Ref"},
+                                  {.key = "GPSLongitude", .display = "Longitude"},
+                                  {.key = "GPSLongitudeRef", .display = "Lon Ref"},
+                                  {.key = "GPSAltitude", .display = "Altitude"},
+                                  {.key = "GPSAltitudeRef", .display = "Alt Ref"},
+                                  {.key = "GPSDateStamp", .display = "Date Stamp"},
+                                  {.key = "GPSTimeStamp", .display = "Time Stamp"}});
 
-constexpr MetadataField kDocFields[] = {{.key = "Title", .display = "Title"},
-                                        {.key = "Author", .display = "Author"},
-                                        {.key = "Subject", .display = "Subject"},
-                                        {.key = "Keywords", .display = "Keywords"},
-                                        {.key = "Creator", .display = "Creator"},
-                                        {.key = "Producer", .display = "Producer"},
-                                        {.key = "Company", .display = "Company"},
-                                        {.key = "Version", .display = "Version"},
-                                        {.key = "CreationDate", .display = "Created"},
-                                        {.key = "ModDate", .display = "Modified"}};
+constexpr auto kDocFields =
+    std::to_array<MetadataField>({{.key = "Title", .display = "Title"},
+                                  {.key = "Author", .display = "Author"},
+                                  {.key = "Subject", .display = "Subject"},
+                                  {.key = "Keywords", .display = "Keywords"},
+                                  {.key = "Creator", .display = "Creator"},
+                                  {.key = "Producer", .display = "Producer"},
+                                  {.key = "Company", .display = "Company"},
+                                  {.key = "Version", .display = "Version"},
+                                  {.key = "CreationDate", .display = "Created"},
+                                  {.key = "ModDate", .display = "Modified"}});
 
-constexpr MetadataField kAudioFields[] = {{.key = "Title", .display = "Title"},
-                                          {.key = "Artist", .display = "Artist"},
-                                          {.key = "Album", .display = "Album"},
-                                          {.key = "Year", .display = "Year"},
-                                          {.key = "Genre", .display = "Genre"},
-                                          {.key = "Track", .display = "Track"},
-                                          {.key = "Comment", .display = "Comment"},
-                                          {.key = "AlbumArtist", .display = "Album Artist"},
-                                          {.key = "Composer", .display = "Composer"},
-                                          {.key = "Publisher", .display = "Publisher"},
-                                          {.key = "Copyright", .display = "Copyright"}};
+constexpr auto kAudioFields =
+    std::to_array<MetadataField>({{.key = "Title", .display = "Title"},
+                                  {.key = "Artist", .display = "Artist"},
+                                  {.key = "Album", .display = "Album"},
+                                  {.key = "Year", .display = "Year"},
+                                  {.key = "Genre", .display = "Genre"},
+                                  {.key = "Track", .display = "Track"},
+                                  {.key = "Comment", .display = "Comment"},
+                                  {.key = "AlbumArtist", .display = "Album Artist"},
+                                  {.key = "Composer", .display = "Composer"},
+                                  {.key = "Publisher", .display = "Publisher"},
+                                  {.key = "Copyright", .display = "Copyright"}});
 
-constexpr MetadataCategory kMetadataCategories[] = {
-    {.name = "File Information", .fields = kFileFields, .count = std::size(kFileFields)},
-    {.name = "Image Properties", .fields = kImageFields, .count = std::size(kImageFields)},
-    {.name = "Camera / EXIF", .fields = kCameraFields, .count = std::size(kCameraFields)},
-    {.name = "GPS Location", .fields = kGpsFields, .count = std::size(kGpsFields)},
-    {.name = "Document Properties", .fields = kDocFields, .count = std::size(kDocFields)},
-    {.name = "Audio Tags", .fields = kAudioFields, .count = std::size(kAudioFields)}};
+constexpr auto kMetadataCategories = std::to_array<MetadataCategory>(
+    {{.name = "File Information", .fields = kFileFields.data(), .count = std::size(kFileFields)},
+     {.name = "Image Properties", .fields = kImageFields.data(), .count = std::size(kImageFields)},
+     {.name = "Camera / EXIF", .fields = kCameraFields.data(), .count = std::size(kCameraFields)},
+     {.name = "GPS Location", .fields = kGpsFields.data(), .count = std::size(kGpsFields)},
+     {.name = "Document Properties", .fields = kDocFields.data(), .count = std::size(kDocFields)},
+     {.name = "Audio Tags", .fields = kAudioFields.data(), .count = std::size(kAudioFields)}});
 
 void populateMetadataTree(QTreeWidget* tree, const QMap<QString, QString>& metadata) {
     const QString dash = QStringLiteral("\u2014");

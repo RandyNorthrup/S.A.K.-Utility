@@ -63,6 +63,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <utility>
 
@@ -2100,7 +2101,7 @@ void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
                        .arg(ui::kHtmlDetailPaddingPx)
                        .arg(ui::htmlColor(ui::kColorTextHeading))
                        .arg(detail.subject.toHtmlEscaped());
-    static const char* const kTaskStatus[] = {
+    static const std::array<const char*, kTaskStatusCount> kTaskStatus = {
         "Not Started", "In Progress", "Complete", "Waiting", "Deferred"};
     if (detail.task_status >= 0 && detail.task_status < kTaskStatusCount) {
         html += QStringLiteral("<p><b>Status:</b> %1 (%2%)</p>")
@@ -2136,11 +2137,11 @@ void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
 }
 
 void EmailInspectorPanel::displayNoteDetail(const sak::PstItemDetail& detail) {
-    static const char* const kNoteColors[] = {ui::kColorNoteBlue,
-                                              ui::kColorNoteGreen,
-                                              ui::kColorNotePink,
-                                              ui::kColorNoteYellow,
-                                              ui::kColorNoteGray};
+    static const std::array<const char*, 5> kNoteColors = {ui::kColorNoteBlue,
+                                                           ui::kColorNoteGreen,
+                                                           ui::kColorNotePink,
+                                                           ui::kColorNoteYellow,
+                                                           ui::kColorNoteGray};
     constexpr int kNoteColorCount = 5;
     const int color_idx = (detail.note_color >= 0 && detail.note_color < kNoteColorCount)
                               ? detail.note_color

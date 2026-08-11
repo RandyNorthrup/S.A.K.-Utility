@@ -32,6 +32,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <iterator>
 #include <memory>
@@ -1063,7 +1064,7 @@ struct AppCategoryRule {
     std::initializer_list<const char*> keywords;
 };
 
-static const AppCategoryRule kAppCategoryRules[] = {
+static const std::array<AppCategoryRule, 10> kAppCategoryRules = {{
     {.category = "Browsers",
      .keywords = {"chrome", "firefox", "edge", "opera", "brave", "vivaldi", "browser"}},
     {.category = "Development",
@@ -1137,7 +1138,7 @@ static const AppCategoryRule kAppCategoryRules[] = {
                   "antivirus"}},
     {.category = "Drivers & Hardware",
      .keywords = {"nvidia", "amd", "realtek", "intel", "driver", "logitech", "corsair", "razer"}},
-};
+}};
 
 QString UserProfileBackupInstalledAppsPage::categorizeApp(const QString& name,
                                                           const QString& publisher) {
@@ -1465,7 +1466,7 @@ static QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& outpu
     return configs;
 }
 
-static const AppDataSourceInfo kCommonAppDataSources[] = {
+static const auto kCommonAppDataSources = std::to_array<AppDataSourceInfo>({
     // Browsers
     {.name = "Chrome Profiles",
      .category = "Browsers",
@@ -1691,7 +1692,7 @@ static const AppDataSourceInfo kCommonAppDataSources[] = {
      .size_bytes = 0,
      .exists = false,
      .selected = true},
-};
+});
 
 /// @brief Common application data sources to detect
 static QVector<AppDataSourceInfo> getCommonAppDataSources() {
