@@ -26,6 +26,7 @@
 #include <QUrl>
 #include <QUrlQuery>
 
+#include <algorithm>
 #include <cstring>
 #include <optional>
 
@@ -193,12 +194,8 @@ bool lineHasRawDownloadToken(const QString& lower) {
                                                 QStringLiteral("downloaddata"),
                                                 QStringLiteral("webclient"),
                                                 QStringLiteral("net.http")};
-    for (const QString& token : kDownloadTokens) {
-        if (lower.contains(token)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(kDownloadTokens,
+                               [&lower](const QString& token) { return lower.contains(token); });
 }
 
 bool lineHasDownloadCommand(const QString& lower) {
@@ -407,10 +404,11 @@ bool PackageInternalizationEngine::isSafePackageComponent(const QString& compone
     // Path separators, the drive colon, and the Win32-illegal filename characters
     // (< > " | ? *) plus control characters are all rejected.
     static const QString kForbidden = QStringLiteral("/\\:<>\"|?*");
-    for (const QChar c : component) {
-        if (kForbidden.contains(c) || c.unicode() < kFirstNonControlCodeUnit) {
-            return false;
-        }
+    const bool hasForbiddenChar = std::ranges::any_of(component, [](const QChar c) {
+        return kForbidden.contains(c) || c.unicode() < kFirstNonControlCodeUnit;
+    });
+    if (hasForbiddenChar) {
+        return false;
     }
     // A trailing dot or space is stripped by Win32 path resolution and can alias a
     // different name; a reserved device name is not a usable component either.

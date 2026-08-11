@@ -23,15 +23,11 @@ bool isValidVersionIdentifier(const QString& id) {
     if (id.isEmpty()) {
         return false;
     }
-    for (const QChar c : id) {
-        const bool ok = (c >= QLatin1Char('0') && c <= QLatin1Char('9')) ||
-                        (c >= QLatin1Char('A') && c <= QLatin1Char('Z')) ||
-                        (c >= QLatin1Char('a') && c <= QLatin1Char('z')) || c == QLatin1Char('-');
-        if (!ok) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::all_of(id, [](const QChar c) {
+        return (c >= QLatin1Char('0') && c <= QLatin1Char('9')) ||
+               (c >= QLatin1Char('A') && c <= QLatin1Char('Z')) ||
+               (c >= QLatin1Char('a') && c <= QLatin1Char('z')) || c == QLatin1Char('-');
+    });
 }
 
 /// @brief Split "release[-prerelease][+build]" into (release, prerelease),
@@ -47,10 +43,8 @@ bool splitVersionText(const QString& text, QString& release_out, QString& prerel
     const int plus = static_cast<int>(core.indexOf(QLatin1Char('+')));
     if (plus >= 0) {
         const QStringList meta_ids = core.mid(plus + 1).split(QLatin1Char('.'), Qt::KeepEmptyParts);
-        for (const QString& id : meta_ids) {
-            if (!isValidVersionIdentifier(id)) {
-                return false;
-            }
+        if (!std::ranges::all_of(meta_ids, isValidVersionIdentifier)) {
+            return false;
         }
         core.truncate(plus);
     }
@@ -78,12 +72,9 @@ bool isAllDigits(const QString& s) {
     if (s.isEmpty()) {
         return false;
     }
-    for (const QChar c : s) {
-        if (c < QLatin1Char('0') || c > QLatin1Char('9')) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::all_of(s, [](const QChar c) {
+        return c >= QLatin1Char('0') && c <= QLatin1Char('9');
+    });
 }
 
 /// @brief Drop leading zeros, keeping at least one digit ("007" -> "7", "0" -> "0").
@@ -136,12 +127,10 @@ bool parseReleaseComponents(const QString& release, QVector<long long>& out) {
 ///        splitting with SkipEmptyParts would silently accept the garbled tag.
 std::optional<QStringList> splitPrerelease(const QString& prerelease) {
     const QStringList ids = prerelease.split(QLatin1Char('.'), Qt::KeepEmptyParts);
-    for (const QString& id : ids) {
-        // Reject an empty identifier (a garbled ".."/leading-dot/trailing-dot) AND
-        // any identifier bearing a byte outside [0-9A-Za-z-] (e.g. "alpha_1", "?").
-        if (!isValidVersionIdentifier(id)) {
-            return std::nullopt;
-        }
+    // Reject an empty identifier (a garbled ".."/leading-dot/trailing-dot) AND
+    // any identifier bearing a byte outside [0-9A-Za-z-] (e.g. "alpha_1", "?").
+    if (!std::ranges::all_of(ids, isValidVersionIdentifier)) {
+        return std::nullopt;
     }
     return ids;
 }

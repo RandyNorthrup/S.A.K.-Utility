@@ -7,6 +7,8 @@
 #include <QRegularExpression>
 #include <QStringList>
 
+#include <algorithm>
+
 namespace sak::win32mcp {
 
 QVector<DialogButton> collectButtons(const QVector<ButtonNode>& nodes) {
@@ -183,11 +185,10 @@ int chooseDialogButton(const QVector<DialogButton>& buttons,
     // A candidate must carry the caller's own handle back to a live element. A negative index is
     // malformed input (a default-constructed DialogButton), and returning it would hand the caller
     // an index it cannot dereference -- refuse the whole choice instead.
-    for (const DialogButton& button : buttons) {
-        if (button.element_index < 0) {
-            why = QStringLiteral("A dialog button candidate carries no valid element index.");
-            return -1;
-        }
+    if (std::ranges::any_of(buttons,
+                            [](const DialogButton& button) { return button.element_index < 0; })) {
+        why = QStringLiteral("A dialog button candidate carries no valid element index.");
+        return -1;
     }
     if (!explicit_button.isEmpty()) {
         return explicitButtonChoice(buttons, explicit_button, why);

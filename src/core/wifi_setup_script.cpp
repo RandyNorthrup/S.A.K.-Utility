@@ -16,6 +16,7 @@
 #include <QDir>
 #include <QTemporaryFile>
 
+#include <algorithm>
 #include <optional>
 
 namespace sak {
@@ -154,12 +155,9 @@ QString escapeBatchString(const QString& text) {
 // safely embedded, so a script must not be generated for such an SSID. A crafted
 // SSID broadcast by a rogue access point can reach here via the scan-and-add flow.
 bool ssidIsBatchSafe(const QString& ssid) {
-    for (const QChar c : ssid) {
-        if (c == '"' || c.unicode() < kFirstPrintableAscii) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::none_of(ssid, [](const QChar c) {
+        return c == '"' || c.unicode() < kFirstPrintableAscii;
+    });
 }
 
 QString buildBatchScript(const QString& ssid, const QString& xml_base64) {

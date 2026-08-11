@@ -3,6 +3,8 @@
 
 #include "sak/user_profile_restore_selection.h"
 
+#include <algorithm>
+
 namespace sak {
 
 void applyFolderRestoreSelections(BackupManifest& manifest,
@@ -26,11 +28,8 @@ int selectedFolderCount(const BackupManifest& manifest, const QString& username)
         if (user.username != username) {
             continue;
         }
-        for (const FolderSelection& folder : user.backed_up_folders) {
-            if (folder.selected) {
-                ++count;
-            }
-        }
+        count += static_cast<int>(std::ranges::count_if(
+            user.backed_up_folders, [](const FolderSelection& folder) { return folder.selected; }));
     }
     return count;
 }

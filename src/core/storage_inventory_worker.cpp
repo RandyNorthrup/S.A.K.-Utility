@@ -351,12 +351,9 @@ bool apfsDetectionNeedsSupplementalSpaceManager(const PartitionFileSystemDetecti
     if (detection.file_system.compare(QStringLiteral("APFS"), Qt::CaseInsensitive) != 0) {
         return false;
     }
-    for (const auto& detail : detection.details) {
-        if (detail.startsWith(QStringLiteral("APFS space manager block:"))) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::none_of(detection.details, [](const auto& detail) {
+        return detail.startsWith(QStringLiteral("APFS space manager block:"));
+    });
 }
 
 std::optional<PartitionFileSystemDetection> detectFromLocalDevicePath(const QString& devicePath,

@@ -10,6 +10,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <algorithm>
+
 /// @file backup_destination_guard.h
 /// @brief Fail-closed screen for the user-profile backup destination folder.
 ///
@@ -98,14 +100,15 @@ struct BackupDestinationCheck {
         if (source.trimmed().isEmpty()) {
             continue;
         }
-        for (const QString& output : output_roots) {
-            if (backupPathIsWithin(output, source)) {
-                return QObject::tr(
-                           "The backup destination writes into the profile being backed "
-                           "up (%1). Choose a folder outside every selected profile, "
-                           "ideally on another drive.")
-                    .arg(QDir::toNativeSeparators(source.trimmed()));
-            }
+        const bool overlaps = std::ranges::any_of(output_roots, [&source](const QString& output) {
+            return backupPathIsWithin(output, source);
+        });
+        if (overlaps) {
+            return QObject::tr(
+                       "The backup destination writes into the profile being backed "
+                       "up (%1). Choose a folder outside every selected profile, "
+                       "ideally on another drive.")
+                .arg(QDir::toNativeSeparators(source.trimmed()));
         }
     }
     return {};

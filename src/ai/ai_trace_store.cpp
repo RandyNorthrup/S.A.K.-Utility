@@ -14,6 +14,7 @@
 #include <QMutexLocker>
 #include <QUuid>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -112,12 +113,8 @@ bool sensitiveKey(const QString& key) {
                                          QStringLiteral("credential"),
                                          QStringLiteral("ciphertext"),
                                          QStringLiteral("recovery_password")};
-    for (const auto& marker : kMarkers) {
-        if (name.contains(marker)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(kMarkers,
+                               [&name](const auto& marker) { return name.contains(marker); });
 }
 
 QJsonValue redactAndCapJson(const QJsonValue& value, const QString& key = {}, int depth = 0);

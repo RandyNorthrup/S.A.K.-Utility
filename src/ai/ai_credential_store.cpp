@@ -19,6 +19,7 @@
 #include <QRegularExpressionMatchIterator>
 #include <QSaveFile>
 
+#include <algorithm>
 #include <optional>
 #include <utility>
 
@@ -309,11 +310,11 @@ bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message)
     // Reject embedded control characters (NUL, CR, LF, tab, etc.): a real API key never contains
     // them, and letting one through could inject a newline into an outbound Authorization header
     // downstream. Fail closed rather than silently storing a malformed credential.
-    for (const QChar ch : api_key) {
-        if (ch.unicode() < kAsciiControlLimit || ch.unicode() == kAsciiDelete) {
-            setError(error_message, QStringLiteral("API key contains control characters"));
-            return false;
-        }
+    if (std::ranges::any_of(api_key, [](const QChar ch) {
+            return ch.unicode() < kAsciiControlLimit || ch.unicode() == kAsciiDelete;
+        })) {
+        setError(error_message, QStringLiteral("API key contains control characters"));
+        return false;
     }
 
 #ifdef Q_OS_WIN

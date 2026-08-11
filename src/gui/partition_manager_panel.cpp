@@ -91,6 +91,7 @@
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <utility>
 
 namespace sak {
@@ -3736,11 +3737,7 @@ QVector<uint64_t> quickPartitionSizesFromOptions(const QJsonObject& options,
 uint64_t quickPartitionTotalBytes(const QVector<uint64_t>& sizes) {
     // Saturate instead of wrapping: adversarial custom sizes near UINT64_MAX must not overflow
     // into a small total that then slips past the "total > usableBytes" validity check.
-    uint64_t total = 0;
-    for (const auto size : sizes) {
-        total = saturatingAdd(total, size);
-    }
-    return total;
+    return std::accumulate(sizes.cbegin(), sizes.cend(), uint64_t{0}, saturatingAdd);
 }
 
 QJsonArray quickPartitionLabelsJson(const QuickPartitionWidgets& widgets) {

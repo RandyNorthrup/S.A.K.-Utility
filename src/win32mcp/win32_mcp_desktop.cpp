@@ -1087,12 +1087,8 @@ QJsonArray desktopToolCatalog() {
 }
 
 bool desktopHandles(const QString& name) {
-    for (const auto& entry : kDesktopHandlers) {
-        if (name == entry.m_name) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(kDesktopHandlers,
+                               [&name](const auto& entry) { return name == entry.m_name; });
 }
 
 ToolResult invokeDesktopTool(const QString& name, const QJsonObject& args) {

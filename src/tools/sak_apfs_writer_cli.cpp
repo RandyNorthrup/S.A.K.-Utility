@@ -2402,12 +2402,12 @@ static QString volumeAliasTargetRefusal(const QString& path) {
             "Refusing raw APFS write: could not resolve the backing physical drive of the "
             "volume/device target");
     }
-    for (const int drive : drives) {
-        if (drive == 0 || drive == os_drive) {
-            return QStringLiteral(
-                "Refusing raw APFS write: volume/device target resolves to the OS system disk "
-                "or PhysicalDrive0");
-        }
+    if (std::ranges::any_of(drives, [os_drive](const int drive) {
+            return drive == 0 || drive == os_drive;
+        })) {
+        return QStringLiteral(
+            "Refusing raw APFS write: volume/device target resolves to the OS system disk "
+            "or PhysicalDrive0");
     }
 #else
     Q_UNUSED(path);

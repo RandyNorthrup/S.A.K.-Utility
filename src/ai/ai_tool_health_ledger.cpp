@@ -258,12 +258,8 @@ bool ledgerWriteFailed(QString* error_message, const QString& reason) {
 }
 
 bool messageContainsAny(const QString& message, const QStringList& markers) {
-    for (const auto& marker : markers) {
-        if (message.contains(marker)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(markers,
+                               [&message](const auto& marker) { return message.contains(marker); });
 }
 
 }  // namespace

@@ -1380,12 +1380,9 @@ bool appendApfsSpaceManagerDetails(PartitionFileSystemDetection* detection,
 }
 
 bool hasApfsSpaceManagerDetails(const PartitionFileSystemDetection& detection) {
-    for (const auto& detail : detection.details) {
-        if (detail.startsWith(QStringLiteral("APFS space manager block:"))) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(detection.details, [](const QString& detail) {
+        return detail.startsWith(QStringLiteral("APFS space manager block:"));
+    });
 }
 
 std::optional<uint64_t> checkedSum(uint64_t left, uint64_t right) {

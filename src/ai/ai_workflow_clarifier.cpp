@@ -7,6 +7,8 @@
 #include <QRegularExpression>
 #include <QStringList>
 
+#include <algorithm>
+
 namespace sak::ai {
 
 namespace {
@@ -25,12 +27,9 @@ bool hasValue(const QJsonValue& value) {
 }
 
 bool containsAny(const QString& haystack, const QStringList& needles) {
-    for (const QString& needle : needles) {
-        if (haystack.contains(needle)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(needles, [&haystack](const QString& needle) {
+        return haystack.contains(needle);
+    });
 }
 
 bool isAppLikeInput(const WorkflowRequiredInput& input) {
@@ -134,12 +133,9 @@ QStringList significantWords(const QStringList& raw_words) {
 }
 
 bool allTermsGeneric(const QStringList& words) {
-    for (const QString& word : words) {
-        if (!genericAppTerms().contains(word)) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::all_of(words, [](const QString& word) {
+        return genericAppTerms().contains(word);
+    });
 }
 
 }  // namespace

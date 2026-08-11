@@ -7,6 +7,7 @@
 #include <QSet>
 #include <QVector>
 
+#include <algorithm>
 #include <limits>
 
 namespace sak::win32mcp::browser {
@@ -588,10 +589,9 @@ QString applySelectValues(const QJsonObject& arguments, QJsonObject& command) {
     if (!values.isArray()) {
         return QStringLiteral("values must be an array of strings");
     }
-    for (const QJsonValue& item : values.toArray()) {
-        if (!item.isString()) {
-            return QStringLiteral("values must be an array of strings");
-        }
+    const QJsonArray items = values.toArray();
+    if (!std::ranges::all_of(items, [](const QJsonValue& item) { return item.isString(); })) {
+        return QStringLiteral("values must be an array of strings");
     }
     command.insert(QStringLiteral("values"), values);
     return QString();

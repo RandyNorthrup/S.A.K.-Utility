@@ -372,12 +372,8 @@ QJsonArray watchToolCatalog() {
 }
 
 bool watchHandles(const QString& name) {
-    for (const auto& entry : kWatchHandlers) {
-        if (name == entry.m_name) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(kWatchHandlers,
+                               [&name](const auto& entry) { return name == entry.m_name; });
 }
 
 ToolResult invokeWatchTool(const QString& name, const QJsonObject& args) {

@@ -8,6 +8,7 @@
 #include <QMutexLocker>
 #include <QRandomGenerator>
 
+#include <algorithm>
 #include <limits>
 
 namespace sak::ai {
@@ -113,12 +114,7 @@ QStringList AiLeaseManager::reclaimExpiredLocked(const QDateTime& now_utc) {
 
 bool AiLeaseManager::hasActiveExclusive() const {
     const QMutexLocker lock(&m_mutex);
-    for (const auto& lease : m_active) {
-        if (lease.exclusive) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(m_active, [](const auto& lease) { return lease.exclusive; });
 }
 
 int AiLeaseManager::activeLeaseCount() const {

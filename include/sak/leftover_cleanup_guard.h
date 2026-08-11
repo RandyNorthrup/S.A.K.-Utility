@@ -14,6 +14,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <algorithm>
+
 /// @file leftover_cleanup_guard.h
 /// @brief Fail-closed target screens for the AI assistant's software.clean_leftovers op.
 ///
@@ -50,13 +52,10 @@ inline constexpr int kMaxCleanupPathLength = 4096;
 /// an external tool or a Win32 API. Rule names may legitimately contain spaces/punctuation, so this
 /// is applied to service/task/registry targets, not to firewall rule names (see below).
 [[nodiscard]] inline bool cleanupNameHasControlOrWildcard(const QString& value) {
-    for (const QChar ch : value) {
-        if (ch.unicode() < kFirstPrintableCodepoint || ch == QLatin1Char('*') ||
-            ch == QLatin1Char('?')) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(value, [](const QChar ch) {
+        return ch.unicode() < kFirstPrintableCodepoint || ch == QLatin1Char('*') ||
+               ch == QLatin1Char('?');
+    });
 }
 
 /// Registry hives CleanupWorker actually supports (deleteRegistryKey/Value refuse anything else).
@@ -489,10 +488,10 @@ inline constexpr int kMaxCleanupPathLength = 4096;
     if (name.size() > kMaxFirewallRuleNameLength) {
         return QStringLiteral("firewall rule name is too long");
     }
-    for (const QChar ch : name) {
-        if (ch.unicode() < kFirstPrintableCodepoint) {
-            return QStringLiteral("firewall rule name contains a control character");
-        }
+    if (std::ranges::any_of(name, [](const QChar ch) {
+            return ch.unicode() < kFirstPrintableCodepoint;
+        })) {
+        return QStringLiteral("firewall rule name contains a control character");
     }
     // netsh strips a surrounding double-quote group, so a quoted name=all bypasses the bare-token
     // check below and still deletes EVERY rule. A real firewall rule name never contains a double

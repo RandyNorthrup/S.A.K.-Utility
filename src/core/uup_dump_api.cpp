@@ -500,15 +500,11 @@ bool UupDumpApi::isValidSha1(const QString& sha1) {
     if (sha1.size() != kSha1HexLength) {
         return false;
     }
-    for (const QChar ch : sha1) {
-        const bool hex = (ch >= QLatin1Char('0') && ch <= QLatin1Char('9')) ||
-                         (ch >= QLatin1Char('a') && ch <= QLatin1Char('f')) ||
-                         (ch >= QLatin1Char('A') && ch <= QLatin1Char('F'));
-        if (!hex) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::all_of(sha1, [](const QChar ch) {
+        return (ch >= QLatin1Char('0') && ch <= QLatin1Char('9')) ||
+               (ch >= QLatin1Char('a') && ch <= QLatin1Char('f')) ||
+               (ch >= QLatin1Char('A') && ch <= QLatin1Char('F'));
+    });
 }
 
 namespace {
@@ -521,12 +517,9 @@ constexpr char16_t kDeleteControlCodeUnit = 0x7f;
 // True if @p s holds any C0 control character (incl. NUL) or DEL. Such a byte in a field
 // serialized into the aria2 input file could truncate the line or break out of the record.
 bool hasAria2ControlChar(const QString& s) {
-    for (const QChar ch : s) {
-        if (ch.unicode() < kFirstPrintableCodeUnit || ch.unicode() == kDeleteControlCodeUnit) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(s, [](const QChar ch) {
+        return ch.unicode() < kFirstPrintableCodeUnit || ch.unicode() == kDeleteControlCodeUnit;
+    });
 }
 
 // True if @p fileName is a Windows reserved device name (CON, NUL, COM1, ...), with or without an

@@ -523,12 +523,8 @@ QJsonArray inputToolCatalog() {
 }
 
 bool inputHandles(const QString& name) {
-    for (const auto& entry : kInputHandlers) {
-        if (name == entry.m_name) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(kInputHandlers,
+                               [&name](const auto& entry) { return name == entry.m_name; });
 }
 
 ToolResult invokeInputTool(const QString& name, const QJsonObject& args) {

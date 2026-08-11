@@ -13,6 +13,7 @@
 #include <QDateTime>
 #include <QtConcurrent>
 
+#include <algorithm>
 #include <cmath>
 
 namespace sak {
@@ -40,12 +41,7 @@ constexpr double kMaxPlausibleCelsius = 150.0;
     if (device_id.isEmpty()) {
         return false;
     }
-    for (const QChar ch : device_id) {
-        if (!ch.isDigit()) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::all_of(device_id, [](const QChar ch) { return ch.isDigit(); });
 }
 }  // namespace
 

@@ -6,6 +6,7 @@
 #include <QRegularExpression>
 #include <QStringList>
 
+#include <algorithm>
 #include <optional>
 
 namespace sak::ai {
@@ -83,12 +84,9 @@ bool isDownloadTool(const AiToolCallRequest& request) {
 }
 
 bool textMatchesAny(const QString& text, const QStringList& needles) {
-    for (const auto& needle : needles) {
-        if (text.contains(needle, Qt::CaseInsensitive)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(needles, [&text](const auto& needle) {
+        return text.contains(needle, Qt::CaseInsensitive);
+    });
 }
 
 // Word-boundary variant: the action VERB that authorizes a mutation must appear as
@@ -96,15 +94,12 @@ bool textMatchesAny(const QString& text, const QStringList& needles) {
 // the substring inside "installed". Phrases ("set up") are matched with boundaries
 // on each end.
 bool textContainsAnyWord(const QString& text, const QStringList& words) {
-    for (const auto& word : words) {
+    return std::ranges::any_of(words, [&text](const auto& word) {
         const QRegularExpression re(QStringLiteral("\\b") + QRegularExpression::escape(word) +
                                         QStringLiteral("\\b"),
                                     QRegularExpression::CaseInsensitiveOption);
-        if (re.match(text).hasMatch()) {
-            return true;
-        }
-    }
-    return false;
+        return re.match(text).hasMatch();
+    });
 }
 
 bool hasScanIntent(const QString& user_message) {
@@ -150,12 +145,9 @@ bool hasNegatedActionIntent(const QString& text) {
 }
 
 bool startsWithAny(const QString& text, const QStringList& prefixes) {
-    for (const auto& prefix : prefixes) {
-        if (text.startsWith(prefix, Qt::CaseInsensitive)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(prefixes, [&text](const auto& prefix) {
+        return text.startsWith(prefix, Qt::CaseInsensitive);
+    });
 }
 
 bool hasDirectedRequestMarker(const QString& text) {
@@ -481,12 +473,9 @@ bool allSegmentsReadOnly(const QString& normalized) {
     if (segments.isEmpty()) {
         return false;
     }
-    for (const QString& segment : segments) {
-        if (!segment.trimmed().isEmpty() && !segmentLeadIsReadOnly(segment)) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::all_of(segments, [](const QString& segment) {
+        return segment.trimmed().isEmpty() || segmentLeadIsReadOnly(segment);
+    });
 }
 
 // Every parenthesized sub-expression is its own command context PowerShell runs
@@ -506,13 +495,10 @@ bool parenSubExpressionsReadOnly(const QString& normalized, int depth_remaining)
     if (depth_remaining <= 0) {
         return false;
     }
-    for (const QString& group : *groups) {
+    return std::ranges::all_of(*groups, [depth_remaining](const QString& group) {
         const QString inner = group.trimmed();
-        if (!inner.isEmpty() && !commandIsReadOnlyDiagnostic(inner, depth_remaining - 1)) {
-            return false;
-        }
-    }
-    return true;
+        return inner.isEmpty() || commandIsReadOnlyDiagnostic(inner, depth_remaining - 1);
+    });
 }
 
 bool commandIsReadOnlyDiagnostic(const QString& preview, int depth_remaining) {

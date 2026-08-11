@@ -5,6 +5,8 @@
 
 #include <QJsonArray>
 
+#include <algorithm>
+
 namespace sak::ai {
 
 CancellationToken::CancellationToken(std::shared_ptr<State> state) : m_state(std::move(state)) {}
@@ -51,13 +53,9 @@ int CancellationToken::childCount() const {
     }
 
     const std::lock_guard<std::mutex> lock(m_state->mutex);
-    int count = 0;
-    for (const auto& child : m_state->children) {
-        if (!child.expired()) {
-            ++count;
-        }
-    }
-    return count;
+    return static_cast<int>(std::ranges::count_if(m_state->children, [](const auto& child) {
+        return !child.expired();
+    }));
 }
 
 void CancellationToken::cancel(const QString& reason) const {

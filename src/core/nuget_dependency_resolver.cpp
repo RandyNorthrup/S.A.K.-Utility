@@ -8,6 +8,8 @@
 
 #include <QDomDocument>
 
+#include <algorithm>
+
 namespace sak {
 
 namespace {
@@ -74,13 +76,10 @@ bool rangeTargetsPrerelease(const QString& range) {
         .remove(QLatin1Char('('))
         .remove(QLatin1Char(')'));
     const QStringList bounds = inner.split(QLatin1Char(','));
-    for (const QString& bound : bounds) {
+    return std::ranges::any_of(bounds, [](const QString& bound) {
         const auto v = NuGetVersion::parse(bound.trimmed());
-        if (v.has_value() && v->isPrerelease()) {
-            return true;
-        }
-    }
-    return false;
+        return v.has_value() && v->isPrerelease();
+    });
 }
 
 /// @brief True if the id's own range OR any recorded constraint targets prerelease.
@@ -88,12 +87,7 @@ bool anyRangeTargetsPrerelease(const QString& own_range, const QVector<QString>&
     if (rangeTargetsPrerelease(own_range)) {
         return true;
     }
-    for (const QString& range : constraints) {
-        if (rangeTargetsPrerelease(range)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(constraints, rangeTargetsPrerelease);
 }
 
 }  // namespace
@@ -166,12 +160,10 @@ bool NuGetDependencyResolver::satisfiesAllConstraints(const QString& id,
     if (!NuGetVersionRange::parse(own_range).satisfies(version)) {
         return false;
     }
-    for (const QString& range : m_constraints.value(id.toLower())) {
-        if (!NuGetVersionRange::parse(range).satisfies(version)) {
-            return false;
-        }
-    }
-    return true;
+    const QVector<QString> ranges = m_constraints.value(id.toLower());
+    return std::ranges::all_of(ranges, [&version](const QString& range) {
+        return NuGetVersionRange::parse(range).satisfies(version);
+    });
 }
 
 void NuGetDependencyResolver::validateConstraints() {

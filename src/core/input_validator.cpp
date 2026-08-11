@@ -237,12 +237,7 @@ bool componentIsReparsePoint(const std::filesystem::path& p) {
 // a reparse point. Non-existent components simply are not reparse points, so this
 // is safe to call on a not-yet-created leaf.
 bool anyComponentIsReparsePoint(const std::filesystem::path& path) {
-    for (const auto& prefix : input_validator::pathPrefixes(path)) {
-        if (componentIsReparsePoint(prefix)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(input_validator::pathPrefixes(path), componentIsReparsePoint);
 }
 
 }  // namespace

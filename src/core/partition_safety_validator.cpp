@@ -535,11 +535,13 @@ std::optional<QString> rawVolumeAliasLetter(const QString& targetPath) {
 const PartitionDiskInfo* diskForDriveLetter(const PartitionInventory& inventory,
                                             const QString& letter) {
     for (const auto& disk : inventory.disks) {
-        for (const auto& partition : disk.partitions) {
-            if (partition.volume &&
-                partition.volume->drive_letter.compare(letter, Qt::CaseInsensitive) == 0) {
-                return &disk;
-            }
+        const bool hasMatchingVolume =
+            std::ranges::any_of(disk.partitions, [&](const auto& partition) {
+                return partition.volume &&
+                       partition.volume->drive_letter.compare(letter, Qt::CaseInsensitive) == 0;
+            });
+        if (hasMatchingVolume) {
+            return &disk;
         }
     }
     return nullptr;

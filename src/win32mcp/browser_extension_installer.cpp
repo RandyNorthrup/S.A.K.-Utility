@@ -14,6 +14,8 @@
 #include <QStandardPaths>
 #include <QUrl>
 
+#include <algorithm>
+
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -355,13 +357,9 @@ QString firstFreeSlot(const std::vector<RegValue>& values) {
     int slot = 1;
     for (;;) {
         const QString candidate = QString::number(slot);
-        bool taken = false;
-        for (const auto& v : values) {
-            if (v.m_name == candidate) {
-                taken = true;
-                break;
-            }
-        }
+        const bool taken = std::ranges::any_of(values, [&candidate](const RegValue& v) {
+            return v.m_name == candidate;
+        });
         if (!taken) {
             return candidate;
         }
@@ -426,12 +424,10 @@ int forcelistPresence(const ExtensionInstallConfig& c) {
     if (!enum_ok) {
         return -1;  // read error: never downgrade an unreadable key to "absent"
     }
-    for (const auto& v : values) {
-        if (isOurForcelistData(v.m_data)) {
-            return 1;
-        }
-    }
-    return 0;
+    return std::ranges::any_of(values,
+                               [](const RegValue& v) { return isOurForcelistData(v.m_data); })
+               ? 1
+               : 0;
 }
 
 int nativeHostPresence(const ExtensionInstallConfig& c) {

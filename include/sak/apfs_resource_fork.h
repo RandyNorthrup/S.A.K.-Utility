@@ -36,6 +36,7 @@
 #include <QVector>
 
 #include <cstring>
+#include <numeric>
 #include <optional>
 
 namespace sak {
@@ -147,10 +148,10 @@ template <class EncodeChunkFn>
     // File offset (from the blob start) of the first chunk's compressed bytes.
     const int firstChunkOffset = kApfsResourceForkDataOffset + tableBytes;
 
-    int totalChunkBytes = 0;
-    for (const QByteArray& value : encoded) {
-        totalChunkBytes += static_cast<int>(value.size());
-    }
+    const int totalChunkBytes =
+        std::accumulate(encoded.cbegin(), encoded.cend(), 0, [](int sum, const QByteArray& value) {
+            return sum + static_cast<int>(value.size());
+        });
     const int dataSize = tableBytes + totalChunkBytes;
 
     QByteArray blob(kApfsResourceForkDataOffset + dataSize + kApfsResourceForkMapTrailerBytes,

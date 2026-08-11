@@ -9,6 +9,7 @@
 #include <QCryptographicHash>
 #include <QMessageAuthenticationCode>
 
+#include <algorithm>
 #include <cstring>
 
 #ifdef _WIN32
@@ -355,10 +356,11 @@ std::optional<QByteArray> aesKeyUnwrap(const QByteArray& kek, const QByteArray& 
             std::memcpy(r.data() + ((i - 1) * 8), b.constData() + 8, 8);
         }
     }
-    for (const char byte : a) {
-        if (static_cast<unsigned char>(byte) != 0xA6) {
-            return std::nullopt;  // integrity check failed (wrong key)
-        }
+    const bool integrityOk = std::ranges::all_of(a, [](const char byte) {
+        return static_cast<unsigned char>(byte) == 0xA6;
+    });
+    if (!integrityOk) {
+        return std::nullopt;  // integrity check failed (wrong key)
     }
     return r;
 #else

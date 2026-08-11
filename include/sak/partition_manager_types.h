@@ -12,6 +12,7 @@
 #include <QStringList>
 #include <QVector>
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 
@@ -247,12 +248,9 @@ struct PartitionInventory {
     /// True when ANY disk's partition enumeration failed. The inventory is then not a faithful
     /// picture of the machine's layout and must not be published as a completed scan.
     [[nodiscard]] bool hasPartitionEnumerationFailure() const noexcept {
-        for (const auto& disk : disks) {
-            if (disk.partition_enumeration_failed) {
-                return true;
-            }
-        }
-        return false;
+        return std::ranges::any_of(disks, [](const auto& disk) {
+            return disk.partition_enumeration_failed;
+        });
     }
 };
 

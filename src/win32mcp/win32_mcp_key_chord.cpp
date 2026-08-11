@@ -7,6 +7,8 @@
 #include <QLatin1String>
 #include <QStringList>
 
+#include <algorithm>
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -84,10 +86,9 @@ bool parseKeyChord(const QString& chord,
     // KeepEmptyParts so a leading/trailing/doubled '+' (e.g. "Ctrl++S", "+S", "Ctrl+") surfaces as
     // an empty segment and is rejected, rather than being silently dropped into a different chord.
     const QStringList parts = chord.split(QLatin1Char('+'), Qt::KeepEmptyParts);
-    for (const QString& part : parts) {
-        if (part.trimmed().isEmpty()) {
-            return false;  // empty segment: malformed separator usage
-        }
+    // empty segment: malformed separator usage (e.g. "Ctrl++S", "+S", "Ctrl+")
+    if (std::ranges::any_of(parts, [](const QString& part) { return part.trimmed().isEmpty(); })) {
+        return false;
     }
     if (parts.isEmpty()) {
         return false;

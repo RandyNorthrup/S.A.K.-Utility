@@ -71,12 +71,7 @@ bool isStringArray(const QJsonValue& value) {
         return false;
     }
     const QJsonArray array = value.toArray();
-    for (const auto& entry : array) {
-        if (!entry.isString()) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::all_of(array, [](const auto& entry) { return entry.isString(); });
 }
 
 // Token counters are model-supplied and feed budget accounting. A wrong-typed or
@@ -312,10 +307,8 @@ QString findingsFieldError(const QJsonObject& payload) {
         return QStringLiteral("Subagent result field 'findings' is not an array");
     }
     const QJsonArray findings = findings_value.toArray();
-    for (const auto& entry : findings) {
-        if (!entry.isObject()) {
-            return QStringLiteral("Subagent result 'findings' contains a non-object entry");
-        }
+    if (std::ranges::any_of(findings, [](const auto& entry) { return !entry.isObject(); })) {
+        return QStringLiteral("Subagent result 'findings' contains a non-object entry");
     }
     return {};
 }

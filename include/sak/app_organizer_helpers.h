@@ -13,6 +13,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <algorithm>
+
 /// @file app_organizer_helpers.h
 /// @brief Organizer category-mapping helpers shared by the AI-assistant app-action modules.
 ///
@@ -120,10 +122,10 @@ inline constexpr char16_t kFirstNonControlCodePoint = 0x20;
         // Covers "." and ".." (and "...", which Win32 also strips to the target itself).
         return false;
     }
-    for (const QChar ch : name) {
-        if (organizer_detail::isForbiddenCategoryChar(ch)) {
-            return false;
-        }
+    if (std::ranges::any_of(name, [](const QChar ch) {
+            return organizer_detail::isForbiddenCategoryChar(ch);
+        })) {
+        return false;
     }
     return !organizer_detail::isReservedDeviceName(name);
 }

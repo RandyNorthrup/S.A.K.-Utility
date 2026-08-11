@@ -16,6 +16,7 @@
 #include <QSet>
 #include <QThread>
 
+#include <algorithm>
 #include <cstddef>
 #include <exception>
 #include <limits>
@@ -699,10 +700,10 @@ bool FlashCoordinator::beginFlashClaim() {
     // shared counters, target list and dedup set out from under those live writers and
     // let their late terminal signals be counted against the new run. Fail closed until
     // the previous run's threads are actually gone.
-    for (const std::unique_ptr<FlashWorker>& worker : m_workers) {
-        if (worker && worker->isRunning()) {
-            return false;
-        }
+    if (std::ranges::any_of(m_workers, [](const std::unique_ptr<FlashWorker>& worker) {
+            return worker && worker->isRunning();
+        })) {
+        return false;
     }
     // Claim the run under the lock so a concurrent startFlash cannot also pass the
     // gate before the first one has moved the state out of Idle/Completed/Failed.

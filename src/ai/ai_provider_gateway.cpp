@@ -196,12 +196,10 @@ QString docsQueryLogicalError(const QJsonObject& docs_result) {
 }
 
 bool providerHasTool(const QJsonObject& provider, const QString& tool_name) {
-    for (const auto& value : provider.value(QStringLiteral("tools")).toArray()) {
-        if (value.toString() == tool_name) {
-            return true;
-        }
-    }
-    return false;
+    const QJsonArray tools = provider.value(QStringLiteral("tools")).toArray();
+    return std::ranges::any_of(tools, [&tool_name](const auto& value) {
+        return value.toString() == tool_name;
+    });
 }
 
 QJsonObject availabilityOk(const QString& operation) {

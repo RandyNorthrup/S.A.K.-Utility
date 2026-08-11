@@ -16,6 +16,8 @@
 #include <QStorageInfo>
 #include <QtGlobal>
 
+#include <algorithm>
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -126,10 +128,10 @@ bool hasUnsafeComponentTraits(const QString& component) {
     if (component.endsWith(QLatin1Char('.')) || component.endsWith(QLatin1Char(' '))) {
         return true;
     }
-    for (const QChar ch : component) {
-        if (ch.unicode() < kFirstNonControlCodePoint) {
-            return true;
-        }
+    if (std::ranges::any_of(component, [](const QChar ch) {
+            return ch.unicode() < kFirstNonControlCodePoint;
+        })) {
+        return true;
     }
     return isWindowsReservedDeviceName(component);
 }
@@ -858,10 +860,8 @@ bool UserProfileBackupWorker::isSafePathSegment(const QString& segment) {
         return false;
     }
     static const QString kForbidden = QStringLiteral("/\\:*?\"<>|");
-    for (const QChar c : segment) {
-        if (kForbidden.contains(c)) {
-            return false;
-        }
+    if (std::ranges::any_of(segment, [](const QChar c) { return kForbidden.contains(c); })) {
+        return false;
     }
     // An untrusted username becomes a real backup subdirectory: reject trailing dot/space,
     // control characters, and Win32 reserved device names too, any of which Win32 name
