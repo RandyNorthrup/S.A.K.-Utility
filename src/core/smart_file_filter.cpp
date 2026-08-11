@@ -204,11 +204,11 @@ QString SmartFileFilter::getExclusionReason(const QFileInfo& fileInfo) const {
     }
 
     if (exceedsSizeLimit(fileInfo.size())) {
-        const double sizeMB = fileInfo.size() / kBytesPerMBf;
+        const double sizeMB = static_cast<double>(fileInfo.size()) / kBytesPerMBf;
         if (m_rules.enable_file_size_limit) {
             return QString("File too large: %1 MB (limit: %2 MB)")
                 .arg(sizeMB, 0, 'f', kFileSizeDisplayPrecision)
-                .arg(m_rules.max_single_file_size_bytes / kBytesPerMBf,
+                .arg(static_cast<double>(m_rules.max_single_file_size_bytes) / kBytesPerMBf,
                      0,
                      'f',
                      kFileSizeLimitDisplayPrecision);

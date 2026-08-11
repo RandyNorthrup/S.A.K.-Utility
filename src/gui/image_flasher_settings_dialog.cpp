@@ -352,11 +352,15 @@ void ImageFlasherSettingsDialog::updateCacheInfo() {
         if (totalBytes < sak::kBytesPerMB) {
             sizeStr = QString("%1 KB").arg(totalBytes / sak::kBytesPerKB);
         } else if (totalBytes < sak::kBytesPerGB) {
-            sizeStr = QString("%1 MB").arg(
-                totalBytes / sak::kBytesPerMBf, 0, 'f', kSizeDisplayPrecisionSmall);
+            sizeStr = QString("%1 MB").arg(static_cast<double>(totalBytes) / sak::kBytesPerMBf,
+                                           0,
+                                           'f',
+                                           kSizeDisplayPrecisionSmall);
         } else {
-            sizeStr = QString("%1 GB").arg(
-                totalBytes / sak::kBytesPerGBf, 0, 'f', kSizeDisplayPrecisionLarge);
+            sizeStr = QString("%1 GB").arg(static_cast<double>(totalBytes) / sak::kBytesPerGBf,
+                                           0,
+                                           'f',
+                                           kSizeDisplayPrecisionLarge);
         }
         m_cacheInfoLabel->setText(
             QString("%1 cached download folder(s) using %2.").arg(dirs.size()).arg(sizeStr));
@@ -374,11 +378,11 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches() {
     const qint64 totalBytes = calculateCacheSize();
     QString sizeStr;
     if (totalBytes < sak::kBytesPerGB) {
-        sizeStr = QString("%1 MB").arg(
-            totalBytes / sak::kBytesPerMBf, 0, 'f', kSizeDisplayPrecisionSmall);
+        const double mb = static_cast<double>(totalBytes) / sak::kBytesPerMBf;
+        sizeStr = QString("%1 MB").arg(mb, 0, 'f', kSizeDisplayPrecisionSmall);
     } else {
-        sizeStr = QString("%1 GB").arg(
-            totalBytes / sak::kBytesPerGBf, 0, 'f', kSizeDisplayPrecisionLarge);
+        const double gb = static_cast<double>(totalBytes) / sak::kBytesPerGBf;
+        sizeStr = QString("%1 GB").arg(gb, 0, 'f', kSizeDisplayPrecisionLarge);
     }
 
     auto reply =

@@ -95,7 +95,7 @@ void EmailSearchWorker::search(PstParser* parser, const sak::EmailSearchCriteria
         searchSingleFolder(parser, criteria, entry.path, entry.folder, state);
     }
 
-    const double elapsed = timer.elapsed() / sak::kMillisecondsPerSecondF;
+    const double elapsed = static_cast<double>(timer.elapsed()) / sak::kMillisecondsPerSecondF;
     Q_EMIT searchComplete(state.total_hits, elapsed);
 }
 
@@ -233,7 +233,7 @@ void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCri
         }
     }
 
-    const double elapsed = timer.elapsed() / sak::kMillisecondsPerSecondF;
+    const double elapsed = static_cast<double>(timer.elapsed()) / sak::kMillisecondsPerSecondF;
     Q_EMIT searchComplete(state.total_hits, elapsed);
 }
 

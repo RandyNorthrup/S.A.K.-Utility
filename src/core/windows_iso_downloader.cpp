@@ -171,9 +171,10 @@ void WindowsISODownloader::onFilesFetched(const QString& updateName,
                  std::to_string(totalBytes / sak::kBytesPerMB) + " MB");
 
     Q_EMIT downloadStarted(static_cast<int>(files.size()), totalBytes);
-    Q_EMIT statusMessage(QString("Downloading %1 files (%2 GB)...")
-                             .arg(files.size())
-                             .arg(totalBytes / sak::kBytesPerGBf, 0, 'f', kGbDisplayPrecision));
+    Q_EMIT statusMessage(
+        QString("Downloading %1 files (%2 GB)...")
+            .arg(files.size())
+            .arg(static_cast<double>(totalBytes) / sak::kBytesPerGBf, 0, 'f', kGbDisplayPrecision));
 
     m_builder->startBuild(files, savePath, edition, lang, updateId);
 }

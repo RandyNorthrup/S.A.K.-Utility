@@ -41,7 +41,7 @@ double fingerprintDiff(const QByteArray& a, const QByteArray& b) {
             ++changed;
         }
     }
-    return static_cast<double>(changed) / a.size();
+    return static_cast<double>(changed) / static_cast<double>(a.size());
 }
 
 bool fingerprintChanged(const QByteArray& a, const QByteArray& b) {

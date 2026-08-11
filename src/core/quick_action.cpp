@@ -112,7 +112,7 @@ QString QuickAction::formatLogBox(const QString& title,
     }
 
     if (duration_ms >= 0) {
-        const double duration_seconds = duration_ms / kMillisecondsPerSecondF;
+        const double duration_seconds = static_cast<double>(duration_ms) / kMillisecondsPerSecondF;
         const QString duration_text = QString::number(duration_seconds, 'f', kDurationPrecision);
         const int padding_width = static_cast<int>(kLogBoxContentWidth - kCompletedInPrefixWidth -
                                                    duration_text.length());

@@ -195,7 +195,8 @@ void UserProfileRestoreWelcomePage::showLoadedManifest(const BackupManifest& man
                  manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
                  manifest.source_machine.toHtmlEscaped(),
                  QString::number(manifest.users.size()),
-                 QString::number(manifest.total_backup_size_bytes / sak::kBytesPerGBf,
+                 QString::number(static_cast<double>(manifest.total_backup_size_bytes) /
+                                     sak::kBytesPerGBf,
                                  'f',
                                  kBackupSizeGbDisplayPrecision));
 

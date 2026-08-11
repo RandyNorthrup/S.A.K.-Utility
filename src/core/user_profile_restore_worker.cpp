@@ -333,12 +333,13 @@ bool UserProfileRestoreWorker::consumeConfiguredArm() {
 // errored (a copy/mkpath/remove failure or a refused reparse point) AND the run was not
 // cancelled; a partial or cancelled restore must not read as clean success.
 void UserProfileRestoreWorker::emitRestoreSummary() {
-    const QString summary = tr("Restore complete!\nFiles restored: %1\nFiles skipped: %2\nErrors: "
-                               "%3\nTotal size: %4 MB")
-                                .arg(m_filesRestored)
-                                .arg(m_filesSkipped)
-                                .arg(m_filesErrored)
-                                .arg(m_bytesRestored / sak::kBytesPerMBf, 0, 'f', 1);
+    const QString summary =
+        tr("Restore complete!\nFiles restored: %1\nFiles skipped: %2\nErrors: "
+           "%3\nTotal size: %4 MB")
+            .arg(m_filesRestored)
+            .arg(m_filesSkipped)
+            .arg(m_filesErrored)
+            .arg(static_cast<double>(m_bytesRestored) / sak::kBytesPerMBf, 0, 'f', 1);
 
     Q_EMIT logMessage(tr("=== Restore Complete ==="), false);
     Q_EMIT logMessage(summary, false);

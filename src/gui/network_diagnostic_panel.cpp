@@ -4616,11 +4616,13 @@ void NetworkDiagnosticPanel::onRunLanTransferTest() {
 void NetworkDiagnosticPanel::onLanTransferProgress(double currentMbps,
                                                    double elapsedSec,
                                                    qint64 totalBytes) {
-    m_lanResultLabel->setText(
-        QStringLiteral("Running: %1 Mbps | %2 s | %3 MB transferred")
-            .arg(currentMbps, 0, 'f', 1)
-            .arg(elapsedSec, 0, 'f', 0)
-            .arg(totalBytes / sak::kBytesPerMBf, 0, 'f', kDecimalPrecisionOne));
+    m_lanResultLabel->setText(QStringLiteral("Running: %1 Mbps | %2 s | %3 MB transferred")
+                                  .arg(currentMbps, 0, 'f', 1)
+                                  .arg(elapsedSec, 0, 'f', 0)
+                                  .arg(static_cast<double>(totalBytes) / sak::kBytesPerMBf,
+                                       0,
+                                       'f',
+                                       kDecimalPrecisionOne));
 }
 
 void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result) {
@@ -4636,7 +4638,10 @@ void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result) {
             .arg(result.isUpload ? tr("Upload") : tr("Download"))
             // remoteAddress is a peer-supplied string echoed into a rich-text label.
             .arg(result.remoteAddress.toHtmlEscaped())
-            .arg(result.bytesTransferred / sak::kBytesPerMBf, 0, 'f', kDecimalPrecisionOne)
+            .arg(static_cast<double>(result.bytesTransferred) / sak::kBytesPerMBf,
+                 0,
+                 'f',
+                 kDecimalPrecisionOne)
             .arg(result.durationSec, 0, 'f', 1)
             .arg(result.avgSpeedMbps, 0, 'f', 1)
             .arg(result.avgSpeedMbps / kBitsPerByteF, 0, 'f', kDecimalPrecisionOne)

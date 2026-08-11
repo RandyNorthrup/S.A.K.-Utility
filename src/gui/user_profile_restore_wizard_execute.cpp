@@ -238,8 +238,8 @@ void UserProfileRestoreExecutePage::onOverallProgress(int current,
         const int percent = (current * kPercentMax) / total;
         m_overallProgressBar->setValue(percent);
 
-        const double gbCopied = bytes / sak::kBytesPerGBf;
-        const double gbTotal = totalBytes / sak::kBytesPerGBf;
+        const double gbCopied = static_cast<double>(bytes) / sak::kBytesPerGBf;
+        const double gbTotal = static_cast<double>(totalBytes) / sak::kBytesPerGBf;
         m_overallProgressBar->setFormat(
             QString("%1% - %2 / %3 GB")
                 .arg(percent)

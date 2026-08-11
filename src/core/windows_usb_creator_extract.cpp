@@ -246,15 +246,27 @@ bool WindowsUSBCreator::copyISO_checkDiskSpace(const QString& cleanDest,
 
     if (availableSpace < requiredSpace) {
         setError(QString("Insufficient disk space: need %1 GB, have %2 GB")
-                     .arg(requiredSpace / sak::kBytesPerGBf, 0, 'f', kCapacityDisplayPrecision)
-                     .arg(availableSpace / sak::kBytesPerGBf, 0, 'f', kCapacityDisplayPrecision));
+                     .arg(static_cast<double>(requiredSpace) / sak::kBytesPerGBf,
+                          0,
+                          'f',
+                          kCapacityDisplayPrecision)
+                     .arg(static_cast<double>(availableSpace) / sak::kBytesPerGBf,
+                          0,
+                          'f',
+                          kCapacityDisplayPrecision));
         sak::logError(m_lastError.toStdString());
         return false;
     }
 
     sak::logInfo(QString("Disk space check: %1 GB available, %2 GB required")
-                     .arg(availableSpace / sak::kBytesPerGBf, 0, 'f', kCapacityDisplayPrecision)
-                     .arg(requiredSpace / sak::kBytesPerGBf, 0, 'f', kCapacityDisplayPrecision)
+                     .arg(static_cast<double>(availableSpace) / sak::kBytesPerGBf,
+                          0,
+                          'f',
+                          kCapacityDisplayPrecision)
+                     .arg(static_cast<double>(requiredSpace) / sak::kBytesPerGBf,
+                          0,
+                          'f',
+                          kCapacityDisplayPrecision)
                      .toStdString());
     return true;
 }
@@ -375,8 +387,8 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
     lastProgressPercent = totalProgress;
     Q_EMIT progressUpdated(totalProgress);
 
-    const double processedMB = processedBytes / sak::kBytesPerMBf;
-    const double totalMB = totalBytes / sak::kBytesPerMBf;
+    const double processedMB = static_cast<double>(processedBytes) / sak::kBytesPerMBf;
+    const double totalMB = static_cast<double>(totalBytes) / sak::kBytesPerMBf;
 
     Q_EMIT statusChanged(QString("Extracting Windows files... %1 MB / %2 MB (%3%)")
                              .arg(processedMB, 0, 'f', kProgressDisplayPrecision)

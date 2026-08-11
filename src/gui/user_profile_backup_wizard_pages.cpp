@@ -262,7 +262,7 @@ void UserProfileBackupCustomizeDataPage::updateSummary() {
         }
     }
 
-    const double totalGB = totalSize / sak::kBytesPerGBf;
+    const double totalGB = static_cast<double>(totalSize) / sak::kBytesPerGBf;
     m_summaryLabel->setText(tr("%1 user(s), %2 total folders | Estimated: %3 GB")
                                 .arg(totalUsers)
                                 .arg(totalFolders)

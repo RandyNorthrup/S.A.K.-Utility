@@ -2908,8 +2908,8 @@ QString durationText(qint64 duration_ms) {
     if (duration_ms < kReadableDurationMillisecondsPerSecond) {
         return QStringLiteral("%1 ms").arg(duration_ms);
     }
-    return QStringLiteral("%1 sec").arg(
-        QString::number(duration_ms / kReadableDurationMillisecondsPerSecondF, 'f', 1));
+    return QStringLiteral("%1 sec").arg(QString::number(
+        static_cast<double>(duration_ms) / kReadableDurationMillisecondsPerSecondF, 'f', 1));
 }
 
 void appendReportMetadataMarkdown(QStringList* lines,

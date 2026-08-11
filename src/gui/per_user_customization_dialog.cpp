@@ -282,15 +282,17 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     // Column 2: Size
     QString sizeStr;
     if (totalSize > 0) {
-        const double sizeMB = totalSize / sak::kBytesPerMBf;
+        const double sizeMB = static_cast<double>(totalSize) / sak::kBytesPerMBf;
         if (sizeMB >= sak::kBytesPerKBf) {
             sizeStr = QString("%1 GB").arg(
                 sizeMB / sak::kBytesPerKBf, 0, 'f', kSizeDisplayPrecisionLarge);
         } else if (sizeMB >= 1) {
             sizeStr = QString("%1 MB").arg(sizeMB, 0, 'f', kSizeDisplayPrecisionSmall);
         } else {
-            sizeStr = QString("%1 KB").arg(
-                totalSize / sak::kBytesPerKBf, 0, 'f', kSizeDisplayPrecisionSmall);
+            sizeStr = QString("%1 KB").arg(static_cast<double>(totalSize) / sak::kBytesPerKBf,
+                                           0,
+                                           'f',
+                                           kSizeDisplayPrecisionSmall);
         }
     } else {
         sizeStr = "0 KB";
@@ -749,7 +751,7 @@ void PerUserCustomizationDialog::updateSummary() {
     QString summary = QString("<b>Backup Summary:</b> %1 folders selected").arg(selectedCount);
 
     if (totalSize > 0) {
-        const double sizeGB = totalSize / sak::kBytesPerGBf;
+        const double sizeGB = static_cast<double>(totalSize) / sak::kBytesPerGBf;
         summary += QString(" | Estimated size: <b>%1 GB</b>")
                        .arg(sizeGB, 0, 'f', kSizeDisplayPrecisionLarge);
     }

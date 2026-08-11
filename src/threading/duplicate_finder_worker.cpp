@@ -503,7 +503,10 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
 
     summary += QString("Total duplicate files: %1\n").arg(total_duplicates);
     summary += QString("Total wasted space: %1 MB\n\n")
-                   .arg(total_wasted / sak::kBytesPerMBf, 0, 'f', kDuplicateSummarySizePrecision);
+                   .arg(static_cast<double>(total_wasted) / sak::kBytesPerMBf,
+                        0,
+                        'f',
+                        kDuplicateSummarySizePrecision);
 
     summary += "Top duplicate groups:\n";
     int count = 0;
@@ -515,7 +518,7 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
         summary += QString("\nGroup %1 (%2 files, %3 KB wasted):\n")
                        .arg(count)
                        .arg(group.file_paths.size())
-                       .arg(group.wasted_space / sak::kBytesPerKBf, 0, 'f', 1);
+                       .arg(static_cast<double>(group.wasted_space) / sak::kBytesPerKBf, 0, 'f', 1);
 
         for (const auto& path : group.file_paths) {
             const QFileInfo info(path);

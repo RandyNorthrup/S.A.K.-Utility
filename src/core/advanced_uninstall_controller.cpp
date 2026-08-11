@@ -880,7 +880,7 @@ void AdvancedUninstallController::onCleanupComplete(int succeeded,
         msg += QString(", %1 failed").arg(failed);
     }
     if (bytesRecovered > 0) {
-        const double mb = bytesRecovered / kBytesPerMBf;
+        const double mb = static_cast<double>(bytesRecovered) / kBytesPerMBf;
         msg += QString(" (%1 MB recovered)").arg(mb, 0, 'f', kRecoveredSizeDisplayPrecision);
     }
     Q_EMIT statusMessage(msg, kStatusTimeoutLongMs);

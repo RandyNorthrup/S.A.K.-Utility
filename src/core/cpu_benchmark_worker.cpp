@@ -241,7 +241,8 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
     // Count primes (prevents optimizer from eliding the work)
     [[maybe_unused]] const auto count = std::count(sieve.begin(), sieve.end(), true);
 
-    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+    const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
+                              kNanosecondsPerMillisecond;
     logInfo("Prime sieve ({} primes up to {}) completed in {:.1f} ms", count, limit, elapsed_ms);
     return elapsed_ms;
 }
@@ -272,7 +273,8 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
         multiplyMatrixRow(a, b, c, i, element_count);
     }
 
-    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+    const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
+                              kNanosecondsPerMillisecond;
 
     // GFLOPS = 2*N^3 / (time_sec * 10^9)
     const double ops = kMatrixOperationMultiplier * static_cast<double>(element_count) *
@@ -328,7 +330,8 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
                               static_cast<uLong>(data_size),
                               Z_DEFAULT_COMPRESSION);
 
-    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+    const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
+                              kNanosecondsPerMillisecond;
 
     if (ret != Z_OK) {
         // Leave m_zlib_throughput_mbps at 0.0 so the caller fails the benchmark
@@ -395,7 +398,8 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
         }
     }
 
-    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+    const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
+                              kNanosecondsPerMillisecond;
 
     // Prevent optimizer from eliding
     const volatile uint8_t sink = data[0];
@@ -429,7 +433,7 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
     QElapsedTimer ref_timer;
     ref_timer.start();
     per_thread_workload();
-    m_mt_single_ref_ms = ref_timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+    m_mt_single_ref_ms = static_cast<double>(ref_timer.nsecsElapsed()) / kNanosecondsPerMillisecond;
 
     // Parallel pass: thread_count units of the same workload at once. std::async
     // (launch::async) futures join in their destructor, so every job is complete before
@@ -448,7 +452,8 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
         future.get();
     }
 
-    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+    const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
+                              kNanosecondsPerMillisecond;
     logInfo(
         "Multi-threaded benchmark ({} threads, {:.1f} ms single-thread reference) "
         "completed in {:.1f} ms",
