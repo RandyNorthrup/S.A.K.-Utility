@@ -365,7 +365,7 @@ bool UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
 
 void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smartFilter,
                                                                PermissionMode permissionMode) {
-    auto worker = new UserProfileBackupWorker(this);
+    auto* worker = new UserProfileBackupWorker(this);
 
     connect(worker,
             &UserProfileBackupWorker::overallProgress,

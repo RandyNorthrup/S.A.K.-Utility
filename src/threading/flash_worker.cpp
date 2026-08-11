@@ -18,6 +18,7 @@
 #include <QRandomGenerator>
 #include <QtGlobal>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -867,9 +868,7 @@ sak::ValidationResult FlashWorker::verifySample() {
     qint64 blockSize = kVerifyBlockSize;
     int numSamples = static_cast<int>(sampleSize / blockSize);
 
-    if (numSamples < 1) {
-        numSamples = 1;
-    }
+    numSamples = std::max(numSamples, 1);
 
     sak::logInfo(QString("Verifying %1 sample blocks (%2 MB)")
                      .arg(numSamples)

@@ -646,9 +646,7 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
     }
 
     int match_distance = (std::max(len1, len2) / kJaroMatchWindowDivisor) - 1;
-    if (match_distance < 1) {
-        match_distance = 1;
-    }
+    match_distance = std::max(match_distance, 1);
 
     std::vector<bool> s1_matches(len1, false);
     std::vector<bool> s2_matches(len2, false);

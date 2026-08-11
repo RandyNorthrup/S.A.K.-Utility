@@ -1079,15 +1079,9 @@ AiSubagentRunner::AiSubagentRunner(IAiModelClient* model_client) : m_model_clien
 
 void AiSubagentRunner::setOptions(const AiSubagentRunnerOptions& options) {
     m_options = options;
-    if (m_options.max_retries < 0) {
-        m_options.max_retries = 0;
-    }
-    if (m_options.retry_delay_ms < 0) {
-        m_options.retry_delay_ms = 0;
-    }
-    if (m_options.wall_clock_timeout_ms < 0) {
-        m_options.wall_clock_timeout_ms = 0;
-    }
+    m_options.max_retries = std::max(m_options.max_retries, 0);
+    m_options.retry_delay_ms = std::max(m_options.retry_delay_ms, 0);
+    m_options.wall_clock_timeout_ms = std::max(m_options.wall_clock_timeout_ms, 0);
     if (m_options.max_tool_iterations < 0) {
         m_options.max_tool_iterations = kDefaultSubagentToolIterationCap;
     }

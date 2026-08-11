@@ -18,6 +18,7 @@
 #include <QRegularExpression>
 #include <QTextStream>
 
+#include <algorithm>
 #include <limits>
 
 #ifdef Q_OS_WIN
@@ -773,9 +774,7 @@ void UupIsoBuilder::pollDownloadProgress() {
     m_downloadedBytes = totalDownloaded;
     m_downloadPercent =
         static_cast<int>((totalDownloaded * kPercentComplete) / m_totalDownloadBytes);
-    if (m_downloadPercent > kPercentComplete) {
-        m_downloadPercent = kPercentComplete;
-    }
+    m_downloadPercent = std::min(m_downloadPercent, kPercentComplete);
 
     // Build progress detail string
     double downloadedGB = totalDownloaded / sak::kBytesPerGBf;
@@ -1207,9 +1206,7 @@ bool UupIsoBuilder::parseConverterStagePercent(const QString& line,
         detail = QString("Writing bootable ISO file (%1%)...").arg(stagePct);
     }
 
-    if (mappedProgress > m_conversionPercent) {
-        m_conversionPercent = mappedProgress;
-    }
+    m_conversionPercent = std::max(mappedProgress, m_conversionPercent);
     hasPercent = true;
     return true;
 }

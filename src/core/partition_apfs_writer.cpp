@@ -1079,9 +1079,8 @@ void writeOmapLeafNode(QByteArray* block,
     const qsizetype keyAreaStart = tableStart + tocBytes;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
                                    (isRoot ? kApfsBtreeInfoBytes : 0);
-    const qsizetype keyBytesUsed = static_cast<qsizetype>(mappings.size()) * kApfsObjectMapKeyBytes;
-    const qsizetype valueBytesUsed = static_cast<qsizetype>(mappings.size()) *
-                                     kApfsObjectMapValueBytes;
+    const qsizetype keyBytesUsed = mappings.size() * kApfsObjectMapKeyBytes;
+    const qsizetype valueBytesUsed = mappings.size() * kApfsObjectMapValueBytes;
     writeLe16(block, 0x2C, static_cast<uint16_t>(keyBytesUsed));
     writeLe16(block,
               0x2E,
@@ -2527,9 +2526,8 @@ bool writeFsTreeNodeBody(QByteArray* block,
                          qsizetype valueAreaEnd,
                          QStringList* blockers) {
     writeLe32(block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(records.size()));
-    const qsizetype tocLength =
-        (((static_cast<qsizetype>(records.size()) * kApfsBtreeVariableTocEntryBytes) + 63) / 64) *
-        64;
+    const qsizetype tocLength = (((records.size() * kApfsBtreeVariableTocEntryBytes) + 63) / 64) *
+                                64;
     writeLe16(block, kApfsBtreeNodeTableOffsetOffset, 0);
     writeLe16(block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
@@ -3761,10 +3759,8 @@ QByteArray buildOmapSnapshotTreeBlock(uint32_t blockSize,
     const qsizetype tableStart = kApfsBtreeNodeHeaderBytes;
     const qsizetype keyAreaStart = tableStart + kApfsOmapSnapshotTreeTocBytes;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
-    const qsizetype keyBytesUsed = static_cast<qsizetype>(entries.size()) *
-                                   kApfsOmapSnapshotKeyBytes;
-    const qsizetype valueBytesUsed = static_cast<qsizetype>(entries.size()) *
-                                     kApfsOmapSnapshotValueBytes;
+    const qsizetype keyBytesUsed = entries.size() * kApfsOmapSnapshotKeyBytes;
+    const qsizetype valueBytesUsed = entries.size() * kApfsOmapSnapshotValueBytes;
     writeLe16(&block, 0x2C, static_cast<uint16_t>(keyBytesUsed));
     writeLe16(&block,
               0x2E,
@@ -3938,9 +3934,8 @@ struct ApfsVarKvNodePlan {
 bool variableKvRecordsFitBody(const QVector<ApfsBtreeKeyValue>& records,
                               uint32_t blockSize,
                               bool isRoot) {
-    const qsizetype tocLength =
-        (((static_cast<qsizetype>(records.size()) * kApfsBtreeVariableTocEntryBytes) + 63) / 64) *
-        64;
+    const qsizetype tocLength = (((records.size() * kApfsBtreeVariableTocEntryBytes) + 63) / 64) *
+                                64;
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + std::max<qsizetype>(64, tocLength);
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
                                    (isRoot ? kApfsBtreeInfoBytes : 0);

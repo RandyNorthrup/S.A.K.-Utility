@@ -5212,12 +5212,8 @@ bool AiAssistantPanel::cyclePromptHistory(int direction) {
         m_promptHistoryIndex = m_promptHistory.size();
     }
     m_promptHistoryIndex += direction;
-    if (m_promptHistoryIndex < 0) {
-        m_promptHistoryIndex = 0;
-    }
-    if (m_promptHistoryIndex > m_promptHistory.size()) {
-        m_promptHistoryIndex = m_promptHistory.size();
-    }
+    m_promptHistoryIndex = std::max(m_promptHistoryIndex, 0);
+    m_promptHistoryIndex = std::min<qsizetype>(m_promptHistoryIndex, m_promptHistory.size());
     const QString text = m_promptHistoryIndex == m_promptHistory.size()
                              ? m_promptHistoryDraft
                              : m_promptHistory.at(m_promptHistoryIndex);

@@ -2093,6 +2093,25 @@ Release build + ctest 225/225, then commit):
      change, so in small batches with a full build + ctest after each.
   4. Wire clang-tidy into pre-commit + CI (R5-G1-4) once the tree is clean.
 
+  SAFE-FIX PROTOCOL (learned the hard way, wave 2): clang-tidy --fix is NOT
+  uniformly safe on this tree. A batch run of readability-simplify-boolean-expr +
+  four other checks REPLACED the whole body of collectExistingFullFsTree
+  (partition_apfs_writer.cpp) -- a create-or-replace preflight that checks the new
+  name against every existing root entry -- with 'return !!collectFullFsTree(...)',
+  silently DELETING the F55/F56 collision guard. It compiled and would have passed
+  ctest (no test covers that path); only an unrelated MSVC warning-as-error
+  (unreferenced parameter, because the fix orphaned newFileName) caught it. The
+  whole wave was reverted. Rules going forward:
+    * --fix ONLY for purely additive / non-logic checks (math-missing-parentheses,
+      qualified-auto, redundant-casting, use-std-min-max, const-correctness).
+    * use-ranges needs a pattern sweep after --fix: its Qt rewrites broke twice
+      (a QVector* passed to std::ranges::stable_sort without a deref, and
+      QList::erase(std::ranges::unique(x), ...) instead of .begin()).
+    * logic-rewriting checks (simplify-boolean-expr) are applied MANUALLY per site,
+      never batch-autofixed.
+    * EVERY wave: read the full diff for any deletion of a conditional/loop/guard,
+      THEN full Release build + ctest. A green build is necessary, not sufficient.
+
 ### G2 - re-enable the 30 disabled clang-tidy checks
 
 Two of the disabled checks directly hide bug classes Codex found in the raw filesystem

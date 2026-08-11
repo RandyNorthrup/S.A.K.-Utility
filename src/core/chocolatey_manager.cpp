@@ -663,9 +663,7 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     if (args.isEmpty()) {
         return {false, "", "No arguments provided to Chocolatey", -1};
     }
-    if (timeout_ms < 0) {
-        timeout_ms = 0;
-    }
+    timeout_ms = std::max(timeout_ms, 0);
     // Fail closed: never launch the bundled choco.exe unless it has been proven a
     // genuine, Chocolatey-signed binary. This is the single execution choke point,
     // so the authenticity gate covers every choco invocation, not just install.

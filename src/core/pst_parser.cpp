@@ -1190,7 +1190,7 @@ std::expected<QByteArray, error_code> PstParser::extractAttachmentFromSubnode(
     }
 
     auto att_props = parsePropertyRecords(*bth, ctx);
-    auto* data = findPropertyById(att_props, sak::email::kPropIdAttachData);
+    const auto* data = findPropertyById(att_props, sak::email::kPropIdAttachData);
     if (data) {
         return *data;
     }

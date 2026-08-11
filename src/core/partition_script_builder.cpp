@@ -3860,8 +3860,10 @@ void PartitionScriptBuilder::appendLayoutBuilders(QHash<int, Builder>* builders)
                      &PartitionScriptBuilder::buildAllocateFreeSpaceScript);
     builders->insert(static_cast<int>(PartitionOperationType::ConvertPartitionStyle),
                      &PartitionScriptBuilder::buildConvertStyleScript);
-    builders->insert(static_cast<int>(PartitionOperationType::Merge), &buildMergeScript);
-    builders->insert(static_cast<int>(PartitionOperationType::Split), &buildSplitScript);
+    builders->insert(static_cast<int>(PartitionOperationType::Merge),
+                     &PartitionScriptBuilder::buildMergeScript);
+    builders->insert(static_cast<int>(PartitionOperationType::Split),
+                     &PartitionScriptBuilder::buildSplitScript);
 }
 
 void PartitionScriptBuilder::appendCloneAndMaintenanceBuilders(QHash<int, Builder>* builders) {
@@ -3870,38 +3872,39 @@ void PartitionScriptBuilder::appendCloneAndMaintenanceBuilders(QHash<int, Builde
                             PartitionOperationType::CreateImage,
                             PartitionOperationType::RestoreImage,
                             PartitionOperationType::MigrateOs}) {
-        builders->insert(static_cast<int>(type), &buildCloneOrImageScript);
+        builders->insert(static_cast<int>(type), &PartitionScriptBuilder::buildCloneOrImageScript);
     }
-    builders->insert(static_cast<int>(PartitionOperationType::RepairBoot), &buildBootRepairScript);
+    builders->insert(static_cast<int>(PartitionOperationType::RepairBoot),
+                     &PartitionScriptBuilder::buildBootRepairScript);
     builders->insert(static_cast<int>(PartitionOperationType::OptimizeSsd),
-                     &buildOptimizeSsdScript);
+                     &PartitionScriptBuilder::buildOptimizeSsdScript);
     builders->insert(static_cast<int>(PartitionOperationType::DefragVolume),
-                     &buildDefragVolumeScript);
+                     &PartitionScriptBuilder::buildDefragVolumeScript);
     builders->insert(static_cast<int>(PartitionOperationType::ConvertFileSystem),
-                     &buildConvertFileSystemScript);
+                     &PartitionScriptBuilder::buildConvertFileSystemScript);
     builders->insert(static_cast<int>(PartitionOperationType::ChangeClusterSize),
-                     &buildChangeClusterSizeScript);
+                     &PartitionScriptBuilder::buildChangeClusterSizeScript);
 }
 
 void PartitionScriptBuilder::appendAdvancedBuilders(QHash<int, Builder>* builders) {
     for (const auto type : {PartitionOperationType::BitLockerUnlock,
                             PartitionOperationType::BitLockerSuspend,
                             PartitionOperationType::BitLockerResume}) {
-        builders->insert(static_cast<int>(type), &buildBitLockerScript);
+        builders->insert(static_cast<int>(type), &PartitionScriptBuilder::buildBitLockerScript);
     }
     for (const auto type : {PartitionOperationType::WipePartition,
                             PartitionOperationType::WipeDisk,
                             PartitionOperationType::WipeFreeSpace}) {
-        builders->insert(static_cast<int>(type), &buildWipeScript);
+        builders->insert(static_cast<int>(type), &PartitionScriptBuilder::buildWipeScript);
     }
     builders->insert(static_cast<int>(PartitionOperationType::MovePartition),
-                     &buildMovePartitionScript);
+                     &PartitionScriptBuilder::buildMovePartitionScript);
     builders->insert(static_cast<int>(PartitionOperationType::ConvertPrimaryLogical),
-                     &buildConvertPrimaryLogicalScript);
+                     &PartitionScriptBuilder::buildConvertPrimaryLogicalScript);
     builders->insert(static_cast<int>(PartitionOperationType::ChangeVolumeSerialNumber),
-                     &buildChangeVolumeSerialNumberScript);
+                     &PartitionScriptBuilder::buildChangeVolumeSerialNumberScript);
     builders->insert(static_cast<int>(PartitionOperationType::ConvertDynamicDiskToBasic),
-                     &buildConvertDynamicDiskToBasicScript);
+                     &PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript);
     for (const auto type : {PartitionOperationType::ApfsWriteRootFile,
                             PartitionOperationType::ApfsPatchRootFile,
                             PartitionOperationType::ApfsPatchRootDirectoryFile,
@@ -3911,17 +3914,19 @@ void PartitionScriptBuilder::appendAdvancedBuilders(QHash<int, Builder>* builder
                             PartitionOperationType::ApfsCreateRootDirectory,
                             PartitionOperationType::ApfsDeleteRootDirectory,
                             PartitionOperationType::ApfsChangeVolumeLabel}) {
-        builders->insert(static_cast<int>(type), &buildApfsRootFileMutationScript);
+        builders->insert(static_cast<int>(type),
+                         &PartitionScriptBuilder::buildApfsRootFileMutationScript);
     }
     for (const auto type : {PartitionOperationType::ApfsSnapshotCreate,
                             PartitionOperationType::ApfsSnapshotDelete,
                             PartitionOperationType::ApfsSnapshotRevert}) {
-        builders->insert(static_cast<int>(type), &buildApfsSnapshotScript);
+        builders->insert(static_cast<int>(type), &PartitionScriptBuilder::buildApfsSnapshotScript);
     }
     for (const auto type : {PartitionOperationType::ApfsCloneRootFile,
                             PartitionOperationType::ApfsHardlinkRootFile,
                             PartitionOperationType::ApfsResizeContainer}) {
-        builders->insert(static_cast<int>(type), &buildApfsCloneHardlinkResizeScript);
+        builders->insert(static_cast<int>(type),
+                         &PartitionScriptBuilder::buildApfsCloneHardlinkResizeScript);
     }
     for (const auto type : {PartitionOperationType::HfsOverwriteFile,
                             PartitionOperationType::HfsReplaceFile,

@@ -598,7 +598,7 @@ void markFileSparse(int fileDescriptor) {
     if (fileDescriptor < 0) {
         return;
     }
-    const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(fileDescriptor));
+    auto* const handle = reinterpret_cast<HANDLE>(_get_osfhandle(fileDescriptor));
     if (handle == INVALID_HANDLE_VALUE) {
         return;
     }

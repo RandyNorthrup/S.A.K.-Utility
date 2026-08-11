@@ -16,6 +16,8 @@
 #include <QJsonObject>
 #include <QProcessEnvironment>
 
+#include <algorithm>
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -199,9 +201,8 @@ QString AppScanner::registryStringFromBuffer(const wchar_t* data,
         return QString();
     }
     int lengthChars = static_cast<int>(byteLength / sizeof(wchar_t));
-    if (lengthChars > capacityChars) {
-        lengthChars = capacityChars;  // never read past the caller's buffer
-    }
+    lengthChars = std::min(lengthChars, capacityChars);  // never read past the caller's buffer
+
     while (lengthChars > 0 && data[lengthChars - 1] == L'\0') {
         --lengthChars;  // drop terminator(s); a full buffer may carry none
     }

@@ -1308,9 +1308,9 @@ static constexpr ExifTagEntry kExifTagNames[] = {
 
 /// @brief EXIF tag ID -> human-readable name mapping
 [[nodiscard]] QString exifTagName(uint16_t tag) {
-    auto it = std::find_if(std::begin(kExifTagNames),
-                           std::end(kExifTagNames),
-                           [tag](const auto& entry) { return entry.tag_id == tag; });
+    const auto* it = std::find_if(std::begin(kExifTagNames),
+                                  std::end(kExifTagNames),
+                                  [tag](const auto& entry) { return entry.tag_id == tag; });
     if (it != std::end(kExifTagNames)) {
         return QStringLiteral("%1").arg(QLatin1String(it->name));
     }
@@ -1332,7 +1332,7 @@ int exifTypeUnitSize(uint16_t type) {
         {9, 4},
         {10, 8},
     };
-    auto it = std::find_if(std::begin(kSizes), std::end(kSizes), [type](const auto& entry) {
+    const auto* it = std::find_if(std::begin(kSizes), std::end(kSizes), [type](const auto& entry) {
         return entry.type == type;
     });
     if (it != std::end(kSizes)) {

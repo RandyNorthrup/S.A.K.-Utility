@@ -160,7 +160,7 @@ void UserProfileRestoreExecutePage::onStartRestore() {
         }
     }
 
-    auto worker = new UserProfileRestoreWorker(this);
+    auto* worker = new UserProfileRestoreWorker(this);
     // Track the worker so onCancelRestore() can actually reach it; a bare local
     // left m_worker null, making Cancel a no-op.
     m_worker = worker;

@@ -804,7 +804,7 @@ auto DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
         return std::unexpected(sak::error_code::out_of_memory);
     }
 
-    const uint64_t file_size = static_cast<uint64_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
+    const uint64_t file_size = m_config.test_file_size_mb * sak::kBytesPerMB;
     const uint64_t max_offset = ((file_size / m_rand_block_bytes) - 1) * m_rand_block_bytes;
     const int duration_ms = m_config.random_duration_sec * kBenchmarkMillisecondsPerSecond;
 
@@ -1017,7 +1017,7 @@ auto DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
 
     fillRandomWriteBuffer(buf);
 
-    const uint64_t file_size = static_cast<uint64_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
+    const uint64_t file_size = m_config.test_file_size_mb * sak::kBytesPerMB;
     const uint64_t max_offset = ((file_size / m_rand_block_bytes) - 1) * m_rand_block_bytes;
 
     std::vector<double> latencies;

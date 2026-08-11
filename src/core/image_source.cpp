@@ -220,7 +220,7 @@ sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
         {"dmg", sak::ImageFormat::DMG},
         {"dsk", sak::ImageFormat::DSK},
     };
-    const auto it =
+    const auto* const it =
         std::find_if(std::begin(kFormats), std::end(kFormats), [&ext](const auto& entry) {
             return ext == QLatin1String(entry.ext);
         });
@@ -239,7 +239,7 @@ sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
         {".xz", sak::ImageFormat::XZ},
     };
     QString fullExt = QFileInfo(filePath).completeSuffix().toLower();
-    const auto cit =
+    const auto* const cit =
         std::find_if(std::begin(kCompound), std::end(kCompound), [&fullExt](const auto& entry) {
             return fullExt.endsWith(QLatin1String(entry.suffix));
         });

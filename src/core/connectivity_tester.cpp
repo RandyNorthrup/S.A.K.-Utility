@@ -189,8 +189,7 @@ void populateMtrResult(MtrResult& result,
     for (int i = 0; i < limit; ++i) {
         result.hops.append(hopStats[i]);
     }
-    result.totalCycles =
-        cancelled ? 0 : static_cast<int>(result.hops.isEmpty() ? 0 : result.hops.first().sent);
+    result.totalCycles = cancelled ? 0 : (result.hops.isEmpty() ? 0 : result.hops.first().sent);
 }
 }  // namespace
 

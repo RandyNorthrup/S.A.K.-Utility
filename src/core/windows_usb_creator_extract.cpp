@@ -16,6 +16,8 @@
 #include <QStorageInfo>
 #include <QThread>
 
+#include <algorithm>
+
 namespace {
 constexpr qsizetype kSevenZipCommentPrefixLength = 10;
 constexpr qsizetype kSevenZipPathPrefixLength = 7;
@@ -358,9 +360,7 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
     // Bytes format matched
     processedBytes = bytesMatch.captured(1).toLongLong();
     qint64 newTotal = bytesMatch.captured(kSevenZipTotalBytesCaptureGroup).toLongLong();
-    if (newTotal > totalBytes) {
-        totalBytes = newTotal;
-    }
+    totalBytes = std::max(newTotal, totalBytes);
     if (totalBytes <= 0) {
         return;
     }

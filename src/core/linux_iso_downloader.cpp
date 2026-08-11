@@ -408,9 +408,9 @@ static constexpr Aria2cExitEntry kAria2cExitCodes[] = {
 }  // namespace
 
 QString LinuxISODownloader::aria2cExitCodeMessage(int exit_code) {
-    auto it = std::find_if(std::begin(kAria2cExitCodes),
-                           std::end(kAria2cExitCodes),
-                           [exit_code](const auto& e) { return e.code == exit_code; });
+    const auto* it = std::find_if(std::begin(kAria2cExitCodes),
+                                  std::end(kAria2cExitCodes),
+                                  [exit_code](const auto& e) { return e.code == exit_code; });
     if (it != std::end(kAria2cExitCodes)) {
         return QString::fromUtf8(it->message);
     }

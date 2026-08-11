@@ -635,7 +635,7 @@ QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan(bool triggerScan, bool& s
         return networks;
     }
 
-    auto handle = static_cast<HANDLE>(m_wlanHandle);
+    auto* handle = static_cast<HANDLE>(m_wlanHandle);
 
     PWLAN_INTERFACE_INFO_LIST rawIfList = nullptr;
     const DWORD result = WlanEnumInterfaces(handle, nullptr, &rawIfList);

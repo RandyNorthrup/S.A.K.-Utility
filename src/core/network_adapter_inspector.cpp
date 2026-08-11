@@ -49,7 +49,7 @@ bool tryIpv4String(const sockaddr* sa, int sa_len, QString& out) {
     }
 
     char ipBuf[INET_ADDRSTRLEN] = {};
-    auto* sa4 = reinterpret_cast<const sockaddr_in*>(sa);
+    const auto* sa4 = reinterpret_cast<const sockaddr_in*>(sa);
     inet_ntop(AF_INET, &sa4->sin_addr, ipBuf, sizeof(ipBuf));
     out = QString::fromLatin1(ipBuf);
     return true;
@@ -62,7 +62,7 @@ bool tryIpv6String(const sockaddr* sa, int sa_len, QString& out) {
     }
 
     char ipBuf[INET6_ADDRSTRLEN] = {};
-    auto* sa6 = reinterpret_cast<const sockaddr_in6*>(sa);
+    const auto* sa6 = reinterpret_cast<const sockaddr_in6*>(sa);
     inet_ntop(AF_INET6, &sa6->sin6_addr, ipBuf, sizeof(ipBuf));
     out = QString::fromLatin1(ipBuf);
     return true;
@@ -321,7 +321,7 @@ QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters(bool& ok)
         return adapters;
     }
 
-    for (auto addr = addresses; addr != nullptr; addr = addr->Next) {
+    for (auto* addr = addresses; addr != nullptr; addr = addr->Next) {
         adapters.append(buildAdapterInfo(addr));
     }
 

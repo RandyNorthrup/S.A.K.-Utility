@@ -72,7 +72,7 @@ QVector<PstItemDetail> DeletedItemScanner::scanRecoverableItems() {
             if (folder.node_id == kRecoverableItemsFolderNid) {
                 return &folder;
             }
-            auto* found = findFolder(folder.children);
+            const auto* found = findFolder(folder.children);
             if (found) {
                 return found;
             }

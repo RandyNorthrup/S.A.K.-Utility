@@ -312,12 +312,8 @@ AiOrchestrator::AiOrchestrator(AiSubagentRunner* subagent_runner, IAiToolExecuto
 
 void AiOrchestrator::setOptions(const AiOrchestrationOptions& options) {
     m_options = options;
-    if (m_options.max_parallel_subagents < 1) {
-        m_options.max_parallel_subagents = 1;
-    }
-    if (m_options.resume_start_phase_index < 0) {
-        m_options.resume_start_phase_index = 0;
-    }
+    m_options.max_parallel_subagents = std::max(m_options.max_parallel_subagents, 1);
+    m_options.resume_start_phase_index = std::max(m_options.resume_start_phase_index, 0);
 }
 
 const AiOrchestrationOptions& AiOrchestrator::options() const {
