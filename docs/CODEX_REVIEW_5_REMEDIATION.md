@@ -2167,7 +2167,7 @@ Release build + ctest 225/225, then commit):
       trade.
   END OF SAFE BATCH-AUTOFIX (waves 1-6). Everything left is heavier per-item
   work, NOT a kick-off-a-wave check:
-    - use-ranges (236): Qt rewrites broke twice; MANUAL per site.
+    - use-ranges: DONE (commit 39b1543, 227 sites autofixed + 9 mangles hand-fixed).
     - unchecked-container-access (cppcoreguidelines-pro-bounds-avoid-unchecked-
       container-access): DONE as a SECURITY AUDIT, not a rewrite. See the
       "unchecked-container-access audit" block below.
@@ -2193,9 +2193,18 @@ Release build + ctest 225/225, then commit):
       passed via scriptPath is rejected ("control characters") if the scratchpad
       file is CRLF -- write it LF-only.
     - remaining per-item tiers:
-      * use-ranges (236): Qt rewrites broke twice; MANUAL per site.
+      * use-ranges: DONE (commit 39b1543). Applied the autofix to 227 sites across 81
+        files; hand-corrected the 9 the fixer mangled (pointer-to-container ranges
+        dereferenced to *ptr; the erase-remove/unique idiom rebuilt via the returned
+        subrange's .begin(); one heterogeneous-comparator upper_bound reverted to the
+        classic std::upper_bound because ranges' indirect_strict_weak_order rejects it
+        on MSVC). Full build + ctest 225/225. Re-measured 227 -> 1; the single residual
+        is that intentional classic upper_bound (partition_ext_file_system_reader:1084),
+        a documented MSVC-constraint exception, not a gated finding.
       * unchecked-container-access: DONE (see audit block below).
-      * other integer-safety (integer-sign, widening, cert-err33, exception-escape).
+      * other integer-safety: DONE -- the whole SECURITY AND CORRECTNESS TIER (995) is
+        closed (narrowing + widening + cert-err33 + small checks + container-access
+        audit); see R5-G12-6..12 above.
     - readability-identifier-naming (15705, 60%): LAST, highest-risk, small batches.
     - then wire clang-tidy into pre-commit + CI (R5-G1-4).
 
