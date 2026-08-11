@@ -457,7 +457,7 @@ QMap<QString, QString> parseMetadataFromMatches(const QVector<SearchMatch>& matc
         if (line.startsWith(prefix)) {
             line = line.mid(prefix.size());
         }
-        const int colon = line.indexOf(QLatin1String(": "));
+        const qsizetype colon = line.indexOf(QLatin1String(": "));
         if (colon > 0) {
             metadata.insert(line.left(colon).trimmed(),
                             line.mid(colon + kMetadataSeparatorLength).trimmed());

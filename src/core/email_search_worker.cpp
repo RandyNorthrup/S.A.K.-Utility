@@ -309,13 +309,13 @@ QString EmailSearchWorker::extractContextSnippet(const QString& text,
         return {};
     }
 
-    const int pos = text.indexOf(query, 0, Qt::CaseInsensitive);
+    const qsizetype pos = text.indexOf(query, 0, Qt::CaseInsensitive);
     if (pos < 0) {
         return text.left(context_chars);
     }
 
-    const int start = std::max(0, pos - (context_chars / kSnippetContextDivisor));
-    const int length = std::min(context_chars, static_cast<int>(text.size()) - start);
+    const qsizetype start = std::max<qsizetype>(0, pos - (context_chars / kSnippetContextDivisor));
+    const qsizetype length = std::min<qsizetype>(context_chars, text.size() - start);
 
     QString snippet = text.mid(start, length);
     if (start > 0) {

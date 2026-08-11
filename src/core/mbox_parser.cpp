@@ -18,6 +18,7 @@
 #include <QTimeZone>
 
 #include <algorithm>
+#include <limits>
 #include <optional>
 
 using sak::error_code;
@@ -137,14 +138,14 @@ void MboxParser::indexMessages() {
 
     m_is_indexed = true;
     Q_EMIT progressUpdated(sak::kPercentMax, QStringLiteral("Indexing complete"));
-    Q_EMIT indexingComplete(m_message_offsets.size());
+    Q_EMIT indexingComplete(static_cast<int>(m_message_offsets.size()));
 }
 
 void MboxParser::loadMessages(int offset, int limit) {
     const QMutexLocker locker(&m_file_mutex);
     auto result = readMessages(offset, limit);
     if (result) {
-        Q_EMIT messagesLoaded(std::move(*result), m_message_offsets.size());
+        Q_EMIT messagesLoaded(std::move(*result), static_cast<int>(m_message_offsets.size()));
     } else {
         Q_EMIT errorOccurred(QStringLiteral("Failed to load messages: %1")
                                  .arg(QString::fromUtf8(sak::to_string(result.error()))));
@@ -168,7 +169,7 @@ void MboxParser::cancel() {
 
 int MboxParser::messageCount() const {
     const QMutexLocker locker(&m_file_mutex);
-    return m_message_offsets.size();
+    return static_cast<int>(m_message_offsets.size());
 }
 
 QString MboxParser::filePath() const {
@@ -194,7 +195,7 @@ std::expected<QVector<sak::MboxMessage>, error_code> MboxParser::readMessages(in
         m_is_indexed = true;
     }
 
-    const int total = m_message_offsets.size();
+    const int total = static_cast<int>(m_message_offsets.size());
     const int start = std::min(offset, total);
     const int end_idx = (limit > 0) ? std::min(start + limit, total) : total;
 
@@ -359,6 +360,14 @@ void MboxParser::buildMessageIndex() {
 
         if (isFromLine(line)) {
             m_message_offsets.append(line_offset);
+            // Defensive bound: the public message-count / index API (messageCount, the readMessages
+            // offset/limit, the indexingComplete / messagesLoaded signals) is int-based, so refuse
+            // to index past INT_MAX entries -- a physically absurd tens-of-GB of bare 'From ' lines
+            // that would exhaust the offset list first. This keeps every m_message_offsets.size()
+            // -> int narrowing below provably in range.
+            if (m_message_offsets.size() >= std::numeric_limits<int>::max()) {
+                break;
+            }
         }
 
         bytes_read = m_file.pos();

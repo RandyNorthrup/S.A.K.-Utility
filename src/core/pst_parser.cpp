@@ -2039,6 +2039,15 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafDataGuarded(uint32_t
         }
         auto child_result = readBthLeafDataGuarded(child_hid, level - 1, walk);
         if (child_result) {
+            // Cap the assembled leaf the same way readDataTree caps its data tree (line ~1821):
+            // an attacker-crafted heap with many distinct leaf HIDs could otherwise grow
+            // `combined` past INT_MAX, and the record counts derived from combined.size() (all
+            // int) would truncate. Fail closed once the sum would exceed the ceiling, which also
+            // keeps those downstream int record counts/offsets in range.
+            if (static_cast<int64_t>(combined.size()) + child_result->size() >
+                kMaxAssembledDataTreeSize) {
+                return std::unexpected(error_code::pst_corrupted_btree);
+            }
             combined.append(*child_result);
         }
     }
@@ -2101,7 +2110,7 @@ QVector<sak::MapiProperty> PstParser::parsePropertyRecords(const BthLeafResult& 
         return {};
     }
 
-    const int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = static_cast<int>(bth.leaf_data.size() / record_size);
     QVector<sak::MapiProperty> properties;
     properties.reserve(record_count);
 
@@ -2419,7 +2428,7 @@ QVector<uint32_t> PstParser::collectTcLiveRowIndices(const TcInfo& tc, const Hea
 QVector<uint32_t> PstParser::extractTcRowIndicesFromLeaf(const QByteArray& leaf) {
     constexpr int kTcRowIdRecordSize = 8;
     QVector<uint32_t> live_row_indices;
-    const int record_count = leaf.size() / kTcRowIdRecordSize;
+    const int record_count = static_cast<int>(leaf.size() / kTcRowIdRecordSize);
     live_row_indices.reserve(record_count);
     for (int rec = 0; rec < record_count; ++rec) {
         live_row_indices.append(
@@ -3007,7 +3016,7 @@ std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult
         return {};
     }
 
-    const int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = static_cast<int>(bth.leaf_data.size() / record_size);
     const auto& slot_map = senderPropSlots();
     QString results[kResolvedRecipientPartCount];
 
@@ -3128,7 +3137,7 @@ void PstParser::scanBthForSubjectAndClass(const BthLeafResult& bth,
     if (record_size == 0) {
         return;
     }
-    const int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = static_cast<int>(bth.leaf_data.size() / record_size);
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
         const int rec_offset = rec_idx * record_size;
         if (rec_offset + record_size > bth.leaf_data.size()) {
@@ -3253,7 +3262,7 @@ void PstParser::populateAttachmentFromLeaf(sak::PstAttachmentInfo& att,
         return;
     }
 
-    const int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = static_cast<int>(bth.leaf_data.size() / record_size);
     const auto& setters = attachmentSetters();
 
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {

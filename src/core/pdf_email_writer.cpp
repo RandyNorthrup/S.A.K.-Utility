@@ -243,11 +243,12 @@ QString PdfEmailWriter::buildHtmlForPdf(
         // hard guarantee against local-file disclosure, this removes script/handlers as well.
         QString body = sanitizeEmailBodyHtml(item.body_html);
         // Strip outer html/head/body tags if present and use inner content
-        const int body_start = body.indexOf(QStringLiteral("<body"), Qt::CaseInsensitive);
+        const qsizetype body_start = body.indexOf(QStringLiteral("<body"), Qt::CaseInsensitive);
         if (body_start >= 0) {
-            const int close = body.indexOf(QStringLiteral(">"), body_start);
+            const qsizetype close = body.indexOf(QStringLiteral(">"), body_start);
             if (close >= 0) {
-                const int body_end = body.indexOf(QStringLiteral("</body>"), Qt::CaseInsensitive);
+                const qsizetype body_end = body.indexOf(QStringLiteral("</body>"),
+                                                        Qt::CaseInsensitive);
                 if (body_end > close) {
                     body = body.mid(close + 1, body_end - close - 1);
                 }

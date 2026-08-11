@@ -2184,7 +2184,7 @@ QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
 
     QString out;
     out.reserve(safe_html.size());
-    int pos = 0;
+    qsizetype pos = 0;
     auto it = kImgSrc.globalMatch(safe_html);
     while (it.hasNext()) {
         const QRegularExpressionMatch m = it.next();
