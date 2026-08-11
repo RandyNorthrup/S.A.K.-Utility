@@ -158,7 +158,7 @@ auto file_hasher::calculateMd5(const std::filesystem::path& file_path,
         // Get final hash as hex string. QCryptographicHash::result() for Md5
         // always yields hashLength(Md5) == 16 bytes and toHex() emits exactly two
         // chars per byte, so both sizes below are guaranteed by the Qt crypto API.
-        QByteArray result = hash.result();
+        const QByteArray result = hash.result();
         Q_ASSERT_X(result.size() == kMd5DigestBytes, "calculateMd5", "MD5 digest must be 16 bytes");
         auto hex = result.toHex().toStdString();
         Q_ASSERT_X(hex.size() == kMd5HexChars, "calculateMd5", "MD5 hex string must be 32 chars");
@@ -200,7 +200,7 @@ auto file_hasher::calculateSha256(const std::filesystem::path& file_path,
         // Get final hash as hex string. QCryptographicHash::result() for Sha256
         // always yields hashLength(Sha256) == 32 bytes and toHex() emits exactly
         // two chars per byte, so both sizes below are Qt-guaranteed.
-        QByteArray result = hash.result();
+        const QByteArray result = hash.result();
         Q_ASSERT_X(result.size() == kSha256DigestBytes,
                    "calculateSha256",
                    "SHA-256 digest must be 32 bytes");
@@ -222,7 +222,7 @@ auto file_hasher::calculateMd5(std::span<const std::byte> data)
         QCryptographicHash hash(QCryptographicHash::Md5);
         hash.addData(QByteArrayView(reinterpret_cast<const char*>(data.data()),
                                     static_cast<qsizetype>(data.size())));
-        QByteArray result = hash.result();
+        const QByteArray result = hash.result();
         return result.toHex().toStdString();
 
     } catch (const std::exception& e) {
@@ -237,7 +237,7 @@ auto file_hasher::calculateSha256(std::span<const std::byte> data)
         QCryptographicHash hash(QCryptographicHash::Sha256);
         hash.addData(QByteArrayView(reinterpret_cast<const char*>(data.data()),
                                     static_cast<qsizetype>(data.size())));
-        QByteArray result = hash.result();
+        const QByteArray result = hash.result();
         return result.toHex().toStdString();
 
     } catch (const std::exception& e) {

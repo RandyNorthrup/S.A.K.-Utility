@@ -43,7 +43,7 @@ void updateHopStats(sak::MtrHopStats& stats,
                     int& max_discovered) {
     stats.sent++;
 
-    bool got_response = reply.success || reply.errorMessage == QStringLiteral("TTL expired");
+    const bool got_response = reply.success || reply.errorMessage == QStringLiteral("TTL expired");
     if (got_response) {
         stats.received++;
         stats.ipAddress = reply.replyFrom;
@@ -86,7 +86,7 @@ void computePingStats(PingResult& result, const QVector<double>& rtts) {
     }
 
     double sumSqDiff = 0.0;
-    for (double rtt : rtts) {
+    for (const double rtt : rtts) {
         const double diff = rtt - result.avgRtt;
         sumSqDiff += diff * diff;
     }
@@ -239,7 +239,7 @@ QString ConnectivityTester::resolveHostname(const QString& hostname) {
 
     // Strip URL scheme (http://, https://, ftp://, etc.)
     if (host.contains(QStringLiteral("://"))) {
-        QUrl url(host);
+        const QUrl url(host);
         if (url.isValid() && !url.host().isEmpty()) {
             host = url.host();
         } else {
@@ -479,9 +479,11 @@ TracerouteHop ConnectivityTester::probeHop(
     constexpr int kMaxRttSlots = 3;
 
     for (int probe_idx = 0; probe_idx < probes; ++probe_idx) {
-        PingReply reply = sendIcmpEcho(targetIP, timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
+        const PingReply reply =
+            sendIcmpEcho(targetIP, timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
 
-        bool got_response = reply.success || reply.errorMessage == QStringLiteral("TTL expired");
+        const bool got_response = reply.success ||
+                                  reply.errorMessage == QStringLiteral("TTL expired");
         if (got_response) {
             hopIP = reply.replyFrom;
             hop.timedOut = false;
@@ -489,7 +491,7 @@ TracerouteHop ConnectivityTester::probeHop(
         }
 
         if (probe_idx < kMaxRttSlots) {
-            bool has_ip = reply.success || !reply.replyFrom.isEmpty();
+            const bool has_ip = reply.success || !reply.replyFrom.isEmpty();
             *rtt_slots[probe_idx] = has_ip ? reply.rttMs : -1.0;
         }
     }
@@ -518,7 +520,7 @@ void ConnectivityTester::traceroute(const TracerouteConfig& rawConfig) {
             break;
         }
 
-        TracerouteHop hop =
+        const TracerouteHop hop =
             probeHop(targetIP, ttl, config.timeoutMs, config.probesPerHop, config.resolveHostnames);
         result.hops.append(hop);
         Q_EMIT tracerouteHop(hop);
@@ -542,7 +544,7 @@ void ConnectivityTester::runMtrCycle(const QString& targetIP,
             break;
         }
 
-        PingReply reply =
+        const PingReply reply =
             sendIcmpEcho(targetIP, config.timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
 
         updateHopStats(hopStats[ttl - 1], reply, ttl, maxDiscoveredHop);

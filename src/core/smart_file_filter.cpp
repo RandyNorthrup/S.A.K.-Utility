@@ -62,7 +62,7 @@ void SmartFileFilter::compileRegexPatterns() {
     m_invalidPatterns.clear();
 
     for (const QString& pattern : m_rules.exclude_patterns) {
-        QRegularExpression regex(pattern, QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpression regex(pattern, QRegularExpression::CaseInsensitiveOption);
         if (regex.isValid()) {
             m_compiledPatterns.append(regex);
         } else {
@@ -79,8 +79,8 @@ void SmartFileFilter::compileRegexPatterns() {
 
 bool SmartFileFilter::shouldExcludeFile(const QFileInfo& fileInfo,
                                         const QString& profilePath) const {
-    QString fileName = fileInfo.fileName();
-    QString absolutePath = fileInfo.absoluteFilePath();
+    const QString fileName = fileInfo.fileName();
+    const QString absolutePath = fileInfo.absoluteFilePath();
 
     // 1. Check if it's a dangerous file (NTUSER.DAT, etc.)
     if (isDangerousFile(fileName)) {
@@ -98,7 +98,7 @@ bool SmartFileFilter::shouldExcludeFile(const QFileInfo& fileInfo,
     }
 
     // 4. Check if in excluded folder (Cache, Temp, etc.)
-    QString relativePath = QDir(profilePath).relativeFilePath(absolutePath);
+    const QString relativePath = QDir(profilePath).relativeFilePath(absolutePath);
     if (isInExcludedFolder(relativePath)) {
         return true;
     }
@@ -113,8 +113,8 @@ bool SmartFileFilter::shouldExcludeFile(const QFileInfo& fileInfo,
 
 bool SmartFileFilter::shouldExcludeFolder(const QFileInfo& folderInfo,
                                           const QString& profilePath) const {
-    QString folderName = folderInfo.fileName();
-    QString absolutePath = folderInfo.absoluteFilePath();
+    const QString folderName = folderInfo.fileName();
+    const QString absolutePath = folderInfo.absoluteFilePath();
 
     // Check if folder name is in exclusion list
     if (m_excludeFoldersSet.contains(folderName.toLower())) {
@@ -122,7 +122,7 @@ bool SmartFileFilter::shouldExcludeFolder(const QFileInfo& folderInfo,
     }
 
     // Check relative path for excluded folders
-    QString relativePath = QDir(profilePath).relativeFilePath(absolutePath);
+    const QString relativePath = QDir(profilePath).relativeFilePath(absolutePath);
     if (isInExcludedFolder(relativePath)) {
         return true;
     }
@@ -197,14 +197,14 @@ bool SmartFileFilter::isInCacheDirectory(const QString& path) {
 }
 
 QString SmartFileFilter::getExclusionReason(const QFileInfo& fileInfo) const {
-    QString fileName = fileInfo.fileName();
+    const QString fileName = fileInfo.fileName();
 
     if (isDangerousFile(fileName)) {
         return QString("Dangerous system file: %1 (would corrupt profile)").arg(fileName);
     }
 
     if (exceedsSizeLimit(fileInfo.size())) {
-        double sizeMB = fileInfo.size() / kBytesPerMBf;
+        const double sizeMB = fileInfo.size() / kBytesPerMBf;
         if (m_rules.enable_file_size_limit) {
             return QString("File too large: %1 MB (limit: %2 MB)")
                 .arg(sizeMB, 0, 'f', kFileSizeDisplayPrecision)

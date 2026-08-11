@@ -104,13 +104,13 @@ void ScreenshotSettingsAction::execute() {
         return;
     }
     setStatus(ActionStatus::Running);
-    QDateTime start_time = QDateTime::currentDateTime();
+    const QDateTime start_time = QDateTime::currentDateTime();
     Q_EMIT executionProgress("Detecting monitor configuration...", progress::kStep3);
-    int monitor_count = detectMonitorCount();
+    const int monitor_count = detectMonitorCount();
 
     Q_EMIT executionProgress("Preparing screenshot directory...", progress::kStep5);
-    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-    QDir output_dir(m_output_location + "/SettingsScreenshots/" + timestamp);
+    const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    const QDir output_dir(m_output_location + "/SettingsScreenshots/" + timestamp);
     if (!output_dir.mkpath(".")) {
         sak::logWarning("Failed to create screenshot output directory: {}",
                         output_dir.absolutePath().toStdString());
@@ -128,7 +128,8 @@ void ScreenshotSettingsAction::execute() {
             return;
         }
 
-        int progress = progress::kStep5 + ((processed * progress::kStep90) / settings_pages.size());
+        const int progress = progress::kStep5 +
+                             ((processed * progress::kStep90) / settings_pages.size());
         Q_EMIT executionProgress(QString("Capturing %1...").arg(it.value()), progress);
 
         if (captureSettingsPage(it.key(), it.value(), output_dir.absolutePath(), timestamp)) {
@@ -157,7 +158,7 @@ void ScreenshotSettingsAction::execute() {
 void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture,
                                                     const QDir& output_dir,
                                                     const CaptureContext& context) {
-    qint64 duration_ms = context.start_time.msecsTo(QDateTime::currentDateTime());
+    const qint64 duration_ms = context.start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
     result.duration_ms = duration_ms;
@@ -234,9 +235,10 @@ void ScreenshotSettingsAction::closeSettingsApp() {
             QStringLiteral("Settings close skipped: cannot resolve System32 taskkill.exe path"));
         return;
     }
-    ProcessResult close_proc = runProcess(taskkill,
-                                          QStringList() << "/IM" << "SystemSettings.exe" << "/F",
-                                          sak::kTimeoutProcessMediumMs);
+    const ProcessResult close_proc = runProcess(taskkill,
+                                                QStringList()
+                                                    << "/IM" << "SystemSettings.exe" << "/F",
+                                                sak::kTimeoutProcessMediumMs);
     if (!close_proc.succeeded()) {
         Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
     }
@@ -296,7 +298,7 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
                                                    const QString& page_name,
                                                    const QString& output_dir_path,
                                                    const QString& timestamp) {
-    QDir output_dir(output_dir_path);
+    const QDir output_dir(output_dir_path);
     for (int attempt = kSettingsCaptureFirstAttempt; attempt <= kSettingsCaptureMaxAttempts;
          ++attempt) {
         // explorer.exe by absolute Windows-directory path (it is NOT a System32 binary):
@@ -319,7 +321,7 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
             continue;
         }
 
-        bool captured = captureSettingsWindow(output_dir, page_name, timestamp);
+        const bool captured = captureSettingsWindow(output_dir, page_name, timestamp);
         closeSettingsApp();
         QThread::msleep(sak::kTimerRetryBaseMs);
 
@@ -396,7 +398,7 @@ bool ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
                                               const QString& timestamp,
                                               int monitor_count,
                                               const CaptureResult& capture) {
-    QDir output_dir(output_dir_path);
+    const QDir output_dir(output_dir_path);
     const QString report_path =
         output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(timestamp));
 
@@ -447,14 +449,14 @@ int ScreenshotSettingsAction::detectMonitorCount() {
 
 int ScreenshotSettingsAction::countMonitorsOnGui() {
     QList<QScreen*> screens = QGuiApplication::screens();
-    int count = screens.size();
+    const int count = screens.size();
 
     sak::logDebug("Detected {} monitor(s)", count);
 
     // Log each monitor's properties
     for (int i = 0; i < count; i++) {
-        QScreen* screen = screens[i];
-        QRect geometry = screen->geometry();
+        const QScreen* screen = screens[i];
+        const QRect geometry = screen->geometry();
         sak::logDebug("Monitor {}: {}x{} at {},{}",
                       i + 1,
                       geometry.width(),

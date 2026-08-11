@@ -1250,7 +1250,7 @@ private:
             return false;
         }
 
-        QByteArray nxBlock = latestContainerSuperblock(firstBlock, result);
+        const QByteArray nxBlock = latestContainerSuperblock(firstBlock, result);
         const auto nxHeader = objectHeader(nxBlock);
         containerXid_ = nxHeader.xid;
         containerUuid_ = nxBlock.mid(kApfsNxUuidOffset, kApfsUuidBytes);
@@ -1759,7 +1759,7 @@ private:
             return;
         }
         const qsizetype payloadLength = std::max<qsizetype>(0, nameLength - 1);
-        QString name = QString::fromUtf8(
+        const QString name = QString::fromUtf8(
             node.mid(nameOffset, std::min(payloadLength, node.size() - nameOffset)));
         if (name.isEmpty()) {
             return;
@@ -2584,7 +2584,7 @@ PartitionApfsDirectoryExportResult PartitionApfsFileSystemReader::exportDirector
         return exportResult;
     }
 
-    QDir root(output_directory);
+    const QDir root(output_directory);
     if (!root.mkpath(QStringLiteral("."))) {
         exportResult.blockers.append(QStringLiteral("Unable to create output directory"));
         return exportResult;

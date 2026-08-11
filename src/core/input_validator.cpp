@@ -334,7 +334,7 @@ bool windowsAccessDenied(const std::filesystem::path& path, DWORD desired_access
 
 validation_result checkWindowsPermissions(const std::filesystem::path& path,
                                           const path_validation_config& config) {
-    DWORD attrs = GetFileAttributesW(path.wstring().c_str());
+    DWORD const attrs = GetFileAttributesW(path.wstring().c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) {
         if (config.check_read_permission || config.check_write_permission) {
             return input_validator::failure(error_code::permission_denied,
@@ -638,14 +638,14 @@ bool input_validator::isValidUtf8(std::string_view str) noexcept {
     std::size_t i = 0;
 
     while (i < str.length()) {
-        unsigned char c = static_cast<unsigned char>(str[i]);
+        const unsigned char c = static_cast<unsigned char>(str[i]);
 
         if (c < kAsciiLimit) {
             i++;
             continue;
         }
 
-        int seq_len = checkMultiByteUtf8(str, i);
+        const int seq_len = checkMultiByteUtf8(str, i);
         if (seq_len == 0) {
             return false;
         }
@@ -661,7 +661,7 @@ std::string input_validator::sanitizeString(std::string_view str, bool allow_uni
     std::string result;
     result.reserve(str.length());
 
-    for (unsigned char c : str) {
+    for (const unsigned char c : str) {
         if (c == '\0') {
             continue;
         }

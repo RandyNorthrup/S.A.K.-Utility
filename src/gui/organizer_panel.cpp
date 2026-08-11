@@ -70,7 +70,7 @@ DedupScanTotals scanDedupTotals(const QStringList& paths, const bool recursive) 
     DedupScanTotals totals;
     const auto flags = recursive ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags;
     for (const QString& path : paths) {
-        QDir dir(path);
+        const QDir dir(path);
         if (!dir.exists()) {
             continue;
         }
@@ -366,7 +366,7 @@ void OrganizerPanel::populateFileSystemTargetCombos() {
         if (!combo) {
             return;
         }
-        QSignalBlocker blocker(combo);
+        const QSignalBlocker blocker(combo);
         combo->clear();
         for (const auto& target : m_file_system_targets) {
             combo->addItem(target.label);
@@ -842,7 +842,7 @@ void OrganizerPanel::updateDirectorySummary() {
         return;
     }
 
-    QDir dir(path);
+    const QDir dir(path);
     if (!dir.exists()) {
         m_dir_summary_label->setText(tr("Directory does not exist"));
         return;
@@ -863,7 +863,7 @@ void OrganizerPanel::updateDirectorySummary() {
         sizeStr = QString("%1 KB").arg(totalSize / sak::kBytesPerKBf, 0, 'f', 0);
     }
 
-    int subdirCount = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot).size();
+    const int subdirCount = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot).size();
     m_dir_summary_label->setText(tr("%1 files (%2) \u2022 %3 subdirectories")
                                      .arg(entries.size())
                                      .arg(sizeStr)
@@ -872,11 +872,11 @@ void OrganizerPanel::updateDirectorySummary() {
 
 void OrganizerPanel::onBrowseClicked() {
     Q_ASSERT(m_target_path);
-    QString dir = QFileDialog::getExistingDirectory(this,
-                                                    tr("Select Directory to Organize"),
-                                                    m_target_path->text(),
-                                                    QFileDialog::ShowDirsOnly |
-                                                        QFileDialog::DontResolveSymlinks);
+    const QString dir = QFileDialog::getExistingDirectory(this,
+                                                          tr("Select Directory to Organize"),
+                                                          m_target_path->text(),
+                                                          QFileDialog::ShowDirsOnly |
+                                                              QFileDialog::DontResolveSymlinks);
 
     if (!dir.isEmpty()) {
         m_target_path->setText(dir);
@@ -906,7 +906,7 @@ bool OrganizerPanel::validateOrganizerTarget() {
         return false;
     }
 
-    QDir targetDir(m_target_path->text());
+    const QDir targetDir(m_target_path->text());
     if (!targetDir.exists()) {
         sak::logWarning("Organization: target directory does not exist: {}",
                         m_target_path->text().toStdString());
@@ -944,7 +944,7 @@ OrganizerWorker::Config OrganizerPanel::buildOrganizerConfig() const {
     config.preview_mode = m_preview_mode_checkbox->isChecked();
     config.create_subdirectories = m_create_subdirs_checkbox->isChecked();
 
-    QString strategy = m_collision_strategy->currentText().toLower();
+    const QString strategy = m_collision_strategy->currentText().toLower();
     config.collision_strategy = strategy;
     return config;
 }
@@ -998,7 +998,7 @@ void OrganizerPanel::startOrganizerWorker(const OrganizerWorker::Config& config)
     Q_EMIT statusMessage(tr("Starting..."), 0);
     m_worker->start();
 
-    QString mode = config.preview_mode ? "Preview" : "Execute";
+    const QString mode = config.preview_mode ? "Preview" : "Execute";
     logInfo("Organization operation initiated ({}): {}",
             mode.toStdString(),
             config.target_directory.toStdString());
@@ -1011,7 +1011,7 @@ void OrganizerPanel::onExecuteClicked() {
         return;
     }
 
-    QDir targetDir(m_target_path->text());
+    const QDir targetDir(m_target_path->text());
     if (!confirmOrganizerExecution(targetDir)) {
         return;
     }
@@ -1030,7 +1030,7 @@ void OrganizerPanel::onCancelClicked() {
 }
 
 void OrganizerPanel::onAddCategoryClicked() {
-    int row = m_category_table->rowCount();
+    const int row = m_category_table->rowCount();
     m_category_table->insertRow(row);
     m_category_table->setItem(row, 0, new QTableWidgetItem(tr("New Category")));
     m_category_table->setItem(row, 1, new QTableWidgetItem(QString()));
@@ -1060,14 +1060,14 @@ void OrganizerPanel::onRemoveCategoryClicked() {
         return;
     }
 
-    int row = m_category_table->currentRow();
+    const int row = m_category_table->currentRow();
     if (row >= 0) {
         m_category_table->removeRow(row);
     }
 }
 
 void OrganizerPanel::onWorkerStarted() {
-    QString mode = m_preview_mode_checkbox->isChecked() ? "preview" : "organization";
+    const QString mode = m_preview_mode_checkbox->isChecked() ? "preview" : "organization";
     logMessage(QString("Starting %1...").arg(mode));
     Q_EMIT statusMessage(QString("%1 in progress").arg(mode), 0);
 }
@@ -1077,7 +1077,7 @@ void OrganizerPanel::onWorkerFinished() {
     Q_ASSERT(m_preview_mode_checkbox);
     setOperationRunning(false);
     m_progress_bar->setValue(kProgressMaximum);
-    QString mode = m_preview_mode_checkbox->isChecked() ? "Preview" : "Organization";
+    const QString mode = m_preview_mode_checkbox->isChecked() ? "Preview" : "Organization";
     Q_EMIT statusMessage(QString("%1 complete").arg(mode), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(kProgressMaximum, kProgressMaximum);
     logMessage(QString("%1 completed successfully").arg(mode));
@@ -1116,11 +1116,11 @@ void OrganizerPanel::onFileProgress(int current, int total, const QString& fileP
     Q_EMIT progressUpdate(current, total);
 
     if (total > 0) {
-        int pct = static_cast<int>(static_cast<double>(current) / total * kProgressMaximum);
+        const int pct = static_cast<int>(static_cast<double>(current) / total * kProgressMaximum);
         m_progress_bar->setValue(pct);
     }
 
-    QString filename = QFileInfo(filePath).fileName();
+    const QString filename = QFileInfo(filePath).fileName();
     Q_EMIT statusMessage(QString("Processing: %1").arg(filename), 0);
 }
 
@@ -1143,8 +1143,8 @@ QMap<QString, QStringList> OrganizerPanel::getCategoryMapping() const {
             continue;
         }
 
-        QString category = categoryItem->text().trimmed();
-        QString extensionsStr = extensionsItem->text().trimmed();
+        const QString category = categoryItem->text().trimmed();
+        const QString extensionsStr = extensionsItem->text().trimmed();
 
         if (category.isEmpty() || extensionsStr.isEmpty()) {
             continue;
@@ -1211,7 +1211,7 @@ bool OrganizerPanel::validateCategoryMapping() const {
 
     QSet<QString> seen;
     for (auto it = mapping.cbegin(); it != mapping.cend(); ++it) {
-        QString lower = it.key().toLower();
+        const QString lower = it.key().toLower();
         if (seen.contains(lower)) {
             sak::logWarning("Duplicate category name in organizer: {}", it.key().toStdString());
             sak::showWarningLogged(const_cast<OrganizerPanel*>(this),
@@ -1303,7 +1303,7 @@ void OrganizerPanel::onSettingsClicked() {
 void OrganizerPanel::updateDedupDirectorySummary() {
     Q_ASSERT(m_dedup_directory_list);
     Q_ASSERT(m_dedup_summary_label);
-    int count = m_dedup_directory_list->count();
+    const int count = m_dedup_directory_list->count();
     if (count == 0) {
         m_dedup_summary_label->setText(tr("No directories added"));
         return;
@@ -1366,11 +1366,11 @@ void OrganizerPanel::onDedupAddDirectoryClicked() {
         return;
     }
 
-    QString dir = QFileDialog::getExistingDirectory(this,
-                                                    tr("Select Directory to Scan"),
-                                                    QString(),
-                                                    QFileDialog::ShowDirsOnly |
-                                                        QFileDialog::DontResolveSymlinks);
+    const QString dir = QFileDialog::getExistingDirectory(this,
+                                                          tr("Select Directory to Scan"),
+                                                          QString(),
+                                                          QFileDialog::ShowDirsOnly |
+                                                              QFileDialog::DontResolveSymlinks);
 
     if (!dir.isEmpty()) {
         // Prevent duplicate directory entries
@@ -1559,11 +1559,11 @@ void OrganizerPanel::onDedupScanProgress(int current, int total, const QString& 
     Q_EMIT progressUpdate(current, total);
 
     if (total > 0) {
-        int pct = static_cast<int>(static_cast<double>(current) / total * kProgressMaximum);
+        const int pct = static_cast<int>(static_cast<double>(current) / total * kProgressMaximum);
         m_dedup_progress_bar->setValue(pct);
     }
 
-    QFileInfo info(path);
+    const QFileInfo info(path);
     Q_EMIT statusMessage(QString("Scanning: %1").arg(info.fileName()), 0);
 }
 
@@ -1577,7 +1577,7 @@ void OrganizerPanel::onDedupResultsReady(const QString& summary,
         sizeStr = QString("%1 MB").arg(wastedSpace / sak::kBytesPerMBf, 0, 'f', kSizeGbPrecision);
     }
 
-    QString resultsText =
+    const QString resultsText =
         tr("Found %1 duplicate file(s), %2 wasted space").arg(duplicateCount).arg(sizeStr);
 
     // Show persistent results label

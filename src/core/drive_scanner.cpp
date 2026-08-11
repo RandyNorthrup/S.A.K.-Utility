@@ -206,7 +206,7 @@ sak::DriveInfo DriveScanner::getDriveInfo(const QString& devicePath) const {
 }
 
 bool DriveScanner::isSystemDrive(const QString& devicePath) const {
-    sak::DriveInfo info = getDriveInfo(devicePath);
+    const sak::DriveInfo info = getDriveInfo(devicePath);
     return info.isValid() && info.isSystem;
 }
 
@@ -233,7 +233,7 @@ QList<sak::DriveInfo> DriveScanner::enumerateDrivesOnce(bool& enumeration_ok) {
     QList<sak::DriveInfo> newDrives;
     const QVector<int> drive_numbers = enumeratePhysicalDriveNumbers(enumeration_ok);
     for (const int driveNumber : drive_numbers) {
-        sak::DriveInfo info = queryDriveInfo(driveNumber);
+        const sak::DriveInfo info = queryDriveInfo(driveNumber);
         if (info.isValid()) {
             newDrives.append(info);
             continue;
@@ -403,7 +403,7 @@ QString DriveScanner::descriptorString(const BYTE* buffer,
 QString DriveScanner::getDriveName(int driveNumber) {
     // Only queryDriveInfo calls this, with a number enumeratePhysicalDriveNumbers accepted (>= 0).
     Q_ASSERT_X(driveNumber >= 0, "getDriveName", "driveNumber must be non-negative");
-    QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
+    const QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
     HANDLE hDrive = CreateFileW(reinterpret_cast<LPCWSTR>(devicePath.utf16()),
                                 0,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -547,7 +547,7 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
     // rejects a negative one before it can reach here.
     Q_ASSERT_X(driveNumber >= 0, "isDriveRemovable", "driveNumber must be non-negative");
     // Use IOCTL_STORAGE_QUERY_PROPERTY to check both RemovableMedia flag and BusType
-    QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
+    const QString devicePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
     HANDLE hDrive = CreateFileW(reinterpret_cast<LPCWSTR>(devicePath.utf16()),
                                 0,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -660,7 +660,7 @@ QStringList DriveScanner::getMountPoints(int driveNumber, bool* enumerationOk) {
         ok = false;
     } else {
         do {
-            size_t len = wcslen(volumeName);
+            const size_t len = wcslen(volumeName);
             if (len > 0 && volumeName[len - 1] == L'\\') {
                 volumeName[len - 1] = L'\0';
             }
@@ -692,7 +692,7 @@ bool DriveScanner::volumeMatchesDrive(const wchar_t* volumeName, int driveNumber
 
 bool DriveScanner::appendVolumeRoot(wchar_t* volumeName, int driveNumber, QStringList& roots) {
     const QString guidRoot = QString::fromWCharArray(volumeName);  // keeps trailing backslash
-    size_t len = wcslen(volumeName);
+    const size_t len = wcslen(volumeName);
     if (len > 0 && volumeName[len - 1] == L'\\') {
         volumeName[len - 1] = L'\0';
     }

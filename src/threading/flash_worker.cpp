@@ -252,7 +252,8 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
         return std::unexpected(sak::error_code::invalid_argument);
     }
 
-    sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Flashing disk image");
+    const sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System,
+                                         "Flashing disk image");
     sak::logInfo(QString("Starting flash to %1").arg(m_targetDevice).toStdString());
 
     QElapsedTimer timer;
@@ -306,7 +307,7 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
     // Cleanup
     cleanupFlashResources();
 
-    qint64 elapsed_ms = timer.elapsed();
+    const qint64 elapsed_ms = timer.elapsed();
     sak::logInfo(QString("Flash completed in %1 seconds")
                      .arg(elapsed_ms / sak::kMillisecondsPerSecondF)
                      .toStdString());
@@ -324,7 +325,7 @@ auto FlashWorker::runVerificationStage() -> std::expected<void, sak::error_code>
     if (!m_verificationEnabled || stopRequested()) {
         return {};
     }
-    sak::ValidationResult result = verifyImage();
+    const sak::ValidationResult result = verifyImage();
     Q_EMIT verificationCompleted(result);
     if (!result.passed) {
         sak::logError("Verification failed");
@@ -419,7 +420,7 @@ bool FlashWorker::openDevice() {
                                  nullptr);
 
     if (m_deviceHandle == INVALID_HANDLE_VALUE) {
-        DWORD last_error = GetLastError();
+        DWORD const last_error = GetLastError();
         sak::logError(QString("CreateFile failed with error %1").arg(last_error).toStdString());
         return false;
     }
@@ -640,7 +641,7 @@ bool FlashWorker::padToSectorSize(QByteArray& buffer, qint64& bytesRead, qint64 
         return true;
     }
 
-    qint64 paddedSize = ((bytesRead / sectorSize) + 1) * sectorSize;
+    const qint64 paddedSize = ((bytesRead / sectorSize) + 1) * sectorSize;
 
     // Validate padded size is reasonable
     if (paddedSize > buffer.capacity() * kPaddingCapacityGrowthLimit || paddedSize < 0) {
@@ -732,7 +733,7 @@ bool FlashWorker::writeImage() {
 bool FlashWorker::finalizeWrite() {
     // Flush buffers and check for failure to prevent silent data loss.
     if (!FlushFileBuffers(m_deviceHandle)) {
-        DWORD flushError = GetLastError();
+        DWORD const flushError = GetLastError();
         sak::logError(
             QString("FlushFileBuffers failed with error %1").arg(flushError).toStdString());
         return false;
@@ -773,7 +774,7 @@ bool FlashWorker::writeChunk(const char* buffer, qint64 bytesRead) {
                    static_cast<DWORD>(bytesRead),
                    &bytesWrittenThisTime,
                    nullptr)) {
-        DWORD last_error = GetLastError();
+        DWORD const last_error = GetLastError();
         sak::logError(QString("WriteFile failed with error %1").arg(last_error).toStdString());
         return false;
     }
@@ -827,7 +828,7 @@ sak::ValidationResult FlashWorker::verifyFull() {
     // compressed source) would never match. m_contentBytesWritten is exactly the
     // meaningful prefix the source checksum was computed over.
     const qint64 verifyLen = m_contentBytesWritten;
-    QString targetChecksum = calculateChecksum(m_deviceHandle, verifyLen);
+    const QString targetChecksum = calculateChecksum(m_deviceHandle, verifyLen);
     if (targetChecksum.isEmpty()) {
         result.passed = false;
         result.errors.append("Failed to calculate target checksum");
@@ -864,8 +865,8 @@ sak::ValidationResult FlashWorker::verifySample() {
     result.sourceChecksum = m_sourceChecksum;
 
     // Sample size: 100MB or 10% of image, whichever is smaller
-    qint64 sampleSize = qMin(kVerifySampleMax, m_totalBytes / kSampleSizeFractionDivisor);
-    qint64 blockSize = kVerifyBlockSize;
+    const qint64 sampleSize = qMin(kVerifySampleMax, m_totalBytes / kSampleSizeFractionDivisor);
+    const qint64 blockSize = kVerifyBlockSize;
     int numSamples = static_cast<int>(sampleSize / blockSize);
 
     numSamples = std::max(numSamples, 1);
@@ -905,10 +906,10 @@ sak::ValidationResult FlashWorker::verifySample() {
         return result;
     }
 
-    int samplesVerified = verifySampleBlocks(result,
-                                             {numSamples, blockSize, totalBlocks, sampleSize},
-                                             sourceBuffer.data(),
-                                             targetBuffer.data());
+    const int samplesVerified = verifySampleBlocks(result,
+                                                   {numSamples, blockSize, totalBlocks, sampleSize},
+                                                   sourceBuffer.data(),
+                                                   targetBuffer.data());
 
     markIncompleteVerification(result, samplesVerified, numSamples);
     result.verificationSpeed = verificationSpeedMBps(sampleSize, timer.elapsed());
@@ -980,8 +981,8 @@ int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
     int samplesVerified = 0;
 
     for (int i = 0; i < config.num_samples && !stopRequested(); ++i) {
-        qint64 blockIndex = QRandomGenerator::global()->bounded(config.total_blocks);
-        qint64 offset_bytes = blockIndex * config.block_size;
+        const qint64 blockIndex = QRandomGenerator::global()->bounded(config.total_blocks);
+        const qint64 offset_bytes = blockIndex * config.block_size;
 
         if (!m_imageSource->seek(offset_bytes)) {
             result.errors.append(QString("Failed to seek source to offset %1").arg(offset_bytes));
@@ -1142,7 +1143,7 @@ void FlashWorker::updateVerificationProgress(qint64 bytesVerified, qint64 totalB
     // it is positive.
     Q_ASSERT(bytesVerified >= 0);
     Q_ASSERT(totalBytes >= 0);
-    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Throttle updates to once per 100ms
     if (now - m_lastVerifyUpdate < kProgressThrottleMs) {
@@ -1163,7 +1164,7 @@ void FlashWorker::updateProgress(qint64 bytesWritten) {
     // Sole caller writeImage() passes m_bytesWritten, which it zeroes and then only ever
     // increases by a successful WriteFile count.
     Q_ASSERT(bytesWritten >= 0);
-    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Throttle updates to once per 100ms
     if (now - m_lastProgressUpdate < kProgressThrottleMs) {
@@ -1183,18 +1184,18 @@ void FlashWorker::updateProgress(qint64 bytesWritten) {
 void FlashWorker::updateSpeed(qint64 bytesWritten) {
     // Same m_bytesWritten counter updateProgress() is given, from the same call site.
     Q_ASSERT(bytesWritten >= 0);
-    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Calculate speed every second
     if (now - m_lastSpeedUpdate < kSpeedUpdateIntervalMs) {
         return;
     }
 
-    qint64 bytesDelta = bytesWritten - m_lastSpeedBytes;
-    qint64 timeDelta = now - m_lastSpeedUpdate;
+    const qint64 bytesDelta = bytesWritten - m_lastSpeedBytes;
+    const qint64 timeDelta = now - m_lastSpeedUpdate;
 
     if (timeDelta > 0) {
-        double bytesPerMs = static_cast<double>(bytesDelta) / timeDelta;
+        const double bytesPerMs = static_cast<double>(bytesDelta) / timeDelta;
         m_speedMBps = (bytesPerMs * sak::kMillisecondsPerSecondF) / sak::kBytesPerMBf;
     }
 

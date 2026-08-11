@@ -21,7 +21,7 @@ GzipDecompressor::~GzipDecompressor() {
 }
 
 bool GzipDecompressor::initStream() {
-    int ret = inflateInit2(&m_zstream, kZlibMaxWindowBits + kZlibGzipDetectionWindowBits);
+    const int ret = inflateInit2(&m_zstream, kZlibMaxWindowBits + kZlibGzipDetectionWindowBits);
     if (ret != Z_OK) {
         m_lastError = QString("Failed to initialize zlib: %1")
                           .arg(m_zstream.msg ? m_zstream.msg : "unknown error");
@@ -55,7 +55,7 @@ bool GzipDecompressor::inputEmpty() const {
 }
 
 GzipDecompressor::StepResult GzipDecompressor::decompressStep() {
-    int ret = inflate(&m_zstream, Z_NO_FLUSH);
+    const int ret = inflate(&m_zstream, Z_NO_FLUSH);
     if (ret == Z_STREAM_END) {
         return StepResult::stream_end;
     }
@@ -72,7 +72,7 @@ bool GzipDecompressor::resetStreamForNextMember() {
     // inflateReset restarts the inflate state for a new gzip member without freeing
     // the allocated window, and leaves next_in/avail_in/next_out/avail_out untouched
     // so the bytes after the previous member feed the next one (B8-12).
-    int ret = inflateReset(&m_zstream);
+    const int ret = inflateReset(&m_zstream);
     if (ret != Z_OK) {
         m_lastError = QString("Failed to reset zlib for the next member: %1")
                           .arg(m_zstream.msg ? m_zstream.msg : "unknown error");

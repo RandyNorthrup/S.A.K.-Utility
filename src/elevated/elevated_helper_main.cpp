@@ -1351,7 +1351,7 @@ int runHelper(sak::ElevatedPipeServer& server, sak::ElevatedTaskDispatcher& disp
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    QCoreApplication app(argc, argv);
+    const QCoreApplication app(argc, argv);
     app.setApplicationName("SAK Elevated Helper");
 
     // Initialize logger (logs directory is independent of TMP/TEMP)
@@ -1404,7 +1404,7 @@ int main(int argc, char* argv[]) {
         return kHelperStartupFailureExitCode;
     }
 
-    int exit_code = runHelper(server, dispatcher);
+    const int exit_code = runHelper(server, dispatcher);
 
     server.stop();
     sak::logInfo("ElevatedHelper: exiting with code {}", exit_code);

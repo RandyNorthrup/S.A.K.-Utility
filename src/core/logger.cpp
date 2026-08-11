@@ -31,7 +31,7 @@ auto logger::initialize(const std::filesystem::path& log_dir, std::string_view p
     -> std::expected<void, error_code> {
     std::string init_log_path;
     {
-        std::lock_guard lock(m_mutex);
+        const std::lock_guard lock(m_mutex);
 
         // Ensure log directory exists
         if (auto result = ensureLogDirectory(log_dir); !result) {
@@ -89,14 +89,14 @@ void logger::setConsoleOutput(bool enable) noexcept {
 }
 
 void logger::flush() noexcept {
-    std::lock_guard lock(m_mutex);
+    const std::lock_guard lock(m_mutex);
     if (m_file_stream.is_open()) {
         m_file_stream.flush();
     }
 }
 
 std::filesystem::path logger::getLogFile() const noexcept {
-    std::lock_guard lock(m_mutex);
+    const std::lock_guard lock(m_mutex);
     return m_log_file;
 }
 
@@ -148,7 +148,7 @@ void logger::logInternal(log_level level,
 }
 
 void logger::writeEntryToFile(std::string_view log_entry, log_level level) noexcept {
-    std::lock_guard lock(m_mutex);
+    const std::lock_guard lock(m_mutex);
 
     if (needsRotation()) {
         rotateLog();

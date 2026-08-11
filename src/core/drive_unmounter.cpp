@@ -153,7 +153,7 @@ bool DriveUnmounter::unmountDrive(int driveNumber) {
     // failed: an empty list from a failed enumeration must not be treated as
     // "no volumes, safe to proceed" -- that would raw-write a still-mounted disk.
     bool enumerationOk = true;
-    QStringList volumes = getVolumesOnDrive(driveNumber, &enumerationOk);
+    const QStringList volumes = getVolumesOnDrive(driveNumber, &enumerationOk);
     if (!enumerationOk) {
         m_lastError = QString("Failed to enumerate volumes on drive %1").arg(driveNumber);
         Q_EMIT statusMessage("Failed to enumerate volumes; aborting");
@@ -233,7 +233,7 @@ bool DriveUnmounter::lockAndDismountVolume(const QString& volumePath) {
 
     // Lock the volume with retry
     HANDLE volumeHandle = INVALID_HANDLE_VALUE;
-    bool locked = retryWithBackoff([&]() {
+    const bool locked = retryWithBackoff([&]() {
         volumeHandle = lockVolume(volumePath);
         return volumeHandle != INVALID_HANDLE_VALUE;
     });
@@ -245,7 +245,7 @@ bool DriveUnmounter::lockAndDismountVolume(const QString& volumePath) {
     }
 
     // Dismount the volume with retry
-    bool dismounted = retryWithBackoff([&]() { return dismountVolume(volumeHandle); });
+    const bool dismounted = retryWithBackoff([&]() { return dismountVolume(volumeHandle); });
 
     if (!dismounted) {
         m_lastError = QString("Failed to dismount volume %1: %2").arg(volumePath).arg(m_lastError);
@@ -307,7 +307,7 @@ QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber, bool* enumeration
 }
 
 HANDLE DriveUnmounter::lockVolume(const QString& volumePath) {
-    std::wstring wVolumePath = volumePath.toStdWString();
+    const std::wstring wVolumePath = volumePath.toStdWString();
 
     // Open the volume
     HANDLE hVolume = CreateFileW(wVolumePath.c_str(),
@@ -418,8 +418,8 @@ bool DriveUnmounter::deleteVolumePathNames(const wchar_t* multiSz, size_t count)
 
 bool DriveUnmounter::preventAutoMount(int driveNumber) {
     // Open the physical drive
-    QString drivePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
-    std::wstring wDrivePath = drivePath.toStdWString();
+    const QString drivePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
+    const std::wstring wDrivePath = drivePath.toStdWString();
 
     HANDLE hDrive = CreateFileW(wDrivePath.c_str(),
                                 GENERIC_READ | GENERIC_WRITE,
@@ -442,14 +442,14 @@ bool DriveUnmounter::preventAutoMount(int driveNumber) {
     attributes.AttributesMask = DISK_ATTRIBUTE_OFFLINE;
 
     DWORD bytesReturned = 0;
-    bool success = DeviceIoControl(hDrive,
-                                   IOCTL_DISK_SET_DISK_ATTRIBUTES,
-                                   &attributes,
-                                   sizeof(attributes),
-                                   nullptr,
-                                   0,
-                                   &bytesReturned,
-                                   nullptr);
+    const bool success = DeviceIoControl(hDrive,
+                                         IOCTL_DISK_SET_DISK_ATTRIBUTES,
+                                         &attributes,
+                                         sizeof(attributes),
+                                         nullptr,
+                                         0,
+                                         &bytesReturned,
+                                         nullptr);
 
     if (!success) {
         m_lastError =
@@ -463,8 +463,8 @@ bool DriveUnmounter::preventAutoMount(int driveNumber) {
 bool DriveUnmounter::allowAutoMount(int driveNumber) {
     // Inverse of preventAutoMount: clear the persistent OFFLINE attribute so a
     // drive taken offline during a failed unmount is brought back online.
-    QString drivePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
-    std::wstring wDrivePath = drivePath.toStdWString();
+    const QString drivePath = QString("\\\\.\\PhysicalDrive%1").arg(driveNumber);
+    const std::wstring wDrivePath = drivePath.toStdWString();
 
     HANDLE hDrive = CreateFileW(wDrivePath.c_str(),
                                 GENERIC_READ | GENERIC_WRITE,
@@ -486,14 +486,14 @@ bool DriveUnmounter::allowAutoMount(int driveNumber) {
     attributes.AttributesMask = DISK_ATTRIBUTE_OFFLINE;
 
     DWORD bytesReturned = 0;
-    bool success = DeviceIoControl(hDrive,
-                                   IOCTL_DISK_SET_DISK_ATTRIBUTES,
-                                   &attributes,
-                                   sizeof(attributes),
-                                   nullptr,
-                                   0,
-                                   &bytesReturned,
-                                   nullptr);
+    const bool success = DeviceIoControl(hDrive,
+                                         IOCTL_DISK_SET_DISK_ATTRIBUTES,
+                                         &attributes,
+                                         sizeof(attributes),
+                                         nullptr,
+                                         0,
+                                         &bytesReturned,
+                                         nullptr);
 
     if (!success) {
         m_lastError =
@@ -666,7 +666,7 @@ bool DriveUnmounter::closeAllHandles(int driveNumber) {
 
     DWORD dwSession;
     WCHAR szSessionKey[CCH_RM_SESSION_KEY + 1] = {0};
-    DWORD dwError = RmStartSession(&dwSession, 0, szSessionKey);
+    DWORD const dwError = RmStartSession(&dwSession, 0, szSessionKey);
 
     if (dwError != ERROR_SUCCESS) {
         // Honest outcome: the Restart Manager pass could not run at all.
@@ -676,7 +676,7 @@ bool DriveUnmounter::closeAllHandles(int driveNumber) {
     }
 
     bool enumerationOk = true;
-    QStringList mountPoints = findVolumesForDrive(driveNumber, &enumerationOk);
+    const QStringList mountPoints = findVolumesForDrive(driveNumber, &enumerationOk);
     if (!enumerationOk) {
         // An incomplete list would leave real holders unregistered and the pass would
         // still report "nothing left holding a handle". Report the truth instead.
@@ -711,7 +711,7 @@ QStringList DriveUnmounter::findVolumesForDrive(int driveNumber, bool* enumerati
         // Strip the trailing backslash BEFORE probing: CreateFileW on a volume
         // GUID path fails when the path carries one, so probing with the slash
         // would never match and the RM pass would register no resources.
-        size_t len = wcslen(volumeName);
+        const size_t len = wcslen(volumeName);
         if (len > 0 && volumeName[len - 1] == L'\\') {
             volumeName[len - 1] = L'\0';
         }

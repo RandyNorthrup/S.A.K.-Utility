@@ -233,9 +233,9 @@ void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group)
     m_browse_button->setToolTip(tr("Select the folder that will receive converted email files"));
     applyCompactOstButton(m_browse_button, ui::kCompactPrimaryButtonStyle);
     connect(m_browse_button, &QPushButton::clicked, this, [this]() {
-        QString dir = QFileDialog::getExistingDirectory(this,
-                                                        tr("Select Output Directory"),
-                                                        m_output_dir_edit->text());
+        const QString dir = QFileDialog::getExistingDirectory(this,
+                                                              tr("Select Output Directory"),
+                                                              m_output_dir_edit->text());
         if (!dir.isEmpty()) {
             m_output_dir_edit->setText(dir);
         }
@@ -433,7 +433,7 @@ QWidget* OstConverterWidget::createButtonBar() {
 // ============================================================================
 
 void OstConverterWidget::onAddFilesClicked() {
-    QStringList files =
+    const QStringList files =
         QFileDialog::getOpenFileNames(this,
                                       tr("Select OST/PST Files"),
                                       QString(),
@@ -445,7 +445,7 @@ void OstConverterWidget::onAddFilesClicked() {
 }
 
 void OstConverterWidget::onRemoveFileClicked() {
-    int row = m_queue_table->currentRow();
+    const int row = m_queue_table->currentRow();
     if (row >= 0) {
         m_controller->removeFile(row);
     }
@@ -489,7 +489,7 @@ void OstConverterWidget::onCancelClicked() {
 // ============================================================================
 
 void OstConverterWidget::onFileAdded(int /*index*/, OstConversionJob job) {
-    int row = m_queue_table->rowCount();
+    const int row = m_queue_table->rowCount();
     m_queue_table->insertRow(row);
     updateQueueRow(row, job);
 }
@@ -553,7 +553,7 @@ void OstConverterWidget::onFileConversionComplete(int file_index, OstConversionR
     if (file_index >= 0 && file_index < m_queue_table->rowCount()) {
         auto* status_item = m_queue_table->item(file_index, ost::ColStatus);
         if (status_item) {
-            bool failed = (result.items_converted == 0 && result.items_failed > 0);
+            const bool failed = (result.items_converted == 0 && result.items_failed > 0);
             status_item->setText(failed ? tr("Failed") : tr("Complete"));
         }
         auto* progress_item = m_queue_table->item(file_index, ost::ColProgress);
@@ -570,7 +570,7 @@ void OstConverterWidget::onAllConversionsComplete(OstConversionBatchResult resul
     Q_EMIT progressUpdate(0, 0);
 
     // Enable report button if a report was generated
-    QString report = m_controller->reportPath();
+    const QString report = m_controller->reportPath();
     m_view_report_button->setEnabled(!report.isEmpty());
 
     Q_EMIT statusMessage(tr("Conversion complete: %1/%2 files, %3 items")
@@ -773,7 +773,7 @@ void OstConverterWidget::saveSettings() {
 }
 
 void OstConverterWidget::onViewReportClicked() {
-    QString report = m_controller->reportPath();
+    const QString report = m_controller->reportPath();
     if (!report.isEmpty()) {
         QDesktopServices::openUrl(QUrl::fromLocalFile(report));
     }

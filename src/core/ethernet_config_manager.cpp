@@ -105,7 +105,7 @@ EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& ada
     // below as a failed capture. No assert: see fromJson.
     Q_EMIT logOutput(QString("Capturing settings for adapter: %1").arg(adapterName));
 
-    QString output =
+    const QString output =
         runNetsh({"interface", "ip", "show", "config", QString("name=%1").arg(adapterName)});
 
     if (output.isEmpty()) {
@@ -175,7 +175,7 @@ EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePa
     }
 
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
     file.close();
 
     if (parseError.error != QJsonParseError::NoError) {
@@ -203,7 +203,7 @@ EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePa
 bool EthernetConfigManager::restoreDhcpMode(const QString& adapterName, bool* dnsApplied) {
     Q_EMIT logOutput("Setting adapter to DHCP mode...");
     bool ok = false;
-    QString result = runNetsh(
+    const QString result = runNetsh(
         {"interface", "ip", "set", "address", QString("name=%1").arg(adapterName), "source=dhcp"},
         &ok);
     if (!ok || result.contains("error", Qt::CaseInsensitive)) {
@@ -251,7 +251,7 @@ bool EthernetConfigManager::restoreStaticIp(const EthernetConfigSnapshot& snapsh
     }
 
     bool ok = false;
-    QString result = runNetsh(addressArgs, &ok);
+    const QString result = runNetsh(addressArgs, &ok);
     if (!ok || result.contains("error", Qt::CaseInsensitive)) {
         Q_EMIT errorOccurred(QString("Failed to set IP address: %1").arg(result));
         return false;
@@ -371,7 +371,7 @@ bool EthernetConfigManager::setDnsServers(const QString& adapterName,
 QStringList EthernetConfigManager::listEthernetAdapters() {
     QStringList adapters;
 
-    QString output = runNetsh({"interface", "show", "interface"});
+    const QString output = runNetsh({"interface", "show", "interface"});
     if (output.isEmpty()) {
         return adapters;
     }
@@ -398,8 +398,8 @@ QStringList EthernetConfigManager::listEthernetAdapters() {
 
         auto match = kAdapterLineRe.match(line.trimmed());
         if (match.hasMatch()) {
-            QString adapterType = match.captured(kAdapterTypeCaptureGroup);
-            QString adapterName = match.captured(kAdapterNameCaptureGroup).trimmed();
+            const QString adapterType = match.captured(kAdapterTypeCaptureGroup);
+            const QString adapterName = match.captured(kAdapterNameCaptureGroup).trimmed();
             // Include Dedicated (Ethernet) adapters
             if (adapterType == "Dedicated") {
                 adapters.append(adapterName);
@@ -447,7 +447,7 @@ QString EthernetConfigManager::runNetsh(const QStringList& args, bool* ok) {
     }
 
     if (result.exit_code != 0) {
-        QString errOutput = result.std_err.trimmed();
+        const QString errOutput = result.std_err.trimmed();
         if (!errOutput.isEmpty()) {
             Q_EMIT errorOccurred(QString("netsh error: %1").arg(errOutput));
         }
@@ -464,7 +464,7 @@ EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& ou
     const auto lines = output.split('\n');
 
     for (const auto& rawLine : lines) {
-        QString line = rawLine.trimmed();
+        const QString line = rawLine.trimmed();
 
         if (line.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
             snap.dhcpEnabled = line.contains("Yes", Qt::CaseInsensitive);
@@ -481,7 +481,7 @@ EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& ou
             snap.ipv4Gateway = line.mid(line.indexOf(':') + 1).trimmed();
         } else if (line.startsWith("Statically Configured DNS Servers:", Qt::CaseInsensitive) ||
                    line.startsWith("DNS Servers configured through DHCP:", Qt::CaseInsensitive)) {
-            QString dns = line.mid(line.indexOf(':') + 1).trimmed();
+            const QString dns = line.mid(line.indexOf(':') + 1).trimmed();
             if (!dns.isEmpty()) {
                 snap.ipv4DnsServers.append(dns);
             }
@@ -494,7 +494,7 @@ EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& ou
     static const QRegularExpression kIpRe(R"(^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$)");
 
     for (const auto& rawLine : lines) {
-        QString line = rawLine.trimmed();
+        const QString line = rawLine.trimmed();
 
         if (line.contains("DNS Servers", Qt::CaseInsensitive)) {
             inDnsSection = true;

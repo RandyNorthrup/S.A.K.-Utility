@@ -53,7 +53,7 @@ QString stepRows(const PartitionExecutionResult& result) {
 
 QJsonArray disksToJson(const PartitionInventory& inventory) {
     QJsonArray array;
-    PartitionReportGenerator generator;
+    const PartitionReportGenerator generator;
     for (const auto& disk : inventory.disks) {
         array.append(generator.diskToJson(disk));
     }

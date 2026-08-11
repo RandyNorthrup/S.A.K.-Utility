@@ -298,8 +298,8 @@ void WindowsISODownloadDialog::onFetchBuildsClicked() {
     Q_ASSERT(m_languageCombo);
     Q_ASSERT(m_archCombo);
     Q_ASSERT(m_channelCombo);
-    QString arch = m_archCombo->currentData().toString();
-    int channelIdx = m_channelCombo->currentData().toInt();
+    const QString arch = m_archCombo->currentData().toString();
+    const int channelIdx = m_channelCombo->currentData().toInt();
     auto channel = static_cast<UupDumpApi::ReleaseChannel>(channelIdx);
 
     m_buildListWidget->clear();
@@ -351,7 +351,7 @@ void WindowsISODownloadDialog::onBuildSelected() {
     Q_ASSERT(m_editionCombo);
     Q_ASSERT(m_buildListWidget);
     Q_ASSERT(m_buildInfoLabel);
-    int row = m_buildListWidget->currentRow();
+    const int row = m_buildListWidget->currentRow();
     if (row < 0 || row >= m_builds.size()) {
         return;
     }
@@ -360,7 +360,7 @@ void WindowsISODownloadDialog::onBuildSelected() {
     m_selectedUpdateId = build.uuid;
 
     // Show build info
-    QDateTime created = QDateTime::fromSecsSinceEpoch(build.created);
+    const QDateTime created = QDateTime::fromSecsSinceEpoch(build.created);
     m_buildInfoLabel->setText(QString("Build: %1 | Arch: %2 | Added: %3")
                                   .arg(build.build, build.arch, created.toString("yyyy-MM-dd")));
 
@@ -380,7 +380,7 @@ void WindowsISODownloadDialog::onLanguagesFetched(const QStringList& langCodes,
     m_languageCombo->clear();
 
     for (const auto& code : langCodes) {
-        QString display = langNames.value(code, code);
+        const QString display = langNames.value(code, code);
         m_languageCombo->addItem(QString("%1 (%2)").arg(display, code), code);
     }
 
@@ -405,7 +405,7 @@ void WindowsISODownloadDialog::onLanguageSelected(int index) {
         return;
     }
 
-    QString langCode = m_languageCombo->currentData().toString();
+    const QString langCode = m_languageCombo->currentData().toString();
     if (langCode.isEmpty() || m_selectedUpdateId.isEmpty()) {
         return;
     }
@@ -423,7 +423,7 @@ void WindowsISODownloadDialog::onEditionsFetched(const QStringList& editions,
     m_editionCombo->clear();
 
     for (const auto& code : editions) {
-        QString display = editionNames.value(code, code);
+        const QString display = editionNames.value(code, code);
         m_editionCombo->addItem(display, code);
     }
 
@@ -465,8 +465,8 @@ void WindowsISODownloadDialog::onStartDownload() {
         return;
     }
 
-    QString langCode = m_languageCombo->currentData().toString();
-    QString edition = m_editionCombo->currentData().toString();
+    const QString langCode = m_languageCombo->currentData().toString();
+    const QString edition = m_editionCombo->currentData().toString();
     QString savePath = m_saveLocationEdit->text().trimmed();
 
     if (langCode.isEmpty() || edition.isEmpty()) {
@@ -588,7 +588,7 @@ void WindowsISODownloadDialog::onDownloadComplete(const QString& isoPath, qint64
 
     m_downloadProgressBar->setValue(sak::kPercentMax);
     m_convertProgressBar->setValue(sak::kPercentMax);
-    double sizeGB = fileSize / sak::kBytesPerGBf;
+    const double sizeGB = fileSize / sak::kBytesPerGBf;
     m_statusLabel->setText(
         QString("ISO created successfully! (%1 GB)").arg(sizeGB, 0, 'f', kIsoSizeDisplayPrecision));
     m_phaseLabel->setText("Complete!");
@@ -701,9 +701,10 @@ void WindowsISODownloadDialog::onBrowseSaveLocation() {
 }
 
 void WindowsISODownloadDialog::updateStartButton() {
-    bool ready = !m_isDownloading && !m_selectedUpdateId.isEmpty() &&
-                 m_languageCombo->currentIndex() >= 0 && m_editionCombo->currentIndex() >= 0 &&
-                 !m_saveLocationEdit->text().trimmed().isEmpty();
+    const bool ready = !m_isDownloading && !m_selectedUpdateId.isEmpty() &&
+                       m_languageCombo->currentIndex() >= 0 &&
+                       m_editionCombo->currentIndex() >= 0 &&
+                       !m_saveLocationEdit->text().trimmed().isEmpty();
     m_startButton->setEnabled(ready);
 }
 
@@ -719,6 +720,6 @@ void WindowsISODownloadDialog::setInputsEnabled(bool enabled) {
 }
 
 QString WindowsISODownloadDialog::getDefaultSavePath() {
-    QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    const QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     return QDir(downloads).filePath("Windows.iso");
 }

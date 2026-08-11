@@ -409,7 +409,7 @@ void BandwidthTester::runIperfTest(const IperfConfig& config) {
 
     Q_EMIT testStarted(config.serverAddress);
 
-    QStringList args = buildIperfClientArgs(config);
+    const QStringList args = buildIperfClientArgs(config);
 
     const auto process =
         runIperfClientProcess(m_iperf3Path, args, m_cancelled, config.durationSec, this);

@@ -72,7 +72,7 @@ void AppInstallationPanel::onSearch() {
         return;
     }
 
-    QString query = m_searchEdit->text().trimmed();
+    const QString query = m_searchEdit->text().trimmed();
     if (query.isEmpty()) {
         sak::showInformationLogged(this, tr("Search"), tr("Please enter a search term."));
         return;
@@ -137,7 +137,7 @@ void AppInstallationPanel::onOnlinePresetSelected(int index) {
     }
 
     QStringList names = m_list_manager->presetNames();
-    int preset_index = index - 1;
+    const int preset_index = index - 1;
     if (preset_index < 0 || preset_index >= names.size()) {
         return;
     }
@@ -170,7 +170,7 @@ void AppInstallationPanel::onAddToQueue() {
         return;
     }
 
-    int row = indexes.first().row();
+    const int row = indexes.first().row();
     auto* pkgItem = m_onlineResultsModel->item(row, RColPackage);
     if (!pkgItem || !pkgItem->isEnabled()) {
         return;
@@ -182,11 +182,11 @@ void AppInstallationPanel::onAddToQueue() {
     }
 
     // Check for duplicates
-    bool duplicate = std::any_of(m_installQueue.cbegin(),
-                                 m_installQueue.cend(),
-                                 [&packageId](const QueueEntry& entry) {
-                                     return entry.package_id == packageId;
-                                 });
+    const bool duplicate = std::any_of(m_installQueue.cbegin(),
+                                       m_installQueue.cend(),
+                                       [&packageId](const QueueEntry& entry) {
+                                           return entry.package_id == packageId;
+                                       });
 
     if (duplicate) {
         Q_EMIT logOutput(QString("Package '%1' already in queue").arg(packageId));
@@ -220,7 +220,7 @@ void AppInstallationPanel::onRemoveFromQueue() {
     }
     std::sort(indices.begin(), indices.end(), std::greater<int>());
 
-    for (int idx : indices) {
+    for (const int idx : indices) {
         if (idx >= 0 && idx < m_installQueue.size()) {
             Q_EMIT logOutput(QString("Removed from queue: %1").arg(m_installQueue[idx].package_id));
             m_installQueue.removeAt(idx);
@@ -346,7 +346,7 @@ void AppInstallationPanel::onInstallAll() {
     setInstallInProgressUi(true);
 
     auto report = buildInstallMigrationReport();
-    int queued = m_worker->startMigration(report, 1);  // Sequential installation
+    const int queued = m_worker->startMigration(report, 1);  // Sequential installation
     sak::logInfo("[AppInstallationPanel] startMigration returned {} queued jobs", queued);
     if (queued == 0) {
         Q_EMIT logOutput("No packages queued for installation.");
@@ -371,7 +371,7 @@ void AppInstallationPanel::onPresetSelected(int index) {
     }
 
     QStringList names = m_list_manager->presetNames();
-    int preset_index = index - 1;
+    const int preset_index = index - 1;
     if (preset_index < 0 || preset_index >= names.size()) {
         return;
     }
@@ -388,7 +388,7 @@ void AppInstallationPanel::onPresetSelected(int index) {
         m_offlineListWidget->addItem(item);
     }
 
-    bool has_items = m_offlineListWidget->count() > 0;
+    const bool has_items = m_offlineListWidget->count() > 0;
     m_offlineClearButton->setEnabled(has_items);
     m_buildBundleButton->setEnabled(has_items);
     m_directDownloadButton->setEnabled(has_items);
@@ -399,7 +399,7 @@ void AppInstallationPanel::onPresetSelected(int index) {
 }
 
 void AppInstallationPanel::onOfflineSearch() {
-    QString query = m_offlinePackageEdit->text().trimmed();
+    const QString query = m_offlinePackageEdit->text().trimmed();
     if (query.isEmpty()) {
         return;
     }
@@ -486,7 +486,7 @@ void AppInstallationPanel::onOfflineSearchCompleted(bool success,
 
         m_offlineResultsModel->setItem(row, RColVersion, new QStandardItem(pkg.version));
 
-        QString pub = lookupPublisher(pkg.package_id);
+        const QString pub = lookupPublisher(pkg.package_id);
         m_offlineResultsModel->setItem(row, RColPublisher, new QStandardItem(pub));
     }
 
@@ -500,20 +500,20 @@ void AppInstallationPanel::onAddToOfflineList() {
         return;
     }
 
-    int row = indexes.first().row();
+    const int row = indexes.first().row();
     auto* pkgItem = m_offlineResultsModel->item(row, RColPackage);
     if (!pkgItem || !pkgItem->isEnabled()) {
         return;
     }
 
-    QString package_id = pkgItem->text();
+    const QString package_id = pkgItem->text();
     if (package_id.isEmpty()) {
         return;
     }
 
     // Check for duplicates
     for (int i = 0; i < m_offlineListWidget->count(); ++i) {
-        QString item_data = m_offlineListWidget->item(i)->data(Qt::UserRole).toString();
+        const QString item_data = m_offlineListWidget->item(i)->data(Qt::UserRole).toString();
         if (item_data.compare(package_id, Qt::CaseInsensitive) == 0) {
             Q_EMIT logOutput(QString("Package '%1' already in list").arg(package_id));
             return;
@@ -521,14 +521,14 @@ void AppInstallationPanel::onAddToOfflineList() {
     }
 
     auto* versionItem = m_offlineResultsModel->item(row, RColVersion);
-    QString version = versionItem ? versionItem->text() : QString();
+    const QString version = versionItem ? versionItem->text() : QString();
 
     auto* item = new QListWidgetItem(QString("%1  (v%2)").arg(package_id, version));
     item->setData(Qt::UserRole, package_id);
     item->setData(Qt::UserRole + 1, version);
     m_offlineListWidget->addItem(item);
 
-    bool has_items = m_offlineListWidget->count() > 0;
+    const bool has_items = m_offlineListWidget->count() > 0;
     m_offlineClearButton->setEnabled(has_items);
     m_buildBundleButton->setEnabled(has_items);
     m_directDownloadButton->setEnabled(has_items);
@@ -549,7 +549,7 @@ void AppInstallationPanel::onRemoveFromOfflineList() {
         delete m_offlineListWidget->takeItem(m_offlineListWidget->row(item));
     }
 
-    bool has_items = m_offlineListWidget->count() > 0;
+    const bool has_items = m_offlineListWidget->count() > 0;
     m_offlineClearButton->setEnabled(has_items);
     m_buildBundleButton->setEnabled(has_items);
     m_directDownloadButton->setEnabled(has_items);
@@ -593,7 +593,7 @@ void AppInstallationPanel::onBuildBundle() {
         return;
     }
 
-    QString output_dir = QFileDialog::getExistingDirectory(
+    const QString output_dir = QFileDialog::getExistingDirectory(
         this, tr("Select Output Directory for Deployment Bundle"));
 
     if (output_dir.isEmpty()) {
@@ -604,8 +604,8 @@ void AppInstallationPanel::onBuildBundle() {
     QVector<QPair<QString, QString>> packages;
     for (int row = 0; row < m_offlineListWidget->count(); ++row) {
         auto* item = m_offlineListWidget->item(row);
-        QString pkg_id = item->data(Qt::UserRole).toString();
-        QString version = item->data(Qt::UserRole + 1).toString();
+        const QString pkg_id = item->data(Qt::UserRole).toString();
+        const QString version = item->data(Qt::UserRole + 1).toString();
         packages.append({pkg_id, version});
     }
 
@@ -630,7 +630,7 @@ void AppInstallationPanel::onInstallFromBundle() {
         return;
     }
 
-    QString manifest_path = QFileDialog::getOpenFileName(
+    const QString manifest_path = QFileDialog::getOpenFileName(
         this, tr("Select Deployment Manifest"), QString(), tr("JSON Files (*.json)"));
 
     if (manifest_path.isEmpty()) {
@@ -638,8 +638,8 @@ void AppInstallationPanel::onInstallFromBundle() {
     }
 
     // The packages directory is alongside the manifest
-    QFileInfo manifest_info(manifest_path);
-    QString packages_dir = manifest_info.dir().absolutePath() + "/packages";
+    const QFileInfo manifest_info(manifest_path);
+    const QString packages_dir = manifest_info.dir().absolutePath() + "/packages";
 
     if (!QDir(packages_dir).exists()) {
         sak::showWarningLogged(
@@ -682,7 +682,8 @@ void AppInstallationPanel::onDirectDownload() {
         return;
     }
 
-    QString output_dir = QFileDialog::getExistingDirectory(this, tr("Select Download Directory"));
+    const QString output_dir = QFileDialog::getExistingDirectory(this,
+                                                                 tr("Select Download Directory"));
 
     if (output_dir.isEmpty()) {
         return;
@@ -691,8 +692,8 @@ void AppInstallationPanel::onDirectDownload() {
     QVector<QPair<QString, QString>> packages;
     for (int row = 0; row < m_offlineListWidget->count(); ++row) {
         auto* item = m_offlineListWidget->item(row);
-        QString pkg_id = item->data(Qt::UserRole).toString();
-        QString version = item->data(Qt::UserRole + 1).toString();
+        const QString pkg_id = item->data(Qt::UserRole).toString();
+        const QString version = item->data(Qt::UserRole + 1).toString();
         packages.append({pkg_id, version});
     }
 
@@ -715,7 +716,7 @@ void AppInstallationPanel::onSaveOfflineList() {
         return;
     }
 
-    QString file_path = QFileDialog::getSaveFileName(
+    const QString file_path = QFileDialog::getSaveFileName(
         this, tr("Save Package List"), "package_list.json", tr("JSON Files (*.json)"));
 
     if (file_path.isEmpty()) {
@@ -760,7 +761,7 @@ void AppInstallationPanel::onSaveOfflineList() {
 }
 
 void AppInstallationPanel::onLoadOfflineList() {
-    QString file_path = QFileDialog::getOpenFileName(
+    const QString file_path = QFileDialog::getOpenFileName(
         this, tr("Load Package List"), QString(), tr("JSON Files (*.json)"));
 
     if (file_path.isEmpty()) {
@@ -779,16 +780,16 @@ void AppInstallationPanel::onLoadOfflineList() {
     for (const auto& entry : list.entries) {
         bool exists = false;
         for (int row = 0; row < m_offlineListWidget->count(); ++row) {
-            QString item_data = m_offlineListWidget->item(row)->data(Qt::UserRole).toString();
+            const QString item_data = m_offlineListWidget->item(row)->data(Qt::UserRole).toString();
             if (item_data.compare(entry.package_id, Qt::CaseInsensitive) == 0) {
                 exists = true;
                 break;
             }
         }
         if (!exists) {
-            QString label = entry.notes.isEmpty()
-                                ? entry.package_id
-                                : QString("%1  (%2)").arg(entry.package_id, entry.notes);
+            const QString label = entry.notes.isEmpty()
+                                      ? entry.package_id
+                                      : QString("%1  (%2)").arg(entry.package_id, entry.notes);
             auto* item = new QListWidgetItem(label);
             item->setData(Qt::UserRole, entry.package_id);
             item->setData(Qt::UserRole + 1, entry.version);
@@ -797,7 +798,7 @@ void AppInstallationPanel::onLoadOfflineList() {
         }
     }
 
-    bool has_items = m_offlineListWidget->count() > 0;
+    const bool has_items = m_offlineListWidget->count() > 0;
     m_offlineClearButton->setEnabled(has_items);
     m_buildBundleButton->setEnabled(has_items);
     m_directDownloadButton->setEnabled(has_items);

@@ -105,7 +105,7 @@ void InstallSummaryDialog::populateJobTable(const QVector<MigrationJob>& jobs) {
         const auto& job = jobs.at(row);
 
         // Package name (prefer display name, fallback to ID)
-        QString display_name = job.appName.isEmpty() ? job.packageId : job.appName;
+        const QString display_name = job.appName.isEmpty() ? job.packageId : job.appName;
         m_job_table->setItem(row, ColPackage, new QTableWidgetItem(display_name));
 
         // Status with color
@@ -140,7 +140,7 @@ void InstallSummaryDialog::populateJobTable(const QVector<MigrationJob>& jobs) {
         // Duration
         QString duration_text;
         if (job.startTime.isValid() && job.endTime.isValid()) {
-            qint64 elapsed_sec = job.startTime.secsTo(job.endTime);
+            const qint64 elapsed_sec = job.startTime.secsTo(job.endTime);
             if (elapsed_sec < kSecondsPerMinute) {
                 duration_text = tr("%1s").arg(elapsed_sec);
             } else {

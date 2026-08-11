@@ -191,14 +191,14 @@ std::expected<QString, error_code> HtmlEmailWriter::writeMessage(
     // Build and write HTML. QSaveFile writes to a temp sibling and atomically
     // renames on commit(), so a write/flush/close error never leaves a truncated
     // .html the user would trust as a complete message; fail closed on any error.
-    QString html = buildHtmlPage(item, attachment_data);
+    const QString html = buildHtmlPage(item, attachment_data);
     QSaveFile file(full_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         logError("HtmlEmailWriter: failed to create: {}", full_path.toStdString());
         return std::unexpected(error_code::write_error);
     }
 
-    QByteArray content = html.toUtf8();
+    const QByteArray content = html.toUtf8();
     if (!writeFully(file, content) || !file.commit()) {
         logError("HtmlEmailWriter: incomplete write to: {}", full_path.toStdString());
         return std::unexpected(error_code::write_error);
@@ -216,7 +216,7 @@ bool HtmlEmailWriter::saveFileAttachments(
         return true;
     }
 
-    QFileInfo fi(filename);
+    const QFileInfo fi(filename);
     const QString attachments_dir = dir_path + QStringLiteral("/") + fi.completeBaseName() +
                                     QStringLiteral("_files");
     QDir().mkpath(attachments_dir);

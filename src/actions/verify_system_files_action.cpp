@@ -69,7 +69,7 @@ void VerifySystemFilesAction::runSFC() {
         makeUniqueSfcOutputName(entropy,
                                 QDateTime::currentMSecsSinceEpoch(),
                                 s_sfc_counter.fetch_add(1, std::memory_order_relaxed));
-    QString ps_script =
+    const QString ps_script =
         QStringLiteral(
             "$sfcOutput = Join-Path $env:TEMP '%1'; "
             "$sys = [System.Environment]::GetFolderPath('System'); "
@@ -83,7 +83,7 @@ void VerifySystemFilesAction::runSFC() {
             .arg(sfc_out_name);
 
     Q_EMIT executionProgress("SFC scanning...", progress::kStep25);
-    ProcessResult proc = runPowerShell(
+    const ProcessResult proc = runPowerShell(
         ps_script, sak::kTimeoutSystemRepairMs, true, true, [this]() { return isCancelled(); });
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("SFC warning: " + proc.std_err.trimmed());
@@ -91,11 +91,11 @@ void VerifySystemFilesAction::runSFC() {
     if (proc.cancelled) {
         return;
     }
-    QString accumulated_output = proc.std_out;
+    const QString accumulated_output = proc.std_out;
 
     // Extract CBS.log path
-    QRegularExpression cbsLogRe("CBS_LOG_PATH:(.+)");
-    QRegularExpressionMatch cbsMatch = cbsLogRe.match(accumulated_output);
+    const QRegularExpression cbsLogRe("CBS_LOG_PATH:(.+)");
+    const QRegularExpressionMatch cbsMatch = cbsLogRe.match(accumulated_output);
     if (cbsMatch.hasMatch()) {
         m_cbs_log_path = cbsMatch.captured(1).trimmed();
     }
@@ -112,7 +112,7 @@ void VerifySystemFilesAction::runSFC() {
 }
 
 bool VerifySystemFilesAction::runDismCheckHealth() {
-    QString script =
+    const QString script =
         "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
         "/Online /Cleanup-Image /CheckHealth; "
         "$LASTEXITCODE";
@@ -120,9 +120,8 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
     // Thread cancellation like runSFC/runDismRestoreHealth so cancel() force-terminates the
     // child; otherwise the probe ignores cancel and the controller's thread->wait(10s) times
     // out and deletes a still-running thread.
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutDismCheckMs, true, true, [this]() {
-        return isCancelled();
-    });
+    const ProcessResult proc = runPowerShell(
+        script, sak::kTimeoutDismCheckMs, true, true, [this]() { return isCancelled(); });
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM CheckHealth warning: " + proc.std_err.trimmed());
     }
@@ -139,11 +138,11 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
 
 bool VerifySystemFilesAction::runDismScanHealth() {
     Q_EMIT executionProgress("DISM: Scanning component store...", progress::kStep50);
-    QString script =
+    const QString script =
         "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
         "/Online /Cleanup-Image /ScanHealth";
 
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutDismScanMs, true, true, [this]() {
+    const ProcessResult proc = runPowerShell(script, sak::kTimeoutDismScanMs, true, true, [this]() {
         return isCancelled();
     });
     if (!proc.std_err.trimmed().isEmpty()) {
@@ -162,14 +161,13 @@ bool VerifySystemFilesAction::runDismScanHealth() {
 
 void VerifySystemFilesAction::runDismRestoreHealth() {
     Q_EMIT executionProgress("DISM: Repairing component store...", progress::kStep65);
-    QString script =
+    const QString script =
         "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
         "/Online /Cleanup-Image /RestoreHealth /LimitAccess";
 
     Q_EMIT executionProgress("DISM restoring...", progress::kStep75);
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutSystemRepairMs, true, true, [this]() {
-        return isCancelled();
-    });
+    const ProcessResult proc = runPowerShell(
+        script, sak::kTimeoutSystemRepairMs, true, true, [this]() { return isCancelled(); });
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM RestoreHealth warning: " + proc.std_err.trimmed());
     }
@@ -191,12 +189,12 @@ void VerifySystemFilesAction::runDismRestoreHealth() {
 void VerifySystemFilesAction::runDISM() {
     Q_EMIT executionProgress("DISM: Checking component store health...", progress::kStep35);
 
-    bool corruption_detected = runDismCheckHealth();
+    const bool corruption_detected = runDismCheckHealth();
     if (isCancelled()) {
         return;
     }
 
-    bool repair_needed = runDismScanHealth();
+    const bool repair_needed = runDismScanHealth();
     if (isCancelled()) {
         return;
     }
@@ -244,7 +242,7 @@ void VerifySystemFilesAction::execute() {
         return;
     }
     setStatus(ActionStatus::Running);
-    QDateTime start_time = QDateTime::currentDateTime();
+    const QDateTime start_time = QDateTime::currentDateTime();
     m_sfc_found_issues = false;
     m_sfc_repaired = false;
     m_sfc_ran = false;

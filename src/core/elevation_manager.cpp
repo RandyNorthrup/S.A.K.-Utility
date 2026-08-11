@@ -132,10 +132,10 @@ bool ElevationManager::canElevate() noexcept {
 
 auto ElevationManager::get_executable_path() -> std::expected<std::wstring, sak::error_code> {
     wchar_t path[MAX_PATH];
-    DWORD result = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    DWORD const result = GetModuleFileNameW(nullptr, path, MAX_PATH);
 
     if (result == 0 || result == MAX_PATH) {
-        DWORD error = GetLastError();
+        DWORD const error = GetLastError();
         sak::logError("Failed to get executable path: error {}", error);
         return std::unexpected(sak::error_code::execution_failed);
     }
@@ -185,7 +185,7 @@ auto ElevationManager::restartElevated(bool wait_for_exit) -> std::expected<void
     const std::wstring& args = args_result.value();
 
     // Log using narrow-string conversion for log output
-    int logLen = WideCharToMultiByte(
+    const int logLen = WideCharToMultiByte(
         CP_UTF8, 0, exe_path_result.value().c_str(), -1, nullptr, 0, nullptr, nullptr);
     std::string logPath(logLen > 0 ? static_cast<size_t>(logLen - 1) : 0, '\0');
     if (logLen > 0) {
@@ -214,7 +214,7 @@ auto ElevationManager::executeElevated(const std::wstring& executable,
     sei.fMask = SEE_MASK_NOCLOSEPROCESS;
 
     if (!ShellExecuteExW(&sei)) {
-        DWORD error = GetLastError();
+        DWORD const error = GetLastError();
 
         if (error == ERROR_CANCELLED) {
             sak::logInfo("User cancelled elevation request");
@@ -247,14 +247,14 @@ auto ElevationManager::executeElevated(const std::wstring& executable,
 std::string ElevationManager::getElevationErrorMessage(unsigned long error_code) {
     char* message_buffer = nullptr;
 
-    DWORD size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                                    FORMAT_MESSAGE_IGNORE_INSERTS,
-                                nullptr,
-                                error_code,
-                                MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                                reinterpret_cast<LPSTR>(&message_buffer),
-                                0,
-                                nullptr);
+    DWORD const size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                                          FORMAT_MESSAGE_IGNORE_INSERTS,
+                                      nullptr,
+                                      error_code,
+                                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                                      reinterpret_cast<LPSTR>(&message_buffer),
+                                      0,
+                                      nullptr);
 
     std::string message;
     if (size > 0 && message_buffer) {

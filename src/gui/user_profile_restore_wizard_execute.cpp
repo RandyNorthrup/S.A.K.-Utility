@@ -132,13 +132,13 @@ void UserProfileRestoreExecutePage::onStartRestore() {
     m_statusLabel->setText(tr("Restore in progress..."));
     m_logText->append(tr("[INFO] Restore started..."));
 
-    QString backupPath = wiz->backupPath();
-    BackupManifest manifest = wiz->manifest();
-    QVector<UserMapping> mappings = wiz->userMappings();
-    ConflictResolution conflictMode = wiz->conflictResolution();
-    PermissionMode permMode = wiz->permissionMode();
-    bool verify = wiz->verifyFiles();
-    bool createBackup = wiz->createBackup();
+    const QString backupPath = wiz->backupPath();
+    const BackupManifest manifest = wiz->manifest();
+    const QVector<UserMapping> mappings = wiz->userMappings();
+    const ConflictResolution conflictMode = wiz->conflictResolution();
+    const PermissionMode permMode = wiz->permissionMode();
+    const bool verify = wiz->verifyFiles();
+    const bool createBackup = wiz->createBackup();
 
     // An encrypted backup cannot be read without the password, and the worker refuses to
     // start without one. Ask here, where the manifest is already known, rather than
@@ -202,7 +202,7 @@ void UserProfileRestoreExecutePage::connectRestoreWorkerSignals(UserProfileResto
             &UserProfileRestoreWorker::logMessage,
             this,
             [this](const QString& message, bool isWarning) {
-                QString prefix = isWarning ? "[WARNING]" : "[INFO]";
+                const QString prefix = isWarning ? "[WARNING]" : "[INFO]";
                 m_logText->append(QString("%1 %2").arg(prefix, message));
             });
     connect(worker,
@@ -235,11 +235,11 @@ void UserProfileRestoreExecutePage::onOverallProgress(int current,
                                                       qint64 bytes,
                                                       qint64 totalBytes) {
     if (total > 0) {
-        int percent = (current * kPercentMax) / total;
+        const int percent = (current * kPercentMax) / total;
         m_overallProgressBar->setValue(percent);
 
-        double gbCopied = bytes / sak::kBytesPerGBf;
-        double gbTotal = totalBytes / sak::kBytesPerGBf;
+        const double gbCopied = bytes / sak::kBytesPerGBf;
+        const double gbTotal = totalBytes / sak::kBytesPerGBf;
         m_overallProgressBar->setFormat(
             QString("%1% - %2 / %3 GB")
                 .arg(percent)
@@ -250,7 +250,7 @@ void UserProfileRestoreExecutePage::onOverallProgress(int current,
 
 void UserProfileRestoreExecutePage::onFileProgress(int current, int total) {
     if (total > 0) {
-        int percent = (current * kPercentMax) / total;
+        const int percent = (current * kPercentMax) / total;
         m_currentProgressBar->setValue(percent);
         m_currentProgressBar->setFormat(
             QString("%1% - %2 / %3 files").arg(percent).arg(current).arg(total));
@@ -263,7 +263,7 @@ void UserProfileRestoreExecutePage::onStatusUpdate(const QString& username,
 }
 
 void UserProfileRestoreExecutePage::onLogMessage(const QString& message, bool isWarning) {
-    QString prefix = isWarning ? "[WARNING]" : "[INFO]";
+    const QString prefix = isWarning ? "[WARNING]" : "[INFO]";
     m_logText->append(QString("%1 %2").arg(prefix, message));
 
     // Auto-scroll to bottom
@@ -301,7 +301,7 @@ void UserProfileRestoreExecutePage::onViewLog() {
     if (msgBox.exec() != QMessageBox::Save) {
         return;
     }
-    QString fileName = QFileDialog::getSaveFileName(
+    const QString fileName = QFileDialog::getSaveFileName(
         this,
         tr("Save Log"),
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/restore_log.txt",

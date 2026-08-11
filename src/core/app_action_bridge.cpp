@@ -121,7 +121,7 @@ AppActionResult runQuickActionSync(QuickActionController* controller,
     if (!controller) {
         return {false, QStringLiteral("No action controller"), {}};
     }
-    QuickAction* action = controller->getAction(action_name);
+    const QuickAction* action = controller->getAction(action_name);
     if (!action) {
         return {false, QStringLiteral("Unknown action: %1").arg(action_name), {}};
     }
@@ -131,7 +131,7 @@ AppActionResult runQuickActionSync(QuickActionController* controller,
     // connection so it cannot complete before exec() begins, and the timeout below
     // always quits the loop.
     QEventLoop loop;
-    QObject ctx;  // caller-thread affinity: all lambdas run serially on this thread
+    const QObject ctx;  // caller-thread affinity: all lambdas run serially on this thread
     AppActionResult out{false, QStringLiteral("Action did not complete"), {}};
     bool done = false;
 
@@ -206,7 +206,7 @@ int registerQuickActionsInto(QuickActionController& controller, AppActionRegistr
         // QPointer so a controller destroyed before this stored thunk is ever invoked
         // fails closed (runQuickActionSync returns "No action controller") instead of
         // dereferencing a dangling raw pointer.
-        QPointer<QuickActionController> controller_ptr = &controller;
+        const QPointer<QuickActionController> controller_ptr = &controller;
         AppActionInvoke invoke = [controller_ptr, name](const QJsonObject&) {
             return runQuickActionSync(controller_ptr, name);
         };

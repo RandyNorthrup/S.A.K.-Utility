@@ -2112,6 +2112,29 @@ Release build + ctest 225/225, then commit):
     * EVERY wave: read the full diff for any deletion of a conditional/loop/guard,
       THEN full Release build + ctest. A green build is necessary, not sufficient.
 
+  WAVES LANDED:
+    * wave 1 (1ff200e) readability-math-missing-parentheses.
+    * wave 2 (2dd7f3c) readability-qualified-auto, readability-redundant-casting,
+      readability-use-std-min-max (25 files).
+    * wave 3 misc-const-correctness, 1712 locals across 173 files. One incidental
+      clang FixItHint kept (partition_script_builder.cpp:3952: unqualified
+      &member -> &Class::member; MSVC-extension -> conforming, identical pointer).
+      DEFERRED: partition_apfs_writer.cpp is intentionally left at HEAD for this
+      check. It threads output state through non-const pointer parameters
+      (prepareCloneSource, resolveParentPath, assignedRootFilePayloads,
+      perFileEncryptedSeedBlocks, repairApfsObjectChecksumBlock), and the check
+      constified locals whose address then feeds those mutating callees -- an
+      escape clang's analysis misses but MSVC rejects (const T* -> T*). Its
+      const-correctness pass is a separate per-declaration review, TODO below.
+      Three more check false-positives were reverted by hand and are the reason
+      --fix is never trusted on a green clang run alone: connectivity_tester.cpp
+      made an array of write-through pointers point-to-const (double const*
+      rtt_slots[], indexed write missed), and app_readonly_actions.cpp constified
+      a default-constructed PartitionOperationPlanner (MSVC C4269).
+  TODO: run misc-const-correctness on partition_apfs_writer.cpp as a targeted,
+  per-declaration review (skip any local whose address is passed to a non-const
+  pointer parameter).
+
 ### G2 - re-enable the 30 disabled clang-tidy checks
 
 Two of the disabled checks directly hide bug classes Codex found in the raw filesystem

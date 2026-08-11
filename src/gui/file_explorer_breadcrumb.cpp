@@ -24,7 +24,7 @@ constexpr int kMaxVisibleSegments = 5;
 constexpr int kChevronIconPx = 10;
 
 void clearLayout(QHBoxLayout* layout) {
-    while (QLayoutItem* item = layout->takeAt(0)) {
+    while (const QLayoutItem* item = layout->takeAt(0)) {
         delete item->widget();
         delete item;
     }

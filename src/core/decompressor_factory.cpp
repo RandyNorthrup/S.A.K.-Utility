@@ -22,7 +22,7 @@ constexpr int kMaxMagicSignatureBytes = 6;
 
 std::unique_ptr<StreamingDecompressor> DecompressorFactory::create(const QString& filePath) {
     // An empty path detects as no format, which is rejected with a nullptr below.
-    QString format = detectFormat(filePath);
+    const QString format = detectFormat(filePath);
 
     if (format.isEmpty()) {
         sak::logWarning(QString("Unknown compression format: %1").arg(filePath).toStdString());
@@ -62,7 +62,7 @@ QString DecompressorFactory::detectFormat(const QString& filePath) {
 QString DecompressorFactory::detectByExtension(const QString& filePath) {
     // An empty path has no suffix and matches no entry, so it returns the empty
     // "unknown format" result like any other unrecognised name.
-    QFileInfo fileInfo(filePath);
+    const QFileInfo fileInfo(filePath);
     QString suffix = fileInfo.suffix().toLower();
 
     struct ExtEntry {

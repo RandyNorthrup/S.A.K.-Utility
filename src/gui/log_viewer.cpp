@@ -118,7 +118,7 @@ void LogViewer::setupUi() {
 void LogViewer::appendLog(const QString& message, LogLevel level) {
     Q_ASSERT(m_search_edit);
     Q_ASSERT(m_text_browser);
-    QString formatted_msg = formatLogMessage(message, level);
+    const QString formatted_msg = formatLogMessage(message, level);
     m_all_logs.append(formatted_msg);
     if (m_all_logs.size() > kMaxRetainedLogEntries) {
         // Drop the oldest entries in a batch so retention stays bounded.
@@ -127,7 +127,7 @@ void LogViewer::appendLog(const QString& message, LogLevel level) {
 
     // Apply current filter
     if (m_current_filter == LogLevel::All || m_current_filter == level) {
-        QString search_text = m_search_edit->text();
+        const QString search_text = m_search_edit->text();
         if (search_text.isEmpty() || message.contains(search_text, Qt::CaseInsensitive)) {
             m_text_browser->append(formatted_msg);
 
@@ -171,7 +171,7 @@ bool LogViewer::loadLogFile(const QString& file_path) {
                     .arg(kMaxRetainedLogEntries));
             break;
         }
-        QString line = in.readLine();
+        const QString line = in.readLine();
 
         // Try to detect log level from line content
         LogLevel level = LogLevel::Info;
@@ -216,7 +216,7 @@ void LogViewer::onClearClicked() {
 
 void LogViewer::onSaveClicked() {
     Q_ASSERT(m_text_browser);
-    QString file_path = QFileDialog::getSaveFileName(
+    const QString file_path = QFileDialog::getSaveFileName(
         this, "Save Log File", QString(), "Log Files (*.log *.txt);;All Files (*.*)");
 
     if (file_path.isEmpty()) {
@@ -259,18 +259,18 @@ void LogViewer::applyFilters() {
     Q_ASSERT(m_search_edit);
     m_text_browser->clear();
 
-    QString search_text = m_search_edit->text().toLower();
+    const QString search_text = m_search_edit->text().toLower();
 
     for (const QString& log : m_all_logs) {
         // Apply level filter
         bool level_match = (m_current_filter == LogLevel::All);
         if (!level_match) {
-            QString level_text = getLevelText(m_current_filter);
+            const QString level_text = getLevelText(m_current_filter);
             level_match = log.contains(level_text, Qt::CaseInsensitive);
         }
 
         // Apply search filter
-        bool search_match = search_text.isEmpty() || log.toLower().contains(search_text);
+        const bool search_match = search_text.isEmpty() || log.toLower().contains(search_text);
 
         if (level_match && search_match) {
             m_text_browser->append(log);
@@ -279,9 +279,9 @@ void LogViewer::applyFilters() {
 }
 
 QString LogViewer::formatLogMessage(const QString& message, LogLevel level) const {
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-    QString level_text = getLevelText(level);
-    QString color = getLevelColor(level);
+    const QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+    const QString level_text = getLevelText(level);
+    const QString color = getLevelColor(level);
 
     // kHtmlLogMessage is an HTML template and the result is handed to QTextBrowser::append(), so
     // the log text -- file paths, program names, command output, AI text -- is escaped before it

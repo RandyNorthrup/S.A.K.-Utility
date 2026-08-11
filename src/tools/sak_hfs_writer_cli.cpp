@@ -1002,7 +1002,7 @@ QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    QCoreApplication app(argc, argv);
+    const QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("sak_hfs_writer_cli"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.9.2.0"));
 

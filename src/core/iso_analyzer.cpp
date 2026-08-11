@@ -386,7 +386,7 @@ QString extractVersionFromText(const QString& text) {
 
 /// Try to extract architecture from text
 QString extractArchFromText(const QString& text) {
-    QString lower = text.toLower();
+    const QString lower = text.toLower();
     if (lower.contains("amd64") || lower.contains("x86_64") || lower.contains("x64")) {
         return QStringLiteral("x64");
     }
@@ -465,14 +465,14 @@ void IsoAnalyzer::readPrimaryVolumeDescriptor(QIODevice& device, IsoInfo& info) 
     // Scan volume descriptor set starting at LBA 16
     constexpr int kMaxDescriptors = 16;
     for (int descriptor_index = 0; descriptor_index < kMaxDescriptors; ++descriptor_index) {
-        qint64 offset = kPrimaryVolumeDescriptorOffset + (descriptor_index * kSectorSize);
+        const qint64 offset = kPrimaryVolumeDescriptorOffset + (descriptor_index * kSectorSize);
 
         if (!device.seek(offset)) {
             return;
         }
 
         std::array<char, kSectorSize> sector{};
-        qint64 bytes_read = device.read(sector.data(), kSectorSize);
+        const qint64 bytes_read = device.read(sector.data(), kSectorSize);
         if (bytes_read < kSectorSize) {
             return;
         }
@@ -594,13 +594,13 @@ void IsoAnalyzer::detectUdf(QIODevice& device, IsoInfo& info) {
     constexpr int kUdfSearchEnd = 48;
 
     for (int sector_index = kUdfSearchStart; sector_index < kUdfSearchEnd; ++sector_index) {
-        qint64 offset = static_cast<qint64>(sector_index) * kSectorSize;
+        const qint64 offset = static_cast<qint64>(sector_index) * kSectorSize;
         if (!device.seek(offset)) {
             return;
         }
 
         std::array<char, kSectorSize> sector{};
-        qint64 bytes_read = device.read(sector.data(), kSectorSize);
+        const qint64 bytes_read = device.read(sector.data(), kSectorSize);
         if (bytes_read < kSectorSize) {
             return;
         }
@@ -709,12 +709,12 @@ QString IsoAnalyzer::parseIsoDateTime(const char* raw) {
     // Parse: YYYY-MM-DD HH:MM:SS
     constexpr int kYearLength = 4;
     constexpr int kFieldLength = 2;
-    QString year = readFixedAscii(raw, kYearLength);
-    QString month = readFixedAscii(raw + kYearLength, kFieldLength);
-    QString day = readFixedAscii(raw + kIsoDateDayOffset, kFieldLength);
-    QString hour = readFixedAscii(raw + kIsoDateHourOffset, kFieldLength);
-    QString minute = readFixedAscii(raw + kIsoDateMinuteOffset, kFieldLength);
-    QString second = readFixedAscii(raw + kIsoDateSecondOffset, kFieldLength);
+    const QString year = readFixedAscii(raw, kYearLength);
+    const QString month = readFixedAscii(raw + kYearLength, kFieldLength);
+    const QString day = readFixedAscii(raw + kIsoDateDayOffset, kFieldLength);
+    const QString hour = readFixedAscii(raw + kIsoDateHourOffset, kFieldLength);
+    const QString minute = readFixedAscii(raw + kIsoDateMinuteOffset, kFieldLength);
+    const QString second = readFixedAscii(raw + kIsoDateSecondOffset, kFieldLength);
 
     return QString("%1-%2-%3 %4:%5:%6").arg(year, month, day, hour, minute, second);
 }

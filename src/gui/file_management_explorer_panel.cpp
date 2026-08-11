@@ -1250,7 +1250,7 @@ void FileManagementExplorerPanel::toggleStatusCenterFlyout() {
         return;
     }
     // Files Placement=BottomEdgeAlignedRight under the toolbar button.
-    QPushButton* button = m_omnibar->statusCenterButton();
+    const QPushButton* button = m_omnibar->statusCenterButton();
     const QPoint anchor = button->mapTo(window(), button->rect().bottomRight());
     constexpr int kStatusFlyoutGapPx = 2;
     m_status_flyout->openAt(QPoint(anchor.x(), anchor.y() + kStatusFlyoutGapPx));
@@ -2951,7 +2951,7 @@ void FileManagementExplorerPanel::copySelectionToClipboard(const bool move) {
 }
 
 void FileManagementExplorerPanel::clearCutMarks() {
-    for (FileExplorerPane* pane : {m_pane_a, m_pane_b}) {
+    for (const FileExplorerPane* pane : {m_pane_a, m_pane_b}) {
         if (pane && pane->itemModel()) {
             pane->itemModel()->setCutPaths({});
         }
@@ -3159,7 +3159,7 @@ void FileManagementExplorerPanel::cancelSpringOpen() {
 int FileManagementExplorerPanel::paneIndexForView(const QAbstractItemView* view) const {
     constexpr int kPaneCount = 2;
     for (int index = 0; index < kPaneCount; ++index) {
-        FileExplorerPane* pane = index == 0 ? m_pane_a : m_pane_b;
+        const FileExplorerPane* pane = index == 0 ? m_pane_a : m_pane_b;
         if (pane && pane->itemViews().contains(const_cast<QAbstractItemView*>(view))) {
             return index;
         }
@@ -6001,7 +6001,7 @@ void FileManagementExplorerPanel::setShowCheckboxes(const bool enabled) {
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.setValue(QString::fromLatin1(kShowCheckboxesKey), enabled);
     settings.endGroup();
-    for (FileExplorerPane* pane : {m_pane_a, m_pane_b}) {
+    for (const FileExplorerPane* pane : {m_pane_a, m_pane_b}) {
         if (pane && pane->itemModel()) {
             pane->itemModel()->setCheckboxesVisible(enabled);
         }
@@ -8434,7 +8434,7 @@ Qt::DropAction FileManagementExplorerPanel::sidebarPasteAction(const FileManagem
 }
 
 bool FileManagementExplorerPanel::handleSidebarDragOver(QDropEvent* drop) {
-    QListWidgetItem* item = m_target_list->itemAt(drop->position().toPoint());
+    const QListWidgetItem* item = m_target_list->itemAt(drop->position().toPoint());
     if (!item) {
         return false;
     }
@@ -8472,7 +8472,7 @@ bool FileManagementExplorerPanel::handleSidebarDragOver(QDropEvent* drop) {
 }
 
 bool FileManagementExplorerPanel::handleSidebarDrop(QDropEvent* drop) {
-    QListWidgetItem* item = m_target_list->itemAt(drop->position().toPoint());
+    const QListWidgetItem* item = m_target_list->itemAt(drop->position().toPoint());
     if (!item) {
         return false;
     }
@@ -8576,7 +8576,7 @@ bool FileManagementExplorerPanel::maybeStartFavoriteDrag(QEvent* event) {
     if (event->type() == QEvent::MouseButtonPress) {
         m_sidebar_press_favorite = -1;
         if (mouse->button() == Qt::LeftButton) {
-            if (QListWidgetItem* item = m_target_list->itemAt(mouse->position().toPoint())) {
+            if (const QListWidgetItem* item = m_target_list->itemAt(mouse->position().toPoint())) {
                 const QVariant position_role = item->data(kSidebarFavoritePosRole);
                 if (!position_role.isNull()) {
                     m_sidebar_press_favorite = position_role.toInt();

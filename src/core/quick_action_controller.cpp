@@ -102,7 +102,7 @@ QuickAction::ExecutionResult makeElevatedActionResult(
 
 QuickActionController::QuickActionController(QObject* parent) : QObject(parent) {
     // Setup log file path
-    QString log_dir = sak::app_paths::logsDirectory();
+    const QString log_dir = sak::app_paths::logsDirectory();
     if (!sak::app_paths::ensureDirectory(log_dir)) {
         sak::logWarning("Failed to create quick actions log directory: {}", log_dir.toStdString());
     }
@@ -207,7 +207,7 @@ QString QuickActionController::registerAction(std::unique_ptr<QuickAction> actio
             &QuickAction::executionProgress,
             this,
             [this, action_ptr](const QString& msg, int prog) {
-                QString message = QString("%1 - %2%").arg(msg).arg(prog);
+                const QString message = QString("%1 - %2%").arg(msg).arg(prog);
                 Q_EMIT actionExecutionProgress(action_ptr, message, prog);
                 logOperation(action_ptr, message);
             });
@@ -403,7 +403,7 @@ void QuickActionController::scanAllActions() {
     }
 
     if (!m_current_scan_action && !m_scan_queue.isEmpty()) {
-        QString next_action = m_scan_queue.dequeue();
+        const QString next_action = m_scan_queue.dequeue();
         scanAction(next_action);
     }
 }
@@ -453,7 +453,7 @@ void QuickActionController::onScanComplete() {
 
     // Process scan queue
     if (!m_scan_queue.isEmpty()) {
-        QString next_action = m_scan_queue.dequeue();
+        const QString next_action = m_scan_queue.dequeue();
         scanAction(next_action);
     }
 }
@@ -490,17 +490,17 @@ void QuickActionController::onExecutionComplete() {
     Q_EMIT actionExecutionComplete(action);
 
     const auto& result = action->lastExecutionResult();
-    qint64 duration_sec = result.duration_ms / kMillisecondsPerSecond;
-    QString log_msg = result.success ? QString("Execution complete: %1 (%2 bytes in %3s)")
-                                           .arg(result.message)
-                                           .arg(result.bytes_processed)
-                                           .arg(duration_sec)
-                                     : QString("Execution failed: %1").arg(result.message);
+    const qint64 duration_sec = result.duration_ms / kMillisecondsPerSecond;
+    const QString log_msg = result.success ? QString("Execution complete: %1 (%2 bytes in %3s)")
+                                                 .arg(result.message)
+                                                 .arg(result.bytes_processed)
+                                                 .arg(duration_sec)
+                                           : QString("Execution failed: %1").arg(result.message);
     logOperation(action, log_msg);
 
     // Process queue
     if (!m_action_queue.isEmpty()) {
-        QString next_action = m_action_queue.dequeue();
+        const QString next_action = m_action_queue.dequeue();
         executeAction(next_action, false);
     }
 }
@@ -578,8 +578,8 @@ void QuickActionController::logOperation(QuickAction* action, const QString& mes
         return;
     }
 
-    QString timestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
-    QString log_entry = QString("[%1] %2: %3").arg(timestamp, action->name(), message);
+    const QString timestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
+    const QString log_entry = QString("[%1] %2: %3").arg(timestamp, action->name(), message);
 
     Q_EMIT logMessage(log_entry);
 

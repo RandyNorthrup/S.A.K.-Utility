@@ -270,9 +270,10 @@ void AdvancedUninstallPanel::showUninstallConfirmation(const ProgramInfo& progra
     addUninstallProgramHeader(&dialog, layout, program);
     const ScanLevelRadioGroup scanRadios =
         addScanLevelGroup(&dialog, layout, m_controller->defaultScanLevel());
-    QCheckBox* restoreCheck =
+    const QCheckBox* restoreCheck =
         addRestorePointOption(&dialog, layout, m_controller->autoRestorePoint());
-    QCheckBox* autoCleanCheck = addAutoCleanOption(&dialog, layout, m_controller->autoCleanSafe());
+    const QCheckBox* autoCleanCheck =
+        addAutoCleanOption(&dialog, layout, m_controller->autoCleanSafe());
     addUninstallConfirmationButtons(&dialog, layout);
 
     if (dialog.exec() == QDialog::Accepted) {
@@ -296,7 +297,7 @@ void AdvancedUninstallPanel::showForcedUninstallDialog(const ProgramInfo& progra
     addForcedUninstallWarning(&dialog, layout);
     addForcedUninstallDescription(&dialog, layout, program);
     const ForcedUninstallScanRadios scanRadios = addForcedUninstallScanGroup(&dialog, layout);
-    QCheckBox* restoreCheck = addForcedUninstallRestoreOption(&dialog, layout);
+    const QCheckBox* restoreCheck = addForcedUninstallRestoreOption(&dialog, layout);
     addForcedUninstallButtons(&dialog, layout);
 
     if (dialog.exec() == QDialog::Accepted) {
@@ -334,7 +335,7 @@ void AdvancedUninstallPanel::wireBatchUninstallQueueActions(const BatchQueueWidg
             [removeBtn = widgets.remove_btn](int row) { removeBtn->setEnabled(row >= 0); });
 
     connect(widgets.remove_btn, &QPushButton::clicked, dialog, [this, w = widgets]() {
-        int row = w.queue_list->currentRow();
+        const int row = w.queue_list->currentRow();
         if (row < 0) {
             return;
         }
@@ -363,7 +364,7 @@ QCheckBox* AdvancedUninstallPanel::addBatchUninstallOptions(QDialog* dialog,
     auto* restoreCheck = new QCheckBox(tr("Create single restore point before batch"), dialog);
     restoreCheck->setChecked(m_controller->autoRestorePoint());
 
-    bool elevated = RestorePointManager::isElevated();
+    const bool elevated = RestorePointManager::isElevated();
     if (!elevated) {
         restoreCheck->setEnabled(false);
         restoreCheck->setChecked(false);
@@ -601,7 +602,7 @@ QCheckBox* AdvancedUninstallPanel::addSettingsRestorePointGroup(QDialog* dialog,
         tr("When enabled, a Windows System Restore point is created before "
            "running the uninstaller. Requires administrator privileges."));
 
-    bool elevated = RestorePointManager::isElevated();
+    const bool elevated = RestorePointManager::isElevated();
     if (!elevated) {
         restorePointCheck->setEnabled(false);
         restorePointCheck->setChecked(false);

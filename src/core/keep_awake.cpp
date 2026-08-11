@@ -37,7 +37,7 @@ unsigned KeepAwake::executionStateForFlags(int power_flags) noexcept {
 
 auto KeepAwake::start(PowerRequest request, const char* reason)
     -> std::expected<void, sak::error_code> {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    const std::lock_guard<std::mutex> lock(s_mutex);
 
     // Install (re-apply) this thread's continuous request on EVERY start. The old code
     // installed only on the first thread's start and let every later (cross-thread) start
@@ -48,7 +48,7 @@ auto KeepAwake::start(PowerRequest request, const char* reason)
     const int new_flags = s_active_flags | static_cast<int>(request);
     const auto state = static_cast<EXECUTION_STATE>(executionStateForFlags(new_flags));
     if (SetThreadExecutionState(state) == 0) {
-        DWORD error = GetLastError();
+        DWORD const error = GetLastError();
         sak::logError("Failed to set thread execution state: error {}", error);
         // Fail closed: do not count a request whose state was not installed.
         return std::unexpected(sak::error_code::platform_not_supported);
@@ -63,7 +63,7 @@ auto KeepAwake::start(PowerRequest request, const char* reason)
 }
 
 auto KeepAwake::stop() -> std::expected<void, sak::error_code> {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    const std::lock_guard<std::mutex> lock(s_mutex);
 
     // A stop() from a thread that installed nothing is a no-op: it must never clear
     // another thread's request or underflow the count. This also fail-closes a stray or
@@ -81,7 +81,7 @@ auto KeepAwake::stop() -> std::expected<void, sak::error_code> {
 
     // Final release on THIS thread: clear the continuous request this thread installed.
     if (SetThreadExecutionState(ES_CONTINUOUS) == 0) {
-        DWORD error = GetLastError();
+        DWORD const error = GetLastError();
         sak::logError("Failed to clear thread execution state: error {}", error);
         // Fail closed: keep the reference (and union) so callers stay awake.
         return std::unexpected(sak::error_code::platform_not_supported);
@@ -101,7 +101,7 @@ auto KeepAwake::stop() -> std::expected<void, sak::error_code> {
 }
 
 bool KeepAwake::isActive() noexcept {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    const std::lock_guard<std::mutex> lock(s_mutex);
     return s_active_count > 0;
 }
 

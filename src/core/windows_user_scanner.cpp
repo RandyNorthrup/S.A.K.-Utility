@@ -186,7 +186,7 @@ QString expandRegistryPath(const wchar_t* profileDir, DWORD valueType) {
         return QString::fromWCharArray(profileDir);
     }
     wchar_t expandedPath[MAX_PATH] = {};
-    DWORD expandedLen = ExpandEnvironmentStringsW(profileDir, expandedPath, MAX_PATH);
+    DWORD const expandedLen = ExpandEnvironmentStringsW(profileDir, expandedPath, MAX_PATH);
     if (expandedLen > 0 && expandedLen <= MAX_PATH) {
         return QString::fromWCharArray(expandedPath);
     }
@@ -199,7 +199,7 @@ QString expandRegistryPath(const wchar_t* profileDir, DWORD valueType) {
 QString lookupRegistryProfilePath(const QString& sid) {
     // getProfilePath is the only caller and returns early on an empty SID.
     Q_ASSERT(!sid.isEmpty());
-    QString regPath =
+    const QString regPath =
         QString("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%1").arg(sid);
     HKEY hKey = nullptr;
     LONG result = RegOpenKeyExW(
@@ -321,10 +321,11 @@ qint64 WindowsUserScanner::estimateProfileSize(const QString& profilePath) {
     qint64 totalSize = 0;
 
     // Quick estimate by scanning main folders (non-recursive)
-    QStringList mainFolders = {"Documents", "Desktop", "Pictures", "Videos", "Music", "Downloads"};
+    const QStringList mainFolders = {
+        "Documents", "Desktop", "Pictures", "Videos", "Music", "Downloads"};
 
     for (const QString& folder : mainFolders) {
-        QString folderPath = profilePath + "/" + folder;
+        const QString folderPath = profilePath + "/" + folder;
         if (!QDir(folderPath).exists()) {
             continue;
         }
@@ -372,7 +373,7 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(
         // Calculate size if folder exists
         sel.size_bytes = 0;
         sel.file_count = 0;
-        QString fullPath = profilePath + "/" + relativePath;
+        const QString fullPath = profilePath + "/" + relativePath;
         if (QDir(fullPath).exists()) {
             // Size THIS folder directly. estimateProfileSize expects a profile
             // ROOT and scans its standard subfolders, so calling it on a single

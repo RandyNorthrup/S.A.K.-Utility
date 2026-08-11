@@ -94,7 +94,7 @@ auto FileExplorerArchiveWorker::execute() -> std::expected<void, sak::error_code
 // targets) import the finished zip through the certified writer.
 void FileExplorerArchiveWorker::runCompress() {
     const bool local = m_request.target.local_file_system;
-    QTemporaryDir staging;
+    const QTemporaryDir staging;
     if (!local && !staging.isValid()) {
         m_blockers.append(QStringLiteral("Could not create a staging folder for the archive."));
         return;
@@ -180,7 +180,7 @@ QStringList FileExplorerArchiveWorker::collectCompressSources(const QString& sta
 }
 
 void FileExplorerArchiveWorker::runExtract() {
-    QTemporaryDir staging;
+    const QTemporaryDir staging;
     // A raw target stages the archive/output through this temp dir; an invalid
     // temp dir would make QDir(staging.path()) resolve relative to the process
     // working directory and clobber a same-named host file (mirrors runCompress).
@@ -280,7 +280,7 @@ bool FileExplorerArchiveWorker::extractLocalArchive(const QString& host_zip,
 // certified writers.
 bool FileExplorerArchiveWorker::extractRawArchive(const QString& host_zip,
                                                   const QString& wrap_name) {
-    QTemporaryDir out;
+    const QTemporaryDir out;
     if (!out.isValid()) {
         m_blockers.append(QStringLiteral("Could not create a staging folder for the extraction."));
         return false;

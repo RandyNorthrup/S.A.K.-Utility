@@ -70,7 +70,7 @@ bool SkillStore::loadBuiltIn(QStringList* errors) {
 }
 
 bool SkillStore::loadDirectory(const QString& directory, QStringList* errors) {
-    QDir dir(directory);
+    const QDir dir(directory);
     if (!dir.exists()) {
         if (errors != nullptr) {
             errors->append(QStringLiteral("Skill directory not found: %1").arg(directory));

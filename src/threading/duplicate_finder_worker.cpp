@@ -114,7 +114,7 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code> {
     m_duplicate_groups = duplicate_groups;
 
     // Generate and emit results
-    QString summary = generateSummary(duplicate_groups);
+    const QString summary = generateSummary(duplicate_groups);
     Q_EMIT resultsReady(summary, total_duplicates, total_wasted);
 
     return {};
@@ -286,7 +286,7 @@ auto DuplicateFinderWorker::scanDirectories()
             return std::unexpected(sak::error_code::operation_cancelled);
         }
 
-        std::filesystem::path dir_path(dir_str.toStdString());
+        const std::filesystem::path dir_path(dir_str.toStdString());
 
         if (!std::filesystem::exists(dir_path)) {
             sak::logWarning("Directory does not exist: {}", dir_path.string());
@@ -518,7 +518,7 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
                        .arg(group.wasted_space / sak::kBytesPerKBf, 0, 'f', 1);
 
         for (const auto& path : group.file_paths) {
-            QFileInfo info(path);
+            const QFileInfo info(path);
             summary += QString("  - %1\n").arg(info.fileName());
         }
     }
@@ -557,7 +557,7 @@ std::function<void(int)> makeParallelHashTask(const std::shared_ptr<ParallelHash
             return;
         }
         const auto& file = job->files[static_cast<size_t>(index)];
-        sak::file_hasher hasher(sak::hash_algorithm::md5);
+        const sak::file_hasher hasher(sak::hash_algorithm::md5);
         // Honor the cancel token so a stop breaks this file at the next 1 MB chunk (not at EOF); on
         // cancel calculateHash returns operation_cancelled and the whole result set is discarded by
         // calculateHashesParallel's post-blockingMap checkStop().
@@ -605,7 +605,7 @@ auto DuplicateFinderWorker::calculateHashesParallel(const std::vector<std::files
     // scope exit (on the worker thread) well before ~DuplicateFinderWorker, and it RETURNS promptly
     // on stop, so it can never emit on a destroyed worker even on the terminate() path.
     const int total = static_cast<int>(files.size());
-    std::jthread monitor([this, job, total](const std::stop_token& monitor_stop) {
+    const std::jthread monitor([this, job, total](const std::stop_token& monitor_stop) {
         while (!monitor_stop.stop_requested()) {
             if (stopRequested()) {
                 m_hash_stop.request_stop();

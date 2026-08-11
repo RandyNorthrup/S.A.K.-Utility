@@ -947,16 +947,17 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
 
     connect(socket, &QTcpSocket::readyRead, this, [this, socket, ctx, idle_timer]() {
         idle_timer->start(kLanIdleTimeoutMs);
-        qint64 bytes = socket->bytesAvailable();
-        QByteArray received_data = socket->read(bytes);
+        const qint64 bytes = socket->bytesAvailable();
+        const QByteArray received_data = socket->read(bytes);
         ctx->total_received += received_data.size();
 
-        qint64 elapsed = ctx->timer.elapsed();
+        const qint64 elapsed = ctx->timer.elapsed();
         if (elapsed - ctx->last_report_time >= kLanReportIntervalMs) {
-            qint64 deltaBytes = ctx->total_received - ctx->last_report_bytes;
-            double deltaSec = (elapsed - ctx->last_report_time) / kNetworkMillisecondsPerSecond;
-            double currentMbps = deltaSec > 0 ? (deltaBytes * kBitsPerByte / (deltaSec * kMegabit))
-                                              : 0.0;
+            const qint64 deltaBytes = ctx->total_received - ctx->last_report_bytes;
+            const double deltaSec = (elapsed - ctx->last_report_time) /
+                                    kNetworkMillisecondsPerSecond;
+            const double currentMbps =
+                deltaSec > 0 ? (deltaBytes * kBitsPerByte / (deltaSec * kMegabit)) : 0.0;
             ctx->peak_mbps = std::max(ctx->peak_mbps, currentMbps);
             if (ctx->speed_samples.size() < kLanMaxSpeedSamples) {
                 ctx->speed_samples.append(currentMbps);
@@ -982,7 +983,7 @@ void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket
     Q_ASSERT(socket);
     Q_ASSERT(ctx);
 
-    double elapsed_sec = ctx->timer.elapsed() / kNetworkMillisecondsPerSecond;
+    const double elapsed_sec = ctx->timer.elapsed() / kNetworkMillisecondsPerSecond;
 
     LanTransferResult result;
     result.remoteAddress = socket->peerAddress().toString();
@@ -1230,7 +1231,7 @@ void NetworkDiagnosticController::finalizeLanTransfer(const LanTransferData& dat
     Q_ASSERT(data.total_sent >= 0);
     Q_ASSERT(!data.target_addr.isEmpty());
 
-    double elapsed_sec = data.elapsed_ms / kNetworkMillisecondsPerSecond;
+    const double elapsed_sec = data.elapsed_ms / kNetworkMillisecondsPerSecond;
 
     LanTransferResult result;
     result.remoteAddress = data.target_addr;
@@ -1453,7 +1454,7 @@ void NetworkDiagnosticController::restoreEthernetSettings(const QString& filePat
         return;
     }
 
-    bool success = m_ethernetConfigManager->restoreSettings(snapshot, targetAdapter);
+    const bool success = m_ethernetConfigManager->restoreSettings(snapshot, targetAdapter);
     Q_EMIT ethernetRestoreComplete(success);
 
     if (success) {

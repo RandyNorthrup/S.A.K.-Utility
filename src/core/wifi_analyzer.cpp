@@ -415,7 +415,7 @@ void scanInterface(HANDLE handle,
     DWORD result = WlanGetNetworkBssList(
         handle, &ifInfo.InterfaceGuid, nullptr, dot11_BSS_type_any, FALSE, nullptr, &rawBssList);
 
-    WlanPtr<WLAN_BSS_LIST> bssList(rawBssList, &wlanFreeMemory);
+    const WlanPtr<WLAN_BSS_LIST> bssList(rawBssList, &wlanFreeMemory);
     if (result == ERROR_SUCCESS && bssList != nullptr) {
         appendBssNetworks(*bssList, networks);
         readOk = true;
@@ -423,7 +423,7 @@ void scanInterface(HANDLE handle,
 
     PWLAN_AVAILABLE_NETWORK_LIST rawNetList = nullptr;
     result = WlanGetAvailableNetworkList(handle, &ifInfo.InterfaceGuid, 0, nullptr, &rawNetList);
-    WlanPtr<WLAN_AVAILABLE_NETWORK_LIST> netList(rawNetList, &wlanFreeMemory);
+    const WlanPtr<WLAN_AVAILABLE_NETWORK_LIST> netList(rawNetList, &wlanFreeMemory);
 
     if (result == ERROR_SUCCESS && netList != nullptr) {
         // Annotates existing (BSS-derived) networks only; never adds entries, so it
@@ -639,7 +639,7 @@ QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan(bool triggerScan, bool& s
 
     PWLAN_INTERFACE_INFO_LIST rawIfList = nullptr;
     const DWORD result = WlanEnumInterfaces(handle, nullptr, &rawIfList);
-    WlanPtr<WLAN_INTERFACE_INFO_LIST> ifList(rawIfList, &wlanFreeMemory);
+    const WlanPtr<WLAN_INTERFACE_INFO_LIST> ifList(rawIfList, &wlanFreeMemory);
     if (result != ERROR_SUCCESS || ifList == nullptr || ifList->dwNumberOfItems == 0) {
         scanError = true;  // no wireless interface to scan (enum failed or zero adapters)
         return networks;

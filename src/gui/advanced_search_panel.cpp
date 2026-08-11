@@ -1040,7 +1040,7 @@ void AdvancedSearchPanel::populateSearchTargets(QVector<FileManagementTarget> ta
     if (!m_target_combo) {
         return;
     }
-    QSignalBlocker blocker(m_target_combo);
+    const QSignalBlocker blocker(m_target_combo);
     m_target_combo->clear();
     for (const auto& target : m_search_targets) {
         m_target_combo->addItem(target.label);
@@ -1674,7 +1674,7 @@ QMap<QString, QString> AdvancedSearchPanel::collectLocalMetadata(const QString& 
     metadata[QStringLiteral("Created")] = fi.birthTime().toString(Qt::ISODate);
     metadata[QStringLiteral("LastModified")] = fi.lastModified().toString(Qt::ISODate);
 
-    QImageReader reader(filePath);
+    const QImageReader reader(filePath);
     if (reader.canRead()) {
         const QSize size = reader.size();
         if (size.isValid()) {
@@ -1788,7 +1788,7 @@ void AdvancedSearchPanel::highlightMatches() {
         const int previewLine = match.line_number + kHeaderLines - 1;
 
         // Move to that line in the document
-        QTextBlock block = doc->findBlockByLineNumber(previewLine);
+        const QTextBlock block = doc->findBlockByLineNumber(previewLine);
         if (!block.isValid()) {
             continue;
         }
@@ -1838,7 +1838,7 @@ void AdvancedSearchPanel::highlightMetadataMatches() {
         // Each metadata match is on its own line after the header
         const int preview_line = kHeaderLines + i;
 
-        QTextBlock block = doc->findBlockByLineNumber(preview_line);
+        const QTextBlock block = doc->findBlockByLineNumber(preview_line);
         if (!block.isValid()) {
             continue;
         }
@@ -1878,7 +1878,7 @@ void AdvancedSearchPanel::navigateToMatch(int matchIndex) {
     // Reset all formatting
     QTextCursor resetCursor(m_preview_edit->document());
     resetCursor.select(QTextCursor::Document);
-    QTextCharFormat defaultFmt;
+    const QTextCharFormat defaultFmt;
     resetCursor.setCharFormat(defaultFmt);
 
     // Detect metadata mode and apply appropriate highlighting
@@ -1902,9 +1902,9 @@ void AdvancedSearchPanel::navigateToMatch(int matchIndex) {
         preview_line = match.line_number + kHeaderLines - 1;
     }
 
-    QTextBlock block = m_preview_edit->document()->findBlockByLineNumber(preview_line);
+    const QTextBlock block = m_preview_edit->document()->findBlockByLineNumber(preview_line);
     if (block.isValid()) {
-        QTextCursor scrollCursor(block);
+        const QTextCursor scrollCursor(block);
         m_preview_edit->setTextCursor(scrollCursor);
         m_preview_edit->ensureCursorVisible();
     }

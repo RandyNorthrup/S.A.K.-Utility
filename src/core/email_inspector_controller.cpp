@@ -130,8 +130,8 @@ void EmailInspectorController::openFile(const QString& file_path) {
     closeFile();
     setState(State::Opening);
 
-    QFileInfo fi(file_path);
-    QString suffix = fi.suffix().toLower();
+    const QFileInfo fi(file_path);
+    const QString suffix = fi.suffix().toLower();
 
     if (suffix == QStringLiteral("pst") || suffix == QStringLiteral("ost")) {
         const bool is_ost = (suffix == QStringLiteral("ost"));
@@ -249,7 +249,7 @@ void EmailInspectorController::loadAttachmentContent(uint64_t message_node_id,
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         m_pst_parser->loadAttachmentContent(message_node_id, attachment_index);
     } else if (m_file_type == FileType::Mbox) {
-        int msg_idx = static_cast<int>(message_node_id);
+        const int msg_idx = static_cast<int>(message_node_id);
         runTracked([this, msg_idx, attachment_index]() {
             auto result = m_mbox_parser->readAttachmentData(msg_idx, attachment_index);
             if (result) {
@@ -384,7 +384,7 @@ void EmailInspectorController::generateReport(const QString& output_path,
     }
     setState(State::GeneratingReport);
 
-    QDir output_dir(output_path);
+    const QDir output_dir(output_path);
     if (!output_dir.mkpath(QStringLiteral("."))) {
         const auto message = QStringLiteral("Cannot create report directory: %1").arg(output_path);
         sak::logError("Report: {}", message.toStdString());

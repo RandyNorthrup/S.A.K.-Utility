@@ -473,8 +473,8 @@ QJsonObject packageTool() {
 }
 
 QJsonObject offlinePackageArrayParameter() {
-    QJsonObject package_id = stringParameter(QStringLiteral("Chocolatey package id."));
-    QJsonObject version =
+    const QJsonObject package_id = stringParameter(QStringLiteral("Chocolatey package id."));
+    const QJsonObject version =
         stringParameter(QStringLiteral("Pinned package version, empty for latest."));
     QJsonObject item_properties;
     item_properties[QStringLiteral("package_id")] = package_id;
@@ -541,7 +541,7 @@ QJsonObject providerGatewayTool() {
                                                    QStringLiteral("app_run_action_plan"),
                                                    QStringLiteral("app_run_action")};
 
-    QJsonObject arguments = stringParameter(
+    const QJsonObject arguments = stringParameter(
         QStringLiteral("JSON object string for provider-specific arguments. Use {} when unused. "
                        "For win32_mcp_call use {\"tool_name\":\"...\",\"tool_arguments\":{...},"
                        "\"timeout_ms\":20000}. For Context7 docs_query use {\"libraryId\":\"...\"} "
@@ -1127,7 +1127,7 @@ bool OpenAIResponsesClient::hasUsableApiKey(const QString& api_key) noexcept {
 
 QNetworkRequest OpenAIResponsesClient::buildRequest(const QString& path,
                                                     const QString& api_key) const {
-    QUrl url(QString::fromLatin1(kOpenAiBaseUrl) + path);
+    const QUrl url(QString::fromLatin1(kOpenAiBaseUrl) + path);
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setHeader(QNetworkRequest::UserAgentHeader,
@@ -1146,7 +1146,7 @@ QNetworkRequest OpenAIResponsesClient::buildRequest(const QString& path,
 
 QByteArray OpenAIResponsesClient::buildResponsePayloadForTesting(
     const OpenAIResponseRequest& request) {
-    OpenAIResponsesClient client;
+    const OpenAIResponsesClient client;
     return client.buildResponsePayload(request);
 }
 

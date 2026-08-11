@@ -17,7 +17,7 @@ Bzip2Decompressor::~Bzip2Decompressor() {
 
 bool Bzip2Decompressor::initStream() {
     // verbosity = 0 (quiet), small = 0 (use normal memory)
-    int ret = BZ2_bzDecompressInit(&m_bzstream, 0, 0);
+    const int ret = BZ2_bzDecompressInit(&m_bzstream, 0, 0);
     if (ret != BZ_OK) {
         m_lastError = QString("Failed to initialize bzip2: error code %1").arg(ret);
         return false;
@@ -50,7 +50,7 @@ bool Bzip2Decompressor::inputEmpty() const {
 }
 
 Bzip2Decompressor::StepResult Bzip2Decompressor::decompressStep() {
-    int ret = BZ2_bzDecompress(&m_bzstream);
+    const int ret = BZ2_bzDecompress(&m_bzstream);
     if (ret == BZ_STREAM_END) {
         return StepResult::stream_end;
     }
@@ -66,7 +66,7 @@ bool Bzip2Decompressor::resetStreamForNextMember() {
     // leaves next_in/avail_in/next_out/avail_out untouched, so the bytes after the
     // previous member feed the next one (B8-12).
     BZ2_bzDecompressEnd(&m_bzstream);
-    int ret = BZ2_bzDecompressInit(&m_bzstream, 0, 0);
+    const int ret = BZ2_bzDecompressInit(&m_bzstream, 0, 0);
     if (ret != BZ_OK) {
         m_lastError = QString("Failed to reset bzip2 for the next member: error code %1").arg(ret);
         return false;

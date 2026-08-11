@@ -327,10 +327,10 @@ bool MigrationReport::importFromJson(const QString& file_path) {
         return false;
     }
 
-    QByteArray data = file.readAll();
+    const QByteArray data = file.readAll();
     file.close();
 
-    QJsonDocument doc = QJsonDocument::fromJson(data);
+    const QJsonDocument doc = QJsonDocument::fromJson(data);
     if (!doc.isObject()) {
         sak::logWarning("[MigrationReport] Invalid JSON format");
         return false;

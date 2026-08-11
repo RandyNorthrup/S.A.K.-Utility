@@ -469,7 +469,7 @@ bool FileExplorerTransferEngine::transferRawToLocal(
 bool FileExplorerTransferEngine::transferRawStaged(const FileExplorerTransferItem& item,
                                                    const QString& destination,
                                                    const FileManagementTransferObserver& observer) {
-    QTemporaryDir staging;
+    const QTemporaryDir staging;
     if (!staging.isValid()) {
         m_blockers.append(
             QStringLiteral("Could not create a staging folder for the raw-to-raw transfer."));

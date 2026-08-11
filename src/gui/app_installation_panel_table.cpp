@@ -140,7 +140,7 @@ QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const {
     if (packageId.isEmpty()) {
         return QApplication::style()->standardIcon(QStyle::SP_FileIcon);
     }
-    QString lowerPkg = packageId.toLower();
+    const QString lowerPkg = packageId.toLower();
 
     // Try exact match first
     if (s_publisherMap.contains(lowerPkg)) {
@@ -159,7 +159,7 @@ QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const {
 }
 
 QString AppInstallationPanel::lookupPublisher(const QString& packageId) {
-    QString lower = packageId.toLower();
+    const QString lower = packageId.toLower();
     if (s_publisherMap.contains(lower)) {
         return s_publisherMap[lower];
     }
@@ -188,7 +188,7 @@ void AppInstallationPanel::updateResultsFromSearch(const QString& output) {
 
         m_onlineResultsModel->setItem(row, RColVersion, new QStandardItem(pkg.version));
 
-        QString pub = lookupPublisher(pkg.package_id);
+        const QString pub = lookupPublisher(pkg.package_id);
         m_onlineResultsModel->setItem(row, RColPublisher, new QStandardItem(pub));
 
         row++;
@@ -196,7 +196,7 @@ void AppInstallationPanel::updateResultsFromSearch(const QString& output) {
 
     m_onlineResultsTable->scrollToTop();
 
-    int count = static_cast<int>(packages.size());
+    const int count = static_cast<int>(packages.size());
     Q_EMIT logOutput(QString("Search returned %1 result(s)").arg(count));
     Q_EMIT statusMessage(tr("Found %1 package(s)").arg(count), sak::kTimerStatusMessageMs);
 }
@@ -220,7 +220,7 @@ void AppInstallationPanel::updateQueueDisplay() {
         m_queueList->addItem(item);
     }
 
-    bool hasItems = !m_installQueue.isEmpty();
+    const bool hasItems = !m_installQueue.isEmpty();
     // Gate on the single in-flight authority, not the online flag alone: an offline
     // deployment operation drives the same Chocolatey install root, so Install must stay
     // disabled while it runs.
@@ -257,7 +257,7 @@ void AppInstallationPanel::saveQueueToFile() {
         return;
     }
 
-    QString filePath = QFileDialog::getSaveFileName(
+    const QString filePath = QFileDialog::getSaveFileName(
         this, tr("Save App List"), QString(), tr("JSON Files (*.json)"));
     if (filePath.isEmpty()) {
         return;
@@ -272,7 +272,7 @@ void AppInstallationPanel::saveQueueToFile() {
         arr.append(obj);
     }
 
-    QJsonDocument doc(arr);
+    const QJsonDocument doc(arr);
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logWarning(("Save Failed: Could not write to file: " + filePath).toStdString());
@@ -300,7 +300,7 @@ void AppInstallationPanel::saveQueueToFile() {
 }
 
 void AppInstallationPanel::loadQueueFromFile() {
-    QString filePath = QFileDialog::getOpenFileName(
+    const QString filePath = QFileDialog::getOpenFileName(
         this, tr("Load App List"), QString(), tr("JSON Files (*.json)"));
     if (filePath.isEmpty()) {
         return;
@@ -351,7 +351,7 @@ bool AppInstallationPanel::parseQueueFile(const QString& filePath, QJsonArray& o
     }
 
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
     file.close();
 
     if (parseError.error != QJsonParseError::NoError) {
@@ -395,7 +395,7 @@ void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added,
             continue;
         }
 
-        bool duplicate =
+        const bool duplicate =
             std::any_of(m_installQueue.begin(),
                         m_installQueue.end(),
                         [&pkgId](const auto& existing) { return existing.package_id == pkgId; });

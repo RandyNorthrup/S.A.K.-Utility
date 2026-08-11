@@ -417,7 +417,7 @@ std::unique_ptr<sak::ui::SplashScreen> createSplashIfRequested(bool show_splash)
     if (splash_path.isEmpty()) {
         return nullptr;
     }
-    QPixmap splash_pixmap(splash_path);
+    const QPixmap splash_pixmap(splash_path);
     if (splash_pixmap.isNull()) {
         return nullptr;
     }

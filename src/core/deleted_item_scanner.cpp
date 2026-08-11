@@ -63,7 +63,7 @@ QVector<PstItemDetail> DeletedItemScanner::scanRecoverableItems() {
     }
 
     // Look for Recoverable Items folder (NID 0x0301) in the folder tree
-    PstFolderTree tree = m_parser->folderTree();
+    const PstFolderTree tree = m_parser->folderTree();
 
     // Search for the recoverable items folder by NID
     std::function<const PstFolder*(const QVector<PstFolder>&)> findFolder;
@@ -176,10 +176,10 @@ QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
     }
 
     // Get all NBT node IDs
-    QVector<uint64_t> all_nids = m_parser->allNodeIds();
+    const QVector<uint64_t> all_nids = m_parser->allNodeIds();
     int nodes_scanned = 0;
 
-    for (uint64_t nid : all_nids) {
+    for (const uint64_t nid : all_nids) {
         if (m_cancelled.load()) {
             break;
         }
@@ -247,7 +247,7 @@ void DeletedItemScanner::buildReachableSet() {
     m_reachable_nids.clear();
     m_reachable_reliable = true;
 
-    PstFolderTree tree = m_parser->folderTree();
+    const PstFolderTree tree = m_parser->folderTree();
 
     std::function<void(const PstFolder&)> walk;
     walk = [&](const PstFolder& folder) {

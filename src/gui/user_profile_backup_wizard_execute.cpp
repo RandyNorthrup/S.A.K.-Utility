@@ -138,8 +138,8 @@ void UserProfileBackupExecutePage::onStartBackup() {
         return;
     }
 
-    SmartFilter smartFilter = wiz->getSmartFilter();
-    PermissionMode permissionMode = wiz->getPermissionMode();
+    const SmartFilter smartFilter = wiz->getSmartFilter();
+    const PermissionMode permissionMode = wiz->getPermissionMode();
 
     // The sidecars are written into the destination directory, so it must exist
     // and be writable before anything is saved (previously they were written
@@ -233,7 +233,7 @@ bool UserProfileBackupExecutePage::ensureDestinationDirectory(QString& error) {
         return false;
     }
 
-    QDir dir(m_destinationPath);
+    const QDir dir(m_destinationPath);
     if (dir.exists()) {
         return true;
     }
@@ -429,7 +429,7 @@ void UserProfileBackupExecutePage::onLogMessage(const QString& message) {
 }
 
 void UserProfileBackupExecutePage::appendLog(const QString& message) {
-    QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
+    const QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
     m_logEdit->append(QString("[%1] %2").arg(timestamp, message));
 }
 

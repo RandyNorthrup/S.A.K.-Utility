@@ -39,7 +39,7 @@ AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
                                                       const QStringList& tool_scope,
                                                       const QString& risk_level,
                                                       bool exclusive) {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     AcquireResult result;
     const QDateTime now = QDateTime::currentDateTimeUtc();
     // Clear any abandoned lease first so a lost release() cannot wedge new leases.
@@ -73,7 +73,7 @@ AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
 }
 
 bool AiLeaseManager::release(const QString& lease_id) {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     // Report whether a lease was actually held: a release for an id this manager does not hold
     // (already reclaimed as expired, or simply wrong) is not the same event as a real release and
     // must not be reported as one.
@@ -83,7 +83,7 @@ bool AiLeaseManager::release(const QString& lease_id) {
 }
 
 QStringList AiLeaseManager::reclaimExpired(const QDateTime& now_utc) {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     return reclaimExpiredLocked(now_utc);
 }
 
@@ -112,7 +112,7 @@ QStringList AiLeaseManager::reclaimExpiredLocked(const QDateTime& now_utc) {
 }
 
 bool AiLeaseManager::hasActiveExclusive() const {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     for (const auto& lease : m_active) {
         if (lease.exclusive) {
             return true;
@@ -122,12 +122,12 @@ bool AiLeaseManager::hasActiveExclusive() const {
 }
 
 int AiLeaseManager::activeLeaseCount() const {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     return m_active.size();
 }
 
 QStringList AiLeaseManager::activeLeaseIds() const {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     QStringList ids;
     ids.reserve(m_active.size());
     for (auto it = m_active.constBegin(); it != m_active.constEnd(); ++it) {

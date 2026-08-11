@@ -162,7 +162,7 @@ Skill Skill::fromMarkdown(const QByteArray& bytes, const QString& path) {
     text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
     text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
 
-    QString body = parseFrontMatter(text, &skill);
+    const QString body = parseFrontMatter(text, &skill);
     if (skill.id.trimmed().isEmpty()) {
         skill.id = QFileInfo(path).completeBaseName().trimmed();
     }

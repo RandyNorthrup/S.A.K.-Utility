@@ -77,7 +77,7 @@ void CheckDiskErrorsAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
-    QDateTime start_time = QDateTime::currentDateTime();
+    const QDateTime start_time = QDateTime::currentDateTime();
     QVector<QChar> drives;
     QString report;
     if (!executeEnumerateVolumes(start_time, drives, report)) {
@@ -155,13 +155,13 @@ void CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
                                                  int& drives_scanned,
                                                  int& errors_found,
                                                  int& repairs_recommended) {
-    QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+    const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
     bool parsing = false;
     ParsedDriveState state;
 
     for (const QString& line : lines) {
-        QString trimmed = line.trimmed();
+        const QString trimmed = line.trimmed();
 
         if (trimmed == "===SCAN_START===") {
             parsing = true;
@@ -266,9 +266,9 @@ void CheckDiskErrorsAction::executeRunChkdsk(const QVector<QChar>& drives,
                              ((i * kDriveScanProgressSpan) / drives.count());
         Q_EMIT executionProgress(QString("Scanning drive %1: for errors...").arg(drive), progress);
 
-        QString ps_cmd = buildScanVolumeScript(drive);
+        const QString ps_cmd = buildScanVolumeScript(drive);
 
-        ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessLongMs);
+        const ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessLongMs);
         if (proc.timed_out) {
             report += QString("Drive %1: - TIMEOUT (scan took too long)\n\n").arg(drive);
             continue;

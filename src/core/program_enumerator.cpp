@@ -221,7 +221,7 @@ void ProgramEnumerator::resolveProgramIcon(ProgramInfo& program, bool locationIs
     // No usable displayIcon: fall back to the first .exe in a LOCAL install dir only
     // (locationIsLocal is already false for the remote/device paths we must never scan).
     if (program.cachedImage.isNull() && locationIsLocal) {
-        QDir dir(program.installLocation);
+        const QDir dir(program.installLocation);
         const auto exes = dir.entryList({"*.exe"}, QDir::Files, QDir::Name);
         const QString exe = exes.value(0);
         program.cachedImage = exe.isEmpty() ? QImage{} : extractIcon(dir.filePath(exe));
@@ -499,7 +499,7 @@ void ProgramEnumerator::parseRegistryEntry(HKEY app_key,
         return;
     }
 
-    QString display_name = readRegString(app_key, L"DisplayName");
+    const QString display_name = readRegString(app_key, L"DisplayName");
     if (display_name.isEmpty()) {
         return;
     }
@@ -562,7 +562,7 @@ DWORD ProgramEnumerator::readRegDword(HKEY key, const wchar_t* valueName) {
     DWORD size = sizeof(DWORD);
     DWORD type = 0;
 
-    LONG rc =
+    LONG const rc =
         RegQueryValueExW(key, valueName, nullptr, &type, reinterpret_cast<LPBYTE>(&value), &size);
     // Require the exact 4-byte REG_DWORD width: a wrong-typed or short value must read as 0, not
     // as a partially-written DWORD.
@@ -573,7 +573,7 @@ DWORD ProgramEnumerator::readRegDword(HKEY key, const wchar_t* valueName) {
 }
 
 bool ProgramEnumerator::isSystemComponent(HKEY key) {
-    DWORD sys_comp = readRegDword(key, L"SystemComponent");
+    DWORD const sys_comp = readRegDword(key, L"SystemComponent");
     return sys_comp == 1;
 }
 
@@ -634,8 +634,8 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages(bool& scanOk) {
         return results;
     }
 
-    QByteArray output = result.std_out.toUtf8();
-    QJsonDocument doc = QJsonDocument::fromJson(output);
+    const QByteArray output = result.std_out.toUtf8();
+    const QJsonDocument doc = QJsonDocument::fromJson(output);
 
     const QJsonArray arr = jsonDocToArray(doc);
     for (const auto& val : arr) {
@@ -669,8 +669,8 @@ QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages(bool& scanOk) {
         return results;
     }
 
-    QByteArray output = result.std_out.toUtf8();
-    QJsonDocument doc = QJsonDocument::fromJson(output);
+    const QByteArray output = result.std_out.toUtf8();
+    const QJsonDocument doc = QJsonDocument::fromJson(output);
 
     QJsonArray arr;
     if (doc.isArray()) {
@@ -707,10 +707,10 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
     int icon_index = 0;
 
     // Handle "path,index" format
-    int comma = path.lastIndexOf(',');
+    const int comma = path.lastIndexOf(',');
     if (comma > 0) {
         bool ok = false;
-        int idx = path.mid(comma + 1).trimmed().toInt(&ok);
+        const int idx = path.mid(comma + 1).trimmed().toInt(&ok);
         if (ok) {
             icon_path = path.left(comma).trimmed();
             icon_index = idx;
@@ -729,11 +729,11 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
     }
 
     SHFILEINFOW sfi{};
-    DWORD_PTR result = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(icon_path.utf16()),
-                                      0,
-                                      &sfi,
-                                      sizeof(sfi),
-                                      SHGFI_ICON | SHGFI_SMALLICON);
+    DWORD_PTR const result = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(icon_path.utf16()),
+                                            0,
+                                            &sfi,
+                                            sizeof(sfi),
+                                            SHGFI_ICON | SHGFI_SMALLICON);
 
     if (result && sfi.hIcon) {
         QImage image = QImage::fromHICON(sfi.hIcon);
@@ -757,7 +757,7 @@ void ProgramEnumerator::deduplicatePrograms(QVector<ProgramInfo>& programs) {
 
     for (const auto& prog : programs) {
         // Use display name + publisher as dedup key
-        QString key = prog.displayName.toLower() + "|" + prog.publisher.toLower();
+        const QString key = prog.displayName.toLower() + "|" + prog.publisher.toLower();
 
         if (!seen.contains(key)) {
             seen.insert(key);

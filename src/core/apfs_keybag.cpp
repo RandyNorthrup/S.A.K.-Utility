@@ -43,7 +43,7 @@ struct DerField {
 /// @brief Decode a big-endian DER INTEGER value into a uint64.
 uint64_t derBigEndianU64(const QByteArray& value) {
     uint64_t v = 0;
-    for (char c : value) {
+    for (const char c : value) {
         v = (v << 8) | static_cast<uint8_t>(c);
     }
     return v;

@@ -274,7 +274,7 @@ QString parseRegistryPathValue(const QVariant& raw, bool is_unicode) {
         return raw.toString();
     }
 
-    QByteArray bytes = raw.toByteArray();
+    const QByteArray bytes = raw.toByteArray();
     if (bytes.size() < kRegistryPathMinimumBytes) {
         return {};
     }
@@ -299,7 +299,7 @@ sak::EmailDataFile classifyDataFileType(const QFileInfo& fi) {
     data_file.size_bytes = fi.size();
     data_file.is_linked = true;
 
-    QString suffix = fi.suffix().toLower();
+    const QString suffix = fi.suffix().toLower();
     if (suffix == QStringLiteral("pst")) {
         data_file.type = QStringLiteral("PST");
     } else if (suffix == QStringLiteral("ost")) {
@@ -323,40 +323,41 @@ QVector<sak::EmailDataFile> findOutlookDataFiles(const QSettings& profile_key) {
         QStringLiteral("001e"),
     };
 
-    QStringList groups = profile_key.childGroups();
+    const QStringList groups = profile_key.childGroups();
     for (const auto& group : groups) {
-        QString prefix = group + QStringLiteral("/");
-        QStringList keys = profile_key.allKeys();
+        const QString prefix = group + QStringLiteral("/");
+        const QStringList keys = profile_key.allKeys();
 
         for (const auto& key : keys) {
             if (!key.startsWith(prefix)) {
                 continue;
             }
-            QString value_name = key.mid(prefix.size());
+            const QString value_name = key.mid(prefix.size());
 
-            int last_slash = value_name.lastIndexOf(QLatin1Char('/'));
-            QString leaf_name = (last_slash >= 0) ? value_name.mid(last_slash + 1) : value_name;
+            const int last_slash = value_name.lastIndexOf(QLatin1Char('/'));
+            const QString leaf_name = (last_slash >= 0) ? value_name.mid(last_slash + 1)
+                                                        : value_name;
 
             if (leaf_name.size() != kMapiPropertyLeafNameLength) {
                 continue;
             }
-            QString prop_id = leaf_name.mid(kMapiPropertyTypePrefixLength);
+            const QString prop_id = leaf_name.mid(kMapiPropertyTypePrefixLength);
             if (!kPathPropertyIds.contains(prop_id)) {
                 continue;
             }
 
-            QString type_prefix = leaf_name.left(kMapiPropertyTypePrefixLength);
+            const QString type_prefix = leaf_name.left(kMapiPropertyTypePrefixLength);
             if (!kValidTypePrefixes.contains(type_prefix)) {
                 continue;
             }
-            bool is_unicode = (type_prefix == QStringLiteral("001f"));
+            const bool is_unicode = (type_prefix == QStringLiteral("001f"));
 
-            QString path_value = parseRegistryPathValue(profile_key.value(key), is_unicode);
+            const QString path_value = parseRegistryPathValue(profile_key.value(key), is_unicode);
             if (path_value.isEmpty()) {
                 continue;
             }
 
-            QFileInfo fi(path_value);
+            const QFileInfo fi(path_value);
             if (!fi.exists()) {
                 continue;
             }
@@ -431,7 +432,7 @@ void EmailProfileManager::backupProfiles(const QVector<int>& profile_indices,
     m_backup_reg_exports.clear();
     m_backup_failures = 0;
 
-    QDir dir(backup_path);
+    const QDir dir(backup_path);
     if (!dir.mkpath(QStringLiteral("."))) {
         Q_EMIT errorOccurred(QStringLiteral("Failed to create backup directory"));
         return;
@@ -443,7 +444,7 @@ void EmailProfileManager::backupProfiles(const QVector<int>& profile_indices,
     qint64 bytes_copied = 0;
     QVector<sak::EmailClientProfile> backed_up_profiles;
 
-    for (int idx : profile_indices) {
+    for (const int idx : profile_indices) {
         if (m_cancelled.load()) {
             break;
         }
@@ -476,7 +477,7 @@ void EmailProfileManager::backupProfiles(const QVector<int>& profile_indices,
 
 int EmailProfileManager::countTotalDataFiles(const QVector<int>& profile_indices) const {
     int total = 0;
-    for (int idx : profile_indices) {
+    for (const int idx : profile_indices) {
         if (idx >= 0 && idx < m_profiles.size()) {
             total += m_profiles[idx].data_files.size();
         }
@@ -516,7 +517,7 @@ void EmailProfileManager::backupSingleProfile(const sak::EmailClientProfile& pro
             break;
         }
 
-        QFileInfo fi(data_file.path);
+        const QFileInfo fi(data_file.path);
         if (!fi.exists()) {
             // A file discovery recorded is now gone: that is a backup gap, not a no-op.
             ++m_backup_failures;
@@ -814,7 +815,7 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverOutlookProfiles() 
             break;
         }
 
-        QString reg_path = kOutlookProfilesPath.arg(version);
+        const QString reg_path = kOutlookProfilesPath.arg(version);
 
         // Use QSettings to read the registry
         QSettings registry(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft"
@@ -822,7 +823,7 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverOutlookProfiles() 
                                .arg(version),
                            QSettings::NativeFormat);
 
-        QStringList profile_names = registry.childGroups();
+        const QStringList profile_names = registry.childGroups();
         noteSettingsStatus(registry);  // a failed key read must not read as "no profiles"
         if (profile_names.isEmpty()) {
             continue;
@@ -833,11 +834,11 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverOutlookProfiles() 
                      version.toStdString());
 
         // Determine which is the default profile
-        QSettings outlook_key(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft"
-                                             "\\Office\\%1\\Outlook")
-                                  .arg(version),
-                              QSettings::NativeFormat);
-        QString default_profile =
+        const QSettings outlook_key(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft"
+                                                   "\\Office\\%1\\Outlook")
+                                        .arg(version),
+                                    QSettings::NativeFormat);
+        const QString default_profile =
             outlook_key.value(QStringLiteral("DefaultProfile"), QString()).toString();
 
         for (const auto& name : profile_names) {
@@ -873,7 +874,7 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverOutlookProfiles() 
 
 void EmailProfileManager::discoverWmsProfiles(QVector<sak::EmailClientProfile>& results) {
     QSettings wms(kWmsProfilesPath, QSettings::NativeFormat);
-    QStringList wms_profiles = wms.childGroups();
+    const QStringList wms_profiles = wms.childGroups();
     noteSettingsStatus(wms);
     for (const auto& name : wms_profiles) {
         if (m_cancelled.load()) {
@@ -919,16 +920,16 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverThunderbirdProfile
     QVector<sak::EmailClientProfile> results;
 
     // Thunderbird stores profiles in %APPDATA%\Thunderbird\profiles.ini
-    QString appdata = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    QString tb_dir = QDir::homePath() + QStringLiteral("/AppData/Roaming/Thunderbird");
-    QString profiles_ini = tb_dir + QStringLiteral("/profiles.ini");
+    const QString appdata = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    const QString tb_dir = QDir::homePath() + QStringLiteral("/AppData/Roaming/Thunderbird");
+    const QString profiles_ini = tb_dir + QStringLiteral("/profiles.ini");
 
     if (!QFile::exists(profiles_ini)) {
         return results;
     }
 
     QSettings ini(profiles_ini, QSettings::IniFormat);
-    QStringList groups = ini.childGroups();
+    const QStringList groups = ini.childGroups();
     noteSettingsStatus(ini);  // a present-but-corrupt profiles.ini must not read as "no profiles"
 
     for (const auto& group : groups) {
@@ -941,7 +942,7 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverThunderbirdProfile
 
         ini.beginGroup(group);
         QString name = ini.value(QStringLiteral("Name"), QStringLiteral("Default")).toString();
-        QString path = ini.value(QStringLiteral("Path")).toString();
+        const QString path = ini.value(QStringLiteral("Path")).toString();
         bool is_relative_ok = false;
         const int is_relative_raw =
             ini.value(QStringLiteral("IsRelative"), 1).toInt(&is_relative_ok);
@@ -969,7 +970,7 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverThunderbirdProfile
 
         // Scan profile directory for MBOX files (no extension in TB)
         // and also look for .msf (index) files alongside mbox
-        QDir profile_dir(full_path);
+        const QDir profile_dir(full_path);
         if (profile_dir.exists()) {
             scanThunderbirdDir(profile_dir, profile.data_files);
         }
@@ -996,7 +997,7 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverWindowsMailProfile
     // Windows Mail / Windows Live Mail stores data in
     // %LOCALAPPDATA%\Microsoft\Windows Mail
     // or %LOCALAPPDATA%\Microsoft\Windows Live Mail
-    QStringList mail_dirs = {
+    const QStringList mail_dirs = {
         QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
             QStringLiteral("/Microsoft/Windows Mail"),
         QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
@@ -1008,7 +1009,7 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverWindowsMailProfile
             break;
         }
 
-        QDir dir(mail_dir);
+        const QDir dir(mail_dir);
         if (!dir.exists()) {
             continue;
         }
@@ -1022,11 +1023,11 @@ QVector<sak::EmailClientProfile> EmailProfileManager::discoverWindowsMailProfile
         profile.profile_path = mail_dir;
 
         // Scan for .eml files
-        QStringList filters = {
+        const QStringList filters = {
             QStringLiteral("*.eml"),
             QStringLiteral("*.pst"),
         };
-        QFileInfoList file_list = dir.entryInfoList(filters, QDir::Files, QDir::Name);
+        const QFileInfoList file_list = dir.entryInfoList(filters, QDir::Files, QDir::Name);
 
         for (const auto& fi : file_list) {
             sak::EmailDataFile data_file;
@@ -1068,7 +1069,7 @@ bool EmailProfileManager::exportRegistryKey(const QString& key_path, const QStri
     // race between uniqueRegistryBackupDestination's existence check and this write substitute a
     // file or reparse target at the name. A planted file/junction now makes QFile::copy fail (it
     // never overwrites), so we fail closed instead of redirecting the export elsewhere.
-    QTemporaryDir staging;
+    const QTemporaryDir staging;
     if (!staging.isValid()) {
         sak::logWarning("Registry export: could not create a private staging directory");
         return false;
@@ -1126,7 +1127,7 @@ bool EmailProfileManager::regContentConfinedToEmailHives(const QString& reg_text
         if (!line.startsWith(QLatin1Char('[')) || !line.endsWith(QLatin1Char(']'))) {
             continue;
         }
-        QString key = line.mid(1, line.size() - kKeySectionBracketChars).trimmed();
+        const QString key = line.mid(1, line.size() - kKeySectionBracketChars).trimmed();
         if (key.startsWith(QLatin1Char('-'))) {
             // [-HKEY...] is a destructive key DELETION. A genuine `reg export` never emits one, so
             // a backup that contains it is crafted/corrupt: refuse the whole file rather than apply
@@ -1192,7 +1193,7 @@ bool EmailProfileManager::importValidatedBytes(const QByteArray& bytes) {
         sak::logWarning("Registry import: cannot resolve the System32 reg.exe path");
         return false;
     }
-    QTemporaryDir staging;
+    const QTemporaryDir staging;
     if (!staging.isValid()) {
         sak::logWarning("Registry import: could not create a private staging directory");
         return false;
@@ -1315,7 +1316,8 @@ void EmailProfileManager::scanThunderbirdDirRecursive(const QDir& dir,
     }
 
     // Thunderbird MBOX files have no extension and sit alongside .msf files
-    QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+    const QFileInfoList entries =
+        dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
 
     for (const auto& entry : entries) {
         if (m_cancelled.load() || files.size() >= kMaxThunderbirdDataFiles) {
@@ -1329,7 +1331,7 @@ void EmailProfileManager::scanThunderbirdDirRecursive(const QDir& dir,
         }
 
         // An MBOX file is identified by having a companion .msf file
-        QString path = entry.absoluteFilePath();
+        const QString path = entry.absoluteFilePath();
         if (entry.suffix().isEmpty() && QFile::exists(path + QStringLiteral(".msf"))) {
             sak::EmailDataFile data_file;
             data_file.path = path;

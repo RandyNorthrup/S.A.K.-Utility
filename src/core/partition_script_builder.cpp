@@ -911,7 +911,7 @@ std::optional<QString> apfsRootFilePayloadBase64(const PartitionOperation& opera
     const QString explicitBase64 =
         payloadString(operation, QString::fromLatin1(kApfsRootFilePayloadBase64)).trimmed();
     if (!explicitBase64.isEmpty()) {
-        QByteArray decoded = QByteArray::fromBase64(explicitBase64.toLatin1());
+        const QByteArray decoded = QByteArray::fromBase64(explicitBase64.toLatin1());
         if (decoded.isEmpty()) {
             *blocker = QStringLiteral("APFS root-file payload_base64 is empty or invalid");
             return std::nullopt;
@@ -3949,7 +3949,8 @@ void PartitionScriptBuilder::appendAdvancedBuilders(QHash<int, Builder>* builder
                             PartitionOperationType::HfsCreateSymlink,
                             PartitionOperationType::HfsCreateHardlink,
                             PartitionOperationType::HfsDeleteHardlink}) {
-        builders->insert(static_cast<int>(type), &buildHfsFileMutationScript);
+        builders->insert(static_cast<int>(type),
+                         &PartitionScriptBuilder::buildHfsFileMutationScript);
     }
 }
 

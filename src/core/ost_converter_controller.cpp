@@ -31,7 +31,7 @@ OstConverterController::~OstConverterController() {
 // ============================================================================
 
 void OstConverterController::addFile(const QString& path) {
-    QFileInfo fi(path);
+    const QFileInfo fi(path);
     if (!fi.exists() || !fi.isFile()) {
         logWarning("OST Converter: file does not exist: {}", path.toStdString());
         return;
@@ -51,10 +51,10 @@ void OstConverterController::addFile(const QString& path) {
     job.display_name = fi.fileName();
     job.file_size_bytes = fi.size();
 
-    QString suffix = fi.suffix().toLower();
+    const QString suffix = fi.suffix().toLower();
     job.is_ost = (suffix == QStringLiteral("ost"));
 
-    int index = m_queue.size();
+    const int index = m_queue.size();
     m_queue.append(job);
 
     logInfo("OST Converter: added file to queue: {}", fi.fileName().toStdString());
@@ -132,8 +132,8 @@ void OstConverterController::startConversion(const OstConversionConfig& config) 
     // one QThread per queued file and exhaust handles, memory, and scheduler
     // resources -- cap the peak worker count regardless of the requested value.
     constexpr int kMaxConcurrentWorkers = 64;
-    int threads_to_launch = qMin(qBound(1, config.max_threads, kMaxConcurrentWorkers),
-                                 m_queue.size());
+    const int threads_to_launch = qMin(qBound(1, config.max_threads, kMaxConcurrentWorkers),
+                                       m_queue.size());
     for (int i = 0; i < threads_to_launch; ++i) {
         startNextFile();
     }
@@ -213,7 +213,7 @@ void OstConverterController::startNextFile() {
         return;
     }
 
-    int file_index = m_next_queued_index;
+    const int file_index = m_next_queued_index;
     ++m_next_queued_index;
 
     auto& job = m_queue[file_index];
@@ -248,8 +248,8 @@ void OstConverterController::startNextFile() {
             Qt::QueuedConnection);
 
     // Start conversion when thread starts
-    QString source = job.source_path;
-    OstConversionConfig config = m_config;
+    const QString source = job.source_path;
+    const OstConversionConfig config = m_config;
     connect(aw.thread, &QThread::started, aw.worker, [worker = aw.worker, source, config]() {
         worker->convert(source, config);
     });

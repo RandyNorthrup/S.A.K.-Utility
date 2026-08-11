@@ -383,7 +383,7 @@ QString TabShortcutHint(int index) {
 /// selects the tab it is written on regardless of build configuration.
 void UpdateTabShortcutHints(QTabWidget* tabWidget) {
     Q_ASSERT(tabWidget);
-    QTabBar* bar = tabWidget->tabBar();
+    const QTabBar* bar = tabWidget->tabBar();
     for (int idx = 0; idx < tabWidget->count(); ++idx) {
         const QString base = bar->tabData(idx).toString();
         if (base.isEmpty()) {
@@ -1511,7 +1511,7 @@ int MainWindow::findPanelTabIndex(QWidget* panel) const {
     }
     // Walk up through parent widgets to find the wrapper
     // that is a direct child of the main tab widget.
-    QWidget* widget = panel->parentWidget();
+    const QWidget* widget = panel->parentWidget();
     while (widget && widget != m_tab_widget) {
         idx = m_tab_widget->indexOf(widget);
         if (idx >= 0) {
@@ -1745,15 +1745,15 @@ void MainWindow::createKeyboardShortcuts() {
     auto* nextTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab), this);
     nextTab->setContext(Qt::ApplicationShortcut);
     connect(nextTab, &QShortcut::activated, this, [this]() {
-        int next = (m_tab_widget->currentIndex() + 1) % m_tab_widget->count();
+        const int next = (m_tab_widget->currentIndex() + 1) % m_tab_widget->count();
         m_tab_widget->setCurrentIndex(next);
     });
 
     auto* prevTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab), this);
     prevTab->setContext(Qt::ApplicationShortcut);
     connect(prevTab, &QShortcut::activated, this, [this]() {
-        int prev = (m_tab_widget->currentIndex() - 1 + m_tab_widget->count()) %
-                   m_tab_widget->count();
+        const int prev = (m_tab_widget->currentIndex() - 1 + m_tab_widget->count()) %
+                         m_tab_widget->count();
         m_tab_widget->setCurrentIndex(prev);
     });
 

@@ -63,10 +63,10 @@ bool generateSecureRandom(void* buffer, std::size_t size) noexcept {
     if (size > static_cast<std::size_t>(MAXDWORD)) {
         return false;
     }
-    NTSTATUS status = BCryptGenRandom(nullptr,
-                                      static_cast<PUCHAR>(buffer),
-                                      static_cast<ULONG>(size),
-                                      BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    NTSTATUS const status = BCryptGenRandom(nullptr,
+                                            static_cast<PUCHAR>(buffer),
+                                            static_cast<ULONG>(size),
+                                            BCRYPT_USE_SYSTEM_PREFERRED_RNG);
     return BCRYPT_SUCCESS(status);
 
 #elif defined(__linux__)

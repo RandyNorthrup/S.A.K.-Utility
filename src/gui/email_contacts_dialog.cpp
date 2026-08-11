@@ -206,7 +206,7 @@ void EmailContactsDialog::loadContacts() {
             this,
             &EmailContactsDialog::onControllerError);
 
-    for (uint64_t folder_id : m_folder_ids) {
+    for (const uint64_t folder_id : m_folder_ids) {
         m_controller->loadFolderItems(folder_id, 0, kMaxContactsPerFolder);
     }
 }
@@ -229,7 +229,7 @@ void EmailContactsDialog::onContactSelected(int row, int /*column*/) {
         return;
     }
     bool ok = false;
-    uint64_t node_id = hidden_item->data(Qt::UserRole).toULongLong(&ok);
+    const uint64_t node_id = hidden_item->data(Qt::UserRole).toULongLong(&ok);
     if (!ok) {
         return;
     }
@@ -237,7 +237,7 @@ void EmailContactsDialog::onContactSelected(int row, int /*column*/) {
 }
 
 void EmailContactsDialog::onExportVcfClicked() {
-    QString dir_path =
+    const QString dir_path =
         QFileDialog::getExistingDirectory(this, tr("Select Export Directory for VCF Files"));
     if (dir_path.isEmpty()) {
         return;
@@ -255,7 +255,7 @@ void EmailContactsDialog::onExportVcfClicked() {
 void EmailContactsDialog::onExportCsvClicked() {
     // The exporter treats output_path as a directory (it appends its own
     // contacts_export.csv), so ask for a directory, not a file name.
-    QString dir_path =
+    const QString dir_path =
         QFileDialog::getExistingDirectory(this, tr("Select Export Directory for Contacts CSV"));
     if (dir_path.isEmpty()) {
         return;
@@ -316,7 +316,7 @@ void EmailContactsDialog::filterContacts(const QString& text) {
     const QSignalBlocker blocker(m_contact_table);
     m_contact_table->setSortingEnabled(false);
     m_contact_table->setRowCount(0);
-    QString filter = text.trimmed().toLower();
+    const QString filter = text.trimmed().toLower();
 
     // Pre-filter into indices so the table can be sized in a single call
     // instead of paying per-row `insertRow` cost.
@@ -325,9 +325,9 @@ void EmailContactsDialog::filterContacts(const QString& text) {
     for (int idx = 0; idx < m_all_contacts.size(); ++idx) {
         const auto& contact = m_all_contacts.at(idx);
         if (!filter.isEmpty()) {
-            bool match = contact.subject.toLower().contains(filter) ||
-                         contact.sender_name.toLower().contains(filter) ||
-                         contact.sender_email.toLower().contains(filter);
+            const bool match = contact.subject.toLower().contains(filter) ||
+                               contact.sender_name.toLower().contains(filter) ||
+                               contact.sender_email.toLower().contains(filter);
             if (!match) {
                 continue;
             }

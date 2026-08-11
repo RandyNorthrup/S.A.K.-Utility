@@ -415,14 +415,14 @@ QString PermissionManager::getOwner(const QString& path) {
     PSID pOwnerSid = nullptr;
     PSECURITY_DESCRIPTOR pSD = nullptr;
 
-    DWORD result = GetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
-                                         SE_FILE_OBJECT,
-                                         OWNER_SECURITY_INFORMATION,
-                                         &pOwnerSid,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         &pSD);
+    DWORD const result = GetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
+                                               SE_FILE_OBJECT,
+                                               OWNER_SECURITY_INFORMATION,
+                                               &pOwnerSid,
+                                               nullptr,
+                                               nullptr,
+                                               nullptr,
+                                               &pSD);
 
     if (result != ERROR_SUCCESS) {
         return QString();
@@ -449,15 +449,15 @@ QString PermissionManager::getSecurityDescriptorSddl(const QString& path) {
         return QString();
     }
     PSECURITY_DESCRIPTOR pSD = nullptr;
-    DWORD result = GetNamedSecurityInfoW(const_cast<LPWSTR>(path.toStdWString().c_str()),
-                                         SE_FILE_OBJECT,
-                                         OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
-                                             DACL_SECURITY_INFORMATION,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         nullptr,
-                                         &pSD);
+    DWORD const result = GetNamedSecurityInfoW(
+        const_cast<LPWSTR>(path.toStdWString().c_str()),
+        SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        &pSD);
 
     if (result != ERROR_SUCCESS) {
         m_lastError = QString("Failed to get security descriptor: %1").arg(result);
@@ -531,7 +531,7 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
 auto PermissionManager::tryStripPermissions(const QString& path)
     -> std::expected<void, sak::error_code> {
 #ifdef Q_OS_WIN
-    QFileInfo fileInfo(path);
+    const QFileInfo fileInfo(path);
     if (!fileInfo.exists()) {
         m_lastError = "File does not exist";
         return std::unexpected(sak::error_code::file_not_found);

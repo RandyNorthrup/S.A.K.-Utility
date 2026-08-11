@@ -170,43 +170,43 @@ protected:
 
 private:
     void drawHeader(QPainter& painter) {
-        int col_width = width() / kDaysPerWeek;
+        const int col_width = width() / kDaysPerWeek;
         painter.setPen(QColor(ui::kColorTextSecondary));
         QFont header_font = font();
         header_font.setWeight(QFont::DemiBold);
         header_font.setPointSize(ui::kFontSizeBody);
         painter.setFont(header_font);
         for (int col = 0; col < kDaysPerWeek; ++col) {
-            QRect cell(col * col_width, 0, col_width, email::kCalendarDayHeaderHeight);
+            const QRect cell(col * col_width, 0, col_width, email::kCalendarDayHeaderHeight);
             painter.drawText(cell, Qt::AlignCenter, kDayHeaders[col]);
         }
     }
 
     void drawGrid(QPainter& painter) {
-        QDate first_of_month(m_date.year(), m_date.month(), 1);
-        int start_dow = first_of_month.dayOfWeek() % kDaysPerWeek;
-        QDate grid_start = first_of_month.addDays(-start_dow);
+        const QDate first_of_month(m_date.year(), m_date.month(), 1);
+        const int start_dow = first_of_month.dayOfWeek() % kDaysPerWeek;
+        const QDate grid_start = first_of_month.addDays(-start_dow);
 
-        int col_width = width() / kDaysPerWeek;
-        int avail_height = height() - email::kCalendarDayHeaderHeight;
-        int row_height = avail_height / kMonthGridRows;
+        const int col_width = width() / kDaysPerWeek;
+        const int avail_height = height() - email::kCalendarDayHeaderHeight;
+        const int row_height = avail_height / kMonthGridRows;
 
         for (int row = 0; row < kMonthGridRows; ++row) {
             for (int col = 0; col < kDaysPerWeek; ++col) {
-                QDate day = grid_start.addDays((row * kDaysPerWeek) + col);
-                int left = col * col_width;
-                int top = email::kCalendarDayHeaderHeight + (row * row_height);
-                QRect cell_rect(left, top, col_width, row_height);
+                const QDate day = grid_start.addDays((row * kDaysPerWeek) + col);
+                const int left = col * col_width;
+                const int top = email::kCalendarDayHeaderHeight + (row * row_height);
+                const QRect cell_rect(left, top, col_width, row_height);
                 drawDayCell(painter, cell_rect, day);
             }
         }
     }
 
     void drawDayCell(QPainter& painter, const QRect& rect, const QDate& day) {
-        bool is_current_month = (day.month() == m_date.month());
-        bool is_today = (day == QDate::currentDate());
-        bool is_selected = (day == m_selected_date);
-        bool is_weekend = (day.dayOfWeek() == Qt::Saturday || day.dayOfWeek() == Qt::Sunday);
+        const bool is_current_month = (day.month() == m_date.month());
+        const bool is_today = (day == QDate::currentDate());
+        const bool is_selected = (day == m_selected_date);
+        const bool is_weekend = (day.dayOfWeek() == Qt::Saturday || day.dayOfWeek() == Qt::Sunday);
 
         QColor bg_color(ui::kColorBgWhite);
         if (!is_current_month) {
@@ -241,11 +241,11 @@ private:
             text_color = QColor(ui::kColorTextDisabled);
         }
         if (is_today) {
-            int circle_diam = email::kCalendarDayLabelHeight - kTodayCircleInsetPx;
-            int cx = rect.left() + email::kCalendarCellPadding +
-                     (circle_diam / kGeometryHalfDivisor) + kTodayCircleCenterAdjustPx;
-            int cy = rect.top() + email::kCalendarCellPadding +
-                     (circle_diam / kGeometryHalfDivisor);
+            const int circle_diam = email::kCalendarDayLabelHeight - kTodayCircleInsetPx;
+            const int cx = rect.left() + email::kCalendarCellPadding +
+                           (circle_diam / kGeometryHalfDivisor) + kTodayCircleCenterAdjustPx;
+            const int cy = rect.top() + email::kCalendarCellPadding +
+                           (circle_diam / kGeometryHalfDivisor);
             painter.setPen(Qt::NoPen);
             painter.setBrush(QColor(ui::kColorPrimary));
             painter.drawEllipse(QPoint(cx, cy),
@@ -254,10 +254,10 @@ private:
             text_color = QColor(ui::kColorBgWhite);
         }
         painter.setPen(text_color);
-        QRect label_rect(rect.left() + email::kCalendarCellPadding,
-                         rect.top() + email::kCalendarCellPadding,
-                         email::kCalendarDayLabelHeight + kDayLabelWidthExtraPx,
-                         email::kCalendarDayLabelHeight);
+        const QRect label_rect(rect.left() + email::kCalendarCellPadding,
+                               rect.top() + email::kCalendarCellPadding,
+                               email::kCalendarDayLabelHeight + kDayLabelWidthExtraPx,
+                               email::kCalendarDayLabelHeight);
         painter.drawText(label_rect, Qt::AlignCenter, QString::number(day.day()));
     }
 
@@ -267,19 +267,21 @@ private:
             return;
         }
         const auto& events = *iter;
-        int bar_top = rect.top() + email::kCalendarDayLabelHeight + email::kCalendarCellPadding;
-        int bar_left = rect.left() + email::kCalendarCellPadding;
-        int bar_width = rect.width() - (kCellPaddingBothSidesFactor * email::kCalendarCellPadding);
+        const int bar_top = rect.top() + email::kCalendarDayLabelHeight +
+                            email::kCalendarCellPadding;
+        const int bar_left = rect.left() + email::kCalendarCellPadding;
+        const int bar_width = rect.width() -
+                              (kCellPaddingBothSidesFactor * email::kCalendarCellPadding);
         int max_bars = std::min(static_cast<int>(events.size()), email::kCalendarMaxVisibleBars);
-        int space_per_bar = email::kCalendarEventBarHeight + email::kCalendarBarGap;
+        const int space_per_bar = email::kCalendarEventBarHeight + email::kCalendarBarGap;
 
-        bool need_more = (events.size() > email::kCalendarMaxVisibleBars);
+        const bool need_more = (events.size() > email::kCalendarMaxVisibleBars);
         if (need_more && max_bars > 1) {
             --max_bars;
         }
 
         for (int idx = 0; idx < max_bars; ++idx) {
-            int top = bar_top + (idx * space_per_bar);
+            const int top = bar_top + (idx * space_per_bar);
             if (top + email::kCalendarEventBarHeight > rect.bottom()) {
                 break;
             }
@@ -289,15 +291,17 @@ private:
         }
 
         if (need_more) {
-            int more_count = events.size() - max_bars;
+            const int more_count = events.size() - max_bars;
             drawMoreLabel(
                 painter, more_count, bar_left, bar_top + (max_bars * space_per_bar), bar_width);
         }
     }
 
     void drawSingleBar(QPainter& painter, const CalendarEvent* evt, const QRect& bar_rect) {
-        QColor fill = EmailCalendarDialog::fillColorForStatus(evt->busy_status, evt->item_type);
-        QColor border = EmailCalendarDialog::borderColorForStatus(evt->busy_status, evt->item_type);
+        const QColor fill = EmailCalendarDialog::fillColorForStatus(evt->busy_status,
+                                                                    evt->item_type);
+        const QColor border = EmailCalendarDialog::borderColorForStatus(evt->busy_status,
+                                                                        evt->item_type);
 
         QPainterPath path;
         path.addRoundedRect(QRectF(bar_rect),
@@ -316,13 +320,14 @@ private:
         bar_font.setPointSize(ui::kFontSizeSmall);
         painter.setFont(bar_font);
 
-        QRect text_rect =
+        const QRect text_rect =
             bar_rect.adjusted(email::kCalendarBarBorderWidth + kBarTextLeftExtraPaddingPx,
                               0,
                               -kBarTextRightInsetPx,
                               0);
-        QString label = buildBarLabel(evt);
-        QString elided = painter.fontMetrics().elidedText(label, Qt::ElideRight, text_rect.width());
+        const QString label = buildBarLabel(evt);
+        const QString elided =
+            painter.fontMetrics().elidedText(label, Qt::ElideRight, text_rect.width());
         painter.drawText(text_rect, Qt::AlignVCenter, elided);
 
         // Store hit rect for click detection
@@ -345,7 +350,7 @@ private:
         more_font.setPointSize(ui::kFontSizeSmall);
         more_font.setItalic(true);
         painter.setFont(more_font);
-        QRect label_rect(left, top, width, email::kCalendarEventBarHeight);
+        const QRect label_rect(left, top, width, email::kCalendarEventBarHeight);
         painter.drawText(label_rect, Qt::AlignVCenter, QStringLiteral("+%1 more...").arg(count));
     }
 
@@ -358,7 +363,7 @@ private:
             }
         }
         // Fall back to day click
-        QDate clicked_day = dayAtPosition(pos);
+        const QDate clicked_day = dayAtPosition(pos);
         if (clicked_day.isValid()) {
             Q_EMIT dayClicked(clicked_day);
         }
@@ -368,22 +373,22 @@ private:
         if (pos.y() < email::kCalendarDayHeaderHeight) {
             return {};
         }
-        int col_width = width() / kDaysPerWeek;
-        int avail_h = height() - email::kCalendarDayHeaderHeight;
-        int row_height = avail_h / kMonthGridRows;
+        const int col_width = width() / kDaysPerWeek;
+        const int avail_h = height() - email::kCalendarDayHeaderHeight;
+        const int row_height = avail_h / kMonthGridRows;
         if (col_width <= 0 || row_height <= 0) {
             return {};
         }
 
-        int col = pos.x() / col_width;
-        int row = (pos.y() - email::kCalendarDayHeaderHeight) / row_height;
+        const int col = pos.x() / col_width;
+        const int row = (pos.y() - email::kCalendarDayHeaderHeight) / row_height;
         if (col < 0 || col >= kDaysPerWeek || row < 0 || row >= kMonthGridRows) {
             return {};
         }
 
-        QDate first_of_month(m_date.year(), m_date.month(), 1);
-        int start_dow = first_of_month.dayOfWeek() % kDaysPerWeek;
-        QDate grid_start = first_of_month.addDays(-start_dow);
+        const QDate first_of_month(m_date.year(), m_date.month(), 1);
+        const int start_dow = first_of_month.dayOfWeek() % kDaysPerWeek;
+        const QDate grid_start = first_of_month.addDays(-start_dow);
         return grid_start.addDays((row * kDaysPerWeek) + col);
     }
 
@@ -423,7 +428,7 @@ public:
     }
 
     [[nodiscard]] int totalHeight() const {
-        int hours = email::kCalendarDayEndHour - email::kCalendarDayStartHour;
+        const int hours = email::kCalendarDayEndHour - email::kCalendarDayStartHour;
         return email::kCalendarDayHeaderHeight + email::kCalendarAllDayRowHeight +
                (hours * email::kCalendarHourHeight);
     }
@@ -452,7 +457,7 @@ protected:
                 return;
             }
         }
-        QDate clicked = dayAtColumn(event->pos().x());
+        const QDate clicked = dayAtColumn(event->pos().x());
         if (clicked.isValid()) {
             Q_EMIT dayClicked(clicked);
         }
@@ -478,12 +483,12 @@ private:
         if (!m_week_mode) {
             return m_date;
         }
-        int dow = m_date.dayOfWeek() % kDaysPerWeek;
+        const int dow = m_date.dayOfWeek() % kDaysPerWeek;
         return m_date.addDays(-dow);
     }
 
     [[nodiscard]] int columnWidth() const {
-        int avail = width() - email::kCalendarTimeColumnWidth;
+        const int avail = width() - email::kCalendarTimeColumnWidth;
         return avail / columnCount();
     }
 
@@ -492,9 +497,9 @@ private:
     }
 
     [[nodiscard]] int timeToY(const QTime& time) const {
-        int top_offset = email::kCalendarDayHeaderHeight + email::kCalendarAllDayRowHeight;
-        int minutes = (time.hour() * kMinutesPerHour) + time.minute() -
-                      (email::kCalendarDayStartHour * kMinutesPerHour);
+        const int top_offset = email::kCalendarDayHeaderHeight + email::kCalendarAllDayRowHeight;
+        const int minutes = (time.hour() * kMinutesPerHour) + time.minute() -
+                            (email::kCalendarDayStartHour * kMinutesPerHour);
         return top_offset + ((minutes * email::kCalendarHourHeight) / kMinutesPerHour);
     }
 
@@ -502,7 +507,7 @@ private:
         if (px < email::kCalendarTimeColumnWidth) {
             return {};
         }
-        int col = (px - email::kCalendarTimeColumnWidth) / columnWidth();
+        const int col = (px - email::kCalendarTimeColumnWidth) / columnWidth();
         if (col < 0 || col >= columnCount()) {
             return {};
         }
@@ -514,18 +519,18 @@ private:
         header_font.setWeight(QFont::DemiBold);
         header_font.setPointSize(ui::kFontSizeBody);
         painter.setFont(header_font);
-        QDate base = startDate();
+        const QDate base = startDate();
 
         for (int col = 0; col < columnCount(); ++col) {
-            QDate day = base.addDays(col);
-            int left = columnLeft(col);
-            QRect header_rect(left, 0, columnWidth(), email::kCalendarDayHeaderHeight);
-            bool is_today = (day == QDate::currentDate());
+            const QDate day = base.addDays(col);
+            const int left = columnLeft(col);
+            const QRect header_rect(left, 0, columnWidth(), email::kCalendarDayHeaderHeight);
+            const bool is_today = (day == QDate::currentDate());
             if (is_today) {
                 painter.fillRect(header_rect, QColor(email::kCalColorTodayBg));
             }
             painter.setPen(QColor(is_today ? ui::kColorPrimary : ui::kColorTextBody));
-            QString label = day.toString(QStringLiteral("ddd M/d"));
+            const QString label = day.toString(QStringLiteral("ddd M/d"));
             painter.drawText(header_rect, Qt::AlignCenter, label);
 
             // Vertical separator between columns
@@ -536,20 +541,20 @@ private:
         }
         // Bottom border of header row
         painter.setPen(QColor(ui::kColorBorderDefault));
-        int header_bottom = email::kCalendarDayHeaderHeight;
+        const int header_bottom = email::kCalendarDayHeaderHeight;
         painter.drawLine(0, header_bottom, width(), header_bottom);
     }
 
     void drawTimeGrid(QPainter& painter) {
-        int top_base = email::kCalendarDayHeaderHeight + email::kCalendarAllDayRowHeight;
-        int hours = email::kCalendarDayEndHour - email::kCalendarDayStartHour;
+        const int top_base = email::kCalendarDayHeaderHeight + email::kCalendarAllDayRowHeight;
+        const int hours = email::kCalendarDayEndHour - email::kCalendarDayStartHour;
         QFont time_font = font();
         time_font.setPointSize(ui::kFontSizeSmall);
         painter.setFont(time_font);
 
         for (int hour = 0; hour <= hours; ++hour) {
-            int display_hour = email::kCalendarDayStartHour + hour;
-            int row_y = top_base + (hour * email::kCalendarHourHeight);
+            const int display_hour = email::kCalendarDayStartHour + hour;
+            const int row_y = top_base + (hour * email::kCalendarHourHeight);
 
             drawHourRow(painter, display_hour, row_y);
         }
@@ -563,8 +568,9 @@ private:
 
         // Half-hour dashed line
         if (hour < email::kCalendarDayEndHour) {
-            int half_y = row_y + (email::kCalendarHourHeight / kGeometryHalfDivisor);
-            QColor half_color = QColor(ui::kColorBorderDefault).lighter(kHalfHourLineLightness);
+            const int half_y = row_y + (email::kCalendarHourHeight / kGeometryHalfDivisor);
+            const QColor half_color =
+                QColor(ui::kColorBorderDefault).lighter(kHalfHourLineLightness);
             painter.setPen(QPen(half_color, 1, Qt::DotLine));
             painter.drawLine(email::kCalendarTimeColumnWidth, half_y, width(), half_y);
         }
@@ -581,29 +587,31 @@ private:
             } else {
                 time_str = QStringLiteral("%1 PM").arg(hour - kNoonHour);
             }
-            QRect time_rect(0,
-                            row_y,
-                            email::kCalendarTimeColumnWidth - kTimeLabelRightPaddingPx,
-                            email::kCalendarHourHeight);
+            const QRect time_rect(0,
+                                  row_y,
+                                  email::kCalendarTimeColumnWidth - kTimeLabelRightPaddingPx,
+                                  email::kCalendarHourHeight);
             painter.drawText(time_rect, Qt::AlignRight | Qt::AlignTop, time_str);
         }
     }
 
     void drawWorkHoursBackground(QPainter& painter, int top_base) {
-        int work_top = top_base + ((email::kCalendarWorkStartHour - email::kCalendarDayStartHour) *
-                                   email::kCalendarHourHeight);
-        int work_bot = top_base + ((email::kCalendarWorkEndHour - email::kCalendarDayStartHour) *
-                                   email::kCalendarHourHeight);
+        const int work_top = top_base +
+                             ((email::kCalendarWorkStartHour - email::kCalendarDayStartHour) *
+                              email::kCalendarHourHeight);
+        const int work_bot = top_base +
+                             ((email::kCalendarWorkEndHour - email::kCalendarDayStartHour) *
+                              email::kCalendarHourHeight);
 
         for (int col = 0; col < columnCount(); ++col) {
-            int left = columnLeft(col);
-            QRect work_rect(left, work_top, columnWidth(), work_bot - work_top);
+            const int left = columnLeft(col);
+            const QRect work_rect(left, work_top, columnWidth(), work_bot - work_top);
             painter.fillRect(work_rect, QColor(email::kCalColorWorkHoursBg));
         }
     }
 
     void drawAllDayEvents(QPainter& painter) {
-        int header_y = email::kCalendarDayHeaderHeight;
+        const int header_y = email::kCalendarDayHeaderHeight;
         painter.fillRect(QRect(0, header_y, width(), email::kCalendarAllDayRowHeight),
                          QColor(ui::kColorBgSurface));
         painter.setPen(QColor(ui::kColorBorderDefault));
@@ -612,9 +620,9 @@ private:
                          width(),
                          header_y + email::kCalendarAllDayRowHeight);
 
-        QDate base = startDate();
+        const QDate base = startDate();
         for (int col = 0; col < columnCount(); ++col) {
-            QDate day = base.addDays(col);
+            const QDate day = base.addDays(col);
             auto iter = m_events.find(day);
             if (iter == m_events.end()) {
                 continue;
@@ -627,21 +635,22 @@ private:
                              const QVector<const CalendarEvent*>& events,
                              int col,
                              int header_y) {
-        int left = columnLeft(col) + kEventBarHorizontalInsetPx;
-        int bar_width = columnWidth() - kEventBarHorizontalInsetTotalPx;
+        const int left = columnLeft(col) + kEventBarHorizontalInsetPx;
+        const int bar_width = columnWidth() - kEventBarHorizontalInsetTotalPx;
 
         for (const auto* evt : events) {
             if (!evt->is_all_day) {
                 continue;
             }
-            QColor fill = EmailCalendarDialog::fillColorForStatus(evt->busy_status, evt->item_type);
-            QColor border = EmailCalendarDialog::borderColorForStatus(evt->busy_status,
-                                                                      evt->item_type);
+            const QColor fill = EmailCalendarDialog::fillColorForStatus(evt->busy_status,
+                                                                        evt->item_type);
+            const QColor border = EmailCalendarDialog::borderColorForStatus(evt->busy_status,
+                                                                            evt->item_type);
 
-            QRect bar(left,
-                      header_y + kAllDayBarVerticalInsetPx,
-                      bar_width,
-                      email::kCalendarAllDayRowHeight - kAllDayBarVerticalInsetTotalPx);
+            const QRect bar(left,
+                            header_y + kAllDayBarVerticalInsetPx,
+                            bar_width,
+                            email::kCalendarAllDayRowHeight - kAllDayBarVerticalInsetTotalPx);
             QPainterPath path;
             path.addRoundedRect(QRectF(bar),
                                 email::kCalendarBarCornerRadius,
@@ -656,9 +665,9 @@ private:
     }
 
     void drawTimedEvents(QPainter& painter) {
-        QDate base = startDate();
+        const QDate base = startDate();
         for (int col = 0; col < columnCount(); ++col) {
-            QDate day = base.addDays(col);
+            const QDate day = base.addDays(col);
             auto iter = m_events.find(day);
             if (iter == m_events.end()) {
                 continue;
@@ -670,8 +679,8 @@ private:
     void drawTimedEventsForColumn(QPainter& painter,
                                   const QVector<const CalendarEvent*>& events,
                                   int col) {
-        int left = columnLeft(col) + kEventBarHorizontalInsetPx;
-        int bar_width = columnWidth() - kEventBarHorizontalInsetTotalPx;
+        const int left = columnLeft(col) + kEventBarHorizontalInsetPx;
+        const int bar_width = columnWidth() - kEventBarHorizontalInsetTotalPx;
 
         for (const auto* evt : events) {
             if (evt->is_all_day || !evt->start_time.isValid()) {
@@ -682,21 +691,23 @@ private:
     }
 
     void drawTimedEventBar(QPainter& painter, const CalendarEvent* evt, int left, int bar_width) {
-        QTime start = evt->start_time.time();
-        QTime end = evt->end_time.isValid() ? evt->end_time.time()
-                                            : start.addSecs(kDefaultEventDurationSec);
+        const QTime start = evt->start_time.time();
+        const QTime end = evt->end_time.isValid() ? evt->end_time.time()
+                                                  : start.addSecs(kDefaultEventDurationSec);
 
-        int top = timeToY(start);
+        const int top = timeToY(start);
         int bottom = timeToY(end);
         constexpr int kMinBarHeight = 20;
         if (bottom - top < kMinBarHeight) {
             bottom = top + kMinBarHeight;
         }
 
-        QColor fill = EmailCalendarDialog::fillColorForStatus(evt->busy_status, evt->item_type);
-        QColor border = EmailCalendarDialog::borderColorForStatus(evt->busy_status, evt->item_type);
+        const QColor fill = EmailCalendarDialog::fillColorForStatus(evt->busy_status,
+                                                                    evt->item_type);
+        const QColor border = EmailCalendarDialog::borderColorForStatus(evt->busy_status,
+                                                                        evt->item_type);
 
-        QRect bar(left, top, bar_width, bottom - top);
+        const QRect bar(left, top, bar_width, bottom - top);
         QPainterPath path;
         path.addRoundedRect(QRectF(bar),
                             email::kCalendarBarCornerRadius,
@@ -714,23 +725,25 @@ private:
         bar_font.setPointSize(ui::kFontSizeSmall);
         painter.setFont(bar_font);
 
-        QRect text_rect = bar.adjusted(email::kCalendarBarBorderWidth + kBarTextLeftExtraPaddingPx,
-                                       1,
-                                       -kBarTextRightInsetPx,
-                                       -1);
+        const QRect text_rect =
+            bar.adjusted(email::kCalendarBarBorderWidth + kBarTextLeftExtraPaddingPx,
+                         1,
+                         -kBarTextRightInsetPx,
+                         -1);
         QString label;
         if (!evt->is_all_day && evt->start_time.isValid()) {
             label = evt->start_time.time().toString(QStringLiteral("h:mm AP")) +
                     QStringLiteral(" ");
         }
         label += evt->subject;
-        QString elided = painter.fontMetrics().elidedText(label, Qt::ElideRight, text_rect.width());
+        const QString elided =
+            painter.fontMetrics().elidedText(label, Qt::ElideRight, text_rect.width());
         painter.drawText(text_rect, Qt::AlignVCenter, elided);
     }
 
     void drawCurrentTimeLine(QPainter& painter) {
-        QDate today = QDate::currentDate();
-        QDate base = startDate();
+        const QDate today = QDate::currentDate();
+        const QDate base = startDate();
         int col = -1;
         for (int idx = 0; idx < columnCount(); ++idx) {
             if (base.addDays(idx) == today) {
@@ -741,9 +754,9 @@ private:
         if (col < 0) {
             return;
         }
-        QTime now = QTime::currentTime();
-        int line_y = timeToY(now);
-        int left = columnLeft(col);
+        const QTime now = QTime::currentTime();
+        const int line_y = timeToY(now);
+        const int left = columnLeft(col);
         constexpr int kTimeDotRadius = 4;
 
         painter.setPen(QPen(QColor(ui::kColorError), kCurrentTimeLineWidthPx));
@@ -1035,7 +1048,7 @@ void EmailCalendarDialog::setupDayEventList(QVBoxLayout* layout) {
             return;
         }
         bool ok = false;
-        uint64_t nid = item->data(Qt::UserRole).toULongLong(&ok);
+        const uint64_t nid = item->data(Qt::UserRole).toULongLong(&ok);
         if (ok) {
             onEventClicked(nid);
         }
@@ -1191,7 +1204,7 @@ void EmailCalendarDialog::loadCalendarItems() {
             this,
             &EmailCalendarDialog::onDetailLoaded);
 
-    for (uint64_t folder_id : m_folder_ids) {
+    for (const uint64_t folder_id : m_folder_ids) {
         m_controller->loadFolderItems(folder_id, 0, email::kCalendarMaxEventsPerFolder);
     }
 }
@@ -1220,7 +1233,7 @@ void EmailCalendarDialog::rebuildDateIndex() {
 }
 
 void EmailCalendarDialog::rebuildOrganizerFilter() {
-    QString current = m_organizer_filter->currentText();
+    const QString current = m_organizer_filter->currentText();
     m_organizer_filter->blockSignals(true);
     m_organizer_filter->clear();
     m_organizer_filter->addItem(tr("All Organizers"));
@@ -1235,7 +1248,7 @@ void EmailCalendarDialog::rebuildOrganizerFilter() {
     sorted.sort(Qt::CaseInsensitive);
     m_organizer_filter->addItems(sorted);
 
-    int restore_idx = m_organizer_filter->findText(current);
+    const int restore_idx = m_organizer_filter->findText(current);
     m_organizer_filter->setCurrentIndex(restore_idx > 0 ? restore_idx : 0);
     m_organizer_filter->blockSignals(false);
 }
@@ -1297,13 +1310,13 @@ void EmailCalendarDialog::onViewModeChanged(int mode_index) {
 void EmailCalendarDialog::onMonthLabelClicked() {
     QMenu menu(this);
     for (int month = kFirstCalendarMonth; month <= kLastCalendarMonth; ++month) {
-        QDate sample(m_current_date.year(), month, 1);
+        const QDate sample(m_current_date.year(), month, 1);
         auto* action = menu.addAction(sample.toString(QStringLiteral("MMMM")));
         action->setCheckable(true);
         action->setChecked(month == m_current_date.month());
         connect(action, &QAction::triggered, this, [this, month]() {
-            int day = qMin(m_current_date.day(),
-                           QDate(m_current_date.year(), month, 1).daysInMonth());
+            const int day = qMin(m_current_date.day(),
+                                 QDate(m_current_date.year(), month, 1).daysInMonth());
             setCurrentDate(QDate(m_current_date.year(), month, day));
         });
     }
@@ -1312,15 +1325,15 @@ void EmailCalendarDialog::onMonthLabelClicked() {
 
 void EmailCalendarDialog::onYearLabelClicked() {
     constexpr int kYearRange = 5;
-    int current_year = m_current_date.year();
+    const int current_year = m_current_date.year();
     QMenu menu(this);
     for (int year = current_year - kYearRange; year <= current_year + kYearRange; ++year) {
         auto* action = menu.addAction(QString::number(year));
         action->setCheckable(true);
         action->setChecked(year == current_year);
         connect(action, &QAction::triggered, this, [this, year]() {
-            int day = qMin(m_current_date.day(),
-                           QDate(year, m_current_date.month(), 1).daysInMonth());
+            const int day = qMin(m_current_date.day(),
+                                 QDate(year, m_current_date.month(), 1).daysInMonth());
             setCurrentDate(QDate(year, m_current_date.month(), day));
         });
     }
@@ -1388,7 +1401,7 @@ void EmailCalendarDialog::onOrganizerFilterChanged() {
 // ============================================================================
 
 void EmailCalendarDialog::onExportIcsClicked() {
-    QString dir_path =
+    const QString dir_path =
         QFileDialog::getExistingDirectory(this, tr("Select Export Directory for ICS Files"));
     if (dir_path.isEmpty()) {
         return;
@@ -1409,7 +1422,7 @@ void EmailCalendarDialog::onExportIcsClicked() {
 void EmailCalendarDialog::onExportCsvClicked() {
     // The exporter treats output_path as a directory (it appends its own
     // calendar_export.csv), so ask for a directory, not a file name.
-    QString dir_path =
+    const QString dir_path =
         QFileDialog::getExistingDirectory(this, tr("Select Export Directory for Calendar CSV"));
     if (dir_path.isEmpty()) {
         return;
@@ -1459,13 +1472,13 @@ void EmailCalendarDialog::onDayEventListContextMenu(const QPoint& pos) {
     if (item == nullptr) {
         return;
     }
-    int row = item->row();
+    const int row = item->row();
     auto* subj_item = m_day_event_list->item(row, DayColSubject);
     if (subj_item == nullptr) {
         return;
     }
     bool ok = false;
-    uint64_t node_id = subj_item->data(Qt::UserRole).toULongLong(&ok);
+    const uint64_t node_id = subj_item->data(Qt::UserRole).toULongLong(&ok);
     if (!ok) {
         return;
     }
@@ -1702,7 +1715,7 @@ void EmailCalendarDialog::refreshAllViews() {
     for (auto it = m_date_index.constBegin(); it != m_date_index.constEnd(); ++it) {
         QVector<const CalendarEvent*> ptrs;
         ptrs.reserve(it->size());
-        for (int idx : *it) {
+        for (const int idx : *it) {
             ptrs.append(&m_all_events[idx]);
         }
         event_map[it.key()] = std::move(ptrs);
@@ -1727,7 +1740,7 @@ void EmailCalendarDialog::updateNavigationLabel() {
 }
 
 void EmailCalendarDialog::updateStatusLabel() {
-    int total = m_all_events.size();
+    const int total = m_all_events.size();
     int visible = 0;
     for (const auto& evt : m_all_events) {
         if (matchesSearch(evt) && matchesFilter(evt)) {
@@ -1747,8 +1760,8 @@ void EmailCalendarDialog::updateStatusLabel() {
 // ============================================================================
 
 void EmailCalendarDialog::displayEventSummary(const CalendarEvent& evt) {
-    QColor fill = fillColorForStatus(evt.busy_status, evt.item_type);
-    QColor border = borderColorForStatus(evt.busy_status, evt.item_type);
+    const QColor fill = fillColorForStatus(evt.busy_status, evt.item_type);
+    const QColor border = borderColorForStatus(evt.busy_status, evt.item_type);
 
     QString html = QString::fromLatin1(ui::kHtmlCalendarEventDetailOpen)
                        .arg(ui::kHtmlDetailPaddingPx)
@@ -1787,7 +1800,8 @@ void EmailCalendarDialog::displayEventSummary(const CalendarEvent& evt) {
     html += buildAttendeesHtml(evt);
     appendHtmlField(html, QStringLiteral("Recurrence"), evt.recurrence_description);
     if (evt.importance != 1) {
-        QString importance_str = (evt.importance == kHighImportanceValue) ? tr("High") : tr("Low");
+        const QString importance_str = (evt.importance == kHighImportanceValue) ? tr("High")
+                                                                                : tr("Low");
         appendHtmlField(html, QStringLiteral("Importance"), importance_str);
     }
     if (evt.attachment_count > 0) {
@@ -1866,7 +1880,7 @@ void EmailCalendarDialog::populateDayEventList(const QDate& date) {
     });
 
     for (const auto* evt : events) {
-        int row = m_day_event_list->rowCount();
+        const int row = m_day_event_list->rowCount();
         m_day_event_list->insertRow(row);
 
         QString time_str;
@@ -1877,7 +1891,7 @@ void EmailCalendarDialog::populateDayEventList(const QDate& date) {
         }
 
         auto* time_item = new QTableWidgetItem(time_str);
-        QColor fill = fillColorForStatus(evt->busy_status, evt->item_type);
+        const QColor fill = fillColorForStatus(evt->busy_status, evt->item_type);
         time_item->setBackground(fill);
         m_day_event_list->setItem(row, DayColTime, time_item);
 
@@ -1899,7 +1913,7 @@ QVector<const CalendarEvent*> EmailCalendarDialog::eventsForDate(const QDate& da
         return result;
     }
     result.reserve(it->size());
-    for (int idx : *it) {
+    for (const int idx : *it) {
         result.append(&m_all_events[idx]);
     }
     return result;
@@ -1911,7 +1925,7 @@ QVector<const CalendarEvent*> EmailCalendarDialog::eventsInRange(const QDate& fr
     auto it_begin = m_date_index.lowerBound(from);
     auto it_end = m_date_index.upperBound(to);
     for (auto iter = it_begin; iter != it_end; ++iter) {
-        for (int idx : *iter) {
+        for (const int idx : *iter) {
             result.append(&m_all_events[idx]);
         }
     }
@@ -1958,7 +1972,7 @@ bool EmailCalendarDialog::matchesFilter(const CalendarEvent& evt) const {
     }
 
     // Busy-status filter
-    int status = evt.busy_status;
+    const int status = evt.busy_status;
     if (status == email::kCalBusyStatusUnknown) {
         return true;  // Unknown status always shown
     }

@@ -485,7 +485,7 @@ AiPhaseExecution AiOrchestrator::executeToolPhase(const WorkflowPhase& phase,
         return execution;
     }
 
-    CancellationToken phase_token =
+    const CancellationToken phase_token =
         parent_token.isValid() ? parent_token.createChild(QStringLiteral("phase_%1").arg(phase.id))
                                : CancellationToken{};
     QElapsedTimer timer;
@@ -693,7 +693,7 @@ AiPhaseExecution AiOrchestrator::executeWithRecovery(const WorkflowTemplate& wor
     if (execution.success || execution.skipped) {
         return execution;
     }
-    AiRecoveryDecision decision = recoveryDecisionFor(workflow, phase, execution);
+    const AiRecoveryDecision decision = recoveryDecisionFor(workflow, phase, execution);
     attachRecoveryDecision(&execution, decision);
     if (decision.action == AiRecoveryAction::Reassign) {
         return executeReassignmentRecovery(
@@ -806,7 +806,7 @@ void AiOrchestrator::executeParallelGroup(const WorkflowTemplate& workflow,
     ++state->result.parallel_groups_executed;
     std::vector<std::future<AiPhaseExecution>> futures;
     futures.reserve(static_cast<size_t>(work->runnable_positions.size()));
-    for (int slot : work->runnable_positions) {
+    for (const int slot : work->runnable_positions) {
         const int phase_index = work->group->phase_indices.at(slot);
         const WorkflowPhase phase = workflow.phases.at(phase_index);
         futures.emplace_back(
@@ -831,7 +831,7 @@ void AiOrchestrator::executeSerialGroup(const WorkflowTemplate& workflow,
                                         const RunState& state,
                                         GroupWork* work,
                                         const CancellationToken& root_token) const {
-    for (int slot : work->runnable_positions) {
+    for (const int slot : work->runnable_positions) {
         const int phase_index = work->group->phase_indices.at(slot);
         const auto& phase = workflow.phases.at(phase_index);
         if (root_token.isValid() && root_token.isCancellationRequested()) {

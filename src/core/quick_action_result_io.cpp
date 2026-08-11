@@ -101,7 +101,7 @@ bool writeExecutionResultFile(const QString& file_path,
     json.insert("log", result.log);
     json.insert("status", actionStatusToString(status));
 
-    QJsonDocument doc(json);
+    const QJsonDocument doc(json);
 
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -143,7 +143,7 @@ QString loadResultJsonObject(const QString& file_path, QJsonObject* json) {
 
     auto data = file.readAll();
     QJsonParseError parse_error;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parse_error);
     if (doc.isNull() || !doc.isObject()) {
         return QString("Invalid result file JSON: %1").arg(parse_error.errorString());
     }

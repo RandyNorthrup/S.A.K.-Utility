@@ -159,7 +159,7 @@ bool AiTranscriptView::appendMessage(const QString& role, const QString& text, b
 }
 
 bool AiTranscriptView::appendLoadedLine(const QString& line) {
-    QString trimmed = line.trimmed();
+    const QString trimmed = line.trimmed();
     if (trimmed.isEmpty()) {
         return false;
     }
@@ -516,7 +516,7 @@ void AiTranscriptView::clearLayout() {
             widget->deleteLater();
         }
         if (QLayout* child_layout = item->layout()) {
-            while (QLayoutItem* child = child_layout->takeAt(0)) {
+            while (const QLayoutItem* child = child_layout->takeAt(0)) {
                 if (QWidget* child_widget = child->widget()) {
                     child_widget->deleteLater();
                 }

@@ -83,7 +83,7 @@ void renderFolderTree(QTextStream& stream,
     }
 
     for (const auto& folder : folders) {
-        QString indent(indent_level * kFolderTreeIndentSpacesPerLevel, QLatin1Char(' '));
+        const QString indent(indent_level * kFolderTreeIndentSpacesPerLevel, QLatin1Char(' '));
         stream << QStringLiteral("<li>%1 <b>%2</b> (%3 items)")
                       .arg(indent,
                            folder.display_name.toHtmlEscaped(),
@@ -280,7 +280,7 @@ void EmailReportGenerator::renderMetadataSection(QTextStream& stream, const Repo
     if (!data.ticket_number.isEmpty()) {
         stream << tableRow(QStringLiteral("Ticket #"), data.ticket_number);
     }
-    QLocale locale;
+    const QLocale locale;
     // Fail closed on a missing/invalid date: label it Unknown rather than fabricate the
     // current time (which would also disagree with the separately-generated JSON).
     stream << tableRow(QStringLiteral("Report Date"),

@@ -603,7 +603,7 @@ FileRecoveryScanResult FileRecoveryEngine::scanOfflineImage(const FileRecoverySc
 FileRecoveryRestoreResult FileRecoveryEngine::restoreCandidates(
     const FileRecoveryRestoreOptions& options) {
     FileRecoveryRestoreResult result;
-    QFileInfo imageInfo(options.image_path);
+    const QFileInfo imageInfo(options.image_path);
     const auto destination =
         prepareRestoreDestination(imageInfo, options.destination_directory, &result.warnings);
     if (!destination) {

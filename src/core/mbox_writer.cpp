@@ -791,7 +791,7 @@ std::expected<QByteArray, error_code> MboxWriter::formatMboxEntry(
     const QDateTime date = item.date;
 
     // asctime format: "Mon Jan 01 00:00:00 2024"
-    QString date_str = date.toUTC().toString(QStringLiteral("ddd MMM dd HH:mm:ss yyyy"));
+    const QString date_str = date.toUTC().toString(QStringLiteral("ddd MMM dd HH:mm:ss yyyy"));
 
     entry.append("From ");
     // Strip CR/LF/controls from the sender: an unescaped newline here would forge a second From_

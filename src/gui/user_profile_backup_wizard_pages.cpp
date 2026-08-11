@@ -218,7 +218,7 @@ UserProfile* UserProfileBackupCustomizeDataPage::findSelectedUserByRow(int selec
 
 void UserProfileBackupCustomizeDataPage::onCustomizeUser() {
     Q_ASSERT(m_userTable);
-    int selectedRow = m_userTable->currentRow();
+    const int selectedRow = m_userTable->currentRow();
     if (selectedRow < 0) {
         return;
     }
@@ -233,9 +233,10 @@ void UserProfileBackupCustomizeDataPage::onCustomizeUser() {
         return;
     }
 
-    int selectedCount = static_cast<int>(std::count_if(user->folder_selections.begin(),
-                                                       user->folder_selections.end(),
-                                                       [](const auto& f) { return f.selected; }));
+    const int selectedCount =
+        static_cast<int>(std::count_if(user->folder_selections.begin(),
+                                       user->folder_selections.end(),
+                                       [](const auto& f) { return f.selected; }));
     m_userTable->item(selectedRow, 1)->setText(tr("%1 folders selected").arg(selectedCount));
     updateSummary();
 }
@@ -261,7 +262,7 @@ void UserProfileBackupCustomizeDataPage::updateSummary() {
         }
     }
 
-    double totalGB = totalSize / sak::kBytesPerGBf;
+    const double totalGB = totalSize / sak::kBytesPerGBf;
     m_summaryLabel->setText(tr("%1 user(s), %2 total folders | Estimated: %3 GB")
                                 .arg(totalUsers)
                                 .arg(totalFolders)
@@ -430,18 +431,18 @@ void UserProfileBackupSmartFiltersPage::loadFilterSettings() {
     m_enableFolderSizeLimitCheck->setChecked(m_filter.enable_folder_size_limit);
 
     // Load from m_filter (convert bytes to MB/GB for UI)
-    qint64 fileSizeMB = m_filter.max_single_file_size_bytes / sak::kBytesPerMB;
+    const qint64 fileSizeMB = m_filter.max_single_file_size_bytes / sak::kBytesPerMB;
     m_maxFileSizeSpinBox->setValue(static_cast<int>(fileSizeMB));
     m_maxFileSizeSpinBox->setEnabled(m_filter.enable_file_size_limit);
 
-    qint64 folderSizeGB = m_filter.max_folder_size_bytes / sak::kBytesPerGB;
+    const qint64 folderSizeGB = m_filter.max_folder_size_bytes / sak::kBytesPerGB;
     m_maxFolderSizeSpinBox->setValue(static_cast<int>(folderSizeGB));
     m_maxFolderSizeSpinBox->setEnabled(m_filter.enable_folder_size_limit);
 
     // Enable checkboxes based on whether the filter category has any rules defined
-    bool hasCacheRules = !m_filter.exclude_folders.isEmpty();
-    bool hasTempRules = !m_filter.exclude_patterns.isEmpty();
-    bool hasLockRules = !m_filter.dangerous_files.isEmpty();
+    const bool hasCacheRules = !m_filter.exclude_folders.isEmpty();
+    const bool hasTempRules = !m_filter.exclude_patterns.isEmpty();
+    const bool hasLockRules = !m_filter.dangerous_files.isEmpty();
 
     m_excludeCacheCheck->setEnabled(hasCacheRules);
     m_excludeCacheCheck->setChecked(hasCacheRules);
@@ -548,8 +549,8 @@ void UserProfileBackupSmartFiltersPage::updateSummary() {
                                      sak::kBytesPerGB;
 
     // Count total exclusions
-    int exclusionCount = m_filter.dangerous_files.size() + m_filter.exclude_patterns.size() +
-                         m_filter.exclude_folders.size();
+    const int exclusionCount = m_filter.dangerous_files.size() + m_filter.exclude_patterns.size() +
+                               m_filter.exclude_folders.size();
 
     QString limitText;
     if (m_filter.enable_file_size_limit) {
@@ -777,14 +778,14 @@ void UserProfileBackupSettingsPage::setupUi() {
 
 void UserProfileBackupSettingsPage::initializePage() {
     // Suggest default backup location
-    QString defaultPath = QDir::homePath() + "/UserProfileBackup_" +
-                          QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    const QString defaultPath = QDir::homePath() + "/UserProfileBackup_" +
+                                QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     m_destinationEdit->setText(defaultPath);
     updateSummary();
 }
 
 bool UserProfileBackupSettingsPage::confirmExistingDestination(const QString& destination) {
-    QDir destDir(destination);
+    const QDir destDir(destination);
     if (!destDir.exists()) {
         return true;
     }
@@ -860,11 +861,11 @@ bool UserProfileBackupSettingsPage::validatePage() {
 }
 
 void UserProfileBackupSettingsPage::onBrowseDestination() {
-    QString dir = QFileDialog::getExistingDirectory(this,
-                                                    tr("Select Backup Destination"),
-                                                    m_destinationEdit->text().isEmpty()
-                                                        ? QDir::homePath()
-                                                        : m_destinationEdit->text());
+    const QString dir = QFileDialog::getExistingDirectory(this,
+                                                          tr("Select Backup Destination"),
+                                                          m_destinationEdit->text().isEmpty()
+                                                              ? QDir::homePath()
+                                                              : m_destinationEdit->text());
     if (!dir.isEmpty()) {
         m_destinationEdit->setText(dir);
     }
@@ -873,9 +874,9 @@ void UserProfileBackupSettingsPage::onBrowseDestination() {
 void UserProfileBackupSettingsPage::updateSummary() {
     Q_ASSERT(m_destinationEdit);
     Q_ASSERT(m_permissionModeCombo);
-    QString dest = m_destinationEdit->text().isEmpty()
-                       ? tr("Not selected")
-                       : QDir::toNativeSeparators(m_destinationEdit->text());
+    const QString dest = m_destinationEdit->text().isEmpty()
+                             ? tr("Not selected")
+                             : QDir::toNativeSeparators(m_destinationEdit->text());
 
     QString permMode;
     auto currentMode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
@@ -1154,7 +1155,7 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
     m_appTree->clear();
 
     // Use a QPointer so we can detect if the page was destroyed while scanning
-    QPointer<UserProfileBackupInstalledAppsPage> safeThis(this);
+    const QPointer<UserProfileBackupInstalledAppsPage> safeThis(this);
 
     // Run heavy scanning work on a background thread to avoid freezing the UI
     auto* watcher = new QFutureWatcher<QVector<InstalledAppInfo>>(this);
@@ -1257,7 +1258,7 @@ void UserProfileBackupInstalledAppsPage::onItemChanged(QTreeWidgetItem* item, in
 
     // If it's a parent (category) item, propagate to children
     if (item->childCount() > 0) {
-        Qt::CheckState state = item->checkState(0);
+        const Qt::CheckState state = item->checkState(0);
         for (int i = 0; i < item->childCount(); ++i) {
             item->child(i)->setCheckState(0, state);
         }
@@ -1291,7 +1292,7 @@ void UserProfileBackupInstalledAppsPage::commitAppSelection() {
 
 void UserProfileBackupInstalledAppsPage::updateParentCheckState(QTreeWidgetItem* parent) {
     int checkedCount = 0;
-    int totalCount = parent->childCount();
+    const int totalCount = parent->childCount();
 
     for (int i = 0; i < totalCount; ++i) {
         if (parent->child(i)->checkState(0) == Qt::Checked) {
@@ -1353,7 +1354,7 @@ void UserProfileBackupInstalledAppsPage::onSelectNone() {
 /// @brief Calculate size of a file or directory; returns -1 if path doesn't exist
 static qint64 calculateSourceSize(const QString& path, const std::atomic_bool* cancel) {
     Q_ASSERT(!path.isEmpty());
-    QFileInfo info(path);
+    const QFileInfo info(path);
     if (!info.exists()) {
         return -1;
     }
@@ -1411,8 +1412,8 @@ static void parseNetshAdapterField(const QString& trimmed, EthernetConfigInfo& c
         return;
     }
 
-    bool is_dns = trimmed.contains("DNS Server", Qt::CaseInsensitive) ||
-                  trimmed.startsWith("Statically Configured DNS", Qt::CaseInsensitive);
+    const bool is_dns = trimmed.contains("DNS Server", Qt::CaseInsensitive) ||
+                        trimmed.startsWith("Statically Configured DNS", Qt::CaseInsensitive);
     if (is_dns) {
         appendDnsServer(extractValueAfterColon(trimmed), current);
     }
@@ -1727,7 +1728,7 @@ void UserProfileBackupAppDataPage::populateTree(const QVector<AppDataSourceInfo>
             auto* item = new QTreeWidgetItem(categoryItem);
             item->setText(kAppDataColumnName, source->name);
             item->setText(kAppDataColumnPath, source->relative_path);
-            double sizeMB = source->size_bytes / sak::kBytesPerMBf;
+            const double sizeMB = source->size_bytes / sak::kBytesPerMBf;
             item->setText(kAppDataColumnSize,
                           QString("%1 MB").arg(sizeMB, 0, 'f', kAppDataSizeDisplayPrecision));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
@@ -1784,7 +1785,7 @@ void UserProfileBackupAppDataPage::commitAppDataSelection() {
 
 void UserProfileBackupAppDataPage::updateParentCheckState(QTreeWidgetItem* parent) {
     int checkedCount = 0;
-    int totalCount = parent->childCount();
+    const int totalCount = parent->childCount();
 
     for (int i = 0; i < totalCount; ++i) {
         if (parent->child(i)->checkState(0) == Qt::Checked) {
@@ -1835,7 +1836,7 @@ void UserProfileBackupAppDataPage::onItemChanged(QTreeWidgetItem* item, int colu
     m_appDataTree->blockSignals(true);
 
     if (item->childCount() > 0) {
-        Qt::CheckState state = item->checkState(0);
+        const Qt::CheckState state = item->checkState(0);
         for (int i = 0; i < item->childCount(); ++i) {
             item->child(i)->setCheckState(0, state);
         }
@@ -2280,7 +2281,7 @@ void UserProfileBackupEthernetSettingsPage::populateTable(
     m_ethernetTable->setRowCount(0);
 
     for (const auto& config : configs) {
-        int row = m_ethernetTable->rowCount();
+        const int row = m_ethernetTable->rowCount();
         m_ethernetTable->insertRow(row);
 
         auto* checkItem = new QTableWidgetItem();

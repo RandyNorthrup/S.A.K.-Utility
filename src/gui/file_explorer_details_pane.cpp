@@ -49,7 +49,7 @@ FileExplorerDetailsPane::FileExplorerDetailsPane(QWidget* parent) : QWidget(pare
     m_body_layout->addWidget(m_details_scroll, kInfoPaneDetailsStretch);
     root->addLayout(m_body_layout, 1);
 
-    QSettings settings;
+    const QSettings settings;
     const QString saved =
         settings.value(QLatin1String(kInfoPaneSelectedTabKey), QLatin1String(kInfoPaneTabDetails))
             .toString();

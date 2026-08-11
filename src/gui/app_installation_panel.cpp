@@ -79,10 +79,10 @@ AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     sak::logInfo("[AppInstallationPanel] setupConnections complete");
 
     // Initialize Chocolatey on startup
-    QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
+    const QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
     sak::logInfo("[AppInstallationPanel] Initializing Chocolatey from: {}",
                  chocoPath.toStdString());
-    bool init_success = m_choco_manager->initialize(chocoPath);
+    const bool init_success = m_choco_manager->initialize(chocoPath);
     sak::logInfo("[AppInstallationPanel] Chocolatey initialize returned");
     if (!init_success) {
         sak::logWarning("[AppInstallationPanel] Chocolatey initialization failed");
@@ -457,7 +457,7 @@ void AppInstallationPanel::setupWorkerJobConnections() {
             }
 
             auto stats = m_worker->getStats();
-            int completed = stats.success + stats.failed + stats.skipped + stats.cancelled;
+            const int completed = stats.success + stats.failed + stats.skipped + stats.cancelled;
             m_progressBar->setValue(completed);
             m_progressLabel->setText(tr("Installing %1 of %2...").arg(completed).arg(stats.total));
             Q_EMIT progressUpdated(completed, stats.total);
@@ -784,8 +784,8 @@ void AppInstallationPanel::setupOfflineWorkerProgressConnections() {
             &OfflineDeploymentWorker::packageProgress,
             this,
             [this](const QString& pkg_id, bool success, const QString& msg) {
-                QString log_line = success ? QString("[OK] %1: %2").arg(pkg_id, msg)
-                                           : QString("[FAIL] %1: %2").arg(pkg_id, msg);
+                const QString log_line = success ? QString("[OK] %1: %2").arg(pkg_id, msg)
+                                                 : QString("[FAIL] %1: %2").arg(pkg_id, msg);
                 Q_EMIT logOutput(log_line);
             });
 

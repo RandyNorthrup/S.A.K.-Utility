@@ -97,11 +97,11 @@ QByteArray aesEcbTransform(const QByteArray& key, const QByteArray& data, bool e
     if (!isAesKeyLen(key.size()) || data.isEmpty() || (data.size() % 16) != 0) {
         return {};
     }
-    AlgProvider alg(BCRYPT_AES_ALGORITHM);
+    const AlgProvider alg(BCRYPT_AES_ALGORITHM);
     if (!alg.valid() || !setEcbMode(alg.get())) {
         return {};
     }
-    SymKey symKey(alg.get(), key);
+    const SymKey symKey(alg.get(), key);
     if (!symKey.valid()) {
         return {};
     }
@@ -260,7 +260,7 @@ QByteArray pbkdf2Sha256(const QByteArray& password,
     if (keyLength <= 0 || iterations == 0 || iterations > kMaxPbkdf2Iterations) {
         return {};
     }
-    AlgProvider alg(BCRYPT_SHA256_ALGORITHM, BCRYPT_ALG_HANDLE_HMAC_FLAG);
+    const AlgProvider alg(BCRYPT_SHA256_ALGORITHM, BCRYPT_ALG_HANDLE_HMAC_FLAG);
     if (!alg.valid()) {
         return {};
     }
@@ -355,7 +355,7 @@ std::optional<QByteArray> aesKeyUnwrap(const QByteArray& kek, const QByteArray& 
             std::memcpy(r.data() + ((i - 1) * 8), b.constData() + 8, 8);
         }
     }
-    for (char byte : a) {
+    for (const char byte : a) {
         if (static_cast<unsigned char>(byte) != 0xA6) {
             return std::nullopt;  // integrity check failed (wrong key)
         }

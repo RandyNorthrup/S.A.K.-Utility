@@ -58,13 +58,13 @@ void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channe
                      .toStdString());
 
     // Use listid.php to search for builds matching architecture and channel
-    QString searchQuery = buildSearchQuery(arch, channel);
+    const QString searchQuery = buildSearchQuery(arch, channel);
 
     QMap<QString, QString> params;
     params["search"] = searchQuery;
     params["sortByDate"] = "1";
 
-    QNetworkReply* reply = sendApiRequest("/listid.php", params);
+    const QNetworkReply* reply = sendApiRequest("/listid.php", params);
     if (reply) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onBuildsFetchReply);
     }
@@ -82,7 +82,7 @@ void UupDumpApi::listLanguages(const QString& updateId) {
     QMap<QString, QString> params;
     params["id"] = updateId;
 
-    QNetworkReply* reply = sendApiRequest("/listlangs.php", params);
+    const QNetworkReply* reply = sendApiRequest("/listlangs.php", params);
     if (reply) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onLanguagesReply);
     }
@@ -102,7 +102,7 @@ void UupDumpApi::listEditions(const QString& updateId, const QString& lang) {
     params["id"] = updateId;
     params["lang"] = lang;
 
-    QNetworkReply* reply = sendApiRequest("/listeditions.php", params);
+    const QNetworkReply* reply = sendApiRequest("/listeditions.php", params);
     if (reply) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onEditionsReply);
     }
@@ -125,7 +125,7 @@ void UupDumpApi::getFiles(const QString& updateId, const QString& lang, const QS
     params["lang"] = lang;
     params["edition"] = edition;
 
-    QNetworkReply* reply = sendApiRequest("/get.php", params);
+    const QNetworkReply* reply = sendApiRequest("/get.php", params);
     if (reply) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onFilesReply);
     }
@@ -228,18 +228,19 @@ void UupDumpApi::onBuildsFetchReply() {
     reply->deleteLater();
 
     if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg = QString("Network error fetching builds: %1").arg(reply->errorString());
+        const QString errorMsg =
+            QString("Network error fetching builds: %1").arg(reply->errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
-    QByteArray data = reply->readAll();
+    const QByteArray data = reply->readAll();
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg = QString("JSON parse error: %1").arg(parseError.errorString());
+        const QString errorMsg = QString("JSON parse error: %1").arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
@@ -299,19 +300,19 @@ void UupDumpApi::onLanguagesReply() {
     reply->deleteLater();
 
     if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg =
+        const QString errorMsg =
             QString("Network error fetching languages: %1").arg(reply->errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
-    QByteArray data = reply->readAll();
+    const QByteArray data = reply->readAll();
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg =
+        const QString errorMsg =
             QString("JSON parse error in languages response: %1").arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
@@ -327,7 +328,7 @@ void UupDumpApi::onLanguagesReply() {
 
     // langList can be a JSON array ["en-us", ...] or object {"en-us": 1, ...}
     QStringList langCodes;
-    QJsonValue langListVal = response["langList"];
+    const QJsonValue langListVal = response["langList"];
     if (langListVal.isArray()) {
         for (const QJsonValue& val : langListVal.toArray()) {
             langCodes.append(val.toString());
@@ -367,7 +368,8 @@ void UupDumpApi::onEditionsReply() {
     reply->deleteLater();
 
     if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg = QString("Network error fetching editions: %1").arg(reply->errorString());
+        const QString errorMsg =
+            QString("Network error fetching editions: %1").arg(reply->errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
@@ -378,7 +380,7 @@ void UupDumpApi::onEditionsReply() {
         return;
     }
 
-    QStringList editions = parseEditionList(response["editionList"]);
+    const QStringList editions = parseEditionList(response["editionList"]);
 
     QJsonObject editionFancyNames = response["editionFancyNames"].toObject();
     QMap<QString, QString> editionNames;
@@ -407,18 +409,19 @@ void UupDumpApi::onFilesReply() {
     reply->deleteLater();
 
     if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg = QString("Network error fetching files: %1").arg(reply->errorString());
+        const QString errorMsg =
+            QString("Network error fetching files: %1").arg(reply->errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
-    QByteArray data = reply->readAll();
+    const QByteArray data = reply->readAll();
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg =
+        const QString errorMsg =
             QString("JSON parse error in files response: %1").arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
@@ -432,7 +435,7 @@ void UupDumpApi::onFilesReply() {
         return;
     }
 
-    QString updateName = response["updateName"].toString();
+    const QString updateName = response["updateName"].toString();
 
     QList<FileInfo> files;
     if (!collectValidFiles(response["files"].toObject(), files)) {
@@ -573,14 +576,14 @@ bool UupDumpApi::isSafeAria2FileEntry(const FileInfo& info) {
 // here trips the incomplete-set refusal rather than shipping an unfetchable entry.
 bool UupDumpApi::isAcceptableDownloadUrl(const FileInfo& info) {
     // Validate download URL scheme
-    QUrl downloadUrl(info.url);
+    const QUrl downloadUrl(info.url);
     if (!downloadUrl.isValid()) {
         sak::logWarning("Rejected invalid download URL for: " + info.fileName.toStdString());
         return false;
     }
 
-    QString scheme = downloadUrl.scheme().toLower();
-    QString host = downloadUrl.host().toLower();
+    const QString scheme = downloadUrl.scheme().toLower();
+    const QString host = downloadUrl.host().toLower();
     if (scheme == "http" && host.endsWith(".microsoft.com")) {
         // Microsoft's UUP CDN does not support HTTPS -- allow HTTP since
         // every file is integrity-verified via SHA-1 checksums.
@@ -678,10 +681,10 @@ bool UupDumpApi::parseApiResponse(const QByteArray& data,
                                   const QString& context,
                                   QJsonObject& response) {
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg =
+        const QString errorMsg =
             QString("JSON parse error in %1 response: %2").arg(context, parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
@@ -709,8 +712,8 @@ QStringList UupDumpApi::parseEditionList(const QJsonValue& edListVal) const {
 
 bool UupDumpApi::checkApiError(const QJsonObject& response, const QString& context) {
     if (response.contains("error")) {
-        QString errorCode = response["error"].toString();
-        QString errorMsg = QString("UUP dump API error while %1: %2").arg(context, errorCode);
+        const QString errorCode = response["error"].toString();
+        const QString errorMsg = QString("UUP dump API error while %1: %2").arg(context, errorCode);
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return true;

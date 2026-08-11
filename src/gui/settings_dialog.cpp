@@ -147,9 +147,9 @@ QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
     auto* browseButton = new QPushButton(tr("Browse..."));
     browseButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(browseButton, &QPushButton::clicked, this, [this]() {
-        QString dir = QFileDialog::getExistingDirectory(this,
-                                                        tr("Select Backup Location"),
-                                                        m_lastBackupLocation->text());
+        const QString dir = QFileDialog::getExistingDirectory(this,
+                                                              tr("Select Backup Location"),
+                                                              m_lastBackupLocation->text());
         if (!dir.isEmpty()) {
             m_lastBackupLocation->setText(dir);
             onSettingChanged();
@@ -176,9 +176,8 @@ QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
     auto* qaBrowseButton = new QPushButton(tr("Browse..."));
     qaBrowseButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(qaBrowseButton, &QPushButton::clicked, this, [this]() {
-        QString dir = QFileDialog::getExistingDirectory(this,
-                                                        tr("Select Quick Actions Backup Location"),
-                                                        m_quickActionsBackupLocation->text());
+        const QString dir = QFileDialog::getExistingDirectory(
+            this, tr("Select Quick Actions Backup Location"), m_quickActionsBackupLocation->text());
         if (!dir.isEmpty()) {
             m_quickActionsBackupLocation->setText(dir);
             onSettingChanged();
@@ -240,7 +239,7 @@ void SettingsDialog::loadSettings() {
 
     // Quick Actions
     {
-        QSettings qaSettings("SAK", "QuickActions");
+        const QSettings qaSettings("SAK", "QuickActions");
         m_quickActionsBackupLocation->setText(
             qaSettings.value("backup_location", "C:\\SAK_Backups").toString());
         m_quickActionsConfirm->setChecked(

@@ -60,7 +60,7 @@ bool AppActionRegistry::registerAction(const AppActionDescriptor& descriptor,
         return false;
     }
 
-    QWriteLocker lock(&m_lock);
+    const QWriteLocker lock(&m_lock);
     if (m_actions.contains(id)) {
         if (error) {
             *error = QStringLiteral("App action '%1' is already registered").arg(id);
@@ -77,12 +77,12 @@ bool AppActionRegistry::registerAction(const AppActionDescriptor& descriptor,
 }
 
 bool AppActionRegistry::contains(const QString& id) const {
-    QReadLocker lock(&m_lock);
+    const QReadLocker lock(&m_lock);
     return m_actions.contains(id.trimmed());
 }
 
 std::optional<AppActionDescriptor> AppActionRegistry::descriptor(const QString& id) const {
-    QReadLocker lock(&m_lock);
+    const QReadLocker lock(&m_lock);
     const auto it = m_actions.constFind(id.trimmed());
     if (it == m_actions.constEnd()) {
         return std::nullopt;
@@ -91,7 +91,7 @@ std::optional<AppActionDescriptor> AppActionRegistry::descriptor(const QString& 
 }
 
 QVector<AppActionDescriptor> AppActionRegistry::list() const {
-    QReadLocker lock(&m_lock);
+    const QReadLocker lock(&m_lock);
     QVector<AppActionDescriptor> out;
     out.reserve(static_cast<int>(m_actions.size()));
     for (const auto& entry : m_actions) {
@@ -101,7 +101,7 @@ QVector<AppActionDescriptor> AppActionRegistry::list() const {
 }
 
 QJsonArray AppActionRegistry::toJsonCatalog() const {
-    QReadLocker lock(&m_lock);
+    const QReadLocker lock(&m_lock);
     QJsonArray catalog;
     for (const auto& entry : m_actions) {
         catalog.append(appActionDescriptorToJson(entry.descriptor));
@@ -114,7 +114,7 @@ AppActionResult AppActionRegistry::invoke(const QString& id,
                                           QString* error) const {
     AppActionInvoke handler;
     {
-        QReadLocker lock(&m_lock);
+        const QReadLocker lock(&m_lock);
         const auto it = m_actions.constFind(id.trimmed());
         if (it == m_actions.constEnd()) {
             if (error) {
@@ -133,7 +133,7 @@ AppActionResult AppActionRegistry::invoke(const QString& id,
 }
 
 int AppActionRegistry::count() const {
-    QReadLocker lock(&m_lock);
+    const QReadLocker lock(&m_lock);
     return static_cast<int>(m_actions.size());
 }
 

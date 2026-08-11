@@ -775,15 +775,15 @@ void runAttachmentSaves(const QVector<MboxAttachmentPayload>& payloads,
 // per-item errors in the payload, so a partial run is never reported as a full one.
 AppActionResult buildAttachmentSaveResult(const AttachmentSaveTally& tally,
                                           const AttachmentSaveRequest& req) {
-    QJsonObject data{{QStringLiteral("output_dir"), req.output_dir},
-                     {req.id_key, req.id_value},
-                     {QStringLiteral("attachment_total"), req.total},
-                     {QStringLiteral("attachments_attempted"), req.attempted},
-                     {QStringLiteral("saved_count"), tally.saved},
-                     {QStringLiteral("failed_count"), tally.failed},
-                     {QStringLiteral("truncated"), req.truncated},
-                     {QStringLiteral("saved_paths"), tally.saved_paths},
-                     {QStringLiteral("errors"), tally.errors}};
+    const QJsonObject data{{QStringLiteral("output_dir"), req.output_dir},
+                           {req.id_key, req.id_value},
+                           {QStringLiteral("attachment_total"), req.total},
+                           {QStringLiteral("attachments_attempted"), req.attempted},
+                           {QStringLiteral("saved_count"), tally.saved},
+                           {QStringLiteral("failed_count"), tally.failed},
+                           {QStringLiteral("truncated"), req.truncated},
+                           {QStringLiteral("saved_paths"), tally.saved_paths},
+                           {QStringLiteral("errors"), tally.errors}};
     if (tally.failed == 0 && tally.saved == req.attempted) {
         QString msg =
             QStringLiteral("Saved %1 attachment(s) to %2").arg(tally.saved).arg(req.output_dir);
@@ -1157,8 +1157,8 @@ AppActionResult organizeDirectory(const QJsonObject& args) {
     AsyncActionInvocation inv;
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker, target]() {
         const int moved = worker.movedCount();
-        QJsonObject data{{QStringLiteral("target_directory"), target},
-                         {QStringLiteral("files_moved"), moved}};
+        const QJsonObject data{{QStringLiteral("target_directory"), target},
+                               {QStringLiteral("files_moved"), moved}};
         inv.finish(
             {true, QStringLiteral("Organized %1 (%2 file(s) moved)").arg(target).arg(moved), data});
     });
@@ -1538,18 +1538,18 @@ AppActionResult buildRestoreResult(const sak::FileRecoveryRestoreResult& res,
                                    const QString& image_path,
                                    const QString& destination) {
     const int restored = static_cast<int>(res.restored_paths.size());
-    QJsonObject data{{QStringLiteral("image_path"), image_path},
-                     {QStringLiteral("destination_directory"), destination},
-                     {QStringLiteral("requested_count"), requested},
-                     {QStringLiteral("restored_count"), restored},
-                     {QStringLiteral("truncated"), truncated},
-                     {QStringLiteral("source_opened_read_only"), res.source_opened_read_only},
-                     {QStringLiteral("source_not_mutated"), res.source_not_mutated},
-                     {QStringLiteral("source_hash_covered_whole"), res.source_hash_covered_whole},
-                     {QStringLiteral("restored_paths"),
-                      jsonStringArrayCapped(res.restored_paths, kMaxRestoreCandidates)},
-                     {QStringLiteral("warnings"),
-                      jsonStringArrayCapped(res.warnings, kMaxReportedListEntries)}};
+    const QJsonObject data{
+        {QStringLiteral("image_path"), image_path},
+        {QStringLiteral("destination_directory"), destination},
+        {QStringLiteral("requested_count"), requested},
+        {QStringLiteral("restored_count"), restored},
+        {QStringLiteral("truncated"), truncated},
+        {QStringLiteral("source_opened_read_only"), res.source_opened_read_only},
+        {QStringLiteral("source_not_mutated"), res.source_not_mutated},
+        {QStringLiteral("source_hash_covered_whole"), res.source_hash_covered_whole},
+        {QStringLiteral("restored_paths"),
+         jsonStringArrayCapped(res.restored_paths, kMaxRestoreCandidates)},
+        {QStringLiteral("warnings"), jsonStringArrayCapped(res.warnings, kMaxReportedListEntries)}};
     if (restored > 0 && res.source_opened_read_only && res.source_not_mutated &&
         res.source_hash_covered_whole) {
         return {true,
@@ -1794,7 +1794,7 @@ AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
     // Independent of the OS-disk guard: refuse an op the safety validator blocks (the
     // same rules preview_operation reports), so a knowingly-invalid or
     // protected-partition op never reaches the executor.
-    PartitionSafetyValidator validator;
+    const PartitionSafetyValidator validator;
     const PartitionValidationResult validation = validator.validate(inventory, op);
     if (!validation.allowed()) {
         return {false,
@@ -1939,21 +1939,22 @@ QJsonObject uninstallProgramParamsSchema(const QString& name_description) {
 // NOT =default) while its members are still alive, so there is no base-runs-too-late UAF.
 AppActionResult driveUninstallWorker(UninstallWorker& worker, const QString& name, int timeout_ms) {
     AsyncActionInvocation inv(timeout_ms);
-    QObject::connect(
-        &worker,
-        &UninstallWorker::uninstallComplete,
-        inv.context(),
-        [&inv, name](const UninstallReport& report) {
-            const bool ok = report.uninstallResult == UninstallReport::UninstallResult::Success;
-            QJsonObject data{{QStringLiteral("program"), name},
+    QObject::connect(&worker,
+                     &UninstallWorker::uninstallComplete,
+                     inv.context(),
+                     [&inv, name](const UninstallReport& report) {
+                         const bool ok = report.uninstallResult ==
+                                         UninstallReport::UninstallResult::Success;
+                         const QJsonObject data{
+                             {QStringLiteral("program"), name},
                              {QStringLiteral("result"),
                               ok ? QStringLiteral("success") : QStringLiteral("failed")},
                              {QStringLiteral("leftovers_found"), report.foundLeftovers.size()}};
-            inv.finish({ok,
-                        ok ? QStringLiteral("Uninstalled '%1'").arg(name)
-                           : QStringLiteral("Uninstall of '%1' failed").arg(name),
-                        data});
-        });
+                         inv.finish({ok,
+                                     ok ? QStringLiteral("Uninstalled '%1'").arg(name)
+                                        : QStringLiteral("Uninstall of '%1' failed").arg(name),
+                                     data});
+                     });
     QObject::connect(
         &worker, &WorkerBase::failed, inv.context(), [&inv, name](int, const QString& error) {
             inv.finish(
@@ -2195,17 +2196,17 @@ struct CleanupTally {
 // the cleaned count.
 AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
     const bool ok = tally.failed == 0;
-    QJsonObject data{{QStringLiteral("items_total"), items_total},
-                     {QStringLiteral("succeeded"), tally.succeeded},
-                     {QStringLiteral("failed"), tally.failed},
-                     {QStringLiteral("reboot_pending_count"), tally.reboot_paths.size()},
-                     {QStringLiteral("reboot_pending"),
-                      jsonStringArrayCapped(tally.reboot_paths, kMaxReportedListEntries)},
-                     {QStringLiteral("permanently_deleted_count"),
-                      tally.recycle_fallback_paths.size()},
-                     {QStringLiteral("permanently_deleted"),
-                      jsonStringArrayCapped(tally.recycle_fallback_paths, kMaxReportedListEntries)},
-                     {QStringLiteral("items"), tally.per_item}};
+    const QJsonObject data{
+        {QStringLiteral("items_total"), items_total},
+        {QStringLiteral("succeeded"), tally.succeeded},
+        {QStringLiteral("failed"), tally.failed},
+        {QStringLiteral("reboot_pending_count"), tally.reboot_paths.size()},
+        {QStringLiteral("reboot_pending"),
+         jsonStringArrayCapped(tally.reboot_paths, kMaxReportedListEntries)},
+        {QStringLiteral("permanently_deleted_count"), tally.recycle_fallback_paths.size()},
+        {QStringLiteral("permanently_deleted"),
+         jsonStringArrayCapped(tally.recycle_fallback_paths, kMaxReportedListEntries)},
+        {QStringLiteral("items"), tally.per_item}};
     QString message =
         ok ? QStringLiteral("Cleaned %1 leftover item(s)").arg(tally.succeeded)
            : QStringLiteral("Cleaned %1 item(s); %2 failed").arg(tally.succeeded).arg(tally.failed);
@@ -3108,9 +3109,9 @@ AppActionResult connectWifi(const QJsonObject& args) {
     const bool hidden = args.value(QStringLiteral("hidden")).toBool(false);
 
     const sak::WifiConnectResult res = sak::connectWifiWindows(ssid, password, security, hidden);
-    QJsonObject data{{QStringLiteral("ssid"), ssid},
-                     {QStringLiteral("profile_added"), res.profile_added},
-                     {QStringLiteral("connect_issued"), res.connect_issued}};
+    const QJsonObject data{{QStringLiteral("ssid"), ssid},
+                           {QStringLiteral("profile_added"), res.profile_added},
+                           {QStringLiteral("connect_issued"), res.connect_issued}};
     if (!res.profile_added) {
         return {false, QStringLiteral("Could not connect to '%1': %2").arg(ssid, res.error), data};
     }
@@ -3238,16 +3239,16 @@ constexpr qint64 kMaxConvertSourceBytes = 2LL * 1024 * 1024 * 1024;
 AppActionResult buildConvertResult(const OstConversionResult& result,
                                    const QString& output_dir,
                                    const QString& error_text) {
-    QJsonObject data{{QStringLiteral("output_directory"), output_dir},
-                     {QStringLiteral("format"), QStringLiteral("mbox")},
-                     {QStringLiteral("items_converted"), result.items_converted},
-                     {QStringLiteral("items_failed"), result.items_failed},
-                     {QStringLiteral("items_recovered"), result.items_recovered},
-                     {QStringLiteral("folders_processed"), result.folders_processed},
-                     {QStringLiteral("bytes_written"), static_cast<double>(result.bytes_written)},
-                     {QStringLiteral("error_count"), static_cast<int>(result.errors.size())},
-                     {QStringLiteral("errors"),
-                      jsonStringArrayCapped(result.errors, kMaxReportedListEntries)}};
+    const QJsonObject data{
+        {QStringLiteral("output_directory"), output_dir},
+        {QStringLiteral("format"), QStringLiteral("mbox")},
+        {QStringLiteral("items_converted"), result.items_converted},
+        {QStringLiteral("items_failed"), result.items_failed},
+        {QStringLiteral("items_recovered"), result.items_recovered},
+        {QStringLiteral("folders_processed"), result.folders_processed},
+        {QStringLiteral("bytes_written"), static_cast<double>(result.bytes_written)},
+        {QStringLiteral("error_count"), static_cast<int>(result.errors.size())},
+        {QStringLiteral("errors"), jsonStringArrayCapped(result.errors, kMaxReportedListEntries)}};
     // Honest + export-aligned (buildExportResult): a run that WROTE files is a success even if some
     // non-fatal item errors were logged (a dropped attachment, one unreadable folder) -- those are
     // surfaced as warnings in the payload + message, NOT treated as total failure. Failure only
@@ -3445,7 +3446,7 @@ QJsonArray clampStringList(const QStringList& values, int max) {
 // are the value channel (a failed op reports ok=false with the reason), so this never invents
 // success: a compress/extract that hit any blocker is a failure.
 AppActionResult buildArchiveResult(const FileExplorerArchiveResult& res, const QString& verb) {
-    QJsonObject data{
+    const QJsonObject data{
         {QStringLiteral("output_path"), res.output_path},
         {QStringLiteral("entries"), res.entries},
         {QStringLiteral("blocker_count"), static_cast<int>(res.blockers.size())},
@@ -3819,9 +3820,9 @@ AppActionResult deleteToRecycleBin(const QJsonObject& args) {
                     .arg(name),
                 {}};
     }
-    QJsonObject data{{QStringLiteral("path"), canonical},
-                     {QStringLiteral("was_directory"), was_directory},
-                     {QStringLiteral("recycled"), true}};
+    const QJsonObject data{{QStringLiteral("path"), canonical},
+                           {QStringLiteral("was_directory"), was_directory},
+                           {QStringLiteral("recycled"), true}};
     return {true, QStringLiteral("Moved %1 to the Recycle Bin").arg(name), data};
 }
 

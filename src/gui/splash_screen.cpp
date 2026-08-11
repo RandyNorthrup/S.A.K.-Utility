@@ -81,7 +81,7 @@ SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent)
 }
 
 void SplashScreen::showCentered() {
-    if (QScreen* screen = QGuiApplication::primaryScreen()) {
+    if (const QScreen* screen = QGuiApplication::primaryScreen()) {
         const QRect screen_geometry = screen->availableGeometry();
         move(screen_geometry.center() - rect().center());
     }
@@ -109,7 +109,7 @@ void SplashScreen::paintEvent(QPaintEvent* event) {
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     const int padding = m_shadow_radius + m_shadow_offset;
-    QRect content_rect = rect().adjusted(padding, padding, -padding, -padding);
+    const QRect content_rect = rect().adjusted(padding, padding, -padding, -padding);
 
     QPainterPath shadow_path;
     shadow_path.addRoundedRect(content_rect, m_corner_radius, m_corner_radius);
@@ -118,7 +118,7 @@ void SplashScreen::paintEvent(QPaintEvent* event) {
     // Drop shadow
     QPainterPath shadow;
     shadow.addRoundedRect(content_rect, m_corner_radius, m_corner_radius);
-    QColor shadow_color(
+    const QColor shadow_color(
         kSplashShadowRed, kSplashShadowGreen, kSplashShadowBlue, kSplashShadowAlpha);
     for (int i = 0; i < m_shadow_radius; ++i) {
         QColor c = shadow_color;

@@ -112,11 +112,11 @@ void UserProfileRestoreWelcomePage::setupUi() {
 
 void UserProfileRestoreWelcomePage::onBrowseBackup() {
     Q_ASSERT(m_backupPathEdit);
-    QString path = QFileDialog::getExistingDirectory(this,
-                                                     tr("Select Backup Directory"),
-                                                     QDir::homePath(),
-                                                     QFileDialog::ShowDirsOnly |
-                                                         QFileDialog::DontResolveSymlinks);
+    const QString path = QFileDialog::getExistingDirectory(this,
+                                                           tr("Select Backup Directory"),
+                                                           QDir::homePath(),
+                                                           QFileDialog::ShowDirsOnly |
+                                                               QFileDialog::DontResolveSymlinks);
 
     if (!path.isEmpty()) {
         m_backupPathEdit->setText(path);
@@ -126,7 +126,7 @@ void UserProfileRestoreWelcomePage::onBrowseBackup() {
 void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     Q_ASSERT(m_backupPathEdit);
     Q_ASSERT(m_manifestInfoLabel);
-    QString path = m_backupPathEdit->text();
+    const QString path = m_backupPathEdit->text();
 
     // Drop any backup/manifest previously stored in the wizard. A path that is empty,
     // invalid, or fails to load must not leave a stale valid manifest from an earlier
@@ -146,7 +146,7 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     }
 
     // Try to load manifest
-    QFileInfo fileInfo(path);
+    const QFileInfo fileInfo(path);
     QString manifestPath;
 
     if (fileInfo.isDir()) {
@@ -165,7 +165,7 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     }
 
     // Load manifest
-    BackupManifest manifest = BackupManifest::loadFromFile(manifestPath);
+    const BackupManifest manifest = BackupManifest::loadFromFile(manifestPath);
     if (manifest.version.isEmpty()) {
         clearStoredBackup();
         m_manifestInfoLabel->setText(
@@ -183,20 +183,21 @@ void UserProfileRestoreWelcomePage::showLoadedManifest(const BackupManifest& man
     // version/source_machine are read straight out of the selected backup's manifest.json, which
     // anyone who can hand the technician a .sakbackup controls. This label is explicitly
     // Qt::RichText (setupUi), so both must be escaped before they enter the template.
-    QString info = QString(
-                       "<b>[OK] Valid Backup Found</b><br>"
-                       "<b>Version:</b> %1<br>"
-                       "<b>Created:</b> %2<br>"
-                       "<b>Source Machine:</b> %3<br>"
-                       "<b>Users:</b> %4<br>"
-                       "<b>Total Size:</b> %5 GB")
-                       .arg(manifest.version.toHtmlEscaped(),
-                            manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
-                            manifest.source_machine.toHtmlEscaped(),
-                            QString::number(manifest.users.size()),
-                            QString::number(manifest.total_backup_size_bytes / sak::kBytesPerGBf,
-                                            'f',
-                                            kBackupSizeGbDisplayPrecision));
+    const QString info =
+        QString(
+            "<b>[OK] Valid Backup Found</b><br>"
+            "<b>Version:</b> %1<br>"
+            "<b>Created:</b> %2<br>"
+            "<b>Source Machine:</b> %3<br>"
+            "<b>Users:</b> %4<br>"
+            "<b>Total Size:</b> %5 GB")
+            .arg(manifest.version.toHtmlEscaped(),
+                 manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
+                 manifest.source_machine.toHtmlEscaped(),
+                 QString::number(manifest.users.size()),
+                 QString::number(manifest.total_backup_size_bytes / sak::kBytesPerGBf,
+                                 'f',
+                                 kBackupSizeGbDisplayPrecision));
 
     m_manifestInfoLabel->setText(info);
     m_manifestInfoLabel->show();

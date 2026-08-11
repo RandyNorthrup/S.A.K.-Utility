@@ -502,8 +502,8 @@ QString LinuxDistroCatalog::resolveFileName(const DistroInfo& distro) const {
     if (distro.sourceType == SourceType::GitHubRelease) {
         auto url = m_githubAssetUrls.find(distro.id);
         if (url != m_githubAssetUrls.end()) {
-            QString path = QUrl(*url).path();
-            int lastSlash = path.lastIndexOf('/');
+            const QString path = QUrl(*url).path();
+            const int lastSlash = path.lastIndexOf('/');
             if (lastSlash >= 0) {
                 return path.mid(lastSlash + 1);
             }
@@ -548,10 +548,10 @@ void LinuxDistroCatalog::checkLatestVersion(const QString& distroId) {
         return;
     }
 
-    QString apiUrl = QString("https://api.github.com/repos/%1/%2/releases/latest")
-                         .arg(distro.githubOwner, distro.githubRepo);
+    const QString apiUrl = QString("https://api.github.com/repos/%1/%2/releases/latest")
+                               .arg(distro.githubOwner, distro.githubRepo);
 
-    QUrl requestUrl(apiUrl);
+    const QUrl requestUrl(apiUrl);
     QNetworkRequest request(requestUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Accept", "application/vnd.github+json");
@@ -583,27 +583,27 @@ void LinuxDistroCatalog::onGitHubReleaseReply() {
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
 
-    QString distroId = reply->property("distroId").toString();
+    const QString distroId = reply->property("distroId").toString();
 
     if (reply->error() != QNetworkReply::NoError) {
-        QString error = QString("GitHub API error: %1").arg(reply->errorString());
+        const QString error = QString("GitHub API error: %1").arg(reply->errorString());
         sak::logWarning(error.toStdString());
         Q_EMIT versionCheckFailed(distroId, error);
         return;
     }
 
-    QByteArray data = reply->readAll();
+    const QByteArray data = reply->readAll();
     if (data.size() > kMaxGitHubReleaseBytes) {
-        QString error = QStringLiteral("GitHub API response exceeds size cap");
+        const QString error = QStringLiteral("GitHub API response exceeds size cap");
         sak::logWarning(error.toStdString());
         Q_EMIT versionCheckFailed(distroId, error);
         return;
     }
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString error = "Failed to parse GitHub API response: " + parseError.errorString();
+        const QString error = "Failed to parse GitHub API response: " + parseError.errorString();
         sak::logWarning(error.toStdString());
         Q_EMIT versionCheckFailed(distroId, error);
         return;
@@ -619,10 +619,10 @@ void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId, const QJson
     }
 
     DistroInfo& distro = m_distros[*it];
-    QString oldVersion = distro.version;
+    const QString oldVersion = distro.version;
 
     // Extract version from tag_name
-    QString tagName = release["tag_name"].toString();
+    const QString tagName = release["tag_name"].toString();
     if (tagName.isEmpty()) {
         Q_EMIT versionCheckFailed(distroId, "GitHub release has no tag_name");
         return;
@@ -632,7 +632,7 @@ void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId, const QJson
     // mutating anything when no asset matches, so a failed resolution leaves the entry wholly
     // unchanged. Committing the version first would pair the new version with a prior release's
     // cached asset URL/size/checksum (partial-mutation / stale-asset).
-    QJsonArray assets = release["assets"].toArray();
+    const QJsonArray assets = release["assets"].toArray();
     QString matchedName;
     if (!resolveGitHubAsset(distroId, distro, assets, matchedName)) {
         sak::logWarning("No matching asset found for " + distroId.toStdString() +
@@ -643,7 +643,7 @@ void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId, const QJson
 
     // A matching asset is now pinned; commit the new version.
     distro.version = tagName;
-    bool changed = (oldVersion != distro.version);
+    const bool changed = (oldVersion != distro.version);
     sak::logInfo("Version check for " + distroId.toStdString() + ": " + tagName.toStdString() +
                  (changed ? " (UPDATED)" : " (unchanged)") +
                  " asset: " + matchedName.toStdString());
@@ -655,14 +655,14 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
                                             DistroInfo& distro,
                                             const QJsonArray& assets,
                                             QString& matchedName) {
-    QRegularExpression assetRegex(distro.githubAssetPattern,
-                                  QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression assetRegex(distro.githubAssetPattern,
+                                        QRegularExpression::CaseInsensitiveOption);
     QString matchedUrl;
     qint64 matchedSize = 0;
 
     for (const auto& assetVal : assets) {
         QJsonObject asset = assetVal.toObject();
-        QString name = asset["name"].toString();
+        const QString name = asset["name"].toString();
         if (assetRegex.match(name).hasMatch()) {
             matchedUrl = asset["browser_download_url"].toString();
             matchedSize = asset["size"].toInteger();
@@ -715,7 +715,7 @@ void LinuxDistroCatalog::cacheChecksumSidecar(const QString& distroId,
     const QString sidecarName = matchedName + "." + checksumType.toLower();
     for (const auto& assetVal : assets) {
         QJsonObject asset = assetVal.toObject();
-        QString name = asset["name"].toString();
+        const QString name = asset["name"].toString();
         if (name == sidecarName) {
             const QString url = asset["browser_download_url"].toString();
             // Reject a non-HTTPS or malformed sidecar URL rather than caching it.

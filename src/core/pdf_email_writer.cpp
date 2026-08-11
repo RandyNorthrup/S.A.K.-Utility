@@ -66,10 +66,10 @@ bool subfolderEscapes(const QString& output_dir, const QString& target_dir) {
 /// Render the message HTML into an open QSaveFile via QPdfWriter/QTextDocument.
 void renderPdfDocument(QSaveFile& out_file, const QString& html, const PstItemDetail& item) {
     QPdfWriter writer(&out_file);
-    QPageLayout layout(QPageSize(QPageSize::Letter),
-                       QPageLayout::Portrait,
-                       QMarginsF(kPdfMarginMm, kPdfMarginMm, kPdfMarginMm, kPdfMarginMm),
-                       QPageLayout::Millimeter);
+    const QPageLayout layout(QPageSize(QPageSize::Letter),
+                             QPageLayout::Portrait,
+                             QMarginsF(kPdfMarginMm, kPdfMarginMm, kPdfMarginMm, kPdfMarginMm),
+                             QPageLayout::Millimeter);
     writer.setPageLayout(layout);
     writer.setResolution(kPdfDpi);
     writer.setTitle(item.subject);
@@ -129,7 +129,7 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
     const QString full_path = resolveCollisionPath(*target_dir, filename);
 
     // Build HTML content for the PDF
-    QString html_content = buildHtmlForPdf(item, attachment_data);
+    const QString html_content = buildHtmlForPdf(item, attachment_data);
 
     // Render via QPdfWriter into a QSaveFile so a locked/read-only destination
     // fails loudly instead of leaving a stale file that exists()-based success
@@ -185,7 +185,7 @@ std::expected<QString, error_code> PdfEmailWriter::resolveTargetDirectory(
         }
     }
 
-    QDir dir(target_dir);
+    const QDir dir(target_dir);
     if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
         return std::unexpected(error_code::write_error);
     }
@@ -243,11 +243,11 @@ QString PdfEmailWriter::buildHtmlForPdf(
         // hard guarantee against local-file disclosure, this removes script/handlers as well.
         QString body = sanitizeEmailBodyHtml(item.body_html);
         // Strip outer html/head/body tags if present and use inner content
-        int body_start = body.indexOf(QStringLiteral("<body"), Qt::CaseInsensitive);
+        const int body_start = body.indexOf(QStringLiteral("<body"), Qt::CaseInsensitive);
         if (body_start >= 0) {
-            int close = body.indexOf(QStringLiteral(">"), body_start);
+            const int close = body.indexOf(QStringLiteral(">"), body_start);
             if (close >= 0) {
-                int body_end = body.indexOf(QStringLiteral("</body>"), Qt::CaseInsensitive);
+                const int body_end = body.indexOf(QStringLiteral("</body>"), Qt::CaseInsensitive);
                 if (body_end > close) {
                     body = body.mid(close + 1, body_end - close - 1);
                 }

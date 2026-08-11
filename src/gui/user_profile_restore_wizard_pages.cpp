@@ -147,12 +147,12 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
         return;
     }
 
-    BackupManifest manifest = wiz->manifest();
+    const BackupManifest manifest = wiz->manifest();
 
     m_mappingTable->setRowCount(0);
 
     for (const auto& backupUser : manifest.users) {
-        int row = m_mappingTable->rowCount();
+        const int row = m_mappingTable->rowCount();
         m_mappingTable->insertRow(row);
 
         // Checkbox
@@ -207,7 +207,7 @@ void UserProfileRestoreUserMappingPage::onAutoMap() {
         return;
     }
 
-    BackupManifest manifest = wiz->manifest();
+    const BackupManifest manifest = wiz->manifest();
 
     for (int row = 0; row < m_mappingTable->rowCount(); ++row) {
         auto* destCombo =
@@ -216,8 +216,8 @@ void UserProfileRestoreUserMappingPage::onAutoMap() {
             continue;
         }
 
-        QString sourceUsername = m_mappingTable->item(row, 1)->text();
-        int matchIndex = destCombo->findText(sourceUsername);
+        const QString sourceUsername = m_mappingTable->item(row, 1)->text();
+        const int matchIndex = destCombo->findText(sourceUsername);
         if (matchIndex >= 0) {
             destCombo->setCurrentIndex(matchIndex);
         }
@@ -235,7 +235,7 @@ void UserProfileRestoreUserMappingPage::onMappingChanged(int row, int column) {
 void UserProfileRestoreUserMappingPage::updateSummary() {
     Q_ASSERT(m_summaryLabel);
     Q_ASSERT(m_mappingTable);
-    int totalMappings = m_mappingTable->rowCount();
+    const int totalMappings = m_mappingTable->rowCount();
     int selectedMappings = 0;
     int newUsers = 0;
     int merges = 0;
@@ -311,7 +311,7 @@ bool UserProfileRestoreUserMappingPage::validatePage() {
         return false;
     }
 
-    BackupManifest manifest = wiz->manifest();
+    const BackupManifest manifest = wiz->manifest();
     QVector<UserMapping> mappings;
 
     for (int row = 0; row < m_mappingTable->rowCount(); ++row) {
@@ -388,16 +388,16 @@ void UserProfileRestoreMergeConfigPage::loadMergeTable() {
         return;
     }
 
-    QVector<UserMapping> mappings = wiz->userMappings();
+    const QVector<UserMapping> mappings = wiz->userMappings();
 
     m_mergeTable->setRowCount(0);
 
     for (const auto& mapping : mappings) {
-        int row = m_mergeTable->rowCount();
+        const int row = m_mergeTable->rowCount();
         m_mergeTable->insertRow(row);
 
         // Mapping info
-        QString mappingText =
+        const QString mappingText =
             mapping.destination_username.isEmpty()
                 ? tr("%1 -> (New User)").arg(mapping.source_username)
                 : tr("%1 -> %2").arg(mapping.source_username, mapping.destination_username);
@@ -450,7 +450,7 @@ void UserProfileRestoreMergeConfigPage::updateSummary() {
     int newCount = 0;
 
     for (int row = 0; row < m_mergeTable->rowCount(); ++row) {
-        QString modeText = m_mergeTable->item(row, 1)->text();
+        const QString modeText = m_mergeTable->item(row, 1)->text();
 
         if (modeText.contains("Replace", Qt::CaseInsensitive)) {
             replaceCount++;
@@ -565,7 +565,7 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
     }
 
     BackupManifest manifest = wiz->manifest();
-    QVector<UserMapping> mappings = wiz->userMappings();
+    const QVector<UserMapping> mappings = wiz->userMappings();
 
     m_folderTable->setRowCount(0);
 
@@ -579,7 +579,7 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
         }
 
         for (const auto& folder : userIt->backed_up_folders) {
-            int row = m_folderTable->rowCount();
+            const int row = m_folderTable->rowCount();
             m_folderTable->insertRow(row);
 
             // Checkbox. Stash the folder's relative path so validatePage can
@@ -601,7 +601,7 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
             m_folderTable->setItem(row, kFolderColumnFolder, folderItem);
 
             // Size
-            double sizeMB = folder.size_bytes / sak::kBytesPerMBf;
+            const double sizeMB = folder.size_bytes / sak::kBytesPerMBf;
             auto* sizeItem = new QTableWidgetItem(
                 QString("%1 MB").arg(sizeMB, 0, 'f', kMegabyteDisplayPrecision));
             sizeItem->setFlags(sizeItem->flags() & ~Qt::ItemIsEditable);
@@ -638,7 +638,7 @@ void UserProfileRestoreFolderSelectionPage::onFolderSelectionChanged(int row, in
 void UserProfileRestoreFolderSelectionPage::updateSummary() {
     Q_ASSERT(m_summaryLabel);
     Q_ASSERT(m_folderTable);
-    int totalFolders = m_folderTable->rowCount();
+    const int totalFolders = m_folderTable->rowCount();
     int selectedFolders = 0;
     qint64 totalSize = 0;
     int totalFiles = 0;
@@ -655,7 +655,7 @@ void UserProfileRestoreFolderSelectionPage::updateSummary() {
         }
     }
 
-    double totalGB = totalSize / sak::kBytesPerGBf;
+    const double totalGB = totalSize / sak::kBytesPerGBf;
 
     m_summaryLabel->setText(tr("Selected: %1 of %2 folders | %3 files | %4 GB")
                                 .arg(selectedFolders)
@@ -878,7 +878,7 @@ void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo
 
     QMap<QString, QVector<const AppDataSourceInfo*>> categories;
     for (const auto& source : sources) {
-        QString cat = source.category.isEmpty() ? tr("Other") : source.category;
+        const QString cat = source.category.isEmpty() ? tr("Other") : source.category;
         categories[cat].append(&source);
     }
 
@@ -895,7 +895,7 @@ void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo
             auto* item = new QTreeWidgetItem(categoryItem);
             item->setText(0, source->name);
             item->setText(1, source->relative_path);
-            double sizeMB = source->size_bytes / sak::kBytesPerMBf;
+            const double sizeMB = source->size_bytes / sak::kBytesPerMBf;
             item->setText(kTreeDetailColumn,
                           QString("%1 MB").arg(sizeMB, 0, 'f', kMegabyteDisplayPrecision));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
@@ -917,7 +917,7 @@ void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo
 
 void UserProfileRestoreAppDataPage::updateParentCheckState(QTreeWidgetItem* parent) {
     int checkedCount = 0;
-    int totalCount = parent->childCount();
+    const int totalCount = parent->childCount();
 
     for (int i = 0; i < totalCount; ++i) {
         if (parent->child(i)->checkState(0) == Qt::Checked) {
@@ -944,7 +944,7 @@ void UserProfileRestoreAppDataPage::onItemChanged(QTreeWidgetItem* item, int col
     m_appDataTree->blockSignals(true);
 
     if (item->childCount() > 0) {
-        Qt::CheckState state = item->checkState(0);
+        const Qt::CheckState state = item->checkState(0);
         for (int i = 0; i < item->childCount(); ++i) {
             item->child(i)->setCheckState(0, state);
         }
@@ -1187,7 +1187,7 @@ void UserProfileRestoreNetworksPage::onItemChanged(QTreeWidgetItem* item, int co
     }
 
     int selected = 0;
-    int total = m_networkTree->topLevelItemCount();
+    const int total = m_networkTree->topLevelItemCount();
     for (int i = 0; i < total; ++i) {
         if (m_networkTree->topLevelItem(i)->checkState(0) == Qt::Checked) {
             selected++;
@@ -1382,7 +1382,7 @@ void UserProfileRestoreEthernetPage::populateTable(const QVector<EthernetConfigI
     m_ethernetTable->setRowCount(0);
 
     for (const auto& config : configs) {
-        int row = m_ethernetTable->rowCount();
+        const int row = m_ethernetTable->rowCount();
         m_ethernetTable->insertRow(row);
 
         auto* checkItem = new QTableWidgetItem();
@@ -1418,7 +1418,7 @@ void UserProfileRestoreEthernetPage::populateTable(const QVector<EthernetConfigI
         m_ethernetTable->setItem(row, kEthernetColumnDns, dnsItem);
     }
 
-    int total = m_ethernetTable->rowCount();
+    const int total = m_ethernetTable->rowCount();
     m_summaryLabel->setText(tr("%1 ethernet configuration(s) selected for restore").arg(total));
 }
 
@@ -1551,11 +1551,12 @@ void UserProfileRestorePermissionSettingsPage::onSettingsChanged() {
 void UserProfileRestorePermissionSettingsPage::updateSummary() {
     Q_ASSERT(m_permissionModeCombo);
     Q_ASSERT(m_conflictResolutionCombo);
-    QString permMode = m_permissionModeCombo->currentText();
-    QString conflictMode = m_conflictResolutionCombo->currentText();
+    const QString permMode = m_permissionModeCombo->currentText();
+    const QString conflictMode = m_conflictResolutionCombo->currentText();
 
     QString warning;
-    PermissionMode mode = static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
+    const PermissionMode mode =
+        static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
 
     if (mode == PermissionMode::PreserveOriginal) {
         warning = tr(
@@ -1569,18 +1570,18 @@ void UserProfileRestorePermissionSettingsPage::updateSummary() {
         warning = tr("(i) <b>Info:</b> Files will be owned by the destination user.");
     }
 
-    QString summary = QString(
-                          "<b>Configuration Summary:</b><br>"
-                          "* Permission Mode: %1<br>"
-                          "* Conflict Resolution: %2<br>"
-                          "* Verify Integrity: %3<br>"
-                          "* Backup Existing: %4<br><br>"
-                          "%5")
-                          .arg(permMode,
-                               conflictMode,
-                               m_verifyCheckBox->isChecked() ? tr("Yes") : tr("No"),
-                               m_createBackupCheckBox->isChecked() ? tr("Yes") : tr("No"),
-                               warning);
+    const QString summary = QString(
+                                "<b>Configuration Summary:</b><br>"
+                                "* Permission Mode: %1<br>"
+                                "* Conflict Resolution: %2<br>"
+                                "* Verify Integrity: %3<br>"
+                                "* Backup Existing: %4<br><br>"
+                                "%5")
+                                .arg(permMode,
+                                     conflictMode,
+                                     m_verifyCheckBox->isChecked() ? tr("Yes") : tr("No"),
+                                     m_createBackupCheckBox->isChecked() ? tr("Yes") : tr("No"),
+                                     warning);
 
     m_summaryLabel->setText(summary);
 }
@@ -1735,7 +1736,7 @@ void UserProfileRestoreAppRestorePage::loadApps() {
         return;
     }
 
-    QString appsFilePath = wiz->backupPath() + "/installed_apps.json";
+    const QString appsFilePath = wiz->backupPath() + "/installed_apps.json";
     QFile file(appsFilePath);
     if (!file.open(QIODevice::ReadOnly)) {
         m_statusLabel->setText(
@@ -1744,7 +1745,7 @@ void UserProfileRestoreAppRestorePage::loadApps() {
         return;
     }
 
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
     file.close();
 
     if (!doc.isArray()) {
@@ -1752,7 +1753,7 @@ void UserProfileRestoreAppRestorePage::loadApps() {
         return;
     }
 
-    QJsonArray appsArray = doc.array();
+    const QJsonArray appsArray = doc.array();
     m_apps.clear();
     m_apps.reserve(appsArray.size());
 
@@ -1837,7 +1838,7 @@ void UserProfileRestoreAppRestorePage::populateTree(const QVector<RestoreAppInfo
     // Group by category
     QMap<QString, QVector<const RestoreAppInfo*>> categories;
     for (const auto& app : apps) {
-        QString cat = app.category.isEmpty() ? tr("Other") : app.category;
+        const QString cat = app.category.isEmpty() ? tr("Other") : app.category;
         categories[cat].append(&app);
     }
 
@@ -1849,7 +1850,7 @@ void UserProfileRestoreAppRestorePage::populateTree(const QVector<RestoreAppInfo
         categoryItem->setText(0, it.key());
         categoryItem->setFlags(categoryItem->flags() | Qt::ItemIsUserCheckable);
 
-        int catSelected = populateCategoryApps(categoryItem, it.value(), totalWithPackage);
+        const int catSelected = populateCategoryApps(categoryItem, it.value(), totalWithPackage);
         totalSelected += catSelected;
 
         // Set parent check state
@@ -1882,7 +1883,7 @@ void UserProfileRestoreAppRestorePage::onItemChanged(QTreeWidgetItem* item, int 
 
     if (item->childCount() > 0) {
         // Parent item -- propagate to enabled children
-        Qt::CheckState state = item->checkState(0);
+        const Qt::CheckState state = item->checkState(0);
         for (int i = 0; i < item->childCount(); ++i) {
             auto* child = item->child(i);
             if (!(child->flags() & Qt::ItemIsEnabled)) {
@@ -1983,7 +1984,7 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
     Q_ASSERT(m_installButton);
     Q_ASSERT(m_selectAllButton);
     // Collect selected apps
-    QVector<RestoreAppInfo> selectedApps = collectSelectedApps();
+    const QVector<RestoreAppInfo> selectedApps = collectSelectedApps();
 
     if (selectedApps.isEmpty()) {
         sak::showInformationLogged(this,
@@ -2025,7 +2026,7 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
                 .arg(failed));
     });
 
-    QPointer<UserProfileRestoreAppRestorePage> self(this);
+    const QPointer<UserProfileRestoreAppRestorePage> self(this);
     watcher->setFuture(QtConcurrent::run([self, selectedApps]() -> QPair<int, int> {
         // Task is page-agnostic: it captures only a QPointer and posts UI updates
         // through it, so a page destroyed mid-install cannot be dereferenced.
@@ -2063,7 +2064,7 @@ QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() 
 QPair<int, int> UserProfileRestoreAppRestorePage::installAppsSequentially(
     const QVector<RestoreAppInfo>& apps, QPointer<UserProfileRestoreAppRestorePage> page) {
     auto chocoManager = std::make_shared<ChocolateyManager>();
-    QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
+    const QString chocoPath = QApplication::applicationDirPath() + "/tools/chocolatey";
     chocoManager->initialize(chocoPath);
 
     int installed = 0;

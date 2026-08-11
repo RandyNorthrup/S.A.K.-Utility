@@ -40,9 +40,9 @@ void flattenFolderTree(const sak::PstFolderTree& tree,
                        uint64_t scope_id,
                        QVector<FolderEntry>& result) {
     for (const auto& folder : tree) {
-        QString folder_path = parent_path.isEmpty()
-                                  ? folder.display_name
-                                  : parent_path + QLatin1Char('/') + folder.display_name;
+        const QString folder_path = parent_path.isEmpty()
+                                        ? folder.display_name
+                                        : parent_path + QLatin1Char('/') + folder.display_name;
         if (scope_id == 0 || scope_id == folder.node_id) {
             result.append({folder, folder_path});
         }
@@ -95,7 +95,7 @@ void EmailSearchWorker::search(PstParser* parser, const sak::EmailSearchCriteria
         searchSingleFolder(parser, criteria, entry.path, entry.folder, state);
     }
 
-    double elapsed = timer.elapsed() / sak::kMillisecondsPerSecondF;
+    const double elapsed = timer.elapsed() / sak::kMillisecondsPerSecondF;
     Q_EMIT searchComplete(state.total_hits, elapsed);
 }
 
@@ -233,7 +233,7 @@ void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCri
         }
     }
 
-    double elapsed = timer.elapsed() / sak::kMillisecondsPerSecondF;
+    const double elapsed = timer.elapsed() / sak::kMillisecondsPerSecondF;
     Q_EMIT searchComplete(state.total_hits, elapsed);
 }
 
@@ -298,7 +298,7 @@ bool EmailSearchWorker::matchesQuery(const QString& text,
     if (query.isEmpty() || text.isEmpty()) {
         return false;
     }
-    Qt::CaseSensitivity cs = case_sensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    const Qt::CaseSensitivity cs = case_sensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
     return text.contains(query, cs);
 }
 
@@ -309,13 +309,13 @@ QString EmailSearchWorker::extractContextSnippet(const QString& text,
         return {};
     }
 
-    int pos = text.indexOf(query, 0, Qt::CaseInsensitive);
+    const int pos = text.indexOf(query, 0, Qt::CaseInsensitive);
     if (pos < 0) {
         return text.left(context_chars);
     }
 
-    int start = std::max(0, pos - (context_chars / kSnippetContextDivisor));
-    int length = std::min(context_chars, static_cast<int>(text.size()) - start);
+    const int start = std::max(0, pos - (context_chars / kSnippetContextDivisor));
+    const int length = std::min(context_chars, static_cast<int>(text.size()) - start);
 
     QString snippet = text.mid(start, length);
     if (start > 0) {

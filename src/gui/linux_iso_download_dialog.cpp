@@ -261,7 +261,7 @@ void LinuxISODownloadDialog::populateDistroList() {
     m_distroListWidget->clear();
     m_currentDistros.clear();
 
-    int categoryValue = m_categoryCombo->currentData().toInt();
+    const int categoryValue = m_categoryCombo->currentData().toInt();
 
     if (categoryValue < 0) {
         // "All" selected
@@ -272,11 +272,12 @@ void LinuxISODownloadDialog::populateDistroList() {
     }
 
     for (const auto& distro : m_currentDistros) {
-        QString label = QString("%1  --  %2")
-                            .arg(distro.name,
-                                 distro.versionLabel.isEmpty()
-                                     ? distro.version
-                                     : QString("%1 (%2)").arg(distro.version, distro.versionLabel));
+        const QString label =
+            QString("%1  --  %2")
+                .arg(distro.name,
+                     distro.versionLabel.isEmpty()
+                         ? distro.version
+                         : QString("%1 (%2)").arg(distro.version, distro.versionLabel));
         m_distroListWidget->addItem(label);
     }
 
@@ -294,7 +295,7 @@ void LinuxISODownloadDialog::populateDistroList() {
 void LinuxISODownloadDialog::onDistroSelected() {
     Q_ASSERT(m_distroListWidget);
     Q_ASSERT(m_downloader);
-    int row = m_distroListWidget->currentRow();
+    const int row = m_distroListWidget->currentRow();
     if (row < 0 || row >= m_currentDistros.size()) {
         m_selectedDistroId.clear();
         updateStartButton();
@@ -307,7 +308,7 @@ void LinuxISODownloadDialog::onDistroSelected() {
     updateDistroDetails();
 
     // Set default save path using the distro's expected filename
-    QString fileName = m_downloader->catalog()->resolveFileName(distro);
+    const QString fileName = m_downloader->catalog()->resolveFileName(distro);
     if (!fileName.isEmpty()) {
         Q_ASSERT(m_saveLocationEdit);
         m_saveLocationEdit->setText(getDefaultSavePath(fileName));
@@ -361,9 +362,9 @@ void LinuxISODownloadDialog::onBrowseSaveLocation() {
     }
 
     // Determine file filter based on selected distro
-    QString filter = "ISO Files (*.iso);;Compressed Images (*.iso.gz *.img);;All Files (*.*)";
+    const QString filter = "ISO Files (*.iso);;Compressed Images (*.iso.gz *.img);;All Files (*.*)";
 
-    QString filePath = QFileDialog::getSaveFileName(this, "Save Linux ISO", current, filter);
+    const QString filePath = QFileDialog::getSaveFileName(this, "Save Linux ISO", current, filter);
 
     if (!filePath.isEmpty()) {
         Q_ASSERT(m_saveLocationEdit);
@@ -386,7 +387,7 @@ void LinuxISODownloadDialog::onStartDownload() {
         return;
     }
 
-    QString savePath = m_saveLocationEdit->text().trimmed();
+    const QString savePath = m_saveLocationEdit->text().trimmed();
     if (savePath.isEmpty()) {
         sak::logWarning("ISO download attempted with no save path specified");
         sak::showWarningLogged(this, "No Save Path", "Please specify where to save the ISO.");
@@ -486,7 +487,7 @@ void LinuxISODownloadDialog::onDownloadComplete(const QString& isoPath, qint64 f
     m_detailLabel->clear();
     m_cancelButton->setEnabled(false);
 
-    QString sizeStr = formatSize(fileSize);
+    const QString sizeStr = formatSize(fileSize);
     m_statusLabel->setText(QString("Download complete! (%1)").arg(sizeStr));
     m_phaseLabel->setText("Complete!");
     m_phaseLabel->setStyleSheet(
@@ -558,8 +559,8 @@ void LinuxISODownloadDialog::onCancelDownload() {
 // ============================================================================
 
 void LinuxISODownloadDialog::updateStartButton() {
-    bool ready = !m_isDownloading && !m_selectedDistroId.isEmpty() &&
-                 !m_saveLocationEdit->text().trimmed().isEmpty();
+    const bool ready = !m_isDownloading && !m_selectedDistroId.isEmpty() &&
+                       !m_saveLocationEdit->text().trimmed().isEmpty();
     m_startButton->setEnabled(ready);
 }
 
@@ -571,7 +572,7 @@ void LinuxISODownloadDialog::setInputsEnabled(bool enabled) {
 }
 
 QString LinuxISODownloadDialog::getDefaultSavePath(const QString& fileName) const {
-    QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    const QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     return QDir(downloads).filePath(fileName);
 }
 

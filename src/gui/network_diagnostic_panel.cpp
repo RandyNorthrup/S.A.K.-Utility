@@ -2250,7 +2250,7 @@ void NetworkDiagnosticPanel::onBackupEthernetSettings() {
 
     const auto& adapter = m_adapters[dataIdx];
 
-    QString filePath =
+    const QString filePath =
         QFileDialog::getSaveFileName(this,
                                      tr("Save Ethernet Settings Backup"),
                                      QStringLiteral("%1_ethernet_backup.json").arg(adapter.name),
@@ -2750,11 +2750,11 @@ void NetworkDiagnosticPanel::onAdapterEnable() {
 
     Q_EMIT logOutput(tr("Enabling adapter '%1'...").arg(adapter->name));
 
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("set"),
-                        QStringLiteral("interface"),
-                        adapter->name,
-                        QStringLiteral("admin=ENABLED")};
+    const QStringList args = {QStringLiteral("interface"),
+                              QStringLiteral("set"),
+                              QStringLiteral("interface"),
+                              adapter->name,
+                              QStringLiteral("admin=ENABLED")};
     const QString adapter_name = adapter->name;
     runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
         if (success) {
@@ -2803,11 +2803,11 @@ void NetworkDiagnosticPanel::onAdapterDisable() {
 
     Q_EMIT logOutput(tr("Disabling adapter '%1'...").arg(adapter->name));
 
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("set"),
-                        QStringLiteral("interface"),
-                        adapter->name,
-                        QStringLiteral("admin=DISABLED")};
+    const QStringList args = {QStringLiteral("interface"),
+                              QStringLiteral("set"),
+                              QStringLiteral("interface"),
+                              adapter->name,
+                              QStringLiteral("admin=DISABLED")};
     const QString adapter_name = adapter->name;
     runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
         if (success) {
@@ -2908,11 +2908,11 @@ void NetworkDiagnosticPanel::onAdapterRename() {
 
     Q_EMIT logOutput(tr("Renaming adapter '%1' to '%2'...").arg(adapter->name, new_name));
 
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("set"),
-                        QStringLiteral("interface"),
-                        adapter->name,
-                        QStringLiteral("newname=") + new_name};
+    const QStringList args = {QStringLiteral("interface"),
+                              QStringLiteral("set"),
+                              QStringLiteral("interface"),
+                              adapter->name,
+                              QStringLiteral("newname=") + new_name};
     const QString old_name = adapter->name;
     runNetshCommandAsync(args, [this, old_name, new_name](bool success, const QString& output) {
         if (success) {
@@ -3353,7 +3353,7 @@ void launchTrackedNetshSequence(NetworkDiagnosticPanel* owner,
                          watcher->deleteLater();
                          report(success, message);
                      });
-    TrackedFuture future = QtConcurrent::run(std::move(work));
+    const TrackedFuture future = QtConcurrent::run(std::move(work));
     watcher->setFuture(future);
     tracked.removeIf([](const TrackedFuture& f) { return f.isFinished(); });
     tracked.append(future);
@@ -5076,7 +5076,7 @@ void NetworkDiagnosticPanel::showPortScanContextMenu(const QPoint& pos) {
         });
         menu.addSeparator();
         menu.addAction(tr("Copy Port:Service"), this, [this]() {
-            int row = m_portTable->currentRow();
+            const int row = m_portTable->currentRow();
             auto* port_item = m_portTable->item(row, 0);
             auto* svc_item = m_portTable->item(row, kPortColumnService);
             if (port_item) {
@@ -5105,7 +5105,7 @@ void NetworkDiagnosticPanel::showWiFiContextMenu(const QPoint& pos) {
         menu.addAction(tr("Copy SSID"), this, [this]() { copyTableCellValue(m_wifiTable, 0); });
         menu.addAction(tr("Copy BSSID"), this, [this]() { copyTableCellValue(m_wifiTable, 1); });
         menu.addAction(tr("Copy Signal/Quality"), this, [this]() {
-            int row = m_wifiTable->currentRow();
+            const int row = m_wifiTable->currentRow();
             auto* sig = m_wifiTable->item(row, kWifiColumnSignal);
             auto* qual = m_wifiTable->item(row, kWifiColumnQuality);
             QString text;
@@ -5119,7 +5119,7 @@ void NetworkDiagnosticPanel::showWiFiContextMenu(const QPoint& pos) {
         });
         menu.addSeparator();
         menu.addAction(tr("Copy Channel/Band"), this, [this]() {
-            int row = m_wifiTable->currentRow();
+            const int row = m_wifiTable->currentRow();
             auto* ch = m_wifiTable->item(row, kWifiColumnChannel);
             auto* band = m_wifiTable->item(row, kWifiColumnBand);
             QString text;
@@ -5149,7 +5149,7 @@ void NetworkDiagnosticPanel::showConnectionsContextMenu(const QPoint& pos) {
             copyTableCellValue(m_connTable, kConnectionColumnRemoteAddress);
         });
         menu.addAction(tr("Copy Remote Address:Port"), this, [this]() {
-            int row = m_connTable->currentRow();
+            const int row = m_connTable->currentRow();
             auto* addr = m_connTable->item(row, kConnectionColumnRemoteAddress);
             auto* port = m_connTable->item(row, kConnectionColumnRemotePort);
             if (addr) {
@@ -5194,7 +5194,7 @@ void NetworkDiagnosticPanel::showConnectionsContextMenu(const QPoint& pos) {
 }
 
 void NetworkDiagnosticPanel::copyFirewallPorts() {
-    int row = m_fwRuleTable->currentRow();
+    const int row = m_fwRuleTable->currentRow();
     auto* local = m_fwRuleTable->item(row, kFirewallColumnLocalPorts);
     auto* remote = m_fwRuleTable->item(row, kFirewallColumnRemotePorts);
     QStringList parts;
@@ -5210,7 +5210,7 @@ void NetworkDiagnosticPanel::copyFirewallPorts() {
 }
 
 void NetworkDiagnosticPanel::copyFirewallRuleDetails() {
-    int row = m_fwRuleTable->currentRow();
+    const int row = m_fwRuleTable->currentRow();
     QStringList details;
     for (int col = 0; col < m_fwRuleTable->columnCount(); ++col) {
         auto* header = m_fwRuleTable->horizontalHeaderItem(col);

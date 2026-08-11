@@ -64,7 +64,7 @@ void FollowScrollController::scrollToBottomLater(bool force) {
         return;
     }
 
-    QPointer<FollowScrollController> self = this;
+    const QPointer<FollowScrollController> self = this;
     QTimer::singleShot(0, this, [self, force]() {
         if (self) {
             self->finishFirstDeferredScroll(force);
@@ -73,7 +73,7 @@ void FollowScrollController::scrollToBottomLater(bool force) {
 }
 
 void FollowScrollController::restoreScrollPositionLater(int value) {
-    QPointer<FollowScrollController> self = this;
+    const QPointer<FollowScrollController> self = this;
     QTimer::singleShot(0, this, [self, value]() {
         if (!self || !self->m_scrollArea || !self->m_scrollArea->verticalScrollBar()) {
             return;
@@ -133,7 +133,7 @@ void FollowScrollController::finishFirstDeferredScroll(bool force) {
     }
 
     setScrollValue(m_scrollArea->verticalScrollBar()->maximum());
-    QPointer<FollowScrollController> self = this;
+    const QPointer<FollowScrollController> self = this;
     QTimer::singleShot(0, this, [self, force]() {
         if (self) {
             self->finishSecondDeferredScroll(force);

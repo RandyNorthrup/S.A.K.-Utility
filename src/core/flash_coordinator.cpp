@@ -297,7 +297,7 @@ void FlashCoordinator::resetRunState(const QStringList& targetDrives) {
     // predicate on the first completion of the next run, aborting still-active workers.
     // Everything here is read by the locked cross-thread getters, so it is written
     // under the same lock rather than raced against them.
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     m_isCancelled = false;
     m_targetDrives = targetDrives;
     m_progress.completedDrives = 0;
@@ -341,13 +341,13 @@ bool FlashCoordinator::recordTotalBytes(const QString& imagePath, qsizetype targ
             QString("Refusing to flash %1: the reported image size is not usable").arg(imagePath));
         return false;
     }
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     m_progress.totalBytes = imageBytes * targetCount;
     return true;
 }
 
 void FlashCoordinator::setState(sak::FlashState state) {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     m_state = state;
     // FlashProgress carries its own copy of the state and callers read it from the
     // progress snapshot; leaving it at Idle for the whole run misreports the operation.
@@ -546,7 +546,7 @@ void FlashCoordinator::startPendingWorkers() {
     std::vector<FlashWorker*> toStart;
     bool leftVerifying = false;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
         // A cancelled or already-finished run must not start another drive. Without
         // this, cancelling a queued multi-drive run would tear down the running
         // worker and then start the next queued one on the back of its failure
@@ -641,7 +641,7 @@ void FlashCoordinator::cancel() {
     sak::FlashResult terminalResult;
     QString terminalMessage;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
         m_state = sak::FlashState::Cancelled;
         m_progress.state = m_state;
         if (m_progress.activeDrives <= 0 &&
@@ -668,7 +668,7 @@ void FlashCoordinator::markQueuedWorkersCancelled() {
     // now: without this the finalize predicate (completed + failed == targets) can
     // never be satisfied after a cancel, and the run would wait forever for drives
     // that are never going to be written.
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     while (m_nextWorkerIndex < m_workers.size()) {
         const QString devicePath = m_workers[m_nextWorkerIndex]->targetDevice();
         ++m_nextWorkerIndex;
@@ -682,14 +682,14 @@ void FlashCoordinator::markQueuedWorkersCancelled() {
 }
 
 bool FlashCoordinator::isFlashing() const {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     // Reports "busy" for the WHOLE active run (including the synchronous Validating/
     // Unmounting phases), so the re-entry guard cannot be slipped during them.
     return isActiveFlashState(m_state);
 }
 
 bool FlashCoordinator::beginFlashClaim() {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     if (isActiveFlashState(m_state)) {
         return false;  // A run is already active -- refuse re-entry atomically.
     }
@@ -712,12 +712,12 @@ bool FlashCoordinator::beginFlashClaim() {
 }
 
 sak::FlashState FlashCoordinator::state() const {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     return m_state;
 }
 
 sak::FlashProgress FlashCoordinator::progress() const {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     return m_progress;
 }
 
@@ -821,7 +821,7 @@ void FlashCoordinator::noteVerificationStarted() {
     // Only the Flashing -> Verifying edge publishes, so the periodic verification
     // progress signal does not turn into a stateChanged storm.
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
         if (m_state != sak::FlashState::Flashing) {
             return;
         }
@@ -923,7 +923,7 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
         return;
     }
 
-    QString devicePath = worker->targetDevice();
+    const QString devicePath = worker->targetDevice();
     sak::logInfo(QString("Drive completed: %1").arg(devicePath).toStdString());
 
     // Mutate coordinator state under the lock, but capture everything the signals
@@ -932,13 +932,13 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     // progress(), isFlashing() (B10-07). cleanupWorkers() (which can wait() up to 15s)
     // likewise runs unlocked so it never stalls those getters.
     QString errorMsg;
-    bool passed = result.passed;
+    const bool passed = result.passed;
     bool terminal = false;
     sak::FlashState terminalState{};
     sak::FlashResult terminalResult;
     QString terminalMessage;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
         // Mark this worker as having reported a terminal outcome so a later WorkerBase
         // failed()/cancelled() for the same drive is not double-counted as a failure.
         m_reportedWorkers.insert(worker);
@@ -1000,7 +1000,7 @@ void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QStrin
     sak::FlashResult terminalResult;
     QString terminalMessage;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
         // Dedup BEFORE dereferencing the worker. A normal handled error emits BOTH
         // FlashWorker::error and (as execute() returns unexpected) WorkerBase::failed; the
         // first finalizes the run and cleanupWorkers() DESTROYS the worker, so by the time
@@ -1068,7 +1068,7 @@ void FlashCoordinator::emitTerminalOutcome(sak::FlashState state,
     // stop and destroy the NEW run's workers and close its image instead of ours.
     std::vector<std::unique_ptr<FlashWorker>> finished;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
         finished.swap(m_workers);
         m_nextWorkerIndex = 0;
     }
@@ -1288,7 +1288,7 @@ bool FlashCoordinator::validateSingleTarget(const QString& devicePath) {
                                  nullptr);
 
     if (hDevice == INVALID_HANDLE_VALUE) {
-        DWORD error = GetLastError();
+        DWORD const error = GetLastError();
         sak::logError(
             QString("Failed to open device %1: Error %2").arg(devicePath).arg(error).toStdString());
         Q_EMIT flashError(QString("Cannot access device %1. Error: %2").arg(devicePath).arg(error));
@@ -1306,7 +1306,7 @@ bool FlashCoordinator::validateSingleTarget(const QString& devicePath) {
                          sizeof(geometry),
                          &bytesReturned,
                          nullptr)) {
-        DWORD error = GetLastError();
+        DWORD const error = GetLastError();
         CloseHandle(hDevice);
         sak::logError(QString("Failed to get geometry for %1: Error %2")
                           .arg(devicePath)
@@ -1457,7 +1457,7 @@ void FlashCoordinator::updateProgress() {
     // otherwise re-lock the non-recursive m_mutex and deadlock.
     sak::FlashProgress snapshot;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
         m_progress.bytesWritten = 0;
         double totalSpeed = 0.0;
 
@@ -1500,7 +1500,7 @@ void FlashCoordinator::cleanupWorkers() {
     // reset); releaseImageSource() handles it. No entry assert.
     std::vector<std::unique_ptr<FlashWorker>> workers;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
         workers.swap(m_workers);
         // The queue index is an index into m_workers; leaving it behind would make it
         // point past the end of an empty vector.

@@ -800,7 +800,7 @@ QString NetworkDiagnosticReportGenerator::toJson() const {
     QJsonObject root;
     populateRootJson(root);
 
-    QJsonDocument doc(root);
+    const QJsonDocument doc(root);
     return QString::fromUtf8(doc.toJson(QJsonDocument::Indented));
 }
 

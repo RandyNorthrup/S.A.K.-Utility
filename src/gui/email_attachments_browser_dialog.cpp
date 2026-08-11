@@ -323,7 +323,7 @@ void EmailAttachmentsBrowserDialog::scanNextFolder() {
         return;
     }
     m_current_folder_offset = 0;
-    uint64_t folder_id = m_all_folder_ids[m_folders_scanned];
+    const uint64_t folder_id = m_all_folder_ids[m_folders_scanned];
     m_controller->loadFolderItems(folder_id, 0, email::kMaxItemsPerLoad);
 }
 
@@ -372,7 +372,7 @@ void EmailAttachmentsBrowserDialog::onFolderItemsLoaded(uint64_t folder_id,
     if (m_current_folder_offset < total && !items.isEmpty()) {
         QTimer::singleShot(0, this, [this]() {
             if (m_folders_scanned < m_all_folder_ids.size()) {
-                uint64_t fid = m_all_folder_ids[m_folders_scanned];
+                const uint64_t fid = m_all_folder_ids[m_folders_scanned];
                 m_controller->loadFolderItems(fid,
                                               m_current_folder_offset,
                                               email::kMaxItemsPerLoad);
@@ -481,26 +481,26 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
 bool EmailAttachmentsBrowserDialog::matchesFilters(const AttachmentEntry& entry) const {
     // Text search
     if (!m_search_text.isEmpty()) {
-        bool found = entry.filename.contains(m_search_text, Qt::CaseInsensitive) ||
-                     entry.source_subject.contains(m_search_text, Qt::CaseInsensitive) ||
-                     entry.source_sender.contains(m_search_text, Qt::CaseInsensitive);
+        const bool found = entry.filename.contains(m_search_text, Qt::CaseInsensitive) ||
+                           entry.source_subject.contains(m_search_text, Qt::CaseInsensitive) ||
+                           entry.source_sender.contains(m_search_text, Qt::CaseInsensitive);
         if (!found) {
             return false;
         }
     }
 
     // Type filter
-    QString selected = m_type_filter->currentText();
+    const QString selected = m_type_filter->currentText();
     if (selected == kFilterAll) {
         return true;
     }
-    QString category = typeCategory(entry.mime_type, entry.filename);
+    const QString category = typeCategory(entry.mime_type, entry.filename);
     return category == selected;
 }
 
 void EmailAttachmentsBrowserDialog::updateStatusLabel() {
-    int visible = m_table->rowCount();
-    int total = m_all_attachments.size();
+    const int visible = m_table->rowCount();
+    const int total = m_all_attachments.size();
     const int checked = m_checked_attachment_keys.size();
     if (m_scan_complete) {
         if (visible == total) {
@@ -548,7 +548,7 @@ void EmailAttachmentsBrowserDialog::onTableContextMenu(const QPoint& pos) {
         return;
     }
 
-    int row = item->row();
+    const int row = item->row();
     auto* name_item = m_table->item(row, ColFilename);
     if (name_item == nullptr) {
         return;
@@ -608,7 +608,7 @@ void EmailAttachmentsBrowserDialog::saveOneAttachment(const AttachmentEntry& ent
         m_status_label->setText(tr("A save is already running. Wait for it to finish."));
         return;
     }
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Save Attachment"));
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Save Attachment"));
     if (dir.isEmpty()) {
         return;
     }
@@ -621,7 +621,7 @@ void EmailAttachmentsBrowserDialog::onSaveSelectedClicked() {
         return;
     }
 
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Save Selected Attachments"));
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Save Selected Attachments"));
     if (dir.isEmpty()) {
         return;
     }
@@ -645,7 +645,7 @@ void EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked() {
         return;
     }
 
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Save All Visible Attachments"));
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Save All Visible Attachments"));
     if (dir.isEmpty()) {
         return;
     }
@@ -836,17 +836,17 @@ static QString classifyByMime(const QString& lower_mime) {
 
 QString EmailAttachmentsBrowserDialog::typeCategory(const QString& mime_type,
                                                     const QString& filename) {
-    QString lower_name = filename.toLower();
-    int dot = lower_name.lastIndexOf(QLatin1Char('.'));
+    const QString lower_name = filename.toLower();
+    const int dot = lower_name.lastIndexOf(QLatin1Char('.'));
     if (dot >= 0) {
-        QString ext = lower_name.mid(dot);
+        const QString ext = lower_name.mid(dot);
         auto iter = extensionCategories().constFind(ext);
         if (iter != extensionCategories().constEnd()) {
             return iter.value();
         }
     }
 
-    QString result = classifyByMime(mime_type.toLower());
+    const QString result = classifyByMime(mime_type.toLower());
     return result.isEmpty() ? kFilterOther : result;
 }
 

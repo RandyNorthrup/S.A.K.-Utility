@@ -103,7 +103,7 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
         return;
     }
 
-    PstFileInfo file_info = parser->fileInfo();
+    const PstFileInfo file_info = parser->fileInfo();
     m_items_total = file_info.total_items;
     result.output_path = config.output_directory;
 
@@ -118,7 +118,7 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
     }
 
     // Get folder tree and process
-    PstFolderTree tree = parser->folderTree();
+    const PstFolderTree tree = parser->folderTree();
     processFolderTree(parser.get(), tree, config, result);
 
     // Process deleted/recovered items if requested
@@ -193,7 +193,7 @@ std::unique_ptr<PstParser> OstConversionWorker::openSourceParser(const QString& 
         return parser;
     }
 
-    QString err_msg = "Failed to open file: " + source_path;
+    const QString err_msg = "Failed to open file: " + source_path;
     logError("OST Converter: {}", err_msg.toStdString());
     result.errors.append(err_msg);
     result.finished = QDateTime::currentDateTime();
@@ -209,7 +209,7 @@ namespace {
 /// otherwise truncate each other's mailbox. Pick a subdir that does not yet exist
 /// so distinct sources never collide.
 QString uniqueMboxSubdir(const QString& directory, const QString& base_name) {
-    QString name = base_name.isEmpty() ? QStringLiteral("mbox") : base_name;
+    const QString name = base_name.isEmpty() ? QStringLiteral("mbox") : base_name;
     QString candidate = name;
     int counter = 1;
     while (QFileInfo::exists(directory + QStringLiteral("/") + candidate)) {
@@ -347,7 +347,7 @@ void OstConversionWorker::loadAndProcessFolderItems(PstParser* parser,
             if (remaining > 0) {
                 result.items_failed += remaining;
             }
-            QString err = "Failed to read items from folder: " + folder_path;
+            const QString err = "Failed to read items from folder: " + folder_path;
             logWarning("OST Converter: {}", err.toStdString());
             result.errors.append(err);
             break;
@@ -379,11 +379,11 @@ void OstConversionWorker::processFolder(PstParser* parser,
     // recursing it unbounded would overflow the stack. Fail closed with a surfaced error
     // (which classifyOutcome treats as a failed job) rather than crash.
     if (position.depth > kMaxFolderRecursionDepth) {
-        QString err = QStringLiteral(
-                          "Folder nesting exceeds the supported depth (%1); deeper "
-                          "folders were not converted under: ")
-                          .arg(kMaxFolderRecursionDepth) +
-                      position.parent_path;
+        const QString err = QStringLiteral(
+                                "Folder nesting exceeds the supported depth (%1); deeper "
+                                "folders were not converted under: ")
+                                .arg(kMaxFolderRecursionDepth) +
+                            position.parent_path;
         logWarning("OST Converter: {}", err.toStdString());
         result.errors.append(err);
         return;
@@ -393,7 +393,7 @@ void OstConversionWorker::processFolder(PstParser* parser,
     // PST/OST and is appended to the output directory by every writer, so a name
     // containing "../" would otherwise write outside the chosen output root.
     const QString safe_segment = sanitizeFolderSegment(folder.display_name);
-    QString folder_path =
+    const QString folder_path =
         position.parent_path.isEmpty() ? safe_segment : position.parent_path + "/" + safe_segment;
 
     if (!folderPassesFilter(folder.display_name, config)) {
@@ -523,17 +523,17 @@ bool OstConversionWorker::writeItemMbox(const PstItemDetail& item,
 bool OstConversionWorker::itemPassesSenderFilter(const PstItemDetail& item,
                                                  const OstConversionConfig& config) const {
     if (!config.sender_filter.isEmpty()) {
-        bool match = item.sender_email.contains(config.sender_filter, Qt::CaseInsensitive) ||
-                     item.sender_name.contains(config.sender_filter, Qt::CaseInsensitive);
+        const bool match = item.sender_email.contains(config.sender_filter, Qt::CaseInsensitive) ||
+                           item.sender_name.contains(config.sender_filter, Qt::CaseInsensitive);
         if (!match) {
             return false;
         }
     }
 
     if (!config.recipient_filter.isEmpty()) {
-        bool match = item.display_to.contains(config.recipient_filter, Qt::CaseInsensitive) ||
-                     item.display_cc.contains(config.recipient_filter, Qt::CaseInsensitive) ||
-                     item.display_bcc.contains(config.recipient_filter, Qt::CaseInsensitive);
+        const bool match = item.display_to.contains(config.recipient_filter, Qt::CaseInsensitive) ||
+                           item.display_cc.contains(config.recipient_filter, Qt::CaseInsensitive) ||
+                           item.display_bcc.contains(config.recipient_filter, Qt::CaseInsensitive);
         if (!match) {
             return false;
         }
@@ -586,7 +586,7 @@ void OstConversionWorker::processRecoveredItems(PstParser* parser,
             scanner.recoverableReliable(), scanner.orphanReliable(), deep_recovery, result);
     }
 
-    QString recovery_folder = QStringLiteral("Recovered Items");
+    const QString recovery_folder = QStringLiteral("Recovered Items");
 
     for (const auto& item : recovered_items) {
         if (m_cancelled.load()) {

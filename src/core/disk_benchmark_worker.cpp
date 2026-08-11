@@ -210,7 +210,7 @@ void finalizeLatencies(std::vector<double>& latencies,
 // pseudo-random data via direct, sector-aligned writes of @p block_bytes. Closes
 // @p h on failure.
 bool fillTestFileWithRandom(HANDLE h, size_t total_bytes, size_t block_bytes) {
-    AlignedBuffer buf(block_bytes, kSectorAlignment);
+    const AlignedBuffer buf(block_bytes, kSectorAlignment);
     if (!buf.valid()) {
         CloseHandle(h);
         return false;
@@ -252,7 +252,7 @@ DiskBenchmarkWorker::DiskBenchmarkWorker(QObject* parent) : WorkerBase(parent) {
 // ============================================================================
 
 auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
-    sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Disk benchmark");
+    const sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Disk benchmark");
 
     // Validate drive path before starting
     if (m_config.drive_path.isEmpty()) {
@@ -390,7 +390,7 @@ auto DiskBenchmarkWorker::validateQueueDepths() const -> std::expected<void, sak
 }
 
 auto DiskBenchmarkWorker::validateDriveAndSpace() -> std::expected<void, sak::error_code> {
-    QStorageInfo storage(m_config.drive_path);
+    const QStorageInfo storage(m_config.drive_path);
     if (!storage.isValid() || !storage.isReady()) {
         logError("Disk benchmark: drive path not valid/ready: {}",
                  m_config.drive_path.toStdString());
@@ -631,7 +631,7 @@ auto DiskBenchmarkWorker::runSequentialRead() -> std::expected<void, sak::error_
         return std::unexpected(sak::error_code::read_error);
     }
 
-    AlignedBuffer buf(m_seq_block_bytes, kSectorAlignment);
+    const AlignedBuffer buf(m_seq_block_bytes, kSectorAlignment);
     if (!buf.valid()) {
         CloseHandle(h);
         return std::unexpected(sak::error_code::out_of_memory);
@@ -644,7 +644,7 @@ auto DiskBenchmarkWorker::runSequentialRead() -> std::expected<void, sak::error_
         QElapsedTimer timer;
         timer.start();
 
-        size_t bytes_read_total = readSequentialPass(h, buf.data(), buf.size(), total_bytes);
+        const size_t bytes_read_total = readSequentialPass(h, buf.data(), buf.size(), total_bytes);
 
         // A short read means ReadFile failed or hit an early EOF mid-run: a genuine
         // disk error, not a measurement. Fail closed rather than scoring the partial
@@ -677,7 +677,7 @@ size_t DiskBenchmarkWorker::readSequentialPass(void* file_handle,
                                                size_t bufSize,
                                                size_t total_bytes) {
     HANDLE h = static_cast<HANDLE>(file_handle);
-    LARGE_INTEGER zero{};
+    LARGE_INTEGER const zero{};
     if (!SetFilePointerEx(h, zero, nullptr, FILE_BEGIN)) {
         return 0;
     }
@@ -699,7 +699,7 @@ auto DiskBenchmarkWorker::runSequentialWrite() -> std::expected<void, sak::error
 #ifdef SAK_PLATFORM_WINDOWS
     const std::wstring wpath = testFilePath().toStdWString();
 
-    AlignedBuffer buf(m_seq_block_bytes, kSectorAlignment);
+    const AlignedBuffer buf(m_seq_block_bytes, kSectorAlignment);
     if (!buf.valid()) {
         return std::unexpected(sak::error_code::out_of_memory);
     }
@@ -730,7 +730,7 @@ auto DiskBenchmarkWorker::runSequentialWrite() -> std::expected<void, sak::error
         QElapsedTimer timer;
         timer.start();
 
-        size_t written_total = writeSequentialPass(h, buf.data(), buf.size(), total_bytes);
+        const size_t written_total = writeSequentialPass(h, buf.data(), buf.size(), total_bytes);
 
         FlushFileBuffers(h);
         CloseHandle(h);

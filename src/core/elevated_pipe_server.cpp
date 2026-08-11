@@ -243,7 +243,7 @@ auto ElevatedPipeServer::readMessage() -> std::expected<PipeMessage, sak::error_
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
 
-    uint32_t payload_len =
+    const uint32_t payload_len =
         static_cast<uint8_t>(header[kPipeFrameLengthByte0]) |
         (static_cast<uint8_t>(header[kPipeFrameLengthByte1]) << kPipeFrameByteShift1) |
         (static_cast<uint8_t>(header[kPipeFrameLengthByte2]) << kPipeFrameByteShift2) |
@@ -384,7 +384,7 @@ bool ElevatedPipeServer::readExact(char* buffer, int size, int timeout_ms) {
             continue;
         }
 
-        DWORD to_read = qMin(static_cast<DWORD>(size - total_read), available);
+        DWORD const to_read = qMin(static_cast<DWORD>(size - total_read), available);
         const int bytes_read = overlappedPipeIo(
             m_pipe_handle, false, buffer + total_read, to_read, static_cast<DWORD>(timeout_ms));
         if (bytes_read < 0) {

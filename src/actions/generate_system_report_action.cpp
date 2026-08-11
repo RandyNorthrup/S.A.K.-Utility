@@ -102,7 +102,7 @@ void GenerateSystemReportAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
-    QDateTime start_time = QDateTime::currentDateTime();
+    const QDateTime start_time = QDateTime::currentDateTime();
     m_collector_errors.clear();
     Q_EMIT executionProgress("Gathering comprehensive system information...", progress::kStep5);
 
@@ -140,7 +140,7 @@ void GenerateSystemReportAction::execute() {
     // Phase 6: Save
     Q_EMIT executionProgress("Saving report...", progress::kStep95);
 
-    QDir output_dir(m_output_location);
+    const QDir output_dir(m_output_location);
     if (!output_dir.exists()) {
         if (!output_dir.mkpath(".")) {
             sak::logWarning("Failed to create system report directory: {}",
@@ -148,7 +148,7 @@ void GenerateSystemReportAction::execute() {
         }
     }
 
-    QString filepath = buildReportFilePath(output_dir);
+    const QString filepath = buildReportFilePath(output_dir);
 
     report += QString("-").repeated(kTextReportRuleWidth) + "\n";
     report += QString("Report completed in %1 seconds\n")
@@ -169,7 +169,7 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
 
     Q_EMIT executionProgress("Report complete", progress::kComplete);
 
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    const qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
     result.duration_ms = duration_ms;
@@ -312,9 +312,9 @@ QString GenerateSystemReportAction::buildHardwareInfoScript() {
 }
 
 QString GenerateSystemReportAction::gatherOsAndHardwareInfo() {
-    QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript();
+    const QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript();
 
-    ProcessResult proc_info = runPowerShell(ps_cmd_info, sak::kTimeoutChocoListMs);
+    const ProcessResult proc_info = runPowerShell(ps_cmd_info, sak::kTimeoutChocoListMs);
     if (!proc_info.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report OS warning: " + proc_info.std_err.trimmed());
     }
@@ -329,7 +329,7 @@ QString GenerateSystemReportAction::gatherOsAndHardwareInfo() {
 }
 
 QString GenerateSystemReportAction::gatherStorageInfo() {
-    QString ps_cmd_storage =
+    const QString ps_cmd_storage =
         "$ErrorActionPreference = 'Stop'\n"
         "Write-Output \"=== STORAGE DEVICES ===\"\n"
         "$disks = Get-PhysicalDisk\n"
@@ -355,7 +355,7 @@ QString GenerateSystemReportAction::gatherStorageInfo() {
         "}\n"
         "Write-Output \"\"";
 
-    ProcessResult proc_storage = runPowerShell(ps_cmd_storage, sak::kTimeoutProcessMediumMs);
+    const ProcessResult proc_storage = runPowerShell(ps_cmd_storage, sak::kTimeoutProcessMediumMs);
     if (!proc_storage.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report storage warning: " + proc_storage.std_err.trimmed());
     }
@@ -370,7 +370,7 @@ QString GenerateSystemReportAction::gatherStorageInfo() {
 }
 
 QString GenerateSystemReportAction::gatherNetworkInfo() {
-    QString ps_cmd_network =
+    const QString ps_cmd_network =
         "$ErrorActionPreference = 'Stop'\n"
         "Write-Output \"=== NETWORK ADAPTERS ===\"\n"
         "$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}\n"
@@ -393,7 +393,7 @@ QString GenerateSystemReportAction::gatherNetworkInfo() {
         "}\n"
         "Write-Output \"\"";
 
-    ProcessResult proc_network = runPowerShell(ps_cmd_network, sak::kTimeoutProcessMediumMs);
+    const ProcessResult proc_network = runPowerShell(ps_cmd_network, sak::kTimeoutProcessMediumMs);
     if (!proc_network.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report network warning: " + proc_network.std_err.trimmed());
     }

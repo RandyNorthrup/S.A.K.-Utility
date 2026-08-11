@@ -944,7 +944,7 @@ void AdvancedUninstallPanel::onRecycleFallbackItems(QStringList paths) {
 // -- Program Table Slots -----------------------------------------------------
 
 void AdvancedUninstallPanel::onProgramSelectionChanged() {
-    bool hasSelection = m_program_table->currentRow() >= 0;
+    const bool hasSelection = m_program_table->currentRow() >= 0;
     m_uninstall_button->setEnabled(hasSelection);
     m_forced_uninstall_button->setEnabled(hasSelection);
 }
@@ -954,7 +954,7 @@ void AdvancedUninstallPanel::onProgramDoubleClicked(int row, int /*column*/) {
     if (!nameItem) {
         return;
     }
-    int idx = originalRowIndex(nameItem);
+    const int idx = originalRowIndex(nameItem);
     if (idx >= 0 && idx < m_filteredPrograms.size()) {
         showProgramProperties(m_filteredPrograms[idx]);
     }
@@ -966,12 +966,12 @@ void AdvancedUninstallPanel::onProgramContextMenu(const QPoint& pos) {
         return;
     }
 
-    int row = item->row();
+    const int row = item->row();
     auto* nameItem = m_program_table->item(row, kColName);
     if (!nameItem) {
         return;
     }
-    int idx = originalRowIndex(nameItem);
+    const int idx = originalRowIndex(nameItem);
     if (idx < 0 || idx >= m_filteredPrograms.size()) {
         return;
     }
@@ -1058,7 +1058,7 @@ void AdvancedUninstallPanel::onSelectAllSafe() {
         if (!typeItem) {
             continue;
         }
-        int idx = originalRowIndex(typeItem);
+        const int idx = originalRowIndex(typeItem);
         if (idx >= 0 && idx < m_currentLeftovers.size() && m_currentLeftovers[idx].deletable &&
             m_currentLeftovers[idx].risk == LeftoverItem::RiskLevel::Safe) {
             auto* checkItem = m_leftover_table->item(row, kLeftoverColCheck);
@@ -1491,9 +1491,9 @@ bool AdvancedUninstallPanel::matchesFilter(const ProgramInfo& program) const {
     }
 
     if (!m_searchFilter.isEmpty()) {
-        bool matches = program.displayName.contains(m_searchFilter, Qt::CaseInsensitive) ||
-                       program.publisher.contains(m_searchFilter, Qt::CaseInsensitive) ||
-                       program.displayVersion.contains(m_searchFilter, Qt::CaseInsensitive);
+        const bool matches = program.displayName.contains(m_searchFilter, Qt::CaseInsensitive) ||
+                             program.publisher.contains(m_searchFilter, Qt::CaseInsensitive) ||
+                             program.displayVersion.contains(m_searchFilter, Qt::CaseInsensitive);
         if (!matches) {
             return false;
         }
@@ -1542,7 +1542,7 @@ void AdvancedUninstallPanel::setOperationRunning(bool running) {
 }
 
 ProgramInfo AdvancedUninstallPanel::selectedProgram() const {
-    int row = m_program_table->currentRow();
+    const int row = m_program_table->currentRow();
     if (row < 0) {
         return {};
     }
@@ -1550,7 +1550,7 @@ ProgramInfo AdvancedUninstallPanel::selectedProgram() const {
     if (!nameItem) {
         return {};
     }
-    int idx = originalRowIndex(nameItem);
+    const int idx = originalRowIndex(nameItem);
     if (idx >= 0 && idx < m_filteredPrograms.size()) {
         return m_filteredPrograms[idx];
     }
@@ -1569,7 +1569,7 @@ QVector<ProgramInfo> AdvancedUninstallPanel::selectedPrograms(bool* all_resolved
             // quietly skipped: dropping it would run the batch against a subset of what the
             // user checked while the UI still showed the full selection.
             auto* nameItem = m_program_table->item(row, kColName);
-            int idx = nameItem ? originalRowIndex(nameItem) : -1;
+            const int idx = nameItem ? originalRowIndex(nameItem) : -1;
             if (idx >= 0 && idx < m_filteredPrograms.size()) {
                 result.append(m_filteredPrograms[idx]);
             } else if (all_resolved != nullptr) {
@@ -1591,7 +1591,7 @@ QVector<LeftoverItem> AdvancedUninstallPanel::selectedLeftovers(bool* all_resolv
             // Same all-or-nothing contract as selectedPrograms: an unresolvable checked row is
             // surfaced so the deletion can refuse rather than act on part of the selection.
             auto* typeItem = m_leftover_table->item(row, kLeftoverColType);
-            int idx = typeItem ? originalRowIndex(typeItem) : -1;
+            const int idx = typeItem ? originalRowIndex(typeItem) : -1;
             if (idx >= 0 && idx < m_currentLeftovers.size()) {
                 auto item = m_currentLeftovers[idx];
                 item.selected = true;

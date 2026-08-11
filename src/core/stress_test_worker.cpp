@@ -250,7 +250,7 @@ StressTestWorker::StressTestWorker(QObject* parent) : WorkerBase(parent) {}
 // ============================================================================
 
 auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
-    sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Stress test");
+    const sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Stress test");
 
     // Fail closed BEFORE any work on a config that would do nothing yet pass, or whose
     // duration would overflow the monitor timer. A run that reaches the code below has
@@ -381,7 +381,7 @@ void StressTestWorker::launchStressThreads(std::vector<std::future<void>>& futur
 
     if (m_config.stress_memory) {
         futures.push_back(std::async(std::launch::async, [this]() {
-            int errors = runMemoryStress();
+            const int errors = runMemoryStress();
             m_error_count.fetch_add(errors, std::memory_order_relaxed);
         }));
         logInfo("Launched memory stress thread");
@@ -493,7 +493,7 @@ void StressTestWorker::runCpuStress() {
     while (!childrenShouldStop()) {
         // Integer workload: check if large random numbers are prime
         const uint64_t candidate = rng() | 1ULL;  // Ensure odd
-        [[maybe_unused]] bool is_prime = isPrimeStress(candidate);
+        [[maybe_unused]] const bool is_prime = isPrimeStress(candidate);
 
         // Re-check after compute-heavy isPrimeStress (atomic; value may change)
         // cppcheck-suppress oppositeInnerCondition
@@ -513,7 +513,7 @@ void StressTestWorker::runCpuStress() {
         }
 
         // Prevent optimizer from removing everything
-        volatile double sink = mat[0];
+        const volatile double sink = mat[0];
         (void)sink;
     }
 }
@@ -578,7 +578,7 @@ int StressTestWorker::runMemoryStress() {
         patternFill(data, count, pattern_seed);
         total_bytes_written += alloc_size;
 
-        int errors = patternVerify(data, count, pattern_seed);
+        const int errors = patternVerify(data, count, pattern_seed);
         if (errors > 0) {
             logError("Memory stress: {} pattern errors with seed {:#x}", errors, pattern_seed);
             total_errors += errors;
@@ -685,7 +685,7 @@ void StressTestWorker::runDiskStress() {
     uint64_t total_bytes_written = 0;
     int disk_errors = 0;
     while (!childrenShouldStop()) {
-        LARGE_INTEGER zero{};
+        LARGE_INTEGER const zero{};
         if (!SetFilePointerEx(h, zero, nullptr, FILE_BEGIN)) {
             logError("Disk stress: failed to rewind test file");
             ++disk_errors;
@@ -848,17 +848,17 @@ bool StressTestWorker::initGpuDevice(GpuStressContext& ctx) {
         return false;
     }
 
-    D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_11_0;
-    HRESULT hr = fnCreate(nullptr,
-                          D3D_DRIVER_TYPE_HARDWARE,
-                          nullptr,
-                          0,
-                          &feature_level,
-                          1,
-                          D3D11_SDK_VERSION,
-                          &ctx.device,
-                          nullptr,
-                          &ctx.context);
+    D3D_FEATURE_LEVEL const feature_level = D3D_FEATURE_LEVEL_11_0;
+    HRESULT const hr = fnCreate(nullptr,
+                                D3D_DRIVER_TYPE_HARDWARE,
+                                nullptr,
+                                0,
+                                &feature_level,
+                                1,
+                                D3D11_SDK_VERSION,
+                                &ctx.device,
+                                nullptr,
+                                &ctx.context);
 
     if (FAILED(hr) || !ctx.device || !ctx.context) {
         logWarning(
@@ -989,7 +989,7 @@ void StressTestWorker::runGpuDispatchLoop(GpuStressContext& ctx) {
 
         // Periodically check for device removal (GPU crash/reset)
         if ((operations & kGpuHealthCheckMask) == 0) {
-            HRESULT hr = ctx.device->GetDeviceRemovedReason();
+            HRESULT const hr = ctx.device->GetDeviceRemovedReason();
             if (FAILED(hr)) {
                 logError(
                     "GPU stress: device removed"

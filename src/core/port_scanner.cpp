@@ -457,7 +457,7 @@ QVector<PortScanResult> PortScanner::scanPortsConcurrently(const ScanConfig& con
         }
 
         for (auto& fut : batch) {
-            PortScanResult result = fut.get();
+            const PortScanResult result = fut.get();
             results.append(result);
             ++scanned;
             Q_EMIT portScanned(result);

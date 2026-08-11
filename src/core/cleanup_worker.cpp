@@ -932,7 +932,7 @@ bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
     }
 
     // RegDeleteTree deletes the key and ALL subkeys
-    LONG rc = RegDeleteTreeW(hive, reinterpret_cast<LPCWSTR>(path.utf16()));
+    LONG const rc = RegDeleteTreeW(hive, reinterpret_cast<LPCWSTR>(path.utf16()));
 
     return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND;
 #else

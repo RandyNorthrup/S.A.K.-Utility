@@ -544,7 +544,7 @@ FileExplorerArchiveResult FileExplorerArchiveService::extractZip(const QString& 
                                                                  const QString& destination_dir) {
     FileExplorerArchiveResult result;
     result.output_path = destination_dir;
-    QZipReader reader(zip_path);
+    const QZipReader reader(zip_path);
     // Bound the central directory BEFORE materializing it (a hostile multi-GB
     // central directory would otherwise force a ~2-3x allocation before the entry
     // cap), then cap the entry count (B8-09).
@@ -576,7 +576,7 @@ FileExplorerArchiveResult FileExplorerArchiveService::extractZip(const QString& 
 
 ArchiveListing FileExplorerArchiveService::listEntries(const QString& zip_path) {
     ArchiveListing listing;
-    QZipReader reader(zip_path);
+    const QZipReader reader(zip_path);
     // Fail closed on a non-zip BEFORE trusting an empty fileInfoList (a garbage file opens readable
     // and lists as a dishonest "0 entries"), and bound the central directory before materializing
     // it (a hostile multi-GB central directory of maximal-length names). A genuinely empty VALID
@@ -606,7 +606,7 @@ ArchiveListing FileExplorerArchiveService::listEntries(const QString& zip_path) 
 
 bool FileExplorerArchiveService::hasSingleTopLevelRoot(const QString& zip_path,
                                                        QString* root_name) {
-    QZipReader reader(zip_path);
+    const QZipReader reader(zip_path);
     // Bound the central directory before materializing it -- this runs per archive
     // (once per extraction), so an unbounded fileInfoList() here would repeat the
     // hostile-central-directory allocation (B8-09).

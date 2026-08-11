@@ -209,7 +209,7 @@ PartitionExecutionResult PartitionExecutor::execute(const QVector<PartitionOpera
 
 void PartitionExecutor::cancel() {
     m_cancelled.store(true, std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lock(m_active_broker_mutex);
+    const std::lock_guard<std::mutex> lock(m_active_broker_mutex);
     if (m_active_broker) {
         m_active_broker->cancelCurrentTask();
     }
@@ -236,7 +236,7 @@ PartitionExecutionStep PartitionExecutor::executeScript(const PartitionOperation
 PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionOperation& operation,
                                                                 const PartitionScript& script) {
     auto step = newScriptExecutionStep(operation);
-    StagedScriptCredentials credentials(script);
+    const StagedScriptCredentials credentials(script);
     if (!credentials.ok()) {
         step.error_message = credentials.error();
         return step;
@@ -289,7 +289,7 @@ PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionO
 PartitionExecutionStep PartitionExecutor::executeLocalScript(const PartitionOperation& operation,
                                                              const PartitionScript& script) {
     auto step = newScriptExecutionStep(operation);
-    StagedScriptCredentials credentials(script);
+    const StagedScriptCredentials credentials(script);
     if (!credentials.ok()) {
         step.error_message = credentials.error();
         return step;
@@ -312,7 +312,7 @@ PartitionExecutionStep PartitionExecutor::executeLocalScript(const PartitionOper
 }
 
 void PartitionExecutor::setActiveBroker(ElevationBroker* broker) {
-    std::lock_guard<std::mutex> lock(m_active_broker_mutex);
+    const std::lock_guard<std::mutex> lock(m_active_broker_mutex);
     // Stores a borrowed pointer by design: every caller that passes a local
     // ElevationBroker clears it with setActiveBroker(nullptr) before that broker is
     // destroyed, so m_active_broker never dangles.

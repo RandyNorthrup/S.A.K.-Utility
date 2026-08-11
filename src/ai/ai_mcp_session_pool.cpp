@@ -56,7 +56,7 @@ AiMcpSessionPool::~AiMcpSessionPool() {
 std::shared_ptr<AiMcpSessionPool::Entry> AiMcpSessionPool::entryFor(
     const AiMcpStdioCallRequest& request) {
     const QString key = sessionKey(request);
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     auto it = m_sessions.find(key);
     if (it == m_sessions.end()) {
         if (m_sessions.size() >= kMaxPooledSessions) {
@@ -125,7 +125,7 @@ QJsonObject AiMcpSessionPool::callTool(const AiMcpStdioCallRequest& request,
         }
         return {};
     }
-    QMutexLocker call_lock(&entry->mutex);
+    const QMutexLocker call_lock(&entry->mutex);
 
     QString error;
     if (!ensureSessionOpen(*entry, request, &error)) {
@@ -169,7 +169,7 @@ QVector<AiMcpToolDescriptor> AiMcpSessionPool::listTools(const AiMcpStdioCallReq
         }
         return {};
     }
-    QMutexLocker call_lock(&entry->mutex);
+    const QMutexLocker call_lock(&entry->mutex);
 
     QString error;
     if (!ensureSessionOpen(*entry, request, &error)) {
@@ -194,11 +194,11 @@ QVector<AiMcpToolDescriptor> AiMcpSessionPool::listTools(const AiMcpStdioCallReq
 }
 
 void AiMcpSessionPool::closeAll() {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     for (auto& [key, entry] : m_sessions) {
         // Serialize against any in-flight call on this entry before tearing its
         // session down, so we never destroy a session mid-call.
-        QMutexLocker entry_lock(&entry->mutex);
+        const QMutexLocker entry_lock(&entry->mutex);
         entry->session.reset();
         // Mark detached under the entry mutex so an in-flight caller that grabbed this handle
         // before we cleared the map cannot reopen a session on it after closeAll() returns.
@@ -208,7 +208,7 @@ void AiMcpSessionPool::closeAll() {
 }
 
 int AiMcpSessionPool::openSessionCount() const {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     return static_cast<int>(m_sessions.size());
 }
 

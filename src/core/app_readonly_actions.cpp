@@ -391,11 +391,11 @@ AppActionResult listInventory(const QJsonObject&) {
         }
         warnings.append(warning);
     }
-    QJsonObject data{{QStringLiteral("disk_count"), disks.size()},
-                     {QStringLiteral("layout_hash"), inventory.layout_hash},
-                     {QStringLiteral("disks"), disks},
-                     {QStringLiteral("warning_count"), inventory.warnings.size()},
-                     {QStringLiteral("warnings"), warnings}};
+    const QJsonObject data{{QStringLiteral("disk_count"), disks.size()},
+                           {QStringLiteral("layout_hash"), inventory.layout_hash},
+                           {QStringLiteral("disks"), disks},
+                           {QStringLiteral("warning_count"), inventory.warnings.size()},
+                           {QStringLiteral("warnings"), warnings}};
     return {true, QStringLiteral("Enumerated %1 disk(s)").arg(disks.size()), data};
 }
 
@@ -516,14 +516,15 @@ AppActionResult previewPartitionOperation(const QJsonObject& args) {
     for (const PartitionOperation& op : preview.operations) {
         operations.append(serializePreviewOperation(op));
     }
-    QJsonObject data{{QStringLiteral("can_apply"), preview.canApply()},
-                     {QStringLiteral("before_layout_hash"), preview.before_layout_hash},
-                     {QStringLiteral("after_layout_description"), preview.after_layout_description},
-                     {QStringLiteral("blocker_count"), preview.blockers.size()},
-                     {QStringLiteral("warning_count"), preview.warnings.size()},
-                     {QStringLiteral("blockers"), cappedMessages(preview.blockers)},
-                     {QStringLiteral("warnings"), cappedMessages(preview.warnings)},
-                     {QStringLiteral("operations"), operations}};
+    const QJsonObject data{{QStringLiteral("can_apply"), preview.canApply()},
+                           {QStringLiteral("before_layout_hash"), preview.before_layout_hash},
+                           {QStringLiteral("after_layout_description"),
+                            preview.after_layout_description},
+                           {QStringLiteral("blocker_count"), preview.blockers.size()},
+                           {QStringLiteral("warning_count"), preview.warnings.size()},
+                           {QStringLiteral("blockers"), cappedMessages(preview.blockers)},
+                           {QStringLiteral("warnings"), cappedMessages(preview.warnings)},
+                           {QStringLiteral("operations"), operations}};
     const QString message =
         preview.canApply()
             ? QStringLiteral("Operation ALLOWED (%1 warning(s))").arg(preview.warnings.size())
@@ -552,11 +553,11 @@ AppActionResult listInstalledPrograms(const QJsonObject&) {
         listed.append(serializeProgram(program));
     }
     const bool truncated = programs.size() > listed.size();
-    QJsonObject data{{QStringLiteral("total_count"), programs.size()},
-                     {QStringLiteral("listed_count"), listed.size()},
-                     {QStringLiteral("truncated"), truncated},
-                     {QStringLiteral("inventory_complete"), inventory_complete},
-                     {QStringLiteral("programs"), listed}};
+    const QJsonObject data{{QStringLiteral("total_count"), programs.size()},
+                           {QStringLiteral("listed_count"), listed.size()},
+                           {QStringLiteral("truncated"), truncated},
+                           {QStringLiteral("inventory_complete"), inventory_complete},
+                           {QStringLiteral("programs"), listed}};
     return {true, QStringLiteral("Found %1 installed program(s)").arg(programs.size()), data};
 }
 
@@ -780,20 +781,21 @@ AppActionResult scanLeftovers(const QJsonObject& args) {
     for (const QString& phase : failed_phases) {
         failed_arr.append(phase);
     }
-    QJsonObject data{{QStringLiteral("program_name"), program.displayName},
-                     {QStringLiteral("install_location"), program.installLocation},
-                     {QStringLiteral("scan_level"),
-                      advanced ? QStringLiteral("advanced") : QStringLiteral("moderate")},
-                     {QStringLiteral("item_count"), static_cast<int>(items.size())},
-                     {QStringLiteral("reported_count"), arr.size()},
-                     {QStringLiteral("truncated"), static_cast<int>(items.size()) > arr.size()},
-                     {QStringLiteral("safe_count"), totals.safe},
-                     {QStringLiteral("review_count"), totals.review},
-                     {QStringLiteral("risky_count"), totals.risky},
-                     {QStringLiteral("total_size_bytes"), static_cast<double>(totals.total_size)},
-                     {QStringLiteral("scan_complete"), !timed_out && failed_phases.isEmpty()},
-                     {QStringLiteral("failed_system_phases"), failed_arr},
-                     {QStringLiteral("items"), arr}};
+    const QJsonObject data{
+        {QStringLiteral("program_name"), program.displayName},
+        {QStringLiteral("install_location"), program.installLocation},
+        {QStringLiteral("scan_level"),
+         advanced ? QStringLiteral("advanced") : QStringLiteral("moderate")},
+        {QStringLiteral("item_count"), static_cast<int>(items.size())},
+        {QStringLiteral("reported_count"), arr.size()},
+        {QStringLiteral("truncated"), static_cast<int>(items.size()) > arr.size()},
+        {QStringLiteral("safe_count"), totals.safe},
+        {QStringLiteral("review_count"), totals.review},
+        {QStringLiteral("risky_count"), totals.risky},
+        {QStringLiteral("total_size_bytes"), static_cast<double>(totals.total_size)},
+        {QStringLiteral("scan_complete"), !timed_out && failed_phases.isEmpty()},
+        {QStringLiteral("failed_system_phases"), failed_arr},
+        {QStringLiteral("items"), arr}};
     return {true,
             buildLeftoverMessage(program, static_cast<int>(items.size()), timed_out, failed_phases),
             data};
@@ -841,16 +843,17 @@ AppActionResult scanVulnerabilities(const QJsonObject& args) {
             "Installed-app inventory incomplete (a registry hive could not be fully read; run "
             "elevated for full coverage) -- vulnerabilities in unlisted apps may be missed"));
     }
-    QJsonObject data{{QStringLiteral("installed_apps_scanned"), scan.installedAppsScanned},
-                     {QStringLiteral("inventory_complete"), inventory_complete},
-                     {QStringLiteral("total_findings"), scan.findings.size()},
-                     {QStringLiteral("reported_findings"), findings.size()},
-                     {QStringLiteral("critical_count"), scan.criticalCount},
-                     {QStringLiteral("actively_exploited_count"), scan.activelyExploitedCount},
-                     {QStringLiteral("truncated"), scan.findings.size() > findings.size()},
-                     {QStringLiteral("cancelled"), scan.cancelled},
-                     {QStringLiteral("findings"), findings},
-                     {QStringLiteral("source_errors"), source_errors}};
+    const QJsonObject data{{QStringLiteral("installed_apps_scanned"), scan.installedAppsScanned},
+                           {QStringLiteral("inventory_complete"), inventory_complete},
+                           {QStringLiteral("total_findings"), scan.findings.size()},
+                           {QStringLiteral("reported_findings"), findings.size()},
+                           {QStringLiteral("critical_count"), scan.criticalCount},
+                           {QStringLiteral("actively_exploited_count"),
+                            scan.activelyExploitedCount},
+                           {QStringLiteral("truncated"), scan.findings.size() > findings.size()},
+                           {QStringLiteral("cancelled"), scan.cancelled},
+                           {QStringLiteral("findings"), findings},
+                           {QStringLiteral("source_errors"), source_errors}};
     QString message = QStringLiteral("Scanned %1 app(s): %2 finding(s), %3 critical")
                           .arg(scan.installedAppsScanned)
                           .arg(scan.findings.size())
@@ -908,13 +911,14 @@ AppActionResult identifyImage(const QJsonObject& args) {
     // are intentionally not computed here; expose them via a future op.
     const ImageFormat format = FileImageSource::detectFormat(path);
     const bool is_compressed = CompressedImageSource::isCompressed(path);
-    QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
-                     {QStringLiteral("name"), info.fileName()},
-                     {QStringLiteral("detection"), QStringLiteral("extension")},
-                     {QStringLiteral("format"), imageFormatToString(format)},
-                     {QStringLiteral("size_bytes"), static_cast<double>(info.size())},
-                     {QStringLiteral("is_compressed"), is_compressed},
-                     {QStringLiteral("extension_recognized"), format != ImageFormat::Unknown}};
+    const QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
+                           {QStringLiteral("name"), info.fileName()},
+                           {QStringLiteral("detection"), QStringLiteral("extension")},
+                           {QStringLiteral("format"), imageFormatToString(format)},
+                           {QStringLiteral("size_bytes"), static_cast<double>(info.size())},
+                           {QStringLiteral("is_compressed"), is_compressed},
+                           {QStringLiteral("extension_recognized"),
+                            format != ImageFormat::Unknown}};
     const QString message = QStringLiteral("%1 -- format %2 (by extension)%3")
                                 .arg(info.fileName(),
                                      imageFormatToString(format),
@@ -1236,7 +1240,7 @@ AppActionResult listDrives(const QJsonObject& args) {
     }
 
     const int shown_total = removable_only ? removable_count : drives.size();
-    QJsonObject data{
+    const QJsonObject data{
         {QStringLiteral("drive_count"), drives.size()},
         {QStringLiteral("removable_count"), removable_count},
         {QStringLiteral("reported_count"), listed.size()},
@@ -1312,10 +1316,10 @@ AppActionResult hashFile(const QJsonObject& args) {
     }
 
     const QString hex = QString::fromStdString(result.value());
-    QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
-                     {QStringLiteral("algorithm"), algo_str},
-                     {QStringLiteral("hash"), hex},
-                     {QStringLiteral("size_bytes"), static_cast<double>(info.size())}};
+    const QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
+                           {QStringLiteral("algorithm"), algo_str},
+                           {QStringLiteral("hash"), hex},
+                           {QStringLiteral("size_bytes"), static_cast<double>(info.size())}};
     return {true, QStringLiteral("%1 (%2): %3").arg(info.fileName(), algo_str, hex), data};
 }
 
@@ -1795,14 +1799,14 @@ AppActionResult listArchive(const QJsonObject& args) {
                                    {QStringLiteral("size_bytes"), static_cast<double>(entry.size)},
                                    {QStringLiteral("is_dir"), entry.is_dir}});
     }
-    QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
-                     {QStringLiteral("name"), info.fileName()},
-                     {QStringLiteral("total_entries"), listing.total_entries},
-                     {QStringLiteral("reported_entries"), entries.size()},
-                     {QStringLiteral("truncated"), listing.total_entries > entries.size()},
-                     {QStringLiteral("total_uncompressed_bytes"),
-                      static_cast<double>(listing.total_uncompressed_bytes)},
-                     {QStringLiteral("entries"), entries}};
+    const QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
+                           {QStringLiteral("name"), info.fileName()},
+                           {QStringLiteral("total_entries"), listing.total_entries},
+                           {QStringLiteral("reported_entries"), entries.size()},
+                           {QStringLiteral("truncated"), listing.total_entries > entries.size()},
+                           {QStringLiteral("total_uncompressed_bytes"),
+                            static_cast<double>(listing.total_uncompressed_bytes)},
+                           {QStringLiteral("entries"), entries}};
     return {true,
             QStringLiteral("Archive '%1': %2 entr%3")
                 .arg(info.fileName())
@@ -1946,16 +1950,17 @@ AppActionResult buildDirScanResult(const QFileInfo& info,
     }
     const qint64 total_entries = out.files + out.directories;
     const bool scan_complete = out.complete && !out.timed_out && out.errors == 0;
-    QJsonObject data{{QStringLiteral("root_path"), info.absoluteFilePath()},
-                     {QStringLiteral("files_found"), static_cast<double>(out.files)},
-                     {QStringLiteral("directories_found"), static_cast<double>(out.directories)},
-                     {QStringLiteral("total_size_bytes"), static_cast<double>(out.total_size)},
-                     {QStringLiteral("reported_entries"), entries.size()},
-                     {QStringLiteral("truncated"), total_entries > entries.size()},
-                     {QStringLiteral("errors_encountered"), static_cast<double>(out.errors)},
-                     {QStringLiteral("scan_complete"), scan_complete},
-                     {QStringLiteral("timed_out"), out.timed_out},
-                     {QStringLiteral("entries"), entries}};
+    const QJsonObject data{
+        {QStringLiteral("root_path"), info.absoluteFilePath()},
+        {QStringLiteral("files_found"), static_cast<double>(out.files)},
+        {QStringLiteral("directories_found"), static_cast<double>(out.directories)},
+        {QStringLiteral("total_size_bytes"), static_cast<double>(out.total_size)},
+        {QStringLiteral("reported_entries"), entries.size()},
+        {QStringLiteral("truncated"), total_entries > entries.size()},
+        {QStringLiteral("errors_encountered"), static_cast<double>(out.errors)},
+        {QStringLiteral("scan_complete"), scan_complete},
+        {QStringLiteral("timed_out"), out.timed_out},
+        {QStringLiteral("entries"), entries}};
     QString message = QStringLiteral("Scanned '%1': %2 file(s), %3 dir(s), %4 bytes")
                           .arg(info.fileName().isEmpty() ? root : info.fileName())
                           .arg(out.files)
@@ -2088,7 +2093,7 @@ QStringList dropNestedPaths(QStringList paths) {
 // filesystem access, no symlink following), deduped case-INSENSITIVELY (Windows FS), then
 // ancestor-filtered so an overlapping subtree is sized once.
 QStringList discoverAppDataDirs(const QString& app_name) {
-    UserDataManager manager;
+    const UserDataManager manager;
     const QStringList raw = manager.scanForAppData(app_name);
     QStringList normalized;
     QSet<QString> seen;
@@ -2192,18 +2197,19 @@ AppActionResult previewAppDataBackup(const QJsonObject& args) {
     const AppDataPreviewOutcome out = runAppDataPreview(paths);
 
     const bool scan_complete = out.complete && !out.timed_out;
-    QJsonObject data{{QStringLiteral("app_name"), app_name},
-                     {QStringLiteral("found"), !paths.isEmpty()},
-                     {QStringLiteral("directory_count"), static_cast<int>(paths.size())},
-                     {QStringLiteral("sized_count"), static_cast<int>(out.scanned.size())},
-                     {QStringLiteral("skipped_count"), static_cast<int>(out.skipped.size())},
-                     {QStringLiteral("total_size_bytes"), static_cast<double>(out.total_size)},
-                     {QStringLiteral("file_count"), static_cast<double>(out.file_count)},
-                     {QStringLiteral("paths"), clampPathArray(out.scanned)},
-                     {QStringLiteral("skipped_paths"), clampPathArray(out.skipped)},
-                     {QStringLiteral("truncated"), out.truncated},
-                     {QStringLiteral("timed_out"), out.timed_out},
-                     {QStringLiteral("scan_complete"), scan_complete}};
+    const QJsonObject data{{QStringLiteral("app_name"), app_name},
+                           {QStringLiteral("found"), !paths.isEmpty()},
+                           {QStringLiteral("directory_count"), static_cast<int>(paths.size())},
+                           {QStringLiteral("sized_count"), static_cast<int>(out.scanned.size())},
+                           {QStringLiteral("skipped_count"), static_cast<int>(out.skipped.size())},
+                           {QStringLiteral("total_size_bytes"),
+                            static_cast<double>(out.total_size)},
+                           {QStringLiteral("file_count"), static_cast<double>(out.file_count)},
+                           {QStringLiteral("paths"), clampPathArray(out.scanned)},
+                           {QStringLiteral("skipped_paths"), clampPathArray(out.skipped)},
+                           {QStringLiteral("truncated"), out.truncated},
+                           {QStringLiteral("timed_out"), out.timed_out},
+                           {QStringLiteral("scan_complete"), scan_complete}};
     QString message = paths.isEmpty()
                           ? QStringLiteral("No app-data directories found for '%1'").arg(app_name)
                           : QStringLiteral("'%1': %2 director(ies), %3 bytes across %4 file(s)")
@@ -2395,9 +2401,9 @@ AppActionResult smartScan(const QJsonObject&) {
     for (const SmartReport& report : analyzer.reports()) {
         drives.append(serializeSmartReport(report));
     }
-    QJsonObject data{{QStringLiteral("drive_count"), drives.size()},
-                     {QStringLiteral("smartctl_available"), analyzer.isSmartctlAvailable()},
-                     {QStringLiteral("drives"), drives}};
+    const QJsonObject data{{QStringLiteral("drive_count"), drives.size()},
+                           {QStringLiteral("smartctl_available"), analyzer.isSmartctlAvailable()},
+                           {QStringLiteral("drives"), drives}};
     return {true, QStringLiteral("Analyzed SMART data for %1 drive(s)").arg(drives.size()), data};
 }
 
@@ -2410,7 +2416,7 @@ AppActionResult smartScan(const QJsonObject&) {
 // list came back empty, the message says the list may be incomplete -- an empty result then does
 // not masquerade as a definitive "no restore points".
 AppActionResult listRestorePoints(const QJsonObject&) {
-    RestorePointManager manager;
+    const RestorePointManager manager;
     const bool enabled = manager.isSystemRestoreEnabled();
     const bool elevated = RestorePointManager::isElevated();
     bool query_ok = false;
@@ -2438,12 +2444,12 @@ AppActionResult listRestorePoints(const QJsonObject&) {
         listed.append(QJsonObject{{QStringLiteral("date"), point.first.toString(Qt::ISODate)},
                                   {QStringLiteral("description"), clampLine(point.second)}});
     }
-    QJsonObject data{{QStringLiteral("system_restore_enabled"), enabled},
-                     {QStringLiteral("elevated"), elevated},
-                     {QStringLiteral("count"), points.size()},
-                     {QStringLiteral("reported_count"), listed.size()},
-                     {QStringLiteral("truncated"), points.size() > listed.size()},
-                     {QStringLiteral("restore_points"), listed}};
+    const QJsonObject data{{QStringLiteral("system_restore_enabled"), enabled},
+                           {QStringLiteral("elevated"), elevated},
+                           {QStringLiteral("count"), points.size()},
+                           {QStringLiteral("reported_count"), listed.size()},
+                           {QStringLiteral("truncated"), points.size() > listed.size()},
+                           {QStringLiteral("restore_points"), listed}};
 
     QString message;
     if (!enabled) {
@@ -2487,10 +2493,10 @@ AppActionResult readTemperatures(const QJsonObject&) {
             listed.append(serializeThermalReading(reading));
         }
     }
-    QJsonObject data{{QStringLiteral("sensor_count"), readings.size()},
-                     {QStringLiteral("reported_count"), listed.size()},
-                     {QStringLiteral("truncated"), readings.size() > listed.size()},
-                     {QStringLiteral("sensors"), listed}};
+    const QJsonObject data{{QStringLiteral("sensor_count"), readings.size()},
+                           {QStringLiteral("reported_count"), listed.size()},
+                           {QStringLiteral("truncated"), readings.size() > listed.size()},
+                           {QStringLiteral("sensors"), listed}};
 
     const QString message =
         readings.isEmpty()
@@ -2666,10 +2672,10 @@ AppActionResult listUsers(const QJsonObject&) {
         }
         listed.append(serializeUserProfile(user));
     }
-    QJsonObject data{{QStringLiteral("count"), users.size()},
-                     {QStringLiteral("reported_count"), listed.size()},
-                     {QStringLiteral("truncated"), users.size() > listed.size()},
-                     {QStringLiteral("users"), listed}};
+    const QJsonObject data{{QStringLiteral("count"), users.size()},
+                           {QStringLiteral("reported_count"), listed.size()},
+                           {QStringLiteral("truncated"), users.size() > listed.size()},
+                           {QStringLiteral("users"), listed}};
     return {true,
             QStringLiteral("Found %1 local user account(s) with a profile").arg(users.size()),
             data};
@@ -2765,11 +2771,11 @@ AppActionResult listEmailProfiles(const QJsonObject&) {
         }
         listed.append(serializeEmailProfile(profile));
     }
-    QJsonObject data{{QStringLiteral("profile_count"), profiles.size()},
-                     {QStringLiteral("reported_count"), listed.size()},
-                     {QStringLiteral("truncated"), profiles.size() > listed.size()},
-                     {QStringLiteral("discovery_complete"), reliable},
-                     {QStringLiteral("profiles"), listed}};
+    const QJsonObject data{{QStringLiteral("profile_count"), profiles.size()},
+                           {QStringLiteral("reported_count"), listed.size()},
+                           {QStringLiteral("truncated"), profiles.size() > listed.size()},
+                           {QStringLiteral("discovery_complete"), reliable},
+                           {QStringLiteral("profiles"), listed}};
     QString message =
         profiles.isEmpty()
             ? QStringLiteral(
@@ -2838,10 +2844,10 @@ AppActionResult readMbox(const QJsonObject& args) {
         messages.append(serializeMboxMessage(message));
     }
     const int total = parser.messageCount();
-    QJsonObject data{{QStringLiteral("message_count"), total},
-                     {QStringLiteral("offset"), offset},
-                     {QStringLiteral("returned"), messages.size()},
-                     {QStringLiteral("messages"), messages}};
+    const QJsonObject data{{QStringLiteral("message_count"), total},
+                           {QStringLiteral("offset"), offset},
+                           {QStringLiteral("returned"), messages.size()},
+                           {QStringLiteral("messages"), messages}};
     const QString summary =
         QStringLiteral("Returned %1 of %2 message(s)").arg(messages.size()).arg(total);
     return {true, summary, data};
@@ -2965,7 +2971,7 @@ AppActionResult searchMbox(const QJsonObject& args) {
         }
         listed.append(serializeSearchHit(hit));
     }
-    QJsonObject data{
+    const QJsonObject data{
         {QStringLiteral("query"), query},
         {QStringLiteral("total_hits"), outcome.hits.size()},
         {QStringLiteral("reported_count"), listed.size()},
@@ -3046,13 +3052,13 @@ AppActionResult searchPst(const QJsonObject& args) {
         }
         listed.append(serializeSearchHit(hit));
     }
-    QJsonObject data{{QStringLiteral("query"), query},
-                     {QStringLiteral("total_hits"), outcome.hits.size()},
-                     {QStringLiteral("reported_count"), listed.size()},
-                     {QStringLiteral("truncated"), outcome.hits.size() > listed.size()},
-                     {QStringLiteral("result_cap_reached"), capped},
-                     {QStringLiteral("search_complete"), search_complete},
-                     {QStringLiteral("hits"), listed}};
+    const QJsonObject data{{QStringLiteral("query"), query},
+                           {QStringLiteral("total_hits"), outcome.hits.size()},
+                           {QStringLiteral("reported_count"), listed.size()},
+                           {QStringLiteral("truncated"), outcome.hits.size() > listed.size()},
+                           {QStringLiteral("result_cap_reached"), capped},
+                           {QStringLiteral("search_complete"), search_complete},
+                           {QStringLiteral("hits"), listed}};
     const QString suffix =
         search_complete ? QString() : QStringLiteral(" (search incomplete -- partial coverage)");
     return {true,
@@ -3331,18 +3337,18 @@ AppActionResult buildRecoverResult(const QFileInfo& info,
     appendRecoveredItems(outcome.orphaned, QStringLiteral("orphaned"), items);
     const int total = static_cast<int>(outcome.recoverable.size() + outcome.orphaned.size());
 
-    QJsonObject data{{QStringLiteral("path"), info.absoluteFilePath()},
-                     {QStringLiteral("name"), info.fileName()},
-                     {QStringLiteral("recoverable_count"),
-                      static_cast<int>(outcome.recoverable.size())},
-                     {QStringLiteral("orphaned_count"), static_cast<int>(outcome.orphaned.size())},
-                     {QStringLiteral("reported_count"), items.size()},
-                     {QStringLiteral("truncated"), total > items.size()},
-                     {QStringLiteral("recoverable_scan_reliable"), outcome.recoverable_reliable},
-                     {QStringLiteral("orphan_scan_included"), include_orphans},
-                     {QStringLiteral("orphan_scan_reliable"), outcome.orphan_reliable},
-                     {QStringLiteral("timed_out"), outcome.timed_out},
-                     {QStringLiteral("items"), items}};
+    const QJsonObject data{
+        {QStringLiteral("path"), info.absoluteFilePath()},
+        {QStringLiteral("name"), info.fileName()},
+        {QStringLiteral("recoverable_count"), static_cast<int>(outcome.recoverable.size())},
+        {QStringLiteral("orphaned_count"), static_cast<int>(outcome.orphaned.size())},
+        {QStringLiteral("reported_count"), items.size()},
+        {QStringLiteral("truncated"), total > items.size()},
+        {QStringLiteral("recoverable_scan_reliable"), outcome.recoverable_reliable},
+        {QStringLiteral("orphan_scan_included"), include_orphans},
+        {QStringLiteral("orphan_scan_reliable"), outcome.orphan_reliable},
+        {QStringLiteral("timed_out"), outcome.timed_out},
+        {QStringLiteral("items"), items}};
 
     QString message = QStringLiteral("Recoverable inventory for '%1': %2 recoverable + %3 orphaned")
                           .arg(info.fileName())
@@ -3442,9 +3448,9 @@ AppActionResult listAdapters(const QJsonObject&) {
         }
         listed.append(serializeAdapter(adapter));
     }
-    QJsonObject data{{QStringLiteral("adapter_count"), adapters.size()},
-                     {QStringLiteral("truncated"), adapters.size() > listed.size()},
-                     {QStringLiteral("adapters"), listed}};
+    const QJsonObject data{{QStringLiteral("adapter_count"), adapters.size()},
+                           {QStringLiteral("truncated"), adapters.size() > listed.size()},
+                           {QStringLiteral("adapters"), listed}};
     return {true, QStringLiteral("Enumerated %1 network adapter(s)").arg(adapters.size()), data};
 }
 
@@ -3511,12 +3517,12 @@ AppActionResult listConnections(const QJsonObject& args) {
             listed.append(serializeConnection(c));
         }
     }
-    QJsonObject data{{QStringLiteral("count"), connections.size()},
-                     {QStringLiteral("tcp_count"), tcp},
-                     {QStringLiteral("udp_count"), udp},
-                     {QStringLiteral("reported_count"), listed.size()},
-                     {QStringLiteral("truncated"), connections.size() > listed.size()},
-                     {QStringLiteral("connections"), listed}};
+    const QJsonObject data{{QStringLiteral("count"), connections.size()},
+                           {QStringLiteral("tcp_count"), tcp},
+                           {QStringLiteral("udp_count"), udp},
+                           {QStringLiteral("reported_count"), listed.size()},
+                           {QStringLiteral("truncated"), connections.size() > listed.size()},
+                           {QStringLiteral("connections"), listed}};
     return {true,
             QStringLiteral("Enumerated %1 connection(s): %2 TCP, %3 UDP")
                 .arg(connections.size())
@@ -3601,12 +3607,13 @@ AppActionResult wifiScan(const QJsonObject&) {
         }
         channels.append(serializeWifiChannel(ch));
     }
-    QJsonObject data{{QStringLiteral("network_count"), networks.size()},
-                     {QStringLiteral("reported_count"), listed.size()},
-                     {QStringLiteral("truncated"), networks.size() > listed.size()},
-                     {QStringLiteral("networks"), listed},
-                     {QStringLiteral("channels"), channels},
-                     {QStringLiteral("channels_truncated"), utilization.size() > channels.size()}};
+    const QJsonObject data{{QStringLiteral("network_count"), networks.size()},
+                           {QStringLiteral("reported_count"), listed.size()},
+                           {QStringLiteral("truncated"), networks.size() > listed.size()},
+                           {QStringLiteral("networks"), listed},
+                           {QStringLiteral("channels"), channels},
+                           {QStringLiteral("channels_truncated"),
+                            utilization.size() > channels.size()}};
     return {true, QStringLiteral("WiFi scan: %1 network(s) found").arg(networks.size()), data};
 }
 
@@ -3634,10 +3641,10 @@ AppActionResult listWifiProfiles(const QJsonObject&) {
             QJsonObject{{QStringLiteral("profile_name"), clampLine(profile.profile_name)},
                         {QStringLiteral("security_type"), clampLine(profile.security_type)}});
     }
-    QJsonObject data{{QStringLiteral("profile_count"), profiles.size()},
-                     {QStringLiteral("reported_count"), listed.size()},
-                     {QStringLiteral("truncated"), profiles.size() > listed.size()},
-                     {QStringLiteral("profiles"), listed}};
+    const QJsonObject data{{QStringLiteral("profile_count"), profiles.size()},
+                           {QStringLiteral("reported_count"), listed.size()},
+                           {QStringLiteral("truncated"), profiles.size() > listed.size()},
+                           {QStringLiteral("profiles"), listed}};
     return {true, QStringLiteral("Found %1 saved WiFi profile(s)").arg(profiles.size()), data};
 }
 
@@ -3724,14 +3731,14 @@ AppActionResult generateWifiSetupScript(const QJsonObject& args) {
             : QStringLiteral(
                   "Save as a .cmd and run as Administrator. It adds the WLAN profile then "
                   "connects.");
-    QJsonObject data{{QStringLiteral("ssid"), clampLine(ssid)},
-                     {QStringLiteral("platform"), QStringLiteral("windows")},
-                     {QStringLiteral("security"),
-                      security.isEmpty() ? QStringLiteral("wpa2") : clampLine(security)},
-                     {QStringLiteral("hidden"), hidden},
-                     {QStringLiteral("embeds_password"), embeds_password},
-                     {QStringLiteral("script"), script},
-                     {QStringLiteral("note"), note}};
+    const QJsonObject data{{QStringLiteral("ssid"), clampLine(ssid)},
+                           {QStringLiteral("platform"), QStringLiteral("windows")},
+                           {QStringLiteral("security"),
+                            security.isEmpty() ? QStringLiteral("wpa2") : clampLine(security)},
+                           {QStringLiteral("hidden"), hidden},
+                           {QStringLiteral("embeds_password"), embeds_password},
+                           {QStringLiteral("script"), script},
+                           {QStringLiteral("note"), note}};
     return {true,
             QStringLiteral("Built a Windows WiFi setup script for '%1'").arg(clampLine(ssid)),
             data};
@@ -3822,11 +3829,11 @@ AppActionResult listShares(const QJsonObject&) {
         }
         listed.append(serializeShare(share));
     }
-    QJsonObject data{{QStringLiteral("count"), shares.size()},
-                     {QStringLiteral("reported_count"), listed.size()},
-                     {QStringLiteral("truncated"), shares.size() > listed.size()},
-                     {QStringLiteral("access_tested"), false},
-                     {QStringLiteral("shares"), listed}};
+    const QJsonObject data{{QStringLiteral("count"), shares.size()},
+                           {QStringLiteral("reported_count"), listed.size()},
+                           {QStringLiteral("truncated"), shares.size() > listed.size()},
+                           {QStringLiteral("access_tested"), false},
+                           {QStringLiteral("shares"), listed}};
     return {true,
             QStringLiteral("Found %1 share(s) on the local machine").arg(shares.size()),
             data};

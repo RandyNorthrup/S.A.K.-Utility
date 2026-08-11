@@ -194,7 +194,7 @@ QString noOcrLanguageText() {
 // Shared flow for every OCR tool: create the engine, capture the target (downscaled to the
 // engine's limit), recognize, and shape the reply. origin for box mapping is (req.left, top).
 ToolResult runOcrCapture(CaptureRequest req, bool structured) {
-    ComApartment com;
+    const ComApartment com;
     const OcrEngine engine = makeEngine();
     if (!engine) {
         return errorResult(noOcrLanguageText());
@@ -308,7 +308,7 @@ void appendWords(const OcrResult& result, long ox, long oy, double inv, QVector<
 // OCR the target and collect every recognized word with an absolute screen box. Returns an
 // error string (missing language / capture / recognize failure), empty on success.
 QString ocrCollect(CaptureRequest req, QVector<WordHit>& out) {
-    ComApartment com;
+    const ComApartment com;
     const OcrEngine engine = makeEngine();
     if (!engine) {
         return noOcrLanguageText();

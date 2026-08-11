@@ -584,7 +584,7 @@ void WifiManagerPanel::setAllCheckStates(bool allChecked) {
 // -----------------------------------------------------------------------------
 
 void WifiManagerPanel::onSecurityChanged(const QString& value) {
-    bool hasPassword = !value.contains("None", Qt::CaseInsensitive);
+    const bool hasPassword = !value.contains("None", Qt::CaseInsensitive);
     m_password_input->setEnabled(hasPassword);
     m_password_toggle_btn->setEnabled(hasPassword);
     if (!hasPassword) {
@@ -623,7 +623,7 @@ void WifiManagerPanel::onDeleteSelectedClicked() {
     }
 
     std::sort(rows.begin(), rows.end(), std::greater<int>());
-    for (int row : rows) {
+    for (const int row : rows) {
         m_network_table->removeRow(row);
     }
 
@@ -1396,7 +1396,7 @@ void WifiManagerPanel::onSaveTableClicked() {
 
 void WifiManagerPanel::saveCheckedRowsToJson(const QString& path, const QList<int>& checkedRows) {
     QJsonArray arr;
-    for (int row_index : checkedRows) {
+    for (const int row_index : checkedRows) {
         const WifiConfig cfg = configFromRow(row_index);
         QJsonObject obj;
         obj["location"] = cfg.location;
@@ -1406,7 +1406,7 @@ void WifiManagerPanel::saveCheckedRowsToJson(const QString& path, const QList<in
         obj["hidden"] = cfg.hidden;
         arr.append(obj);
     }
-    QJsonDocument doc(arr);
+    const QJsonDocument doc(arr);
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
         sak::logWarning(("Could not open file for writing: " + path).toStdString());
@@ -1559,7 +1559,7 @@ void WifiManagerPanel::onScanNetworksClicked() {
     Q_EMIT statusMessage("Scanning known Windows WiFi profiles...", 0);
 
     auto* watcher = new QFutureWatcher<QList<WifiConfig>>(this);
-    QPointer<WifiManagerPanel> panel(this);
+    const QPointer<WifiManagerPanel> panel(this);
     connect(watcher, &QFutureWatcher<QList<WifiConfig>>::finished, this, [watcher, panel]() {
         watcher->deleteLater();
         if (!panel) {
@@ -1592,7 +1592,7 @@ void WifiManagerPanel::onScanNetworksClicked() {
         const QStringList profile_names = scanWindowsProfileNames();
         configs.reserve(profile_names.size());
         for (const QString& name : profile_names) {
-            WifiConfig cfg = parseWindowsWifiProfile(name);
+            const WifiConfig cfg = parseWindowsWifiProfile(name);
             if (!cfg.ssid.isEmpty()) {
                 configs.append(cfg);
             }
@@ -1806,7 +1806,7 @@ QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::configsFromRows(
     const QList<int>& rows) const {
     QList<WifiConfig> configs;
     configs.reserve(rows.size());
-    for (int row : rows) {
+    for (const int row : rows) {
         const WifiConfig cfg = configFromRow(row);
         if (!cfg.ssid.isEmpty()) {
             configs.append(cfg);
@@ -1828,7 +1828,7 @@ void WifiManagerPanel::startAddToWindowsProfiles(const QList<WifiConfig>& config
     Q_EMIT statusMessage("Adding selected network(s) to Windows WiFi profiles...", 0);
 
     auto* watcher = new QFutureWatcher<QPair<int, int>>(this);
-    QPointer<WifiManagerPanel> panel(this);
+    const QPointer<WifiManagerPanel> panel(this);
     connect(watcher, &QFutureWatcher<QPair<int, int>>::finished, this, [watcher, panel]() {
         watcher->deleteLater();
         if (!panel) {
@@ -2358,7 +2358,7 @@ void WifiManagerPanel::highlightSearchMatches() {
         setRowBackground(m_network_table, row, QBrush());
     }
 
-    for (int row : m_search_matches) {
+    for (const int row : m_search_matches) {
         setRowBackground(m_network_table,
                          row,
                          QColor(QString::fromLatin1(ui::kColorWifiSearchMatchHighlight)));
@@ -2382,7 +2382,7 @@ void WifiManagerPanel::saveTableToJson(const QString& path) {
         obj["hidden"] = cfg.hidden;
         arr.append(obj);
     }
-    QJsonDocument doc(arr);
+    const QJsonDocument doc(arr);
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
         sak::logWarning(("Could not open file for writing: " + path).toStdString());

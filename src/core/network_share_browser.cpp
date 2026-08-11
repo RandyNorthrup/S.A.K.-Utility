@@ -324,14 +324,14 @@ QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPat
     bool canWrite = false;
 
     // Test read access
-    QDir dir(uncPath);
+    const QDir dir(uncPath);
     if (dir.exists()) {
         canRead = true;
 
         // Bounded read probe: confirm the root is enumerable WITHOUT materializing a (possibly
         // hostile or huge) full directory listing. Touching just the first entry exercises real
         // read access; entryInfoList() would stat and copy the entire directory first.
-        QDirIterator it(uncPath, QDir::AllEntries | QDir::NoDotAndDotDot);
+        const QDirIterator it(uncPath, QDir::AllEntries | QDir::NoDotAndDotDot);
         (void)it.hasNext();
     }
 

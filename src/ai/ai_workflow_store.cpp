@@ -49,7 +49,7 @@ bool WorkflowStore::loadBuiltIn(QStringList* errors) {
 }
 
 bool WorkflowStore::loadDirectory(const QString& directory, QStringList* errors) {
-    QDir dir(directory);
+    const QDir dir(directory);
     if (!dir.exists()) {
         if (errors != nullptr) {
             errors->append(QStringLiteral("Workflow directory not found: %1").arg(directory));

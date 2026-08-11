@@ -227,7 +227,7 @@ static QString findNuspecDependencyId(const QString& extract_dir) {
     while (!xml.atEnd()) {
         xml.readNext();
         if (xml.isStartElement() && xml.name() == QStringLiteral("dependency")) {
-            QString id = xml.attributes().value("id").toString();
+            const QString id = xml.attributes().value("id").toString();
             if (id.isEmpty()) {
                 continue;
             }
@@ -398,7 +398,7 @@ void OfflineDeploymentWorker::buildDeploymentBundle(
     m_cancelled = false;
 
     {
-        QMutexLocker lock(&m_mutex);
+        const QMutexLocker lock(&m_mutex);
         m_jobs.clear();
         m_jobs.reserve(packages.size());
         for (const auto& [pkg_id, version] : packages) {
@@ -467,7 +467,7 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
                     .arg(unmet.join(QStringLiteral(", "))));
     }
     {
-        QMutexLocker jobs_lock(&m_mutex);
+        const QMutexLocker jobs_lock(&m_mutex);
         m_jobs = closure;
     }
 
@@ -504,7 +504,7 @@ void OfflineDeploymentWorker::executeBuildListManifest(const QString& output_dir
     // install time. Fast and network-free to build.
     QVector<BatchInternalizationJob> requested;
     {
-        QMutexLocker lock(&m_mutex);
+        const QMutexLocker lock(&m_mutex);
         requested = m_jobs;
     }
 
@@ -602,7 +602,7 @@ QVector<BatchInternalizationJob> OfflineDeploymentWorker::resolveDependencyClosu
     QStringList& warnings) {
     QVector<BatchInternalizationJob> requested;
     {
-        QMutexLocker lock(&m_mutex);
+        const QMutexLocker lock(&m_mutex);
         requested = m_jobs;
     }
 
@@ -732,7 +732,7 @@ bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
 }
 
 BatchInternalizationJob OfflineDeploymentWorker::beginInternalizationJob(int idx) {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     BatchInternalizationJob job = m_jobs[idx];
     m_jobs[idx].status = InternalizationStatus::DownloadingNupkg;
     return job;
@@ -777,7 +777,7 @@ InternalizationResult OfflineDeploymentWorker::runInternalizationJob(
     // Publish the active engine so cancel() (UI thread) can abort THIS engine's
     // in-flight download; clear it before the local engine goes out of scope.
     {
-        QMutexLocker lock(&m_mutex);
+        const QMutexLocker lock(&m_mutex);
         m_active_engine = &engine;
     }
     if (m_cancelled) {
@@ -785,7 +785,7 @@ InternalizationResult OfflineDeploymentWorker::runInternalizationJob(
     }
     engine.internalizePackage(job.package_id, job.version, ctx.packages_dir, ctx.work_dir);
     {
-        QMutexLocker lock(&m_mutex);
+        const QMutexLocker lock(&m_mutex);
         m_active_engine = nullptr;
     }
 
@@ -800,7 +800,7 @@ InternalizationResult OfflineDeploymentWorker::runInternalizationJob(
 void OfflineDeploymentWorker::applyInternalizationResult(int idx,
                                                          const InternalizationResult& result,
                                                          DeploymentManifest& manifest) {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     if (result.success) {
         m_jobs[idx].status = InternalizationStatus::Complete;
         m_jobs[idx].output_path = result.output_nupkg_path;
@@ -930,7 +930,7 @@ BatchStats OfflineDeploymentWorker::computeBuildStats(const DeploymentManifest& 
         }
     }
 
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     for (const auto& job : m_jobs) {
         if (job.status == InternalizationStatus::Cancelled) {
             stats.cancelled++;
@@ -1359,7 +1359,7 @@ void OfflineDeploymentWorker::executeDirectDownload(
     PackageInternalizationEngine resolver;
     int completed = 0;
     int failed = 0;
-    int total = packages.size();
+    const int total = packages.size();
     // Shared across EVERY package in the run: two packages emitting the same
     // installer basename must not overwrite each other in the one output dir.
     QSet<QString> used_names;
@@ -1398,15 +1398,15 @@ void OfflineDeploymentWorker::executeDirectDownload(
 
         // Harvesting feature (installers for manual use, nothing installed): any file
         // harvested is success and the exact count is surfaced (partial set = honest).
-        bool ok = (files > 0);
+        const bool ok = (files > 0);
         if (ok) {
             ++completed;
         } else {
             ++failed;
         }
 
-        QString msg = ok ? QString("Downloaded %1 file(s)").arg(files)
-                         : QString("No installers found");
+        const QString msg = ok ? QString("Downloaded %1 file(s)").arg(files)
+                               : QString("No installers found");
         QMetaObject::invokeMethod(
             this,
             [this, pkg_id, ok, msg]() { Q_EMIT packageProgress(pkg_id, ok, msg); },
@@ -1462,7 +1462,7 @@ int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
     }
 
     // Step 3: Find install script (or resolve meta-package dependency)
-    PackageInternalizationEngine engine;
+    const PackageInternalizationEngine engine;
     QString script_path = engine.findInstallScript(extract_dir);
     QString pkg_extract_dir = extract_dir;
     if (script_path.isEmpty()) {
@@ -1491,7 +1491,7 @@ int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
 QString OfflineDeploymentWorker::downloadAndExtractNupkg(const QString& pkg_id,
                                                          const QString& resolved_version,
                                                          const QString& temp_dir) {
-    QString nupkg_path = temp_dir + "/" + pkg_id + ".nupkg";
+    const QString nupkg_path = temp_dir + "/" + pkg_id + ".nupkg";
 
     // The .nupkg carries no checksum of its own (the install script inside it declares
     // the INSTALLER checksums), so it is authenticated against the feed's published
@@ -1514,7 +1514,7 @@ QString OfflineDeploymentWorker::downloadAndExtractNupkg(const QString& pkg_id,
 
 QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
     const QString& pkg_id, const QString& extract_dir, const QString& temp_dir) {
-    QString dep_id = findNuspecDependencyId(extract_dir);
+    const QString dep_id = findNuspecDependencyId(extract_dir);
     if (dep_id.isEmpty()) {
         emitLog(QString("[%1] No chocolateyInstall.ps1 found").arg(pkg_id));
         return {};
@@ -1529,20 +1529,20 @@ QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
     emitLog(QString("[%1] Meta-package -> resolving %2").arg(pkg_id, dep_id));
 
     PackageInternalizationEngine dep_engine;
-    QString dep_version = dep_engine.resolveLatestVersion(dep_id);
+    const QString dep_version = dep_engine.resolveLatestVersion(dep_id);
     if (dep_version.isEmpty()) {
         emitLog(QString("[%1] Version resolve failed for %2").arg(pkg_id, dep_id));
         return {};
     }
 
-    QString dep_nupkg_path = temp_dir + "/" + dep_id + ".nupkg";
+    const QString dep_nupkg_path = temp_dir + "/" + dep_id + ".nupkg";
     // Same feed-hash authentication as the parent .nupkg (see downloadVerifiedNupkg).
     if (!downloadVerifiedNupkg(dep_id, dep_version, dep_nupkg_path)) {
         emitLog(QString("[%1] Dependency nupkg download failed").arg(dep_id));
         return {};
     }
 
-    QString dep_extract = temp_dir + "/dep_extracted";
+    const QString dep_extract = temp_dir + "/dep_extracted";
     QString dep_error;
     PackageInternalizationEngine engine;
     if (!engine.extractNupkg(dep_nupkg_path, dep_extract, dep_error)) {
@@ -1550,7 +1550,7 @@ QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
         return {};
     }
 
-    QString script_path = engine.findInstallScript(dep_extract);
+    const QString script_path = engine.findInstallScript(dep_extract);
     if (script_path.isEmpty()) {
         emitLog(QString("[%1] Dependency %2 also has no script").arg(pkg_id, dep_id));
         return {};
@@ -1563,12 +1563,12 @@ int OfflineDeploymentWorker::copyEmbeddedInstallers(const QString& pkg_id,
                                                     const QString& pkg_extract_dir,
                                                     const QString& output_dir,
                                                     QSet<QString>& used_names) {
-    QDir tools_dir(pkg_extract_dir + "/tools");
+    const QDir tools_dir(pkg_extract_dir + "/tools");
     if (!tools_dir.exists()) {
         return 0;
     }
 
-    QStringList embedded = tools_dir.entryList({"*.exe", "*.msi"}, QDir::Files);
+    const QStringList embedded = tools_dir.entryList({"*.exe", "*.msi"}, QDir::Files);
     if (embedded.isEmpty()) {
         return 0;
     }
@@ -1818,7 +1818,7 @@ void OfflineDeploymentWorker::cancel() {
     m_cancelled = true;
     // Abort the engine actively internalizing a package, if any, so a large
     // in-progress download stops promptly instead of running to completion.
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     if (m_active_engine != nullptr) {
         m_active_engine->cancel();
     }
@@ -1829,7 +1829,7 @@ bool OfflineDeploymentWorker::isRunning() const {
 }
 
 BatchStats OfflineDeploymentWorker::getStats() const {
-    QMutexLocker lock(&m_mutex);
+    const QMutexLocker lock(&m_mutex);
     BatchStats stats;
     stats.total = m_jobs.size();
     for (const auto& job : m_jobs) {
@@ -1888,7 +1888,7 @@ bool OfflineDeploymentWorker::writeManifest(const DeploymentManifest& manifest,
     }
     root["packages"] = packages_arr;
 
-    QString manifest_path = output_dir + "/" + offline::kManifestFilename;
+    const QString manifest_path = output_dir + "/" + offline::kManifestFilename;
     // QSaveFile: write to a temp file and atomically rename on commit(), so a
     // crash or short write never truncates a previously-good manifest (which
     // installFromBundle would then reject as "empty or unreadable").
@@ -1899,7 +1899,7 @@ bool OfflineDeploymentWorker::writeManifest(const DeploymentManifest& manifest,
         return false;
     }
 
-    QJsonDocument doc(root);
+    const QJsonDocument doc(root);
     const QByteArray json = doc.toJson(QJsonDocument::Indented);
     if (file.write(json) != json.size() || !file.commit()) {
         sak::logError("[OfflineDeploymentWorker] Failed to write manifest (original intact): {}",
@@ -1931,7 +1931,7 @@ static void writeReadmePackageList(QTextStream& stream,
 
 void OfflineDeploymentWorker::writeReadme(const DeploymentManifest& manifest,
                                           const QString& output_dir) const {
-    QString readme_path = output_dir + "/" + offline::kReadmeFilename;
+    const QString readme_path = output_dir + "/" + offline::kReadmeFilename;
     QFile file(readme_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return;
@@ -2052,7 +2052,7 @@ DeploymentManifest OfflineDeploymentWorker::readManifest(const QString& path) co
     }
 
     QJsonParseError parse_error;
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
     file.close();
 
     if (parse_error.error != QJsonParseError::NoError) {
@@ -2083,7 +2083,7 @@ DeploymentManifest OfflineDeploymentWorker::readManifest(const QString& path) co
     }
     manifest.payload_mode = *payload_mode;
 
-    QJsonArray packages_arr = root["packages"].toArray();
+    const QJsonArray packages_arr = root["packages"].toArray();
     // Parity with the build-side kMaxPackagesPerBuild gate: refuse a manifest that
     // lists more packages than a build could ever have produced, failing closed
     // (an empty manifest -> installFromBundle reports "empty or unreadable").

@@ -423,7 +423,7 @@ static QString formatString8Value(const QByteArray& raw) {
 
     // Fall back to the system ANSI codepage (e.g., CP1252 on
     // Western Windows systems, CP932 on Japanese, etc.).
-    int needed =
+    const int needed =
         MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, raw.constData(), raw.size(), nullptr, 0);
     if (needed > 0) {
         QString result;
@@ -463,13 +463,13 @@ static QString formatSysTimeValue(const QByteArray& raw) {
     if (raw.size() < kInt64PropertyBytes) {
         return QStringLiteral("<invalid>");
     }
-    int64_t ft = localReadLE<int64_t>(raw, 0);
+    const int64_t ft = localReadLE<int64_t>(raw, 0);
     // Guard the signed subtraction below: a hostile value near INT64_MIN would underflow
     // (undefined behavior). Such a value is not a real FILETIME (100ns ticks since 1601).
     if (ft < INT64_MIN + kFileTimeEpochDiff) {
         return QStringLiteral("<invalid>");
     }
-    int64_t unix_ms = (ft - kFileTimeEpochDiff) / kFileTimeTicksPerMillisecond;
+    const int64_t unix_ms = (ft - kFileTimeEpochDiff) / kFileTimeTicksPerMillisecond;
     return QDateTime::fromMSecsSinceEpoch(unix_ms, QTimeZone::UTC).toString(Qt::ISODate);
 }
 
@@ -778,7 +778,7 @@ static QVector<uint64_t> extractChildNids(const QVector<QVector<sak::MapiPropert
     for (const auto& row : htable) {
         for (const auto& col : row) {
             if (col.tag_id == kPidTagLtpRowId && col.raw_value.size() >= kPropertyValueRefSize) {
-                uint64_t nid = localReadLE<uint32_t>(col.raw_value, 0);
+                const uint64_t nid = localReadLE<uint32_t>(col.raw_value, 0);
                 if (nid != 0) {
                     child_nids.append(nid);
                 }
@@ -799,7 +799,7 @@ static std::expected<int, error_code> resolveHnBlockOffset(uint16_t hid_block_in
     if (block_offsets.isEmpty() || hid_block_index > block_offsets.size()) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
-    int offset = block_offsets[hid_block_index - 1];
+    const int offset = block_offsets[hid_block_index - 1];
     if (offset + kHidOffsetRecordSize > heap_size) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
@@ -830,7 +830,7 @@ static std::expected<PstParser::TcInfo, error_code> parseTcInfo(const QByteArray
     }
 
     PstParser::TcInfo info;
-    uint8_t col_count = static_cast<uint8_t>(tc_raw[1]);
+    const uint8_t col_count = static_cast<uint8_t>(tc_raw[1]);
     info.rgib_tci_1b = localReadLE<uint16_t>(tc_raw, kTcHeaderRgibTci1bOffset);
     info.rgib_tci_bm = localReadLE<uint16_t>(tc_raw, kTcHeaderRgibTciBmOffset);
     info.hid_row_index = localReadLE<uint32_t>(tc_raw, kTcHeaderRowIndexHidOffset);
@@ -838,7 +838,7 @@ static std::expected<PstParser::TcInfo, error_code> parseTcInfo(const QByteArray
 
     info.columns.reserve(col_count);
     for (int col_idx = 0; col_idx < col_count; ++col_idx) {
-        int base = kTcinfoHeaderSize + (col_idx * kTcColumnDescriptorSize);
+        const int base = kTcinfoHeaderSize + (col_idx * kTcColumnDescriptorSize);
         // Fail closed: a declared column whose descriptor runs past the TCINFO buffer means the
         // header's column count is inconsistent with the (CRC-authenticated) heap allocation.
         // Returning the columns parsed so far would surface a partial schema as a complete table.
@@ -972,7 +972,7 @@ bool PstParser::loadPstStructure() {
 }
 
 void PstParser::populateFileInfo(const QString& file_path) {
-    QFileInfo fi(file_path);
+    const QFileInfo fi(file_path);
     m_file_info.file_path = file_path;
     m_file_info.file_size_bytes = fi.size();
     m_file_info.is_unicode = m_is_unicode;
@@ -1143,7 +1143,8 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readFolderIte
 
     // Build the contents table NID from the folder NID
     // Contents table NID = (folder_nid & 0xFFFFFFE0) | NID_TYPE_CONTENTS_TABLE
-    uint64_t contents_nid = (folder_node_id & ~kNidTypeMask) | sak::email::kNidTypeContentsTable;
+    const uint64_t contents_nid = (folder_node_id & ~kNidTypeMask) |
+                                  sak::email::kNidTypeContentsTable;
 
     return readContentsTable(contents_nid, offset, limit);
 }
@@ -1222,7 +1223,7 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t mes
 
     int found_count = 0;
     for (auto sub_it = subnodes->begin(); sub_it != subnodes->end(); ++sub_it) {
-        uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & kNidTypeMask);
+        const uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & kNidTypeMask);
         if (sub_type != sak::email::kNidTypeAttachment) {
             continue;
         }
@@ -1355,7 +1356,7 @@ std::expected<void, error_code> PstParser::verifyHeaderIntegrity(const QByteArra
         if (!msPstWeakCrc(data, kHeaderCrcDataStart, kHeaderCrcFullLen, full)) {
             return std::unexpected(error_code::pst_invalid_header);
         }
-        uint32_t stored_full = readLE<uint32_t>(data, kHeaderCrcFullOffset);
+        const uint32_t stored_full = readLE<uint32_t>(data, kHeaderCrcFullOffset);
         if (full != stored_full) {
             sak::logError(
                 "PstParser: header dwCRCFull mismatch (computed 0x{:08X}, stored 0x{:08X})",
@@ -1461,8 +1462,8 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
-    int trailer_offset = fmt.page_size - fmt.trailer_size;
-    uint8_t ptype = static_cast<uint8_t>((*page_data)[trailer_offset]);
+    const int trailer_offset = fmt.page_size - fmt.trailer_size;
+    const uint8_t ptype = static_cast<uint8_t>((*page_data)[trailer_offset]);
     // ptype and its duplicate (ptypeRepeat) must agree, and the page must be exactly the BTree
     // type the caller expected (ptypeNBT vs ptypeBBT). The all-zeros page that a truncated or
     // crafted file yields satisfies the duplicate check by coincidence; the expected-type gate
@@ -1478,7 +1479,7 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(
         return std::unexpected(trailer_ok.error());
     }
 
-    int meta_offset = trailer_offset - fmt.meta_pad - fmt.meta_size;
+    const int meta_offset = trailer_offset - fmt.meta_pad - fmt.meta_size;
     if (meta_offset < 0) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
@@ -1504,10 +1505,10 @@ std::expected<void, error_code> PstParser::verifyPageTrailer(const QByteArray& p
     if (page_crc != readLE<uint32_t>(page_data, trailer_offset + kPageTrailerCrcOffset)) {
         return std::unexpected(error_code::pst_integrity_check_failed);
     }
-    uint16_t page_sig = readLE<uint16_t>(page_data, trailer_offset + kPageTrailerSigOffset);
-    uint64_t page_bid = m_is_unicode
-                            ? readLE<uint64_t>(page_data, trailer_offset + kPageTrailerBidOffset)
-                            : readLE<uint32_t>(page_data, trailer_offset + kPageTrailerBidOffset);
+    const uint16_t page_sig = readLE<uint16_t>(page_data, trailer_offset + kPageTrailerSigOffset);
+    const uint64_t page_bid =
+        m_is_unicode ? readLE<uint64_t>(page_data, trailer_offset + kPageTrailerBidOffset)
+                     : readLE<uint32_t>(page_data, trailer_offset + kPageTrailerBidOffset);
     if (msPstComputeSig(page_offset, page_bid) != page_sig) {
         return std::unexpected(error_code::pst_integrity_check_failed);
     }
@@ -1552,12 +1553,12 @@ std::expected<void, error_code> PstParser::loadNodeBTreeGuarded(uint64_t page_of
     }
 
     const auto& data = page->data;
-    int entry_size = page->entry_size;
-    int meta_offset = page->meta_offset;
+    const int entry_size = page->entry_size;
+    const int meta_offset = page->meta_offset;
 
     if (page->level == 0) {
         for (int idx = 0; idx < page->entry_count; ++idx) {
-            int off = idx * entry_size;
+            const int off = idx * entry_size;
             if (off + entry_size > meta_offset) {
                 break;
             }
@@ -1567,14 +1568,14 @@ std::expected<void, error_code> PstParser::loadNodeBTreeGuarded(uint64_t page_of
         }
     } else {
         for (int idx = 0; idx < page->entry_count; ++idx) {
-            int off = idx * entry_size;
+            const int off = idx * entry_size;
             if (off + entry_size > meta_offset) {
                 break;
             }
 
-            uint64_t child_page = m_is_unicode
-                                      ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
-                                      : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
+            const uint64_t child_page =
+                m_is_unicode ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
+                             : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
             auto child_result = loadNodeBTreeGuarded(child_page, depth + 1, visited);
             if (!child_result) {
                 return child_result;
@@ -1605,12 +1606,12 @@ std::expected<void, error_code> PstParser::loadBlockBTreeGuarded(uint64_t page_o
     }
 
     const auto& data = page->data;
-    int entry_size = page->entry_size;
-    int meta_offset = page->meta_offset;
+    const int entry_size = page->entry_size;
+    const int meta_offset = page->meta_offset;
 
     if (page->level == 0) {
         for (int idx = 0; idx < page->entry_count; ++idx) {
-            int off = idx * entry_size;
+            const int off = idx * entry_size;
             if (off + entry_size > meta_offset) {
                 break;
             }
@@ -1620,14 +1621,14 @@ std::expected<void, error_code> PstParser::loadBlockBTreeGuarded(uint64_t page_o
         }
     } else {
         for (int idx = 0; idx < page->entry_count; ++idx) {
-            int off = idx * entry_size;
+            const int off = idx * entry_size;
             if (off + entry_size > meta_offset) {
                 break;
             }
 
-            uint64_t child_page = m_is_unicode
-                                      ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
-                                      : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
+            const uint64_t child_page =
+                m_is_unicode ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
+                             : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
             auto child_result = loadBlockBTreeGuarded(child_page, depth + 1, visited);
             if (!child_result) {
                 return child_result;
@@ -1650,8 +1651,8 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
     }
 
     const auto& entry = it.value();
-    uint64_t file_offset = entry.file_offset;
-    int cb = static_cast<int>(entry.cb);
+    const uint64_t file_offset = entry.file_offset;
+    const int cb = static_cast<int>(entry.cb);
 
     if (cb == 0) {
         return QByteArray{};
@@ -1731,7 +1732,7 @@ std::expected<QByteArray, error_code> PstParser::readDataTreeGuarded(uint64_t bi
     }
     guard.visited.insert(bid);
 
-    bool is_internal = (bid & kBidInternalFlag) != 0;
+    const bool is_internal = (bid & kBidInternalFlag) != 0;
     if (!is_internal) {
         auto result = readBlock(bid);
         if (result && block_offsets) {
@@ -1750,8 +1751,8 @@ std::expected<QByteArray, error_code> PstParser::readDataTreeGuarded(uint64_t bi
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
-    uint8_t block_level = static_cast<uint8_t>(data[1]);
-    uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
+    const uint8_t block_level = static_cast<uint8_t>(data[1]);
+    const uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
 
     // The in-block entry count is independent of the block's byte length (which
     // comes from the BBT), so a small block can claim a large count. Reject any
@@ -1794,16 +1795,16 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
                                                               QByteArray& result,
                                                               QVector<int>* block_offsets,
                                                               DataTreeGuard guard) {
-    int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
+    const int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
     for (int idx = 0; idx < entry_count; ++idx) {
-        int offset = kBlockTreeHeaderSize + (idx * bid_size);
-        uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
-                                          : readLE<uint32_t>(data, offset);
+        const int offset = kBlockTreeHeaderSize + (idx * bid_size);
+        const uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
+                                                : readLE<uint32_t>(data, offset);
         // Recurse through readDataTreeGuarded so nested internal (XBLOCK/XXBLOCK)
         // children are properly expanded (some PST/OST files build non-spec nesting
         // where an XBLOCK entry itself carries the internal bid flag 0x02) while the
         // shared visited set bounds total work.
-        int base_offset = result.size();
+        const int base_offset = result.size();
         QVector<int> child_offsets;
         auto child_data =
             readDataTreeGuarded(child_bid, block_offsets ? &child_offsets : nullptr, guard);
@@ -1818,7 +1819,7 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
         }
         result.append(*child_data);
         if (block_offsets) {
-            for (int child_off : child_offsets) {
+            for (const int child_off : child_offsets) {
                 block_offsets->append(base_offset + child_off);
             }
         }
@@ -1831,12 +1832,12 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
                                                                QByteArray& result,
                                                                QVector<int>* block_offsets,
                                                                DataTreeGuard guard) {
-    int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
+    const int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
     for (int idx = 0; idx < entry_count; ++idx) {
-        int offset = kBlockTreeHeaderSize + (idx * bid_size);
-        uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
-                                          : readLE<uint32_t>(data, offset);
-        int base_offset = result.size();
+        const int offset = kBlockTreeHeaderSize + (idx * bid_size);
+        const uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
+                                                : readLE<uint32_t>(data, offset);
+        const int base_offset = result.size();
         QVector<int> child_offsets;
         auto child_data = readDataTreeGuarded(child_bid, &child_offsets, guard);
         if (!child_data) {
@@ -1850,7 +1851,7 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
         }
         result.append(*child_data);
         if (block_offsets) {
-            for (int child_off : child_offsets) {
+            for (const int child_off : child_offsets) {
                 block_offsets->append(base_offset + child_off);
             }
         }
@@ -1879,7 +1880,7 @@ std::expected<QByteArray, error_code> PstParser::readBlockTrailer(uint64_t file_
         }
         trailer_pos = static_cast<int64_t>(file_offset) + aligned - kBlock4kFooterSize;
     } else {
-        int64_t disk =
+        const int64_t disk =
             ((static_cast<int64_t>(cb) + trailer_size + kBlockAlignment - 1) / kBlockAlignment) *
             kBlockAlignment;
         trailer_pos = static_cast<int64_t>(file_offset) + disk - trailer_size;
@@ -1916,8 +1917,8 @@ std::expected<void, error_code> PstParser::verifyBlockTrailer(const QByteArray& 
     if (msPstComputeSig(file_offset, bid) != readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)) {
         return std::unexpected(error_code::pst_integrity_check_failed);
     }
-    uint64_t trailer_bid = m_is_unicode ? readLE<uint64_t>(*trailer, kBlockTrailerBidOffset)
-                                        : readLE<uint32_t>(*trailer, kBlockTrailerBidOffset);
+    const uint64_t trailer_bid = m_is_unicode ? readLE<uint64_t>(*trailer, kBlockTrailerBidOffset)
+                                              : readLE<uint32_t>(*trailer, kBlockTrailerBidOffset);
     if (trailer_bid != bid) {
         return std::unexpected(error_code::pst_integrity_check_failed);
     }
@@ -1938,13 +1939,13 @@ std::expected<QByteArray, error_code> PstParser::decompressBlockIf4k(const QByte
     // Read the 24-byte block footer from the end of the aligned allocation. A truncated or
     // corrupt allocation that cannot yield the full footer is unreadable; fail closed rather
     // than returning the still-compressed bytes as if they were the block payload.
-    qint64 footer_pos = static_cast<qint64>(file_offset) + aligned - kBlock4kFooterSize;
+    const qint64 footer_pos = static_cast<qint64>(file_offset) + aligned - kBlock4kFooterSize;
     auto footer_result = readBytes(footer_pos, kBlock4kFooterSize);
     if (!footer_result || footer_result->size() != kBlock4kFooterSize) {
         return std::unexpected(error_code::read_error);
     }
 
-    uint16_t uncompressed_size = readLE<uint16_t>(*footer_result, kBlock4kUncompSizeOffset);
+    const uint16_t uncompressed_size = readLE<uint16_t>(*footer_result, kBlock4kUncompSizeOffset);
 
     if (uncompressed_size == 0 || uncompressed_size == static_cast<uint16_t>(cb)) {
         return raw;
@@ -2012,20 +2013,20 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafDataGuarded(uint32_t
         return *node_data;
     }
 
-    int entry_size = walk.key_size + kBthChildHidSize;
+    const int entry_size = walk.key_size + kBthChildHidSize;
     if (entry_size == 0) {
         return QByteArray{};
     }
 
-    int entry_count = node_data->size() / entry_size;
+    const int entry_count = node_data->size() / entry_size;
     QByteArray combined;
 
     for (int idx = 0; idx < entry_count; ++idx) {
-        int offset = idx * entry_size;
+        const int offset = idx * entry_size;
         if (offset + entry_size > node_data->size()) {
             break;
         }
-        uint32_t child_hid = readLE<uint32_t>(*node_data, offset + walk.key_size);
+        const uint32_t child_hid = readLE<uint32_t>(*node_data, offset + walk.key_size);
         if (child_hid == 0) {
             continue;
         }
@@ -2054,7 +2055,7 @@ std::expected<PstParser::BthLeafResult, error_code> PstParser::collectBthLeafDat
         return std::unexpected(error_code::pst_property_context_error);
     }
 
-    uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, kHnRootHidOffset);
+    const uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, kHnRootHidOffset);
     auto bth_header = readHeapOnNode(ctx.heap_data, hid_root, ctx.block_offsets);
     if (!bth_header) {
         return std::unexpected(bth_header.error());
@@ -2066,10 +2067,10 @@ std::expected<PstParser::BthLeafResult, error_code> PstParser::collectBthLeafDat
         return std::unexpected(error_code::pst_property_context_error);
     }
 
-    uint8_t key_size = static_cast<uint8_t>((*bth_header)[kBthKeySizeOffset]);
-    uint8_t data_size = static_cast<uint8_t>((*bth_header)[kBthDataSizeOffset]);
-    uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[kBthIndexLevelsOffset]);
-    uint32_t bth_root_hid = readLE<uint32_t>(*bth_header, kBthRootHidOffset);
+    const uint8_t key_size = static_cast<uint8_t>((*bth_header)[kBthKeySizeOffset]);
+    const uint8_t data_size = static_cast<uint8_t>((*bth_header)[kBthDataSizeOffset]);
+    const uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[kBthIndexLevelsOffset]);
+    const uint32_t bth_root_hid = readLE<uint32_t>(*bth_header, kBthRootHidOffset);
     if (bth_root_hid == 0) {
         return BthLeafResult{};
     }
@@ -2086,17 +2087,17 @@ std::expected<PstParser::BthLeafResult, error_code> PstParser::collectBthLeafDat
 
 QVector<sak::MapiProperty> PstParser::parsePropertyRecords(const BthLeafResult& bth,
                                                            const HeapContext& ctx) {
-    int record_size = bth.key_size + bth.data_size;
+    const int record_size = bth.key_size + bth.data_size;
     if (record_size == 0) {
         return {};
     }
 
-    int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = bth.leaf_data.size() / record_size;
     QVector<sak::MapiProperty> properties;
     properties.reserve(record_count);
 
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
-        int rec_off = rec_idx * record_size;
+        const int rec_off = rec_idx * record_size;
         if (rec_off + record_size > bth.leaf_data.size()) {
             break;
         }
@@ -2202,7 +2203,7 @@ std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTa
         return std::unexpected(valid.error());
     }
 
-    uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, kHnRootHidOffset);
+    const uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, kHnRootHidOffset);
     auto tc_raw = readHeapOnNode(ctx.heap_data, hid_root, ctx.block_offsets);
     if (!tc_raw) {
         return std::unexpected(tc_raw.error());
@@ -2216,7 +2217,7 @@ std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTa
         return QVector<QVector<sak::MapiProperty>>{};
     }
 
-    TcRowMatrix matrix = loadTcRowData(*tc, node, ctx);
+    const TcRowMatrix matrix = loadTcRowData(*tc, node, ctx);
     if (matrix.data.isEmpty()) {
         return QVector<QVector<sak::MapiProperty>>{};
     }
@@ -2311,7 +2312,7 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& ma
 
     QVector<QVector<sak::MapiProperty>> rows;
     rows.reserve(live_row_indices.size());
-    for (uint32_t row_index : live_row_indices) {
+    for (const uint32_t row_index : live_row_indices) {
         const int row_off = tcRowOffset(matrix, row_index, row_size, rows_per_block, block_count);
         if (row_off < 0) {
             continue;
@@ -2426,8 +2427,8 @@ sak::MapiProperty PstParser::buildTcCell(const QByteArray& row_data,
     prop.property_name = propertyIdToName(col.prop_id);
 
     bool cell_exists = true;
-    int ceb_byte = row_view.ceb_off + (col.i_bit / kBitPackingBitsPerByte);
-    int ceb_bit = kBitPackingHighBitIndex - (col.i_bit % kBitPackingBitsPerByte);
+    const int ceb_byte = row_view.ceb_off + (col.i_bit / kBitPackingBitsPerByte);
+    const int ceb_bit = kBitPackingHighBitIndex - (col.i_bit % kBitPackingBitsPerByte);
     if (ceb_byte < row_view.row_off + row_view.row_size) {
         cell_exists = (static_cast<uint8_t>(row_data[ceb_byte]) >> ceb_bit) & 1;
     }
@@ -2435,13 +2436,13 @@ sak::MapiProperty PstParser::buildTcCell(const QByteArray& row_data,
     // Bound the cell against THIS row's end (row_off + row_size), not the whole matrix buffer:
     // a column whose ib_data/cb_data run past the fixed-row layout must not be allowed to read
     // bytes that belong to the next row (or the block padding) just because the matrix is large.
-    int cell_off = row_view.row_off + col.ib_data;
-    int row_end = row_view.row_off + row_view.row_size;
+    const int cell_off = row_view.row_off + col.ib_data;
+    const int row_end = row_view.row_off + row_view.row_size;
     if (cell_exists && cell_off >= row_view.row_off && cell_off + col.cb_data <= row_end &&
         row_end <= row_data.size()) {
         prop.raw_value = row_data.mid(cell_off, col.cb_data);
         if (isHnidResolvableType(col.prop_type) && col.cb_data == kPropertyValueRefSize) {
-            uint32_t hnid = readLE<uint32_t>(row_data, cell_off);
+            const uint32_t hnid = readLE<uint32_t>(row_data, cell_off);
             auto resolved = resolveHnid(hnid, ctx.heap_data, ctx.block_offsets, ctx.subnode_map);
             if (resolved) {
                 prop.raw_value = std::move(*resolved);
@@ -2469,32 +2470,32 @@ std::expected<QByteArray, error_code> PstParser::readHeapOnNode(const QByteArray
     if (!block_off) {
         return std::unexpected(block_off.error());
     }
-    int block_offset = *block_off;
+    const int block_offset = *block_off;
 
-    uint16_t ib_hnpm = readLE<uint16_t>(heap_data, block_offset);
-    int page_map_offset = block_offset + ib_hnpm;
+    const uint16_t ib_hnpm = readLE<uint16_t>(heap_data, block_offset);
+    const int page_map_offset = block_offset + ib_hnpm;
     if (page_map_offset + kInt32PropertyBytes > heap_data.size()) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
 
-    uint16_t alloc_count = readLE<uint16_t>(heap_data, page_map_offset);
+    const uint16_t alloc_count = readLE<uint16_t>(heap_data, page_map_offset);
     if (hid_index == 0 || hid_index > alloc_count) {
         return QByteArray{};
     }
 
-    int alloc_table_offset = page_map_offset + kInt32PropertyBytes;
-    int entry_offset = alloc_table_offset + ((hid_index - 1) * kHidOffsetRecordSize);
-    int next_offset = alloc_table_offset + (hid_index * kHidOffsetRecordSize);
+    const int alloc_table_offset = page_map_offset + kInt32PropertyBytes;
+    const int entry_offset = alloc_table_offset + ((hid_index - 1) * kHidOffsetRecordSize);
+    const int next_offset = alloc_table_offset + (hid_index * kHidOffsetRecordSize);
 
     if (next_offset + kHidOffsetRecordSize > heap_data.size()) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
 
-    uint16_t start = readLE<uint16_t>(heap_data, entry_offset);
-    uint16_t end = readLE<uint16_t>(heap_data, next_offset);
+    const uint16_t start = readLE<uint16_t>(heap_data, entry_offset);
+    const uint16_t end = readLE<uint16_t>(heap_data, next_offset);
 
-    int abs_start = block_offset + start;
-    int abs_end = block_offset + end;
+    const int abs_start = block_offset + start;
+    const int abs_end = block_offset + end;
 
     if (abs_start > abs_end || abs_end > heap_data.size()) {
         return std::unexpected(error_code::pst_invalid_heap);
@@ -2578,8 +2579,8 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeB
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
-    uint8_t level = static_cast<uint8_t>(data[1]);
-    uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
+    const uint8_t level = static_cast<uint8_t>(data[1]);
+    const uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
     constexpr int kSubnodeHeaderSize = 8;
 
     if (level == 0) {
@@ -2593,10 +2594,10 @@ QHash<uint64_t, sak::PstNode> PstParser::readSubNodeLeafEntries(const QByteArray
                                                                 int header_size,
                                                                 uint16_t entry_count) {
     QHash<uint64_t, sak::PstNode> result;
-    int entry_size = m_is_unicode ? kSubnodeLeafSizeUnicode : kSubnodeLeafSizeAnsi;
+    const int entry_size = m_is_unicode ? kSubnodeLeafSizeUnicode : kSubnodeLeafSizeAnsi;
 
     for (int entry_idx = 0; entry_idx < entry_count; ++entry_idx) {
-        int offset = header_size + (entry_idx * entry_size);
+        const int offset = header_size + (entry_idx * entry_size);
         if (offset + entry_size > data.size()) {
             break;
         }
@@ -2623,18 +2624,19 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeI
     int depth,
     QSet<uint64_t>& visited_bids) {
     QHash<uint64_t, sak::PstNode> result;
-    int entry_size = m_is_unicode ? kSubnodeIntermediateSizeUnicode : kSubnodeIntermediateSizeAnsi;
-    int bid_offset = m_is_unicode ? kSubnodeIntermediateBidOffsetUnicode
-                                  : kSubnodeIntermediateBidOffsetAnsi;
+    const int entry_size = m_is_unicode ? kSubnodeIntermediateSizeUnicode
+                                        : kSubnodeIntermediateSizeAnsi;
+    const int bid_offset = m_is_unicode ? kSubnodeIntermediateBidOffsetUnicode
+                                        : kSubnodeIntermediateBidOffsetAnsi;
 
     for (int entry_idx = 0; entry_idx < entry_count; ++entry_idx) {
-        int offset = header_size + (entry_idx * entry_size);
+        const int offset = header_size + (entry_idx * entry_size);
         if (offset + entry_size > data.size()) {
             break;
         }
 
-        uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset + bid_offset)
-                                          : readLE<uint32_t>(data, offset + bid_offset);
+        const uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset + bid_offset)
+                                                : readLE<uint32_t>(data, offset + bid_offset);
 
         auto child_result = readSubNodeBTreeGuarded(child_bid, depth + 1, visited_bids);
         if (child_result) {
@@ -2842,7 +2844,7 @@ void PstParser::loadChildFolders(sak::PstFolder& folder,
                                  uint64_t root_nid,
                                  int depth,
                                  QSet<uint64_t>& visited_nids) {
-    uint64_t hierarchy_nid = (root_nid & ~kNidTypeMask) | sak::email::kNidTypeHierarchyTable;
+    const uint64_t hierarchy_nid = (root_nid & ~kNidTypeMask) | sak::email::kNidTypeHierarchyTable;
 
     sak::logInfo(
         "PstParser: folder 0x{:X} hierarchy NID=0x{:X}, "
@@ -2867,7 +2869,7 @@ void PstParser::loadChildFolders(sak::PstFolder& folder,
                  root_nid,
                  htable_result->size());
     auto child_nids = extractChildNids(*htable_result);
-    for (uint64_t child_nid : child_nids) {
+    for (const uint64_t child_nid : child_nids) {
         auto child_tree = buildFolderHierarchyGuarded(child_nid, depth + 1, visited_nids);
         // Surface, rather than silently swallow, a child that fails to parse or yields no
         // subtree: dropping it produces a partial folder tree that looks complete. Log each drop
@@ -2907,9 +2909,9 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsT
     // Clamp the pagination offset: a negative offset (reachable when a caller's
     // page*page_size int-multiply overflows) must not produce a negative start
     // index and read rows[] out of bounds. Clamp to [0, rows.size()].
-    int start = std::clamp(offset, 0, static_cast<int>(rows.size()));
-    int end_idx = (limit > 0) ? std::min(start + limit, static_cast<int>(rows.size()))
-                              : static_cast<int>(rows.size());
+    const int start = std::clamp(offset, 0, static_cast<int>(rows.size()));
+    const int end_idx = (limit > 0) ? std::min(start + limit, static_cast<int>(rows.size()))
+                                    : static_cast<int>(rows.size());
 
     QVector<sak::PstItemSummary> items;
     items.reserve(end_idx - start);
@@ -2988,22 +2990,22 @@ std::expected<sak::PstItemDetail, error_code> PstParser::readMessage(uint64_t me
 
 std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult& bth,
                                                              const HeapContext& ctx) {
-    int record_size = bth.key_size + bth.data_size;
+    const int record_size = bth.key_size + bth.data_size;
     if (record_size == 0) {
         return {};
     }
 
-    int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = bth.leaf_data.size() / record_size;
     const auto& slot_map = senderPropSlots();
     QString results[kResolvedRecipientPartCount];
 
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
-        int rec_offset = rec_idx * record_size;
+        const int rec_offset = rec_idx * record_size;
         if (rec_offset + record_size > bth.leaf_data.size()) {
             break;
         }
 
-        uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
+        const uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
         auto slot_it = slot_map.find(prop_id);
         if (slot_it == slot_map.end()) {
             continue;
@@ -3012,7 +3014,7 @@ std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult
             continue;
         }
 
-        uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
+        const uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
         uint32_t value_ref = readLE<uint32_t>(bth.leaf_data,
                                               rec_offset + bth.key_size + kPropertyValueRefOffset);
 
@@ -3089,7 +3091,7 @@ bool PstParser::loadNodeHeapContext(const sak::PstNode& entry, HeapContext& ctx)
 QString PstParser::readBthRecordValue(const BthLeafResult& bth,
                                       const HeapContext& ctx,
                                       int rec_offset) {
-    uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
+    const uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
     uint32_t value_ref = readLE<uint32_t>(bth.leaf_data,
                                           rec_offset + bth.key_size + kPropertyValueRefOffset);
     QByteArray raw_value;
@@ -3110,17 +3112,17 @@ void PstParser::scanBthForSubjectAndClass(const BthLeafResult& bth,
                                           sak::PstItemSummary& item,
                                           bool need_subject,
                                           bool need_class) {
-    int record_size = bth.key_size + bth.data_size;
+    const int record_size = bth.key_size + bth.data_size;
     if (record_size == 0) {
         return;
     }
-    int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = bth.leaf_data.size() / record_size;
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
-        int rec_offset = rec_idx * record_size;
+        const int rec_offset = rec_idx * record_size;
         if (rec_offset + record_size > bth.leaf_data.size()) {
             break;
         }
-        uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
+        const uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
         if (need_subject && prop_id == sak::email::kPropIdSubject) {
             item.subject = stripSubjectPrefix(readBthRecordValue(bth, ctx, rec_offset));
             need_subject = false;
@@ -3148,9 +3150,9 @@ void PstParser::enrichItemFromBth(sak::PstItemSummary& item,
         }
     }
 
-    bool need_class = (item.item_type == sak::EmailItemType::Unknown);
+    const bool need_class = (item.item_type == sak::EmailItemType::Unknown);
     if (need_class) {
-        bool dont_touch_subject = false;
+        const bool dont_touch_subject = false;
         scanBthForSubjectAndClass(bth, ctx, item, dont_touch_subject, need_class);
     }
 }
@@ -3160,8 +3162,8 @@ void PstParser::enrichSingleItemProps(sak::PstItemSummary& item) {
         return;
     }
 
-    bool need_sender = item.sender_name.isEmpty();
-    bool need_class = (item.item_type == sak::EmailItemType::Unknown);
+    const bool need_sender = item.sender_name.isEmpty();
+    const bool need_class = (item.item_type == sak::EmailItemType::Unknown);
     if (!need_sender && !need_class) {
         return;
     }
@@ -3234,22 +3236,22 @@ std::expected<sak::PstAttachmentInfo, error_code> PstParser::readSingleAttachmen
 void PstParser::populateAttachmentFromLeaf(sak::PstAttachmentInfo& att,
                                            const BthLeafResult& bth,
                                            const HeapContext& ctx) {
-    int record_size = bth.key_size + bth.data_size;
+    const int record_size = bth.key_size + bth.data_size;
     if (record_size == 0) {
         return;
     }
 
-    int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = bth.leaf_data.size() / record_size;
     const auto& setters = attachmentSetters();
 
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
-        int rec_offset = rec_idx * record_size;
+        const int rec_offset = rec_idx * record_size;
         if (rec_offset + record_size > bth.leaf_data.size()) {
             break;
         }
 
-        uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
-        uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
+        const uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
+        const uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
         uint32_t value_ref = readLE<uint32_t>(bth.leaf_data,
                                               rec_offset + bth.key_size + kPropertyValueRefOffset);
 
@@ -3292,7 +3294,7 @@ std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttach
     int att_index = 0;
 
     for (auto sub_it = subnodes->begin(); sub_it != subnodes->end(); ++sub_it) {
-        uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & kNidTypeMask);
+        const uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & kNidTypeMask);
         if (sub_type != sak::email::kNidTypeAttachment) {
             continue;
         }

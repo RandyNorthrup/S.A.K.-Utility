@@ -241,9 +241,9 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
                                          : new QTreeWidgetItem(m_folderTree);
 
     // Get absolute path
-    QDir profileDir(m_profile.profile_path);
-    QString absolutePath = profileDir.filePath(selection.relative_path);
-    QDir dir(absolutePath);
+    const QDir profileDir(m_profile.profile_path);
+    const QString absolutePath = profileDir.filePath(selection.relative_path);
+    const QDir dir(absolutePath);
 
     if (!dir.exists()) {
         // Folder doesn't exist, just add placeholder
@@ -278,7 +278,7 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     // Column 2: Size
     QString sizeStr;
     if (totalSize > 0) {
-        double sizeMB = totalSize / sak::kBytesPerMBf;
+        const double sizeMB = totalSize / sak::kBytesPerMBf;
         if (sizeMB >= sak::kBytesPerKBf) {
             sizeStr = QString("%1 GB").arg(
                 sizeMB / sak::kBytesPerKBf, 0, 'f', kSizeDisplayPrecisionLarge);
@@ -344,22 +344,22 @@ void PerUserCustomizationDialog::onSelectRecommended() {
 }
 
 void PerUserCustomizationDialog::onAddCustomFolder() {
-    QString folderPath = QFileDialog::getExistingDirectory(this,
-                                                           "Select Custom Folder to Backup",
-                                                           m_profile.profile_path,
-                                                           QFileDialog::ShowDirsOnly |
-                                                               QFileDialog::DontResolveSymlinks);
+    const QString folderPath = QFileDialog::getExistingDirectory(
+        this,
+        "Select Custom Folder to Backup",
+        m_profile.profile_path,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
 
     if (folderPath.isEmpty()) {
         return;
     }
 
     // Make path relative to profile path if possible
-    QDir profileDir(m_profile.profile_path);
+    const QDir profileDir(m_profile.profile_path);
     QString relativePath = profileDir.relativeFilePath(folderPath);
 
     // Check if already exists
-    bool duplicate =
+    const bool duplicate =
         std::any_of(m_profile.folder_selections.begin(),
                     m_profile.folder_selections.end(),
                     [&relativePath](const auto& sel) { return sel.relative_path == relativePath; });
@@ -373,7 +373,7 @@ void PerUserCustomizationDialog::onAddCustomFolder() {
     }
 
     // Calculate actual size and file count (with reasonable limits)
-    QDir dir(folderPath);
+    const QDir dir(folderPath);
     qint64 totalSize = 0;
     int fileCount = 0;
     const int MAX_SCAN_DEPTH = 10;  // Scan deeper for custom folders
@@ -396,14 +396,14 @@ void PerUserCustomizationDialog::onAddCustomFolder() {
 
 void PerUserCustomizationDialog::onRemoveFolder() {
     Q_ASSERT(m_folderTree);
-    QTreeWidgetItem* currentItem = m_folderTree->currentItem();
+    const QTreeWidgetItem* currentItem = m_folderTree->currentItem();
     if (!currentItem) {
         sak::showInformationLogged(this, "Remove Folder", "Please select a folder to remove.");
         return;
     }
 
     // Get the folder information
-    QString displayText = currentItem->text(0);
+    const QString displayText = currentItem->text(0);
     QString relativePath = currentItem->data(0, Qt::UserRole).toString();
 
     // Only allow removal of top-level custom folders
@@ -475,7 +475,7 @@ void PerUserCustomizationDialog::onTreeItemChanged(QTreeWidgetItem* item, int co
     // Qt's AutoTristate updates parents based on children, but not the reverse
     if (item->childCount() > 0) {
         m_folderTree->blockSignals(true);
-        Qt::CheckState state = item->checkState(0);
+        const Qt::CheckState state = item->checkState(0);
         setChildrenCheckState(item, state);
         m_folderTree->blockSignals(false);
     }
@@ -532,7 +532,7 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
         // Recursively add subdirectory contents
         qint64 subDirSize = 0;
         int subDirFiles = 0;
-        QDir subDir(entry.filePath());
+        const QDir subDir(entry.filePath());
         addDirectoryContents(
             subDir,
             childItem,
@@ -550,7 +550,7 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
         childItem->setText(0, entry.fileName());
         childItem->setData(0, Qt::UserRole + 1, false);
 
-        qint64 fileSize = entry.size();
+        const qint64 fileSize = entry.size();
         state.total_size += fileSize;
         state.total_files++;
 
@@ -632,7 +632,7 @@ void PerUserCustomizationDialog::calculateDirectorySize(
         }
 
         if (entry.isDir() && !entry.isSymLink()) {
-            QDir subDir(entry.filePath());
+            const QDir subDir(entry.filePath());
             calculateDirectorySize(subDir, totalSize, fileCount, depth + 1, maxDepth);
         } else if (entry.isFile()) {
             totalSize += entry.size();
@@ -666,14 +666,14 @@ void PerUserCustomizationDialog::updateParentCheckState(QTreeWidgetItem* item) {
 
     int checkedCount = 0;
     int uncheckedCount = 0;
-    int childCount = item->childCount();
+    const int childCount = item->childCount();
 
     if (childCount == 0) {
         return;
     }
 
     for (int i = 0; i < childCount; ++i) {
-        Qt::CheckState childState = item->child(i)->checkState(0);
+        const Qt::CheckState childState = item->child(i)->checkState(0);
         if (childState == Qt::Checked) {
             checkedCount++;
         } else if (childState == Qt::Unchecked) {
@@ -700,7 +700,7 @@ void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) 
     }
 
     // Update children when parent changes
-    Qt::CheckState parentState = item->checkState(0);
+    const Qt::CheckState parentState = item->checkState(0);
     for (int i = 0; i < item->childCount(); ++i) {
         item->child(i)->setCheckState(0, parentState);
     }
@@ -715,7 +715,7 @@ void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) 
     int uncheckedCount = 0;
 
     for (int i = 0; i < parent->childCount(); ++i) {
-        Qt::CheckState childState = parent->child(i)->checkState(0);
+        const Qt::CheckState childState = parent->child(i)->checkState(0);
         if (childState == Qt::Checked) {
             checkedCount++;
         } else if (childState == Qt::Unchecked) {
@@ -733,8 +733,8 @@ void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) 
 }
 
 void PerUserCustomizationDialog::updateSummary() {
-    qint64 totalSize = calculateTotalSize();
-    int selectedCount =
+    const qint64 totalSize = calculateTotalSize();
+    const int selectedCount =
         static_cast<int>(std::count_if(m_profile.folder_selections.begin(),
                                        m_profile.folder_selections.end(),
                                        [](const auto& sel) { return sel.selected; }));
@@ -742,7 +742,7 @@ void PerUserCustomizationDialog::updateSummary() {
     QString summary = QString("<b>Backup Summary:</b> %1 folders selected").arg(selectedCount);
 
     if (totalSize > 0) {
-        double sizeGB = totalSize / sak::kBytesPerGBf;
+        const double sizeGB = totalSize / sak::kBytesPerGBf;
         summary += QString(" | Estimated size: <b>%1 GB</b>")
                        .arg(sizeGB, 0, 'f', kSizeDisplayPrecisionLarge);
     }

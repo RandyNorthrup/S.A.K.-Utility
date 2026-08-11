@@ -47,24 +47,24 @@ QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enu
     bool& discovery_ok) {
     QVector<PowerPlan> plans;
 
-    ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
-                                    QStringList() << "-LIST",
-                                    sak::kTimeoutProcessShortMs);
+    const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
+                                          QStringList() << "-LIST",
+                                          sak::kTimeoutProcessShortMs);
     // Whether powercfg itself ran. A failed run must not later be treated as "no plans found"
     // and coerced into a hard-coded-GUID mutation.
     discovery_ok = proc.succeeded();
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan list warning: " + proc.std_err.trimmed());
     }
-    QString output = proc.std_out;
+    const QString output = proc.std_out;
 
     // Parse output: "Power Scheme GUID: {guid} (Plan Name) *"
-    QRegularExpression plan_regex(QString::fromLatin1(kPowerPlanListPattern),
-                                  QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression plan_regex(QString::fromLatin1(kPowerPlanListPattern),
+                                        QRegularExpression::CaseInsensitiveOption);
 
     QRegularExpressionMatchIterator it = plan_regex.globalMatch(output);
     while (it.hasNext()) {
-        QRegularExpressionMatch match = it.next();
+        const QRegularExpressionMatch match = it.next();
         PowerPlan plan;
         plan.guid = match.captured(kPowerPlanGuidCaptureGroup);
         plan.name = match.captured(kPowerPlanNameCaptureGroup).trimmed();
@@ -82,17 +82,17 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPl
     plan.guid = guid;
     plan.isActive = false;
 
-    ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
-                                    QStringList() << "-QUERY" << guid,
-                                    sak::kTimeoutProcessMediumMs);
+    const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
+                                          QStringList() << "-QUERY" << guid,
+                                          sak::kTimeoutProcessMediumMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan query warning: " + proc.std_err.trimmed());
     }
-    QString output = proc.std_out;
+    const QString output = proc.std_out;
 
     // Parse plan name from output
-    QRegularExpression regex(QString::fromLatin1(kPowerPlanNamePattern));
-    QRegularExpressionMatch match = regex.match(output);
+    const QRegularExpression regex(QString::fromLatin1(kPowerPlanNamePattern));
+    const QRegularExpressionMatch match = regex.match(output);
     if (match.hasMatch()) {
         plan.name = match.captured(kPowerPlanGuidCaptureGroup);
     }
@@ -104,9 +104,9 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPl
 bool OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
     Q_EMIT executionProgress("Activating power plan...", progress::kStep60);
 
-    ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
-                                    QStringList() << "-SETACTIVE" << guid,
-                                    sak::kTimeoutProcessShortMs);
+    const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
+                                          QStringList() << "-SETACTIVE" << guid,
+                                          sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan activate warning: " + proc.std_err.trimmed());
     }
@@ -117,17 +117,17 @@ bool OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
 OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::getActivePowerPlan() {
     PowerPlan active_plan;
 
-    ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
-                                    QStringList() << "-GETACTIVESCHEME",
-                                    sak::kTimeoutProcessShortMs);
+    const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
+                                          QStringList() << "-GETACTIVESCHEME",
+                                          sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan active query warning: " + proc.std_err.trimmed());
     }
-    QString output = proc.std_out;
+    const QString output = proc.std_out;
 
     // Parse: "Power Scheme GUID: {guid} (Plan Name)"
-    QRegularExpression regex(QString::fromLatin1(kActivePowerPlanPattern));
-    QRegularExpressionMatch match = regex.match(output);
+    const QRegularExpression regex(QString::fromLatin1(kActivePowerPlanPattern));
+    const QRegularExpressionMatch match = regex.match(output);
 
     if (match.hasMatch()) {
         active_plan.guid = match.captured(kPowerPlanGuidCaptureGroup);
@@ -226,7 +226,7 @@ QString OptimizePowerSettingsAction::getStandardPowerPlanGuid(const QString& pla
 void OptimizePowerSettingsAction::scan() {
     setStatus(ActionStatus::Scanning);
 
-    PowerPlan current_plan = getActivePowerPlan();
+    const PowerPlan current_plan = getActivePowerPlan();
 
     ScanResult result;
     result.applicable = true;
@@ -261,7 +261,7 @@ QString OptimizePowerSettingsAction::buildPowerPlanListReport(
 
     // List all plans
     for (const PowerPlan& plan : all_plans) {
-        QString plan_line =
+        const QString plan_line =
             QString("|   %1 %2\n").arg(plan.isActive ? "[ACTIVE]" : "        ").arg(plan.name);
         report += plan_line.leftJustified(kReportInnerWidth, ' ') + "|\n";
     }
@@ -274,7 +274,7 @@ void OptimizePowerSettingsAction::finalizePowerOptimizationResult(
     const OptimizationResultContext& context) {
     Q_EMIT executionProgress("Power optimization complete", progress::kComplete);
 
-    qint64 duration_ms = context.start_time.msecsTo(QDateTime::currentDateTime());
+    const qint64 duration_ms = context.start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
     result.duration_ms = duration_ms;
@@ -318,7 +318,7 @@ bool OptimizePowerSettingsAction::activateHighPerformancePlan(const PowerPlan& h
 
     if (success) {
         Q_EMIT executionProgress("Verifying power plan activation...", progress::kStep80);
-        PowerPlan new_active = getActivePowerPlan();
+        const PowerPlan new_active = getActivePowerPlan();
 
         // Verify by GUID: either the exact plan we set, or any built-in
         // high-performance scheme -- never a mere name-substring match.
@@ -356,13 +356,13 @@ void OptimizePowerSettingsAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
-    QDateTime start_time = QDateTime::currentDateTime();
+    const QDateTime start_time = QDateTime::currentDateTime();
     Q_EMIT executionProgress("Enumerating power plans...", progress::kStep10);
-    PowerPlan current_plan = getActivePowerPlan();
+    const PowerPlan current_plan = getActivePowerPlan();
 
     Q_EMIT executionProgress("Scanning available power plans...", progress::kStep25);
     bool discovery_ok = false;
-    QVector<PowerPlan> all_plans = enumeratePowerPlans(discovery_ok);
+    const QVector<PowerPlan> all_plans = enumeratePowerPlans(discovery_ok);
 
     QString report = buildPowerPlanListReport(current_plan, all_plans);
 
@@ -387,7 +387,7 @@ void OptimizePowerSettingsAction::execute() {
     // Match by GUID, not by name substring: a custom plan named e.g. "My High
     // Performance Rig" must NOT be treated as the built-in plan (which would skip
     // switching to the real one).
-    bool already_optimized = isHighPerformanceGuid(current_plan.guid);
+    const bool already_optimized = isHighPerformanceGuid(current_plan.guid);
     bool success = true;
 
     if (already_optimized) {

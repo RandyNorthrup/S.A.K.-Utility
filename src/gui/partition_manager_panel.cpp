@@ -2439,14 +2439,14 @@ private:
             segment.bytes = firstSize;
             segment.label = tr("Split A");
             segment.changed = true;
-            ApplyDiffSegment second{tr("Split B"),
-                                    segment.offset + firstSize,
-                                    operation.target.size_bytes - firstSize,
-                                    QColor(QString::fromLatin1(ui::kColorSuccess)),
-                                    0,
-                                    0,
-                                    false,
-                                    true};
+            const ApplyDiffSegment second{tr("Split B"),
+                                          segment.offset + firstSize,
+                                          operation.target.size_bytes - firstSize,
+                                          QColor(QString::fromLatin1(ui::kColorSuccess)),
+                                          0,
+                                          0,
+                                          false,
+                                          true};
             (*segments)[i] = segment;
             segments->insert(i + 1, second);
             return;
@@ -2586,14 +2586,14 @@ private:
                 (*segments)[i] = segment;
                 return;
             }
-            ApplyDiffSegment after{tr("Free"),
-                                   offset + size,
-                                   segmentEnd - (offset + size),
-                                   segmentUnallocatedColor(),
-                                   0,
-                                   0,
-                                   true,
-                                   false};
+            const ApplyDiffSegment after{tr("Free"),
+                                         offset + size,
+                                         segmentEnd - (offset + size),
+                                         segmentUnallocatedColor(),
+                                         0,
+                                         0,
+                                         true,
+                                         false};
             segment.bytes = offset - segment.offset;
             (*segments)[i] = segment;
             segments->insert(i + 1, after);
@@ -2825,11 +2825,12 @@ private:
         const uint64_t safeTotal = std::max(row.total_bytes, kDiskMapMinimumBytes);
         const int fillX = track.left() +
                           static_cast<int>((row.offset_bytes * track.width()) / safeTotal);
-        QRect filled(fillX,
-                     track.top(),
-                     std::max(kTableDiskSeparatorWidth,
-                              static_cast<int>((row.filled_bytes * track.width()) / safeTotal)),
-                     track.height());
+        const QRect filled(
+            fillX,
+            track.top(),
+            std::max(kTableDiskSeparatorWidth,
+                     static_cast<int>((row.filled_bytes * track.width()) / safeTotal)),
+            track.height());
         painter->fillRect(filled.intersected(track), row.fill_color);
         drawInteractiveHandles(painter, rowIndex, row, track);
         painter->setPen(QPen(palette().color(QPalette::Mid), kTableDiskSeparatorWidth));
@@ -9057,8 +9058,8 @@ QStringList PartitionManagerPanel::diskStatusParts(const PartitionDiskInfo& disk
 void PartitionManagerPanel::addDiskRow(const PartitionDiskInfo& disk) {
     const int row = m_table->rowCount();
     m_table->insertRow(row);
-    QVariantMap rowData{{QStringLiteral("kind"), rowKindName(TableRowKind::Disk)},
-                        {QStringLiteral("disk"), static_cast<int>(disk.disk_number)}};
+    const QVariantMap rowData{{QStringLiteral("kind"), rowKindName(TableRowKind::Disk)},
+                              {QStringLiteral("disk"), static_cast<int>(disk.disk_number)}};
     auto* target = new QTableWidgetItem(QIcon(kIconDisk), tr("Disk %1").arg(disk.disk_number));
     auto font = target->font();
     font.setBold(true);
@@ -9127,10 +9128,10 @@ void PartitionManagerPanel::addUnallocatedRow(const UnallocatedRegion& region) {
     }
     const int row = m_table->rowCount();
     m_table->insertRow(row);
-    QVariantMap rowData{{QStringLiteral("kind"), rowKindName(TableRowKind::Unallocated)},
-                        {QStringLiteral("disk"), static_cast<int>(region.disk_number)},
-                        {QStringLiteral("offset"), QString::number(region.offset_bytes)},
-                        {QStringLiteral("size"), QString::number(region.size_bytes)}};
+    const QVariantMap rowData{{QStringLiteral("kind"), rowKindName(TableRowKind::Unallocated)},
+                              {QStringLiteral("disk"), static_cast<int>(region.disk_number)},
+                              {QStringLiteral("offset"), QString::number(region.offset_bytes)},
+                              {QStringLiteral("size"), QString::number(region.size_bytes)}};
     auto* target = new QTableWidgetItem(tr("  Unallocated"));
     target->setData(Qt::UserRole, rowData);
     m_table->setItem(row, ColPartition, target);

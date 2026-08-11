@@ -99,7 +99,7 @@ qint64 StreamingDecompressor::read(char* data, qint64 maxSize) {
         return -1;
     }
 
-    qint64 bytesProduced = maxSize - static_cast<qint64>(outputRemaining());
+    const qint64 bytesProduced = maxSize - static_cast<qint64>(outputRemaining());
     m_decompressedBytesProduced += bytesProduced;
 
     // Emit progress every ~1 MB
@@ -202,7 +202,7 @@ bool StreamingDecompressor::tryRefillInput() {
 }
 
 bool StreamingDecompressor::fillInputBuffer() {
-    qint64 bytesRead = m_file.read(reinterpret_cast<char*>(m_inputBuffer), CHUNK_SIZE);
+    const qint64 bytesRead = m_file.read(reinterpret_cast<char*>(m_inputBuffer), CHUNK_SIZE);
     if (bytesRead < 0) {
         m_lastError = QString("File read error: %1").arg(m_file.errorString());
         logError(m_lastError.toStdString());

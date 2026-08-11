@@ -36,10 +36,10 @@ QString ConversionReportGenerator::generateHtmlReport(const OstConversionBatchRe
         logError("ConversionReport: refusing to write report to a blank output directory");
         return {};
     }
-    QString html = buildReportHtml(batch);
+    const QString html = buildReportHtml(batch);
     QString report_path = output_directory + QStringLiteral("/conversion_report.html");
 
-    QDir dir(output_directory);
+    const QDir dir(output_directory);
     if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
         logError("ConversionReport: failed to create output directory {}",
                  output_directory.toStdString());
@@ -179,7 +179,7 @@ QString ConversionReportGenerator::generateCsvManifest(
     }
     QString csv_path = output_directory + QStringLiteral("/properties_manifest.csv");
 
-    QDir dir(output_directory);
+    const QDir dir(output_directory);
     if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
         logError("ConversionReport: failed to create output directory {}",
                  output_directory.toStdString());
@@ -413,20 +413,20 @@ QString ConversionReportGenerator::formatDuration(qint64 ms) {
         return QStringLiteral("%1 ms").arg(ms);
     }
 
-    qint64 total_sec = ms / kMillisecondsPerSecond;
+    const qint64 total_sec = ms / kMillisecondsPerSecond;
 
     if (total_sec < kSecondsPerMinute) {
         return QStringLiteral("%1 s").arg(total_sec);
     }
 
     qint64 minutes = total_sec / kSecondsPerMinute;
-    qint64 seconds = total_sec % kSecondsPerMinute;
+    const qint64 seconds = total_sec % kSecondsPerMinute;
 
     if (minutes < kSecondsPerMinute) {
         return QStringLiteral("%1 min %2 s").arg(minutes).arg(seconds);
     }
 
-    qint64 hours = total_sec / kSecondsPerHour;
+    const qint64 hours = total_sec / kSecondsPerHour;
     minutes = (total_sec % kSecondsPerHour) / kSecondsPerMinute;
     return QStringLiteral("%1 h %2 min").arg(hours).arg(minutes);
 }

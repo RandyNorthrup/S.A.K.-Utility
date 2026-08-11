@@ -295,7 +295,7 @@ bool BrowserBridgePipeServer::createPipeResources(QString* error) {
 }
 
 bool BrowserBridgePipeServer::start(QString* error) {
-    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+    const std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
     // Refuse a second start while a session is live: move-assigning a std::thread onto a still
     // joinable thread_ would call std::terminate. A prior stopped cycle left thread_ joined
     // (not joinable); join any leftover defensively before it is reassigned below.
@@ -322,13 +322,13 @@ void BrowserBridgePipeServer::stop() {
     // BLOCKS until this finishes, then sees stop_done_ and returns -- no double-join or
     // double-close. Unlike the old std::once_flag, stop_done_ is re-armed by start(), so a later
     // start/stop cycle tears down again instead of being permanently disabled.
-    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+    const std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
     if (stop_done_) {
         return;  // already torn down this cycle (or never started)
     }
     stop_done_ = true;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::lock_guard<std::mutex> lock(mutex_);
         running_ = false;
     }
     if (shutdown_event_ != nullptr) {
@@ -350,19 +350,19 @@ void BrowserBridgePipeServer::stop() {
 }
 
 bool BrowserBridgePipeServer::clientConnected() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::lock_guard<std::mutex> lock(mutex_);
     return connected_;
 }
 
 quint64 BrowserBridgePipeServer::connectionGeneration() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::lock_guard<std::mutex> lock(mutex_);
     return generation_;
 }
 
 void BrowserBridgePipeServer::run() {
     while (true) {
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::lock_guard<std::mutex> lock(mutex_);
             if (!running_) {
                 return;
             }
@@ -384,7 +384,7 @@ void BrowserBridgePipeServer::run() {
             continue;
         }
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::lock_guard<std::mutex> lock(mutex_);
             connected_ = true;
             ++generation_;
             has_request_ = false;  // no request may carry over from a prior connection
@@ -393,7 +393,7 @@ void BrowserBridgePipeServer::run() {
         cv_.notify_all();
         serveConnected();
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            const std::lock_guard<std::mutex> lock(mutex_);
             connected_ = false;
         }
         cv_.notify_all();  // wake a waiting sender so it does not hang on a dead peer
@@ -464,7 +464,7 @@ void BrowserBridgePipeServer::serveConnected() {
         if (!running_) {
             return;
         }
-        QJsonObject request = request_frame_;
+        const QJsonObject request = request_frame_;
         has_request_ = false;
         lock.unlock();
 

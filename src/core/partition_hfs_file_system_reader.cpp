@@ -456,7 +456,7 @@ PartitionHfsDirectoryExportResult PartitionHfsFileSystemReader::exportDirectoryF
         return exportResult;
     }
 
-    QDir root(output_directory);
+    const QDir root(output_directory);
     if (!root.mkpath(QStringLiteral("."))) {
         exportResult.blockers.append(QStringLiteral("Unable to create output directory"));
         return exportResult;

@@ -724,7 +724,7 @@ QWidget* EmailInspectorPanel::createHeadersTab() {
     m_headers_browser = new QTextBrowser(this);
     m_headers_browser->setReadOnly(true);
     m_headers_browser->setAccessibleName(QStringLiteral("Email Headers"));
-    QFont mono_font(QStringLiteral("Consolas"), ui::kFontSizeNote);
+    const QFont mono_font(QStringLiteral("Consolas"), ui::kFontSizeNote);
     m_headers_browser->setFont(mono_font);
     return m_headers_browser;
 }
@@ -964,13 +964,13 @@ void EmailInspectorPanel::connectControllerMboxSignals() {
 // ============================================================================
 
 void EmailInspectorPanel::onOpenFileClicked() {
-    QString filter = tr(
+    const QString filter = tr(
         "Email Data Files (*.pst *.ost *.mbox);;"
         "PST Files (*.pst);;"
         "OST Files (*.ost);;"
         "MBOX Files (*.mbox);;"
         "All Files (*)");
-    QString path =
+    const QString path =
         QFileDialog::getOpenFileName(this, tr("Open Email Data File"), QString(), filter);
     if (path.isEmpty()) {
         return;
@@ -991,7 +991,7 @@ void EmailInspectorPanel::onFolderTreeItemClicked(QTreeWidgetItem* item, int /*c
         return;
     }
     bool ok = false;
-    uint64_t folder_id = item->data(0, Qt::UserRole).toULongLong(&ok);
+    const uint64_t folder_id = item->data(0, Qt::UserRole).toULongLong(&ok);
     if (!ok) {
         return;
     }
@@ -1013,7 +1013,7 @@ void EmailInspectorPanel::onItemListCellClicked(int row, int column) {
         return;
     }
     bool ok = false;
-    uint64_t item_id = subject_item->data(Qt::UserRole).toULongLong(&ok);
+    const uint64_t item_id = subject_item->data(Qt::UserRole).toULongLong(&ok);
     if (!ok) {
         return;
     }
@@ -1024,11 +1024,11 @@ void EmailInspectorPanel::onItemListCellClicked(int row, int column) {
 void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
     QMenu menu(this);
     menu.addAction(tr("Open in Detail Panel"), this, [this] {
-        int row = m_item_list->currentRow();
+        const int row = m_item_list->currentRow();
         if (row >= 0) {
             auto* subject_item = m_item_list->item(row, ColSubject);
             if (subject_item) {
-                uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
+                const uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
                 m_controller->loadItemDetail(nid);
             }
         }
@@ -1038,7 +1038,7 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
     menu.addAction(tr("Browse Attachments..."), this, [this] { onExportAttachmentsClicked(); });
     menu.addSeparator();
     menu.addAction(tr("Copy Subject"), this, [this] {
-        int row = m_item_list->currentRow();
+        const int row = m_item_list->currentRow();
         if (row >= 0) {
             auto* subject_item = m_item_list->item(row, ColSubject);
             if (subject_item) {
@@ -1047,11 +1047,11 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
         }
     });
     menu.addAction(tr("View MAPI Properties"), this, [this] {
-        int row = m_item_list->currentRow();
+        const int row = m_item_list->currentRow();
         if (row >= 0) {
             auto* subject_item = m_item_list->item(row, ColSubject);
             if (subject_item) {
-                uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
+                const uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
                 m_controller->loadItemProperties(nid);
                 m_detail_tabs->setCurrentIndex(kPropertiesDetailTabIndex);
             }
@@ -1118,7 +1118,7 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
 // ============================================================================
 
 void EmailInspectorPanel::onSearchClicked() {
-    QString query = m_search_edit->text().trimmed();
+    const QString query = m_search_edit->text().trimmed();
     if (query.isEmpty()) {
         return;
     }
@@ -1251,7 +1251,7 @@ void EmailInspectorPanel::onExportClicked() {
         return;
     }
 
-    QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Export Directory"));
+    const QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Export Directory"));
     if (dir_path.isEmpty()) {
         return;
     }
@@ -1351,8 +1351,8 @@ void EmailInspectorPanel::onExportAttachmentsClicked() {
     reconnectDialogSignals();
     m_dialog_active = false;
     if (result == QDialog::Accepted) {
-        uint64_t folder_id = dialog.navigateFolderId();
-        uint64_t message_id = dialog.navigateMessageId();
+        const uint64_t folder_id = dialog.navigateFolderId();
+        const uint64_t message_id = dialog.navigateMessageId();
         if (folder_id != 0 && message_id != 0) {
             m_current_folder_id = folder_id;
             m_current_page = 0;
@@ -1461,7 +1461,7 @@ void EmailInspectorPanel::onStateChanged(EmailInspectorController::State state) 
     if (m_dialog_active) {
         return;
     }
-    bool idle = (state == EmailInspectorController::State::Idle);
+    const bool idle = (state == EmailInspectorController::State::Idle);
     setOperationRunning(!idle);
 }
 
@@ -1870,8 +1870,8 @@ QVector<const sak::PstFolder*> EmailInspectorPanel::sortedVisibleFolders(
     std::sort(sorted.begin(),
               sorted.end(),
               [](const sak::PstFolder* lhs, const sak::PstFolder* rhs) {
-                  int order_lhs = folderSortOrder(lhs->display_name, lhs->container_class);
-                  int order_rhs = folderSortOrder(rhs->display_name, rhs->container_class);
+                  const int order_lhs = folderSortOrder(lhs->display_name, lhs->container_class);
+                  const int order_rhs = folderSortOrder(rhs->display_name, rhs->container_class);
                   if (order_lhs != order_rhs) {
                       return order_lhs < order_rhs;
                   }
@@ -2021,7 +2021,7 @@ void EmailInspectorPanel::collectSpecialFolderIds(const sak::PstFolder& folder) 
 void EmailInspectorPanel::onScanForFilesClicked() {
     EmailFileScannerDialog dialog(this);
     if (dialog.exec() == QDialog::Accepted) {
-        QString path = dialog.selectedFilePath();
+        const QString path = dialog.selectedFilePath();
         if (!path.isEmpty()) {
             m_controller->openFile(path);
         }
@@ -2139,18 +2139,18 @@ void EmailInspectorPanel::displayNoteDetail(const sak::PstItemDetail& detail) {
                                               ui::kColorNoteYellow,
                                               ui::kColorNoteGray};
     constexpr int kNoteColorCount = 5;
-    int color_idx = (detail.note_color >= 0 && detail.note_color < kNoteColorCount)
-                        ? detail.note_color
-                        : kDefaultNoteColorIndex;
-    QString html = QString::fromLatin1(ui::kHtmlNoteDetailTemplate)
-                       .arg(ui::kHtmlDetailLargePaddingPx)
-                       .arg(ui::htmlColor(QLatin1String(kNoteColors[color_idx])))
-                       .arg(ui::kCssRadiusLargePx)
-                       .arg(ui::kHtmlNoteMinHeightPx)
-                       .arg(ui::htmlColor(ui::kColorTextHeading))
-                       .arg(detail.subject.toHtmlEscaped())
-                       .arg(ui::htmlColor(ui::kColorTextBody))
-                       .arg(detail.body_plain.toHtmlEscaped());
+    const int color_idx = (detail.note_color >= 0 && detail.note_color < kNoteColorCount)
+                              ? detail.note_color
+                              : kDefaultNoteColorIndex;
+    const QString html = QString::fromLatin1(ui::kHtmlNoteDetailTemplate)
+                             .arg(ui::kHtmlDetailLargePaddingPx)
+                             .arg(ui::htmlColor(QLatin1String(kNoteColors[color_idx])))
+                             .arg(ui::kCssRadiusLargePx)
+                             .arg(ui::kHtmlNoteMinHeightPx)
+                             .arg(ui::htmlColor(ui::kColorTextHeading))
+                             .arg(detail.subject.toHtmlEscaped())
+                             .arg(ui::htmlColor(ui::kColorTextBody))
+                             .arg(detail.body_plain.toHtmlEscaped());
     m_content_browser->setHtml(html);
     m_headers_browser->setPlainText(tr("No transport headers available"));
 }
@@ -2371,10 +2371,10 @@ void EmailInspectorPanel::displayItemDetail(const sak::PstItemDetail& detail) {
         if (detail.body_html.isEmpty()) {
             m_content_browser->clear();
         } else {
-            QString wrapped = QString::fromLatin1(ui::kHtmlEmailPreviewDocument)
-                                  .arg(ui::kHtmlPreviewBodyFontPx)
-                                  .arg(ui::kHtmlPreviewBodyPaddingPx)
-                                  .arg(buildPreviewHtml(detail.body_html));
+            const QString wrapped = QString::fromLatin1(ui::kHtmlEmailPreviewDocument)
+                                        .arg(ui::kHtmlPreviewBodyFontPx)
+                                        .arg(ui::kHtmlPreviewBodyPaddingPx)
+                                        .arg(buildPreviewHtml(detail.body_html));
             m_content_browser->setHtml(wrapped);
         }
     } else {
@@ -2401,8 +2401,8 @@ void EmailInspectorPanel::displayProperties(const QVector<sak::MapiProperty>& pr
     for (int row = 0; row < count; ++row) {
         const auto& prop = props.at(row);
         m_properties_table->setItem(row, 0, new QTableWidgetItem(prop.property_name));
-        QString display = prop.display_value.isEmpty() ? QStringLiteral("<empty>")
-                                                       : prop.display_value;
+        const QString display = prop.display_value.isEmpty() ? QStringLiteral("<empty>")
+                                                             : prop.display_value;
         m_properties_table->setItem(row, 1, new QTableWidgetItem(display));
     }
     m_properties_table->setUpdatesEnabled(true);
@@ -2417,7 +2417,7 @@ void EmailInspectorPanel::displayAttachments(const QVector<sak::PstAttachmentInf
     m_attachments_table->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& att = attachments.at(row);
-        QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
+        const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
         m_attachments_table->setItem(row, 0, new QTableWidgetItem(name));
         m_attachments_table->setItem(row, 1, new QTableWidgetItem(formatBytes(att.size_bytes)));
         m_attachments_table->setItem(row,

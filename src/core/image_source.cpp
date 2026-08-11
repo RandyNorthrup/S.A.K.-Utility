@@ -93,7 +93,7 @@ qint64 FileImageSource::read(char* data, qint64 maxSize) {
         return -1;
     }
 
-    qint64 bytesRead = m_device->read(data, maxSize);
+    const qint64 bytesRead = m_device->read(data, maxSize);
     if (bytesRead < 0) {
         sak::logError(QString("Read error: %1")
                           .arg(static_cast<QFile*>(m_device.get())->errorString())
@@ -161,7 +161,7 @@ QString FileImageSource::calculateChecksum() {
     const qint64 totalBytes = m_device->size();
 
     while (!atEnd()) {
-        qint64 bytesRead = read(buffer.data(), bufferSize);
+        const qint64 bytesRead = read(buffer.data(), bufferSize);
         if (bytesRead < 0) {
             sak::logError("Error reading file for checksum");
             // Restore before returning: this function is a read-only observation, and leaving
@@ -263,7 +263,7 @@ CompressedImageSource::CompressedImageSource(const QString& filePath, QObject* p
     m_metadata.isCompressed = true;
 
     // Determine compression type
-    QString ext = QFileInfo(filePath).suffix().toLower();
+    const QString ext = QFileInfo(filePath).suffix().toLower();
     if (ext == "gz") {
         m_metadata.compressionType = "gzip";
     } else if (ext == "bz2") {
@@ -292,7 +292,8 @@ bool CompressedImageSource::open() {
     // Create decompressor using factory
     m_decompressor = sak::DecompressorFactory::create(m_filePath);
     if (!m_decompressor) {
-        QString error = QString("Unsupported or undetected compression format: %1").arg(m_filePath);
+        const QString error =
+            QString("Unsupported or undetected compression format: %1").arg(m_filePath);
         sak::logError(error.toStdString());
         Q_EMIT readError(error);
         return false;
@@ -300,8 +301,8 @@ bool CompressedImageSource::open() {
 
     // Open the decompressor
     if (!m_decompressor->open(m_filePath)) {
-        QString error = QString("Failed to open compressed file: %1 (%2)")
-                            .arg(m_filePath, m_decompressor->lastError());
+        const QString error = QString("Failed to open compressed file: %1 (%2)")
+                                  .arg(m_filePath, m_decompressor->lastError());
         sak::logError(error.toStdString());
         Q_EMIT readError(error);
         m_decompressor.reset();
@@ -326,7 +327,7 @@ bool CompressedImageSource::open() {
 
                 // Calculate percentage based on compressed file size
                 if (m_metadata.size > 0) {
-                    int percentage =
+                    const int percentage =
                         static_cast<int>((compressedBytes * sak::kPercentMax) / m_metadata.size);
                     Q_EMIT decompressionProgress(percentage);
                 }
@@ -370,7 +371,7 @@ qint64 CompressedImageSource::read(char* data, qint64 maxSize) {
         return -1;
     }
 
-    qint64 bytesRead = m_decompressor->read(data, maxSize);
+    const qint64 bytesRead = m_decompressor->read(data, maxSize);
     if (bytesRead < 0) {
         // Surface the decompressor's real failure instead of a bare -1: malformed compressed
         // input must reach the caller as the actual error, not a silent short read.
@@ -424,7 +425,7 @@ QString CompressedImageSource::calculateChecksum() {
     }
 
     // Save current position
-    qint64 savedPos = m_totalDecompressed;
+    const qint64 savedPos = m_totalDecompressed;
     // Note: Position restoration not possible for compressed streams
     // Must reopen to reset decompression state
     Q_UNUSED(savedPos);
@@ -442,7 +443,7 @@ QString CompressedImageSource::calculateChecksum() {
     std::vector<char> buffer(bufferSize);
 
     while (!atEnd()) {
-        qint64 bytesRead = read(buffer.data(), bufferSize);
+        const qint64 bytesRead = read(buffer.data(), bufferSize);
         if (bytesRead < 0) {
             sak::logError(QString("Error reading data during checksum calculation: %1")
                               .arg(m_decompressor ? m_decompressor->lastError() : QString())

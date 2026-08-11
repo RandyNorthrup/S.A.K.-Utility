@@ -53,7 +53,7 @@ bool BundledToolsManager::moduleExists(const QString& moduleName) const {
     if (trimmed.isEmpty() || trimmed == QStringLiteral(".") || trimmed == QStringLiteral("..")) {
         return false;
     }
-    QDir moduleDir(psModulePath(moduleName));
+    const QDir moduleDir(psModulePath(moduleName));
     return moduleDir.exists();
 }
 

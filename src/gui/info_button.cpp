@@ -144,7 +144,7 @@ void InfoButton::togglePopup() {
 
     // Position: below the button, left-aligned
     QPoint globalPos = mapToGlobal(QPoint(0, height() + kInfoPopupScreenPaddingPx));
-    QRect screenRect = screen()->availableGeometry();
+    const QRect screenRect = screen()->availableGeometry();
 
     // Ensure popup stays on screen
     if (globalPos.y() + popup->height() > screenRect.bottom()) {

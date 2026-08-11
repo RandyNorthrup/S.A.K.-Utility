@@ -117,8 +117,8 @@ RewrittenScript ScriptRewriter::rewriteToFile(const ParsedInstallScript& parsed,
     }
 
     // Ensure the output directory exists
-    QFileInfo info(output_path);
-    QDir dir = info.dir();
+    const QFileInfo info(output_path);
+    const QDir dir = info.dir();
     if (!dir.exists()) {
         dir.mkpath(".");
     }
@@ -182,7 +182,7 @@ QString ScriptRewriter::replaceUrl(const QString& script,
                                    const QString& local_filename,
                                    QVector<ScriptReplacement>& replacements) const {
     QString result = script;
-    QString tools_path = buildToolsPath(local_filename);
+    const QString tools_path = buildToolsPath(local_filename);
 
     // Replace URL in both quoted and unquoted contexts. tools_path is a PS
     // EXPRESSION, so a matched wrapping quote pair must be consumed too --
@@ -190,7 +190,7 @@ QString ScriptRewriter::replaceUrl(const QString& script,
     // rewritten download silently does nothing.
     int search_pos = 0;
     while (true) {
-        int found_pos = result.indexOf(url, search_pos, Qt::CaseInsensitive);
+        const int found_pos = result.indexOf(url, search_pos, Qt::CaseInsensitive);
         if (found_pos < 0) {
             break;
         }

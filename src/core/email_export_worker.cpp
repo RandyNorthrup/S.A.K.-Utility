@@ -245,14 +245,14 @@ QVector<uint64_t> expandWithSubfolders(const sak::PstFolderTree& tree,
                                        const QVector<uint64_t>& roots) {
     QVector<uint64_t> expanded;
     QSet<uint64_t> seen;
-    for (uint64_t root : roots) {
+    for (const uint64_t root : roots) {
         QVector<uint64_t> subtree;
         if (const auto* folder = findFolderById(tree, root)) {
             collectFolderSubtreeIds(*folder, subtree);
         } else {
             subtree.append(root);
         }
-        for (uint64_t id : subtree) {
+        for (const uint64_t id : subtree) {
             if (!seen.contains(id)) {
                 seen.insert(id);
                 expanded.append(id);
@@ -291,9 +291,9 @@ bool passesAttachmentFilter(const sak::PstAttachmentInfo& att,
         return true;
     }
     const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
-    QRegularExpression filter(QRegularExpression::wildcardToRegularExpression(
-                                  config.attachment_filter),
-                              QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression filter(QRegularExpression::wildcardToRegularExpression(
+                                        config.attachment_filter),
+                                    QRegularExpression::CaseInsensitiveOption);
     return filter.match(name).hasMatch();
 }
 
@@ -559,13 +559,13 @@ void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportCon
     result.started = QDateTime::currentDateTime();
     result.export_format = formatDisplayName(config.format);
 
-    QDir output_dir(config.output_path);
+    const QDir output_dir(config.output_path);
     if (!output_dir.mkpath(QStringLiteral("."))) {
         emitEarlyFailure(QStringLiteral("Failed to create output directory"));
         return;
     }
 
-    QVector<uint64_t> item_ids = collectItemIds(parser, config, result);
+    const QVector<uint64_t> item_ids = collectItemIds(parser, config, result);
     if (item_ids.isEmpty()) {
         emitEarlyFailure(QStringLiteral("No items to export"));
         return;
@@ -595,7 +595,7 @@ QVector<uint64_t> EmailExportWorker::collectItemIds(PstParser* parser,
     if (config.recurse_subfolders && !folders.isEmpty()) {
         folders = expandWithSubfolders(parser->folderTree(), folders);
     }
-    for (uint64_t folder : folders) {
+    for (const uint64_t folder : folders) {
         if (!pageFolderItemIds(parser, folder, item_ids)) {
             result.errors.append(
                 QStringLiteral("Folder %1 read error; item list is incomplete").arg(folder));
@@ -757,7 +757,7 @@ void EmailExportWorker::exportIcsFormat(PstParser* parser,
             events.append(detail.value());
         }
     }
-    QString ics_path = config.output_path + QStringLiteral("/calendar_export.ics");
+    const QString ics_path = config.output_path + QStringLiteral("/calendar_export.ics");
     if (writeIcs(events, ics_path)) {
         result.items_exported += events.size();
     } else {
@@ -797,8 +797,8 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
         columns = defaultCsvColumns(config.format);
     }
 
-    QString csv_name = csvFilename(config.format);
-    QString csv_path = config.output_path + QLatin1Char('/') + csv_name;
+    const QString csv_name = csvFilename(config.format);
+    const QString csv_path = config.output_path + QLatin1Char('/') + csv_name;
 
     // Reject a malformed config BEFORE writing rather than coerce unknown columns to
     // blank cells or accept a structure-breaking delimiter (fail closed).
@@ -806,7 +806,7 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
     if (cfg_error.isEmpty() &&
         writeCsv(items, csv_path, columns, config.csv_delimiter, config.csv_include_header)) {
         result.items_exported += items.size();
-        QFileInfo fi(csv_path);
+        const QFileInfo fi(csv_path);
         result.total_bytes = fi.size();
     } else {
         result.items_failed += items.size();
@@ -848,7 +848,7 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
     const auto effective_format = messageFormatOrEml(config.format);
     result.export_format = formatDisplayName(effective_format) + QStringLiteral(" (from MBOX)");
 
-    QDir output_dir(config.output_path);
+    const QDir output_dir(config.output_path);
     if (!output_dir.mkpath(QStringLiteral("."))) {
         emitEarlyFailure(QStringLiteral("Failed to create output directory"));
         return;
@@ -1015,7 +1015,7 @@ bool EmailExportWorker::writePdf(sak::PdfEmailWriter& writer,
 bool EmailExportWorker::writeVcf(const sak::PstItemDetail& contact,
                                  const QString& output_dir,
                                  int index) {
-    QByteArray content = buildVcfContent(contact);
+    const QByteArray content = buildVcfContent(contact);
     if (content.isEmpty()) {
         return false;
     }
@@ -1097,7 +1097,7 @@ QByteArray EmailExportWorker::buildVcfContent(const sak::PstItemDetail& contact)
 
 bool EmailExportWorker::writeIcs(const QVector<sak::PstItemDetail>& events,
                                  const QString& output_path) {
-    QByteArray content = buildIcsContent(events);
+    const QByteArray content = buildIcsContent(events);
     // QSaveFile writes to a temp sibling and atomically renames on commit(), so a
     // failed write never truncates a previously valid .ics in place.
     QSaveFile file(output_path);
@@ -1257,7 +1257,7 @@ QString EmailExportWorker::sanitizeFilename(const QString& name, int max_length)
 
     // Replace Windows-forbidden characters
     static const QString kForbidden = QStringLiteral("<>:\"/\\|?*");
-    for (QChar forbidden : kForbidden) {
+    for (const QChar forbidden : kForbidden) {
         safe.replace(forbidden, QLatin1Char('_'));
     }
 
@@ -1286,14 +1286,14 @@ QString EmailExportWorker::sanitizeFilename(const QString& name, int max_length)
 }
 
 QString EmailExportWorker::resolveFilenameConflict(const QString& dir, const QString& filename) {
-    QString full_path = dir + QLatin1Char('/') + filename;
+    const QString full_path = dir + QLatin1Char('/') + filename;
     if (!QFile::exists(full_path)) {
         return filename;
     }
 
-    QFileInfo fi(filename);
-    QString base = fi.completeBaseName();
-    QString ext = fi.suffix();
+    const QFileInfo fi(filename);
+    const QString base = fi.completeBaseName();
+    const QString ext = fi.suffix();
 
     constexpr int kMaxConflictAttempts = 9999;
     for (int attempt = kFirstConflictAttempt; attempt <= kMaxConflictAttempts; ++attempt) {
@@ -1346,7 +1346,7 @@ bool EmailExportWorker::writePlainText(const PlainTextWriteRequest& request,
     if (!textStreamOk(stream, file) || !file.commit()) {
         return false;  // A truncated/failed .txt write is not a successful export.
     }
-    QFileInfo info(full_path);
+    const QFileInfo info(full_path);
     bytes_written += info.size();
     if (request.save_attachments &&
         !saveSidecarAttachments(
@@ -1447,7 +1447,7 @@ bool EmailExportWorker::saveSidecarAttachments(
                                    : exported_info.absolutePath() + QLatin1Char('/') +
                                          exported_info.completeBaseName() +
                                          QStringLiteral("_attachments");
-    QDir dir;
+    const QDir dir;
     if (!dir.mkpath(attach_dir)) {
         return false;
     }

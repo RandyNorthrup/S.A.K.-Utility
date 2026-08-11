@@ -640,7 +640,7 @@ ToolResult toolUiaInspectWindow(const QJsonObject& args) {
     if (!hwnd) {
         return errorResult(err_target);
     }
-    ComApartment com;
+    const ComApartment com;
     QVector<UiaNode> nodes;
     bool truncated = false;
     const int depth = clampUiaDepth(args);
@@ -669,7 +669,7 @@ ToolResult toolUiaFindControl(const QJsonObject& args) {
     }
     const QString type_filter =
         args.value(QStringLiteral("control_type")).toString().trimmed().toLower();
-    ComApartment com;
+    const ComApartment com;
     QVector<UiaNode> nodes;
     bool truncated = false;
     const QString err = inspectHwnd(hwnd, kDefaultUiaDepth, nodes, truncated);
@@ -731,7 +731,7 @@ ToolResult toolUiaGetControlValue(const QJsonObject& args) {
     if (!stale.isEmpty()) {
         return errorResult(stale);
     }
-    ComApartment com;
+    const ComApartment com;
     QVector<UiaNode> nodes;
     bool truncated = false;
     const QString err = inspectHwnd(g_uia_snapshot.hwnd, g_uia_snapshot.depth, nodes, truncated);
@@ -808,7 +808,7 @@ ToolResult toolUiaClickControl(const QJsonObject& args) {
     if (!stale.isEmpty()) {
         return errorResult(stale);
     }
-    ComApartment com;
+    const ComApartment com;
     QVector<UiaNode> nodes;
     bool truncated = false;
     QVector<ComPtr<IUIAutomationElement>> elements;
@@ -846,7 +846,7 @@ QString focusedWindowTitle(IUIAutomationElement* element) {
 }
 
 ToolResult toolUiaGetFocused(const QJsonObject&) {
-    ComApartment com;
+    const ComApartment com;
     ComPtr<IUIAutomation> automation;
     if (FAILED(CoCreateInstance(
             __uuidof(CUIAutomation), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation))) ||
@@ -893,7 +893,7 @@ ToolResult toolDismissDialog(const QJsonObject& args) {
         return errorResult(err_target);
     }
     const QString explicit_button = args.value(QStringLiteral("button")).toString().trimmed();
-    ComApartment com;
+    const ComApartment com;
     QVector<UiaNode> nodes;
     bool truncated = false;
     QVector<ComPtr<IUIAutomationElement>> elements;

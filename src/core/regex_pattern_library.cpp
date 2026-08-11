@@ -115,7 +115,7 @@ void RegexPatternLibrary::addCustomPattern(const QString& key,
     }
 
     // Validate regex before accepting
-    QRegularExpression testRegex(pattern);
+    const QRegularExpression testRegex(pattern);
     if (!testRegex.isValid()) {
         logWarning("RegexPatternLibrary: pattern '{}' is invalid regex: {}",
                    pattern.toStdString(),
@@ -141,7 +141,7 @@ void RegexPatternLibrary::addCustomPattern(const QString& key,
 }
 
 void RegexPatternLibrary::removeCustomPattern(const QString& key) {
-    QVector<RegexPatternInfo> previous = m_custom_patterns;  // snapshot for rollback
+    const QVector<RegexPatternInfo> previous = m_custom_patterns;  // snapshot for rollback
     auto it = std::remove_if(m_custom_patterns.begin(),
                              m_custom_patterns.end(),
                              [&key](const RegexPatternInfo& p) { return p.key == key; });
@@ -168,7 +168,7 @@ void RegexPatternLibrary::updateCustomPattern(const QString& key,
         return;
     }
     // Validate regex before accepting update
-    QRegularExpression testRegex(pattern);
+    const QRegularExpression testRegex(pattern);
     if (!testRegex.isValid()) {
         logWarning("RegexPatternLibrary: updated pattern '{}' is invalid regex: {}",
                    pattern.toStdString(),
@@ -375,7 +375,7 @@ bool RegexPatternLibrary::saveCustomPatterns() {
         arr.append(obj);
     }
 
-    QJsonDocument doc(arr);
+    const QJsonDocument doc(arr);
 
     // QSaveFile writes to a temporary and atomically renames on commit(), so a
     // short write / crash / full disk leaves the previously valid library intact

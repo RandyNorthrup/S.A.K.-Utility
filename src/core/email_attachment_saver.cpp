@@ -56,19 +56,19 @@ AttachmentSaveResult saveAttachmentToPath(const QString& path, const QByteArray&
     // so a short/failed write never leaves a truncated file reported as saved.
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
-        QString error = QStringLiteral("Failed to save attachment: %1").arg(path);
+        const QString error = QStringLiteral("Failed to save attachment: %1").arg(path);
         sak::logError("Failed to save attachment: {}", path.toStdString());
         return {false, path, error};
     }
     const qint64 written = file.write(data);
     if (written != static_cast<qint64>(data.size())) {
         file.cancelWriting();
-        QString error = QStringLiteral("Short write saving attachment: %1").arg(path);
+        const QString error = QStringLiteral("Short write saving attachment: %1").arg(path);
         sak::logError("Short write saving attachment: {}", path.toStdString());
         return {false, path, error};
     }
     if (!file.commit()) {
-        QString error = QStringLiteral("Failed to finalize attachment: %1").arg(path);
+        const QString error = QStringLiteral("Failed to finalize attachment: %1").arg(path);
         sak::logError("Failed to finalize attachment: {}", path.toStdString());
         return {false, path, error};
     }
@@ -93,13 +93,13 @@ AttachmentSaveResult saveAttachmentToDirectory(const QString& dir,
         // arrives as a non-null zero-length QByteArray and is still saved.
         return {false, {}, QStringLiteral("No attachment content to save")};
     }
-    QString safe_name = sanitizeAttachmentFilename(filename);
+    const QString safe_name = sanitizeAttachmentFilename(filename);
     QString file_path = dir + QStringLiteral("/") + safe_name;
 
     if (QFile::exists(file_path)) {
-        int dot = safe_name.lastIndexOf(QLatin1Char('.'));
-        QString base = (dot > 0) ? safe_name.left(dot) : safe_name;
-        QString ext = (dot > 0) ? safe_name.mid(dot) : QString();
+        const int dot = safe_name.lastIndexOf(QLatin1Char('.'));
+        const QString base = (dot > 0) ? safe_name.left(dot) : safe_name;
+        const QString ext = (dot > 0) ? safe_name.mid(dot) : QString();
         int counter = 1;
         constexpr int kMaxDedupeAttempts = 999;
         do {
@@ -112,7 +112,7 @@ AttachmentSaveResult saveAttachmentToDirectory(const QString& dir,
     // above exits with a path that still exists, and saveAttachmentToPath would
     // otherwise truncate it.
     if (QFile::exists(file_path)) {
-        QString error = QStringLiteral("No unique attachment name available in: %1").arg(dir);
+        const QString error = QStringLiteral("No unique attachment name available in: %1").arg(dir);
         sak::logError("No unique attachment name available in: {}", dir.toStdString());
         return {false, file_path, error};
     }

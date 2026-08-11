@@ -75,7 +75,7 @@ QVector<ScannedFile> scanPathsWorker(const QStringList& paths) {
     };
 
     for (const auto& path : paths) {
-        QDir dir(path);
+        const QDir dir(path);
         if (!dir.exists()) {
             continue;
         }
@@ -298,7 +298,7 @@ void EmailFileScannerDialog::onScanClicked() {
 }
 
 void EmailFileScannerDialog::onOpenClicked() {
-    int row = m_results_table->currentRow();
+    const int row = m_results_table->currentRow();
     if (row < 0) {
         return;
     }
@@ -320,7 +320,7 @@ void EmailFileScannerDialog::onFileDoubleClicked(int row, int /*column*/) {
 }
 
 void EmailFileScannerDialog::onOpenContainingFolderClicked() {
-    int row = m_results_table->currentRow();
+    const int row = m_results_table->currentRow();
     if (row < 0) {
         return;
     }
@@ -328,7 +328,7 @@ void EmailFileScannerDialog::onOpenContainingFolderClicked() {
     if (item == nullptr) {
         return;
     }
-    QFileInfo file_info(item->text());
+    const QFileInfo file_info(item->text());
     QDesktopServices::openUrl(QUrl::fromLocalFile(file_info.absolutePath()));
 }
 
@@ -339,7 +339,7 @@ void EmailFileScannerDialog::onOpenContainingFolderClicked() {
 // static
 QStringList EmailFileScannerDialog::commonScanPaths() {
     QStringList paths;
-    QString home = QDir::homePath();
+    const QString home = QDir::homePath();
 
     // Outlook default data locations
     paths << home + QStringLiteral("/AppData/Local/Microsoft/Outlook");
@@ -359,7 +359,7 @@ QStringList EmailFileScannerDialog::commonScanPaths() {
         if (!storage.isReady() || storage.isReadOnly()) {
             continue;
         }
-        QString root = storage.rootPath();
+        const QString root = storage.rootPath();
         if (root == QLatin1String("C:/")) {
             continue;  // Already covered by home paths above
         }

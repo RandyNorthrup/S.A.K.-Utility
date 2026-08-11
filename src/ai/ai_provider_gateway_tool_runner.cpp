@@ -424,7 +424,7 @@ Win32StepOutcome executeWin32GuiStep(const QJsonObject& step, const AiProviderGa
         return outcome;
     }
 
-    QJsonObject result = gateway->callWin32Mcp(call_plan, &error);
+    const QJsonObject result = gateway->callWin32Mcp(call_plan, &error);
     if (!error.isEmpty()) {
         outcome.tool_error = true;
         outcome.error = error;

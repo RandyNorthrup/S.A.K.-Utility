@@ -414,7 +414,7 @@ ToolResult toolBrowserExtensionUninstall(const QJsonObject&) {
 }
 
 ToolResult toolBrowserExtensionStatus(const QJsonObject&) {
-    BrowserExtensionInstaller installer;
+    const BrowserExtensionInstaller installer;
     return jsonResult(
         QJsonObject{{QStringLiteral("state"), installer.stateString()},
                     {QStringLiteral("crx_present"), installer.crxPresent()},

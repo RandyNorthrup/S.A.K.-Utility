@@ -90,7 +90,7 @@ bool PackageListManager::addPackage(PackageList& list,
     }
 
     // Check for duplicates
-    bool exists = std::any_of(
+    const bool exists = std::any_of(
         list.entries.cbegin(), list.entries.cend(), [&package_id](const PackageListEntry& entry) {
             return entry.package_id.compare(package_id, Qt::CaseInsensitive) == 0;
         });
@@ -174,7 +174,7 @@ bool PackageListManager::saveToFile(const PackageList& list, const QString& file
         return false;
     }
 
-    QJsonDocument doc(root);
+    const QJsonDocument doc(root);
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
     if (file.write(json_bytes) != json_bytes.size()) {
         sak::logError("[PackageListManager] Incomplete write: {}", file_path.toStdString());
@@ -217,7 +217,7 @@ PackageList PackageListManager::loadFromFile(const QString& file_path) {
     file.close();
 
     QJsonParseError parse_error;
-    QJsonDocument doc = QJsonDocument::fromJson(raw, &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &parse_error);
 
     if (parse_error.error != QJsonParseError::NoError) {
         sak::logError("[PackageListManager] JSON parse error: {}",
@@ -237,7 +237,7 @@ PackageList PackageListManager::loadFromFile(const QString& file_path) {
     list.created_date = root["created"].toString();
     list.modified_date = root["modified"].toString();
 
-    QJsonArray packages = root["packages"].toArray();
+    const QJsonArray packages = root["packages"].toArray();
     for (const auto& val : packages) {
         if (list.entries.size() >= offline::kMaxPackageListEntries) {
             sak::logWarning("[PackageListManager] Entry cap reached ({}); extra packages ignored",

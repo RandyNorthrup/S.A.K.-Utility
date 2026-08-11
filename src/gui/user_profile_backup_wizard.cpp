@@ -347,7 +347,7 @@ void UserProfileBackupSelectUsersPage::populateTable() {
         // Size estimate
         QString sizeText = tr("Calculating...");
         if (user.total_size_estimated > 0) {
-            double sizeGB = user.total_size_estimated / sak::kBytesPerGBf;
+            const double sizeGB = user.total_size_estimated / sak::kBytesPerGBf;
             sizeText = QString("%1 GB").arg(sizeGB, 0, 'f', kProfileSizeDisplayPrecision);
         }
         auto* sizeItem = new QTableWidgetItem(sizeText);
@@ -398,7 +398,7 @@ void UserProfileBackupSelectUsersPage::updateSummary() {
         }
     }
 
-    double totalGB = totalSizeBytes / sak::kBytesPerGBf;
+    const double totalGB = totalSizeBytes / sak::kBytesPerGBf;
 
     if (selectedCount == 0) {
         m_summaryLabel->setText(tr("No users selected"));

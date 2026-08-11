@@ -282,7 +282,7 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
                               : 0.0;
 
     // Prevent optimizer from eliding c
-    volatile double sink = c[0];
+    const volatile double sink = c[0];
     (void)sink;
 
     logInfo("Matrix {}x{} multiply completed in {:.1f} ms ({:.2f} GFLOPS)",
@@ -398,7 +398,7 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
     const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
 
     // Prevent optimizer from eliding
-    volatile uint8_t sink = data[0];
+    const volatile uint8_t sink = data[0];
     (void)sink;
 
     m_aes_throughput_mbps = static_cast<double>(data_size) / sak::kBytesPerMBf /

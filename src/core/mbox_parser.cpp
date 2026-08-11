@@ -82,7 +82,7 @@ void MboxParser::open(const QString& file_path) {
     }
 
     // Quick validation -- first line should start with "From "
-    QByteArray first_line = m_file.readLine(kFromLineProbeBytes);
+    const QByteArray first_line = m_file.readLine(kFromLineProbeBytes);
     if (!isFromLine(first_line)) {
         const auto message =
             QStringLiteral("Not a valid MBOX file (missing 'From ' header): %1").arg(file_path);
@@ -97,8 +97,8 @@ void MboxParser::open(const QString& file_path) {
 
     // Estimate message count from file size (rough average ~5KB per message)
     constexpr qint64 kAvgMessageSize = 5120;
-    int estimated = static_cast<int>(std::min(m_file.size() / kAvgMessageSize,
-                                              static_cast<qint64>(sak::email::kMaxSearchResults)));
+    const int estimated = static_cast<int>(std::min(
+        m_file.size() / kAvgMessageSize, static_cast<qint64>(sak::email::kMaxSearchResults)));
 
     Q_EMIT fileOpened(file_path, estimated);
 }
@@ -194,9 +194,9 @@ std::expected<QVector<sak::MboxMessage>, error_code> MboxParser::readMessages(in
         m_is_indexed = true;
     }
 
-    int total = m_message_offsets.size();
-    int start = std::min(offset, total);
-    int end_idx = (limit > 0) ? std::min(start + limit, total) : total;
+    const int total = m_message_offsets.size();
+    const int start = std::min(offset, total);
+    const int end_idx = (limit > 0) ? std::min(start + limit, total) : total;
 
     QVector<sak::MboxMessage> messages;
     messages.reserve(end_idx - start);
@@ -336,7 +336,7 @@ void MboxParser::buildMessageIndex() {
     m_message_offsets.clear();
     m_file.seek(0);
 
-    qint64 file_size = m_file.size();
+    const qint64 file_size = m_file.size();
     qint64 bytes_read = 0;
     int last_progress = 0;
 
@@ -345,8 +345,8 @@ void MboxParser::buildMessageIndex() {
             return;
         }
 
-        qint64 line_offset = m_file.pos();
-        QByteArray line = m_file.readLine(sak::email::kMboxMaxMessageSize);
+        const qint64 line_offset = m_file.pos();
+        const QByteArray line = m_file.readLine(sak::email::kMboxMaxMessageSize);
 
         // A successful non-EOF readLine always yields at least one byte. An empty return while
         // !atEnd() means the underlying read FAILED (I/O error, removed media, a dropped network
@@ -363,7 +363,7 @@ void MboxParser::buildMessageIndex() {
 
         bytes_read = m_file.pos();
         if (file_size > 0) {
-            int progress = static_cast<int>((bytes_read * sak::kPercentMax) / file_size);
+            const int progress = static_cast<int>((bytes_read * sak::kPercentMax) / file_size);
             if (progress > last_progress &&
                 (progress - last_progress) >= kIndexProgressStepPercent) {
                 last_progress = progress;
@@ -384,7 +384,7 @@ std::expected<QByteArray, error_code> MboxParser::readRawMessage(int message_ind
         return std::unexpected(error_code::invalid_argument);
     }
 
-    qint64 start_offset = m_message_offsets[message_index];
+    const qint64 start_offset = m_message_offsets[message_index];
     qint64 end_offset;
 
     if (message_index + 1 < m_message_offsets.size()) {
@@ -393,7 +393,7 @@ std::expected<QByteArray, error_code> MboxParser::readRawMessage(int message_ind
         end_offset = m_file.size();
     }
 
-    qint64 message_size = end_offset - start_offset;
+    const qint64 message_size = end_offset - start_offset;
     if (message_size > sak::email::kMboxMaxMessageSize) {
         return std::unexpected(error_code::file_too_large);
     }
@@ -406,10 +406,10 @@ std::expected<QByteArray, error_code> MboxParser::readRawMessage(int message_ind
     }
 
     // Skip the "From " line
-    QByteArray from_line = m_file.readLine(kFromLineProbeBytes);
+    const QByteArray from_line = m_file.readLine(kFromLineProbeBytes);
     Q_UNUSED(from_line);
 
-    qint64 remaining = end_offset - m_file.pos();
+    const qint64 remaining = end_offset - m_file.pos();
     if (remaining <= 0) {
         return QByteArray{};
     }
@@ -438,10 +438,10 @@ QMap<QString, QString> MboxParser::parseHeaders(const QByteArray& raw_message) {
         header_end = raw_message.indexOf("\n\n");
     }
 
-    QByteArray header_block = (header_end >= 0) ? raw_message.left(header_end) : raw_message;
+    const QByteArray header_block = (header_end >= 0) ? raw_message.left(header_end) : raw_message;
 
     // Split into lines and handle continuation (folded headers)
-    QList<QByteArray> lines = header_block.split('\n');
+    const QList<QByteArray> lines = header_block.split('\n');
 
     QString current_name;
     QString current_value;
@@ -472,7 +472,7 @@ QMap<QString, QString> MboxParser::parseHeaders(const QByteArray& raw_message) {
 
         // New header
         flushHeader();
-        int colon = line.indexOf(':');
+        const int colon = line.indexOf(':');
         if (colon > 0) {
             current_name = QString::fromUtf8(line.left(colon));
             current_value = QString::fromUtf8(line.mid(colon + 1)).trimmed();
@@ -604,8 +604,8 @@ QByteArray decodeQuotedPrintable(const QByteArray& data) {
         // Hex-encoded byte
         bool ok_first = false;
         bool ok_second = false;
-        int val1 = QByteArray(1, hex1).toInt(&ok_first, sak::kHexBase);
-        int val2 = QByteArray(1, hex2).toInt(&ok_second, sak::kHexBase);
+        const int val1 = QByteArray(1, hex1).toInt(&ok_first, sak::kHexBase);
+        const int val2 = QByteArray(1, hex2).toInt(&ok_second, sak::kHexBase);
         if (ok_first && ok_second) {
             result.append(static_cast<char>((val1 << kQuotedPrintableNibbleShift) | val2));
             idx += kQuotedPrintableHexDigitCount;
@@ -645,8 +645,8 @@ void MboxParser::parseSinglePart(const QByteArray& body,
                                  const QString& transfer_encoding,
                                  const QString& charset,
                                  sak::MboxMessageDetail& detail) {
-    QByteArray decoded = decodeTransferEncoding(body, transfer_encoding);
-    QString text = decodeCharset(decoded, charset);
+    const QByteArray decoded = decodeTransferEncoding(body, transfer_encoding);
+    const QString text = decodeCharset(decoded, charset);
 
     if (content_type.startsWith(QLatin1String("text/html"), Qt::CaseInsensitive)) {
         detail.body_html = text;
@@ -679,7 +679,7 @@ void MboxParser::appendAttachment(const MimePartInfo& part,
         att.filename = att.long_filename;
     }
 
-    QByteArray decoded = decodeTransferEncoding(part.body, part.encoding);
+    const QByteArray decoded = decodeTransferEncoding(part.body, part.encoding);
     att.size_bytes = decoded.size();
     att.content_id = part.headers.value(QStringLiteral("content-id"));
 
@@ -723,16 +723,16 @@ void MboxParser::processMimePart(const QByteArray& part,
                                  int& attachment_idx,
                                  int depth) {
     auto part_headers = parseHeaders(part);
-    QString part_ct = part_headers.value(QStringLiteral("content-type"),
-                                         QStringLiteral("text/plain"));
-    QString part_enc = part_headers.value(QStringLiteral("content-transfer-encoding"));
-    QString part_disp = part_headers.value(QStringLiteral("content-disposition"));
+    const QString part_ct = part_headers.value(QStringLiteral("content-type"),
+                                               QStringLiteral("text/plain"));
+    const QString part_enc = part_headers.value(QStringLiteral("content-transfer-encoding"));
+    const QString part_disp = part_headers.value(QStringLiteral("content-disposition"));
 
     auto [part_hdr_end, part_body_start] = findBodyBoundary(part);
     if (part_hdr_end < 0) {
         return;
     }
-    QByteArray part_body = part.mid(part_body_start);
+    const QByteArray part_body = part.mid(part_body_start);
 
     // Nested multipart/* part: recurse into its sub-parts. Without this, an inner
     // multipart yields nothing (it is neither text nor an attachment) and its
@@ -742,20 +742,21 @@ void MboxParser::processMimePart(const QByteArray& part,
         return;
     }
 
-    bool is_attachment = part_disp.startsWith(QLatin1String("attachment"), Qt::CaseInsensitive);
-    bool is_non_text = !part_ct.startsWith(QLatin1String("text/"), Qt::CaseInsensitive) &&
-                       !part_ct.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive);
+    const bool is_attachment = part_disp.startsWith(QLatin1String("attachment"),
+                                                    Qt::CaseInsensitive);
+    const bool is_non_text = !part_ct.startsWith(QLatin1String("text/"), Qt::CaseInsensitive) &&
+                             !part_ct.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive);
 
     if (is_attachment || is_non_text) {
-        MimePartInfo mime_part{part_body, part_ct, part_enc, part_disp, part_headers};
+        const MimePartInfo mime_part{part_body, part_ct, part_enc, part_disp, part_headers};
         appendAttachment(mime_part, detail, attachment_idx);
         return;
     }
 
     // Text part
-    QString part_charset = extractCharset(part_ct);
-    QByteArray decoded = decodeTransferEncoding(part_body, part_enc);
-    QString text = decodeCharset(decoded, part_charset);
+    const QString part_charset = extractCharset(part_ct);
+    const QByteArray decoded = decodeTransferEncoding(part_body, part_enc);
+    const QString text = decodeCharset(decoded, part_charset);
 
     if (part_ct.startsWith(QLatin1String("text/html"), Qt::CaseInsensitive)) {
         detail.body_html = text;
@@ -774,12 +775,12 @@ void MboxParser::parseMimeMessage(const QByteArray& raw_message, sak::MboxMessag
         return;
     }
 
-    QByteArray body = raw_message.mid(body_start);
+    const QByteArray body = raw_message.mid(body_start);
     auto headers = parseHeaders(raw_message);
-    QString content_type = headers.value(QStringLiteral("content-type"),
-                                         QStringLiteral("text/plain"));
-    QString transfer_enc = headers.value(QStringLiteral("content-transfer-encoding"));
-    QString charset = extractCharset(content_type);
+    const QString content_type = headers.value(QStringLiteral("content-type"),
+                                               QStringLiteral("text/plain"));
+    const QString transfer_enc = headers.value(QStringLiteral("content-transfer-encoding"));
+    const QString charset = extractCharset(content_type);
 
     if (!content_type.startsWith(QLatin1String("multipart/"), Qt::CaseInsensitive)) {
         const QString disposition = headers.value(QStringLiteral("content-disposition"));
@@ -791,7 +792,7 @@ void MboxParser::parseMimeMessage(const QByteArray& raw_message, sak::MboxMessag
             // A single-part message that is itself a file (e.g. a lone PDF, or one
             // marked Content-Disposition: attachment) must be exposed as an
             // attachment, not decoded into garbled body text (B7-33).
-            MimePartInfo mime_part{body, content_type, transfer_enc, disposition, headers};
+            const MimePartInfo mime_part{body, content_type, transfer_enc, disposition, headers};
             int attachment_idx = 0;
             appendAttachment(mime_part, detail, attachment_idx);
             return;
@@ -800,14 +801,14 @@ void MboxParser::parseMimeMessage(const QByteArray& raw_message, sak::MboxMessag
         return;
     }
 
-    QString boundary = extractBoundary(content_type);
+    const QString boundary = extractBoundary(content_type);
     if (boundary.isEmpty()) {
         detail.body_plain = QString::fromUtf8(body);
         return;
     }
 
-    QByteArray delimiter = QByteArrayLiteral("--") + boundary.toUtf8();
-    QVector<QByteArray> mime_parts = splitMimeParts(body, delimiter);
+    const QByteArray delimiter = QByteArrayLiteral("--") + boundary.toUtf8();
+    const QVector<QByteArray> mime_parts = splitMimeParts(body, delimiter);
 
     int attachment_idx = 0;
     for (const auto& part : mime_parts) {

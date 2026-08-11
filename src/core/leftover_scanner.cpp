@@ -81,14 +81,14 @@ void appendAndReportItems(QVector<LeftoverItem>& out,
 }
 
 void appendEnvDir(QStringList& dirs, const char* env_var) {
-    QString value = QDir::toNativeSeparators(qEnvironmentVariable(env_var));
+    const QString value = QDir::toNativeSeparators(qEnvironmentVariable(env_var));
     if (!value.isEmpty()) {
         dirs.append(value);
     }
 }
 
 void appendStandardDir(QStringList& dirs, QStandardPaths::StandardLocation loc) {
-    QString path = QStandardPaths::writableLocation(loc);
+    const QString path = QStandardPaths::writableLocation(loc);
     if (!path.isEmpty()) {
         dirs.append(path);
     }
@@ -344,7 +344,7 @@ void LeftoverScanner::extractInstallDirNames() {
         return;
     }
     QDir install_dir(m_screenedInstallLocation);
-    QString dir_name = install_dir.dirName().toLower();
+    const QString dir_name = install_dir.dirName().toLower();
     if (!dir_name.isEmpty() && !kGenericDirNames.contains(dir_name)) {
         m_installDirName = dir_name;
         if (!m_exactNames.contains(dir_name)) {
@@ -353,7 +353,7 @@ void LeftoverScanner::extractInstallDirNames() {
     }
 
     if (install_dir.cdUp()) {
-        QString parent = install_dir.dirName().toLower();
+        const QString parent = install_dir.dirName().toLower();
         if (isSignificantParentDir(parent)) {
             m_installParentName = parent;
         }
@@ -369,7 +369,7 @@ void LeftoverScanner::buildExactNames() {
     extractInstallDirNames();
 
     if (!m_program.packageFamilyName.isEmpty()) {
-        QString pkg = m_program.packageFamilyName.toLower();
+        const QString pkg = m_program.packageFamilyName.toLower();
         if (!m_exactNames.contains(pkg)) {
             m_exactNames.append(pkg);
         }
@@ -549,7 +549,7 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownPaths(const std::atomic<bool>& s
 QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(const QString& basePath,
                                                         const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
-    QDir base(basePath);
+    const QDir base(basePath);
     if (!base.exists()) {
         return items;
     }
@@ -578,7 +578,7 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(const QString& basePath,
         if (!isPublisherDir(dir_lower)) {
             continue;
         }
-        QDir pub_dir(entry.absoluteFilePath());
+        const QDir pub_dir(entry.absoluteFilePath());
         const auto sub_entries = pub_dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
         for (const auto& sub : sub_entries) {
             if (stopRequested.load()) {
@@ -603,7 +603,7 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(const QString& basePath,
 QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(const QString& basePath,
                                                          const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
-    QDir base(basePath);
+    const QDir base(basePath);
     if (!base.exists()) {
         return items;
     }
@@ -716,7 +716,7 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
     auto checkKey =
         [&](HKEY hive, const QString& subkey, const QString& hiveName, const QString& description) {
             HKEY key = nullptr;
-            LONG rc =
+            LONG const rc =
                 RegOpenKeyExW(hive, reinterpret_cast<LPCWSTR>(subkey.utf16()), 0, KEY_READ, &key);
             if (rc != ERROR_SUCCESS) {
                 return;
@@ -749,7 +749,7 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
 
     // Check for product keys under standard hives
     if (!m_installDirName.isEmpty()) {
-        QString dir_proper = QDir(m_screenedInstallLocation).dirName();
+        const QString dir_proper = QDir(m_screenedInstallLocation).dirName();
         checkKey(
             HKEY_CURRENT_USER, "Software\\" + dir_proper, "HKCU", "Leftover product registry key");
         checkKey(
@@ -916,15 +916,15 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool
         return items;
     }
 
-    QString output = result.std_out;
-    QStringList lines = output.split('\n');
+    const QString output = result.std_out;
+    const QStringList lines = output.split('\n');
 
     for (const auto& line : lines) {
         if (stopRequested.load()) {
             break;
         }
 
-        QString trimmed = line.trimmed();
+        const QString trimmed = line.trimmed();
         if (trimmed.isEmpty()) {
             continue;
         }
@@ -1290,7 +1290,7 @@ void LeftoverScanner::scanStartupFolder(const std::atomic<bool>& stopRequested,
     if (!QDir(startup_folder).exists()) {
         return;
     }
-    QDir dir(startup_folder);
+    const QDir dir(startup_folder);
     const auto files = dir.entryInfoList(QDir::Files);
     for (const auto& file : files) {
         if (stopRequested.load()) {
@@ -1465,7 +1465,7 @@ bool LeftoverScanner::isPublisherDir(const QString& dirNameLower) const {
 // no deletion decision), and a qint64 total cannot realistically overflow from file sizes, so a
 // capped/cancelled partial is an acceptable display value rather than a correctness hazard.
 qint64 LeftoverScanner::calculateSize(const QString& path, const std::atomic<bool>& stopRequested) {
-    QFileInfo info(path);
+    const QFileInfo info(path);
     if (info.isFile()) {
         return info.size();
     }

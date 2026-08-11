@@ -108,7 +108,7 @@ ParsedInstallScript InstallScriptParser::parseFile(const QString& file_path) con
     }
 
     QTextStream stream(&file);
-    QString content = stream.readAll();
+    const QString content = stream.readAll();
     return parse(content);
 }
 
@@ -135,12 +135,12 @@ void InstallScriptParser::extractInstallPackageParams(const QString& call_text,
                                                     script);
     resource.file_name = resolveVariables(extractParameter(call_text, "fileName"), script);
 
-    QString file_type = resolveVariables(extractParameter(call_text, "fileType"), script);
+    const QString file_type = resolveVariables(extractParameter(call_text, "fileType"), script);
     if (!file_type.isEmpty()) {
         result.package_type = file_type;
     }
 
-    QString silent = extractParameter(call_text, "silentArgs");
+    const QString silent = extractParameter(call_text, "silentArgs");
     if (!silent.isEmpty()) {
         result.silent_args = resolveVariables(silent, script);
     }
@@ -156,8 +156,8 @@ void InstallScriptParser::parseInstallChocolateyPackage(const QString& script,
     auto matches = pattern.globalMatch(script);
     while (matches.hasNext()) {
         auto match = matches.next();
-        QString call_text = match.captured(1);
-        int pos = match.capturedStart();
+        const QString call_text = match.captured(1);
+        const int pos = match.capturedStart();
 
         DownloadResource resource;
         resource.source_function = "Install-ChocolateyPackage";
@@ -184,8 +184,8 @@ void InstallScriptParser::parseInstallChocolateyZipPackage(const QString& script
     auto matches = pattern.globalMatch(script);
     while (matches.hasNext()) {
         auto match = matches.next();
-        QString call_text = match.captured(1);
-        int pos = match.capturedStart();
+        const QString call_text = match.captured(1);
+        const int pos = match.capturedStart();
 
         DownloadResource resource;
         resource.source_function = "Install-ChocolateyZipPackage";
@@ -221,8 +221,8 @@ void InstallScriptParser::parseGetChocolateyWebFile(const QString& script,
     auto matches = pattern.globalMatch(script);
     while (matches.hasNext()) {
         auto match = matches.next();
-        QString call_text = match.captured(1);
-        int pos = match.capturedStart();
+        const QString call_text = match.captured(1);
+        const int pos = match.capturedStart();
 
         DownloadResource resource;
         resource.source_function = "Get-ChocolateyWebFile";
@@ -374,7 +374,7 @@ QString InstallScriptParser::resolveVariables(const QString& value, const QStrin
 QString InstallScriptParser::extractParameter(const QString& call_text,
                                               const QString& param_name) const {
     // Match: -paramName 'value' or -paramName "value" or -paramName $var
-    QRegularExpression pattern(
+    const QRegularExpression pattern(
         QString::fromLatin1(kParameterPattern).arg(QRegularExpression::escape(param_name)),
         QRegularExpression::CaseInsensitiveOption);
 
@@ -386,7 +386,7 @@ QString InstallScriptParser::extractParameter(const QString& call_text,
     QString value = match.captured(1).trimmed();
 
     // Handle quoted strings: -param 'some value'
-    QRegularExpression quoted_pattern(
+    const QRegularExpression quoted_pattern(
         QString::fromLatin1(kQuotedParameterPattern).arg(QRegularExpression::escape(param_name)),
         QRegularExpression::CaseInsensitiveOption);
 
@@ -400,7 +400,7 @@ QString InstallScriptParser::extractParameter(const QString& call_text,
 
 QString InstallScriptParser::extractHashtableValue(const QString& block, const QString& key) const {
     // Quoted values first -- handles URLs containing ${var} or special chars
-    QRegularExpression quoted_pattern(
+    const QRegularExpression quoted_pattern(
         QString::fromLatin1(kQuotedHashtableValuePattern).arg(QRegularExpression::escape(key)),
         QRegularExpression::CaseInsensitiveOption);
 
@@ -410,7 +410,7 @@ QString InstallScriptParser::extractHashtableValue(const QString& block, const Q
     }
 
     // Fallback: unquoted values (variable references like $varName)
-    QRegularExpression unquoted_pattern(
+    const QRegularExpression unquoted_pattern(
         QString::fromLatin1(kUnquotedHashtableValuePattern).arg(QRegularExpression::escape(key)),
         QRegularExpression::CaseInsensitiveOption);
 

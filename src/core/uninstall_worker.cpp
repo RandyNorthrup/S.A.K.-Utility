@@ -303,8 +303,8 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
 
 bool UninstallWorker::createRestorePoint() {
     RestorePointManager mgr;
-    QString desc = QString("SAK: Before uninstall %1")
-                       .arg(m_program.displayName.left(kRestorePointProgramNameMaxChars));
+    const QString desc = QString("SAK: Before uninstall %1")
+                             .arg(m_program.displayName.left(kRestorePointProgramNameMaxChars));
     return mgr.createRestorePoint(desc);
 }
 
@@ -478,7 +478,8 @@ bool UninstallWorker::removeRegistryEntry() {
         return false;
     }
 
-    LONG rc = RegDeleteKeyExW(hive, reinterpret_cast<LPCWSTR>(path.utf16()), KEY_WOW64_64KEY, 0);
+    LONG const rc =
+        RegDeleteKeyExW(hive, reinterpret_cast<LPCWSTR>(path.utf16()), KEY_WOW64_64KEY, 0);
     if (rc != ERROR_SUCCESS) {
         // Preserve the real Win32 error instead of collapsing it to a generic failure.
         sak::logWarning("Registry-only removal failed (rc={}) for key '{}'",

@@ -372,7 +372,7 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseD
     }
 
     QJsonParseError parse_error;
-    QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &parse_error);
     if (parse_error.error != QJsonParseError::NoError) {
         Q_EMIT logMessage("Failed to parse BitLocker volume data: " + parse_error.errorString());
         return volumes;  // parse_ok stays false: a parse failure is not "no volumes".
@@ -410,7 +410,7 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseD
         vi.protection_status = protectionStatusLabel(obj["ProtectionStatus"].toInt(-1));
         vi.encryption_method = formatEncryptionMethod(obj["EncryptionMethod"].toInt());
 
-        int enc_pct = obj["EncryptionPct"].toInt(-1);
+        const int enc_pct = obj["EncryptionPct"].toInt(-1);
         vi.encryption_percentage = (enc_pct >= 0) ? QString("%1%").arg(enc_pct) : "N/A";
         vi.lock_status = lockStatusLabel(obj["LockStatus"].toInt(-1));
 
@@ -428,10 +428,10 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::detect
 
     Q_EMIT logMessage("Querying BitLocker volume encryption status...");
 
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutProcessLongMs);
+    const ProcessResult proc = runPowerShell(script, sak::kTimeoutProcessLongMs);
 
     if (!proc.succeeded()) {
-        QString error = proc.std_err.trimmed();
+        const QString error = proc.std_err.trimmed();
         if (error.contains("Access is denied", Qt::CaseInsensitive) ||
             error.contains("not recognized", Qt::CaseInsensitive)) {
             Q_EMIT logMessage("BitLocker WMI query requires administrator privileges");
@@ -463,7 +463,7 @@ QVector<BackupBitlockerKeysAction::KeyProtectorInfo> BackupBitlockerKeysAction::
         return protectors;
     }
 
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutProcessLongMs);
+    const ProcessResult proc = runPowerShell(script, sak::kTimeoutProcessLongMs);
 
     if (!proc.succeeded()) {
         // query_ok stays false: the caller must fail closed rather than treat a
@@ -475,7 +475,7 @@ QVector<BackupBitlockerKeysAction::KeyProtectorInfo> BackupBitlockerKeysAction::
         return protectors;
     }
 
-    QString output = proc.std_out.trimmed();
+    const QString output = proc.std_out.trimmed();
     if (output.isEmpty()) {
         query_ok = true;  // ran successfully; this volume genuinely has none
         return protectors;
@@ -500,7 +500,7 @@ BackupBitlockerKeysAction::parseKeyProtectorResponse(const QString& output, bool
     QVector<KeyProtectorInfo> protectors;
 
     QJsonParseError parse_error;
-    QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &parse_error);
     if (parse_error.error != QJsonParseError::NoError) {
         Q_EMIT logMessage("Failed to parse key protector data: " + parse_error.errorString());
         return protectors;  // parse_ok stays false -> caller fails closed
@@ -585,11 +585,12 @@ void BackupBitlockerKeysAction::scan() {
 
         QStringList volume_details;
         for (const auto& vol : m_volumes) {
-            QString detail = QString("%1 (%2) -- Protection: %3, Encryption: %4")
-                                 .arg(vol.drive_letter)
-                                 .arg(vol.volume_label.isEmpty() ? "No Label" : vol.volume_label)
-                                 .arg(vol.protection_status)
-                                 .arg(vol.encryption_method);
+            const QString detail = QString("%1 (%2) -- Protection: %3, Encryption: %4")
+                                       .arg(vol.drive_letter)
+                                       .arg(vol.volume_label.isEmpty() ? "No Label"
+                                                                       : vol.volume_label)
+                                       .arg(vol.protection_status)
+                                       .arg(vol.encryption_method);
             volume_details.append(detail);
         }
         result.details = volume_details.join("\n");
@@ -614,7 +615,7 @@ void BackupBitlockerKeysAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
-    QDateTime start_time = QDateTime::currentDateTime();
+    const QDateTime start_time = QDateTime::currentDateTime();
     int total_keys_found = 0;
     int total_recovery_passwords = 0;
     if (!executeDiscoverVolumes(start_time)) {
@@ -884,7 +885,7 @@ bool BackupBitlockerKeysAction::createBackupDirectory(const QDateTime& start_tim
     const unsigned counter = s_dir_counter.fetch_add(1, std::memory_order_relaxed);
     const QString backup_dir_name = uniqueBackupDirName(timestamp, counter);
 
-    QDir parent(location);
+    const QDir parent(location);
     if (!parent.mkpath(QStringLiteral("."))) {
         emitFailedResult("Failed to create backup directory",
                          "Could not create backup location: " + location,
@@ -965,7 +966,7 @@ bool BackupBitlockerKeysAction::writeJsonBackup(const QString& backup_dir_path) 
     }
     json_backup["volumes"] = volumes_json;
 
-    QString json_path = QDir(backup_dir_path).filePath("bitlocker_keys.json");
+    const QString json_path = QDir(backup_dir_path).filePath("bitlocker_keys.json");
     QSaveFile json_file(json_path);
     if (!json_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         logError("Failed to write BitLocker key backup JSON: {}",
@@ -1002,7 +1003,7 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
 
     Q_EMIT executionProgress("Backup complete", progress::kComplete);
 
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    const qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
     result.success = true;
@@ -1115,7 +1116,7 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) c
         out << "  Lock Status:          " << vol.lock_status << "\n";
 
         if (vol.volume_size_bytes > 0) {
-            double size_gb = static_cast<double>(vol.volume_size_bytes) / sak::kBytesPerGBf;
+            const double size_gb = static_cast<double>(vol.volume_size_bytes) / sak::kBytesPerGBf;
             out << "  Volume Size:          "
                 << QString::number(size_gb, 'f', kVolumeSizeDisplayPrecision) << " GB\n";
         }
@@ -1256,7 +1257,7 @@ bool BackupBitlockerKeysAction::restrictFilePermissions(const QString& path) {
     const QString script =
         QString::fromUtf8(kRestrictPermissionsScriptTemplate).arg(QString(path).replace("'", "''"));
 
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutChocoListMs);
+    const ProcessResult proc = runPowerShell(script, sak::kTimeoutChocoListMs);
     // The script emits exactly "SUCCESS" on its one success path and nothing else on stdout
     // (Set-Acl/Get-ChildItem produce no output), so require an exact match rather than a
     // substring -- a stray token accompanying an error must not read as success.

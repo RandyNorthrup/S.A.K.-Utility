@@ -197,7 +197,7 @@ void MemoryBenchmarkWorker::emitCompletion() {
 // ============================================================================
 
 double MemoryBenchmarkWorker::runReadBandwidth() {
-    VirtualBuffer buf(kBandwidthBufferSize);
+    const VirtualBuffer buf(kBandwidthBufferSize);
     if (!buf.valid()) {
         logError("Failed to allocate {} MB for read bandwidth test",
                  kBandwidthBufferSize / sak::kBytesPerMB);
@@ -229,7 +229,7 @@ double MemoryBenchmarkWorker::runReadBandwidth() {
         best_gbps = std::max(best_gbps, gbps);
 
         // Prevent optimization from eliding reads
-        volatile uint64_t sink = sum;
+        const volatile uint64_t sink = sum;
         (void)sink;
     }
 
@@ -238,7 +238,7 @@ double MemoryBenchmarkWorker::runReadBandwidth() {
 }
 
 double MemoryBenchmarkWorker::runWriteBandwidth() {
-    VirtualBuffer buf(kBandwidthBufferSize);
+    const VirtualBuffer buf(kBandwidthBufferSize);
     if (!buf.valid()) {
         logError("Failed to allocate {} MB for write bandwidth test",
                  kBandwidthBufferSize / sak::kBytesPerMB);
@@ -273,8 +273,8 @@ double MemoryBenchmarkWorker::runWriteBandwidth() {
 }
 
 double MemoryBenchmarkWorker::runCopyBandwidth() {
-    VirtualBuffer src(kBandwidthBufferSize);
-    VirtualBuffer dst(kBandwidthBufferSize);
+    const VirtualBuffer src(kBandwidthBufferSize);
+    const VirtualBuffer dst(kBandwidthBufferSize);
     if (!src.valid() || !dst.valid()) {
         logError("Failed to allocate {} MB x2 for copy bandwidth test",
                  kBandwidthBufferSize / sak::kBytesPerMB);
@@ -313,7 +313,7 @@ double MemoryBenchmarkWorker::runRandomLatency() {
     // prefetchers cannot predict the next access -> measures true latency.
 
     const size_t element_count = kLatencyArrayElements;
-    VirtualBuffer buf(element_count * sizeof(size_t));
+    const VirtualBuffer buf(element_count * sizeof(size_t));
     if (!buf.valid()) {
         // Return 0.0 as a failure sentinel: a real pointer-chase always measures a
         // positive latency. runLatencyAndAllocationBenchmarks fails the benchmark on
@@ -361,7 +361,7 @@ double MemoryBenchmarkWorker::runRandomLatency() {
     const double latency_ns = elapsed_ns / static_cast<double>(kLatencyChases);
 
     // Prevent optimization
-    volatile size_t sink = idx;
+    const volatile size_t sink = idx;
     (void)sink;
 
     logInfo("Memory random latency: {:.1f} ns", latency_ns);

@@ -1080,7 +1080,7 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
 
     for (auto it = m_qa_buttons.constBegin(); it != m_qa_buttons.constEnd(); ++it) {
         const QString action_name = it.key();
-        QPushButton* btn = it.value();
+        const QPushButton* btn = it.value();
         QuickAction* action = m_qa_controller->getAction(action_name);
         if (action) {
             connect(btn, &QPushButton::clicked, this, [this, action]() {

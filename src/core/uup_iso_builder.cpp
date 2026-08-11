@@ -103,7 +103,7 @@ static bool removeTreeRefusingReparse(const QString& dirPath) {
     if (!rootInfo.exists()) {
         return true;
     }
-    QDir dir(dirPath);
+    const QDir dir(dirPath);
     bool ok = true;
     const QFileInfoList entries =
         dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
@@ -346,7 +346,7 @@ void UupIsoBuilder::executePreparation() {
 
 void UupIsoBuilder::prepareWorkspace() {
     // ---- Validate required tools ----
-    QString aria2Path = findAria2Path();
+    const QString aria2Path = findAria2Path();
     if (aria2Path.isEmpty()) {
         m_phase = Phase::Failed;
         Q_EMIT buildError(
@@ -371,7 +371,7 @@ void UupIsoBuilder::prepareWorkspace() {
             QCryptographicHash::hash(resumeKey.toUtf8(), QCryptographicHash::Md5).toHex().left(12));
         m_workDir = QDir(tempBase).filePath(QString("sak_uup_%1").arg(shortHash));
     } else {
-        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+        const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
         m_workDir = QDir(tempBase).filePath(QString("sak_uup_%1").arg(timestamp));
     }
 
@@ -385,7 +385,7 @@ void UupIsoBuilder::prepareWorkspace() {
         return;
     }
 
-    QDir workDir(m_workDir);
+    const QDir workDir(m_workDir);
     if (!workDir.mkpath(".")) {
         m_phase = Phase::Failed;
         Q_EMIT buildError(QString("Failed to create work directory: %1").arg(m_workDir));
@@ -418,9 +418,9 @@ void UupIsoBuilder::prepareWorkspace() {
 void UupIsoBuilder::checkResumedDownloads() {
     // prepareWorkspace assigns m_workDir and only calls here once mkpath has succeeded.
     Q_ASSERT(!m_workDir.isEmpty());
-    QDir workDir(m_workDir);
-    QString downloadDir = workDir.filePath("UUPs");
-    QDir dlDir(downloadDir);
+    const QDir workDir(m_workDir);
+    const QString downloadDir = workDir.filePath("UUPs");
+    const QDir dlDir(downloadDir);
 
     if (!dlDir.exists()) {
         return;
@@ -442,7 +442,7 @@ void UupIsoBuilder::checkResumedDownloads() {
         return;
     }
 
-    double existingGB = existingBytes / sak::kBytesPerGBf;
+    const double existingGB = existingBytes / sak::kBytesPerGBf;
     sak::logInfo(
         "Resuming download -- found " + std::to_string(existingFiles) + " existing files (" +
         std::to_string(static_cast<int>(existingGB * kResumeGbLogScale) / kResumeGbLogScale) +
@@ -454,12 +454,12 @@ void UupIsoBuilder::checkResumedDownloads() {
 }
 
 void UupIsoBuilder::downloadPackages() {
-    QDir workDir(m_workDir);
+    const QDir workDir(m_workDir);
 
     // ---- Generate aria2c input file ----
     Q_EMIT progressUpdated(kProgressDownloadManifest, "Generating download manifest...");
 
-    QString aria2InputPath = workDir.filePath("aria2_script.txt");
+    const QString aria2InputPath = workDir.filePath("aria2_script.txt");
     if (!generateAria2InputFile(aria2InputPath)) {
         m_phase = Phase::Failed;
         Q_EMIT buildError("Failed to generate aria2c download manifest");
@@ -467,14 +467,14 @@ void UupIsoBuilder::downloadPackages() {
     }
 
     // Check if the aria2 input file is empty (all files already downloaded)
-    QFileInfo aria2FileInfo(aria2InputPath);
+    const QFileInfo aria2FileInfo(aria2InputPath);
     m_allFilesAlreadyDownloaded = (aria2FileInfo.size() == 0);
 }
 
 bool UupIsoBuilder::isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo,
                                             const QString& downloadDir) const {
-    QString filePath = QDir(downloadDir).filePath(fileInfo.fileName);
-    QFileInfo localFile(filePath);
+    const QString filePath = QDir(downloadDir).filePath(fileInfo.fileName);
+    const QFileInfo localFile(filePath);
     if (!localFile.exists() || !localFile.isFile()) {
         return false;
     }
@@ -497,7 +497,7 @@ bool UupIsoBuilder::isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo
         }
         f.close();
 
-        QString computedHash = hasher.result().toHex().toLower();
+        const QString computedHash = hasher.result().toHex().toLower();
         if (computedHash != fileInfo.sha1.toLower()) {
             return false;
         }
@@ -543,7 +543,7 @@ bool UupIsoBuilder::generateAria2InputFile(const QString& outputPath) {
     int validFiles = 0;
     int skippedFiles = 0;
     qint64 skippedBytes = 0;
-    QString downloadDir = QDir(m_workDir).filePath("UUPs");
+    const QString downloadDir = QDir(m_workDir).filePath("UUPs");
 
     for (const auto& fileInfo : m_files) {
         if (fileInfo.url.isEmpty()) {
@@ -585,7 +585,7 @@ void UupIsoBuilder::logAria2SkippedFiles(int skippedFiles, qint64 skippedBytes) 
     if (skippedFiles <= 0) {
         return;
     }
-    double skippedMB = skippedBytes / sak::kBytesPerMBf;
+    const double skippedMB = skippedBytes / sak::kBytesPerMBf;
     sak::logInfo("Resume: skipped " + std::to_string(skippedFiles) + " already-downloaded files (" +
                  std::to_string(static_cast<int>(skippedMB)) + " MB)");
     Q_EMIT progressUpdated(kProgressDownloadManifest,
@@ -619,9 +619,9 @@ void UupIsoBuilder::executeDownload() {
         return;
     }
 
-    QString aria2Path = findAria2Path();
-    QString inputFile = QDir(m_workDir).filePath("aria2_script.txt");
-    QString downloadDir = QDir(m_workDir).filePath("UUPs");
+    const QString aria2Path = findAria2Path();
+    const QString inputFile = QDir(m_workDir).filePath("aria2_script.txt");
+    const QString downloadDir = QDir(m_workDir).filePath("UUPs");
 
     m_aria2Process = std::make_unique<QProcess>(this);
     m_aria2Process->setWorkingDirectory(m_workDir);
@@ -648,7 +648,7 @@ void UupIsoBuilder::executeDownload() {
             }
         });
 
-    QStringList args = buildAria2Arguments(inputFile, downloadDir);
+    const QStringList args = buildAria2Arguments(inputFile, downloadDir);
 
     sak::logInfo("Starting aria2c download: " + aria2Path.toStdString());
     m_aria2Process->start(aria2Path, args);
@@ -699,11 +699,11 @@ void UupIsoBuilder::onAria2ReadyRead() {
         return;
     }
 
-    QByteArray data = m_aria2Process->readAllStandardOutput();
-    QString output = QString::fromUtf8(data);
+    const QByteArray data = m_aria2Process->readAllStandardOutput();
+    const QString output = QString::fromUtf8(data);
 
     // aria2c uses \r for in-place progress updates
-    QStringList lines = output.split(QRegularExpression("[\\r\\n]+"), Qt::SkipEmptyParts);
+    const QStringList lines = output.split(QRegularExpression("[\\r\\n]+"), Qt::SkipEmptyParts);
     for (const QString& line : lines) {
         parseAria2Progress(line.trimmed());
     }
@@ -715,16 +715,16 @@ void UupIsoBuilder::parseAria2Progress(const QString& line) {
     }
 
     // Parse download speed: [DL:12345678] (bytes/sec with --human-readable=false)
-    QRegularExpressionMatch speedMatch = kAria2SpeedPattern.match(line);
+    const QRegularExpressionMatch speedMatch = kAria2SpeedPattern.match(line);
     if (speedMatch.hasMatch()) {
-        qint64 bytesPerSec = speedMatch.captured(1).toLongLong();
+        const qint64 bytesPerSec = speedMatch.captured(1).toLongLong();
         m_currentSpeedMBps = bytesPerSec / sak::kBytesPerMBf;
         Q_EMIT speedUpdated(m_currentSpeedMBps);
     }
 
     // Parse human-readable speed: DL:50MiB or DL:1.2GiB
     if (!speedMatch.hasMatch()) {
-        QRegularExpressionMatch hrMatch = kAria2HrSpeedPattern.match(line);
+        const QRegularExpressionMatch hrMatch = kAria2HrSpeedPattern.match(line);
         if (hrMatch.hasMatch()) {
             m_currentSpeedMBps =
                 convertHrSpeedToMBps(hrMatch.captured(kAria2SpeedValueCaptureGroup).toDouble(),
@@ -761,8 +761,8 @@ void UupIsoBuilder::pollDownloadProgress() {
     Q_ASSERT(!m_workDir.isEmpty());
     Q_ASSERT(m_totalDownloadBytes > 0);
     // Scan download directory to compute actual overall progress
-    QString downloadDir = QDir(m_workDir).filePath("UUPs");
-    QDir dir(downloadDir);
+    const QString downloadDir = QDir(m_workDir).filePath("UUPs");
+    const QDir dir(downloadDir);
     qint64 totalDownloaded = 0;
 
     QDirIterator it(dir.absolutePath(), QDir::Files);
@@ -777,16 +777,16 @@ void UupIsoBuilder::pollDownloadProgress() {
     m_downloadPercent = std::min(m_downloadPercent, kPercentComplete);
 
     // Build progress detail string
-    double downloadedGB = totalDownloaded / sak::kBytesPerGBf;
-    double totalGB = m_totalDownloadBytes / sak::kBytesPerGBf;
+    const double downloadedGB = totalDownloaded / sak::kBytesPerGBf;
+    const double totalGB = m_totalDownloadBytes / sak::kBytesPerGBf;
     QString detail = QString("Downloaded %1 GB / %2 GB")
                          .arg(downloadedGB, 0, 'f', kGbDisplayPrecision)
                          .arg(totalGB, 0, 'f', kGbDisplayPrecision);
 
     if (m_currentSpeedMBps > kMinimumDisplaySpeedMbps) {
-        double remainingMB = (m_totalDownloadBytes - totalDownloaded) / sak::kBytesPerMBf;
+        const double remainingMB = (m_totalDownloadBytes - totalDownloaded) / sak::kBytesPerMBf;
         int etaSec = static_cast<int>(remainingMB / m_currentSpeedMBps);
-        int etaMin = etaSec / kSecondsPerMinute;
+        const int etaMin = etaSec / kSecondsPerMinute;
         etaSec %= kSecondsPerMinute;
         detail += QString(" | %1 MB/s | ETA: %2:%3")
                       .arg(m_currentSpeedMBps, 0, 'f', 1)
@@ -794,8 +794,8 @@ void UupIsoBuilder::pollDownloadProgress() {
                       .arg(etaSec, kEtaSecondsFieldWidth, kEtaSecondsBase, QChar('0'));
     }
 
-    int overall = PHASE_PREPARE_WEIGHT +
-                  (m_downloadPercent * PHASE_DOWNLOAD_WEIGHT / kPercentComplete);
+    const int overall = PHASE_PREPARE_WEIGHT +
+                        (m_downloadPercent * PHASE_DOWNLOAD_WEIGHT / kPercentComplete);
     Q_EMIT progressUpdated(overall, detail);
 }
 
@@ -811,10 +811,10 @@ void UupIsoBuilder::pollConversionProgress() {
 
     // During conversion, report output ISO growth at the destination path
     // (UUPMediaConverter writes directly to m_outputIsoPath).
-    QFileInfo outputIso(m_outputIsoPath);
+    const QFileInfo outputIso(m_outputIsoPath);
     if (outputIso.exists() && outputIso.size() > 0) {
-        qint64 isoSize = outputIso.size();
-        double sizeGB = isoSize / sak::kBytesPerGBf;
+        const qint64 isoSize = outputIso.size();
+        const double sizeGB = isoSize / sak::kBytesPerGBf;
         int conversionProgress = m_conversionPercent;
         if (conversionProgress >= kPercentComplete) {
             conversionProgress = kPercentAlmostComplete;
@@ -828,8 +828,8 @@ void UupIsoBuilder::pollConversionProgress() {
         if (conversionProgress >= kPercentComplete) {
             conversionProgress = kPercentAlmostComplete;
         }
-        int overall = PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
-                      (conversionProgress * PHASE_CONVERT_WEIGHT / kPercentComplete);
+        const int overall = PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
+                            (conversionProgress * PHASE_CONVERT_WEIGHT / kPercentComplete);
         Q_EMIT progressUpdated(overall,
                                QString("Building Windows ISO... (%1%)").arg(conversionProgress));
     }
@@ -957,7 +957,7 @@ bool UupIsoBuilder::ensureCleanConversionTempDir(const QString& conversionTempDi
                           conversionTempDir);
         return false;
     }
-    QDir conversionDir(conversionTempDir);
+    const QDir conversionDir(conversionTempDir);
     if (conversionDir.exists() && !removeTreeRefusingReparse(conversionTempDir)) {
         m_phase = Phase::Failed;
         Q_EMIT buildError("Failed to remove stale conversion temp directory: " + conversionTempDir);
@@ -1109,8 +1109,8 @@ void UupIsoBuilder::onConverterReadyRead() {
         return;
     }
 
-    QByteArray data = m_converterProcess->readAllStandardOutput();
-    QString output = QString::fromUtf8(data);
+    const QByteArray data = m_converterProcess->readAllStandardOutput();
+    const QString output = QString::fromUtf8(data);
     if (!output.isEmpty()) {
         m_converterOutputTail += output;
         constexpr int kMaxTailChars = 16'000;
@@ -1119,7 +1119,7 @@ void UupIsoBuilder::onConverterReadyRead() {
         }
     }
 
-    QStringList lines = output.split(QRegularExpression("[\\r\\n]+"), Qt::SkipEmptyParts);
+    const QStringList lines = output.split(QRegularExpression("[\\r\\n]+"), Qt::SkipEmptyParts);
     for (const QString& line : lines) {
         const QString trimmed = line.trimmed();
         parseConverterProgress(trimmed);
@@ -1156,8 +1156,8 @@ void UupIsoBuilder::parseConverterProgress(const QString& line) {
         if (conversionProgress >= kPercentComplete) {
             conversionProgress = kPercentAlmostComplete;
         }
-        int overall = PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
-                      (conversionProgress * PHASE_CONVERT_WEIGHT / kPercentComplete);
+        const int overall = PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
+                            (conversionProgress * PHASE_CONVERT_WEIGHT / kPercentComplete);
         Q_EMIT progressUpdated(overall, detail);
     }
 }
@@ -1183,7 +1183,7 @@ bool UupIsoBuilder::parseConverterStagePercent(const QString& line,
     static const QRegularExpression stagePercentPattern(
         R"(\[(PreparingFiles|CreatingWindowsInstaller|CreatingISO)\]\[(\d{1,3})%\])",
         QRegularExpression::CaseInsensitiveOption);
-    QRegularExpressionMatch stageMatch = stagePercentPattern.match(line);
+    const QRegularExpressionMatch stageMatch = stagePercentPattern.match(line);
     if (!stageMatch.hasMatch()) {
         return false;
     }
@@ -1220,7 +1220,7 @@ void UupIsoBuilder::parseConverterProgressPatterns(const QString& line,
     if (isImageLine) {
         static const QRegularExpression imagePattern(R"(image\s+(\d+)\s+of\s+(\d+))",
                                                      QRegularExpression::CaseInsensitiveOption);
-        QRegularExpressionMatch imgMatch = imagePattern.match(line);
+        const QRegularExpressionMatch imgMatch = imagePattern.match(line);
         if (!imgMatch.hasMatch()) {
             detail = "Preparing Windows installation images...";
             m_conversionPercent = (std::max)(m_conversionPercent, kConverterHeuristicImageBase);
@@ -1447,7 +1447,7 @@ void UupIsoBuilder::cleanupWorkDir() {
         return;
     }
 
-    QDir workDir(m_workDir);
+    const QDir workDir(m_workDir);
     if (workDir.exists()) {
         sak::logInfo("Cleaning up work directory: " + m_workDir.toStdString());
         if (!removeTreeRefusingReparse(m_workDir)) {

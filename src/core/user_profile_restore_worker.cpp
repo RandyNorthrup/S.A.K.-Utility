@@ -89,15 +89,15 @@ bool buildSafePath(const QString& basePath, const QString& relativePath, QString
     if (basePath.isEmpty() || relativePath.isEmpty()) {
         return false;
     }
-    QString combined = QDir(basePath).filePath(relativePath);
+    const QString combined = QDir(basePath).filePath(relativePath);
     auto nativeCombined = QDir::toNativeSeparators(combined);
     auto nativeBase = QDir::toNativeSeparators(basePath);
 
     // Build the filesystem paths from UTF-16, not a lossy narrow (system-ANSI)
     // std::string: toStdString() would mangle any non-ASCII path component and
     // could make the containment check compare corrupted bytes.
-    std::filesystem::path destPath(nativeCombined.toStdU16String());
-    std::filesystem::path base(nativeBase.toStdU16String());
+    const std::filesystem::path destPath(nativeCombined.toStdU16String());
+    const std::filesystem::path base(nativeBase.toStdU16String());
 
     auto safe = path_utils::isSafePath(destPath, base);
     if (!safe || !(*safe)) {
@@ -269,7 +269,7 @@ bool UserProfileRestoreWorker::startRestore(const QString& backupPath,
 
     bool refused = false;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
         // The busy test lives UNDER the mutex: outside it, two concurrent callers could both
         // see "not running" and then both overwrite the configuration that a just-started
         // run() is already reading. m_configured additionally covers the window between
@@ -333,12 +333,12 @@ bool UserProfileRestoreWorker::consumeConfiguredArm() {
 // errored (a copy/mkpath/remove failure or a refused reparse point) AND the run was not
 // cancelled; a partial or cancelled restore must not read as clean success.
 void UserProfileRestoreWorker::emitRestoreSummary() {
-    QString summary = tr("Restore complete!\nFiles restored: %1\nFiles skipped: %2\nErrors: "
-                         "%3\nTotal size: %4 MB")
-                          .arg(m_filesRestored)
-                          .arg(m_filesSkipped)
-                          .arg(m_filesErrored)
-                          .arg(m_bytesRestored / sak::kBytesPerMBf, 0, 'f', 1);
+    const QString summary = tr("Restore complete!\nFiles restored: %1\nFiles skipped: %2\nErrors: "
+                               "%3\nTotal size: %4 MB")
+                                .arg(m_filesRestored)
+                                .arg(m_filesSkipped)
+                                .arg(m_filesErrored)
+                                .arg(m_bytesRestored / sak::kBytesPerMBf, 0, 'f', 1);
 
     Q_EMIT logMessage(tr("=== Restore Complete ==="), false);
     Q_EMIT logMessage(summary, false);
@@ -521,7 +521,7 @@ bool UserProfileRestoreWorker::resolveCreateNewUser(const UserMapping& mapping,
     const QString destUsername = mapping.destination_username.isEmpty()
                                      ? mapping.source_username
                                      : mapping.destination_username;
-    QString baseProfileRoot = systemDrive + "/Users";
+    const QString baseProfileRoot = systemDrive + "/Users";
     if (!buildSafePath(baseProfileRoot, destUsername, destProfilePath)) {
         Q_EMIT logMessage(tr("Invalid destination username: %1").arg(destUsername), true);
         return false;
@@ -590,7 +590,7 @@ bool UserProfileRestoreWorker::restoreFolder(const FolderSelection& folder,
                                              const QString& destPath) {
     // An empty sourcePath fails the exists() check below and is reported; no
     // assert, which would abort Debug on input Release handles.
-    QFileInfo sourceInfo(sourcePath);
+    const QFileInfo sourceInfo(sourcePath);
 
     if (!sourceInfo.exists()) {
         Q_EMIT logMessage(tr("Source folder does not exist: %1").arg(sourcePath), true);
@@ -598,7 +598,7 @@ bool UserProfileRestoreWorker::restoreFolder(const FolderSelection& folder,
     }
 
     // Create destination directory
-    QDir destDir(destPath);
+    const QDir destDir(destPath);
     if (!destDir.exists()) {
         if (!QDir().mkpath(destPath)) {
             Q_EMIT logMessage(tr("Failed to create directory: %1").arg(destPath), true);
@@ -616,7 +616,7 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
                                              const FolderSelection& folderConfig,
                                              const QString& profileRelativeDir) {
     // An empty sourceDir fails the exists() check below; see restoreFolder.
-    QDir dir(sourceDir);
+    const QDir dir(sourceDir);
     if (!dir.exists()) {
         return false;
     }
@@ -634,8 +634,8 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
     }
 
     // Iterate through all entries
-    QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot |
-                                              QDir::Hidden | QDir::System);
+    const QFileInfoList entries = dir.entryInfoList(
+        QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
 
     // cppcheck-suppress useStlAlgorithm ; loop has side effects (file copy, cancellation)
     for (const QFileInfo& entry : entries) {
@@ -709,7 +709,7 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
     // this class guarantees: it comes from QFileInfo::size(), which reports 0 -
     // never a negative - for a file it cannot stat.
     Q_ASSERT_X(size >= 0, "copyFileWithConflictResolution", "size must be non-negative");
-    QFileInfo destInfo(dest);
+    const QFileInfo destInfo(dest);
     QString finalDestPath = dest;
 
     // Check if destination file exists and resolve conflict
@@ -720,7 +720,7 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
     }
 
     // Ensure destination directory exists
-    QFileInfo finalDestInfo(finalDestPath);
+    const QFileInfo finalDestInfo(finalDestPath);
     if (!QDir().mkpath(finalDestInfo.absolutePath())) {
         Q_EMIT logMessage(tr("Failed to create directory: %1").arg(finalDestInfo.absolutePath()),
                           true);
@@ -764,10 +764,10 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
 }
 
 QString UserProfileRestoreWorker::generateConflictRenamePath(const QFileInfo& destInfo) {
-    QString baseName = destInfo.completeBaseName();
-    QString extension = destInfo.suffix();
-    QString dirPath = destInfo.absolutePath();
-    QString suffix = extension.isEmpty() ? QString() : "." + extension;
+    const QString baseName = destInfo.completeBaseName();
+    const QString extension = destInfo.suffix();
+    const QString dirPath = destInfo.absolutePath();
+    const QString suffix = extension.isEmpty() ? QString() : "." + extension;
 
     constexpr int kMaxRenameAttempts = 1000;
     int counter = 1;
@@ -904,7 +904,7 @@ bool UserProfileRestoreWorker::applyPermissions(const QString& filePath,
 }
 
 bool UserProfileRestoreWorker::validateBackup() {
-    QFileInfo manifestFile(m_backupPath + "/manifest.json");
+    const QFileInfo manifestFile(m_backupPath + "/manifest.json");
     if (!manifestFile.exists()) {
         Q_EMIT logMessage(tr("Manifest file not found"), true);
         return false;
@@ -1062,7 +1062,7 @@ bool UserProfileRestoreWorker::hashFile(const QString& filePath, QByteArray& out
 
 bool UserProfileRestoreWorker::verifyFile(const QString& sourcePath, const QString& filePath) {
     // Empty paths fail the exists()/isReadable() check below; see restoreFolder.
-    QFileInfo fileInfo(filePath);
+    const QFileInfo fileInfo(filePath);
 
     if (!fileInfo.exists() || !fileInfo.isReadable()) {
         Q_EMIT logMessage(tr("Verification failed - file missing or unreadable: %1").arg(filePath),
@@ -1087,10 +1087,10 @@ bool UserProfileRestoreWorker::verifyFile(const QString& sourcePath, const QStri
 
 QString UserProfileRestoreWorker::resolveConflict(const QString& destPath) {
     // Generate unique filename by adding suffix
-    QFileInfo destInfo(destPath);
-    QString baseName = destInfo.completeBaseName();
-    QString extension = destInfo.suffix();
-    QString dirPath = destInfo.absolutePath();
+    const QFileInfo destInfo(destPath);
+    const QString baseName = destInfo.completeBaseName();
+    const QString extension = destInfo.suffix();
+    const QString dirPath = destInfo.absolutePath();
 
     int counter = 1;
     QString newPath;

@@ -139,7 +139,7 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
 
     // If preview mode, emit results and exit
     if (m_config.preview_mode) {
-        QString summary = generatePreviewSummary();
+        const QString summary = generatePreviewSummary();
         Q_EMIT previewResults(summary, static_cast<int>(m_planned_operations.size()));
         sak::logInfo("Preview mode complete");
         return {};
@@ -175,7 +175,7 @@ auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_co
 auto OrganizerWorker::scanDirectory()
     -> std::expected<std::vector<std::filesystem::path>, sak::error_code> {
     std::vector<std::filesystem::path> files;
-    std::filesystem::path target_path(m_config.target_directory.toStdString());
+    const std::filesystem::path target_path(m_config.target_directory.toStdString());
 
     if (!std::filesystem::exists(target_path)) {
         sak::logError("Target directory does not exist: {}", target_path.string());
@@ -236,7 +236,7 @@ auto OrganizerWorker::categorizeFile(const std::filesystem::path& file_path) -> 
         return std::tolower(c);
     });
 
-    QString ext_lower = QString::fromStdString(extension);
+    const QString ext_lower = QString::fromStdString(extension);
 
     // Find matching category
     for (auto it = m_config.category_mapping.begin(); it != m_config.category_mapping.end(); ++it) {
@@ -256,8 +256,8 @@ auto OrganizerWorker::planMove(const std::filesystem::path& file_path, const QSt
     op.category = category;
 
     // Build destination path
-    std::filesystem::path target_dir(m_config.target_directory.toStdString());
-    std::filesystem::path category_dir = target_dir / category.toStdString();
+    const std::filesystem::path target_dir(m_config.target_directory.toStdString());
+    const std::filesystem::path category_dir = target_dir / category.toStdString();
     op.destination = category_dir / file_path.filename();
 
     // Check for collision

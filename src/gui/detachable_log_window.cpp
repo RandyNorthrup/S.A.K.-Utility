@@ -317,7 +317,7 @@ void LogToggleSwitch::paintEvent(QPaintEvent* /*event*/) {
     const int labelX = trackWidth + kToggleLabelGap;
 
     // Track
-    QRect trackRect(
+    const QRect trackRect(
         0, (height() - trackHeight) / kToggleTrackRadiusDivisor, trackWidth, trackHeight);
     const QColor trackColor = m_checked ? QColor(QString::fromLatin1(ui::kColorPrimary))
                                         : QColor(QString::fromLatin1(ui::kColorBorderMuted));
@@ -336,7 +336,7 @@ void LogToggleSwitch::paintEvent(QPaintEvent* /*event*/) {
     // Label
     p.setPen(palette().color(QPalette::WindowText));
     p.setFont(toggleLabelFont(font()));
-    QRect labelRect(labelX, 0, width() - labelX, height());
+    const QRect labelRect(labelX, 0, width() - labelX, height());
     p.drawText(labelRect, Qt::AlignVCenter | Qt::AlignLeft, m_label);
 }
 

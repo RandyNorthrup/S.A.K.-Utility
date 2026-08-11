@@ -3783,7 +3783,7 @@ void AiAssistantPanel::cancelRunningWorkOnDestroy() {
 // deadline); this only pumps its marshaled UI calls to completion. Returns true if
 // the worker stopped, false if the deadline forced abandonment.
 static bool pumpEventsUntilStopped(const std::function<bool()>& running) {
-    QDeadlineTimer deadline(kAsyncDrainDeadlineMs);
+    const QDeadlineTimer deadline(kAsyncDrainDeadlineMs);
     while (running()) {
         if (deadline.hasExpired()) {
             return false;
@@ -4076,7 +4076,7 @@ void AiAssistantPanel::refreshBrowserExtensionStatus() {
     if (m_browserExtensionButton == nullptr || m_browserExtensionStatusLabel == nullptr) {
         return;
     }
-    sak::win32mcp::BrowserExtensionInstaller installer(m_browserExtensionConfig);
+    const sak::win32mcp::BrowserExtensionInstaller installer(m_browserExtensionConfig);
     // Remember exactly what this label was rendered from: the click handler refuses to
     // act when the setup state has moved since, so an "Install extension" button can
     // never turn into an uninstall.
@@ -5429,7 +5429,7 @@ void AiAssistantPanel::refreshPromptTemplates() {
         return;
     }
 
-    QSignalBlocker blocker(m_promptTemplateCombo);
+    const QSignalBlocker blocker(m_promptTemplateCombo);
     resetPromptTemplatePicker();
 
     if (m_workflowStore && !m_workflowStore->workflows().isEmpty()) {
@@ -7869,7 +7869,7 @@ QJsonObject AiAssistantPanel::packageManagerSearchResult(const QJsonObject& args
                                                       : search.error_message);
         }
         const auto packages = m_chocoManager->parseSearchResults(search.output);
-        QJsonArray package_json = packageInfoToJson(packages);
+        const QJsonArray package_json = packageInfoToJson(packages);
         for (auto item : package_json) {
             QJsonObject package = item.toObject();
             package[QStringLiteral("source_query")] = package_query;
@@ -8434,7 +8434,7 @@ void AiAssistantPanel::onArtifactsClicked() {
         appendLocalEvent(tr("Artifact folder unavailable: %1").arg(error));
         return;
     }
-    QDirIterator iter(artifact_root_path, QDir::Files, QDirIterator::Subdirectories);
+    const QDirIterator iter(artifact_root_path, QDir::Files, QDirIterator::Subdirectories);
     if (!iter.hasNext()) {
         refreshArtifactList();
         return;
@@ -9138,7 +9138,7 @@ void AiAssistantPanel::removeContextItem(int index) {
 }
 
 void AiAssistantPanel::addInstructionFile(const QString& path) {
-    QFileInfo info(path);
+    const QFileInfo info(path);
     if (!info.exists() || !info.isFile()) {
         appendLocalEvent(tr("Instruction file not found: %1").arg(path));
         return;
@@ -9182,7 +9182,7 @@ void AiAssistantPanel::addInstructionFile(const QString& path) {
 }
 
 void AiAssistantPanel::addContextFile(const QString& path) {
-    QFileInfo info(path);
+    const QFileInfo info(path);
     if (!info.exists() || !info.isFile()) {
         appendLocalEvent(tr("Context file not found: %1").arg(path));
         return;
@@ -9199,10 +9199,10 @@ void AiAssistantPanel::addContextFile(const QString& path) {
     }
     QByteArray bytes = file.readAll();
 
-    QMimeDatabase mime_database;
+    const QMimeDatabase mime_database;
     const QString mime_type = mime_database.mimeTypeForFile(info).name();
 
-    ContextItem item = contextItemFromFile(info, std::move(bytes), mime_type);
+    const ContextItem item = contextItemFromFile(info, std::move(bytes), mime_type);
     m_contextItems.append(item);
     refreshContextList();
     persistContextItem(item);
@@ -9679,7 +9679,7 @@ void AiAssistantPanel::registerProviderGatewayAvailabilityChecker() {
     m_toolDispatcher->registerAvailabilityChecker(
         QStringLiteral("sak_provider_gateway"),
         [](const QJsonObject& args, const ai::AiToolPolicyDecision&) {
-            ai::AiProviderGateway gateway;
+            const ai::AiProviderGateway gateway;
             QString error;
             QJsonObject result = gateway.checkAvailability(args, &error);
             if (!error.isEmpty() &&
@@ -10457,7 +10457,7 @@ public:
                              ai::AiToolPolicy policy,
                              const ai::AiWorkflowPhaseContext& context,
                              const ai::CancellationToken& token) override {
-        QPointer<AiAssistantPanel> panel = m_panel;
+        const QPointer<AiAssistantPanel> panel = m_panel;
         if (!panel) {
             QJsonObject err;
             err[QStringLiteral("success")] = false;
@@ -10534,7 +10534,7 @@ void AiAssistantPanel::appendPhaseToTranscript(const ai::AiPhaseExecution& execu
     updatePhaseRunCounters(execution);
 
     QStringList transcript_details;
-    QJsonObject metadata = phaseTranscriptMetadata(execution, &transcript_details);
+    const QJsonObject metadata = phaseTranscriptMetadata(execution, &transcript_details);
     const QString phase_chat = phaseTranscriptLine(execution, transcript_details);
     recordPhaseTranscript(execution, phase_chat, metadata, transcript_details);
     traceAiEvent(QStringLiteral("workflow_phase"),
@@ -10890,11 +10890,11 @@ void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workfl
     const QString model = m_modelCombo->currentText().trimmed();
     const QString reasoning = m_reasoningEffortCombo->currentText().trimmed().toLower();
     const QString run_id = m_currentRunId;
-    ai::CancellationToken token = m_runToken;
+    const ai::CancellationToken token = m_runToken;
     const ai::WorkflowTemplate workflow_copy = workflow;
     const QJsonObject input_values_copy = input_values;
     const QJsonObject resume_state_copy = resume_state;
-    QPointer<AiAssistantPanel> panel_guard(this);
+    const QPointer<AiAssistantPanel> panel_guard(this);
     PanelToolExecutor* executor = new PanelToolExecutor(this);
     const WorkflowRunLaunch launch{panel_guard,
                                    workflow_copy,
@@ -10909,7 +10909,7 @@ void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workfl
                                    currentAccessToolPolicy(),
                                    executor};
 
-    QFuture<ai::AiOrchestratorResult> future =
+    const QFuture<ai::AiOrchestratorResult> future =
         QtConcurrent::run([launch]() { return AiAssistantPanel::executeWorkflowRun(launch); });
     m_workflowRunWatcher->setFuture(future);
 }
@@ -10969,7 +10969,7 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
 
     // Own the executor via RAII so it is freed on every exit path, including if
     // orchestrator.run() throws.
-    std::unique_ptr<PanelToolExecutor> executor_owner(launch.executor);
+    const std::unique_ptr<PanelToolExecutor> executor_owner(launch.executor);
     ai::AiOrchestrator orchestrator(&runner, launch.executor);
     orchestrator.setOptions(workflowOrchestrationOptions(launch));
     orchestrator.setGuidanceResolver(&readAiGuidanceResource);
@@ -11311,7 +11311,7 @@ void AiAssistantPanel::onPromptTemplateSelected(int index) {
     if (m_workflowStore) {
         if (const auto* workflow = m_workflowStore->workflowById(item_data)) {
             applyWorkflowTemplate(*workflow);
-            QSignalBlocker blocker(m_promptTemplateCombo);
+            const QSignalBlocker blocker(m_promptTemplateCombo);
             m_promptTemplateCombo->setCurrentIndex(0);
             if (m_workflowDetailsButton) {
                 m_workflowDetailsButton->setEnabled(false);
@@ -11325,7 +11325,7 @@ void AiAssistantPanel::onPromptTemplateSelected(int index) {
     }
     const QString prompt = item_data;
     applyPromptTemplate(title, prompt);
-    QSignalBlocker blocker(m_promptTemplateCombo);
+    const QSignalBlocker blocker(m_promptTemplateCombo);
     m_promptTemplateCombo->setCurrentIndex(0);
     if (m_workflowDetailsButton) {
         m_workflowDetailsButton->setEnabled(false);
@@ -11460,7 +11460,7 @@ QStringList AiAssistantPanel::runDetailsToolHealthLines() const {
 
 QStringList AiAssistantPanel::runDetailsProviderHealthLines() const {
     QStringList lines;
-    ai::AiProviderRegistry registry;
+    const ai::AiProviderRegistry registry;
     QString provider_error;
     const QJsonArray providers =
         registry.providerStatuses(&provider_error).value(QStringLiteral("providers")).toArray();

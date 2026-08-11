@@ -270,7 +270,7 @@ void PartitionManagerController::finishApplyQueue(
         m_inventory = m_apply_before_inventory;
     }
 
-    PartitionReportGenerator report_generator;
+    const PartitionReportGenerator report_generator;
     result.report_html =
         report_generator.generateHtml(m_apply_before_inventory, m_inventory, result);
     result.report_json =
@@ -320,11 +320,11 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
 
     const QString manifestPath = runtimeFilesystemManifestPath();
     const QString toolsRoot = QFileInfo(manifestPath).absolutePath();
-    PartitionFileSystemReadOnlyCheckRequest request{.manifest_path = manifestPath,
-                                                    .tools_root = toolsRoot,
-                                                    .file_system = file_system,
-                                                    .target_path = target_path,
-                                                    .timeout_ms = 0};
+    const PartitionFileSystemReadOnlyCheckRequest request{.manifest_path = manifestPath,
+                                                          .tools_root = toolsRoot,
+                                                          .file_system = file_system,
+                                                          .target_path = target_path,
+                                                          .timeout_ms = 0};
     Q_EMIT statusMessage(QStringLiteral("Running read-only %1 filesystem check").arg(file_system),
                          0);
     auto* watcher = new QFutureWatcher<PartitionFileSystemToolRunResult>(this);

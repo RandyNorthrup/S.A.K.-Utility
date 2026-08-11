@@ -251,7 +251,7 @@ std::pair<int, std::optional<PackageMatcher::MatchResult>> PackageMatcher::match
     if (config.use_fuzzy_matching && choco_mgr) {
         auto fuzzy = fuzzyMatch(base_name, choco_mgr);
         if (fuzzy.has_value() && fuzzy->confidence >= config.min_confidence) {
-            QMutexLocker locker(&m_stats_mutex);
+            const QMutexLocker locker(&m_stats_mutex);
             m_fuzzy_match_count++;
             return {idx, fuzzy};
         }
@@ -260,7 +260,7 @@ std::pair<int, std::optional<PackageMatcher::MatchResult>> PackageMatcher::match
     if (config.use_choco_search && choco_mgr) {
         auto search = searchMatch(base_name, choco_mgr, config.max_search_results);
         if (search.has_value() && search->confidence >= config.min_confidence) {
-            QMutexLocker locker(&m_stats_mutex);
+            const QMutexLocker locker(&m_stats_mutex);
             m_search_match_count++;
             return {idx, search};
         }
@@ -327,11 +327,11 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::mergeMatchResults(
 }
 
 std::optional<PackageMatcher::MatchResult> PackageMatcher::exactMatch(const QString& app_name) {
-    QString normalized = normalizeAppName(app_name);
+    const QString normalized = normalizeAppName(app_name);
 
     // Check direct mapping
     if (m_exact_mappings.contains(normalized)) {
-        QString choco_pkg = m_exact_mappings[normalized];
+        const QString choco_pkg = m_exact_mappings[normalized];
         return MatchResult{choco_pkg,
                            normalized,
                            1.0,   // Perfect confidence
@@ -387,8 +387,8 @@ void PackageMatcher::updateBestFuzzyMatch(
 
 std::optional<PackageMatcher::MatchResult> PackageMatcher::fuzzyMatch(
     const QString& app_name, ChocolateyManager* choco_mgr) {
-    QString normalized = normalizeAppName(app_name);
-    QStringList keywords = extractKeywords(app_name);
+    const QString normalized = normalizeAppName(app_name);
+    const QStringList keywords = extractKeywords(app_name);
 
     double best_similarity = 0.0;
     QString best_package;
@@ -419,8 +419,8 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::fuzzyMatch(
 std::optional<PackageMatcher::MatchResult> PackageMatcher::searchMatch(const QString& app_name,
                                                                        ChocolateyManager* choco_mgr,
                                                                        int max_results) const {
-    QString base_name = extractBaseAppName(app_name);
-    QStringList keywords = extractKeywords(base_name);
+    const QString base_name = extractBaseAppName(app_name);
+    const QStringList keywords = extractKeywords(base_name);
 
     // Try searching with the base name first
     auto result = choco_mgr->searchPackage(base_name, max_results);
@@ -441,7 +441,7 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::searchMatch(const QSt
         double score = calculateSimilarity(base_name, pkg.package_id);
 
         // Boost score if title matches better
-        double title_score = calculateSimilarity(base_name, pkg.title);
+        const double title_score = calculateSimilarity(base_name, pkg.title);
         if (title_score > score) {
             score = title_score * kTitleMatchWeight;
         }
@@ -468,16 +468,16 @@ QString PackageMatcher::normalizeAppName(const QString& app_name) {
     QString normalized = app_name;
 
     // Remove common suffixes
-    QStringList suffixes = {" (x64)",
-                            " (64-bit)",
-                            " (x86)",
-                            " (32-bit)",
-                            " (64 bit)",
-                            " (32 bit)",
-                            " (Remove only)",
-                            " for Windows",
-                            " Desktop",
-                            " Application"};
+    const QStringList suffixes = {" (x64)",
+                                  " (64-bit)",
+                                  " (x86)",
+                                  " (32-bit)",
+                                  " (64 bit)",
+                                  " (32 bit)",
+                                  " (Remove only)",
+                                  " for Windows",
+                                  " Desktop",
+                                  " Application"};
 
     for (const QString& suffix : suffixes) {
         if (normalized.endsWith(suffix, Qt::CaseInsensitive)) {
@@ -486,7 +486,7 @@ QString PackageMatcher::normalizeAppName(const QString& app_name) {
     }
 
     // Remove version numbers at the end
-    QRegularExpression versionRegex(R"(\s+v?\d+(\.\d+)*(\s+\w+)?$)");
+    const QRegularExpression versionRegex(R"(\s+v?\d+(\.\d+)*(\s+\w+)?$)");
     normalized.remove(versionRegex);
 
     return normalized.trimmed();
@@ -500,7 +500,7 @@ QString PackageMatcher::extractBaseAppName(const QString& app_name) {
 
     if (!words.isEmpty()) {
         // Return first 1-3 words as base name
-        int word_count = std::min(kBaseNameMaxWordCount, static_cast<int>(words.size()));
+        const int word_count = std::min(kBaseNameMaxWordCount, static_cast<int>(words.size()));
         QStringList base_words;
         for (int i = 0; i < word_count; ++i) {
             base_words.append(words[i]);
@@ -512,17 +512,18 @@ QString PackageMatcher::extractBaseAppName(const QString& app_name) {
 }
 
 QStringList PackageMatcher::extractKeywords(const QString& app_name) {
-    QString normalized = normalizeAppName(app_name);
+    const QString normalized = normalizeAppName(app_name);
 
     // Split into words
-    QStringList words = normalized.split(QRegularExpression(R"([\s\-_]+)"), Qt::SkipEmptyParts);
+    const QStringList words = normalized.split(QRegularExpression(R"([\s\-_]+)"),
+                                               Qt::SkipEmptyParts);
 
     // Remove common words
-    QStringList stopWords = {"the", "for", "and", "or", "software", "application", "app"};
+    const QStringList stopWords = {"the", "for", "and", "or", "software", "application", "app"};
 
     QStringList keywords;
     for (const QString& word : words) {
-        QString lower = word.toLower();
+        const QString lower = word.toLower();
         if (!stopWords.contains(lower) && word.length() >= kMinimumKeywordLength) {
             keywords.append(word);
         }
@@ -532,8 +533,8 @@ QStringList PackageMatcher::extractKeywords(const QString& app_name) {
 }
 
 double PackageMatcher::calculateSimilarity(const QString& str1, const QString& str2) const {
-    QString s1 = str1.toLower();
-    QString s2 = str2.toLower();
+    const QString s1 = str1.toLower();
+    const QString s2 = str2.toLower();
 
     // Exact match
     if (s1 == s2) {
@@ -549,12 +550,12 @@ double PackageMatcher::calculateSimilarity(const QString& str1, const QString& s
     }
 
     // Jaro-Winkler similarity
-    double jw = jaroWinklerSimilarity(s1, s2);
+    const double jw = jaroWinklerSimilarity(s1, s2);
 
     // Levenshtein-based similarity
-    int lev_dist = levenshteinDistance(s1, s2);
-    int max_len = std::max(s1.length(), s2.length());
-    double lev_sim = max_len > 0 ? 1.0 - (double(lev_dist) / max_len) : 0.0;
+    const int lev_dist = levenshteinDistance(s1, s2);
+    const int max_len = std::max(s1.length(), s2.length());
+    const double lev_sim = max_len > 0 ? 1.0 - (double(lev_dist) / max_len) : 0.0;
 
     // Average of both methods
     return (jw + lev_sim) / kSimilarityAverageDivisor;
@@ -583,7 +584,7 @@ int PackageMatcher::levenshteinDistance(const QString& s1, const QString& s2) co
 
     for (int i = 1; i <= len1; ++i) {
         for (int j = 1; j <= len2; ++j) {
-            int cost = (s1[i - 1] == s2[j - 1]) ? 0 : 1;
+            const int cost = (s1[i - 1] == s2[j - 1]) ? 0 : 1;
             d[i][j] = std::min({
                 d[i - 1][j] + 1,        // deletion
                 d[i][j - 1] + 1,        // insertion
@@ -653,7 +654,7 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
     int matches = 0;
 
     for (int idx = 0; idx < len1; ++idx) {
-        int jdx = findJaroMatch(s1, s2, idx, match_distance, s2_matches);
+        const int jdx = findJaroMatch(s1, s2, idx, match_distance, s2_matches);
         if (jdx < 0) {
             continue;
         }
@@ -678,7 +679,7 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
 }
 
 void PackageMatcher::addMapping(const QString& app_name, const QString& choco_package) {
-    QString normalized = normalizeAppName(app_name);
+    const QString normalized = normalizeAppName(app_name);
     if (normalized.isEmpty() || choco_package.isEmpty()) {
         // Never store a blank mapping: it would surface as an empty suggestion and cannot map
         // anything. Matches importMappings(), which already skips blank entries. Fail closed.
@@ -688,17 +689,17 @@ void PackageMatcher::addMapping(const QString& app_name, const QString& choco_pa
 }
 
 void PackageMatcher::removeMapping(const QString& app_name) {
-    QString normalized = normalizeAppName(app_name);
+    const QString normalized = normalizeAppName(app_name);
     m_exact_mappings.remove(normalized);
 }
 
 bool PackageMatcher::hasMapping(const QString& app_name) const {
-    QString normalized = normalizeAppName(app_name);
+    const QString normalized = normalizeAppName(app_name);
     return m_exact_mappings.contains(normalized);
 }
 
 QString PackageMatcher::getMapping(const QString& app_name) const {
-    QString normalized = normalizeAppName(app_name);
+    const QString normalized = normalizeAppName(app_name);
     return m_exact_mappings.value(normalized, QString());
 }
 
@@ -766,7 +767,7 @@ bool PackageMatcher::importMappings(const QString& file_path) {
         return false;
     }
 
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
     file.close();
 
     if (!doc.isObject()) {
@@ -776,12 +777,12 @@ bool PackageMatcher::importMappings(const QString& file_path) {
     }
 
     QJsonObject root = doc.object();
-    QJsonArray mappings = root["mappings"].toArray();
+    const QJsonArray mappings = root["mappings"].toArray();
 
     for (const QJsonValue& value : mappings) {
         QJsonObject mapping = value.toObject();
-        QString app_name = mapping["app_name"].toString();
-        QString choco_package = mapping["choco_package"].toString();
+        const QString app_name = mapping["app_name"].toString();
+        const QString choco_package = mapping["choco_package"].toString();
 
         if (!app_name.isEmpty() && !choco_package.isEmpty()) {
             m_exact_mappings[app_name] = choco_package;
@@ -791,18 +792,18 @@ bool PackageMatcher::importMappings(const QString& file_path) {
 }
 
 void PackageMatcher::clearCache() {
-    QMutexLocker locker(&m_cache_mutex);
+    const QMutexLocker locker(&m_cache_mutex);
     m_search_cache.clear();
 }
 
 QString PackageMatcher::getCachedSearch(const QString& keyword) const {
-    QMutexLocker locker(&m_cache_mutex);
-    QString* cached = m_search_cache.object(keyword);
+    const QMutexLocker locker(&m_cache_mutex);
+    const QString* cached = m_search_cache.object(keyword);
     return cached ? *cached : QString();
 }
 
 void PackageMatcher::cacheSearch(const QString& keyword, const QString& result) {
-    QMutexLocker locker(&m_cache_mutex);
+    const QMutexLocker locker(&m_cache_mutex);
     m_search_cache.insert(keyword, new QString(result), 1);
 }
 

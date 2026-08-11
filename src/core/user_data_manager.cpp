@@ -68,7 +68,7 @@ void appendExistingVariants(QStringList& paths,
                             const QString& base_dir,
                             const QStringList& variants) {
     for (const auto& variant : variants) {
-        QString path = QDir(base_dir).filePath(variant);
+        const QString path = QDir(base_dir).filePath(variant);
         if (QDir(path).exists()) {
             paths.append(path);
         }
@@ -136,14 +136,14 @@ std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(
     }
 
     // Generate a collision-free backup path (payload plus a ".json" sidecar).
-    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     QString safe_name = app_name;
     safe_name.replace(QRegularExpression("[^a-zA-Z0-9_-]"), "_");
     QString base_name = QString("%1_%2").arg(safe_name, timestamp);
     QString backup_path = uniqueBackupPath(backup_dir, base_name, config.compress);
 
     // Calculate total size
-    qint64 total_size = calculateSize(source_paths);
+    const qint64 total_size = calculateSize(source_paths);
     Q_EMIT progressUpdate(0, total_size, "Calculating size...");
 
     // Create archive (compressed) or copy tree (uncompressed) at backup_path.
@@ -220,7 +220,7 @@ bool UserDataManager::validateBackupRequest(const QString& app_name,
         Q_EMIT operationError(app_name, "No source paths specified");
         return false;
     }
-    QDir dir(backup_dir);
+    const QDir dir(backup_dir);
     if (!dir.exists() && !dir.mkpath(".")) {
         Q_EMIT operationError(app_name, "Failed to create backup directory");
         return false;
@@ -254,7 +254,7 @@ bool UserDataManager::writeBackupPayload(const QString& app_name,
 QString UserDataManager::uniqueBackupPath(const QString& backup_dir,
                                           const QString& base_name,
                                           bool compress) {
-    QDir dir(backup_dir);
+    const QDir dir(backup_dir);
     const QString suffix = compress ? QStringLiteral(".zip") : QString();
     QString candidate = dir.filePath(base_name + suffix);
     int counter = 1;
@@ -368,11 +368,11 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
     // cannot be made, abort before the -Force extraction below overwrites the
     // only intact original with an incomplete/absent backup.
     if (config.create_backup) {
-        QDir restore(restore_dir);
+        const QDir restore(restore_dir);
         if (restore.exists()) {
-            QString backup_name = "backup_" +
-                                  QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-            QString backup_existing = restore.filePath("../" + backup_name);
+            const QString backup_name = "backup_" +
+                                        QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+            const QString backup_existing = restore.filePath("../" + backup_name);
             if (!copyDirectory(restore_dir, backup_existing, {})) {
                 Q_EMIT operationError(entry.app_name,
                                       "Failed to back up existing data before restore");
@@ -469,14 +469,14 @@ QStringList UserDataManager::discoverAppDataPaths(const QString& app_name) const
         return {};
     }
     QStringList paths;
-    QStringList base_dirs = getStandardDataPaths();
+    const QStringList base_dirs = getStandardDataPaths();
 
     // Common name variations
     QString nospace = app_name;
     nospace.replace(" ", "");
     QString underscore = app_name;
     underscore.replace(" ", "_");
-    QStringList name_variants = {app_name, app_name.toLower(), nospace, underscore};
+    const QStringList name_variants = {app_name, app_name.toLower(), nospace, underscore};
 
     // Search in standard locations
     for (const auto& base : base_dirs) {
@@ -489,9 +489,11 @@ QStringList UserDataManager::discoverAppDataPaths(const QString& app_name) const
 std::vector<UserDataManager::DataLocation> UserDataManager::getCommonDataLocations() const {
     std::vector<DataLocation> locations;
 
-    QString appdata_local = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-    QString appdata_roaming = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString appdata_local =
+        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    const QString appdata_roaming =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 
     // Chrome
     locations.push_back({"Google Chrome",
@@ -524,12 +526,12 @@ QStringList UserDataManager::scanForAppData(const QString& app_name) const {
         return {};
     }
     QStringList found_paths;
-    QStringList search_dirs = getStandardDataPaths();
+    const QStringList search_dirs = getStandardDataPaths();
 
     for (const auto& dir : search_dirs) {
         QDirIterator it(dir, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::NoIteratorFlags);
         while (it.hasNext()) {
-            QString path = it.next();
+            const QString path = it.next();
             if (path.contains(app_name, Qt::CaseInsensitive)) {
                 found_paths.append(path);
             }
@@ -549,7 +551,7 @@ std::vector<UserDataManager::BackupEntry> UserDataManager::listBackups(
     }
     std::vector<BackupEntry> backups;
 
-    QDir dir(backup_dir);
+    const QDir dir(backup_dir);
     // Compressed backups are *.zip files; uncompressed backups are directories.
     // Both carry a "<name>.json" sidecar, so entries without one are skipped
     // below and unrelated files/directories are ignored.
@@ -557,7 +559,7 @@ std::vector<UserDataManager::BackupEntry> UserDataManager::listBackups(
     files += dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Time);
 
     for (const auto& file : files) {
-        QString metadata_path = dir.filePath(file) + ".json";
+        const QString metadata_path = dir.filePath(file) + ".json";
         if (!QFile::exists(metadata_path)) {
             continue;
         }
@@ -627,7 +629,7 @@ bool UserDataManager::deleteBackup(const QString& backup_path) {
     bool success = true;
     // Delete the payload. An uncompressed backup is a DIRECTORY, which QFile::remove cannot
     // delete -- it would leave the backup on disk forever; remove such payloads recursively.
-    QFileInfo payload(backup_path);
+    const QFileInfo payload(backup_path);
     if (payload.isDir()) {
         success &= QDir(backup_path).removeRecursively();
     } else if (payload.exists()) {
@@ -657,7 +659,7 @@ bool UserDataManager::verifyBackup(const QString& backup_path) {
         return true;  // Payload present but no checksum recorded (e.g. directory payload).
     }
 
-    QString current = generateChecksum(backup_path);
+    const QString current = generateChecksum(backup_path);
     return !current.isEmpty() && current == entry->checksum;
 }
 
@@ -665,7 +667,7 @@ qint64 UserDataManager::calculateSize(const QStringList& paths) const {
     qint64 total = 0;
 
     for (const auto& path : paths) {
-        QFileInfo info(path);
+        const QFileInfo info(path);
         if (info.isFile()) {
             total += info.size();
         } else if (info.isDir()) {
@@ -711,7 +713,7 @@ bool UserDataManager::encryptArchiveInPlace(const QString& archive_path,
                       archive_path.toStdString());
         return false;
     }
-    QByteArray data = archive.readAll();
+    const QByteArray data = archive.readAll();
     archive.close();
 
     // Encrypt data
@@ -810,7 +812,7 @@ bool UserDataManager::buildArchivePayload(const QStringList& source_paths,
     // verbatim -- a user excluding secrets would still ship them. Stage a filtered copy
     // (same exclusion + collision rules as an uncompressed backup) and compress THAT.
     // Fail closed if the staging copy cannot be completed.
-    QTemporaryDir staging;
+    const QTemporaryDir staging;
     if (!staging.isValid()) {
         sak::logError("[UserDataManager] Failed to create staging dir for filtered archive");
         return false;
@@ -861,7 +863,7 @@ QString UserDataManager::decryptArchiveToTempFile(const QString& archive_path,
                       static_cast<long long>(archive.size()));
         return {};
     }
-    QByteArray encrypted_data = archive.readAll();
+    const QByteArray encrypted_data = archive.readAll();
     archive.close();
 
     // Decrypt data
@@ -983,14 +985,14 @@ bool UserDataManager::extractArchive(const QString& archive_path,
     // Doubling single-quotes is PowerShell's escape for literal quotes
     // inside a single-quoted string; this neutralises paths containing
     // apostrophes without opening a code-injection vector.
-    QString safe_source = QString(file_to_extract).replace("'", "''");
-    QString safe_dest = QString(destination).replace("'", "''");
+    const QString safe_source = QString(file_to_extract).replace("'", "''");
+    const QString safe_dest = QString(destination).replace("'", "''");
     // Honor RestoreConfig::overwrite_existing: -Force overwrites existing files, without it
     // Expand-Archive refuses to clobber them. The old code hard-coded -Force, silently overwriting
     // regardless of the flag.
     const QString force = config.overwrite_existing ? QStringLiteral(" -Force") : QString();
-    QString command = QString("Expand-Archive -Path '%1' -DestinationPath '%2'%3")
-                          .arg(safe_source, safe_dest, force);
+    const QString command = QString("Expand-Archive -Path '%1' -DestinationPath '%2'%3")
+                                .arg(safe_source, safe_dest, force);
 
     args << command;
 
@@ -1167,7 +1169,7 @@ bool UserDataManager::copyDirectory(const QString& source,
     // recursive call below.
     Q_ASSERT_X(!source.isEmpty(), "copyDirectory", "source must not be empty");
     Q_ASSERT_X(!destination.isEmpty(), "copyDirectory", "destination must not be empty");
-    QDir source_dir(source);
+    const QDir source_dir(source);
     if (!source_dir.exists()) {
         return false;
     }
@@ -1180,7 +1182,7 @@ bool UserDataManager::copyDirectory(const QString& source,
         return false;
     }
 
-    QDir dest_dir(destination);
+    const QDir dest_dir(destination);
     if (!dest_dir.exists() && !dest_dir.mkpath(".")) {
         return false;
     }
@@ -1192,7 +1194,7 @@ bool UserDataManager::copyDirectory(const QString& source,
     // Copy subdirectories
     auto dirs = source_dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     for (const auto& dir : dirs) {
-        QString source_subdir = source_dir.filePath(dir);
+        const QString source_subdir = source_dir.filePath(dir);
         if (isExcluded(source_subdir, exclude_patterns)) {
             continue;
         }
@@ -1209,7 +1211,7 @@ bool UserDataManager::copyDirectory(const QString& source,
             continue;
         }
 
-        QString dest_subdir = dest_dir.filePath(dir);
+        const QString dest_subdir = dest_dir.filePath(dir);
         if (!copyDirectory(source_subdir, dest_subdir, exclude_patterns, policy)) {
             return false;
         }
@@ -1273,7 +1275,7 @@ bool UserDataManager::writeMetadata(const BackupEntry& entry, const QString& met
     }
     json["excluded_patterns"] = excluded;
 
-    QJsonDocument doc(json);
+    const QJsonDocument doc(json);
 
     QFile file(metadata_path);
     if (!file.open(QIODevice::WriteOnly)) {

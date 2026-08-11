@@ -24,7 +24,7 @@ static qint64 qint64FromJson(const QJsonObject& json, const QString& key, qint64
     if (!json.contains(key)) {
         return defaultValue;
     }
-    QJsonValue value = json[key];
+    const QJsonValue value = json[key];
     if (value.isDouble()) {
         return static_cast<qint64>(value.toDouble());
     }
@@ -222,7 +222,7 @@ UserProfile UserProfile::fromJson(const QJsonObject& json) {
     profile.is_selected = json["is_selected"].toBool();
     profile.total_size_estimated = qint64FromJson(json, "total_size_estimated");
 
-    QJsonArray selections = json["folder_selections"].toArray();
+    const QJsonArray selections = json["folder_selections"].toArray();
     for (const auto& val : selections) {
         profile.folder_selections.append(FolderSelection::fromJson(val.toObject()));
     }
@@ -257,13 +257,13 @@ BackupUserData BackupUserData::fromJson(const QJsonObject& json) {
     data.sid = json["sid"].toString();
     data.profile_path = json["profile_path"].toString();
 
-    QJsonArray folders = json["backed_up_folders"].toArray();
+    const QJsonArray folders = json["backed_up_folders"].toArray();
     for (const auto& val : folders) {
         data.backed_up_folders.append(FolderSelection::fromJson(val.toObject()));
     }
 
     // Parse permission mode
-    QString permMode = json["permissions_mode"].toString();
+    const QString permMode = json["permissions_mode"].toString();
     if (permMode == "PreserveOriginal") {
         data.permissions_mode = PermissionMode::PreserveOriginal;
     } else if (permMode == "AssignToDestination") {
@@ -344,7 +344,7 @@ BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
     manifest.sak_version = metadata["sak_utility_version"].toString();
     manifest.backup_type = metadata["backup_type"].toString();
 
-    QJsonArray usersArray = json["users"].toArray();
+    const QJsonArray usersArray = json["users"].toArray();
     for (const auto& val : usersArray) {
         manifest.users.append(BackupUserData::fromJson(val.toObject()));
     }
@@ -357,15 +357,15 @@ BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
     manifest.compressed = json["compressed"].toBool(false);
     manifest.encrypted = json["encrypted"].toBool(false);
 
-    QJsonArray wifiArray = json["wifi_profiles"].toArray();
+    const QJsonArray wifiArray = json["wifi_profiles"].toArray();
     for (const auto& val : wifiArray) {
         manifest.wifi_profiles.append(WifiProfileInfo::fromJson(val.toObject()));
     }
-    QJsonArray ethArray = json["ethernet_configs"].toArray();
+    const QJsonArray ethArray = json["ethernet_configs"].toArray();
     for (const auto& val : ethArray) {
         manifest.ethernet_configs.append(EthernetConfigInfo::fromJson(val.toObject()));
     }
-    QJsonArray appDataArray = json["app_data_sources"].toArray();
+    const QJsonArray appDataArray = json["app_data_sources"].toArray();
     for (const auto& val : appDataArray) {
         manifest.app_data_sources.append(AppDataSourceInfo::fromJson(val.toObject()));
     }
@@ -380,7 +380,7 @@ bool BackupManifest::saveToFile(const QString& path) const {
         return false;
     }
 
-    QJsonDocument doc(toJson());
+    const QJsonDocument doc(toJson());
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
     if (file.write(json_bytes) != json_bytes.size()) {
         return false;
@@ -401,8 +401,8 @@ BackupManifest BackupManifest::loadFromFile(const QString& path) {
         return invalid;
     }
 
-    QByteArray data = file.readAll();
-    QJsonDocument doc = QJsonDocument::fromJson(data);
+    const QByteArray data = file.readAll();
+    const QJsonDocument doc = QJsonDocument::fromJson(data);
     return fromJson(doc.object());
 }
 
@@ -428,7 +428,7 @@ bool BackupManifest::verifyManifestChecksum() const {
 }
 
 QString BackupManifest::hashDirectoryTree(const QString& dir_path) {
-    QDir root(dir_path);
+    const QDir root(dir_path);
     if (!root.exists()) {
         return QString();
     }

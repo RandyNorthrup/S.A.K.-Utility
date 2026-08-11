@@ -669,8 +669,8 @@ QString DiagnosticReportGenerator::buildSmartSection() const {
 QString DiagnosticReportGenerator::buildBenchmarkSection() const {
     QString html;
 
-    bool has_any = m_data.cpu_benchmark.has_value() || m_data.disk_benchmark.has_value() ||
-                   m_data.memory_benchmark.has_value();
+    const bool has_any = m_data.cpu_benchmark.has_value() || m_data.disk_benchmark.has_value() ||
+                         m_data.memory_benchmark.has_value();
     if (!has_any) {
         return {};
     }

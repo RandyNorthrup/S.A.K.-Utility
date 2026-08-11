@@ -106,7 +106,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
     std::vector<AppInfo> apps;
 
     HKEY hKey;
-    LONG result =
+    LONG const result =
         RegOpenKeyExW(static_cast<HKEY>(hive), subkey.toStdWString().c_str(), 0, KEY_READ, &hKey);
 
     if (result != ERROR_SUCCESS) {
@@ -180,12 +180,12 @@ QString AppScanner::readRegistryValue(void* key,
     DWORD bufferSize = sizeof(buffer);
     DWORD type;
 
-    LONG result = RegQueryValueExW(hKey,
-                                   valueName.toStdWString().c_str(),
-                                   nullptr,
-                                   &type,
-                                   reinterpret_cast<LPBYTE>(buffer),
-                                   &bufferSize);
+    LONG const result = RegQueryValueExW(hKey,
+                                         valueName.toStdWString().c_str(),
+                                         nullptr,
+                                         &type,
+                                         reinterpret_cast<LPBYTE>(buffer),
+                                         &bufferSize);
 
     if (result == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ)) {
         return registryStringFromBuffer(buffer, bufferSize, kRegistryValueBufferChars);
@@ -293,10 +293,10 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
         return apps;
     }
 
-    QString output = result.std_out;
+    const QString output = result.std_out;
 
     QJsonParseError error{};
-    QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &error);
+    const QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &error);
     if (error.error != QJsonParseError::NoError) {
         sak::logWarning("AppScanner: Failed to parse AppX JSON {}",
                         error.errorString().toStdString());
@@ -314,7 +314,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
         if (!value.isObject()) {
             continue;
         }
-        QJsonObject obj = value.toObject();
+        const QJsonObject obj = value.toObject();
         AppInfo app;
         app.source = AppInfo::Source::AppX;
         app.name = obj.value("Name").toString();
@@ -373,9 +373,9 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
         return apps;
     }
 
-    QString output = result.std_out;
+    const QString output = result.std_out;
 
-    QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+    const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
     for (const auto& line : lines) {
         if (line.trimmed().isEmpty() || line.startsWith("Chocolatey")) {
             continue;

@@ -252,7 +252,7 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* mainLayout) {
     m_backButton->setStyleSheet(ui::kPrimaryButtonStyle);
     buttonLayout->addWidget(m_backButton);
     connect(m_backButton, &QPushButton::clicked, this, [this]() {
-        int currentIndex = m_stackedWidget->currentIndex();
+        const int currentIndex = m_stackedWidget->currentIndex();
         if (m_isFlashing) {
             return;  // Never navigate away during flash
         }
@@ -273,7 +273,7 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* mainLayout) {
     m_nextButton->setStyleSheet(ui::kPrimaryButtonStyle);
     buttonLayout->addWidget(m_nextButton);
     connect(m_nextButton, &QPushButton::clicked, this, [this]() {
-        int currentIndex = m_stackedWidget->currentIndex();
+        const int currentIndex = m_stackedWidget->currentIndex();
         if (currentIndex < m_stackedWidget->count() - 1) {
             m_stackedWidget->setCurrentIndex(currentIndex + 1);
             updateNavigationButtons();
@@ -612,10 +612,11 @@ bool ImageFlasherPanel::loadImageFile(const QString& filePath) {
 }
 
 void ImageFlasherPanel::onSelectImageClicked() {
-    QString filter =
+    const QString filter =
         "Disk Images (*.iso *.img *.wic *.dmg *.dsk *.gz *.bz2 *.xz *.zip);;All Files "
         "(*.*)";
-    QString filePath = QFileDialog::getOpenFileName(this, "Select Image File", QString(), filter);
+    const QString filePath =
+        QFileDialog::getOpenFileName(this, "Select Image File", QString(), filter);
 
     if (!filePath.isEmpty()) {
         onImageSelected(filePath);
@@ -707,7 +708,7 @@ bool ImageFlasherPanel::onImageSelected(const QString& imagePath) {
     }
     m_selectedImagePath = imagePath;
 
-    QFileInfo fileInfo(imagePath);
+    const QFileInfo fileInfo(imagePath);
     m_imageSize = fileInfo.size();
     m_imageLastModified = fileInfo.lastModified();
 
@@ -994,12 +995,12 @@ void ImageFlasherPanel::onCancelClicked() {
 void ImageFlasherPanel::updateNavigationButtons() {
     Q_ASSERT(m_stackedWidget);
     Q_ASSERT(m_backButton);
-    int currentIndex = m_stackedWidget->currentIndex();
+    const int currentIndex = m_stackedWidget->currentIndex();
 
     // Back button: enabled on pages 1 (drive selection) and 3 (completion)
     // Disabled during flashing (page 2) and on page 0 (nothing to go back to)
-    bool canGoBack = !m_isFlashing && (currentIndex == kDriveSelectionPageIndex ||
-                                       currentIndex == kCompletionPageIndex);
+    const bool canGoBack = !m_isFlashing && (currentIndex == kDriveSelectionPageIndex ||
+                                             currentIndex == kCompletionPageIndex);
     m_backButton->setEnabled(canGoBack);
     m_backButton->setVisible(currentIndex != kFlashProgressPageIndex);
 
@@ -1116,7 +1117,7 @@ QStringList ImageFlasherPanel::buildDriveDetailsList(bool& hasSystemDrive) const
     QStringList driveDetails;
     hasSystemDrive = false;
     for (const auto& drivePath : m_selectedDrives) {
-        QString label = findDriveDisplayText(drivePath);
+        const QString label = findDriveDisplayText(drivePath);
         driveDetails << QString("  \u2022 %1").arg(label);
         if (isSystemDrive(drivePath)) {
             hasSystemDrive = true;
@@ -1241,11 +1242,11 @@ void ImageFlasherPanel::showConfirmationDialog() {
     }
 
     // Check if this is a Windows ISO
-    bool isWindowsISO = isWindowsInstallISO(m_selectedImagePath);
+    const bool isWindowsISO = isWindowsInstallISO(m_selectedImagePath);
 
     // Build drive list for display
     bool hasSystemDrive = false;
-    QStringList driveDetails = buildDriveDetailsList(hasSystemDrive);
+    const QStringList driveDetails = buildDriveDetailsList(hasSystemDrive);
 
     // Block system drive flashing with a hard error
     if (hasSystemDrive) {
@@ -1272,7 +1273,7 @@ void ImageFlasherPanel::showConfirmationDialog() {
         return;
     }
 
-    QString message = buildFlashConfirmationMessage(driveDetails, isWindowsISO);
+    const QString message = buildFlashConfirmationMessage(driveDetails, isWindowsISO);
 
     auto reply = sak::showWarningLogged(this,
                                         "Confirm Flash -- Data Loss Warning",
@@ -1376,8 +1377,8 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creat
 
 QString ImageFlasherPanel::parseDiskNumberFromDevicePath(const QString& devicePath) {
     Q_ASSERT(!devicePath.isEmpty());
-    QRegularExpression regex(R"(PhysicalDrive(\d+))");
-    QRegularExpressionMatch match = regex.match(devicePath);
+    const QRegularExpression regex(R"(PhysicalDrive(\d+))");
+    const QRegularExpressionMatch match = regex.match(devicePath);
     if (match.hasMatch()) {
         logInfo(
             QString("Using disk number %1 (PhysicalDrive%1)").arg(match.captured(1)).toStdString());
@@ -1421,8 +1422,8 @@ void ImageFlasherPanel::createWindowsUSB() {
     connectWindowsUSBCreatorSignals(creator, thread);
 
     // Extract disk number (hardware ID) from device path
-    QString devicePath = m_selectedDrives.first();
-    QString diskNumber = parseDiskNumberFromDevicePath(devicePath);
+    const QString devicePath = m_selectedDrives.first();
+    const QString diskNumber = parseDiskNumberFromDevicePath(devicePath);
 
     if (diskNumber.isEmpty()) {
         // Could not parse disk number - fail immediately
@@ -1439,7 +1440,7 @@ void ImageFlasherPanel::createWindowsUSB() {
     }
 
     // Start the creation on the worker thread
-    QString isoPath = m_selectedImagePath;
+    const QString isoPath = m_selectedImagePath;
     connect(thread, &QThread::started, creator, [creator, isoPath, diskNumber]() {
         creator->createBootableUSB(isoPath, diskNumber);
     });
@@ -1510,7 +1511,7 @@ void ImageFlasherPanel::populateIsoInfo(const QString& imagePath) {
     Q_ASSERT(!imagePath.isEmpty());
     Q_ASSERT(m_isoInfoGroup);
 
-    sak::IsoInfo iso = sak::IsoAnalyzer::analyze(imagePath);
+    const sak::IsoInfo iso = sak::IsoAnalyzer::analyze(imagePath);
 
     // Always show size and format
     m_infoSizeLabel->setText(formatFileSize(m_imageSize));

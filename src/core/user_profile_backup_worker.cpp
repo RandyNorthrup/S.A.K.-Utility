@@ -221,7 +221,7 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
         return;
     }
 
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
 
     // Re-check under the lock: two callers can both pass the unlocked isRunning() check above
     // before either starts the thread, then race to overwrite this shared configuration and
@@ -348,7 +348,7 @@ void UserProfileBackupWorker::backupAllUsers() {
         Q_EMIT statusUpdate(user.username, tr("Starting backup..."));
         Q_EMIT logMessage(tr("=== Backing up user: %1 ===").arg(user.username), false);
 
-        QString userBackupPath = m_destinationPath + "/" + user.username;
+        const QString userBackupPath = m_destinationPath + "/" + user.username;
         if (!backupUser(user, userBackupPath)) {
             Q_EMIT logMessage(tr("Failed to backup user: %1").arg(user.username), true);
             // Continue with other users
@@ -368,14 +368,14 @@ void UserProfileBackupWorker::emitBackupSummary() {
     }
 
     // Complete
-    QString summary = tr("Backup complete!\nFiles copied: %1\nFiles skipped: %2\n"
-                         "Skipped (elevation required): %3\nErrors: %4\nTotal "
-                         "size: %5 MB")
-                          .arg(m_filesCopied)
-                          .arg(m_filesSkipped)
-                          .arg(m_filesElevationSkipped)
-                          .arg(m_filesErrored)
-                          .arg(m_bytesCopied / sak::kBytesPerMBf, 0, 'f', 1);
+    const QString summary = tr("Backup complete!\nFiles copied: %1\nFiles skipped: %2\n"
+                               "Skipped (elevation required): %3\nErrors: %4\nTotal "
+                               "size: %5 MB")
+                                .arg(m_filesCopied)
+                                .arg(m_filesSkipped)
+                                .arg(m_filesElevationSkipped)
+                                .arg(m_filesErrored)
+                                .arg(m_bytesCopied / sak::kBytesPerMBf, 0, 'f', 1);
 
     Q_EMIT logMessage(tr("=== Backup Complete ==="), false);
     Q_EMIT logMessage(summary, false);
@@ -392,7 +392,7 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
     // Filter exclusion rules are keyed on THIS user's profile path (B7-34).
     m_currentUserProfile = user.profile_path;
     // Create user backup directory
-    QDir dir;
+    const QDir dir;
     if (!dir.mkpath(userBackupPath)) {
         Q_EMIT logMessage(tr("Failed to create directory: %1").arg(userBackupPath), true);
         // A user whose backup root cannot be created backed up nothing; count it as
@@ -422,8 +422,8 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
 
         Q_EMIT statusUpdate(user.username, tr("Backing up: %1").arg(folder.display_name));
 
-        QString sourcePath = user.profile_path + "/" + folder.relative_path;
-        QString destPath = userBackupPath + "/" + folder.relative_path;
+        const QString sourcePath = user.profile_path + "/" + folder.relative_path;
+        const QString destPath = userBackupPath + "/" + folder.relative_path;
 
         if (!backupFolder(folder, sourcePath, destPath)) {
             Q_EMIT logMessage(tr("Warning: Failed to backup folder: %1").arg(folder.display_name),
@@ -439,7 +439,7 @@ bool UserProfileBackupWorker::backupFolder(const FolderSelection& folder,
                                            const QString& sourcePath,
                                            const QString& destPath) {
     // An empty sourcePath fails the exists() check below; see startBackup.
-    QFileInfo sourceInfo(sourcePath);
+    const QFileInfo sourceInfo(sourcePath);
 
     if (!sourceInfo.exists()) {
         Q_EMIT logMessage(tr("Source does not exist: %1").arg(sourcePath), true);
@@ -497,11 +497,11 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
 
     // Empty directories fail the checks below; see startBackup.
     // Check if folder should be excluded
-    QFileInfo sourceDirInfo(sourceDir);
+    const QFileInfo sourceDirInfo(sourceDir);
     const QString& currentUserProfile = m_currentUserProfile;
 
     if (m_fileFilter->shouldExcludeFolder(sourceDirInfo, currentUserProfile)) {
-        QString reason = m_fileFilter->getExclusionReason(sourceDirInfo);
+        const QString reason = m_fileFilter->getExclusionReason(sourceDirInfo);
         Q_EMIT logMessage(tr("Skipping folder: %1 (%2)").arg(sourceDir, reason), false);
         m_filesSkipped++;
         return true;  // Not an error, just skipped
@@ -541,8 +541,8 @@ void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
                                                  const QString& destDir,
                                                  const FolderSelection& folderConfig,
                                                  int depth) {
-    QFileInfo itemInfo(sourceItem);
-    QString destItem = destDir + "/" + itemInfo.fileName();
+    const QFileInfo itemInfo(sourceItem);
+    const QString destItem = destDir + "/" + itemInfo.fileName();
 
     // Never follow a reparse point (junction/symlink), whether it is a directory OR a file: a
     // directory one can loop back into the profile or point outside it (foreign/privileged data),
@@ -577,12 +577,12 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
     // QFileInfo::size(), which reports 0 - never a negative - for a file it
     // cannot stat.
     Q_ASSERT_X(fileSize >= 0, "copyFileWithFiltering", "fileSize must be non-negative");
-    QFileInfo sourceInfo(sourcePath);
+    const QFileInfo sourceInfo(sourcePath);
     const QString& currentUserProfile = m_currentUserProfile;
 
     // Apply smart filtering
     if (m_fileFilter->shouldExcludeFile(sourceInfo, currentUserProfile)) {
-        QString reason = m_fileFilter->getExclusionReason(sourceInfo);
+        const QString reason = m_fileFilter->getExclusionReason(sourceInfo);
         Q_EMIT logMessage(tr("Skipping file: %1 (%2)").arg(sourceInfo.fileName(), reason), false);
         m_filesSkipped++;
         return true;  // Not an error
@@ -612,7 +612,7 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
     }
 
     // Ensure destination directory exists
-    QFileInfo destInfo(destPath);
+    const QFileInfo destInfo(destPath);
     if (!createDirectory(destInfo.absolutePath())) {
         // The file cannot be written without its parent dir; count it (B7-20).
         Q_EMIT logMessage(tr("Failed to create directory for: %1").arg(destPath), true);
@@ -689,7 +689,7 @@ bool UserProfileBackupWorker::applyPermissions(const QString& filePath) {
 }
 
 bool UserProfileBackupWorker::createBackupStructure() {
-    QDir dir;
+    const QDir dir;
 
     // Create main backup directory
     if (!dir.mkpath(m_destinationPath)) {
@@ -734,7 +734,7 @@ bool UserProfileBackupWorker::saveManifest() {
     m_manifest.manifest_checksum = m_manifest.computeManifestChecksum();
 
     // Save to JSON file
-    QString manifestPath = m_destinationPath + "/manifest.json";
+    const QString manifestPath = m_destinationPath + "/manifest.json";
     return m_manifest.saveToFile(manifestPath);
 }
 
@@ -808,7 +808,7 @@ bool UserProfileBackupWorker::createDirectory(const QString& path) {
             true);
         return false;
     }
-    QDir dir;
+    const QDir dir;
     if (!dir.mkpath(path)) {
         Q_EMIT logMessage(tr("Failed to create directory: %1").arg(path), true);
         return false;
@@ -819,14 +819,14 @@ bool UserProfileBackupWorker::createDirectory(const QString& path) {
 bool UserProfileBackupWorker::canReadPath(const QString& path) {
 #ifdef Q_OS_WIN
     const std::wstring wide = path.toStdWString();
-    DWORD attrs = GetFileAttributesW(wide.c_str());
+    DWORD const attrs = GetFileAttributesW(wide.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) {
         // This predicate answers ONLY "is the path blocked by permissions such that
         // elevation might help" -- its single caller emits "requires elevation" and counts an
         // elevation-skip on false. A denied/sharing-locked path is such a block; a merely
         // missing path (ERROR_PATH_NOT_FOUND) is not, and must not be mislabelled as one, so
         // it reports readable and the copy logic handles the absence.
-        DWORD err = GetLastError();
+        DWORD const err = GetLastError();
         return err != ERROR_ACCESS_DENIED && err != ERROR_SHARING_VIOLATION;
     }
     // Confirm read access by actually opening it; a denial here is the elevation case, while
@@ -895,7 +895,7 @@ bool UserProfileBackupWorker::validateSourcePaths() {
             continue;
         }
 
-        QDir profileDir(user.profile_path);
+        const QDir profileDir(user.profile_path);
         if (!profileDir.exists()) {
             Q_EMIT logMessage(tr("User profile does not exist: %1").arg(user.profile_path), true);
             return false;
@@ -918,14 +918,14 @@ bool UserProfileBackupWorker::validateSourcePaths() {
 }
 
 bool UserProfileBackupWorker::checkDiskSpace() {
-    QStorageInfo storage(m_destinationPath);
+    const QStorageInfo storage(m_destinationPath);
 
     if (!storage.isValid() || !storage.isReady()) {
         Q_EMIT logMessage(tr("Invalid or not ready destination: %1").arg(m_destinationPath), true);
         return false;
     }
 
-    qint64 availableBytes = storage.bytesAvailable();
+    const qint64 availableBytes = storage.bytesAvailable();
     qint64 requiredBytes = m_totalBytesToCopy;
 
     requiredBytes = qRound64(static_cast<double>(requiredBytes) * kDiskSpaceSafetyMultiplier);
@@ -941,8 +941,8 @@ bool UserProfileBackupWorker::checkDiskSpace() {
     }
 
     if (availableBytes < requiredBytes) {
-        double availableGB = availableBytes / sak::kBytesPerGBf;
-        double requiredGB = requiredBytes / sak::kBytesPerGBf;
+        const double availableGB = availableBytes / sak::kBytesPerGBf;
+        const double requiredGB = requiredBytes / sak::kBytesPerGBf;
 
         Q_EMIT logMessage(tr("Insufficient disk space. Available: %1 GB, Required: %2 GB")
                               .arg(availableGB, 0, 'f', kDiskSpaceDisplayPrecision)

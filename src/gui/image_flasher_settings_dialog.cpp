@@ -243,8 +243,8 @@ void ImageFlasherSettingsDialog::loadSettings() {
     const auto& config = sak::ConfigManager::instance();
 
     // Validation mode
-    QString validationMode = config.getImageFlasherValidationMode();
-    int validationIndex = m_validationModeCombo->findData(validationMode);
+    const QString validationMode = config.getImageFlasherValidationMode();
+    const int validationIndex = m_validationModeCombo->findData(validationMode);
     if (validationIndex >= 0) {
         m_validationModeCombo->setCurrentIndex(validationIndex);
     }
@@ -311,7 +311,7 @@ void ImageFlasherSettingsDialog::onResetDefaults() {
 QStringList ImageFlasherSettingsDialog::findCacheDirectories() {
     QStringList dirs;
     const QString tempBase = sak::app_paths::tempDirectory();
-    QDir tempDir(tempBase);
+    const QDir tempDir(tempBase);
 
     for (const auto& entry : tempDir.entryList(QStringList{"sak_uup_*"}, QDir::Dirs)) {
         dirs.append(tempDir.filePath(entry));
@@ -334,7 +334,7 @@ qint64 ImageFlasherSettingsDialog::calculateCacheSize() {
 void ImageFlasherSettingsDialog::updateCacheInfo() {
     Q_ASSERT(m_cacheInfoLabel);
     Q_ASSERT(m_clearCacheButton);
-    QStringList dirs = findCacheDirectories();
+    const QStringList dirs = findCacheDirectories();
     qint64 totalBytes = 0;
     for (const auto& dirPath : dirs) {
         QDirIterator it(dirPath, QDir::Files, QDirIterator::Subdirectories);
@@ -365,13 +365,13 @@ void ImageFlasherSettingsDialog::updateCacheInfo() {
 }
 
 void ImageFlasherSettingsDialog::onClearDownloadCaches() {
-    QStringList dirs = findCacheDirectories();
+    const QStringList dirs = findCacheDirectories();
     if (dirs.isEmpty()) {
         sak::showInformationLogged(this, "Clear Download Caches", "No cached downloads to clear.");
         return;
     }
 
-    qint64 totalBytes = calculateCacheSize();
+    const qint64 totalBytes = calculateCacheSize();
     QString sizeStr;
     if (totalBytes < sak::kBytesPerGB) {
         sizeStr = QString("%1 MB").arg(

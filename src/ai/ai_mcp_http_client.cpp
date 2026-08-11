@@ -150,7 +150,7 @@ struct HttpWorkerSinks {
         if (!line.startsWith("data:")) {
             continue;
         }
-        QByteArray data = line.mid(kSseDataPrefixLength).trimmed();
+        const QByteArray data = line.mid(kSseDataPrefixLength).trimmed();
         if (data == "[DONE]") {
             continue;
         }

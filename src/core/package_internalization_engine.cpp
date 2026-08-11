@@ -61,7 +61,8 @@ NetworkTransferRequest makeVersionRequest(const QUrl& url) {
 QString uniqueBinaryFilename(const QUrl& url, int index, QSet<QString>& used_names) {
     // Reduce the URL-derived name to a safe in-tree basename first: a crafted URL
     // segment can decode to traversal / separators and must never escape the dir.
-    QString base = PackageInternalizationEngine::sanitizedBinaryBasename(url.fileName(), index);
+    const QString base = PackageInternalizationEngine::sanitizedBinaryBasename(url.fileName(),
+                                                                               index);
     // Two distinct URLs can share a basename (x86 vs x64 setup.exe); disambiguate so the second
     // never overwrites the first on disk and the rewritten script maps each URL to its own file.
     // used_names holds LOWERCASED keys: on a case-insensitive filesystem 'Setup.exe' and
@@ -661,7 +662,8 @@ bool PackageInternalizationEngine::verifyNupkgIntegrity(const QString& package_i
 // ============================================================================
 
 QString PackageInternalizationEngine::resolveLatestVersion(const QString& package_id) {
-    QString url_str = QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath);
+    const QString url_str = QString("%1%2").arg(offline::kNuGetBaseUrl,
+                                                offline::kNuGetFindByIdPath);
     QUrl url(url_str);
     QUrlQuery query;
     query.addQueryItem("id", QString("'%1'").arg(package_id));
@@ -676,7 +678,7 @@ QString PackageInternalizationEngine::resolveLatestVersion(const QString& packag
             return {};
         }
         if (attempt > 0) {
-            int delay = offline::kApiRetryDelayBaseMs * attempt;
+            const int delay = offline::kApiRetryDelayBaseMs * attempt;
             sak::logInfo("[InternalizationEngine] Retry {}/{} for {} (wait {}ms)",
                          attempt + 1,
                          offline::kApiMaxRetries,
@@ -737,7 +739,7 @@ QString PackageInternalizationEngine::parseLatestVersionFromOData(const QByteArr
         return {};
     }
 
-    QDomNodeList entries = doc.documentElement().elementsByTagName(QStringLiteral("entry"));
+    const QDomNodeList entries = doc.documentElement().elementsByTagName(QStringLiteral("entry"));
     QStringList all_versions;
     for (int idx = 0; idx < entries.count(); ++idx) {
         const QDomElement props = odataProperties(entries.at(idx).toElement());
@@ -770,7 +772,7 @@ QPair<QString, QString> PackageInternalizationEngine::parsePackageHashFromOData(
     if (!doc.setContent(data)) {
         return {};
     }
-    QDomNodeList entries = doc.documentElement().elementsByTagName(QStringLiteral("entry"));
+    const QDomNodeList entries = doc.documentElement().elementsByTagName(QStringLiteral("entry"));
     for (int idx = 0; idx < entries.count(); ++idx) {
         const QDomElement props = odataProperties(entries.at(idx).toElement());
         if (props.isNull() || odataChildText(props, "d:Version", "Version") != version) {
@@ -1067,7 +1069,7 @@ bool PackageInternalizationEngine::extractNupkg(const QString& nupkg_path,
     // a path containing ' would otherwise close the literal and inject commands.
     native_nupkg.replace(QLatin1Char('\''), QStringLiteral("''"));
     native_extract.replace(QLatin1Char('\''), QStringLiteral("''"));
-    QString ps_command =
+    const QString ps_command =
         QString(
             "$ErrorActionPreference='Stop'; $src='%1'; $dst='%2'; "
             "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
@@ -1096,7 +1098,7 @@ bool PackageInternalizationEngine::extractNupkg(const QString& nupkg_path,
     }
 
     if (process.exit_code != 0) {
-        QString stderr_text = process.std_err.trimmed();
+        const QString stderr_text = process.std_err.trimmed();
         error_out = stderr_text.isEmpty()
                         ? QString("PowerShell exit code %1").arg(process.exit_code)
                         : stderr_text;
@@ -1180,10 +1182,11 @@ bool PackageInternalizationEngine::repackNupkg(const QString& source_dir,
     // a path containing ' would otherwise close the literal and inject commands.
     native_src.replace(QLatin1Char('\''), QStringLiteral("''"));
     native_out.replace(QLatin1Char('\''), QStringLiteral("''"));
-    QString ps_command = QString(
-                             "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
-                             "[System.IO.Compression.ZipFile]::CreateFromDirectory('%1', '%2')")
-                             .arg(native_src, native_out);
+    const QString ps_command =
+        QString(
+            "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
+            "[System.IO.Compression.ZipFile]::CreateFromDirectory('%1', '%2')")
+            .arg(native_src, native_out);
 
     const auto process = runPowerShell(ps_command, offline::kPackTimeoutMs, true, false, [this]() {
         return m_cancelled.load();
@@ -1198,7 +1201,7 @@ bool PackageInternalizationEngine::repackNupkg(const QString& source_dir,
     }
 
     if (process.exit_code != 0) {
-        QString err = process.std_err;
+        const QString err = process.std_err;
         sak::logError("[InternalizationEngine] Repack failed: {}", err.toStdString());
         return false;
     }

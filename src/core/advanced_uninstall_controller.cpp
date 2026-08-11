@@ -647,7 +647,8 @@ void AdvancedUninstallController::startBatchUninstall(bool createRestorePoint) {
     // rollback point and it cannot be created, abort the (potentially destructive) batch rather
     // than proceed with no way back.
     if (createRestorePoint) {
-        QString desc = QString("SAK: Before batch uninstall (%1 programs)").arg(m_queue.size());
+        const QString desc =
+            QString("SAK: Before batch uninstall (%1 programs)").arg(m_queue.size());
         m_batchRestorePointCreated = m_restore_manager->createRestorePoint(desc);
         if (!m_batchRestorePointCreated) {
             setState(State::Idle);
@@ -879,7 +880,7 @@ void AdvancedUninstallController::onCleanupComplete(int succeeded,
         msg += QString(", %1 failed").arg(failed);
     }
     if (bytesRecovered > 0) {
-        double mb = bytesRecovered / kBytesPerMBf;
+        const double mb = bytesRecovered / kBytesPerMBf;
         msg += QString(" (%1 MB recovered)").arg(mb, 0, 'f', kRecoveredSizeDisplayPrecision);
     }
     Q_EMIT statusMessage(msg, kStatusTimeoutLongMs);

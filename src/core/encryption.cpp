@@ -85,7 +85,7 @@ QByteArray derive_key(const QString& password,
     }
     QByteArray derived_key(key_length, 0);
 
-    NTSTATUS status =
+    NTSTATUS const status =
         BCryptDeriveKeyPBKDF2(hAlg,
                               reinterpret_cast<PUCHAR>(pwd_bytes.data()),
                               pwd_bytes.size(),
@@ -168,13 +168,13 @@ QByteArray compute_hmac(const QByteArray& mac_key, const QByteArray& message) {
         return {};
     }
     QByteArray tag(kEncryptionMacBytes, 0);
-    NTSTATUS status = BCryptHash(hAlg,
-                                 reinterpret_cast<PUCHAR>(const_cast<char*>(mac_key.data())),
-                                 static_cast<ULONG>(mac_key.size()),
-                                 reinterpret_cast<PUCHAR>(const_cast<char*>(message.data())),
-                                 static_cast<ULONG>(message.size()),
-                                 reinterpret_cast<PUCHAR>(tag.data()),
-                                 static_cast<ULONG>(tag.size()));
+    NTSTATUS const status = BCryptHash(hAlg,
+                                       reinterpret_cast<PUCHAR>(const_cast<char*>(mac_key.data())),
+                                       static_cast<ULONG>(mac_key.size()),
+                                       reinterpret_cast<PUCHAR>(const_cast<char*>(message.data())),
+                                       static_cast<ULONG>(message.size()),
+                                       reinterpret_cast<PUCHAR>(tag.data()),
+                                       static_cast<ULONG>(tag.size()));
     BCryptCloseAlgorithmProvider(hAlg, 0);
     if (status != 0) {
         sak::logError("BCrypt: HMAC-SHA256 computation failed");
@@ -518,8 +518,8 @@ auto encryptData(const QByteArray& data, const QString& password, const Encrypti
     }
 
     // Generate salt and IV
-    QByteArray salt = generate_random_bytes(params.salt_size);
-    QByteArray iv = generate_random_bytes(params.iv_size);
+    const QByteArray salt = generate_random_bytes(params.salt_size);
+    const QByteArray iv = generate_random_bytes(params.iv_size);
 
     if (salt.isEmpty() || iv.isEmpty()) {
         logError("Failed to generate random bytes for encryption");
@@ -534,7 +534,7 @@ auto encryptData(const QByteArray& data, const QString& password, const Encrypti
         return std::unexpected(error_code::crypto_error);
     }
 
-    QByteArray ciphertext = aes_encrypt(data, enc_key, iv);
+    const QByteArray ciphertext = aes_encrypt(data, enc_key, iv);
     secure_wiper::wipe(enc_key.data(), enc_key.size());
     if (ciphertext.isEmpty()) {
         secure_wiper::wipe(mac_key.data(), mac_key.size());
@@ -548,7 +548,7 @@ auto encryptData(const QByteArray& data, const QString& password, const Encrypti
     result.append(iv);
     result.append(ciphertext);
 
-    QByteArray tag = compute_hmac(mac_key, result);
+    const QByteArray tag = compute_hmac(mac_key, result);
     secure_wiper::wipe(mac_key.data(), mac_key.size());
     if (tag.isEmpty()) {
         logError("Failed to authenticate encrypted data");
@@ -583,12 +583,12 @@ auto decryptData(const QByteArray& encrypted_data,
 
     // Split off the trailing HMAC tag; the message it authenticates is [salt][IV][ciphertext].
     const qsizetype message_size = encrypted_data.size() - kEncryptionMacBytes;
-    QByteArray message = encrypted_data.left(message_size);
-    QByteArray stored_tag = encrypted_data.mid(message_size);
+    const QByteArray message = encrypted_data.left(message_size);
+    const QByteArray stored_tag = encrypted_data.mid(message_size);
 
-    QByteArray salt = message.left(params.salt_size);
-    QByteArray iv = message.mid(params.salt_size, params.iv_size);
-    QByteArray ciphertext = message.mid(header_size);
+    const QByteArray salt = message.left(params.salt_size);
+    const QByteArray iv = message.mid(params.salt_size, params.iv_size);
+    const QByteArray ciphertext = message.mid(header_size);
 
     QByteArray enc_key;
     QByteArray mac_key;
@@ -599,7 +599,7 @@ auto decryptData(const QByteArray& encrypted_data,
 
     // Verify the tag in constant time BEFORE decrypting: a tamper or wrong password fails here,
     // never reaching BCryptDecrypt (no padding oracle).
-    QByteArray tag = compute_hmac(mac_key, message);
+    const QByteArray tag = compute_hmac(mac_key, message);
     secure_wiper::wipe(mac_key.data(), mac_key.size());
     if (tag.isEmpty() || !constant_time_equal(tag, stored_tag)) {
         secure_wiper::wipe(enc_key.data(), enc_key.size());

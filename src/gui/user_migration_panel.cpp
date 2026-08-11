@@ -328,7 +328,7 @@ void UserMigrationPanel::createQuickActions() {
     // Connect buttons to actions
     for (auto it = m_action_buttons.constBegin(); it != m_action_buttons.constEnd(); ++it) {
         const QString action_name = it.key();
-        QPushButton* btn = it.value();
+        const QPushButton* btn = it.value();
         QuickAction* action = m_action_controller->getAction(action_name);
         if (action) {
             connect(btn, &QPushButton::clicked, this, [this, action]() {
@@ -414,9 +414,9 @@ void UserMigrationPanel::onSettingsClicked() {
     auto* browseBtn = new QPushButton(tr("Browse..."), &dialog);
     browseBtn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(browseBtn, &QPushButton::clicked, &dialog, [&locEdit, &dialog]() {
-        QString dir = QFileDialog::getExistingDirectory(&dialog,
-                                                        tr("Select Backup Location"),
-                                                        locEdit->text());
+        const QString dir = QFileDialog::getExistingDirectory(&dialog,
+                                                              tr("Select Backup Location"),
+                                                              locEdit->text());
         if (!dir.isEmpty()) {
             locEdit->setText(dir);
         }

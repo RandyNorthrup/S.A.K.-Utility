@@ -1992,11 +1992,11 @@ QByteArray decompressZipEntry(
     const bool wanted = isMetadataTarget(entry_name) &&
                         (comp_method == kZipMethodStored || comp_method == kZipMethodDeflated);
     if (wanted) {
-        QByteArray xml_data = decompressZipEntry(fileData,
-                                                 static_cast<int>(offset),
-                                                 static_cast<int>(data_start),
-                                                 static_cast<int>(entry_size),
-                                                 comp_method);
+        const QByteArray xml_data = decompressZipEntry(fileData,
+                                                       static_cast<int>(offset),
+                                                       static_cast<int>(data_start),
+                                                       static_cast<int>(entry_size),
+                                                       comp_method);
         if (!xml_data.isEmpty()) {
             extractXmlTags(QString::fromUtf8(xml_data), metadata);
         }
@@ -2171,7 +2171,7 @@ void captureId3Frame(const QByteArray& file_data,
     const auto encoding = static_cast<std::uint8_t>(file_data[offset + kId3FrameHeaderSize]);
     const QByteArray frame_data = file_data.mid(offset + kId3FrameDataOffset,
                                                 static_cast<int>(frame_size - 1));
-    QString value = decodeId3FrameValue(frame_data, encoding).remove(QChar('\0'));
+    const QString value = decodeId3FrameValue(frame_data, encoding).remove(QChar('\0'));
     if (!value.isEmpty()) {
         metadata.insert(id3FrameNames()[frame_id], value);
     }

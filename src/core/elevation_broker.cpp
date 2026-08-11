@@ -109,7 +109,7 @@ auto ElevationBroker::executeTask(const QString& task_id,
     // Serialize the request and bound its size BEFORE sending -- the payload can carry
     // AI-planned arguments -- then send. Publish the current task id only AFTER the
     // request is on the wire, so a cancel cannot race ahead of the task it names.
-    QByteArray request = buildTaskRequest(task_id, payload);
+    const QByteArray request = buildTaskRequest(task_id, payload);
     if (static_cast<uint64_t>(request.size()) > static_cast<uint64_t>(kPipeMaxPayload)) {
         sak::logError("ElevationBroker: task '{}' request too large: {} bytes",
                       task_id.toStdString(),
@@ -140,8 +140,8 @@ auto ElevationBroker::awaitTaskResult(const QString& task_id)
         }
 
         if (msg->type == PipeMessageType::ProgressUpdate) {
-            int percent = msg->json["percent"].toInt(0);
-            QString status = msg->json["status"].toString();
+            const int percent = msg->json["percent"].toInt(0);
+            const QString status = msg->json["status"].toString();
             Q_EMIT progressUpdated(percent, status);
             continue;
         }
@@ -192,7 +192,7 @@ auto ElevationBroker::handleTaskMessage(const PipeMessage& msg, const QString& t
         result.success = false;
         result.error_message = msg.json["message"].toString();
         setCurrentTaskId(QString());
-        int code = msg.json["code"].toInt(0);
+        const int code = msg.json["code"].toInt(0);
         sak::logError("ElevationBroker: task '{}' failed: {} (code {})",
                       task_id.toStdString(),
                       result.error_message.toStdString(),
@@ -209,7 +209,7 @@ auto ElevationBroker::handleTaskMessage(const PipeMessage& msg, const QString& t
 }
 
 void ElevationBroker::setCurrentTaskId(const QString& id) {
-    std::lock_guard<std::mutex> lock(m_task_state_mutex);
+    const std::lock_guard<std::mutex> lock(m_task_state_mutex);
     m_current_task_id = id;
 }
 
@@ -218,14 +218,14 @@ void ElevationBroker::cancelCurrentTask() {
     // worker thread may be clearing it in handleTaskMessage/cleanup.
     QString task_id;
     {
-        std::lock_guard<std::mutex> lock(m_task_state_mutex);
+        const std::lock_guard<std::mutex> lock(m_task_state_mutex);
         task_id = m_current_task_id;
     }
     if (!isConnected() || task_id.isEmpty()) {
         return;
     }
 
-    QByteArray cancel = buildCancelRequest(task_id);
+    const QByteArray cancel = buildCancelRequest(task_id);
     if (!sendRaw(cancel)) {
         sak::logWarning("ElevationBroker: cancel send failed for '{}'", task_id.toStdString());
     } else {
@@ -236,7 +236,7 @@ void ElevationBroker::cancelCurrentTask() {
 void ElevationBroker::shutdown() {
 #ifdef _WIN32
     if (isConnected()) {
-        QByteArray msg = buildShutdown();
+        const QByteArray msg = buildShutdown();
         if (!sendRaw(msg)) {
             sak::logWarning("ElevationBroker: shutdown send failed; tearing down anyway");
         } else {
@@ -266,21 +266,21 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
                  m_pipe_name.toStdString());
 
     // Pass pipe name and parent PID as arguments
-    QString args = QString("--pipe \"%1\" --parent-pid %2")
-                       .arg(m_pipe_name)
-                       .arg(QCoreApplication::applicationPid());
+    const QString args = QString("--pipe \"%1\" --parent-pid %2")
+                             .arg(m_pipe_name)
+                             .arg(QCoreApplication::applicationPid());
 
     SHELLEXECUTEINFOW sei{};
     sei.cbSize = sizeof(sei);
     sei.lpVerb = L"runas";
     sei.lpFile = reinterpret_cast<LPCWSTR>(helper_path->utf16());
-    std::wstring wide_args = args.toStdWString();
+    const std::wstring wide_args = args.toStdWString();
     sei.lpParameters = wide_args.c_str();
     sei.nShow = SW_HIDE;
     sei.fMask = SEE_MASK_NOCLOSEPROCESS;
 
     if (!ShellExecuteExW(&sei)) {
-        DWORD error = GetLastError();
+        DWORD const error = GetLastError();
         if (error == ERROR_CANCELLED) {
             sak::logInfo("ElevationBroker: user cancelled UAC prompt");
             return std::unexpected(sak::error_code::elevation_denied);
@@ -293,7 +293,7 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
         // Publish the launched-helper handle under m_send_mutex -- the same lock cleanup()
         // nulls+closes it under, and isHelperAlive() reads it under -- so a concurrent GUI/AI
         // shutdown() can never race this write of the raw HANDLE.
-        std::lock_guard<std::mutex> lock(m_send_mutex);
+        const std::lock_guard<std::mutex> lock(m_send_mutex);
         m_helper_process = sei.hProcess;
     }
     sak::logInfo("ElevationBroker: helper launched successfully");
@@ -309,7 +309,7 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
 
 auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
 #ifdef _WIN32
-    std::wstring wide_name = m_pipe_name.toStdWString();
+    const std::wstring wide_name = m_pipe_name.toStdWString();
 
     // Wait for the helper to create the pipe (with timeout)
     constexpr int kRetryIntervalMs = 100;
@@ -345,7 +345,7 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
             return {};
         }
 
-        DWORD error = GetLastError();
+        DWORD const error = GetLastError();
         if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY) {
             sak::logError("ElevationBroker: pipe connect error: {}", error);
             return std::unexpected(sak::error_code::helper_connection_failed);
@@ -355,7 +355,7 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
         // same lock cleanup() nulls+closes it under) so a concurrent shutdown() cannot race
         // this read; a nulled handle short-circuits to "not crashed" and the loop retries.
         {
-            std::lock_guard<std::mutex> lock(m_send_mutex);
+            const std::lock_guard<std::mutex> lock(m_send_mutex);
             DWORD exit_code = 0;
             if (m_helper_process != nullptr && GetExitCodeProcess(m_helper_process, &exit_code) &&
                 exit_code != STILL_ACTIVE) {
@@ -387,7 +387,7 @@ auto ElevationBroker::verifyPipeServer(HANDLE handle) -> std::expected<void, sak
         // Read the raw helper handle under m_send_mutex (the lock cleanup() nulls it under) so a
         // concurrent shutdown() cannot race this read; a nulled handle yields PID 0, which
         // serverPidMatchesHelper() rejects fail-closed.
-        std::lock_guard<std::mutex> lock(m_send_mutex);
+        const std::lock_guard<std::mutex> lock(m_send_mutex);
         expected_pid = static_cast<qint64>(GetProcessId(m_helper_process));
     }
     if (!serverPidMatchesHelper(expected_pid, static_cast<qint64>(server_pid))) {
@@ -428,14 +428,14 @@ bool ElevationBroker::sendRaw(const QByteArray& data) {
     // Serialize every pipe write: the worker thread sends the task request while
     // the GUI thread may send a cancel frame; interleaved WriteFile calls on a
     // byte-mode pipe would corrupt the framing.
-    std::lock_guard<std::mutex> lock(m_send_mutex);
+    const std::lock_guard<std::mutex> lock(m_send_mutex);
     const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
     if (handle == INVALID_HANDLE_VALUE) {
         return false;
     }
 
     DWORD bytes_written = 0;
-    BOOL ok = WriteFile(
+    BOOL const ok = WriteFile(
         handle, data.constData(), static_cast<DWORD>(data.size()), &bytes_written, nullptr);
 
     return ok && static_cast<int>(bytes_written) == data.size();
@@ -455,7 +455,7 @@ auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_cod
     // Cast each byte to uint32_t BEFORE shifting: a bare uint8_t promotes to signed int,
     // and shifting the high byte left by 24 would be signed and (pre-C++20) UB. Unsigned
     // 32-bit shifts are always well-defined here.
-    uint32_t payload_len =
+    const uint32_t payload_len =
         static_cast<uint32_t>(static_cast<uint8_t>(header[kPipeFrameLengthByte0])) |
         (static_cast<uint32_t>(static_cast<uint8_t>(header[kPipeFrameLengthByte1]))
          << kPipeFrameByteShift1) |
@@ -493,7 +493,7 @@ bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
     constexpr int kPollIntervalMs = 50;
 
     while (total_read < size && elapsed < timeout_ms) {
-        DWORD available = peekAvailable();
+        DWORD const available = peekAvailable();
         if (available == 0) {
             if (!isHelperAlive()) {
                 return false;
@@ -503,7 +503,7 @@ bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
             continue;
         }
 
-        DWORD to_read = qMin(static_cast<DWORD>(size - total_read), available);
+        DWORD const to_read = qMin(static_cast<DWORD>(size - total_read), available);
         DWORD bytes_read = 0;
         {
             // Pin the handle across the ReadFile under m_send_mutex: cleanup() stores
@@ -511,7 +511,7 @@ bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
             // between this load and the ReadFile. peekAvailable() already reported
             // available>0, so this read does not block long enough to starve a
             // concurrent cancel (which only sends between polls, outside the lock).
-            std::lock_guard<std::mutex> lock(m_send_mutex);
+            const std::lock_guard<std::mutex> lock(m_send_mutex);
             const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
             if (handle == INVALID_HANDLE_VALUE ||
                 !ReadFile(handle, buffer + total_read, to_read, &bytes_read, nullptr)) {
@@ -535,7 +535,7 @@ DWORD ElevationBroker::peekAvailable() const {
     DWORD available = 0;
     // Pin the handle across PeekNamedPipe under m_send_mutex so a concurrent
     // cleanup() close (which holds the same lock) cannot tear it mid-peek.
-    std::lock_guard<std::mutex> lock(m_send_mutex);
+    const std::lock_guard<std::mutex> lock(m_send_mutex);
     const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
     if (handle == INVALID_HANDLE_VALUE ||
         !PeekNamedPipe(handle, nullptr, 0, nullptr, &available, nullptr)) {
@@ -549,7 +549,7 @@ bool ElevationBroker::isHelperAlive() const {
     // holds the same lock) cannot land between this null-check and GetExitCodeProcess.
     // This method is only ever called outside the lock (from readExact's poll), so the
     // acquisition never recurses.
-    std::lock_guard<std::mutex> lock(m_send_mutex);
+    const std::lock_guard<std::mutex> lock(m_send_mutex);
     DWORD exit_code = 0;
     if (m_helper_process && GetExitCodeProcess(m_helper_process, &exit_code) &&
         exit_code != STILL_ACTIVE) {
@@ -572,7 +572,7 @@ void ElevationBroker::cleanup() {
         // lock CloseHandle could land between sendRaw's INVALID_HANDLE_VALUE check and its
         // WriteFile, writing to a closed (possibly reused) handle -- a data race on a
         // non-atomic HANDLE. Holding m_send_mutex serializes the close against any write.
-        std::lock_guard<std::mutex> lock(m_send_mutex);
+        const std::lock_guard<std::mutex> lock(m_send_mutex);
         const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
         if (handle != INVALID_HANDLE_VALUE) {
             // Invalidate BEFORE closing so a concurrent lock-free reader
@@ -604,7 +604,7 @@ void ElevationBroker::cleanup() {
 // ======================================================================
 
 auto ElevationBroker::findHelperPath() -> std::expected<QString, sak::error_code> {
-    QString app_dir = QCoreApplication::applicationDirPath();
+    const QString app_dir = QCoreApplication::applicationDirPath();
     QString helper = QDir(app_dir).filePath("sak_elevated_helper.exe");
 
     // Fail closed: the helper must be a real regular file, not a directory and not a

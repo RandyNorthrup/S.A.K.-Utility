@@ -174,9 +174,9 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
     m_initialized = false;
 
     // Look for choco.exe in common locations within portable directory
-    QStringList possible_paths = {QDir(m_choco_dir).filePath("choco.exe"),
-                                  QDir(m_choco_dir).filePath("bin/choco.exe"),
-                                  QDir(m_choco_dir).filePath("chocolatey/bin/choco.exe")};
+    const QStringList possible_paths = {QDir(m_choco_dir).filePath("choco.exe"),
+                                        QDir(m_choco_dir).filePath("bin/choco.exe"),
+                                        QDir(m_choco_dir).filePath("chocolatey/bin/choco.exe")};
 
     const auto it = std::find_if(possible_paths.cbegin(),
                                  possible_paths.cend(),
@@ -225,7 +225,7 @@ bool ChocolateyManager::verifyIntegrity() {
     }
 
     // Try to execute a simple command
-    Result result = executeChoco({"--version"}, kVersionProbeTimeoutMs);
+    const Result result = executeChoco({"--version"}, kVersionProbeTimeoutMs);
     return result.success;
 }
 
@@ -274,11 +274,11 @@ QString ChocolateyManager::getChocoVersion() {
         return QString();
     }
 
-    Result result = executeChoco({"--version"}, kVersionProbeTimeoutMs);
+    const Result result = executeChoco({"--version"}, kVersionProbeTimeoutMs);
     if (result.success) {
         // Extract version number from output (e.g., "2.4.1")
-        QRegularExpression versionRegex(R"(\d+\.\d+\.\d+)");
-        QRegularExpressionMatch match = versionRegex.match(result.output);
+        const QRegularExpression versionRegex(R"(\d+\.\d+\.\d+)");
+        const QRegularExpressionMatch match = versionRegex.match(result.output);
         if (match.hasMatch()) {
             return match.captured(0);
         }
@@ -390,7 +390,7 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
 
     Q_EMIT installStarted(config.package_name);
 
-    QStringList args = buildInstallArgs(config);
+    const QStringList args = buildInstallArgs(config);
     const int timeout_ms = computeTimeoutMs(config.timeout_seconds, m_default_timeout_seconds);
     Result result = executeChoco(args, timeout_ms);
 
@@ -486,7 +486,7 @@ std::vector<ChocolateyManager::PackageInfo> ChocolateyManager::parseSearchResult
     std::vector<PackageInfo> packages;
 
     // Parse limit-output format: "package_id|version"
-    QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+    const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
     for (const QString& line : lines) {
         if (line.trimmed().isEmpty() || line.startsWith("Chocolatey")) {
@@ -530,15 +530,15 @@ QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
         return QString();
     }
 
-    QStringList args = {"list", "--local-only", package_name, "--exact", "--limit-output"};
-    Result result = executeChoco(args, kPackageQueryTimeoutMs);
+    const QStringList args = {"list", "--local-only", package_name, "--exact", "--limit-output"};
+    const Result result = executeChoco(args, kPackageQueryTimeoutMs);
 
     if (!result.success) {
         return QString();
     }
 
     // Parse "package_name|version"
-    QStringList lines = result.output.split('\n', Qt::SkipEmptyParts);
+    const QStringList lines = result.output.split('\n', Qt::SkipEmptyParts);
     for (const QString& line : lines) {
         if (!line.startsWith(package_name + "|")) {
             continue;
@@ -562,7 +562,7 @@ bool ChocolateyManager::isPackageAvailable(const QString& package_name) {
         return false;
     }
 
-    Result result = searchPackage(package_name, 1);
+    const Result result = searchPackage(package_name, 1);
     if (!result.success) {
         return false;
     }
@@ -586,7 +586,7 @@ QStringList ChocolateyManager::getOutdatedPackages() {
         return outdated;
     }
 
-    QStringList lines = result.output.split('\n', Qt::SkipEmptyParts);
+    const QStringList lines = result.output.split('\n', Qt::SkipEmptyParts);
     for (const QString& line : lines) {
         QStringList parts = line.split('|');
         if (parts.size() >= kOutdatedRecordMinimumParts) {
@@ -675,7 +675,7 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     env.insert("ChocolateyInstall", m_choco_dir);
 
     // Build command
-    QString program = m_choco_path;
+    const QString program = m_choco_path;
     const int effective_timeout_ms =
         timeout_ms > 0 ? timeout_ms : sak::kChocoTimeoutExtendedSec * kMillisecondsPerSecond;
     const auto process_result =
@@ -686,12 +686,12 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     }
 
     // Get output
-    QString stdout_output = process_result.std_out;
-    QString stderr_output = process_result.std_err;
-    QString combined_output = stdout_output + "\n" + stderr_output;
+    const QString stdout_output = process_result.std_out;
+    const QString stderr_output = process_result.std_err;
+    const QString combined_output = stdout_output + "\n" + stderr_output;
 
-    int exit_code = process_result.exit_code;
-    bool success = parseExitCode(exit_code);
+    const int exit_code = process_result.exit_code;
+    const bool success = parseExitCode(exit_code);
 
     QString error_msg;
     if (!success) {
@@ -720,14 +720,14 @@ QString ChocolateyManager::extractErrorMessage(const QString& output) const {
         return "Unknown error";
     }
     // Look for common error patterns in Chocolatey output
-    QStringList lines = output.split('\n');
+    const QStringList lines = output.split('\n');
 
     for (const QString& line : lines) {
         QString trimmed = line.trimmed();
 
         if (trimmed.contains("ERROR", Qt::CaseInsensitive)) {
             // Extract error message after "ERROR:"
-            int error_pos = trimmed.indexOf("ERROR", Qt::CaseInsensitive);
+            const int error_pos = trimmed.indexOf("ERROR", Qt::CaseInsensitive);
             return trimmed.mid(error_pos).trimmed();
         }
 
@@ -747,15 +747,15 @@ bool ChocolateyManager::isNetworkError(const QString& output) const {
     if (output.isEmpty()) {
         return false;
     }
-    QStringList network_keywords = {"network",
-                                    "timeout",
-                                    "connection",
-                                    "unreachable",
-                                    "dns",
-                                    "proxy",
-                                    "ssl",
-                                    "certificate",
-                                    "tls"};
+    const QStringList network_keywords = {"network",
+                                          "timeout",
+                                          "connection",
+                                          "unreachable",
+                                          "dns",
+                                          "proxy",
+                                          "ssl",
+                                          "certificate",
+                                          "tls"};
 
     QString lower_output = output.toLower();
     return std::any_of(network_keywords.cbegin(),

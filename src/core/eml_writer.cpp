@@ -268,7 +268,7 @@ std::expected<QString, error_code> EmlWriter::writeMessage(
         }
     }
 
-    QDir dir;
+    const QDir dir;
     if (!dir.mkpath(target_dir)) {
         logError("EmlWriter: failed to create directory: {}", target_dir.toStdString());
         return std::unexpected(error_code::write_error);

@@ -260,9 +260,9 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
         return;
     }
 
-    QFileInfo saveInfo(savePath);
-    QString outDir = saveInfo.absolutePath();
-    QString outFile = saveInfo.fileName();
+    const QFileInfo saveInfo(savePath);
+    const QString outDir = saveInfo.absolutePath();
+    const QString outFile = saveInfo.fileName();
 
     if (!QDir().mkpath(outDir)) {
         sak::logWarning("Failed to create ISO download directory: {}", outDir.toStdString());
@@ -285,7 +285,7 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
         }
     });
 
-    QStringList args = buildAria2cArguments(url, outDir, outFile);
+    const QStringList args = buildAria2cArguments(url, outDir, outFile);
 
     sak::logInfo("Starting aria2c: " + aria2Path.toStdString() + " -> " + savePath.toStdString());
 
@@ -425,7 +425,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
 
     // Read any remaining output
     if (m_aria2cProcess) {
-        QString output = QString::fromUtf8(m_aria2cProcess->readAllStandardOutput());
+        const QString output = QString::fromUtf8(m_aria2cProcess->readAllStandardOutput());
         if (!output.trimmed().isEmpty()) {
             sak::logInfo("aria2c final output: " + output.trimmed().toStdString());
         }
@@ -451,7 +451,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
     }
 
     // Download succeeded -- verify file exists
-    QFileInfo downloadedFile(m_savePath);
+    const QFileInfo downloadedFile(m_savePath);
     if (!downloadedFile.exists() || downloadedFile.size() == 0) {
         setPhase(Phase::Failed, "Downloaded file is missing or empty");
         Q_EMIT downloadError(
@@ -494,31 +494,33 @@ void LinuxISODownloader::onProgressPollTimer() {
         return;
     }
 
-    QByteArray data = m_aria2cProcess->readAllStandardOutput();
+    const QByteArray data = m_aria2cProcess->readAllStandardOutput();
     if (data.isEmpty()) {
         return;
     }
 
-    QString output = QString::fromUtf8(data);
-    QStringList lines = output.split(QRegularExpression("[\r\n]"), Qt::SkipEmptyParts);
+    const QString output = QString::fromUtf8(data);
+    const QStringList lines = output.split(QRegularExpression("[\r\n]"), Qt::SkipEmptyParts);
 
     for (const QString& rawLine : lines) {
-        QString line = rawLine.trimmed();
+        const QString line = rawLine.trimmed();
 
         // aria2c progress lines look like:
         // [#abcdef 1234567/9876543(12%) CN:16 DL:45.2MiB]
         // or in human-readable=false mode:
         // [#abcdef 1234567/9876543(12%) CN:16 DL:47394816]
-        static QRegularExpression progressRegex(R"(\[#\w+\s+(\d+)/(\d+)\((\d+)%\).*DL:(\S+)\])");
+        static const QRegularExpression progressRegex(
+            R"(\[#\w+\s+(\d+)/(\d+)\((\d+)%\).*DL:(\S+)\])");
 
         auto match = progressRegex.match(line);
         if (match.hasMatch()) {
-            qint64 downloaded = match.captured(kAria2cDownloadedCaptureGroup).toLongLong();
-            qint64 total = match.captured(kAria2cTotalCaptureGroup).toLongLong();
-            int percent = match.captured(kAria2cPercentCaptureGroup).toInt();
-            double speedMBps = parseAria2cSpeedMBps(match.captured(kAria2cSpeedCaptureGroup));
+            const qint64 downloaded = match.captured(kAria2cDownloadedCaptureGroup).toLongLong();
+            const qint64 total = match.captured(kAria2cTotalCaptureGroup).toLongLong();
+            const int percent = match.captured(kAria2cPercentCaptureGroup).toInt();
+            const double speedMBps = parseAria2cSpeedMBps(match.captured(kAria2cSpeedCaptureGroup));
 
-            QString detail = QString("%1 / %2").arg(formatSize(downloaded), formatSize(total));
+            const QString detail = QString("%1 / %2").arg(formatSize(downloaded),
+                                                          formatSize(total));
 
             Q_EMIT progressUpdated(percent, detail);
             Q_EMIT speedUpdated(speedMBps);
@@ -670,9 +672,9 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply,
         return;
     }
 
-    QString checksumData = QString::fromUtf8(reply->readAll());
-    QString expectedFileName = QFileInfo(m_savePath).fileName();
-    QString expectedHash = parseExpectedHash(checksumData, expectedFileName);
+    const QString checksumData = QString::fromUtf8(reply->readAll());
+    const QString expectedFileName = QFileInfo(m_savePath).fileName();
+    const QString expectedHash = parseExpectedHash(checksumData, expectedFileName);
 
     if (expectedHash.isEmpty()) {
         const QString error = "Could not find matching hash in checksum file for: " +
@@ -707,7 +709,7 @@ void LinuxISODownloader::launchChecksumHash(QCryptographicHash::Algorithm algori
         &QFutureWatcher<QString>::finished,
         this,
         [this, watcher, expectedHash, generation]() {
-            QString actualHash = watcher->result();
+            const QString actualHash = watcher->result();
             watcher->deleteLater();
             if (!shouldApplyVerifyResult(m_cancelled, generation, m_operationGeneration.load())) {
                 return;  // cancelled or superseded by a newer download
@@ -753,7 +755,7 @@ void LinuxISODownloader::verifyChecksum() {
 
     // Fetch checksum file
     auto* nam = new QNetworkAccessManager(this);
-    QUrl checksumUrl(m_checksumUrl);
+    const QUrl checksumUrl(m_checksumUrl);
     QNetworkRequest request(checksumUrl);
     request.setRawHeader("User-Agent", "SAK-Utility/1.0");
     // The checksum is the only thing standing between a mirror-served ISO and the disk it is
@@ -784,7 +786,7 @@ void LinuxISODownloader::verifyChecksum() {
 void LinuxISODownloader::onChecksumVerified(bool match,
                                             const QString& expected,
                                             const QString& actual) {
-    QFileInfo fileInfo(m_savePath);
+    const QFileInfo fileInfo(m_savePath);
 
     if (actual.isEmpty()) {
         // Fail closed: a checksum the user requested could not be computed (file
@@ -871,7 +873,7 @@ QString LinuxISODownloader::findAria2c() const {
 
 void LinuxISODownloader::cleanupPartialFiles() {
     // Remove .aria2 control file
-    QString aria2ControlFile = m_savePath + ".aria2";
+    const QString aria2ControlFile = m_savePath + ".aria2";
     if (QFile::exists(aria2ControlFile)) {
         QFile::remove(aria2ControlFile);
         sak::logInfo("Removed aria2 control file: " + aria2ControlFile.toStdString());

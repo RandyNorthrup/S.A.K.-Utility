@@ -33,7 +33,7 @@ bool XzDecompressor::initStream() {
     // decompressStep treats as a fatal error) when a member declares an integrity check
     // this build cannot verify, so an unverifiable stream fails closed instead of decoding
     // to a "successful" end with its integrity silently unchecked.
-    lzma_ret ret =
+    const lzma_ret ret =
         lzma_auto_decoder(&m_lzmaStream, kXzDecoderMemLimitBytes, LZMA_TELL_UNSUPPORTED_CHECK);
     if (ret != LZMA_OK) {
         m_lastError =
@@ -68,7 +68,7 @@ bool XzDecompressor::inputEmpty() const {
 }
 
 XzDecompressor::StepResult XzDecompressor::decompressStep() {
-    lzma_ret ret = lzma_code(&m_lzmaStream, LZMA_RUN);
+    const lzma_ret ret = lzma_code(&m_lzmaStream, LZMA_RUN);
     if (ret == LZMA_STREAM_END) {
         return StepResult::stream_end;
     }
@@ -85,7 +85,7 @@ bool XzDecompressor::resetStreamForNextMember() {
     // untouched, so the bytes after the previous stream feed the next one. The memory
     // limit is re-applied so a later concatenated member is bounded too (B8-12).
     lzma_end(&m_lzmaStream);
-    lzma_ret ret =
+    const lzma_ret ret =
         lzma_auto_decoder(&m_lzmaStream, kXzDecoderMemLimitBytes, LZMA_TELL_UNSUPPORTED_CHECK);
     if (ret != LZMA_OK) {
         m_lastError = QString("Failed to reset lzma for the next member: error code %1")

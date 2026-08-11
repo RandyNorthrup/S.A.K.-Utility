@@ -325,7 +325,7 @@ std::vector<RegValue> enumStringValues(HKEY key, bool* ok) {
         DWORD nameLen = static_cast<DWORD>(std::size(nameBuf));
         DWORD type = 0;
         DWORD dataBytes = 0;
-        LSTATUS s =
+        LSTATUS const s =
             RegEnumValueW(key, index, nameBuf, &nameLen, nullptr, &type, nullptr, &dataBytes);
         if (s == ERROR_NO_MORE_ITEMS) {
             break;

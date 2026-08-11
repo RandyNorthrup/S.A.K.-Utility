@@ -225,8 +225,8 @@ bool file_scanner::shouldProcessEntry(const std::filesystem::directory_entry& en
             return false;
         }
 
-        bool is_dir = entry.is_directory();
-        bool is_file = entry.is_regular_file();
+        const bool is_dir = entry.is_directory();
+        const bool is_file = entry.is_regular_file();
 
         if (!passesTypeFilter(options.type_filter, is_dir, is_file)) {
             return false;
@@ -296,7 +296,7 @@ bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
 
 #ifdef _WIN32
         // Windows hidden attribute
-        DWORD attrs = GetFileAttributesW(path.wstring().c_str());
+        DWORD const attrs = GetFileAttributesW(path.wstring().c_str());
         if (attrs != INVALID_FILE_ATTRIBUTES) {
             return (attrs & FILE_ATTRIBUTE_HIDDEN) != 0;
         }
@@ -483,7 +483,7 @@ auto file_scanner::scanDirectoryRecursive(const std::filesystem::path& current_p
         }
 
         std::error_code ec;
-        std::filesystem::directory_iterator dir_it(current_path, dir_options, ec);
+        const std::filesystem::directory_iterator dir_it(current_path, dir_options, ec);
 
         if (ec) {
             logWarning("Failed to open directory: {} - {}", current_path.string(), ec.message());

@@ -114,7 +114,7 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
     int totalJobs;
     QVector<QPair<int, QString>> skipped;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
 
         if (m_running) {
             sak::logWarning("[AppInstallationWorker] Installation already running");
@@ -203,7 +203,7 @@ MigrationJob AppInstallationWorker::makeJob(int entryIndex,
 }
 
 void AppInstallationWorker::pause() {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
 
     if (!m_running || m_paused) {
         return;
@@ -214,7 +214,7 @@ void AppInstallationWorker::pause() {
 }
 
 void AppInstallationWorker::resume() {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
 
     if (!m_running || !m_paused) {
         return;
@@ -230,7 +230,7 @@ void AppInstallationWorker::resume() {
 void AppInstallationWorker::cancel() {
     QVector<MigrationJob> cancelled_jobs;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
 
         if (!m_running) {
             return;
@@ -240,7 +240,7 @@ void AppInstallationWorker::cancel() {
         m_paused = false;
 
         while (!m_jobQueue.isEmpty()) {
-            int jobIndex = m_jobQueue.dequeue();
+            const int jobIndex = m_jobQueue.dequeue();
             m_jobs[jobIndex].status = MigrationStatus::Cancelled;
 
             if (m_report) {
@@ -259,17 +259,17 @@ void AppInstallationWorker::cancel() {
 }
 
 bool AppInstallationWorker::isRunning() const {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     return m_running;
 }
 
 bool AppInstallationWorker::isPaused() const {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     return m_paused;
 }
 
 AppInstallationWorker::Stats AppInstallationWorker::getStats() const {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
 
     Stats stats;
     stats.total = m_jobs.size();
@@ -310,7 +310,7 @@ AppInstallationWorker::Stats AppInstallationWorker::getStats() const {
 }
 
 QVector<MigrationJob> AppInstallationWorker::getJobs() const {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
     return m_jobs;
 }
 
@@ -326,7 +326,7 @@ void AppInstallationWorker::processQueue() {
 
         int jobIndex;
         {
-            QMutexLocker locker(&m_mutex);
+            const QMutexLocker locker(&m_mutex);
             // checkQueueState() confirmed the queue was non-empty, but it RELEASED
             // the mutex before returning Proceed, so the queue can be drained in
             // between: cancel() empties m_jobQueue under this same mutex. The
@@ -348,7 +348,7 @@ void AppInstallationWorker::processQueue() {
         MigrationJob job;
         bool cancelled_in_flight = false;
         {
-            QMutexLocker locker(&m_mutex);
+            const QMutexLocker locker(&m_mutex);
             if (jobIndex < 0 || jobIndex >= m_jobs.size()) {
                 m_activeJobs--;
                 continue;
@@ -375,7 +375,7 @@ void AppInstallationWorker::processQueue() {
             continue;
         }
 
-        bool success = installPackage(jobIndex, job);
+        const bool success = installPackage(jobIndex, job);
         handleJobResult(jobIndex, job, success);
     }
 }
@@ -390,7 +390,7 @@ void AppInstallationWorker::handleJobResult(int jobIndex, MigrationJob& job, boo
     locker.unlock();
     QThread::msleep(delay_ms);
 
-    QMutexLocker retryLocker(&m_mutex);
+    const QMutexLocker retryLocker(&m_mutex);
     // A cancel() may have landed during the backoff sleep and already drained the
     // queue; do not resurrect a job onto a cancelled run.
     if (m_cancelled) {
@@ -444,8 +444,8 @@ bool AppInstallationWorker::installPackage(int jobIndex, MigrationJob& job) {
         job.status = MigrationStatus::Skipped;
         job.startTime = QDateTime::currentDateTime();
         job.endTime = job.startTime;
-        QString message = QString("Skipped %1 - newer version %2 already installed")
-                              .arg(job.appName, installed_version);
+        const QString message = QString("Skipped %1 - newer version %2 already installed")
+                                    .arg(job.appName, installed_version);
         job.errorMessage = message;
         storeJobSnapshot(jobIndex, job);
         Q_EMIT jobProgress(job.entryIndex, message);
@@ -513,7 +513,7 @@ bool AppInstallationWorker::verifyInstallation(const MigrationJob& job,
 
     auto count_match = kPackageCountPattern.match(choco_result.output);
     if (count_match.hasMatch()) {
-        int installed = count_match.captured(1).toInt();
+        const int installed = count_match.captured(1).toInt();
         if (installed <= 0) {
             sak::logWarning("[AppInstallationWorker] Choco reports 0 packages for {}",
                             job.packageId.toStdString());
@@ -586,8 +586,8 @@ bool AppInstallationWorker::isNewerVersionInstalled(const MigrationJob& job,
     }
 
     for (const auto& app : AppScanner::scanAppX()) {
-        bool name_match = nameIndicatesApp(app.name, job.appName) ||
-                          nameIndicatesApp(app.name, job.packageId);
+        const bool name_match = nameIndicatesApp(app.name, job.appName) ||
+                                nameIndicatesApp(app.name, job.packageId);
         if (name_match && isVersionNewer(app.version, *requested)) {
             installed_version = app.version;
             return true;
@@ -617,7 +617,7 @@ void AppInstallationWorker::updateJobStatus(int index,
                                             const QString& error) {
     MigrationJob job_copy;
     {
-        QMutexLocker locker(&m_mutex);
+        const QMutexLocker locker(&m_mutex);
 
         if (index < 0 || index >= m_jobs.size()) {
             return;
@@ -633,7 +633,7 @@ void AppInstallationWorker::updateJobStatus(int index,
 }
 
 void AppInstallationWorker::storeJobSnapshot(int index, const MigrationJob& job) {
-    QMutexLocker locker(&m_mutex);
+    const QMutexLocker locker(&m_mutex);
 
     if (index < 0 || index >= m_jobs.size()) {
         return;
