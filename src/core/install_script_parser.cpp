@@ -299,7 +299,7 @@ DownloadResource InstallScriptParser::buildSplattingResource(const QString& scri
 }
 
 void InstallScriptParser::appendUniqueSplattingResource(ParsedInstallScript& result,
-                                                        const DownloadResource& resource) const {
+                                                        const DownloadResource& resource) {
     if (resource.url.isEmpty() && resource.url_64bit.isEmpty()) {
         return;
     }
@@ -320,7 +320,7 @@ void InstallScriptParser::appendUniqueSplattingResource(ParsedInstallScript& res
 // Variable Resolution
 // ============================================================================
 
-QString InstallScriptParser::resolveVariables(const QString& value, const QString& script) const {
+QString InstallScriptParser::resolveVariables(const QString& value, const QString& script) {
     if (value.isEmpty()) {
         return value;
     }
@@ -371,8 +371,7 @@ QString InstallScriptParser::resolveVariables(const QString& value, const QStrin
 // Parameter Extraction
 // ============================================================================
 
-QString InstallScriptParser::extractParameter(const QString& call_text,
-                                              const QString& param_name) const {
+QString InstallScriptParser::extractParameter(const QString& call_text, const QString& param_name) {
     // Match: -paramName 'value' or -paramName "value" or -paramName $var
     const QRegularExpression pattern(
         QString::fromLatin1(kParameterPattern).arg(QRegularExpression::escape(param_name)),
@@ -398,7 +397,7 @@ QString InstallScriptParser::extractParameter(const QString& call_text,
     return value;
 }
 
-QString InstallScriptParser::extractHashtableValue(const QString& block, const QString& key) const {
+QString InstallScriptParser::extractHashtableValue(const QString& block, const QString& key) {
     // Quoted values first -- handles URLs containing ${var} or special chars
     const QRegularExpression quoted_pattern(
         QString::fromLatin1(kQuotedHashtableValuePattern).arg(QRegularExpression::escape(key)),
@@ -422,7 +421,7 @@ QString InstallScriptParser::extractHashtableValue(const QString& block, const Q
     return {};
 }
 
-int InstallScriptParser::lineNumberAt(const QString& script, int position) const {
+int InstallScriptParser::lineNumberAt(const QString& script, int position) {
     if (position < 0 || position > script.length()) {
         return 0;
     }

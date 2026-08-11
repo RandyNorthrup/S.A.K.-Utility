@@ -64,7 +64,7 @@ QJsonArray disksToJson(const PartitionInventory& inventory) {
 
 QString PartitionReportGenerator::generateHtml(const PartitionInventory& before,
                                                const PartitionInventory& after,
-                                               const PartitionExecutionResult& result) const {
+                                               const PartitionExecutionResult& result) {
     return QString::fromLatin1(report::kPartitionManagerReportDocumentOpen)
                .arg(QString::fromLatin1(report::kPartitionManagerReportStyle)) +
            QStringLiteral(
@@ -88,7 +88,7 @@ QString PartitionReportGenerator::generateHtml(const PartitionInventory& before,
 
 QString PartitionReportGenerator::generateJson(const PartitionInventory& before,
                                                const PartitionInventory& after,
-                                               const PartitionExecutionResult& result) const {
+                                               const PartitionExecutionResult& result) {
     QJsonArray steps;
     for (const auto& step : result.steps) {
         steps.append(operationStepToJson(step));

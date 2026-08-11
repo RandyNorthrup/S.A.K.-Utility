@@ -611,7 +611,7 @@ QString AiToolHealthLedger::classifyResult(const QJsonObject& result) {
     return QStringLiteral("tool_failed");
 }
 
-QDateTime AiToolHealthLedger::normalizedNow(QDateTime now_utc) const {
+QDateTime AiToolHealthLedger::normalizedNow(QDateTime now_utc) {
     return now_utc.isValid() ? now_utc.toUTC() : QDateTime::currentDateTimeUtc();
 }
 

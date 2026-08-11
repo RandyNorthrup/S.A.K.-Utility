@@ -17,11 +17,11 @@ void BrowserControl::stop() {
     started_ = false;
 }
 
-QJsonArray BrowserControl::toolCatalog() const {
+QJsonArray BrowserControl::toolCatalog() {
     return browser::browserToolCatalog();
 }
 
-bool BrowserControl::handles(const QString& name) const {
+bool BrowserControl::handles(const QString& name) {
     // The browser_* tools drive the live extension through the bridge. The
     // browser_extension_* tools are native installer tools (they set Chrome up) and must
     // NOT be routed here -- they are served by invokeTool, and routing them to the bridge

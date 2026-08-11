@@ -86,7 +86,7 @@ public:
     [[nodiscard]] bool refIndexStale() const { return ref_index_stale_; }
 
 private:
-    Outgoing refuse(const QString& reason) const;
+    static Outgoing refuse(const QString& reason);
     void fillResult(const QString& sent_cmd,
                     quint64 sent_epoch,
                     const QJsonObject& frame,

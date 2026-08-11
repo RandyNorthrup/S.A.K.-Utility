@@ -186,11 +186,11 @@ private:
                                                         const WorkflowPhase& phase,
                                                         const RunState& state,
                                                         const CancellationToken& root_token) const;
-    [[nodiscard]] AiRecoveryDecision recoveryDecisionFor(const WorkflowTemplate& workflow,
-                                                         const WorkflowPhase& phase,
-                                                         const AiPhaseExecution& execution) const;
-    void attachRecoveryDecision(AiPhaseExecution* execution,
-                                const AiRecoveryDecision& decision) const;
+    [[nodiscard]] static AiRecoveryDecision recoveryDecisionFor(const WorkflowTemplate& workflow,
+                                                                const WorkflowPhase& phase,
+                                                                const AiPhaseExecution& execution);
+    static void attachRecoveryDecision(AiPhaseExecution* execution,
+                                       const AiRecoveryDecision& decision);
     [[nodiscard]] AiPhaseExecution executeWithRecovery(const WorkflowTemplate& workflow,
                                                        const WorkflowPhase& phase,
                                                        AiPhaseExecution execution,
@@ -229,15 +229,15 @@ private:
                                                      const PhaseGroup& group,
                                                      QVector<AiPhaseExecution>* group_executions,
                                                      RunState* state) const;
-    void updateOutcomeForFailure(const WorkflowTemplate& workflow,
-                                 const WorkflowPhase& phase,
-                                 AiPhaseExecution* execution,
-                                 GroupOutcome* outcome,
-                                 RunState* state) const;
-    void recordCleanupFailureIfNeeded(const AiPhaseExecution& execution, RunState* state) const;
-    void updateOutcomeFromRecoveryDecision(const AiPhaseExecution& execution,
-                                           const AiRecoveryDecision& recovery,
-                                           GroupOutcome* outcome) const;
+    static void updateOutcomeForFailure(const WorkflowTemplate& workflow,
+                                        const WorkflowPhase& phase,
+                                        AiPhaseExecution* execution,
+                                        GroupOutcome* outcome,
+                                        RunState* state);
+    static void recordCleanupFailureIfNeeded(const AiPhaseExecution& execution, RunState* state);
+    static void updateOutcomeFromRecoveryDecision(const AiPhaseExecution& execution,
+                                                  const AiRecoveryDecision& recovery,
+                                                  GroupOutcome* outcome);
     void updateRunStatusFromGroupOutcome(const GroupOutcome& outcome, RunState* state) const;
     void runPlannedGroups(const WorkflowTemplate& workflow,
                           const QVector<PhaseGroup>& groups,

@@ -253,7 +253,7 @@ bool CredentialStore::isPersistentStorageAvailable() const noexcept {
 #endif
 }
 
-QString CredentialStore::credentialFilePath() const {
+QString CredentialStore::credentialFilePath() {
     return QDir(credentialDirectory()).filePath(QStringLiteral("openai_api_key.dpapi.json"));
 }
 

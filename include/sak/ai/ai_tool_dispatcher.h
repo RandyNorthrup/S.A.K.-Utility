@@ -93,10 +93,10 @@ private:
     void releaseLeaseForDispatch(DispatchOutcome* outcome,
                                  const AiToolCallRequest& request,
                                  const QString& lease_id) const;
-    void invokeHandler(const Handler& handler,
-                       const AiToolCallRequest& request,
-                       const QJsonObject& arguments,
-                       DispatchOutcome* outcome) const;
+    static void invokeHandler(const Handler& handler,
+                              const AiToolCallRequest& request,
+                              const QJsonObject& arguments,
+                              DispatchOutcome* outcome);
     void recordHealthForResult(const DispatchOutcome& outcome) const;
 
     QHash<QString, Handler> m_handlers;

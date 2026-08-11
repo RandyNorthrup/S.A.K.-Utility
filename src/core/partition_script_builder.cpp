@@ -4368,7 +4368,7 @@ PartitionScript PartitionScriptBuilder::buildHfsFileMutationScript(
 }
 
 PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
-    const PartitionOperation& operation, const ExternalFileSystemToolScriptRequest& request) const {
+    const PartitionOperation& operation, const ExternalFileSystemToolScriptRequest& request) {
     if (operation.target.partition_number == 0 || operation.target.size_bytes == 0) {
         return invalidScript(
             QStringLiteral("Filesystem tool operation requires a partition identity"));

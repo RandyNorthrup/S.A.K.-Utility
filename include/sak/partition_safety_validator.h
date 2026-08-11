@@ -19,8 +19,8 @@ struct PartitionValidationResult {
 
 class PartitionSafetyValidator {
 public:
-    [[nodiscard]] PartitionValidationResult validate(const PartitionInventory& inventory,
-                                                     const PartitionOperation& operation) const;
+    [[nodiscard]] static PartitionValidationResult validate(const PartitionInventory& inventory,
+                                                            const PartitionOperation& operation);
 
     [[nodiscard]] static const PartitionDiskInfo* findDisk(const PartitionInventory& inventory,
                                                            uint32_t disk_number);
@@ -29,28 +29,28 @@ public:
     [[nodiscard]] static bool isSystemProtectedPartition(const PartitionInfoEx& partition);
 
 private:
-    void validateDiskOperation(const PartitionInventory& inventory,
-                               const PartitionDiskInfo& disk,
-                               const PartitionOperation& operation,
-                               PartitionValidationResult* result) const;
-    void validatePartitionOperation(const PartitionInventory& inventory,
-                                    const PartitionDiskInfo& disk,
-                                    const PartitionInfoEx& partition,
-                                    const PartitionOperation& operation,
-                                    PartitionValidationResult* result) const;
-    void validatePayloadRawWriteTarget(const PartitionInventory& inventory,
-                                       const PartitionDiskInfo& selectedDisk,
-                                       const PartitionOperation& operation,
-                                       PartitionValidationResult* result) const;
-    void validateRawVolumeAliasWriteTarget(const PartitionInventory& inventory,
-                                           const PartitionDiskInfo& selectedDisk,
-                                           const PartitionOperation& operation,
-                                           PartitionValidationResult* result) const;
-    void validateUnallocatedOperation(const PartitionDiskInfo& disk,
+    static void validateDiskOperation(const PartitionInventory& inventory,
+                                      const PartitionDiskInfo& disk,
                                       const PartitionOperation& operation,
-                                      PartitionValidationResult* result) const;
-    void addCommonDiskWarnings(const PartitionDiskInfo& disk,
-                               PartitionValidationResult* result) const;
+                                      PartitionValidationResult* result);
+    static void validatePartitionOperation(const PartitionInventory& inventory,
+                                           const PartitionDiskInfo& disk,
+                                           const PartitionInfoEx& partition,
+                                           const PartitionOperation& operation,
+                                           PartitionValidationResult* result);
+    static void validatePayloadRawWriteTarget(const PartitionInventory& inventory,
+                                              const PartitionDiskInfo& selectedDisk,
+                                              const PartitionOperation& operation,
+                                              PartitionValidationResult* result);
+    static void validateRawVolumeAliasWriteTarget(const PartitionInventory& inventory,
+                                                  const PartitionDiskInfo& selectedDisk,
+                                                  const PartitionOperation& operation,
+                                                  PartitionValidationResult* result);
+    static void validateUnallocatedOperation(const PartitionDiskInfo& disk,
+                                             const PartitionOperation& operation,
+                                             PartitionValidationResult* result);
+    static void addCommonDiskWarnings(const PartitionDiskInfo& disk,
+                                      PartitionValidationResult* result);
 };
 
 }  // namespace sak

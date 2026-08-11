@@ -18,8 +18,11 @@ unknownMacro
 // Style suggestion to use STL algorithms; Qt-idiomatic loops are preferred.
 useStlAlgorithm
 
-// Qt Test slots are invoked by the meta-object system and cannot be static.
-functionStatic
+// Qt Test slots are invoked by the meta-object system and cannot be static. Scoped to tests/ ONLY
+// -- a global silence hid 114 production "can be static" findings. All were resolved: every pure
+// helper across the HFS/APFS/ext readers, parsers, preset builders, and stateless validators was
+// made static (163 methods over 5 cascade rounds, R5-G3/G5). Production reports 0.
+functionStatic:*tests*
 
 // Test assertions intentionally verify enum distinctness with known values. Scoped to tests/
 // ONLY -- a global silence hid real always-true/false logic findings in production code (R5-G5

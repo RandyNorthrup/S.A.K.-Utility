@@ -46,10 +46,10 @@ public:
     PackageListManager() = default;
 
     /// @brief Get names of all built-in preset lists
-    [[nodiscard]] QStringList presetNames() const;
+    [[nodiscard]] static QStringList presetNames();
 
     /// @brief Get a built-in preset list by name
-    [[nodiscard]] PackageList preset(const QString& name) const;
+    [[nodiscard]] static PackageList preset(const QString& name);
 
     /// @brief Create a new empty package list
     [[nodiscard]] static PackageList createList(const QString& name, const QString& description);
@@ -81,19 +81,19 @@ public:
 
 private:
     /// @brief Build the Office PC preset
-    [[nodiscard]] PackageList buildOfficePreset() const;
+    [[nodiscard]] static PackageList buildOfficePreset();
 
     /// @brief Build the Developer Workstation preset
-    [[nodiscard]] PackageList buildDeveloperPreset() const;
+    [[nodiscard]] static PackageList buildDeveloperPreset();
 
     /// @brief Build the Kiosk/POS preset
-    [[nodiscard]] PackageList buildKioskPreset() const;
+    [[nodiscard]] static PackageList buildKioskPreset();
 
     /// @brief Build the Security/IT Admin preset
-    [[nodiscard]] PackageList buildSecurityPreset() const;
+    [[nodiscard]] static PackageList buildSecurityPreset();
 
     /// @brief Build the Education Lab preset
-    [[nodiscard]] PackageList buildEducationPreset() const;
+    [[nodiscard]] static PackageList buildEducationPreset();
 };
 
 }  // namespace sak

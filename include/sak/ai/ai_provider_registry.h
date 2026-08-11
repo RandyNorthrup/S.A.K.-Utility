@@ -39,13 +39,13 @@ private:
     };
 
     [[nodiscard]] QString providerRegistryPath() const;
-    [[nodiscard]] QString providerRegistryResourcePath() const;
+    [[nodiscard]] static QString providerRegistryResourcePath();
     [[nodiscard]] QString appManifestPath(const QString& app_id) const;
-    [[nodiscard]] QString appManifestResourcePath(const QString& app_id) const;
-    [[nodiscard]] QJsonObject readCachedJsonObject(const QString& file_path,
-                                                   const QString& resource_path,
-                                                   CachedJsonObject* cache,
-                                                   QString* error_message) const;
+    [[nodiscard]] static QString appManifestResourcePath(const QString& app_id);
+    [[nodiscard]] static QJsonObject readCachedJsonObject(const QString& file_path,
+                                                          const QString& resource_path,
+                                                          CachedJsonObject* cache,
+                                                          QString* error_message);
 
     QString m_app_dir;
     mutable CachedJsonObject m_provider_cache;

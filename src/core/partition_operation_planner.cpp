@@ -213,14 +213,14 @@ PartitionOperation PartitionOperationPlanner::makeOperation(PartitionOperationTy
     return operation;
 }
 
-void PartitionOperationPlanner::fillRiskAndSummary(PartitionOperation* operation) const {
+void PartitionOperationPlanner::fillRiskAndSummary(PartitionOperation* operation) {
     operation->risk = riskForType(operation->type);
     operation->summary = QStringLiteral("%1 - %2").arg(toDisplayString(operation->type),
                                                        targetSummary(operation->target));
 }
 
 void PartitionOperationPlanner::expandCompositeOperation(const PartitionOperation& operation,
-                                                         OperationPreview* preview) const {
+                                                         OperationPreview* preview) {
     preview->operations.append(operation);
 }
 

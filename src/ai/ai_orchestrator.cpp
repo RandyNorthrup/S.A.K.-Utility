@@ -665,7 +665,7 @@ AiPhaseExecution AiOrchestrator::executeWorkflowPhase(const WorkflowTemplate& wo
 
 AiRecoveryDecision AiOrchestrator::recoveryDecisionFor(const WorkflowTemplate& workflow,
                                                        const WorkflowPhase& phase,
-                                                       const AiPhaseExecution& execution) const {
+                                                       const AiPhaseExecution& execution) {
     AiFailureContext failure_context;
     failure_context.workflow_id = workflow.id;
     failure_context.phase_id = execution.phase_id;
@@ -679,7 +679,7 @@ AiRecoveryDecision AiOrchestrator::recoveryDecisionFor(const WorkflowTemplate& w
 }
 
 void AiOrchestrator::attachRecoveryDecision(AiPhaseExecution* execution,
-                                            const AiRecoveryDecision& decision) const {
+                                            const AiRecoveryDecision& decision) {
     if (execution != nullptr) {
         execution->metadata.insert(QStringLiteral("recovery_decision"), decision.toJson());
     }
@@ -884,7 +884,7 @@ QVector<AiPhaseExecution> AiOrchestrator::executePhaseGroup(
 }
 
 void AiOrchestrator::recordCleanupFailureIfNeeded(const AiPhaseExecution& execution,
-                                                  RunState* state) const {
+                                                  RunState* state) {
     if (execution.phase_type.compare(QStringLiteral("cleanup"), Qt::CaseInsensitive) == 0) {
         state->result.cleanup_failures.append(execution.phase_id);
     }
@@ -892,7 +892,7 @@ void AiOrchestrator::recordCleanupFailureIfNeeded(const AiPhaseExecution& execut
 
 void AiOrchestrator::updateOutcomeFromRecoveryDecision(const AiPhaseExecution& execution,
                                                        const AiRecoveryDecision& recovery,
-                                                       GroupOutcome* outcome) const {
+                                                       GroupOutcome* outcome) {
     if (execution.subagent_status == AiSubagentStatus::Cancelled && !outcome->any_cancelled) {
         outcome->any_cancelled = true;
         outcome->first_cancel_msg = execution.error_message;
@@ -917,7 +917,7 @@ void AiOrchestrator::updateOutcomeForFailure(const WorkflowTemplate& workflow,
                                              const WorkflowPhase& phase,
                                              AiPhaseExecution* execution,
                                              GroupOutcome* outcome,
-                                             RunState* state) const {
+                                             RunState* state) {
     state->result.flags.insert(QStringLiteral("%1_failed").arg(execution->phase_id));
     if (!execution->metadata.contains(QStringLiteral("recovery_decision"))) {
         attachRecoveryDecision(execution, recoveryDecisionFor(workflow, phase, *execution));

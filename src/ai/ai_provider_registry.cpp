@@ -310,7 +310,7 @@ QString AiProviderRegistry::providerRegistryPath() const {
     return QDir(m_app_dir).filePath(QString::fromLatin1(kProviderFile));
 }
 
-QString AiProviderRegistry::providerRegistryResourcePath() const {
+QString AiProviderRegistry::providerRegistryResourcePath() {
     return QString::fromLatin1(kProvidersResource);
 }
 
@@ -320,7 +320,7 @@ QString AiProviderRegistry::appManifestPath(const QString& app_id) const {
             .arg(QString::fromLatin1(kAppManifestFileRoot), normalizedId(app_id)));
 }
 
-QString AiProviderRegistry::appManifestResourcePath(const QString& app_id) const {
+QString AiProviderRegistry::appManifestResourcePath(const QString& app_id) {
     return QStringLiteral("%1/%2.json")
         .arg(QString::fromLatin1(kAppManifestResourceRoot), normalizedId(app_id));
 }
@@ -333,7 +333,7 @@ void AiProviderRegistry::clearCache() const {
 QJsonObject AiProviderRegistry::readCachedJsonObject(const QString& file_path,
                                                      const QString& resource_path,
                                                      CachedJsonObject* cache,
-                                                     QString* error_message) const {
+                                                     QString* error_message) {
     if (cache == nullptr) {
         return {};
     }

@@ -47,10 +47,10 @@ public:
     void stop();
 
     /// The browser tool definitions to merge into `tools/list`.
-    [[nodiscard]] QJsonArray toolCatalog() const;
+    [[nodiscard]] static QJsonArray toolCatalog();
 
     /// True iff @p name is one of the browser_* tools this facade owns.
-    [[nodiscard]] bool handles(const QString& name) const;
+    [[nodiscard]] static bool handles(const QString& name);
 
     /// True while a verified relay is connected (a browser is reachable).
     [[nodiscard]] bool clientConnected() const { return pipe_.clientConnected(); }

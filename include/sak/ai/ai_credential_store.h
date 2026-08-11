@@ -13,7 +13,7 @@ public:
     [[nodiscard]] QString loadApiKey(QString* error_message = nullptr) const;
     [[nodiscard]] bool saveApiKey(const QString& api_key, QString* error_message = nullptr) const;
     [[nodiscard]] bool deleteApiKey(QString* error_message = nullptr) const;
-    [[nodiscard]] QString credentialFilePath() const;
+    [[nodiscard]] static QString credentialFilePath();
 
     [[nodiscard]] static QString redactSecrets(const QString& text);
 };

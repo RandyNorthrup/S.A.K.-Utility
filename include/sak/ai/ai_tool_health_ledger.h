@@ -88,7 +88,7 @@ public:
     [[nodiscard]] static QString classifyResult(const QJsonObject& result);
 
 private:
-    [[nodiscard]] QDateTime normalizedNow(QDateTime now_utc) const;
+    [[nodiscard]] static QDateTime normalizedNow(QDateTime now_utc);
     [[nodiscard]] int backoffMs(int consecutive_failures) const;
     [[nodiscard]] bool recordIsFresh(const AiToolHealthRecord& record, QDateTime now_utc) const;
     /// True when a PERSISTED record's timestamps are consistent with this ledger's own

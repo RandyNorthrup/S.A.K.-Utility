@@ -60,9 +60,8 @@ private:
         const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildCheckFileSystemScript(
         const PartitionOperation& operation) const;
-    [[nodiscard]] PartitionScript buildExternalFileSystemToolScript(
-        const PartitionOperation& operation,
-        const ExternalFileSystemToolScriptRequest& request) const;
+    [[nodiscard]] static PartitionScript buildExternalFileSystemToolScript(
+        const PartitionOperation& operation, const ExternalFileSystemToolScriptRequest& request);
     [[nodiscard]] PartitionScript buildSurfaceTestScript(const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildPartitionRecoveryScanScript(
         const PartitionOperation& operation) const;

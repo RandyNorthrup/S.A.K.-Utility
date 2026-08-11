@@ -655,8 +655,8 @@ private:
         return true;
     }
 
-    [[nodiscard]] bool validateContainerFeatures(const QByteArray& nxBlock,
-                                                 PartitionApfsFileReadResult* result) const {
+    [[nodiscard]] static bool validateContainerFeatures(const QByteArray& nxBlock,
+                                                        PartitionApfsFileReadResult* result) {
         const uint64_t incompatible = le64(nxBlock, kApfsNxIncompatibleFeaturesOffset);
         if ((incompatible & kApfsContainerIncompatVersion1) != 0) {
             result->blockers.append(QStringLiteral("APFS version 1 containers are unsupported"));
@@ -1431,11 +1431,11 @@ private:
         return std::nullopt;
     }
 
-    [[nodiscard]] std::optional<ObjectMapValue> bestObjectMapLeafValue(
+    [[nodiscard]] static std::optional<ObjectMapValue> bestObjectMapLeafValue(
         const QByteArray& node,
         const QVector<BtreeEntryView>& entries,
         uint64_t oid,
-        uint64_t xid) const {
+        uint64_t xid) {
         std::optional<ObjectMapValue> best;
         for (const auto& entry : entries) {
             if (!isObjectMapLeafEntry(entry)) {
@@ -1456,7 +1456,7 @@ private:
         return best;
     }
 
-    [[nodiscard]] bool isObjectMapLeafEntry(const BtreeEntryView& entry) const {
+    [[nodiscard]] static bool isObjectMapLeafEntry(const BtreeEntryView& entry) {
         return entry.key_length >= kApfsOmapKeyBytes && entry.value_length >= kApfsOmapValueBytes;
     }
 
@@ -1477,11 +1477,11 @@ private:
         return value;
     }
 
-    [[nodiscard]] std::optional<uint64_t> objectMapChildAddress(
+    [[nodiscard]] static std::optional<uint64_t> objectMapChildAddress(
         const QByteArray& node,
         const QVector<BtreeEntryView>& entries,
         uint64_t oid,
-        uint64_t xid) const {
+        uint64_t xid) {
         std::optional<uint64_t> childAddress;
         for (const auto& entry : entries) {
             if (!isObjectMapChildEntry(entry)) {
@@ -1499,7 +1499,7 @@ private:
         return childAddress;
     }
 
-    [[nodiscard]] bool isObjectMapChildEntry(const BtreeEntryView& entry) const {
+    [[nodiscard]] static bool isObjectMapChildEntry(const BtreeEntryView& entry) {
         return entry.key_length >= kApfsOmapKeyBytes &&
                entry.value_length >= kApfsBtreeChildPointerBytes;
     }
@@ -1805,7 +1805,7 @@ private:
         inodeById_.insert(record.object_id, record);
     }
 
-    uint64_t inodeDstreamSize(const QByteArray& node, const BtreeEntryView& entry) const {
+    static uint64_t inodeDstreamSize(const QByteArray& node, const BtreeEntryView& entry) {
         const qsizetype blobOffset = entry.value_offset + kApfsInodeXfieldsOffset;
         if (blobOffset + kApfsXfieldHeaderBytes > entry.value_offset + entry.value_length) {
             return 0;
@@ -2153,18 +2153,18 @@ private:
         return entries;
     }
 
-    [[nodiscard]] bool btreeTableInBounds(const QByteArray& node,
-                                          uint32_t count,
-                                          qsizetype tableStart,
-                                          qsizetype keyAreaStart,
-                                          qsizetype tocEntryBytes) const {
+    [[nodiscard]] static bool btreeTableInBounds(const QByteArray& node,
+                                                 uint32_t count,
+                                                 qsizetype tableStart,
+                                                 qsizetype keyAreaStart,
+                                                 qsizetype tocEntryBytes) {
         return count <= kApfsBtreeMaxEntryCount && tableStart >= kApfsBtreeNodeHeaderBytes &&
                tableStart + (static_cast<qsizetype>(count) * tocEntryBytes) <= node.size() &&
                keyAreaStart <= node.size();
     }
 
-    [[nodiscard]] std::optional<BtreeEntryView> fixedBtreeEntry(
-        const QByteArray& node, qsizetype toc, const BtreeEntryContext& context) const {
+    [[nodiscard]] static std::optional<BtreeEntryView> fixedBtreeEntry(
+        const QByteArray& node, qsizetype toc, const BtreeEntryContext& context) {
         const uint16_t keyOffset = le16(node, toc);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeFixedTocValueOffset);
         return BtreeEntryView{.key_offset = context.key_area_start + keyOffset,
@@ -2174,8 +2174,8 @@ private:
                                                                 : context.info.value_size};
     }
 
-    [[nodiscard]] std::optional<BtreeEntryView> variableBtreeEntry(
-        const QByteArray& node, qsizetype toc, const BtreeEntryContext& context) const {
+    [[nodiscard]] static std::optional<BtreeEntryView> variableBtreeEntry(
+        const QByteArray& node, qsizetype toc, const BtreeEntryContext& context) {
         const uint16_t keyOffset = le16(node, toc);
         const uint16_t keyLength = le16(node, toc + kApfsBtreeVariableTocKeyLengthOffset);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
@@ -2186,8 +2186,8 @@ private:
                               .value_length = valueLength};
     }
 
-    [[nodiscard]] bool btreeEntryInBounds(const QByteArray& node,
-                                          const BtreeEntryView& entry) const {
+    [[nodiscard]] static bool btreeEntryInBounds(const QByteArray& node,
+                                                 const BtreeEntryView& entry) {
         return entry.key_length > 0 && entry.value_length >= 0 && entry.key_offset >= 0 &&
                entry.value_offset >= 0 && entry.key_offset + entry.key_length <= node.size() &&
                entry.value_offset + entry.value_length <= node.size();

@@ -1950,8 +1950,8 @@ bool PartitionSafetyValidator::isSystemProtectedPartition(const PartitionInfoEx&
            partition.is_recovery;
 }
 
-PartitionValidationResult PartitionSafetyValidator::validate(
-    const PartitionInventory& inventory, const PartitionOperation& operation) const {
+PartitionValidationResult PartitionSafetyValidator::validate(const PartitionInventory& inventory,
+                                                             const PartitionOperation& operation) {
     PartitionValidationResult result;
     const PartitionDiskInfo* disk = findDisk(inventory, operation.target.disk_number);
     if (disk == nullptr) {
@@ -2125,7 +2125,7 @@ static void validateDiskRecoveryBlockers(const PartitionDiskInfo& disk,
 void PartitionSafetyValidator::validateDiskOperation(const PartitionInventory& inventory,
                                                      const PartitionDiskInfo& disk,
                                                      const PartitionOperation& operation,
-                                                     PartitionValidationResult* result) const {
+                                                     PartitionValidationResult* result) {
     validatePayloadRawWriteTarget(inventory, disk, operation, result);
     validateDiskStateBlockers(disk, operation, result);
     validateDynamicToBasicBlockers(disk, operation, result);
@@ -2139,11 +2139,10 @@ void PartitionSafetyValidator::validateDiskOperation(const PartitionInventory& i
                      "SSD wipe uses software clear; vendor secure erase is required for purge"));
 }
 
-void PartitionSafetyValidator::validatePayloadRawWriteTarget(
-    const PartitionInventory& inventory,
-    const PartitionDiskInfo& selectedDisk,
-    const PartitionOperation& operation,
-    PartitionValidationResult* result) const {
+void PartitionSafetyValidator::validatePayloadRawWriteTarget(const PartitionInventory& inventory,
+                                                             const PartitionDiskInfo& selectedDisk,
+                                                             const PartitionOperation& operation,
+                                                             PartitionValidationResult* result) {
     if (restoreOrMigrateMissingPhysicalTarget(operation)) {
         return;
     }
@@ -2199,7 +2198,7 @@ void PartitionSafetyValidator::validateRawVolumeAliasWriteTarget(
     const PartitionInventory& inventory,
     const PartitionDiskInfo& selectedDisk,
     const PartitionOperation& operation,
-    PartitionValidationResult* result) const {
+    PartitionValidationResult* result) {
     if (!targetPathIsRawDevice(operation)) {
         return;  // An image-file target: covered by the image-destination checks.
     }
@@ -2240,7 +2239,7 @@ void PartitionSafetyValidator::validatePartitionOperation(const PartitionInvento
                                                           const PartitionDiskInfo& disk,
                                                           const PartitionInfoEx& partition,
                                                           const PartitionOperation& operation,
-                                                          PartitionValidationResult* result) const {
+                                                          PartitionValidationResult* result) {
     validatePayloadRawWriteTarget(inventory, disk, operation, result);
     validatePartitionTargetState(disk, partition, operation, result);
     validatePartitionMetadataOperation(disk, partition, operation, result);
@@ -2248,10 +2247,9 @@ void PartitionSafetyValidator::validatePartitionOperation(const PartitionInvento
     validatePartitionCompositeOperation(disk, partition, operation, result);
 }
 
-void PartitionSafetyValidator::validateUnallocatedOperation(
-    const PartitionDiskInfo& disk,
-    const PartitionOperation& operation,
-    PartitionValidationResult* result) const {
+void PartitionSafetyValidator::validateUnallocatedOperation(const PartitionDiskInfo& disk,
+                                                            const PartitionOperation& operation,
+                                                            PartitionValidationResult* result) {
     if (operation.type != PartitionOperationType::Create) {
         result->blockers.append(QStringLiteral("Only create is valid for unallocated space"));
     }
@@ -2297,7 +2295,7 @@ void PartitionSafetyValidator::validateUnallocatedOperation(
 }
 
 void PartitionSafetyValidator::addCommonDiskWarnings(const PartitionDiskInfo& disk,
-                                                     PartitionValidationResult* result) const {
+                                                     PartitionValidationResult* result) {
     if (disk.is_removable) {
         result->warnings.append(QStringLiteral("Target disk is removable"));
     }

@@ -12,12 +12,12 @@ namespace sak {
 
 class PartitionReportGenerator {
 public:
-    [[nodiscard]] QString generateHtml(const PartitionInventory& before,
-                                       const PartitionInventory& after,
-                                       const PartitionExecutionResult& result) const;
-    [[nodiscard]] QString generateJson(const PartitionInventory& before,
-                                       const PartitionInventory& after,
-                                       const PartitionExecutionResult& result) const;
+    [[nodiscard]] static QString generateHtml(const PartitionInventory& before,
+                                              const PartitionInventory& after,
+                                              const PartitionExecutionResult& result);
+    [[nodiscard]] static QString generateJson(const PartitionInventory& before,
+                                              const PartitionInventory& after,
+                                              const PartitionExecutionResult& result);
     [[nodiscard]] static QJsonObject diskToJson(const PartitionDiskInfo& disk);
     [[nodiscard]] static QJsonObject operationStepToJson(const PartitionExecutionStep& step);
 };

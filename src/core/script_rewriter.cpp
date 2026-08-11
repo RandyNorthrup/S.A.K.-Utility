@@ -57,7 +57,7 @@ QString rewriteFailure(const QStringList& unreplaced,
 // ============================================================================
 
 RewrittenScript ScriptRewriter::rewrite(const ParsedInstallScript& parsed,
-                                        const QHash<QString, QString>& local_filenames) const {
+                                        const QHash<QString, QString>& local_filenames) {
     RewrittenScript result;
 
     if (parsed.original_script.isEmpty()) {
@@ -110,7 +110,7 @@ RewrittenScript ScriptRewriter::rewrite(const ParsedInstallScript& parsed,
 
 RewrittenScript ScriptRewriter::rewriteToFile(const ParsedInstallScript& parsed,
                                               const QHash<QString, QString>& local_filenames,
-                                              const QString& output_path) const {
+                                              const QString& output_path) {
     auto result = rewrite(parsed, local_filenames);
     if (!result.success) {
         return result;
@@ -180,7 +180,7 @@ ScriptRewriter::ReplacementSpan ScriptRewriter::urlReplacementSpan(const QString
 QString ScriptRewriter::replaceUrl(const QString& script,
                                    const QString& url,
                                    const QString& local_filename,
-                                   QVector<ScriptReplacement>& replacements) const {
+                                   QVector<ScriptReplacement>& replacements) {
     QString result = script;
     const QString tools_path = buildToolsPath(local_filename);
 
@@ -215,7 +215,7 @@ QString ScriptRewriter::replaceUrl(const QString& script,
     return result;
 }
 
-QString ScriptRewriter::buildToolsPath(const QString& filename) const {
+QString ScriptRewriter::buildToolsPath(const QString& filename) {
     // Produce: (Join-Path $toolsDir 'filename.ext'). A single quote inside a PowerShell
     // single-quoted string is escaped by doubling it; do so here so a quote in the filename
     // (e.g. a %27-decoded URL name) cannot terminate the literal or inject tokens.

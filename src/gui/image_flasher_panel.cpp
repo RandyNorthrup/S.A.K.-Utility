@@ -1318,7 +1318,7 @@ void ImageFlasherPanel::beginConfirmedFlash(bool is_windows_iso) {
     }
 }
 
-bool ImageFlasherPanel::isWindowsInstallISO(const QString& iso_path) const {
+bool ImageFlasherPanel::isWindowsInstallISO(const QString& iso_path) {
     // Classify from the image's own metadata (volume label / application ID via
     // IsoAnalyzer), not the filename. The old filename heuristic matched
     // "server" and routed Linux server ISOs into the Windows-installer path.

@@ -155,7 +155,7 @@ void BrowserBridgeSession::onDetached() {
     ++session_epoch_;
 }
 
-BrowserBridgeSession::Outgoing BrowserBridgeSession::refuse(const QString& reason) const {
+BrowserBridgeSession::Outgoing BrowserBridgeSession::refuse(const QString& reason) {
     return {.frame = QJsonObject{}, .ok = false, .error = reason};
 }
 

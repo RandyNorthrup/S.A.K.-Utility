@@ -32,7 +32,7 @@ constexpr qint64 kMaxPackageListFileBytes = 8LL * 1024 * 1024;
 // Preset Lists
 // ============================================================================
 
-QStringList PackageListManager::presetNames() const {
+QStringList PackageListManager::presetNames() {
     return {"Office PC",
             "Developer Workstation",
             "Kiosk / POS",
@@ -40,7 +40,7 @@ QStringList PackageListManager::presetNames() const {
             "Education Lab"};
 }
 
-PackageList PackageListManager::preset(const QString& name) const {
+PackageList PackageListManager::preset(const QString& name) {
     if (name == "Office PC") {
         return buildOfficePreset();
     }
@@ -276,7 +276,7 @@ QVector<QPair<QString, QString>> PackageListManager::toPackagePairs(const Packag
 // Preset Builders
 // ============================================================================
 
-PackageList PackageListManager::buildOfficePreset() const {
+PackageList PackageListManager::buildOfficePreset() {
     auto list = createList("Office PC",
                            "Standard office workstation with productivity "
                            "tools, browsers, and document viewers");
@@ -295,7 +295,7 @@ PackageList PackageListManager::buildOfficePreset() const {
     return list;
 }
 
-PackageList PackageListManager::buildDeveloperPreset() const {
+PackageList PackageListManager::buildDeveloperPreset() {
     auto list = createList("Developer Workstation",
                            "Software development tools, IDEs, runtimes, "
                            "and version control utilities");
@@ -316,7 +316,7 @@ PackageList PackageListManager::buildDeveloperPreset() const {
     return list;
 }
 
-PackageList PackageListManager::buildKioskPreset() const {
+PackageList PackageListManager::buildKioskPreset() {
     auto list = createList("Kiosk / POS",
                            "Minimal setup for kiosk or point-of-sale "
                            "terminals with only essential software");
@@ -329,7 +329,7 @@ PackageList PackageListManager::buildKioskPreset() const {
     return list;
 }
 
-PackageList PackageListManager::buildSecurityPreset() const {
+PackageList PackageListManager::buildSecurityPreset() {
     auto list = createList("Security / IT Admin",
                            "Security tools, network utilities, and system "
                            "administration software for IT professionals");
@@ -348,7 +348,7 @@ PackageList PackageListManager::buildSecurityPreset() const {
     return list;
 }
 
-PackageList PackageListManager::buildEducationPreset() const {
+PackageList PackageListManager::buildEducationPreset() {
     auto list = createList("Education Lab",
                            "Software for educational computer labs with "
                            "browsers, office suite, and educational tools");

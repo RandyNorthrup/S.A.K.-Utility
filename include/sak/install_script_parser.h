@@ -100,21 +100,21 @@ private:
                                                           const QRegularExpressionMatch& match,
                                                           ParsedInstallScript& result) const;
 
-    void appendUniqueSplattingResource(ParsedInstallScript& result,
-                                       const DownloadResource& resource) const;
+    static void appendUniqueSplattingResource(ParsedInstallScript& result,
+                                              const DownloadResource& resource);
 
     /// @brief Resolve PowerShell variable references ($varName) in a value
-    [[nodiscard]] QString resolveVariables(const QString& value, const QString& script) const;
+    [[nodiscard]] static QString resolveVariables(const QString& value, const QString& script);
 
     /// @brief Extract a named parameter value from a function call
-    [[nodiscard]] QString extractParameter(const QString& call_text,
-                                           const QString& param_name) const;
+    [[nodiscard]] static QString extractParameter(const QString& call_text,
+                                                  const QString& param_name);
 
     /// @brief Extract a named parameter from a hashtable block
-    [[nodiscard]] QString extractHashtableValue(const QString& block, const QString& key) const;
+    [[nodiscard]] static QString extractHashtableValue(const QString& block, const QString& key);
 
     /// @brief Find the line number for a position in the script
-    [[nodiscard]] int lineNumberAt(const QString& script, int position) const;
+    [[nodiscard]] static int lineNumberAt(const QString& script, int position);
 };
 
 }  // namespace sak

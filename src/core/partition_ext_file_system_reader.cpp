@@ -655,7 +655,7 @@ private:
         return true;
     }
 
-    [[nodiscard]] ExtInode parseInode(uint32_t inodeNumber, const QByteArray& bytes) const {
+    [[nodiscard]] static ExtInode parseInode(uint32_t inodeNumber, const QByteArray& bytes) {
         ExtInode inode;
         inode.inode_number = inodeNumber;
         inode.mode = le16(bytes, kExtInodeModeOffset);
@@ -701,7 +701,7 @@ private:
         return current;
     }
 
-    [[nodiscard]] QString normalizedDisplayPath(const QString& path) const {
+    [[nodiscard]] static QString normalizedDisplayPath(const QString& path) {
         QStringList local_blockers;
         const QStringList parts = pathParts(path, &local_blockers);
         if (parts.isEmpty()) {
@@ -752,18 +752,18 @@ private:
         }
     }
 
-    [[nodiscard]] bool directoryRecordIsValid(qsizetype offset,
-                                              qsizetype blockEnd,
-                                              uint16_t recLen,
-                                              unsigned char nameLen) const {
+    [[nodiscard]] static bool directoryRecordIsValid(qsizetype offset,
+                                                     qsizetype blockEnd,
+                                                     uint16_t recLen,
+                                                     unsigned char nameLen) {
         return recLen >= kDirEntryHeaderBytes && offset + recLen <= blockEnd &&
                nameLen <= recLen - kDirEntryHeaderBytes;
     }
 
-    void appendDirectoryRecord(const QByteArray& bytes,
-                               qsizetype offset,
-                               unsigned char nameLen,
-                               QVector<DirectoryRecord>* records) const {
+    static void appendDirectoryRecord(const QByteArray& bytes,
+                                      qsizetype offset,
+                                      unsigned char nameLen,
+                                      QVector<DirectoryRecord>* records) {
         const uint32_t inode = le32(bytes, offset);
         if (inode == 0 || nameLen == 0) {
             return;
@@ -857,7 +857,7 @@ private:
         return output;
     }
 
-    [[nodiscard]] bool fileSizeWithinReadCap(const ExtInode& inode, uint64_t maxBytes) const {
+    [[nodiscard]] static bool fileSizeWithinReadCap(const ExtInode& inode, uint64_t maxBytes) {
         return inode.size_bytes <= maxBytes &&
                inode.size_bytes <= static_cast<uint64_t>(std::numeric_limits<qsizetype>::max());
     }
@@ -1074,8 +1074,8 @@ private:
         return true;
     }
 
-    [[nodiscard]] std::optional<uint64_t> physicalBlockFromExtents(
-        const QVector<ExtentRecord>& extents, uint64_t logical) const {
+    [[nodiscard]] static std::optional<uint64_t> physicalBlockFromExtents(
+        const QVector<ExtentRecord>& extents, uint64_t logical) {
         // Binary search the sorted, non-overlapping extents (O(log n) per block instead of the old
         // linear scan, which was O(blocks * extents) across a whole file read). Find the last
         // extent whose logical_start <= logical, then confirm it actually covers the block.

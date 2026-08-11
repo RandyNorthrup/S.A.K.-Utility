@@ -51,17 +51,18 @@ public:
     /// @param parsed Previously parsed install script
     /// @param local_filenames Map of original URLs to local filenames
     /// @return Rewritten script with local references
-    [[nodiscard]] RewrittenScript rewrite(const ParsedInstallScript& parsed,
-                                          const QHash<QString, QString>& local_filenames) const;
+    [[nodiscard]] static RewrittenScript rewrite(const ParsedInstallScript& parsed,
+                                                 const QHash<QString, QString>& local_filenames);
 
     /// @brief Rewrite and save to a file
     /// @param parsed Previously parsed install script
     /// @param local_filenames Map of original URLs to local filenames
     /// @param output_path File path to write the rewritten script
     /// @return Rewritten script result
-    [[nodiscard]] RewrittenScript rewriteToFile(const ParsedInstallScript& parsed,
-                                                const QHash<QString, QString>& local_filenames,
-                                                const QString& output_path) const;
+    [[nodiscard]] static RewrittenScript rewriteToFile(
+        const ParsedInstallScript& parsed,
+        const QHash<QString, QString>& local_filenames,
+        const QString& output_path);
 
     /// @brief A [start, length] span within a script to overwrite.
     struct ReplacementSpan {
@@ -80,13 +81,13 @@ public:
 
 private:
     /// @brief Replace a single URL in script content with a local path
-    [[nodiscard]] QString replaceUrl(const QString& script,
-                                     const QString& url,
-                                     const QString& local_filename,
-                                     QVector<ScriptReplacement>& replacements) const;
+    [[nodiscard]] static QString replaceUrl(const QString& script,
+                                            const QString& url,
+                                            const QString& local_filename,
+                                            QVector<ScriptReplacement>& replacements);
 
     /// @brief Build a $toolsDir-relative path expression
-    [[nodiscard]] QString buildToolsPath(const QString& filename) const;
+    [[nodiscard]] static QString buildToolsPath(const QString& filename);
 };
 
 }  // namespace sak

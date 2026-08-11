@@ -209,7 +209,7 @@ private:
     ///        Called immediately before each raw-image flash starts.
     void applyFlasherSettings();
     /** @brief Return true if the ISO is a Windows installer (needs special handling) */
-    bool isWindowsInstallISO(const QString& iso_path) const;
+    static bool isWindowsInstallISO(const QString& iso_path);
     /** @brief Create a bootable Windows USB instead of raw flash */
     void createWindowsUSB();
     /** @brief Wire signal/slot connections for the Windows USB creator worker */

@@ -147,7 +147,7 @@ void AiToolDispatcher::setHealthLedger(AiToolHealthLedger* ledger) {
 void AiToolDispatcher::invokeHandler(const Handler& handler,
                                      const AiToolCallRequest& request,
                                      const QJsonObject& arguments,
-                                     DispatchOutcome* outcome) const {
+                                     DispatchOutcome* outcome) {
     QElapsedTimer timer;
     timer.start();
     try {
