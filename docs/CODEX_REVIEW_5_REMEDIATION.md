@@ -2152,6 +2152,28 @@ Release build + ctest 225/225, then commit):
       file_explorer_properties_dialog.cpp makeCancelableLister. LESSON: for
       use-internal-linkage the LINK stage -- not ctest, not the clang run -- is the
       gate; many production helpers here are deliberately test-visible seams.
+    * wave 5 (ffc9984) readability-implicit-bool-conversion, 1413 across 131 files
+      (pointer tests -> == / != nullptr, Win32 BOOL -> == / != 0). No
+      false-positive tail; genuinely additive. Control-flow keyword counts
+      verified unchanged per file.
+    * wave 6 (87d3d66) modernize-use-designated-initializers, 102 files. Removed a
+      redundant comment-designator idiom in 2 files (179 sites, backreference-
+      guarded so only exact duplicate text dropped). SEVEN files reverted/excluded
+      because naming the fields expanded inits past the 70-line lizard limit
+      (app_action_bridge, app_mutating_actions, app_readonly_actions,
+      disk_benchmark_worker, partition_apfs_writer COW writers,
+      user_profile_restore_wizard_execute, browser_contract spec tables) --
+      refactoring safety-critical code for a cosmetic init change is the wrong
+      trade.
+  END OF SAFE BATCH-AUTOFIX (waves 1-6). Everything left is heavier per-item
+  work, NOT a kick-off-a-wave check:
+    - use-ranges (236): Qt rewrites broke twice; MANUAL per site.
+    - unchecked-container-access (2383): [] -> .at() CHANGES SEMANTICS (throws) --
+      hand-review each, not an autofix wave.
+    - security / narrowing tier (~670): hand-verify each (a truncation is a real
+      bug or an intended explicit cast).
+    - readability-identifier-naming (15705, 60%): LAST, highest-risk, small batches.
+    - then wire clang-tidy into pre-commit + CI (R5-G1-4).
 
 ### G2 - re-enable the 30 disabled clang-tidy checks
 
