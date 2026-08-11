@@ -1,0 +1,16 @@
+# =============================================================================
+# S.A.K. Utility -- src/core/ clang-tidy override
+# =============================================================================
+# ACCEPTED EXCEPTION (R5-G12, tracked in docs/CODEX_REVIEW_5_REMEDIATION.md):
+# readability-identifier-naming is disabled for the core raw-filesystem/parser
+# layer. These are very large, lambda-heavy translation units (multi-thousand
+# line APFS/HFS/PST/mbox engines). clang-tidy's rename FIX is unreliable at that
+# scale: it produces partial local renames (declaration renamed, some uses left)
+# that can compile only by accident and would silently change behavior if an
+# un-renamed use resolved to another in-scope symbol. A false rename in the
+# raw-block writers is worse than the style gap, so core naming stays as-is.
+# The gui layer WAS renamed (smaller panels autofix reliably); core is the
+# documented, permanent carve-out. Every OTHER check still runs on core.
+InheritParentConfig: true
+Checks: >
+  -readability-identifier-naming

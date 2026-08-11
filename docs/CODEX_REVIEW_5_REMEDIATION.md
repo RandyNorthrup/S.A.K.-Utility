@@ -2205,45 +2205,61 @@ Release build + ctest 225/225, then commit):
       * other integer-safety: DONE -- the whole SECURITY AND CORRECTNESS TIER (995) is
         closed (narrowing + widening + cert-err33 + small checks + container-access
         audit); see R5-G12-6..12 above.
-    - readability-identifier-naming: IN PROGRESS (config fixed + batches 1-2 done;
-      gui/core deferred). See the NAMING TIER block below.
+    - readability-identifier-naming: batches 1-3 DONE (threading + 5 small dirs + gui);
+      core is an accepted, documented exception. See the NAMING TIER block below.
     - then wire clang-tidy into pre-commit + CI (R5-G1-4).
 
   NAMING TIER (readability-identifier-naming):
-    CONFIG BUG FIXED FIRST (commit 8f227aa): the generic ConstantCase/ConstantPrefix
-    (CamelCase + k) applied to EVERY const-qualified variable with no more-specific
-    match -- including plain `const QString bar` locals and `for (const auto x : ...)`
-    loop variables -- because .clang-tidy had no LocalConstant / ConstantParameter /
-    ConstantMember overrides. A trial whole-tree autofix renamed ~7000 const locals to
-    kBar-style names (wrong: k is for compile-time constants). Adding the overrides
-    (const locals/params -> lower_case no prefix; const members -> m_) dropped the
-    measured debt from 15705 to 8833. Also added -FileFilter to run_clang_tidy.ps1 for
-    per-directory batching.
+    TWO too-broad-config bugs were found and fixed before any mass rename, each the same
+    class of error -- a generic rule with no more-specific access/const override:
+      CONFIG BUG 1 (commit 8f227aa): the generic ConstantCase/ConstantPrefix (CamelCase
+        + k) applied to EVERY const-qualified variable -- including plain `const QString
+        bar` locals and `for (const auto x : ...)` loop variables -- because there were
+        no LocalConstant / ConstantParameter / ConstantMember overrides. A trial
+        whole-tree autofix renamed ~7000 const locals to kBar-style names (wrong: k is
+        for compile-time constants). Adding the overrides (const locals/params ->
+        lower_case no prefix; const members -> m_) dropped the measured debt from 15705
+        to 8833. Also added -FileFilter to run_clang_tidy.ps1 for per-directory batching
+        (a trailing path regex; use dots for the separator, e.g. 'src.gui.', because a
+        [\\/] char class collapses to slash-only passing through cmd.exe).
+      CONFIG BUG 2 (commit 372ce1d): a blanket MemberPrefix 'm_' demanded the m_ prefix
+        on EVERY data member, including public aggregate/DTO fields (PartitionTarget,
+        PartitionExecutionResult, the local wizard/widget result structs) that the
+        codebase deliberately leaves bare. The real convention is access-scoped:
+        private/protected class members carry m_, public struct members do not. Added
+        PublicMember* (no prefix) + PrivateMember*/ProtectedMember* (m_). Found when the
+        first gui autofix wrongly m_-prefixed a local PartitionWizardResult and cascaded
+        ~40 member-access desyncs; with the split, the re-autofix produced none.
     BATCHES DONE (each: autofix -> clang-format -> full build + ctest 225/225):
       * batch 1, src/threading (commit 50d5675): camelCase -> snake_case.
       * batch 2, src/ai + actions + elevated + tools + win32mcp (commit 43f1343, 36
-        files). One template/auto member desync hand-fixed (see below).
-    GUI + CORE DEFERRED (the ~8000 remaining, ~2434 + ~6347). Two independent
-    reliability problems make a mechanical autofix unsafe on the large lambda-heavy
-    files (esp. partition_manager_panel.cpp, ~16k lines):
-      1. Member (m_) renames desync: clang-tidy renames a struct field in its
-         definition, the designated initializers, and concrete uses, but MISSES uses
-         where the object is a dependent `const auto&` / lambda capture (e.g.
-         CodeDescriptionEntry::code in a find_if lambda; BackupRestoreWidgets and
-         PartitionWizardResult fields accessed through captured references). Each is a
-         hidden compile break.
-      2. Even LOCAL renames come out partial on the big file: clang-tidy renamed
-         `rowItem`/`rowData` at their declarations but left the uses a few lines later
-         un-renamed (rowItem -> row_item decl, rowItem use kept), producing an
-         inconsistent state that only compiles by accident. A partial rename that
-         happened to resolve to a different in-scope symbol would be a SILENT behavior
-         change the build could not catch.
-    Rather than hand-patch thousands of unreliable renames across gui + core (and risk
-    a silent partial rename slipping the gate), these two directories are left for a
-    careful per-file pass or a more reliable renamer. The convention is now correct in
-    .clang-tidy, so the work is well-defined; it is the tooling reliability on huge TUs,
-    not the plan, that is the blocker. The clean batches (threading + 5 small dirs) are
-    committed and gated.
+        files). One template/auto member desync hand-fixed.
+      * batch 3, src/gui (commit 372ce1d): all 40 changed .cpp + 9 headers, 1879 -> 0.
+        METHOD that made the huge lambda-heavy files safe: run the autofix over ALL 56
+        gui TUs in ONE run-clang-tidy pass so member renames apply consistently across
+        the set (not per-file), and let the Release build be the oracle. Only
+        partition_manager_panel.cpp (11.7k lines) came out with partial LOCAL renames --
+        declaration renamed, a few uses a few lines later left (immediateStatus,
+        partitionSizes, targetText, rowItem, rowData). EVERY straggler surfaced as a hard
+        compile error (C2065/C2039), never a silent accidental-resolve, so the build was
+        a complete oracle; each was hand-completed, then a whole-file grep for the old
+        names AND a post-fix re-measure both returned 0. run-clang-tidy renames parameter
+        names only in .cpp definitions, so 63 declaration parameter names across 9 gui
+        headers were hand-synced to their renamed definitions (cosmetic; clears cppcheck
+        funcArgNamesDifferent), each scoped to the header owned by the renamed .cpp. The
+        whole-word header sync over-reached ONCE onto a same-named public getter
+        (installedApps()) -- caught by the post-commit Release gate (cppcheck cannot do
+        member resolution), reverted (methods stay camelBack), re-gated 225/225.
+    CORE = ACCEPTED EXCEPTION (src/core/.clang-tidy: InheritParentConfig + Checks
+      '-readability-identifier-naming'; per user direction 2026-08-11 "add an exception
+      for core but fix gui"). The core raw-filesystem/parser layer is multi-thousand-line
+      lambda-heavy APFS/HFS/PST/mbox engines where clang-tidy's rename fix is unreliable
+      (partial local renames that compile only by accident and could silently change
+      behavior if an un-renamed use resolved to another in-scope symbol -- a false rename
+      in the raw-block writers is worse than a style gap). EVERY OTHER clang-tidy check
+      still runs on core; only naming is carved out. gui proved the autofix IS safe on
+      the smaller panels (build+re-measure closed it to 0), so gui was fully renamed;
+      core stays as-is by decision, not by tooling defeat.
 
   UNCHECKED-CONTAINER-ACCESS AUDIT (cppcoreguidelines-pro-bounds-avoid-unchecked-
   container-access): treated as a security audit, NOT a mechanical []->at() sweep.
