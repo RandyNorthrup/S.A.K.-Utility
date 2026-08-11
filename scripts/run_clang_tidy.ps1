@@ -30,7 +30,8 @@ param(
     [string]$Checks = "",
     [switch]$Fix,
     [int]$Jobs = 6,
-    [string]$LogPath = ""
+    [string]$LogPath = "",
+    [string]$FileFilter = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,6 +80,10 @@ try {
     $tidyArgs = "-p `"$fpDir`" -clang-tidy-binary `"$tidyBin`" -j $Jobs -quiet"
     if ($Checks) { $tidyArgs += " -checks=`"-*,$Checks`"" }
     if ($Fix) { $tidyArgs += " -fix -clang-apply-replacements-binary `"$applyBin`"" }
+
+    # A trailing positional regex restricts run-clang-tidy to matching source paths, so a
+    # large check (e.g. readability-identifier-naming) can be applied one directory at a time.
+    if ($FileFilter) { $tidyArgs += " `"$FileFilter`"" }
 
     $cmd = "call `"$vcvars`" >nul 2>&1 && python `"$runTidy`" $tidyArgs"
     Write-Host "running clang-tidy (checks='$Checks' fix=$Fix) -> $LogPath"

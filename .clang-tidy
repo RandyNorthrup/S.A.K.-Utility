@@ -114,6 +114,24 @@ CheckOptions:
   - key: readability-identifier-naming.StaticConstantPrefix
     value: 'k'
 
+  # A plain `const` local / parameter / member is NOT a compile-time constant: the k prefix
+  # is reserved for constexpr / static / global / enum constants. Without these overrides the
+  # generic ConstantCase rule above would demand a k prefix on every `const QString bar` local
+  # (and even `for (const auto x : ...)` loop variables). Const locals and parameters follow
+  # their non-const kin (lower_case, no prefix); const members keep the m_ member prefix.
+  - key: readability-identifier-naming.LocalConstantCase
+    value: lower_case
+  - key: readability-identifier-naming.LocalConstantPointerCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantPointerParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantMemberPrefix
+    value: 'm_'
+
   # Global constants (also k prefix)
   - key: readability-identifier-naming.GlobalConstantCase
     value: CamelCase
