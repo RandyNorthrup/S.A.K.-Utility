@@ -25,7 +25,7 @@ constexpr int kHexBase = 16;
 constexpr double kMaxAppPidExactDouble = 9.0e15;
 
 void setError(QString* error, const QString& message) {
-    if (error) {
+    if (error != nullptr) {
         *error = message;
     }
 }

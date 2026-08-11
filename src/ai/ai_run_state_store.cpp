@@ -26,7 +26,7 @@ constexpr qint64 kMaxRunStateBytes = 16 * 1024 * 1024;  // 16 MiB
 // guard in here keeps each failure path a single statement instead of its own branch, so a
 // function's control flow reflects the checks it makes and not the optional reporting.
 void setError(QString* error_message, const QString& text) {
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = text;
     }
 }

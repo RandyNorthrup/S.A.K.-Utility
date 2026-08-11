@@ -317,7 +317,7 @@ bool LinuxISODownloader::prepareAria2cDownload(const QString& url,
 }
 
 void LinuxISODownloader::resetAria2cProcess() {
-    if (m_aria2cProcess) {
+    if (m_aria2cProcess != nullptr) {
         m_aria2cProcess->disconnect();
         m_aria2cProcess->deleteLater();
         m_aria2cProcess = nullptr;
@@ -424,7 +424,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
     m_progressTimer->stop();
 
     // Read any remaining output
-    if (m_aria2cProcess) {
+    if (m_aria2cProcess != nullptr) {
         const QString output = QString::fromUtf8(m_aria2cProcess->readAllStandardOutput());
         if (!output.trimmed().isEmpty()) {
             sak::logInfo("aria2c final output: " + output.trimmed().toStdString());
@@ -490,7 +490,7 @@ void LinuxISODownloader::onProgressPollTimer() {
     }
 
     // Read aria2c stdout for progress info
-    if (!m_aria2cProcess) {
+    if (m_aria2cProcess == nullptr) {
         return;
     }
 
@@ -840,7 +840,7 @@ void LinuxISODownloader::cancel() {
     m_progressTimer->stop();
     m_catalog->cancelAll();
 
-    if (m_aria2cProcess && m_aria2cProcess->state() != QProcess::NotRunning) {
+    if ((m_aria2cProcess != nullptr) && m_aria2cProcess->state() != QProcess::NotRunning) {
         m_aria2cProcess->kill();
     }
 

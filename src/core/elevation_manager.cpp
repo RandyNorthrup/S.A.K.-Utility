@@ -62,7 +62,7 @@ void appendQuotedArg(std::wstring& out, const std::wstring& arg) {
 // missing handle, a failed wait, an unreadable exit code, or a non-zero exit code, so a caller
 // that asked to wait is never told an operation succeeded that we could not actually observe.
 std::expected<void, sak::error_code> waitForElevatedExit(HANDLE process) {
-    if (!process) {
+    if (process == nullptr) {
         sak::logError("Elevated launch returned no process handle; cannot confirm completion");
         return std::unexpected(sak::error_code::execution_failed);
     }
@@ -71,7 +71,7 @@ std::expected<void, sak::error_code> waitForElevatedExit(HANDLE process) {
         return std::unexpected(sak::error_code::execution_failed);
     }
     DWORD exit_code = 0;
-    if (!GetExitCodeProcess(process, &exit_code)) {
+    if (GetExitCodeProcess(process, &exit_code) == 0) {
         sak::logError("Failed to read elevated process exit code: error {}", GetLastError());
         return std::unexpected(sak::error_code::execution_failed);
     }
@@ -85,7 +85,7 @@ std::expected<void, sak::error_code> waitForElevatedExit(HANDLE process) {
 
 std::wstring ElevationManager::serializeArgsForRelaunch(int argc, wchar_t* const* argv) {
     std::wstring args;
-    for (int i = 1; argv && i < argc; ++i) {
+    for (int i = 1; (argv != nullptr) && i < argc; ++i) {
         if (i > 1) {
             args += L' ';
         }
@@ -109,7 +109,7 @@ bool ElevationManager::isElevated() noexcept {
                                  0,
                                  0,
                                  0,
-                                 &administrators_group)) {
+                                 &administrators_group) != 0) {
         CheckTokenMembership(nullptr, administrators_group, &is_admin);
         FreeSid(administrators_group);
     }
@@ -150,7 +150,7 @@ auto ElevationManager::get_command_line_args() -> std::expected<std::wstring, sa
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(cmd_line, &argc);
 
-    if (!argv) {
+    if (argv == nullptr) {
         // A genuine parse failure is NOT the same as "no arguments": fail closed instead of
         // relaunching elevated with whatever arguments this process was started with dropped.
         sak::logError("CommandLineToArgvW failed: error {}", GetLastError());
@@ -213,7 +213,7 @@ auto ElevationManager::executeElevated(const std::wstring& executable,
     sei.nShow = SW_NORMAL;
     sei.fMask = SEE_MASK_NOCLOSEPROCESS;
 
-    if (!ShellExecuteExW(&sei)) {
+    if (ShellExecuteExW(&sei) == 0) {
         DWORD const error = GetLastError();
 
         if (error == ERROR_CANCELLED) {
@@ -230,14 +230,14 @@ auto ElevationManager::executeElevated(const std::wstring& executable,
     if (wait_for_exit) {
         sak::logInfo("Waiting for elevated process to complete...");
         auto wait_result = waitForElevatedExit(sei.hProcess);
-        if (sei.hProcess) {
+        if (sei.hProcess != nullptr) {
             CloseHandle(sei.hProcess);
         }
         if (!wait_result) {
             return std::unexpected(wait_result.error());
         }
         sak::logInfo("Elevated process completed successfully");
-    } else if (sei.hProcess) {
+    } else if (sei.hProcess != nullptr) {
         CloseHandle(sei.hProcess);
     }
 
@@ -257,7 +257,7 @@ std::string ElevationManager::getElevationErrorMessage(unsigned long error_code)
                                       nullptr);
 
     std::string message;
-    if (size > 0 && message_buffer) {
+    if (size > 0 && (message_buffer != nullptr)) {
         message = message_buffer;
         // Remove trailing newlines
         while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) {

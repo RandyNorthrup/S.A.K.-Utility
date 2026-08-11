@@ -45,17 +45,17 @@ void terminateProcessTree(DWORD process_id) {
     if (snapshot != INVALID_HANDLE_VALUE) {
         PROCESSENTRY32W entry{};
         entry.dwSize = sizeof(entry);
-        if (Process32FirstW(snapshot, &entry)) {
+        if (Process32FirstW(snapshot, &entry) != 0) {
             do {
                 if (entry.th32ParentProcessID == process_id) {
                     terminateProcessTree(entry.th32ProcessID);
                 }
-            } while (Process32NextW(snapshot, &entry));
+            } while (Process32NextW(snapshot, &entry) != 0);
         }
         CloseHandle(snapshot);
     }
     HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, process_id);
-    if (process) {
+    if (process != nullptr) {
         TerminateProcess(process, 1);
         CloseHandle(process);
     }
@@ -162,7 +162,7 @@ public:
         const int id = nextId();
         const QJsonObject message =
             request(mcp::toolCallPayload(id, tool_name, arguments), id, error_message);
-        if (error_message && !error_message->isEmpty()) {
+        if ((error_message != nullptr) && !error_message->isEmpty()) {
             return {};
         }
         const QJsonObject result = message.value(QStringLiteral("result")).toObject();
@@ -193,7 +193,7 @@ private:
     }
 
     bool writeMessage(const QJsonObject& object, QString* error_message) {
-        if (!m_process || m_process->state() == QProcess::NotRunning) {
+        if ((m_process == nullptr) || m_process->state() == QProcess::NotRunning) {
             setError(error_message, QStringLiteral("MCP stdio server is not running"));
             return false;
         }
@@ -211,7 +211,7 @@ private:
         timer.start();
         for (;;) {
             const QJsonObject matched = drainMatchingLines(id, error_message);
-            if (!matched.isEmpty() || (error_message && !error_message->isEmpty())) {
+            if (!matched.isEmpty() || ((error_message != nullptr) && !error_message->isEmpty())) {
                 return matched;
             }
             if (m_process->bytesAvailable() > kMaxStdioReadBufferBytes) {
@@ -277,7 +277,7 @@ private:
                          QStringLiteral("MCP stdio response missing a result object"));
                 return {};
             }
-            if (error_message) {
+            if (error_message != nullptr) {
                 error_message->clear();
             }
             return message;
@@ -286,7 +286,7 @@ private:
     }
 
     void drainStderr() {
-        if (!m_process) {
+        if (m_process == nullptr) {
             return;
         }
         m_stderrTail.append(m_process->readAllStandardError());
@@ -315,7 +315,7 @@ private:
 
     void stopProcess() {
 #ifdef Q_OS_WIN
-        if (m_jobHandle) {
+        if (m_jobHandle != nullptr) {
             // The kill-on-close Job Object reaps the entire descendant tree -- including a
             // server that already exited on its own and left orphaned descendants, which the
             // NotRunning early-return below would otherwise skip. Supersedes the per-process
@@ -324,7 +324,7 @@ private:
             return;
         }
 #endif
-        if (!m_process || m_process->state() == QProcess::NotRunning) {
+        if ((m_process == nullptr) || m_process->state() == QProcess::NotRunning) {
             return;
         }
         const qint64 pid = m_process->processId();
@@ -340,35 +340,35 @@ private:
 
 #ifdef Q_OS_WIN
     void assignProcessToJob() {
-        if (!m_process || m_process->processId() <= 0) {
+        if ((m_process == nullptr) || m_process->processId() <= 0) {
             return;
         }
         m_jobHandle = ::CreateJobObjectW(nullptr, nullptr);
-        if (!m_jobHandle) {
+        if (m_jobHandle == nullptr) {
             return;
         }
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if (!::SetInformationJobObject(
-                m_jobHandle, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        if (::SetInformationJobObject(
+                m_jobHandle, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
             closeJob();  // Without KILL_ON_JOB_CLOSE the job cannot guarantee cleanup; drop it.
             return;
         }
         const HANDLE proc = ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE,
                                           FALSE,
                                           static_cast<DWORD>(m_process->processId()));
-        if (!proc) {
+        if (proc == nullptr) {
             closeJob();
             return;
         }
-        if (!::AssignProcessToJobObject(m_jobHandle, proc)) {
+        if (::AssignProcessToJobObject(m_jobHandle, proc) == 0) {
             closeJob();  // Not in the job -> closing it would reap nothing; fall back.
         }
         ::CloseHandle(proc);
     }
 
     void closeJob() {
-        if (m_jobHandle) {
+        if (m_jobHandle != nullptr) {
             ::CloseHandle(m_jobHandle);  // KILL_ON_JOB_CLOSE reaps any surviving descendants.
             m_jobHandle = nullptr;
         }
@@ -376,7 +376,7 @@ private:
 #endif
 
     static void setError(QString* error_message, const QString& message) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = message;
         }
     }
@@ -408,7 +408,7 @@ bool AiMcpStdioSession::open(const AiMcpSessionConfig& config, QString* error_me
     if (!m_thread->isRunning()) {
         delete m_thread;
         m_thread = nullptr;
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not start MCP session worker thread");
         }
         return false;
@@ -430,7 +430,7 @@ bool AiMcpStdioSession::open(const AiMcpSessionConfig& config, QString* error_me
         error = QStringLiteral("Could not dispatch open to the MCP session worker");
         ok = false;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = error;
     }
     m_open = ok;
@@ -445,8 +445,8 @@ bool AiMcpStdioSession::isOpen() const {
 }
 
 QVector<AiMcpToolDescriptor> AiMcpStdioSession::listTools(QString* error_message) {
-    if (!m_open || !m_worker) {
-        if (error_message) {
+    if (!m_open || (m_worker == nullptr)) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP session is not open");
         }
         return {};
@@ -458,13 +458,13 @@ QVector<AiMcpToolDescriptor> AiMcpStdioSession::listTools(QString* error_message
         [this, &result, &error]() { result = m_worker->doListTools(&error); },
         Qt::BlockingQueuedConnection);
     if (!invoked) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not dispatch tools/list to the MCP session worker");
         }
         return {};
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = error;
     }
     if (!error.isEmpty()) {
@@ -476,8 +476,8 @@ QVector<AiMcpToolDescriptor> AiMcpStdioSession::listTools(QString* error_message
 QJsonObject AiMcpStdioSession::callTool(const QString& tool_name,
                                         const QJsonObject& arguments,
                                         QString* error_message) {
-    if (!m_open || !m_worker) {
-        if (error_message) {
+    if (!m_open || (m_worker == nullptr)) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP session is not open");
         }
         return {};
@@ -491,13 +491,13 @@ QJsonObject AiMcpStdioSession::callTool(const QString& tool_name,
         },
         Qt::BlockingQueuedConnection);
     if (!invoked) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not dispatch tools/call to the MCP session worker");
         }
         return {};
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = error;
     }
     if (!error.isEmpty()) {
@@ -507,12 +507,12 @@ QJsonObject AiMcpStdioSession::callTool(const QString& tool_name,
 }
 
 void AiMcpStdioSession::close() {
-    if (m_thread) {
+    if (m_thread != nullptr) {
         // Only issue the blocking call while the worker's event loop is actually
         // running (it always is once open() succeeds); guarding this keeps close()
         // safe even if the thread were ever stopped, so it cannot hang like the
         // pre-guard open() start-failure path could.
-        if (m_worker && m_thread->isRunning()) {
+        if ((m_worker != nullptr) && m_thread->isRunning()) {
             QMetaObject::invokeMethod(
                 m_worker, [this]() { m_worker->doClose(); }, Qt::BlockingQueuedConnection);
         }

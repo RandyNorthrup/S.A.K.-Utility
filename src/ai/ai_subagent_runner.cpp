@@ -1108,7 +1108,7 @@ AiSubagentResult AiSubagentRunner::run(const AiSubagentTask& task,
         model_client = owned_client.get();
     }
 
-    if (!model_client) {
+    if (model_client == nullptr) {
         return baseResult(task,
                           AiSubagentStatus::Failed,
                           QStringLiteral("No model client configured"));

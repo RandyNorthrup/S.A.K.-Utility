@@ -708,10 +708,10 @@ void AdvancedUninstallPanel::showSettingsDialog() {
     }
 
     ScanLevel scanLevel = ScanLevel::Safe;
-    if (advancedRadio && advancedRadio->isChecked()) {
+    if ((advancedRadio != nullptr) && advancedRadio->isChecked()) {
         scanLevel = ScanLevel::Advanced;
     }
-    if (moderateRadio && moderateRadio->isChecked()) {
+    if ((moderateRadio != nullptr) && moderateRadio->isChecked()) {
         scanLevel = ScanLevel::Moderate;
     }
     m_controller->setDefaultScanLevel(scanLevel);

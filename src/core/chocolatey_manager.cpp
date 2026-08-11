@@ -100,12 +100,12 @@ QString certSubjectDisplayName(PCCERT_CONTEXT cert) {
 // Subject name of the certificate that actually signed the PKCS7 message.
 QString subjectFromSignedMsg(HCERTSTORE store, HCRYPTMSG msg) {
     DWORD info_size = 0;
-    if (!CryptMsgGetParam(msg, CMSG_SIGNER_CERT_INFO_PARAM, 0, nullptr, &info_size) ||
+    if ((CryptMsgGetParam(msg, CMSG_SIGNER_CERT_INFO_PARAM, 0, nullptr, &info_size) == 0) ||
         info_size == 0) {
         return {};
     }
     std::vector<BYTE> info_buf(info_size);
-    if (!CryptMsgGetParam(msg, CMSG_SIGNER_CERT_INFO_PARAM, 0, info_buf.data(), &info_size)) {
+    if (CryptMsgGetParam(msg, CMSG_SIGNER_CERT_INFO_PARAM, 0, info_buf.data(), &info_size) == 0) {
         return {};
     }
     auto* info = reinterpret_cast<CERT_INFO*>(info_buf.data());
@@ -124,17 +124,17 @@ QString subjectFromSignedMsg(HCERTSTORE store, HCRYPTMSG msg) {
 QString signerSubjectName(const std::wstring& path) {
     HCERTSTORE store = nullptr;
     HCRYPTMSG msg = nullptr;
-    if (!CryptQueryObject(CERT_QUERY_OBJECT_FILE,
-                          path.c_str(),
-                          CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
-                          CERT_QUERY_FORMAT_FLAG_BINARY,
-                          0,
-                          nullptr,
-                          nullptr,
-                          nullptr,
-                          &store,
-                          &msg,
-                          nullptr)) {
+    if (CryptQueryObject(CERT_QUERY_OBJECT_FILE,
+                         path.c_str(),
+                         CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
+                         CERT_QUERY_FORMAT_FLAG_BINARY,
+                         0,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         &store,
+                         &msg,
+                         nullptr) == 0) {
         return {};
     }
     QString subject;

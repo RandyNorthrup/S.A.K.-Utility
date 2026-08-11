@@ -34,12 +34,12 @@ constexpr int kWin32McpMaximumTimeoutMs = 7'200'000;  // 2 hours
 
 QString cappedString(const QString& value, qsizetype max_chars, bool* truncated = nullptr) {
     if (value.size() <= max_chars) {
-        if (truncated) {
+        if (truncated != nullptr) {
             *truncated = false;
         }
         return value;
     }
-    if (truncated) {
+    if (truncated != nullptr) {
         *truncated = true;
     }
     return value.left(max_chars) + QStringLiteral("\n...[truncated]");
@@ -367,7 +367,7 @@ QJsonObject loadHttpDocsProvider(const AiProviderRegistry& registry,
         return {};
     }
     if (!provider.value(QStringLiteral("available")).toBool(false)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             const QString reason = provider.value(QStringLiteral("missing_reason")).toString();
             *error_message = reason.isEmpty() ? QStringLiteral("Provider unavailable") : reason;
         }
@@ -379,7 +379,7 @@ QJsonObject loadHttpDocsProvider(const AiProviderRegistry& registry,
         // the model's query at whatever a rewritten manifest names.
         const QString endpoint = provider.value(QStringLiteral("endpoint")).toString().trimmed();
         if (!isAbsoluteHttpUrl(endpoint, true)) {
-            if (error_message) {
+            if (error_message != nullptr) {
                 *error_message =
                     QStringLiteral("docs_query provider endpoint is not an absolute https URL: %1")
                         .arg(provider_id);
@@ -388,7 +388,7 @@ QJsonObject loadHttpDocsProvider(const AiProviderRegistry& registry,
         }
         return provider;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = QStringLiteral("docs_query supports HTTP MCP docs providers only");
     }
     return {};
@@ -401,7 +401,7 @@ bool requireProviderTool(const QJsonObject& provider,
     if (providerHasTool(provider, provider_tool)) {
         return true;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message =
             QStringLiteral("MCP provider tool is not in bundled provider manifest: %1/%2")
                 .arg(provider_id, provider_tool);
@@ -420,7 +420,7 @@ bool isAppOperation(const QString& operation) {
 // Keeps the pointer-level error channel in step with the availability envelope: a success
 // clears it (never leave stale text next to success=true), a failure carries the same message.
 QJsonObject withAvailabilityError(QJsonObject result, QString* error_message) {
-    if (!error_message) {
+    if (error_message == nullptr) {
         return result;
     }
     if (result.value(QStringLiteral("success")).toBool(false)) {
@@ -654,14 +654,14 @@ bool isKnownWin32SecurityProfile(const QString& profile) {
 // caller asked for it, the reason. Keeping that in one place stops the null check on the
 // out-parameter from being repeated at every failure site.
 QProcessEnvironment envFailure(QString* error_message, const QString& reason) {
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = reason;
     }
     return {};
 }
 
 QJsonObject jsonFailure(QString* error_message, const QString& reason) {
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = reason;
     }
     return {};
@@ -709,7 +709,7 @@ bool requireAvailableWin32Provider(const QJsonObject& provider, QString* error_m
     if (provider.value(QStringLiteral("available")).toBool(false)) {
         return true;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = provider.value(QStringLiteral("missing_reason"))
                              .toString(QStringLiteral("Win32 MCP provider unavailable"));
     }
@@ -720,7 +720,7 @@ bool requireWin32Tool(const QJsonObject& provider,
                       const QString& tool_name,
                       QString* error_message) {
     if (tool_name.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("win32_mcp_call requires arguments.tool_name");
         }
         return false;
@@ -728,7 +728,7 @@ bool requireWin32Tool(const QJsonObject& provider,
     if (providerHasTool(provider, tool_name)) {
         return true;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message =
             QStringLiteral("Win32 MCP tool is not in bundled provider manifest: %1").arg(tool_name);
     }
@@ -783,7 +783,7 @@ QJsonObject runDocsToolCall(const QJsonObject& provider,
     }
     const QString envelope_error = mcpEnvelopeError(message.value(QStringLiteral("result")));
     if (!envelope_error.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("docs_query MCP %1").arg(envelope_error);
         }
         return {};
@@ -792,12 +792,12 @@ QJsonObject runDocsToolCall(const QJsonObject& provider,
         mcpDocsQueryResult(provider, plan.provider_tool, query, plan.tool_arguments, message);
     const QString logical_error = docsQueryLogicalError(result);
     if (!logical_error.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = logical_error;
         }
         return {};
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return result;
@@ -824,7 +824,7 @@ QJsonObject AiProviderGateway::providerStatus(const QString& provider_id,
 QJsonObject AiProviderGateway::docsQuery(const QJsonObject& args, QString* error_message) const {
     const QString envelope_error = docsQueryEnvelopeError(args);
     if (!envelope_error.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = envelope_error;
         }
         return {};
@@ -832,7 +832,7 @@ QJsonObject AiProviderGateway::docsQuery(const QJsonObject& args, QString* error
     const QString provider_id =
         args.value(QStringLiteral("provider_id")).toString().trimmed().toLower();
     if (provider_id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("docs_query requires provider_id");
         }
         return {};
@@ -847,7 +847,7 @@ QJsonObject AiProviderGateway::docsQuery(const QJsonObject& args, QString* error
     const QJsonObject extra = args.value(QStringLiteral("arguments")).toObject();
     const DocsToolPlan plan = docsToolPlan(provider_id, query, extra);
     if (!plan.ok()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = plan.error;
         }
         return {};
@@ -895,7 +895,7 @@ QJsonObject AiProviderGateway::checkAvailability(const QJsonObject& args,
     const QString operation =
         args.value(QStringLiteral("operation")).toString().trimmed().toLower();
     if (operation.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Provider gateway requires operation");
         }
         return availabilityError({},
@@ -940,7 +940,7 @@ AiProviderGateway::Win32McpCallPlan AiProviderGateway::planWin32McpCall(
     Win32McpCallPlan plan;
     const QString envelope_error = win32CallEnvelopeError(args);
     if (!envelope_error.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = envelope_error;
         }
         return plan;
@@ -961,7 +961,7 @@ AiProviderGateway::Win32McpCallPlan AiProviderGateway::planWin32McpCall(
 
     const QJsonObject tool_arguments = win32ToolArguments(extra);
     populateWin32Plan(&plan, std::move(provider), tool_name, tool_arguments, extra);
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return plan;
@@ -992,8 +992,9 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
     // With a pool, the server process is reused across calls (keyed on command +
     // the full launch environment, so security profiles never share a process);
     // without one, fall back to a fresh process per call.
-    const QJsonObject message = m_mcp_pool ? m_mcp_pool->callTool(request, error_message)
-                                           : AiMcpStdioClient::callTool(request, error_message);
+    const QJsonObject message = (m_mcp_pool != nullptr)
+                                    ? m_mcp_pool->callTool(request, error_message)
+                                    : AiMcpStdioClient::callTool(request, error_message);
     if (message.isEmpty()) {
         return {};
     }
@@ -1001,7 +1002,7 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
     if (!result_error.isEmpty()) {
         return jsonFailure(error_message, QStringLiteral("Win32 MCP %1").arg(result_error));
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return win32McpResult(
@@ -1159,7 +1160,7 @@ QProcessEnvironment AiProviderGateway::win32McpEnvironment(const QString& securi
     }
     env.insert(QStringLiteral("WIN32_MCP_RESULT_ENVELOPE"), QStringLiteral("true"));
     env.insert(QStringLiteral("WIN32_MCP_REDACT_SENSITIVE_OUTPUT"), QStringLiteral("true"));
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return env;

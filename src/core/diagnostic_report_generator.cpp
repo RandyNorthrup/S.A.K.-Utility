@@ -88,7 +88,7 @@ bool writeJsonDocument(const QString& output_path, const QJsonObject& root, QStr
     // at output_path -- any previous good report there is preserved.
     QSaveFile file(output_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        if (error) {
+        if (error != nullptr) {
             *error = QString("Failed to open %1: %2").arg(output_path, file.errorString());
         }
         return false;
@@ -96,7 +96,7 @@ bool writeJsonDocument(const QString& output_path, const QJsonObject& root, QStr
 
     const QByteArray data = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (file.write(data) != data.size() || !file.commit()) {
-        if (error) {
+        if (error != nullptr) {
             *error = QString("Incomplete write to %1").arg(output_path);
         }
         return false;

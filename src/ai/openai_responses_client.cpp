@@ -103,7 +103,7 @@ void collectCitationsFromValue(const QJsonValue& value, QVector<OpenAIUrlCitatio
 
 std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* error_message) {
     if (data.size() > kMaxResponseBodyBytes) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("OpenAI response body exceeds the size limit");
         }
         return std::nullopt;
@@ -111,7 +111,7 @@ std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* e
     QJsonParseError parse_error;
     const auto doc = QJsonDocument::fromJson(data, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = firstNonEmptyError(parse_error.errorString(),
                                                 QStringLiteral("Invalid OpenAI response JSON"));
         }
@@ -119,7 +119,7 @@ std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* e
     }
     const QString api_error = OpenAIResponsesClient::extractApiError(data);
     if (!api_error.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = api_error;
         }
         return std::nullopt;
@@ -904,7 +904,7 @@ void OpenAIResponsesClient::listModels(const QString& api_key) {
 }
 
 void OpenAIResponsesClient::cancel() {
-    if (!m_current_reply) {
+    if (m_current_reply == nullptr) {
         return;
     }
 
@@ -922,7 +922,7 @@ void OpenAIResponsesClient::cancel() {
 
 OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray& data,
                                                                 QString* error_message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
 
@@ -955,14 +955,14 @@ OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray
     // response into a usable partial result.
     const QString terminal = terminalResponseError(*root);
     if (!terminal.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = terminal;
         }
         return {};
     }
 
     if (result.output_text.trimmed().isEmpty() && result.function_calls.isEmpty() &&
-        error_message) {
+        (error_message != nullptr)) {
         *error_message = QStringLiteral("OpenAI response had no output text");
     }
     return result;
@@ -973,7 +973,7 @@ namespace {
 // Report a models-list failure through the optional out-parameter and fail closed.
 [[nodiscard]] std::optional<QJsonArray> modelsListError(QString* error_message,
                                                         const QString& text) {
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = text;
     }
     return std::nullopt;
@@ -1015,7 +1015,7 @@ namespace {
 }  // namespace
 
 QStringList OpenAIResponsesClient::parseModelsList(const QByteArray& data, QString* error_message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
 
@@ -1090,7 +1090,7 @@ QString OpenAIResponsesClient::extractApiError(const QByteArray& data) {
 
 qint64 OpenAIResponsesClient::parseInputTokenCountObject(const QByteArray& data,
                                                          QString* error_message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     const auto root = responseRootObject(data, error_message);
@@ -1099,7 +1099,7 @@ qint64 OpenAIResponsesClient::parseInputTokenCountObject(const QByteArray& data,
     }
     const auto value = root->value(QStringLiteral("input_tokens"));
     if (!value.isDouble()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("OpenAI input token count missing input_tokens");
         }
         return -1;
@@ -1107,13 +1107,13 @@ qint64 OpenAIResponsesClient::parseInputTokenCountObject(const QByteArray& data,
     // Guard the double->qint64 cast: a non-finite or out-of-range magnitude is UB to cast.
     const double raw = value.toDouble();
     if (!std::isfinite(raw) || raw < 0.0) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("OpenAI input token count was negative or non-finite");
         }
         return -1;
     }
     if (raw >= static_cast<double>(std::numeric_limits<qint64>::max())) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("OpenAI input token count was out of range");
         }
         return -1;
@@ -1247,7 +1247,7 @@ void OpenAIResponsesClient::handleInputTokenCountFinished(QNetworkReply* reply,
 }
 
 void OpenAIResponsesClient::cancelInputTokenCount() {
-    if (!m_input_tokens_reply) {
+    if (m_input_tokens_reply == nullptr) {
         return;
     }
     auto* reply = m_input_tokens_reply;

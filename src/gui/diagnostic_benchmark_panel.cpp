@@ -1082,7 +1082,7 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
         const QString action_name = it.key();
         const QPushButton* btn = it.value();
         QuickAction* action = m_qa_controller->getAction(action_name);
-        if (action) {
+        if (action != nullptr) {
             connect(btn, &QPushButton::clicked, this, [this, action]() {
                 onQuickActionClicked(action);
             });
@@ -1139,7 +1139,7 @@ void DiagnosticBenchmarkPanel::onQuickActionComplete(QuickAction* action) {
     // lifetime; this panel cannot vouch for it and dereferences it on the next
     // line. Refuse rather than crash Release (Debug would have aborted here and
     // Release would not have checked at all).
-    if (!action) {
+    if (action == nullptr) {
         logMessage("Quick action completion arrived with no action; ignoring");
         return;
     }
@@ -1159,7 +1159,7 @@ void DiagnosticBenchmarkPanel::onQuickActionError(QuickAction* action,
     refreshPrimaryControls();
     // Same boundary as onQuickActionComplete, and the next line dereferences it.
     // Losing the action's name must not lose the error itself.
-    if (!action) {
+    if (action == nullptr) {
         logMessage(QString("Quick action error with no action: %1").arg(error_message));
         Q_EMIT statusMessage(QString("Quick action error: %1").arg(error_message),
                              sak::kTimerStatusDefaultMs);

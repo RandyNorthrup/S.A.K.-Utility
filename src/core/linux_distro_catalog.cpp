@@ -576,7 +576,7 @@ void LinuxDistroCatalog::checkLatestVersion(const QString& distroId) {
 
 void LinuxDistroCatalog::onGitHubReleaseReply() {
     auto* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
+    if (reply == nullptr) {
         return;
     }
 
@@ -741,7 +741,7 @@ void LinuxDistroCatalog::cancelAll() {
     const QList<QNetworkReply*> pending = m_pendingReplies;
     m_pendingReplies.clear();
     for (auto* reply : pending) {
-        if (reply) {
+        if (reply != nullptr) {
             reply->abort();
             reply->deleteLater();
         }

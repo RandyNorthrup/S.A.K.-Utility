@@ -122,13 +122,14 @@ void DetachableLogWindow::appendLog(const QString& message) {
         bounded = bounded.left(kMaxLogMessageChars) + QStringLiteral(" [truncated]");
     }
     const QString timestamp = QDateTime::currentDateTime().toString("[HH:mm:ss] ");
-    const int previous_value = m_logScrollController ? m_logScrollController->scrollValue() : 0;
-    const bool follow_newest = !m_logScrollController ||
+    const int previous_value =
+        (m_logScrollController != nullptr) ? m_logScrollController->scrollValue() : 0;
+    const bool follow_newest = (m_logScrollController == nullptr) ||
                                m_logScrollController->shouldFollowNewestForAppend();
     // QTextEdit::append() promotes anything that looks like markup to rich text, and log lines
     // carry file paths, program names, command output and AI text; wrap so they read literally.
     m_logEdit->append(sak::ui::asLiteralRichText(timestamp + bounded));
-    if (!m_logScrollController) {
+    if (m_logScrollController == nullptr) {
         return;
     }
     if (follow_newest) {
@@ -139,7 +140,7 @@ void DetachableLogWindow::appendLog(const QString& message) {
 }
 
 void DetachableLogWindow::clearLog() {
-    if (m_logScrollController) {
+    if (m_logScrollController != nullptr) {
         m_logScrollController->setAutoScroll(true);
     }
     m_logEdit->clear();
@@ -194,7 +195,7 @@ void DetachableLogWindow::moveEvent(QMoveEvent* event) {
 
     // If user drags window, check whether it's still close to main window
     auto* mainWin = findMainWindow();
-    if (!mainWin) {
+    if (mainWin == nullptr) {
         return;
     }
 
@@ -213,7 +214,7 @@ void DetachableLogWindow::moveEvent(QMoveEvent* event) {
 
 void DetachableLogWindow::snapToMainWindow() {
     auto* mainWin = findMainWindow();
-    if (!mainWin) {
+    if (mainWin == nullptr) {
         return;
     }
 
@@ -234,7 +235,7 @@ void DetachableLogWindow::snapToMainWindow() {
 
 QWidget* DetachableLogWindow::findMainWindow() const {
     for (auto* widget : QApplication::topLevelWidgets()) {
-        if (qobject_cast<QMainWindow*>(widget)) {
+        if (qobject_cast<QMainWindow*>(widget) != nullptr) {
             return widget;
         }
     }

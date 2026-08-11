@@ -143,7 +143,7 @@ void UserProfileRestoreUserMappingPage::initializePage() {
 void UserProfileRestoreUserMappingPage::loadMappingTable() {
     Q_ASSERT(m_mappingTable);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -203,7 +203,7 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
 void UserProfileRestoreUserMappingPage::onAutoMap() {
     Q_ASSERT(m_mappingTable);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -212,7 +212,7 @@ void UserProfileRestoreUserMappingPage::onAutoMap() {
     for (int row = 0; row < m_mappingTable->rowCount(); ++row) {
         auto* destCombo =
             qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, kMappingColumnDestination));
-        if (!destCombo) {
+        if (destCombo == nullptr) {
             continue;
         }
 
@@ -248,7 +248,7 @@ void UserProfileRestoreUserMappingPage::updateSummary() {
 
         auto* destCombo =
             qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, kMappingColumnDestination));
-        if (destCombo && destCombo->currentData().toString().isEmpty()) {
+        if ((destCombo != nullptr) && destCombo->currentData().toString().isEmpty()) {
             newUsers++;
         } else {
             merges++;
@@ -279,7 +279,7 @@ UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(
     // Get destination user
     auto* destCombo =
         qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, kMappingColumnDestination));
-    if (destCombo) {
+    if (destCombo != nullptr) {
         mapping.destination_username = destCombo->currentData().toString();
     }
 
@@ -297,7 +297,7 @@ UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(
     // Get merge mode
     auto* modeCombo =
         qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, kMappingColumnMergeMode));
-    if (modeCombo) {
+    if (modeCombo != nullptr) {
         mapping.mode = static_cast<MergeMode>(modeCombo->currentData().toInt());
     }
 
@@ -307,7 +307,7 @@ UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(
 bool UserProfileRestoreUserMappingPage::validatePage() {
     Q_ASSERT(m_mappingTable);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return false;
     }
 
@@ -384,7 +384,7 @@ void UserProfileRestoreMergeConfigPage::initializePage() {
 void UserProfileRestoreMergeConfigPage::loadMergeTable() {
     Q_ASSERT(m_mergeTable);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -470,7 +470,7 @@ void UserProfileRestoreMergeConfigPage::updateSummary() {
 bool UserProfileRestoreMergeConfigPage::validatePage() {
     Q_ASSERT(m_mergeTable);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return false;
     }
 
@@ -480,7 +480,7 @@ bool UserProfileRestoreMergeConfigPage::validatePage() {
     for (int row = 0; row < m_mergeTable->rowCount() && row < mappings.size(); ++row) {
         auto* conflictCombo =
             qobject_cast<QComboBox*>(m_mergeTable->cellWidget(row, kMergeColumnConflict));
-        if (conflictCombo) {
+        if (conflictCombo != nullptr) {
             mappings[row].conflict_resolution =
                 static_cast<ConflictResolution>(conflictCombo->currentData().toInt());
         }
@@ -560,7 +560,7 @@ void UserProfileRestoreFolderSelectionPage::initializePage() {
 void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
     Q_ASSERT(m_folderTable);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -686,7 +686,7 @@ bool UserProfileRestoreFolderSelectionPage::validatePage() {
     // worker skips unchecked folders. Without this the selection is display-only
     // and every backed-up folder is restored regardless of the checkboxes.
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return false;
     }
     QVector<FolderRestoreChoice> choices;
@@ -809,7 +809,7 @@ void UserProfileRestoreAppDataPage::loadAppDataSources() {
     Q_ASSERT(m_statusLabel);
     Q_ASSERT(m_summaryLabel);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -847,7 +847,7 @@ void UserProfileRestoreAppDataPage::loadAppDataSources() {
 
 bool UserProfileRestoreAppDataPage::validatePage() {
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return false;
     }
     // Reconstruct the selection directly from the tree: each category's leaf items
@@ -948,7 +948,7 @@ void UserProfileRestoreAppDataPage::onItemChanged(QTreeWidgetItem* item, int col
         for (int i = 0; i < item->childCount(); ++i) {
             item->child(i)->setCheckState(0, state);
         }
-    } else if (item->parent()) {
+    } else if (item->parent() != nullptr) {
         updateParentCheckState(item->parent());
     }
 
@@ -1103,7 +1103,7 @@ void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
     Q_ASSERT(m_statusLabel);
     Q_ASSERT(m_summaryLabel);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -1144,7 +1144,7 @@ void UserProfileRestoreNetworksPage::loadNetworkProfiles() {
 
 bool UserProfileRestoreNetworksPage::validatePage() {
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return false;
     }
     // Tree row order matches m_profiles; carry each profile's checkbox state
@@ -1321,7 +1321,7 @@ void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
     Q_ASSERT(m_statusLabel);
     Q_ASSERT(m_summaryLabel);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -1361,7 +1361,7 @@ void UserProfileRestoreEthernetPage::loadEthernetConfigs() {
 
 bool UserProfileRestoreEthernetPage::validatePage() {
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return false;
     }
     // Table row order matches m_configs; carry each adapter's checkbox state
@@ -1590,7 +1590,7 @@ bool UserProfileRestorePermissionSettingsPage::validatePage() {
     Q_ASSERT(m_permissionModeCombo);
     Q_ASSERT(m_conflictResolutionCombo);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return false;
     }
 
@@ -1732,7 +1732,7 @@ void UserProfileRestoreAppRestorePage::loadApps() {
     Q_ASSERT(m_statusLabel);
     Q_ASSERT(m_summaryLabel);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -1891,7 +1891,7 @@ void UserProfileRestoreAppRestorePage::onItemChanged(QTreeWidgetItem* item, int 
             }
             child->setCheckState(0, state);
         }
-    } else if (item->parent()) {
+    } else if (item->parent() != nullptr) {
         updateParentCheckState(item->parent());
     }
 
@@ -2050,7 +2050,8 @@ QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() 
         auto* category = m_appTree->topLevelItem(category_index);
         for (int child_index = 0; child_index < category->childCount(); ++child_index) {
             auto* appItem = category->child(child_index);
-            if ((appItem->flags() & Qt::ItemIsEnabled) && appItem->checkState(0) == Qt::Checked) {
+            if (((appItem->flags() & Qt::ItemIsEnabled) != 0) &&
+                appItem->checkState(0) == Qt::Checked) {
                 RestoreAppInfo info;
                 info.name = appItem->text(0);
                 info.choco_package = appItem->text(kTreePackageColumn);

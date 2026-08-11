@@ -493,8 +493,8 @@ QString locationViewSettingsGroup(const FileExplorerLocation& location) {
 }
 
 void selectRowInView(QAbstractItemView* view, const int row) {
-    if (!view || !view->model() || !view->selectionModel() || row < 0 ||
-        row >= view->model()->rowCount()) {
+    if ((view == nullptr) || (view->model() == nullptr) || (view->selectionModel() == nullptr) ||
+        row < 0 || row >= view->model()->rowCount()) {
         return;
     }
 
@@ -506,7 +506,7 @@ void selectRowInView(QAbstractItemView* view, const int row) {
 }
 
 void resetPaneNavigationPreservingView(FileExplorerPaneState* state) {
-    if (!state) {
+    if (state == nullptr) {
         return;
     }
     const FileExplorerViewSettings view_settings = state->view;
@@ -528,7 +528,7 @@ FileManagementExplorerPanel::FileManagementExplorerPanel(QWidget* parent) : QWid
 }
 
 FileManagementExplorerPanel::~FileManagementExplorerPanel() {
-    if (m_search_worker) {
+    if (m_search_worker != nullptr) {
         // Destruction is the one place a join is required: a running child
         // QThread must not be destroyed with the panel. Interactive stops go
         // through the non-blocking stopExplorerSearch instead.
@@ -562,7 +562,7 @@ FileManagementExplorerPanel::~FileManagementExplorerPanel() {
     // its own deleteLater instead of being destroyed alive.
     constexpr int kIoWorkerJoinMs = 5000;
     for (WorkerBase* worker : std::as_const(m_active_io_workers)) {
-        if (!worker) {
+        if (worker == nullptr) {
             continue;
         }
         worker->requestStop();
@@ -699,15 +699,15 @@ void FileManagementExplorerPanel::buildCommandAndNavBars(QWidget* center,
 }
 
 void FileManagementExplorerPanel::rebuildSortMenu(QMenu* menu, const bool include_grouping) {
-    if (!menu) {
+    if (menu == nullptr) {
         return;
     }
     menu->clear();
     // Files sort flyout (Toolbar.xaml ArrangementOptions): checkable sort-by
     // entries, then Ascending/Descending. Sorting runs through the shared
     // proxy model, so it applies to every layout mode.
-    auto* proxy = m_pane ? m_pane->sortFilterModel() : nullptr;
-    if (!proxy) {
+    auto* proxy = (m_pane != nullptr) ? m_pane->sortFilterModel() : nullptr;
+    if (proxy == nullptr) {
         return;
     }
     const int current_column = proxy->sortColumn() < 0 ? FileExplorerItemModel::NameColumn
@@ -758,7 +758,7 @@ void FileManagementExplorerPanel::rebuildSortMenu(QMenu* menu, const bool includ
 }
 
 void FileManagementExplorerPanel::rebuildGroupMenu(QMenu* menu) {
-    if (!menu) {
+    if (menu == nullptr) {
         return;
     }
     menu->clear();
@@ -857,7 +857,7 @@ void FileManagementExplorerPanel::applyGrouping(const FileExplorerGroupOption op
 }
 
 void FileManagementExplorerPanel::applySortOrder(const int column, const Qt::SortOrder order) {
-    if (!m_pane || !m_pane->sortFilterModel()) {
+    if ((m_pane == nullptr) || (m_pane->sortFilterModel() == nullptr)) {
         return;
     }
     m_pane->sortFilterModel()->sort(column, order);
@@ -892,7 +892,7 @@ void FileManagementExplorerPanel::applyFolderSortPlacement(
     applyViewSettings();
     // Placement only shows through an active sort; with no sort column yet
     // the proxy would never re-run lessThan (Files always sorts by name).
-    if (m_pane && m_pane->sortFilterModel()) {
+    if ((m_pane != nullptr) && (m_pane->sortFilterModel() != nullptr)) {
         const int column = m_pane->sortFilterModel()->sortColumn() < 0
                                ? FileExplorerItemModel::NameColumn
                                : m_pane->sortFilterModel()->sortColumn();
@@ -949,14 +949,15 @@ uint64_t selectedFileBytes(FileExplorerPane* pane, const QModelIndexList& rows) 
 }  // namespace
 
 void FileManagementExplorerPanel::updateStatusCounts() {
-    if (!m_items_count_label || !m_selection_count_label) {
+    if ((m_items_count_label == nullptr) || (m_selection_count_label == nullptr)) {
         return;
     }
-    const int item_count =
-        (m_pane && m_pane->sortFilterModel()) ? m_pane->sortFilterModel()->rowCount() : 0;
+    const int item_count = ((m_pane != nullptr) && (m_pane->sortFilterModel() != nullptr))
+                               ? m_pane->sortFilterModel()->rowCount()
+                               : 0;
     m_items_count_label->setText(tr("%n item(s)", nullptr, item_count));
 
-    QModelIndexList rows = (m_pane && m_pane->sharedSelectionModel())
+    QModelIndexList rows = ((m_pane != nullptr) && (m_pane->sharedSelectionModel() != nullptr))
                                ? m_pane->sharedSelectionModel()->selectedRows()
                                : QModelIndexList{};
     rows.removeIf([this](const QModelIndex& index) { return !m_pane->hasViewEntry(index.row()); });
@@ -1039,7 +1040,7 @@ void FileManagementExplorerPanel::buildTabBar(QVBoxLayout* center_layout) {
 }
 
 void FileManagementExplorerPanel::rebuildTabActionsMenu(QMenu* menu) {
-    if (!menu) {
+    if (menu == nullptr) {
         return;
     }
     menu->clear();
@@ -1047,7 +1048,7 @@ void FileManagementExplorerPanel::rebuildTabActionsMenu(QMenu* menu) {
     menu->addAction(tr("Split pane vertically"), this, [this]() { splitPane(Qt::Horizontal); });
     menu->addAction(tr("Split pane horizontally"), this, [this]() { splitPane(Qt::Vertical); });
     menu->addSeparator();
-    const bool splitter_horizontal = m_pane_splitter &&
+    const bool splitter_horizontal = (m_pane_splitter != nullptr) &&
                                      m_pane_splitter->orientation() == Qt::Horizontal;
     QAction* arrange_vertical = menu->addAction(tr("Arrange panes vertically"));
     arrange_vertical->setCheckable(true);
@@ -1081,13 +1082,13 @@ void FileManagementExplorerPanel::splitPane(const Qt::Orientation orientation) {
     if (!m_dual_pane_enabled) {
         toggleDualPane();
     }
-    if (m_pane_splitter) {
+    if (m_pane_splitter != nullptr) {
         m_pane_splitter->setOrientation(orientation);
     }
 }
 
 void FileManagementExplorerPanel::showTabContextMenu(const QPoint& point) {
-    if (!m_tab_bar) {
+    if (m_tab_bar == nullptr) {
         return;
     }
     const int index = m_tab_bar->tabAt(point);
@@ -1122,7 +1123,7 @@ void FileManagementExplorerPanel::showTabContextMenu(const QPoint& point) {
 }
 
 void FileManagementExplorerPanel::closeTabsRelative(const int index, const int direction) {
-    if (!m_tab_bar || index < 0) {
+    if ((m_tab_bar == nullptr) || index < 0) {
         return;
     }
     // Close from the highest index down so remaining indices stay valid.
@@ -1136,7 +1137,7 @@ void FileManagementExplorerPanel::closeTabsRelative(const int index, const int d
 }
 
 void FileManagementExplorerPanel::nameTabCloseButtons() {
-    if (!m_tab_bar) {
+    if (m_tab_bar == nullptr) {
         return;
     }
     // QTabBar creates its close buttons automatically once tabs are closable;
@@ -1242,7 +1243,7 @@ void FileManagementExplorerPanel::connectToolbarSignals() {
 }
 
 void FileManagementExplorerPanel::toggleStatusCenterFlyout() {
-    if (!m_status_flyout) {
+    if (m_status_flyout == nullptr) {
         m_status_flyout = new FileExplorerStatusCenterFlyout(m_status_center, window());
     }
     if (m_status_flyout->isVisible()) {
@@ -1366,7 +1367,7 @@ void FileManagementExplorerPanel::installSelectionCheckboxes(FileExplorerPane* p
             toggleSelectionForPath(pane, path, checked);
         });
     pane->itemModel()->setCheckboxesVisible(showCheckboxesEnabled());
-    if (!pane->sharedSelectionModel()) {
+    if (pane->sharedSelectionModel() == nullptr) {
         return;
     }
     connect(pane->sharedSelectionModel(),
@@ -1388,7 +1389,7 @@ void FileManagementExplorerPanel::installSelectionCheckboxes(FileExplorerPane* p
 
 void FileManagementExplorerPanel::connectPaneViewSignals(FileExplorerPane* pane, int pane_index) {
     for (auto* view : pane->itemViews()) {
-        if (!view) {
+        if (view == nullptr) {
             continue;
         }
         connect(view, &QAbstractItemView::doubleClicked, this, [this, pane_index](const auto& mi) {
@@ -1412,7 +1413,7 @@ void FileManagementExplorerPanel::connectPaneViewSignals(FileExplorerPane* pane,
 
 void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int pane_index) {
     installSelectionCheckboxes(pane);
-    if (pane->sharedSelectionModel()) {
+    if (pane->sharedSelectionModel() != nullptr) {
         connect(pane->sharedSelectionModel(),
                 &QItemSelectionModel::selectionChanged,
                 this,
@@ -1473,13 +1474,13 @@ bool FileManagementExplorerPanel::eventFilter(QObject* watched, QEvent* event) {
 // filter box, the sidebar viewport, an item view (key presses), or a pane
 // viewport. Returns true when the event was consumed.
 bool FileManagementExplorerPanel::dispatchFilteredEvent(QObject* watched, QEvent* event) {
-    if (!event) {
+    if (event == nullptr) {
         return false;
     }
-    if (m_filter_box && watched == m_filter_box) {
+    if ((m_filter_box != nullptr) && watched == m_filter_box) {
         return handleFilterBoxKeyEvent(event);
     }
-    if (m_target_list && watched == m_target_list->viewport()) {
+    if ((m_target_list != nullptr) && watched == m_target_list->viewport()) {
         return handleSidebarViewportEvent(event);
     }
     if (auto* view = qobject_cast<QAbstractItemView*>(watched)) {
@@ -1509,8 +1510,9 @@ bool FileManagementExplorerPanel::handleFilterBoxKeyEvent(QEvent* event) {
 }
 
 bool FileManagementExplorerPanel::filterPaneViewportEvent(QObject* watched, QEvent* event) {
-    auto* view = qobject_cast<QAbstractItemView*>(watched ? watched->parent() : nullptr);
-    if (!view || !event) {
+    auto* view = qobject_cast<QAbstractItemView*>((watched != nullptr) ? watched->parent()
+                                                                       : nullptr);
+    if ((view == nullptr) || (event == nullptr)) {
         return false;
     }
     if (handleViewportDragEvent(view, event)) {
@@ -1524,7 +1526,7 @@ bool FileManagementExplorerPanel::filterPaneViewportEvent(QObject* watched, QEve
 }
 
 void FileManagementExplorerPanel::activatePaneForView(QAbstractItemView* view) {
-    const bool in_second_pane = m_pane_b && m_pane_b->itemViews().contains(view);
+    const bool in_second_pane = (m_pane_b != nullptr) && m_pane_b->itemViews().contains(view);
     activatePane(in_second_pane ? 1 : 0);
 }
 
@@ -1700,7 +1702,7 @@ void FileManagementExplorerPanel::applyExplorerSettings(const bool checkboxes,
     settings.setValue(QString::fromLatin1(kShowFlattenKey), flatten);
     settings.setValue(QString::fromLatin1(kStatusCenterVisibilityKey), status_center_visibility);
     settings.endGroup();
-    if (m_filter_header) {
+    if (m_filter_header != nullptr) {
         m_filter_header->setVisible(filter_header);
     }
     syncStatusCenterButton();
@@ -1738,7 +1740,8 @@ void FileManagementExplorerPanel::handleRenameTapRelease(QAbstractItemView* view
         cancelRenameTap();
         return;
     }
-    if (m_rename_tap_timer && m_rename_tap_view == view && m_rename_tap_candidate.isValid() &&
+    if ((m_rename_tap_timer != nullptr) && m_rename_tap_view == view &&
+        m_rename_tap_candidate.isValid() &&
         view->indexAt(mouse->pos()) == QModelIndex(m_rename_tap_candidate)) {
         m_rename_tap_timer->start();
     } else {
@@ -1756,7 +1759,7 @@ void FileManagementExplorerPanel::armRenameTapCandidate(QAbstractItemView* view,
         return;
     }
     const auto* selection_model = view->selectionModel();
-    if (!selection_model || !selection_model->isSelected(index) ||
+    if ((selection_model == nullptr) || !selection_model->isSelected(index) ||
         selection_model->selectedRows().size() != 1) {
         return;
     }
@@ -1765,7 +1768,7 @@ void FileManagementExplorerPanel::armRenameTapCandidate(QAbstractItemView* view,
 }
 
 void FileManagementExplorerPanel::cancelRenameTap() {
-    if (m_rename_tap_timer) {
+    if (m_rename_tap_timer != nullptr) {
         m_rename_tap_timer->stop();
     }
     m_rename_tap_candidate = QPersistentModelIndex();
@@ -1776,11 +1779,11 @@ void FileManagementExplorerPanel::onRenameTapTimeout() {
     QAbstractItemView* view = m_rename_tap_view.data();
     const QModelIndex index = m_rename_tap_candidate;
     cancelRenameTap();
-    if (!view || !index.isValid() || !currentTarget().can_write_files) {
+    if ((view == nullptr) || !index.isValid() || !currentTarget().can_write_files) {
         return;
     }
     const auto* selection_model = view->selectionModel();
-    if (!selection_model || !selection_model->isSelected(index) ||
+    if ((selection_model == nullptr) || !selection_model->isSelected(index) ||
         selection_model->selectedRows().size() != 1) {
         return;
     }
@@ -1790,17 +1793,17 @@ void FileManagementExplorerPanel::onRenameTapTimeout() {
 
 void FileManagementExplorerPanel::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
-    const int width = event ? event->size().width() : this->width();
+    const int width = (event != nullptr) ? event->size().width() : this->width();
     // Files adaptive triggers work both ways: panes hide below their
     // breakpoints and come back once the shell is wide enough again (a
     // construction-time narrow resize must not hide them permanently).
-    if (m_sidebar) {
+    if (m_sidebar != nullptr) {
         m_sidebar->setVisible(width >= kSidebarCollapseWidth);
     }
-    if (m_details_pane) {
+    if (m_details_pane != nullptr) {
         m_details_pane->setVisible(m_details_pane_enabled && width >= kDetailsTabsCollapseWidth);
     }
-    if (m_omnibar) {
+    if (m_omnibar != nullptr) {
         // Files NavigationToolbar collapses Forward/Up/Refresh into an
         // overflow flyout below its narrow breakpoint.
         m_omnibar->setNarrowMode(width < kNavClusterCollapseWidth);
@@ -2002,7 +2005,7 @@ void FileManagementExplorerPanel::installPaneShortcuts() {
 
 void FileManagementExplorerPanel::cycleTab(const int direction) {
     constexpr int kMinTabsToCycle = 2;
-    if (!m_tab_bar || m_tab_bar->count() < kMinTabsToCycle) {
+    if ((m_tab_bar == nullptr) || m_tab_bar->count() < kMinTabsToCycle) {
         return;
     }
     const int count = m_tab_bar->count();
@@ -2010,7 +2013,7 @@ void FileManagementExplorerPanel::cycleTab(const int direction) {
 }
 
 void FileManagementExplorerPanel::selectTabByNumber(const int digit) {
-    if (!m_tab_bar) {
+    if (m_tab_bar == nullptr) {
         return;
     }
     // Files MainPageViewModel: Ctrl+9 selects the last tab regardless of count.
@@ -2028,7 +2031,7 @@ void FileManagementExplorerPanel::setTargets(QVector<FileManagementTarget> targe
     if (m_targets.isEmpty()) {
         m_item_model->clear();
         m_summary_label->setText(tr("No target selected"));
-        if (m_pane) {
+        if (m_pane != nullptr) {
             m_pane->showEmptyState(tr("No File Explorer targets are available."));
         }
         updateDetailsPane();
@@ -2215,7 +2218,7 @@ void FileManagementExplorerPanel::appendTagRows() {
 }
 
 void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_target_id) {
-    if (!m_target_list) {
+    if (m_target_list == nullptr) {
         return;
     }
 
@@ -2244,7 +2247,7 @@ void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_tar
     appendVisibleSidebarSections();
 
     m_target_list->blockSignals(false);
-    if (m_sidebar) {
+    if (m_sidebar != nullptr) {
         m_sidebar->refreshCompactPresentation();
     }
     if (!current_id.isEmpty()) {
@@ -2253,7 +2256,7 @@ void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_tar
 }
 
 void FileManagementExplorerPanel::setSidebarCompact(const bool compact) {
-    if (!m_sidebar) {
+    if (m_sidebar == nullptr) {
         return;
     }
     m_sidebar->setCompact(compact);
@@ -2264,12 +2267,12 @@ void FileManagementExplorerPanel::setSidebarCompact(const bool compact) {
 }
 
 void FileManagementExplorerPanel::selectTargetById(const QString& target_id) {
-    if (!m_target_list || target_id.trimmed().isEmpty()) {
+    if ((m_target_list == nullptr) || target_id.trimmed().isEmpty()) {
         return;
     }
     for (int row = 0; row < m_target_list->count(); ++row) {
         auto* item = m_target_list->item(row);
-        if (!item ||
+        if ((item == nullptr) ||
             item->data(kSidebarKindRole).toInt() != static_cast<int>(SidebarEntryKind::Target)) {
             continue;
         }
@@ -2311,7 +2314,8 @@ void FileManagementExplorerPanel::loadSidebarState() {
         settings.value(QString::fromLatin1(kFavoriteTargetIdsKey)).toStringList();
     m_recent_target_ids = settings.value(QString::fromLatin1(kRecentTargetIdsKey)).toStringList();
     m_last_target_id = settings.value(QString::fromLatin1(kLastTargetIdKey)).toString();
-    if (m_sidebar && settings.value(QString::fromLatin1(kSidebarCompactKey), false).toBool()) {
+    if ((m_sidebar != nullptr) &&
+        settings.value(QString::fromLatin1(kSidebarCompactKey), false).toBool()) {
         m_sidebar->setCompact(true);
     }
     settings.endGroup();
@@ -2328,7 +2332,7 @@ void FileManagementExplorerPanel::saveSidebarState() const {
 }
 
 void FileManagementExplorerPanel::applyViewSettings() {
-    if (!m_pane) {
+    if (m_pane == nullptr) {
         return;
     }
     clampFileExplorerLayoutSizes(m_pane_state.view.sizes);
@@ -2342,7 +2346,7 @@ void FileManagementExplorerPanel::applyViewSettings() {
     if (auto* proxy = m_pane->sortFilterModel()) {
         proxy->setFolderSortPlacement(m_pane_state.view.folder_placement);
     }
-    if (m_view_button) {
+    if (m_view_button != nullptr) {
         FileExplorerCommandId iconCommand = FileExplorerCommandId::ViewDetails;
         switch (m_pane_state.view.mode) {
         case FileExplorerViewMode::List:
@@ -2452,7 +2456,7 @@ void FileManagementExplorerPanel::setExplorerViewMode(const FileExplorerViewMode
 }
 
 QAbstractItemView* FileManagementExplorerPanel::currentItemView() const {
-    return m_pane ? m_pane->activeItemView() : nullptr;
+    return (m_pane != nullptr) ? m_pane->activeItemView() : nullptr;
 }
 
 FileManagementTarget FileManagementExplorerPanel::currentTarget() const {
@@ -2476,8 +2480,8 @@ int FileManagementExplorerPanel::targetIndexForId(const QString& target_id) cons
 }
 
 QString FileManagementExplorerPanel::selectedPath() const {
-    const auto* selection_model = m_pane ? m_pane->sharedSelectionModel() : nullptr;
-    if (!selection_model || !m_pane) {
+    const auto* selection_model = (m_pane != nullptr) ? m_pane->sharedSelectionModel() : nullptr;
+    if ((selection_model == nullptr) || (m_pane == nullptr)) {
         return {};
     }
     const QModelIndexList rows = selection_model->selectedRows();
@@ -2488,8 +2492,8 @@ QString FileManagementExplorerPanel::selectedPath() const {
 }
 
 bool FileManagementExplorerPanel::selectedIsDirectory() const {
-    const auto* selection_model = m_pane ? m_pane->sharedSelectionModel() : nullptr;
-    if (!selection_model || !m_pane) {
+    const auto* selection_model = (m_pane != nullptr) ? m_pane->sharedSelectionModel() : nullptr;
+    if ((selection_model == nullptr) || (m_pane == nullptr)) {
         return false;
     }
     const QModelIndexList rows = selection_model->selectedRows();
@@ -2511,13 +2515,13 @@ bool FileManagementExplorerPanel::validateCurrentTargetIdentity(QString* blocker
     const auto target = currentTarget();
     const QString target_id = FileExplorerTargetId::fromTarget(target).value;
     if (target_id.trimmed().isEmpty() || target.root_path.trimmed().isEmpty()) {
-        if (blocker) {
+        if (blocker != nullptr) {
             *blocker = tr("No stable File Explorer target identity is selected.");
         }
         return false;
     }
     if (m_pane_state.location.target_id.value != target_id) {
-        if (blocker) {
+        if (blocker != nullptr) {
             *blocker = tr("Selected target identity changed. Refresh target and retry.");
         }
         return false;
@@ -2532,7 +2536,7 @@ bool FileManagementExplorerPanel::targetStillSelected(const FileManagementTarget
     }
     if (FileExplorerTargetId::fromTarget(currentTarget()).value !=
         FileExplorerTargetId::fromTarget(target).value) {
-        if (blocker) {
+        if (blocker != nullptr) {
             *blocker = tr(
                 "The selected target changed while the dialog was open; "
                 "nothing was written.");
@@ -2550,7 +2554,7 @@ void FileManagementExplorerPanel::resetListingForUnavailableTarget(const QString
         m_summary_label->setText(message);
         m_item_model->clear();
     }
-    if (m_pane) {
+    if (m_pane != nullptr) {
         if (is_error) {
             m_pane->showErrorState(message);
         } else {
@@ -2564,12 +2568,12 @@ void FileManagementExplorerPanel::resetListingForUnavailableTarget(const QString
 
 // Files ShellViewModel: the folder filter clears on directory change.
 void FileManagementExplorerPanel::clearFolderFilterOnNavigation() {
-    if (!m_filter_box || m_filter_box->text().isEmpty()) {
+    if ((m_filter_box == nullptr) || m_filter_box->text().isEmpty()) {
         return;
     }
     const QSignalBlocker blocker(m_filter_box);
     m_filter_box->clear();
-    if (m_pane && m_pane->sortFilterModel()) {
+    if ((m_pane != nullptr) && (m_pane->sortFilterModel() != nullptr)) {
         m_pane->sortFilterModel()->setNameFilter(QString());
     }
 }
@@ -2617,7 +2621,7 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
     // selection -- actionable while the new listing loads: a command fired in
     // that window would run stale paths against the now-current target.
     if (m_pane_state.location.target_id.value != destination.target_id.value) {
-        if (m_item_model) {
+        if (m_item_model != nullptr) {
             m_item_model->clear();
         }
         m_pane_state.selection.clear();
@@ -2632,14 +2636,14 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
     clearCurrentTagFilter();  // tag filter is scoped to one folder view
     loadViewSettingsForCurrentLocation();
     m_path_edit->setText(m_current_path);
-    if (m_preview_text) {
+    if (m_preview_text != nullptr) {
         m_preview_text->setPlainText(tr("Select a readable file and choose Preview."));
     }
 
     const int load_pane = m_active_pane_index;
     const quint64 listing_revision = ++m_listing_revision[load_pane];
     ++m_columns_preview_revision;
-    if (m_pane) {
+    if (m_pane != nullptr) {
         m_pane->clearColumnsPreview();
         m_pane->showLoadingState(tr("Loading %1...").arg(m_current_path));
     }
@@ -2661,7 +2665,7 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
 }
 
 void FileManagementExplorerPanel::loadColumnsPreview(const QString& path) {
-    if (!m_pane) {
+    if (m_pane == nullptr) {
         return;
     }
     const auto target = currentTarget();
@@ -2704,7 +2708,7 @@ void FileManagementExplorerPanel::populateTable(const FileManagementListResult& 
     m_item_model->clear();
     if (!result.ok) {
         m_summary_label->setText(result.blockers.join(QStringLiteral("; ")));
-        if (m_pane) {
+        if (m_pane != nullptr) {
             m_pane->showErrorState(result.blockers.join(QStringLiteral("; ")));
         }
         Q_EMIT statusMessage(tr("Explorer listing failed"), sak::kTimerStatusMessageMs);
@@ -2714,10 +2718,11 @@ void FileManagementExplorerPanel::populateTable(const FileManagementListResult& 
     }
 
     m_item_model->setEntries(result.entries);
-    if (m_pane) {
+    if (m_pane != nullptr) {
         if (result.entries.isEmpty()) {
             m_pane->showEmptyState(tr("This folder is empty."));
-        } else if (m_pane->sortFilterModel() && m_pane->sortFilterModel()->rowCount() == 0) {
+        } else if ((m_pane->sortFilterModel() != nullptr) &&
+                   m_pane->sortFilterModel()->rowCount() == 0) {
             m_pane->showEmptyState(tr("No items match current view settings."));
         } else {
             m_pane->showReadyState();
@@ -2742,13 +2747,13 @@ void FileManagementExplorerPanel::populateTable(const FileManagementListResult& 
 void FileManagementExplorerPanel::selectPendingSearchResult() {
     // A search "Open Result" navigated to the file's parent folder; now that the (async)
     // listing has arrived, select the target entry so the user lands on it.
-    if (m_pending_select_name.isEmpty() || !m_pane) {
+    if (m_pending_select_name.isEmpty() || (m_pane == nullptr)) {
         return;
     }
     const QString name = m_pending_select_name;
     m_pending_select_name.clear();
     auto* view = currentItemView();
-    if (!view || !view->model()) {
+    if ((view == nullptr) || (view->model() == nullptr)) {
         return;
     }
     // Iterate the view's own model (the group proxy) so the row selected
@@ -2779,7 +2784,7 @@ void FileManagementExplorerPanel::previewSelectedFile() {
         return;
     }
 
-    if (m_preview_text) {
+    if (m_preview_text != nullptr) {
         // The info pane preview region is visible on both the Details and
         // Preview tabs (Files InfoPane.xaml), so no tab switch is needed.
         m_preview_text->setPlainText(QString::fromUtf8(read.data));
@@ -2936,7 +2941,7 @@ void FileManagementExplorerPanel::copySelectionToClipboard(const bool move) {
         mime->setUrls(batch.urls);
     }
     QApplication::clipboard()->setMimeData(mime);
-    if (move && m_item_model) {
+    if (move && (m_item_model != nullptr)) {
         // Files dims cut items at 0.4 opacity until the move-paste lands.
         m_item_model->setCutPaths(QSet<QString>(batch.lines.cbegin(), batch.lines.cend()));
     }
@@ -2952,7 +2957,7 @@ void FileManagementExplorerPanel::copySelectionToClipboard(const bool move) {
 
 void FileManagementExplorerPanel::clearCutMarks() {
     for (const FileExplorerPane* pane : {m_pane_a, m_pane_b}) {
-        if (pane && pane->itemModel()) {
+        if ((pane != nullptr) && (pane->itemModel() != nullptr)) {
             pane->itemModel()->setCutPaths({});
         }
     }
@@ -2971,7 +2976,7 @@ bool FileManagementExplorerPanel::clipboardHasPasteableFiles() const {
 }
 
 bool FileManagementExplorerPanel::mimeHasPasteableItems(const QMimeData* mime) {
-    if (!mime) {
+    if (mime == nullptr) {
         return false;
     }
     if (mime->hasFormat(QLatin1String(kExplorerClipboardMime))) {
@@ -2995,7 +3000,7 @@ QMimeData* FileManagementExplorerPanel::buildDragMimeData(const int pane_index,
     // The drag starts in this pane's view; make it the active pane so the
     // payload target identity and any drop-time dialogs match the source.
     activatePane(pane_index);
-    if (!m_item_model) {
+    if (m_item_model == nullptr) {
         return nullptr;
     }
     FileExplorerSelection selection;
@@ -3038,7 +3043,7 @@ Qt::DropAction FileManagementExplorerPanel::dropActionFor(const Qt::KeyboardModi
     if (modifiers.testFlag(Qt::ShiftModifier)) {
         return Qt::MoveAction;
     }
-    if (mime && mime->hasFormat(QLatin1String(kExplorerClipboardMime))) {
+    if ((mime != nullptr) && mime->hasFormat(QLatin1String(kExplorerClipboardMime))) {
         const QJsonObject payload =
             QJsonDocument::fromJson(mime->data(QLatin1String(kExplorerClipboardMime))).object();
         if (payload.value(QStringLiteral("target")).toString() ==
@@ -3132,7 +3137,7 @@ void FileManagementExplorerPanel::performDrop(const PasteSources& sources,
 }
 
 void FileManagementExplorerPanel::armSpringOpen(const QString& directory_path) {
-    if (!m_spring_open_timer) {
+    if (m_spring_open_timer == nullptr) {
         m_spring_open_timer = new QTimer(this);
         m_spring_open_timer->setSingleShot(true);
         m_spring_open_timer->setInterval(kSpringOpenMs);
@@ -3150,7 +3155,7 @@ void FileManagementExplorerPanel::armSpringOpen(const QString& directory_path) {
 }
 
 void FileManagementExplorerPanel::cancelSpringOpen() {
-    if (m_spring_open_timer) {
+    if (m_spring_open_timer != nullptr) {
         m_spring_open_timer->stop();
     }
     m_spring_open_path.clear();
@@ -3160,7 +3165,7 @@ int FileManagementExplorerPanel::paneIndexForView(const QAbstractItemView* view)
     constexpr int kPaneCount = 2;
     for (int index = 0; index < kPaneCount; ++index) {
         const FileExplorerPane* pane = index == 0 ? m_pane_a : m_pane_b;
-        if (pane && pane->itemViews().contains(const_cast<QAbstractItemView*>(view))) {
+        if ((pane != nullptr) && pane->itemViews().contains(const_cast<QAbstractItemView*>(view))) {
             return index;
         }
     }
@@ -3191,7 +3196,7 @@ void FileManagementExplorerPanel::appendPayloadItems(const QJsonArray& items,
 FileManagementExplorerPanel::PasteSources FileManagementExplorerPanel::collectPasteSources(
     const QMimeData* mime) const {
     PasteSources sources;
-    if (!mime) {
+    if (mime == nullptr) {
         return sources;
     }
     if (mime->hasFormat(QLatin1String(kExplorerClipboardMime))) {
@@ -3299,7 +3304,7 @@ FileManagementExplorerPanel::resolvePasteCollision(const QString& name,
         choice = PasteCollisionChoice::Skip;
     }
     policy->choice = choice;
-    policy->apply_to_all = apply_all && apply_all->isChecked();
+    policy->apply_to_all = (apply_all != nullptr) && apply_all->isChecked();
     return choice;
 }
 
@@ -4055,7 +4060,7 @@ void FileManagementExplorerPanel::undoLastOperation() {
         return;
     }
     const FileExplorerStorageHistory* history = m_storage_history.undoTarget();
-    if (!history) {
+    if (history == nullptr) {
         Q_EMIT statusMessage(tr("Nothing to undo."), sak::kTimerStatusMessageMs);
         return;
     }
@@ -4074,7 +4079,7 @@ void FileManagementExplorerPanel::redoLastOperation() {
         return;
     }
     const FileExplorerStorageHistory* history = m_storage_history.redoTarget();
-    if (!history) {
+    if (history == nullptr) {
         Q_EMIT statusMessage(tr("Nothing to redo."), sak::kTimerStatusMessageMs);
         return;
     }
@@ -4810,8 +4815,8 @@ void FileManagementExplorerPanel::showMutationResult(const QString& title,
 
 FileExplorerSelection FileManagementExplorerPanel::currentSelection() const {
     FileExplorerSelection selection;
-    const auto* selection_model = m_pane ? m_pane->sharedSelectionModel() : nullptr;
-    if (!selection_model || !m_pane) {
+    const auto* selection_model = (m_pane != nullptr) ? m_pane->sharedSelectionModel() : nullptr;
+    if ((selection_model == nullptr) || (m_pane == nullptr)) {
         return selection;
     }
 
@@ -4857,7 +4862,7 @@ bool FileManagementExplorerPanel::selectionHasTags(const FileExplorerSelection& 
 void FileManagementExplorerPanel::applyCommandState(QPushButton* button,
                                                     const FileExplorerCommandId command,
                                                     const FileExplorerCommandContext& context) {
-    if (!button) {
+    if (button == nullptr) {
         return;
     }
 
@@ -4871,7 +4876,7 @@ void FileManagementExplorerPanel::applyCommandState(QPushButton* button,
 
 QAction* FileManagementExplorerPanel::addCommandMenuAction(
     QMenu* menu, const FileExplorerCommandId command, const FileExplorerCommandContext& context) {
-    if (!menu) {
+    if (menu == nullptr) {
         return nullptr;
     }
 
@@ -4901,12 +4906,12 @@ QAction* FileManagementExplorerPanel::addCommandMenuAction(
 }
 
 void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandContext& context) {
-    if (!m_view_button) {
+    if (m_view_button == nullptr) {
         return;
     }
 
     auto* menu = m_view_button->menu();
-    if (!menu) {
+    if (menu == nullptr) {
         menu = new QMenu(m_view_button);
         menu->setObjectName(QStringLiteral("fileExplorerViewMenu"));
         m_view_button->setMenu(menu);
@@ -4922,7 +4927,7 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
                                                 FileExplorerCommandId::ViewColumns,
                                                 FileExplorerCommandId::ViewAdaptive}) {
         auto* action = addCommandMenuAction(menu, command, context);
-        if (!action) {
+        if (action == nullptr) {
             continue;
         }
         action->setCheckable(true);
@@ -4940,7 +4945,8 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     auto* stackAction = menu->addAction(tr("Stack Panes Vertically"));
     stackAction->setObjectName(QStringLiteral("fileExplorerStackPanesAction"));
     stackAction->setCheckable(true);
-    stackAction->setChecked(m_pane_splitter && m_pane_splitter->orientation() == Qt::Vertical);
+    stackAction->setChecked((m_pane_splitter != nullptr) &&
+                            m_pane_splitter->orientation() == Qt::Vertical);
     stackAction->setEnabled(m_dual_pane_enabled);
     stackAction->setToolTip(m_dual_pane_enabled
                                 ? tr("Switch between side-by-side and stacked panes.")
@@ -5027,7 +5033,7 @@ void FileManagementExplorerPanel::executeCommand(const FileExplorerCommandId com
                                                                               commandContext());
     if (!state.enabled) {
         if (!state.blocker.isEmpty()) {
-            if (m_status_label) {
+            if (m_status_label != nullptr) {
                 m_status_label->setText(state.blocker);
             }
             Q_EMIT statusMessage(state.blocker, sak::kTimerStatusMessageMs);
@@ -5104,7 +5110,8 @@ bool FileManagementExplorerPanel::dispatchSelectionEditCommand(
         }
         return true;
     case FileExplorerCommandId::ClearSelection:
-        if (auto* selection_model = m_pane ? m_pane->sharedSelectionModel() : nullptr) {
+        if (auto* selection_model = (m_pane != nullptr) ? m_pane->sharedSelectionModel()
+                                                        : nullptr) {
             selection_model->clearSelection();
         }
         return true;
@@ -5298,7 +5305,7 @@ void FileManagementExplorerPanel::showSelectedItemProperties() {
     const FileExplorerSelection selection = currentSelection();
     if (selection.isEmpty()) {
         // No selection: fall back to the info pane's Details tab.
-        if (m_details_pane) {
+        if (m_details_pane != nullptr) {
             m_details_pane->showDetailsTab();
         }
         return;
@@ -5405,7 +5412,7 @@ QStringList FileManagementExplorerPanel::allKnownTags() const {
 }
 
 void FileManagementExplorerPanel::installTagProvider(FileExplorerItemModel* model) {
-    if (!model) {
+    if (model == nullptr) {
         return;
     }
     // The model stays decoupled from the tag store: it calls this lookup, which resolves
@@ -5422,7 +5429,7 @@ void FileManagementExplorerPanel::installTagProvider(FileExplorerItemModel* mode
 }
 
 void FileManagementExplorerPanel::installIconProvider(FileExplorerItemModel* model) {
-    if (!model) {
+    if (model == nullptr) {
         return;
     }
     // Row icons come from the shared explorer registry (palette-tinted, so they
@@ -5451,13 +5458,13 @@ void FileManagementExplorerPanel::installIconProvider(FileExplorerItemModel* mod
 }
 
 void FileManagementExplorerPanel::clearCurrentTagFilter() {
-    if (m_pane && m_pane->sortFilterModel()) {
+    if ((m_pane != nullptr) && (m_pane->sortFilterModel() != nullptr)) {
         m_pane->sortFilterModel()->clearTagFilter();
     }
 }
 
 void FileManagementExplorerPanel::applyTagFilter(const QString& tag) {
-    if (!m_pane || !m_pane->sortFilterModel()) {
+    if ((m_pane == nullptr) || (m_pane->sortFilterModel() == nullptr)) {
         return;
     }
     const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
@@ -5511,7 +5518,7 @@ void FileManagementExplorerPanel::editSelectedItemTags() {
     FileExplorerTagStore::setTags(
         settings, QString::fromLatin1(kTagStoreGroup), target_id, path, tags);
     updateDetailsPane();
-    if (m_item_model) {
+    if (m_item_model != nullptr) {
         m_item_model->refreshTags();
     }
     rebuildTargetList();
@@ -5533,7 +5540,7 @@ void FileManagementExplorerPanel::removeTagsFromSelection() {
             settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path, {});
     }
     updateDetailsPane();
-    if (m_item_model) {
+    if (m_item_model != nullptr) {
         m_item_model->refreshTags();
     }
     rebuildTargetList();
@@ -5888,7 +5895,7 @@ void FileManagementExplorerPanel::finishArchiveWorker(FileExplorerArchiveWorker*
 }
 
 void FileManagementExplorerPanel::togglePreviewPane() {
-    if (m_details_pane) {
+    if (m_details_pane != nullptr) {
         m_details_pane_enabled = !m_details_pane_enabled;
         m_details_pane->setVisible(m_details_pane_enabled && width() >= kDetailsTabsCollapseWidth);
     }
@@ -5896,7 +5903,7 @@ void FileManagementExplorerPanel::togglePreviewPane() {
 
 void FileManagementExplorerPanel::invertCurrentSelection() {
     auto* view = currentItemView();
-    if (!view || !view->selectionModel() || !view->model()) {
+    if ((view == nullptr) || (view->selectionModel() == nullptr) || (view->model() == nullptr)) {
         return;
     }
     auto* selection_model = view->selectionModel();
@@ -5918,7 +5925,7 @@ void FileManagementExplorerPanel::invertCurrentSelection() {
 void FileManagementExplorerPanel::toggleCurrentItemSelection() {
     // Files ToggleSelectAction (Ctrl+Space): toggle the focused row only.
     auto* view = currentItemView();
-    if (!view || !view->selectionModel()) {
+    if ((view == nullptr) || (view->selectionModel() == nullptr)) {
         return;
     }
     const QModelIndex current = view->currentIndex();
@@ -5956,8 +5963,8 @@ void FileManagementExplorerPanel::stepLayoutSize(const int direction) {
 void FileManagementExplorerPanel::toggleHiddenItems() {
     m_pane_state.view.show_hidden = !m_pane_state.view.show_hidden;
     applyViewSettings();
-    if (m_pane && m_item_model && !m_item_model->entries().isEmpty()) {
-        if (m_pane->sortFilterModel() && m_pane->sortFilterModel()->rowCount() == 0) {
+    if ((m_pane != nullptr) && (m_item_model != nullptr) && !m_item_model->entries().isEmpty()) {
+        if ((m_pane->sortFilterModel() != nullptr) && m_pane->sortFilterModel()->rowCount() == 0) {
             m_pane->showEmptyState(tr("No items match current view settings."));
         } else {
             m_pane->showReadyState();
@@ -5973,8 +5980,8 @@ void FileManagementExplorerPanel::toggleHiddenItems() {
 void FileManagementExplorerPanel::toggleFileExtensions() {
     m_pane_state.view.show_extensions = !m_pane_state.view.show_extensions;
     applyViewSettings();
-    if (m_pane && m_item_model && !m_item_model->entries().isEmpty()) {
-        if (m_pane->sortFilterModel() && m_pane->sortFilterModel()->rowCount() == 0) {
+    if ((m_pane != nullptr) && (m_item_model != nullptr) && !m_item_model->entries().isEmpty()) {
+        if ((m_pane->sortFilterModel() != nullptr) && m_pane->sortFilterModel()->rowCount() == 0) {
             m_pane->showEmptyState(tr("No items match current view settings."));
         } else {
             m_pane->showReadyState();
@@ -6002,7 +6009,7 @@ void FileManagementExplorerPanel::setShowCheckboxes(const bool enabled) {
     settings.setValue(QString::fromLatin1(kShowCheckboxesKey), enabled);
     settings.endGroup();
     for (const FileExplorerPane* pane : {m_pane_a, m_pane_b}) {
-        if (pane && pane->itemModel()) {
+        if ((pane != nullptr) && (pane->itemModel() != nullptr)) {
             pane->itemModel()->setCheckboxesVisible(enabled);
         }
     }
@@ -6015,7 +6022,8 @@ void FileManagementExplorerPanel::setShowCheckboxes(const bool enabled) {
 void FileManagementExplorerPanel::toggleSelectionForPath(FileExplorerPane* pane,
                                                          const QString& path,
                                                          const bool checked) {
-    if (!pane || !pane->groupProxyModel() || !pane->sharedSelectionModel()) {
+    if ((pane == nullptr) || (pane->groupProxyModel() == nullptr) ||
+        (pane->sharedSelectionModel() == nullptr)) {
         return;
     }
     auto* view_model = pane->groupProxyModel();
@@ -6231,16 +6239,16 @@ void FileManagementExplorerPanel::toggleFilterHeader() {
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.setValue(QString::fromLatin1(kShowFilterHeaderKey), enabled);
     settings.endGroup();
-    if (m_filter_header) {
+    if (m_filter_header != nullptr) {
         m_filter_header->setVisible(enabled);
     }
-    if (enabled && m_filter_box) {
+    if (enabled && (m_filter_box != nullptr)) {
         m_filter_box->setFocus(Qt::ShortcutFocusReason);
     }
 }
 
 void FileManagementExplorerPanel::applyFilterHeaderText(const QString& text) {
-    if (!m_pane || !m_pane->sortFilterModel()) {
+    if ((m_pane == nullptr) || (m_pane->sortFilterModel() == nullptr)) {
         return;
     }
     m_pane->sortFilterModel()->setNameFilter(text);
@@ -6248,7 +6256,7 @@ void FileManagementExplorerPanel::applyFilterHeaderText(const QString& text) {
     const QString message = text.trimmed().isEmpty()
                                 ? tr("Current folder filter cleared.")
                                 : tr("Filter active: %1 item(s) visible.").arg(visible_count);
-    if (m_status_label) {
+    if (m_status_label != nullptr) {
         m_status_label->setText(message);
     }
     Q_EMIT statusMessage(message, sak::kTimerStatusDefaultMs);
@@ -6281,7 +6289,7 @@ void FileManagementExplorerPanel::rememberSearchQuery(const QString& query) {
 }
 
 void FileManagementExplorerPanel::stopExplorerSearch() {
-    if (!m_search_worker) {
+    if (m_search_worker == nullptr) {
         return;
     }
     AdvancedSearchWorker* worker = m_search_worker;
@@ -6382,7 +6390,7 @@ void FileManagementExplorerPanel::openSearchResult(const QString& path, const bo
 // Files PopulateOmnibarSuggestionsForSearchMode: an empty query lists the
 // recent searches; typed text debounces 200 ms into a live capped search.
 void FileManagementExplorerPanel::populateOmnibarSearch(const QString& text) {
-    if (!m_omnibar || m_omnibar->mode() != FileExplorerOmnibarMode::Search) {
+    if ((m_omnibar == nullptr) || m_omnibar->mode() != FileExplorerOmnibarMode::Search) {
         return;
     }
     const QString clean = text.trimmed();
@@ -6405,7 +6413,7 @@ void FileManagementExplorerPanel::populateOmnibarSearch(const QString& text) {
 }
 
 void FileManagementExplorerPanel::runSearchSuggestions(const QString& query) {
-    if (!m_omnibar || m_omnibar->mode() != FileExplorerOmnibarMode::Search) {
+    if ((m_omnibar == nullptr) || m_omnibar->mode() != FileExplorerOmnibarMode::Search) {
         return;
     }
     QListWidget* list = m_omnibar->suggestionList();
@@ -6501,10 +6509,10 @@ void FileManagementExplorerPanel::submitExplorerSearch(const QString& query) {
 void FileManagementExplorerPanel::submitSearchSuggestion(QListWidgetItem* item,
                                                          const QString& typed) {
     QString query = typed.trimmed();
-    if (item) {
+    if (item != nullptr) {
         const QVariant path = item->data(kSearchPathRole);
         if (!path.isNull()) {
-            if (m_omnibar) {
+            if (m_omnibar != nullptr) {
                 m_omnibar->setMode(FileExplorerOmnibarMode::Path);
             }
             openSearchResult(path.toString(), false);
@@ -6512,7 +6520,7 @@ void FileManagementExplorerPanel::submitSearchSuggestion(QListWidgetItem* item,
         }
         query = item->text();
     }
-    if (m_omnibar) {
+    if (m_omnibar != nullptr) {
         m_omnibar->setMode(FileExplorerOmnibarMode::Path);
     }
     submitExplorerSearch(query);
@@ -6521,7 +6529,7 @@ void FileManagementExplorerPanel::submitSearchSuggestion(QListWidgetItem* item,
 void FileManagementExplorerPanel::showCommandPalette() {
     // Files OpenCommandPaletteAction (Ctrl+Shift+P): switch the omnibar into
     // the inline palette mode; suggestions populate for the empty query.
-    if (m_omnibar) {
+    if (m_omnibar != nullptr) {
         m_omnibar->setMode(FileExplorerOmnibarMode::Palette);
     }
 }
@@ -6530,7 +6538,7 @@ void FileManagementExplorerPanel::showCommandPalette() {
 // executable commands whose text matches the typed needle (case-insensitive
 // contains, unranked, uncapped); no group headers, no disabled rows.
 void FileManagementExplorerPanel::populateOmnibarPalette(const QString& needle) {
-    if (!m_omnibar) {
+    if (m_omnibar == nullptr) {
         return;
     }
     QListWidget* list = m_omnibar->suggestionList();
@@ -6577,7 +6585,7 @@ void FileManagementExplorerPanel::executePaletteSuggestion(QListWidgetItem* item
                                                            const QString& typed) {
     FileExplorerCommandId command_id{};
     bool found = false;
-    if (item && item->data(kCommandEnabledRole).toBool()) {
+    if ((item != nullptr) && item->data(kCommandEnabledRole).toBool()) {
         command_id = item->data(kCommandIdRole).value<FileExplorerCommandId>();
         found = true;
     } else {
@@ -6590,7 +6598,7 @@ void FileManagementExplorerPanel::executePaletteSuggestion(QListWidgetItem* item
             }
         }
     }
-    if (m_omnibar) {
+    if (m_omnibar != nullptr) {
         m_omnibar->setMode(FileExplorerOmnibarMode::Path);
     }
     if (!found) {
@@ -6874,18 +6882,18 @@ void FileManagementExplorerPanel::updateDetailsPane() {
     const auto target = currentTarget();
     const FileExplorerSelection selection = currentSelection();
 
-    if (m_properties_text) {
+    if (m_properties_text != nullptr) {
         m_properties_text->setPlainText(
             buildDetailsProperties(target, selection).join(QStringLiteral("\n")));
     }
-    if (m_safety_text) {
+    if (m_safety_text != nullptr) {
         m_safety_text->setPlainText(buildDetailsSafety(target).join(QStringLiteral("\n")));
     }
-    if (m_evidence_text) {
+    if (m_evidence_text != nullptr) {
         m_evidence_text->setPlainText(buildDetailsEvidence(target).join(QStringLiteral("\n")));
     }
     updatePreviewPane(target, selection);
-    if (m_status_label) {
+    if (m_status_label != nullptr) {
         m_status_label->setText(composeStatusText(target, selection));
     }
 }
@@ -6943,7 +6951,7 @@ void FileManagementExplorerPanel::onPreviewReadFinished(
 
 void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& target,
                                                     const FileExplorerSelection& selection) {
-    if (!m_preview_text || !m_details_pane) {
+    if ((m_preview_text == nullptr) || (m_details_pane == nullptr)) {
         return;
     }
     // Any selection change supersedes an in-flight preview read.
@@ -6986,7 +6994,7 @@ void FileManagementExplorerPanel::showPreviewHint(const QString& message) {
     if (auto* caption = m_details_pane->previewCaption()) {
         caption->clear();
     }
-    if (m_preview_text) {
+    if (m_preview_text != nullptr) {
         m_preview_text->setPlainText(message);
     }
 }
@@ -7043,7 +7051,7 @@ void FileManagementExplorerPanel::updateActionButtons() {
     applyCommandState(m_up_button, FileExplorerCommandId::Up, context);
     applyCommandState(m_rename_button, FileExplorerCommandId::Rename, context);
     applyCommandState(m_delete_button, FileExplorerCommandId::Delete, context);
-    if (m_command_bar) {
+    if (m_command_bar != nullptr) {
         applyCommandState(m_command_bar->cutButton(), FileExplorerCommandId::CutItems, context);
         applyCommandState(m_command_bar->copyButton(), FileExplorerCommandId::CopyItems, context);
         applyCommandState(m_command_bar->pasteButton(), FileExplorerCommandId::Paste, context);
@@ -7167,7 +7175,7 @@ int FileManagementExplorerPanel::resolveSidebarTargetIndex(QListWidgetItem* item
 }
 
 void FileManagementExplorerPanel::onTargetChanged(int index) {
-    if (!m_target_list || index < 0 || index >= m_target_list->count()) {
+    if ((m_target_list == nullptr) || index < 0 || index >= m_target_list->count()) {
         m_current_target_index = -1;
         updateDetailsPane();
         updateActionButtons();
@@ -7175,7 +7183,7 @@ void FileManagementExplorerPanel::onTargetChanged(int index) {
     }
 
     auto* item = m_target_list->item(index);
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
     if (static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt()) ==
@@ -7227,14 +7235,14 @@ FileExplorerTabState FileManagementExplorerPanel::captureCurrentTab() const {
     tab.secondary = m_active_pane_index == 0 ? m_secondary_state : m_pane_state;
     tab.secondary_pane_enabled = true;
     tab.active_pane_index = m_active_pane_index;
-    tab.split = (m_pane_splitter && m_pane_splitter->orientation() == Qt::Vertical)
+    tab.split = ((m_pane_splitter != nullptr) && m_pane_splitter->orientation() == Qt::Vertical)
                     ? FileExplorerPaneSplit::Horizontal
                     : FileExplorerPaneSplit::Vertical;
     return tab;
 }
 
 void FileManagementExplorerPanel::updateActiveTabLabel() {
-    if (!m_tab_bar || m_active_tab < 0 || m_active_tab >= m_tab_bar->count()) {
+    if ((m_tab_bar == nullptr) || m_active_tab < 0 || m_active_tab >= m_tab_bar->count()) {
         return;
     }
     const QString title = tabTitleForCurrentLocation();
@@ -7258,7 +7266,7 @@ void FileManagementExplorerPanel::restoreTab(const FileExplorerTabState& tab) {
     if (m_dual_pane_enabled && !tab.secondary_pane_enabled) {
         // The incoming tab is single-pane: collapse the split left over from the prior tab.
         m_dual_pane_enabled = false;
-        if (m_pane_b) {
+        if (m_pane_b != nullptr) {
             m_pane_b->hide();
         }
         highlightActivePane();
@@ -7266,7 +7274,7 @@ void FileManagementExplorerPanel::restoreTab(const FileExplorerTabState& tab) {
     const int target_index = findTargetIndexById(tab.primary.location.target_id.value);
     m_current_target_index = target_index;
     m_pane_state = tab.primary;
-    if (m_target_list && target_index >= 0) {
+    if ((m_target_list != nullptr) && target_index >= 0) {
         const QSignalBlocker blocker(m_target_list);
         selectTargetById(tab.primary.location.target_id.value);
     }
@@ -7283,7 +7291,7 @@ void FileManagementExplorerPanel::restoreSecondaryPane(const FileExplorerTabStat
     ensureSecondPane();
     m_dual_pane_enabled = true;
     m_pane_b->show();
-    if (m_pane_splitter) {
+    if (m_pane_splitter != nullptr) {
         m_pane_splitter->setOrientation(
             tab.split == FileExplorerPaneSplit::Horizontal ? Qt::Vertical : Qt::Horizontal);
     }
@@ -7313,7 +7321,7 @@ void FileManagementExplorerPanel::onTabSwitched(int index) {
 }
 
 void FileManagementExplorerPanel::openPathInNewTab(const QString& path) {
-    if (!m_tab_bar) {
+    if (m_tab_bar == nullptr) {
         return;
     }
     if (m_active_tab >= 0 && m_active_tab < m_tabs.size()) {
@@ -7357,7 +7365,7 @@ void FileManagementExplorerPanel::openSelectedFoldersInNewTabs() {
 }
 
 void FileManagementExplorerPanel::duplicateCurrentTab() {
-    if (!m_tab_bar || m_active_tab < 0 || m_active_tab >= m_tabs.size()) {
+    if ((m_tab_bar == nullptr) || m_active_tab < 0 || m_active_tab >= m_tabs.size()) {
         return;
     }
     // Sync the live pane into the active tab, then clone it verbatim (history + title).
@@ -7371,7 +7379,7 @@ void FileManagementExplorerPanel::duplicateCurrentTab() {
 }
 
 void FileManagementExplorerPanel::onTabCloseRequested(int index) {
-    if (!m_tab_bar || m_tabs.size() <= 1 || index < 0 || index >= m_tabs.size()) {
+    if ((m_tab_bar == nullptr) || m_tabs.size() <= 1 || index < 0 || index >= m_tabs.size()) {
         return;
     }
     // Capture the live pane if closing the active tab so a reopen is byte-accurate.
@@ -7389,7 +7397,7 @@ void FileManagementExplorerPanel::onTabCloseRequested(int index) {
 }
 
 void FileManagementExplorerPanel::reopenClosedTab() {
-    if (!m_tab_bar || m_closed_tabs.isEmpty()) {
+    if ((m_tab_bar == nullptr) || m_closed_tabs.isEmpty()) {
         return;
     }
     if (m_active_tab >= 0 && m_active_tab < m_tabs.size()) {
@@ -7403,7 +7411,7 @@ void FileManagementExplorerPanel::reopenClosedTab() {
 }
 
 void FileManagementExplorerPanel::saveTabSession() const {
-    if (!m_tab_session_persistence || !m_tab_bar) {
+    if (!m_tab_session_persistence || (m_tab_bar == nullptr)) {
         return;
     }
     FileExplorerTabSession session;
@@ -7450,7 +7458,7 @@ bool tabSessionRestorable(const FileExplorerTabSession& session) {
 }  // namespace
 
 void FileManagementExplorerPanel::restoreTabSession() {
-    if (!m_tab_session_persistence || !m_tab_bar) {
+    if (!m_tab_session_persistence || (m_tab_bar == nullptr)) {
         return;
     }
     QSettings settings;
@@ -7482,7 +7490,7 @@ void FileManagementExplorerPanel::restoreTabSession() {
 }
 
 void FileManagementExplorerPanel::ensureSecondPane() {
-    if (m_pane_b) {
+    if (m_pane_b != nullptr) {
         return;
     }
     m_pane_b = new FileExplorerPane(m_pane_splitter);
@@ -7494,10 +7502,10 @@ void FileManagementExplorerPanel::ensureSecondPane() {
 }
 
 void FileManagementExplorerPanel::activatePane(int index) {
-    if (index == m_active_pane_index || index < 0 || index > 1 || !m_pane_a) {
+    if (index == m_active_pane_index || index < 0 || index > 1 || (m_pane_a == nullptr)) {
         return;
     }
-    if (index == 1 && !m_pane_b) {
+    if (index == 1 && (m_pane_b == nullptr)) {
         return;
     }
     std::swap(m_pane_state, m_secondary_state);
@@ -7513,7 +7521,7 @@ void FileManagementExplorerPanel::activatePane(int index) {
     // the OTHER pane's target; an id that no longer resolves fails closed to no
     // target, which blocks every write until a listing re-establishes one.
     m_current_target_index = targetIndexForId(m_pane_state.location.target_id.value);
-    if (m_path_edit) {
+    if (m_path_edit != nullptr) {
         m_path_edit->setText(m_current_path);
     }
     applyViewSettings();  // re-apply the now-active pane's own view mode/size/toggles
@@ -7522,7 +7530,7 @@ void FileManagementExplorerPanel::activatePane(int index) {
 }
 
 void FileManagementExplorerPanel::togglePaneOrientation() {
-    if (!m_pane_splitter) {
+    if (m_pane_splitter == nullptr) {
         return;
     }
     const bool stacked = m_pane_splitter->orientation() == Qt::Vertical;
@@ -7533,12 +7541,12 @@ void FileManagementExplorerPanel::togglePaneOrientation() {
 }
 
 void FileManagementExplorerPanel::highlightActivePane() {
-    if (!m_pane_a) {
+    if (m_pane_a == nullptr) {
         return;
     }
     const QString border = ui::activePaneBorderStyleSheet();
     m_pane_a->setStyleSheet(m_dual_pane_enabled && m_active_pane_index == 0 ? border : QString());
-    if (m_pane_b) {
+    if (m_pane_b != nullptr) {
         m_pane_b->setStyleSheet(m_dual_pane_enabled && m_active_pane_index == 1 ? border
                                                                                 : QString());
     }
@@ -7582,7 +7590,7 @@ void FileManagementExplorerPanel::onPathReturnPressed() {
     loadDirectory(m_path_edit->text());
     // Files EditPath commit: Enter navigates and the breadcrumb replaces the
     // editable field (edit mode otherwise lingers until a focus change).
-    if (m_omnibar) {
+    if (m_omnibar != nullptr) {
         m_omnibar->setAddressEditMode(false);
     }
 }
@@ -7901,7 +7909,7 @@ void FileManagementExplorerPanel::onRenameClicked() {
         return;
     }
     auto* view = currentItemView();
-    if (!view || !view->selectionModel()) {
+    if ((view == nullptr) || (view->selectionModel() == nullptr)) {
         return;
     }
     QModelIndex current = view->currentIndex();
@@ -7939,7 +7947,7 @@ void FileManagementExplorerPanel::performInlineRename(const int row,
                                                       const QString& new_name,
                                                       const QString& expected_source_path) {
     const auto target = currentTarget();
-    if (!target.can_write_files || !m_item_model || !m_item_model->hasEntry(row)) {
+    if (!target.can_write_files || (m_item_model == nullptr) || !m_item_model->hasEntry(row)) {
         return;
     }
     // The row is a position, not an identity: refuse when the entry sitting there
@@ -8056,10 +8064,10 @@ void FileManagementExplorerPanel::deleteSelectionWithConfirmation(const bool per
 
 void FileManagementExplorerPanel::onTableContextMenuRequested(const QPoint& position) {
     auto* view = qobject_cast<QAbstractItemView*>(sender());
-    if (!view) {
+    if (view == nullptr) {
         view = currentItemView();
     }
-    if (!view) {
+    if (view == nullptr) {
         return;
     }
 
@@ -8166,7 +8174,7 @@ void FileManagementExplorerPanel::addArchiveSubmenus(QMenu* menu,
     compress_menu->setObjectName(QStringLiteral("fileExplorerCompressMenu"));
     if (auto* zip_action =
             addCommandMenuAction(compress_menu, FileExplorerCommandId::CompressIntoZip, context);
-        zip_action && zip_action->isEnabled()) {
+        (zip_action != nullptr) && zip_action->isEnabled()) {
         zip_action->setText(tr("Create %1.zip").arg(selectionArchiveBaseName()));
     }
     auto* extract_menu = menu->addMenu(tr("Extract"));
@@ -8177,7 +8185,7 @@ void FileManagementExplorerPanel::addArchiveSubmenus(QMenu* menu,
     auto* child_action =
         addCommandMenuAction(extract_menu, FileExplorerCommandId::ExtractToChildFolder, context);
     const FileExplorerSelection& selection = context.pane.selection;
-    if (child_action && child_action->isEnabled() && selection.hasSingleEntry()) {
+    if ((child_action != nullptr) && child_action->isEnabled() && selection.hasSingleEntry()) {
         // Files "Extract to {name}\" label from the archive's own stem.
         child_action->setText(
             tr("Extract to %1\\")
@@ -8268,7 +8276,7 @@ void FileManagementExplorerPanel::toggleTagOnSelection(const QString& tag, const
             settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path, tags);
     }
     updateDetailsPane();
-    if (m_item_model) {
+    if (m_item_model != nullptr) {
         m_item_model->refreshTags();
     }
     rebuildTargetList();
@@ -8277,7 +8285,7 @@ void FileManagementExplorerPanel::toggleTagOnSelection(const QString& tag, const
 int FileManagementExplorerPanel::resolveContextMenuTargetIndex(const QPoint& position) {
     if (const QModelIndex index = m_target_list->indexAt(position); index.isValid()) {
         auto* item = m_target_list->item(index.row());
-        if (item) {
+        if (item != nullptr) {
             const auto kind = static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt());
             if (kind == SidebarEntryKind::Target) {
                 // A row that cannot say WHICH target it is must not be coerced into
@@ -8422,7 +8430,7 @@ Qt::DropAction FileManagementExplorerPanel::sidebarPasteAction(const FileManagem
         return Qt::MoveAction;
     }
     const QMimeData* mime = drop->mimeData();
-    if (mime && mime->hasFormat(QLatin1String(kExplorerClipboardMime))) {
+    if ((mime != nullptr) && mime->hasFormat(QLatin1String(kExplorerClipboardMime))) {
         const QJsonObject payload =
             QJsonDocument::fromJson(mime->data(QLatin1String(kExplorerClipboardMime))).object();
         if (payload.value(QStringLiteral("target")).toString() ==
@@ -8435,7 +8443,7 @@ Qt::DropAction FileManagementExplorerPanel::sidebarPasteAction(const FileManagem
 
 bool FileManagementExplorerPanel::handleSidebarDragOver(QDropEvent* drop) {
     const QListWidgetItem* item = m_target_list->itemAt(drop->position().toPoint());
-    if (!item) {
+    if (item == nullptr) {
         return false;
     }
     const QMimeData* mime = drop->mimeData();
@@ -8473,7 +8481,7 @@ bool FileManagementExplorerPanel::handleSidebarDragOver(QDropEvent* drop) {
 
 bool FileManagementExplorerPanel::handleSidebarDrop(QDropEvent* drop) {
     const QListWidgetItem* item = m_target_list->itemAt(drop->position().toPoint());
-    if (!item) {
+    if (item == nullptr) {
         return false;
     }
     const QMimeData* mime = drop->mimeData();
@@ -8551,7 +8559,7 @@ void FileManagementExplorerPanel::applyDroppedTag(const QString& tag, const QMim
             settings, QString::fromLatin1(kTagStoreGroup), sources.source_target_id, path, tags);
         ++tagged;
     }
-    if (m_item_model) {
+    if (m_item_model != nullptr) {
         m_item_model->refreshTags();
     }
     Q_EMIT statusMessage(tr("Tagged %1 item(s) with %2").arg(tagged).arg(tag),
@@ -8650,8 +8658,8 @@ bool FileManagementExplorerPanel::showStaleFavoriteContextMenu(const QPoint& pos
         return false;
     }
     auto* item = m_target_list->item(index.row());
-    if (!item || static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt()) !=
-                     SidebarEntryKind::StaleFavorite) {
+    if ((item == nullptr) || static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt()) !=
+                                 SidebarEntryKind::StaleFavorite) {
         return false;
     }
     const QString stale_id = item->data(kSidebarTagRole).toString();
@@ -8671,7 +8679,7 @@ bool FileManagementExplorerPanel::showStaleFavoriteContextMenu(const QPoint& pos
 }
 
 void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& position) {
-    if (!m_target_list) {
+    if (m_target_list == nullptr) {
         return;
     }
     if (showStaleFavoriteContextMenu(position)) {

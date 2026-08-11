@@ -1225,7 +1225,7 @@ bool mergeSourceIsAdjacentAfterTarget(const PartitionDiskInfo& disk,
                                       const PartitionInfoEx& target,
                                       uint32_t source_partition_number) {
     const auto* source = PartitionSafetyValidator::findPartition(disk, source_partition_number);
-    return source && source->offset_bytes == target.offset_bytes + target.size_bytes;
+    return (source != nullptr) && source->offset_bytes == target.offset_bytes + target.size_bytes;
 }
 
 const PartitionInfoEx* allocateDonorPartition(const PartitionDiskInfo& disk,
@@ -1240,7 +1240,7 @@ const PartitionInfoEx* allocateDonorPartition(const PartitionDiskInfo& disk,
 
 bool allocationDonorSizeMismatch(const PartitionInfoEx* donor,
                                  const PartitionOperation& operation) {
-    if (operation.type != PartitionOperationType::AllocateFreeSpace || !donor) {
+    if (operation.type != PartitionOperationType::AllocateFreeSpace || (donor == nullptr)) {
         return false;
     }
     const uint64_t sourceSize = payloadUInt64(operation, QStringLiteral("source_size_bytes"));
@@ -1250,24 +1250,25 @@ bool allocationDonorSizeMismatch(const PartitionInfoEx* donor,
 bool allocationDonorIsAdjacentAfterTarget(const PartitionInfoEx& target,
                                           const PartitionInfoEx* donor,
                                           const PartitionOperation& operation) {
-    return operation.type == PartitionOperationType::AllocateFreeSpace && donor &&
+    return operation.type == PartitionOperationType::AllocateFreeSpace && (donor != nullptr) &&
            donor->offset_bytes == target.offset_bytes + target.size_bytes;
 }
 
 bool allocationDonorIsProtected(const PartitionInfoEx* donor, const PartitionOperation& operation) {
-    return operation.type == PartitionOperationType::AllocateFreeSpace && donor &&
+    return operation.type == PartitionOperationType::AllocateFreeSpace && (donor != nullptr) &&
            (PartitionSafetyValidator::isSystemProtectedPartition(*donor) || donor->is_read_only);
 }
 
 bool allocationDonorMissingMountedVolume(const PartitionInfoEx* donor,
                                          const PartitionOperation& operation) {
-    return operation.type == PartitionOperationType::AllocateFreeSpace && donor &&
+    return operation.type == PartitionOperationType::AllocateFreeSpace && (donor != nullptr) &&
            (!donor->volume || donor->volume->drive_letter.isEmpty());
 }
 
 bool allocationDonorVolumePayloadMismatch(const PartitionInfoEx* donor,
                                           const PartitionOperation& operation) {
-    if (operation.type != PartitionOperationType::AllocateFreeSpace || !donor || !donor->volume) {
+    if (operation.type != PartitionOperationType::AllocateFreeSpace || (donor == nullptr) ||
+        !donor->volume) {
         return false;
     }
     const QString payloadDrive =
@@ -1287,7 +1288,7 @@ bool allocationAmountMissing(const PartitionOperation& operation) {
 
 bool allocationLeavesDonorTooSmall(const PartitionInfoEx* donor,
                                    const PartitionOperation& operation) {
-    if (operation.type != PartitionOperationType::AllocateFreeSpace || !donor) {
+    if (operation.type != PartitionOperationType::AllocateFreeSpace || (donor == nullptr)) {
         return false;
     }
     const uint64_t bytes = payloadUInt64(operation, QStringLiteral("bytes_to_allocate"));
@@ -1312,7 +1313,7 @@ bool allocationBackupOnTargetOrDonor(const PartitionInfoEx& target,
     }
     const QString backup = normalizedBackupDirectory(operation);
     return (target.volume && targetPathStartsWithDrive(backup, target.volume->drive_letter)) ||
-           (donor && donor->volume &&
+           ((donor != nullptr) && donor->volume &&
             targetPathStartsWithDrive(backup, donor->volume->drive_letter));
 }
 
@@ -1870,13 +1871,15 @@ void validatePartitionCompositeOperation(const PartitionDiskInfo& disk,
                  QStringLiteral(
                      "Merge source must be an existing adjacent partition after target"));
     addBlockerIf(result,
-                 operation.type == PartitionOperationType::AllocateFreeSpace && !allocationDonor,
+                 operation.type == PartitionOperationType::AllocateFreeSpace &&
+                     (allocationDonor == nullptr),
                  QStringLiteral("Allocate Free Space requires an existing donor partition"));
     addBlockerIf(result,
                  allocationDonorSizeMismatch(allocationDonor, operation),
                  QStringLiteral("Allocate Free Space donor identity is missing or stale"));
     addBlockerIf(result,
-                 operation.type == PartitionOperationType::AllocateFreeSpace && allocationDonor &&
+                 operation.type == PartitionOperationType::AllocateFreeSpace &&
+                     (allocationDonor != nullptr) &&
                      !allocationDonorIsAdjacentAfterTarget(partition, allocationDonor, operation),
                  QStringLiteral(
                      "Allocate Free Space donor must be directly after the target partition"));
@@ -1951,7 +1954,7 @@ PartitionValidationResult PartitionSafetyValidator::validate(
     const PartitionInventory& inventory, const PartitionOperation& operation) const {
     PartitionValidationResult result;
     const PartitionDiskInfo* disk = findDisk(inventory, operation.target.disk_number);
-    if (!disk) {
+    if (disk == nullptr) {
         result.blockers.append(QStringLiteral("Target disk was not found in current inventory"));
         return result;
     }
@@ -1984,7 +1987,7 @@ PartitionValidationResult PartitionSafetyValidator::validate(
     case PartitionTargetKind::Partition:
     case PartitionTargetKind::Volume: {
         const PartitionInfoEx* partition = findPartition(*disk, operation.target.partition_number);
-        if (!partition) {
+        if (partition == nullptr) {
             result.blockers.append(QStringLiteral("Target partition was not found"));
             break;
         }
@@ -2157,7 +2160,7 @@ void PartitionSafetyValidator::validatePayloadRawWriteTarget(
     addBlockerIf(result,
                  payloadTargetDiskMustExist(operation) && targetDisk == nullptr,
                  QStringLiteral("Payload target disk was not found in current inventory"));
-    if (!targetDisk) {
+    if (targetDisk == nullptr) {
         return;
     }
 
@@ -2217,7 +2220,7 @@ void PartitionSafetyValidator::validateRawVolumeAliasWriteTarget(
                  targetDisk == nullptr,
                  QStringLiteral("Raw device target could not be resolved to a known disk; use a "
                                 "\\\\.\\PhysicalDriveN path"));
-    if (!targetDisk) {
+    if (targetDisk == nullptr) {
         return;
     }
     addCommonDiskWarnings(*targetDisk, result);

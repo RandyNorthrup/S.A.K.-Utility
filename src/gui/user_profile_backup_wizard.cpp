@@ -88,7 +88,7 @@ BackupCodecOptions UserProfileBackupWizard::getCodecOptions() const {
     BackupCodecOptions options;
     const auto* settings =
         qobject_cast<const UserProfileBackupSettingsPage*>(page(Page_BackupSettings));
-    if (!settings) {
+    if (settings == nullptr) {
         // Pass-through: a missing page must mean a verbatim copy, never a claim of
         // protection the run would not deliver.
         return options;

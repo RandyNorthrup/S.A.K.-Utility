@@ -59,7 +59,7 @@ int queryVolumeDriveNumber(const wchar_t* volumePath) {
                         &deviceNumber,
                         sizeof(deviceNumber),
                         &bytesReturned,
-                        nullptr)) {
+                        nullptr) != 0) {
         result = static_cast<int>(deviceNumber.DeviceNumber);
     }
 
@@ -294,7 +294,7 @@ QStringList DriveUnmounter::getVolumesOnDrive(int driveNumber, bool* enumeration
             FindVolumeClose(hFind);
             return volumes;
         }
-    } while (FindNextVolumeW(hFind, volumeName, ARRAYSIZE(volumeName)));
+    } while (FindNextVolumeW(hFind, volumeName, ARRAYSIZE(volumeName)) != 0);
 
     // FindNextVolumeW returns FALSE at the end of enumeration; only ERROR_NO_MORE_FILES
     // is a clean end. Any other error means the list may be incomplete -> fail closed.
@@ -325,8 +325,8 @@ HANDLE DriveUnmounter::lockVolume(const QString& volumePath) {
 
     // Lock the volume
     DWORD bytesReturned = 0;
-    if (!DeviceIoControl(
-            hVolume, FSCTL_LOCK_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr)) {
+    if (DeviceIoControl(
+            hVolume, FSCTL_LOCK_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr) == 0) {
         m_lastError = QString("FSCTL_LOCK_VOLUME failed: error %1").arg(GetLastError());
         CloseHandle(hVolume);
         return INVALID_HANDLE_VALUE;
@@ -343,8 +343,9 @@ bool DriveUnmounter::dismountVolume(HANDLE volumeHandle) {
 
     // Dismount the volume
     DWORD bytesReturned = 0;
-    if (!DeviceIoControl(
-            volumeHandle, FSCTL_DISMOUNT_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr)) {
+    if (DeviceIoControl(
+            volumeHandle, FSCTL_DISMOUNT_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr) ==
+        0) {
         m_lastError = QString("FSCTL_DISMOUNT_VOLUME failed: error %1").arg(GetLastError());
         return false;
     }
@@ -364,7 +365,7 @@ bool DriveUnmounter::deleteMountPoints(const QString& volumePath) {
     }
 
     DWORD charCount = 0;
-    if (GetVolumePathNamesForVolumeNameW(volumeName.c_str(), nullptr, 0, &charCount)) {
+    if (GetVolumePathNamesForVolumeNameW(volumeName.c_str(), nullptr, 0, &charCount) != 0) {
         // Success with a zero-length buffer means there are no mount points.
         return true;
     }
@@ -385,8 +386,8 @@ bool DriveUnmounter::deleteMountPoints(const QString& volumePath) {
     }
 
     std::vector<wchar_t> names(charCount, L'\0');
-    if (!GetVolumePathNamesForVolumeNameW(
-            volumeName.c_str(), names.data(), charCount, &charCount)) {
+    if (GetVolumePathNamesForVolumeNameW(volumeName.c_str(), names.data(), charCount, &charCount) ==
+        0) {
         sak::logWarning(QString("GetVolumePathNamesForVolumeNameW failed for %1: error %2")
                             .arg(volumePath)
                             .arg(GetLastError())
@@ -405,7 +406,7 @@ bool DriveUnmounter::deleteVolumePathNames(const wchar_t* multiSz, size_t count)
     const wchar_t* const end = multiSz + count;
     bool allSucceeded = true;
     for (const wchar_t* p = multiSz; p < end && *p != L'\0';) {
-        if (!DeleteVolumeMountPointW(p)) {
+        if (DeleteVolumeMountPointW(p) == 0) {
             sak::logWarning(QString("Failed to delete mount point: %1")
                                 .arg(QString::fromWCharArray(p))
                                 .toStdString());
@@ -449,7 +450,7 @@ bool DriveUnmounter::preventAutoMount(int driveNumber) {
                                          nullptr,
                                          0,
                                          &bytesReturned,
-                                         nullptr);
+                                         nullptr) != 0;
 
     if (!success) {
         m_lastError =
@@ -493,7 +494,7 @@ bool DriveUnmounter::allowAutoMount(int driveNumber) {
                                          nullptr,
                                          0,
                                          &bytesReturned,
-                                         nullptr);
+                                         nullptr) != 0;
 
     if (!success) {
         m_lastError =
@@ -598,14 +599,14 @@ bool DriveUnmounter::issueEjectIoctls(int driveNumber) {
     DWORD bytesReturned = 0;
     PREVENT_MEDIA_REMOVAL allowRemoval = {};
     allowRemoval.PreventMediaRemoval = FALSE;
-    if (!DeviceIoControl(hDrive,
-                         IOCTL_STORAGE_MEDIA_REMOVAL,
-                         &allowRemoval,
-                         sizeof(allowRemoval),
-                         nullptr,
-                         0,
-                         &bytesReturned,
-                         nullptr)) {
+    if (DeviceIoControl(hDrive,
+                        IOCTL_STORAGE_MEDIA_REMOVAL,
+                        &allowRemoval,
+                        sizeof(allowRemoval),
+                        nullptr,
+                        0,
+                        &bytesReturned,
+                        nullptr) == 0) {
         sak::logInfo(QString("IOCTL_STORAGE_MEDIA_REMOVAL not honoured on drive %1: error %2")
                          .arg(driveNumber)
                          .arg(GetLastError())
@@ -726,7 +727,7 @@ QStringList DriveUnmounter::findVolumesForDrive(int driveNumber, bool* enumerati
             continue;
         }
         mountPoints.append(QString::fromWCharArray(volumeName));
-    } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
+    } while (FindNextVolumeW(hFind, volumeName, MAX_PATH) != 0);
 
     // Only ERROR_NO_MORE_FILES is a clean end of enumeration; any other error means the
     // list may be short (same fail-closed rule as getVolumesOnDrive).

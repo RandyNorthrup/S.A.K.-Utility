@@ -24,7 +24,7 @@ constexpr int kMaxFunctionCallsPerTurn = 4096;
 constexpr int kMaxArgumentsJsonChars = 1'048'576;  // 1 MiB of arguments_json per call
 
 void setError(QString* error_message, const QString& message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = message;
     }
 }
@@ -82,7 +82,7 @@ const OpenAIFunctionCall* AiToolTurn::currentCall() const noexcept {
 
 QString AiToolTurn::currentCallId() const {
     const auto* call = currentCall();
-    return call ? call->call_id : QString();
+    return (call != nullptr) ? call->call_id : QString();
 }
 
 AiToolTurn::AdvanceResult AiToolTurn::appendOutput(OpenAIFunctionOutput output) {
@@ -92,7 +92,7 @@ AiToolTurn::AdvanceResult AiToolTurn::appendOutput(OpenAIFunctionOutput output) 
         return result;
     }
     const auto* call = currentCall();
-    if (!call) {
+    if (call == nullptr) {
         result.error_message = QStringLiteral("Pending tool turn has no current call");
         return result;
     }
@@ -338,7 +338,7 @@ bool AiToolTurn::validateCalls(const QVector<OpenAIFunctionCall>& calls, QString
 bool AiToolTurn::decodeCalls(const QJsonArray& calls_json,
                              QVector<OpenAIFunctionCall>* calls,
                              QString* error_message) {
-    if (!calls) {
+    if (calls == nullptr) {
         setError(error_message, QStringLiteral("Pending tool turn call decode target missing"));
         return false;
     }
@@ -371,7 +371,7 @@ bool AiToolTurn::decodeCalls(const QJsonArray& calls_json,
 bool AiToolTurn::decodeOutputs(const QJsonArray& outputs_json,
                                QVector<OpenAIFunctionOutput>* outputs,
                                QString* error_message) {
-    if (!outputs) {
+    if (outputs == nullptr) {
         setError(error_message, QStringLiteral("Pending tool turn output decode target missing"));
         return false;
     }

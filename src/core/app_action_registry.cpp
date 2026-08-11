@@ -54,7 +54,7 @@ bool AppActionRegistry::registerAction(const AppActionDescriptor& descriptor,
     const QString id = descriptor.id.trimmed();
     const QString invalid = registrationError(id, descriptor, invoke);
     if (!invalid.isEmpty()) {
-        if (error) {
+        if (error != nullptr) {
             *error = invalid;
         }
         return false;
@@ -62,7 +62,7 @@ bool AppActionRegistry::registerAction(const AppActionDescriptor& descriptor,
 
     const QWriteLocker lock(&m_lock);
     if (m_actions.contains(id)) {
-        if (error) {
+        if (error != nullptr) {
             *error = QStringLiteral("App action '%1' is already registered").arg(id);
         }
         return false;
@@ -70,7 +70,7 @@ bool AppActionRegistry::registerAction(const AppActionDescriptor& descriptor,
     AppActionDescriptor stored = descriptor;
     stored.id = id;
     m_actions.insert(id, Entry{stored, std::move(invoke)});
-    if (error) {
+    if (error != nullptr) {
         error->clear();
     }
     return true;
@@ -117,14 +117,14 @@ AppActionResult AppActionRegistry::invoke(const QString& id,
         const QReadLocker lock(&m_lock);
         const auto it = m_actions.constFind(id.trimmed());
         if (it == m_actions.constEnd()) {
-            if (error) {
+            if (error != nullptr) {
                 *error = QStringLiteral("Unknown app action: %1").arg(id.trimmed());
             }
             return {false, QStringLiteral("Unknown app action: %1").arg(id.trimmed()), {}};
         }
         handler = it->invoke;  // copy the thunk so we can call it lock-free
     }
-    if (error) {
+    if (error != nullptr) {
         error->clear();
     }
     // Call outside the lock: the thunk may run for a long time or marshal onto the

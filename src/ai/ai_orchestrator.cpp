@@ -479,7 +479,7 @@ AiPhaseExecution AiOrchestrator::executeToolPhase(const WorkflowPhase& phase,
     execution.agent_id = phase.agent;
     execution.ran = true;
 
-    if (!m_tool_executor) {
+    if (m_tool_executor == nullptr) {
         execution.success = false;
         execution.error_message = QStringLiteral("No tool executor configured");
         return execution;
@@ -564,7 +564,7 @@ AiPhaseExecution AiOrchestrator::executeDelegatePhase(const WorkflowTemplate& wo
     execution.agent_id = phase.agent;
     execution.ran = true;
 
-    if (!m_subagent_runner) {
+    if (m_subagent_runner == nullptr) {
         execution.success = false;
         execution.error_message = QStringLiteral("No subagent runner configured");
         return execution;
@@ -680,7 +680,7 @@ AiRecoveryDecision AiOrchestrator::recoveryDecisionFor(const WorkflowTemplate& w
 
 void AiOrchestrator::attachRecoveryDecision(AiPhaseExecution* execution,
                                             const AiRecoveryDecision& decision) const {
-    if (execution) {
+    if (execution != nullptr) {
         execution->metadata.insert(QStringLiteral("recovery_decision"), decision.toJson());
     }
 }

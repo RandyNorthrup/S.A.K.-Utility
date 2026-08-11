@@ -188,7 +188,7 @@ QString dxgiVendorName(unsigned int vendor_id) {
 ///         (WARP) adapter that should be skipped.
 bool tryBuildGpuFromAdapter(IDXGIAdapter1* adapter, sak::GpuInfo& out) {
     DXGI_ADAPTER_DESC1 desc{};
-    if (!SUCCEEDED(adapter->GetDesc1(&desc)) || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+    if (!SUCCEEDED(adapter->GetDesc1(&desc)) || ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0u)) {
         return false;
     }
     out.name = QString::fromWCharArray(desc.Description);
@@ -505,7 +505,7 @@ MemorySummary HardwareInventoryScanner::queryMemory() {
 #ifdef SAK_PLATFORM_WINDOWS
     MEMORYSTATUSEX mem_status{};
     mem_status.dwLength = sizeof(mem_status);
-    if (GlobalMemoryStatusEx(&mem_status)) {
+    if (GlobalMemoryStatusEx(&mem_status) != 0) {
         summary.total_bytes = mem_status.ullTotalPhys;
         summary.available_bytes = mem_status.ullAvailPhys;
     } else {
@@ -821,7 +821,7 @@ void HardwareInventoryScanner::enumerateDxgiAdapters(QVector<GpuInfo>& gpus) {
         // Any other failure leaves `adapter` unpopulated -- stop rather than
         // dereference a null ComPtr (GetDesc1 would crash). The old loop only
         // broke on NOT_FOUND, so an error HRESULT fell through to the deref.
-        if (FAILED(hr) || !adapter) {
+        if (FAILED(hr) || (adapter == nullptr)) {
             logWarning("DXGI EnumAdapters1 failed at index {} (hr {:#x})",
                        i,
                        static_cast<unsigned long>(hr));
@@ -866,7 +866,7 @@ MotherboardInfo HardwareInventoryScanner::queryMotherboard() {
 #ifdef SAK_PLATFORM_WINDOWS
 bool HardwareInventoryScanner::queryBatteryPowerStatus(BatteryInfo& info) {
     SYSTEM_POWER_STATUS power_status{};
-    if (!GetSystemPowerStatus(&power_status)) {
+    if (GetSystemPowerStatus(&power_status) == 0) {
         // Do not swallow the failure silently: log it, then continue to the WMI
         // Win32_Battery query (the authoritative presence source) rather than
         // asserting a battery state we could not read.

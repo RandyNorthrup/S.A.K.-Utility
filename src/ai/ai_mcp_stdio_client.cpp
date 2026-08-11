@@ -73,18 +73,18 @@ void terminateProcessTree(DWORD process_id) {
     if (snapshot != INVALID_HANDLE_VALUE) {
         PROCESSENTRY32W entry{};
         entry.dwSize = sizeof(entry);
-        if (Process32FirstW(snapshot, &entry)) {
+        if (Process32FirstW(snapshot, &entry) != 0) {
             do {
                 if (entry.th32ParentProcessID == process_id) {
                     terminateProcessTree(entry.th32ProcessID);
                 }
-            } while (Process32NextW(snapshot, &entry));
+            } while (Process32NextW(snapshot, &entry) != 0);
         }
         CloseHandle(snapshot);
     }
 
     HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, process_id);
-    if (process) {
+    if (process != nullptr) {
         TerminateProcess(process, 1);
         CloseHandle(process);
     }
@@ -148,7 +148,7 @@ private:
     // Drain stderr as it arrives, retaining only the trailing bytes for diagnostics so an
     // unbounded stderr stream cannot accumulate in the QProcess buffer.
     void drainStderr() {
-        if (!m_process) {
+        if (m_process == nullptr) {
             return;
         }
         m_stderrTail.append(m_process->readAllStandardError());
@@ -175,35 +175,35 @@ private:
 
 #ifdef Q_OS_WIN
     void assignProcessToJob() {
-        if (!m_process || m_process->processId() <= 0) {
+        if ((m_process == nullptr) || m_process->processId() <= 0) {
             return;
         }
         m_jobHandle = ::CreateJobObjectW(nullptr, nullptr);
-        if (!m_jobHandle) {
+        if (m_jobHandle == nullptr) {
             return;
         }
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if (!::SetInformationJobObject(
-                m_jobHandle, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        if (::SetInformationJobObject(
+                m_jobHandle, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
             closeJob();  // Without KILL_ON_JOB_CLOSE the job cannot guarantee cleanup; drop it.
             return;
         }
         const HANDLE proc = ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE,
                                           FALSE,
                                           static_cast<DWORD>(m_process->processId()));
-        if (!proc) {
+        if (proc == nullptr) {
             closeJob();
             return;
         }
-        if (!::AssignProcessToJobObject(m_jobHandle, proc)) {
+        if (::AssignProcessToJobObject(m_jobHandle, proc) == 0) {
             closeJob();  // Not in the job -> closing it would reap nothing; fall back.
         }
         ::CloseHandle(proc);
     }
 
     void closeJob() {
-        if (m_jobHandle) {
+        if (m_jobHandle != nullptr) {
             ::CloseHandle(m_jobHandle);  // KILL_ON_JOB_CLOSE reaps any surviving descendants.
             m_jobHandle = nullptr;
         }
@@ -310,7 +310,7 @@ private:
 
     void stopProcess(bool force_kill) {
 #ifdef Q_OS_WIN
-        if (m_jobHandle) {
+        if (m_jobHandle != nullptr) {
             // The Job Object reaps the entire tree via KILL_ON_JOB_CLOSE -- including a server
             // that already exited on its own and left orphaned descendants (the NotRunning
             // early-return below would otherwise skip cleanup entirely). Supersedes the
@@ -352,13 +352,13 @@ private:
 bool validateStdioToolCall(const AiMcpStdioCallRequest& request, QString* error_message) {
     const QString command = request.command.trimmed();
     if (command.isEmpty() || !QFileInfo::exists(command)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP stdio command missing: %1").arg(request.command);
         }
         return false;
     }
     if (request.tool_name.trimmed().isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP tool name is empty");
         }
         return false;
@@ -400,7 +400,7 @@ QJsonObject AiMcpStdioClient::callTool(const AiMcpStdioCallRequest& request,
         return {};
     }
     const StdioCallState state = performStdioToolCall(request);
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = state.error_message;
     }
     if (!state.error_message.isEmpty()) {

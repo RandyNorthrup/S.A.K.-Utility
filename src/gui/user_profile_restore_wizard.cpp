@@ -204,7 +204,7 @@ void UserProfileRestoreWelcomePage::showLoadedManifest(const BackupManifest& man
 
     // Store manifest in wizard
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (wiz) {
+    if (wiz != nullptr) {
         wiz->setBackupPath(m_backupPathEdit->text());
         wiz->setManifest(manifest);
     }

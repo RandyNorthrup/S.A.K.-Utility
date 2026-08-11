@@ -55,7 +55,7 @@ constexpr qint64 kMaxCredentialFileBytes = 256LL * 1024LL;
 #endif
 
 void setError(QString* error_message, const QString& message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = message;
     }
 }
@@ -131,13 +131,13 @@ QString decryptCredentialBytes(QByteArray encrypted, QString* error_message) {
     entropy_blob.cbData = static_cast<DWORD>(entropy.size());
 
     DATA_BLOB out_blob{};
-    if (!CryptUnprotectData(&in_blob,
-                            nullptr,
-                            &entropy_blob,
-                            nullptr,
-                            nullptr,
-                            CRYPTPROTECT_UI_FORBIDDEN,
-                            &out_blob)) {
+    if (CryptUnprotectData(&in_blob,
+                           nullptr,
+                           &entropy_blob,
+                           nullptr,
+                           nullptr,
+                           CRYPTPROTECT_UI_FORBIDDEN,
+                           &out_blob) == 0) {
         setError(error_message,
                  QStringLiteral("Could not decrypt encrypted API key file: %1")
                      .arg(winErrorMessage(GetLastError())));
@@ -148,7 +148,7 @@ QString decryptCredentialBytes(QByteArray encrypted, QString* error_message) {
                      static_cast<int>(out_blob.cbData));
     const QString api_key = QString::fromUtf8(bytes);
     sak::secure_wiper::wipe(bytes.data(), static_cast<std::size_t>(bytes.size()));
-    if (out_blob.pbData) {
+    if (out_blob.pbData != nullptr) {
         SecureZeroMemory(out_blob.pbData, out_blob.cbData);
         LocalFree(out_blob.pbData);
     }
@@ -188,7 +188,7 @@ std::optional<QJsonObject> protectedCredentialRoot(const QString& api_key, QStri
                                                &out_blob);
     sak::secure_wiper::wipe(bytes.data(), static_cast<std::size_t>(bytes.size()));
     sak::secure_wiper::wipe(entropy.data(), static_cast<std::size_t>(entropy.size()));
-    if (!protected_ok) {
+    if (protected_ok == 0) {
         setError(error_message, winErrorMessage(GetLastError()));
         return std::nullopt;
     }
@@ -202,7 +202,7 @@ std::optional<QJsonObject> protectedCredentialRoot(const QString& api_key, QStri
         QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
     root[QStringLiteral("ciphertext")] = QString::fromLatin1(encrypted.toBase64());
 
-    if (out_blob.pbData) {
+    if (out_blob.pbData != nullptr) {
         SecureZeroMemory(out_blob.pbData, out_blob.cbData);
         LocalFree(out_blob.pbData);
     }
@@ -258,7 +258,7 @@ QString CredentialStore::credentialFilePath() const {
 }
 
 QString CredentialStore::loadApiKey(QString* error_message) const {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
 
@@ -280,7 +280,7 @@ QString CredentialStore::loadApiKey(QString* error_message) const {
         // A stored credential is never empty (saveApiKey rejects empty). An empty result here
         // means decryption failed (error already set) or the plaintext was empty/corrupt -- do
         // not hand back an empty key as if that were an error-free "not configured" state.
-        if (error_message && error_message->isEmpty()) {
+        if ((error_message != nullptr) && error_message->isEmpty()) {
             *error_message = QStringLiteral("Decrypted API key is empty or invalid");
         }
         return {};
@@ -294,7 +294,7 @@ QString CredentialStore::loadApiKey(QString* error_message) const {
 }
 
 bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message) const {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
 
@@ -335,7 +335,7 @@ bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message)
 }
 
 bool CredentialStore::deleteApiKey(QString* error_message) const {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
 
@@ -347,7 +347,7 @@ bool CredentialStore::deleteApiKey(QString* error_message) const {
     if (QFile::remove(path)) {
         return true;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = QStringLiteral("Could not remove encrypted API key file: %1").arg(path);
     }
     return false;

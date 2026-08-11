@@ -1347,7 +1347,8 @@ bool appendApfsSpaceManagerDetails(PartitionFileSystemDetection* detection,
                                    const QByteArray& bytes,
                                    uint32_t blockSize,
                                    uint64_t blockCount) {
-    if (!detection || !apfsProbeBlockScanSupported(bytes, blockSize) || blockCount == 0) {
+    if ((detection == nullptr) || !apfsProbeBlockScanSupported(bytes, blockSize) ||
+        blockCount == 0) {
         return false;
     }
 
@@ -1418,7 +1419,7 @@ std::optional<QByteArray> readExactDeviceBytes(QIODevice* device,
                                                uint64_t absoluteOffset,
                                                qsizetype byteCount,
                                                QString* errorMessage) {
-    if (!device || !device->isOpen()) {
+    if ((device == nullptr) || !device->isOpen()) {
         setProbeError(errorMessage, QStringLiteral("Raw probe device is not open"));
         return std::nullopt;
     }
@@ -1527,7 +1528,7 @@ std::optional<ApfsSupplementalReadContext> apfsSupplementalReadContext(
 }
 
 void setFirstSupplementalError(QString* target, const QString& error) {
-    if (target && target->isEmpty() && !error.isEmpty()) {
+    if ((target != nullptr) && target->isEmpty() && !error.isEmpty()) {
         *target = error;
     }
 }
@@ -1580,7 +1581,8 @@ bool scanApfsSupplementalSpaceManager(PartitionFileSystemDetection* detection,
 bool appendApfsSupplementalSpaceManagerDetails(PartitionFileSystemDetection* detection,
                                                const ApfsSupplementalInput& input,
                                                QString* errorMessage) {
-    if (!detection || !input.probeBytes || detection->file_system != QStringLiteral("APFS") ||
+    if ((detection == nullptr) || (input.probeBytes == nullptr) ||
+        detection->file_system != QStringLiteral("APFS") ||
         hasApfsSpaceManagerDetails(*detection)) {
         return false;
     }
@@ -2067,7 +2069,7 @@ std::optional<PartitionFileSystemDetection> detectSwapFamily(const QByteArray& b
 }
 
 void setProbeError(QString* errorMessage, const QString& message) {
-    if (errorMessage) {
+    if (errorMessage != nullptr) {
         *errorMessage = message;
     }
 }
@@ -2186,7 +2188,7 @@ std::optional<QByteArray> PartitionFileSystemDetector::readProbeBytesFromDeviceP
     uint64_t partition_offset_bytes,
     uint64_t partition_size_bytes,
     QString* error_message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     if (!validateProbeReadRequest(device_path, partition_offset_bytes, error_message)) {
@@ -2210,10 +2212,10 @@ std::optional<PartitionFileSystemDetection> PartitionFileSystemDetector::detectF
     uint64_t partition_offset_bytes,
     uint64_t partition_size_bytes,
     QString* error_message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
-    if (!device || !device->isOpen()) {
+    if ((device == nullptr) || !device->isOpen()) {
         setProbeError(error_message, QStringLiteral("Raw probe device is not open"));
         return std::nullopt;
     }
@@ -2238,7 +2240,7 @@ std::optional<PartitionFileSystemDetection> PartitionFileSystemDetector::detectF
     const ApfsSupplementalInput supplementalInput{
         &*bytes, device, partition_offset_bytes, partition_size_bytes};
     appendApfsSupplementalSpaceManagerDetails(&*detection, supplementalInput, error_message);
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return detection;
@@ -2249,7 +2251,7 @@ std::optional<PartitionFileSystemDetection> PartitionFileSystemDetector::detectF
     uint64_t partition_offset_bytes,
     uint64_t partition_size_bytes,
     QString* error_message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     if (!validateProbeReadRequest(device_path, partition_offset_bytes, error_message)) {

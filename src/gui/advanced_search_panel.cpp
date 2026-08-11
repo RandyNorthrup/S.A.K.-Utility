@@ -1037,7 +1037,7 @@ void AdvancedSearchPanel::createRegexPatternMenu() {
 
 void AdvancedSearchPanel::populateSearchTargets(QVector<FileManagementTarget> targets) {
     m_search_targets = std::move(targets);
-    if (!m_target_combo) {
+    if (m_target_combo == nullptr) {
         return;
     }
     const QSignalBlocker blocker(m_target_combo);
@@ -1048,7 +1048,7 @@ void AdvancedSearchPanel::populateSearchTargets(QVector<FileManagementTarget> ta
     if (!m_search_targets.isEmpty()) {
         m_target_combo->setCurrentIndex(0);
     }
-    if (m_file_explorer) {
+    if (m_file_explorer != nullptr) {
         populateFileExplorerRoot();
     }
 }
@@ -1102,7 +1102,7 @@ void AdvancedSearchPanel::addManualSearchTarget() {
 }
 
 FileManagementTarget AdvancedSearchPanel::currentSearchTarget() const {
-    const int index = m_target_combo ? m_target_combo->currentIndex() : -1;
+    const int index = (m_target_combo != nullptr) ? m_target_combo->currentIndex() : -1;
     if (index < 0 || index >= m_search_targets.size()) {
         return {};
     }
@@ -1226,7 +1226,7 @@ void AdvancedSearchPanel::onStopClicked() {
 }
 
 void AdvancedSearchPanel::onRegexPatternsClicked() {
-    if (m_regex_menu) {
+    if (m_regex_menu != nullptr) {
         m_regex_menu->popup(
             m_regex_patterns_button->mapToGlobal(QPoint(0, m_regex_patterns_button->height())));
     }
@@ -1255,7 +1255,7 @@ SearchConfig AdvancedSearchPanel::buildSearchConfig() const {
 
     // Get selected directory from file explorer
     auto* selectedItem = m_file_explorer->currentItem();
-    if (selectedItem) {
+    if (selectedItem != nullptr) {
         config.root_path = selectedItem->data(0, Qt::UserRole).toString();
     }
     config.file_system_target = currentSearchTarget();
@@ -1333,7 +1333,7 @@ QTreeWidgetItem* AdvancedSearchPanel::findOrCreateFileItem(
 }
 
 void AdvancedSearchPanel::onResultsReceived(QVector<sak::SearchMatch> matches) {
-    if (matches.isEmpty() || !m_results_tree) {
+    if (matches.isEmpty() || (m_results_tree == nullptr)) {
         return;
     }
 
@@ -1407,7 +1407,7 @@ void AdvancedSearchPanel::onSearchCancelled() {
 // -- File Explorer Handlers --------------------------------------------------
 
 void AdvancedSearchPanel::onFileExplorerItemClicked(QTreeWidgetItem* item, int /*column*/) {
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
 
@@ -1418,7 +1418,7 @@ void AdvancedSearchPanel::onFileExplorerItemClicked(QTreeWidgetItem* item, int /
 }
 
 void AdvancedSearchPanel::onFileExplorerItemExpanded(QTreeWidgetItem* item) {
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
 
@@ -1434,7 +1434,7 @@ void AdvancedSearchPanel::onFileExplorerItemExpanded(QTreeWidgetItem* item) {
 void AdvancedSearchPanel::onFileExplorerContextMenu(const QPoint& pos) {
     Q_ASSERT(m_file_explorer);
     auto* item = m_file_explorer->itemAt(pos);
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
 
@@ -1461,7 +1461,7 @@ void AdvancedSearchPanel::onFileExplorerContextMenu(const QPoint& pos) {
 // -- Results Tree Handlers ---------------------------------------------------
 
 void AdvancedSearchPanel::onResultItemClicked(QTreeWidgetItem* item, int /*column*/) {
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
 
@@ -1483,7 +1483,7 @@ void AdvancedSearchPanel::onResultItemClicked(QTreeWidgetItem* item, int /*colum
 }
 
 void AdvancedSearchPanel::onResultItemDoubleClicked(QTreeWidgetItem* item, int /*column*/) {
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
 
@@ -1496,7 +1496,7 @@ void AdvancedSearchPanel::onResultItemDoubleClicked(QTreeWidgetItem* item, int /
 void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos) {
     Q_ASSERT(m_results_tree);
     auto* item = m_results_tree->itemAt(pos);
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
 

@@ -192,7 +192,7 @@ QString FileExplorerPropertiesDialog::editedName() const {
     // Return the field verbatim: trimming here would make a name that legitimately carries
     // leading/trailing whitespace (raw ext4/HFS+/APFS images permit it) differ from
     // originalName() with no edit, silently coercing a rename of real data.
-    return m_name_edit ? m_name_edit->text() : QString();
+    return (m_name_edit != nullptr) ? m_name_edit->text() : QString();
 }
 
 QString FileExplorerPropertiesDialog::originalName() const {

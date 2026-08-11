@@ -59,7 +59,7 @@ QString FileExplorerBreadcrumb::path() const {
 
 void FileExplorerBreadcrumb::mousePressEvent(QMouseEvent* event) {
     QWidget::mousePressEvent(event);
-    if (event && event->button() == Qt::LeftButton) {
+    if ((event != nullptr) && event->button() == Qt::LeftButton) {
         Q_EMIT editRequested();
     }
 }

@@ -44,7 +44,7 @@ QScrollArea* createTranscriptScrollArea(QWidget* parent, QWidget* content) {
 }
 
 void configureTranscriptButton(QPushButton* button, const QString& icon_path) {
-    if (!button) {
+    if (button == nullptr) {
         return;
     }
     button->setMinimumHeight(sak::ui::kUiButtonHeightDialog);
@@ -221,10 +221,10 @@ void AiTranscriptView::updateActivityFrame() {
     if (m_activityText.isEmpty()) {
         return;
     }
-    if (!m_activityLabel) {
+    if (m_activityLabel == nullptr) {
         renderMessages(true);
     }
-    if (!m_activityLabel) {
+    if (m_activityLabel == nullptr) {
         return;
     }
     applyActivityFrame();
@@ -232,46 +232,47 @@ void AiTranscriptView::updateActivityFrame() {
 }
 
 void AiTranscriptView::scrollToBottomLater(bool force) {
-    if (m_scrollController) {
+    if (m_scrollController != nullptr) {
         m_scrollController->scrollToBottomLater(force);
     }
 }
 
 void AiTranscriptView::restoreScrollPositionLater(int value) {
-    if (m_scrollController) {
+    if (m_scrollController != nullptr) {
         m_scrollController->restoreScrollPositionLater(value);
     }
 }
 
 bool AiTranscriptView::isScrolledToBottom() const {
-    return !m_scrollController || m_scrollController->isScrolledToBottom();
+    return (m_scrollController == nullptr) || m_scrollController->isScrolledToBottom();
 }
 
 void AiTranscriptView::setAutoScroll(bool enabled) {
-    if (m_scrollController) {
+    if (m_scrollController != nullptr) {
         m_scrollController->setAutoScroll(enabled);
     }
 }
 
 void AiTranscriptView::updateJumpToNewestButton() {
-    if (m_scrollController) {
+    if (m_scrollController != nullptr) {
         m_scrollController->updateJumpToNewestButton();
     }
 }
 
 void AiTranscriptView::jumpToNewest() {
-    if (m_scrollController) {
+    if (m_scrollController != nullptr) {
         m_scrollController->jumpToNewest();
     }
 }
 
 void AiTranscriptView::renderMessages(bool scroll_to_bottom) {
-    if (!m_layout || !m_content || !m_scroll) {
+    if ((m_layout == nullptr) || (m_content == nullptr) || (m_scroll == nullptr)) {
         return;
     }
 
     const bool follow_newest = shouldFollowNewest(scroll_to_bottom);
-    const int previous_scroll_value = m_scrollController ? m_scrollController->scrollValue() : 0;
+    const int previous_scroll_value =
+        (m_scrollController != nullptr) ? m_scrollController->scrollValue() : 0;
 
     clearLayout();
     appendRenderedRows(transcriptBubbleMaxWidth());
@@ -280,12 +281,14 @@ void AiTranscriptView::renderMessages(bool scroll_to_bottom) {
 }
 
 bool AiTranscriptView::shouldFollowNewest(bool scroll_to_bottom) const {
-    return scroll_to_bottom && (!m_scrollController || m_scrollController->autoScroll());
+    return scroll_to_bottom &&
+           ((m_scrollController == nullptr) || m_scrollController->autoScroll());
 }
 
 int AiTranscriptView::transcriptBubbleMaxWidth() const {
-    const int viewport_width = m_scroll && m_scroll->viewport() ? m_scroll->viewport()->width()
-                                                                : kFallbackViewportWidth;
+    const int viewport_width = (m_scroll != nullptr) && (m_scroll->viewport() != nullptr)
+                                   ? m_scroll->viewport()->width()
+                                   : kFallbackViewportWidth;
     return qMax(sak::kDetachLogMinW, (viewport_width * kBubbleWidthPercent) / sak::kPercentMax);
 }
 
@@ -318,7 +321,7 @@ QString AiTranscriptView::messageBody(const Message& message, bool* long_text) c
     const QStringList all_lines = message.text.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
     const bool is_long = message.text.size() > kCollapsedChars ||
                          all_lines.size() > kCollapsedLines;
-    if (long_text) {
+    if (long_text != nullptr) {
         *long_text = is_long;
     }
     if (!is_long || message.expanded) {
@@ -491,7 +494,7 @@ void AiTranscriptView::copyMessageToClipboard(const Message& message, QPushButto
     if (auto* clipboard = QGuiApplication::clipboard()) {
         clipboard->setText(message.text);
     }
-    if (button) {
+    if (button != nullptr) {
         button->setToolTip(QObject::tr("Copied"));
     }
 }
@@ -507,7 +510,7 @@ void AiTranscriptView::toggleMessageExpanded(const QString& message_id) {
 }
 
 void AiTranscriptView::clearLayout() {
-    if (!m_layout) {
+    if (m_layout == nullptr) {
         return;
     }
     m_activityLabel = nullptr;
@@ -529,7 +532,7 @@ void AiTranscriptView::clearLayout() {
 }
 
 void AiTranscriptView::applyActivityFrame() {
-    if (!m_activityLabel || m_activityText.isEmpty()) {
+    if ((m_activityLabel == nullptr) || m_activityText.isEmpty()) {
         return;
     }
     const QString dots = QString(m_activityStep % kActivityAnimationFrameCount, QLatin1Char('.'));

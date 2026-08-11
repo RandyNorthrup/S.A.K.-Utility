@@ -59,7 +59,7 @@ void applyCompactOstButton(QPushButton* button, const QString& style) {
 
 bool IsAccessibilityAuditMode() {
     const auto* app = QCoreApplication::instance();
-    return app && app->property("sakAccessibilityAudit").toBool();
+    return (app != nullptr) && app->property("sakAccessibilityAudit").toBool();
 }
 
 }  // namespace
@@ -530,11 +530,11 @@ void OstConverterWidget::onFileProgressUpdated(int file_index,
     if (file_index >= 0 && file_index < m_queue_table->rowCount()) {
         auto progress_text = tr("%1 / %2").arg(items_done).arg(items_total);
         auto* item = m_queue_table->item(file_index, ost::ColProgress);
-        if (item) {
+        if (item != nullptr) {
             item->setText(progress_text);
         }
         auto* status_item = m_queue_table->item(file_index, ost::ColStatus);
-        if (status_item) {
+        if (status_item != nullptr) {
             status_item->setText(tr("Converting"));
         }
     }
@@ -552,12 +552,12 @@ void OstConverterWidget::onFileConversionComplete(int file_index, OstConversionR
 
     if (file_index >= 0 && file_index < m_queue_table->rowCount()) {
         auto* status_item = m_queue_table->item(file_index, ost::ColStatus);
-        if (status_item) {
+        if (status_item != nullptr) {
             const bool failed = (result.items_converted == 0 && result.items_failed > 0);
             status_item->setText(failed ? tr("Failed") : tr("Complete"));
         }
         auto* progress_item = m_queue_table->item(file_index, ost::ColProgress);
-        if (progress_item) {
+        if (progress_item != nullptr) {
             progress_item->setText(tr("%1 items").arg(result.items_converted));
         }
     }
@@ -585,7 +585,7 @@ void OstConverterWidget::onErrorOccurred(int file_index, QString message) {
 
     if (file_index >= 0 && file_index < m_queue_table->rowCount()) {
         auto* status_item = m_queue_table->item(file_index, ost::ColStatus);
-        if (status_item) {
+        if (status_item != nullptr) {
             status_item->setText(tr("Error"));
         }
     }

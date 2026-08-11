@@ -255,7 +255,7 @@ bool PartitionManagerController::revalidateBeforeApply(bool dry_run) {
 
 void PartitionManagerController::finishApplyQueue(
     QFutureWatcher<PartitionExecutionResult>* watcher) {
-    if (!watcher) {
+    if (watcher == nullptr) {
         return;
     }
     auto result = watcher->result();

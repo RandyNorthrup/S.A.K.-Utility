@@ -115,14 +115,14 @@ void UserProfileRestoreExecutePage::onStartRestore() {
     Q_ASSERT(m_statusLabel);
     Q_ASSERT(m_logText);
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         m_statusLabel->setText(tr("Error: Could not access wizard data"));
         m_restoreComplete = true;
         Q_EMIT completeChanged();
         return;
     }
 
-    if (m_worker) {
+    if (m_worker != nullptr) {
         // A restore worker is already running for this page (e.g. the page was
         // re-entered). Do not spawn a second one that would race the same
         // destinations and the shared .sakrestore.tmp/.sakold.tmp names.
@@ -224,7 +224,7 @@ void UserProfileRestoreExecutePage::connectRestoreWorkerSignals(UserProfileResto
 }
 
 void UserProfileRestoreExecutePage::onCancelRestore() {
-    if (m_worker && m_worker->isRunning()) {
+    if ((m_worker != nullptr) && m_worker->isRunning()) {
         m_worker->cancel();
         m_logText->append(tr("[WARNING] Canceling restore..."));
     }

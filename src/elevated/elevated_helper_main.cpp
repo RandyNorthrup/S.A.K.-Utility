@@ -319,25 +319,25 @@ QString cappedTaskOutput(const QString& value, int max_bytes, bool* truncated = 
 struct ElevatedJobGuard {
     HANDLE job{nullptr};
     ~ElevatedJobGuard() {
-        if (job) {
+        if (job != nullptr) {
             ::CloseHandle(job);  // KILL_ON_JOB_CLOSE reaps survivors
         }
     }
     // Create the KILL_ON_JOB_CLOSE job on first use. Returns false (job left null) if
     // creation or configuration fails so the caller does not rely on an unconfigured job.
     bool ensureJob() {
-        if (job) {
+        if (job != nullptr) {
             return true;
         }
         job = ::CreateJobObjectW(nullptr, nullptr);
-        if (!job) {
+        if (job == nullptr) {
             sak::logError("ElevatedHelper: CreateJobObject failed: {}", ::GetLastError());
             return false;
         }
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if (!::SetInformationJobObject(
-                job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        if (::SetInformationJobObject(
+                job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
             sak::logError("ElevatedHelper: SetInformationJobObject failed: {}", ::GetLastError());
             ::CloseHandle(job);
             job = nullptr;
@@ -349,7 +349,7 @@ struct ElevatedJobGuard {
     // escapes KILL_ON_JOB_CLOSE and can outlive the helper, so kill it now.
     static void terminateUncontained(qint64 pid) {
         const HANDLE handle = ::OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
-        if (!handle) {
+        if (handle == nullptr) {
             sak::logError(
                 "ElevatedHelper: OpenProcess to terminate uncontained child {} "
                 "failed: {}",
@@ -357,7 +357,7 @@ struct ElevatedJobGuard {
                 ::GetLastError());
             return;
         }
-        if (!::TerminateProcess(handle, 1)) {
+        if (::TerminateProcess(handle, 1) == 0) {
             sak::logError("ElevatedHelper: TerminateProcess for uncontained child {} failed: {}",
                           pid,
                           ::GetLastError());
@@ -379,16 +379,16 @@ struct ElevatedJobGuard {
         }
         const HANDLE handle =
             ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
-        if (!handle) {
+        if (handle == nullptr) {
             sak::logError("ElevatedHelper: OpenProcess for job assign failed: {}",
                           ::GetLastError());
             terminateUncontained(pid);
             return;
         }
-        if (!::AssignProcessToJobObject(job, handle)) {
+        if (::AssignProcessToJobObject(job, handle) == 0) {
             sak::logError("ElevatedHelper: AssignProcessToJobObject failed: {}; terminating child",
                           ::GetLastError());
-            if (!::TerminateProcess(handle, 1)) {
+            if (::TerminateProcess(handle, 1) == 0) {
                 sak::logError(
                     "ElevatedHelper: TerminateProcess after failed job assign "
                     "failed: {}",
@@ -398,7 +398,7 @@ struct ElevatedJobGuard {
         ::CloseHandle(handle);
     }
     void terminate() const {
-        if (job && !::TerminateJobObject(job, 1)) {
+        if ((job != nullptr) && (::TerminateJobObject(job, 1) == 0)) {
             sak::logError("ElevatedHelper: TerminateJobObject failed: {}", ::GetLastError());
         }
     }

@@ -820,7 +820,7 @@ QVector<QPair<QString, QString>> enumerateWin32Services(const std::atomic<bool>&
                                               &services_returned,
                                               &resume_handle,
                                               nullptr);
-        const DWORD err = rc ? ERROR_SUCCESS : GetLastError();
+        const DWORD err = (rc != 0) ? ERROR_SUCCESS : GetLastError();
         if (rc == FALSE && err != ERROR_MORE_DATA) {
             ok = false;  // genuine enumeration failure -> fail closed, discard the partial list
             CloseServiceHandle(scm);

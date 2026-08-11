@@ -666,7 +666,7 @@ std::string input_validator::sanitizeString(std::string_view str, bool allow_uni
             continue;
         }
 
-        if (std::iscntrl(c) && c != '\n' && c != '\r' && c != '\t') {
+        if ((std::iscntrl(c) != 0) && c != '\n' && c != '\r' && c != '\t') {
             continue;
         }
 
@@ -829,7 +829,7 @@ std::uintmax_t input_validator::get_available_memory_impl() {
 #ifdef _WIN32
     MEMORYSTATUSEX mem_info;
     mem_info.dwLength = sizeof(MEMORYSTATUSEX);
-    if (GlobalMemoryStatusEx(&mem_info)) {
+    if (GlobalMemoryStatusEx(&mem_info) != 0) {
         return mem_info.ullAvailPhys;
     }
     return 0;

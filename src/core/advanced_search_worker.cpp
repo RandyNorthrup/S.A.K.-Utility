@@ -1500,7 +1500,7 @@ void parseExifIFD(const QByteArray& tiffData,
         }
         const char* value_ptr = resolveExifValuePtr(
             entry, base, static_cast<uint32_t>(total_bytes), data_size, littleEndian);
-        if (!value_ptr) {
+        if (value_ptr == nullptr) {
             continue;
         }
 

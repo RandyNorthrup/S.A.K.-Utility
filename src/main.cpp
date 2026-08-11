@@ -153,14 +153,15 @@ void writeAccessibilityAuditStatus(const QString& status) {
 }
 
 bool isKnownQtInternalWidget(const QWidget* widget) {
-    if (!widget) {
+    if (widget == nullptr) {
         return true;
     }
-    if (qobject_cast<const QScrollBar*>(widget) || qobject_cast<const QHeaderView*>(widget)) {
+    if ((qobject_cast<const QScrollBar*>(widget) != nullptr) ||
+        (qobject_cast<const QHeaderView*>(widget) != nullptr)) {
         return true;
     }
-    if (qobject_cast<const QLineEdit*>(widget) &&
-        qobject_cast<const QComboBox*>(widget->parentWidget())) {
+    if ((qobject_cast<const QLineEdit*>(widget) != nullptr) &&
+        (qobject_cast<const QComboBox*>(widget->parentWidget()) != nullptr)) {
         return true;
     }
     const QString class_name = QString::fromLatin1(widget->metaObject()->className());
@@ -175,21 +176,23 @@ bool isKnownQtInternalWidget(const QWidget* widget) {
 }
 
 bool isAuditedInteractiveWidget(const QWidget* widget) {
-    if (qobject_cast<const QAbstractButton*>(widget)) {
+    if (qobject_cast<const QAbstractButton*>(widget) != nullptr) {
         return true;
     }
-    if (qobject_cast<const QLineEdit*>(widget) || qobject_cast<const QComboBox*>(widget)) {
+    if ((qobject_cast<const QLineEdit*>(widget) != nullptr) ||
+        (qobject_cast<const QComboBox*>(widget) != nullptr)) {
         return true;
     }
-    if (qobject_cast<const QAbstractSpinBox*>(widget) ||
-        qobject_cast<const QAbstractSlider*>(widget)) {
+    if ((qobject_cast<const QAbstractSpinBox*>(widget) != nullptr) ||
+        (qobject_cast<const QAbstractSlider*>(widget) != nullptr)) {
         return true;
     }
-    if (qobject_cast<const QTextEdit*>(widget) || qobject_cast<const QPlainTextEdit*>(widget)) {
+    if ((qobject_cast<const QTextEdit*>(widget) != nullptr) ||
+        (qobject_cast<const QPlainTextEdit*>(widget) != nullptr)) {
         return true;
     }
-    return qobject_cast<const QAbstractItemView*>(widget) ||
-           qobject_cast<const QTabWidget*>(widget);
+    return (qobject_cast<const QAbstractItemView*>(widget) != nullptr) ||
+           (qobject_cast<const QTabWidget*>(widget) != nullptr);
 }
 
 bool requiresExplicitAccessibleName(const QWidget* widget) {
@@ -206,15 +209,15 @@ QString objectDebugLabel(const QObject* object) {
 
 QString textDebugLabel(const QWidget* widget) {
     if (const auto* button = qobject_cast<const QAbstractButton*>(widget);
-        button && !button->text().trimmed().isEmpty()) {
+        (button != nullptr) && !button->text().trimmed().isEmpty()) {
         return QStringLiteral(" text=\"%1\"").arg(button->text());
     }
     if (const auto* line_edit = qobject_cast<const QLineEdit*>(widget);
-        line_edit && !line_edit->placeholderText().trimmed().isEmpty()) {
+        (line_edit != nullptr) && !line_edit->placeholderText().trimmed().isEmpty()) {
         return QStringLiteral(" placeholder=\"%1\"").arg(line_edit->placeholderText());
     }
     if (const auto* text_edit = qobject_cast<const QTextEdit*>(widget);
-        text_edit && !text_edit->placeholderText().trimmed().isEmpty()) {
+        (text_edit != nullptr) && !text_edit->placeholderText().trimmed().isEmpty()) {
         return QStringLiteral(" placeholder=\"%1\"").arg(text_edit->placeholderText());
     }
     return {};
@@ -223,7 +226,7 @@ QString textDebugLabel(const QWidget* widget) {
 QString parentDebugLabel(const QWidget* widget) {
     QStringList parents;
     const QObject* parent = widget->parent();
-    while (parent && parents.size() < kAccessibilityParentDepthLimit) {
+    while ((parent != nullptr) && parents.size() < kAccessibilityParentDepthLimit) {
         parents << objectDebugLabel(parent);
         parent = parent->parent();
     }

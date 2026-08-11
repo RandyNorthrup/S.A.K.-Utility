@@ -90,7 +90,7 @@ void FileExplorerSidebar::setCompact(const bool compact) {
 void FileExplorerSidebar::refreshCompactPresentation() {
     for (int row = 0; row < m_target_list->count(); ++row) {
         QListWidgetItem* item = m_target_list->item(row);
-        if (!item) {
+        if (item == nullptr) {
             continue;
         }
         if (m_compact && !item->text().isEmpty()) {

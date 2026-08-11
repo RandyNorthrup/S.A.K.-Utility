@@ -119,7 +119,7 @@ QString WindowsUserScanner::getCurrentUsername() {
 #ifdef Q_OS_WIN
     wchar_t username[kWindowsAccountBufferChars];
     DWORD size = kWindowsAccountBufferChars;
-    if (GetUserNameW(username, &size)) {
+    if (GetUserNameW(username, &size) != 0) {
         return QString::fromWCharArray(username);
     }
 #endif
@@ -150,18 +150,18 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
     }
 
     sid = static_cast<PSID>(LocalAlloc(LPTR, sidSize));
-    if (!sid) {
+    if (sid == nullptr) {
         return QString();
     }
     domainSize = kWindowsAccountBufferChars;
 
-    if (!LookupAccountNameW(nullptr, usernameW, sid, &sidSize, domain, &domainSize, &sidType)) {
+    if (LookupAccountNameW(nullptr, usernameW, sid, &sidSize, domain, &domainSize, &sidType) == 0) {
         LocalFree(sid);
         return QString();
     }
 
     LPWSTR sidString = nullptr;
-    if (!ConvertSidToStringSidW(sid, &sidString)) {
+    if (ConvertSidToStringSidW(sid, &sidString) == 0) {
         LocalFree(sid);
         return QString();
     }

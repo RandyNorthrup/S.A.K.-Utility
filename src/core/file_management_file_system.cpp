@@ -2231,7 +2231,7 @@ FileManagementMutationResult removeExistingRawEntry(const FileManagementTarget& 
                 QStringLiteral("An entry (%1) matches %2 only by case and this volume's "
                                "case-sensitivity is unknown; refusing to replace to avoid "
                                "removing the wrong file.")
-                    .arg(ci_match ? ci_match->name : QString(), name));
+                    .arg((ci_match != nullptr) ? ci_match->name : QString(), name));
             return result;
         case RawReplaceCaseAction::TreatAsVacant:
             break;  // exact name is vacant -> fall through to the nothing-occupies path

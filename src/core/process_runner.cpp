@@ -106,7 +106,7 @@ void terminateProcess(QProcess* proc, const ProcessTerminationCallback& on_termi
 }
 
 bool startProcess(const ProcessRunRequest& request, QProcess* proc, ProcessResult* result) {
-    if (request.environment) {
+    if (request.environment != nullptr) {
         proc->setProcessEnvironment(*request.environment);
     }
     proc->start(request.program, request.args);

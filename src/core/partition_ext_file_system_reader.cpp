@@ -224,7 +224,7 @@ bool isPowerOfTwo(uint32_t value) {
 }
 
 bool checkedMul(uint64_t left, uint64_t right, uint64_t* output) {
-    if (!output) {
+    if (output == nullptr) {
         return false;
     }
     if (left != 0 && right > std::numeric_limits<uint64_t>::max() / left) {
@@ -235,7 +235,7 @@ bool checkedMul(uint64_t left, uint64_t right, uint64_t* output) {
 }
 
 bool checkedAdd(uint64_t left, uint64_t right, uint64_t* output) {
-    if (!output) {
+    if (output == nullptr) {
         return false;
     }
     if (right > std::numeric_limits<uint64_t>::max() - left) {
@@ -322,7 +322,7 @@ public:
     [[nodiscard]] const QStringList& blockers() const { return m_blockers; }
 
     [[nodiscard]] bool load() {
-        if (!m_device || !m_device->isReadable()) {
+        if ((m_device == nullptr) || !m_device->isReadable()) {
             m_blockers.append(QStringLiteral("Readable ext device or image is required"));
             return false;
         }

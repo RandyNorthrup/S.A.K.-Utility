@@ -111,7 +111,7 @@ QString finalPathOfHandle(HANDLE handle) {
 bool unlinkByHandle(HANDLE handle) {
     FILE_DISPOSITION_INFO_EX info_ex{};
     info_ex.Flags = FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS;
-    if (SetFileInformationByHandle(handle, FileDispositionInfoEx, &info_ex, sizeof(info_ex))) {
+    if (SetFileInformationByHandle(handle, FileDispositionInfoEx, &info_ex, sizeof(info_ex)) != 0) {
         return true;
     }
     FILE_DISPOSITION_INFO info{};

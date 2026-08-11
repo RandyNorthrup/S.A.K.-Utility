@@ -59,14 +59,14 @@ void incrementSaturating(int* counter) {
 /// UNC/device paths before performing any stat.
 bool ledgerPathUnsafe(const QString& path, QString* error_message) {
     if (!QFileInfo(path).isAbsolute()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("AI tool health ledger path must be absolute: %1").arg(path);
         }
         return true;
     }
     if (sak::pathReparseUnsafe(path)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral(
                                  "Refusing AI tool health ledger path (it, or an ancestor, is a "
                                  "symlink/junction or a UNC/device path): %1")
@@ -195,7 +195,7 @@ bool parseHealthLedgerDocument(const QString& path,
                                QString* error_message) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not read AI tool health ledger: %1").arg(file.errorString());
         }
@@ -205,7 +205,7 @@ bool parseHealthLedgerDocument(const QString& path,
     // and a DOM parse of an arbitrarily large file is an out-of-memory abort, not an error.
     const qint64 size = file.size();
     if (size < 0 || size > kAiToolHealthMaxLedgerBytes) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("AI tool health ledger is not a readable size (%1 bytes)").arg(size);
         }
@@ -217,7 +217,7 @@ bool parseHealthLedgerDocument(const QString& path,
     if (parse_error.error == QJsonParseError::NoError && document->isObject()) {
         return true;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message =
             QStringLiteral("Invalid AI tool health ledger JSON: %1").arg(parse_error.errorString());
     }
@@ -251,7 +251,7 @@ QString ledgerEnvelopeRefusal(const QJsonObject& root, QJsonArray* records) {
 /// Report a failed ledger write through the optional out-parameter. Every write step fails
 /// the same way, so the null check lives here once instead of guarding each of them.
 bool ledgerWriteFailed(QString* error_message, const QString& reason) {
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = reason;
     }
     return false;
@@ -284,7 +284,7 @@ QJsonObject AiToolHealthRecord::toJson() const {
 }
 
 AiToolHealthRecord AiToolHealthRecord::fromJson(const QJsonObject& object, bool* ok) {
-    if (ok) {
+    if (ok != nullptr) {
         *ok = false;
     }
     if (!recordTextFieldsOk(object)) {
@@ -307,7 +307,7 @@ AiToolHealthRecord AiToolHealthRecord::fromJson(const QJsonObject& object, bool*
     if (!parseRecordCounters(object, &record)) {
         return {};
     }
-    if (ok) {
+    if (ok != nullptr) {
         *ok = true;
     }
     return record;
@@ -441,7 +441,7 @@ QString AiToolHealthLedger::persistencePath() const {
 
 bool AiToolHealthLedger::load(QString* error_message) {
     const QMutexLocker locker(&m_mutex);
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     if (m_persistence_path.isEmpty()) {
@@ -500,7 +500,7 @@ bool AiToolHealthLedger::save(QString* error_message) const {
 }
 
 bool AiToolHealthLedger::saveUnlocked(QString* error_message) const {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     if (m_persistence_path.isEmpty()) {

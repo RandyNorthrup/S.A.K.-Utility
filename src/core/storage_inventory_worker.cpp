@@ -59,7 +59,8 @@ void classifyPartition(PartitionInfoEx* partition) {
 }
 
 void applyProtectedPartitionFileSystemFallback(PartitionInfoEx* partition) {
-    if (!partition || (partition->volume && !partition->volume->file_system.trimmed().isEmpty())) {
+    if ((partition == nullptr) ||
+        (partition->volume && !partition->volume->file_system.trimmed().isEmpty())) {
         return;
     }
 
@@ -195,7 +196,7 @@ void applyDetectedVolumeMetadata(PartitionVolumeInfo* volume,
 }
 
 void setProbeError(QString* errorMessage, const QString& message) {
-    if (errorMessage) {
+    if (errorMessage != nullptr) {
         *errorMessage = message;
     }
 }
@@ -243,11 +244,11 @@ std::optional<QByteArray> readElevatedProbeBytes(ElevationBroker* broker,
                                                  const PartitionDiskInfo& disk,
                                                  const PartitionInfoEx& partition,
                                                  QString* errorMessage) {
-    if (errorMessage) {
+    if (errorMessage != nullptr) {
         errorMessage->clear();
     }
-    if (!broker) {
-        if (errorMessage) {
+    if (broker == nullptr) {
+        if (errorMessage != nullptr) {
             *errorMessage = QStringLiteral("Elevation broker is unavailable");
         }
         return std::nullopt;
@@ -415,7 +416,7 @@ void applyRawFileSystemDetectionToPartition(const PartitionDiskInfo& disk,
 }
 
 void applyRawFileSystemDetection(PartitionInventory* inventory, bool allow_elevation) {
-    if (!inventory) {
+    if (inventory == nullptr) {
         return;
     }
 

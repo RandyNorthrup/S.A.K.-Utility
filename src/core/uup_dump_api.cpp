@@ -65,7 +65,7 @@ void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channe
     params["sortByDate"] = "1";
 
     const QNetworkReply* reply = sendApiRequest("/listid.php", params);
-    if (reply) {
+    if (reply != nullptr) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onBuildsFetchReply);
     }
 }
@@ -83,7 +83,7 @@ void UupDumpApi::listLanguages(const QString& updateId) {
     params["id"] = updateId;
 
     const QNetworkReply* reply = sendApiRequest("/listlangs.php", params);
-    if (reply) {
+    if (reply != nullptr) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onLanguagesReply);
     }
 }
@@ -103,7 +103,7 @@ void UupDumpApi::listEditions(const QString& updateId, const QString& lang) {
     params["lang"] = lang;
 
     const QNetworkReply* reply = sendApiRequest("/listeditions.php", params);
-    if (reply) {
+    if (reply != nullptr) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onEditionsReply);
     }
 }
@@ -126,7 +126,7 @@ void UupDumpApi::getFiles(const QString& updateId, const QString& lang, const QS
     params["edition"] = edition;
 
     const QNetworkReply* reply = sendApiRequest("/get.php", params);
-    if (reply) {
+    if (reply != nullptr) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onFilesReply);
     }
 }
@@ -139,7 +139,7 @@ void UupDumpApi::cancelAll() {
     const QList<QNetworkReply*> pending = m_pendingReplies;
     m_pendingReplies.clear();
     for (QNetworkReply* reply : pending) {
-        if (reply) {
+        if (reply != nullptr) {
             reply->abort();
             reply->deleteLater();
         }
@@ -219,7 +219,7 @@ std::optional<UupDumpApi::BuildInfo> UupDumpApi::parseBuildEntry(const QString& 
 
 void UupDumpApi::onBuildsFetchReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
+    if (reply == nullptr) {
         sak::logError("onBuildsFetchReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
@@ -291,7 +291,7 @@ QMap<QString, QString> UupDumpApi::parseLangFancyNames(const QJsonObject& respon
 
 void UupDumpApi::onLanguagesReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
+    if (reply == nullptr) {
         sak::logError("onLanguagesReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
@@ -359,7 +359,7 @@ void UupDumpApi::onLanguagesReply() {
 
 void UupDumpApi::onEditionsReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
+    if (reply == nullptr) {
         sak::logError("onEditionsReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
@@ -400,7 +400,7 @@ void UupDumpApi::onEditionsReply() {
 
 void UupDumpApi::onFilesReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
+    if (reply == nullptr) {
         sak::logError("onFilesReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }

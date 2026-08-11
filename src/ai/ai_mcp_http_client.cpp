@@ -68,13 +68,13 @@ struct HttpWorkerSinks {
     QJsonParseError parse_error;
     const QJsonDocument doc = QJsonDocument::fromJson(bytes.trimmed(), &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Invalid MCP JSON response: %1").arg(parse_error.errorString());
         }
         return {};
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return doc.object();
@@ -108,7 +108,7 @@ struct HttpWorkerSinks {
         last_unparsed = event_data;
     } else if (isJsonRpcResponse(object)) {
         event_data.clear();
-        if (error_message) {
+        if (error_message != nullptr) {
             error_message->clear();
         }
         return object;
@@ -125,7 +125,7 @@ struct HttpWorkerSinks {
     if (!last_unparsed.isEmpty()) {
         return parseJsonObject(last_unparsed, error_message);
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = QStringLiteral("MCP response did not contain JSON-RPC data");
     }
     return {};
@@ -181,7 +181,7 @@ struct HttpWorkerSinks {
         // accept an arbitrary object as a successful tool result. Fail closed on the SSE path's
         // same requirement rather than trusting any `{`-leading payload.
         if (!isJsonRpcResponse(object)) {
-            if (error_message) {
+            if (error_message != nullptr) {
                 *error_message = QStringLiteral("MCP response is not a JSON-RPC response");
             }
             return {};
@@ -329,20 +329,20 @@ private:
 
 bool validateHttpToolCall(const QUrl& endpoint, const QString& tool_name, QString* error_message) {
     if (!endpoint.isValid() || endpoint.scheme().isEmpty() || endpoint.host().isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Invalid MCP endpoint");
         }
         return false;
     }
     if (!endpointSchemeIsSecure(endpoint)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP endpoint must use https (or http on loopback): %1")
                                  .arg(endpoint.toString());
         }
         return false;
     }
     if (tool_name.trimmed().isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP tool name is empty");
         }
         return false;
@@ -419,7 +419,7 @@ bool explainHttpFailure(const HttpCallState& state, QString* error_message) {
     if (reason.isEmpty()) {
         return false;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = reason;
     }
     return true;
@@ -431,7 +431,7 @@ bool explainJsonRpcError(const QJsonObject& message, QString* error_message) {
     }
     const QJsonObject error = message.value(QStringLiteral("error")).toObject();
     const QString error_text = error.value(QStringLiteral("message")).toString();
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = error_text.isEmpty() ? QStringLiteral("MCP JSON-RPC error") : error_text;
     }
     return true;
@@ -451,7 +451,7 @@ QJsonObject AiMcpHttpClient::callTool(const QUrl& endpoint,
     const QByteArray body =
         QJsonDocument(toolCallPayload(tool_name, arguments)).toJson(QJsonDocument::Compact);
     if (body.size() > kMaxRequestBytes) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("MCP request body exceeds the %1-byte cap").arg(kMaxRequestBytes);
         }
@@ -473,7 +473,7 @@ QJsonObject AiMcpHttpClient::callTool(const QUrl& endpoint,
     if (explainJsonRpcError(message, error_message)) {
         return {};
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return message;

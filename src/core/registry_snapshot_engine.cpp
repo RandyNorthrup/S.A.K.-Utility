@@ -158,7 +158,7 @@ QSet<QString> RegistrySnapshotEngine::captureSnapshot(bool* reliable) {
             subkey = path.mid(5);  // Skip "HKCU\\"
         }
 
-        if (hive) {
+        if (hive != nullptr) {
             const QString hive_name = path.left(path.indexOf('\\'));
             enumerateKeys(hive, subkey, hive_name, sink, kDefaultMaxDepth);
         }

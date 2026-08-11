@@ -51,7 +51,7 @@ QJsonObject finalizeResult(QJsonObject result, const QString& operation) {
 QJsonObject parseArgumentsString(const QString& text, QString* error_message) {
     const QString trimmed = text.trimmed();
     if (trimmed.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral(
                 "Provider gateway arguments must be a JSON object string; use {} when unused");
         }
@@ -61,7 +61,7 @@ QJsonObject parseArgumentsString(const QString& text, QString* error_message) {
     QJsonParseError parse_error;
     const QJsonDocument doc = QJsonDocument::fromJson(trimmed.toUtf8(), &parse_error);
     if (parse_error.error != QJsonParseError::NoError) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Provider gateway arguments must be a JSON object string: %1")
                     .arg(parse_error.errorString());
@@ -69,13 +69,13 @@ QJsonObject parseArgumentsString(const QString& text, QString* error_message) {
         return {};
     }
     if (!doc.isObject()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Provider gateway arguments JSON must decode to an object");
         }
         return {};
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return doc.object();
@@ -84,13 +84,13 @@ QJsonObject parseArgumentsString(const QString& text, QString* error_message) {
 QJsonObject normalizedGatewayArgs(QJsonObject args, QString* error_message) {
     const QJsonValue arguments = args.value(QStringLiteral("arguments"));
     if (arguments.isUndefined() || arguments.isObject()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             error_message->clear();
         }
         return args;
     }
     if (!arguments.isString()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral(
                 "Provider gateway arguments must be an object or JSON object string");
         }
@@ -98,7 +98,7 @@ QJsonObject normalizedGatewayArgs(QJsonObject args, QString* error_message) {
     }
 
     const QJsonObject parsed = parseArgumentsString(arguments.toString(), error_message);
-    if (parsed.isEmpty() && error_message && !error_message->isEmpty()) {
+    if (parsed.isEmpty() && (error_message != nullptr) && !error_message->isEmpty()) {
         return {};
     }
     args[QStringLiteral("arguments")] = parsed;
@@ -549,7 +549,7 @@ QJsonObject AiProviderGatewayToolRunner::run(const QJsonObject& args,
                                              AiProviderGatewayToolAccess access,
                                              const AiProviderGatewayToolCallbacks& callbacks,
                                              AiProviderGatewayToolOptions options) {
-    if (!gateway) {
+    if (gateway == nullptr) {
         return toolError(QStringLiteral("Provider gateway is not configured"));
     }
 

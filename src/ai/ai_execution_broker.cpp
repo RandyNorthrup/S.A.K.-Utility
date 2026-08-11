@@ -248,17 +248,17 @@ void killProcessTreeSnapshot(DWORD process_id, int depth, std::vector<DWORD>& vi
     if (snapshot != INVALID_HANDLE_VALUE) {
         PROCESSENTRY32W entry{};
         entry.dwSize = sizeof(entry);
-        if (::Process32FirstW(snapshot, &entry)) {
+        if (::Process32FirstW(snapshot, &entry) != 0) {
             do {
                 if (entry.th32ParentProcessID == process_id) {
                     killProcessTreeSnapshot(entry.th32ProcessID, depth + 1, visited);
                 }
-            } while (::Process32NextW(snapshot, &entry));
+            } while (::Process32NextW(snapshot, &entry) != 0);
         }
         ::CloseHandle(snapshot);
     }
     HANDLE process = ::OpenProcess(PROCESS_TERMINATE, FALSE, process_id);
-    if (process) {
+    if (process != nullptr) {
         ::TerminateProcess(process, 1);
         ::CloseHandle(process);
     }
@@ -274,15 +274,15 @@ void ExecutionBroker::assignProcessToJob() {
     if (!m_process || m_process->processId() <= 0) {
         return;
     }
-    if (!m_job_handle) {
+    if (m_job_handle == nullptr) {
         m_job_handle = ::CreateJobObjectW(nullptr, nullptr);
-        if (!m_job_handle) {
+        if (m_job_handle == nullptr) {
             return;
         }
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if (!::SetInformationJobObject(
-                m_job_handle, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        if (::SetInformationJobObject(
+                m_job_handle, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
             // Without KILL_ON_JOB_CLOSE the job cannot guarantee descendant cleanup; drop it
             // so teardown relies on the direct primary-process kill rather than a job that
             // will not reap survivors.
@@ -293,14 +293,14 @@ void ExecutionBroker::assignProcessToJob() {
     const HANDLE process = ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE,
                                          FALSE,
                                          static_cast<DWORD>(m_process->processId()));
-    if (!process) {
+    if (process == nullptr) {
         // An empty job would make terminateProcessTree() call TerminateJobObject on a job
         // that contains nothing and then RETURN, skipping the snapshot fallback entirely.
         // Drop it so the fallback still reaps the tree.
         closeJobHandle();
         return;
     }
-    if (!::AssignProcessToJobObject(m_job_handle, process)) {
+    if (::AssignProcessToJobObject(m_job_handle, process) == 0) {
         // The process is NOT in the job, so TerminateJobObject would silently reap nothing
         // and grandchildren could survive. Drop the job handle so teardown falls back to
         // killing the primary process directly instead of trusting an empty job.
@@ -310,8 +310,8 @@ void ExecutionBroker::assignProcessToJob() {
 }
 
 void ExecutionBroker::terminateProcessTree() {
-    if (m_job_handle) {
-        if (::TerminateJobObject(m_job_handle, 1)) {
+    if (m_job_handle != nullptr) {
+        if (::TerminateJobObject(m_job_handle, 1) != 0) {
             return;
         }
         // The job refused the kill, so nothing was reaped. Fall through to the snapshot walk
@@ -327,7 +327,7 @@ void ExecutionBroker::terminateProcessTree() {
 }
 
 void ExecutionBroker::closeJobHandle() {
-    if (m_job_handle) {
+    if (m_job_handle != nullptr) {
         ::CloseHandle(m_job_handle);  // KILL_ON_JOB_CLOSE reaps any survivors
         m_job_handle = nullptr;
     }

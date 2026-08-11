@@ -31,7 +31,7 @@ constexpr int kHelperExitWaitMs = kTimerStatusBriefMs;
 // Returns an empty string on any failure so callers fail closed.
 QString processImagePath(DWORD pid) {
     HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!proc) {
+    if (proc == nullptr) {
         sak::logWarning("ElevationBroker: OpenProcess({}) failed: {}", pid, GetLastError());
         return {};
     }
@@ -39,7 +39,7 @@ QString processImagePath(DWORD pid) {
     DWORD size = MAX_PATH;
     const BOOL ok = QueryFullProcessImageNameW(proc, 0, buffer, &size);
     CloseHandle(proc);
-    if (!ok) {
+    if (ok == 0) {
         sak::logWarning("ElevationBroker: QueryFullProcessImageNameW failed: {}", GetLastError());
         return {};
     }
@@ -279,7 +279,7 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
     sei.nShow = SW_HIDE;
     sei.fMask = SEE_MASK_NOCLOSEPROCESS;
 
-    if (!ShellExecuteExW(&sei)) {
+    if (ShellExecuteExW(&sei) == 0) {
         DWORD const error = GetLastError();
         if (error == ERROR_CANCELLED) {
             sak::logInfo("ElevationBroker: user cancelled UAC prompt");
@@ -357,7 +357,8 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
         {
             const std::lock_guard<std::mutex> lock(m_send_mutex);
             DWORD exit_code = 0;
-            if (m_helper_process != nullptr && GetExitCodeProcess(m_helper_process, &exit_code) &&
+            if (m_helper_process != nullptr &&
+                (GetExitCodeProcess(m_helper_process, &exit_code) != 0) &&
                 exit_code != STILL_ACTIVE) {
                 sak::logError("ElevationBroker: helper exited with code {}", exit_code);
                 return std::unexpected(sak::error_code::helper_crashed);
@@ -378,7 +379,7 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
 #ifdef _WIN32
 auto ElevationBroker::verifyPipeServer(HANDLE handle) -> std::expected<void, sak::error_code> {
     ULONG server_pid = 0;
-    if (!GetNamedPipeServerProcessId(handle, &server_pid)) {
+    if (GetNamedPipeServerProcessId(handle, &server_pid) == 0) {
         sak::logError("ElevationBroker: GetNamedPipeServerProcessId failed: {}", GetLastError());
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
@@ -438,7 +439,7 @@ bool ElevationBroker::sendRaw(const QByteArray& data) {
     BOOL const ok = WriteFile(
         handle, data.constData(), static_cast<DWORD>(data.size()), &bytes_written, nullptr);
 
-    return ok && static_cast<int>(bytes_written) == data.size();
+    return (ok != 0) && static_cast<int>(bytes_written) == data.size();
 #else
     (void)data;
     return false;
@@ -514,7 +515,7 @@ bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
             const std::lock_guard<std::mutex> lock(m_send_mutex);
             const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
             if (handle == INVALID_HANDLE_VALUE ||
-                !ReadFile(handle, buffer + total_read, to_read, &bytes_read, nullptr)) {
+                (ReadFile(handle, buffer + total_read, to_read, &bytes_read, nullptr) == 0)) {
                 return false;
             }
         }
@@ -538,7 +539,7 @@ DWORD ElevationBroker::peekAvailable() const {
     const std::lock_guard<std::mutex> lock(m_send_mutex);
     const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
     if (handle == INVALID_HANDLE_VALUE ||
-        !PeekNamedPipe(handle, nullptr, 0, nullptr, &available, nullptr)) {
+        (PeekNamedPipe(handle, nullptr, 0, nullptr, &available, nullptr) == 0)) {
         return 0;
     }
     return available;
@@ -551,7 +552,7 @@ bool ElevationBroker::isHelperAlive() const {
     // acquisition never recurses.
     const std::lock_guard<std::mutex> lock(m_send_mutex);
     DWORD exit_code = 0;
-    if (m_helper_process && GetExitCodeProcess(m_helper_process, &exit_code) &&
+    if ((m_helper_process != nullptr) && (GetExitCodeProcess(m_helper_process, &exit_code) != 0) &&
         exit_code != STILL_ACTIVE) {
         return false;
     }
@@ -588,7 +589,7 @@ void ElevationBroker::cleanup() {
         proc_to_close = m_helper_process;
         m_helper_process = nullptr;
     }
-    if (proc_to_close) {
+    if (proc_to_close != nullptr) {
         // Give the helper a moment to exit cleanly
         WaitForSingleObject(proc_to_close, kHelperExitWaitMs);
         CloseHandle(proc_to_close);

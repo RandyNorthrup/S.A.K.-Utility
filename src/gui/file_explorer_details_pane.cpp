@@ -183,13 +183,13 @@ void FileExplorerDetailsPane::resizeEvent(QResizeEvent* event) {
     const bool horizontal = width() >= height();
     const QBoxLayout::Direction direction = horizontal ? QBoxLayout::LeftToRight
                                                        : QBoxLayout::TopToBottom;
-    if (m_body_layout && m_body_layout->direction() != direction) {
+    if ((m_body_layout != nullptr) && m_body_layout->direction() != direction) {
         m_body_layout->setDirection(direction);
     }
 }
 
 void FileExplorerDetailsPane::showImagePreview(bool image) {
-    if (m_preview_stack) {
+    if (m_preview_stack != nullptr) {
         m_preview_stack->setCurrentIndex(image ? 1 : 0);
     }
 }

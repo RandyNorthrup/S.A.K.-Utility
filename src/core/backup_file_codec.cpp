@@ -272,7 +272,7 @@ auto validateWriteOptions(const BackupCodecOptions& options) -> std::expected<vo
 /// @brief Feed one plaintext chunk through the optional compressor into the sink.
 auto pushChunk(ZlibStream* deflater, ContainerSink* sink, const QByteArray& chunk, bool finish)
     -> std::expected<void, error_code> {
-    if (!deflater) {
+    if (deflater == nullptr) {
         return finish ? std::expected<void, error_code>{} : sink->writeBody(chunk);
     }
     QByteArray compressed;
@@ -305,7 +305,7 @@ auto copyThroughCodec(QFile* source,
             return pushed;
         }
     }
-    if (!deflater) {
+    if (deflater == nullptr) {
         return {};
     }
     return pushChunk(deflater, sink, QByteArray{}, true);

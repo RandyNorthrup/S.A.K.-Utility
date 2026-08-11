@@ -111,17 +111,17 @@ QuickActionController::QuickActionController(QObject* parent) : QObject(parent) 
 
 QuickActionController::~QuickActionController() {
     // Cancel any running operations
-    if (m_current_scan_action) {
+    if (m_current_scan_action != nullptr) {
         m_current_scan_action->cancel();
     }
-    if (m_current_execution_action) {
+    if (m_current_execution_action != nullptr) {
         m_current_execution_action->cancel();
     }
     // Reach any in-flight ELEVATED task too: cancelling the action only sets its flag,
     // which the helper process never sees. cancelCurrentTask() is safe to call while
     // executeTask() blocks on the worker, and lets that blocking call return so the join
     // below does not wait out the helper's full inactivity timeout.
-    if (m_broker) {
+    if (m_broker != nullptr) {
         m_broker->cancelCurrentTask();
     }
 
@@ -252,7 +252,7 @@ bool QuickActionController::hasAdminPrivileges() {
 
 void QuickActionController::scanAction(const QString& action_name) {
     QuickAction* action = getAction(action_name);
-    if (!action) {
+    if (action == nullptr) {
         Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
         return;
     }
@@ -263,7 +263,7 @@ void QuickActionController::scanAction(const QString& action_name) {
     // scanAllActions() sweep does not stall on the running action.
     if (action == m_current_execution_action) {
         Q_EMIT logMessage(QString("Skipped scan of '%1' while it is executing").arg(action_name));
-        if (!m_current_scan_action && !m_scan_queue.isEmpty()) {
+        if ((m_current_scan_action == nullptr) && !m_scan_queue.isEmpty()) {
             const QString next_action = m_scan_queue.dequeue();
             scanAction(next_action);
         }
@@ -278,7 +278,7 @@ void QuickActionController::scanAction(const QString& action_name) {
     }
 
     // Check if already scanning
-    if (m_current_scan_action) {
+    if (m_current_scan_action != nullptr) {
         m_scan_queue.enqueue(action_name);
         Q_EMIT logMessage(QString("Scan queued: %1").arg(action_name));
         return;
@@ -301,7 +301,7 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
     }
 
     QuickAction* action = getAction(action_name);
-    if (!action) {
+    if (action == nullptr) {
         Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
         return;
     }
@@ -322,7 +322,7 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
     }
 
     // Check if already executing
-    if (m_current_execution_action) {
+    if (m_current_execution_action != nullptr) {
         // Queue for later
         m_action_queue.enqueue(action_name);
         Q_EMIT logMessage(QString("Action queued: %1").arg(action_name));
@@ -336,7 +336,7 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
     // executeAction is the only caller and returns early when getAction() found no
     // action for this name.
     Q_ASSERT(action);
-    if (m_current_execution_action) {
+    if (m_current_execution_action != nullptr) {
         m_action_queue.enqueue(action_name);
         Q_EMIT logMessage(QString("Action queued: %1").arg(action_name));
         return;
@@ -402,22 +402,22 @@ void QuickActionController::scanAllActions() {
         m_scan_queue.enqueue(action->name());
     }
 
-    if (!m_current_scan_action && !m_scan_queue.isEmpty()) {
+    if ((m_current_scan_action == nullptr) && !m_scan_queue.isEmpty()) {
         const QString next_action = m_scan_queue.dequeue();
         scanAction(next_action);
     }
 }
 
 void QuickActionController::cancelCurrentAction() {
-    if (m_current_scan_action) {
+    if (m_current_scan_action != nullptr) {
         m_current_scan_action->cancel();
         logOperation(m_current_scan_action, "Scan cancelled by user");
     }
-    if (m_current_execution_action) {
+    if (m_current_execution_action != nullptr) {
         m_current_execution_action->cancel();
         // An elevated action runs inside the helper process; the action's own cancel flag
         // never reaches it. Signal the broker so the privileged task actually stops.
-        if (m_broker) {
+        if (m_broker != nullptr) {
             m_broker->cancelCurrentTask();
         }
         logOperation(m_current_execution_action, "Execution cancelled by user");
@@ -425,7 +425,7 @@ void QuickActionController::cancelCurrentAction() {
 }
 
 void QuickActionController::onScanComplete() {
-    if (!m_current_scan_action) {
+    if (m_current_scan_action == nullptr) {
         return;
     }
 
@@ -459,7 +459,7 @@ void QuickActionController::onScanComplete() {
 }
 
 void QuickActionController::onExecutionComplete() {
-    if (!m_current_execution_action) {
+    if (m_current_execution_action == nullptr) {
         return;
     }
 
@@ -469,7 +469,7 @@ void QuickActionController::onExecutionComplete() {
     // Release the elevated broker (only set on an elevated run). It is created and
     // destroyed on this controller thread, and the worker has already returned from
     // executeTask() by the time this completion handler runs.
-    if (m_broker) {
+    if (m_broker != nullptr) {
         m_broker->deleteLater();
         m_broker = nullptr;
     }

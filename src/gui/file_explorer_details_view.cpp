@@ -55,7 +55,7 @@ FileExplorerDetailsView::FileExplorerDetailsView(QWidget* parent) : QTableView(p
 }
 
 void FileExplorerDetailsView::showColumnMenu(const QPoint& position) {
-    if (!model()) {
+    if (model() == nullptr) {
         return;
     }
     QMenu menu(this);
@@ -82,7 +82,7 @@ void FileExplorerDetailsView::showColumnMenu(const QPoint& position) {
 }
 
 void FileExplorerDetailsView::autoFitAllColumns() {
-    if (!model()) {
+    if (model() == nullptr) {
         return;
     }
     // Files ResizeColumnToFit per column; the name column gets extra
@@ -122,7 +122,7 @@ void FileExplorerDetailsView::showEvent(QShowEvent* event) {
 }
 
 void FileExplorerDetailsView::configureExplorerColumns() {
-    if (!model()) {
+    if (model() == nullptr) {
         return;
     }
     horizontalHeader()->setSectionResizeMode(FileExplorerItemModel::NameColumn,
@@ -144,7 +144,7 @@ void FileExplorerDetailsView::configureExplorerColumns() {
 }
 
 void FileExplorerDetailsView::saveColumnState() const {
-    if (!model()) {
+    if (model() == nullptr) {
         return;
     }
     QSettings settings;
@@ -160,7 +160,7 @@ void FileExplorerDetailsView::saveColumnState() const {
 }
 
 void FileExplorerDetailsView::restoreColumnState() {
-    if (!model()) {
+    if (model() == nullptr) {
         return;
     }
     QSettings settings;

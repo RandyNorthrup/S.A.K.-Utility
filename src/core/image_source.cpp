@@ -85,7 +85,7 @@ qint64 FileImageSource::read(char* data, qint64 maxSize) {
     // read() is public on the ImageSource interface, so the buffer arrives from outside this
     // class: reject a null one with the documented -1 error instead of handing it to
     // QIODevice::read. m_device is covered by the isOpen() check below.
-    if (!data) {
+    if (data == nullptr) {
         sak::logError("FileImageSource::read called with a null buffer");
         return -1;
     }
@@ -356,7 +356,7 @@ bool CompressedImageSource::isOpen() const {
 qint64 CompressedImageSource::read(char* data, qint64 maxSize) {
     // Public interface entry point: reject a null buffer with the documented -1 error.
     // m_decompressor is covered by the isOpen() check below.
-    if (!data) {
+    if (data == nullptr) {
         sak::logError("CompressedImageSource::read called with a null buffer");
         return -1;
     }

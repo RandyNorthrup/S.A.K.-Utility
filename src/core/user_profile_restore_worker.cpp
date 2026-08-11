@@ -415,7 +415,7 @@ bool UserProfileRestoreWorker::restoreUser(const UserMapping& mapping) {
 
     // Find source user data in manifest
     const BackupUserData* sourceUser = findManifestUser(mapping.source_username);
-    if (!sourceUser) {
+    if (sourceUser == nullptr) {
         Q_EMIT logMessage(tr("Source user not found in manifest: %1").arg(mapping.source_username),
                           true);
         return false;
@@ -989,7 +989,7 @@ qint64 UserProfileRestoreWorker::calculateTotalSize() {
         }
 
         const auto* user = findManifestUser(mapping.source_username);
-        if (!user) {
+        if (user == nullptr) {
             continue;
         }
 

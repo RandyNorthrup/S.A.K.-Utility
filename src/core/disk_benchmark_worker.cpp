@@ -101,7 +101,7 @@ HANDLE rejectReparseOrLinkedFile(HANDLE h) {
         return INVALID_HANDLE_VALUE;
     }
     BY_HANDLE_FILE_INFORMATION info{};
-    if (!GetFileInformationByHandle(h, &info) ||
+    if ((GetFileInformationByHandle(h, &info) == 0) ||
         (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 || info.nNumberOfLinks != 1) {
         CloseHandle(h);
         return INVALID_HANDLE_VALUE;
@@ -201,7 +201,7 @@ void finalizeLatencies(std::vector<double>& latencies,
         avg_latency_us = std::accumulate(latencies.begin(), latencies.end(), 0.0) /
                          static_cast<double>(latencies.size());
     }
-    if (latencies_out) {
+    if (latencies_out != nullptr) {
         *latencies_out = std::move(latencies);
     }
 }
@@ -228,7 +228,7 @@ bool fillTestFileWithRandom(HANDLE h, size_t total_bytes, size_t block_bytes) {
         DWORD bytes_written = 0;
         const DWORD to_write =
             static_cast<DWORD>(std::min(buf.size(), total_bytes - written_total));
-        if (!WriteFile(h, buf.data(), to_write, &bytes_written, nullptr)) {
+        if (WriteFile(h, buf.data(), to_write, &bytes_written, nullptr) == 0) {
             logError("Failed to write test file at offset {}", written_total);
             CloseHandle(h);
             return false;
@@ -678,14 +678,14 @@ size_t DiskBenchmarkWorker::readSequentialPass(void* file_handle,
                                                size_t total_bytes) {
     HANDLE h = static_cast<HANDLE>(file_handle);
     LARGE_INTEGER const zero{};
-    if (!SetFilePointerEx(h, zero, nullptr, FILE_BEGIN)) {
+    if (SetFilePointerEx(h, zero, nullptr, FILE_BEGIN) == 0) {
         return 0;
     }
 
     size_t bytes_read_total = 0;
     while (bytes_read_total < total_bytes) {
         DWORD bytes_read = 0;
-        if (!ReadFile(h, buffer, static_cast<DWORD>(bufSize), &bytes_read, nullptr) ||
+        if ((ReadFile(h, buffer, static_cast<DWORD>(bufSize), &bytes_read, nullptr) == 0) ||
             bytes_read == 0) {
             break;
         }
@@ -767,7 +767,7 @@ size_t DiskBenchmarkWorker::writeSequentialPass(void* file_handle,
     while (written_total < total_bytes) {
         DWORD bytes_written = 0;
         const DWORD to_write = static_cast<DWORD>(std::min(bufSize, total_bytes - written_total));
-        if (!WriteFile(h, buffer, to_write, &bytes_written, nullptr)) {
+        if (WriteFile(h, buffer, to_write, &bytes_written, nullptr) == 0) {
             break;
         }
         written_total += bytes_written;
@@ -858,7 +858,7 @@ void DiskBenchmarkWorker::processRandomReadOp(
 
     LARGE_INTEGER li;
     li.QuadPart = static_cast<LONGLONG>(offset);
-    if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
+    if (SetFilePointerEx(h, li, nullptr, FILE_BEGIN) == 0) {
         logWarning("Random read: SetFilePointerEx failed at offset {} (error {})",
                    offset,
                    GetLastError());
@@ -873,11 +873,11 @@ void DiskBenchmarkWorker::processRandomReadOp(
     // A short read (bytes_read < block) with NO_BUFFERING and an in-bounds aligned
     // offset is a real disk error, not a completed op -- count it as a failure so one
     // success cannot mask many partial/failed reads and report garbage IOPS.
-    if (!ReadFile(h,
+    if ((ReadFile(h,
                   buf_data + (queue_index * m_rand_block_bytes),
                   static_cast<DWORD>(m_rand_block_bytes),
                   &bytes_read,
-                  nullptr) ||
+                  nullptr) == 0) ||
         bytes_read != static_cast<DWORD>(m_rand_block_bytes)) {
         logWarning("Random read: short/failed ReadFile at offset {} (error {})",
                    offset,
@@ -932,7 +932,7 @@ void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
 
     LARGE_INTEGER li;
     li.QuadPart = static_cast<LONGLONG>(offset);
-    if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
+    if (SetFilePointerEx(h, li, nullptr, FILE_BEGIN) == 0) {
         logWarning("Random write: SetFilePointerEx failed at offset {} (error {})",
                    offset,
                    GetLastError());
@@ -947,11 +947,11 @@ void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
     // A short write (bytes_written < block) with NO_BUFFERING and an in-bounds aligned
     // offset is a real disk error, not a completed op -- count it as a failure so one
     // success cannot mask many partial/failed writes and report garbage IOPS.
-    if (!WriteFile(h,
+    if ((WriteFile(h,
                    buf_data + (queue_index * m_rand_block_bytes),
                    static_cast<DWORD>(m_rand_block_bytes),
                    &bytes_written,
-                   nullptr) ||
+                   nullptr) == 0) ||
         bytes_written != static_cast<DWORD>(m_rand_block_bytes)) {
         logWarning("Random write: short/failed WriteFile at offset {} (error {})",
                    offset,

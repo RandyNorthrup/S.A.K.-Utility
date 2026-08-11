@@ -89,13 +89,13 @@ constexpr auto kTabScrollDirectionLeft = "left";
 constexpr auto kTabScrollDirectionRight = "right";
 
 QBoxLayout* findBoxLayoutContainingWidget(QLayout* layout, QWidget* target, int& item_index) {
-    if (!layout || !target) {
+    if ((layout == nullptr) || (target == nullptr)) {
         return nullptr;
     }
 
     for (int index = 0; index < layout->count(); ++index) {
         QLayoutItem* item = layout->itemAt(index);
-        if (!item) {
+        if (item == nullptr) {
             continue;
         }
         if (item->widget() == target) {
@@ -322,12 +322,12 @@ constexpr int kTabIconSize = 20;
 
 bool IsAccessibilityAuditMode() {
     const auto* app = QCoreApplication::instance();
-    return app && app->property("sakAccessibilityAudit").toBool();
+    return (app != nullptr) && app->property("sakAccessibilityAudit").toBool();
 }
 
 bool IsStartupSmokeMode() {
     const auto* app = QCoreApplication::instance();
-    return app && app->property("sakStartupSmokeTest").toBool();
+    return (app != nullptr) && app->property("sakStartupSmokeTest").toBool();
 }
 
 void AddTabWithTooltip(QTabWidget* tabWidget,
@@ -340,7 +340,7 @@ void AddTabWithTooltip(QTabWidget* tabWidget,
     Q_ASSERT(tabTitle);
     Q_ASSERT(tooltip);
 
-    const QIcon icon = iconPath ? QIcon(QString::fromUtf8(iconPath)) : QIcon();
+    const QIcon icon = (iconPath != nullptr) ? QIcon(QString::fromUtf8(iconPath)) : QIcon();
     const int idx = icon.isNull() ? tabWidget->addTab(panel, QString::fromUtf8(tabTitle))
                                   : tabWidget->addTab(panel, icon, QString::fromUtf8(tabTitle));
     if (!icon.isNull()) {
@@ -399,7 +399,7 @@ void UpdateTabShortcutHints(QTabWidget* tabWidget) {
 }
 
 void ApplyHtmlBrowserTheme(QTextBrowser* browser) {
-    if (!browser) {
+    if (browser == nullptr) {
         return;
     }
     browser->setStyleSheet(ui::textBrowserSurfaceStyle(ui::kColorBgWhite, ui::kColorBorderDefault));
@@ -411,12 +411,12 @@ void ApplyHtmlBrowserTheme(QTextBrowser* browser) {
 }
 
 void ApplyThemedHtmlBrowsers(QWidget* root) {
-    if (!root) {
+    if (root == nullptr) {
         return;
     }
     const auto browsers = root->findChildren<QTextBrowser*>();
     for (QTextBrowser* browser : browsers) {
-        if (browser && browser->property("sakThemedHtmlBrowser").toBool()) {
+        if ((browser != nullptr) && browser->property("sakThemedHtmlBrowser").toBool()) {
             ApplyHtmlBrowserTheme(browser);
         }
     }
@@ -741,7 +741,7 @@ void MainWindow::materializeTab(int slot) {
         m_tab_widget->removeTab(slot + 1);
         m_tab_widget->setCurrentIndex(slot);
     }
-    if (placeholder) {
+    if (placeholder != nullptr) {
         placeholder->deleteLater();
     }
 
@@ -1036,7 +1036,7 @@ void MainWindow::createNetworkManagementPanel() {
 
 void MainWindow::connectNetworkAdapterLogToggle() {
     auto* adapterToggle = m_network_diagnostic_panel->adapterLogToggle();
-    if (!adapterToggle || !m_logWindow) {
+    if ((adapterToggle == nullptr) || (m_logWindow == nullptr)) {
         return;
     }
     connect(
@@ -1460,13 +1460,13 @@ void MainWindow::wireAiPanel() {
 #endif
 
 bool MainWindow::isVulnerabilityPanelActive() const {
-    return m_tab_widget && m_application_tabs && m_vulnerability_panel &&
+    return (m_tab_widget != nullptr) && (m_application_tabs != nullptr) && m_vulnerability_panel &&
            m_tab_widget->currentIndex() == findPanelTabIndex(m_vulnerability_panel.get()) &&
            m_application_tabs->currentWidget() == m_vulnerability_panel.get();
 }
 
 void MainWindow::updateVulnerabilityStatusBarVisibility() {
-    if (m_shutting_down || !m_vulnerability_summary_label) {
+    if (m_shutting_down || (m_vulnerability_summary_label == nullptr)) {
         return;
     }
 
@@ -1482,12 +1482,12 @@ void MainWindow::updateVulnerabilityStatusBarVisibility() {
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 bool MainWindow::isAiAssistantPanelActive() const {
-    return m_tab_widget && m_ai_assistant_panel &&
+    return (m_tab_widget != nullptr) && m_ai_assistant_panel &&
            m_tab_widget->currentIndex() == findPanelTabIndex(m_ai_assistant_panel.get());
 }
 
 void MainWindow::updateAiStatusBarVisibility() {
-    if (m_shutting_down || !m_ai_status_label) {
+    if (m_shutting_down || (m_ai_status_label == nullptr)) {
         return;
     }
 
@@ -1512,7 +1512,7 @@ int MainWindow::findPanelTabIndex(QWidget* panel) const {
     // Walk up through parent widgets to find the wrapper
     // that is a direct child of the main tab widget.
     const QWidget* widget = panel->parentWidget();
-    while (widget && widget != m_tab_widget) {
+    while ((widget != nullptr) && widget != m_tab_widget) {
         idx = m_tab_widget->indexOf(widget);
         if (idx >= 0) {
             return idx;
@@ -1560,14 +1560,14 @@ void MainWindow::setupLogRouting() {
 }
 
 void MainWindow::attachThemeToggleToLogToggle(LogToggleSwitch* logToggle) {
-    if (!logToggle || !logToggle->parentWidget()) {
+    if ((logToggle == nullptr) || (logToggle->parentWidget() == nullptr)) {
         return;
     }
 
     int item_index = -1;
     QBoxLayout* box_layout =
         findBoxLayoutContainingWidget(logToggle->parentWidget()->layout(), logToggle, item_index);
-    if (!box_layout || item_index < 0) {
+    if ((box_layout == nullptr) || item_index < 0) {
         return;
     }
 
@@ -1593,7 +1593,7 @@ void MainWindow::setDarkThemeEnabled(bool enabled) {
     }
 
     for (auto* toggle : m_theme_toggles) {
-        if (!toggle) {
+        if (toggle == nullptr) {
             continue;
         }
         const QSignalBlocker blocker(toggle);
@@ -1603,7 +1603,7 @@ void MainWindow::setDarkThemeEnabled(bool enabled) {
 }
 
 void MainWindow::updateStatus(const QString& message, int timeout_ms) {
-    if (m_status_label) {
+    if (m_status_label != nullptr) {
         if (timeout_ms > 0) {
             statusBar()->showMessage(message, timeout_ms);
         } else {
@@ -1624,7 +1624,7 @@ void MainWindow::updateProgress(int current, int maximum) {
                  maximum);
         return;
     }
-    if (!m_progress_bar) {
+    if (m_progress_bar == nullptr) {
         return;
     }
 
@@ -1646,7 +1646,7 @@ void MainWindow::updateProgress(int current, int maximum) {
 }
 
 void MainWindow::hideProgressBarIfComplete() {
-    if (m_progress_bar && m_progress_bar->value() >= m_progress_bar->maximum()) {
+    if ((m_progress_bar != nullptr) && m_progress_bar->value() >= m_progress_bar->maximum()) {
         m_progress_bar->setVisible(false);
     }
 }
@@ -1674,7 +1674,7 @@ void MainWindow::appendLogIfActive(int tabIdx, const QString& formatted) {
 }
 
 void MainWindow::setProgressVisible(bool visible) {
-    if (m_progress_bar) {
+    if (m_progress_bar != nullptr) {
         m_progress_bar->setVisible(visible);
     }
 }
@@ -1690,7 +1690,7 @@ void MainWindow::onTabChanged(int index) {
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     updateAiStatusBarVisibility();
 #endif
-    if (!m_logWindow) {
+    if (m_logWindow == nullptr) {
         return;
     }
 
@@ -1797,7 +1797,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 void MainWindow::moveEvent(QMoveEvent* event) {
     Q_ASSERT(event);
     QMainWindow::moveEvent(event);
-    if (m_logWindow) {
+    if (m_logWindow != nullptr) {
         m_logWindow->repositionIfAnchored();
     }
 }
@@ -1805,7 +1805,7 @@ void MainWindow::moveEvent(QMoveEvent* event) {
 void MainWindow::resizeEvent(QResizeEvent* event) {
     Q_ASSERT(event);
     QMainWindow::resizeEvent(event);
-    if (m_logWindow) {
+    if (m_logWindow != nullptr) {
         m_logWindow->repositionIfAnchored();
     }
     // Scroll buttons may appear/disappear on resize
@@ -1824,7 +1824,7 @@ void MainWindow::showEvent(QShowEvent* event) {
 }
 
 void MainWindow::applyTabBarChevrons() {
-    if (!m_tab_widget) {
+    if (m_tab_widget == nullptr) {
         return;
     }
 

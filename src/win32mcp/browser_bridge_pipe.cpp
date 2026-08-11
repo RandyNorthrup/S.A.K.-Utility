@@ -266,7 +266,7 @@ bool BrowserBridgePipeServer::createPipeResources(QString* error) {
         &attributes);
     LocalFree(descriptor);
     if (pipe_ == INVALID_HANDLE_VALUE) {
-        if (error) {
+        if (error != nullptr) {
             *error = QStringLiteral("CreateNamedPipe failed (err=%1); the name may be squatted")
                          .arg(GetLastError());
         }
@@ -280,7 +280,7 @@ bool BrowserBridgePipeServer::createPipeResources(QString* error) {
     // rendezvous record could not be written -- the I/O thread must have a valid abort
     // event, and the relay must be able to discover the pipe.
     if (shutdown_event_ == nullptr || !writeRendezvousRecord(rendezvous_path_, record, error)) {
-        if (shutdown_event_ == nullptr && error) {
+        if (shutdown_event_ == nullptr && (error != nullptr)) {
             *error = QStringLiteral("CreateEvent failed (err=%1)").arg(GetLastError());
         }
         CloseHandle(pipe_);
@@ -300,7 +300,7 @@ bool BrowserBridgePipeServer::start(QString* error) {
     // joinable thread_ would call std::terminate. A prior stopped cycle left thread_ joined
     // (not joinable); join any leftover defensively before it is reassigned below.
     if (running_) {
-        if (error) {
+        if (error != nullptr) {
             *error = QStringLiteral("Bridge pipe server is already running");
         }
         return false;

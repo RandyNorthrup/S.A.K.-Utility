@@ -472,7 +472,7 @@ QString MigrationReport::getComputerName() const {
 #ifdef Q_OS_WIN
     WCHAR buffer[MAX_COMPUTERNAME_LENGTH + 1];
     DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
-    if (GetComputerNameW(buffer, &size)) {
+    if (GetComputerNameW(buffer, &size) != 0) {
         return QString::fromWCharArray(buffer);
     }
 #endif
@@ -483,7 +483,7 @@ QString MigrationReport::getCurrentUser() const {
 #ifdef Q_OS_WIN
     WCHAR buffer[UNLEN + 1];
     DWORD size = UNLEN + 1;
-    if (GetUserNameW(buffer, &size)) {
+    if (GetUserNameW(buffer, &size) != 0) {
         return QString::fromWCharArray(buffer);
     }
 #endif

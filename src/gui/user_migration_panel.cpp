@@ -330,7 +330,7 @@ void UserMigrationPanel::createQuickActions() {
         const QString action_name = it.key();
         const QPushButton* btn = it.value();
         QuickAction* action = m_action_controller->getAction(action_name);
-        if (action) {
+        if (action != nullptr) {
             connect(btn, &QPushButton::clicked, this, [this, action]() {
                 onQuickActionClicked(action);
             });

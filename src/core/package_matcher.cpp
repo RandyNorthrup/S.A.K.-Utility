@@ -144,7 +144,7 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::resolveExactMatch(
 
 std::optional<PackageMatcher::MatchResult> PackageMatcher::tryFuzzyMatch(
     const QString& base_name, ChocolateyManager* choco_mgr, double min_confidence) {
-    if (!choco_mgr) {
+    if (choco_mgr == nullptr) {
         return std::nullopt;
     }
     auto fuzzy = fuzzyMatch(base_name, choco_mgr);
@@ -157,7 +157,7 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::tryFuzzyMatch(
 
 std::optional<PackageMatcher::MatchResult> PackageMatcher::trySearchMatch(
     const QString& base_name, ChocolateyManager* choco_mgr, const MatchConfig& config) const {
-    if (!choco_mgr) {
+    if (choco_mgr == nullptr) {
         return std::nullopt;
     }
     auto search = searchMatch(base_name, choco_mgr, config.max_search_results);
@@ -799,7 +799,7 @@ void PackageMatcher::clearCache() {
 QString PackageMatcher::getCachedSearch(const QString& keyword) const {
     const QMutexLocker locker(&m_cache_mutex);
     const QString* cached = m_search_cache.object(keyword);
-    return cached ? *cached : QString();
+    return (cached != nullptr) ? *cached : QString();
 }
 
 void PackageMatcher::cacheSearch(const QString& keyword, const QString& result) {

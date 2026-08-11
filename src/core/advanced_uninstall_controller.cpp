@@ -184,7 +184,7 @@ void AdvancedUninstallController::refreshPrograms() {
     // Run enumeration on the persistent worker thread so the GUI stays responsive. The
     // enumerator already lives on m_enumThread; queue the work onto that thread instead of
     // moving the object around.
-    if (!m_enumThread || !m_enumThread->isRunning()) {
+    if ((m_enumThread == nullptr) || !m_enumThread->isRunning()) {
         setState(State::Idle);
         Q_EMIT statusMessage("Enumeration thread unavailable.", kStatusTimeoutShortMs);
         return;
@@ -920,7 +920,7 @@ void AdvancedUninstallController::setState(State newState) {
 }
 
 void AdvancedUninstallController::stopEnumThread() {
-    if (!m_enumThread) {
+    if (m_enumThread == nullptr) {
         return;
     }
     m_enumerator->requestCancel();

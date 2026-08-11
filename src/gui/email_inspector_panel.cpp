@@ -987,7 +987,7 @@ void EmailInspectorPanel::onCloseFileClicked() {
 // ============================================================================
 
 void EmailInspectorPanel::onFolderTreeItemClicked(QTreeWidgetItem* item, int /*column*/) {
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
     bool ok = false;
@@ -1009,7 +1009,7 @@ void EmailInspectorPanel::onItemListCellClicked(int row, int column) {
         return;
     }
     auto* subject_item = m_item_list->item(row, ColSubject);
-    if (!subject_item) {
+    if (subject_item == nullptr) {
         return;
     }
     bool ok = false;
@@ -1062,7 +1062,7 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
 
 void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
     QTreeWidgetItem* item = m_folder_tree->itemAt(pos);
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
     // Resolve the RIGHT-CLICKED folder and export that id. A right-click does not
@@ -2306,7 +2306,7 @@ void applyRemoteImageReply(QNetworkReply* reply,
 }  // namespace
 
 void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {
-    if (!m_remote_image_nam) {
+    if (m_remote_image_nam == nullptr) {
         m_remote_image_nam = new QNetworkAccessManager(this);
     }
 

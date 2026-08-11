@@ -860,7 +860,7 @@ int osSystemPhysicalDrive() {
                                     &bytesReturned,
                                     nullptr);
     CloseHandle(hVol);
-    if (!ok || extents->NumberOfDiskExtents == 0) {
+    if ((ok == 0) || extents->NumberOfDiskExtents == 0) {
         return -1;
     }
     return static_cast<int>(extents->Extents[0].DiskNumber);
@@ -890,7 +890,7 @@ std::vector<int> volumeBackingPhysicalDrives(const QString& path) {
                                     &bytesReturned,
                                     nullptr);
     CloseHandle(handle);
-    if (!ok) {
+    if (ok == 0) {
         return drives;
     }
     for (DWORD i = 0; i < extents->NumberOfDiskExtents; ++i) {

@@ -134,11 +134,11 @@ void FileExplorerOmnibar::createNavigationButtons(QHBoxLayout* row) {
 }
 
 void FileExplorerOmnibar::setNarrowMode(const bool narrow) {
-    if (m_nav_overflow_button) {
+    if (m_nav_overflow_button != nullptr) {
         m_nav_overflow_button->setVisible(narrow);
     }
     for (QPushButton* button : {m_forward_button, m_up_button, m_refresh_button}) {
-        if (button) {
+        if (button != nullptr) {
             button->setVisible(!narrow);
         }
     }
@@ -211,7 +211,7 @@ FileExplorerStatusCenterButton* FileExplorerOmnibar::statusCenterButton() const 
 }
 
 void FileExplorerOmnibar::setAddressEditMode(const bool edit) {
-    if (!m_address_stack) {
+    if (m_address_stack == nullptr) {
         return;
     }
     // Editing the address is a path operation. If a palette/search mode is active, leave it
@@ -231,7 +231,7 @@ void FileExplorerOmnibar::setAddressEditMode(const bool edit) {
 }
 
 bool FileExplorerOmnibar::addressEditMode() const {
-    return m_address_stack && m_address_stack->currentWidget() == m_path_edit;
+    return (m_address_stack != nullptr) && m_address_stack->currentWidget() == m_path_edit;
 }
 
 void FileExplorerOmnibar::setMode(const FileExplorerOmnibarMode mode) {
@@ -270,7 +270,7 @@ FileExplorerOmnibarMode FileExplorerOmnibar::mode() const {
 }
 
 void FileExplorerOmnibar::ensureSuggestionPopup() {
-    if (m_suggestion_frame) {
+    if (m_suggestion_frame != nullptr) {
         return;
     }
     // A plain child frame of the shell window (not Qt::Popup): it never takes
@@ -295,7 +295,7 @@ void FileExplorerOmnibar::ensureSuggestionPopup() {
 }
 
 void FileExplorerOmnibar::positionSuggestionPopup() {
-    if (!m_suggestion_frame || !m_address_stack) {
+    if ((m_suggestion_frame == nullptr) || (m_address_stack == nullptr)) {
         return;
     }
     const QPoint anchor = m_address_stack->mapTo(window(), m_address_stack->rect().bottomLeft());
@@ -322,11 +322,11 @@ void FileExplorerOmnibar::setSuggestionsVisible(const bool visible) {
 }
 
 bool FileExplorerOmnibar::suggestionsVisible() const {
-    return m_suggestion_frame && m_suggestion_frame->isVisible();
+    return (m_suggestion_frame != nullptr) && m_suggestion_frame->isVisible();
 }
 
 void FileExplorerOmnibar::moveSuggestionSelection(const int delta) {
-    if (!m_suggestion_list || m_suggestion_list->count() == 0) {
+    if ((m_suggestion_list == nullptr) || m_suggestion_list->count() == 0) {
         return;
     }
     const int count = m_suggestion_list->count();
@@ -413,7 +413,7 @@ bool FileExplorerOmnibar::filterPathModeEvent(QEvent* event) {
 }
 
 bool FileExplorerOmnibar::eventFilter(QObject* watched, QEvent* event) {
-    if (watched != m_path_edit || !event) {
+    if (watched != m_path_edit || (event == nullptr)) {
         return QWidget::eventFilter(watched, event);
     }
     if (event->type() == QEvent::ShortcutOverride &&

@@ -377,13 +377,14 @@ void OrganizerPanel::populateFileSystemTargetCombos() {
     };
     fillCombo(m_organizer_target_combo);
     fillCombo(m_dedup_target_combo);
-    onOrganizerTargetChanged(m_organizer_target_combo ? m_organizer_target_combo->currentIndex()
-                                                      : -1);
-    onDedupTargetChanged(m_dedup_target_combo ? m_dedup_target_combo->currentIndex() : -1);
+    onOrganizerTargetChanged(
+        (m_organizer_target_combo != nullptr) ? m_organizer_target_combo->currentIndex() : -1);
+    onDedupTargetChanged((m_dedup_target_combo != nullptr) ? m_dedup_target_combo->currentIndex()
+                                                           : -1);
 }
 
 FileManagementTarget OrganizerPanel::currentTargetForCombo(const QComboBox* combo) const {
-    const int index = combo ? combo->currentIndex() : -1;
+    const int index = (combo != nullptr) ? combo->currentIndex() : -1;
     if (index < 0 || index >= m_file_system_targets.size()) {
         return {};
     }
@@ -819,7 +820,7 @@ void OrganizerPanel::onTargetPathChanged(const QString& path) {
 void OrganizerPanel::onOrganizerTargetChanged(int index) {
     Q_UNUSED(index)
     const auto target = currentOrganizerTarget();
-    if (!m_target_path || target.root_path.isEmpty()) {
+    if ((m_target_path == nullptr) || target.root_path.isEmpty()) {
         return;
     }
     m_browse_button->setEnabled(target.local_file_system && !m_operation_running);
@@ -1139,7 +1140,7 @@ QMap<QString, QStringList> OrganizerPanel::getCategoryMapping() const {
         auto* categoryItem = m_category_table->item(row, 0);
         auto* extensionsItem = m_category_table->item(row, 1);
 
-        if (!categoryItem || !extensionsItem) {
+        if ((categoryItem == nullptr) || (extensionsItem == nullptr)) {
             continue;
         }
 
@@ -1511,7 +1512,7 @@ void OrganizerPanel::onDedupSettingsClicked() {
 
 void OrganizerPanel::onDedupTargetChanged(int index) {
     Q_UNUSED(index)
-    if (m_dedup_directory_list) {
+    if (m_dedup_directory_list != nullptr) {
         m_dedup_directory_list->clear();
     }
     updateDedupDirectorySummary();

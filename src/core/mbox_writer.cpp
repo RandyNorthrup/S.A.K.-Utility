@@ -299,9 +299,10 @@ void appendAttachmentPart(QByteArray& message,
                           const QString& name,
                           const QByteArray& data) {
     const PstAttachmentInfo* info = findAttachmentInfo(item, name);
-    const QByteArray content_type = info ? sanitizedMimeType(info->mime_type)
-                                         : QByteArray("application/octet-stream");
-    const QByteArray content_id = info ? sanitizedContentId(info->content_id) : QByteArray();
+    const QByteArray content_type = (info != nullptr) ? sanitizedMimeType(info->mime_type)
+                                                      : QByteArray("application/octet-stream");
+    const QByteArray content_id = (info != nullptr) ? sanitizedContentId(info->content_id)
+                                                    : QByteArray();
 
     message.append("--" + boundary.toUtf8() + "\r\n");
     message.append("Content-Type: " + content_type + "\r\n");
@@ -478,7 +479,7 @@ std::expected<void, error_code> MboxWriter::writeMessage(
     }
 
     QFile* file = getOrCreateFile(folder_path);
-    if (!file) {
+    if (file == nullptr) {
         return std::unexpected(error_code::write_error);
     }
     if (!writeFully(*file, *entry)) {
@@ -495,7 +496,7 @@ std::expected<void, error_code> MboxWriter::writeMessage(
 }
 
 bool MboxWriter::closeOneFile(QFile* file, const QString& key) {
-    if (!file) {
+    if (file == nullptr) {
         return true;
     }
     bool ok = true;

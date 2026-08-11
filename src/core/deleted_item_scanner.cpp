@@ -81,7 +81,7 @@ QVector<PstItemDetail> DeletedItemScanner::scanRecoverableItems() {
     };
 
     const PstFolder* recov_folder = findFolder(tree);
-    if (!recov_folder) {
+    if (recov_folder == nullptr) {
         logInfo("DeletedItemScanner: no Recoverable Items folder found");
         return recovered;
     }

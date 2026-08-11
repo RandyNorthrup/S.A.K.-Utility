@@ -1171,7 +1171,7 @@ private:
                                             bool sparseInode,
                                             uint64_t* cursor,
                                             PartitionApfsFileReadResult* result) {
-        if (!cursor || *cursor >= bytesToRead) {
+        if ((cursor == nullptr) || *cursor >= bytesToRead) {
             return true;
         }
         if (extent.flags != 0) {
@@ -1224,7 +1224,7 @@ private:
                                           bool sparseInode,
                                           uint64_t* cursor,
                                           PartitionApfsFileReadResult* result) const {
-        if (!cursor || extent.logical_offset <= *cursor) {
+        if ((cursor == nullptr) || extent.logical_offset <= *cursor) {
             return true;
         }
         if (!sparseInode) {
@@ -1240,7 +1240,7 @@ private:
     }
 
     [[nodiscard]] bool mount(PartitionApfsFileReadResult* result) {
-        if (!device_ || !device_->isOpen()) {
+        if ((device_ == nullptr) || !device_->isOpen()) {
             result->blockers.append(QStringLiteral("APFS input is not open"));
             return false;
         }
@@ -2265,7 +2265,7 @@ private:
                                  QByteArray* bytes,
                                  PartitionApfsFileReadResult* result,
                                  bool appendBlocker = true) {
-        if (!bytes) {
+        if (bytes == nullptr) {
             return false;
         }
         if (length > static_cast<uint64_t>(std::numeric_limits<int>::max())) {

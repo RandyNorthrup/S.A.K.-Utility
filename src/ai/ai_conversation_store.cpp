@@ -198,7 +198,7 @@ QString uniqueDestinationPath(const QString& path) {
 }
 
 void setError(QString* error_message, const QString& message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = message;
     }
 }
@@ -356,7 +356,7 @@ bool trimMemoryFile(const QString& path, QString* error_message) {
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not trim memory: %1").arg(file.errorString());
         }
         return false;
@@ -367,14 +367,14 @@ bool trimMemoryFile(const QString& path, QString* error_message) {
 
     QSaveFile out(path);
     if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not trim memory: %1").arg(out.errorString());
         }
         return false;
     }
     out.write(compacted.toUtf8());
     if (!out.commit()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not commit trimmed memory: %1").arg(out.errorString());
         }
@@ -519,7 +519,7 @@ std::optional<QJsonObject> parseJsonLineObject(const QByteArray& raw_line) {
 
 bool openOptionalTranscriptFile(QFile* file, QString* error_message) {
     if (!file->exists()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             error_message->clear();
         }
         return false;
@@ -527,7 +527,7 @@ bool openOptionalTranscriptFile(QFile* file, QString* error_message) {
     if (file->open(QIODevice::ReadOnly | QIODevice::Text)) {
         return true;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = QStringLiteral("Could not read transcript: %1").arg(file->errorString());
     }
     return false;
@@ -663,7 +663,7 @@ bool ConversationStore::ensureRoot(QString* error_message) const {
     if (dir.mkpath(QStringLiteral("."))) {
         return true;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = QStringLiteral("Could not create AI session root: %1").arg(m_root_dir);
     }
     return false;
@@ -705,7 +705,7 @@ QStringList ConversationStore::loadTranscriptLines(const QString& session_id,
         return lines;
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not read transcript: %1").arg(file.errorString());
         }
@@ -747,7 +747,7 @@ QString ConversationStore::latestAssistantResponseId(const QString& session_id,
             latest = response_id;
         }
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return latest;
@@ -759,7 +759,7 @@ QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& 
     QVector<AiSessionSearchResult> results;
     const QString term = query.trimmed();
     if (term.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Search query is empty");
         }
         return results;
@@ -789,7 +789,7 @@ QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& 
     if (results.size() > bounded_max_results) {
         results.resize(bounded_max_results);
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return results;
@@ -807,7 +807,7 @@ bool ConversationStore::startSession(const QString& title, QString* error_messag
                  QUuid::createUuid().toString(QUuid::WithoutBraces).left(kSessionUuidSuffixChars));
     const QString path = sessionPath(id);
     if (!QDir().mkpath(path)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not create AI session: %1").arg(path);
         }
         return false;
@@ -825,7 +825,7 @@ bool ConversationStore::openSession(const QString& session_id, QString* error_me
     const QWriteLocker locker(&m_lock);
     const QString path = sessionPath(session_id);
     if (!QFileInfo::exists(QDir(path).filePath(QString::fromLatin1(kManifestFile)))) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("AI session not found: %1").arg(session_id);
         }
         return false;
@@ -833,7 +833,7 @@ bool ConversationStore::openSession(const QString& session_id, QString* error_me
 
     auto info = readManifest(path);
     if (info.id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("AI session manifest invalid: %1").arg(session_id);
         }
         return false;
@@ -851,7 +851,7 @@ bool ConversationStore::renameCurrentSession(const QString& title, QString* erro
     const QWriteLocker locker(&m_lock);
     const QString trimmed = fallbackTitle(title);
     if (m_current_session.id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("No active AI session");
         }
         return false;
@@ -949,7 +949,7 @@ QString ConversationStore::commandLogPath(const QString& command_id,
                                           QString* error_message) const {
     const QReadLocker locker(&m_lock);
     if (m_current_session.id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("No active AI session");
         }
         return {};
@@ -963,7 +963,7 @@ QString ConversationStore::commandLogPath(const QString& command_id,
     const QString logs_dir = QDir(artifact_root).filePath(QStringLiteral("logs"));
     const QDir dir(logs_dir);
     if (!dir.exists() && !QDir().mkpath(logs_dir)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not create artifacts directory: %1").arg(logs_dir);
         }
@@ -976,7 +976,7 @@ QString ConversationStore::artifactSubdir(const QString& subdir, QString* error_
     const QReadLocker locker(&m_lock);
     const QString trimmed_subdir = subdir.trimmed();
     if (trimmed_subdir.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Artifact subdir is empty");
         }
         return {};
@@ -987,7 +987,7 @@ QString ConversationStore::artifactSubdir(const QString& subdir, QString* error_
     }
     const QString path = QDir(artifact_root).filePath(trimmed_subdir);
     if (!QDir().mkpath(path)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not create artifact directory: %1").arg(path);
         }
         return {};
@@ -998,7 +998,7 @@ QString ConversationStore::artifactSubdir(const QString& subdir, QString* error_
 QString ConversationStore::artifactRootDirectory(QString* error_message) const {
     const QReadLocker locker(&m_lock);
     if (m_current_session.id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("No active AI session");
         }
         return {};
@@ -1007,7 +1007,7 @@ QString ConversationStore::artifactRootDirectory(QString* error_message) const {
     const QString artifacts_root = QDir(currentSessionPath()).filePath(QStringLiteral("artifacts"));
     const QString path = QDir(artifacts_root).filePath(name);
     if (!QDir().mkpath(path)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not create artifact directory: %1").arg(path);
         }
         return {};
@@ -1029,7 +1029,7 @@ QString ConversationStore::artifactPath(const QString& subdir,
     const QString base = QDir::cleanPath(dir);
     const QString resolved = QDir::cleanPath(QDir(dir).filePath(filename));
     if (resolved != base && !resolved.startsWith(base + QLatin1Char('/'))) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Artifact filename escapes the artifact directory: %1")
                                  .arg(filename);
         }
@@ -1059,7 +1059,7 @@ bool ConversationStore::appendContext(const QString& kind,
 QString ConversationStore::memoryText(int max_chars, QString* error_message) const {
     const QReadLocker locker(&m_lock);
     if (m_current_session.id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("No active AI session");
         }
         return {};
@@ -1069,7 +1069,7 @@ QString ConversationStore::memoryText(int max_chars, QString* error_message) con
         return {};
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not read memory: %1").arg(file.errorString());
         }
         return {};
@@ -1088,7 +1088,7 @@ bool ConversationStore::appendMemoryEntry(const QString& kind,
                                           QString* error_message) {
     const QWriteLocker locker(&m_lock);
     if (m_current_session.id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("No active AI session");
         }
         return false;
@@ -1104,7 +1104,7 @@ bool ConversationStore::appendMemoryEntry(const QString& kind,
     }
     QFile file(memory_path);
     if (!file.open(QIODevice::Append | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not append memory: %1").arg(file.errorString());
         }
         return false;
@@ -1137,14 +1137,14 @@ bool ConversationStore::writeUsage(const TokenUsage& turn,
 
     QSaveFile file(QDir(currentSessionPath()).filePath(QString::fromLatin1(kUsageFile)));
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not write usage: %1").arg(file.errorString());
         }
         return false;
     }
     file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
     if (!file.commit()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not commit usage: %1").arg(file.errorString());
         }
         return false;
@@ -1172,7 +1172,7 @@ QString ConversationStore::currentSessionPath() const {
 
 bool ConversationStore::writeManifest(QString* error_message) const {
     if (m_current_session.id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("No active AI session");
         }
         return false;
@@ -1186,14 +1186,14 @@ bool ConversationStore::writeManifest(QString* error_message) const {
 
     QSaveFile file(QDir(currentSessionPath()).filePath(QString::fromLatin1(kManifestFile)));
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not write manifest: %1").arg(file.errorString());
         }
         return false;
     }
     file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
     if (!file.commit()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not commit manifest: %1").arg(file.errorString());
         }
@@ -1206,7 +1206,7 @@ bool ConversationStore::appendJsonLine(const QString& filename,
                                        QJsonObject object,
                                        QString* error_message) const {
     if (m_current_session.id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("No active AI session");
         }
         return false;
@@ -1216,7 +1216,7 @@ bool ConversationStore::appendJsonLine(const QString& filename,
     object[QStringLiteral("schema_version")] = kSessionArtifactSchemaVersion;
     QFile file(QDir(currentSessionPath()).filePath(filename));
     if (!file.open(QIODevice::Append | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not append %1: %2").arg(filename, file.errorString());
         }
@@ -1228,7 +1228,7 @@ bool ConversationStore::appendJsonLine(const QString& filename,
         // Roll back the partial line so the JSONL file stays parseable, and report
         // failure instead of claiming a truncated record was persisted.
         file.resize(start_size);
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Short write appending %1: %2").arg(filename, file.errorString());
         }
@@ -1241,7 +1241,7 @@ bool ConversationStore::appendSearchIndexRecord(QJsonObject object, QString* err
     const QString path = QDir(currentSessionPath()).filePath(QString::fromLatin1(kSearchIndexFile));
     const QFileInfo info(path);
     if (info.exists() && info.size() >= kMaxSearchIndexBytes) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("AI session search index exceeded max size cap (%1 bytes): %2")
                     .arg(kMaxSearchIndexBytes)

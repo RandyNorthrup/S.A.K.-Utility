@@ -543,7 +543,7 @@ void EmailExportWorker::noteIfCancelled(sak::EmailExportResult& result) const {
 }
 
 void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportConfig& config) {
-    if (!parser) {
+    if (parser == nullptr) {
         emitEarlyFailure(QStringLiteral("No PST/OST file open for export"));
         return;
     }
@@ -823,7 +823,7 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
 // ============================================================================
 
 void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExportConfig& config) {
-    if (!parser) {
+    if (parser == nullptr) {
         emitEarlyFailure(QStringLiteral("No MBOX file open for export"));
         return;
     }

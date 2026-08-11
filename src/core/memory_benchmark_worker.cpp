@@ -400,7 +400,7 @@ auto MemoryBenchmarkWorker::runAllocationStress() -> std::expected<void, sak::er
     size_t test_size = sak::kBytesPerGB;  // Start at 1 GB
     while (test_size >= sak::kBytesPerMB) {
         void* ptr = std::malloc(test_size);
-        if (ptr) {
+        if (ptr != nullptr) {
             max_contiguous = test_size / sak::kBytesPerMB;
             std::free(ptr);
             break;

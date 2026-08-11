@@ -55,7 +55,7 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
 // the "set the reason, return nothing" contract identical across paths instead of repeating the
 // same null-check branch at each guard.
 [[nodiscard]] QJsonObject rejectConfig(QString* error_message, const QString& message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = message;
     }
     return {};
@@ -89,7 +89,7 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
             error_message,
             QStringLiteral("Invalid JSON in %1: %2").arg(path, parse_error.errorString()));
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return doc.object();
@@ -218,18 +218,18 @@ QJsonObject AiProviderRegistry::providerById(const QString& provider_id,
     for (const auto& value : providers(error_message)) {
         const QJsonObject provider = value.toObject();
         if (normalizedId(provider.value(QStringLiteral("id")).toString()) == wanted) {
-            if (error_message) {
+            if (error_message != nullptr) {
                 error_message->clear();
             }
             return provider;
         }
     }
-    if (error_message && !error_message->isEmpty()) {
+    if ((error_message != nullptr) && !error_message->isEmpty()) {
         // providers() recorded an open/parse failure; surface THAT error rather than masking it
         // as "Unknown provider".
         return {};
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = QStringLiteral("Unknown provider: %1").arg(provider_id);
     }
     return {};
@@ -241,7 +241,7 @@ QJsonObject AiProviderRegistry::providerStatus(const QString& provider_id,
     if (provider.isEmpty()) {
         return {};
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return providerStatusObject(m_app_dir, provider);
@@ -262,7 +262,7 @@ QJsonObject AiProviderRegistry::providerStatuses(QString* error_message) const {
 QJsonObject AiProviderRegistry::appManifest(const QString& app_id, QString* error_message) const {
     const QString id = normalizedId(app_id);
     if (id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("App id is empty");
         }
         return {};
@@ -299,7 +299,7 @@ QJsonObject AiProviderRegistry::appCapabilities(const QString& app_id,
             manifest[QStringLiteral("requested_action_profile")] = requested;
         }
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return manifest;
@@ -333,14 +333,14 @@ QJsonObject AiProviderRegistry::readCachedJsonObject(const QString& file_path,
                                                      const QString& resource_path,
                                                      CachedJsonObject* cache,
                                                      QString* error_message) const {
-    if (!cache) {
+    if (cache == nullptr) {
         return {};
     }
     const ResolvedConfigSource source = resolveConfigSource(file_path, resource_path);
 
     if (cache->valid && cache->path == source.path &&
         (!source.file_exists || cache->last_modified_utc == source.last_modified_utc)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             error_message->clear();
         }
         return cache->object;

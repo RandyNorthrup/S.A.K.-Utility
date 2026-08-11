@@ -237,8 +237,8 @@ void PerUserCustomizationDialog::populateTree() {
 
 void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selection,
                                                  QTreeWidgetItem* parent) {
-    QTreeWidgetItem* folderItem = parent ? new QTreeWidgetItem(parent)
-                                         : new QTreeWidgetItem(m_folderTree);
+    QTreeWidgetItem* folderItem = (parent != nullptr) ? new QTreeWidgetItem(parent)
+                                                      : new QTreeWidgetItem(m_folderTree);
 
     // Get absolute path
     const QDir profileDir(m_profile.profile_path);
@@ -397,7 +397,7 @@ void PerUserCustomizationDialog::onAddCustomFolder() {
 void PerUserCustomizationDialog::onRemoveFolder() {
     Q_ASSERT(m_folderTree);
     const QTreeWidgetItem* currentItem = m_folderTree->currentItem();
-    if (!currentItem) {
+    if (currentItem == nullptr) {
         sak::showInformationLogged(this, "Remove Folder", "Please select a folder to remove.");
         return;
     }
@@ -643,7 +643,7 @@ void PerUserCustomizationDialog::calculateDirectorySize(
 
 void PerUserCustomizationDialog::setChildrenCheckState(QTreeWidgetItem* item,
                                                        Qt::CheckState state) const {
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
 
@@ -660,7 +660,7 @@ void PerUserCustomizationDialog::setChildrenCheckState(QTreeWidgetItem* item,
 }
 
 void PerUserCustomizationDialog::updateParentCheckState(QTreeWidgetItem* item) {
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
 
@@ -695,7 +695,7 @@ void PerUserCustomizationDialog::updateParentCheckState(QTreeWidgetItem* item) {
 
 void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) {
     // Tri-state checkbox logic for parent/child relationships
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
 
@@ -707,7 +707,7 @@ void PerUserCustomizationDialog::updateFolderCheckStates(QTreeWidgetItem* item) 
 
     // Update parent based on children
     QTreeWidgetItem* parent = item->parent();
-    if (!parent) {
+    if (parent == nullptr) {
         return;
     }
 

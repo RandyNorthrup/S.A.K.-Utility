@@ -735,7 +735,7 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
                                             sizeof(sfi),
                                             SHGFI_ICON | SHGFI_SMALLICON);
 
-    if (result && sfi.hIcon) {
+    if ((result != 0u) && (sfi.hIcon != nullptr)) {
         QImage image = QImage::fromHICON(sfi.hIcon);
         DestroyIcon(sfi.hIcon);
         return image;

@@ -24,7 +24,7 @@ bool GzipDecompressor::initStream() {
     const int ret = inflateInit2(&m_zstream, kZlibMaxWindowBits + kZlibGzipDetectionWindowBits);
     if (ret != Z_OK) {
         m_lastError = QString("Failed to initialize zlib: %1")
-                          .arg(m_zstream.msg ? m_zstream.msg : "unknown error");
+                          .arg((m_zstream.msg != nullptr) ? m_zstream.msg : "unknown error");
         return false;
     }
     m_zstream.avail_in = 0;
@@ -61,7 +61,7 @@ GzipDecompressor::StepResult GzipDecompressor::decompressStep() {
     }
     if (ret != Z_OK) {
         m_lastError = QString("Decompression error: %1 (%2)")
-                          .arg(m_zstream.msg ? m_zstream.msg : "unknown error")
+                          .arg((m_zstream.msg != nullptr) ? m_zstream.msg : "unknown error")
                           .arg(ret);
         return StepResult::error;
     }
@@ -75,7 +75,7 @@ bool GzipDecompressor::resetStreamForNextMember() {
     const int ret = inflateReset(&m_zstream);
     if (ret != Z_OK) {
         m_lastError = QString("Failed to reset zlib for the next member: %1")
-                          .arg(m_zstream.msg ? m_zstream.msg : "unknown error");
+                          .arg((m_zstream.msg != nullptr) ? m_zstream.msg : "unknown error");
         return false;
     }
     return true;

@@ -26,7 +26,7 @@ constexpr qint64 kMaxGateLogBytes = 32LL * 1024 * 1024;
 bool appendJsonLine(const QString& path, const QJsonObject& object, QString* error_message) {
     const QFileInfo info(path);
     if (!QDir().mkpath(info.absolutePath())) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not create human-gate directory: %1")
                                  .arg(info.absolutePath());
         }
@@ -34,7 +34,7 @@ bool appendJsonLine(const QString& path, const QJsonObject& object, QString* err
     }
     QFile file(path);
     if (!file.open(QIODevice::Append | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not append human-gate log: %1").arg(file.errorString());
         }
@@ -47,7 +47,7 @@ bool appendJsonLine(const QString& path, const QJsonObject& object, QString* err
         // already-approved gate resolves back to its older pending record on next start.
         const QString detail = file.errorString();
         file.resize(original_size);
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Short write to human-gate log: %1").arg(detail);
         }
         return false;
@@ -58,7 +58,7 @@ bool appendJsonLine(const QString& path, const QJsonObject& object, QString* err
 // Assign the caller's optional error sink in one statement, so each failure path stays a
 // single line instead of a repeated guarded branch that inflates the decision count.
 void setGateError(QString* error_message, const QString& message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = message;
     }
 }
@@ -104,7 +104,7 @@ QString AiHumanGateStore::gateLogPath() const {
 
 bool AiHumanGateStore::appendGate(AiHumanGate gate, QString* error_message) const {
     if (m_session_dir.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Human-gate store has no session directory");
         }
         return false;

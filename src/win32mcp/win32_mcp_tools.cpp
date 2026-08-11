@@ -47,7 +47,7 @@ ToolResult errorResult(const QString& message) {
 }
 
 QString wideToQString(const wchar_t* text, int length) {
-    if (!text || length <= 0) {
+    if ((text == nullptr) || length <= 0) {
         return {};
     }
     return QString::fromWCharArray(text, length);
@@ -202,7 +202,7 @@ ToolResult toolGetWindowInfo(const QJsonObject& args) {
     }
     QString find_err;
     HWND hwnd = findWindowByTitle(title.toLower(), find_err);
-    if (!hwnd) {
+    if (hwnd == nullptr) {
         return errorResult(find_err);
     }
     return jsonResult(describeWindow(hwnd));
@@ -215,7 +215,7 @@ ToolResult toolCloseWindow(const QJsonObject& args) {
     }
     QString find_err;
     HWND hwnd = findWindowByTitle(title.toLower(), find_err);
-    if (!hwnd) {
+    if (hwnd == nullptr) {
         return errorResult(find_err);
     }
     // WM_CLOSE is the graceful request a window's own close button sends: the app can still run

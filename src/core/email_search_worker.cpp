@@ -63,7 +63,7 @@ bool needsDetailLoad(const sak::EmailSearchCriteria& criteria) {
 // ============================================================================
 
 void EmailSearchWorker::search(PstParser* parser, const sak::EmailSearchCriteria& criteria) {
-    if (!parser || !parser->isOpen()) {
+    if ((parser == nullptr) || !parser->isOpen()) {
         Q_EMIT errorOccurred(QStringLiteral("No PST/OST file open for search"));
         Q_EMIT searchComplete(0, 0);
         return;
@@ -179,7 +179,7 @@ bool EmailSearchWorker::searchItemPage(PstParser* parser,
 // ============================================================================
 
 void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCriteria& criteria) {
-    if (!parser || !parser->isOpen()) {
+    if ((parser == nullptr) || !parser->isOpen()) {
         Q_EMIT errorOccurred(QStringLiteral("No MBOX file open for search"));
         Q_EMIT searchComplete(0, 0);
         return;

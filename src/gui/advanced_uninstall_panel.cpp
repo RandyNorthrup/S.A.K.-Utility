@@ -951,7 +951,7 @@ void AdvancedUninstallPanel::onProgramSelectionChanged() {
 
 void AdvancedUninstallPanel::onProgramDoubleClicked(int row, int /*column*/) {
     auto* nameItem = m_program_table->item(row, kColName);
-    if (!nameItem) {
+    if (nameItem == nullptr) {
         return;
     }
     const int idx = originalRowIndex(nameItem);
@@ -962,13 +962,13 @@ void AdvancedUninstallPanel::onProgramDoubleClicked(int row, int /*column*/) {
 
 void AdvancedUninstallPanel::onProgramContextMenu(const QPoint& pos) {
     auto* item = m_program_table->itemAt(pos);
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
 
     const int row = item->row();
     auto* nameItem = m_program_table->item(row, kColName);
-    if (!nameItem) {
+    if (nameItem == nullptr) {
         return;
     }
     const int idx = originalRowIndex(nameItem);
@@ -1016,7 +1016,7 @@ void AdvancedUninstallPanel::onLeftoverSelectionChanged() {
     bool anyChecked = false;
     for (int row = 0; row < m_leftover_table->rowCount(); ++row) {
         auto* checkItem = m_leftover_table->item(row, kLeftoverColCheck);
-        if (checkItem && checkItem->checkState() == Qt::Checked) {
+        if ((checkItem != nullptr) && checkItem->checkState() == Qt::Checked) {
             anyChecked = true;
             break;
         }
@@ -1029,14 +1029,14 @@ void AdvancedUninstallPanel::onSelectAll() {
     m_leftover_table->blockSignals(true);
     for (int row = 0; row < m_leftover_table->rowCount(); ++row) {
         auto* checkItem = m_leftover_table->item(row, kLeftoverColCheck);
-        if (!checkItem) {
+        if (checkItem == nullptr) {
             continue;
         }
 
         checkItem->setCheckState(Qt::Checked);
 
         auto* typeItem = m_leftover_table->item(row, kLeftoverColType);
-        if (!typeItem) {
+        if (typeItem == nullptr) {
             continue;
         }
 
@@ -1055,14 +1055,14 @@ void AdvancedUninstallPanel::onSelectAllSafe() {
     m_leftover_table->blockSignals(true);
     for (int row = 0; row < m_leftover_table->rowCount(); ++row) {
         auto* typeItem = m_leftover_table->item(row, kLeftoverColType);
-        if (!typeItem) {
+        if (typeItem == nullptr) {
             continue;
         }
         const int idx = originalRowIndex(typeItem);
         if (idx >= 0 && idx < m_currentLeftovers.size() && m_currentLeftovers[idx].deletable &&
             m_currentLeftovers[idx].risk == LeftoverItem::RiskLevel::Safe) {
             auto* checkItem = m_leftover_table->item(row, kLeftoverColCheck);
-            if (checkItem) {
+            if (checkItem != nullptr) {
                 checkItem->setCheckState(Qt::Checked);
                 m_currentLeftovers[idx].selected = true;
             }
@@ -1077,14 +1077,14 @@ void AdvancedUninstallPanel::onDeselectAll() {
     m_leftover_table->blockSignals(true);
     for (int row = 0; row < m_leftover_table->rowCount(); ++row) {
         auto* checkItem = m_leftover_table->item(row, kLeftoverColCheck);
-        if (!checkItem) {
+        if (checkItem == nullptr) {
             continue;
         }
 
         checkItem->setCheckState(Qt::Unchecked);
 
         auto* typeItem = m_leftover_table->item(row, kLeftoverColType);
-        if (!typeItem) {
+        if (typeItem == nullptr) {
             continue;
         }
 
@@ -1547,7 +1547,7 @@ ProgramInfo AdvancedUninstallPanel::selectedProgram() const {
         return {};
     }
     auto* nameItem = m_program_table->item(row, kColName);
-    if (!nameItem) {
+    if (nameItem == nullptr) {
         return {};
     }
     const int idx = originalRowIndex(nameItem);
@@ -1564,12 +1564,12 @@ QVector<ProgramInfo> AdvancedUninstallPanel::selectedPrograms(bool* all_resolved
     }
     for (int row = 0; row < m_program_table->rowCount(); ++row) {
         auto* checkItem = m_program_table->item(row, kColCheck);
-        if (checkItem && checkItem->checkState() == Qt::Checked) {
+        if ((checkItem != nullptr) && checkItem->checkState() == Qt::Checked) {
             // A CHECKED row that cannot be resolved back to a program is reported, never
             // quietly skipped: dropping it would run the batch against a subset of what the
             // user checked while the UI still showed the full selection.
             auto* nameItem = m_program_table->item(row, kColName);
-            const int idx = nameItem ? originalRowIndex(nameItem) : -1;
+            const int idx = (nameItem != nullptr) ? originalRowIndex(nameItem) : -1;
             if (idx >= 0 && idx < m_filteredPrograms.size()) {
                 result.append(m_filteredPrograms[idx]);
             } else if (all_resolved != nullptr) {
@@ -1587,11 +1587,11 @@ QVector<LeftoverItem> AdvancedUninstallPanel::selectedLeftovers(bool* all_resolv
     }
     for (int row = 0; row < m_leftover_table->rowCount(); ++row) {
         auto* checkItem = m_leftover_table->item(row, kLeftoverColCheck);
-        if (checkItem && checkItem->checkState() == Qt::Checked) {
+        if ((checkItem != nullptr) && checkItem->checkState() == Qt::Checked) {
             // Same all-or-nothing contract as selectedPrograms: an unresolvable checked row is
             // surfaced so the deletion can refuse rather than act on part of the selection.
             auto* typeItem = m_leftover_table->item(row, kLeftoverColType);
-            const int idx = typeItem ? originalRowIndex(typeItem) : -1;
+            const int idx = (typeItem != nullptr) ? originalRowIndex(typeItem) : -1;
             if (idx >= 0 && idx < m_currentLeftovers.size()) {
                 auto item = m_currentLeftovers[idx];
                 item.selected = true;

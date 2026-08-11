@@ -811,7 +811,7 @@ void addApprovalButtons(QVBoxLayout* layout,
         });
     }
     layout->addLayout(button_row);
-    if (default_button) {
+    if (default_button != nullptr) {
         default_button->setDefault(true);
         default_button->setFocus();
     }
@@ -1430,7 +1430,7 @@ bool workflowResumeStateIsValid(const ai::WorkflowTemplate& workflow,
         message = workflowResumeCarriedStateError(resume_state, static_cast<int>(history.size()));
     }
     if (!message.isEmpty()) {
-        if (error) {
+        if (error != nullptr) {
             *error = message;
         }
         return false;
@@ -1753,7 +1753,7 @@ QStringList workflowPackageQueries(const ai::AiWorkflowPhaseContext& context,
             if (query.isEmpty()) {
                 // Fail closed: silently dropping a malformed entry would download or
                 // install a SUBSET of the requested list and report it as complete work.
-                if (error_message) {
+                if (error_message != nullptr) {
                     *error_message = QStringLiteral(
                         "Workflow input 'app_list' has an empty or non-string entry");
                 }
@@ -1773,7 +1773,7 @@ QStringList workflowPackageQueries(const ai::AiWorkflowPhaseContext& context,
 }
 
 void mergePackageSelectionError(QJsonObject* error, const QJsonObject& selection_details) {
-    if (!error || selection_details.isEmpty()) {
+    if ((error == nullptr) || selection_details.isEmpty()) {
         return;
     }
     error->insert(QStringLiteral("package_selection"), selection_details);
@@ -1797,11 +1797,11 @@ QJsonArray packagesFromToolSearch(const QJsonObject& search_result,
                                   QJsonObject* selection_details = nullptr) {
     const auto packages = search_result.value(QStringLiteral("packages")).toArray();
     const ai::AiPackageSelectionResult selection = ai::selectPackageForWorkflow(query, packages);
-    if (selection_details) {
+    if (selection_details != nullptr) {
         *selection_details = selection.toJson();
     }
     if (!selection.success) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = selection.error_message;
         }
         return {};
@@ -1810,7 +1810,7 @@ QJsonArray packagesFromToolSearch(const QJsonObject& search_result,
     QJsonArray resolved;
     const QString package_id = safePackageToken(selection.selected.package_id);
     if (package_id.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Selected package candidate did not include package_id");
         }
@@ -1867,7 +1867,7 @@ QString packageItemError(const QJsonValue& value, QPair<QString, QString>* packa
 QVector<QPair<QString, QString>> packagesFromJson(const QJsonArray& array, QString* error_message) {
     QVector<QPair<QString, QString>> packages;
     if (array.size() > kMaxToolPackageItems) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Package list has %1 items (limit %2)")
                                  .arg(array.size())
                                  .arg(kMaxToolPackageItems);
@@ -1879,7 +1879,7 @@ QVector<QPair<QString, QString>> packagesFromJson(const QJsonArray& array, QStri
         QPair<QString, QString> package;
         const QString item_error = packageItemError(value, &package);
         if (!item_error.isEmpty()) {
-            if (error_message) {
+            if (error_message != nullptr) {
                 *error_message = item_error;
             }
             return {};
@@ -1912,7 +1912,7 @@ bool parsePackedOnlyArg(const QJsonValue& value, bool* out, QString* error) {
             return true;
         }
     }
-    if (error) {
+    if (error != nullptr) {
         *error = QStringLiteral(
             "install_bundle 'packed_only' must be a boolean (or the string \"true\"/\"false\")");
     }
@@ -1955,13 +1955,13 @@ constexpr int kMaxEnumeratedArtifactFiles = 5000;
 
 QStringList filesUnderDirectory(const QString& dir_path, bool* truncated = nullptr) {
     QStringList files;
-    if (truncated) {
+    if (truncated != nullptr) {
         *truncated = false;
     }
     QDirIterator iter(dir_path, QDir::Files, QDirIterator::Subdirectories);
     while (iter.hasNext()) {
         if (files.size() >= kMaxEnumeratedArtifactFiles) {
-            if (truncated) {
+            if (truncated != nullptr) {
                 *truncated = true;
             }
             break;
@@ -2034,7 +2034,7 @@ QString offlineOutputLinkComponent(const QString& cleaned) {
 bool offlineOutputDirectoryIsAllowed(const QString& output_dir, QString* error) {
     const QString cleaned = QDir::cleanPath(output_dir);
     if (cleaned.isEmpty() || !QDir::isAbsolutePath(cleaned)) {
-        if (error) {
+        if (error != nullptr) {
             *error = QStringLiteral("offline downloader 'output_dir' must be an absolute path: %1")
                          .arg(output_dir);
         }
@@ -2043,7 +2043,7 @@ bool offlineOutputDirectoryIsAllowed(const QString& output_dir, QString* error) 
     const QStringList protected_roots = offlineProtectedOutputRoots();
     for (const auto& root : protected_roots) {
         if (pathIsWithinRoot(cleaned, root)) {
-            if (error) {
+            if (error != nullptr) {
                 *error = QStringLiteral(
                              "offline downloader 'output_dir' is inside a protected system "
                              "location and was refused: %1")
@@ -2054,7 +2054,7 @@ bool offlineOutputDirectoryIsAllowed(const QString& output_dir, QString* error) 
     }
     const QString link_component = offlineOutputLinkComponent(cleaned);
     if (!link_component.isEmpty()) {
-        if (error) {
+        if (error != nullptr) {
             *error = QStringLiteral(
                          "offline downloader 'output_dir' resolves through a "
                          "link/junction and was refused: %1")
@@ -2331,13 +2331,13 @@ bool downloadUrlBytes(const QUrl& url,
     network_thread.wait();
 
     if (!state.ok) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = state.error.isEmpty() ? QStringLiteral("Download failed")
                                                    : state.error;
         }
         return false;
     }
-    if (bytes) {
+    if (bytes != nullptr) {
         *bytes = state.payload;
     }
     return true;
@@ -2353,7 +2353,7 @@ bool writeDownloadBytes(const QString& destination,
     // link whose target does not exist yet.
     const QFileInfo existing(destination);
     if (existing.exists() || existing.isSymLink()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Download destination already exists: %1").arg(destination);
         }
@@ -2361,14 +2361,14 @@ bool writeDownloadBytes(const QString& destination,
     }
     QFile file(destination);
     if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not write destination: %1").arg(file.errorString());
         }
         return false;
     }
     if (file.write(bytes) != bytes.size() || !file.flush()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Short write to destination: %1").arg(destination);
         }
         file.close();
@@ -2386,7 +2386,7 @@ bool writeDownloadBytes(const QString& destination,
 constexpr int kMaxCommandBufferChars = 4 * 1024 * 1024;
 
 void appendCappedCommandOutput(QString* buffer, const QString& chunk) {
-    if (!buffer || buffer->size() > kMaxCommandBufferChars) {
+    if ((buffer == nullptr) || buffer->size() > kMaxCommandBufferChars) {
         return;
     }
     buffer->append(chunk);
@@ -2485,7 +2485,7 @@ QString normalizedReportKey(QString value) {
 }
 
 void appendUniqueReportLine(QStringList* lines, const QString& value, int max_items) {
-    if (!lines) {
+    if (lines == nullptr) {
         return;
     }
     const QString text = cleanReportText(value);
@@ -2507,7 +2507,7 @@ void appendReportFinding(QVector<PanelReportFinding>* findings,
                          const QString& severity,
                          const QString& title,
                          const QString& detail) {
-    if (!findings) {
+    if (findings == nullptr) {
         return;
     }
     const QString clean_title = cleanReportText(title, 260);
@@ -2526,7 +2526,7 @@ void appendReportFinding(QVector<PanelReportFinding>* findings,
 }
 
 void appendReportRisk(PanelReportData* data, const QString& risk) {
-    if (!data || reportLineLooksOperationalNoise(risk)) {
+    if ((data == nullptr) || reportLineLooksOperationalNoise(risk)) {
         return;
     }
     appendUniqueReportLine(&data->risks, risk, kReportRiskLineLimit);
@@ -2585,7 +2585,7 @@ QStringList cleanTranscriptLines(const QStringList& raw_lines) {
 }
 
 void appendStructuredFinding(const QJsonObject& finding, PanelReportData* data) {
-    if (!data || finding.isEmpty()) {
+    if ((data == nullptr) || finding.isEmpty()) {
         return;
     }
     QString severity = finding.value(QStringLiteral("severity")).toString().trimmed();
@@ -2614,7 +2614,7 @@ void appendStructuredFinding(const QJsonObject& finding, PanelReportData* data) 
 }
 
 void appendSubagentReportData(const QJsonObject& result, PanelReportData* data) {
-    if (!data || result.isEmpty()) {
+    if ((data == nullptr) || result.isEmpty()) {
         return;
     }
     appendUniqueReportLine(&data->summaries,
@@ -2681,7 +2681,7 @@ bool isUsefulEvidenceLine(const QString& line) {
 }
 
 void appendToolEvidenceSnapshot(const QJsonObject& tool_result, PanelReportData* data) {
-    if (!data || tool_result.isEmpty()) {
+    if ((data == nullptr) || tool_result.isEmpty()) {
         return;
     }
     const QString stdout_text = tool_result.value(QStringLiteral("stdout")).toString();
@@ -2705,7 +2705,7 @@ void appendToolEvidenceSnapshot(const QJsonObject& tool_result, PanelReportData*
 }
 
 void appendPhaseReportData(const ai::AiPhaseExecution& phase, PanelReportData* data) {
-    if (!data) {
+    if (data == nullptr) {
         return;
     }
     if (!phase.error_message.trimmed().isEmpty()) {
@@ -2724,7 +2724,7 @@ void appendPhaseReportData(const ai::AiPhaseExecution& phase, PanelReportData* d
 }
 
 void appendActivityReportData(const ai::AiActivityEvent& activity, PanelReportData* data) {
-    if (!data) {
+    if (data == nullptr) {
         return;
     }
     if (!activity.error.trimmed().isEmpty()) {
@@ -3287,14 +3287,14 @@ QString markdownReportToHtml(const QString& markdown) {
 bool writeReportText(const QString& path, const QString& text, QString* error_message) {
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = file.errorString();
         }
         return false;
     }
     const QByteArray bytes = text.toUtf8();
     if (file.write(bytes) != bytes.size() || !file.commit()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = file.errorString().isEmpty() ? QStringLiteral("Could not write report")
                                                           : file.errorString();
         }
@@ -3339,8 +3339,8 @@ QString resolvePanelReportPath(const ai::ConversationStore* conversation,
                                const QString& output_path,
                                PanelReportFormat format,
                                QString* error_message) {
-    if (!conversation) {
-        if (error_message) {
+    if (conversation == nullptr) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("No conversation store");
         }
         return {};
@@ -3357,7 +3357,7 @@ QString resolvePanelReportPath(const ai::ConversationStore* conversation,
     } else if (QFileInfo(path).suffix().isEmpty()) {
         path += QStringLiteral(".%1").arg(reportSuffix(format));
     }
-    if (path.isEmpty() && error_message) {
+    if (path.isEmpty() && (error_message != nullptr)) {
         *error_message = error;
     }
     return path;
@@ -3368,7 +3368,7 @@ bool ensureReportParentDirectory(const QString& report_path, QString* error_mess
     if (QDir().mkpath(parent_dir)) {
         return true;
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = QStringLiteral("Could not create report directory: %1").arg(parent_dir);
     }
     return false;
@@ -3382,7 +3382,7 @@ PanelReportData collectPanelReportData(const PanelReportInputs& inputs,
     data.phases = inputs.phases;
     data.sources = collectReportSources(inputs.citations);
     data.tool_calls = inputs.tool_calls;
-    if (inputs.tokens) {
+    if (inputs.tokens != nullptr) {
         data.tokens = inputs.tokens->sessionTotal();
     }
     data.transcript = cleanTranscriptLines(
@@ -3395,10 +3395,10 @@ PanelReportData collectPanelReportData(const PanelReportInputs& inputs,
 }
 
 void appendTraceAndGateData(const PanelReportInputs& inputs, PanelReportData* data) {
-    if (inputs.trace && !inputs.trace->sessionDirectory().isEmpty()) {
+    if ((inputs.trace != nullptr) && !inputs.trace->sessionDirectory().isEmpty()) {
         data->activities = inputs.trace->loadActivityEvents(&data->activity_warning);
     }
-    if (inputs.gates && !inputs.gates->sessionDirectory().isEmpty()) {
+    if ((inputs.gates != nullptr) && !inputs.gates->sessionDirectory().isEmpty()) {
         data->gates = inputs.gates->loadGates();
     }
 }
@@ -3521,23 +3521,23 @@ QScrollArea* createScrollArea(QWidget* parent, QWidget* content) {
 }
 
 bool widgetOwnsFocus(const QWidget* widget) {
-    if (!widget) {
+    if (widget == nullptr) {
         return false;
     }
     const QWidget* focus_widget = QApplication::focusWidget();
-    return widget->hasFocus() || (focus_widget && widget->isAncestorOf(focus_widget));
+    return widget->hasFocus() || ((focus_widget != nullptr) && widget->isAncestorOf(focus_widget));
 }
 
 bool forwardWheelToAncestorScrollArea(QWidget* widget, QEvent* event) {
-    if (!widget || !event || event->type() != QEvent::Wheel) {
+    if ((widget == nullptr) || (event == nullptr) || event->type() != QEvent::Wheel) {
         return false;
     }
     auto* wheel_event = static_cast<QWheelEvent*>(event);
     QWidget* parent = widget->parentWidget();
-    while (parent) {
+    while (parent != nullptr) {
         if (auto* scroll_area = qobject_cast<QAbstractScrollArea*>(parent)) {
             QWidget* viewport = scroll_area->viewport();
-            if (!viewport) {
+            if (viewport == nullptr) {
                 return false;
             }
             const QPointF viewport_pos =
@@ -3561,7 +3561,7 @@ bool forwardWheelToAncestorScrollArea(QWidget* widget, QEvent* event) {
 }
 
 void requireFocusForWheel(QWidget* widget, QObject* owner) {
-    if (!widget || !owner) {
+    if ((widget == nullptr) || (owner == nullptr)) {
         return;
     }
     widget->setFocusPolicy(Qt::StrongFocus);
@@ -3572,7 +3572,7 @@ void requireFocusForWheel(QWidget* widget, QObject* owner) {
 void configureReadableCombo(QComboBox* combo,
                             int minimum_contents_length = kReadableComboDefaultContentsLength,
                             int popup_min_width = kReadableComboDefaultPopupMinWidth) {
-    if (!combo) {
+    if (combo == nullptr) {
         return;
     }
     combo->setMinimumHeight(kReadableComboMinHeight);
@@ -3595,7 +3595,7 @@ QString composerEditStyle() {
 }
 
 void configureCompactButton(QPushButton* button, const QString& icon_path = {}) {
-    if (!button) {
+    if (button == nullptr) {
         return;
     }
     button->setMinimumHeight(sak::ui::kUiButtonHeightDialog);
@@ -3692,7 +3692,7 @@ bool AiAssistantPanel::loadWorkflowDefaults(QStringList* workflow_errors) {
 
 void AiAssistantPanel::loadSkillDefaults(QStringList* skill_errors) {
     if (!m_skillStore) {
-        if (skill_errors) {
+        if (skill_errors != nullptr) {
             skill_errors->append(QStringLiteral("skill store is unavailable"));
         }
         return;
@@ -3707,7 +3707,7 @@ void AiAssistantPanel::loadSkillDefaults(QStringList* skill_errors) {
     for (const auto& error : errors) {
         logWarning("Skill load: {}", error.toStdString());
     }
-    if (skill_errors) {
+    if (skill_errors != nullptr) {
         *skill_errors += errors;
     }
 }
@@ -3824,7 +3824,7 @@ void AiAssistantPanel::drainAndStopAsyncTool() {
 }
 
 void AiAssistantPanel::drainWorkflowRun() {
-    if (!m_workflowRunWatcher) {
+    if (m_workflowRunWatcher == nullptr) {
         return;
     }
     // Detach first so onWorkflowRunFinished does not fire mid-teardown. The run
@@ -3927,7 +3927,7 @@ bool AiAssistantPanel::filterMessageEditKeyPress(QEvent* event) {
 bool AiAssistantPanel::handleComposerKeyAction(int action) {
     const auto composer_action = static_cast<ComposerKeyAction>(action);
     if (composer_action == ComposerKeyAction::InsertNewline) {
-        if (m_messageEdit) {
+        if (m_messageEdit != nullptr) {
             m_messageEdit->insertPlainText(QStringLiteral("\n"));
         }
         return true;
@@ -3941,11 +3941,11 @@ bool AiAssistantPanel::handleComposerKeyAction(int action) {
 
 bool AiAssistantPanel::handleComposerHistoryKeyAction(int action) {
     const auto composer_action = static_cast<ComposerKeyAction>(action);
-    if (composer_action == ComposerKeyAction::PreviousHistory && m_messageEdit &&
+    if (composer_action == ComposerKeyAction::PreviousHistory && (m_messageEdit != nullptr) &&
         m_messageEdit->textCursor().atStart()) {
         return cyclePromptHistory(-1);
     }
-    if (composer_action == ComposerKeyAction::NextHistory && m_messageEdit &&
+    if (composer_action == ComposerKeyAction::NextHistory && (m_messageEdit != nullptr) &&
         m_messageEdit->textCursor().atEnd()) {
         return cyclePromptHistory(1);
     }
@@ -4270,14 +4270,14 @@ void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidg
 
 void AiAssistantPanel::onWorkflowTemplatePickerChanged(int index) {
     const bool has_selection = index > 0;
-    if (m_addWorkflowButton) {
+    if (m_addWorkflowButton != nullptr) {
         m_addWorkflowButton->setEnabled(has_selection);
     }
     if (!has_selection) {
         clearWorkflowSelectionPreview();
         return;
     }
-    if (!m_workflowStore || !m_promptTemplateCombo) {
+    if (!m_workflowStore || (m_promptTemplateCombo == nullptr)) {
         return;
     }
     const QString item_data = m_promptTemplateCombo->itemData(index).toString();
@@ -4297,8 +4297,8 @@ void AiAssistantPanel::previewWorkflowTemplateSelection(const ai::WorkflowTempla
 }
 
 void AiAssistantPanel::showUnstructuredWorkflowTemplateSelection(int index) {
-    if (!m_promptTemplateCombo || !m_workflowDetailsPanel || !m_workflowDetailsBody ||
-        !m_workflowDetailsTitle) {
+    if ((m_promptTemplateCombo == nullptr) || (m_workflowDetailsPanel == nullptr) ||
+        (m_workflowDetailsBody == nullptr) || (m_workflowDetailsTitle == nullptr)) {
         return;
     }
     m_workflowDetailsTitle->setText(m_promptTemplateCombo->itemText(index));
@@ -4779,7 +4779,7 @@ void AiAssistantPanel::handleElevationBrokerProgress(int percent, const QString&
 }
 
 void AiAssistantPanel::ensureActivityTimer() {
-    if (!m_activityTimer) {
+    if (m_activityTimer == nullptr) {
         m_activityTimer = new QTimer(this);
         m_activityTimer->setInterval(kActivityTimerIntervalMs);
         connect(m_activityTimer,
@@ -4814,12 +4814,12 @@ void AiAssistantPanel::setApiKeyStatus(const QString& text,
                                        const char* color,
                                        const QString& marker,
                                        const char* marker_color) {
-    if (m_connectionStatusIconLabel) {
+    if (m_connectionStatusIconLabel != nullptr) {
         m_connectionStatusIconLabel->setText(marker);
         m_connectionStatusIconLabel->setStyleSheet(sak::ui::fontWeightAndColorStyle(
             kFontWeightExtraBold, QString::fromLatin1(marker_color)));
     }
-    if (m_connectionStatusLabel) {
+    if (m_connectionStatusLabel != nullptr) {
         m_connectionStatusLabel->setText(text);
         m_connectionStatusLabel->setStyleSheet(statusLabelStyle(color));
     }
@@ -4827,7 +4827,7 @@ void AiAssistantPanel::setApiKeyStatus(const QString& text,
 }
 
 void AiAssistantPanel::updateLoadKeyButton(bool has_key, bool busy) {
-    if (m_loadKeyButton) {
+    if (m_loadKeyButton != nullptr) {
         m_loadKeyButton->setEnabled(!busy);
         m_loadKeyButton->setText(has_key ? tr("Clear Key") : tr("Load Key"));
         m_loadKeyButton->setIcon(QIcon());
@@ -4842,7 +4842,7 @@ void AiAssistantPanel::updateLoadKeyButton(bool has_key, bool busy) {
 }
 
 void AiAssistantPanel::updateReportButton(bool busy) {
-    if (!m_generateReportButton) {
+    if (m_generateReportButton == nullptr) {
         return;
     }
     const bool reportable = hasReportableResults();
@@ -4876,7 +4876,7 @@ static bool canResumeHumanGate(const ai::AiHumanGate& gate) {
 }
 
 void AiAssistantPanel::updateResumeGateButton(bool has_key, bool busy) {
-    if (!m_resumeGateButton) {
+    if (m_resumeGateButton == nullptr) {
         return;
     }
     const auto& gate = m_runState.pending_human_gate;
@@ -4893,13 +4893,13 @@ void AiAssistantPanel::updateCredentialControls() {
     const bool has_key = ai::OpenAIResponsesClient::hasUsableApiKey(apiKey());
     const bool busy = isAiBusy();
     updateLoadKeyButton(has_key, busy);
-    if (m_newSessionButton) {
+    if (m_newSessionButton != nullptr) {
         m_newSessionButton->setEnabled(!busy);
         m_newSessionButton->setToolTip(busy
                                            ? tr("Stop the active AI run before starting a new chat")
                                            : tr("Start a new AI chat session"));
     }
-    if (m_renameSessionButton) {
+    if (m_renameSessionButton != nullptr) {
         const bool has_persistent_session = m_conversationStore &&
                                             !m_conversationStore->currentSessionId().isEmpty();
         m_renameSessionButton->setEnabled(!busy && has_persistent_session);
@@ -4913,7 +4913,7 @@ void AiAssistantPanel::updateCredentialControls() {
 }
 
 void AiAssistantPanel::updatePrimaryActionButton() {
-    if (!m_sendButton) {
+    if (m_sendButton == nullptr) {
         return;
     }
 
@@ -4941,15 +4941,17 @@ void AiAssistantPanel::updatePrimaryActionButton() {
 }
 
 qint64 AiAssistantPanel::currentContextWindowTokens() const {
-    return modelContextWindowTokens(m_modelCombo ? m_modelCombo->currentText() : QString{});
+    return modelContextWindowTokens((m_modelCombo != nullptr) ? m_modelCombo->currentText()
+                                                              : QString{});
 }
 
 bool AiAssistantPanel::currentContextWindowIsDocumented() const {
-    return modelContextWindowIsDocumented(m_modelCombo ? m_modelCombo->currentText() : QString{});
+    return modelContextWindowIsDocumented((m_modelCombo != nullptr) ? m_modelCombo->currentText()
+                                                                    : QString{});
 }
 
 void AiAssistantPanel::ensureContextTokenTimer() {
-    if (m_contextTokenTimer) {
+    if (m_contextTokenTimer != nullptr) {
         return;
     }
     m_contextTokenTimer = new QTimer(this);
@@ -4960,7 +4962,7 @@ void AiAssistantPanel::ensureContextTokenTimer() {
 }
 
 void AiAssistantPanel::scheduleContextTokenRefresh() {
-    if (!m_contextWindowLabel) {
+    if (m_contextWindowLabel == nullptr) {
         return;
     }
     ensureContextTokenTimer();
@@ -4968,7 +4970,7 @@ void AiAssistantPanel::scheduleContextTokenRefresh() {
         resetContextTokenCount(tr("key needed"));
         return;
     }
-    if (!m_modelCombo || m_modelCombo->currentText().trimmed().isEmpty()) {
+    if ((m_modelCombo == nullptr) || m_modelCombo->currentText().trimmed().isEmpty()) {
         resetContextTokenCount(tr("model needed"));
         return;
     }
@@ -4978,7 +4980,8 @@ void AiAssistantPanel::scheduleContextTokenRefresh() {
 }
 
 void AiAssistantPanel::refreshContextTokenCount() {
-    if (!m_client || !ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) || !m_modelCombo) {
+    if (!m_client || !ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) ||
+        (m_modelCombo == nullptr)) {
         resetContextTokenCount(tr("key needed"));
         return;
     }
@@ -4994,7 +4997,7 @@ void AiAssistantPanel::resetContextTokenCount(const QString& status) {
     m_contextInputTokens = -1;
     m_contextTokenRequestId.clear();
     m_contextTokenStatus = status;
-    if (m_contextTokenTimer) {
+    if (m_contextTokenTimer != nullptr) {
         m_contextTokenTimer->stop();
     }
     updateRunTelemetryLabels();
@@ -5024,7 +5027,7 @@ void AiAssistantPanel::updateRunTelemetryLabels() {
 }
 
 void AiAssistantPanel::updateAgentActivityLabel() {
-    if (m_agentActivityLabel) {
+    if (m_agentActivityLabel != nullptr) {
         const QString text = tr("Agents: %1/%2")
                                  .arg(std::max(0, m_runState.active_subagents))
                                  .arg(std::max(0, m_runState.completed_subagents));
@@ -5050,7 +5053,7 @@ double AiAssistantPanel::currentContextUsageRatio() const {
 }
 
 void AiAssistantPanel::updateContextWindowUsageLabel() {
-    if (m_contextWindowLabel) {
+    if (m_contextWindowLabel != nullptr) {
         const qint64 used = exactContextUsageTokens();
         const qint64 limit = currentContextWindowTokens();
         const bool documented_limit = currentContextWindowIsDocumented();
@@ -5069,7 +5072,8 @@ void AiAssistantPanel::updateContextWindowUsageLabel() {
                "attached context.%4")
                 .arg(usage.isEmpty() ? tr("pending") : usage,
                      limit_text,
-                     m_modelCombo ? m_modelCombo->currentText().trimmed() : tr("selected model"),
+                     (m_modelCombo != nullptr) ? m_modelCombo->currentText().trimmed()
+                                               : tr("selected model"),
                      compact_hint));
         m_contextWindowLabel->setStyleSheet(
             sak::ui::fontWeightAndColorStyle(kFontWeightBold, color));
@@ -5105,7 +5109,7 @@ void AiAssistantPanel::setUiBusy(bool busy) {
     m_taskStatus = busy ? tr("OpenAI request running") : tr("Idle");
     emitStatusDetails();
     setActivityIndicator(busy ? tr("Thinking") : QString(), busy);
-    if (m_loadKeyButton) {
+    if (m_loadKeyButton != nullptr) {
         m_loadKeyButton->setEnabled(!busy);
     }
     updateCredentialControls();
@@ -5113,7 +5117,7 @@ void AiAssistantPanel::setUiBusy(bool busy) {
 
 void AiAssistantPanel::setActivityIndicator(const QString& text, bool active) {
     const QString next_text = active ? text.trimmed() : QString();
-    if (m_activityTimer) {
+    if (m_activityTimer != nullptr) {
         if (!next_text.isEmpty()) {
             if (!m_activityTimer->isActive()) {
                 m_activityTimer->start();
@@ -5122,13 +5126,13 @@ void AiAssistantPanel::setActivityIndicator(const QString& text, bool active) {
             m_activityTimer->stop();
         }
     }
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         m_transcriptView->setActivityText(next_text);
     }
 }
 
 void AiAssistantPanel::updateActivityIndicatorFrame() {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         m_transcriptView->updateActivityFrame();
     }
 }
@@ -5136,53 +5140,53 @@ void AiAssistantPanel::updateActivityIndicatorFrame() {
 void AiAssistantPanel::appendTranscriptMessage(const QString& role,
                                                const QString& text,
                                                bool expanded) {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         (void)m_transcriptView->appendMessage(role, text, expanded);
     }
 }
 
 void AiAssistantPanel::appendLoadedTranscriptLine(const QString& line) {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         (void)m_transcriptView->appendLoadedLine(line);
     }
 }
 
 void AiAssistantPanel::scrollTranscriptToBottomLater(bool force) {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         m_transcriptView->scrollToBottomLater(force);
     }
 }
 
 void AiAssistantPanel::restoreTranscriptScrollPositionLater(int value) {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         m_transcriptView->restoreScrollPositionLater(value);
     }
 }
 
 bool AiAssistantPanel::isTranscriptScrolledToBottom() const {
-    return !m_transcriptView || m_transcriptView->isScrolledToBottom();
+    return (m_transcriptView == nullptr) || m_transcriptView->isScrolledToBottom();
 }
 
 void AiAssistantPanel::setTranscriptAutoScroll(bool enabled) {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         m_transcriptView->setAutoScroll(enabled);
     }
 }
 
 void AiAssistantPanel::updateJumpToNewestButton() {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         m_transcriptView->updateJumpToNewestButton();
     }
 }
 
 void AiAssistantPanel::jumpTranscriptToNewest() {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         m_transcriptView->jumpToNewest();
     }
 }
 
 void AiAssistantPanel::renderTranscriptMessages(bool scroll_to_bottom) {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         m_transcriptView->renderMessages(scroll_to_bottom);
     }
 }
@@ -5204,7 +5208,7 @@ void AiAssistantPanel::recordPromptHistory(const QString& prompt) {
 }
 
 bool AiAssistantPanel::cyclePromptHistory(int direction) {
-    if (!m_messageEdit || m_promptHistory.isEmpty()) {
+    if ((m_messageEdit == nullptr) || m_promptHistory.isEmpty()) {
         return false;
     }
     if (m_promptHistoryIndex < 0) {
@@ -5266,7 +5270,7 @@ void AiAssistantPanel::applySteeringMessage(const QString& message) {
         return;
     }
     m_pendingSteeringMessages.append(message);
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         appendTranscriptMessage(QStringLiteral("Steering"), message);
     }
     if (m_conversationStore) {
@@ -5280,7 +5284,7 @@ void AiAssistantPanel::applySteeringMessage(const QString& message) {
     appendSessionMemory(QStringLiteral("Steering"),
                         QStringLiteral("User request during active run"),
                         message);
-    if (m_messageEdit) {
+    if (m_messageEdit != nullptr) {
         m_messageEdit->clear();
     }
     setActivityIndicator(tr("Steering saved"), true);
@@ -5291,7 +5295,7 @@ void AiAssistantPanel::applySteeringMessage(const QString& message) {
 
 void AiAssistantPanel::queuePromptForLater(const QString& message, const QString& reason) {
     m_queuedUserMessages.append(message);
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         appendTranscriptMessage(QStringLiteral("Queued"), message);
     }
     if (m_conversationStore) {
@@ -5307,7 +5311,7 @@ void AiAssistantPanel::queuePromptForLater(const QString& message, const QString
     appendSessionMemory(QStringLiteral("Queued"),
                         reason.isEmpty() ? QStringLiteral("Next user request") : reason,
                         message);
-    if (m_messageEdit) {
+    if (m_messageEdit != nullptr) {
         m_messageEdit->clear();
     }
     appendLocalEvent(tr("Queued AI request for later"));
@@ -5319,7 +5323,7 @@ void AiAssistantPanel::dispatchQueuedPromptIfIdle() {
     if (m_dispatchingQueuedPrompt || isAiBusy() || m_queuedUserMessages.isEmpty()) {
         return;
     }
-    if (!m_messageEdit) {
+    if (m_messageEdit == nullptr) {
         return;
     }
     const QString next = m_queuedUserMessages.takeFirst();
@@ -5353,10 +5357,10 @@ void AiAssistantPanel::resetPromptTemplatePicker() {
                                           "skills, tools, verification, reporting, and cleanup."),
                                        Qt::ToolTipRole);
     hideWorkflowDetails();
-    if (m_workflowDetailsButton) {
+    if (m_workflowDetailsButton != nullptr) {
         m_workflowDetailsButton->setEnabled(false);
     }
-    if (m_addWorkflowButton) {
+    if (m_addWorkflowButton != nullptr) {
         m_addWorkflowButton->setEnabled(false);
     }
 }
@@ -5425,7 +5429,7 @@ void AiAssistantPanel::populateWorkflowTemplatePicker(
 }
 
 void AiAssistantPanel::refreshPromptTemplates() {
-    if (!m_promptTemplateCombo) {
+    if (m_promptTemplateCombo == nullptr) {
         return;
     }
 
@@ -5446,7 +5450,7 @@ void AiAssistantPanel::refreshPromptTemplates() {
 }
 
 void AiAssistantPanel::applyPromptTemplate(const QString& title, const QString& prompt) {
-    if (!m_messageEdit || prompt.trimmed().isEmpty()) {
+    if ((m_messageEdit == nullptr) || prompt.trimmed().isEmpty()) {
         return;
     }
 
@@ -5567,7 +5571,7 @@ bool AiAssistantPanel::addWorkflowResourceContext(const QString& resource_path,
 }
 
 QString AiAssistantPanel::messageText() const {
-    return m_messageEdit ? m_messageEdit->toPlainText().trimmed() : QString();
+    return (m_messageEdit != nullptr) ? m_messageEdit->toPlainText().trimmed() : QString();
 }
 
 QString AiAssistantPanel::buildInstructions() const {
@@ -5728,7 +5732,7 @@ ai::CancellationToken AiAssistantPanel::makePendingCallToken(const ai::OpenAIFun
 bool AiAssistantPanel::preparePendingToolCall(const ai::OpenAIFunctionCall& call,
                                               PendingToolCallContext* context,
                                               ai::OpenAIFunctionOutput* output) {
-    if (!context || !output) {
+    if ((context == nullptr) || (output == nullptr)) {
         return false;
     }
     const ai::AiToolCallRouter::PreparedCall prepared =
@@ -5879,7 +5883,7 @@ QJsonObject AiAssistantPanel::buildBuiltInToolMetadata(
 bool AiAssistantPanel::dispatchBuiltInToolCall(const PendingToolCallContext& context,
                                                const QJsonObject& args,
                                                ai::OpenAIFunctionOutput* output) {
-    if (!output || !ai::AiToolCallRouter::isBuiltInTool(context.kind)) {
+    if ((output == nullptr) || !ai::AiToolCallRouter::isBuiltInTool(context.kind)) {
         return false;
     }
     ai::AiToolCallRequest policy_request;
@@ -6209,7 +6213,7 @@ void AiAssistantPanel::startCommandToolCall(const PendingToolCallContext& contex
 bool AiAssistantPanel::dispatchCommandToolCall(const PendingToolCallContext& context,
                                                const QJsonObject& args,
                                                ai::OpenAIFunctionOutput* output) {
-    if (!output) {
+    if (output == nullptr) {
         return false;
     }
     const ai::AiCommandToolPlan plan =
@@ -6376,7 +6380,7 @@ bool AiAssistantPanel::consumeResumedCommandApproval(const QString& shell,
                  QStringLiteral("resumed"),
                  metadata);
     appendLocalEvent(tr("Resumed approval for %1 command").arg(shell));
-    if (approval_result) {
+    if (approval_result != nullptr) {
         *approval_result = offerRestorePointIfNeeded(preview, risky_change);
     }
     return true;
@@ -6861,7 +6865,7 @@ QJsonObject AiAssistantPanel::runScreenshotTool(const QString& reason) {
         return result;
     }
     QScreen* screen = QGuiApplication::primaryScreen();
-    if (!screen) {
+    if (screen == nullptr) {
         result[QStringLiteral("error_message")] = QStringLiteral("No primary screen available");
         return result;
     }
@@ -7360,7 +7364,7 @@ bool parseAppActionArguments(const QJsonValue& raw, QJsonObject* out, QString* e
             return true;
         }
     }
-    if (error) {
+    if (error != nullptr) {
         *error = QStringLiteral(
             "sak_app_action arguments must be a JSON object, or a JSON object string, e.g. \"{}\"");
     }
@@ -8024,7 +8028,7 @@ void AiAssistantPanel::appendOfflineArtifacts(const QString& operation,
     if (!output_dir.isEmpty() && QDir(output_dir).exists()) {
         bool files_truncated = false;
         const QStringList files = filesUnderDirectory(output_dir, &files_truncated);
-        if (result) {
+        if (result != nullptr) {
             (*result)[QStringLiteral("files")] =
                 QJsonArray::fromStringList(files.mid(0, kPackageFileResultLimit));
             (*result)[QStringLiteral("file_count")] = files.size();
@@ -8096,7 +8100,7 @@ QString AiAssistantPanel::offlineOutputDirectory(const QString& operation,
     QString output_dir;
     QString request_error;
     if (!offlineRequestedOutputDirIsUsable(args, &output_dir, &request_error)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = request_error;
         }
         return {};
@@ -8108,7 +8112,7 @@ QString AiAssistantPanel::offlineOutputDirectory(const QString& operation,
         return output_dir;
     }
     if (!m_conversationStore) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("No active AI session for artifact output");
         }
         return {};
@@ -8226,7 +8230,7 @@ bool AiAssistantPanel::validateOfflineOperation(const QString& operation,
     const bool supported = operation == QLatin1String("direct_download") ||
                            operation == QLatin1String("build_bundle") ||
                            operation == QLatin1String("install_bundle");
-    if (!supported && run) {
+    if (!supported && (run != nullptr)) {
         run->operation_error =
             QStringLiteral("Unsupported offline downloader operation: %1").arg(operation);
     }
@@ -8390,7 +8394,7 @@ void AiAssistantPanel::appendArtifactRow(const QString& path, const QString& kin
 }
 
 void AiAssistantPanel::refreshArtifactList() {
-    if (!m_artifactsButton) {
+    if (m_artifactsButton == nullptr) {
         return;
     }
     m_artifactsButton->setText(tr("Artifacts"));
@@ -8578,11 +8582,11 @@ QString AiAssistantPanel::generateReport(QString* error_message,
     inputs.citations = m_citations;
     inputs.tool_calls = m_toolCallsThisSession;
 
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     PanelReportData report_data = collectPanelReportData(inputs, report_path, error_message);
-    if (error_message && !error_message->isEmpty()) {
+    if ((error_message != nullptr) && !error_message->isEmpty()) {
         // The transcript exists but could not be read (locked/ACL denies read); fail rather
         // than emit a report that silently presents an empty conversation as complete.
         return {};
@@ -8820,7 +8824,7 @@ AiAssistantPanel::AccessMode AiAssistantPanel::currentAccessMode() const {
     if (!isOnGuiThread()) {
         return runOnGuiThread([this]() { return currentAccessMode(); });
     }
-    if (!m_accessModeCombo) {
+    if (m_accessModeCombo == nullptr) {
         return AccessMode::AssistedFullAccess;
     }
 
@@ -8836,7 +8840,7 @@ AiAssistantPanel::AccessMode AiAssistantPanel::currentAccessMode() const {
 }
 
 QString AiAssistantPanel::currentAccessModeLabel() const {
-    if (!m_accessModeCombo) {
+    if (m_accessModeCombo == nullptr) {
         return tr("Assisted Full Access");
     }
     return m_accessModeCombo->currentText();
@@ -8874,7 +8878,7 @@ QString AiAssistantPanel::contextItemLabel(const ContextItem& item) {
 
 int AiAssistantPanel::contextChipMaxWidth() const {
     const QWidget* viewport = m_contextList->viewport();
-    const int source_width = viewport ? viewport->width() : m_contextList->width();
+    const int source_width = (viewport != nullptr) ? viewport->width() : m_contextList->width();
     const int available_width = std::max(kContextChipMinAvailableWidth,
                                          source_width - kContextChipViewportReserve);
     int target_chip_width = std::clamp(available_width / kContextChipColumns,
@@ -8942,7 +8946,7 @@ void AiAssistantPanel::addContextListItem(int index, int max_chip_width) {
 }
 
 void AiAssistantPanel::refreshContextList() {
-    if (!m_contextList) {
+    if (m_contextList == nullptr) {
         return;
     }
 
@@ -8952,7 +8956,7 @@ void AiAssistantPanel::refreshContextList() {
     for (int i = 0; i < m_contextItems.size(); ++i) {
         addContextListItem(i, max_chip_width);
     }
-    if (m_clearContextButton) {
+    if (m_clearContextButton != nullptr) {
         m_clearContextButton->setEnabled(!m_contextItems.isEmpty());
     }
     scheduleContextTokenRefresh();
@@ -8998,7 +9002,7 @@ void AiAssistantPanel::reloadSessionPicker() {
         runOnGuiThread([this]() { reloadSessionPicker(); });
         return;
     }
-    if (!m_sessionCombo || !m_conversationStore) {
+    if ((m_sessionCombo == nullptr) || !m_conversationStore) {
         return;
     }
 
@@ -9071,7 +9075,7 @@ QString AiAssistantPanel::workflowTitleForChatRename(const QString& workflow_id)
         return {};
     }
     const auto* workflow = m_workflowStore->workflowById(workflow_id);
-    return workflow ? workflow->title : QString{};
+    return (workflow != nullptr) ? workflow->title : QString{};
 }
 
 void AiAssistantPanel::autoRenameDefaultChatFromFirstPrompt(const QString& message,
@@ -9101,7 +9105,7 @@ void AiAssistantPanel::autoRenameDefaultChatFromFirstPrompt(const QString& messa
 }
 
 void AiAssistantPanel::loadSessionTranscript(const QString& session_id) {
-    if (!m_conversationStore || !m_transcriptView) {
+    if (!m_conversationStore || (m_transcriptView == nullptr)) {
         return;
     }
 
@@ -9255,7 +9259,7 @@ void AiAssistantPanel::persistContextItem(const ContextItem& item) {
 }
 
 void AiAssistantPanel::updateAccessStatus() {
-    if (!m_accessStatusLabel) {
+    if (m_accessStatusLabel == nullptr) {
         return;
     }
 
@@ -9355,7 +9359,7 @@ void AiAssistantPanel::loadRunStateSnapshotForSession() {
 }
 
 void AiAssistantPanel::mergePendingHumanGate(ai::AiRunState* loaded) {
-    if (!loaded || loaded->has_pending_human_gate || !m_humanGateStore) {
+    if ((loaded == nullptr) || loaded->has_pending_human_gate || !m_humanGateStore) {
         return;
     }
     QString error;
@@ -9378,8 +9382,8 @@ void AiAssistantPanel::mergePendingHumanGate(ai::AiRunState* loaded) {
 }
 
 void AiAssistantPanel::markStaleRunCancelled(ai::AiRunState* loaded) {
-    if (!loaded || loaded->has_pending_human_gate || ai::isTerminalRunStatus(loaded->status) ||
-        loaded->status == ai::AiRunStatus::Idle) {
+    if ((loaded == nullptr) || loaded->has_pending_human_gate ||
+        ai::isTerminalRunStatus(loaded->status) || loaded->status == ai::AiRunStatus::Idle) {
         return;
     }
     loaded->status = ai::AiRunStatus::Cancelled;
@@ -9790,7 +9794,7 @@ bool AiAssistantPanel::ensureWorkflowInputs(const ai::WorkflowTemplate& workflow
                                             QJsonObject* input_values,
                                             const QJsonObject& initial_values,
                                             bool preserve_run_id) {
-    if (!input_values) {
+    if (input_values == nullptr) {
         return false;
     }
     *input_values = mergeWorkflowInputValues(workflowInputValues(workflow, user_message),
@@ -9896,7 +9900,7 @@ bool AiAssistantPanel::resumeWorkflowRecoveryGate(const ai::AiHumanGate& gate) {
     QJsonObject metadata;
     QJsonObject resume_state;
     const ai::WorkflowTemplate* workflow = recoveryWorkflowForGate(gate, &metadata, &resume_state);
-    if (!workflow) {
+    if (workflow == nullptr) {
         return false;
     }
     // The gate record is a file in the session directory, so its resume snapshot is
@@ -9970,7 +9974,7 @@ const ai::WorkflowTemplate* AiAssistantPanel::recoveryWorkflowForGate(const ai::
     const QString workflow_id =
         resume_state->value(QStringLiteral("workflow_id")).toString(gate.workflow_id).trimmed();
     const ai::WorkflowTemplate* workflow = m_workflowStore->workflowById(workflow_id);
-    if (!workflow) {
+    if (workflow == nullptr) {
         appendLocalEvent(
             tr("Workflow recovery resume failed: unknown workflow %1").arg(workflow_id));
         sak::showWarningLogged(this,
@@ -10503,7 +10507,7 @@ void AiAssistantPanel::appendPhaseStartedToTranscript(const ai::WorkflowPhase& p
 
     const QString owner = workflowPhaseOwnerLabel(phase);
     m_taskStatus = tr("Workflow phase %1").arg(phase.id);
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         QString line = tr("[phase %1] running").arg(phase.id);
         if (!owner.isEmpty()) {
             line += tr(" (%1)").arg(owner);
@@ -10553,7 +10557,7 @@ void AiAssistantPanel::recordPhaseTranscript(const ai::AiPhaseExecution& executi
                                              const QString& phase_chat,
                                              const QJsonObject& metadata,
                                              const QStringList& transcript_details) {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         appendTranscriptMessage(QStringLiteral("Workflow"), phase_chat);
     }
     if (m_conversationStore && (execution.ran || !transcript_details.isEmpty())) {
@@ -10610,7 +10614,7 @@ QJsonObject AiAssistantPanel::phaseTranscriptMetadata(const ai::AiPhaseExecution
         metadata[QStringLiteral("tool_result")] = execution.tool_result;
         const QString summary = ai::toolResultChatSummary(execution.tool_result,
                                                           ai::CredentialStore::redactSecrets);
-        if (!summary.isEmpty() && transcript_details) {
+        if (!summary.isEmpty() && (transcript_details != nullptr)) {
             *transcript_details << summary;
         }
     }
@@ -10629,7 +10633,7 @@ void AiAssistantPanel::appendRecoveryMetadata(const ai::AiPhaseExecution& execut
                                               QJsonObject* metadata) {
     const QJsonObject recovery =
         execution.metadata.value(QStringLiteral("recovery_decision")).toObject();
-    if (!metadata || recovery.isEmpty()) {
+    if ((metadata == nullptr) || recovery.isEmpty()) {
         return;
     }
     (*metadata)[QStringLiteral("recovery_action")] =
@@ -10663,7 +10667,7 @@ void AiAssistantPanel::appendRecoveryMetadata(const ai::AiPhaseExecution& execut
 void AiAssistantPanel::appendSubagentTranscriptDetails(const QJsonObject& subagent_result,
                                                        QJsonObject* metadata,
                                                        QStringList* transcript_details) const {
-    if (!metadata || !transcript_details || subagent_result.isEmpty()) {
+    if ((metadata == nullptr) || (transcript_details == nullptr) || subagent_result.isEmpty()) {
         return;
     }
     (*metadata)[QStringLiteral("subagent_result")] = subagent_result;
@@ -10712,7 +10716,7 @@ QString AiAssistantPanel::phaseTranscriptLine(const ai::AiPhaseExecution& execut
     return line;
 }
 void AiAssistantPanel::onWorkflowRunFinished() {
-    if (!m_workflowRunWatcher) {
+    if (m_workflowRunWatcher == nullptr) {
         return;
     }
     const auto result = m_workflowRunWatcher->result();
@@ -10770,7 +10774,7 @@ QString AiAssistantPanel::workflowResultText(const ai::AiOrchestratorResult& res
 
 void AiAssistantPanel::recordWorkflowResult(const ai::AiOrchestratorResult& result,
                                             const QString& workflow_result_text) {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         appendTranscriptMessage(QStringLiteral("Workflow Results"), workflow_result_text);
     }
     if (m_conversationStore) {
@@ -10861,7 +10865,7 @@ void AiAssistantPanel::beginWorkflowRunUiState(const ai::WorkflowTemplate& workf
                  QStringLiteral("required_inputs"),
                  QStringLiteral("completed"),
                  input_metadata);
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         appendTranscriptMessage(QStringLiteral("Workflow"),
                                 tr("Workflow run started: %1 (%2 phases)")
                                     .arg(workflow.title)
@@ -10870,7 +10874,7 @@ void AiAssistantPanel::beginWorkflowRunUiState(const ai::WorkflowTemplate& workf
 }
 
 void AiAssistantPanel::resetWorkflowRunWatcher() {
-    if (m_workflowRunWatcher) {
+    if (m_workflowRunWatcher != nullptr) {
         m_workflowRunWatcher->disconnect();
         m_workflowRunWatcher->deleteLater();
         m_workflowRunWatcher = nullptr;
@@ -11303,7 +11307,7 @@ void AiAssistantPanel::onAccessModeChanged(int index) {
 }
 
 void AiAssistantPanel::onPromptTemplateSelected(int index) {
-    if (!m_promptTemplateCombo || index <= 0) {
+    if ((m_promptTemplateCombo == nullptr) || index <= 0) {
         return;
     }
     const QString title = m_promptTemplateCombo->itemText(index);
@@ -11313,10 +11317,10 @@ void AiAssistantPanel::onPromptTemplateSelected(int index) {
             applyWorkflowTemplate(*workflow);
             const QSignalBlocker blocker(m_promptTemplateCombo);
             m_promptTemplateCombo->setCurrentIndex(0);
-            if (m_workflowDetailsButton) {
+            if (m_workflowDetailsButton != nullptr) {
                 m_workflowDetailsButton->setEnabled(false);
             }
-            if (m_addWorkflowButton) {
+            if (m_addWorkflowButton != nullptr) {
                 m_addWorkflowButton->setEnabled(false);
             }
             hideWorkflowDetails();
@@ -11327,17 +11331,17 @@ void AiAssistantPanel::onPromptTemplateSelected(int index) {
     applyPromptTemplate(title, prompt);
     const QSignalBlocker blocker(m_promptTemplateCombo);
     m_promptTemplateCombo->setCurrentIndex(0);
-    if (m_workflowDetailsButton) {
+    if (m_workflowDetailsButton != nullptr) {
         m_workflowDetailsButton->setEnabled(false);
     }
-    if (m_addWorkflowButton) {
+    if (m_addWorkflowButton != nullptr) {
         m_addWorkflowButton->setEnabled(false);
     }
     hideWorkflowDetails();
 }
 
 void AiAssistantPanel::onAddWorkflowClicked() {
-    if (!m_promptTemplateCombo) {
+    if (m_promptTemplateCombo == nullptr) {
         return;
     }
     onPromptTemplateSelected(m_promptTemplateCombo->currentIndex());
@@ -11384,7 +11388,7 @@ void AiAssistantPanel::onResumeGateClicked() {
 }
 
 void AiAssistantPanel::onWorkflowDetailsClicked() {
-    if (!m_promptTemplateCombo || !m_workflowStore) {
+    if ((m_promptTemplateCombo == nullptr) || !m_workflowStore) {
         return;
     }
     const int index = m_promptTemplateCombo->currentIndex();
@@ -11395,8 +11399,9 @@ void AiAssistantPanel::onWorkflowDetailsClicked() {
 
     const QString item_data = m_promptTemplateCombo->itemData(index).toString();
     const auto* workflow = m_workflowStore->workflowById(item_data);
-    if (!workflow) {
-        if (m_workflowDetailsPanel && m_workflowDetailsBody && m_workflowDetailsTitle) {
+    if (workflow == nullptr) {
+        if ((m_workflowDetailsPanel != nullptr) && (m_workflowDetailsBody != nullptr) &&
+            (m_workflowDetailsTitle != nullptr)) {
             m_workflowDetailsTitle->setText(m_promptTemplateCombo->itemText(index));
             m_workflowDetailsBody->setPlainText(
                 tr("No structured details available for this entry."));
@@ -11593,7 +11598,7 @@ QVector<ai::AiActivityEvent> AiAssistantPanel::filteredRunDetailsActivities(
         return {};
     }
     const auto activities = m_traceStore->loadActivityEvents(error_message);
-    if (error_message && !error_message->isEmpty()) {
+    if ((error_message != nullptr) && !error_message->isEmpty()) {
         return {};
     }
     QVector<ai::AiActivityEvent> filtered;
@@ -11672,7 +11677,8 @@ void AiAssistantPanel::showRunDetails() {
 }
 
 void AiAssistantPanel::showWorkflowDetails(const ai::WorkflowTemplate& workflow) {
-    if (!m_workflowDetailsPanel || !m_workflowDetailsBody || !m_workflowDetailsTitle) {
+    if ((m_workflowDetailsPanel == nullptr) || (m_workflowDetailsBody == nullptr) ||
+        (m_workflowDetailsTitle == nullptr)) {
         return;
     }
     m_workflowDetailsCurrentId = workflow.id;
@@ -11681,7 +11687,7 @@ void AiAssistantPanel::showWorkflowDetails(const ai::WorkflowTemplate& workflow)
     m_workflowDetailsPanel->setVisible(true);
 }
 void AiAssistantPanel::hideWorkflowDetails() {
-    if (m_workflowDetailsPanel) {
+    if (m_workflowDetailsPanel != nullptr) {
         m_workflowDetailsPanel->setVisible(false);
     }
     m_workflowDetailsCurrentId.clear();
@@ -11693,7 +11699,7 @@ void AiAssistantPanel::clearWorkflowProgressUi() {
     m_activeWorkflowCurrentPhase.clear();
     m_activeWorkflowPhaseStartCounts.clear();
     m_activeWorkflowCompletedPhaseCount = 0;
-    if (m_workflowProgressBar) {
+    if (m_workflowProgressBar != nullptr) {
         m_workflowProgressBar->setVisible(false);
         m_workflowProgressBar->setRange(0, 1);
         m_workflowProgressBar->setValue(0);
@@ -11770,8 +11776,8 @@ void AiAssistantPanel::finishWorkflowProgressUi(const ai::AiOrchestratorResult& 
 
 void AiAssistantPanel::updateWorkflowProgressUi() {
     const int total = m_activeWorkflowPhaseOrder.size();
-    if (!m_workflowProgressBar || total <= 0) {
-        if (m_workflowProgressBar) {
+    if ((m_workflowProgressBar == nullptr) || total <= 0) {
+        if (m_workflowProgressBar != nullptr) {
             m_workflowProgressBar->setVisible(false);
         }
         Q_EMIT progressUpdate(1, 1);
@@ -11846,7 +11852,8 @@ void AiAssistantPanel::rebuildWorkflowDetailsView() {
 }
 
 void AiAssistantPanel::onSessionSelected(int index) {
-    if (m_loadingSessionPicker || index < 0 || !m_sessionCombo || !m_conversationStore) {
+    if (m_loadingSessionPicker || index < 0 || (m_sessionCombo == nullptr) ||
+        !m_conversationStore) {
         return;
     }
 
@@ -11974,10 +11981,10 @@ void AiAssistantPanel::onNewSessionClicked() {
         m_tokenTracker->reset();
         updateTokenLabels();
     }
-    if (m_messageEdit) {
+    if (m_messageEdit != nullptr) {
         m_messageEdit->clear();
     }
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         m_transcriptView->clearMessages(false);
     }
     m_contextItems.clear();
@@ -12142,7 +12149,7 @@ bool AiAssistantPanel::handleBusySendPrompt(const QString& message) {
         onStopClicked();
         break;
     case BusyPromptAction::Discard:
-        if (m_messageEdit) {
+        if (m_messageEdit != nullptr) {
             m_messageEdit->clear();
         }
         Q_EMIT statusMessage(tr("AI request discarded"), sak::kTimerStatusDefaultMs);
@@ -12155,7 +12162,7 @@ bool AiAssistantPanel::handleBusySendPrompt(const QString& message) {
 AiAssistantPanel::WorkflowSendResult AiAssistantPanel::startAttachedWorkflowFromPrompt(
     const QString& message) {
     const ai::WorkflowTemplate* workflow = attachedWorkflow();
-    if (!workflow) {
+    if (workflow == nullptr) {
         return WorkflowSendResult::NoWorkflow;
     }
     QJsonObject workflow_inputs;
@@ -12185,7 +12192,7 @@ void AiAssistantPanel::appendUserTurn(const QString& message,
             persistContextItem(item);
         }
     }
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         QString user_block = message;
         if (!m_contextItems.isEmpty()) {
             user_block += tr("\n\nContext attached: %1 item(s)").arg(m_contextItems.size());
@@ -12457,7 +12464,7 @@ void AiAssistantPanel::appendBrokerResultToTranscript(const QJsonObject& result_
                                                          request,
                                                          ai::CredentialStore::redactSecrets);
     if (!record.transcript_text.isEmpty()) {
-        if (m_transcriptView) {
+        if (m_transcriptView != nullptr) {
             appendTranscriptMessage(QStringLiteral("Tool Result"), record.transcript_text);
         }
     }
@@ -12530,7 +12537,7 @@ void AiAssistantPanel::handleResponseToolCalls(const ai::OpenAIResponseResult& r
                 .arg(kMaxToolTurnsPerUserMessage)
                 .arg(toolLoopCapSummary());
         appendLocalEvent(warn);
-        if (m_transcriptView) {
+        if (m_transcriptView != nullptr) {
             appendTranscriptMessage(QStringLiteral("System"), warn, true);
         }
         if (m_conversationStore) {
@@ -12568,7 +12575,7 @@ void AiAssistantPanel::handleResponseToolCalls(const ai::OpenAIResponseResult& r
 
 void AiAssistantPanel::handleAssistantResponse(const ai::OpenAIResponseResult& result,
                                                const QJsonObject& response_metadata) {
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         appendTranscriptMessage(QStringLiteral("Assistant"), assistantTextWithCitations(result));
     }
     appendCitationsToList(result.citations);
@@ -12734,7 +12741,7 @@ void AiAssistantPanel::onInputTokenCountFailed(const QString& request_id,
 
 void AiAssistantPanel::onRequestFailed(const QString& error_message) {
     const QString redacted = ai::CredentialStore::redactSecrets(error_message);
-    if (m_transcriptView) {
+    if (m_transcriptView != nullptr) {
         appendTranscriptMessage(QStringLiteral("Error"), redacted, true);
     }
     if (m_conversationStore) {

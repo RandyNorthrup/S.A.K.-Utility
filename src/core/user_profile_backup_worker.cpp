@@ -831,13 +831,14 @@ bool UserProfileBackupWorker::canReadPath(const QString& path) {
     }
     // Confirm read access by actually opening it; a denial here is the elevation case, while
     // any other open failure is left to the copy path rather than reported as needing rights.
-    HANDLE handle = CreateFileW(wide.c_str(),
-                                GENERIC_READ,
-                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                nullptr,
-                                OPEN_EXISTING,
-                                (attrs & FILE_ATTRIBUTE_DIRECTORY) ? FILE_FLAG_BACKUP_SEMANTICS : 0,
-                                nullptr);
+    HANDLE handle =
+        CreateFileW(wide.c_str(),
+                    GENERIC_READ,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    nullptr,
+                    OPEN_EXISTING,
+                    ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0u) ? FILE_FLAG_BACKUP_SEMANTICS : 0,
+                    nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         return GetLastError() != ERROR_ACCESS_DENIED;
     }

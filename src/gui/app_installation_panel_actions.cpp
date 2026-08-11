@@ -172,7 +172,7 @@ void AppInstallationPanel::onAddToQueue() {
 
     const int row = indexes.first().row();
     auto* pkgItem = m_onlineResultsModel->item(row, RColPackage);
-    if (!pkgItem || !pkgItem->isEnabled()) {
+    if ((pkgItem == nullptr) || !pkgItem->isEnabled()) {
         return;
     }
 
@@ -198,8 +198,8 @@ void AppInstallationPanel::onAddToQueue() {
 
     QueueEntry entry;
     entry.package_id = packageId;
-    entry.version = versionItem ? versionItem->text() : QString();
-    entry.publisher = publisherItem ? publisherItem->text() : QString();
+    entry.version = (versionItem != nullptr) ? versionItem->text() : QString();
+    entry.publisher = (publisherItem != nullptr) ? publisherItem->text() : QString();
     m_installQueue.append(entry);
 
     updateQueueDisplay();
@@ -502,7 +502,7 @@ void AppInstallationPanel::onAddToOfflineList() {
 
     const int row = indexes.first().row();
     auto* pkgItem = m_offlineResultsModel->item(row, RColPackage);
-    if (!pkgItem || !pkgItem->isEnabled()) {
+    if ((pkgItem == nullptr) || !pkgItem->isEnabled()) {
         return;
     }
 
@@ -521,7 +521,7 @@ void AppInstallationPanel::onAddToOfflineList() {
     }
 
     auto* versionItem = m_offlineResultsModel->item(row, RColVersion);
-    const QString version = versionItem ? versionItem->text() : QString();
+    const QString version = (versionItem != nullptr) ? versionItem->text() : QString();
 
     auto* item = new QListWidgetItem(QString("%1  (v%2)").arg(package_id, version));
     item->setData(Qt::UserRole, package_id);

@@ -209,7 +209,7 @@ AiToolDispatcher::DispatchOutcome AiToolDispatcher::dispatch(AiToolPolicy policy
 
 bool AiToolDispatcher::applyHealthGate(DispatchOutcome* outcome,
                                        const AiToolCallRequest& request) const {
-    if (!m_health_ledger) {
+    if (m_health_ledger == nullptr) {
         return true;
     }
     const AiToolAvailability availability = m_health_ledger->check(outcome->health_key);
@@ -252,7 +252,7 @@ bool AiToolDispatcher::applyAvailabilityGate(DispatchOutcome* outcome,
     }
     outcome->availability_denied = true;
     outcome->result = availabilityDeniedResult(request, availability);
-    if (m_health_ledger) {
+    if (m_health_ledger != nullptr) {
         m_health_ledger->recordFailure(
             outcome->health_key,
             outcome->result.value(QStringLiteral("failure_class"))
@@ -272,7 +272,7 @@ AiToolDispatcher::Handler AiToolDispatcher::resolveHandler(DispatchOutcome* outc
     }
     outcome->handler_missing = true;
     outcome->result = handlerMissingResult(request);
-    if (m_health_ledger) {
+    if (m_health_ledger != nullptr) {
         m_health_ledger->recordFailure(
             outcome->health_key,
             QStringLiteral("handler_missing"),
@@ -289,7 +289,7 @@ bool AiToolDispatcher::acquireLeaseForDispatch(DispatchOutcome* outcome,
     if (!outcome->policy_decision.requires_lease) {
         return true;
     }
-    if (!m_lease_manager) {
+    if (m_lease_manager == nullptr) {
         // Fail closed: a call that requires a mutation lease must NOT run when no lease
         // manager is wired. Proceeding would let a mutating tool execute with no
         // cross-agent serialization -- the exact guarantee the lease exists to provide.
@@ -316,7 +316,7 @@ bool AiToolDispatcher::acquireLeaseForDispatch(DispatchOutcome* outcome,
 void AiToolDispatcher::releaseLeaseForDispatch(DispatchOutcome* outcome,
                                                const AiToolCallRequest& request,
                                                const QString& lease_id) const {
-    if (lease_id.isEmpty() || !m_lease_manager) {
+    if (lease_id.isEmpty() || (m_lease_manager == nullptr)) {
         return;
     }
     if (m_lease_manager->release(lease_id)) {
@@ -346,7 +346,7 @@ void AiToolDispatcher::releaseLeaseForDispatch(DispatchOutcome* outcome,
 }
 
 void AiToolDispatcher::recordHealthForResult(const DispatchOutcome& outcome) const {
-    if (!m_health_ledger) {
+    if (m_health_ledger == nullptr) {
         return;
     }
     if (resultSucceeded(outcome.result)) {

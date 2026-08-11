@@ -59,7 +59,7 @@ public:
                const QRect& rect,
                const QIcon::Mode mode,
                const QIcon::State state) override {
-        if (!painter) {
+        if (painter == nullptr) {
             return;
         }
         painter->drawPixmap(rect, pixmap(rect.size(), mode, state));

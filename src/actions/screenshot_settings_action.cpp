@@ -39,7 +39,7 @@ ScreenshotSettingsAction::ScreenshotSettingsAction(const QString& output_locatio
 
 bool ScreenshotSettingsAction::grabAndSaveOnGui(WId window, const QString& filepath) {
     QScreen* screen = QGuiApplication::primaryScreen();
-    if (!screen) {
+    if (screen == nullptr) {
         return false;
     }
     const QPixmap shot = screen->grabWindow(window);  // 0 = the whole primary screen
@@ -54,7 +54,7 @@ bool ScreenshotSettingsAction::captureWindowToPng(WId window, const QString& fil
     // thread. Marshal the grab onto the GUI thread and block until it finishes. Fail closed if
     // there is no application object or the invocation cannot be marshalled.
     QCoreApplication* app = QCoreApplication::instance();
-    if (!app) {
+    if (app == nullptr) {
         sak::logError("ScreenshotSettingsAction: no QCoreApplication to marshal capture onto");
         return false;
     }
@@ -281,7 +281,7 @@ bool ScreenshotSettingsAction::captureSettingsWindow(const QDir& output_dir,
         },
         reinterpret_cast<LPARAM>(&settings_hwnd));
 
-    if (!settings_hwnd) {
+    if (settings_hwnd == nullptr) {
         // Refuse to capture an arbitrary foreground window -- the caller
         // asked for Settings, not "whatever happens to be on top".
         sak::logWarning("ScreenshotSettingsAction: Settings window not found for page {}",
@@ -429,7 +429,7 @@ int ScreenshotSettingsAction::detectMonitorCount() {
     // until it finishes; fail closed (0) if there is no application object to marshal onto
     // or the invocation cannot be marshalled -- never touch QScreen off the GUI thread.
     QCoreApplication* app = QCoreApplication::instance();
-    if (!app) {
+    if (app == nullptr) {
         sak::logWarning("ScreenshotSettingsAction: no QCoreApplication to detect monitors");
         return 0;
     }

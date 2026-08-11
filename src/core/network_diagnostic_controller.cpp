@@ -894,7 +894,7 @@ void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
         return;
     }
 
-    if (!m_lanTransferServer) {
+    if (m_lanTransferServer == nullptr) {
         m_lanTransferServer = new QTcpServer(this);
     }
 
@@ -1008,13 +1008,13 @@ void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket
     socket->deleteLater();
 
     // The single served client is gone: re-open the server for the next peer.
-    if (m_lanTransferServer && m_lanTransferServer->isListening()) {
+    if ((m_lanTransferServer != nullptr) && m_lanTransferServer->isListening()) {
         m_lanTransferServer->resumeAccepting();
     }
 }
 
 void NetworkDiagnosticController::stopLanTransferServer() {
-    if (m_lanTransferServer && m_lanTransferServer->isListening()) {
+    if ((m_lanTransferServer != nullptr) && m_lanTransferServer->isListening()) {
         m_lanTransferServer->close();
     }
     m_lanTransferServerRunning.store(false, std::memory_order_release);

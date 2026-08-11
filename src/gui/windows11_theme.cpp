@@ -18,11 +18,11 @@ namespace sak::ui {
 namespace {
 
 void applyShadow(QWidget* widget) {
-    if (!widget || widget->graphicsEffect()) {
+    if ((widget == nullptr) || (widget->graphicsEffect() != nullptr)) {
         return;
     }
 
-    const bool should_shadow = qobject_cast<QGroupBox*>(widget) ||
+    const bool should_shadow = (qobject_cast<QGroupBox*>(widget) != nullptr) ||
                                widget->property("sakElevated").toBool() ||
                                widget->property("sakCard").toBool() ||
                                (widget->styleSheet().contains("border-radius") &&
@@ -45,7 +45,7 @@ public:
     using QObject::QObject;
 
     bool eventFilter(QObject* watched, QEvent* event) override {
-        if (!watched || !event) {
+        if ((watched == nullptr) || (event == nullptr)) {
             return QObject::eventFilter(watched, event);
         }
 
@@ -54,7 +54,7 @@ public:
         }
 
         auto* widget = qobject_cast<QWidget*>(watched);
-        if (!widget) {
+        if (widget == nullptr) {
             return QObject::eventFilter(watched, event);
         }
 
@@ -363,7 +363,7 @@ void applyWindows11Theme(QApplication& app, AppThemeMode mode) {
     app.setPalette(themePalette(mode));
     app.setStyleSheet(windows11ThemeStyleSheet(mode));
     for (QWidget* widget : QApplication::topLevelWidgets()) {
-        if (!widget) {
+        if (widget == nullptr) {
             continue;
         }
         widget->setPalette(app.palette());

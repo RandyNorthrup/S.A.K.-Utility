@@ -147,7 +147,7 @@ HANDLE openExclusiveStressFile(const QString& drive) {
     // Belt-and-suspenders: CREATE_NEW already guarantees a freshly created regular file,
     // but reject anything carrying a reparse attribute or more than one hard link so this
     // handle can only ever write to (and delete on close) the unique file we just created.
-    if (!GetFileInformationByHandle(h, &info) ||
+    if ((GetFileInformationByHandle(h, &info) == 0) ||
         (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 || info.nNumberOfLinks != 1) {
         CloseHandle(h);  // FILE_FLAG_DELETE_ON_CLOSE removes the file we just created
         return INVALID_HANDLE_VALUE;
@@ -557,7 +557,7 @@ int StressTestWorker::runMemoryStress() {
     logInfo("Memory stress: allocating {} MB", alloc_size / sak::kBytesPerMB);
 
     auto* data = allocateStressMemory(alloc_size);
-    if (!data) {
+    if (data == nullptr) {
         // A requested memory stress that could not allocate did NO work: count it
         // as one error (the caller folds this into errors_detected) so a memory
         // component that never ran cannot report PASSED. Return before any
@@ -610,7 +610,7 @@ size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const
 #ifdef SAK_PLATFORM_WINDOWS
     MEMORYSTATUSEX mem_status{};
     mem_status.dwLength = sizeof(mem_status);
-    if (GlobalMemoryStatusEx(&mem_status)) {
+    if (GlobalMemoryStatusEx(&mem_status) != 0) {
         return static_cast<size_t>(static_cast<double>(mem_status.ullAvailPhys) *
                                    (m_config.memory_usage_percent / sak::kPercentMaxF));
     }
@@ -673,7 +673,7 @@ void StressTestWorker::runDiskStress() {
     // A disk stress that cannot allocate its buffer did no work: record an error so
     // the run cannot report PASSED (mirrors the could-not-create-file guard above).
     auto* buf = static_cast<uint8_t*>(_aligned_malloc(kBlockSize, kDiskBufferAlignment));
-    if (!buf) {
+    if (buf == nullptr) {
         logError("Disk stress: buffer allocation failed -- marking disk stress failed");
         m_result.disk_errors = 1;
         m_error_count.fetch_add(1, std::memory_order_relaxed);
@@ -686,7 +686,7 @@ void StressTestWorker::runDiskStress() {
     int disk_errors = 0;
     while (!childrenShouldStop()) {
         LARGE_INTEGER const zero{};
-        if (!SetFilePointerEx(h, zero, nullptr, FILE_BEGIN)) {
+        if (SetFilePointerEx(h, zero, nullptr, FILE_BEGIN) == 0) {
             logError("Disk stress: failed to rewind test file");
             ++disk_errors;
             m_error_count.fetch_add(1, std::memory_order_relaxed);
@@ -726,7 +726,7 @@ int StressTestWorker::writeDiskStressFile(void* file_handle,
         DWORD bytes_written = 0;
         // A short write (bytes_written < blockSize) with NO_BUFFERING is a real device
         // error, not partial progress -- count it as a failure rather than as success.
-        if (!WriteFile(h, buf, static_cast<DWORD>(blockSize), &bytes_written, nullptr) ||
+        if ((WriteFile(h, buf, static_cast<DWORD>(blockSize), &bytes_written, nullptr) == 0) ||
             bytes_written != static_cast<DWORD>(blockSize)) {
             return 1;
         }
@@ -734,7 +734,7 @@ int StressTestWorker::writeDiskStressFile(void* file_handle,
     }
     // A durability/stress test must confirm the writes reached the device. An ignored
     // FlushFileBuffers failure would silently pass a flush failure as a good pass.
-    if (!FlushFileBuffers(h)) {
+    if (FlushFileBuffers(h) == 0) {
         logError("Disk stress: FlushFileBuffers failed -- durability not guaranteed");
         return 1;
     }
@@ -804,25 +804,25 @@ struct sak::GpuStressContext {
     ID3D11UnorderedAccessView* uav{nullptr};
 
     ~GpuStressContext() {
-        if (uav) {
+        if (uav != nullptr) {
             uav->Release();
         }
-        if (gpuBuffer) {
+        if (gpuBuffer != nullptr) {
             gpuBuffer->Release();
         }
-        if (computeShader) {
+        if (computeShader != nullptr) {
             computeShader->Release();
         }
-        if (context) {
+        if (context != nullptr) {
             context->Release();
         }
-        if (device) {
+        if (device != nullptr) {
             device->Release();
         }
-        if (d3dCompiler) {
+        if (d3dCompiler != nullptr) {
             FreeLibrary(d3dCompiler);
         }
-        if (d3d11) {
+        if (d3d11 != nullptr) {
             FreeLibrary(d3d11);
         }
     }
@@ -836,14 +836,14 @@ bool StressTestWorker::initGpuDevice(GpuStressContext& ctx) {
     // d3d11.dll is a KnownDLL (always resolved from System32), but pin the search path
     // explicitly for defense in depth and consistency with the d3dcompiler load.
     ctx.d3d11 = LoadLibraryExW(L"d3d11.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (!ctx.d3d11) {
+    if (ctx.d3d11 == nullptr) {
         logWarning("GPU stress: d3d11.dll not available -- skipping");
         return false;
     }
 
     auto fnCreate =
         reinterpret_cast<PFN_D3D11CreateDevice>(GetProcAddress(ctx.d3d11, "D3D11CreateDevice"));
-    if (!fnCreate) {
+    if (fnCreate == nullptr) {
         logWarning("GPU stress: D3D11CreateDevice not found");
         return false;
     }
@@ -860,7 +860,7 @@ bool StressTestWorker::initGpuDevice(GpuStressContext& ctx) {
                                 nullptr,
                                 &ctx.context);
 
-    if (FAILED(hr) || !ctx.device || !ctx.context) {
+    if (FAILED(hr) || (ctx.device == nullptr) || (ctx.context == nullptr)) {
         logWarning(
             "GPU stress: failed to create D3D11 device"
             " (HRESULT={:#x})",
@@ -881,14 +881,14 @@ bool StressTestWorker::compileGpuShader(GpuStressContext& ctx) {
     // search order to the app dir / CWD and load a planted copy -- dangerous when the
     // tool runs elevated. Fail closed (skip GPU stress) if it is not in System32.
     ctx.d3dCompiler = LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (!ctx.d3dCompiler) {
+    if (ctx.d3dCompiler == nullptr) {
         logWarning("GPU stress: d3dcompiler_47.dll not available in System32");
         return false;
     }
 
     auto fnCompile =
         reinterpret_cast<PFN_D3DCompile>(GetProcAddress(ctx.d3dCompiler, "D3DCompile"));
-    if (!fnCompile) {
+    if (fnCompile == nullptr) {
         logWarning("GPU stress: D3DCompile not found");
         return false;
     }
@@ -908,17 +908,17 @@ bool StressTestWorker::compileGpuShader(GpuStressContext& ctx) {
                            &error_blob);
 
     if (FAILED(hr)) {
-        if (error_blob) {
+        if (error_blob != nullptr) {
             logError("GPU stress: shader compile failed: {}",
                      static_cast<const char*>(error_blob->GetBufferPointer()));
             error_blob->Release();
         }
-        if (shader_blob) {
+        if (shader_blob != nullptr) {
             shader_blob->Release();
         }
         return false;
     }
-    if (error_blob) {
+    if (error_blob != nullptr) {
         error_blob->Release();
     }
 
@@ -926,7 +926,7 @@ bool StressTestWorker::compileGpuShader(GpuStressContext& ctx) {
         shader_blob->GetBufferPointer(), shader_blob->GetBufferSize(), nullptr, &ctx.computeShader);
     shader_blob->Release();
 
-    if (FAILED(hr) || !ctx.computeShader) {
+    if (FAILED(hr) || (ctx.computeShader == nullptr)) {
         logError("GPU stress: CreateComputeShader failed");
         return false;
     }
@@ -946,7 +946,7 @@ bool StressTestWorker::createGpuUavBuffer(GpuStressContext& ctx) {
     buf_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
 
     HRESULT hr = ctx.device->CreateBuffer(&buf_desc, nullptr, &ctx.gpuBuffer);
-    if (FAILED(hr) || !ctx.gpuBuffer) {
+    if (FAILED(hr) || (ctx.gpuBuffer == nullptr)) {
         logError("GPU stress: CreateBuffer failed");
         return false;
     }
@@ -958,7 +958,7 @@ bool StressTestWorker::createGpuUavBuffer(GpuStressContext& ctx) {
     uav_desc.Format = DXGI_FORMAT_R32_FLOAT;
 
     hr = ctx.device->CreateUnorderedAccessView(ctx.gpuBuffer, &uav_desc, &ctx.uav);
-    if (FAILED(hr) || !ctx.uav) {
+    if (FAILED(hr) || (ctx.uav == nullptr)) {
         logError("GPU stress: CreateUnorderedAccessView failed");
         return false;
     }

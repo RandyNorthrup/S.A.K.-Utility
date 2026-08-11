@@ -35,8 +35,8 @@ bool createPipeSecurityAttributes(SECURITY_ATTRIBUTES& attributes,
     // missing parent PID (B5-04) and pins the exact launching process by PID --
     // a stronger control than any user-level DACL. The pipe name is also a
     // per-session nonce.
-    if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
-            "D:(A;;GA;;;BA)(A;;GRGW;;;BU)", SDDL_REVISION_1, &descriptor, nullptr)) {
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorA(
+            "D:(A;;GA;;;BA)(A;;GRGW;;;BU)", SDDL_REVISION_1, &descriptor, nullptr) == 0) {
         sak::logError("ElevatedPipeServer: failed to create security descriptor: {}",
                       GetLastError());
         return false;
@@ -71,14 +71,14 @@ HANDLE createServerPipe(const QString& pipe_name, SECURITY_ATTRIBUTES& attribute
 bool waitForPipeClient(HANDLE pipe_handle) {
     OVERLAPPED ov{};
     ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!ov.hEvent) {
+    if (ov.hEvent == nullptr) {
         sak::logError("ElevatedPipeServer: CreateEventW failed");
         return false;
     }
 
     const BOOL connected = ConnectNamedPipe(pipe_handle, &ov);
     const DWORD last_error = GetLastError();
-    bool ok = connected || last_error == ERROR_PIPE_CONNECTED;
+    bool ok = (connected != 0) || last_error == ERROR_PIPE_CONNECTED;
 
     if (!ok && last_error == ERROR_IO_PENDING) {
         ok = WaitForSingleObject(ov.hEvent, kPipeConnectTimeoutMs) == WAIT_OBJECT_0;
@@ -104,13 +104,13 @@ bool waitForPipeClient(HANDLE pipe_handle) {
 int overlappedPipeIo(HANDLE handle, bool is_write, char* buffer, DWORD size, DWORD timeout_ms) {
     OVERLAPPED ov{};
     ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!ov.hEvent) {
+    if (ov.hEvent == nullptr) {
         sak::logError("ElevatedPipeServer: CreateEventW failed");
         return -1;
     }
     BOOL ok = is_write ? WriteFile(handle, buffer, size, nullptr, &ov)
                        : ReadFile(handle, buffer, size, nullptr, &ov);
-    if (!ok && GetLastError() == ERROR_IO_PENDING) {
+    if ((ok == 0) && GetLastError() == ERROR_IO_PENDING) {
         if (WaitForSingleObject(ov.hEvent, timeout_ms) == WAIT_OBJECT_0) {
             ok = TRUE;
         } else {
@@ -119,18 +119,18 @@ int overlappedPipeIo(HANDLE handle, bool is_write, char* buffer, DWORD size, DWO
         }
     }
     DWORD transferred = 0;
-    if (ok) {
+    if (ok != 0) {
         ok = GetOverlappedResult(handle, &ov, &transferred, FALSE);
     }
     CloseHandle(ov.hEvent);
-    return ok ? static_cast<int>(transferred) : -1;
+    return (ok != 0) ? static_cast<int>(transferred) : -1;
 }
 
 // Resolve the full image path of a process by PID via PROCESS_QUERY_LIMITED_INFORMATION.
 // Returns an empty string on any failure so callers fail closed.
 QString processImagePath(DWORD pid) {
     HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!proc) {
+    if (proc == nullptr) {
         sak::logWarning("ElevatedPipeServer: OpenProcess({}) failed: {}", pid, GetLastError());
         return {};
     }
@@ -138,7 +138,7 @@ QString processImagePath(DWORD pid) {
     DWORD size = MAX_PATH;
     const BOOL ok = QueryFullProcessImageNameW(proc, 0, buffer, &size);
     CloseHandle(proc);
-    if (!ok) {
+    if (ok == 0) {
         sak::logWarning("ElevatedPipeServer: QueryFullProcessImageNameW failed: {}",
                         GetLastError());
         return {};
@@ -289,7 +289,7 @@ bool ElevatedPipeServer::hasPendingMessage() const {
         return false;
     }
     DWORD available = 0;
-    if (!PeekNamedPipe(m_pipe_handle, nullptr, 0, nullptr, &available, nullptr)) {
+    if (PeekNamedPipe(m_pipe_handle, nullptr, 0, nullptr, &available, nullptr) == 0) {
         return false;
     }
     return available > 0;
@@ -374,7 +374,7 @@ bool ElevatedPipeServer::readExact(char* buffer, int size, int timeout_ms) {
 
     while (total_read < size && elapsed < timeout_ms) {
         DWORD available = 0;
-        if (!PeekNamedPipe(m_pipe_handle, nullptr, 0, nullptr, &available, nullptr)) {
+        if (PeekNamedPipe(m_pipe_handle, nullptr, 0, nullptr, &available, nullptr) == 0) {
             return false;
         }
 
@@ -417,7 +417,7 @@ bool ElevatedPipeServer::validateClient() const {
 
     // Get the client process ID from the pipe
     ULONG client_pid = 0;
-    if (!GetNamedPipeClientProcessId(m_pipe_handle, &client_pid)) {
+    if (GetNamedPipeClientProcessId(m_pipe_handle, &client_pid) == 0) {
         sak::logWarning("ElevatedPipeServer: could not get client PID: {}", GetLastError());
         return false;
     }

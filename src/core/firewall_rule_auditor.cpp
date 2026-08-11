@@ -885,7 +885,7 @@ void FirewallRuleAuditor::checkSmbGap(const QVector<FirewallRule>& rules,
         if (!localPortsCoverPort(rule.localPorts, kSmbPort)) {
             continue;
         }
-        if (rule.profiles & static_cast<int>(FirewallRule::Profile::Public)) {
+        if ((rule.profiles & static_cast<int>(FirewallRule::Profile::Public)) != 0) {
             FirewallGap gap;
             gap.description = QStringLiteral("SMB (port 445) is allowed on Public profile");
             gap.recommendation = QStringLiteral(

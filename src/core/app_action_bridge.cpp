@@ -118,11 +118,11 @@ AppActionResult appActionResultFromExecution(const AppActionExecutionFields& fie
 AppActionResult runQuickActionSync(QuickActionController* controller,
                                    const QString& action_name,
                                    int timeout_ms) {
-    if (!controller) {
+    if (controller == nullptr) {
         return {false, QStringLiteral("No action controller"), {}};
     }
     const QuickAction* action = controller->getAction(action_name);
-    if (!action) {
+    if (action == nullptr) {
         return {false, QStringLiteral("Unknown action: %1").arg(action_name), {}};
     }
 

@@ -69,11 +69,11 @@ void FileExplorerGroupProxyModel::setSourceModel(QAbstractItemModel* source_mode
         return;
     }
     beginResetModel();
-    if (sourceModel()) {
+    if (sourceModel() != nullptr) {
         disconnect(sourceModel(), nullptr, this, nullptr);
     }
     QAbstractProxyModel::setSourceModel(source_model);
-    if (source_model) {
+    if (source_model != nullptr) {
         connectSourceSignals(source_model);
     }
     rebuildGroups();
@@ -295,7 +295,7 @@ Qt::SortOrder FileExplorerGroupProxyModel::groupDirection() const {
 }
 
 bool FileExplorerGroupProxyModel::grouped() const {
-    return m_option != FileExplorerGroupOption::None && sourceModel();
+    return m_option != FileExplorerGroupOption::None && (sourceModel() != nullptr);
 }
 
 bool FileExplorerGroupProxyModel::isHeaderRow(const int proxy_row) const {
@@ -368,7 +368,7 @@ void FileExplorerGroupProxyModel::rebuildGroups() {
 }
 
 QModelIndex FileExplorerGroupProxyModel::mapToSource(const QModelIndex& proxy_index) const {
-    if (!proxy_index.isValid() || !sourceModel()) {
+    if (!proxy_index.isValid() || (sourceModel() == nullptr)) {
         return {};
     }
     if (!grouped()) {
@@ -414,14 +414,14 @@ QModelIndex FileExplorerGroupProxyModel::parent(const QModelIndex& index) const 
 }
 
 int FileExplorerGroupProxyModel::rowCount(const QModelIndex& parent) const {
-    if (parent.isValid() || !sourceModel()) {
+    if (parent.isValid() || (sourceModel() == nullptr)) {
         return 0;
     }
     return grouped() ? m_rows.size() : sourceModel()->rowCount();
 }
 
 int FileExplorerGroupProxyModel::columnCount(const QModelIndex& parent) const {
-    if (parent.isValid() || !sourceModel()) {
+    if (parent.isValid() || (sourceModel() == nullptr)) {
         return 0;
     }
     return sourceModel()->columnCount();
@@ -462,7 +462,7 @@ QVariant FileExplorerGroupProxyModel::headerData(const int section,
     // The base class maps the section through proxy row 0; when row 0 is an
     // injected group header that maps to nothing and the view headers blank
     // out. Columns are never rearranged here, so forward sections directly.
-    if (!sourceModel() || orientation != Qt::Horizontal) {
+    if ((sourceModel() == nullptr) || orientation != Qt::Horizontal) {
         return {};
     }
     return sourceModel()->headerData(section, orientation, role);
@@ -478,7 +478,7 @@ Qt::ItemFlags FileExplorerGroupProxyModel::flags(const QModelIndex& index) const
 void FileExplorerGroupProxyModel::sort(const int column, const Qt::SortOrder order) {
     // Header clicks in the details view sort the VIEW's model; forward to the
     // sort/filter proxy underneath (the base class silently drops sort()).
-    if (sourceModel()) {
+    if (sourceModel() != nullptr) {
         sourceModel()->sort(column, order);
     }
 }

@@ -80,14 +80,14 @@ bool isActiveFlashState(sak::FlashState state) {
 int queryHandleDriveNumber(HANDLE handle) {
     STORAGE_DEVICE_NUMBER deviceNumber = {};
     DWORD bytesReturned = 0;
-    if (!DeviceIoControl(handle,
-                         IOCTL_STORAGE_GET_DEVICE_NUMBER,
-                         nullptr,
-                         0,
-                         &deviceNumber,
-                         sizeof(deviceNumber),
-                         &bytesReturned,
-                         nullptr)) {
+    if (DeviceIoControl(handle,
+                        IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                        nullptr,
+                        0,
+                        &deviceNumber,
+                        sizeof(deviceNumber),
+                        &bytesReturned,
+                        nullptr) == 0) {
         return -1;
     }
     // A "successful" short reply would leave the zero-initialized struct in place and
@@ -178,7 +178,7 @@ OsDiskCheck physicalDriveOsDiskCheck(int driveNumber) {
                                     &bytesReturned,
                                     nullptr);
     CloseHandle(hVol);
-    if (!ok) {
+    if (ok == 0) {
         return OsDiskCheck::Undetermined;
     }
     // Fail closed on a reply that does not carry the extents it claims.
@@ -913,7 +913,7 @@ void FlashCoordinator::onWorkerCompleted(const sak::ValidationResult& result) {
     // never cleared; no worker exists to signal this slot before that assignment.
     Q_ASSERT(!m_targetDrives.isEmpty());
     const FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
-    if (!worker) {
+    if (worker == nullptr) {
         // Not expected: this slot is private and only connectWorkerSignals() wires it.
         // Do not swallow it silently -- an unattributable completion leaves the run
         // waiting for a drive that has already finished, with its disk still offline.
@@ -973,7 +973,7 @@ void FlashCoordinator::onWorkerFailed(const QString& error) {
     const QString reportedError =
         error.isEmpty() ? tr("Flash failed (the worker reported no reason)") : error;
     const FlashWorker* worker = qobject_cast<FlashWorker*>(sender());
-    if (!worker) {
+    if (worker == nullptr) {
         // See onWorkerCompleted: an unattributable failure must not vanish quietly, or
         // the run waits forever for a drive that has already given up.
         sak::logError(QString("Flash failure arrived with no FlashWorker sender: %1")
@@ -988,7 +988,7 @@ void FlashCoordinator::onWorkerFailedFor(const FlashWorker* worker, const QStrin
     // Reached only from a worker signal, and workers are created after startFlash() assigns the
     // (non-empty) target list.
     Q_ASSERT(!m_targetDrives.isEmpty());
-    if (!worker) {
+    if (worker == nullptr) {
         return;
     }
 
@@ -1298,14 +1298,14 @@ bool FlashCoordinator::validateSingleTarget(const QString& devicePath) {
     // Get device geometry to verify it's a valid disk
     DISK_GEOMETRY geometry;
     DWORD bytesReturned = 0;
-    if (!DeviceIoControl(hDevice,
-                         IOCTL_DISK_GET_DRIVE_GEOMETRY,
-                         nullptr,
-                         0,
-                         &geometry,
-                         sizeof(geometry),
-                         &bytesReturned,
-                         nullptr)) {
+    if (DeviceIoControl(hDevice,
+                        IOCTL_DISK_GET_DRIVE_GEOMETRY,
+                        nullptr,
+                        0,
+                        &geometry,
+                        sizeof(geometry),
+                        &bytesReturned,
+                        nullptr) == 0) {
         DWORD const error = GetLastError();
         CloseHandle(hDevice);
         sak::logError(QString("Failed to get geometry for %1: Error %2")

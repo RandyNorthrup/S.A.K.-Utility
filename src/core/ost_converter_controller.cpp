@@ -144,7 +144,7 @@ void OstConverterController::cancelAll() {
 
     // Cancel all active workers
     for (auto& aw : m_active_workers) {
-        if (aw.worker) {
+        if (aw.worker != nullptr) {
             aw.worker->cancel();
         }
     }
@@ -366,7 +366,7 @@ void OstConverterController::destroyActiveWorker(int worker_index) {
 }
 
 void OstConverterController::disposeWorker(ActiveWorker& aw) {
-    if (!aw.thread) {
+    if (aw.thread == nullptr) {
         return;
     }
     aw.thread->quit();

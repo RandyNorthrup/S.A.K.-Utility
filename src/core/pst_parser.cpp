@@ -401,7 +401,7 @@ static QString formatBooleanValue(const QByteArray& raw) {
     if (raw.size() < 1) {
         return QStringLiteral("<invalid>");
     }
-    return raw[0] ? QStringLiteral("true") : QStringLiteral("false");
+    return (raw[0] != 0) ? QStringLiteral("true") : QStringLiteral("false");
 }
 
 static QString formatFloat64Value(const QByteArray& raw) {
@@ -1192,7 +1192,7 @@ std::expected<QByteArray, error_code> PstParser::extractAttachmentFromSubnode(
 
     auto att_props = parsePropertyRecords(*bth, ctx);
     const auto* data = findPropertyById(att_props, sak::email::kPropIdAttachData);
-    if (data) {
+    if (data != nullptr) {
         return *data;
     }
     return std::unexpected(error_code::pst_attachment_error);
@@ -1735,7 +1735,7 @@ std::expected<QByteArray, error_code> PstParser::readDataTreeGuarded(uint64_t bi
     const bool is_internal = (bid & kBidInternalFlag) != 0;
     if (!is_internal) {
         auto result = readBlock(bid);
-        if (result && block_offsets) {
+        if (result && (block_offsets != nullptr)) {
             block_offsets->append(result->size());
         }
         return result;
@@ -1806,8 +1806,9 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
         // shared visited set bounds total work.
         const int base_offset = result.size();
         QVector<int> child_offsets;
-        auto child_data =
-            readDataTreeGuarded(child_bid, block_offsets ? &child_offsets : nullptr, guard);
+        auto child_data = readDataTreeGuarded(child_bid,
+                                              (block_offsets != nullptr) ? &child_offsets : nullptr,
+                                              guard);
         if (!child_data) {
             return std::unexpected(child_data.error());
         }
@@ -1818,7 +1819,7 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
             return std::unexpected(error_code::pst_corrupted_btree);
         }
         result.append(*child_data);
-        if (block_offsets) {
+        if (block_offsets != nullptr) {
             for (const int child_off : child_offsets) {
                 block_offsets->append(base_offset + child_off);
             }
@@ -1850,7 +1851,7 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
             return std::unexpected(error_code::pst_corrupted_btree);
         }
         result.append(*child_data);
-        if (block_offsets) {
+        if (block_offsets != nullptr) {
             for (const int child_off : child_offsets) {
                 block_offsets->append(base_offset + child_off);
             }
@@ -2430,7 +2431,7 @@ sak::MapiProperty PstParser::buildTcCell(const QByteArray& row_data,
     const int ceb_byte = row_view.ceb_off + (col.i_bit / kBitPackingBitsPerByte);
     const int ceb_bit = kBitPackingHighBitIndex - (col.i_bit % kBitPackingBitsPerByte);
     if (ceb_byte < row_view.row_off + row_view.row_size) {
-        cell_exists = (static_cast<uint8_t>(row_data[ceb_byte]) >> ceb_bit) & 1;
+        cell_exists = (((static_cast<uint8_t>(row_data[ceb_byte]) >> ceb_bit) & 1) != 0);
     }
 
     // Bound the cell against THIS row's end (row_off + row_size), not the whole matrix buffer:

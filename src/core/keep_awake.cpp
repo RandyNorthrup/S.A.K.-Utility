@@ -26,10 +26,10 @@ thread_local int t_thread_active_count = 0;
 
 unsigned KeepAwake::executionStateForFlags(int power_flags) noexcept {
     EXECUTION_STATE flags = ES_CONTINUOUS;
-    if (power_flags & static_cast<int>(PowerRequest::System)) {
+    if ((power_flags & static_cast<int>(PowerRequest::System)) != 0) {
         flags |= ES_SYSTEM_REQUIRED;
     }
-    if (power_flags & static_cast<int>(PowerRequest::Display)) {
+    if ((power_flags & static_cast<int>(PowerRequest::Display)) != 0) {
         flags |= ES_DISPLAY_REQUIRED;
     }
     return static_cast<unsigned>(flags);

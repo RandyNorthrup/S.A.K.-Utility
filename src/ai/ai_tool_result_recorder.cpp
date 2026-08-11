@@ -79,7 +79,7 @@ QString commandLabel(const AiToolResultRecordRequest& request) {
 void appendCommandRecord(ConversationStore* store,
                          const AiToolResultRecordRequest& request,
                          AiToolResultRecordResult* result) {
-    if (!store) {
+    if (store == nullptr) {
         result->errors << QStringLiteral(
             "Command record failed: AI conversation store is not initialized");
         return;
@@ -98,7 +98,7 @@ void appendTranscriptRecord(ConversationStore* store,
     // Validate the store BEFORE the empty-text short-circuit: a requested
     // transcript with a null store is a genuine failure that must be surfaced,
     // not silently swallowed just because the summary happened to be empty.
-    if (!store) {
+    if (store == nullptr) {
         result->errors << QStringLiteral(
             "Transcript log failed: AI conversation store is not initialized");
         return;

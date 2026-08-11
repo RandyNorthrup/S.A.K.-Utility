@@ -200,7 +200,7 @@ QVector<QAbstractItemView*> FileExplorerPane::itemViews() const {
 }
 
 QAbstractItemView* FileExplorerPane::activeItemView() const {
-    if (!m_view_stack) {
+    if (m_view_stack == nullptr) {
         return nullptr;
     }
     if (m_view_mode == FileExplorerViewMode::Columns) {
@@ -232,8 +232,9 @@ FileManagementEntry FileExplorerPane::entryAtViewRow(const int row) const {
 }
 
 bool FileExplorerPane::hasViewEntry(const int row) const {
-    return m_group_proxy && m_sort_filter_model && m_item_model && row >= 0 &&
-           row < m_group_proxy->rowCount() && !m_group_proxy->isHeaderRow(row);
+    return (m_group_proxy != nullptr) && (m_sort_filter_model != nullptr) &&
+           (m_item_model != nullptr) && row >= 0 && row < m_group_proxy->rowCount() &&
+           !m_group_proxy->isHeaderRow(row);
 }
 
 FileExplorerViewMode FileExplorerPane::viewMode() const {
@@ -245,16 +246,16 @@ FileExplorerLayoutSizes FileExplorerPane::layoutSizes() const {
 }
 
 bool FileExplorerPane::showHiddenItems() const {
-    return m_sort_filter_model && m_sort_filter_model->showHiddenItems();
+    return (m_sort_filter_model != nullptr) && m_sort_filter_model->showHiddenItems();
 }
 
 bool FileExplorerPane::showFileExtensions() const {
-    return m_item_model && m_item_model->showFileExtensions();
+    return (m_item_model != nullptr) && m_item_model->showFileExtensions();
 }
 
 void FileExplorerPane::setViewMode(const FileExplorerViewMode mode) {
     m_view_mode = mode;
-    if (!m_view_stack) {
+    if (m_view_stack == nullptr) {
         return;
     }
 
@@ -282,7 +283,7 @@ void FileExplorerPane::setViewMode(const FileExplorerViewMode mode) {
 void FileExplorerPane::setGrouping(const FileExplorerGroupOption option,
                                    const FileExplorerGroupDateUnit date_unit,
                                    const Qt::SortOrder direction) {
-    if (m_group_proxy) {
+    if (m_group_proxy != nullptr) {
         m_group_proxy->setGrouping(option, date_unit, direction);
     }
 }
@@ -298,19 +299,19 @@ void FileExplorerPane::setLayoutSizes(const FileExplorerLayoutSizes& sizes) {
 }
 
 void FileExplorerPane::setShowHiddenItems(const bool show) {
-    if (m_sort_filter_model) {
+    if (m_sort_filter_model != nullptr) {
         m_sort_filter_model->setShowHiddenItems(show);
     }
-    if (m_columns_preview_proxy) {
+    if (m_columns_preview_proxy != nullptr) {
         m_columns_preview_proxy->setShowHiddenItems(show);
     }
 }
 
 void FileExplorerPane::setShowFileExtensions(const bool show) {
-    if (m_item_model) {
+    if (m_item_model != nullptr) {
         m_item_model->setShowFileExtensions(show);
     }
-    if (m_columns_preview_model) {
+    if (m_columns_preview_model != nullptr) {
         m_columns_preview_model->setShowFileExtensions(show);
     }
 }
@@ -318,14 +319,14 @@ void FileExplorerPane::setShowFileExtensions(const bool show) {
 void FileExplorerPane::setColumnsPreviewEntries(const QString& path,
                                                 QVector<FileManagementEntry> entries) {
     m_columns_preview_path = path;
-    if (m_columns_preview_model) {
+    if (m_columns_preview_model != nullptr) {
         m_columns_preview_model->setEntries(std::move(entries));
     }
 }
 
 void FileExplorerPane::clearColumnsPreview() {
     m_columns_preview_path.clear();
-    if (m_columns_preview_model) {
+    if (m_columns_preview_model != nullptr) {
         m_columns_preview_model->clear();
     }
 }
@@ -347,7 +348,7 @@ void FileExplorerPane::showErrorState(const QString& message) {
 }
 
 void FileExplorerPane::setStateMessage(const QString& message, const bool visible) {
-    if (!m_state_label) {
+    if (m_state_label == nullptr) {
         return;
     }
     m_state_label->setText(message);
@@ -357,7 +358,7 @@ void FileExplorerPane::setStateMessage(const QString& message, const bool visibl
 void FileExplorerPane::configureListView(QListView* view,
                                          const QString& object_name,
                                          const QListView::ViewMode mode) {
-    if (!view) {
+    if (view == nullptr) {
         return;
     }
     view->setObjectName(object_name);
@@ -375,7 +376,7 @@ void FileExplorerPane::configureListView(QListView* view,
 }
 
 void FileExplorerPane::configureColumnsPreviewView(QListView* view) {
-    if (!view) {
+    if (view == nullptr) {
         return;
     }
     view->setObjectName(QStringLiteral("fileExplorerColumnsPreviewView"));
@@ -394,28 +395,28 @@ void FileExplorerPane::configureColumnsPreviewView(QListView* view) {
 void FileExplorerPane::applyLayoutSizes() {
     // Files LayoutSizeKindHelper: each layout's size kind drives its row
     // height (or grid cell) and icon edge; kinds are independent per layout.
-    if (m_details_view) {
+    if (m_details_view != nullptr) {
         const int icon = fileExplorerIconSize(FileExplorerViewMode::Details,
                                               m_layout_sizes.details);
         m_details_view->setIconSize(QSize(icon, icon));
         m_details_view->verticalHeader()->setDefaultSectionSize(
             fileExplorerRowHeight(FileExplorerViewMode::Details, m_layout_sizes.details));
     }
-    if (m_list_view) {
+    if (m_list_view != nullptr) {
         const int icon = fileExplorerIconSize(FileExplorerViewMode::List, m_layout_sizes.list);
         m_list_view->setIconSize(QSize(icon, icon));
         m_list_view->setGridSize(
             QSize(kFileExplorerListCellW,
                   fileExplorerRowHeight(FileExplorerViewMode::List, m_layout_sizes.list)));
     }
-    if (m_grid_view) {
+    if (m_grid_view != nullptr) {
         const int icon = fileExplorerIconSize(FileExplorerViewMode::Grid, m_layout_sizes.grid);
         m_grid_view->setIconSize(QSize(icon, icon));
         m_grid_view->setGridSize(
             QSize(fileExplorerGridItemWidth(m_layout_sizes.grid),
                   fileExplorerRowHeight(FileExplorerViewMode::Grid, m_layout_sizes.grid)));
     }
-    if (m_cards_view) {
+    if (m_cards_view != nullptr) {
         const int icon = fileExplorerIconSize(FileExplorerViewMode::Cards, m_layout_sizes.cards);
         m_cards_view->setIconSize(QSize(icon, icon));
         m_cards_view->setGridSize(
@@ -427,11 +428,11 @@ void FileExplorerPane::applyLayoutSizes() {
     const QSize columnsCell(kFileExplorerColumnsMinCellW,
                             fileExplorerRowHeight(FileExplorerViewMode::Columns,
                                                   m_layout_sizes.columns));
-    if (m_columns_view) {
+    if (m_columns_view != nullptr) {
         m_columns_view->setIconSize(QSize(columnsIcon, columnsIcon));
         m_columns_view->setGridSize(columnsCell);
     }
-    if (m_columns_preview_view) {
+    if (m_columns_preview_view != nullptr) {
         m_columns_preview_view->setIconSize(QSize(columnsIcon, columnsIcon));
         m_columns_preview_view->setGridSize(columnsCell);
     }
@@ -440,7 +441,7 @@ void FileExplorerPane::applyLayoutSizes() {
 void FileExplorerPane::applyGroupHeaderSpans() {
     // Files renders group headers full-width above each section; in the
     // details table the injected header rows span every column.
-    if (!m_details_view || !m_group_proxy) {
+    if ((m_details_view == nullptr) || (m_group_proxy == nullptr)) {
         return;
     }
     m_details_view->clearSpans();
@@ -455,7 +456,7 @@ void FileExplorerPane::applyGroupHeaderSpans() {
 }
 
 void FileExplorerPane::updateColumnsPreviewRequest() {
-    if (m_view_mode != FileExplorerViewMode::Columns || !m_selection_model) {
+    if (m_view_mode != FileExplorerViewMode::Columns || (m_selection_model == nullptr)) {
         return;
     }
     const QModelIndexList rows = m_selection_model->selectedRows();
@@ -476,7 +477,7 @@ void FileExplorerPane::updateColumnsPreviewRequest() {
 }
 
 FileManagementEntry FileExplorerPane::columnsPreviewEntryAtRow(const int row) const {
-    if (!m_columns_preview_proxy || !m_columns_preview_model || row < 0 ||
+    if ((m_columns_preview_proxy == nullptr) || (m_columns_preview_model == nullptr) || row < 0 ||
         row >= m_columns_preview_proxy->rowCount()) {
         return {};
     }

@@ -631,7 +631,7 @@ bool FileExplorerArchiveService::hasSingleTopLevelRoot(const QString& zip_path,
     if (roots.size() != 1 || !root_is_directory) {
         return false;
     }
-    if (root_name) {
+    if (root_name != nullptr) {
         *root_name = *roots.cbegin();
     }
     return true;

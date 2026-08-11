@@ -210,7 +210,7 @@ bool writeAppendPayload(QFile& file,
     }
     // Roll the partial line back so the JSONL stays parseable and report failure.
     file.resize(start_size);
-    if (error_message) {
+    if (error_message != nullptr) {
         *error_message = QStringLiteral("Could not append %1: %2").arg(label, file.errorString());
     }
     return false;
@@ -255,7 +255,7 @@ bool appendJsonLine(const QString& path,
                     QString* error_message) {
     const QFileInfo info(path);
     if (!QDir().mkpath(info.absolutePath())) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not create %1 directory: %2").arg(label, info.absolutePath());
         }
@@ -268,7 +268,7 @@ bool appendJsonLine(const QString& path,
     }
     QFile file(path);
     if (!file.open(QIODevice::Append | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not append %1: %2").arg(label, file.errorString());
         }
@@ -415,13 +415,13 @@ QString TraceStore::replayPath() const {
 bool TraceStore::appendEvent(AiTraceEvent event, QString* error_message) const {
     const QMutexLocker locker(&m_io_mutex);
     if (m_session_dir.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Trace session directory is empty");
         }
         return false;
     }
     if (!QDir().mkpath(m_session_dir)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message =
                 QStringLiteral("Could not create trace directory: %1").arg(m_session_dir);
         }
@@ -447,7 +447,7 @@ QVector<AiTraceEvent> TraceStore::loadEvents(QString* error_message) const {
         return events;
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not read trace: %1").arg(file.errorString());
         }
         return events;
@@ -458,7 +458,7 @@ QVector<AiTraceEvent> TraceStore::loadEvents(QString* error_message) const {
         const QByteArray raw_line = file.readLine(kMaxJsonlLineBytes);
         loaded_bytes += raw_line.size();
         if (loaded_bytes > kMaxJsonlLoadBytes) {
-            if (error_message) {
+            if (error_message != nullptr) {
                 *error_message = QStringLiteral("Trace file exceeds the %1-byte load cap")
                                      .arg(kMaxJsonlLoadBytes);
             }
@@ -477,7 +477,7 @@ QVector<AiTraceEvent> TraceStore::loadEvents(QString* error_message) const {
 bool TraceStore::appendActivityEvent(AiActivityEvent event, QString* error_message) const {
     const QMutexLocker locker(&m_io_mutex);
     if (m_session_dir.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Trace session directory is empty");
         }
         return false;
@@ -504,7 +504,7 @@ QVector<AiActivityEvent> TraceStore::loadActivityEvents(QString* error_message) 
         return events;
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not read activity: %1").arg(file.errorString());
         }
         return events;
@@ -515,7 +515,7 @@ QVector<AiActivityEvent> TraceStore::loadActivityEvents(QString* error_message) 
         const QByteArray raw_line = file.readLine(kMaxJsonlLineBytes);
         loaded_bytes += raw_line.size();
         if (loaded_bytes > kMaxJsonlLoadBytes) {
-            if (error_message) {
+            if (error_message != nullptr) {
                 *error_message = QStringLiteral("Activity file exceeds the %1-byte load cap")
                                      .arg(kMaxJsonlLoadBytes);
             }
@@ -538,7 +538,7 @@ bool TraceStore::appendReplayEvent(const QString& run_id,
                                    QString* error_message) const {
     const QMutexLocker locker(&m_io_mutex);
     if (m_session_dir.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Trace session directory is empty");
         }
         return false;

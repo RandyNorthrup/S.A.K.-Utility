@@ -105,7 +105,7 @@ bool writeExecutionResultFile(const QString& file_path,
 
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QString("Failed to write result file: %1").arg(file.errorString());
         }
         return false;
@@ -113,7 +113,7 @@ bool writeExecutionResultFile(const QString& file_path,
 
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Compact);
     if (file.write(json_bytes) != json_bytes.size()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("Incomplete write of result file");
         }
         return false;
@@ -186,23 +186,23 @@ bool readExecutionResultFile(const QString& file_path,
     QJsonObject json;
     const QString load_error = loadResultJsonObject(file_path, &json);
     if (!load_error.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = load_error;
         }
         return false;
     }
 
-    if (result) {
+    if (result != nullptr) {
         const QString populate_error = populateExecutionResult(json, result);
         if (!populate_error.isEmpty()) {
-            if (error_message) {
+            if (error_message != nullptr) {
                 *error_message = populate_error;
             }
             return false;
         }
     }
 
-    if (status) {
+    if (status != nullptr) {
         *status = actionStatusFromString(json.value("status").toString());
     }
 

@@ -163,7 +163,7 @@ HWND findVisibleWindowByTitle(const QString& needle_lower, QString& err) {
 HWND resolveTargetHwnd(const QJsonObject& args, QString& err) {
     if (args.value(QStringLiteral("foreground")).toBool()) {
         HWND fg = GetForegroundWindow();
-        if (!fg) {
+        if (fg == nullptr) {
             err = QStringLiteral("There is no foreground window.");
         }
         return fg;
@@ -225,10 +225,10 @@ QString captureToBase64(void* hwnd, const RECT& rect, QString* err) {
 ToolResult toolCaptureWindow(const QJsonObject& args) {
     QString err_target;
     HWND hwnd = resolveTargetHwnd(args, err_target);
-    if (!hwnd) {
+    if (hwnd == nullptr) {
         return errorResult(err_target);
     }
-    if (IsIconic(hwnd)) {
+    if (IsIconic(hwnd) != 0) {
         return errorResult(QStringLiteral("The window is minimized; restore it before capturing."));
     }
     RECT rc{};
@@ -414,11 +414,11 @@ const char* controlTypeName(CONTROLTYPEID id) {
 // Read a control's ValuePattern text, if it exposes one and it is non-empty.
 QString readValuePattern(IUIAutomationElement* element) {
     ComPtr<IUnknown> unknown;
-    if (FAILED(element->GetCurrentPattern(UIA_ValuePatternId, &unknown)) || !unknown) {
+    if (FAILED(element->GetCurrentPattern(UIA_ValuePatternId, &unknown)) || (unknown == nullptr)) {
         return {};
     }
     ComPtr<IUIAutomationValuePattern> pattern;
-    if (FAILED(unknown.As(&pattern)) || !pattern) {
+    if (FAILED(unknown.As(&pattern)) || (pattern == nullptr)) {
         return {};
     }
     BSTR value = nullptr;
@@ -433,11 +433,11 @@ QString readValuePattern(IUIAutomationElement* element) {
 // Read a control's TogglePattern state as on/off/indeterminate, if it exposes one.
 QString readToggleState(IUIAutomationElement* element) {
     ComPtr<IUnknown> unknown;
-    if (FAILED(element->GetCurrentPattern(UIA_TogglePatternId, &unknown)) || !unknown) {
+    if (FAILED(element->GetCurrentPattern(UIA_TogglePatternId, &unknown)) || (unknown == nullptr)) {
         return {};
     }
     ComPtr<IUIAutomationTogglePattern> pattern;
-    if (FAILED(unknown.As(&pattern)) || !pattern) {
+    if (FAILED(unknown.As(&pattern)) || (pattern == nullptr)) {
         return {};
     }
     ToggleState state = ToggleState_Off;
@@ -523,10 +523,10 @@ void walkElement(WalkState& state, IUIAutomationElement* element, int depth) {
         state.truncated = true;  // a walk failure leaves the tree incomplete -- flag, don't hide it
         return;
     }
-    if (!child) {
+    if (child == nullptr) {
         return;  // genuinely no children
     }
-    while (child) {
+    while (child != nullptr) {
         walkElement(state, child.Get(), depth + 1);
         if (state.nodes->size() >= kMaxUiaNodes) {
             state.truncated = true;
@@ -552,15 +552,15 @@ QString inspectHwnd(HWND hwnd,
     ComPtr<IUIAutomation> automation;
     if (FAILED(CoCreateInstance(
             __uuidof(CUIAutomation), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation))) ||
-        !automation) {
+        (automation == nullptr)) {
         return QStringLiteral("UI Automation is unavailable on this system.");
     }
     ComPtr<IUIAutomationElement> root;
-    if (FAILED(automation->ElementFromHandle(hwnd, &root)) || !root) {
+    if (FAILED(automation->ElementFromHandle(hwnd, &root)) || (root == nullptr)) {
         return QStringLiteral("Could not read the window's UI Automation tree.");
     }
     ComPtr<IUIAutomationTreeWalker> walker;
-    if (FAILED(automation->get_ControlViewWalker(&walker)) || !walker) {
+    if (FAILED(automation->get_ControlViewWalker(&walker)) || (walker == nullptr)) {
         return QStringLiteral("The UI Automation control view is unavailable.");
     }
     WalkState state{&out, walker.Get(), max_depth, false, elements};
@@ -637,7 +637,7 @@ QVector<UiaRefNode> toRefNodes(const QVector<UiaNode>& nodes) {
 ToolResult toolUiaInspectWindow(const QJsonObject& args) {
     QString err_target;
     HWND hwnd = resolveTargetHwnd(args, err_target);
-    if (!hwnd) {
+    if (hwnd == nullptr) {
         return errorResult(err_target);
     }
     const ComApartment com;
@@ -664,7 +664,7 @@ ToolResult toolUiaFindControl(const QJsonObject& args) {
     }
     QString err_target;
     HWND hwnd = resolveTargetHwnd(args, err_target);
-    if (!hwnd) {
+    if (hwnd == nullptr) {
         return errorResult(err_target);
     }
     const QString type_filter =
@@ -758,29 +758,30 @@ ToolResult toolUiaGetControlValue(const QJsonObject& args) {
 // control exposes that pattern and the call succeeds.
 bool tryInvoke(IUIAutomationElement* element) {
     ComPtr<IUnknown> unknown;
-    if (FAILED(element->GetCurrentPattern(UIA_InvokePatternId, &unknown)) || !unknown) {
+    if (FAILED(element->GetCurrentPattern(UIA_InvokePatternId, &unknown)) || (unknown == nullptr)) {
         return false;
     }
     ComPtr<IUIAutomationInvokePattern> pattern;
-    return SUCCEEDED(unknown.As(&pattern)) && pattern && SUCCEEDED(pattern->Invoke());
+    return SUCCEEDED(unknown.As(&pattern)) && (pattern != nullptr) && SUCCEEDED(pattern->Invoke());
 }
 
 bool tryToggle(IUIAutomationElement* element) {
     ComPtr<IUnknown> unknown;
-    if (FAILED(element->GetCurrentPattern(UIA_TogglePatternId, &unknown)) || !unknown) {
+    if (FAILED(element->GetCurrentPattern(UIA_TogglePatternId, &unknown)) || (unknown == nullptr)) {
         return false;
     }
     ComPtr<IUIAutomationTogglePattern> pattern;
-    return SUCCEEDED(unknown.As(&pattern)) && pattern && SUCCEEDED(pattern->Toggle());
+    return SUCCEEDED(unknown.As(&pattern)) && (pattern != nullptr) && SUCCEEDED(pattern->Toggle());
 }
 
 bool trySelect(IUIAutomationElement* element) {
     ComPtr<IUnknown> unknown;
-    if (FAILED(element->GetCurrentPattern(UIA_SelectionItemPatternId, &unknown)) || !unknown) {
+    if (FAILED(element->GetCurrentPattern(UIA_SelectionItemPatternId, &unknown)) ||
+        (unknown == nullptr)) {
         return false;
     }
     ComPtr<IUIAutomationSelectionItemPattern> pattern;
-    return SUCCEEDED(unknown.As(&pattern)) && pattern && SUCCEEDED(pattern->Select());
+    return SUCCEEDED(unknown.As(&pattern)) && (pattern != nullptr) && SUCCEEDED(pattern->Select());
 }
 
 QString invokeElement(IUIAutomationElement* element, QString& action) {
@@ -850,11 +851,11 @@ ToolResult toolUiaGetFocused(const QJsonObject&) {
     ComPtr<IUIAutomation> automation;
     if (FAILED(CoCreateInstance(
             __uuidof(CUIAutomation), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation))) ||
-        !automation) {
+        (automation == nullptr)) {
         return errorResult(QStringLiteral("UI Automation is unavailable on this system."));
     }
     ComPtr<IUIAutomationElement> element;
-    if (FAILED(automation->GetFocusedElement(&element)) || !element) {
+    if (FAILED(automation->GetFocusedElement(&element)) || (element == nullptr)) {
         return errorResult(QStringLiteral("No UI element currently has focus."));
     }
     const UiaNode node = describeElement(element.Get(), 0);
@@ -889,7 +890,7 @@ QVector<DialogButton> buttonsFromNodes(const QVector<UiaNode>& nodes) {
 ToolResult toolDismissDialog(const QJsonObject& args) {
     QString err_target;
     HWND hwnd = resolveTargetHwnd(args, err_target);
-    if (!hwnd) {
+    if (hwnd == nullptr) {
         return errorResult(err_target);
     }
     const QString explicit_button = args.value(QStringLiteral("button")).toString().trimmed();

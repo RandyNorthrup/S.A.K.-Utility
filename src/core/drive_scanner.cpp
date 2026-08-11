@@ -423,14 +423,14 @@ QString DriveScanner::getDriveName(int driveNumber) {
     BYTE buffer[kStorageDescriptorBufferBytes] = {};
     DWORD bytesReturned = 0;
 
-    if (DeviceIoControl(hDrive,
-                        IOCTL_STORAGE_QUERY_PROPERTY,
-                        &query,
-                        sizeof(query),
-                        buffer,
-                        sizeof(buffer),
-                        &bytesReturned,
-                        nullptr) &&
+    if ((DeviceIoControl(hDrive,
+                         IOCTL_STORAGE_QUERY_PROPERTY,
+                         &query,
+                         sizeof(query),
+                         buffer,
+                         sizeof(buffer),
+                         &bytesReturned,
+                         nullptr) != 0) &&
         bytesReturned >= sizeof(STORAGE_DEVICE_DESCRIPTOR)) {
         const auto* desc = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR*>(buffer);
 
@@ -471,7 +471,7 @@ qint64 DriveScanner::getDriveSize(HANDLE hDrive) {
                         &geometry,
                         sizeof(geometry),
                         &bytesReturned,
-                        nullptr)) {
+                        nullptr) != 0) {
         return geometry.DiskSize.QuadPart;
     }
 
@@ -491,7 +491,7 @@ quint32 DriveScanner::getBlockSize(HANDLE hDrive) {
                         &geometry,
                         sizeof(geometry),
                         &bytesReturned,
-                        nullptr)) {
+                        nullptr) != 0) {
         return geometry.BytesPerSector;
     }
 
@@ -518,7 +518,7 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
                         buffer,
                         sizeof(buffer),
                         &bytesReturned,
-                        nullptr)) {
+                        nullptr) != 0) {
         const auto* desc = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR*>(buffer);
 
         switch (desc->BusType) {
@@ -576,11 +576,11 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
                         buffer,
                         sizeof(buffer),
                         &bytesReturned,
-                        nullptr)) {
+                        nullptr) != 0) {
         const auto* desc = reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR*>(buffer);
 
         // Primary: use the RemovableMedia flag from the device descriptor
-        if (desc->RemovableMedia) {
+        if (desc->RemovableMedia != 0u) {
             removable = true;
         }
 
@@ -668,7 +668,7 @@ QStringList DriveScanner::getMountPoints(int driveNumber, bool* enumerationOk) {
                 !collectMountPaths(volumeName, len, mountPoints)) {
                 ok = false;
             }
-        } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
+        } while (FindNextVolumeW(hFind, volumeName, MAX_PATH) != 0);
         // Only ERROR_NO_MORE_FILES is a clean end of enumeration; any other error means the
         // list may be incomplete -> report non-authoritative so the caller fails closed.
         if (GetLastError() != ERROR_NO_MORE_FILES) {
@@ -741,7 +741,7 @@ QStringList DriveScanner::getVolumeRootsForDrive(int driveNumber, bool* enumerat
             if (!appendVolumeRoot(volumeName, driveNumber, roots)) {
                 ok = false;
             }
-        } while (FindNextVolumeW(hFind, volumeName, MAX_PATH));
+        } while (FindNextVolumeW(hFind, volumeName, MAX_PATH) != 0);
         // Only ERROR_NO_MORE_FILES is a clean end of enumeration; any other error means the
         // list may be incomplete -> report non-authoritative so the caller fails closed.
         if (GetLastError() != ERROR_NO_MORE_FILES) {
@@ -803,7 +803,7 @@ bool DriveScanner::collectMountPaths(wchar_t* volumeName,
     }
 
     const wchar_t* ptr = pathNames.data();
-    while (*ptr) {
+    while ((*ptr) != 0u) {
         mountPoints.append(QString::fromWCharArray(ptr));
         ptr += wcslen(ptr) + 1;
     }
@@ -823,7 +823,7 @@ QString DriveScanner::getVolumeLabel(const QString& mountPoint) {
                               nullptr,
                               nullptr,
                               nullptr,
-                              0)) {
+                              0) != 0) {
         return QString::fromWCharArray(volumeLabel);
     }
 
@@ -946,7 +946,8 @@ LRESULT CALLBACK DriveScanner::deviceChangeWndProc(HWND hwnd,
         return TRUE;
     }
     const auto* pHdr = reinterpret_cast<const DEV_BROADCAST_HDR*>(lParam);
-    if (pHdr && pHdr->dbch_devicetype == DBT_DEVTYP_VOLUME && DriveScanner::s_instance) {
+    if ((pHdr != nullptr) && pHdr->dbch_devicetype == DBT_DEVTYP_VOLUME &&
+        (DriveScanner::s_instance != nullptr)) {
         QMetaObject::invokeMethod(DriveScanner::s_instance, "scanDrives", Qt::QueuedConnection);
     }
     return TRUE;
@@ -961,7 +962,7 @@ void DriveScanner::registerDeviceNotification() {
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = className;
 
-    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+    if ((RegisterClassExW(&wc) == 0u) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         sak::logError("Failed to register window class");
         return;
     }
@@ -979,7 +980,7 @@ void DriveScanner::registerDeviceNotification() {
                                            GetModuleHandleW(nullptr),
                                            nullptr);
 
-    if (!m_notificationWindow) {
+    if (m_notificationWindow == nullptr) {
         sak::logError("Failed to create notification window");
         return;
     }
@@ -993,7 +994,7 @@ void DriveScanner::registerDeviceNotification() {
                                                  DEVICE_NOTIFY_WINDOW_HANDLE |
                                                      DEVICE_NOTIFY_ALL_INTERFACE_CLASSES);
 
-    if (!m_deviceNotify) {
+    if (m_deviceNotify == nullptr) {
         sak::logError("Failed to register device notification");
         DestroyWindow(m_notificationWindow);
         m_notificationWindow = nullptr;

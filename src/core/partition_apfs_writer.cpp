@@ -829,7 +829,7 @@ bool stampApfsObjectBlock(QByteArray* block, QStringList* blockers) {
     if (PartitionApfsWriter::stampObjectChecksum(block)) {
         return true;
     }
-    if (blockers) {
+    if (blockers != nullptr) {
         blockers->append(QStringLiteral("Unable to stamp APFS object checksum"));
     }
     return false;
@@ -1571,7 +1571,7 @@ uint32_t crc32cWord(uint32_t crc, uint32_t word) {
     for (int byteIndex = 0; byteIndex < 4; ++byteIndex) {
         crc ^= (word >> (byteIndex * 8)) & 0xFF;
         for (int bit = 0; bit < 8; ++bit) {
-            crc = (crc >> 1) ^ ((crc & 1) ? 0x82'F6'3B'78u : 0u);
+            crc = (crc >> 1) ^ (((crc & 1) != 0u) ? 0x82'F6'3B'78u : 0u);
         }
     }
     return crc;
@@ -1913,7 +1913,7 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
               inodeInternalFlags(compressed, extraInternalFlags, rsrcBitsExplicit));
     writeLe32(&value, 0x38, static_cast<uint32_t>(childOrLinkCount));
     writeLe32(&value, kApfsInodeDefaultProtectionClassOffset, protectionClass);
-    const uint16_t permissions = (mode & 0777) ? 0 : (regularFile ? 0644 : 0755);
+    const uint16_t permissions = ((mode & 0777) != 0) ? 0 : (regularFile ? 0644 : 0755);
     writeLe16(&value, kApfsInodeModeOffset, mode | permissions);
     stampCompressedInodeFields(&value, compressed, uncompressedSize);
     applyRecoveredInodeMetadata(&value, recovered);
@@ -2692,8 +2692,8 @@ QByteArray newFsTreeNode(uint32_t blockSize, uint64_t oid, uint16_t flags, uint1
     // of a multi-level tree) carry BTREE_NODE - Apple's fsck_apfs rejects a leaf
     // typed as a root (it reads the one-bit 0x2-vs-0x3 difference as a header bit
     // flip in the fsroot tree).
-    const uint32_t objectType = (flags & kApfsBtreeNodeRoot) ? kApfsObjectTypeBtree
-                                                             : kApfsObjectTypeBtreeNode;
+    const uint32_t objectType = ((flags & kApfsBtreeNodeRoot) != 0) ? kApfsObjectTypeBtree
+                                                                    : kApfsObjectTypeBtreeNode;
     QByteArray block =
         newApfsObjectBlock(blockSize, oid, kApfsFormatXid, objectType, kApfsObjectSubtypeFsTree);
     writeLe16(&block, kApfsBtreeNodeFlagsOffset, flags);
@@ -4866,7 +4866,7 @@ bool writeBlock(QIODevice* device,
                 const ApfsBlockWriteBounds& bounds,
                 const QByteArray& block,
                 QStringList* blockers) {
-    if (!device || bounds.blockSize == 0 ||
+    if ((device == nullptr) || bounds.blockSize == 0 ||
         block.size() != static_cast<qsizetype>(bounds.blockSize)) {
         blockers->append(QStringLiteral("APFS format block has invalid size"));
         return false;
@@ -4955,7 +4955,8 @@ bool readApfsRepairGeometry(QIODevice* image,
                             uint32_t* blockSize,
                             uint64_t* blockCount,
                             QStringList* blockers) {
-    if (!image || !blockSize || !blockCount || !blockers) {
+    if ((image == nullptr) || (blockSize == nullptr) || (blockCount == nullptr) ||
+        (blockers == nullptr)) {
         return false;
     }
     if (!image->seek(0)) {
@@ -7669,7 +7670,7 @@ bool findFreeBlocksInBitmap(const ApfsFreeBlockScan& scan,
     }
     for (uint64_t block = scan.startBlock; block < scan.maxBlock && freeBlocks->size() < scan.count;
          ++block) {
-        const bool used = (bitmap.at(static_cast<qsizetype>(block / 8)) >> (block % 8)) & 1;
+        const bool used = ((bitmap.at(static_cast<qsizetype>(block / 8)) >> (block % 8)) & 1) != 0;
         if (!used) {
             freeBlocks->append(block);
         }
@@ -7721,7 +7722,7 @@ void findFreeBlocksInBitmapContent(const QByteArray& bitmap,
     for (uint64_t block = range.startBlock; block < range.maxBlock && freeBlocks->size() < count;
          ++block) {
         const uint64_t bit = block - range.chunkBase;
-        const bool used = (bitmap.at(static_cast<qsizetype>(bit / 8)) >> (bit % 8)) & 1;
+        const bool used = ((bitmap.at(static_cast<qsizetype>(bit / 8)) >> (bit % 8)) & 1) != 0;
         if (!used) {
             freeBlocks->append(block);
         }
@@ -10999,9 +11000,9 @@ QVector<uint64_t> foreignLiveIpUsedSet(const QByteArray& ipBitmap, uint64_t ipBl
     const uint64_t bits = std::min<uint64_t>(ipBlockCount,
                                              static_cast<uint64_t>(ipBitmap.size()) * 8);
     for (uint64_t bit = 0; bit < bits; ++bit) {
-        if ((static_cast<unsigned char>(ipBitmap.at(static_cast<qsizetype>(bit / 8))) >>
-             (bit % 8)) &
-            1U) {
+        if (((static_cast<unsigned char>(ipBitmap.at(static_cast<qsizetype>(bit / 8))) >>
+              (bit % 8)) &
+             1U) != 0u) {
             used.append(bit);
         }
     }
@@ -11052,9 +11053,9 @@ bool allocateForeignIpBlocks(const ApfsFsCommitContext& ctx,
                                              static_cast<uint64_t>(ipBitmap.size()) * 8);
     for (uint64_t bit = 0; bit < bits && outAbs->size() < count; ++bit) {
         const bool set =
-            (static_cast<unsigned char>(ipBitmap.at(static_cast<qsizetype>(bit / 8))) >>
-             (bit % 8)) &
-            1U;
+            ((static_cast<unsigned char>(ipBitmap.at(static_cast<qsizetype>(bit / 8))) >>
+              (bit % 8)) &
+             1U) != 0u;
         if (set) {
             continue;
         }
@@ -12519,7 +12520,7 @@ bool clearReclaimedBits(const ApfsForeignReclaimChunk& ch,
         const qsizetype byteIdx = static_cast<qsizetype>(bit / 8);
         const unsigned char mask = static_cast<unsigned char>(1U << (bit % 8));
         if (byteIdx < 0 || byteIdx >= bitmap->size() ||
-            !(static_cast<unsigned char>(bitmap->at(byteIdx)) & mask)) {
+            ((static_cast<unsigned char>(bitmap->at(byteIdx)) & mask) == 0)) {
             blockers->append(QStringLiteral(
                 "APFS foreign reclaim: reclaimed block is already free (double free)"));
             return false;
@@ -15598,7 +15599,8 @@ bool chunk0RangeIsFree(ApfsFsCommitContext* ctx,
         return false;
     }
     for (uint64_t b = firstBlock; b < lastBlock; ++b) {
-        if ((static_cast<uint8_t>(chunk0.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) {
+        if (((static_cast<uint8_t>(chunk0.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) !=
+            0u) {
             blockers->append(
                 QStringLiteral("APFS resize-shrink: the truncated tail holds used blocks (data "
                                "past the new size)"));
@@ -15794,8 +15796,8 @@ bool ipBitmapRingHasBitAtOrAbove(QIODevice* image,
             return true;  // fail safe: treat an unreadable ring as needing relocation
         }
         for (uint64_t bit = threshold; bit < static_cast<uint64_t>(geometry.blockSize) * 8; ++bit) {
-            if ((static_cast<uint8_t>(block.at(static_cast<qsizetype>(bit / 8))) >> (bit % 8)) &
-                1U) {
+            if (((static_cast<uint8_t>(block.at(static_cast<qsizetype>(bit / 8))) >> (bit % 8)) &
+                 1U) != 0u) {
                 return true;
             }
         }
@@ -19112,7 +19114,7 @@ bool enterCollectedDirectory(const ApfsTreeCollect& sink,
                              const QString& dirPath,
                              uint64_t dirObjectId,
                              int depth) {
-    if (!sink.visitedDirectories) {
+    if (sink.visitedDirectories == nullptr) {
         // A sink built without the visited set cannot detect a cycle; descending anyway would
         // be the unguarded recursion this exists to stop.
         sink.blockers->append(
@@ -20093,7 +20095,7 @@ bool repairApfsObjectChecksumBlocks(QIODevice* image,
                                     const ApfsRepairGeometry& geometry,
                                     ApfsRepairCounters* counters,
                                     QStringList* blockers) {
-    if (!image || !counters || !blockers) {
+    if ((image == nullptr) || (counters == nullptr) || (blockers == nullptr)) {
         return false;
     }
     *counters = {};
@@ -20116,7 +20118,7 @@ bool repairGeneratedApfsObjectChecksumBlocks(QIODevice* image,
                                              const ApfsRepairGeometry& geometry,
                                              ApfsRepairCounters* counters,
                                              QStringList* blockers) {
-    if (!image || !counters || !blockers) {
+    if ((image == nullptr) || (counters == nullptr) || (blockers == nullptr)) {
         return false;
     }
     *counters = {};
@@ -20896,7 +20898,7 @@ std::optional<uint64_t> PartitionApfsWriter::computeObjectChecksum(const QByteAr
 }
 
 bool PartitionApfsWriter::stampObjectChecksum(QByteArray* object_bytes) {
-    if (!object_bytes) {
+    if (object_bytes == nullptr) {
         return false;
     }
     const auto checksum = computeObjectChecksum(*object_bytes);
@@ -22187,7 +22189,7 @@ static bool writeZeroRange(QIODevice* device,
                            uint64_t offset,
                            uint64_t length,
                            QStringList* blockers) {
-    if (!device || offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max())) {
+    if ((device == nullptr) || offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max())) {
         blockers->append(QStringLiteral("APFS zero-fill target offset is invalid"));
         return false;
     }
@@ -22370,7 +22372,7 @@ static QVector<ApfsImageBlock> seedRewriteBlocks(const ApfsSeedRewrite& rewrite,
     const uint64_t volumeAllocatedBlocks = kApfsFormatVolumeBaseAllocatedBlocks +
                                            (allocatedBlocks - kApfsFormatSeedFileDataBlock);
     if (rewrite.volumeUuid.size() != kApfsUuidBytes) {
-        if (blockers) {
+        if (blockers != nullptr) {
             blockers->append(QStringLiteral("APFS rewrite is missing the on-disk volume UUID"));
         }
         return {};
@@ -22821,7 +22823,7 @@ static void appendRawTargetMutationBlockers(const RawTargetMutationBlockersConte
         blockers->append(
             QStringLiteral("APFS raw %1 requires explicit raw-target opt-in").arg(context.purpose));
     }
-    if (!context.options || context.options->image_only) {
+    if ((context.options == nullptr) || context.options->image_only) {
         blockers->append(QStringLiteral("APFS raw %1 requires non-image-only writer options")
                              .arg(context.purpose));
     }

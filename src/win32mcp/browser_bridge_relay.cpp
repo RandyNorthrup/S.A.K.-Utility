@@ -30,7 +30,7 @@ constexpr int kImagePathBufferChars = MAX_PATH * 2;
 constexpr int kNativeFrameHeaderBytes = 4;
 
 void setError(QString* error, const QString& message) {
-    if (error) {
+    if (error != nullptr) {
         *error = message;
     }
 }
@@ -219,10 +219,10 @@ HANDLE relayConnect(const QString& rendezvous_path,
         CloseHandle(pipe);
         return INVALID_HANDLE_VALUE;
     }
-    if (token_out) {
+    if (token_out != nullptr) {
         *token_out = record.token;
     }
-    if (protocol_out) {
+    if (protocol_out != nullptr) {
         *protocol_out = record.protocol;
     }
     return pipe;

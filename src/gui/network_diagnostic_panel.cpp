@@ -2343,7 +2343,7 @@ const NetworkAdapterInfo* NetworkDiagnosticPanel::selectedAdapter() const {
         return nullptr;
     }
     const auto* name_item = m_adapterTable->item(row, 0);
-    if (!name_item) {
+    if (name_item == nullptr) {
         return nullptr;
     }
     const int data_idx = name_item->data(Qt::UserRole).toInt();
@@ -2359,7 +2359,7 @@ QVector<const NetworkAdapterInfo*> NetworkDiagnosticPanel::selectedAdapters() co
     const auto selected_rows = m_adapterTable->selectionModel()->selectedRows();
     for (const auto& index : selected_rows) {
         const auto* name_item = m_adapterTable->item(index.row(), 0);
-        if (!name_item) {
+        if (name_item == nullptr) {
             continue;
         }
         const int data_idx = name_item->data(Qt::UserRole).toInt();
@@ -2377,7 +2377,7 @@ bool NetworkDiagnosticPanel::runNetshCommand(const QStringList& args, QString* o
     // when the path cannot be resolved rather than run whatever PATH/CWD supplies.
     const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
     if (netsh_exe.isEmpty()) {
-        if (output) {
+        if (output != nullptr) {
             *output = tr("Cannot resolve the System32 netsh.exe path");
         }
         return false;
@@ -2385,13 +2385,13 @@ bool NetworkDiagnosticPanel::runNetshCommand(const QStringList& args, QString* o
     const auto process = runProcess(netsh_exe, args, kFinishTimeoutMs);
 
     if (process.timed_out) {
-        if (output) {
+        if (output != nullptr) {
             *output = tr("netsh command timed out");
         }
         return false;
     }
 
-    if (output) {
+    if (output != nullptr) {
         *output = process.std_out.isEmpty() ? process.std_err : process.std_out;
     }
     return process.exit_code == 0;
@@ -2463,8 +2463,10 @@ void NetworkDiagnosticPanel::addTypeSpecificMenuItems(
     const bool is_bluetooth = (type == QStringLiteral("Bluetooth"));
     const bool is_ethernet = (type == QStringLiteral("Ethernet"));
     const bool is_wifi = (type == QStringLiteral("WiFi"));
-    const bool is_ip_configurable = static_cast<bool>(is_ethernet | is_wifi);
-    const bool can_rename = static_cast<bool>(!is_loopback & !is_vpn);
+    const bool is_ip_configurable =
+        static_cast<bool>(static_cast<int>(is_ethernet) | static_cast<int>(is_wifi));
+    const bool can_rename =
+        static_cast<bool>(static_cast<int>(!is_loopback) & static_cast<int>(!is_vpn));
 
     if (!is_loopback) {
         if (adapter.isConnected) {
@@ -2521,7 +2523,7 @@ void NetworkDiagnosticPanel::addTypeSpecificMenuItems(
 
 void NetworkDiagnosticPanel::showAdapterContextMenu(const QPoint& pos) {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
@@ -2669,7 +2671,7 @@ void NetworkDiagnosticPanel::populateStatusStatistics(QTreeWidget* tree,
 
 void NetworkDiagnosticPanel::onAdapterStatus() {
     const NetworkAdapterInfo* selected = selectedAdapter();
-    if (!selected) {
+    if (selected == nullptr) {
         return;
     }
     // Snapshot the adapter by value before the nested event loop below (dialog or message
@@ -2708,7 +2710,7 @@ void NetworkDiagnosticPanel::onAdapterStatus() {
 
 void NetworkDiagnosticPanel::onAdapterProperties() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
@@ -2744,7 +2746,7 @@ void NetworkDiagnosticPanel::onAdapterProperties() {
 
 void NetworkDiagnosticPanel::onAdapterEnable() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
@@ -2781,7 +2783,7 @@ void NetworkDiagnosticPanel::onAdapterEnable() {
 
 void NetworkDiagnosticPanel::onAdapterDisable() {
     const NetworkAdapterInfo* selected = selectedAdapter();
-    if (!selected) {
+    if (selected == nullptr) {
         return;
     }
     // Snapshot the adapter by value before the nested event loop below (dialog or message
@@ -2834,7 +2836,7 @@ void NetworkDiagnosticPanel::onAdapterDisable() {
 
 void NetworkDiagnosticPanel::onAdapterDiagnose() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
@@ -2866,7 +2868,7 @@ void NetworkDiagnosticPanel::onAdapterDiagnose() {
 
 void NetworkDiagnosticPanel::onAdapterRename() {
     const NetworkAdapterInfo* selected = selectedAdapter();
-    if (!selected) {
+    if (selected == nullptr) {
         return;
     }
     // Snapshot the adapter by value before the nested event loop below (dialog or message
@@ -2937,7 +2939,7 @@ void NetworkDiagnosticPanel::onAdapterRename() {
 
 void NetworkDiagnosticPanel::onOpenAdapterSettings() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
@@ -3081,7 +3083,7 @@ bool NetworkDiagnosticPanel::promptStaticIpInput(const NetworkAdapterInfo& adapt
 
 void NetworkDiagnosticPanel::onSetStaticIp() {
     const NetworkAdapterInfo* selected = selectedAdapter();
-    if (!selected) {
+    if (selected == nullptr) {
         return;
     }
     // Snapshot the adapter by value before the nested event loop below (dialog or message
@@ -3151,7 +3153,7 @@ void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
 
 void NetworkDiagnosticPanel::onSetDnsServers() {
     const NetworkAdapterInfo* selected = selectedAdapter();
-    if (!selected) {
+    if (selected == nullptr) {
         return;
     }
     // Snapshot the adapter by value before the nested event loop below (dialog or message
@@ -3395,7 +3397,7 @@ void NetworkDiagnosticPanel::applyDnsServers(const QString& adapter_name,
 
 void NetworkDiagnosticPanel::onEnableDhcp() {
     const NetworkAdapterInfo* selected = selectedAdapter();
-    if (!selected) {
+    if (selected == nullptr) {
         return;
     }
     // Snapshot the adapter by value before the nested event loop below (dialog or message
@@ -3442,7 +3444,7 @@ void NetworkDiagnosticPanel::onEnableDhcp() {
 
 void NetworkDiagnosticPanel::onReleaseDhcpLease() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
@@ -3478,7 +3480,7 @@ void NetworkDiagnosticPanel::onReleaseDhcpLease() {
 
 void NetworkDiagnosticPanel::onRenewDhcpLease() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
@@ -4826,7 +4828,7 @@ void NetworkDiagnosticPanel::copySelectedRows(QTableWidget* table) {
         QStringList cells;
         for (int col = 0; col < table->columnCount(); ++col) {
             auto* item = table->item(idx.row(), col);
-            cells << (item ? item->text() : QString());
+            cells << ((item != nullptr) ? item->text() : QString());
         }
         text += cells.join(QLatin1Char('\t')) + QLatin1Char('\n');
     }
@@ -4846,7 +4848,7 @@ void NetworkDiagnosticPanel::copyAllRows(QTableWidget* table) {
     QStringList headers;
     for (int col = 0; col < table->columnCount(); ++col) {
         auto* item = table->horizontalHeaderItem(col);
-        headers << (item ? item->text() : QString());
+        headers << ((item != nullptr) ? item->text() : QString());
     }
     text += headers.join(QLatin1Char('\t')) + QLatin1Char('\n');
 
@@ -4855,7 +4857,7 @@ void NetworkDiagnosticPanel::copyAllRows(QTableWidget* table) {
         QStringList cells;
         for (int col = 0; col < table->columnCount(); ++col) {
             auto* item = table->item(row, col);
-            cells << (item ? item->text() : QString());
+            cells << ((item != nullptr) ? item->text() : QString());
         }
         text += cells.join(QLatin1Char('\t')) + QLatin1Char('\n');
     }
@@ -4883,7 +4885,7 @@ void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString
     QStringList headers;
     for (int col = 0; col < table->columnCount(); ++col) {
         auto* item = table->horizontalHeaderItem(col);
-        headers << QStringLiteral("\"%1\"").arg(item ? item->text() : QString());
+        headers << QStringLiteral("\"%1\"").arg((item != nullptr) ? item->text() : QString());
     }
     out << headers.join(QLatin1Char(',')) << "\n";
 
@@ -4892,7 +4894,7 @@ void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString
         QStringList cells;
         for (int col = 0; col < table->columnCount(); ++col) {
             auto* item = table->item(row, col);
-            QString cell_text = item ? item->text() : QString();
+            QString cell_text = (item != nullptr) ? item->text() : QString();
             cell_text.replace(QLatin1Char('"'), QStringLiteral("\"\""));
             cells << QStringLiteral("\"%1\"").arg(cell_text);
         }
@@ -4911,7 +4913,7 @@ void NetworkDiagnosticPanel::copyTableCellValue(QTableWidget* table, int column)
         return;
     }
     auto* item = table->item(row, column);
-    if (item && !item->text().isEmpty()) {
+    if ((item != nullptr) && !item->text().isEmpty()) {
         QApplication::clipboard()->setText(item->text());
         Q_EMIT statusMessage(tr("Copied: %1").arg(item->text()), sak::kTimerBroadcastMs);
     }
@@ -4976,7 +4978,8 @@ void NetworkDiagnosticPanel::showTracerouteContextMenu(const QPoint& pos) {
         menu.addSeparator();
 
         auto* ip_item = m_traceTable->item(m_traceTable->currentRow(), 1);
-        if (ip_item && !ip_item->text().isEmpty() && ip_item->text() != QStringLiteral("*")) {
+        if ((ip_item != nullptr) && !ip_item->text().isEmpty() &&
+            ip_item->text() != QStringLiteral("*")) {
             menu.addAction(tr("Ping this Hop"), this, [this, ip_item]() {
                 m_pingTarget->setText(ip_item->text());
                 m_toolTabs->setCurrentIndex(0);
@@ -5006,7 +5009,8 @@ void NetworkDiagnosticPanel::showMtrContextMenu(const QPoint& pos) {
         menu.addSeparator();
 
         auto* ip_item = m_mtrTable->item(m_mtrTable->currentRow(), 1);
-        if (ip_item && !ip_item->text().isEmpty() && ip_item->text() != QStringLiteral("*")) {
+        if ((ip_item != nullptr) && !ip_item->text().isEmpty() &&
+            ip_item->text() != QStringLiteral("*")) {
             menu.addAction(tr("Ping this Hop"), this, [this, ip_item]() {
                 m_pingTarget->setText(ip_item->text());
                 m_toolTabs->setCurrentIndex(0);
@@ -5042,7 +5046,7 @@ void NetworkDiagnosticPanel::showDnsContextMenu(const QPoint& pos) {
         menu.addSeparator();
 
         auto* answer_item = m_dnsTable->item(m_dnsTable->currentRow(), kDnsColumnAnswers);
-        if (answer_item && !answer_item->text().isEmpty()) {
+        if ((answer_item != nullptr) && !answer_item->text().isEmpty()) {
             menu.addAction(tr("Ping First Answer"), this, [this, answer_item]() {
                 const QString first_answer =
                     answer_item->text().split(QLatin1Char(',')).first().trimmed();
@@ -5168,7 +5172,7 @@ void NetworkDiagnosticPanel::showConnectionsContextMenu(const QPoint& pos) {
 
         auto* remote_item = m_connTable->item(m_connTable->currentRow(),
                                               kConnectionColumnRemoteAddress);
-        if (remote_item && !remote_item->text().isEmpty() &&
+        if ((remote_item != nullptr) && !remote_item->text().isEmpty() &&
             remote_item->text() != QStringLiteral("0.0.0.0") &&
             remote_item->text() != QStringLiteral("::")) {
             menu.addAction(tr("Ping Remote Address"), this, [this, remote_item]() {
@@ -5198,10 +5202,10 @@ void NetworkDiagnosticPanel::copyFirewallPorts() {
     auto* local = m_fwRuleTable->item(row, kFirewallColumnLocalPorts);
     auto* remote = m_fwRuleTable->item(row, kFirewallColumnRemotePorts);
     QStringList parts;
-    if (local && !local->text().isEmpty()) {
+    if ((local != nullptr) && !local->text().isEmpty()) {
         parts << QStringLiteral("Local: %1").arg(local->text());
     }
-    if (remote && !remote->text().isEmpty()) {
+    if ((remote != nullptr) && !remote->text().isEmpty()) {
         parts << QStringLiteral("Remote: %1").arg(remote->text());
     }
     if (!parts.isEmpty()) {
@@ -5215,7 +5219,7 @@ void NetworkDiagnosticPanel::copyFirewallRuleDetails() {
     for (int col = 0; col < m_fwRuleTable->columnCount(); ++col) {
         auto* header = m_fwRuleTable->horizontalHeaderItem(col);
         auto* item = m_fwRuleTable->item(row, col);
-        if (header && item) {
+        if ((header != nullptr) && (item != nullptr)) {
             details << QStringLiteral("%1: %2").arg(header->text(), item->text());
         }
     }
@@ -5260,7 +5264,7 @@ void NetworkDiagnosticPanel::showSharesContextMenu(const QPoint& pos) {
 
         auto* share_item = m_shareTable->item(m_shareTable->currentRow(), kShareColumnName);
         const QString host = m_shareHostname->text().trimmed();
-        if (share_item && !host.isEmpty()) {
+        if ((share_item != nullptr) && !host.isEmpty()) {
             const QString unc_path = QStringLiteral("\\\\%1\\%2").arg(host, share_item->text());
             menu.addAction(tr("Copy UNC Path"), this, [this, unc_path]() {
                 QApplication::clipboard()->setText(unc_path);

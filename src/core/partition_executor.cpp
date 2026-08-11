@@ -210,7 +210,7 @@ PartitionExecutionResult PartitionExecutor::execute(const QVector<PartitionOpera
 void PartitionExecutor::cancel() {
     m_cancelled.store(true, std::memory_order_relaxed);
     const std::lock_guard<std::mutex> lock(m_active_broker_mutex);
-    if (m_active_broker) {
+    if (m_active_broker != nullptr) {
         m_active_broker->cancelCurrentTask();
     }
 }

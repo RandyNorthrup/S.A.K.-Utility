@@ -128,14 +128,14 @@ int parseTargetDriveNumber(const QString& path) {
 int handleStorageDriveNumber(HANDLE handle) {
     STORAGE_DEVICE_NUMBER deviceNumber = {};
     DWORD bytesReturned = 0;
-    if (!DeviceIoControl(handle,
-                         IOCTL_STORAGE_GET_DEVICE_NUMBER,
-                         nullptr,
-                         0,
-                         &deviceNumber,
-                         sizeof(deviceNumber),
-                         &bytesReturned,
-                         nullptr)) {
+    if (DeviceIoControl(handle,
+                        IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                        nullptr,
+                        0,
+                        &deviceNumber,
+                        sizeof(deviceNumber),
+                        &bytesReturned,
+                        nullptr) == 0) {
         return -1;
     }
     // A short "success" would leave the zero-initialized struct in place and let a
@@ -184,7 +184,7 @@ bool physicalDriveBacksWindows(int driveNumber) {
                                     &bytesReturned,
                                     nullptr);
     CloseHandle(hVol);
-    if (!ok) {
+    if (ok == 0) {
         return false;
     }
     for (DWORD i = 0; i < extents->NumberOfDiskExtents && i < kMaxExtents; ++i) {
@@ -467,14 +467,14 @@ bool FlashWorker::queryDeviceSectorSize() {
 
     DISK_GEOMETRY geometry{};
     DWORD bytesReturned = 0;
-    if (DeviceIoControl(m_deviceHandle,
-                        IOCTL_DISK_GET_DRIVE_GEOMETRY,
-                        nullptr,
-                        0,
-                        &geometry,
-                        sizeof(geometry),
-                        &bytesReturned,
-                        nullptr) &&
+    if ((DeviceIoControl(m_deviceHandle,
+                         IOCTL_DISK_GET_DRIVE_GEOMETRY,
+                         nullptr,
+                         0,
+                         &geometry,
+                         sizeof(geometry),
+                         &bytesReturned,
+                         nullptr) != 0) &&
         geometry.BytesPerSector > 0) {
         m_sectorSize = static_cast<qint64>(geometry.BytesPerSector);
         sak::logInfo(
@@ -500,14 +500,14 @@ qint64 FlashWorker::queryDeviceCapacity() {
     }
     GET_LENGTH_INFORMATION lengthInfo{};
     DWORD bytesReturned = 0;
-    if (!DeviceIoControl(m_deviceHandle,
-                         IOCTL_DISK_GET_LENGTH_INFO,
-                         nullptr,
-                         0,
-                         &lengthInfo,
-                         sizeof(lengthInfo),
-                         &bytesReturned,
-                         nullptr)) {
+    if (DeviceIoControl(m_deviceHandle,
+                        IOCTL_DISK_GET_LENGTH_INFO,
+                        nullptr,
+                        0,
+                        &lengthInfo,
+                        sizeof(lengthInfo),
+                        &bytesReturned,
+                        nullptr) == 0) {
         sak::logWarning(QString("Could not query device capacity (error %1)")
                             .arg(GetLastError())
                             .toStdString());
@@ -545,8 +545,10 @@ bool FlashWorker::imageFitsDevice(qint64 imageBytes, qint64 deviceBytes) {
 
 bool FlashWorker::lockVolume() {
     DWORD bytesReturned = 0;
-    const bool locked = DeviceIoControl(
-        m_deviceHandle, FSCTL_LOCK_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr);
+    const bool locked =
+        DeviceIoControl(
+            m_deviceHandle, FSCTL_LOCK_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr) !=
+        0;
     if (!locked) {
         // Non-fatal: a physical-drive handle has no single volume to lock, and
         // the coordinator already fail-closed dismounted every child volume.
@@ -562,7 +564,7 @@ bool FlashWorker::unlockVolume() {
     // the caller should not be told the unlock succeeded when it did not.
     const BOOL ok = DeviceIoControl(
         m_deviceHandle, FSCTL_UNLOCK_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr);
-    if (!ok) {
+    if (ok == 0) {
         sak::logInfo("Volume unlock not performed (physical-drive target / no lock held)");
     }
     return ok != 0;
@@ -570,8 +572,14 @@ bool FlashWorker::unlockVolume() {
 
 bool FlashWorker::dismountVolume() {
     DWORD bytesReturned = 0;
-    const bool dismounted = DeviceIoControl(
-        m_deviceHandle, FSCTL_DISMOUNT_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr);
+    const bool dismounted = DeviceIoControl(m_deviceHandle,
+                                            FSCTL_DISMOUNT_VOLUME,
+                                            nullptr,
+                                            0,
+                                            nullptr,
+                                            0,
+                                            &bytesReturned,
+                                            nullptr) != 0;
     if (!dismounted) {
         // Non-fatal: see lockVolume(); the coordinator owns the authoritative,
         // fail-closed dismount performed before this worker started.
@@ -732,7 +740,7 @@ bool FlashWorker::writeImage() {
 
 bool FlashWorker::finalizeWrite() {
     // Flush buffers and check for failure to prevent silent data loss.
-    if (!FlushFileBuffers(m_deviceHandle)) {
+    if (FlushFileBuffers(m_deviceHandle) == 0) {
         DWORD const flushError = GetLastError();
         sak::logError(
             QString("FlushFileBuffers failed with error %1").arg(flushError).toStdString());
@@ -769,11 +777,11 @@ bool FlashWorker::writeChunk(const char* buffer, qint64 bytesRead) {
     }
 
     DWORD bytesWrittenThisTime = 0;
-    if (!WriteFile(m_deviceHandle,
-                   buffer,
-                   static_cast<DWORD>(bytesRead),
-                   &bytesWrittenThisTime,
-                   nullptr)) {
+    if (WriteFile(m_deviceHandle,
+                  buffer,
+                  static_cast<DWORD>(bytesRead),
+                  &bytesWrittenThisTime,
+                  nullptr) == 0) {
         DWORD const last_error = GetLastError();
         sak::logError(QString("WriteFile failed with error %1").arg(last_error).toStdString());
         return false;
@@ -934,17 +942,17 @@ bool FlashWorker::compareDeviceBlock(sak::ValidationResult& result,
     Q_ASSERT(targetData != nullptr);
     LARGE_INTEGER li;
     li.QuadPart = offset_bytes;
-    if (!SetFilePointerEx(m_deviceHandle, li, nullptr, FILE_BEGIN)) {
+    if (SetFilePointerEx(m_deviceHandle, li, nullptr, FILE_BEGIN) == 0) {
         result.errors.append(QString("Failed to seek target to offset %1").arg(offset_bytes));
         return false;
     }
 
     DWORD bytesReadFromDevice = 0;
-    if (!ReadFile(m_deviceHandle,
-                  targetData,
-                  static_cast<DWORD>(compareLen),
-                  &bytesReadFromDevice,
-                  nullptr)) {
+    if (ReadFile(m_deviceHandle,
+                 targetData,
+                 static_cast<DWORD>(compareLen),
+                 &bytesReadFromDevice,
+                 nullptr) == 0) {
         result.errors.append(QString("Failed to read from device at offset %1").arg(offset_bytes));
         return false;
     }
@@ -1037,7 +1045,7 @@ void FlashWorker::verifySmallImage(sak::ValidationResult& result) {
 
     LARGE_INTEGER li;
     li.QuadPart = 0;
-    if (!SetFilePointerEx(m_deviceHandle, li, nullptr, FILE_BEGIN)) {
+    if (SetFilePointerEx(m_deviceHandle, li, nullptr, FILE_BEGIN) == 0) {
         result.passed = false;
         result.errors.append("Failed to seek device for small-image verification");
         return;
@@ -1051,11 +1059,11 @@ void FlashWorker::verifySmallImage(sak::ValidationResult& result) {
         return;
     }
     DWORD bytesReadFromDevice = 0;
-    if (!ReadFile(m_deviceHandle,
+    if ((ReadFile(m_deviceHandle,
                   targetBuffer.data(),
                   static_cast<DWORD>(alignedLen),
                   &bytesReadFromDevice,
-                  nullptr) ||
+                  nullptr) == 0) ||
         static_cast<qint64>(bytesReadFromDevice) < len) {
         result.passed = false;
         result.errors.append("Failed to read full device for small-image verification");
@@ -1081,7 +1089,7 @@ QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
     // Seek to beginning
     LARGE_INTEGER li;
     li.QuadPart = 0;
-    if (!SetFilePointerEx(handle, li, nullptr, FILE_BEGIN)) {
+    if (SetFilePointerEx(handle, li, nullptr, FILE_BEGIN) == 0) {
         sak::logError("Failed to seek to beginning for checksum");
         return QString();
     }
@@ -1110,8 +1118,8 @@ QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
         }
 
         DWORD bytesRead = 0;
-        if (!ReadFile(
-                handle, buffer.data(), static_cast<DWORD>(alignedRead), &bytesRead, nullptr)) {
+        if (ReadFile(handle, buffer.data(), static_cast<DWORD>(alignedRead), &bytesRead, nullptr) ==
+            0) {
             sak::logError(
                 QString("ReadFile failed with error %1").arg(GetLastError()).toStdString());
             return QString();

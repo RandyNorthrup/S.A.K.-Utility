@@ -147,10 +147,10 @@ bool initialize_aes_key(BCRYPT_ALG_HANDLE& hAlg,
 }
 
 void destroy_aes_key(BCRYPT_ALG_HANDLE hAlg, BCRYPT_KEY_HANDLE hKey) {
-    if (hKey) {
+    if (hKey != nullptr) {
         BCryptDestroyKey(hKey);
     }
-    if (hAlg) {
+    if (hAlg != nullptr) {
         BCryptCloseAlgorithmProvider(hAlg, 0);
     }
 }
@@ -227,7 +227,7 @@ public:
     }
 
     [[nodiscard]] bool update(const QByteArray& data) {
-        if (!m_hash || data.isEmpty()) {
+        if ((m_hash == nullptr) || data.isEmpty()) {
             return m_hash != nullptr;
         }
         if (!bcrypt_length_ok(data.size())) {
@@ -245,7 +245,7 @@ public:
     }
 
     [[nodiscard]] QByteArray finish() {
-        if (!m_hash) {
+        if (m_hash == nullptr) {
             return {};
         }
         QByteArray tag(kEncryptionMacBytes, 0);
@@ -260,11 +260,11 @@ public:
 
 private:
     void reset() {
-        if (m_hash) {
+        if (m_hash != nullptr) {
             BCryptDestroyHash(m_hash);
             m_hash = nullptr;
         }
-        if (m_alg) {
+        if (m_alg != nullptr) {
             BCryptCloseAlgorithmProvider(m_alg, 0);
             m_alg = nullptr;
         }

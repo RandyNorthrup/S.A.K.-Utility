@@ -115,7 +115,7 @@ QString recycleOutcomeError(const SHFILEOPSTRUCTW& op, int shell_result, const Q
     }
     // A user or the shell can abort mid-flight with a zero return, so the item may never
     // have reached the bin even though the call "succeeded".
-    if (op.fAnyOperationsAborted) {
+    if (op.fAnyOperationsAborted != 0) {
         return QStringLiteral("The recycle of '%1' was aborted before it completed.").arg(absolute);
     }
     return {};

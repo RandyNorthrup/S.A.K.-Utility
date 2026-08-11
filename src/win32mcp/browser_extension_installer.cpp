@@ -140,20 +140,20 @@ QString updateXmlPath(const ExtensionInstallConfig& c) {
     QDir().mkpath(QFileInfo(path).absolutePath());
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
-        if (err) {
+        if (err != nullptr) {
             *err = QStringLiteral("cannot write ") + path + QStringLiteral(": ") + f.errorString();
         }
         return false;
     }
     if (f.write(bytes) != bytes.size()) {
         f.cancelWriting();
-        if (err) {
+        if (err != nullptr) {
             *err = QStringLiteral("short write ") + path;
         }
         return false;
     }
     if (!f.commit()) {
-        if (err) {
+        if (err != nullptr) {
             *err = QStringLiteral("could not finalize ") + path + QStringLiteral(": ") +
                    f.errorString();
         }
@@ -234,7 +234,7 @@ class RegKey {
 public:
     RegKey() = default;
     ~RegKey() {
-        if (h_) {
+        if (h_ != nullptr) {
             RegCloseKey(h_);
         }
     }

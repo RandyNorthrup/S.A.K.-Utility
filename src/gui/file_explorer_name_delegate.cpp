@@ -213,7 +213,7 @@ QWidget* FileExplorerNameDelegate::createEditor(QWidget* parent,
 
 void FileExplorerNameDelegate::setEditorData(QWidget* editor, const QModelIndex& index) const {
     auto* line_edit = qobject_cast<FileExplorerRenameLineEdit*>(editor);
-    if (!line_edit) {
+    if (line_edit == nullptr) {
         QStyledItemDelegate::setEditorData(editor, index);
         return;
     }

@@ -94,7 +94,7 @@ bool AiMcpSessionPool::ensureSessionOpen(Entry& entry,
     if (entry.detached) {
         // closeAll() tore this Entry down and dropped it from the map. Refuse to reopen so a call
         // that grabbed the handle mid-teardown cannot spawn a process after shutdown.
-        if (error) {
+        if (error != nullptr) {
             *error = QStringLiteral("MCP session pool is closing");
         }
         return false;
@@ -113,14 +113,14 @@ bool AiMcpSessionPool::ensureSessionOpen(Entry& entry,
 QJsonObject AiMcpSessionPool::callTool(const AiMcpStdioCallRequest& request,
                                        QString* error_message) {
     if (request.command.trimmed().isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP stdio command is empty");
         }
         return {};
     }
     const std::shared_ptr<Entry> entry = entryFor(request);
     if (!entry) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP session pool is at capacity");
         }
         return {};
@@ -129,7 +129,7 @@ QJsonObject AiMcpSessionPool::callTool(const AiMcpStdioCallRequest& request,
 
     QString error;
     if (!ensureSessionOpen(*entry, request, &error)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = error;
         }
         return {};
@@ -141,12 +141,12 @@ QJsonObject AiMcpSessionPool::callTool(const AiMcpStdioCallRequest& request,
         // The call failed -- the process may have died. Drop the session so the next
         // call reopens a fresh one rather than writing into a corpse.
         entry->session.reset();
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = error;
         }
         return {};
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     // Re-wrap into the full JSON-RPC message shape the one-shot client returns, so
@@ -157,14 +157,14 @@ QJsonObject AiMcpSessionPool::callTool(const AiMcpStdioCallRequest& request,
 QVector<AiMcpToolDescriptor> AiMcpSessionPool::listTools(const AiMcpStdioCallRequest& request,
                                                          QString* error_message) {
     if (request.command.trimmed().isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP stdio command is empty");
         }
         return {};
     }
     const std::shared_ptr<Entry> entry = entryFor(request);
     if (!entry) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP session pool is at capacity");
         }
         return {};
@@ -173,7 +173,7 @@ QVector<AiMcpToolDescriptor> AiMcpSessionPool::listTools(const AiMcpStdioCallReq
 
     QString error;
     if (!ensureSessionOpen(*entry, request, &error)) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = error;
         }
         return {};
@@ -182,12 +182,12 @@ QVector<AiMcpToolDescriptor> AiMcpSessionPool::listTools(const AiMcpStdioCallReq
     const QVector<AiMcpToolDescriptor> tools = entry->session->listTools(&error);
     if (!error.isEmpty()) {
         entry->session.reset();
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = error;
         }
         return {};
     }
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
     return tools;

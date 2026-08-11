@@ -561,7 +561,7 @@ void WifiManagerPanel::connectSignals() {
 
     // Wire the CheckHeaderView "select all" checkbox
     auto* checkHdr = qobject_cast<CheckHeaderView*>(m_network_table->horizontalHeader());
-    if (checkHdr) {
+    if (checkHdr != nullptr) {
         connect(
             checkHdr, &CheckHeaderView::checkToggled, this, &WifiManagerPanel::setAllCheckStates);
     }
@@ -571,7 +571,7 @@ void WifiManagerPanel::setAllCheckStates(bool allChecked) {
     m_network_table->blockSignals(true);
     for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
         auto* item = m_network_table->item(row_index, COL_SELECT);
-        if (item) {
+        if (item != nullptr) {
             item->setCheckState(allChecked ? Qt::Checked : Qt::Unchecked);
         }
     }
@@ -1368,7 +1368,7 @@ void WifiManagerPanel::onSaveTableClicked() {
     QList<int> checkedRows;
     for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
         auto* item = m_network_table->item(row_index, COL_SELECT);
-        if (item && item->checkState() == Qt::Checked) {
+        if ((item != nullptr) && item->checkState() == Qt::Checked) {
             checkedRows.append(row_index);
         }
     }
@@ -1707,14 +1707,14 @@ void WifiManagerPanel::onSelectionChanged() {
     int checked = 0;
     for (int row_index = 0; row_index < total; ++row_index) {
         auto* item = m_network_table->item(row_index, COL_SELECT);
-        if (item && item->checkState() == Qt::Checked) {
+        if ((item != nullptr) && item->checkState() == Qt::Checked) {
             ++checked;
         }
     }
 
     // Update header checkbox tri-state
     auto* checkHdr = qobject_cast<CheckHeaderView*>(m_network_table->horizontalHeader());
-    if (checkHdr) {
+    if (checkHdr != nullptr) {
         if (total == 0 || checked == 0) {
             checkHdr->setTriState(Qt::Unchecked);
         } else if (checked == total) {
@@ -1762,7 +1762,7 @@ void WifiManagerPanel::onSelectionChanged() {
 }
 
 void WifiManagerPanel::onTableItemChanged(QTableWidgetItem* item) {
-    if (item && item->column() == COL_SELECT) {
+    if ((item != nullptr) && item->column() == COL_SELECT) {
         onSelectionChanged();
     }
 }
@@ -1795,7 +1795,7 @@ QList<int> WifiManagerPanel::checkedWifiRows() const {
     QList<int> checkedRows;
     for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
         auto* item = m_network_table->item(row_index, COL_SELECT);
-        if (item && item->checkState() == Qt::Checked) {
+        if ((item != nullptr) && item->checkState() == Qt::Checked) {
             checkedRows.append(row_index);
         }
     }
@@ -1863,7 +1863,7 @@ QPair<int, int> WifiManagerPanel::installWlanProfiles(const QList<WifiConfig>& c
     for (int index = 0; index < configs.size(); ++index) {
         // Cooperative cancellation: stop between profiles so teardown does not wait for every
         // remaining netsh call. Already-installed profiles stay (a partial install is honest).
-        if (cancel && cancel->load()) {
+        if ((cancel != nullptr) && cancel->load()) {
             break;
         }
         const QString xml = WifiManagerPanel::buildWlanProfileXml(configs.at(index));
@@ -2293,7 +2293,7 @@ WifiManagerPanel::WifiConfig WifiManagerPanel::configFromRow(int row) const {
     cfg.ssid = text(COL_SSID);
     // Real password is stored in UserRole (display shows dots)
     auto* pwItem = m_network_table->item(row, COL_PASSWORD);
-    cfg.password = pwItem ? pwItem->data(Qt::UserRole).toString() : QString{};
+    cfg.password = (pwItem != nullptr) ? pwItem->data(Qt::UserRole).toString() : QString{};
     cfg.security = text(COL_SECURITY);
     cfg.hidden = text(COL_HIDDEN).compare("Yes", Qt::CaseInsensitive) == 0;
     return cfg;
@@ -2312,7 +2312,7 @@ QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::checkedConfigs() const {
     QList<WifiConfig> list;
     for (int row_index = 0; row_index < m_network_table->rowCount(); ++row_index) {
         auto* item = m_network_table->item(row_index, COL_SELECT);
-        if (item && item->checkState() == Qt::Checked) {
+        if ((item != nullptr) && item->checkState() == Qt::Checked) {
             list.append(configFromRow(row_index));
         }
     }
@@ -2325,7 +2325,7 @@ QList<WifiManagerPanel::WifiConfig> WifiManagerPanel::checkedConfigs() const {
 bool WifiManagerPanel::rowMatchesSearch(int row, const QString& text) const {
     for (int col = COL_LOCATION; col < COL_COUNT; ++col) {
         auto* item = m_network_table->item(row, col);
-        if (item && item->text().contains(text, Qt::CaseInsensitive)) {
+        if ((item != nullptr) && item->text().contains(text, Qt::CaseInsensitive)) {
             return true;
         }
     }
@@ -2347,7 +2347,7 @@ void WifiManagerPanel::updateSearchMatches(const QString& text) {
 static void setRowBackground(QTableWidget* table, int row, const QBrush& brush) {
     for (int col = COL_LOCATION; col < COL_COUNT; ++col) {
         auto* item = table->item(row, col);
-        if (item) {
+        if (item != nullptr) {
             item->setBackground(brush);
         }
     }

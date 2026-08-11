@@ -257,7 +257,7 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
     //   Bit 7: Self-test log has errors
     // Bits 3-7 are informational; only bits 0-2 are true failures
     const int exit_code = result.exit_code;
-    if (exit_code & kSmartctlFatalExitMask) {
+    if ((exit_code & kSmartctlFatalExitMask) != 0) {
         const QString stderr_text = result.std_err;
         logError("smartctl failed for drive {} (exit {}): {}",
                  disk_number,

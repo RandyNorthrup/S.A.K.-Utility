@@ -38,8 +38,8 @@ DWORD buildStandardUserDacl(PSID userSid, PACL* outAcl) {
     DWORD systemSize = sizeof(systemSid);
     BYTE adminSid[SECURITY_MAX_SID_SIZE];
     DWORD adminSize = sizeof(adminSid);
-    if (!CreateWellKnownSid(WinLocalSystemSid, nullptr, systemSid, &systemSize) ||
-        !CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, adminSid, &adminSize)) {
+    if ((CreateWellKnownSid(WinLocalSystemSid, nullptr, systemSid, &systemSize) == 0) ||
+        (CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, adminSid, &adminSize) == 0)) {
         return GetLastError();
     }
 
@@ -179,12 +179,12 @@ DWORD applySecurityNoFollow(const QString& path, DWORD access, const SecurityCha
         return GetLastError();
     }
     BY_HANDLE_FILE_INFORMATION info;
-    if (!GetFileInformationByHandle(h, &info)) {
+    if (GetFileInformationByHandle(h, &info) == 0) {
         const DWORD e = GetLastError();
         CloseHandle(h);
         return e;
     }
-    if (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+    if ((info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0u) {
         CloseHandle(h);
         return kReparseRefused;
     }
@@ -240,10 +240,10 @@ std::expected<void, sak::error_code> interpretSecurityResult(DWORD result,
 // Access-rights mask a SetSecurityInfo call needs for the given SECURITY_INFORMATION.
 DWORD accessForSecurityInfo(SECURITY_INFORMATION si) {
     DWORD access = READ_CONTROL;
-    if (si & (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION)) {
+    if ((si & (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION)) != 0u) {
         access |= WRITE_OWNER;  // primary group is set through WRITE_OWNER too
     }
-    if (si & DACL_SECURITY_INFORMATION) {
+    if ((si & DACL_SECURITY_INFORMATION) != 0u) {
         access |= WRITE_DAC;
     }
     return access;
@@ -257,10 +257,10 @@ DWORD accessForSecurityInfo(SECURITY_INFORMATION si) {
 bool collectParsedDacl(PSECURITY_DESCRIPTOR pSD, SECURITY_INFORMATION& si, SecurityChange& change) {
     BOOL daclPresent = FALSE;
     BOOL daclDefaulted = FALSE;
-    if (!GetSecurityDescriptorDacl(pSD, &daclPresent, &change.dacl, &daclDefaulted)) {
+    if (GetSecurityDescriptorDacl(pSD, &daclPresent, &change.dacl, &daclDefaulted) == 0) {
         return false;
     }
-    if (!daclPresent) {
+    if (daclPresent == 0) {
         // No DACL specified: leave the object's DACL untouched (do not set the bit).
         change.dacl = nullptr;
         return true;
@@ -272,11 +272,11 @@ bool collectParsedDacl(PSECURITY_DESCRIPTOR pSD, SECURITY_INFORMATION& si, Secur
     si |= DACL_SECURITY_INFORMATION;
     SECURITY_DESCRIPTOR_CONTROL control = 0;
     DWORD revision = 0;
-    if (!GetSecurityDescriptorControl(pSD, &control, &revision)) {
+    if (GetSecurityDescriptorControl(pSD, &control, &revision) == 0) {
         return false;
     }
-    si |= (control & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION
-                                        : UNPROTECTED_DACL_SECURITY_INFORMATION;
+    si |= ((control & SE_DACL_PROTECTED) != 0) ? PROTECTED_DACL_SECURITY_INFORMATION
+                                               : UNPROTECTED_DACL_SECURITY_INFORMATION;
     return true;
 }
 
@@ -296,15 +296,15 @@ DWORD applyParsedSecurityDescriptor(const QString& path, PSECURITY_DESCRIPTOR pS
     // query on a freshly-parsed descriptor is an accessor error -> fail closed.
     SECURITY_DESCRIPTOR_CONTROL sdControl = 0;
     DWORD sdRevision = 0;
-    if (!GetSecurityDescriptorControl(pSD, &sdControl, &sdRevision)) {
+    if (GetSecurityDescriptorControl(pSD, &sdControl, &sdRevision) == 0) {
         return ERROR_INVALID_SECURITY_DESCR;
     }
-    if (sdControl & SE_SACL_PRESENT) {
+    if ((sdControl & SE_SACL_PRESENT) != 0) {
         return kSaclUnsupported;
     }
 
     BOOL ownerDefaulted = FALSE;
-    if (!GetSecurityDescriptorOwner(pSD, &change.owner, &ownerDefaulted)) {
+    if (GetSecurityDescriptorOwner(pSD, &change.owner, &ownerDefaulted) == 0) {
         return ERROR_INVALID_SECURITY_DESCR;  // accessor error -> fail closed
     }
     if (change.owner != nullptr) {
@@ -312,7 +312,7 @@ DWORD applyParsedSecurityDescriptor(const QString& path, PSECURITY_DESCRIPTOR pS
     }
 
     BOOL groupDefaulted = FALSE;
-    if (!GetSecurityDescriptorGroup(pSD, &change.group, &groupDefaulted)) {
+    if (GetSecurityDescriptorGroup(pSD, &change.group, &groupDefaulted) == 0) {
         return ERROR_INVALID_SECURITY_DESCR;  // accessor error -> fail closed
     }
     if (change.group != nullptr) {
@@ -430,7 +430,7 @@ QString PermissionManager::getOwner(const QString& path) {
 
     LPWSTR sidString = nullptr;
     QString ownerSid;
-    if (ConvertSidToStringSidW(pOwnerSid, &sidString)) {
+    if (ConvertSidToStringSidW(pOwnerSid, &sidString) != 0) {
         ownerSid = QString::fromWCharArray(sidString);
         LocalFree(sidString);
     }
@@ -465,12 +465,12 @@ QString PermissionManager::getSecurityDescriptorSddl(const QString& path) {
     }
 
     LPWSTR sddlString = nullptr;
-    if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(
+    if (ConvertSecurityDescriptorToStringSecurityDescriptorW(
             pSD,
             SDDL_REVISION_1,
             OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
             &sddlString,
-            nullptr)) {
+            nullptr) == 0) {
         m_lastError = QString("Failed to convert security descriptor: %1").arg(GetLastError());
         LocalFree(pSD);
         return QString();
@@ -499,8 +499,8 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
     }
 
     PSECURITY_DESCRIPTOR pSD = nullptr;
-    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            const_cast<LPWSTR>(sddl.toStdWString().c_str()), SDDL_REVISION_1, &pSD, nullptr)) {
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            const_cast<LPWSTR>(sddl.toStdWString().c_str()), SDDL_REVISION_1, &pSD, nullptr) == 0) {
         m_lastError = QString("Failed to parse SDDL: %1").arg(GetLastError());
         return false;
     }
@@ -542,7 +542,7 @@ auto PermissionManager::tryStripPermissions(const QString& path)
     // access. The change is applied to a verified no-follow handle so a reparse
     // swap cannot redirect it (see applySecurityNoFollow).
     ACL emptyDacl;
-    if (!InitializeAcl(&emptyDacl, sizeof(ACL), ACL_REVISION)) {
+    if (InitializeAcl(&emptyDacl, sizeof(ACL), ACL_REVISION) == 0) {
         m_lastError = QString("Failed to initialize empty DACL: %1").arg(GetLastError());
         return std::unexpected(sak::error_code::permission_update_failed);
     }
@@ -573,7 +573,7 @@ auto PermissionManager::tryTakeOwnership(const QString& path, const QString& use
     }
 
     PSID pSid = nullptr;
-    if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
+    if (ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid) == 0) {
         m_lastError = QString("Invalid SID: %1").arg(GetLastError());
         return std::unexpected(sak::error_code::invalid_argument);
     }
@@ -597,7 +597,7 @@ auto PermissionManager::trySetStandardUserPermissions(const QString& path, const
     }
 
     PSID pSid = nullptr;
-    if (!ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid)) {
+    if (ConvertStringSidToSidW(const_cast<LPWSTR>(userSID.toStdWString().c_str()), &pSid) == 0) {
         m_lastError = QString("Invalid SID: %1").arg(GetLastError());
         return std::unexpected(sak::error_code::invalid_argument);
     }
@@ -635,12 +635,13 @@ bool PermissionManager::enablePrivilege(const wchar_t* privilegeName) {
     Q_ASSERT(privilegeName);
     HANDLE hToken = nullptr;
 
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken) ==
+        0) {
         return false;
     }
 
     LUID luid;
-    if (!LookupPrivilegeValueW(nullptr, privilegeName, &luid)) {
+    if (LookupPrivilegeValueW(nullptr, privilegeName, &luid) == 0) {
         CloseHandle(hToken);
         return false;
     }

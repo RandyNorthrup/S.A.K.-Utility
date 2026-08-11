@@ -156,8 +156,8 @@ ImageFlasherPanel::~ImageFlasherPanel() {
     // of this panel). Destroying a running QThread aborts the process, so cancel
     // the creator -- it polls an atomic flag -- and wait for the worker to
     // unwind before the QObject child teardown deletes the thread.
-    if (m_windowsUsbThread && m_windowsUsbThread->isRunning()) {
-        if (m_windowsUsbCreator) {
+    if ((m_windowsUsbThread != nullptr) && m_windowsUsbThread->isRunning()) {
+        if (m_windowsUsbCreator != nullptr) {
             m_windowsUsbCreator->cancel();
         }
         m_windowsUsbThread->quit();
@@ -888,7 +888,7 @@ void ImageFlasherPanel::notifyFlashFinished(const FlashResult& result) {
         return;
     }
 
-    if (!m_notificationTray) {
+    if (m_notificationTray == nullptr) {
         m_notificationTray = new QSystemTrayIcon(
             QIcon(QStringLiteral(":/icons/icons/panel_image_flasher.svg")), this);
     }
@@ -961,7 +961,7 @@ void ImageFlasherPanel::onCancelClicked() {
         // Signal every writer that currently exists. Both cancels set an atomic flag the
         // worker polls, and both are already invoked this way from the destructor.
         bool cancel_signalled = false;
-        if (m_windowsUsbCreator) {
+        if (m_windowsUsbCreator != nullptr) {
             m_windowsUsbCreator->cancel();
             cancel_signalled = true;
         }

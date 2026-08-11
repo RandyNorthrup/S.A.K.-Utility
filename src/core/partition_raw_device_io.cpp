@@ -36,7 +36,7 @@ namespace sak {
 namespace {
 
 void setError(QString* errorMessage, const QString& value) {
-    if (errorMessage) {
+    if (errorMessage != nullptr) {
         *errorMessage = value;
     }
 }
@@ -119,7 +119,7 @@ public:
         if (handle_ == INVALID_HANDLE_VALUE || !writable_) {
             return true;
         }
-        if (!FlushFileBuffers(handle_)) {
+        if (FlushFileBuffers(handle_) == 0) {
             setErrorString(win32ErrorMessage(GetLastError()));
             return false;
         }
@@ -136,13 +136,13 @@ public:
         }
         LARGE_INTEGER target{};
         target.QuadPart = pos;
-        if (!SetFilePointerEx(handle_, target, nullptr, FILE_BEGIN)) {
+        if (SetFilePointerEx(handle_, target, nullptr, FILE_BEGIN) == 0) {
             if (!writable_ || (pos % kRawAlignment) == 0) {
                 setErrorString(win32ErrorMessage(GetLastError()));
                 return false;
             }
             target.QuadPart = alignedStartFor(pos);
-            if (!SetFilePointerEx(handle_, target, nullptr, FILE_BEGIN)) {
+            if (SetFilePointerEx(handle_, target, nullptr, FILE_BEGIN) == 0) {
                 setErrorString(win32ErrorMessage(GetLastError()));
                 return false;
             }
@@ -158,7 +158,7 @@ public:
             return -1;
         }
         LARGE_INTEGER fileSize{};
-        if (GetFileSizeEx(handle_, &fileSize)) {
+        if (GetFileSizeEx(handle_, &fileSize) != 0) {
             return fileSize.QuadPart;
         }
         // A physical-drive / partition / volume handle rejects GetFileSizeEx; ask the
@@ -169,7 +169,7 @@ public:
 
 protected:
     qint64 readData(char* data, qint64 maxSize) override {
-        if (handle_ == INVALID_HANDLE_VALUE || !data || maxSize < 0) {
+        if (handle_ == INVALID_HANDLE_VALUE || (data == nullptr) || maxSize < 0) {
             return -1;
         }
         if (maxSize == 0) {
@@ -185,7 +185,7 @@ protected:
             setErrorString(QStringLiteral("Raw device helper is read-only"));
             return -1;
         }
-        if (handle_ == INVALID_HANDLE_VALUE || !data || maxSize < 0) {
+        if (handle_ == INVALID_HANDLE_VALUE || (data == nullptr) || maxSize < 0) {
             return -1;
         }
         if (maxSize == 0) {
@@ -217,7 +217,7 @@ private:
                             &info,
                             sizeof(info),
                             &returned,
-                            nullptr)) {
+                            nullptr) != 0) {
             return info.Length.QuadPart;
         }
         return -1;
@@ -237,7 +237,7 @@ private:
     [[nodiscard]] qint64 readAligned(char* data, qint64 maxSize) {
         const DWORD bytesRequested = clampedDword(maxSize);
         DWORD bytesRead = 0;
-        if (!ReadFile(handle_, data, bytesRequested, &bytesRead, nullptr)) {
+        if (ReadFile(handle_, data, bytesRequested, &bytesRead, nullptr) == 0) {
             setErrorString(win32ErrorMessage(GetLastError()));
             return -1;
         }
@@ -261,7 +261,7 @@ private:
 
         std::vector<char> scratch(bytesRequested);
         DWORD bytesRead = 0;
-        if (!ReadFile(handle_, scratch.data(), bytesRequested, &bytesRead, nullptr)) {
+        if (ReadFile(handle_, scratch.data(), bytesRequested, &bytesRead, nullptr) == 0) {
             setErrorString(win32ErrorMessage(GetLastError()));
             return -1;
         }
@@ -286,7 +286,7 @@ private:
     [[nodiscard]] bool seekHandle(qint64 offset) {
         LARGE_INTEGER target{};
         target.QuadPart = offset;
-        if (SetFilePointerEx(handle_, target, nullptr, FILE_BEGIN)) {
+        if (SetFilePointerEx(handle_, target, nullptr, FILE_BEGIN) != 0) {
             return true;
         }
         setErrorString(win32ErrorMessage(GetLastError()));
@@ -296,7 +296,7 @@ private:
     [[nodiscard]] qint64 writeAligned(const char* data, qint64 maxSize) {
         const DWORD bytesRequested = clampedDword(maxSize);
         DWORD bytesWritten = 0;
-        if (!WriteFile(handle_, data, bytesRequested, &bytesWritten, nullptr)) {
+        if (WriteFile(handle_, data, bytesRequested, &bytesWritten, nullptr) == 0) {
             setErrorString(win32ErrorMessage(GetLastError()));
             return -1;
         }
@@ -326,7 +326,7 @@ private:
 
         std::vector<char> scratch(bytesRequested);
         DWORD bytesRead = 0;
-        if (!ReadFile(handle_, scratch.data(), bytesRequested, &bytesRead, nullptr)) {
+        if (ReadFile(handle_, scratch.data(), bytesRequested, &bytesRead, nullptr) == 0) {
             setErrorString(win32ErrorMessage(GetLastError()));
             return -1;
         }
@@ -340,7 +340,7 @@ private:
         }
 
         DWORD bytesWritten = 0;
-        if (!WriteFile(handle_, scratch.data(), bytesRequested, &bytesWritten, nullptr)) {
+        if (WriteFile(handle_, scratch.data(), bytesRequested, &bytesWritten, nullptr) == 0) {
             setErrorString(win32ErrorMessage(GetLastError()));
             return -1;
         }
@@ -374,18 +374,18 @@ bool copyHandleRange(HANDLE src, HANDLE dst, qint64 offset, qint64 length) {
     while (remaining > 0) {
         LARGE_INTEGER seek{};
         seek.QuadPart = position;
-        if (!SetFilePointerEx(src, seek, nullptr, FILE_BEGIN) ||
-            !SetFilePointerEx(dst, seek, nullptr, FILE_BEGIN)) {
+        if ((SetFilePointerEx(src, seek, nullptr, FILE_BEGIN) == 0) ||
+            (SetFilePointerEx(dst, seek, nullptr, FILE_BEGIN) == 0)) {
             return false;
         }
         const DWORD want =
             static_cast<DWORD>(std::min<qint64>(remaining, static_cast<qint64>(kChunk)));
         DWORD got = 0;
-        if (!ReadFile(src, buffer.data(), want, &got, nullptr) || got == 0) {
+        if ((ReadFile(src, buffer.data(), want, &got, nullptr) == 0) || got == 0) {
             return false;
         }
         DWORD wrote = 0;
-        if (!WriteFile(dst, buffer.data(), got, &wrote, nullptr) || wrote != got) {
+        if ((WriteFile(dst, buffer.data(), got, &wrote, nullptr) == 0) || wrote != got) {
             return false;
         }
         position += got;
@@ -414,7 +414,7 @@ bool copyAllocatedRanges(HANDLE src, HANDLE dst, qint64 size) {
                                         &returned,
                                         nullptr);
         const DWORD error = GetLastError();
-        if (!ok && error != ERROR_MORE_DATA) {
+        if ((ok == 0) && error != ERROR_MORE_DATA) {
             return false;
         }
         const size_t count = returned / sizeof(FILE_ALLOCATED_RANGE_BUFFER);
@@ -429,7 +429,7 @@ bool copyAllocatedRanges(HANDLE src, HANDLE dst, qint64 size) {
         }
         const auto& last = ranges[count - 1];
         scanStart = last.FileOffset.QuadPart + last.Length.QuadPart;
-        if (ok) {
+        if (ok != 0) {
             break;
         }
     }
@@ -447,7 +447,7 @@ bool copyFileSparseWindows(const QString& source,
                                    FILE_ATTRIBUTE_NORMAL,
                                    nullptr);
     LARGE_INTEGER size{};
-    if (src == INVALID_HANDLE_VALUE || !GetFileSizeEx(src, &size)) {
+    if (src == INVALID_HANDLE_VALUE || (GetFileSizeEx(src, &size) == 0)) {
         setError(errorMessage, win32ErrorMessage(GetLastError()));
         if (src != INVALID_HANDLE_VALUE) {
             CloseHandle(src);
@@ -472,8 +472,9 @@ bool copyFileSparseWindows(const QString& source,
     // so a caller never treats a write-cache/media failure as a completed sparse copy. The
     // FSCTL_SET_SPARSE result is intentionally not checked -- a non-sparse destination is a
     // space-efficiency loss, not an incorrect copy, so it must not fail the operation.
-    const bool ok = SetFilePointerEx(dst, size, nullptr, FILE_BEGIN) && SetEndOfFile(dst) &&
-                    copyAllocatedRanges(src, dst, size.QuadPart) && FlushFileBuffers(dst);
+    const bool ok = (SetFilePointerEx(dst, size, nullptr, FILE_BEGIN) != 0) &&
+                    (SetEndOfFile(dst) != 0) && copyAllocatedRanges(src, dst, size.QuadPart) &&
+                    (FlushFileBuffers(dst) != 0);
     if (!ok) {
         setError(errorMessage, win32ErrorMessage(GetLastError()));
     }

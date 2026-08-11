@@ -224,7 +224,7 @@ void UserProfileBackupCustomizeDataPage::onCustomizeUser() {
     }
 
     auto* user = findSelectedUserByRow(selectedRow);
-    if (!user) {
+    if (user == nullptr) {
         return;
     }
 
@@ -671,22 +671,22 @@ void UserProfileBackupSettingsPage::setupUi_transforms(QVBoxLayout* layout) {
 }
 
 bool UserProfileBackupSettingsPage::compressionEnabled() const {
-    return m_compressCheck && m_compressCheck->isChecked();
+    return (m_compressCheck != nullptr) && m_compressCheck->isChecked();
 }
 
 int UserProfileBackupSettingsPage::compressionLevel() const {
-    return m_compressionLevelCombo ? m_compressionLevelCombo->currentData().toInt()
-                                   : sak::kBackupDefaultCompressionLevel;
+    return (m_compressionLevelCombo != nullptr) ? m_compressionLevelCombo->currentData().toInt()
+                                                : sak::kBackupDefaultCompressionLevel;
 }
 
 bool UserProfileBackupSettingsPage::encryptionEnabled() const {
-    return m_encryptCheck && m_encryptCheck->isChecked();
+    return (m_encryptCheck != nullptr) && m_encryptCheck->isChecked();
 }
 
 QString UserProfileBackupSettingsPage::encryptionPassword() const {
     // Never hand back a password for a run that is not encrypting: the worker treats a
     // non-empty password as intent and would otherwise write containers unexpectedly.
-    return encryptionEnabled() && m_passwordEdit ? m_passwordEdit->text() : QString();
+    return encryptionEnabled() && (m_passwordEdit != nullptr) ? m_passwordEdit->text() : QString();
 }
 
 bool UserProfileBackupSettingsPage::validateEncryptionPassword() {
@@ -803,7 +803,7 @@ bool UserProfileBackupSettingsPage::validateDestination() {
     // overlaps a profile being backed up (the run would recurse into its own output) are all
     // refused outright -- never corrected to something "close enough".
     auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         sak::logWarning("User profile backup: settings page has no owning wizard");
         sak::showWarningLogged(this,
                                tr("Backup Unavailable"),
@@ -833,7 +833,7 @@ bool UserProfileBackupSettingsPage::validateDestination() {
 
 void UserProfileBackupSettingsPage::installExecutePage() {
     auto* wizard = qobject_cast<UserProfileBackupWizard*>(this->wizard());
-    if (wizard) {
+    if (wizard != nullptr) {
         // Use the wizard's real scanned-users list; the old "scannedUsers"
         // property was never set, so the execute page always backed up nothing.
         wizard->setPage(UserProfileBackupWizard::Page_Execute,
@@ -996,7 +996,7 @@ void UserProfileBackupInstalledAppsPage::initializePage() {
 void UserProfileBackupInstalledAppsPage::cleanupPage() {
     // Restore default button text when leaving the page
     auto* wiz = wizard();
-    if (wiz) {
+    if (wiz != nullptr) {
         wiz->setButtonText(QWizard::NextButton, tr("Next >"));
     }
 }
@@ -1036,7 +1036,7 @@ static void collectCategoryApps(QTreeWidgetItem* category,
 void UserProfileBackupInstalledAppsPage::updateNextButtonText() {
     Q_ASSERT(m_appTree);
     auto* wiz = wizard();
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -1262,7 +1262,7 @@ void UserProfileBackupInstalledAppsPage::onItemChanged(QTreeWidgetItem* item, in
         for (int i = 0; i < item->childCount(); ++i) {
             item->child(i)->setCheckState(0, state);
         }
-    } else if (item->parent()) {
+    } else if (item->parent() != nullptr) {
         updateParentCheckState(item->parent());
     }
 
@@ -1364,7 +1364,7 @@ static qint64 calculateSourceSize(const QString& path, const std::atomic_bool* c
     qint64 size = 0;
     QDirIterator it(path, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
     while (it.hasNext()) {
-        if (cancel && cancel->load()) {
+        if ((cancel != nullptr) && cancel->load()) {
             return size;
         }
         it.next();
@@ -1552,7 +1552,7 @@ UserProfileBackupAppDataPage::~UserProfileBackupAppDataPage() {
     if (m_scanCancel) {
         m_scanCancel->store(true);
     }
-    if (m_scanWatcher && m_scanWatcher->isRunning()) {
+    if ((m_scanWatcher != nullptr) && m_scanWatcher->isRunning()) {
         // SAK-ALLOW-BLOCKING: m_scanCancel was set above and the scan polls it, so the task
         // returns on its own. The watcher dies with this page, so abandoning the wait would
         // free it under a running scan.
@@ -1636,7 +1636,7 @@ bool UserProfileBackupAppDataPage::isComplete() const {
 
 void UserProfileBackupAppDataPage::cleanupPage() {
     auto* wiz = wizard();
-    if (wiz) {
+    if (wiz != nullptr) {
         wiz->setButtonText(QWizard::NextButton, tr("Next >"));
     }
 }
@@ -1653,7 +1653,7 @@ static QVector<AppDataSourceInfo> scanSelectedAppDataSources(const QVector<UserP
             continue;
         }
         for (auto source : commonSources) {
-            if (cancel && cancel->load()) {
+            if ((cancel != nullptr) && cancel->load()) {
                 return allSources;
             }
             const QString fullPath = user.profile_path + "/" + source.relative_path;
@@ -1805,7 +1805,7 @@ void UserProfileBackupAppDataPage::updateParentCheckState(QTreeWidgetItem* paren
 void UserProfileBackupAppDataPage::updateNextButtonText() {
     Q_ASSERT(m_appDataTree);
     auto* wiz = wizard();
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -1840,7 +1840,7 @@ void UserProfileBackupAppDataPage::onItemChanged(QTreeWidgetItem* item, int colu
         for (int i = 0; i < item->childCount(); ++i) {
             item->child(i)->setCheckState(0, state);
         }
-    } else if (item->parent()) {
+    } else if (item->parent() != nullptr) {
         updateParentCheckState(item->parent());
     }
 
@@ -1972,7 +1972,7 @@ bool UserProfileBackupKnownNetworksPage::isComplete() const {
 
 void UserProfileBackupKnownNetworksPage::cleanupPage() {
     auto* wiz = wizard();
-    if (wiz) {
+    if (wiz != nullptr) {
         wiz->setButtonText(QWizard::NextButton, tr("Next >"));
     }
 }
@@ -2055,7 +2055,7 @@ void UserProfileBackupKnownNetworksPage::commitWifiSelection() {
 void UserProfileBackupKnownNetworksPage::updateNextButtonText() {
     Q_ASSERT(m_networkTree);
     auto* wiz = wizard();
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 
@@ -2204,7 +2204,7 @@ bool UserProfileBackupEthernetSettingsPage::isComplete() const {
 
 void UserProfileBackupEthernetSettingsPage::cleanupPage() {
     auto* wiz = wizard();
-    if (wiz) {
+    if (wiz != nullptr) {
         wiz->setButtonText(QWizard::NextButton, tr("Next >"));
     }
 }
@@ -2330,7 +2330,7 @@ void UserProfileBackupEthernetSettingsPage::commitEthernetSelection() {
     QVector<EthernetConfigInfo> configs;
     for (int row = 0; row < m_ethernetTable->rowCount(); ++row) {
         auto* checkItem = m_ethernetTable->item(row, kEthernetColumnSelect);
-        if (!checkItem || checkItem->checkState() != Qt::Checked) {
+        if ((checkItem == nullptr) || checkItem->checkState() != Qt::Checked) {
             continue;
         }
         const int idx = checkItem->data(Qt::UserRole).toInt();
@@ -2348,7 +2348,7 @@ void UserProfileBackupEthernetSettingsPage::commitEthernetSelection() {
 }
 
 void UserProfileBackupEthernetSettingsPage::onEthernetItemChanged(QTableWidgetItem* item) {
-    if (item && item->column() != kEthernetColumnSelect) {
+    if ((item != nullptr) && item->column() != kEthernetColumnSelect) {
         return;
     }
     commitEthernetSelection();
@@ -2358,7 +2358,7 @@ void UserProfileBackupEthernetSettingsPage::onEthernetItemChanged(QTableWidgetIt
 void UserProfileBackupEthernetSettingsPage::updateNextButtonText() {
     Q_ASSERT(m_ethernetTable);
     auto* wiz = wizard();
-    if (!wiz) {
+    if (wiz == nullptr) {
         return;
     }
 

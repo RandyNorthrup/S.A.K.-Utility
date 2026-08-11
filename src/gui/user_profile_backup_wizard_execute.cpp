@@ -133,7 +133,7 @@ void UserProfileBackupExecutePage::onStartBackup() {
 
     // Get smart filter and permission mode from wizard
     auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         appendLog(tr("ERROR: Could not access wizard"));
         return;
     }

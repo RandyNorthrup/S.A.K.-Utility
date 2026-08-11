@@ -257,10 +257,10 @@ QHash<uint32_t, QString> ActiveConnectionsMonitor::snapshotProcessNames() {
     PROCESSENTRY32W entry{};
     entry.dwSize = sizeof(entry);
 
-    if (Process32FirstW(snapshot, &entry)) {
+    if (Process32FirstW(snapshot, &entry) != 0) {
         do {
             names.insert(entry.th32ProcessID, QString::fromWCharArray(entry.szExeFile));
-        } while (Process32NextW(snapshot, &entry));
+        } while (Process32NextW(snapshot, &entry) != 0);
     }
 
     CloseHandle(snapshot);
@@ -292,7 +292,7 @@ QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid) {
     DWORD pathLen = MAX_PATH;
     QString result;
 
-    if (QueryFullProcessImageNameW(process, 0, path, &pathLen)) {
+    if (QueryFullProcessImageNameW(process, 0, path, &pathLen) != 0) {
         result = QString::fromWCharArray(path, static_cast<int>(pathLen));
     }
 
