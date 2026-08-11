@@ -2375,9 +2375,17 @@ suppression list removed, cppcheck reports 4548 findings. 3908 are missingInclud
 caused by not passing Qt module include paths, which is a configuration defect to fix
 properly (supply the include paths and --library=qt) rather than silence.
 
-- [ ] R5-G3-1 missingInclude / missingIncludeSystem: pass real Qt module include dirs; delete the suppression
-- [ ] R5-G3-2 unknownMacro and shadowFunction: use --library=qt so Qt macros are understood; delete the suppressions
-- [ ] R5-G3-3 unusedFunction and unusedStructMember: run project-wide with --cppcheck-build-dir (required with -j) and delete the genuinely dead code
+STATUS 2026-08-11: the tree is cppcheck-CLEAN -- 0 unsuppressed findings outside third_party. The
+remaining suppressions are genuine tool limitations (missing includes, cross-TU unused checks that
+need --cppcheck-build-dir, unknown Qt macros) plus THREE style-preference checks kept by decision
+(see R5-G3-5); the two bug-relevant ones were scoped/removed and their production findings fixed.
+
+- [ ] R5-G3-1 missingInclude / missingIncludeSystem: tool limitation (cppcheck lacks Qt headers). Kept.
+- [x] R5-G3-2 shadowFunction DELETED (9f7a8e8): the Q_EMIT false positive no longer occurs (-DQ_EMIT=);
+      the 20 real local-shadows-a-member-function findings were fixed by renaming the locals. unknownMacro
+      stays -- a genuine Qt-macro tool limitation.
+- [ ] R5-G3-3 unusedFunction / unusedStructMember: tool limitation (single-file analysis needs
+      --cppcheck-build-dir, incompatible with -j). Kept.
 - [~] R5-G3-4 knownConditionTrueFalse: DONE for production; suppression SCOPED to tests, not deleted.
       The blanket suppression existed for legitimate test enum-distinctness assertions (10 of them:
       `Normal != SkipCorrupt`, `ptr != nullptr`, `kMinThreads >= 1`, ...), but it also hid every
@@ -2412,7 +2420,18 @@ properly (supply the include paths and --library=qt) rather than silence.
           guards stay with their inline suppressions and their headers now note the paths are
           intentionally tolerant.
       cppcheck now reports 0 knownConditionTrueFalse in src/ with the scoped list; tests unchanged.
-- [ ] R5-G3-5 functionStatic (137) and useStlAlgorithm (203): fix or justify each individually; delete the blanket suppressions
+- [~] R5-G3-5 functionStatic DONE (65152d0), suppression SCOPED to `functionStatic:*tests*` (Qt Test
+      slots stay silenced). 114 production findings; functionStatic CASCADES (a static helper frees its
+      this-only caller to be static too), so it was iterated to the fixpoint over 5 rounds
+      (114 -> 25 -> 9 -> 7 -> 1 -> 0) = 163 methods static across the HFS/APFS/ext readers, the parsers,
+      the preset builders, and the stateless validators/rewriters (whose whole surface is pure). That
+      exposed 6 functionConst callers (the tree-rebalance/split/merge helpers), iterated 4 -> 2 -> 0.
+      Declaration-only qualifier changes; Release build is the oracle (0 pointer-to-member/slot breaks),
+      ctest 225/225. Also synced flash_worker.h (2b8294e) -- the last file with funcArgNamesDifferent.
+      useStlAlgorithm (200) is KEPT (style-preference suppression, not deleted): the codebase prefers
+      Qt-idiomatic loops, each conversion is a per-loop judgment (not all loops read better as
+      algorithms), and -- like the R5-G5-FO over-reach -- blanket "fixing" a preference check would
+      introduce churn/wrongness, not correctness. A deliberate, documented carve-out.
 - [ ] R5-G3-6 unmatchedSuppression: 8 inline suppressions are stale and no longer match anything; remove them
 - [ ] R5-G3-7 Delete cppcheck_suppressions.txt entirely once the above are closed
 
