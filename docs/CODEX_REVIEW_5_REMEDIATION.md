@@ -2343,7 +2343,13 @@ misc-no-recursion (the recursion with no depth or visited-set bound).
 - [ ] R5-G2 re-enable and fix: misc-no-recursion
 - [ ] R5-G2 re-enable and fix: misc-include-cleaner
 - [ ] R5-G2 re-enable and fix: modernize-use-trailing-return-type
-- [~] R5-G2 modernize-avoid-c-arrays: DEFER (stays disabled), with rationale. Measured 187
+- [~] R5-G2 modernize-avoid-c-arrays: SAFE SUBSET converted (522e275); check stays disabled. A 5-agent
+      workflow converted the ~20 pure-local lookup/metadata tables to std::array/std::to_array (the
+      advanced_search/diagnostic/email/organizer/backup-wizard/main_window tables) and KEPT every array
+      that must stay a C array (string literals, WinAPI wchar/MAX_PATH buffers, char** argv, on-disk
+      raw-block buffers). The AppCategoryRule table (std::initializer_list member) uses explicit
+      std::array aggregate init, not std::to_array, to avoid dangling its backing array. Original
+      measurement below stands for the KEPT remainder. Measured 187
       findings: 109 in src/core (raw-block on-disk APFS/HFS/PST buffers accessed via
       reinterpret_cast -- a C array is the correct, ABI-shaped type there), 28 in win32mcp and
       more across drive/network/dns/pipe tools (fixed-size Win32 ABI buffers: TCHAR[MAX_PATH],
@@ -2428,10 +2434,16 @@ need --cppcheck-build-dir, unknown Qt macros) plus THREE style-preference checks
       exposed 6 functionConst callers (the tree-rebalance/split/merge helpers), iterated 4 -> 2 -> 0.
       Declaration-only qualifier changes; Release build is the oracle (0 pointer-to-member/slot breaks),
       ctest 225/225. Also synced flash_worker.h (2b8294e) -- the last file with funcArgNamesDifferent.
-      useStlAlgorithm (200) is KEPT (style-preference suppression, not deleted): the codebase prefers
-      Qt-idiomatic loops, each conversion is a per-loop judgment (not all loops read better as
-      algorithms), and -- like the R5-G5-FO over-reach -- blanket "fixing" a preference check would
-      introduce churn/wrongness, not correctness. A deliberate, documented carve-out.
+      useStlAlgorithm (200): SAFE SUBSET converted (0baf67f), suppression KEPT (not deleted -- it is a
+      per-loop judgment, not a to-zero check). Split 100 non-raw-fs / 100 raw-fs. A 6-agent workflow
+      adjudicated all 100 non-raw-fs loops under a strict rule and converted the clean single-purpose
+      find/any_of/all_of/count_if/accumulate loops to std::ranges:: (the ai_* matchers, the nuget SemVer
+      validators, apfs_crypto RFC3394 check, etc.); it SKIPPED find-then-extract (element-dependent
+      terminal), external-mutation, multi-statement, and bit-fold loops. The 100 raw-filesystem sites
+      (partition_apfs_writer 59, partition_hfs_internal 34, ...) are DELIBERATELY not touched: they are
+      byte-cert'd intricate bit/block loops where an algorithm rarely reads clearer and a rewrite is
+      unjustified churn/risk on certified code (same reasoning the R5-G5-FO over-reach reinforced).
+      Full Release build + ctest 225/225.
 - [ ] R5-G3-6 unmatchedSuppression: 8 inline suppressions are stale and no longer match anything; remove them
 - [ ] R5-G3-7 Delete cppcheck_suppressions.txt entirely once the above are closed
 
