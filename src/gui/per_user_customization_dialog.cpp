@@ -281,6 +281,9 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
 
     // Column 2: Size
     QString size_str;
+    // total_size is filled via the qint64& reference member of DirTraversalState (header line 69);
+    // cppcheck misreads the aggregate field as a value copy and wrongly deems this always-false.
+    // cppcheck-suppress knownConditionTrueFalse
     if (total_size > 0) {
         const double size_mb = static_cast<double>(total_size) / sak::kBytesPerMBf;
         if (size_mb >= sak::kBytesPerKBf) {

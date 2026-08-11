@@ -545,12 +545,18 @@ BrowserBridgePipeServer::Exchange BrowserBridgePipeServer::sendCommandAwaitReply
     // thread consumed the request, leaving has_request_ set would make the NEXT
     // connection execute a stale command frame.
     const bool got_response = has_response_;
-    Exchange result =
-        got_response
-            ? response_
-            : Exchange{.ok = false,
-                       .reply = {},
-                       .error = QStringLiteral("Browser connection closed before it replied.")};
+    Exchange result{};
+    // has_response_ is set true by the I/O worker thread in serveConnected(); cppcheck's
+    // single-threaded flow cannot see that cross-thread write and wrongly deems got_response
+    // always-false here.
+    // cppcheck-suppress knownConditionTrueFalse
+    if (got_response) {
+        result = response_;
+    } else {
+        result = Exchange{.ok = false,
+                          .reply = {},
+                          .error = QStringLiteral("Browser connection closed before it replied.")};
+    }
     has_request_ = false;
     has_response_ = false;
     return result;

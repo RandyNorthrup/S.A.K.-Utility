@@ -24,5 +24,8 @@ useStlAlgorithm
 // Qt Test slots are invoked by the meta-object system and cannot be static.
 functionStatic
 
-// Test assertions intentionally verify enum distinctness with known values.
-knownConditionTrueFalse
+// Test assertions intentionally verify enum distinctness with known values. Scoped to tests/
+// ONLY -- a global silence hid real always-true/false logic findings in production code (R5-G5
+// audit surfaced 9; the genuine false positives now carry inline // cppcheck-suppress with a
+// justification, and two fail-open questions in the raw-filesystem writers are logged for review).
+knownConditionTrueFalse:*tests*

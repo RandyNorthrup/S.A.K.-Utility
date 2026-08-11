@@ -855,6 +855,10 @@ void AiOrchestrator::executeSerialGroup(const WorkflowTemplate& workflow,
                                 executeWorkflowPhase(workflow, phase, state, root_token),
                                 state,
                                 root_token);
+        // isCancellationRequested() reads a std::atomic<bool> the UI thread can flip via cancel()
+        // while this worker thread runs the phase above; cppcheck's single-threaded flow cannot see
+        // that cross-thread mutation and wrongly deems this always-false.
+        // cppcheck-suppress knownConditionTrueFalse
         if (root_token.isValid() && root_token.isCancellationRequested()) {
             break;
         }
@@ -1033,6 +1037,10 @@ void AiOrchestrator::runPlannedGroups(const WorkflowTemplate& workflow,
         const GroupOutcome outcome =
             appendGroupExecutions(workflow, group, &group_executions, state);
 
+        // executePhaseGroup above is long-running; the UI thread can flip the cancellation
+        // std::atomic<bool> during it, so this re-check is live. cppcheck cannot model the
+        // cross-thread atomic write and wrongly deems it always-false.
+        // cppcheck-suppress knownConditionTrueFalse
         if (root_token.isValid() && root_token.isCancellationRequested()) {
             state->result.status = AiRunStatus::Cancelled;
             state->result.error_message = root_token.cancelReason();

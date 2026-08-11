@@ -4816,6 +4816,11 @@ private:
             return false;
         }
         for (const auto& update : edit.valence_updates) {
+            // applyCatalogModelValence currently warns-and-succeeds when the parent folder record
+            // is absent (always returns true), so this guard is presently dead. Whether an absent
+            // parent folder should instead fail closed is logged for adjudication (R5-G5); until
+            // then the defensive guard is kept ([[implement-never-drop]]).
+            // cppcheck-suppress knownConditionTrueFalse
             if (!applyCatalogModelValence(model, update, warnings)) {
                 return false;
             }
@@ -10707,6 +10712,11 @@ private:
                 m_blockers.append(QStringLiteral("HFS+ catalog consistency record cap reached"));
                 return false;
             }
+            // scanCatalogRecord soft-skips invalid/unparseable records (counted in
+            // summary->invalid_records and surfaced by appendCatalogScanWarnings) BY DESIGN, so it
+            // always returns true today; the guard is a deliberate fail-closed hook kept for when
+            // a record error should abort the scan.
+            // cppcheck-suppress knownConditionTrueFalse
             if (!scanCatalogRecord(node, nodeNumber, *offsets, index, summary)) {
                 return false;
             }
@@ -11118,9 +11128,8 @@ private:
             return QStringLiteral("%1: record metadata truncated").arg(label);
         }
         if (record.record_type == kHfsAttributeInlineDataRecord) {
-            if (!record.payload_complete) {
-                return QStringLiteral("%1: inline attribute metadata truncated").arg(label);
-            }
+            // The record.payload_complete guard above already returned for truncated records,
+            // so no redundant re-check is needed here (it was dead code -- always false).
             return QStringLiteral("%1: inline attribute size %2 bytes")
                 .arg(label)
                 .arg(record.inline_size);

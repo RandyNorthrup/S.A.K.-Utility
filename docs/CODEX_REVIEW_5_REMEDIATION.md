@@ -2378,7 +2378,34 @@ properly (supply the include paths and --library=qt) rather than silence.
 - [ ] R5-G3-1 missingInclude / missingIncludeSystem: pass real Qt module include dirs; delete the suppression
 - [ ] R5-G3-2 unknownMacro and shadowFunction: use --library=qt so Qt macros are understood; delete the suppressions
 - [ ] R5-G3-3 unusedFunction and unusedStructMember: run project-wide with --cppcheck-build-dir (required with -j) and delete the genuinely dead code
-- [ ] R5-G3-4 knownConditionTrueFalse: 36 real vacuous conditions, enumerated below; fix all, then delete the suppression
+- [~] R5-G3-4 knownConditionTrueFalse: DONE for production; suppression SCOPED to tests, not deleted.
+      The blanket suppression existed for legitimate test enum-distinctness assertions (10 of them:
+      `Normal != SkipCorrupt`, `ptr != nullptr`, `kMinThreads >= 1`, ...), but it also hid every
+      production always-true/false finding. Re-measured with it removed: 9 in src/, 10 in tests/.
+      Changed the suppression to `knownConditionTrueFalse:*tests*` so tests stay quiet and production
+      is checked, then adjudicated all 9 production findings (9-agent workflow + hand-verify):
+        * 5 FALSE POSITIVES (cppcheck cannot model the construct) -- now carry an inline
+          // cppcheck-suppress with a justification: ai_orchestrator.cpp x2 (cross-thread
+          std::atomic cancellation flipped by the UI thread during a long phase), browser_bridge_
+          pipe.cpp (has_response_ set by the I/O worker thread -- cross-thread rendezvous),
+          per_user_customization_dialog.cpp (total_size mutated through a qint64& reference member
+          of the traversal-state aggregate), partition_manager_panel.cpp (the continue-guard proved
+          new_end <= segment_end, so `<` is live; cppcheck over-narrowed <= to ==).
+        * 1 REAL dead code FIXED: partition_hfs_internal.h attributeRecordMetadata had a redundant
+          inner `!payload_complete` re-check after the identical outer guard -- removed.
+        * 3 dead defensive guards over helpers that currently always return true -- kept
+          ([[implement-never-drop]]) with inline suppressions: scanCatalogRecord (scan soft-skips
+          bad records BY DESIGN), and TWO genuine FAIL-OPEN questions in the raw-filesystem writers
+          logged for adjudication + LIVE RE-CERT before any behavior change:
+            R5-G5-FO1 (HFS) applyCatalogModelValence warns-and-succeeds when the parent folder
+              record is absent; sibling helpers fail closed. Should an absent parent folder fail
+              the valence update? ([[no-fallbacks-fail-closed]] says likely yes -- HFS write path.)
+            R5-G5-FO2 (APFS) resolveRelocatedIpLayout treats a zero actualIpBase (a failed
+              readLiveSpacemanIpBase) as "no relocation" and returns true; its header comment
+              deliberately states "there is no fail-close". Is a zero ip_base a real spaceman-read
+              failure that must fail closed? Cert-sensitive in-place-commit code; needs Randy + Mac
+              re-cert. NOT changed unilaterally.
+      cppcheck now reports 0 knownConditionTrueFalse in src/ with the scoped list; tests unchanged.
 - [ ] R5-G3-5 functionStatic (137) and useStlAlgorithm (203): fix or justify each individually; delete the blanket suppressions
 - [ ] R5-G3-6 unmatchedSuppression: 8 inline suppressions are stale and no longer match anything; remove them
 - [ ] R5-G3-7 Delete cppcheck_suppressions.txt entirely once the above are closed

@@ -2567,6 +2567,10 @@ private:
                                 .unallocated = false,
                                 .changed = true});
             const uint64_t new_end = offset + size;
+            // The continue guard above only established offset + size <= segment_end, so a block
+            // that does not fill the segment to its end leaves trailing free space here. cppcheck
+            // over-narrows the <= to == and wrongly deems this always-false.
+            // cppcheck-suppress knownConditionTrueFalse
             if (new_end < segment_end) {
                 replacement.append({.label = tr("Free"),
                                     .offset = new_end,
