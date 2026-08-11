@@ -67,7 +67,7 @@ bool mouseButtonFlags(const QString& button, unsigned long& down, unsigned long&
 QVector<KeyStroke> planTypeText(const QString& text) {
     QVector<KeyStroke> strokes;
     strokes.reserve(text.size() * kKeyStrokesPerChar);
-    const int count = text.size();
+    const int count = static_cast<int>(text.size());
     for (int i = 0; i < count; ++i) {
         const QChar ch = text.at(i);
         if (ch == QLatin1Char('\r')) {

@@ -445,7 +445,7 @@ void LinuxDistroCatalog::addUtilityDistros() {
 }
 
 void LinuxDistroCatalog::addDistro(const DistroInfo& distro) {
-    m_distroIndex[distro.id] = m_distros.size();
+    m_distroIndex[distro.id] = static_cast<int>(m_distros.size());
     m_distros.append(distro);
 }
 
@@ -522,7 +522,7 @@ QString LinuxDistroCatalog::resolveFileName(const DistroInfo& distro) const {
         auto url = m_githubAssetUrls.find(distro.id);
         if (url != m_githubAssetUrls.end()) {
             const QString path = QUrl(*url).path();
-            const int lastSlash = path.lastIndexOf('/');
+            const int lastSlash = static_cast<int>(path.lastIndexOf('/'));
             if (lastSlash >= 0) {
                 return path.mid(lastSlash + 1);
             }

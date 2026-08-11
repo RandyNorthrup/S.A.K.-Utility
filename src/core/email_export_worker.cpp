@@ -571,7 +571,7 @@ void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportCon
         return;
     }
 
-    Q_EMIT exportStarted(item_ids.size());
+    Q_EMIT exportStarted(static_cast<int>(item_ids.size()));
     dispatchExportFormat(parser, item_ids, config, result);
 }
 
@@ -646,7 +646,7 @@ void EmailExportWorker::exportPerItemFormats(PstParser* parser,
         }
 
         if ((index + 1) % kProgressInterval == 0) {
-            Q_EMIT exportProgress(index + 1, item_ids.size(), result.total_bytes);
+            Q_EMIT exportProgress(index + 1, static_cast<int>(item_ids.size()), result.total_bytes);
         }
     }
 
@@ -762,9 +762,9 @@ void EmailExportWorker::exportIcsFormat(PstParser* parser,
     }
     const QString ics_path = config.output_path + QStringLiteral("/calendar_export.ics");
     if (writeIcs(events, ics_path)) {
-        result.items_exported += events.size();
+        result.items_exported += static_cast<int>(events.size());
     } else {
-        result.items_failed += events.size();
+        result.items_failed += static_cast<int>(events.size());
         result.errors.append(QStringLiteral("Failed to write ICS file"));
     }
     noteIfCancelled(result);
@@ -791,7 +791,7 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
             ++result.items_failed;
         }
         if ((index + 1) % kProgressInterval == 0) {
-            Q_EMIT exportProgress(index + 1, item_ids.size(), 0);
+            Q_EMIT exportProgress(index + 1, static_cast<int>(item_ids.size()), 0);
         }
     }
 
@@ -808,11 +808,11 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
     const QString cfg_error = validateCsvConfig(columns, config.csv_delimiter);
     if (cfg_error.isEmpty() &&
         writeCsv(items, csv_path, columns, config.csv_delimiter, config.csv_include_header)) {
-        result.items_exported += items.size();
+        result.items_exported += static_cast<int>(items.size());
         const QFileInfo fi(csv_path);
         result.total_bytes = fi.size();
     } else {
-        result.items_failed += items.size();
+        result.items_failed += static_cast<int>(items.size());
         result.errors.append(cfg_error.isEmpty() ? QStringLiteral("Failed to write CSV file")
                                                  : cfg_error);
     }
@@ -859,7 +859,7 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
 
     QVector<int> indices = collectMboxIndices(parser, config.item_ids, result);
 
-    Q_EMIT exportStarted(indices.size());
+    Q_EMIT exportStarted(static_cast<int>(indices.size()));
 
     std::unique_ptr<sak::EmlWriter> eml_writer;
     std::unique_ptr<sak::HtmlEmailWriter> html_writer;
@@ -886,7 +886,7 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
         }
 
         if ((idx + 1) % kProgressInterval == 0) {
-            Q_EMIT exportProgress(idx + 1, indices.size(), result.total_bytes);
+            Q_EMIT exportProgress(idx + 1, static_cast<int>(indices.size()), result.total_bytes);
         }
     }
 
@@ -1346,7 +1346,7 @@ bool EmailExportWorker::writePlainText(const PlainTextWriteRequest& request,
     }
     QTextStream stream(&file);
     stream.setEncoding(QStringConverter::Utf8);
-    appendPlainTextHeaders(stream, item, request.attachment_data.size());
+    appendPlainTextHeaders(stream, item, static_cast<int>(request.attachment_data.size()));
     stream << QStringLiteral("\r\n---\r\n\r\n");
     stream << item.body_plain;
     if (item.body_plain.isEmpty() && !item.body_html.isEmpty()) {

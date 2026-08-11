@@ -294,7 +294,7 @@ QString utf8Field(const QByteArray& bytes, qsizetype offset, qsizetype length) {
     }
     const qsizetype clamped = std::min(length, bytes.size() - offset);
     const QByteArray raw = bytes.mid(offset, clamped);
-    const int terminator = raw.indexOf('\0');
+    const int terminator = static_cast<int>(raw.indexOf('\0'));
     return QString::fromUtf8(terminator >= 0 ? raw.left(terminator) : raw).trimmed();
 }
 

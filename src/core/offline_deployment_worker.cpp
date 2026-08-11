@@ -411,7 +411,7 @@ void OfflineDeploymentWorker::buildDeploymentBundle(
         }
     }
 
-    Q_EMIT operationStarted(packages.size());
+    Q_EMIT operationStarted(static_cast<int>(packages.size()));
     Q_EMIT logMessage(QString("Building %1: %2 package(s)")
                           .arg(mode == PayloadMode::List
                                    ? QStringLiteral("Thin Bundle (metadata-only)")
@@ -476,7 +476,7 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
     DeploymentManifest manifest = makeManifestHeader(output_dir, description, PayloadMode::Bundle);
 
     QMutexLocker lock(&m_mutex);
-    ctx.total_jobs = m_jobs.size();
+    ctx.total_jobs = static_cast<int>(m_jobs.size());
     lock.unlock();
 
     if (ctx.total_jobs > 0) {
@@ -538,9 +538,9 @@ void OfflineDeploymentWorker::executeBuildListManifest(const QString& output_dir
     writeReadme(manifest, output_dir);
 
     BatchStats stats;
-    stats.total = manifest.packages.size();
-    stats.completed = manifest.packages.size();
-    stats.requires_network = manifest.packages.size();
+    stats.total = static_cast<int>(manifest.packages.size());
+    stats.completed = static_cast<int>(manifest.packages.size());
+    stats.requires_network = static_cast<int>(manifest.packages.size());
 
     m_running = false;
     QMetaObject::invokeMethod(
@@ -1054,7 +1054,7 @@ void OfflineDeploymentWorker::installFromBundle(const QString& manifest_path,
     m_cancelled = false;
 
     const bool is_list = manifest.payload_mode == PayloadMode::List;
-    Q_EMIT operationStarted(manifest.packages.size());
+    Q_EMIT operationStarted(static_cast<int>(manifest.packages.size()));
     Q_EMIT logMessage(
         QString("Installing %1: %2 package(s)%3")
             .arg(is_list ? QStringLiteral("Thin Bundle") : QStringLiteral("Full Bundle"))
@@ -1119,7 +1119,7 @@ void OfflineDeploymentWorker::executeInstallFromBundle(DeploymentManifest manife
     }
 
     BatchStats stats;
-    stats.total = ordered.size();
+    stats.total = static_cast<int>(ordered.size());
 
     for (const auto& entry : ordered) {
         if (m_cancelled) {
@@ -1351,7 +1351,7 @@ void OfflineDeploymentWorker::directDownload(const QVector<QPair<QString, QStrin
     m_running = true;
     m_cancelled = false;
 
-    Q_EMIT operationStarted(packages.size());
+    Q_EMIT operationStarted(static_cast<int>(packages.size()));
     Q_EMIT logMessage(QString("Direct download: %1 package(s)").arg(packages.size()));
 
     m_operation_future = QtConcurrent::run(
@@ -1365,7 +1365,7 @@ void OfflineDeploymentWorker::executeDirectDownload(
     PackageInternalizationEngine resolver;
     int completed = 0;
     int failed = 0;
-    const int total = packages.size();
+    const int total = static_cast<int>(packages.size());
     // Shared across EVERY package in the run: two packages emitting the same
     // installer basename must not overwrite each other in the one output dir.
     QSet<QString> used_names;
@@ -1837,7 +1837,7 @@ bool OfflineDeploymentWorker::isRunning() const {
 BatchStats OfflineDeploymentWorker::getStats() const {
     const QMutexLocker lock(&m_mutex);
     BatchStats stats;
-    stats.total = m_jobs.size();
+    stats.total = static_cast<int>(m_jobs.size());
     for (const auto& job : m_jobs) {
         switch (job.status) {
         case InternalizationStatus::Complete:

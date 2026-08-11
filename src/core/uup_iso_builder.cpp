@@ -442,7 +442,7 @@ void UupIsoBuilder::checkResumedDownloads() {
         return;
     }
 
-    const double existingGB = existingBytes / sak::kBytesPerGBf;
+    const double existingGB = static_cast<double>(existingBytes) / sak::kBytesPerGBf;
     sak::logInfo(
         "Resuming download -- found " + std::to_string(existingFiles) + " existing files (" +
         std::to_string(static_cast<int>(existingGB * kResumeGbLogScale) / kResumeGbLogScale) +
@@ -585,7 +585,7 @@ void UupIsoBuilder::logAria2SkippedFiles(int skippedFiles, qint64 skippedBytes) 
     if (skippedFiles <= 0) {
         return;
     }
-    const double skippedMB = skippedBytes / sak::kBytesPerMBf;
+    const double skippedMB = static_cast<double>(skippedBytes) / sak::kBytesPerMBf;
     sak::logInfo("Resume: skipped " + std::to_string(skippedFiles) + " already-downloaded files (" +
                  std::to_string(static_cast<int>(skippedMB)) + " MB)");
     Q_EMIT progressUpdated(kProgressDownloadManifest,
@@ -718,7 +718,7 @@ void UupIsoBuilder::parseAria2Progress(const QString& line) {
     const QRegularExpressionMatch speedMatch = kAria2SpeedPattern.match(line);
     if (speedMatch.hasMatch()) {
         const qint64 bytesPerSec = speedMatch.captured(1).toLongLong();
-        m_currentSpeedMBps = bytesPerSec / sak::kBytesPerMBf;
+        m_currentSpeedMBps = static_cast<double>(bytesPerSec) / sak::kBytesPerMBf;
         Q_EMIT speedUpdated(m_currentSpeedMBps);
     }
 
@@ -777,14 +777,15 @@ void UupIsoBuilder::pollDownloadProgress() {
     m_downloadPercent = std::min(m_downloadPercent, kPercentComplete);
 
     // Build progress detail string
-    const double downloadedGB = totalDownloaded / sak::kBytesPerGBf;
-    const double totalGB = m_totalDownloadBytes / sak::kBytesPerGBf;
+    const double downloadedGB = static_cast<double>(totalDownloaded) / sak::kBytesPerGBf;
+    const double totalGB = static_cast<double>(m_totalDownloadBytes) / sak::kBytesPerGBf;
     QString detail = QString("Downloaded %1 GB / %2 GB")
                          .arg(downloadedGB, 0, 'f', kGbDisplayPrecision)
                          .arg(totalGB, 0, 'f', kGbDisplayPrecision);
 
     if (m_currentSpeedMBps > kMinimumDisplaySpeedMbps) {
-        const double remainingMB = (m_totalDownloadBytes - totalDownloaded) / sak::kBytesPerMBf;
+        const double remainingMB = static_cast<double>(m_totalDownloadBytes - totalDownloaded) /
+                                   sak::kBytesPerMBf;
         int etaSec = static_cast<int>(remainingMB / m_currentSpeedMBps);
         const int etaMin = etaSec / kSecondsPerMinute;
         etaSec %= kSecondsPerMinute;
@@ -814,7 +815,7 @@ void UupIsoBuilder::pollConversionProgress() {
     const QFileInfo outputIso(m_outputIsoPath);
     if (outputIso.exists() && outputIso.size() > 0) {
         const qint64 isoSize = outputIso.size();
-        const double sizeGB = isoSize / sak::kBytesPerGBf;
+        const double sizeGB = static_cast<double>(isoSize) / sak::kBytesPerGBf;
         int conversionProgress = m_conversionPercent;
         if (conversionProgress >= kPercentComplete) {
             conversionProgress = kPercentAlmostComplete;

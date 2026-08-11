@@ -46,14 +46,20 @@ QString formatBytes(qint64 bytes) {
         return QString::number(bytes) + QStringLiteral(" B");
     }
     if (bytes < sak::kBytesPerMB) {
-        return QString::number(bytes / sak::kBytesPerKBf, 'f', kByteSizePrecisionSmall) +
+        return QString::number(static_cast<double>(bytes) / sak::kBytesPerKBf,
+                               'f',
+                               kByteSizePrecisionSmall) +
                QStringLiteral(" KB");
     }
     if (bytes < sak::kBytesPerGB) {
-        return QString::number(bytes / sak::kBytesPerMBf, 'f', kByteSizePrecisionSmall) +
+        return QString::number(static_cast<double>(bytes) / sak::kBytesPerMBf,
+                               'f',
+                               kByteSizePrecisionSmall) +
                QStringLiteral(" MB");
     }
-    return QString::number(bytes / sak::kBytesPerGBf, 'f', kByteSizePrecisionLarge) +
+    return QString::number(static_cast<double>(bytes) / sak::kBytesPerGBf,
+                           'f',
+                           kByteSizePrecisionLarge) +
            QStringLiteral(" GB");
 }
 

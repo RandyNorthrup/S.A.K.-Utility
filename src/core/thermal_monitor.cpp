@@ -237,7 +237,7 @@ QVector<ThermalReading> ThermalMonitor::parseThermalOutput(const QString& output
     const auto lines = output.split('\n', Qt::SkipEmptyParts);
     for (const auto& line : lines) {
         const auto trimmed = line.trimmed();
-        const int eq_pos = trimmed.indexOf('=');
+        const int eq_pos = static_cast<int>(trimmed.indexOf('='));
         if (eq_pos <= 0) {
             continue;
         }

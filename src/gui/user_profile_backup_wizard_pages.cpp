@@ -549,8 +549,9 @@ void UserProfileBackupSmartFiltersPage::updateSummary() {
                                      sak::kBytesPerGB;
 
     // Count total exclusions
-    const int exclusionCount = m_filter.dangerous_files.size() + m_filter.exclude_patterns.size() +
-                               m_filter.exclude_folders.size();
+    const int exclusionCount = static_cast<int>(m_filter.dangerous_files.size() +
+                                                m_filter.exclude_patterns.size() +
+                                                m_filter.exclude_folders.size());
 
     QString limitText;
     if (m_filter.enable_file_size_limit) {
@@ -1203,7 +1204,7 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
         sak::logDebug("onScanApps background: scanAll returned {} apps", apps.size());
 
         QVector<InstalledAppInfo> appInfos;
-        appInfos.reserve(apps.size());
+        appInfos.reserve(static_cast<qsizetype>(apps.size()));
 
         for (const auto& app : apps) {
             InstalledAppInfo info;
@@ -1384,7 +1385,7 @@ static qint64 calculateSourceSize(const QString& path, const std::atomic_bool* c
 
 /// @brief Parse netsh "interface ipv4 show config" output
 static QString extractValueAfterColon(const QString& line) {
-    const int idx = line.indexOf(':');
+    const int idx = static_cast<int>(line.indexOf(':'));
     if (idx < 0) {
         return {};
     }
@@ -1441,8 +1442,8 @@ static QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& outpu
                 configs.append(current);
             }
             current = EthernetConfigInfo();
-            const int firstQuote = trimmed.indexOf('"');
-            const int lastQuote = trimmed.lastIndexOf('"');
+            const int firstQuote = static_cast<int>(trimmed.indexOf('"'));
+            const int lastQuote = static_cast<int>(trimmed.lastIndexOf('"'));
             if (firstQuote >= 0 && lastQuote > firstQuote) {
                 current.adapter_name = trimmed.mid(firstQuote + 1, lastQuote - firstQuote - 1);
             }

@@ -262,8 +262,8 @@ void CheckDiskErrorsAction::executeRunChkdsk(const QVector<QChar>& drives,
     for (int i = 0; i < drives.count(); ++i) {
         const QChar& drive = drives[i];
 
-        const int progress = kDriveScanProgressStart +
-                             ((i * kDriveScanProgressSpan) / drives.count());
+        const int progress = static_cast<int>(kDriveScanProgressStart +
+                                              ((i * kDriveScanProgressSpan) / drives.count()));
         Q_EMIT executionProgress(QString("Scanning drive %1: for errors...").arg(drive), progress);
 
         const QString ps_cmd = buildScanVolumeScript(drive);

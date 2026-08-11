@@ -652,7 +652,7 @@ void WifiManagerPanel::onFindNext() {
     if (m_search_matches.isEmpty()) {
         return;
     }
-    m_search_index = (m_search_index + 1) % m_search_matches.size();
+    m_search_index = static_cast<int>((m_search_index + 1) % m_search_matches.size());
     m_network_table->scrollToItem(
         m_network_table->item(m_search_matches.at(m_search_index), COL_SSID));
     m_network_table->selectRow(m_search_matches.at(m_search_index));
@@ -662,7 +662,8 @@ void WifiManagerPanel::onFindPrev() {
     if (m_search_matches.isEmpty()) {
         return;
     }
-    m_search_index = (m_search_index - 1 + m_search_matches.size()) % m_search_matches.size();
+    m_search_index =
+        static_cast<int>((m_search_index - 1 + m_search_matches.size()) % m_search_matches.size());
     m_network_table->scrollToItem(
         m_network_table->item(m_search_matches.at(m_search_index), COL_SSID));
     m_network_table->selectRow(m_search_matches.at(m_search_index));
@@ -1155,7 +1156,7 @@ MultiNetworkQrDialogUi buildMultiNetworkQrDialogUi(QDialog* dlg, int networkCoun
 void WifiManagerPanel::showBatchQrDialog(const QList<WifiConfig>& sources) {
     Q_ASSERT(!sources.isEmpty());
     QDialog dlg(this);
-    const BatchQrDialogUi ui = buildBatchQrDialogUi(&dlg, sources.size());
+    const BatchQrDialogUi ui = buildBatchQrDialogUi(&dlg, static_cast<int>(sources.size()));
 
     QObject::connect(ui.btnCancel, &QPushButton::clicked, &dlg, &QDialog::reject);
     QObject::connect(ui.btnBrowse, &QPushButton::clicked, &dlg, [&]() {
@@ -1518,7 +1519,8 @@ void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg) {
 void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources) {
     Q_ASSERT(!sources.isEmpty());
     QDialog dlg(this);
-    const MultiNetworkQrDialogUi ui = buildMultiNetworkQrDialogUi(&dlg, sources.size());
+    const MultiNetworkQrDialogUi ui = buildMultiNetworkQrDialogUi(&dlg,
+                                                                  static_cast<int>(sources.size()));
 
     int currentIdx = 0;
 

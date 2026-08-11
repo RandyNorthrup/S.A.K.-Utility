@@ -362,7 +362,7 @@ void OstConversionWorker::loadAndProcessFolderItems(PstParser* parser,
             processItemInFolder(item_summary, parser, folder_path, config, result);
         }
 
-        offset += items.size();
+        offset += static_cast<int>(items.size());
     }
 }
 

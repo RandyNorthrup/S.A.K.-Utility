@@ -334,7 +334,7 @@ void EmailContactsDialog::filterContacts(const QString& text) {
         }
         matching.append(idx);
     }
-    m_contact_table->setRowCount(matching.size());
+    m_contact_table->setRowCount(static_cast<int>(matching.size()));
     for (int row = 0; row < matching.size(); ++row) {
         const auto& contact = m_all_contacts.at(matching.at(row));
 

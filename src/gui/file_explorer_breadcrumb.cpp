@@ -139,7 +139,7 @@ void FileExplorerBreadcrumb::rebuildSegments() {
     QVector<Segment> collapsed;
     int first_visible = 0;
     if (segments.size() > kMaxVisibleSegments) {
-        first_visible = segments.size() - kMaxVisibleSegments;
+        first_visible = static_cast<int>(segments.size() - kMaxVisibleSegments);
         collapsed = segments.mid(0, first_visible);
     }
     if (!collapsed.isEmpty()) {

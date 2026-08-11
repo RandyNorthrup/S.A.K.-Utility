@@ -954,10 +954,11 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
         const qint64 elapsed = ctx->timer.elapsed();
         if (elapsed - ctx->last_report_time >= kLanReportIntervalMs) {
             const qint64 deltaBytes = ctx->total_received - ctx->last_report_bytes;
-            const double deltaSec = (elapsed - ctx->last_report_time) /
+            const double deltaSec = static_cast<double>(elapsed - ctx->last_report_time) /
                                     kNetworkMillisecondsPerSecond;
-            const double currentMbps =
-                deltaSec > 0 ? (deltaBytes * kBitsPerByte / (deltaSec * kMegabit)) : 0.0;
+            const double currentMbps = deltaSec > 0 ? (static_cast<double>(deltaBytes) *
+                                                       kBitsPerByte / (deltaSec * kMegabit))
+                                                    : 0.0;
             ctx->peak_mbps = std::max(ctx->peak_mbps, currentMbps);
             if (ctx->speed_samples.size() < kLanMaxSpeedSamples) {
                 ctx->speed_samples.append(currentMbps);
@@ -966,7 +967,7 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
             ctx->last_report_bytes = ctx->total_received;
 
             Q_EMIT lanTransferProgress(currentMbps,
-                                       elapsed / kNetworkMillisecondsPerSecond,
+                                       static_cast<double>(elapsed) / kNetworkMillisecondsPerSecond,
                                        ctx->total_received);
         }
     });
@@ -983,26 +984,29 @@ void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket
     Q_ASSERT(socket);
     Q_ASSERT(ctx);
 
-    const double elapsed_sec = ctx->timer.elapsed() / kNetworkMillisecondsPerSecond;
+    const double elapsed_sec = static_cast<double>(ctx->timer.elapsed()) /
+                               kNetworkMillisecondsPerSecond;
 
     LanTransferResult result;
     result.remoteAddress = socket->peerAddress().toString();
     result.port = socket->localPort();
     result.bytesTransferred = ctx->total_received;
     result.durationSec = elapsed_sec;
-    result.avgSpeedMbps =
-        elapsed_sec > 0 ? (ctx->total_received * kBitsPerByte / (elapsed_sec * kMegabit)) : 0.0;
+    result.avgSpeedMbps = elapsed_sec > 0 ? (static_cast<double>(ctx->total_received) *
+                                             kBitsPerByte / (elapsed_sec * kMegabit))
+                                          : 0.0;
     result.peakSpeedMbps = ctx->peak_mbps;
     result.isUpload = false;
     result.timestamp = QDateTime::currentDateTime();
     result.speedSamplesMbps = ctx->speed_samples;
 
     Q_EMIT lanTransferComplete(result);
-    Q_EMIT logOutput(QStringLiteral("LAN transfer receive complete: "
-                                    "%1 MB in %2s (%3 Mbps avg)")
-                         .arg(ctx->total_received / sak::kBytesPerMBf, 0, 'f', 1)
-                         .arg(elapsed_sec, 0, 'f', 1)
-                         .arg(result.avgSpeedMbps, 0, 'f', 1));
+    Q_EMIT logOutput(
+        QStringLiteral("LAN transfer receive complete: "
+                       "%1 MB in %2s (%3 Mbps avg)")
+            .arg(static_cast<double>(ctx->total_received) / sak::kBytesPerMBf, 0, 'f', 1)
+            .arg(elapsed_sec, 0, 'f', 1)
+            .arg(result.avgSpeedMbps, 0, 'f', 1));
 
     delete ctx;
     socket->deleteLater();
@@ -1103,9 +1107,11 @@ private:
             return;
         }
         const qint64 deltaBytes = m_totalSent - m_lastReportBytes;
-        const double deltaSec = (elapsed - m_lastReportTime) / kNetworkMillisecondsPerSecond;
+        const double deltaSec = static_cast<double>(elapsed - m_lastReportTime) /
+                                kNetworkMillisecondsPerSecond;
         const double currentMbps =
-            deltaSec > 0 ? (deltaBytes * kBitsPerByte / (deltaSec * kMegabit)) : 0.0;
+            deltaSec > 0 ? (static_cast<double>(deltaBytes) * kBitsPerByte / (deltaSec * kMegabit))
+                         : 0.0;
         m_peakMbps = std::max(m_peakMbps, currentMbps);
         if (m_speedSamples.size() < kLanMaxSpeedSamples) {
             m_speedSamples.append(currentMbps);
@@ -1113,7 +1119,9 @@ private:
         m_lastReportTime = elapsed;
         m_lastReportBytes = m_totalSent;
         if (m_request.progress) {
-            m_request.progress(currentMbps, elapsed / kNetworkMillisecondsPerSecond, m_totalSent);
+            m_request.progress(currentMbps,
+                               static_cast<double>(elapsed) / kNetworkMillisecondsPerSecond,
+                               m_totalSent);
         }
     }
 
@@ -1231,15 +1239,16 @@ void NetworkDiagnosticController::finalizeLanTransfer(const LanTransferData& dat
     Q_ASSERT(data.total_sent >= 0);
     Q_ASSERT(!data.target_addr.isEmpty());
 
-    const double elapsed_sec = data.elapsed_ms / kNetworkMillisecondsPerSecond;
+    const double elapsed_sec = static_cast<double>(data.elapsed_ms) / kNetworkMillisecondsPerSecond;
 
     LanTransferResult result;
     result.remoteAddress = data.target_addr;
     result.port = data.port;
     result.bytesTransferred = data.total_sent;
     result.durationSec = elapsed_sec;
-    result.avgSpeedMbps =
-        elapsed_sec > 0 ? (data.total_sent * kBitsPerByte / (elapsed_sec * kMegabit)) : 0.0;
+    result.avgSpeedMbps = elapsed_sec > 0 ? (static_cast<double>(data.total_sent) * kBitsPerByte /
+                                             (elapsed_sec * kMegabit))
+                                          : 0.0;
     result.peakSpeedMbps = data.peak_mbps;
     result.isUpload = true;
     result.timestamp = QDateTime::currentDateTime();
@@ -1248,7 +1257,7 @@ void NetworkDiagnosticController::finalizeLanTransfer(const LanTransferData& dat
     Q_EMIT lanTransferComplete(result);
     Q_EMIT logOutput(QStringLiteral("LAN transfer complete: "
                                     "%1 MB in %2s (%3 Mbps avg)")
-                         .arg(data.total_sent / sak::kBytesPerMBf, 0, 'f', 1)
+                         .arg(static_cast<double>(data.total_sent) / sak::kBytesPerMBf, 0, 'f', 1)
                          .arg(elapsed_sec, 0, 'f', 1)
                          .arg(result.avgSpeedMbps, 0, 'f', 1));
     Q_EMIT statusMessage(QStringLiteral("LAN transfer test complete"), sak::kTimerStatusDefaultMs);

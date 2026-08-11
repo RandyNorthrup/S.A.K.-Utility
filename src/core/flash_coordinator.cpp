@@ -1185,7 +1185,7 @@ void FlashCoordinator::rollbackAndReport() {
 
 int FlashCoordinator::parsePhysicalDriveNumber(const QString& devicePath) {
     const QString prefix = QStringLiteral("PhysicalDrive");
-    const int idx = devicePath.lastIndexOf(prefix);
+    const int idx = static_cast<int>(devicePath.lastIndexOf(prefix));
     if (idx < 0) {
         return -1;
     }

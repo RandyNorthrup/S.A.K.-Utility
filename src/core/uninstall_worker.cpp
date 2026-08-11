@@ -73,7 +73,7 @@ struct ParsedCommand {
     }
 
     if (cmd.startsWith('"')) {
-        const int endQuote = cmd.indexOf('"', 1);
+        const int endQuote = static_cast<int>(cmd.indexOf('"', 1));
         if (endQuote <= 0) {
             return parsed;
         }
@@ -82,7 +82,7 @@ struct ParsedCommand {
         return parsed;
     }
 
-    const int exeEnd = cmd.indexOf(".exe", 0, Qt::CaseInsensitive);
+    const int exeEnd = static_cast<int>(cmd.indexOf(".exe", 0, Qt::CaseInsensitive));
     if (exeEnd > 0) {
         parsed.exe = cmd.left(exeEnd + kExecutableExtensionLength);
         parsed.args = splitArgsRespectingQuotes(cmd.mid(exeEnd + kExecutableExtensionLength));

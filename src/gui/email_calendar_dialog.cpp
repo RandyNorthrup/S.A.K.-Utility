@@ -291,7 +291,7 @@ private:
         }
 
         if (need_more) {
-            const int more_count = events.size() - max_bars;
+            const int more_count = static_cast<int>(events.size() - max_bars);
             drawMoreLabel(
                 painter, more_count, bar_left, bar_top + (max_bars * space_per_bar), bar_width);
         }
@@ -1672,7 +1672,7 @@ void EmailCalendarDialog::onDetailLoaded(sak::PstItemDetail detail) {
     evt.body_plain = detail.body_plain;
     evt.body_html = detail.body_html;
     evt.sender_email = detail.sender_email;
-    evt.attachment_count = detail.attachments.size();
+    evt.attachment_count = static_cast<int>(detail.attachments.size());
 
     if (detail.start_time.isValid()) {
         evt.start_time = detail.start_time;
@@ -1740,7 +1740,7 @@ void EmailCalendarDialog::updateNavigationLabel() {
 }
 
 void EmailCalendarDialog::updateStatusLabel() {
-    const int total = m_all_events.size();
+    const int total = static_cast<int>(m_all_events.size());
     int visible = 0;
     for (const auto& evt : m_all_events) {
         if (matchesSearch(evt) && matchesFilter(evt)) {

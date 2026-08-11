@@ -776,7 +776,7 @@ QString ChocolateyManager::extractErrorMessage(const QString& output) const {
 
         if (trimmed.contains("ERROR", Qt::CaseInsensitive)) {
             // Extract error message after "ERROR:"
-            const int error_pos = trimmed.indexOf("ERROR", Qt::CaseInsensitive);
+            const int error_pos = static_cast<int>(trimmed.indexOf("ERROR", Qt::CaseInsensitive));
             return trimmed.mid(error_pos).trimmed();
         }
 

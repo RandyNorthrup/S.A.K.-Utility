@@ -224,7 +224,8 @@ double MemoryBenchmarkWorker::runReadBandwidth() {
             }
         }
 
-        const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+        const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
+                                   kNanosecondsPerSecond;
         const double gbps = static_cast<double>(buf.size()) / sak::kBytesPerGBf / elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
 
@@ -263,7 +264,8 @@ double MemoryBenchmarkWorker::runWriteBandwidth() {
             }
         }
 
-        const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+        const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
+                                   kNanosecondsPerSecond;
         const double gbps = static_cast<double>(buf.size()) / sak::kBytesPerGBf / elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
     }
@@ -293,7 +295,8 @@ double MemoryBenchmarkWorker::runCopyBandwidth() {
 
         std::memcpy(dst.data(), src.data(), src.size());
 
-        const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+        const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
+                                   kNanosecondsPerSecond;
         // Copy touches both read and write = 2x buffer size
         const double gbps = static_cast<double>(src.size()) / sak::kBytesPerGBf / elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
@@ -393,7 +396,7 @@ auto MemoryBenchmarkWorker::runAllocationStress() -> std::expected<void, sak::er
         std::free(ptr);
     }
 
-    const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+    const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) / kNanosecondsPerSecond;
     m_result.alloc_dealloc_ops_per_sec = static_cast<double>(kAllocOps) / elapsed_sec;
 
     // Find max contiguous allocation

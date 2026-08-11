@@ -249,13 +249,13 @@ QString ConnectivityTester::resolveHostname(const QString& hostname) {
     }
 
     // Strip path, query, and fragment (anything after the host)
-    const int slashPos = host.indexOf(QLatin1Char('/'));
+    const int slashPos = static_cast<int>(host.indexOf(QLatin1Char('/')));
     if (slashPos > 0) {
         host = host.left(slashPos);
     }
 
     // Strip port suffix (e.g. "example.com:443")
-    const int colonPos = host.lastIndexOf(QLatin1Char(':'));
+    const int colonPos = static_cast<int>(host.lastIndexOf(QLatin1Char(':')));
     if (colonPos > 0) {
         const auto maybPort = host.mid(colonPos + 1);
         bool isPort = false;
@@ -531,7 +531,7 @@ void ConnectivityTester::traceroute(const TracerouteConfig& rawConfig) {
         }
     }
 
-    result.totalHops = result.hops.size();
+    result.totalHops = static_cast<int>(result.hops.size());
     Q_EMIT tracerouteComplete(result);
 }
 

@@ -1271,7 +1271,7 @@ void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& pr
     m_program_table->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_program_table);
     m_program_table->setRowCount(0);
-    m_program_table->setRowCount(programs.size());
+    m_program_table->setRowCount(static_cast<int>(programs.size()));
 
     for (int row = 0; row < programs.size(); ++row) {
         const auto& prog = programs[row];
@@ -1341,7 +1341,7 @@ void AdvancedUninstallPanel::populateLeftoverTable(const QVector<LeftoverItem>& 
     m_leftover_table->setUpdatesEnabled(false);
     const QSignalBlocker leftover_blocker(m_leftover_table);
     m_leftover_table->setRowCount(0);
-    m_leftover_table->setRowCount(leftovers.size());
+    m_leftover_table->setRowCount(static_cast<int>(leftovers.size()));
 
     for (int row = 0; row < leftovers.size(); ++row) {
         populateLeftoverRow(row, leftovers[row]);

@@ -291,7 +291,7 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
     int failed = 0;
     qint64 bytes_recovered = 0;
 
-    const int total = m_items.size();
+    const int total = static_cast<int>(m_items.size());
 
     for (int idx = 0; idx < total; ++idx) {
         if (checkStop()) {

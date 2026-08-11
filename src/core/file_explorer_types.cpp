@@ -19,7 +19,7 @@ QString remoteParentPath(const QString& normalized_path) {
     if (normalized_path == QStringLiteral("/")) {
         return QStringLiteral("/");
     }
-    const int separator = normalized_path.lastIndexOf(QLatin1Char('/'));
+    const int separator = static_cast<int>(normalized_path.lastIndexOf(QLatin1Char('/')));
     if (separator <= 0) {
         return QStringLiteral("/");
     }
@@ -34,7 +34,7 @@ QString localParentPath(const QString& normalized_path) {
     if (directory.cdUp()) {
         return QDir::fromNativeSeparators(QDir::cleanPath(directory.absolutePath()));
     }
-    const int separator = normalized_path.lastIndexOf(QLatin1Char('/'));
+    const int separator = static_cast<int>(normalized_path.lastIndexOf(QLatin1Char('/')));
     if (separator < 0) {
         return QString();
     }
@@ -147,7 +147,7 @@ bool FileExplorerSelection::hasSingleEntry() const {
 }
 
 int FileExplorerSelection::count() const {
-    return entries.size();
+    return static_cast<int>(entries.size());
 }
 
 bool FileExplorerSelection::containsDirectory() const {

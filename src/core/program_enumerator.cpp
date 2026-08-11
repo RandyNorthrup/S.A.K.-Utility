@@ -39,14 +39,14 @@ constexpr int kQuotedPathTrimChars = 2;
     QString exePath = std::move(uninstallString);
 
     if (exePath.startsWith('"')) {
-        const int endQuote = exePath.indexOf('"', 1);
+        const int endQuote = static_cast<int>(exePath.indexOf('"', 1));
         if (endQuote > 0) {
             exePath = exePath.mid(1, endQuote - 1);
         }
         return exePath;
     }
 
-    const int space = exePath.indexOf(' ');
+    const int space = static_cast<int>(exePath.indexOf(' '));
     if (space > 0) {
         exePath = exePath.left(space);
     }
@@ -707,7 +707,7 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
     int icon_index = 0;
 
     // Handle "path,index" format
-    const int comma = path.lastIndexOf(',');
+    const int comma = static_cast<int>(path.lastIndexOf(','));
     if (comma > 0) {
         bool ok = false;
         const int idx = path.mid(comma + 1).trimmed().toInt(&ok);

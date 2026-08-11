@@ -689,9 +689,10 @@ bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
         }
 
         auto& vol = m_volumes[i];
-        const int progress_percent = progress::kStep15 +
-                                     static_cast<int>((static_cast<double>(i) / m_volumes.size()) *
-                                                      kKeyRetrievalProgressSpan);
+        const int progress_percent =
+            progress::kStep15 +
+            static_cast<int>((static_cast<double>(i) / static_cast<double>(m_volumes.size())) *
+                             kKeyRetrievalProgressSpan);
         Q_EMIT executionProgress(QString("Retrieving keys for %1 (%2/%3)...")
                                      .arg(vol.drive_letter)
                                      .arg(i + 1)
@@ -712,7 +713,7 @@ bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
                              start_time);
             return false;
         }
-        total_keys_found += vol.key_protectors.size();
+        total_keys_found += static_cast<int>(vol.key_protectors.size());
         total_recovery_passwords += countRecoveryPasswords(vol.key_protectors);
 
         // Log protector IDs only (never log the actual recovery passwords)

@@ -93,7 +93,7 @@ void finishTcpProbe(const TcpProbeContextPtr& probe) {
         return;
     }
     probe->finished = true;
-    probe->result.response_time_ms = probe->elapsed.elapsed();
+    probe->result.response_time_ms = static_cast<int>(probe->elapsed.elapsed());
     probe->socket->disconnectFromHost();
     probe->socket->deleteLater();
     probe->owner->deleteLater();
@@ -133,7 +133,7 @@ void connectTcpProbeSocket(const TcpProbeContextPtr& probe) {
     QObject::connect(probe->socket, &QTcpSocket::connected, probe->owner, [probe]() {
         probe->connect_timer->stop();
         probe->result.connected = true;
-        probe->result.response_time_ms = probe->elapsed.elapsed();
+        probe->result.response_time_ms = static_cast<int>(probe->elapsed.elapsed());
         if (!probe->grab_banner) {
             finishTcpProbe(probe);
             return;
@@ -421,7 +421,7 @@ void PortScanner::scan(const ScanConfig& config) {
         return;
     }
 
-    Q_EMIT scanStarted(config.target, ports.size());
+    Q_EMIT scanStarted(config.target, static_cast<int>(ports.size()));
 
     const QVector<PortScanResult> results = scanPortsConcurrently(config, ports);
 
@@ -466,7 +466,7 @@ QVector<PortScanResult> PortScanner::scanPortsConcurrently(const ScanConfig& con
             results.append(result);
             ++scanned;
             Q_EMIT portScanned(result);
-            Q_EMIT scanProgress(scanned, ports.size());
+            Q_EMIT scanProgress(scanned, static_cast<int>(ports.size()));
         }
     }
 

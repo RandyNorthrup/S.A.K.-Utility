@@ -403,7 +403,7 @@ ToolResult toolSendKeys(const QJsonObject& args) {
     }
     seq.append(keyVk(main_key, false));
     seq.append(keyVk(main_key, true));
-    for (int i = modifiers.size() - 1; i >= 0; --i) {
+    for (int i = static_cast<int>(modifiers.size() - 1); i >= 0; --i) {
         seq.append(keyVk(modifiers[i], true));
     }
     if (!sendInputAll(seq)) {

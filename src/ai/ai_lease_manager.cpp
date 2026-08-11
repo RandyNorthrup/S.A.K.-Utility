@@ -123,7 +123,7 @@ bool AiLeaseManager::hasActiveExclusive() const {
 
 int AiLeaseManager::activeLeaseCount() const {
     const QMutexLocker lock(&m_mutex);
-    return m_active.size();
+    return static_cast<int>(m_active.size());
 }
 
 QStringList AiLeaseManager::activeLeaseIds() const {

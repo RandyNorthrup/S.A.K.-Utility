@@ -397,7 +397,7 @@ void UserProfileRestoreWorker::run() {
 
         userIndex++;
         Q_EMIT overallProgress(
-            userIndex, m_mappings.size(), m_bytesRestored, m_totalBytesToRestore);
+            userIndex, static_cast<int>(m_mappings.size()), m_bytesRestored, m_totalBytesToRestore);
     }
 
     // Apply the selected machine-level WiFi/Ethernet settings after the file restore.
@@ -1159,7 +1159,7 @@ bool UserProfileRestoreWorker::isAppDataPathExcluded(const QString& profileRelat
         // sibling under "AppData/Local/Google".
         if (norm == base || norm.startsWith(base + QLatin1Char('/'))) {
             if (base.length() > bestLen) {
-                bestLen = base.length();
+                bestLen = static_cast<int>(base.length());
                 excluded = !src.selected;
             }
         }

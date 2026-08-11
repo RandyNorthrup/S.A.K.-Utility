@@ -123,7 +123,7 @@ bool SkillStore::addSkill(const Skill& skill, QStringList* errors) {
     if (existing != m_index_by_id.constEnd()) {
         m_skills[*existing] = skill;
     } else {
-        m_index_by_id.insert(skill.id, m_skills.size());
+        m_index_by_id.insert(skill.id, static_cast<int>(m_skills.size()));
         m_skills.append(skill);
     }
     return true;

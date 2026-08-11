@@ -472,7 +472,7 @@ bool UupDumpApi::collectValidFiles(const QJsonObject& filesObj, QList<FileInfo>&
 
     // A UUP ISO needs every listed file; silently dropping unsafe/unverifiable
     // entries and reporting success would build from an incomplete set. Refuse.
-    const int droppedCount = filesObj.size() - out.size();
+    const int droppedCount = static_cast<int>(filesObj.size() - out.size());
     if (droppedCount > 0) {
         const QString errorMsg =
             QString(
@@ -485,7 +485,7 @@ bool UupDumpApi::collectValidFiles(const QJsonObject& filesObj, QList<FileInfo>&
         return false;
     }
 
-    const double totalSizeGB = totalSize / sak::kBytesPerGBf;
+    const double totalSizeGB = static_cast<double>(totalSize) / sak::kBytesPerGBf;
     sak::logInfo(QString("Fetched %1 downloadable files (%2 GB total)")
                      .arg(out.size())
                      .arg(totalSizeGB, 0, 'f', kGbDisplayPrecision)
@@ -532,7 +532,7 @@ bool hasAria2ControlChar(const QString& s) {
 // True if @p fileName is a Windows reserved device name (CON, NUL, COM1, ...), with or without an
 // extension: aria2 out=con / out=con.esd would open the console device instead of creating a file.
 bool isReservedDosDeviceName(const QString& fileName) {
-    const int dot = fileName.indexOf(QLatin1Char('.'));
+    const int dot = static_cast<int>(fileName.indexOf(QLatin1Char('.')));
     const QString base = (dot < 0 ? fileName : fileName.left(dot)).toUpper();
     static const QStringList kReserved = {
         QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),

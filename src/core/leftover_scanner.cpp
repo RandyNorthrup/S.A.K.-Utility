@@ -873,7 +873,7 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& sto
 // parse is unit-testable without schtasks.
 QString parseFirstCsvField(const QString& line) {
     if (line.isEmpty() || line.at(0) != QLatin1Char('"')) {
-        const int comma = line.indexOf(QLatin1Char(','));
+        const int comma = static_cast<int>(line.indexOf(QLatin1Char(',')));
         return comma < 0 ? line : line.left(comma);
     }
     QString out;
@@ -1386,7 +1386,7 @@ namespace {
 bool leftoverInsideOwnInstallSubfolder(const QString& path_native,
                                        const QString& install_native,
                                        const QString& protected_path) {
-    const int len = protected_path.length();
+    const int len = static_cast<int>(protected_path.length());
     const bool install_below_protected =
         !install_native.isEmpty() && install_native.length() > len &&
         install_native.startsWith(protected_path, Qt::CaseInsensitive) &&
@@ -1409,7 +1409,7 @@ bool LeftoverScanner::isProtectedPath(const QString& path) const {
         if (!path_native.startsWith(protected_path, Qt::CaseInsensitive)) {
             continue;
         }
-        const int len = protected_path.length();
+        const int len = static_cast<int>(protected_path.length());
         const bool direct = (path_native.length() == len);
         const bool child = (path_native.length() > len && path_native[len] == '\\');
         if (!direct && !child) {

@@ -1099,7 +1099,7 @@ void AdvancedSearchPanel::addManualSearchTarget() {
     m_search_targets.append(
         FileManagementFileSystemBridge::manualTarget(path->text(), fs->currentText()));
     m_target_combo->addItem(m_search_targets.constLast().label);
-    m_target_combo->setCurrentIndex(m_search_targets.size() - 1);
+    m_target_combo->setCurrentIndex(static_cast<int>(m_search_targets.size() - 1));
 }
 
 FileManagementTarget AdvancedSearchPanel::currentSearchTarget() const {
@@ -1798,7 +1798,7 @@ void AdvancedSearchPanel::highlightMatches() {
         // The line format is: ">>> NNNNN | content" or "    NNNNN | content"
         // The actual content starts after "| "
         const QString blockText = block.text();
-        const int pipeIdx = blockText.indexOf('|');
+        const int pipeIdx = static_cast<int>(blockText.indexOf('|'));
         if (pipeIdx < 0) {
             continue;
         }
@@ -1920,7 +1920,7 @@ void AdvancedSearchPanel::onPreviousMatch() {
 
     int newIndex = m_current_match_index - 1;
     if (newIndex < 0) {
-        newIndex = m_current_matches.size() - 1;  // Wrap around
+        newIndex = static_cast<int>(m_current_matches.size() - 1);  // Wrap around
     }
     navigateToMatch(newIndex);
 }

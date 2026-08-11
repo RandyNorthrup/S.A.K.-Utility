@@ -254,12 +254,12 @@ QString RegexPatternLibrary::combinedPattern() const {
 }
 
 int RegexPatternLibrary::activeCount() const {
-    return std::count_if(m_builtin_patterns.begin(),
-                         m_builtin_patterns.end(),
-                         [](const auto& p) { return p.enabled; }) +
-           std::count_if(m_custom_patterns.begin(), m_custom_patterns.end(), [](const auto& p) {
-               return p.enabled;
-           });
+    return static_cast<int>(std::count_if(m_builtin_patterns.begin(),
+                                          m_builtin_patterns.end(),
+                                          [](const auto& p) { return p.enabled; }) +
+                            std::count_if(m_custom_patterns.begin(),
+                                          m_custom_patterns.end(),
+                                          [](const auto& p) { return p.enabled; }));
 }
 
 void RegexPatternLibrary::clearAll() {

@@ -497,7 +497,7 @@ QString NetworkDiagnosticReportGenerator::buildConnectionSection() const {
         "<th>State</th><th>Process</th></tr>\n");
 
     // Only show first 100 to avoid huge reports
-    const int limit = qMin(m_connections.size(), 100);
+    const int limit = static_cast<int>(qMin(m_connections.size(), 100));
     for (int i = 0; i < limit; ++i) {
         const auto& c = m_connections[i];
         const auto proto = (c.protocol == ConnectionInfo::Protocol::TCP) ? QStringLiteral("TCP")

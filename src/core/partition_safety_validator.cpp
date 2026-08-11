@@ -593,8 +593,8 @@ bool targetPathReferencesVolumeGuid(const QString& targetPath, const QString& vo
     if (volumeGuid.isEmpty()) {
         return false;
     }
-    const int open = volumeGuid.indexOf(QLatin1Char('{'));
-    const int close = volumeGuid.indexOf(QLatin1Char('}'), open + 1);
+    const int open = static_cast<int>(volumeGuid.indexOf(QLatin1Char('{')));
+    const int close = static_cast<int>(volumeGuid.indexOf(QLatin1Char('}'), open + 1));
     if (open >= 0 && close > open) {
         return targetPath.contains(volumeGuid.mid(open, close - open + 1), Qt::CaseInsensitive);
     }

@@ -190,7 +190,8 @@ QString ScriptRewriter::replaceUrl(const QString& script,
     // rewritten download silently does nothing.
     int search_pos = 0;
     while (true) {
-        const int found_pos = result.indexOf(url, search_pos, Qt::CaseInsensitive);
+        const int found_pos =
+            static_cast<int>(result.indexOf(url, search_pos, Qt::CaseInsensitive));
         if (found_pos < 0) {
             break;
         }
@@ -208,7 +209,7 @@ QString ScriptRewriter::replaceUrl(const QString& script,
         result.replace(span.start, span.length, tools_path);
         replacements.append(replacement);
 
-        search_pos = span.start + tools_path.length();
+        search_pos = static_cast<int>(span.start + tools_path.length());
     }
 
     return result;

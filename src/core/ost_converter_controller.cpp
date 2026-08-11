@@ -54,7 +54,7 @@ void OstConverterController::addFile(const QString& path) {
     const QString suffix = fi.suffix().toLower();
     job.is_ost = (suffix == QStringLiteral("ost"));
 
-    const int index = m_queue.size();
+    const int index = static_cast<int>(m_queue.size());
     m_queue.append(job);
 
     logInfo("OST Converter: added file to queue: {}", fi.fileName().toStdString());
@@ -115,14 +115,14 @@ void OstConverterController::startConversion(const OstConversionConfig& config) 
 
     // Initialize batch result
     m_batch_result = OstConversionBatchResult();
-    m_batch_result.files_total = m_queue.size();
+    m_batch_result.files_total = static_cast<int>(m_queue.size());
     m_batch_result.batch_started = QDateTime::currentDateTime();
 
     logInfo("OST Converter: starting batch conversion - {} files, {} threads",
             std::to_string(m_queue.size()),
             std::to_string(config.max_threads));
 
-    Q_EMIT conversionStarted(m_queue.size());
+    Q_EMIT conversionStarted(static_cast<int>(m_queue.size()));
 
     // Launch up to max_threads concurrent workers. Clamp to at least one: a
     // zero/negative max_threads would launch no worker, so finalizeBatch() would
@@ -132,8 +132,8 @@ void OstConverterController::startConversion(const OstConversionConfig& config) 
     // one QThread per queued file and exhaust handles, memory, and scheduler
     // resources -- cap the peak worker count regardless of the requested value.
     constexpr int kMaxConcurrentWorkers = 64;
-    const int threads_to_launch = qMin(qBound(1, config.max_threads, kMaxConcurrentWorkers),
-                                       m_queue.size());
+    const int threads_to_launch = static_cast<int>(
+        qMin(qBound(1, config.max_threads, kMaxConcurrentWorkers), m_queue.size()));
     for (int i = 0; i < threads_to_launch; ++i) {
         startNextFile();
     }

@@ -676,7 +676,7 @@ constexpr QLatin1StringView kEvidenceRollbackBoundary("rollback-boundary");
         }
 
         const int snapshotCountAt =
-            detail.indexOf(QStringLiteral("snapshots "), 0, Qt::CaseInsensitive);
+            static_cast<int>(detail.indexOf(QStringLiteral("snapshots "), 0, Qt::CaseInsensitive));
         if (snapshotCountAt < 0) {
             continue;
         }
@@ -4227,7 +4227,8 @@ bool buildIpBitmapBlockFromUsedSet(uint32_t blockSize,
                 QStringLiteral("APFS commit: internal-pool bitmap index out of range"));
             return false;
         }
-        block[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
+        block[static_cast<qsizetype>(bit / 8)] = static_cast<char>(
+            block[static_cast<qsizetype>(bit / 8)] | static_cast<char>(1 << (bit % 8)));
     }
     *out = block;
     return true;
@@ -4241,7 +4242,8 @@ QByteArray contiguousBitmapPrefix(uint32_t blockSize, uint64_t count) {
     QByteArray block(static_cast<qsizetype>(blockSize), '\0');
     const uint64_t bitCapacity = static_cast<uint64_t>(blockSize) * 8;
     for (uint64_t bit = 0; bit < count && bit < bitCapacity; ++bit) {
-        block[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
+        block[static_cast<qsizetype>(bit / 8)] = static_cast<char>(
+            block[static_cast<qsizetype>(bit / 8)] | static_cast<char>(1 << (bit % 8)));
     }
     return block;
 }
@@ -4727,7 +4729,8 @@ std::optional<QByteArray> buildChunkRangeBitmapBlock(uint32_t blockSize,
     }
     QByteArray block(static_cast<qsizetype>(blockSize), '\0');
     for (uint64_t index = startBlock; index < startBlock + runBlocks; ++index) {
-        block[static_cast<qsizetype>(index / 8)] |= static_cast<char>(1 << (index % 8));
+        block[static_cast<qsizetype>(index / 8)] = static_cast<char>(
+            block[static_cast<qsizetype>(index / 8)] | static_cast<char>(1 << (index % 8)));
     }
     return block;
 }
@@ -5542,7 +5545,9 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
         return false;
     }
     for (uint64_t i = 0; i < bmSize; ++i) {
-        writeLe16(spaceman, bmAddrOff + (static_cast<qsizetype>(i) * 2), newSlots.at(i));
+        writeLe16(spaceman,
+                  bmAddrOff + (static_cast<qsizetype>(i) * 2),
+                  newSlots.at(static_cast<qsizetype>(i)));
         writeLe64(spaceman, xidOff + (static_cast<qsizetype>(i) * 8), ctx.newXid);
     }
     // The whole ip usage (the exact ipUsedSet, all indices below one block's worth of
@@ -5554,7 +5559,11 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
             !buildIpBitmapBlockFromUsedSet(ctx.geometry.blockSize, ctx.ipUsedSet, &bmp, blockers)) {
             return false;
         }
-        if (!writeApfsRepairBlock(ctx.image, ctx.geometry, base + newSlots.at(i), bmp, blockers)) {
+        if (!writeApfsRepairBlock(ctx.image,
+                                  ctx.geometry,
+                                  base + newSlots.at(static_cast<qsizetype>(i)),
+                                  bmp,
+                                  blockers)) {
             return false;
         }
     }
@@ -7695,13 +7704,15 @@ void flipChunkBitmapBits(QByteArray* bitmap,
         if (block >= bitCapacity) {
             continue;
         }
-        (*bitmap)[static_cast<qsizetype>(block / 8)] &= static_cast<char>(~(1 << (block % 8)));
+        (*bitmap)[static_cast<qsizetype>(block / 8)] = static_cast<char>(
+            (*bitmap)[static_cast<qsizetype>(block / 8)] & static_cast<char>(~(1 << (block % 8))));
     }
     for (uint64_t block : allocated) {
         if (block >= bitCapacity) {
             continue;
         }
-        (*bitmap)[static_cast<qsizetype>(block / 8)] |= static_cast<char>(1 << (block % 8));
+        (*bitmap)[static_cast<qsizetype>(block / 8)] = static_cast<char>(
+            (*bitmap)[static_cast<qsizetype>(block / 8)] | static_cast<char>(1 << (block % 8)));
     }
 }
 
@@ -8910,8 +8921,9 @@ bool writeCowVolumeOmap(const ApfsCowFileInsert& cow,
                         const QVector<ApfsObjectMapEntry>& fsMappings,
                         QStringList* blockers) {
     const uint32_t bs = cow.geometry.blockSize;
-    const uint64_t volOmapTreeBasePaddr = cow.newBlocks.at(chain.volOmapTreeBase);
-    const uint64_t volOmapHdr = cow.newBlocks.at(chain.volOmapHdr);
+    const uint64_t volOmapTreeBasePaddr =
+        cow.newBlocks.at(static_cast<qsizetype>(chain.volOmapTreeBase));
+    const uint64_t volOmapHdr = cow.newBlocks.at(static_cast<qsizetype>(chain.volOmapHdr));
     // The reserved omap-tree run is generally NON-CONTIGUOUS once free space is fragmented,
     // so hand the builder the ACTUAL blocks (emit slot i -> volTreeNodeBlocks[i]); a
     // treeBasePaddr+i assumption pointed the multi-node omap's leaves at the wrong (data)
@@ -8919,7 +8931,8 @@ bool writeCowVolumeOmap(const ApfsCowFileInsert& cow,
     QVector<uint64_t> volTreeNodeBlocks;
     volTreeNodeBlocks.reserve(chain.volOmapTreeBlocks);
     for (qsizetype i = 0; i < chain.volOmapTreeBlocks; ++i) {
-        volTreeNodeBlocks.append(cow.newBlocks.at(chain.volOmapTreeBase + i));
+        volTreeNodeBlocks.append(
+            cow.newBlocks.at(static_cast<qsizetype>(chain.volOmapTreeBase + i)));
     }
     // Diverge: keep the older (oid, xid) versions a snapshot still resolves alongside the new
     // (oid, newXid) mappings. buildObjectMapTreeNodes sorts by (oid, xid), so the versioned
@@ -8977,10 +8990,10 @@ bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers
     const uint32_t bs = cow.geometry.blockSize;
     const qsizetype nodeCount = cow.fsNodes.size();
     const ApfsOmapChainLayout chain = omapChainLayout(nodeCount, cowVolMappingCount(cow), bs);
-    const uint64_t volOmapHdr = cow.newBlocks.at(chain.volOmapHdr);
-    const uint64_t volSb = cow.newBlocks.at(chain.volSb);
-    const uint64_t ctrOmapTree = cow.newBlocks.at(chain.ctrOmapTreeBase);
-    const uint64_t ctrOmapHdr = cow.newBlocks.at(chain.ctrOmapHdr);
+    const uint64_t volOmapHdr = cow.newBlocks.at(static_cast<qsizetype>(chain.volOmapHdr));
+    const uint64_t volSb = cow.newBlocks.at(static_cast<qsizetype>(chain.volSb));
+    const uint64_t ctrOmapTree = cow.newBlocks.at(static_cast<qsizetype>(chain.ctrOmapTreeBase));
+    const uint64_t ctrOmapHdr = cow.newBlocks.at(static_cast<qsizetype>(chain.ctrOmapHdr));
 
     QVector<ApfsObjectMapEntry> fsMappings;
     if (!writeCowFsTreeNodes(cow, &fsMappings, blockers)) {
@@ -9512,11 +9525,14 @@ bool materializeSpilledChunkBitmaps(const ApfsFileInsertAllocation& alloc,
         const uint64_t chunkBase = c * alloc.layout.chunk0Blocks;
         for (uint64_t block : chunkFreedBlocks(alloc, c)) {
             const uint64_t bit = block - chunkBase;
-            chunkBitmap[static_cast<qsizetype>(bit / 8)] &= static_cast<char>(~(1 << (bit % 8)));
+            chunkBitmap[static_cast<qsizetype>(bit / 8)] =
+                static_cast<char>(chunkBitmap[static_cast<qsizetype>(bit / 8)] &
+                                  static_cast<char>(~(1 << (bit % 8))));
         }
         for (uint64_t block : chunkAllocatedBlocks(alloc, c)) {
             const uint64_t bit = block - chunkBase;
-            chunkBitmap[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
+            chunkBitmap[static_cast<qsizetype>(bit / 8)] = static_cast<char>(
+                chunkBitmap[static_cast<qsizetype>(bit / 8)] | static_cast<char>(1 << (bit % 8)));
         }
         if (!writeApfsRepairBlock(
                 alloc.image, alloc.geometry, spilledChunkSlot(alloc, c), chunkBitmap, blockers)) {
@@ -11690,10 +11706,11 @@ bool writeFinalizeCowChain(const ApfsFsCommitFinalize& f,
          .live = f.ctx.chain,
          .fsNodes = f.fsNodes,
          .newBlocks = f.newBlocks.mid(0,
-                                      omapChainLayout(static_cast<uint64_t>(nodeCount),
-                                                      volMappings,
-                                                      f.ctx.geometry.blockSize)
-                                          .tail),
+                                      static_cast<qsizetype>(
+                                          omapChainLayout(static_cast<uint64_t>(nodeCount),
+                                                          volMappings,
+                                                          f.ctx.geometry.blockSize)
+                                              .tail)),
          .files = f.files,
          .allocBlockDelta = netConsumed,
          .extentRefNew = f.extentRefNew,
@@ -12525,7 +12542,7 @@ bool clearReclaimedBits(const ApfsForeignReclaimChunk& ch,
                 "APFS foreign reclaim: reclaimed block is already free (double free)"));
             return false;
         }
-        (*bitmap)[byteIdx] &= static_cast<char>(~mask);
+        (*bitmap)[byteIdx] = static_cast<char>((*bitmap)[byteIdx] & static_cast<char>(~mask));
     }
     return true;
 }
@@ -12763,10 +12780,10 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
     const int64_t netQueued = in.fq.freedCount - static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
     const uint64_t containerOmapBlock =
-        f.newBlocks.at(omapChainLayout(static_cast<uint64_t>(nodeCount),
-                                       finalizeVolMappingCount(f),
-                                       f.ctx.geometry.blockSize)
-                           .ctrOmapHdr);
+        f.newBlocks.at(static_cast<qsizetype>(omapChainLayout(static_cast<uint64_t>(nodeCount),
+                                                              finalizeVolMappingCount(f),
+                                                              f.ctx.geometry.blockSize)
+                                                  .ctrOmapHdr));
     return finalizeApplyBitmapsAndAdvance(
         f,
         in,
@@ -13016,9 +13033,10 @@ bool reserveInsertLayout(const ApfsFsCommitContext& ctx,
                                               in.volMappingCount,
                                               ctx.geometry.blockSize)
                                   .tail;
-    out->dataBlockList = out->newBlocks.mid(tailBase + extentRefSlots);
-    out->extentRefBlocks = extentRefSlots != 0 ? out->newBlocks.mid(tailBase, extentRefSlots)
-                                               : QVector<uint64_t>{};
+    out->dataBlockList = out->newBlocks.mid(static_cast<qsizetype>(tailBase + extentRefSlots));
+    out->extentRefBlocks =
+        extentRefSlots != 0 ? out->newBlocks.mid(static_cast<qsizetype>(tailBase), extentRefSlots)
+                            : QVector<uint64_t>{};
     return true;
 }
 
@@ -14508,7 +14526,8 @@ struct ApfsMultiChunkLayout {
 // A source data chunk that already carries a materialized allocation bitmap (a prior commit set
 // its cib entry's ci_bitmap_addr non-zero); a fresh chunk starts implicit-all-free (0).
 bool srcChunkHasBitmap(const QVector<ApfsSourceChunkState>& src, uint64_t k) {
-    return k < static_cast<uint64_t>(src.size()) && src.at(k).bitmapAddr != 0;
+    return k < static_cast<uint64_t>(src.size()) &&
+           src.at(static_cast<qsizetype>(k)).bitmapAddr != 0;
 }
 
 // Fail closed if any IP-relative used-set index exceeds the internal-pool bitmap's full span
@@ -14619,14 +14638,17 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
             e.xid = plan.newXid;
         } else if (srcChunkHasBitmap(src, k)) {
             QByteArray bm(bs, '\0');
-            if (!readApfsRepairBlock(
-                    ctx->image, ctx->geometry, src.at(k).bitmapAddr, &bm, blockers)) {
+            if (!readApfsRepairBlock(ctx->image,
+                                     ctx->geometry,
+                                     src.at(static_cast<qsizetype>(k)).bitmapAddr,
+                                     &bm,
+                                     blockers)) {
                 return false;
             }
             const uint64_t slot = nextSlot++;
             out->writes.append({slot, bm});
             e.bitmapAddr = slot;
-            e.freeCount = src.at(k).freeCount;
+            e.freeCount = src.at(static_cast<qsizetype>(k)).freeCount;
             e.xid = plan.newXid;
             out->ipUsedSet.append(slot - base);
         }
@@ -14925,10 +14947,12 @@ uint64_t buildGrownChunk0Bitmap(const QByteArray& source,
                                 QByteArray* out) {
     *out = source;
     for (uint64_t block : reclaimed) {
-        (*out)[static_cast<qsizetype>(block / 8)] &= static_cast<char>(~(1 << (block % 8)));
+        (*out)[static_cast<qsizetype>(block / 8)] = static_cast<char>(
+            (*out)[static_cast<qsizetype>(block / 8)] & static_cast<char>(~(1 << (block % 8))));
     }
     for (uint64_t block = poolBase; block < poolBase + poolBlocks; ++block) {
-        (*out)[static_cast<qsizetype>(block / 8)] |= static_cast<char>(1 << (block % 8));
+        (*out)[static_cast<qsizetype>(block / 8)] = static_cast<char>(
+            (*out)[static_cast<qsizetype>(block / 8)] | static_cast<char>(1 << (block % 8)));
     }
     uint64_t used = 0;
     for (qsizetype i = 0; i < out->size(); ++i) {
@@ -19491,7 +19515,7 @@ struct GeneratedHeaderExpectation {
 };
 
 bool appendGeneratedHeaderBlockers(const GeneratedHeaderExpectation& expected) {
-    const int before = expected.blockers->size();
+    const int before = static_cast<int>(expected.blockers->size());
     appendGeneratedLayoutBlocker(
         le64(*expected.block, kApfsObjectOidOffset) == expected.expectedOid,
         QStringLiteral("APFS generated/minimal block %1 OID mismatch").arg(expected.blockIndex),
@@ -19527,7 +19551,7 @@ struct GeneratedObjectMapTreeExpectation {
 };
 
 bool appendGeneratedObjectMapTreeBlockers(const GeneratedObjectMapTreeExpectation& expected) {
-    const int before = expected.blockers->size();
+    const int before = static_cast<int>(expected.blockers->size());
     appendGeneratedHeaderBlockers({.block = expected.block,
                                    .blockIndex = expected.blockIndex,
                                    .expectedOid = expected.blockIndex,
@@ -19576,7 +19600,7 @@ struct GeneratedRootTreeExpectation {
 };
 
 bool appendGeneratedRootTreeBlockers(const GeneratedRootTreeExpectation& expected) {
-    const int before = expected.blockers->size();
+    const int before = static_cast<int>(expected.blockers->size());
     appendGeneratedHeaderBlockers({.block = expected.block,
                                    .blockIndex = kApfsFormatRootTreeBlock,
                                    .expectedOid = kApfsFormatRootTreeOid,
@@ -20041,7 +20065,7 @@ bool appendGeneratedApfsLayoutBlockers(QIODevice* image,
                                        QLatin1StringView purpose,
                                        bool allowChecksumRepair,
                                        QStringList* blockers) {
-    const int before = blockers->size();
+    const int before = static_cast<int>(blockers->size());
     const GeneratedApfsLayoutContext context{.image = image,
                                              .geometry = geometry,
                                              .purpose = purpose,

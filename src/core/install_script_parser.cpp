@@ -157,7 +157,7 @@ void InstallScriptParser::parseInstallChocolateyPackage(const QString& script,
     while (matches.hasNext()) {
         auto match = matches.next();
         const QString call_text = match.captured(1);
-        const int pos = match.capturedStart();
+        const int pos = static_cast<int>(match.capturedStart());
 
         DownloadResource resource;
         resource.source_function = "Install-ChocolateyPackage";
@@ -185,7 +185,7 @@ void InstallScriptParser::parseInstallChocolateyZipPackage(const QString& script
     while (matches.hasNext()) {
         auto match = matches.next();
         const QString call_text = match.captured(1);
-        const int pos = match.capturedStart();
+        const int pos = static_cast<int>(match.capturedStart());
 
         DownloadResource resource;
         resource.source_function = "Install-ChocolateyZipPackage";
@@ -222,7 +222,7 @@ void InstallScriptParser::parseGetChocolateyWebFile(const QString& script,
     while (matches.hasNext()) {
         auto match = matches.next();
         const QString call_text = match.captured(1);
-        const int pos = match.capturedStart();
+        const int pos = static_cast<int>(match.capturedStart());
 
         DownloadResource resource;
         resource.source_function = "Get-ChocolateyWebFile";
@@ -270,7 +270,7 @@ DownloadResource InstallScriptParser::buildSplattingResource(const QString& scri
 
     DownloadResource resource;
     resource.source_function = QString("splatting (@%1)").arg(match.captured(1));
-    resource.line_number = lineNumberAt(script, match.capturedStart());
+    resource.line_number = lineNumberAt(script, static_cast<int>(match.capturedStart()));
     resource.url = resolveVariables(extractHashtableValue(block, "url"), script);
 
     QString url64 = extractHashtableValue(block, "url64bit");

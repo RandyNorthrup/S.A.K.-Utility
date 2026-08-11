@@ -436,7 +436,7 @@ struct CliParserOptions {
     const QStringList& values, QString* error) {
     QVector<QPair<QByteArray, QByteArray>> out;
     for (const QString& spec : values) {
-        const int eq = spec.indexOf(QLatin1Char('='));
+        const int eq = static_cast<int>(spec.indexOf(QLatin1Char('=')));
         if (eq <= 0) {
             *error = QStringLiteral("--xattr must be name=hexvalue: %1").arg(spec);
             return std::nullopt;

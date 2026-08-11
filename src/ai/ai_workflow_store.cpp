@@ -86,7 +86,7 @@ bool WorkflowStore::addWorkflow(const WorkflowTemplate& workflow, QStringList* e
         // invariant), so an override cannot smuggle an unescaped placeholder past validation.
         m_workflows[*existing] = workflow;
     } else {
-        m_index_by_id.insert(workflow.id, m_workflows.size());
+        m_index_by_id.insert(workflow.id, static_cast<int>(m_workflows.size()));
         m_workflows.append(workflow);
     }
     return true;

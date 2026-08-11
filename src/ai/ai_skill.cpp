@@ -74,7 +74,7 @@ QString parseFrontMatter(const QString& text, Skill* skill) {
     }
     for (int i = 1; i < close_index; ++i) {
         const QString line = lines.at(i);
-        const int colon = line.indexOf(QLatin1Char(':'));
+        const int colon = static_cast<int>(line.indexOf(QLatin1Char(':')));
         if (colon <= 0) {
             continue;
         }

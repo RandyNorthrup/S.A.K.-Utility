@@ -176,7 +176,7 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
     Q_ASSERT(m_smart_warnings_label);
     setOperationRunning(false);
 
-    m_smart_table->setRowCount(reports.size());
+    m_smart_table->setRowCount(static_cast<int>(reports.size()));
     QStringList warnings_list;
 
     for (int row = 0; row < reports.size(); ++row) {

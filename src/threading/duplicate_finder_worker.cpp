@@ -224,8 +224,8 @@ void DuplicateFinderWorker::buildDuplicateGroups(
         }
 
         try {
-            group.file_size = std::filesystem::file_size(paths[0]);
-            group.wasted_space = group.file_size * (paths.size() - 1);
+            group.file_size = static_cast<qint64>(std::filesystem::file_size(paths[0]));
+            group.wasted_space = static_cast<qint64>(group.file_size * (paths.size() - 1));
 
             duplicate_groups.push_back(group);
             total_duplicates += static_cast<int>(paths.size() - 1);
@@ -413,7 +413,7 @@ auto DuplicateFinderWorker::hashVirtualFiles(const QVector<VirtualFile>& files)
             return std::unexpected(sak::error_code::operation_cancelled);
         }
         const auto& file = files.at(i);
-        Q_EMIT scanProgress(i + 1, files.size(), file.path);
+        Q_EMIT scanProgress(i + 1, static_cast<int>(files.size()), file.path);
         if (file.size < 0 || static_cast<uint64_t>(file.size) > kDuplicateVirtualReadMaxBytes) {
             sak::logWarning("Skipping oversized file-system target entry: {}",
                             file.path.toStdString());
@@ -456,7 +456,7 @@ DuplicateFinderWorker::buildVirtualDuplicateGroups(
             group.file_paths.append(file.path);
         }
         groups.push_back(group);
-        total_duplicates += paths.size() - 1;
+        total_duplicates += static_cast<int>(paths.size() - 1);
         total_wasted += group.wasted_space;
     }
     return groups;
@@ -497,7 +497,7 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
     qint64 total_wasted = 0;
 
     for (const auto& group : groups) {
-        total_duplicates += (group.file_paths.size() - 1);
+        total_duplicates += static_cast<int>(group.file_paths.size() - 1);
         total_wasted += group.wasted_space;
     }
 

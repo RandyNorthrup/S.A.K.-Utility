@@ -417,7 +417,7 @@ QString CredentialStore::redactSecrets(const QString& text) {
         rewritten.append(result.mid(last_end, match.capturedStart(0) - last_end));
         rewritten.append(match.captured(1));
         rewritten.append(QStringLiteral("=[redacted]"));
-        last_end = match.capturedEnd(0);
+        last_end = static_cast<int>(match.capturedEnd(0));
     }
     rewritten.append(result.mid(last_end));
     if (!rewritten.isEmpty() || last_end > 0) {

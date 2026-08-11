@@ -401,7 +401,9 @@ bool WindowsUSBCreator::copyISO_logExtractionResult(const sak::ProcessResult& re
         QStringList lines = output.split('\n', Qt::SkipEmptyParts);
         sak::logInfo(QString("7z processed %1 lines of output").arg(lines.count()).toStdString());
         // Log last few lines which contain summary
-        for (int i = qMax(0, lines.count() - kExtractionSummaryLineCount); i < lines.count(); ++i) {
+        for (int i = static_cast<int>(qMax(0, lines.count() - kExtractionSummaryLineCount));
+             i < lines.count();
+             ++i) {
             sak::logInfo(QString("  %1").arg(lines[i].trimmed()).toStdString());
         }
     }

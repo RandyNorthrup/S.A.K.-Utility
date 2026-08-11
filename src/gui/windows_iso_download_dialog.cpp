@@ -588,7 +588,7 @@ void WindowsISODownloadDialog::onDownloadComplete(const QString& isoPath, qint64
 
     m_downloadProgressBar->setValue(sak::kPercentMax);
     m_convertProgressBar->setValue(sak::kPercentMax);
-    const double sizeGB = fileSize / sak::kBytesPerGBf;
+    const double sizeGB = static_cast<double>(fileSize) / sak::kBytesPerGBf;
     m_statusLabel->setText(
         QString("ISO created successfully! (%1 GB)").arg(sizeGB, 0, 'f', kIsoSizeDisplayPrecision));
     m_phaseLabel->setText("Complete!");

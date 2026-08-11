@@ -601,7 +601,7 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
             m_folderTable->setItem(row, kFolderColumnFolder, folderItem);
 
             // Size
-            const double sizeMB = folder.size_bytes / sak::kBytesPerMBf;
+            const double sizeMB = static_cast<double>(folder.size_bytes) / sak::kBytesPerMBf;
             auto* sizeItem = new QTableWidgetItem(
                 QString("%1 MB").arg(sizeMB, 0, 'f', kMegabyteDisplayPrecision));
             sizeItem->setFlags(sizeItem->flags() & ~Qt::ItemIsEditable);
@@ -655,7 +655,7 @@ void UserProfileRestoreFolderSelectionPage::updateSummary() {
         }
     }
 
-    const double totalGB = totalSize / sak::kBytesPerGBf;
+    const double totalGB = static_cast<double>(totalSize) / sak::kBytesPerGBf;
 
     m_summaryLabel->setText(tr("Selected: %1 of %2 folders | %3 files | %4 GB")
                                 .arg(selectedFolders)
@@ -895,7 +895,7 @@ void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo
             auto* item = new QTreeWidgetItem(categoryItem);
             item->setText(0, source->name);
             item->setText(1, source->relative_path);
-            const double sizeMB = source->size_bytes / sak::kBytesPerMBf;
+            const double sizeMB = static_cast<double>(source->size_bytes) / sak::kBytesPerMBf;
             item->setText(kTreeDetailColumn,
                           QString("%1 MB").arg(sizeMB, 0, 'f', kMegabyteDisplayPrecision));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
@@ -2002,7 +2002,7 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
     Q_EMIT completeChanged();
 
     m_progressBar->setVisible(true);
-    m_progressBar->setRange(0, selectedApps.size());
+    m_progressBar->setRange(0, static_cast<int>(selectedApps.size()));
     m_progressBar->setValue(0);
 
     auto* watcher = new QFutureWatcher<QPair<int, int>>(this);
@@ -2070,7 +2070,7 @@ QPair<int, int> UserProfileRestoreAppRestorePage::installAppsSequentially(
 
     int installed = 0;
     int failed = 0;
-    const int total = apps.size();
+    const int total = static_cast<int>(apps.size());
 
     for (int i = 0; i < apps.size(); ++i) {
         const auto& app = apps[i];

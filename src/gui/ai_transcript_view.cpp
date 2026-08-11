@@ -167,14 +167,14 @@ bool AiTranscriptView::appendLoadedLine(const QString& line) {
     QString role;
     QString text;
     if (trimmed.startsWith(QLatin1Char('['))) {
-        const int end = trimmed.indexOf(QStringLiteral("]\n"));
+        const int end = static_cast<int>(trimmed.indexOf(QStringLiteral("]\n")));
         if (end > 1) {
             role = trimmed.mid(1, end - 1).trimmed();
             text = trimmed.mid(end + kBracketHeaderDelimiterLength).trimmed();
         }
     }
     if (role.isEmpty()) {
-        const int colon = trimmed.indexOf(QStringLiteral(": "));
+        const int colon = static_cast<int>(trimmed.indexOf(QStringLiteral(": ")));
         if (colon > 0 && colon < kMaximumRolePrefixChars) {
             role = trimmed.left(colon).trimmed();
             text = trimmed.mid(colon + kRoleDelimiterLength).trimmed();

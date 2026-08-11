@@ -423,15 +423,15 @@ static QString formatString8Value(const QByteArray& raw) {
 
     // Fall back to the system ANSI codepage (e.g., CP1252 on
     // Western Windows systems, CP932 on Japanese, etc.).
-    const int needed =
-        MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, raw.constData(), raw.size(), nullptr, 0);
+    const int needed = MultiByteToWideChar(
+        CP_ACP, MB_PRECOMPOSED, raw.constData(), static_cast<int>(raw.size()), nullptr, 0);
     if (needed > 0) {
         QString result;
         result.resize(needed);
         const int written = MultiByteToWideChar(CP_ACP,
                                                 MB_PRECOMPOSED,
                                                 raw.constData(),
-                                                raw.size(),
+                                                static_cast<int>(raw.size()),
                                                 reinterpret_cast<wchar_t*>(result.data()),
                                                 needed);
         // Trust the actually-written count, not the sizing pass: if the second call
@@ -1739,7 +1739,7 @@ std::expected<QByteArray, error_code> PstParser::readDataTreeGuarded(uint64_t bi
     if (!is_internal) {
         auto result = readBlock(bid);
         if (result && (block_offsets != nullptr)) {
-            block_offsets->append(result->size());
+            block_offsets->append(static_cast<int>(result->size()));
         }
         return result;
     }
@@ -1807,7 +1807,7 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
         // children are properly expanded (some PST/OST files build non-spec nesting
         // where an XBLOCK entry itself carries the internal bid flag 0x02) while the
         // shared visited set bounds total work.
-        const int base_offset = result.size();
+        const int base_offset = static_cast<int>(result.size());
         QVector<int> child_offsets;
         auto child_data = readDataTreeGuarded(child_bid,
                                               (block_offsets != nullptr) ? &child_offsets : nullptr,
@@ -1841,7 +1841,7 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
         const int offset = kBlockTreeHeaderSize + (idx * bid_size);
         const uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
                                                 : readLE<uint32_t>(data, offset);
-        const int base_offset = result.size();
+        const int base_offset = static_cast<int>(result.size());
         QVector<int> child_offsets;
         auto child_data = readDataTreeGuarded(child_bid, &child_offsets, guard);
         if (!child_data) {
@@ -2025,7 +2025,7 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafDataGuarded(uint32_t
         return QByteArray{};
     }
 
-    const int entry_count = node_data->size() / entry_size;
+    const int entry_count = static_cast<int>(node_data->size() / entry_size);
     QByteArray combined;
 
     for (int idx = 0; idx < entry_count; ++idx) {
@@ -2266,7 +2266,7 @@ PstParser::TcRowMatrix PstParser::loadTcRowData(const TcInfo& tc,
         auto heap_r = readHeapOnNode(ctx.heap_data, tc.hnid_rows, ctx.block_offsets);
         if (heap_r) {
             matrix.data = std::move(*heap_r);
-            matrix.block_ends.append(matrix.data.size());
+            matrix.block_ends.append(static_cast<int>(matrix.data.size()));
         }
     } else {
         // Subnode-stored: row matrix spans multiple data blocks with per-
@@ -2296,10 +2296,10 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& ma
     // by padding.  dwRowIndex from TCROWID is a *logical* row number across
     // all blocks, so we must convert it to (block_i, row_in_block) and skip
     // the padding of prior blocks.
-    const int block_count = matrix.block_ends.size();
+    const int block_count = static_cast<int>(matrix.block_ends.size());
     const int first_block_bytes = matrix.block_ends.first();
     const int rows_per_block = (block_count > 1) ? (first_block_bytes / row_size)
-                                                 : (matrix.data.size() / row_size);
+                                                 : static_cast<int>(matrix.data.size() / row_size);
 
     // MS-PST section 2.3.4.3.1 -- TCROWID BTH is the authoritative list of live rows.
     // The row matrix often contains stale/deleted/padding slots that are NOT
@@ -2477,7 +2477,8 @@ std::expected<QByteArray, error_code> PstParser::readHeapOnNode(const QByteArray
 
     const auto [hid_index, hid_block_index] = unpackHid(hn_id);
 
-    auto block_off = resolveHnBlockOffset(hid_block_index, block_offsets, heap_data.size());
+    auto block_off =
+        resolveHnBlockOffset(hid_block_index, block_offsets, static_cast<int>(heap_data.size()));
     if (!block_off) {
         return std::unexpected(block_off.error());
     }
@@ -2844,7 +2845,7 @@ std::expected<sak::PstFolderTree, error_code> PstParser::buildFolderHierarchyGua
 
     loadChildFolders(folder, root_nid, depth, visited_nids);
 
-    folder.subfolder_count = folder.children.size();
+    folder.subfolder_count = static_cast<int>(folder.children.size());
 
     sak::PstFolderTree tree;
     tree.append(std::move(folder));

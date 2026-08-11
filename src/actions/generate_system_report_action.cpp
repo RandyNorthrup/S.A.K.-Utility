@@ -152,7 +152,8 @@ void GenerateSystemReportAction::execute() {
 
     report += QString("-").repeated(kTextReportRuleWidth) + "\n";
     report += QString("Report completed in %1 seconds\n")
-                  .arg(start_time.msecsTo(QDateTime::currentDateTime()) / kMillisecondsPerSecondF,
+                  .arg(static_cast<double>(start_time.msecsTo(QDateTime::currentDateTime())) /
+                           kMillisecondsPerSecondF,
                        0,
                        'f',
                        kDurationDisplayPrecision);
@@ -180,11 +181,16 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
         result.message = QString("Comprehensive system report generated: %1")
                              .arg(QFileInfo(filepath).fileName());
         result.output_path = filepath;
-        result.log =
-            QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
-                .arg(filepath)
-                .arg(report.size() / sak::kBytesPerKBf, 0, 'f', kReportSizeDisplayPrecision)
-                .arg(duration_ms / kMillisecondsPerSecondF, 0, 'f', kDurationDisplayPrecision);
+        result.log = QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
+                         .arg(filepath)
+                         .arg(static_cast<double>(report.size()) / sak::kBytesPerKBf,
+                              0,
+                              'f',
+                              kReportSizeDisplayPrecision)
+                         .arg(static_cast<double>(duration_ms) / kMillisecondsPerSecondF,
+                              0,
+                              'f',
+                              kDurationDisplayPrecision);
     } else if (!save_success) {
         result.message = "Failed to save system report";
         result.log = QString("Could not write to: %1").arg(filepath);
@@ -429,14 +435,18 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
         section += QString("  Name: %1\n").arg(storage.name());
         section += QString("  File System: %1\n").arg(QString::fromUtf8(storage.fileSystemType()));
         section += QString("  Device: %1\n").arg(QString::fromUtf8(storage.device()));
-        section +=
-            QString("  Total: %1 GB\n")
-                .arg(storage.bytesTotal() / sak::kBytesPerGBf, 0, 'f', kStorageDisplayPrecision);
-        section +=
-            QString("  Free: %1 GB\n")
-                .arg(storage.bytesFree() / sak::kBytesPerGBf, 0, 'f', kStorageDisplayPrecision);
+        section += QString("  Total: %1 GB\n")
+                       .arg(static_cast<double>(storage.bytesTotal()) / sak::kBytesPerGBf,
+                            0,
+                            'f',
+                            kStorageDisplayPrecision);
+        section += QString("  Free: %1 GB\n")
+                       .arg(static_cast<double>(storage.bytesFree()) / sak::kBytesPerGBf,
+                            0,
+                            'f',
+                            kStorageDisplayPrecision);
         section += QString("  Available: %1 GB\n")
-                       .arg(storage.bytesAvailable() / sak::kBytesPerGBf,
+                       .arg(static_cast<double>(storage.bytesAvailable()) / sak::kBytesPerGBf,
                             0,
                             'f',
                             kStorageDisplayPrecision);

@@ -1742,7 +1742,7 @@ void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> message
         }
     }
 
-    const int count = visible_indices.size();
+    const int count = static_cast<int>(visible_indices.size());
     m_item_list->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& msg = messages.at(visible_indices.at(row));
@@ -2397,7 +2397,7 @@ void EmailInspectorPanel::displayProperties(const QVector<sak::MapiProperty>& pr
     m_properties_table->setSortingEnabled(false);
     m_properties_table->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_properties_table);
-    const int count = props.size();
+    const int count = static_cast<int>(props.size());
     m_properties_table->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& prop = props.at(row);
@@ -2414,7 +2414,7 @@ void EmailInspectorPanel::displayAttachments(const QVector<sak::PstAttachmentInf
     m_attachments_table->setSortingEnabled(false);
     m_attachments_table->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_attachments_table);
-    const int count = attachments.size();
+    const int count = static_cast<int>(attachments.size());
     m_attachments_table->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& att = attachments.at(row);

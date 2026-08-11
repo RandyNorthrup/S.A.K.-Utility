@@ -102,7 +102,7 @@ constexpr int kMaxCopyDepth = 512;
 // such a name to the device no matter which directory it sits in.
 bool isWindowsReservedDeviceName(const QString& component) {
     QString base = component;
-    const int dot = base.indexOf(QLatin1Char('.'));
+    const int dot = static_cast<int>(base.indexOf(QLatin1Char('.')));
     if (dot >= 0) {
         base = base.left(dot);
     }
@@ -291,10 +291,12 @@ void UserProfileBackupWorker::run() {
     // requirement to compare against (an empty total would always pass).
     Q_EMIT logMessage(tr("Calculating total size..."), false);
     m_totalBytesToCopy = calculateTotalSize();
-    Q_EMIT logMessage(
-        tr("Total estimated size: %1 GB")
-            .arg(m_totalBytesToCopy / sak::kBytesPerGBf, 0, 'f', kBackupSizeDisplayPrecision),
-        false);
+    Q_EMIT logMessage(tr("Total estimated size: %1 GB")
+                          .arg(static_cast<double>(m_totalBytesToCopy) / sak::kBytesPerGBf,
+                               0,
+                               'f',
+                               kBackupSizeDisplayPrecision),
+                      false);
 
     // Check disk space
     if (!checkDiskSpace()) {
@@ -355,7 +357,8 @@ void UserProfileBackupWorker::backupAllUsers() {
         }
 
         userIndex++;
-        Q_EMIT overallProgress(userIndex, m_users.size(), m_bytesCopied, m_totalBytesToCopy);
+        Q_EMIT overallProgress(
+            userIndex, static_cast<int>(m_users.size()), m_bytesCopied, m_totalBytesToCopy);
     }
 }
 
@@ -368,14 +371,15 @@ void UserProfileBackupWorker::emitBackupSummary() {
     }
 
     // Complete
-    const QString summary = tr("Backup complete!\nFiles copied: %1\nFiles skipped: %2\n"
-                               "Skipped (elevation required): %3\nErrors: %4\nTotal "
-                               "size: %5 MB")
-                                .arg(m_filesCopied)
-                                .arg(m_filesSkipped)
-                                .arg(m_filesElevationSkipped)
-                                .arg(m_filesErrored)
-                                .arg(m_bytesCopied / sak::kBytesPerMBf, 0, 'f', 1);
+    const QString summary =
+        tr("Backup complete!\nFiles copied: %1\nFiles skipped: %2\n"
+           "Skipped (elevation required): %3\nErrors: %4\nTotal "
+           "size: %5 MB")
+            .arg(m_filesCopied)
+            .arg(m_filesSkipped)
+            .arg(m_filesElevationSkipped)
+            .arg(m_filesErrored)
+            .arg(static_cast<double>(m_bytesCopied) / sak::kBytesPerMBf, 0, 'f', 1);
 
     Q_EMIT logMessage(tr("=== Backup Complete ==="), false);
     Q_EMIT logMessage(summary, false);
@@ -592,7 +596,7 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
     if (m_fileFilter->exceedsSizeLimit(fileSize)) {
         Q_EMIT logMessage(tr("Skipping large file: %1 (%2 MB)")
                               .arg(sourceInfo.fileName())
-                              .arg(fileSize / sak::kBytesPerMBf, 0, 'f', 1),
+                              .arg(static_cast<double>(fileSize) / sak::kBytesPerMBf, 0, 'f', 1),
                           true);
         m_filesSkipped++;
         return true;
@@ -942,8 +946,8 @@ bool UserProfileBackupWorker::checkDiskSpace() {
     }
 
     if (availableBytes < requiredBytes) {
-        const double availableGB = availableBytes / sak::kBytesPerGBf;
-        const double requiredGB = requiredBytes / sak::kBytesPerGBf;
+        const double availableGB = static_cast<double>(availableBytes) / sak::kBytesPerGBf;
+        const double requiredGB = static_cast<double>(requiredBytes) / sak::kBytesPerGBf;
 
         Q_EMIT logMessage(tr("Insufficient disk space. Available: %1 GB, Required: %2 GB")
                               .arg(availableGB, 0, 'f', kDiskSpaceDisplayPrecision)

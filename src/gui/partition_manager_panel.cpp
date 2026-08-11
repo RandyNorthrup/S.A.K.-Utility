@@ -5791,7 +5791,7 @@ QString propertiesClipboardText(const QVector<PropertyRow>& rows) {
 }
 
 QTableWidget* createPropertiesTable(QWidget* parent, const QVector<PropertyRow>& rows) {
-    auto* table = new QTableWidget(rows.size(), kPropertiesColumnCount, parent);
+    auto* table = new QTableWidget(static_cast<int>(rows.size()), kPropertiesColumnCount, parent);
     table->setObjectName(QStringLiteral("partitionPropertiesTable"));
     table->setAccessibleName(QObject::tr("Partition properties table"));
     table->setHorizontalHeaderLabels({QObject::tr("Property"), QObject::tr("Value")});
@@ -6045,7 +6045,8 @@ void exportExtDirectory(QWidget* parent, const QString& targetPath, const QStrin
 }
 
 QTableWidget* createExtBrowserTable(QWidget* parent, const PartitionExtFileReadResult& result) {
-    auto* table = new QTableWidget(result.entries.size(), kExtBrowserColumnCount, parent);
+    auto* table =
+        new QTableWidget(static_cast<int>(result.entries.size()), kExtBrowserColumnCount, parent);
     table->setObjectName(QStringLiteral("partitionExtBrowserTable"));
     table->setAccessibleName(QObject::tr("ext directory listing table"));
     table->setHorizontalHeaderLabels({QObject::tr("Name"),
@@ -6361,7 +6362,8 @@ void addHfsBrowserSummary(QVBoxLayout* layout,
 }
 
 QTableWidget* createHfsBrowserTable(QDialog* dialog, const PartitionHfsFileReadResult& result) {
-    auto* table = new QTableWidget(result.entries.size(), kHfsBrowserColumnCount, dialog);
+    auto* table =
+        new QTableWidget(static_cast<int>(result.entries.size()), kHfsBrowserColumnCount, dialog);
     table->setObjectName(QStringLiteral("partitionHfsBrowserTable"));
     table->setHorizontalHeaderLabels({QObject::tr("Name"),
                                       QObject::tr("Type"),
@@ -6594,7 +6596,8 @@ void addApfsBrowserSummary(QVBoxLayout* layout,
 }
 
 QTableWidget* createApfsBrowserTable(QDialog* dialog, const PartitionApfsFileReadResult& result) {
-    auto* table = new QTableWidget(result.entries.size(), kApfsBrowserColumnCount, dialog);
+    auto* table =
+        new QTableWidget(static_cast<int>(result.entries.size()), kApfsBrowserColumnCount, dialog);
     table->setObjectName(QStringLiteral("partitionApfsBrowserTable"));
     table->setHorizontalHeaderLabels({QObject::tr("Name"),
                                       QObject::tr("Type"),
@@ -7221,7 +7224,7 @@ void setSpaceAnalyzerRow(QTableWidget* table,
 
 void populateSpaceAnalyzerTable(QTableWidget* table, const SpaceAnalyzerResult& result) {
     table->setSortingEnabled(false);
-    table->setRowCount(result.entries.size());
+    table->setRowCount(static_cast<int>(result.entries.size()));
     for (qsizetype row = 0; row < result.entries.size(); ++row) {
         setSpaceAnalyzerRow(
             table, static_cast<int>(row), result.entries.at(row), result.total_bytes);
@@ -7360,7 +7363,7 @@ QTableWidget* createFileRecoveryTable(QWidget* parent) {
 
 void populateFileRecoveryTable(QTableWidget* table,
                                const QVector<FileRecoveryCandidate>& candidates) {
-    table->setRowCount(candidates.size());
+    table->setRowCount(static_cast<int>(candidates.size()));
     for (qsizetype row = 0; row < candidates.size(); ++row) {
         const auto& candidate = candidates.at(row);
         table->setItem(static_cast<int>(row),

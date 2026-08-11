@@ -120,7 +120,8 @@ void FileExplorerSessionStore::save(QSettings& settings,
     settings.beginGroup(group);
     settings.remove(QString());  // drop any prior session under this group
     settings.setValue(QString::fromLatin1(kActiveIndexKey), session.active_index);
-    settings.beginWriteArray(QString::fromLatin1(kTabsArray), session.tabs.size());
+    settings.beginWriteArray(QString::fromLatin1(kTabsArray),
+                             static_cast<int>(session.tabs.size()));
     for (int i = 0; i < session.tabs.size(); ++i) {
         settings.setArrayIndex(i);
         const FileExplorerTabState& tab = session.tabs.at(i);

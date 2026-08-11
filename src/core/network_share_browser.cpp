@@ -70,7 +70,7 @@ constexpr int kMaxTotalShares = 100'000;
         }
     }
     const QString rest = path.mid(2);
-    const int sep = rest.indexOf(QLatin1Char('\\'));
+    const int sep = static_cast<int>(rest.indexOf(QLatin1Char('\\')));
     if (sep <= 0) {  // need a non-empty server followed by a share separator
         return false;
     }

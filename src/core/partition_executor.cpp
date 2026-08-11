@@ -119,7 +119,7 @@ public:
             const QString stagedPath = QString(QDir::toNativeSeparators(file->fileName()))
                                            .replace(QLatin1Char('\''), QStringLiteral("''"));
             m_script.replace(credential.placeholder, stagedPath);
-            m_secret_sizes.push_back(secret.size());
+            m_secret_sizes.push_back(static_cast<int>(secret.size()));
             m_files.push_back(std::move(file));
         }
     }

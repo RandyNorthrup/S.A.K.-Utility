@@ -151,7 +151,7 @@ QVariant alignmentForColumn(const int column) {
 FileExplorerItemModel::FileExplorerItemModel(QObject* parent) : QAbstractTableModel(parent) {}
 
 int FileExplorerItemModel::rowCount(const QModelIndex& parent) const {
-    return parent.isValid() ? 0 : m_entries.size();
+    return parent.isValid() ? 0 : static_cast<int>(m_entries.size());
 }
 
 int FileExplorerItemModel::columnCount(const QModelIndex& parent) const {
@@ -393,7 +393,7 @@ void FileExplorerItemModel::setCutPaths(const QSet<QString>& paths) {
     m_cut_paths = paths;
     if (!m_entries.isEmpty()) {
         Q_EMIT dataChanged(index(0, NameColumn),
-                           index(m_entries.size() - 1, ColumnCount - 1),
+                           index(static_cast<int>(m_entries.size() - 1), ColumnCount - 1),
                            {Qt::ForegroundRole});
     }
 }
@@ -411,7 +411,7 @@ void FileExplorerItemModel::setIconProvider(IconProvider provider) {
     m_icon_provider = std::move(provider);
     if (!m_entries.isEmpty()) {
         Q_EMIT dataChanged(index(0, NameColumn),
-                           index(m_entries.size() - 1, NameColumn),
+                           index(static_cast<int>(m_entries.size() - 1), NameColumn),
                            {Qt::DecorationRole});
     }
 }
@@ -453,7 +453,7 @@ void FileExplorerItemModel::refreshChecks() {
         return;
     }
     Q_EMIT dataChanged(index(0, NameColumn),
-                       index(m_entries.size() - 1, NameColumn),
+                       index(static_cast<int>(m_entries.size() - 1), NameColumn),
                        {Qt::CheckStateRole});
 }
 
@@ -462,7 +462,7 @@ void FileExplorerItemModel::refreshTags() {
         return;
     }
     Q_EMIT dataChanged(index(0, TagsColumn),
-                       index(m_entries.size() - 1, TagsColumn),
+                       index(static_cast<int>(m_entries.size() - 1), TagsColumn),
                        {Qt::DisplayRole, EntryTagsRole});
 }
 
@@ -473,7 +473,7 @@ void FileExplorerItemModel::setShowFileExtensions(const bool show) {
     m_show_file_extensions = show;
     if (!m_entries.isEmpty()) {
         Q_EMIT dataChanged(index(0, NameColumn),
-                           index(m_entries.size() - 1, NameColumn),
+                           index(static_cast<int>(m_entries.size() - 1), NameColumn),
                            {Qt::DisplayRole});
     }
 }
@@ -513,13 +513,16 @@ QString FileExplorerItemModel::attributeSummary(const FileManagementEntry& entry
 QString FileExplorerItemModel::sizeText(const uint64_t bytes) {
     constexpr int kSizeTextDecimals = 2;
     if (bytes >= sak::kBytesPerGB) {
-        return QStringLiteral("%1 GB").arg(bytes / sak::kBytesPerGBf, 0, 'f', kSizeTextDecimals);
+        return QStringLiteral("%1 GB").arg(
+            static_cast<double>(bytes) / sak::kBytesPerGBf, 0, 'f', kSizeTextDecimals);
     }
     if (bytes >= sak::kBytesPerMB) {
-        return QStringLiteral("%1 MB").arg(bytes / sak::kBytesPerMBf, 0, 'f', 1);
+        return QStringLiteral("%1 MB").arg(
+            static_cast<double>(bytes) / sak::kBytesPerMBf, 0, 'f', 1);
     }
     if (bytes >= sak::kBytesPerKB) {
-        return QStringLiteral("%1 KB").arg(bytes / sak::kBytesPerKBf, 0, 'f', 0);
+        return QStringLiteral("%1 KB").arg(
+            static_cast<double>(bytes) / sak::kBytesPerKBf, 0, 'f', 0);
     }
     return QStringLiteral("%1 B").arg(bytes);
 }

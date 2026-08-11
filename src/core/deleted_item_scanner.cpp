@@ -119,7 +119,7 @@ void DeletedItemScanner::scanRecoverableFolder(const PstFolder& folder,
         if (!appendRecoverableBatch(items, recovered)) {
             return;  // cancelled mid-batch
         }
-        offset += items.size();
+        offset += static_cast<int>(items.size());
     }
 
     for (const auto& child : folder.children) {
@@ -136,7 +136,7 @@ bool DeletedItemScanner::appendRecoverableBatch(const QVector<PstItemSummary>& i
         auto detail = m_parser->readItemDetail(summary.node_id);
         if (detail.has_value()) {
             recovered.append(detail.value());
-            Q_EMIT recoveryProgress(recovered.size(), 0);
+            Q_EMIT recoveryProgress(static_cast<int>(recovered.size()), 0);
         } else if (detail.error() != error_code::operation_cancelled) {
             // A per-item detail read that fails (corruption) drops that item; the
             // recovered set is then incomplete and must not be reported as reliable
@@ -203,7 +203,7 @@ QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
         }
 
         if (nodes_scanned % kScanBatchSize == 0) {
-            Q_EMIT recoveryProgress(recovered.size(), nodes_scanned);
+            Q_EMIT recoveryProgress(static_cast<int>(recovered.size()), nodes_scanned);
         }
     }
 
@@ -288,7 +288,7 @@ bool DeletedItemScanner::collectFolderItemNids(uint64_t folder_node_id) {
         for (const auto& item : items.value()) {
             m_reachable_nids.insert(item.node_id);
         }
-        offset += items.value().size();
+        offset += static_cast<int>(items.value().size());
     }
     return false;  // cancelled -> incomplete
 }

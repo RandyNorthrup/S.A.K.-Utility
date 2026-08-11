@@ -44,7 +44,7 @@ bool splitVersionText(const QString& text, QString& release_out, QString& prerel
     // Build metadata ("+abc") is ignored for precedence -- strip it first. It must
     // still be well-formed (dot-separated ASCII identifiers); "1.0+", "1.0+a..b" and
     // "1.0+a+b" are malformed versions, not a plain release.
-    const int plus = core.indexOf(QLatin1Char('+'));
+    const int plus = static_cast<int>(core.indexOf(QLatin1Char('+')));
     if (plus >= 0) {
         const QStringList meta_ids = core.mid(plus + 1).split(QLatin1Char('.'), Qt::KeepEmptyParts);
         for (const QString& id : meta_ids) {
@@ -54,7 +54,7 @@ bool splitVersionText(const QString& text, QString& release_out, QString& prerel
         }
         core.truncate(plus);
     }
-    const int dash = core.indexOf(QLatin1Char('-'));
+    const int dash = static_cast<int>(core.indexOf(QLatin1Char('-')));
     if (dash >= 0) {
         prerelease_out = core.mid(dash + 1);
         release_out = core.left(dash);
@@ -348,7 +348,7 @@ void NuGetVersionRange::applyExact(const QString& inner, QChar open, QChar close
 }
 
 void NuGetVersionRange::applyInterval(const QString& inner, QChar open, QChar close) {
-    const int comma = inner.indexOf(QLatin1Char(','));
+    const int comma = static_cast<int>(inner.indexOf(QLatin1Char(',')));
     bool lower_ok = false;
     bool upper_ok = false;
     const auto lower = parseBoundToken(inner.left(comma), lower_ok);

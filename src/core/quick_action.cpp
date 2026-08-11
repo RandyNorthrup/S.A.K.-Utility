@@ -114,8 +114,8 @@ QString QuickAction::formatLogBox(const QString& title,
     if (duration_ms >= 0) {
         const double duration_seconds = duration_ms / kMillisecondsPerSecondF;
         const QString duration_text = QString::number(duration_seconds, 'f', kDurationPrecision);
-        const int padding_width = kLogBoxContentWidth - kCompletedInPrefixWidth -
-                                  duration_text.length();
+        const int padding_width = static_cast<int>(kLogBoxContentWidth - kCompletedInPrefixWidth -
+                                                   duration_text.length());
         box += sep;
         box += QString("| Completed in: %1 seconds%2|\n")
                    .arg(duration_seconds, 0, 'f', kDurationPrecision)

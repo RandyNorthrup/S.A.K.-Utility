@@ -280,7 +280,7 @@ void EmailAttachmentsBrowserDialog::startScan() {
         return;
     }
     m_folders_scanned = 0;
-    m_progress_bar->setRange(0, m_all_folder_ids.size());
+    m_progress_bar->setRange(0, static_cast<int>(m_all_folder_ids.size()));
     m_progress_bar->setValue(0);
     m_status_label->setText(tr("Scanning folders for attachments..."));
 
@@ -307,7 +307,7 @@ void EmailAttachmentsBrowserDialog::startScan() {
 void EmailAttachmentsBrowserDialog::scanNextFolder() {
     if (m_folders_scanned >= m_all_folder_ids.size()) {
         // All folders scanned -- now load details for items with attachments
-        m_details_total = m_pending_detail_ids.size();
+        m_details_total = static_cast<int>(m_pending_detail_ids.size());
         m_details_loaded = 0;
         if (m_details_total == 0) {
             m_scan_complete = true;
@@ -442,7 +442,7 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
     m_table->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_table);
     m_table->setSortingEnabled(false);
-    m_table->setRowCount(matching.size());
+    m_table->setRowCount(static_cast<int>(matching.size()));
 
     for (int row = 0; row < matching.size(); ++row) {
         const int idx = matching.at(row);
@@ -500,8 +500,8 @@ bool EmailAttachmentsBrowserDialog::matchesFilters(const AttachmentEntry& entry)
 
 void EmailAttachmentsBrowserDialog::updateStatusLabel() {
     const int visible = m_table->rowCount();
-    const int total = m_all_attachments.size();
-    const int checked = m_checked_attachment_keys.size();
+    const int total = static_cast<int>(m_all_attachments.size());
+    const int checked = static_cast<int>(m_checked_attachment_keys.size());
     if (m_scan_complete) {
         if (visible == total) {
             m_status_label->setText(tr("%1 attachments, %2 selected").arg(total).arg(checked));
@@ -840,7 +840,7 @@ static QString classifyByMime(const QString& lower_mime) {
 QString EmailAttachmentsBrowserDialog::typeCategory(const QString& mime_type,
                                                     const QString& filename) {
     const QString lower_name = filename.toLower();
-    const int dot = lower_name.lastIndexOf(QLatin1Char('.'));
+    const int dot = static_cast<int>(lower_name.lastIndexOf(QLatin1Char('.')));
     if (dot >= 0) {
         const QString ext = lower_name.mid(dot);
         auto iter = extensionCategories().constFind(ext);

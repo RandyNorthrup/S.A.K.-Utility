@@ -321,7 +321,7 @@ void UserProfileBackupSelectUsersPage::onUserScanned(const QString& username) {
 void UserProfileBackupSelectUsersPage::populateTable() {
     Q_ASSERT(m_userTable);
     m_userTable->blockSignals(true);
-    m_userTable->setRowCount(m_users.size());
+    m_userTable->setRowCount(static_cast<int>(m_users.size()));
 
     for (int i = 0; i < m_users.size(); ++i) {
         auto& user = m_users[i];

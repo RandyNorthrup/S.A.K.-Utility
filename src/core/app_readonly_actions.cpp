@@ -1239,7 +1239,7 @@ AppActionResult listDrives(const QJsonObject& args) {
         listed.append(serializeDrive(drive));
     }
 
-    const int shown_total = removable_only ? removable_count : drives.size();
+    const int shown_total = removable_only ? removable_count : static_cast<int>(drives.size());
     const QJsonObject data{
         {QStringLiteral("drive_count"), drives.size()},
         {QStringLiteral("removable_count"), removable_count},
@@ -1365,7 +1365,7 @@ QJsonObject serializeSearch(const QVector<SearchMatch>& matches, int total_files
         }
         listed.append(serializeMatch(match));
     }
-    const int total_matches = matches.size();
+    const int total_matches = static_cast<int>(matches.size());
     return QJsonObject{{QStringLiteral("total_matches"), total_matches},
                        {QStringLiteral("total_files"), total_files},
                        {QStringLiteral("reported_matches"), listed.size()},

@@ -174,7 +174,7 @@ void UserProfileRestoreExecutePage::onStartRestore() {
                          {conflictMode, permMode, verify, createBackup, password},
                          {wiz->wifiProfiles(), wiz->ethernetConfigs(), wiz->appDataSources()});
 
-    m_overallProgressBar->setRange(0, mappings.size());
+    m_overallProgressBar->setRange(0, static_cast<int>(mappings.size()));
     m_currentProgressBar->setRange(0, 0);  // Indeterminate
 }
 

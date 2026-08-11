@@ -920,7 +920,7 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
     emitProgress(InternalizationStatus::DownloadingBinaries, "Downloading binaries...");
 
     QStringList urls_to_download = collectBinaryUrls(parsed);
-    m_current_progress.binary_total = urls_to_download.size();
+    m_current_progress.binary_total = static_cast<int>(urls_to_download.size());
 
     // Same iteration order + shared used_names as buildLocalFilenameMap, so the on-disk name and
     // the rewritten-script name for each URL always agree.

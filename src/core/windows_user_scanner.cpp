@@ -107,7 +107,7 @@ bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
             populateFolderSelections(profile);
             profiles.append(profile);
             Q_EMIT userFound(profile.username);
-            Q_EMIT scanProgress(profiles.size(), static_cast<int>(totalEntries));
+            Q_EMIT scanProgress(static_cast<int>(profiles.size()), static_cast<int>(totalEntries));
         }
         NetApiBufferFree(userInfo);
     } while (status == ERROR_MORE_DATA);

@@ -95,7 +95,7 @@ QVector<ScannedFile> scanPathsWorker(const QStringList& paths) {
 void populateResultsTable(QTableWidget* table, const QVector<ScannedFile>& results) {
     table->setUpdatesEnabled(false);
     table->setSortingEnabled(false);
-    table->setRowCount(results.size());
+    table->setRowCount(static_cast<int>(results.size()));
     for (int row = 0; row < results.size(); ++row) {
         const auto& r = results.at(row);
         table->setItem(row, FileScanColPath, new QTableWidgetItem(r.path));
@@ -286,7 +286,7 @@ void EmailFileScannerDialog::onScanClicked() {
         watcher->deleteLater();
 
         populateResultsTable(m_results_table, results);
-        m_files_found = results.size();
+        m_files_found = static_cast<int>(results.size());
 
         m_progress_bar->setVisible(false);
         m_scan_button->setEnabled(true);

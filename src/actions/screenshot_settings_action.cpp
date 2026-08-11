@@ -128,8 +128,8 @@ void ScreenshotSettingsAction::execute() {
             return;
         }
 
-        const int progress = progress::kStep5 +
-                             ((processed * progress::kStep90) / settings_pages.size());
+        const int progress = static_cast<int>(
+            progress::kStep5 + ((processed * progress::kStep90) / settings_pages.size()));
         Q_EMIT executionProgress(QString("Capturing %1...").arg(it.value()), progress);
 
         if (captureSettingsPage(it.key(), it.value(), output_dir.absolutePath(), timestamp)) {
@@ -337,7 +337,8 @@ QString ScreenshotSettingsAction::buildScreenshotReportText(int monitor_count,
                                                             const QString& output_dir_path,
                                                             const QString& timestamp) {
     Q_UNUSED(timestamp);
-    const int total_pages = capture.captured_pages.size() + capture.failed_pages.size();
+    const int total_pages =
+        static_cast<int>(capture.captured_pages.size() + capture.failed_pages.size());
 
     QString text;
     QTextStream report(&text);
@@ -449,7 +450,7 @@ int ScreenshotSettingsAction::detectMonitorCount() {
 
 int ScreenshotSettingsAction::countMonitorsOnGui() {
     QList<QScreen*> screens = QGuiApplication::screens();
-    const int count = screens.size();
+    const int count = static_cast<int>(screens.size());
 
     sak::logDebug("Detected {} monitor(s)", count);
 

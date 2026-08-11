@@ -91,7 +91,8 @@ double verificationSpeedMBps(qint64 bytes, qint64 elapsed_ms) {
     if (elapsed_ms <= 0) {
         return 0.0;
     }
-    return (bytes / sak::kBytesPerMBf) / (elapsed_ms / sak::kMillisecondsPerSecondF);
+    return (static_cast<double>(bytes) / sak::kBytesPerMBf) /
+           (static_cast<double>(elapsed_ms) / sak::kMillisecondsPerSecondF);
 }
 
 // Fail closed: if fewer than the intended sample blocks were read back and compared (all reads
@@ -109,7 +110,7 @@ void markIncompleteVerification(sak::ValidationResult& result, int verified, int
 // Parse the physical-drive number from a "\\.\PhysicalDriveN" path; -1 if absent.
 int parseTargetDriveNumber(const QString& path) {
     const QString prefix = QStringLiteral("PhysicalDrive");
-    const int idx = path.lastIndexOf(prefix);
+    const int idx = static_cast<int>(path.lastIndexOf(prefix));
     if (idx < 0) {
         return -1;
     }
@@ -309,7 +310,7 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
 
     const qint64 elapsed_ms = timer.elapsed();
     sak::logInfo(QString("Flash completed in %1 seconds")
-                     .arg(elapsed_ms / sak::kMillisecondsPerSecondF)
+                     .arg(static_cast<double>(elapsed_ms) / sak::kMillisecondsPerSecondF)
                      .toStdString());
 
     return {};
@@ -1165,7 +1166,8 @@ void FlashWorker::updateVerificationProgress(qint64 bytesVerified, qint64 totalB
 
     double percentage = 0.0;
     if (totalBytes > 0) {
-        percentage = (static_cast<double>(bytesVerified) / totalBytes) * sak::kPercentMaxF;
+        percentage = (static_cast<double>(bytesVerified) / static_cast<double>(totalBytes)) *
+                     sak::kPercentMaxF;
     }
 
     Q_EMIT verificationProgress(percentage, bytesVerified);
@@ -1186,7 +1188,8 @@ void FlashWorker::updateProgress(qint64 bytesWritten) {
 
     double percentage = 0.0;
     if (m_totalBytes > 0) {
-        percentage = (static_cast<double>(bytesWritten) / m_totalBytes) * sak::kPercentMaxF;
+        percentage = (static_cast<double>(bytesWritten) / static_cast<double>(m_totalBytes)) *
+                     sak::kPercentMaxF;
     }
 
     Q_EMIT progressUpdated(percentage, bytesWritten);
@@ -1206,7 +1209,7 @@ void FlashWorker::updateSpeed(qint64 bytesWritten) {
     const qint64 timeDelta = now - m_lastSpeedUpdate;
 
     if (timeDelta > 0) {
-        const double bytesPerMs = static_cast<double>(bytesDelta) / timeDelta;
+        const double bytesPerMs = static_cast<double>(bytesDelta) / static_cast<double>(timeDelta);
         m_speedMBps = (bytesPerMs * sak::kMillisecondsPerSecondF) / sak::kBytesPerMBf;
     }
 

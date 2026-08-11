@@ -563,7 +563,7 @@ double PackageMatcher::calculateSimilarity(const QString& str1, const QString& s
 
     // Levenshtein-based similarity
     const int lev_dist = levenshteinDistance(s1, s2);
-    const int max_len = std::max(s1.length(), s2.length());
+    const int max_len = static_cast<int>(std::max(s1.length(), s2.length()));
     const double lev_sim = max_len > 0 ? 1.0 - (double(lev_dist) / max_len) : 0.0;
 
     // Average of both methods
@@ -571,8 +571,8 @@ double PackageMatcher::calculateSimilarity(const QString& str1, const QString& s
 }
 
 int PackageMatcher::levenshteinDistance(const QString& s1, const QString& s2) const {
-    const int len1 = s1.length();
-    const int len2 = s2.length();
+    const int len1 = static_cast<int>(s1.length());
+    const int len2 = static_cast<int>(s2.length());
 
     // Bound the O(len1*len2) matrix. Registry DisplayNames / package ids are practically short, but
     // a pathological input must not allocate an enormous matrix. Past a sane cap, fail closed by
@@ -649,8 +649,8 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
         return 1.0;
     }
 
-    const int len1 = s1.length();
-    const int len2 = s2.length();
+    const int len1 = static_cast<int>(s1.length());
+    const int len2 = static_cast<int>(s2.length());
     if (len1 == 0 || len2 == 0) {
         return 0.0;
     }
@@ -713,7 +713,7 @@ QString PackageMatcher::getMapping(const QString& app_name) const {
 }
 
 int PackageMatcher::getMappingCount() const {
-    return m_exact_mappings.size();
+    return static_cast<int>(m_exact_mappings.size());
 }
 
 int PackageMatcher::getExactMatchCount() const {

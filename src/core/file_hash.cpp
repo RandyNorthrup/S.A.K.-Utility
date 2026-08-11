@@ -256,7 +256,7 @@ bool file_hasher::hashFileInChunks(
     std::size_t bytes_processed = 0;
 
     while (!stop_token.stop_requested()) {
-        const QByteArray buffer = file.read(m_chunk_size);
+        const QByteArray buffer = file.read(static_cast<qint64>(m_chunk_size));
         if (buffer.isEmpty()) {
             // An empty read is either a clean end-of-file or an I/O fault. The
             // previous code did `continue`, which on a mid-file read error spun

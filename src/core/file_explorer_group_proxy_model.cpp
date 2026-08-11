@@ -361,7 +361,7 @@ void FileExplorerGroupProxyModel::rebuildGroups() {
     for (const GroupBucket& bucket : buckets) {
         m_rows.append(ProxyRow{.source_row = -1, .header_text = bucket.info.text});
         for (const int source_row : bucket.source_rows) {
-            m_source_to_proxy[source_row] = m_rows.size();
+            m_source_to_proxy[source_row] = static_cast<int>(m_rows.size());
             m_rows.append(ProxyRow{.source_row = source_row, .header_text = {}});
         }
     }
@@ -417,7 +417,7 @@ int FileExplorerGroupProxyModel::rowCount(const QModelIndex& parent) const {
     if (parent.isValid() || (sourceModel() == nullptr)) {
         return 0;
     }
-    return grouped() ? m_rows.size() : sourceModel()->rowCount();
+    return grouped() ? static_cast<int>(m_rows.size()) : sourceModel()->rowCount();
 }
 
 int FileExplorerGroupProxyModel::columnCount(const QModelIndex& parent) const {

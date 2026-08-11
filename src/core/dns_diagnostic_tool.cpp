@@ -294,7 +294,7 @@ void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& d
     const auto parts = ipAddress.split(QLatin1Char('.'));
 
     QString reverseName;
-    for (int i = parts.size() - 1; i >= 0; --i) {
+    for (int i = static_cast<int>(parts.size() - 1); i >= 0; --i) {
         if (!reverseName.isEmpty()) {
             reverseName += QLatin1Char('.');
         }
@@ -402,13 +402,13 @@ void DnsDiagnosticTool::inspectDnsCache() {
         const auto trimmed = line.trimmed();
 
         if (trimmed.startsWith(QStringLiteral("Record Name"))) {
-            const int colonPos = trimmed.indexOf(QLatin1Char(':'));
+            const int colonPos = static_cast<int>(trimmed.indexOf(QLatin1Char(':')));
             if (colonPos >= 0) {
                 currentName = trimmed.mid(colonPos + 1).trimmed();
             }
         } else if (trimmed.startsWith(QStringLiteral("A (Host) Record")) ||
                    trimmed.startsWith(QStringLiteral("AAAA Record"))) {
-            const int colonPos = trimmed.indexOf(QLatin1Char(':'));
+            const int colonPos = static_cast<int>(trimmed.indexOf(QLatin1Char(':')));
             if (colonPos >= 0 && !currentName.isEmpty()) {
                 const auto value = trimmed.mid(colonPos + 1).trimmed();
                 entries.append({currentName, value});

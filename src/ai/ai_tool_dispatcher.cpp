@@ -133,7 +133,7 @@ bool AiToolDispatcher::hasHandler(const QString& tool_name) const {
 }
 
 int AiToolDispatcher::handlerCount() const {
-    return m_handlers.size();
+    return static_cast<int>(m_handlers.size());
 }
 
 void AiToolDispatcher::setLeaseManager(AiLeaseManager* manager) {

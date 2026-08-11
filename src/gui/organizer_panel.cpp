@@ -90,12 +90,13 @@ DedupScanTotals scanDedupTotals(const QStringList& paths, const bool recursive) 
 
 QString formatDedupBytes(const qint64 bytes) {
     if (bytes >= sak::kBytesPerGB) {
-        return QString("%1 GB").arg(bytes / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
+        return QString("%1 GB").arg(
+            static_cast<double>(bytes) / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
     }
     if (bytes >= sak::kBytesPerMB) {
-        return QString("%1 MB").arg(bytes / sak::kBytesPerMBf, 0, 'f', 1);
+        return QString("%1 MB").arg(static_cast<double>(bytes) / sak::kBytesPerMBf, 0, 'f', 1);
     }
-    return QString("%1 KB").arg(bytes / sak::kBytesPerKBf, 0, 'f', 0);
+    return QString("%1 KB").arg(static_cast<double>(bytes) / sak::kBytesPerKBf, 0, 'f', 0);
 }
 
 struct DedupSettingsDefaults {
@@ -804,7 +805,7 @@ void OrganizerPanel::setupDefaultCategories() {
         {"Fonts", "ttf,otf,woff,woff2,eot"},
     };
 
-    m_category_table->setRowCount(defaults.size());
+    m_category_table->setRowCount(static_cast<int>(defaults.size()));
     int row = 0;
     for (auto it = defaults.begin(); it != defaults.end(); ++it) {
         m_category_table->setItem(row, 0, new QTableWidgetItem(it.key()));
@@ -858,14 +859,18 @@ void OrganizerPanel::updateDirectorySummary() {
 
     QString sizeStr;
     if (totalSize >= sak::kBytesPerGB) {
-        sizeStr = QString("%1 GB").arg(totalSize / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
+        sizeStr = QString("%1 GB").arg(
+            static_cast<double>(totalSize) / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
     } else if (totalSize >= sak::kBytesPerMB) {
-        sizeStr = QString("%1 MB").arg(totalSize / sak::kBytesPerMBf, 0, 'f', 1);
+        sizeStr =
+            QString("%1 MB").arg(static_cast<double>(totalSize) / sak::kBytesPerMBf, 0, 'f', 1);
     } else {
-        sizeStr = QString("%1 KB").arg(totalSize / sak::kBytesPerKBf, 0, 'f', 0);
+        sizeStr =
+            QString("%1 KB").arg(static_cast<double>(totalSize) / sak::kBytesPerKBf, 0, 'f', 0);
     }
 
-    const int subdirCount = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot).size();
+    const int subdirCount =
+        static_cast<int>(dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot).size());
     m_dir_summary_label->setText(tr("%1 files (%2) \u2022 %3 subdirectories")
                                      .arg(entries.size())
                                      .arg(sizeStr)
@@ -925,7 +930,8 @@ bool OrganizerPanel::confirmOrganizerExecution(const QDir& targetDir) {
         return true;
     }
 
-    const int fileCount = targetDir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot).size();
+    const int fileCount =
+        static_cast<int>(targetDir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot).size());
     auto result = sak::showQuestionLogged(
         this,
         tr("Confirm Organization"),
@@ -1574,9 +1580,11 @@ void OrganizerPanel::onDedupResultsReady(const QString& summary,
                                          qint64 wastedSpace) {
     QString sizeStr;
     if (wastedSpace >= sak::kBytesPerGB) {
-        sizeStr = QString("%1 GB").arg(wastedSpace / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
+        sizeStr = QString("%1 GB").arg(
+            static_cast<double>(wastedSpace) / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
     } else {
-        sizeStr = QString("%1 MB").arg(wastedSpace / sak::kBytesPerMBf, 0, 'f', kSizeGbPrecision);
+        sizeStr = QString("%1 MB").arg(
+            static_cast<double>(wastedSpace) / sak::kBytesPerMBf, 0, 'f', kSizeGbPrecision);
     }
 
     const QString resultsText =

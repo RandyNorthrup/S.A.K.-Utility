@@ -579,7 +579,7 @@ QJsonObject AiToolHealthLedger::snapshotUnlocked() const {
 
 int AiToolHealthLedger::size() const {
     const QMutexLocker locker(&m_mutex);
-    return m_records.size();
+    return static_cast<int>(m_records.size());
 }
 
 QString AiToolHealthLedger::classifyResult(const QJsonObject& result) {

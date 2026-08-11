@@ -273,9 +273,9 @@ std::expected<sak::MboxMessageDetail, error_code> MboxParser::readMessageDetail(
     detail.message_id = headers.value(QStringLiteral("message-id"));
 
     // Build raw headers string
-    int header_end = raw->indexOf("\r\n\r\n");
+    int header_end = static_cast<int>(raw->indexOf("\r\n\r\n"));
     if (header_end < 0) {
-        header_end = raw->indexOf("\n\n");
+        header_end = static_cast<int>(raw->indexOf("\n\n"));
     }
     if (header_end >= 0) {
         detail.raw_headers = QString::fromUtf8(raw->left(header_end));
@@ -433,9 +433,9 @@ QMap<QString, QString> MboxParser::parseHeaders(const QByteArray& raw_message) {
     QMap<QString, QString> headers;
 
     // Find the header/body boundary
-    int header_end = raw_message.indexOf("\r\n\r\n");
+    int header_end = static_cast<int>(raw_message.indexOf("\r\n\r\n"));
     if (header_end < 0) {
-        header_end = raw_message.indexOf("\n\n");
+        header_end = static_cast<int>(raw_message.indexOf("\n\n"));
     }
 
     const QByteArray header_block = (header_end >= 0) ? raw_message.left(header_end) : raw_message;
@@ -472,7 +472,7 @@ QMap<QString, QString> MboxParser::parseHeaders(const QByteArray& raw_message) {
 
         // New header
         flushHeader();
-        const int colon = line.indexOf(':');
+        const int colon = static_cast<int>(line.indexOf(':'));
         if (colon > 0) {
             current_name = QString::fromUtf8(line.left(colon));
             current_value = QString::fromUtf8(line.mid(colon + 1)).trimmed();
@@ -491,10 +491,10 @@ namespace {
 
 /// Find header/body boundary (\r\n\r\n or \n\n)
 std::pair<int, int> findBodyBoundary(const QByteArray& data) {
-    int header_end = data.indexOf("\r\n\r\n");
+    int header_end = static_cast<int>(data.indexOf("\r\n\r\n"));
     int body_start = header_end + kCrLfHeaderBoundaryBytes;
     if (header_end < 0) {
-        header_end = data.indexOf("\n\n");
+        header_end = static_cast<int>(data.indexOf("\n\n"));
         body_start = header_end + kLfHeaderBoundaryBytes;
     }
     return {header_end, body_start};
@@ -558,9 +558,9 @@ QVector<QByteArray> splitMimeParts(const QByteArray& body, const QByteArray& del
     bool in_part = false;
 
     int pos = 0;
-    const int size = body.size();
+    const int size = static_cast<int>(body.size());
     while (pos < size) {
-        const int newline = body.indexOf('\n', pos);
+        const int newline = static_cast<int>(body.indexOf('\n', pos));
         const int line_end = (newline < 0) ? size : newline;
         if (!consumeMimeLine(
                 body.mid(pos, line_end - pos), delimiter, mime_parts, current_part, in_part)) {

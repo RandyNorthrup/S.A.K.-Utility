@@ -5236,11 +5236,12 @@ bool AiAssistantPanel::cyclePromptHistory(int direction) {
     }
     if (m_promptHistoryIndex < 0) {
         m_promptHistoryDraft = m_messageEdit->toPlainText();
-        m_promptHistoryIndex = m_promptHistory.size();
+        m_promptHistoryIndex = static_cast<int>(m_promptHistory.size());
     }
     m_promptHistoryIndex += direction;
     m_promptHistoryIndex = std::max(m_promptHistoryIndex, 0);
-    m_promptHistoryIndex = std::min<qsizetype>(m_promptHistoryIndex, m_promptHistory.size());
+    m_promptHistoryIndex =
+        static_cast<int>(std::min<qsizetype>(m_promptHistoryIndex, m_promptHistory.size()));
     const QString text = m_promptHistoryIndex == m_promptHistory.size()
                              ? m_promptHistoryDraft
                              : m_promptHistory.at(m_promptHistoryIndex);
@@ -11159,7 +11160,7 @@ void AiAssistantPanel::applyWorkflowResumeState(ai::AiOrchestrationOptions* opti
         phaseHistoryFromJson(resume_state.value(QStringLiteral("phase_history")).toArray());
     int start_index = 0;
     if (!workflowResumeStartIndex(resume_state.value(QStringLiteral("resume_start_phase_index")),
-                                  prior.size(),
+                                  static_cast<int>(prior.size()),
                                   &start_index)) {
         qWarning("AiAssistantPanel: ignoring resume snapshot with invalid start index");
         return;
@@ -11793,7 +11794,7 @@ void AiAssistantPanel::beginWorkflowProgressUi(const ai::WorkflowTemplate& workf
 void AiAssistantPanel::finishWorkflowProgressUi(const ai::AiOrchestratorResult& result) {
     m_activeWorkflowPhaseStartCounts.clear();
     if (result.status == ai::AiRunStatus::Completed) {
-        m_activeWorkflowCompletedPhaseCount = m_activeWorkflowPhaseOrder.size();
+        m_activeWorkflowCompletedPhaseCount = static_cast<int>(m_activeWorkflowPhaseOrder.size());
     } else {
         m_activeWorkflowCompletedPhaseCount = workflowCompletedPhaseCount();
     }
@@ -11804,7 +11805,7 @@ void AiAssistantPanel::finishWorkflowProgressUi(const ai::AiOrchestratorResult& 
 }
 
 void AiAssistantPanel::updateWorkflowProgressUi() {
-    const int total = m_activeWorkflowPhaseOrder.size();
+    const int total = static_cast<int>(m_activeWorkflowPhaseOrder.size());
     if ((m_workflowProgressBar == nullptr) || total <= 0) {
         if (m_workflowProgressBar != nullptr) {
             m_workflowProgressBar->setVisible(false);
@@ -11842,7 +11843,7 @@ QString AiAssistantPanel::workflowProgressFormat(int completed,
                                                  bool has_active_phase,
                                                  const QString& current_phase) const {
     if (has_active_phase) {
-        const int phase_index = m_activeWorkflowPhaseOrder.indexOf(current_phase);
+        const int phase_index = static_cast<int>(m_activeWorkflowPhaseOrder.indexOf(current_phase));
         const int display_index = phase_index >= 0 ? phase_index + 1 : completed + 1;
         return tr("Running %1/%2: %3")
             .arg(std::clamp(display_index, 1, total))
@@ -12584,8 +12585,8 @@ void AiAssistantPanel::handleResponseToolCalls(const ai::OpenAIResponseResult& r
         saveRunStateSnapshot();
         return;
     }
-    m_toolCallsThisSession += result.function_calls.size();
-    m_runState.active_tools += result.function_calls.size();
+    m_toolCallsThisSession += static_cast<int>(result.function_calls.size());
+    m_runState.active_tools += static_cast<int>(result.function_calls.size());
     updateTokenLabels();
     saveRunStateSnapshot();
     traceAiEvent(QStringLiteral("tool_queue"),

@@ -99,7 +99,7 @@ void InstallSummaryDialog::populateJobTable(const QVector<MigrationJob>& jobs) {
     m_job_table->setSortingEnabled(false);
     m_job_table->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_job_table);
-    const int count = jobs.size();
+    const int count = static_cast<int>(jobs.size());
     m_job_table->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& job = jobs.at(row);

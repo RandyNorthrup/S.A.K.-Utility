@@ -129,7 +129,7 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
         m_activeJobs = 0;
 
         skipped = buildJobQueue();
-        totalJobs = m_jobs.size();
+        totalJobs = static_cast<int>(m_jobs.size());
 
         // Launch background processing (will wait for mutex release)
         m_processFuture = QtConcurrent::run([this]() { processQueue(); });
@@ -150,7 +150,7 @@ QVector<QPair<int, QString>> AppInstallationWorker::buildJobQueue() {
 
     const auto& entries = m_report->getEntries();
     const size_t entry_count = entries.size();
-    m_jobs.reserve(entry_count / kSelectedJobReserveDivisor);
+    m_jobs.reserve(static_cast<qsizetype>(entry_count / kSelectedJobReserveDivisor));
 
     for (size_t i = 0; i < entry_count; ++i) {
         const auto& entry = entries[i];
@@ -167,7 +167,7 @@ QVector<QPair<int, QString>> AppInstallationWorker::buildJobQueue() {
             continue;
         }
         m_jobs.append(makeJob(static_cast<int>(i), entry));
-        m_jobQueue.enqueue(m_jobs.size() - 1);
+        m_jobQueue.enqueue(static_cast<int>(m_jobs.size() - 1));
     }
     // These selected-but-rejected entries never become jobs; remember how many so
     // getStats() can account for them in the final totals.
@@ -272,7 +272,7 @@ AppInstallationWorker::Stats AppInstallationWorker::getStats() const {
     const QMutexLocker locker(&m_mutex);
 
     Stats stats;
-    stats.total = m_jobs.size();
+    stats.total = static_cast<int>(m_jobs.size());
 
     for (const auto& job : m_jobs) {
         switch (job.status) {

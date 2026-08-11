@@ -402,7 +402,7 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
     }
     worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, backup_options);
 
-    m_overallProgress->setRange(0, m_users.size());
+    m_overallProgress->setRange(0, static_cast<int>(m_users.size()));
     m_currentProgress->setRange(0, 0);
 }
 

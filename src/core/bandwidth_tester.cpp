@@ -100,7 +100,8 @@ IperfProcessResult runIperfClientProcess(const QString& program,
                 tester,
                 [tester, durationSec, elapsed_ms]() {
                     Q_EMIT tester->testProgress(0.0,
-                                                elapsed_ms / kMillisecondsPerSecondF,
+                                                static_cast<double>(elapsed_ms) /
+                                                    kMillisecondsPerSecondF,
                                                 static_cast<double>(durationSec));
                 },
                 Qt::QueuedConnection);

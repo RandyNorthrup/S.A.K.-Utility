@@ -214,8 +214,9 @@ bool isRestorableDataFile(const QString& path) {
 /// or a following '\'), so "\OUTLOOK\PROFILES" matches "...\Profiles" and "...\Profiles\Sub" but
 /// NOT "...\ProfilesEvil". Case-sensitive; callers pass already-upper-cased strings.
 bool containsPathSegment(const QString& haystack, const QString& marker) {
-    for (int pos = haystack.indexOf(marker); pos >= 0; pos = haystack.indexOf(marker, pos + 1)) {
-        const int after = pos + marker.size();
+    for (int pos = static_cast<int>(haystack.indexOf(marker)); pos >= 0;
+         pos = static_cast<int>(haystack.indexOf(marker, pos + 1))) {
+        const int after = static_cast<int>(pos + marker.size());
         if (after == haystack.size() || haystack.at(after) == QLatin1Char('\\')) {
             return true;
         }
@@ -334,7 +335,7 @@ QVector<sak::EmailDataFile> findOutlookDataFiles(const QSettings& profile_key) {
             }
             const QString value_name = key.mid(prefix.size());
 
-            const int last_slash = value_name.lastIndexOf(QLatin1Char('/'));
+            const int last_slash = static_cast<int>(value_name.lastIndexOf(QLatin1Char('/')));
             const QString leaf_name = (last_slash >= 0) ? value_name.mid(last_slash + 1)
                                                         : value_name;
 
@@ -479,7 +480,7 @@ int EmailProfileManager::countTotalDataFiles(const QVector<int>& profile_indices
     int total = 0;
     for (const int idx : profile_indices) {
         if (idx >= 0 && idx < m_profiles.size()) {
-            total += m_profiles[idx].data_files.size();
+            total += static_cast<int>(m_profiles[idx].data_files.size());
         }
     }
     return total;

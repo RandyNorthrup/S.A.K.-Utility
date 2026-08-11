@@ -101,7 +101,7 @@ AttachmentSaveResult saveAttachmentToDirectory(const QString& dir,
     QString file_path = dir + QStringLiteral("/") + safe_name;
 
     if (QFile::exists(file_path)) {
-        const int dot = safe_name.lastIndexOf(QLatin1Char('.'));
+        const int dot = static_cast<int>(safe_name.lastIndexOf(QLatin1Char('.')));
         const QString base = (dot > 0) ? safe_name.left(dot) : safe_name;
         const QString ext = (dot > 0) ? safe_name.mid(dot) : QString();
         int counter = 1;

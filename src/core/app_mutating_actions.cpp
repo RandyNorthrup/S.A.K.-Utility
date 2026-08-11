@@ -835,7 +835,7 @@ AppActionResult saveMboxAttachments(const QJsonObject& args) {
     req.id_key = QStringLiteral("message_index");
     req.id_value = message_index;
     req.message_id = static_cast<uint64_t>(message_index);
-    req.total = payloads->size();
+    req.total = static_cast<int>(payloads->size());
     req.truncated = req.total > kMaxSavedAttachments;
     req.attempted = req.truncated ? kMaxSavedAttachments : req.total;
     req.output_dir = output_dir;
@@ -978,7 +978,7 @@ AppActionResult savePstAttachments(const QJsonObject& args) {
     req.id_key = QStringLiteral("message_node_id");
     req.id_value = static_cast<double>(node_id);  // NID up to 0xFFFFFFFF -> exact as a double
     req.message_id = node_id;
-    req.total = metas->size();
+    req.total = static_cast<int>(metas->size());
     req.truncated = req.total > kMaxSavedAttachments;
     req.attempted = req.truncated ? kMaxSavedAttachments : req.total;
     req.output_dir = output_dir;
@@ -1596,7 +1596,8 @@ AppActionResult restoreRecoverable(const QJsonObject& args) {
     options.overwrite_existing = false;  // only ADD files; never overwrite -> not destructive
 
     const sak::FileRecoveryRestoreResult res = sak::FileRecoveryEngine::restoreCandidates(options);
-    return buildRestoreResult(res, candidates.size(), truncated, image_path, destination);
+    return buildRestoreResult(
+        res, static_cast<int>(candidates.size()), truncated, image_path, destination);
 }
 
 QJsonObject restoreRecoverableParamsSchema() {
@@ -2272,7 +2273,7 @@ AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items, bool use_re
     // rebootPendingItems, which are queued to this same caller-thread context in emission order),
     // so every accumulator is populated by the time this runs.
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &items, &tally]() {
-        inv.finish(buildCleanupResult(items.size(), tally));
+        inv.finish(buildCleanupResult(static_cast<int>(items.size()), tally));
     });
     QObject::connect(
         &worker, &WorkerBase::failed, inv.context(), [&inv](int, const QString& error) {
@@ -2411,7 +2412,7 @@ AppActionResult cleanLeftovers(const QJsonObject& args) {
                              jsonStringArrayCapped(refusals, kMaxRefusalListEntries)}}};
     }
     if (!unscanned.isEmpty()) {
-        return provenanceRefusalResult(unscanned, items_arr.size());
+        return provenanceRefusalResult(unscanned, static_cast<int>(items_arr.size()));
     }
 
     if (technician_override) {

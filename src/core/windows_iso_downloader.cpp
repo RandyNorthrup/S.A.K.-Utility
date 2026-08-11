@@ -170,7 +170,7 @@ void WindowsISODownloader::onFilesFetched(const QString& updateName,
     sak::logInfo("Starting UUP download: " + std::to_string(files.size()) + " files, " +
                  std::to_string(totalBytes / sak::kBytesPerMB) + " MB");
 
-    Q_EMIT downloadStarted(files.size(), totalBytes);
+    Q_EMIT downloadStarted(static_cast<int>(files.size()), totalBytes);
     Q_EMIT statusMessage(QString("Downloading %1 files (%2 GB)...")
                              .arg(files.size())
                              .arg(totalBytes / sak::kBytesPerGBf, 0, 'f', kGbDisplayPrecision));

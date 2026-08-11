@@ -657,7 +657,8 @@ auto DiskBenchmarkWorker::runSequentialRead() -> std::expected<void, sak::error_
             return std::unexpected(sak::error_code::read_error);
         }
 
-        const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+        const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
+                                   kNanosecondsPerSecond;
         const double mbps = static_cast<double>(bytes_read_total) / sak::kBytesPerMBf / elapsed_sec;
         best_mbps = std::max(best_mbps, mbps);
     }
@@ -744,7 +745,8 @@ auto DiskBenchmarkWorker::runSequentialWrite() -> std::expected<void, sak::error
             return std::unexpected(sak::error_code::write_error);
         }
 
-        const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+        const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
+                                   kNanosecondsPerSecond;
         const double mbps = static_cast<double>(written_total) / sak::kBytesPerMBf / elapsed_sec;
         best_mbps = std::max(best_mbps, mbps);
     }
@@ -886,7 +888,8 @@ void DiskBenchmarkWorker::processRandomReadOp(
         return;
     }
 
-    stats.latencies.push_back(op_timer.nsecsElapsed() / kNanosecondsPerMicrosecond);
+    stats.latencies.push_back(static_cast<double>(op_timer.nsecsElapsed()) /
+                              kNanosecondsPerMicrosecond);
     stats.total_bytes += bytes_read;
     ++stats.total_ops;
 }
@@ -918,7 +921,7 @@ double DiskBenchmarkWorker::runRandom4KReadLoop(void* file_handle,
         }
     }
 
-    return total_timer.nsecsElapsed() / kNanosecondsPerSecond;
+    return static_cast<double>(total_timer.nsecsElapsed()) / kNanosecondsPerSecond;
 }
 #endif
 
@@ -960,7 +963,8 @@ void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
         return;
     }
 
-    stats.latencies.push_back(op_timer.nsecsElapsed() / kNanosecondsPerMicrosecond);
+    stats.latencies.push_back(static_cast<double>(op_timer.nsecsElapsed()) /
+                              kNanosecondsPerMicrosecond);
     stats.total_bytes += bytes_written;
     ++stats.total_ops;
 }
@@ -988,7 +992,7 @@ double DiskBenchmarkWorker::runRandom4KWriteLoop(void* file_handle,
         }
     }
 
-    return total_timer.nsecsElapsed() / kNanosecondsPerSecond;
+    return static_cast<double>(total_timer.nsecsElapsed()) / kNanosecondsPerSecond;
 }
 #endif
 
@@ -1068,7 +1072,7 @@ double DiskBenchmarkWorker::calculateP99(std::vector<double>& latencies) const {
         return 0.0;
     }
     std::sort(latencies.begin(), latencies.end());
-    const size_t idx = static_cast<size_t>(latencies.size() * kP99Percentile);
+    const size_t idx = static_cast<size_t>(static_cast<double>(latencies.size()) * kP99Percentile);
     return latencies[std::min(idx, latencies.size() - 1)];
 }
 

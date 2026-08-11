@@ -648,9 +648,9 @@ bool AdvancedSearchWorker::processSearchFile(const QString& file_path,
         }
     }
 
-    Q_EMIT fileSearched(file_path, matches.size());
+    Q_EMIT fileSearched(file_path, static_cast<int>(matches.size()));
     batch_matches.append(matches);
-    total_matches += matches.size();
+    total_matches += static_cast<int>(matches.size());
     total_files++;
 
     if (m_config.max_results > 0 && total_matches >= m_config.max_results) {
@@ -866,9 +866,9 @@ bool AdvancedSearchWorker::processTargetFile(const FileManagementEntry& file,
         }
     }
 
-    Q_EMIT fileSearched(file.path, matches.size());
+    Q_EMIT fileSearched(file.path, static_cast<int>(matches.size()));
     batch_matches.append(matches);
-    total_matches += matches.size();
+    total_matches += static_cast<int>(matches.size());
     total_files++;
 
     if (m_config.max_results > 0 && total_matches >= m_config.max_results) {
@@ -914,9 +914,9 @@ void AdvancedSearchWorker::searchSingleFile(const QRegularExpression& regex,
 
     auto matches = searchFile(m_config.root_path, regex);
     if (!matches.isEmpty()) {
-        total_matches += matches.size();
+        total_matches += static_cast<int>(matches.size());
         total_files++;
-        Q_EMIT fileSearched(m_config.root_path, matches.size());
+        Q_EMIT fileSearched(m_config.root_path, static_cast<int>(matches.size()));
         Q_EMIT resultsReady(matches);
     }
     reportScanOutcome(total_matches, total_files, 1);
@@ -1459,7 +1459,7 @@ void parseExifIFD(const QByteArray& tiffData,
         return;
     }
 
-    const int data_size = tiffData.size();
+    const int data_size = static_cast<int>(tiffData.size());
     // All range checks use 64-bit math: ifdOffset, entry offsets, and value
     // sizes are attacker-controlled 32-bit fields, so 32-bit/int arithmetic
     // would wrap or go negative and defeat the bound.
@@ -1594,7 +1594,7 @@ void processApp1Segment(const QByteArray& file_data,
 
 /// @brief Extract PNG text metadata chunks (tEXt, iTXt, zTXt)
 void parseTEXtChunk(const QByteArray& chunk_data, QMap<QString, QString>& metadata) {
-    const int null_pos = chunk_data.indexOf('\0');
+    const int null_pos = static_cast<int>(chunk_data.indexOf('\0'));
     if (null_pos > 0) {
         const QString key = QString::fromLatin1(chunk_data.left(null_pos));
         const QString val = QString::fromLatin1(chunk_data.mid(null_pos + 1));
@@ -1603,7 +1603,7 @@ void parseTEXtChunk(const QByteArray& chunk_data, QMap<QString, QString>& metada
 }
 
 void parseITXtChunk(const QByteArray& chunk_data, QMap<QString, QString>& metadata) {
-    const int null_pos = chunk_data.indexOf('\0');
+    const int null_pos = static_cast<int>(chunk_data.indexOf('\0'));
     if (null_pos <= 0) {
         return;
     }
@@ -1690,7 +1690,7 @@ struct MetadataMatchContext {
         match.match_start = kMetadataPrefix + static_cast<int>(regex_match.capturedStart());
         match.match_end = kMetadataPrefix + static_cast<int>(regex_match.capturedEnd());
     } else {
-        const int prefix = QString("[Metadata] %1: ").arg(ctx.key).length();
+        const int prefix = static_cast<int>(QString("[Metadata] %1: ").arg(ctx.key).length());
         match.match_start = prefix + static_cast<int>(regex_match.capturedStart());
         match.match_end = prefix + static_cast<int>(regex_match.capturedEnd());
     }
@@ -2336,7 +2336,7 @@ QVector<SearchMatch> AdvancedSearchWorker::collectMetadataMatches(
 
 std::optional<AdvancedSearchWorker::ArchiveEntry> AdvancedSearchWorker::readArchiveEntry(
     const QByteArray& archive_data, const QString& file_path, int offset) const {
-    const int data_size = archive_data.size();
+    const int data_size = static_cast<int>(archive_data.size());
     if (offset + kZipLocalHeaderSize > data_size || !isZipLocalFileHeader(archive_data, offset)) {
         return std::nullopt;
     }
@@ -2414,9 +2414,9 @@ bool AdvancedSearchWorker::appendArchiveNameMatches(const ArchiveEntry& entry,
         match.file_path = entry.path;
         match.line_number = 0;
         match.line_content = QString("%1%2").arg(archive_entry_prefix, entry.name);
-        match.match_start = archive_entry_prefix.length() +
+        match.match_start = static_cast<int>(archive_entry_prefix.length()) +
                             static_cast<int>(regexMatch.capturedStart());
-        match.match_end = archive_entry_prefix.length() +
+        match.match_end = static_cast<int>(archive_entry_prefix.length()) +
                           static_cast<int>(regexMatch.capturedEnd());
         matches.append(match);
 
@@ -2508,7 +2508,7 @@ qsizetype AdvancedSearchWorker::scanArchiveEntries(const QByteArray& archive_dat
                                                    const QRegularExpression& regex,
                                                    QVector<SearchMatch>& matches) {
     int offset = 0;
-    const int data_size = archive_data.size();
+    const int data_size = static_cast<int>(archive_data.size());
     while (offset + kZipLocalHeaderSize < data_size) {
         if (checkStop()) {
             return -1;

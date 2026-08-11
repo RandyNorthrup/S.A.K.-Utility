@@ -241,7 +241,7 @@ QString parentPathFor(const QString& path, bool local) {
     }
     const QString trimmed =
         path.endsWith(QLatin1Char('/')) && path.size() > 1 ? path.left(path.size() - 1) : path;
-    const int slash = trimmed.lastIndexOf(QLatin1Char('/'));
+    const int slash = static_cast<int>(trimmed.lastIndexOf(QLatin1Char('/')));
     if (slash <= 0) {
         return QStringLiteral("/");
     }
@@ -366,7 +366,7 @@ QString nameForPath(const QString& path, bool local) {
     if (clean.endsWith(QLatin1Char('/')) && clean.size() > 1) {
         clean.chop(1);
     }
-    const int slash = clean.lastIndexOf(QLatin1Char('/'));
+    const int slash = static_cast<int>(clean.lastIndexOf(QLatin1Char('/')));
     return slash >= 0 ? clean.mid(slash + 1) : clean;
 }
 
@@ -3369,7 +3369,7 @@ QString FileManagementExplorerPanel::uniqueChildName(const FileManagementTarget&
                                                      const QString& name) const {
     // Files FileOperationsHelpers.GetIncrementalName: "{name} ({n}){ext}"
     // starting at 2.
-    const int last_dot = name.lastIndexOf(QLatin1Char('.'));
+    const int last_dot = static_cast<int>(name.lastIndexOf(QLatin1Char('.')));
     const QString base = last_dot > 0 ? name.left(last_dot) : name;
     const QString extension = last_dot > 0 ? name.mid(last_dot) : QString();
     constexpr int kIncrementalNameStart = 2;
@@ -4541,7 +4541,7 @@ QString FileManagementExplorerPanel::historyDeletePathList(
     const QVector<FileExplorerHistoryItem>& items) {
     constexpr int kMaxShown = 15;
     QStringList lines;
-    const int shown = std::min<int>(items.size(), kMaxShown);
+    const int shown = std::min<int>(static_cast<int>(items.size()), kMaxShown);
     for (int index = 0; index < shown; ++index) {
         lines.append(items.at(index).destination_path);
     }
@@ -8418,7 +8418,7 @@ void FileManagementExplorerPanel::moveFavoriteAtIndex(const int target_index, co
         return;
     }
     const QString target_id = FileExplorerTargetId::fromTarget(m_targets.at(target_index)).value;
-    const int position = m_favorite_target_ids.indexOf(target_id);
+    const int position = static_cast<int>(m_favorite_target_ids.indexOf(target_id));
     const int destination = position + delta;
     if (position < 0 || destination < 0 || destination >= m_favorite_target_ids.size()) {
         return;

@@ -3717,7 +3717,7 @@ void NetworkDiagnosticPanel::onMtrUpdate(QVector<MtrHopStats> hops, int cycle) {
     Q_ASSERT(m_mtrTable);
     Q_ASSERT(m_mtrStatusLabel);
     m_mtrTable->setSortingEnabled(false);
-    m_mtrTable->setRowCount(hops.size());
+    m_mtrTable->setRowCount(static_cast<int>(hops.size()));
 
     for (int i = 0; i < hops.size(); ++i) {
         const auto& h = hops[i];
@@ -4310,7 +4310,7 @@ void NetworkDiagnosticPanel::onConnectionsUpdated(QVector<ConnectionInfo> connec
     Q_ASSERT(m_connTable);
     Q_ASSERT(m_connSummaryLabel);
     m_connTable->setSortingEnabled(false);
-    m_connTable->setRowCount(connections.size());
+    m_connTable->setRowCount(static_cast<int>(connections.size()));
 
     int tcpCount = 0;
     int udpCount = 0;
@@ -4497,7 +4497,7 @@ void NetworkDiagnosticPanel::populateFirewallTable(const QVector<FirewallRule>& 
     Q_ASSERT(m_fwRuleTable);
 
     m_fwRuleTable->setSortingEnabled(false);
-    m_fwRuleTable->setRowCount(filtered.size());
+    m_fwRuleTable->setRowCount(static_cast<int>(filtered.size()));
 
     for (int i = 0; i < filtered.size(); ++i) {
         const auto& r = filtered[i];
@@ -4548,7 +4548,7 @@ void NetworkDiagnosticPanel::onSharesDiscovered(QVector<NetworkShareInfo> shares
     Q_ASSERT(m_shareTable);
     m_shareDiscoverBtn->setEnabled(true);
 
-    m_shareTable->setRowCount(shares.size());
+    m_shareTable->setRowCount(static_cast<int>(shares.size()));
 
     for (int i = 0; i < shares.size(); ++i) {
         const auto& s = shares[i];

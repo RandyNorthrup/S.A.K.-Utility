@@ -48,7 +48,8 @@ FileExplorerRenameLineEdit::FileExplorerRenameLineEdit(QWidget* parent) : QLineE
         if (cleaned == text) {
             return;
         }
-        const int cursor = qMax(0, cursorPosition() - (text.length() - cleaned.length()));
+        const int cursor =
+            static_cast<int>(qMax(0, cursorPosition() - (text.length() - cleaned.length())));
         setText(cleaned);
         setCursorPosition(cursor);
         QToolTip::showText(mapToGlobal(rect().bottomLeft()),
@@ -222,9 +223,9 @@ void FileExplorerNameDelegate::setEditorData(QWidget* editor, const QModelIndex&
     // Files StartRenameItem: files select the base name (extension excluded
     // when visible); folders select the whole name.
     const bool is_directory = index.data(FileExplorerItemModel::EntryDirectoryRole).toBool();
-    int selection_length = text.length();
+    int selection_length = static_cast<int>(text.length());
     if (!is_directory) {
-        const int last_dot = text.lastIndexOf(QLatin1Char('.'));
+        const int last_dot = static_cast<int>(text.lastIndexOf(QLatin1Char('.')));
         if (last_dot > 0) {
             selection_length = last_dot;
         }

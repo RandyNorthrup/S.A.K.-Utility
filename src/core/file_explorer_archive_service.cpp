@@ -87,7 +87,7 @@ qint64 zipCentralDirectorySize(const QString& path) {
         return -1;
     }
     const QByteArray buf = file.read(tail);
-    const int eocd = buf.lastIndexOf(QByteArrayLiteral("PK\x05\x06"));
+    const int eocd = static_cast<int>(buf.lastIndexOf(QByteArrayLiteral("PK\x05\x06")));
     if (eocd < 0 || eocd + kEocdCentralDirSizeFieldEnd > buf.size()) {
         return -1;
     }
@@ -450,7 +450,7 @@ QString topLevelSegment(const QString& entry_name) {
     while (clean.startsWith(QLatin1Char('/'))) {
         clean.remove(0, 1);
     }
-    const int slash = clean.indexOf(QLatin1Char('/'));
+    const int slash = static_cast<int>(clean.indexOf(QLatin1Char('/')));
     return slash < 0 ? clean : clean.left(slash);
 }
 
