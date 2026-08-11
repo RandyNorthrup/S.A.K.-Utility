@@ -437,13 +437,13 @@ DuplicateFinderWorker::buildVirtualDuplicateGroups(
     const QVector<QPair<VirtualFile, QString>>& hashed_files,
     int& total_duplicates,
     qint64& total_wasted) const {
-    QHash<QString, QVector<VirtualFile>> byHash;
+    QHash<QString, QVector<VirtualFile>> by_hash;
     for (const auto& item : hashed_files) {
-        byHash[item.second].append(item.first);
+        by_hash[item.second].append(item.first);
     }
 
     std::vector<DuplicateGroup> groups;
-    for (auto it = byHash.cbegin(); it != byHash.cend(); ++it) {
+    for (auto it = by_hash.cbegin(); it != by_hash.cend(); ++it) {
         const auto& paths = it.value();
         if (paths.size() <= 1) {
             continue;
@@ -539,12 +539,12 @@ namespace {
 // of the worker's m_hash_stop token; it shares the token's refcounted stop-state, so it also
 // outlives the worker safely.
 struct ParallelHashJob {
-    std::vector<std::filesystem::path> files;
-    std::vector<std::pair<std::filesystem::path, std::string>> results;
-    std::atomic<int> processed_count{0};
-    std::atomic<bool> error_occurred{false};
-    QMutex results_mutex;
-    std::stop_token stop;
+    std::vector<std::filesystem::path> m_files;
+    std::vector<std::pair<std::filesystem::path, std::string>> m_results;
+    std::atomic<int> m_processed_count{0};
+    std::atomic<bool> m_error_occurred{false};
+    QMutex m_results_mutex;
+    std::stop_token m_stop;
 };
 
 // Build the per-index hashing task. It captures ONLY the shared job (no worker pointer, no stack
@@ -556,23 +556,23 @@ std::function<void(int)> makeParallelHashTask(const std::shared_ptr<ParallelHash
         // would nondeterministically drop real duplicate groups depending on scheduling):
         // unreadable files are simply left un-hashed and filtered out, matching the sequential
         // path.
-        if (job->stop.stop_requested()) {
+        if (job->m_stop.stop_requested()) {
             return;
         }
-        const auto& file = job->files[static_cast<size_t>(index)];
+        const auto& file = job->m_files[static_cast<size_t>(index)];
         const sak::file_hasher hasher(sak::hash_algorithm::md5);
         // Honor the cancel token so a stop breaks this file at the next 1 MB chunk (not at EOF); on
         // cancel calculateHash returns operation_cancelled and the whole result set is discarded by
         // calculateHashesParallel's post-blockingMap checkStop().
-        auto hash_result = hasher.calculateHash(file, nullptr, job->stop);
+        auto hash_result = hasher.calculateHash(file, nullptr, job->m_stop);
         if (hash_result) {
-            const QMutexLocker locker(&job->results_mutex);
-            job->results[static_cast<size_t>(index)] = std::make_pair(file, hash_result.value());
+            const QMutexLocker locker(&job->m_results_mutex);
+            job->m_results[static_cast<size_t>(index)] = std::make_pair(file, hash_result.value());
         } else {
             sak::logWarning("Failed to hash file: {}", file.string());
-            job->error_occurred.store(true);
+            job->m_error_occurred.store(true);
         }
-        job->processed_count.fetch_add(1);
+        job->m_processed_count.fetch_add(1);
     };
 }
 
@@ -593,9 +593,9 @@ auto DuplicateFinderWorker::calculateHashesParallel(const std::vector<std::files
     sak::logInfo("Using {} threads for parallel hashing", thread_count);
 
     auto job = std::make_shared<ParallelHashJob>();
-    job->files = files;  // own a copy so an orphaned task never derefs a dangling caller vector
-    job->results.resize(files.size());
-    job->stop = m_hash_stop.get_token();
+    job->m_files = files;  // own a copy so an orphaned task never derefs a dangling caller vector
+    job->m_results.resize(files.size());
+    job->m_stop = m_hash_stop.get_token();
 
     QVector<int> indices;
     indices.reserve(static_cast<int>(files.size()));
@@ -614,7 +614,7 @@ auto DuplicateFinderWorker::calculateHashesParallel(const std::vector<std::files
                 m_hash_stop.request_stop();
                 return;  // die within one poll of teardown, long before any terminate() at +15s
             }
-            Q_EMIT scanProgress(job->processed_count.load(), total, QString());
+            Q_EMIT scanProgress(job->m_processed_count.load(), total, QString());
             std::this_thread::sleep_for(std::chrono::milliseconds(kHashCancelPollMs));
         }
     });
@@ -628,11 +628,11 @@ auto DuplicateFinderWorker::calculateHashesParallel(const std::vector<std::files
     if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
     }
-    if (job->error_occurred.load()) {
+    if (job->m_error_occurred.load()) {
         sak::logError("Errors occurred during parallel hashing");
     }
 
-    auto valid_results = filterValidResults(job->results);
+    auto valid_results = filterValidResults(job->m_results);
     sak::logInfo("Parallel hashing complete: {}/{} files successful",
                  valid_results.size(),
                  files.size());

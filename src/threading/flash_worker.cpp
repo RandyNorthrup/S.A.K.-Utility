@@ -127,27 +127,27 @@ int parseTargetDriveNumber(const QString& path) {
 // alias remap in the interim could otherwise redirect the raw write to a different
 // disk. Mirrors FlashCoordinator::queryHandleDriveNumber (same fail-closed guards).
 int handleStorageDriveNumber(HANDLE handle) {
-    STORAGE_DEVICE_NUMBER deviceNumber = {};
-    DWORD bytesReturned = 0;
+    STORAGE_DEVICE_NUMBER device_number = {};
+    DWORD bytes_returned = 0;
     if (DeviceIoControl(handle,
                         IOCTL_STORAGE_GET_DEVICE_NUMBER,
                         nullptr,
                         0,
-                        &deviceNumber,
-                        sizeof(deviceNumber),
-                        &bytesReturned,
+                        &device_number,
+                        sizeof(device_number),
+                        &bytes_returned,
                         nullptr) == 0) {
         return -1;
     }
     // A short "success" would leave the zero-initialized struct in place and let a
     // zeroed DeviceNumber pass for a real answer. Require the whole record back.
-    if (bytesReturned < sizeof(deviceNumber)) {
+    if (bytes_returned < sizeof(device_number)) {
         return -1;
     }
-    if (deviceNumber.DeviceType != FILE_DEVICE_DISK) {
+    if (device_number.DeviceType != FILE_DEVICE_DISK) {
         return -1;
     }
-    return static_cast<int>(deviceNumber.DeviceNumber);
+    return static_cast<int>(device_number.DeviceNumber);
 }
 
 // Defense-in-depth OS-disk self-guard: does physical drive @p driveNumber back the
@@ -156,40 +156,40 @@ int handleStorageDriveNumber(HANDLE handle) {
 // FlashWorker constructed directly (bypassing the coordinator) still cannot raw-
 // write the current system disk. An indeterminate probe returns false (proceed) so
 // it never blocks a legitimate flash the coordinator already cleared.
-bool physicalDriveBacksWindows(int driveNumber) {
-    if (driveNumber < 0) {
+bool physicalDriveBacksWindows(int drive_number) {
+    if (drive_number < 0) {
         return false;
     }
-    wchar_t winDir[MAX_PATH] = {};
-    const UINT len = GetWindowsDirectoryW(winDir, MAX_PATH);
-    if (len == 0 || len >= MAX_PATH || winDir[1] != L':') {
+    wchar_t win_dir[MAX_PATH] = {};
+    const UINT len = GetWindowsDirectoryW(win_dir, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH || win_dir[1] != L':') {
         return false;
     }
-    const wchar_t volumePath[] = {L'\\', L'\\', L'.', L'\\', winDir[0], L':', L'\0'};
-    HANDLE hVol = CreateFileW(
-        volumePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (hVol == INVALID_HANDLE_VALUE) {
+    const wchar_t volume_path[] = {L'\\', L'\\', L'.', L'\\', win_dir[0], L':', L'\0'};
+    HANDLE h_vol = CreateFileW(
+        volume_path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h_vol == INVALID_HANDLE_VALUE) {
         return false;
     }
     constexpr DWORD kMaxExtents = 16;
-    const DWORD bufSize = sizeof(VOLUME_DISK_EXTENTS) + ((kMaxExtents - 1) * sizeof(DISK_EXTENT));
-    std::vector<unsigned char> buffer(bufSize, 0);
+    const DWORD buf_size = sizeof(VOLUME_DISK_EXTENTS) + ((kMaxExtents - 1) * sizeof(DISK_EXTENT));
+    std::vector<unsigned char> buffer(buf_size, 0);
     auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
-    DWORD bytesReturned = 0;
-    const BOOL ok = DeviceIoControl(hVol,
+    DWORD bytes_returned = 0;
+    const BOOL ok = DeviceIoControl(h_vol,
                                     IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
                                     nullptr,
                                     0,
                                     extents,
-                                    bufSize,
-                                    &bytesReturned,
+                                    buf_size,
+                                    &bytes_returned,
                                     nullptr);
-    CloseHandle(hVol);
+    CloseHandle(h_vol);
     if (ok == 0) {
         return false;
     }
     for (DWORD i = 0; i < extents->NumberOfDiskExtents && i < kMaxExtents; ++i) {
-        if (static_cast<int>(extents->Extents[i].DiskNumber) == driveNumber) {
+        if (static_cast<int>(extents->Extents[i].DiskNumber) == drive_number) {
             return true;
         }
     }
@@ -200,12 +200,12 @@ bool physicalDriveBacksWindows(int driveNumber) {
 // Neither constructor input is asserted: both are caller-supplied, and both are rejected at
 // runtime instead -- execute() refuses a null image source, and openDevice() fails the run on a
 // device path it cannot open (an empty one included).
-FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
-                         const QString& targetDevice,
+FlashWorker::FlashWorker(std::unique_ptr<ImageSource> image_source,
+                         const QString& target_device,
                          QObject* parent)
     : WorkerBase(parent)
-    , m_imageSource(std::move(imageSource))
-    , m_targetDevice(targetDevice)
+    , m_imageSource(std::move(image_source))
+    , m_targetDevice(target_device)
     , m_deviceHandle(INVALID_HANDLE_VALUE)
     , m_bytesWritten(0)
     , m_totalBytes(0)
@@ -237,12 +237,12 @@ void FlashWorker::setValidationMode(sak::ValidationMode mode) {
     m_validationMode = mode;
 }
 
-void FlashWorker::setBufferSize(qint64 sizeBytes) {
-    if (sizeBytes <= 0) {
-        sak::logWarning("FlashWorker::setBufferSize: ignoring non-positive size {}", sizeBytes);
+void FlashWorker::setBufferSize(qint64 size_bytes) {
+    if (size_bytes <= 0) {
+        sak::logWarning("FlashWorker::setBufferSize: ignoring non-positive size {}", size_bytes);
         return;
     }
-    m_bufferSize = sizeBytes;
+    m_bufferSize = size_bytes;
 }
 
 auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
@@ -340,13 +340,13 @@ auto FlashWorker::runVerificationStage() -> std::expected<void, sak::error_code>
 }
 
 bool FlashWorker::refuseIfTargetIsOsDisk() {
-    const int driveNumber = parseTargetDriveNumber(m_targetDevice);
+    const int drive_number = parseTargetDriveNumber(m_targetDevice);
     // This worker raw-writes physical drives only ("\\.\PhysicalDriveN"). A target that is not a
     // parseable physical drive (e.g. a bare volume path like "\\.\C:") cannot be checked against
     // the OS disk, yet openDevice() may still have opened it -- so fail closed rather than proceed
     // to raw-write an unverifiable target. The coordinator only ever constructs physical-drive
     // targets, so this refuses only a direct, coordinator-bypassing misuse.
-    if (driveNumber < 0) {
+    if (drive_number < 0) {
         sak::logError(QString("Refusing raw write to %1: target is not a physical-drive path")
                           .arg(m_targetDevice)
                           .toStdString());
@@ -354,7 +354,7 @@ bool FlashWorker::refuseIfTargetIsOsDisk() {
         cleanupFlashResources();
         return true;
     }
-    if (!physicalDriveBacksWindows(driveNumber)) {
+    if (!physicalDriveBacksWindows(drive_number)) {
         return false;
     }
     sak::logError(QString("Refusing raw write to %1: it backs the current OS disk")
@@ -369,8 +369,8 @@ bool FlashWorker::ensureImageFitsTarget() {
     // Fail closed: the device capacity MUST be known before writing. A previous
     // "capacity unknown -> write anyway, it fails at end-of-device" fallback would
     // let an oversized image overwrite the entire device before failing.
-    const qint64 deviceBytes = queryDeviceCapacity();
-    if (deviceBytes < 0) {
+    const qint64 device_bytes = queryDeviceCapacity();
+    if (device_bytes < 0) {
         sak::logError("Refusing to flash: could not determine target device capacity");
         Q_EMIT error("Could not determine the target device capacity");
         cleanupFlashResources();
@@ -387,12 +387,12 @@ bool FlashWorker::ensureImageFitsTarget() {
         cleanupFlashResources();
         return false;
     }
-    if (imageFitsDevice(m_totalBytes, deviceBytes)) {
+    if (imageFitsDevice(m_totalBytes, device_bytes)) {
         return true;
     }
     sak::logError(QString("Image (%1 bytes) exceeds the target device capacity (%2 bytes)")
                       .arg(m_totalBytes)
-                      .arg(deviceBytes)
+                      .arg(device_bytes)
                       .toStdString());
     Q_EMIT error("Image is larger than the target device");
     cleanupFlashResources();
@@ -435,15 +435,15 @@ bool FlashWorker::openDevice() {
     // any mismatch or unreadable identity (verify, do not assume). A non-physical path
     // names no disk number to check; refuseIfTargetIsOsDisk() fails that closed just
     // after openDevice() returns, so its dedicated branch stays live.
-    const int parsedNumber = parseTargetDriveNumber(m_targetDevice);
-    if (parsedNumber >= 0) {
-        const int actualNumber = handleStorageDriveNumber(m_deviceHandle);
-        if (actualNumber != parsedNumber) {
+    const int parsed_number = parseTargetDriveNumber(m_targetDevice);
+    if (parsed_number >= 0) {
+        const int actual_number = handleStorageDriveNumber(m_deviceHandle);
+        if (actual_number != parsed_number) {
             sak::logError(QString("Refusing raw write to %1: the opened device is disk %2, not %3 "
                                   "(hot-plug or alias remap after validation)")
                               .arg(m_targetDevice)
-                              .arg(actualNumber)
-                              .arg(parsedNumber)
+                              .arg(actual_number)
+                              .arg(parsed_number)
                               .toStdString());
             closeDevice();
             return false;
@@ -467,14 +467,14 @@ bool FlashWorker::queryDeviceSectorSize() {
     }
 
     DISK_GEOMETRY geometry{};
-    DWORD bytesReturned = 0;
+    DWORD bytes_returned = 0;
     if ((DeviceIoControl(m_deviceHandle,
                          IOCTL_DISK_GET_DRIVE_GEOMETRY,
                          nullptr,
                          0,
                          &geometry,
                          sizeof(geometry),
-                         &bytesReturned,
+                         &bytes_returned,
                          nullptr) != 0) &&
         geometry.BytesPerSector > 0) {
         m_sectorSize = static_cast<qint64>(geometry.BytesPerSector);
@@ -499,56 +499,56 @@ qint64 FlashWorker::queryDeviceCapacity() {
     if (m_deviceHandle == INVALID_HANDLE_VALUE) {
         return -1;
     }
-    GET_LENGTH_INFORMATION lengthInfo{};
-    DWORD bytesReturned = 0;
+    GET_LENGTH_INFORMATION length_info{};
+    DWORD bytes_returned = 0;
     if (DeviceIoControl(m_deviceHandle,
                         IOCTL_DISK_GET_LENGTH_INFO,
                         nullptr,
                         0,
-                        &lengthInfo,
-                        sizeof(lengthInfo),
-                        &bytesReturned,
+                        &length_info,
+                        sizeof(length_info),
+                        &bytes_returned,
                         nullptr) == 0) {
         sak::logWarning(QString("Could not query device capacity (error %1)")
                             .arg(GetLastError())
                             .toStdString());
         return -1;
     }
-    return static_cast<qint64>(lengthInfo.Length.QuadPart);
+    return static_cast<qint64>(length_info.Length.QuadPart);
 }
 
-qint64 FlashWorker::alignUpToSectorSize(qint64 bytes, qint64 sectorSize) {
-    if (sectorSize <= 0 || bytes < 0) {
+qint64 FlashWorker::alignUpToSectorSize(qint64 bytes, qint64 sector_size) {
+    if (sector_size <= 0 || bytes < 0) {
         return -1;
     }
-    if (bytes % sectorSize == 0) {
+    if (bytes % sector_size == 0) {
         return bytes;
     }
-    const qint64 sectors = bytes / sectorSize;  // floor
+    const qint64 sectors = bytes / sector_size;  // floor
     // Guard the (sectors + 1) * sectorSize multiply against qint64 overflow.
-    if (sectors > (std::numeric_limits<qint64>::max() / sectorSize) - 1) {
+    if (sectors > (std::numeric_limits<qint64>::max() / sector_size) - 1) {
         return -1;
     }
-    return (sectors + 1) * sectorSize;
+    return (sectors + 1) * sector_size;
 }
 
-bool FlashWorker::imageFitsDevice(qint64 imageBytes, qint64 deviceBytes) {
+bool FlashWorker::imageFitsDevice(qint64 image_bytes, qint64 device_bytes) {
     // Fail closed on BOTH unknowns. An unqueryable capacity (deviceBytes < 0) or
     // an undetermined image size (imageBytes < 0, e.g. a compressed stream whose
     // decompressed length the decompressor cannot report) must NOT be treated as
     // "fits" -- that would let an oversized image overwrite the whole device
     // before failing at end-of-media. Both sizes must be KNOWN.
-    if (deviceBytes < 0 || imageBytes < 0) {
+    if (device_bytes < 0 || image_bytes < 0) {
         return false;
     }
-    return imageBytes <= deviceBytes;
+    return image_bytes <= device_bytes;
 }
 
 bool FlashWorker::lockVolume() {
-    DWORD bytesReturned = 0;
+    DWORD bytes_returned = 0;
     const bool locked =
         DeviceIoControl(
-            m_deviceHandle, FSCTL_LOCK_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr) !=
+            m_deviceHandle, FSCTL_LOCK_VOLUME, nullptr, 0, nullptr, 0, &bytes_returned, nullptr) !=
         0;
     if (!locked) {
         // Non-fatal: a physical-drive handle has no single volume to lock, and
@@ -559,12 +559,12 @@ bool FlashWorker::lockVolume() {
 }
 
 bool FlashWorker::unlockVolume() {
-    DWORD bytesReturned = 0;
+    DWORD bytes_returned = 0;
     // Report the real outcome instead of an unconditional true. Non-fatal on the
     // cleanup path (a physical-drive handle may hold no volume lock to release), but
     // the caller should not be told the unlock succeeded when it did not.
     const BOOL ok = DeviceIoControl(
-        m_deviceHandle, FSCTL_UNLOCK_VOLUME, nullptr, 0, nullptr, 0, &bytesReturned, nullptr);
+        m_deviceHandle, FSCTL_UNLOCK_VOLUME, nullptr, 0, nullptr, 0, &bytes_returned, nullptr);
     if (ok == 0) {
         sak::logInfo("Volume unlock not performed (physical-drive target / no lock held)");
     }
@@ -572,14 +572,14 @@ bool FlashWorker::unlockVolume() {
 }
 
 bool FlashWorker::dismountVolume() {
-    DWORD bytesReturned = 0;
+    DWORD bytes_returned = 0;
     const bool dismounted = DeviceIoControl(m_deviceHandle,
                                             FSCTL_DISMOUNT_VOLUME,
                                             nullptr,
                                             0,
                                             nullptr,
                                             0,
-                                            &bytesReturned,
+                                            &bytes_returned,
                                             nullptr) != 0;
     if (!dismounted) {
         // Non-fatal: see lockVolume(); the coordinator owns the authoritative,
@@ -612,73 +612,74 @@ bool FlashWorker::prepareSourceChecksum() {
     return true;
 }
 
-bool FlashWorker::padAlignedBuffer(char* data, qint64& bytesRead, qint64 capacity) const {
+bool FlashWorker::padAlignedBuffer(char* data, qint64& bytes_read, qint64 capacity) const {
     // Sole caller writeImage() returns early when AlignedBuffer::allocate() fails, so data() is
     // never null here.
     Q_ASSERT(data != nullptr);
-    const qint64 padded = alignUpToSectorSize(bytesRead, m_sectorSize);
+    const qint64 padded = alignUpToSectorSize(bytes_read, m_sectorSize);
     if (padded < 0 || padded > capacity) {
         sak::logError(QString("Invalid sector padding: %1 -> %2 (capacity %3)")
-                          .arg(bytesRead)
+                          .arg(bytes_read)
                           .arg(padded)
                           .arg(capacity)
                           .toStdString());
         return false;
     }
-    if (padded > bytesRead) {
-        std::memset(data + bytesRead, 0, static_cast<size_t>(padded - bytesRead));
-        bytesRead = padded;
+    if (padded > bytes_read) {
+        std::memset(data + bytes_read, 0, static_cast<size_t>(padded - bytes_read));
+        bytes_read = padded;
     }
     return true;
 }
 
-bool FlashWorker::padToSectorSize(QByteArray& buffer, qint64& bytesRead, qint64 sectorSize) {
+bool FlashWorker::padToSectorSize(QByteArray& buffer, qint64& bytes_read, qint64 sector_size) {
     // Fail closed on bogus geometry rather than dividing by zero / under-padding.
-    if (sectorSize <= 0) {
-        sak::logError(QString("Invalid sector size for padding: %1").arg(sectorSize).toStdString());
+    if (sector_size <= 0) {
+        sak::logError(
+            QString("Invalid sector size for padding: %1").arg(sector_size).toStdString());
         return false;
     }
     // Fail closed on a negative valid-byte count. A negative bytesRead would make the
     // zero-fill loop below write buffer[i] at NEGATIVE indices (out-of-bounds/UB), and
     // -100 % 512 != 0 would even reach that loop. A valid count is never negative.
-    if (bytesRead < 0) {
+    if (bytes_read < 0) {
         sak::logError(
-            QString("Invalid negative bytesRead for padding: %1").arg(bytesRead).toStdString());
+            QString("Invalid negative bytesRead for padding: %1").arg(bytes_read).toStdString());
         return false;
     }
-    if (bytesRead % sectorSize == 0) {
+    if (bytes_read % sector_size == 0) {
         return true;
     }
 
-    const qint64 paddedSize = ((bytesRead / sectorSize) + 1) * sectorSize;
+    const qint64 padded_size = ((bytes_read / sector_size) + 1) * sector_size;
 
     // Validate padded size is reasonable
-    if (paddedSize > buffer.capacity() * kPaddingCapacityGrowthLimit || paddedSize < 0) {
-        sak::logError(QString("Invalid padded size calculated: %1").arg(paddedSize).toStdString());
+    if (padded_size > buffer.capacity() * kPaddingCapacityGrowthLimit || padded_size < 0) {
+        sak::logError(QString("Invalid padded size calculated: %1").arg(padded_size).toStdString());
         return false;
     }
 
     try {
-        buffer.resize(paddedSize);
+        buffer.resize(padded_size);
     } catch (const std::bad_alloc&) {
         sak::logError("Failed to allocate padding buffer - out of memory");
         return false;
     }
 
     // Verify resize succeeded
-    if (buffer.size() != paddedSize) {
+    if (buffer.size() != padded_size) {
         sak::logError(QString("Buffer resize failed: expected %1, got %2")
-                          .arg(paddedSize)
+                          .arg(padded_size)
                           .arg(buffer.size())
                           .toStdString());
         return false;
     }
 
     // Zero out padding
-    for (qint64 i = bytesRead; i < paddedSize; ++i) {
+    for (qint64 i = bytes_read; i < padded_size; ++i) {
         buffer[i] = 0;
     }
-    bytesRead = paddedSize;
+    bytes_read = padded_size;
     return true;
 }
 
@@ -699,8 +700,8 @@ bool FlashWorker::writeImage() {
     m_bytesWritten = 0;
     m_contentBytesWritten = 0;
 
-    QElapsedTimer speedTimer;
-    speedTimer.start();
+    QElapsedTimer speed_timer;
+    speed_timer.start();
     m_lastSpeedUpdate = 0;
     m_lastSpeedBytes = 0;
 
@@ -708,25 +709,25 @@ bool FlashWorker::writeImage() {
         // Bound the read by the ACTUAL allocation (buffer.size()), not m_bufferSize: the two are
         // equal here, but reading against the live member would write past the buffer if a setter
         // changed m_bufferSize after allocation. Reading into buffer.size() can never overflow it.
-        qint64 bytesRead = m_imageSource->read(buffer.data(), buffer.size());
-        if (bytesRead < 0) {
+        qint64 bytes_read = m_imageSource->read(buffer.data(), buffer.size());
+        if (bytes_read < 0) {
             sak::logError("Failed to read from image source");
             return false;
         }
 
-        if (bytesRead == 0) {
+        if (bytes_read == 0) {
             break;
         }
 
         // The meaningful (decompressed) content length, before sector padding.
         // Full verify hashes exactly this many bytes back from the device.
-        m_contentBytesWritten += bytesRead;
+        m_contentBytesWritten += bytes_read;
 
-        if (!padAlignedBuffer(buffer.data(), bytesRead, buffer.size())) {
+        if (!padAlignedBuffer(buffer.data(), bytes_read, buffer.size())) {
             return false;
         }
 
-        if (!writeChunk(buffer.data(), bytesRead)) {
+        if (!writeChunk(buffer.data(), bytes_read)) {
             return false;
         }
 
@@ -742,9 +743,9 @@ bool FlashWorker::writeImage() {
 bool FlashWorker::finalizeWrite() {
     // Flush buffers and check for failure to prevent silent data loss.
     if (FlushFileBuffers(m_deviceHandle) == 0) {
-        DWORD const flushError = GetLastError();
+        DWORD const flush_error = GetLastError();
         sak::logError(
-            QString("FlushFileBuffers failed with error %1").arg(flushError).toStdString());
+            QString("FlushFileBuffers failed with error %1").arg(flush_error).toStdString());
         return false;
     }
 
@@ -768,20 +769,20 @@ bool FlashWorker::finalizeWrite() {
     return !stopRequested();
 }
 
-bool FlashWorker::writeChunk(const char* buffer, qint64 bytesRead) {
+bool FlashWorker::writeChunk(const char* buffer, qint64 bytes_read) {
     // Sole caller writeImage() passes its AlignedBuffer, allocated (non-null) or it returned.
     Q_ASSERT(buffer != nullptr);
     // Guard against qint64 -> DWORD truncation
-    if (bytesRead > static_cast<qint64>(MAXDWORD)) {
+    if (bytes_read > static_cast<qint64>(MAXDWORD)) {
         sak::logError("Write size exceeds DWORD range");
         return false;
     }
 
-    DWORD bytesWrittenThisTime = 0;
+    DWORD bytes_written_this_time = 0;
     if (WriteFile(m_deviceHandle,
                   buffer,
-                  static_cast<DWORD>(bytesRead),
-                  &bytesWrittenThisTime,
+                  static_cast<DWORD>(bytes_read),
+                  &bytes_written_this_time,
                   nullptr) == 0) {
         DWORD const last_error = GetLastError();
         sak::logError(QString("WriteFile failed with error %1").arg(last_error).toStdString());
@@ -790,15 +791,15 @@ bool FlashWorker::writeChunk(const char* buffer, qint64 bytesRead) {
 
     // Fail closed on a short write: WriteFile can succeed yet write fewer bytes (device full,
     // failing sector). Accepting it drops the chunk's tail and misaligns every later write.
-    if (bytesWrittenThisTime != static_cast<DWORD>(bytesRead)) {
+    if (bytes_written_this_time != static_cast<DWORD>(bytes_read)) {
         sak::logError(QString("Short write: wrote %1 of %2 bytes")
-                          .arg(bytesWrittenThisTime)
-                          .arg(bytesRead)
+                          .arg(bytes_written_this_time)
+                          .arg(bytes_read)
                           .toStdString());
         return false;
     }
 
-    m_bytesWritten += bytesWrittenThisTime;
+    m_bytesWritten += bytes_written_this_time;
     return true;
 }
 
@@ -836,15 +837,15 @@ sak::ValidationResult FlashWorker::verifyFull() {
     // zeros. Hashing m_totalBytes (== size(), the compressed length for a
     // compressed source) would never match. m_contentBytesWritten is exactly the
     // meaningful prefix the source checksum was computed over.
-    const qint64 verifyLen = m_contentBytesWritten;
-    const QString targetChecksum = calculateChecksum(m_deviceHandle, verifyLen);
-    if (targetChecksum.isEmpty()) {
+    const qint64 verify_len = m_contentBytesWritten;
+    const QString target_checksum = calculateChecksum(m_deviceHandle, verify_len);
+    if (target_checksum.isEmpty()) {
         result.passed = false;
         result.errors.append("Failed to calculate target checksum");
         return result;
     }
 
-    result.targetChecksum = targetChecksum;
+    result.targetChecksum = target_checksum;
 
     // Compare checksums
     if (result.sourceChecksum != result.targetChecksum) {
@@ -861,7 +862,7 @@ sak::ValidationResult FlashWorker::verifyFull() {
         sak::logInfo("Verification passed - checksums match");
     }
 
-    result.verificationSpeed = verificationSpeedMBps(verifyLen, timer.elapsed());
+    result.verificationSpeed = verificationSpeedMBps(verify_len, timer.elapsed());
 
     return result;
 }
@@ -874,24 +875,24 @@ sak::ValidationResult FlashWorker::verifySample() {
     result.sourceChecksum = m_sourceChecksum;
 
     // Sample size: 100MB or 10% of image, whichever is smaller
-    const qint64 sampleSize = qMin(kVerifySampleMax, m_totalBytes / kSampleSizeFractionDivisor);
-    const qint64 blockSize = kVerifyBlockSize;
-    int numSamples = static_cast<int>(sampleSize / blockSize);
+    const qint64 sample_size = qMin(kVerifySampleMax, m_totalBytes / kSampleSizeFractionDivisor);
+    const qint64 block_size = kVerifyBlockSize;
+    int num_samples = static_cast<int>(sample_size / block_size);
 
-    numSamples = std::max(numSamples, 1);
+    num_samples = std::max(num_samples, 1);
 
     sak::logInfo(QString("Verifying %1 sample blocks (%2 MB)")
-                     .arg(numSamples)
-                     .arg(sampleSize / sak::kBytesPerMB)
+                     .arg(num_samples)
+                     .arg(sample_size / sak::kBytesPerMB)
                      .toStdString());
 
     QElapsedTimer timer;
     timer.start();
 
-    QByteArray sourceBuffer(blockSize, 0);
+    QByteArray source_buffer(block_size, 0);
     // Device read-back buffer needs a sector-aligned base for NO_BUFFERING.
-    AlignedBuffer targetBuffer;
-    if (!targetBuffer.allocate(blockSize, m_sectorSize)) {
+    AlignedBuffer target_buffer;
+    if (!target_buffer.allocate(block_size, m_sectorSize)) {
         result.passed = false;
         result.errors.append("Failed to allocate sector-aligned verify buffer");
         return result;
@@ -909,26 +910,26 @@ sak::ValidationResult FlashWorker::verifySample() {
 
     // Images smaller than one sample block: compare the whole image rather than
     // auto-passing with zero bytes read back (fail-closed).
-    const qint64 totalBlocks = m_totalBytes / blockSize;
-    if (totalBlocks < 1) {
+    const qint64 total_blocks = m_totalBytes / block_size;
+    if (total_blocks < 1) {
         verifySmallImage(result);
         return result;
     }
 
-    const int samplesVerified = verifySampleBlocks(result,
-                                                   {.num_samples = numSamples,
-                                                    .block_size = blockSize,
-                                                    .total_blocks = totalBlocks,
-                                                    .sample_size = sampleSize},
-                                                   sourceBuffer.data(),
-                                                   targetBuffer.data());
+    const int samples_verified = verifySampleBlocks(result,
+                                                    {.num_samples = num_samples,
+                                                     .block_size = block_size,
+                                                     .total_blocks = total_blocks,
+                                                     .sample_size = sample_size},
+                                                    source_buffer.data(),
+                                                    target_buffer.data());
 
-    markIncompleteVerification(result, samplesVerified, numSamples);
-    result.verificationSpeed = verificationSpeedMBps(sampleSize, timer.elapsed());
+    markIncompleteVerification(result, samples_verified, num_samples);
+    result.verificationSpeed = verificationSpeedMBps(sample_size, timer.elapsed());
 
     sak::logInfo(QString("Sample verification complete - %1/%2 blocks verified, %3 mismatches")
-                     .arg(samplesVerified)
-                     .arg(numSamples)
+                     .arg(samples_verified)
+                     .arg(num_samples)
                      .arg(result.corruptedBlocks)
                      .toStdString());
 
@@ -937,13 +938,13 @@ sak::ValidationResult FlashWorker::verifySample() {
 
 bool FlashWorker::compareDeviceBlock(sak::ValidationResult& result,
                                      qint64 offset_bytes,
-                                     qint64 compareLen,
-                                     const char* sourceData,
-                                     char* targetData) {
+                                     qint64 compare_len,
+                                     const char* source_data,
+                                     char* target_data) {
     // Both buffers come from verifySample() via verifySampleBlocks(): a sized QByteArray and an
     // AlignedBuffer whose failed allocation returns before either is passed on.
-    Q_ASSERT(sourceData != nullptr);
-    Q_ASSERT(targetData != nullptr);
+    Q_ASSERT(source_data != nullptr);
+    Q_ASSERT(target_data != nullptr);
     LARGE_INTEGER li;
     li.QuadPart = offset_bytes;
     if (SetFilePointerEx(m_deviceHandle, li, nullptr, FILE_BEGIN) == 0) {
@@ -951,11 +952,11 @@ bool FlashWorker::compareDeviceBlock(sak::ValidationResult& result,
         return false;
     }
 
-    DWORD bytesReadFromDevice = 0;
+    DWORD bytes_read_from_device = 0;
     if (ReadFile(m_deviceHandle,
-                 targetData,
-                 static_cast<DWORD>(compareLen),
-                 &bytesReadFromDevice,
+                 target_data,
+                 static_cast<DWORD>(compare_len),
+                 &bytes_read_from_device,
                  nullptr) == 0) {
         result.errors.append(QString("Failed to read from device at offset %1").arg(offset_bytes));
         return false;
@@ -963,16 +964,16 @@ bool FlashWorker::compareDeviceBlock(sak::ValidationResult& result,
 
     // Fail closed on a short device read: fewer bytes back than we compare means
     // the target buffer tail is stale, so this block cannot count as verified.
-    if (static_cast<qint64>(bytesReadFromDevice) != compareLen) {
+    if (static_cast<qint64>(bytes_read_from_device) != compare_len) {
         result.passed = false;
         result.errors.append(QString("Short device read at offset %1: %2 of %3 bytes")
                                  .arg(offset_bytes)
-                                 .arg(bytesReadFromDevice)
-                                 .arg(compareLen));
+                                 .arg(bytes_read_from_device)
+                                 .arg(compare_len));
         return false;
     }
 
-    if (memcmp(sourceData, targetData, static_cast<size_t>(compareLen)) != 0) {
+    if (memcmp(source_data, target_data, static_cast<size_t>(compare_len)) != 0) {
         result.passed = false;
         result.mismatchOffset = offset_bytes;
         result.corruptedBlocks++;
@@ -984,17 +985,17 @@ bool FlashWorker::compareDeviceBlock(sak::ValidationResult& result,
 
 int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
                                     const VerifyBlocksConfig& config,
-                                    char* sourceData,
-                                    char* targetData) {
+                                    char* source_data,
+                                    char* target_data) {
     // Sole caller verifySample() passes its sized source QByteArray and an AlignedBuffer it
     // returned early on if the allocation failed.
-    Q_ASSERT(sourceData != nullptr);
-    Q_ASSERT(targetData != nullptr);
-    int samplesVerified = 0;
+    Q_ASSERT(source_data != nullptr);
+    Q_ASSERT(target_data != nullptr);
+    int samples_verified = 0;
 
     for (int i = 0; i < config.num_samples && !stopRequested(); ++i) {
-        const qint64 blockIndex = QRandomGenerator::global()->bounded(config.total_blocks);
-        const qint64 offset_bytes = blockIndex * config.block_size;
+        const qint64 block_index = QRandomGenerator::global()->bounded(config.total_blocks);
+        const qint64 offset_bytes = block_index * config.block_size;
 
         if (!m_imageSource->seek(offset_bytes)) {
             result.errors.append(QString("Failed to seek source to offset %1").arg(offset_bytes));
@@ -1003,22 +1004,22 @@ int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
 
         // Compare only the bytes actually read. A full-block sample offset always
         // returns block_size here, keeping the device read a whole sector multiple.
-        const qint64 compareLen = m_imageSource->read(sourceData, config.block_size);
-        if (compareLen <= 0) {
+        const qint64 compare_len = m_imageSource->read(source_data, config.block_size);
+        if (compare_len <= 0) {
             // Seek/read failure or premature EOF; leave unverified
             // (markIncompleteVerification fails closed if too few blocks read back).
             continue;
         }
 
-        if (!compareDeviceBlock(result, offset_bytes, compareLen, sourceData, targetData)) {
+        if (!compareDeviceBlock(result, offset_bytes, compare_len, source_data, target_data)) {
             continue;
         }
 
-        samplesVerified++;
-        updateVerificationProgress(samplesVerified * config.block_size, config.sample_size);
+        samples_verified++;
+        updateVerificationProgress(samples_verified * config.block_size, config.sample_size);
     }
 
-    return samplesVerified;
+    return samples_verified;
 }
 
 void FlashWorker::verifySmallImage(sak::ValidationResult& result) {
@@ -1033,15 +1034,15 @@ void FlashWorker::verifySmallImage(sak::ValidationResult& result) {
     // Device reads use FILE_FLAG_NO_BUFFERING: the read length must be a whole
     // multiple of the sector size. The written image was sector-padded, so read
     // back the aligned length and compare only the meaningful prefix.
-    const qint64 alignedLen = alignUpToSectorSize(len, m_sectorSize);
-    if (alignedLen < 0) {
+    const qint64 aligned_len = alignUpToSectorSize(len, m_sectorSize);
+    if (aligned_len < 0) {
         result.passed = false;
         result.errors.append("Invalid sector geometry for small-image verification");
         return;
     }
 
-    QByteArray sourceBuffer(len, 0);
-    if (m_imageSource->read(sourceBuffer.data(), len) != len) {
+    QByteArray source_buffer(len, 0);
+    if (m_imageSource->read(source_buffer.data(), len) != len) {
         result.passed = false;
         result.errors.append("Failed to read full source for small-image verification");
         return;
@@ -1056,25 +1057,25 @@ void FlashWorker::verifySmallImage(sak::ValidationResult& result) {
     }
 
     // Sector-aligned base address for the NO_BUFFERING device read-back.
-    AlignedBuffer targetBuffer;
-    if (!targetBuffer.allocate(alignedLen, m_sectorSize)) {
+    AlignedBuffer target_buffer;
+    if (!target_buffer.allocate(aligned_len, m_sectorSize)) {
         result.passed = false;
         result.errors.append("Failed to allocate sector-aligned verify buffer");
         return;
     }
-    DWORD bytesReadFromDevice = 0;
+    DWORD bytes_read_from_device = 0;
     if ((ReadFile(m_deviceHandle,
-                  targetBuffer.data(),
-                  static_cast<DWORD>(alignedLen),
-                  &bytesReadFromDevice,
+                  target_buffer.data(),
+                  static_cast<DWORD>(aligned_len),
+                  &bytes_read_from_device,
                   nullptr) == 0) ||
-        static_cast<qint64>(bytesReadFromDevice) < len) {
+        static_cast<qint64>(bytes_read_from_device) < len) {
         result.passed = false;
         result.errors.append("Failed to read full device for small-image verification");
         return;
     }
 
-    if (memcmp(sourceBuffer.data(), targetBuffer.data(), static_cast<size_t>(len)) != 0) {
+    if (memcmp(source_buffer.data(), target_buffer.data(), static_cast<size_t>(len)) != 0) {
         result.passed = false;
         result.mismatchOffset = 0;
         result.corruptedBlocks++;
@@ -1106,37 +1107,38 @@ QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
     }
 
     QCryptographicHash hash(QCryptographicHash::Sha512);
-    qint64 totalRead = 0;
+    qint64 total_read = 0;
     m_lastVerifyUpdate = 0;
 
-    while (totalRead < size && !stopRequested()) {
-        const qint64 remaining = size - totalRead;
-        const qint64 toRead = qMin(static_cast<qint64>(kFlashBufferSize), remaining);
+    while (total_read < size && !stopRequested()) {
+        const qint64 remaining = size - total_read;
+        const qint64 to_read = qMin(static_cast<qint64>(kFlashBufferSize), remaining);
         // NO_BUFFERING: the read LENGTH must also be a whole sector multiple. Read
         // the aligned length back (the tail sectors hold write-time padding) and
         // hash only the meaningful prefix so the digest matches the source.
-        const qint64 alignedRead = alignUpToSectorSize(toRead, m_sectorSize);
-        if (alignedRead < 0 || alignedRead > buffer.size()) {
+        const qint64 aligned_read = alignUpToSectorSize(to_read, m_sectorSize);
+        if (aligned_read < 0 || aligned_read > buffer.size()) {
             sak::logError("Invalid sector-aligned verify read length");
             return QString();
         }
 
-        DWORD bytesRead = 0;
-        if (ReadFile(handle, buffer.data(), static_cast<DWORD>(alignedRead), &bytesRead, nullptr) ==
+        DWORD bytes_read = 0;
+        if (ReadFile(
+                handle, buffer.data(), static_cast<DWORD>(aligned_read), &bytes_read, nullptr) ==
             0) {
             sak::logError(
                 QString("ReadFile failed with error %1").arg(GetLastError()).toStdString());
             return QString();
         }
 
-        if (bytesRead == 0) {
+        if (bytes_read == 0) {
             break;
         }
 
-        const qint64 meaningful = qMin(remaining, static_cast<qint64>(bytesRead));
+        const qint64 meaningful = qMin(remaining, static_cast<qint64>(bytes_read));
         hash.addData(QByteArrayView(buffer.data(), static_cast<qsizetype>(meaningful)));
-        totalRead += meaningful;
-        updateVerificationProgress(totalRead, size);
+        total_read += meaningful;
+        updateVerificationProgress(total_read, size);
     }
 
     if (stopRequested()) {
@@ -1149,12 +1151,12 @@ QString FlashWorker::calculateChecksum(HANDLE handle, qint64 size) {
     return result;
 }
 
-void FlashWorker::updateVerificationProgress(qint64 bytesVerified, qint64 totalBytes) {
+void FlashWorker::updateVerificationProgress(qint64 bytes_verified, qint64 total_bytes) {
     // Both callers (verifySampleBlocks, calculateChecksum) pass non-negative running counters and
     // a total derived from m_totalBytes, which ensureImageFitsTarget() refuses to flash unless
     // it is positive.
-    Q_ASSERT(bytesVerified >= 0);
-    Q_ASSERT(totalBytes >= 0);
+    Q_ASSERT(bytes_verified >= 0);
+    Q_ASSERT(total_bytes >= 0);
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Throttle updates to once per 100ms
@@ -1165,18 +1167,18 @@ void FlashWorker::updateVerificationProgress(qint64 bytesVerified, qint64 totalB
     m_lastVerifyUpdate = now;
 
     double percentage = 0.0;
-    if (totalBytes > 0) {
-        percentage = (static_cast<double>(bytesVerified) / static_cast<double>(totalBytes)) *
+    if (total_bytes > 0) {
+        percentage = (static_cast<double>(bytes_verified) / static_cast<double>(total_bytes)) *
                      sak::kPercentMaxF;
     }
 
-    Q_EMIT verificationProgress(percentage, bytesVerified);
+    Q_EMIT verificationProgress(percentage, bytes_verified);
 }
 
-void FlashWorker::updateProgress(qint64 bytesWritten) {
+void FlashWorker::updateProgress(qint64 bytes_written) {
     // Sole caller writeImage() passes m_bytesWritten, which it zeroes and then only ever
     // increases by a successful WriteFile count.
-    Q_ASSERT(bytesWritten >= 0);
+    Q_ASSERT(bytes_written >= 0);
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Throttle updates to once per 100ms
@@ -1188,16 +1190,16 @@ void FlashWorker::updateProgress(qint64 bytesWritten) {
 
     double percentage = 0.0;
     if (m_totalBytes > 0) {
-        percentage = (static_cast<double>(bytesWritten) / static_cast<double>(m_totalBytes)) *
+        percentage = (static_cast<double>(bytes_written) / static_cast<double>(m_totalBytes)) *
                      sak::kPercentMaxF;
     }
 
-    Q_EMIT progressUpdated(percentage, bytesWritten);
+    Q_EMIT progressUpdated(percentage, bytes_written);
 }
 
-void FlashWorker::updateSpeed(qint64 bytesWritten) {
+void FlashWorker::updateSpeed(qint64 bytes_written) {
     // Same m_bytesWritten counter updateProgress() is given, from the same call site.
-    Q_ASSERT(bytesWritten >= 0);
+    Q_ASSERT(bytes_written >= 0);
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Calculate speed every second
@@ -1205,12 +1207,13 @@ void FlashWorker::updateSpeed(qint64 bytesWritten) {
         return;
     }
 
-    const qint64 bytesDelta = bytesWritten - m_lastSpeedBytes;
-    const qint64 timeDelta = now - m_lastSpeedUpdate;
+    const qint64 bytes_delta = bytes_written - m_lastSpeedBytes;
+    const qint64 time_delta = now - m_lastSpeedUpdate;
 
-    if (timeDelta > 0) {
-        const double bytesPerMs = static_cast<double>(bytesDelta) / static_cast<double>(timeDelta);
-        m_speedMBps = (bytesPerMs * sak::kMillisecondsPerSecondF) / sak::kBytesPerMBf;
+    if (time_delta > 0) {
+        const double bytes_per_ms = static_cast<double>(bytes_delta) /
+                                    static_cast<double>(time_delta);
+        m_speedMBps = (bytes_per_ms * sak::kMillisecondsPerSecondF) / sak::kBytesPerMBf;
     }
 
     m_lastSpeedUpdate = now;
