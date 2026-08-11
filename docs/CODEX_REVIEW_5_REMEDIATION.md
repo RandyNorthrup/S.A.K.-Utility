@@ -2168,8 +2168,9 @@ Release build + ctest 225/225, then commit):
   END OF SAFE BATCH-AUTOFIX (waves 1-6). Everything left is heavier per-item
   work, NOT a kick-off-a-wave check:
     - use-ranges (236): Qt rewrites broke twice; MANUAL per site.
-    - unchecked-container-access (2383): [] -> .at() CHANGES SEMANTICS (throws) --
-      hand-review each, not an autofix wave.
+    - unchecked-container-access (cppcoreguidelines-pro-bounds-avoid-unchecked-
+      container-access): DONE as a SECURITY AUDIT, not a rewrite. See the
+      "unchecked-container-access audit" block below.
     - narrowing tier (bugprone/cppcoreguidelines-narrowing-conversions): DONE.
       Measured 400 first-party findings, adjudicated all 400 with an 11-agent
       Workflow (one per file-group, each classifying every finding REAL vs BENIGN
@@ -2193,11 +2194,50 @@ Release build + ctest 225/225, then commit):
       file is CRLF -- write it LF-only.
     - remaining per-item tiers:
       * use-ranges (236): Qt rewrites broke twice; MANUAL per site.
-      * unchecked-container-access (2383): [] -> .at() CHANGES SEMANTICS (throws)
-        -- hand-review each, not an autofix wave.
+      * unchecked-container-access: DONE (see audit block below).
       * other integer-safety (integer-sign, widening, cert-err33, exception-escape).
     - readability-identifier-naming (15705, 60%): LAST, highest-risk, small batches.
     - then wire clang-tidy into pre-commit + CI (R5-G1-4).
+
+  UNCHECKED-CONTAINER-ACCESS AUDIT (cppcoreguidelines-pro-bounds-avoid-unchecked-
+  container-access): treated as a security audit, NOT a mechanical []->at() sweep.
+    WHY NOT A SWEEP: this pro-guideline check flags EVERY operator[]. A blind
+    []->at() over 2384 sites would add a throw-on-OOB crash surface where none
+    existed and churn the whole tree, for zero security gain -- and a false throw
+    is worse than the (nonexistent) gap [[no-fallbacks-fail-closed]]. The value is
+    finding places where an index derived from ATTACKER-CONTROLLED bytes reaches a
+    raw container with no dominating bounds check -- same thesis as the narrowing
+    tier.
+    MEASUREMENT: 2384 findings, 129 files. Split by trust:
+      - 20 file-format parsers (PST/MBOX/APFS/HFS/ISO/PDF/email raw bytes): 220
+        line-sites.
+      - 29 remote/command-output parsers (LLM/HTTP JSON, netsh/manage-bde/chkdsk/
+        winget output): 960 sites.
+      - ~1204 in pure GUI/local-data files (ai_assistant_panel 404,
+        partition_manager_panel 150, user_profile_types 130, ...) indexing
+        locally-constructed containers -- not attacker-controlled.
+    ADJUDICATION: two Workflows (8 agents over the 20 parsers; 5 agents over the 29
+    remote/command files) classified all 1180 security-relevant sites REAL vs
+    BENIGN against the actual code. RESULT: 0 REAL, 1180 BENIGN. Every site is one
+    of: a memory-safe Qt-container operator[] (QJsonObject/QJsonArray/QMap/QHash
+    return a default / default-insert and can NEVER raw-OOB -- the bulk of them); a
+    raw container (QByteArray/QString/QList/QStringList/std::vector/std::array)
+    dominated by an explicit size/header guard; or loop-var / literal / local-known-
+    size bounded.
+    HAND-VERIFIED (agent CONFIRMED is a lead, not a verdict) the hardest multi-hop
+    chains: pst_parser buildTcCell row_data[ceb_byte] (guard ceb_byte < row_off+
+    row_size, and readDataTree builds block_ends as cumulative offsets so
+    block_end <= data.size(); ceb_off = row_off+rgib_tci_1b >= 0) -- SAFE;
+    resolveHnBlockOffset block_offsets[hid_block_index-1] (guarded 799); parsePageMeta
+    Unicode4k meta_offset chain (meta_offset>=0 and meta_offset+meta_size<=
+    trailer_offset<size); and the classic command-output split idiom
+    check_disk_errors_action parts[0]/parts[1] (dominated by
+    parts.size()<kMinimumScanKeyValueParts==2 continue) and wifi_analyzer parts[0]/
+    parts[1] (parts.size()>=kOuiDatabaseMinimumFields==2). All held.
+    OUTCOME: no code change. The audit CERTIFIES the R1-R5 parser/command-output
+    hardening held under a fresh systematic operator[] lens. This check is NOT
+    gated (it would be red on the ~1204 benign GUI/local sites forever); the real
+    OOB surface it was meant to catch is provably empty.
 
 ### G2 - re-enable the 30 disabled clang-tidy checks
 
