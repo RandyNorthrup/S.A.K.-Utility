@@ -2170,8 +2170,32 @@ Release build + ctest 225/225, then commit):
     - use-ranges (236): Qt rewrites broke twice; MANUAL per site.
     - unchecked-container-access (2383): [] -> .at() CHANGES SEMANTICS (throws) --
       hand-review each, not an autofix wave.
-    - security / narrowing tier (~670): hand-verify each (a truncation is a real
-      bug or an intended explicit cast).
+    - narrowing tier (bugprone/cppcoreguidelines-narrowing-conversions): DONE.
+      Measured 400 first-party findings, adjudicated all 400 with an 11-agent
+      Workflow (one per file-group, each classifying every finding REAL vs BENIGN
+      against the code and applying the safe cast). Outcome, all gated 225/225:
+        * 344 benign made explicit -- static_cast to the exact target where the
+          value is provably in range at the site (commit 6d54533).
+        * 15 real truncation risks fixed at the source, not silenced (fad3806):
+          pst_parser caps the assembled BTH leaf fail-closed (the 5 record counts
+          were unbounded by the 1GB data-tree cap); mbox_parser bounds the message
+          index at INT_MAX; email-body HTML offsets (pdf_email_writer,
+          email_inspector_panel, email_search_worker, advanced_search_panel)
+          widened int -> qsizetype so >2GB bodies do not truncate.
+        * 40 qint64->double size/duration displays made explicit with
+          static_cast<double> (casting to int would corrupt the value) (6aa9ac4).
+        Re-measured: 400 -> 0.
+      MEASUREMENT GOTCHA: run_clang_tidy's TUs abort under WarningsAsErrors='*'
+      because clang emits clang-diagnostic errors (/GL unused,
+      missing-designated-field-initializers) MSVC never does; measure a single
+      check with -Checks '<check>,-clang-diagnostic-*'. Also: a Workflow script
+      passed via scriptPath is rejected ("control characters") if the scratchpad
+      file is CRLF -- write it LF-only.
+    - remaining per-item tiers:
+      * use-ranges (236): Qt rewrites broke twice; MANUAL per site.
+      * unchecked-container-access (2383): [] -> .at() CHANGES SEMANTICS (throws)
+        -- hand-review each, not an autofix wave.
+      * other integer-safety (integer-sign, widening, cert-err33, exception-escape).
     - readability-identifier-naming (15705, 60%): LAST, highest-risk, small batches.
     - then wire clang-tidy into pre-commit + CI (R5-G1-4).
 

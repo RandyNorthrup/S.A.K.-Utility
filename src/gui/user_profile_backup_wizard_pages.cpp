@@ -1893,7 +1893,7 @@ void UserProfileBackupAppDataPage::populateTree(const QVector<AppDataSourceInfo>
             auto* item = new QTreeWidgetItem(categoryItem);
             item->setText(kAppDataColumnName, source->name);
             item->setText(kAppDataColumnPath, source->relative_path);
-            const double sizeMB = source->size_bytes / sak::kBytesPerMBf;
+            const double sizeMB = static_cast<double>(source->size_bytes) / sak::kBytesPerMBf;
             item->setText(kAppDataColumnSize,
                           QString("%1 MB").arg(sizeMB, 0, 'f', kAppDataSizeDisplayPrecision));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
