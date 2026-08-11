@@ -6917,10 +6917,9 @@ QStringList FileManagementExplorerPanel::evidenceReportsForTarget(const QString&
         }
         const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
         const QJsonArray targets = doc.object().value(QStringLiteral("targets")).toArray();
-        const bool hit =
-            std::any_of(targets.cbegin(), targets.cend(), [&needle](const auto& value) {
-                return value.toObject().value(QStringLiteral("target_path")).toString() == needle;
-            });
+        const bool hit = std::ranges::any_of(targets, [&needle](const auto& value) {
+            return value.toObject().value(QStringLiteral("target_path")).toString() == needle;
+        });
         if (hit) {
             matches.append(QDir::toNativeSeparators(report_path));
         }
@@ -8321,12 +8320,10 @@ void FileManagementExplorerPanel::toggleTagOnSelection(const QString& tag, const
         if (add && !present) {
             tags.append(tag);
         } else if (!add && present) {
-            tags.erase(std::remove_if(tags.begin(),
-                                      tags.end(),
-                                      [&tag](const QString& existing) {
-                                          return existing.compare(tag, Qt::CaseInsensitive) == 0;
-                                      }),
-                       tags.end());
+            const auto matching = std::ranges::remove_if(tags, [&tag](const QString& existing) {
+                return existing.compare(tag, Qt::CaseInsensitive) == 0;
+            });
+            tags.erase(matching.begin(), tags.end());
         } else {
             continue;
         }

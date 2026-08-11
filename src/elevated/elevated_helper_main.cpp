@@ -759,7 +759,7 @@ bool isAllowedPhysicalDrivePath(const QString& path) {
     if (suffix.isEmpty()) {
         return false;
     }
-    return std::all_of(suffix.cbegin(), suffix.cend(), [](QChar ch) { return ch.isDigit(); });
+    return std::ranges::all_of(suffix, [](QChar ch) { return ch.isDigit(); });
 }
 
 // Largest integer a JSON double carries exactly (2^53). Beyond it a double no longer identifies

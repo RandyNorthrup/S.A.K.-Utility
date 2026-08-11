@@ -34,14 +34,13 @@ bool isAllowedQueuePackageChar(QChar ch) {
 // never reach the privileged install queue.
 bool queuePackageIdIsValid(const QString& id) {
     return !id.isEmpty() && !id.startsWith(QLatin1Char('-')) &&
-           std::all_of(id.cbegin(), id.cend(), isAllowedQueuePackageChar);
+           std::ranges::all_of(id, isAllowedQueuePackageChar);
 }
 
 // A version is optional; when present it must contain only allowed characters so a
 // malformed token cannot flow into an install command.
 bool queueVersionIsValid(const QString& version) {
-    return version.isEmpty() ||
-           std::all_of(version.cbegin(), version.cend(), isAllowedQueuePackageChar);
+    return version.isEmpty() || std::ranges::all_of(version, isAllowedQueuePackageChar);
 }
 }  // namespace
 
@@ -395,10 +394,11 @@ void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added,
             continue;
         }
 
-        const bool duplicate =
-            std::any_of(m_installQueue.begin(),
-                        m_installQueue.end(),
-                        [&pkgId](const auto& existing) { return existing.package_id == pkgId; });
+        const bool duplicate = std::ranges::any_of(m_installQueue,
+
+                                                   [&pkgId](const auto& existing) {
+                                                       return existing.package_id == pkgId;
+                                                   });
         if (duplicate) {
             skipped++;
             continue;

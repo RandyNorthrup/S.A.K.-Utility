@@ -262,8 +262,8 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
     std::mt19937 rng(kMatrixRandomSeed);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
 
-    std::generate(a.begin(), a.end(), [&]() { return dist(rng); });
-    std::generate(b.begin(), b.end(), [&]() { return dist(rng); });
+    std::ranges::generate(a, [&]() { return dist(rng); });
+    std::ranges::generate(b, [&]() { return dist(rng); });
 
     QElapsedTimer timer;
     timer.start();

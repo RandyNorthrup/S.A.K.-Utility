@@ -232,7 +232,7 @@ auto OrganizerWorker::categorizeFile(const std::filesystem::path& file_path) -> 
     if (extension[0] == '.') {
         extension = extension.substr(1);
     }
-    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+    std::ranges::transform(extension, extension.begin(), [](unsigned char c) {
         return std::tolower(c);
     });
 

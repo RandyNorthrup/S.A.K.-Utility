@@ -145,7 +145,7 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::findPlanByNa
     // named e.g. "My High Performance Rig" must not be selected when searching
     // for the built-in "High Performance". If no exact match exists, the caller
     // falls back to the canonical built-in GUID via getStandardPowerPlanGuid().
-    auto it = std::find_if(plans.begin(), plans.end(), [&name](const PowerPlan& plan) {
+    auto it = std::ranges::find_if(plans, [&name](const PowerPlan& plan) {
         return plan.name.compare(name, Qt::CaseInsensitive) == 0;
     });
     return it != plans.end() ? *it : PowerPlan();
@@ -185,7 +185,7 @@ bool OptimizePowerSettingsAction::resolveHighPerformancePlan(const QVector<Power
     // plan merely NAMED "High Performance"/"Ultimate Performance" must never win over the
     // real built-in scheme. Selection stays GUID-anchored (same predicate the
     // already-optimized check uses), not a name that an arbitrary plan can spoof.
-    auto by_guid = std::find_if(plans.begin(), plans.end(), [](const PowerPlan& plan) {
+    auto by_guid = std::ranges::find_if(plans, [](const PowerPlan& plan) {
         return isHighPerformanceGuid(plan.guid);
     });
     if (by_guid != plans.end()) {

@@ -645,7 +645,7 @@ DuplicateFinderWorker::filterValidResults(
     std::vector<std::pair<std::filesystem::path, std::string>> valid;
     valid.reserve(results.size());
 
-    std::copy_if(results.begin(), results.end(), std::back_inserter(valid), [](const auto& result) {
+    std::ranges::copy_if(results, std::back_inserter(valid), [](const auto& result) {
         return !result.first.empty() && !result.second.empty();
     });
     return valid;

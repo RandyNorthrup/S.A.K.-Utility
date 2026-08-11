@@ -106,7 +106,7 @@ QVector<TextMatch> locateText(const QVector<WordHit>& hits, const QString& query
         m.score = (strength * kStrengthScoreWeight) - extra;
         out.append(m);
     }
-    std::stable_sort(out.begin(), out.end(), [](const TextMatch& a, const TextMatch& b) {
+    std::ranges::stable_sort(out, [](const TextMatch& a, const TextMatch& b) {
         return a.score > b.score;
     });
     return out;

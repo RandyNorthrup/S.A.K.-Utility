@@ -425,9 +425,11 @@ bool FileExplorerArchiveWorker::destinationOccupied(const QString& name) const {
         // names and ultimately fails closed rather than delivering into an unverified destination.
         return true;
     }
-    return std::any_of(listing.entries.cbegin(),
-                       listing.entries.cend(),
-                       [&name](const FileManagementEntry& entry) { return entry.name == name; });
+    return std::ranges::any_of(listing.entries,
+
+                               [&name](const FileManagementEntry& entry) {
+                                   return entry.name == name;
+                               });
 }
 
 QString FileExplorerArchiveWorker::childPath(const QString& name) const {

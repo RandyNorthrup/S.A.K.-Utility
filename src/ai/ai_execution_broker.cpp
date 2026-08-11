@@ -240,7 +240,7 @@ void killProcessTreeSnapshot(DWORD process_id, int depth, std::vector<DWORD>& vi
     }
     // Parent-PID fields are stale once a PID is reused, so the snapshot graph can contain a
     // cycle. Without a visited set that cycle recurses until the stack is exhausted.
-    if (std::find(visited.begin(), visited.end(), process_id) != visited.end()) {
+    if (std::ranges::find(visited, process_id) != visited.end()) {
         return;
     }
     visited.push_back(process_id);

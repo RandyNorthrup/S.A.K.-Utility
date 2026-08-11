@@ -165,7 +165,7 @@ int fileExplorerGridItemWidth(const int kind) {
 FileExplorerViewMode fileExplorerAdjacentLayout(const FileExplorerViewMode mode,
                                                 const bool forward) {
     const FileExplorerViewMode current = effectiveMode(mode);
-    const auto it = std::find(kLayoutRing.begin(), kLayoutRing.end(), current);
+    const auto it = std::ranges::find(kLayoutRing, current);
     const auto position = static_cast<int>(it - kLayoutRing.begin());
     const auto count = static_cast<int>(kLayoutRing.size());
     const int next = (((position + (forward ? 1 : -1)) % count) + count) % count;

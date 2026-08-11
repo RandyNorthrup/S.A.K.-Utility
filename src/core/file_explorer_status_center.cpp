@@ -537,7 +537,7 @@ int FileExplorerStatusCenterModel::averageProgress() const {
 
 int FileExplorerStatusCenterModel::infoBadgeState() const {
     const bool any_failure =
-        std::any_of(m_items.begin(), m_items.end(), [](const FileExplorerStatusCenterItem* item) {
+        std::ranges::any_of(m_items, [](const FileExplorerStatusCenterItem* item) {
             return item->returnResult() != FileExplorerReturnResult::InProgress &&
                    item->returnResult() != FileExplorerReturnResult::Success;
         });

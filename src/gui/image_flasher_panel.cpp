@@ -1085,9 +1085,8 @@ bool ImageFlasherPanel::selectedImageUnchanged() const {
 bool ImageFlasherPanel::selectedDrivesIdentityUnchanged() const {
     const QList<DriveInfo> current = m_driveScanner->getDrives();
     for (const QString& path : m_selectedDrives) {
-        const auto match = std::find_if(current.cbegin(), current.cend(), [&](const DriveInfo& d) {
-            return d.devicePath == path;
-        });
+        const auto match =
+            std::ranges::find_if(current, [&](const DriveInfo& d) { return d.devicePath == path; });
         if (match == current.cend() ||
             driveIdentitySignature(*match) != m_selectedDriveSignatures.value(path)) {
             return false;
@@ -1131,7 +1130,7 @@ QStringList ImageFlasherPanel::selectedDrivesOverThreshold(qint64 thresholdBytes
     const QList<DriveInfo> current = m_driveScanner->getDrives();
     QStringList oversized;
     for (const QString& drivePath : m_selectedDrives) {
-        const auto match = std::find_if(current.cbegin(), current.cend(), [&](const DriveInfo& d) {
+        const auto match = std::ranges::find_if(current, [&](const DriveInfo& d) {
             return d.devicePath == drivePath;
         });
         // A drive that is no longer in the scan has no readable capacity; -1 makes

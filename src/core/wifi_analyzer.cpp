@@ -788,14 +788,14 @@ QVector<WiFiChannelUtilization> WiFiAnalyzer::calculateChannelUtilization(
     }
 
     // Sort by channel number, then band so entries sharing a channel across bands are deterministic
-    std::sort(result.begin(),
-              result.end(),
-              [](const WiFiChannelUtilization& a, const WiFiChannelUtilization& b) {
-                  if (a.channelNumber != b.channelNumber) {
-                      return a.channelNumber < b.channelNumber;
-                  }
-                  return a.band < b.band;
-              });
+    std::ranges::sort(result,
+
+                      [](const WiFiChannelUtilization& a, const WiFiChannelUtilization& b) {
+                          if (a.channelNumber != b.channelNumber) {
+                              return a.channelNumber < b.channelNumber;
+                          }
+                          return a.band < b.band;
+                      });
 
     return result;
 }

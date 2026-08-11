@@ -271,9 +271,7 @@ void UserProfileBackupSelectUsersPage::initializePage() {
 
 bool UserProfileBackupSelectUsersPage::isComplete() const {
     // At least one user must be selected
-    return std::any_of(m_users.begin(), m_users.end(), [](const auto& user) {
-        return user.is_selected;
-    });
+    return std::ranges::any_of(m_users, [](const auto& user) { return user.is_selected; });
 }
 
 void UserProfileBackupSelectUsersPage::onScanUsers() {

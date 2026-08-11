@@ -20,9 +20,9 @@ namespace {
 
 /// @brief Normalize path separators and case for comparison
 std::string normalize_for_compare(std::string value) {
-    std::replace(value.begin(), value.end(), '\\', '/');
+    std::ranges::replace(value, '\\', '/');
 #ifdef _WIN32
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    std::ranges::transform(value, value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
     });
 #endif
@@ -160,11 +160,11 @@ bool path_utils::matchesPattern(const std::filesystem::path& path,
                                 const std::vector<std::string>& patterns) noexcept {
     try {
         const auto filename = path.filename().string();
-        return std::any_of(patterns.begin(),
-                           patterns.end(),
-                           [&filename](const std::string& pattern) {
-                               return wildcardMatch(filename, pattern);
-                           });
+        return std::ranges::any_of(patterns,
+
+                                   [&filename](const std::string& pattern) {
+                                       return wildcardMatch(filename, pattern);
+                                   });
     } catch (const std::exception& e) {
         logError("Exception in matchesPattern(): {}", e.what());
         return false;

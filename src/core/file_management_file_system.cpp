@@ -413,15 +413,15 @@ void keepBoundedEntry(std::vector<QFileInfo>& kept,
     if (cap <= 0 || static_cast<int>(kept.size()) < cap) {
         kept.push_back(std::move(info));
         if (cap > 0) {
-            std::push_heap(kept.begin(), kept.end(), less);
+            std::ranges::push_heap(kept, less);
         }
         return;
     }
     ++dropped;
     if (less(info, kept.front())) {
-        std::pop_heap(kept.begin(), kept.end(), less);
+        std::ranges::pop_heap(kept, less);
         kept.back() = std::move(info);
-        std::push_heap(kept.begin(), kept.end(), less);
+        std::ranges::push_heap(kept, less);
     }
 }
 
@@ -454,7 +454,7 @@ BoundedDirectoryWalk collectBoundedEntries(const QString& path,
         iter.next();
         keepBoundedEntry(walk.entries, iter.fileInfo(), cap, less, walk.dropped);
     }
-    std::sort(walk.entries.begin(), walk.entries.end(), less);
+    std::ranges::sort(walk.entries, less);
     return walk;
 }
 

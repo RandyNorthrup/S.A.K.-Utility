@@ -280,7 +280,7 @@ void logger::rotateLog() noexcept {
         auto log_files = collectRotationCandidates();
 
         // Sort by modification time (oldest first)
-        std::sort(log_files.begin(), log_files.end(), [](const auto& a, const auto& b) {
+        std::ranges::sort(log_files, [](const auto& a, const auto& b) {
             return std::filesystem::last_write_time(a) < std::filesystem::last_write_time(b);
         });
 

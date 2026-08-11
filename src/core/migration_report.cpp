@@ -444,19 +444,19 @@ QMap<QString, int> MigrationReport::getMatchTypeDistribution() const {
 
 std::vector<MigrationReport::MigrationEntry> MigrationReport::getSelectedEntries() const {
     std::vector<MigrationEntry> selected;
-    std::copy_if(m_entries.begin(),
-                 m_entries.end(),
-                 std::back_inserter(selected),
-                 [](const MigrationEntry& e) { return e.selected; });
+    std::ranges::copy_if(m_entries,
+
+                         std::back_inserter(selected),
+                         [](const MigrationEntry& e) { return e.selected; });
     return selected;
 }
 
 std::vector<MigrationReport::MigrationEntry> MigrationReport::getUnmatchedEntries() const {
     std::vector<MigrationEntry> unmatched;
-    std::copy_if(m_entries.begin(),
-                 m_entries.end(),
-                 std::back_inserter(unmatched),
-                 [](const MigrationEntry& e) { return e.choco_package.isEmpty(); });
+    std::ranges::copy_if(m_entries,
+
+                         std::back_inserter(unmatched),
+                         [](const MigrationEntry& e) { return e.choco_package.isEmpty(); });
     return unmatched;
 }
 

@@ -35,9 +35,7 @@ constexpr int kTransferSpeedDisplayPrecision = 1;
 constexpr int kIsoSizeDisplayPrecision = 2;
 
 bool matchesAny(const QString& text, std::initializer_list<QLatin1String> keywords) {
-    return std::any_of(keywords.begin(), keywords.end(), [&text](const auto& kw) {
-        return text.contains(kw);
-    });
+    return std::ranges::any_of(keywords, [&text](const auto& kw) { return text.contains(kw); });
 }
 
 }  // namespace

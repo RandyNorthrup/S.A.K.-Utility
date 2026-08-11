@@ -1032,7 +1032,7 @@ QStringList OpenAIResponsesClient::parseModelsList(const QByteArray& data, QStri
         }
     }
     models.removeDuplicates();
-    std::sort(models.begin(), models.end(), [](const QString& left, const QString& right) {
+    std::ranges::sort(models, [](const QString& left, const QString& right) {
         return left.localeAwareCompare(right) < 0;
     });
     return models;

@@ -2058,17 +2058,16 @@ struct AppDataPreviewOutcome {
 // keeps only the shallowest of any nested chain so each byte is counted once. @p paths must already
 // be cleanPath-normalized (so nesting is a pure lexical '/' prefix, not a separator/case artifact).
 QStringList dropNestedPaths(QStringList paths) {
-    std::sort(paths.begin(), paths.end(), [](const QString& lhs, const QString& rhs) {
+    std::ranges::sort(paths, [](const QString& lhs, const QString& rhs) {
         return lhs.size() < rhs.size();  // ancestors (shorter) first
     });
     QStringList kept;
     for (const QString& path : paths) {
         const QString lower = path.toLower();
-        const bool nested =
-            std::any_of(kept.cbegin(), kept.cend(), [&lower](const QString& keeper) {
-                const QString keeper_lower = keeper.toLower();
-                return lower == keeper_lower || lower.startsWith(keeper_lower + QLatin1Char('/'));
-            });
+        const bool nested = std::ranges::any_of(kept, [&lower](const QString& keeper) {
+            const QString keeper_lower = keeper.toLower();
+            return lower == keeper_lower || lower.startsWith(keeper_lower + QLatin1Char('/'));
+        });
         if (!nested) {
             kept.append(path);
         }

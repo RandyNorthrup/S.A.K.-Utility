@@ -195,10 +195,9 @@ PartitionExecutionResult PartitionExecutor::execute(const QVector<PartitionOpera
         }
     }
 
-    result.success = !result.cancelled &&
-                     std::all_of(result.steps.begin(), result.steps.end(), [](const auto& step) {
-                         return step.success;
-                     });
+    result.success = !result.cancelled && std::ranges::all_of(result.steps, [](const auto& step) {
+        return step.success;
+    });
     if (result.success) {
         result.message = dry_run ? QStringLiteral("Dry run complete")
                                  : QStringLiteral("Partition operation batch complete");

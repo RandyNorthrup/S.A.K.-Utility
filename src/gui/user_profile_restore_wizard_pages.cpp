@@ -269,7 +269,7 @@ UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(
     mapping.selected = true;
 
     // Find source SID
-    auto srcIt = std::find_if(manifest.users.begin(), manifest.users.end(), [&](const auto& u) {
+    auto srcIt = std::ranges::find_if(manifest.users, [&](const auto& u) {
         return u.username == mapping.source_username;
     });
     if (srcIt != manifest.users.end()) {
@@ -285,10 +285,9 @@ UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(
 
     // Find destination SID
     if (!mapping.destination_username.isEmpty()) {
-        auto destIt =
-            std::find_if(m_destinationUsers.begin(), m_destinationUsers.end(), [&](const auto& u) {
-                return u.username == mapping.destination_username;
-            });
+        auto destIt = std::ranges::find_if(m_destinationUsers, [&](const auto& u) {
+            return u.username == mapping.destination_username;
+        });
         if (destIt != m_destinationUsers.end()) {
             mapping.destination_sid = destIt->sid;
         }
@@ -570,10 +569,9 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
     m_folderTable->setRowCount(0);
 
     for (const auto& mapping : mappings) {
-        auto userIt =
-            std::find_if(manifest.users.begin(), manifest.users.end(), [&](const auto& u) {
-                return u.username == mapping.source_username;
-            });
+        auto userIt = std::ranges::find_if(manifest.users, [&](const auto& u) {
+            return u.username == mapping.source_username;
+        });
         if (userIt == manifest.users.end()) {
             continue;
         }

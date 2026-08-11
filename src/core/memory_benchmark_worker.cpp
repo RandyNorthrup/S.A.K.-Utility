@@ -331,7 +331,7 @@ double MemoryBenchmarkWorker::runRandomLatency() {
 
     // Create a random permutation for the chase sequence
     std::vector<size_t> indices(element_count);
-    std::iota(indices.begin(), indices.end(), 0);
+    std::ranges::iota(indices, 0);
 
     // Fisher-Yates shuffle with fixed seed
     std::mt19937_64 rng(kLatencyShuffleSeed);

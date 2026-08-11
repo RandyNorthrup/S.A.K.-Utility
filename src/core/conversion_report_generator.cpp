@@ -15,6 +15,7 @@
 #include <QSaveFile>
 #include <QTextStream>
 
+#include <algorithm>
 #include <limits>
 
 namespace sak {
@@ -92,8 +93,8 @@ QString ConversionReportGenerator::csvSafeCell(const QString& value) {
     // RFC 4180 quoting: wrap and double internal quotes if the cell contains a comma, quote,
     // newline, or carriage return.
     static const QString kMustQuote = QStringLiteral(",\"\n\r");
-    const bool needs_quote =
-        std::any_of(cell.cbegin(), cell.cend(), [](QChar c) { return kMustQuote.contains(c); });
+    const bool needs_quote = std::ranges::any_of(cell,
+                                                 [](QChar c) { return kMustQuote.contains(c); });
     if (needs_quote) {
         cell.replace(QLatin1Char('"'), QStringLiteral("\"\""));
         return QStringLiteral("\"%1\"").arg(cell);
@@ -155,7 +156,7 @@ QList<QString> collectManifestPropertyColumns(
         }
     }
     QList<QString> sorted_names = prop_names.values();
-    std::sort(sorted_names.begin(), sorted_names.end());
+    std::ranges::sort(sorted_names);
 
     constexpr qsizetype kMaxPropertyColumns = 4096;
     if (sorted_names.size() > kMaxPropertyColumns) {

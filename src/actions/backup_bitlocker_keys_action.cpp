@@ -1277,9 +1277,8 @@ int BackupBitlockerKeysAction::countRecoveryPasswords(const QVector<KeyProtector
 
 bool BackupBitlockerKeysAction::volumeHasRecoveryPassword(
     const QVector<KeyProtectorInfo>& protectors) {
-    return std::any_of(protectors.begin(), protectors.end(), [](const auto& kp) {
-        return !kp.recovery_password.isEmpty();
-    });
+    return std::ranges::any_of(protectors,
+                               [](const auto& kp) { return !kp.recovery_password.isEmpty(); });
 }
 
 void BackupBitlockerKeysAction::writeKeyProtectorEntry(QTextStream& out,

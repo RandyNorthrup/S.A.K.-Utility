@@ -946,7 +946,7 @@ private:
         if (!collectExtentsFromNode(inode.blocks, 0, kExtentRootDepth, &extents)) {
             return std::nullopt;
         }
-        std::sort(extents.begin(), extents.end(), [](const auto& left, const auto& right) {
+        std::ranges::sort(extents, [](const auto& left, const auto& right) {
             return left.logical_start < right.logical_start;
         });
         if (!extentsNonOverlapping(extents)) {
@@ -1079,6 +1079,8 @@ private:
         // Binary search the sorted, non-overlapping extents (O(log n) per block instead of the old
         // linear scan, which was O(blocks * extents) across a whole file read). Find the last
         // extent whose logical_start <= logical, then confirm it actually covers the block.
+        // Classic upper_bound: the comparator is heterogeneous (uint64_t vs ExtentRecord), which
+        // std::ranges::upper_bound's indirect_strict_weak_order constraint rejects on MSVC.
         const auto after = std::upper_bound(extents.cbegin(),
                                             extents.cend(),
                                             logical,

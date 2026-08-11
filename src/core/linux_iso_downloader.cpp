@@ -408,9 +408,10 @@ static constexpr Aria2cExitEntry kAria2cExitCodes[] = {
 }  // namespace
 
 QString LinuxISODownloader::aria2cExitCodeMessage(int exit_code) {
-    const auto* it = std::find_if(std::begin(kAria2cExitCodes),
-                                  std::end(kAria2cExitCodes),
-                                  [exit_code](const auto& e) { return e.code == exit_code; });
+    const auto* it =
+        std::ranges::find_if(kAria2cExitCodes,
+
+                             [exit_code](const auto& e) { return e.code == exit_code; });
     if (it != std::end(kAria2cExitCodes)) {
         return QString::fromUtf8(it->message);
     }
@@ -547,7 +548,7 @@ bool LinuxISODownloader::isHexDigestOfLength(const QString& token, qsizetype hex
     if (token.size() != hex_length) {
         return false;
     }
-    return std::all_of(token.cbegin(), token.cend(), [](QChar ch) {
+    return std::ranges::all_of(token, [](QChar ch) {
         const QChar lower = ch.toLower();
         return (lower >= QLatin1Char('0') && lower <= QLatin1Char('9')) ||
                (lower >= QLatin1Char('a') && lower <= QLatin1Char('f'));

@@ -90,8 +90,8 @@ bool PackageListManager::addPackage(PackageList& list,
     }
 
     // Check for duplicates
-    const bool exists = std::any_of(
-        list.entries.cbegin(), list.entries.cend(), [&package_id](const PackageListEntry& entry) {
+    const bool exists =
+        std::ranges::any_of(list.entries, [&package_id](const PackageListEntry& entry) {
             return entry.package_id.compare(package_id, Qt::CaseInsensitive) == 0;
         });
 
@@ -111,10 +111,9 @@ bool PackageListManager::addPackage(PackageList& list,
 }
 
 bool PackageListManager::removePackage(PackageList& list, const QString& package_id) {
-    auto iter = std::find_if(
-        list.entries.begin(), list.entries.end(), [&package_id](const PackageListEntry& entry) {
-            return entry.package_id.compare(package_id, Qt::CaseInsensitive) == 0;
-        });
+    auto iter = std::ranges::find_if(list.entries, [&package_id](const PackageListEntry& entry) {
+        return entry.package_id.compare(package_id, Qt::CaseInsensitive) == 0;
+    });
 
     if (iter == list.entries.end()) {
         return false;

@@ -119,9 +119,8 @@ auto file_hasher::verifyHash(const std::filesystem::path& file_path,
     const auto to_lower = [](char c) {
         return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     };
-    std::transform(lower_expected.begin(), lower_expected.end(), lower_expected.begin(), to_lower);
-    std::transform(
-        lower_calculated.begin(), lower_calculated.end(), lower_calculated.begin(), to_lower);
+    std::ranges::transform(lower_expected, lower_expected.begin(), to_lower);
+    std::ranges::transform(lower_calculated, lower_calculated.begin(), to_lower);
 
     return lower_expected == lower_calculated;
 }

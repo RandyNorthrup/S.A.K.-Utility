@@ -650,14 +650,14 @@ bool hasInternalMetadataCheck(const QString& fileSystem) {
 }
 
 bool hasMetadataSanityEvidence(const QStringList& details) {
-    return std::any_of(details.cbegin(), details.cend(), [](const QString& detail) {
+    return std::ranges::any_of(details, [](const QString& detail) {
         return detail.startsWith(QStringLiteral("Metadata sanity:"), Qt::CaseInsensitive) ||
                detail.startsWith(QStringLiteral("Metadata sanity warning:"), Qt::CaseInsensitive);
     });
 }
 
 bool hasMetadataSanityWarnings(const QStringList& details) {
-    return std::any_of(details.cbegin(), details.cend(), [](const QString& detail) {
+    return std::ranges::any_of(details, [](const QString& detail) {
         return detail.startsWith(QStringLiteral("Metadata sanity warning:"), Qt::CaseInsensitive);
     });
 }
@@ -1305,12 +1305,10 @@ void recordLargestFile(QVector<SpaceAnalyzerEntry>* largestFiles,
         largestFiles->append(row);
         return;
     }
-    auto smallest =
-        std::min_element(largestFiles->begin(),
-                         largestFiles->end(),
-                         [](const SpaceAnalyzerEntry& left, const SpaceAnalyzerEntry& right) {
-                             return left.bytes < right.bytes;
-                         });
+    auto smallest = std::ranges::min_element(
+        *largestFiles, [](const SpaceAnalyzerEntry& left, const SpaceAnalyzerEntry& right) {
+            return left.bytes < right.bytes;
+        });
     if (smallest != largestFiles->end() && bytes > smallest->bytes) {
         *smallest = row;
     }
@@ -1352,14 +1350,12 @@ void sortSpaceAnalyzerRows(QVector<SpaceAnalyzerEntry>* rows) {
     if (rows == nullptr) {
         return;
     }
-    std::sort(rows->begin(),
-              rows->end(),
-              [](const SpaceAnalyzerEntry& left, const SpaceAnalyzerEntry& right) {
-                  if (left.bytes == right.bytes) {
-                      return left.name.localeAwareCompare(right.name) < 0;
-                  }
-                  return left.bytes > right.bytes;
-              });
+    std::ranges::sort(*rows, [](const SpaceAnalyzerEntry& left, const SpaceAnalyzerEntry& right) {
+        if (left.bytes == right.bytes) {
+            return left.name.localeAwareCompare(right.name) < 0;
+        }
+        return left.bytes > right.bytes;
+    });
 }
 
 SpaceAnalyzerResult analyzeVolumeSpace(const QString& rootPath,
@@ -1459,11 +1455,11 @@ uint64_t adjacentFreeBytesAfter(const PartitionDiskInfo* disk, const PartitionIn
         return 0;
     }
     const uint64_t partitionEnd = saturatingAdd(partition->offset_bytes, partition->size_bytes);
-    const auto it = std::find_if(disk->unallocated_regions.cbegin(),
-                                 disk->unallocated_regions.cend(),
-                                 [partitionEnd](const auto& region) {
-                                     return region.offset_bytes == partitionEnd;
-                                 });
+    const auto it = std::ranges::find_if(disk->unallocated_regions,
+
+                                         [partitionEnd](const auto& region) {
+                                             return region.offset_bytes == partitionEnd;
+                                         });
     return it == disk->unallocated_regions.cend() ? 0 : it->size_bytes;
 }
 
@@ -1472,11 +1468,9 @@ const PartitionInfoEx* partitionBeforeRegion(const PartitionDiskInfo* disk,
     if ((disk == nullptr) || region.kind != PartitionTargetKind::Unallocated) {
         return nullptr;
     }
-    const auto it = std::find_if(
-        disk->partitions.cbegin(), disk->partitions.cend(), [&region](const auto& candidate) {
-            return saturatingAdd(candidate.offset_bytes, candidate.size_bytes) ==
-                   region.offset_bytes;
-        });
+    const auto it = std::ranges::find_if(disk->partitions, [&region](const auto& candidate) {
+        return saturatingAdd(candidate.offset_bytes, candidate.size_bytes) == region.offset_bytes;
+    });
     return it == disk->partitions.cend() ? nullptr : &(*it);
 }
 
@@ -1486,11 +1480,11 @@ const PartitionInfoEx* partitionAfterRegion(const PartitionDiskInfo* disk,
         return nullptr;
     }
     const uint64_t regionEnd = saturatingAdd(region.offset_bytes, region.size_bytes);
-    const auto it = std::find_if(disk->partitions.cbegin(),
-                                 disk->partitions.cend(),
-                                 [regionEnd](const auto& candidate) {
-                                     return candidate.offset_bytes == regionEnd;
-                                 });
+    const auto it = std::ranges::find_if(disk->partitions,
+
+                                         [regionEnd](const auto& candidate) {
+                                             return candidate.offset_bytes == regionEnd;
+                                         });
     return it == disk->partitions.cend() ? nullptr : &(*it);
 }
 
@@ -1500,11 +1494,11 @@ const PartitionInfoEx* adjacentDonorPartitionAfter(const PartitionDiskInfo* disk
         return nullptr;
     }
     const uint64_t partitionEnd = saturatingAdd(partition->offset_bytes, partition->size_bytes);
-    const auto it = std::find_if(disk->partitions.cbegin(),
-                                 disk->partitions.cend(),
-                                 [partitionEnd](const auto& candidate) {
-                                     return candidate.offset_bytes == partitionEnd;
-                                 });
+    const auto it = std::ranges::find_if(disk->partitions,
+
+                                         [partitionEnd](const auto& candidate) {
+                                             return candidate.offset_bytes == partitionEnd;
+                                         });
     return it == disk->partitions.cend() ? nullptr : &(*it);
 }
 
@@ -2119,10 +2113,9 @@ private:
     [[nodiscard]] QVector<PartitionDiskInfo> affectedDisks() const {
         QVector<PartitionDiskInfo> disks;
         for (const auto& disk : m_inventory.disks) {
-            const bool affected =
-                std::any_of(m_operations.cbegin(), m_operations.cend(), [&disk](const auto& op) {
-                    return op.target.disk_number == disk.disk_number;
-                });
+            const bool affected = std::ranges::any_of(m_operations, [&disk](const auto& op) {
+                return op.target.disk_number == disk.disk_number;
+            });
             if (affected) {
                 disks.append(disk);
             }
@@ -2663,18 +2656,18 @@ private:
 
     [[nodiscard]] static const PartitionInfoEx* findPartition(const PartitionDiskInfo& disk,
                                                               uint32_t partitionNumber) {
-        const auto it = std::find_if(disk.partitions.cbegin(),
-                                     disk.partitions.cend(),
-                                     [partitionNumber](const auto& partition) {
-                                         return partition.partition_number == partitionNumber;
-                                     });
+        const auto it = std::ranges::find_if(disk.partitions,
+
+                                             [partitionNumber](const auto& partition) {
+                                                 return partition.partition_number ==
+                                                        partitionNumber;
+                                             });
         return it == disk.partitions.cend() ? nullptr : &(*it);
     }
 
     static void sortSegments(QVector<ApplyDiffSegment>* segments) {
-        std::sort(segments->begin(), segments->end(), [](const auto& a, const auto& b) {
-            return a.offset < b.offset;
-        });
+        std::ranges::sort(*segments,
+                          [](const auto& a, const auto& b) { return a.offset < b.offset; });
     }
 
     void drawTrack(QPainter* painter,
@@ -3773,9 +3766,7 @@ bool quickPartitionSizesAreValid(const QVector<uint64_t>& sizes, uint64_t usable
     if (sizes.isEmpty() || quickPartitionTotalBytes(sizes) > usableBytes) {
         return false;
     }
-    return std::all_of(sizes.cbegin(), sizes.cend(), [](uint64_t size) {
-        return size >= minimumBytes;
-    });
+    return std::ranges::all_of(sizes, [](uint64_t size) { return size >= minimumBytes; });
 }
 
 QJsonArray quickPartitionPresetArray() {
@@ -8993,7 +8984,7 @@ void PartitionManagerPanel::addOrderedDiskMapSegments(
                         .size = region.size_bytes,
                         .widget = createUnallocatedSegment(region, selected)});
     }
-    std::sort(ordered.begin(), ordered.end(), [](const MapSegment& lhs, const MapSegment& rhs) {
+    std::ranges::sort(ordered, [](const MapSegment& lhs, const MapSegment& rhs) {
         return lhs.offset < rhs.offset;
     });
     for (const auto& segment : ordered) {

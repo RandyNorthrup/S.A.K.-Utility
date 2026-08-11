@@ -343,18 +343,17 @@ void FileExplorerGroupProxyModel::rebuildGroups() {
         group_source.tags = index.data(FileExplorerItemModel::EntryTagsRole).toStringList();
         const FileExplorerGroupInfo info =
             fileExplorerGroupInfo(group_source, m_option, m_date_unit, now);
-        auto it = std::find_if(buckets.begin(), buckets.end(), [&info](const GroupBucket& b) {
-            return b.info == info;
-        });
+        auto it = std::ranges::find_if(buckets,
+                                       [&info](const GroupBucket& b) { return b.info == info; });
         if (it == buckets.end()) {
             buckets.append(GroupBucket{.info = info, .source_rows = {}});
             it = buckets.end() - 1;
         }
         it->source_rows.append(row);
     }
-    std::stable_sort(buckets.begin(), buckets.end(), bucketBefore);
+    std::ranges::stable_sort(buckets, bucketBefore);
     if (m_direction == Qt::DescendingOrder) {
-        std::reverse(buckets.begin(), buckets.end());
+        std::ranges::reverse(buckets);
     }
 
     m_source_to_proxy.resize(count);

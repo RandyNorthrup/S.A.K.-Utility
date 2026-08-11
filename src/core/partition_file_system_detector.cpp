@@ -380,7 +380,7 @@ constexpr char16_t kAsciiDelete = 0x7F;
 // crafted label fabricate additional detail lines in the metadata dialog. Reject any field carrying
 // one rather than pass it through; a legitimate name never contains control characters.
 bool fieldTextHasControlCharacter(const QString& text) {
-    return std::any_of(text.cbegin(), text.cend(), [](QChar c) {
+    return std::ranges::any_of(text, [](QChar c) {
         const char16_t code = c.unicode();
         return code < kAsciiControlLimit || code == kAsciiDelete;
     });
@@ -1167,7 +1167,7 @@ QString apfsReferencedObjectHeaderSummary(const QByteArray& bytes,
 }
 
 bool apfsObjectMapLabels(const QStringList& labels) {
-    return std::any_of(labels.cbegin(), labels.cend(), [](const QString& label) {
+    return std::ranges::any_of(labels, [](const QString& label) {
         return label.contains(QStringLiteral("object map OID"), Qt::CaseInsensitive);
     });
 }

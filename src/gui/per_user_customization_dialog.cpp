@@ -315,9 +315,10 @@ void PerUserCustomizationDialog::applyProfileSelectionsToTree() {
     for (int i = 0; i < m_folderTree->topLevelItemCount(); ++i) {
         auto* item = m_folderTree->topLevelItem(i);
         const QString rel = item->data(0, Qt::UserRole).toString();
-        const auto it = std::find_if(m_profile.folder_selections.begin(),
-                                     m_profile.folder_selections.end(),
-                                     [&rel](const auto& s) { return s.relative_path == rel; });
+        const auto it =
+            std::ranges::find_if(m_profile.folder_selections,
+
+                                 [&rel](const auto& s) { return s.relative_path == rel; });
         const bool sel = (it != m_profile.folder_selections.end()) && it->selected;
         const Qt::CheckState state = sel ? Qt::Checked : Qt::Unchecked;
         item->setCheckState(0, state);
@@ -365,10 +366,11 @@ void PerUserCustomizationDialog::onAddCustomFolder() {
     QString relativePath = profileDir.relativeFilePath(folderPath);
 
     // Check if already exists
-    const bool duplicate =
-        std::any_of(m_profile.folder_selections.begin(),
-                    m_profile.folder_selections.end(),
-                    [&relativePath](const auto& sel) { return sel.relative_path == relativePath; });
+    const bool duplicate = std::ranges::any_of(m_profile.folder_selections,
+
+                                               [&relativePath](const auto& sel) {
+                                                   return sel.relative_path == relativePath;
+                                               });
     if (duplicate) {
         sak::logWarning("Duplicate folder rejected in backup profile: {}",
                         relativePath.toStdString());
@@ -423,11 +425,11 @@ void PerUserCustomizationDialog::onRemoveFolder() {
     }
 
     // Find the folder selection
-    auto it = std::find_if(m_profile.folder_selections.begin(),
-                           m_profile.folder_selections.end(),
-                           [&relativePath](const FolderSelection& sel) {
-                               return sel.relative_path == relativePath;
-                           });
+    auto it = std::ranges::find_if(m_profile.folder_selections,
+
+                                   [&relativePath](const FolderSelection& sel) {
+                                       return sel.relative_path == relativePath;
+                                   });
 
     if (it == m_profile.folder_selections.end()) {
         sak::logWarning("Attempted to remove folder not found in profile: {}",
@@ -489,9 +491,10 @@ void PerUserCustomizationDialog::onTreeItemChanged(QTreeWidgetItem* item, int co
     // Update corresponding folder selection for top-level folders
     QString relativePath = item->data(0, Qt::UserRole).toString();
     if (!relativePath.isEmpty()) {
-        auto it = std::find_if(m_profile.folder_selections.begin(),
-                               m_profile.folder_selections.end(),
-                               [&](const auto& s) { return s.relative_path == relativePath; });
+        auto it =
+            std::ranges::find_if(m_profile.folder_selections,
+
+                                 [&](const auto& s) { return s.relative_path == relativePath; });
         if (it != m_profile.folder_selections.end()) {
             it->selected = (item->checkState(0) == Qt::Checked);
         }

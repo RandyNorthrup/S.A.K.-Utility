@@ -62,6 +62,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <functional>
 #include <utility>
 
@@ -1868,16 +1869,17 @@ QVector<const sak::PstFolder*> EmailInspectorPanel::sortedVisibleFolders(
             sorted.append(&folder);
         }
     }
-    std::sort(sorted.begin(),
-              sorted.end(),
-              [](const sak::PstFolder* lhs, const sak::PstFolder* rhs) {
-                  const int order_lhs = folderSortOrder(lhs->display_name, lhs->container_class);
-                  const int order_rhs = folderSortOrder(rhs->display_name, rhs->container_class);
-                  if (order_lhs != order_rhs) {
-                      return order_lhs < order_rhs;
-                  }
-                  return lhs->display_name.compare(rhs->display_name, Qt::CaseInsensitive) < 0;
-              });
+    std::ranges::sort(
+        sorted,
+
+        [](const sak::PstFolder* lhs, const sak::PstFolder* rhs) {
+            const int order_lhs = folderSortOrder(lhs->display_name, lhs->container_class);
+            const int order_rhs = folderSortOrder(rhs->display_name, rhs->container_class);
+            if (order_lhs != order_rhs) {
+                return order_lhs < order_rhs;
+            }
+            return lhs->display_name.compare(rhs->display_name, Qt::CaseInsensitive) < 0;
+        });
     return sorted;
 }
 

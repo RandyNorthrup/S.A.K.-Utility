@@ -178,9 +178,9 @@ bool ChocolateyManager::initialize(const QString& choco_portable_path) {
                                         QDir(m_choco_dir).filePath("bin/choco.exe"),
                                         QDir(m_choco_dir).filePath("chocolatey/bin/choco.exe")};
 
-    const auto it = std::find_if(possible_paths.cbegin(),
-                                 possible_paths.cend(),
-                                 [](const QString& path) { return QFile::exists(path); });
+    const auto it = std::ranges::find_if(possible_paths,
+
+                                         [](const QString& path) { return QFile::exists(path); });
     if (it != possible_paths.cend()) {
         m_choco_path = *it;
     }
@@ -325,9 +325,9 @@ bool ChocolateyManager::validateExtraArgs(const QStringList& extra_args) {
                                            QStringLiteral("--ignore-checksums"),
                                            QStringLiteral("--allow-empty-checksums"),
                                            QStringLiteral("--allow-empty-checksums-secure")};
-    return std::none_of(extra_args.cbegin(), extra_args.cend(), [](const QString& arg) {
+    return std::ranges::none_of(extra_args, [](const QString& arg) {
         const QString lower = arg.trimmed().toLower();
-        return std::any_of(kForbidden.cbegin(), kForbidden.cend(), [&lower](const QString& bad) {
+        return std::ranges::any_of(kForbidden, [&lower](const QString& bad) {
             return lower == bad || lower.startsWith(bad + QStringLiteral("="));
         });
     });
@@ -601,7 +601,7 @@ bool ChocolateyManager::isPackageAvailable(const QString& package_name) {
     }
 
     auto packages = parseSearchResults(result.output);
-    return std::any_of(packages.cbegin(), packages.cend(), [&package_name](const auto& pkg) {
+    return std::ranges::any_of(packages, [&package_name](const auto& pkg) {
         return pkg.package_id.compare(package_name, Qt::CaseInsensitive) == 0;
     });
 }
@@ -807,11 +807,11 @@ bool ChocolateyManager::isNetworkError(const QString& output) const {
                                           "tls"};
 
     QString lower_output = output.toLower();
-    return std::any_of(network_keywords.cbegin(),
-                       network_keywords.cend(),
-                       [&lower_output](const QString& keyword) {
-                           return lower_output.contains(keyword);
-                       });
+    return std::ranges::any_of(network_keywords,
+
+                               [&lower_output](const QString& keyword) {
+                                   return lower_output.contains(keyword);
+                               });
 }
 
 bool ChocolateyManager::isDependencyError(const QString& output) const {

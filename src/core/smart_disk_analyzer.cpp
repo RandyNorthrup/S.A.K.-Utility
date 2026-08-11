@@ -473,9 +473,7 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
         return;
     }
 
-    if (std::any_of(report.attributes.begin(), report.attributes.end(), [](const auto& attr) {
-            return attr.failing;
-        })) {
+    if (std::ranges::any_of(report.attributes, [](const auto& attr) { return attr.failing; })) {
         report.overall_health = SmartHealthStatus::Critical;
         return;
     }

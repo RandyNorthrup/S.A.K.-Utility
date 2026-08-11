@@ -95,8 +95,8 @@ bool DnsDiagnosticTool::answersEquivalent(const QVector<QString>& a, const QVect
     }
     QVector<QString> sortedA = a;
     QVector<QString> sortedB = b;
-    std::sort(sortedA.begin(), sortedA.end());
-    std::sort(sortedB.begin(), sortedB.end());
+    std::ranges::sort(sortedA);
+    std::ranges::sort(sortedB);
     return sortedA == sortedB;
 }
 

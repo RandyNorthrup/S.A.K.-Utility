@@ -29,7 +29,7 @@ constexpr std::size_t kMaxPooledSessions = 32;
 // first call's (now stale) timeout -- it keys to its own session instead.
 QString sessionKey(const AiMcpStdioCallRequest& request) {
     QStringList entries = request.environment.toStringList();
-    std::sort(entries.begin(), entries.end());
+    std::ranges::sort(entries);
     QCryptographicHash hash(QCryptographicHash::Sha256);
     for (const QString& entry : entries) {
         const QByteArray bytes = entry.toUtf8();

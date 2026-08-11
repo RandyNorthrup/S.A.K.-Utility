@@ -552,7 +552,7 @@ public:
         }
 
         QVector<DirectoryRecord> entries = directoryRecordsFor(*directoryId);
-        std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+        std::ranges::sort(entries, [](const auto& left, const auto& right) {
             return QString::localeAwareCompare(left.name, right.name) < 0;
         });
 
@@ -1130,7 +1130,7 @@ private:
 
     [[nodiscard]] QVector<FileExtentRecord> sortedExtents(uint64_t privateId) const {
         QVector<FileExtentRecord> extents = extentsByOwner_.values(privateId).toVector();
-        std::sort(extents.begin(), extents.end(), [](const auto& left, const auto& right) {
+        std::ranges::sort(extents, [](const auto& left, const auto& right) {
             return left.logical_offset < right.logical_offset;
         });
         return extents;
@@ -1892,7 +1892,7 @@ private:
         uint64_t current = kApfsRootDirectoryId;
         for (const auto& part : pathParts(path)) {
             const auto records = directoryRecordsFor(current);
-            auto match = std::find_if(records.cbegin(), records.cend(), [&](const auto& record) {
+            auto match = std::ranges::find_if(records, [&](const auto& record) {
                 return componentMatchesName(record.name, part);
             });
             if (match == records.cend()) {
@@ -1920,7 +1920,7 @@ private:
         uint64_t parent = kApfsRootDirectoryId;
         for (int index = 0; index < parts.size() - 1; ++index) {
             const auto records = directoryRecordsFor(parent);
-            auto match = std::find_if(records.cbegin(), records.cend(), [&](const auto& record) {
+            auto match = std::ranges::find_if(records, [&](const auto& record) {
                 return componentMatchesName(record.name, parts.at(index));
             });
             if (match == records.cend() || match->directory_type != kApfsDirTypeDirectory) {
@@ -1931,7 +1931,7 @@ private:
             parent = match->file_id;
         }
         const auto records = directoryRecordsFor(parent);
-        auto match = std::find_if(records.cbegin(), records.cend(), [&](const auto& record) {
+        auto match = std::ranges::find_if(records, [&](const auto& record) {
             return componentMatchesName(record.name, parts.constLast());
         });
         if (match == records.cend()) {

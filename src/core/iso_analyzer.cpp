@@ -168,7 +168,7 @@ struct BootCatalogFlags {
 };
 
 bool containsAny(const QString& text, std::initializer_list<const char*> needles) {
-    return std::any_of(needles.begin(), needles.end(), [&text](const char* needle) {
+    return std::ranges::any_of(needles, [&text](const char* needle) {
         return text.contains(QString::fromLatin1(needle));
     });
 }

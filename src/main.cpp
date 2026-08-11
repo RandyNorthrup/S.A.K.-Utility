@@ -71,9 +71,8 @@ QString findSplashPath() {
                                     app_dir + "/../resources/sak_splash.png",
                                     app_dir + "/../sak_splash.png"};
 
-    auto it = std::find_if(candidates.begin(), candidates.end(), [](const QString& p) {
-        return QFileInfo::exists(p);
-    });
+    auto it = std::ranges::find_if(candidates,
+                                   [](const QString& p) { return QFileInfo::exists(p); });
     return it != candidates.end() ? *it : QString{};
 }
 
@@ -83,9 +82,8 @@ QString findIconPath() {
                                     app_dir + "/resources/icon.ico",
                                     app_dir + "/../resources/icon.ico"};
 
-    auto it = std::find_if(candidates.begin(), candidates.end(), [](const QString& p) {
-        return QFileInfo::exists(p);
-    });
+    auto it = std::ranges::find_if(candidates,
+                                   [](const QString& p) { return QFileInfo::exists(p); });
     return it != candidates.end() ? *it : QString{};
 }
 

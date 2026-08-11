@@ -1071,7 +1071,7 @@ double DiskBenchmarkWorker::calculateP99(std::vector<double>& latencies) const {
     if (latencies.empty()) {
         return 0.0;
     }
-    std::sort(latencies.begin(), latencies.end());
+    std::ranges::sort(latencies);
     const size_t idx = static_cast<size_t>(static_cast<double>(latencies.size()) * kP99Percentile);
     return latencies[std::min(idx, latencies.size() - 1)];
 }

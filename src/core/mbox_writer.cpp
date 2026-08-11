@@ -58,9 +58,7 @@ constexpr int kFirstDisambiguationSuffix = 2;
 
 // True when any character is outside 7-bit ASCII (needs RFC 2047 header encoding).
 bool hasNonAscii(const QString& value) {
-    return std::any_of(value.cbegin(), value.cend(), [](QChar c) {
-        return c.unicode() > kAsciiMaxCodePoint;
-    });
+    return std::ranges::any_of(value, [](QChar c) { return c.unicode() > kAsciiMaxCodePoint; });
 }
 
 // Strip header-injection vectors from a header value: CR/LF/tab collapse to a
@@ -176,7 +174,7 @@ QByteArray encodedHeaderValue(const QString& value) {
 // them could forge a second mailbox in the address list.
 bool needsQuotedPhrase(const QString& name) {
     static const QString kSpecials = QStringLiteral("()<>[]:;@\\,.\"");
-    return std::any_of(name.cbegin(), name.cend(), [](QChar c) { return kSpecials.contains(c); });
+    return std::ranges::any_of(name, [](QChar c) { return kSpecials.contains(c); });
 }
 
 // Encode an RFC 5322 display-name phrase (an encoded-word MUST NOT appear inside

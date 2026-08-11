@@ -1872,7 +1872,7 @@ void EmailCalendarDialog::populateDayEventList(const QDate& date) {
     m_day_event_list->setRowCount(0);
     auto events = eventsForDate(date);
 
-    std::sort(events.begin(), events.end(), [](const CalendarEvent* lhs, const CalendarEvent* rhs) {
+    std::ranges::sort(events, [](const CalendarEvent* lhs, const CalendarEvent* rhs) {
         if (lhs->is_all_day != rhs->is_all_day) {
             return lhs->is_all_day;
         }

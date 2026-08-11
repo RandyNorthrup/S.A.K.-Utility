@@ -382,8 +382,7 @@ bool isSupportedNonNativeFileSystemToolOperation(const PartitionOperation& opera
         PartitionOperationType::HfsCreateHardlink,
         PartitionOperationType::HfsDeleteHardlink,
     };
-    return std::find(std::begin(kSupportedTypes), std::end(kSupportedTypes), operation.type) !=
-           std::end(kSupportedTypes);
+    return std::ranges::find(kSupportedTypes, operation.type) != std::end(kSupportedTypes);
 }
 
 bool isApfsRootFileMutationOperation(PartitionOperationType type) {
@@ -623,11 +622,12 @@ bool createImageTargetsSourceDisk(const PartitionDiskInfo& disk,
         return false;
     }
     const QString targetPath = normalizedTargetPath(operation);
-    return std::any_of(disk.partitions.cbegin(),
-                       disk.partitions.cend(),
-                       [&targetPath](const auto& p) {
-                           return p.volume && targetPathReferencesVolume(targetPath, *p.volume);
-                       });
+    return std::ranges::any_of(disk.partitions,
+
+                               [&targetPath](const auto& p) {
+                                   return p.volume &&
+                                          targetPathReferencesVolume(targetPath, *p.volume);
+                               });
 }
 
 bool isSupportedAllocationUnitSize(uint64_t value) {
@@ -752,11 +752,11 @@ uint64_t usedBytes(const PartitionInfoEx& partition) {
 
 uint64_t adjacentFreeBytesAfter(const PartitionDiskInfo& disk, const PartitionInfoEx& partition) {
     const uint64_t partitionEnd = saturatingAdd(partition.offset_bytes, partition.size_bytes);
-    const auto it = std::find_if(disk.unallocated_regions.cbegin(),
-                                 disk.unallocated_regions.cend(),
-                                 [partitionEnd](const auto& region) {
-                                     return region.offset_bytes == partitionEnd;
-                                 });
+    const auto it = std::ranges::find_if(disk.unallocated_regions,
+
+                                         [partitionEnd](const auto& region) {
+                                             return region.offset_bytes == partitionEnd;
+                                         });
     return it == disk.unallocated_regions.cend() ? 0 : it->size_bytes;
 }
 
@@ -1098,12 +1098,12 @@ bool clonePartitionRegionIsUnallocated(const PartitionDiskInfo& targetDisk,
                                        uint64_t offset,
                                        uint64_t span) {
     const uint64_t end = offset + span;
-    return std::any_of(targetDisk.unallocated_regions.cbegin(),
-                       targetDisk.unallocated_regions.cend(),
-                       [offset, end](const auto& region) {
-                           return offset >= region.offset_bytes &&
-                                  end <= region.offset_bytes + region.size_bytes;
-                       });
+    return std::ranges::any_of(targetDisk.unallocated_regions,
+
+                               [offset, end](const auto& region) {
+                                   return offset >= region.offset_bytes &&
+                                          end <= region.offset_bytes + region.size_bytes;
+                               });
 }
 
 // The region a partition clone writes is proven against the LIVE target disk before any byte
@@ -1170,12 +1170,12 @@ bool recoveryCandidateOverlapsExistingPartition(const PartitionDiskInfo& disk,
         return false;
     }
     const uint64_t end = start + size;
-    return std::any_of(disk.partitions.cbegin(),
-                       disk.partitions.cend(),
-                       [start, end](const auto& p) {
-                           const uint64_t partition_end = p.offset_bytes + p.size_bytes;
-                           return start < partition_end && end > p.offset_bytes;
-                       });
+    return std::ranges::any_of(disk.partitions,
+
+                               [start, end](const auto& p) {
+                                   const uint64_t partition_end = p.offset_bytes + p.size_bytes;
+                                   return start < partition_end && end > p.offset_bytes;
+                               });
 }
 
 bool recoveryCandidateExceedsDisk(const PartitionDiskInfo& disk,
@@ -1406,14 +1406,13 @@ bool movePartitionOverlapsOtherPartitions(const PartitionDiskInfo& disk,
     }
     const uint64_t start = payloadUInt64(operation, QStringLiteral("target_offset_bytes"));
     const uint64_t end = start + payloadUInt64(operation, QStringLiteral("target_size_bytes"));
-    return std::any_of(
-        disk.partitions.cbegin(), disk.partitions.cend(), [&](const auto& candidate) {
-            if (candidate.partition_number == partition.partition_number) {
-                return false;
-            }
-            const uint64_t candidateEnd = candidate.offset_bytes + candidate.size_bytes;
-            return start < candidateEnd && end > candidate.offset_bytes;
-        });
+    return std::ranges::any_of(disk.partitions, [&](const auto& candidate) {
+        if (candidate.partition_number == partition.partition_number) {
+            return false;
+        }
+        const uint64_t candidateEnd = candidate.offset_bytes + candidate.size_bytes;
+        return start < candidateEnd && end > candidate.offset_bytes;
+    });
 }
 
 bool primaryLogicalTargetLayoutInvalid(const PartitionOperation& operation) {
@@ -1929,19 +1928,20 @@ void validatePartitionCompositeOperation(const PartitionDiskInfo& disk,
 
 const PartitionDiskInfo* PartitionSafetyValidator::findDisk(const PartitionInventory& inventory,
                                                             uint32_t disk_number) {
-    auto it = std::find_if(inventory.disks.begin(),
-                           inventory.disks.end(),
-                           [disk_number](const auto& d) { return d.disk_number == disk_number; });
+    auto it =
+        std::ranges::find_if(inventory.disks,
+
+                             [disk_number](const auto& d) { return d.disk_number == disk_number; });
     return it == inventory.disks.end() ? nullptr : &(*it);
 }
 
 const PartitionInfoEx* PartitionSafetyValidator::findPartition(const PartitionDiskInfo& disk,
                                                                uint32_t partition_number) {
-    auto it = std::find_if(disk.partitions.begin(),
-                           disk.partitions.end(),
-                           [partition_number](const auto& p) {
-                               return p.partition_number == partition_number;
-                           });
+    auto it = std::ranges::find_if(disk.partitions,
+
+                                   [partition_number](const auto& p) {
+                                       return p.partition_number == partition_number;
+                                   });
     return it == disk.partitions.end() ? nullptr : &(*it);
 }
 

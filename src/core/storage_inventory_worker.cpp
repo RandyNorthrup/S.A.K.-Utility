@@ -129,11 +129,11 @@ PartitionInfoEx parsePartition(uint32_t disk_number, const QJsonObject& object) 
 }
 
 void appendUnallocatedRegions(PartitionDiskInfo* disk) {
-    std::sort(disk->partitions.begin(),
-              disk->partitions.end(),
-              [](const auto& left, const auto& right) {
-                  return left.offset_bytes < right.offset_bytes;
-              });
+    std::ranges::sort(disk->partitions,
+
+                      [](const auto& left, const auto& right) {
+                          return left.offset_bytes < right.offset_bytes;
+                      });
     uint64_t cursor = 0;
     for (const auto& partition : disk->partitions) {
         if (partition.offset_bytes > cursor) {

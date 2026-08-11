@@ -90,10 +90,9 @@ constexpr qint64 kBytesPerKiB = 1024;
 constexpr qint64 kBytesPerMiB = kBytesPerKiB * kBytesPerKiB;
 
 bool matchesAreMetadataOnly(const QVector<SearchMatch>& matches) {
-    return !matches.isEmpty() &&
-           std::all_of(matches.begin(), matches.end(), [](const SearchMatch& match) {
-               return match.line_content.startsWith(QLatin1String("[Metadata]"));
-           });
+    return !matches.isEmpty() && std::ranges::all_of(matches, [](const SearchMatch& match) {
+        return match.line_content.startsWith(QLatin1String("[Metadata]"));
+    });
 }
 
 QString previewSizeLimitMessage(qint64 fileSize, int limitMegabytes) {
@@ -398,11 +397,11 @@ QVector<FileSortEntry> buildSortedFileEntries(const QMap<QString, QVector<Search
         sortedFiles.append(std::move(entry));
     }
 
-    std::sort(sortedFiles.begin(),
-              sortedFiles.end(),
-              [sortMode](const FileSortEntry& a, const FileSortEntry& b) {
-                  return compareFileEntries(a, b, sortMode);
-              });
+    std::ranges::sort(sortedFiles,
+
+                      [sortMode](const FileSortEntry& a, const FileSortEntry& b) {
+                          return compareFileEntries(a, b, sortMode);
+                      });
 
     return sortedFiles;
 }

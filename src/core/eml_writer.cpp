@@ -37,9 +37,7 @@ constexpr ushort kFirstNonControlCodePoint = 0x20;
 
 // True when any character is outside 7-bit ASCII (needs RFC 2047 header encoding).
 bool hasNonAscii(const QString& value) {
-    return std::any_of(value.cbegin(), value.cend(), [](QChar c) {
-        return c.unicode() > kAsciiMaxCodePoint;
-    });
+    return std::ranges::any_of(value, [](QChar c) { return c.unicode() > kAsciiMaxCodePoint; });
 }
 
 // Encode bytes as base64 wrapped to RFC 2045 76-column lines. A single unbroken

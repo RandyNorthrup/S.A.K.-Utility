@@ -278,7 +278,7 @@ QMimeData* FileExplorerItemModel::mimeData(const QModelIndexList& indexes) const
             rows.append(index.row());
         }
     }
-    std::sort(rows.begin(), rows.end());
+    std::ranges::sort(rows);
     return rows.isEmpty() ? nullptr : m_drag_payload_provider(rows);
 }
 
@@ -345,15 +345,15 @@ void FileExplorerItemModel::sort(const int column, const Qt::SortOrder order) {
         held_paths.append(hasEntry(held.row()) ? m_entries.at(held.row()).path : QString());
     }
 
-    std::stable_sort(m_entries.begin(),
-                     m_entries.end(),
-                     [column, order](const auto& left, const auto& right) {
-                         if (left.directory != right.directory) {
-                             return left.directory;
-                         }
-                         const int compared = compareEntries(left, right, column);
-                         return order == Qt::AscendingOrder ? compared < 0 : compared > 0;
-                     });
+    std::ranges::stable_sort(m_entries,
+
+                             [column, order](const auto& left, const auto& right) {
+                                 if (left.directory != right.directory) {
+                                     return left.directory;
+                                 }
+                                 const int compared = compareEntries(left, right, column);
+                                 return order == Qt::AscendingOrder ? compared < 0 : compared > 0;
+                             });
 
     remapPersistentIndexesByPath(old_indexes, held_paths);
     Q_EMIT layoutChanged();

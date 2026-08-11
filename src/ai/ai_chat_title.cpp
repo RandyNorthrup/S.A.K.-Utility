@@ -80,7 +80,7 @@ QSet<QString> stopWords() {
 }
 
 bool containsAnyTerm(const QString& lower_text, std::initializer_list<const char*> terms) {
-    return std::any_of(terms.begin(), terms.end(), [&](const char* term) {
+    return std::ranges::any_of(terms, [&](const char* term) {
         return lower_text.contains(QString::fromLatin1(term));
     });
 }
@@ -89,9 +89,8 @@ QString titleCaseWord(const QString& word) {
     if (word.isEmpty()) {
         return {};
     }
-    const bool keep_upper =
-        std::any_of(word.cbegin(), word.cend(), [](QChar ch) { return ch.isDigit(); }) ||
-        (word.size() <= kUppercaseAcronymMaxChars && word == word.toUpper());
+    const bool keep_upper = std::ranges::any_of(word, [](QChar ch) { return ch.isDigit(); }) ||
+                            (word.size() <= kUppercaseAcronymMaxChars && word == word.toUpper());
     if (keep_upper) {
         return word.toUpper();
     }

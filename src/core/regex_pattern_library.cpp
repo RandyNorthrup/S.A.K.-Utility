@@ -114,16 +114,12 @@ void RegexPatternLibrary::addCustomPattern(const QString& key,
         return;
     }
     // Check for duplicate keys in both built-in and custom patterns
-    if (std::any_of(m_builtin_patterns.begin(), m_builtin_patterns.end(), [&key](const auto& p) {
-            return p.key == key;
-        })) {
+    if (std::ranges::any_of(m_builtin_patterns, [&key](const auto& p) { return p.key == key; })) {
         logWarning("RegexPatternLibrary: key '{}' conflicts with built-in pattern, rejected",
                    key.toStdString());
         return;
     }
-    if (std::any_of(m_custom_patterns.begin(), m_custom_patterns.end(), [&key](const auto& p) {
-            return p.key == key;
-        })) {
+    if (std::ranges::any_of(m_custom_patterns, [&key](const auto& p) { return p.key == key; })) {
         logWarning("RegexPatternLibrary: key '{}' already exists in custom patterns, rejected",
                    key.toStdString());
         return;
@@ -157,12 +153,11 @@ void RegexPatternLibrary::addCustomPattern(const QString& key,
 
 void RegexPatternLibrary::removeCustomPattern(const QString& key) {
     const QVector<RegexPatternInfo> previous = m_custom_patterns;  // snapshot for rollback
-    auto it = std::remove_if(m_custom_patterns.begin(),
-                             m_custom_patterns.end(),
-                             [&key](const RegexPatternInfo& p) { return p.key == key; });
+    const auto removed = std::ranges::remove_if(
+        m_custom_patterns, [&key](const RegexPatternInfo& p) { return p.key == key; });
 
-    if (it != m_custom_patterns.end()) {
-        m_custom_patterns.erase(it, m_custom_patterns.end());
+    if (removed.begin() != m_custom_patterns.end()) {
+        m_custom_patterns.erase(removed.begin(), m_custom_patterns.end());
         if (!saveCustomPatterns()) {
             // A failed persist must not leave memory diverged from disk (the removal
             // would silently reappear on restart); restore and report nothing changed.
@@ -191,9 +186,9 @@ void RegexPatternLibrary::updateCustomPattern(const QString& key,
         return;
     }
 
-    auto it = std::find_if(m_custom_patterns.begin(),
-                           m_custom_patterns.end(),
-                           [&key](const auto& p) { return p.key == key; });
+    auto it = std::ranges::find_if(m_custom_patterns,
+
+                                   [&key](const auto& p) { return p.key == key; });
     if (it != m_custom_patterns.end()) {
         const RegexPatternInfo previous = *it;  // snapshot for rollback
         it->label = label;
@@ -215,9 +210,9 @@ void RegexPatternLibrary::setPatternEnabled(const QString& key, bool enabled) {
     // No pattern carries an empty key, so an empty key takes the unknown-key path
     // below: both lookups miss and nothing is toggled.
     // Check built-in patterns first
-    auto builtin_it = std::find_if(m_builtin_patterns.begin(),
-                                   m_builtin_patterns.end(),
-                                   [&key](const auto& p) { return p.key == key; });
+    auto builtin_it = std::ranges::find_if(m_builtin_patterns,
+
+                                           [&key](const auto& p) { return p.key == key; });
     if (builtin_it != m_builtin_patterns.end()) {
         builtin_it->enabled = enabled;
         Q_EMIT patternsChanged();
@@ -225,9 +220,9 @@ void RegexPatternLibrary::setPatternEnabled(const QString& key, bool enabled) {
     }
 
     // Then check custom patterns
-    auto custom_it = std::find_if(m_custom_patterns.begin(),
-                                  m_custom_patterns.end(),
-                                  [&key](const auto& p) { return p.key == key; });
+    auto custom_it = std::ranges::find_if(m_custom_patterns,
+
+                                          [&key](const auto& p) { return p.key == key; });
     if (custom_it != m_custom_patterns.end()) {
         custom_it->enabled = enabled;
         Q_EMIT patternsChanged();
@@ -345,17 +340,16 @@ void RegexPatternLibrary::loadCustomPatterns() {
             logWarning("RegexPatternLibrary: skipping custom pattern with empty key or pattern");
             continue;
         }
-        if (std::any_of(m_builtin_patterns.begin(),
-                        m_builtin_patterns.end(),
-                        [&info](const auto& p) { return p.key == info.key; })) {
+        if (std::ranges::any_of(m_builtin_patterns,
+
+                                [&info](const auto& p) { return p.key == info.key; })) {
             logWarning(
                 "RegexPatternLibrary: skipping custom pattern '{}' (conflicts with built-in)",
                 info.key.toStdString());
             continue;
         }
-        if (std::any_of(m_custom_patterns.begin(), m_custom_patterns.end(), [&info](const auto& p) {
-                return p.key == info.key;
-            })) {
+        if (std::ranges::any_of(m_custom_patterns,
+                                [&info](const auto& p) { return p.key == info.key; })) {
             logWarning("RegexPatternLibrary: skipping duplicate custom pattern key '{}'",
                        info.key.toStdString());
             continue;

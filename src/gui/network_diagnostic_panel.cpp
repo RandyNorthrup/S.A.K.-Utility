@@ -47,6 +47,8 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace sak {
 
 namespace {
@@ -4487,8 +4489,7 @@ void NetworkDiagnosticPanel::filterFirewallRules() {
 
     QVector<FirewallRule> filtered;
     filtered.reserve(m_cachedFwRules.size());
-    std::copy_if(
-        m_cachedFwRules.begin(), m_cachedFwRules.end(), std::back_inserter(filtered), matches);
+    std::ranges::copy_if(m_cachedFwRules, std::back_inserter(filtered), matches);
 
     populateFirewallTable(filtered);
 }

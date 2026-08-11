@@ -304,12 +304,12 @@ void InstallScriptParser::appendUniqueSplattingResource(ParsedInstallScript& res
         return;
     }
 
-    const auto duplicate = std::any_of(result.resources.cbegin(),
-                                       result.resources.cend(),
-                                       [&resource](const DownloadResource& existing) {
-                                           return existing.url == resource.url &&
-                                                  existing.url_64bit == resource.url_64bit;
-                                       });
+    const auto duplicate = std::ranges::any_of(result.resources,
+
+                                               [&resource](const DownloadResource& existing) {
+                                                   return existing.url == resource.url &&
+                                                          existing.url_64bit == resource.url_64bit;
+                                               });
     if (!duplicate) {
         result.resources.append(resource);
         result.uses_splatting = true;

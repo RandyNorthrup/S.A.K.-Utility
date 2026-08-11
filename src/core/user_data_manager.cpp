@@ -301,9 +301,7 @@ bool UserDataManager::allPathsPresent(std::initializer_list<QString> paths) {
     }
     // A whitespace-only path is not empty but QDir still treats it as the CWD, so trim
     // before the emptiness test and fail closed on either.
-    return std::none_of(paths.begin(), paths.end(), [](const QString& p) {
-        return p.trimmed().isEmpty();
-    });
+    return std::ranges::none_of(paths, [](const QString& p) { return p.trimmed().isEmpty(); });
 }
 
 bool UserDataManager::encryptedArchiveSizeOk(qint64 size) {
@@ -1016,7 +1014,7 @@ bool UserDataManager::extractArchive(const QString& archive_path,
 
 bool UserDataManager::isExcluded(const QString& path, const QStringList& patterns) const {
     const QString normalized = QDir::fromNativeSeparators(path);
-    return std::any_of(patterns.begin(), patterns.end(), [&normalized](const auto& pattern) {
+    return std::ranges::any_of(patterns, [&normalized](const auto& pattern) {
         // Match wildcards UNANCHORED against the full path. isExcluded is fed absolute
         // paths, and a DEFAULT (anchored, path-aware) conversion of a glob such as
         // "*.log" or "cache/*" only ever matches a lone path segment -- so against an
@@ -1054,7 +1052,7 @@ QStringList UserDataManager::getStandardDataPaths() const {
 bool UserDataManager::copySourcesToDest(const QStringList& source_paths,
                                         const QString& dest_dir,
                                         const QStringList& exclude_patterns) {
-    return std::all_of(source_paths.begin(), source_paths.end(), [&](const auto& source) {
+    return std::ranges::all_of(source_paths, [&](const auto& source) {
         // Individual ENTRIES arrive unvalidated (validateBackupRequest only rejects an empty
         // LIST), and QDir("") is the process working directory -- an empty entry would copy
         // the CWD into the backup. Refuse here, before copyDirectory relies on it.

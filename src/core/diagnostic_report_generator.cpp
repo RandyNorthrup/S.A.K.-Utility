@@ -575,7 +575,7 @@ QString DiagnosticReportGenerator::buildHardwareSection() const {
                 .arg(inv.memory.slots_used)
                 .arg(inv.memory.slots_total);
 
-    std::for_each(inv.memory.modules.begin(), inv.memory.modules.end(), [&html](const auto& mod) {
+    std::ranges::for_each(inv.memory.modules, [&html](const auto& mod) {
         html += QString("<tr><td>Slot %1</td><td>%2 %3 %4 @ %5 MHz</td></tr>\n")
                     .arg(mod.slot)
                     .arg(mod.manufacturer.toHtmlEscaped())
@@ -585,7 +585,7 @@ QString DiagnosticReportGenerator::buildHardwareSection() const {
     });
 
     html += "<tr><th colspan=\"2\">Storage</th></tr>\n";
-    std::for_each(inv.storage.begin(), inv.storage.end(), [&html](const auto& dev) {
+    std::ranges::for_each(inv.storage, [&html](const auto& dev) {
         html += QString("<tr><td>%1</td><td>%2 (%3, %4)</td></tr>\n")
                     .arg(dev.model.toHtmlEscaped())
                     .arg(formatBytes(dev.size_bytes))
@@ -594,7 +594,7 @@ QString DiagnosticReportGenerator::buildHardwareSection() const {
     });
 
     html += "<tr><th colspan=\"2\">GPU</th></tr>\n";
-    std::for_each(inv.gpus.begin(), inv.gpus.end(), [&html](const auto& gpu) {
+    std::ranges::for_each(inv.gpus, [&html](const auto& gpu) {
         html += QString("<tr><td>%1</td><td>%2 VRAM, Driver %3</td></tr>\n")
                     .arg(gpu.name.toHtmlEscaped())
                     .arg(formatBytes(gpu.vram_bytes))
@@ -654,11 +654,11 @@ QString DiagnosticReportGenerator::buildSmartSection() const {
         if (!report.warnings.isEmpty()) {
             html +=
                 QString("<p><strong>%1:</strong></p>\n<ul>\n").arg(report.model.toHtmlEscaped());
-            std::for_each(report.warnings.begin(),
-                          report.warnings.end(),
-                          [&html](const QString& warning) {
-                              html += QString("<li>%1</li>\n").arg(warning.toHtmlEscaped());
-                          });
+            std::ranges::for_each(report.warnings,
+
+                                  [&html](const QString& warning) {
+                                      html += QString("<li>%1</li>\n").arg(warning.toHtmlEscaped());
+                                  });
             html += "</ul>\n";
         }
     }
@@ -775,9 +775,9 @@ QString DiagnosticReportGenerator::buildRecommendationsSection() const {
 
     if (!m_data.critical_issues.isEmpty()) {
         html += "<h3>Critical Issues</h3>\n<ul class=\"rec-list\">\n";
-        std::for_each(
-            m_data.critical_issues.begin(),
-            m_data.critical_issues.end(),
+        std::ranges::for_each(
+            m_data.critical_issues,
+
             [&html](const QString& issue) {
                 html += QString("<li class=\"rec-critical\">%1</li>\n").arg(issue.toHtmlEscaped());
             });
@@ -786,20 +786,19 @@ QString DiagnosticReportGenerator::buildRecommendationsSection() const {
 
     if (!m_data.warnings.isEmpty()) {
         html += "<h3>Warnings</h3>\n<ul class=\"rec-list\">\n";
-        std::for_each(
-            m_data.warnings.begin(), m_data.warnings.end(), [&html](const QString& warning) {
-                html += QString("<li class=\"rec-warning\">%1</li>\n").arg(warning.toHtmlEscaped());
-            });
+        std::ranges::for_each(m_data.warnings, [&html](const QString& warning) {
+            html += QString("<li class=\"rec-warning\">%1</li>\n").arg(warning.toHtmlEscaped());
+        });
         html += "</ul>\n";
     }
 
     if (!m_data.recommendations.isEmpty()) {
         html += "<h3>Recommendations</h3>\n<ul class=\"rec-list\">\n";
-        std::for_each(m_data.recommendations.begin(),
-                      m_data.recommendations.end(),
-                      [&html](const QString& rec) {
-                          html += QString("<li>%1</li>\n").arg(rec.toHtmlEscaped());
-                      });
+        std::ranges::for_each(m_data.recommendations,
+
+                              [&html](const QString& rec) {
+                                  html += QString("<li>%1</li>\n").arg(rec.toHtmlEscaped());
+                              });
         html += "</ul>\n";
     }
 

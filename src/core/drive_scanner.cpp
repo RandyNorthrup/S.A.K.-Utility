@@ -34,7 +34,7 @@ constexpr int kVolumePathQueryAttempts = 3;
 
 /// @brief Check if any drive in the list has the given devicePath
 bool containsDevicePath(const QList<sak::DriveInfo>& drives, const QString& devicePath) {
-    return std::any_of(drives.begin(), drives.end(), [&devicePath](const auto& drive) {
+    return std::ranges::any_of(drives, [&devicePath](const auto& drive) {
         return drive.devicePath == devicePath;
     });
 }
@@ -74,9 +74,8 @@ QVector<int> enumeratePhysicalDriveNumbers(bool& query_ok) {
         buffer.resize(buffer.size() * kDosDeviceBufferGrowthFactor);
     }
 
-    std::sort(drive_numbers.begin(), drive_numbers.end());
-    drive_numbers.erase(std::unique(drive_numbers.begin(), drive_numbers.end()),
-                        drive_numbers.end());
+    std::ranges::sort(drive_numbers);
+    drive_numbers.erase(std::ranges::unique(drive_numbers).begin(), drive_numbers.end());
 
     if (drive_numbers.isEmpty()) {
         // No authoritative PhysicalDrive entry (the query failed, or the table had none). Do
@@ -199,7 +198,7 @@ QList<sak::DriveInfo> DriveScanner::getRemovableDrives() const {
 }
 
 sak::DriveInfo DriveScanner::getDriveInfo(const QString& devicePath) const {
-    auto it = std::find_if(m_drives.begin(), m_drives.end(), [&devicePath](const auto& d) {
+    auto it = std::ranges::find_if(m_drives, [&devicePath](const auto& d) {
         return d.devicePath == devicePath;
     });
     return it != m_drives.end() ? *it : sak::DriveInfo{};
@@ -300,7 +299,7 @@ void DriveScanner::applyDriveScan(const QList<sak::DriveInfo>& newDrives, bool e
     // and in-place property changes on an already-known drive (size/read-only/system/mount-point
     // changes on the SAME devicePath) -- both must refresh subscribers via drivesUpdated.
     for (const auto& newDrive : newDrives) {
-        const auto it = std::find_if(m_drives.begin(), m_drives.end(), [&newDrive](const auto& d) {
+        const auto it = std::ranges::find_if(m_drives, [&newDrive](const auto& d) {
             return d.devicePath == newDrive.devicePath;
         });
         if (it == m_drives.end()) {
@@ -898,9 +897,8 @@ bool DriveScanner::containsWindowsInstallation(int driveNumber) {
         return true;
     }
 
-    if (std::any_of(roots.begin(), roots.end(), [](const QString& root) {
-            return hasWindowsIndicators(root);
-        })) {
+    if (std::ranges::any_of(roots,
+                            [](const QString& root) { return hasWindowsIndicators(root); })) {
         return true;
     }
     // A FIXED disk carrying the Windows boot loader (e.g. a split-boot ESP whose
@@ -910,9 +908,8 @@ bool DriveScanner::containsWindowsInstallation(int driveNumber) {
     if (isDriveRemovable(driveNumber)) {
         return false;
     }
-    return std::any_of(roots.begin(), roots.end(), [](const QString& root) {
-        return hasBootManagerIndicators(root);
-    });
+    return std::ranges::any_of(roots,
+                               [](const QString& root) { return hasBootManagerIndicators(root); });
 }
 
 sak::DiskProbe DriveScanner::physicalDriveBootProbe(int driveNumber) {
@@ -929,7 +926,7 @@ sak::DiskProbe DriveScanner::physicalDriveBootProbe(int driveNumber) {
     if (isDriveRemovable(driveNumber)) {
         return sak::DiskProbe::No;
     }
-    const bool boot = std::any_of(roots.begin(), roots.end(), [](const QString& root) {
+    const bool boot = std::ranges::any_of(roots, [](const QString& root) {
         return hasBootManagerIndicators(root);
     });
     return boot ? sak::DiskProbe::Yes : sak::DiskProbe::No;

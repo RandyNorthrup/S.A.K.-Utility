@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QSet>
 
+#include <algorithm>
 #include <optional>
 
 #include <private/qzipreader_p.h>
@@ -208,9 +209,7 @@ void performExtractionRollback(const ExtractionRollback& rollback) {
         QFile::remove(file);
     }
     QStringList dirs = rollback.dirs;
-    std::sort(dirs.begin(), dirs.end(), [](const QString& a, const QString& b) {
-        return a.size() > b.size();
-    });
+    std::ranges::sort(dirs, [](const QString& a, const QString& b) { return a.size() > b.size(); });
     for (const QString& dir : dirs) {
         QDir().rmdir(dir);
     }

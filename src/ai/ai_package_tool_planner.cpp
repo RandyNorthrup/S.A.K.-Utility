@@ -24,7 +24,7 @@ bool isAllowedPackageChar(QChar ch) {
 // allowed. Used to REJECT (never rewrite) ids with disallowed characters.
 bool packageTokenIsValid(const QString& trimmed) {
     return !trimmed.isEmpty() && !trimmed.startsWith(QLatin1Char('-')) &&
-           std::all_of(trimmed.cbegin(), trimmed.cend(), isAllowedPackageChar);
+           std::ranges::all_of(trimmed, isAllowedPackageChar);
 }
 
 // Fail closed: a version that is PRESENT but not a string must be rejected rather

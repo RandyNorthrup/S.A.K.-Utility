@@ -390,15 +390,13 @@ struct ModelContextRule {
 };
 
 bool modelStartsWithAny(const QString& model, const QStringList& prefixes) {
-    return std::any_of(prefixes.cbegin(), prefixes.cend(), [&](const QString& prefix) {
-        return model.startsWith(prefix);
-    });
+    return std::ranges::any_of(prefixes,
+                               [&](const QString& prefix) { return model.startsWith(prefix); });
 }
 
 bool modelContainsAll(const QString& model, const QStringList& needles) {
-    return std::all_of(needles.cbegin(), needles.cend(), [&](const QString& needle) {
-        return model.contains(needle);
-    });
+    return std::ranges::all_of(needles,
+                               [&](const QString& needle) { return model.contains(needle); });
 }
 
 bool modelMatchesRule(const QString& model, const ModelContextRule& rule) {
@@ -8646,11 +8644,11 @@ void AiAssistantPanel::appendCitationsToList(const QVector<ai::OpenAIUrlCitation
         if (m_citations.size() >= kMaxStoredCitations) {
             break;
         }
-        const bool already_known = std::any_of(m_citations.cbegin(),
-                                               m_citations.cend(),
-                                               [&](const ai::OpenAIUrlCitation& existing) {
-                                                   return existing.url == citation.url;
-                                               });
+        const bool already_known = std::ranges::any_of(m_citations,
+
+                                                       [&](const ai::OpenAIUrlCitation& existing) {
+                                                           return existing.url == citation.url;
+                                                       });
         if (!already_known) {
             m_citations.append(citation);
         }
@@ -9874,11 +9872,12 @@ bool AiAssistantPanel::collectClarifyingWorkflowInputs(const ai::WorkflowTemplat
     const auto clarification =
         ai::AiWorkflowClarifier::analyze(workflow, user_message, *input_values);
     for (const auto& question : clarification.questions) {
-        const auto input_it = std::find_if(workflow.required_inputs.begin(),
-                                           workflow.required_inputs.end(),
-                                           [&question](const ai::WorkflowRequiredInput& input) {
-                                               return input.id.trimmed() == question.input_id;
-                                           });
+        const auto input_it =
+            std::ranges::find_if(workflow.required_inputs,
+
+                                 [&question](const ai::WorkflowRequiredInput& input) {
+                                     return input.id.trimmed() == question.input_id;
+                                 });
         if (input_it == workflow.required_inputs.end()) {
             continue;
         }
@@ -11474,14 +11473,13 @@ QStringList AiAssistantPanel::runDetailsToolHealthLines() const {
             for (const auto& value : records) {
                 objects.append(value.toObject());
             }
-            std::sort(
-                objects.begin(), objects.end(), [](const QJsonObject& lhs, const QJsonObject& rhs) {
-                    const QString left = lhs.value(QStringLiteral("last_failure_utc")).toString() +
-                                         lhs.value(QStringLiteral("last_success_utc")).toString();
-                    const QString right = rhs.value(QStringLiteral("last_failure_utc")).toString() +
-                                          rhs.value(QStringLiteral("last_success_utc")).toString();
-                    return left > right;
-                });
+            std::ranges::sort(objects, [](const QJsonObject& lhs, const QJsonObject& rhs) {
+                const QString left = lhs.value(QStringLiteral("last_failure_utc")).toString() +
+                                     lhs.value(QStringLiteral("last_success_utc")).toString();
+                const QString right = rhs.value(QStringLiteral("last_failure_utc")).toString() +
+                                      rhs.value(QStringLiteral("last_success_utc")).toString();
+                return left > right;
+            });
             const int limit = std::min(static_cast<int>(objects.size()), 12);
             for (int i = 0; i < limit; ++i) {
                 lines << runDetailsHealthRecordLine(objects.at(i));

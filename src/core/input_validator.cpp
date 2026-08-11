@@ -147,11 +147,11 @@ int checkMultiByteUtf8(std::string_view str, std::size_t pos) noexcept {
 }
 
 bool isPrintableString(std::string_view str) {
-    return std::all_of(str.begin(), str.end(), [](unsigned char c) { return std::isprint(c); });
+    return std::ranges::all_of(str, [](unsigned char c) { return std::isprint(c); });
 }
 
 bool isAsciiString(std::string_view str) {
-    return std::all_of(str.begin(), str.end(), [](unsigned char c) { return c < kAsciiLimit; });
+    return std::ranges::all_of(str, [](unsigned char c) { return c < kAsciiLimit; });
 }
 
 validation_result validateStringLengthPolicy(std::string_view str,
@@ -391,7 +391,7 @@ std::vector<std::string> normalizedPathComponents(const std::filesystem::path& p
             continue;
         }
 #ifdef _WIN32
-        std::transform(component.begin(), component.end(), component.begin(), [](unsigned char c) {
+        std::ranges::transform(component, component.begin(), [](unsigned char c) {
             return static_cast<char>(std::tolower(c));
         });
 #endif
@@ -531,7 +531,7 @@ bool input_validator::containsTraversalSequences(const std::filesystem::path& pa
     }
 
     // Check each path component
-    return std::any_of(path.begin(), path.end(), [](const auto& component) {
+    return std::ranges::any_of(path, [](const auto& component) {
         const auto comp_str = component.string();
         return comp_str == ".." || comp_str == ".";
     });
@@ -626,7 +626,7 @@ bool input_validator::containsNullBytes(std::string_view str) noexcept {
 }
 
 bool input_validator::containsControlChars(std::string_view str) noexcept {
-    return std::any_of(str.begin(), str.end(), [](unsigned char c) {
+    return std::ranges::any_of(str, [](unsigned char c) {
         return std::iscntrl(c) && c != '\n' && c != '\r' && c != '\t';
     });
 }

@@ -25,6 +25,7 @@
 #include <QSslConfiguration>
 #include <QUrlQuery>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -263,9 +264,8 @@ void UupDumpApi::onBuildsFetchReply() {
     }
 
     // Sort by creation date (newest first)
-    std::sort(builds.begin(), builds.end(), [](const BuildInfo& a, const BuildInfo& b) {
-        return a.created > b.created;
-    });
+    std::ranges::sort(builds,
+                      [](const BuildInfo& a, const BuildInfo& b) { return a.created > b.created; });
 
     // An empty set is not a successful result: a garbage or unexpected response yields no
     // usable build, so fail closed the way the language/edition handlers do rather than
@@ -343,7 +343,7 @@ void UupDumpApi::onLanguagesReply() {
     QMap<QString, QString> langNames = parseLangFancyNames(response);
 
     // Sort by friendly name for better UX
-    std::sort(langCodes.begin(), langCodes.end(), [&langNames](const QString& a, const QString& b) {
+    std::ranges::sort(langCodes, [&langNames](const QString& a, const QString& b) {
         return langNames.value(a, a) < langNames.value(b, b);
     });
 

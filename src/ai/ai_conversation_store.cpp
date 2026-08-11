@@ -79,7 +79,7 @@ QString sanitizeLogToken(const QString& value, const QString& fallback) {
     // Collapse any run of 2+ dots so no ".." traversal sequence survives inside a segment
     // (a lone extension dot is fine); a bare ".."/"..." then reduces to "_".
     safe.replace(QRegularExpression(QStringLiteral(R"(\.{2,})")), QStringLiteral("_"));
-    const bool all_dots = !safe.isEmpty() && std::all_of(safe.cbegin(), safe.cend(), [](QChar ch) {
+    const bool all_dots = !safe.isEmpty() && std::ranges::all_of(safe, [](QChar ch) {
         return ch == QLatin1Char('.');
     });
     if (safe.isEmpty() || all_dots) {
@@ -681,7 +681,7 @@ QVector<AiSessionInfo> ConversationStore::listSessions() const {
             sessions.append(info);
         }
     }
-    std::sort(sessions.begin(), sessions.end(), [](const auto& lhs, const auto& rhs) {
+    std::ranges::sort(sessions, [](const auto& lhs, const auto& rhs) {
         return lhs.updated_at > rhs.updated_at;
     });
     return sessions;
@@ -780,7 +780,7 @@ QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& 
             searchRawSessionFiles(session, term, &results);
         }
     }
-    std::sort(results.begin(), results.end(), [](const auto& lhs, const auto& rhs) {
+    std::ranges::sort(results, [](const auto& lhs, const auto& rhs) {
         if (lhs.score != rhs.score) {
             return lhs.score > rhs.score;
         }
@@ -1298,7 +1298,7 @@ QString ConversationStore::safeArtifactDirectoryName(const QString& title,
     safe = safe.trimmed().left(kSafeFilenameMaxChars);
     // A name that is only dots ("." / ".." / "...") would traverse or alias the parent
     // directory, so collapse it to the safe fallback rather than let it name the dir.
-    const bool all_dots = !safe.isEmpty() && std::all_of(safe.cbegin(), safe.cend(), [](QChar ch) {
+    const bool all_dots = !safe.isEmpty() && std::ranges::all_of(safe, [](QChar ch) {
         return ch == QLatin1Char('.');
     });
     if (safe.isEmpty() || all_dots) {

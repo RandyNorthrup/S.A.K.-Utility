@@ -447,8 +447,7 @@ struct CliParserOptions {
                    (ch >= QLatin1Char('a') && ch <= QLatin1Char('f')) ||
                    (ch >= QLatin1Char('A') && ch <= QLatin1Char('F'));
         };
-        const bool cleanHex = (hex.size() % 2) == 0 &&
-                              std::all_of(hex.cbegin(), hex.cend(), isHexDigit);
+        const bool cleanHex = (hex.size() % 2) == 0 && std::ranges::all_of(hex, isHexDigit);
         if (!cleanHex) {
             *error = QStringLiteral("--xattr value must be even-length hex: %1").arg(spec);
             return std::nullopt;

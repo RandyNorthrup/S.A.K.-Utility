@@ -75,8 +75,8 @@ void computePingStats(PingResult& result, const QVector<double>& rtts) {
         return;
     }
 
-    result.minRtt = *std::min_element(rtts.begin(), rtts.end());
-    result.maxRtt = *std::max_element(rtts.begin(), rtts.end());
+    result.minRtt = *std::ranges::min_element(rtts);
+    result.maxRtt = *std::ranges::max_element(rtts);
     result.avgRtt = std::accumulate(rtts.begin(), rtts.end(), 0.0) /
                     static_cast<double>(rtts.size());
 

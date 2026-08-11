@@ -62,6 +62,8 @@
 #include <QUuid>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 // -----------------------------------------------------------------------------
 // CheckHeaderView  --  column 0 renders a tri-state "select all" checkbox
 // -----------------------------------------------------------------------------
@@ -622,7 +624,7 @@ void WifiManagerPanel::onDeleteSelectedClicked() {
         rows.prepend(idx.row());
     }
 
-    std::sort(rows.begin(), rows.end(), std::greater<int>());
+    std::ranges::sort(rows, std::greater<int>());
     for (const int row : rows) {
         m_network_table->removeRow(row);
     }

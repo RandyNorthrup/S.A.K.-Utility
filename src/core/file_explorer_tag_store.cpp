@@ -27,7 +27,7 @@ QStringList normalizeTags(const QStringList& tags) {
             cleaned.append(trimmed);
         }
     }
-    std::sort(cleaned.begin(), cleaned.end(), [](const QString& a, const QString& b) {
+    std::ranges::sort(cleaned, [](const QString& a, const QString& b) {
         return a.compare(b, Qt::CaseInsensitive) < 0;
     });
     return cleaned;

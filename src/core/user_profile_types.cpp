@@ -500,9 +500,9 @@ static constexpr FolderTypeEntry kFolderTypes[] = {
 }  // namespace
 
 QString folderTypeToString(FolderType type) {
-    const auto* it = std::find_if(std::begin(kFolderTypes),
-                                  std::end(kFolderTypes),
-                                  [type](const auto& entry) { return entry.type == type; });
+    const auto* it = std::ranges::find_if(kFolderTypes,
+
+                                          [type](const auto& entry) { return entry.type == type; });
     if (it != std::end(kFolderTypes)) {
         return QString::fromLatin1(it->name);
     }
@@ -514,10 +514,9 @@ FolderType stringToFolderType(const QString& str) {
     // data and maps to Custom. The BackupManifest, FolderSelection and
     // BackupUserData fromJson asserts were removed for exactly this reason; this
     // one was missed and still aborted every Debug run.
-    const auto* it =
-        std::find_if(std::begin(kFolderTypes), std::end(kFolderTypes), [&str](const auto& entry) {
-            return str == QLatin1String(entry.name);
-        });
+    const auto* it = std::ranges::find_if(kFolderTypes, [&str](const auto& entry) {
+        return str == QLatin1String(entry.name);
+    });
     if (it != std::end(kFolderTypes)) {
         return it->type;
     }

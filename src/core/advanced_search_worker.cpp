@@ -398,11 +398,11 @@ auto AdvancedSearchWorker::compileRegex() const -> std::expected<QRegularExpress
 // -- Exclusion & Filtering ---------------------------------------------------
 
 bool AdvancedSearchWorker::isExcluded(const QString& path) const {
-    return std::any_of(m_compiled_excludes.begin(),
-                       m_compiled_excludes.end(),
-                       [&path](const auto& excludeRegex) {
-                           return excludeRegex.match(path).hasMatch();
-                       });
+    return std::ranges::any_of(m_compiled_excludes,
+
+                               [&path](const auto& excludeRegex) {
+                                   return excludeRegex.match(path).hasMatch();
+                               });
 }
 
 bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const {
@@ -414,15 +414,15 @@ bool AdvancedSearchWorker::matchesExtensionFilter(const QString& filePath) const
     }
 
     const QString ext = QFileInfo(filePath).suffix().toLower();
-    return std::any_of(m_config.file_extensions.begin(),
-                       m_config.file_extensions.end(),
-                       [&ext](const QString& filter) {
-                           QString normalized = filter.trimmed().toLower();
-                           if (normalized.startsWith('.')) {
-                               normalized = normalized.mid(1);
-                           }
-                           return ext == normalized;
-                       });
+    return std::ranges::any_of(m_config.file_extensions,
+
+                               [&ext](const QString& filter) {
+                                   QString normalized = filter.trimmed().toLower();
+                                   if (normalized.startsWith('.')) {
+                                       normalized = normalized.mid(1);
+                                   }
+                                   return ext == normalized;
+                               });
 }
 
 // -- Network Path Detection --------------------------------------------------
@@ -1311,9 +1311,9 @@ static constexpr ExifTagEntry kExifTagNames[] = {
 
 /// @brief EXIF tag ID -> human-readable name mapping
 [[nodiscard]] QString exifTagName(uint16_t tag) {
-    const auto* it = std::find_if(std::begin(kExifTagNames),
-                                  std::end(kExifTagNames),
-                                  [tag](const auto& entry) { return entry.tag_id == tag; });
+    const auto* it = std::ranges::find_if(kExifTagNames,
+
+                                          [tag](const auto& entry) { return entry.tag_id == tag; });
     if (it != std::end(kExifTagNames)) {
         return QStringLiteral("%1").arg(QLatin1String(it->name));
     }
@@ -1335,9 +1335,8 @@ int exifTypeUnitSize(uint16_t type) {
         {.type = 9, .size = 4},
         {.type = 10, .size = 8},
     };
-    const auto* it = std::find_if(std::begin(kSizes), std::end(kSizes), [type](const auto& entry) {
-        return entry.type == type;
-    });
+    const auto* it = std::ranges::find_if(kSizes,
+                                          [type](const auto& entry) { return entry.type == type; });
     if (it != std::end(kSizes)) {
         return it->size;
     }
@@ -1900,9 +1899,9 @@ bool isMetadataTarget(const QString& entry_name) {
     static const QStringList kMetadataFiles = {
         "docprops/core.xml", "docprops/app.xml", "meta.xml", "content.opf", "oebps/content.opf"};
     const QString lower = entry_name.toLower();
-    return std::any_of(kMetadataFiles.begin(),
-                       kMetadataFiles.end(),
-                       [&lower](const QString& target) { return lower.endsWith(target); });
+    return std::ranges::any_of(kMetadataFiles,
+
+                               [&lower](const QString& target) { return lower.endsWith(target); });
 }
 
 constexpr auto kXmlMetadataTagPattern = "<(?:dc:|cp:|dcterms:|meta:)?(\\w+)[^>]*>([^<]+)</";

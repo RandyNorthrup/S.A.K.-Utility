@@ -1027,9 +1027,10 @@ void UserProfileRestoreWorker::accumulateFolderTotals(const FolderSelection& fol
 }
 
 const BackupUserData* UserProfileRestoreWorker::findManifestUser(const QString& username) const {
-    auto it = std::find_if(m_manifest.users.begin(),
-                           m_manifest.users.end(),
-                           [&username](const auto& user) { return user.username == username; });
+    auto it =
+        std::ranges::find_if(m_manifest.users,
+
+                             [&username](const auto& user) { return user.username == username; });
     return (it != m_manifest.users.end()) ? &(*it) : nullptr;
 }
 

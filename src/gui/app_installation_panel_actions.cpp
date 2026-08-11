@@ -182,11 +182,11 @@ void AppInstallationPanel::onAddToQueue() {
     }
 
     // Check for duplicates
-    const bool duplicate = std::any_of(m_installQueue.cbegin(),
-                                       m_installQueue.cend(),
-                                       [&packageId](const QueueEntry& entry) {
-                                           return entry.package_id == packageId;
-                                       });
+    const bool duplicate = std::ranges::any_of(m_installQueue,
+
+                                               [&packageId](const QueueEntry& entry) {
+                                                   return entry.package_id == packageId;
+                                               });
 
     if (duplicate) {
         Q_EMIT logOutput(QString("Package '%1' already in queue").arg(packageId));
@@ -218,7 +218,7 @@ void AppInstallationPanel::onRemoveFromQueue() {
     for (auto* item : selectedItems) {
         indices.append(m_queueList->row(item));
     }
-    std::sort(indices.begin(), indices.end(), std::greater<int>());
+    std::ranges::sort(indices, std::greater<int>());
 
     for (const int idx : indices) {
         if (idx >= 0 && idx < m_installQueue.size()) {

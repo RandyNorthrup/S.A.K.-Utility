@@ -1326,11 +1326,11 @@ QVector<QByteArray> buildObjectMapTreeNodes(const ApfsOmapTreeParams& params,
                                             const QVector<ApfsObjectMapEntry>& mappings,
                                             QStringList* blockers) {
     QVector<ApfsObjectMapEntry> sorted = mappings;
-    std::sort(sorted.begin(),
-              sorted.end(),
-              [](const ApfsObjectMapEntry& a, const ApfsObjectMapEntry& b) {
-                  return a.oid != b.oid ? a.oid < b.oid : a.xid < b.xid;
-              });
+    std::ranges::sort(sorted,
+
+                      [](const ApfsObjectMapEntry& a, const ApfsObjectMapEntry& b) {
+                          return a.oid != b.oid ? a.oid < b.oid : a.xid < b.xid;
+                      });
     QVector<ApfsOmapNodePlan> plans;
     QVector<qsizetype> levelStart{0};
     QVector<qsizetype> levelCount{planOmapLeaves(sorted, params.blockSize, &plans)};
@@ -1818,7 +1818,7 @@ void writeInodeXfields(QByteArray* value, const InodeXfieldParams& x) {
         writeLe16(value, toc + kApfsXfieldSizeOffset, 4);
     }
     const qsizetype dataStart = kApfsInodeXfieldsOffset + x.tocBytes;
-    std::copy(x.nameBytes.cbegin(), x.nameBytes.cend(), value->begin() + dataStart);
+    std::ranges::copy(x.nameBytes, value->begin() + dataStart);
     const uint64_t roundedSize =
         ((x.sizeBytes + kSupportedApfsBlockSizeBytes - 1) / kSupportedApfsBlockSizeBytes) *
         kSupportedApfsBlockSizeBytes;
@@ -1935,7 +1935,7 @@ QByteArray directoryEntryKey(uint64_t parentId, const QString& fileName) {
     QByteArray key =
         fsKey(parentId, kApfsRecordDirectoryEntry, kApfsDrecNameOffset + nameBytes.size() + 1);
     writeLe32(&key, kApfsDrecNameLengthOffset, drecNameLenAndHash(fileName));
-    std::copy(nameBytes.cbegin(), nameBytes.cend(), key.begin() + kApfsDrecNameOffset);
+    std::ranges::copy(nameBytes, key.begin() + kApfsDrecNameOffset);
     return key;
 }
 
@@ -1984,7 +1984,7 @@ QByteArray siblingLinkValue(uint64_t parentId, const QString& name) {
     QByteArray value(8 + kUint16Size + nameBytes.size(), '\0');
     writeLe64(&value, 0, parentId);
     writeLe16(&value, 8, static_cast<uint16_t>(nameBytes.size()));
-    std::copy(nameBytes.cbegin(), nameBytes.cend(), value.begin() + 8 + kUint16Size);
+    std::ranges::copy(nameBytes, value.begin() + 8 + kUint16Size);
     return value;
 }
 
@@ -2008,9 +2008,9 @@ QByteArray xattrKey(uint64_t inodeId, const QByteArray& name) {
                            kApfsRecordXattr,
                            kApfsFormattedRootInodeKeyBytes + kUint16Size + nameBytes.size());
     writeLe16(&key, kApfsFormattedRootInodeKeyBytes, static_cast<uint16_t>(nameBytes.size()));
-    std::copy(nameBytes.cbegin(),
-              nameBytes.cend(),
-              key.begin() + kApfsFormattedRootInodeKeyBytes + kUint16Size);
+    std::ranges::copy(nameBytes,
+
+                      key.begin() + kApfsFormattedRootInodeKeyBytes + kUint16Size);
     return key;
 }
 
@@ -2019,7 +2019,7 @@ QByteArray xattrEmbeddedValue(uint16_t flags, const QByteArray& xdata) {
     QByteArray value((2 * kUint16Size) + xdata.size(), '\0');
     writeLe16(&value, 0, flags);
     writeLe16(&value, kUint16Size, static_cast<uint16_t>(xdata.size()));
-    std::copy(xdata.cbegin(), xdata.cend(), value.begin() + (2 * kUint16Size));
+    std::ranges::copy(xdata, value.begin() + (2 * kUint16Size));
     return value;
 }
 
@@ -2081,15 +2081,15 @@ ApfsBtreeKeyValue perFileCryptoStateRecord(uint64_t cryptoId,
               0,
               cryptoId | (static_cast<uint64_t>(kApfsRecordCryptoState) << kApfsObjTypeShift));
     QByteArray value(24 + wrappedKey.size(), '\0');
-    writeLe32(&value, 0, refcnt);                                           // refcnt
-    writeLe16(&value, 4, kApfsWmcsMajorVersion);                            // major_version
-    writeLe16(&value, 6, kApfsWmcsMinorVersion);                            // minor_version
-    writeLe32(&value, 8, 0);                                                // cpflags
-    writeLe32(&value, 12, protectionClass);                                 // persistent_class
-    writeLe32(&value, 16, kApfsGeneratedKeyOsVersion);                      // key_os_version
-    writeLe16(&value, 20, kApfsCryptoKeyRevision);                          // key_revision
-    writeLe16(&value, 22, static_cast<uint16_t>(wrappedKey.size()));        // key_len
-    std::copy(wrappedKey.cbegin(), wrappedKey.cend(), value.begin() + 24);  // persistent_key
+    writeLe32(&value, 0, refcnt);                                     // refcnt
+    writeLe16(&value, 4, kApfsWmcsMajorVersion);                      // major_version
+    writeLe16(&value, 6, kApfsWmcsMinorVersion);                      // minor_version
+    writeLe32(&value, 8, 0);                                          // cpflags
+    writeLe32(&value, 12, protectionClass);                           // persistent_class
+    writeLe32(&value, 16, kApfsGeneratedKeyOsVersion);                // key_os_version
+    writeLe16(&value, 20, kApfsCryptoKeyRevision);                    // key_revision
+    writeLe16(&value, 22, static_cast<uint16_t>(wrappedKey.size()));  // key_len
+    std::ranges::copy(wrappedKey, value.begin() + 24);                // persistent_key
     return {key, value};
 }
 
@@ -2381,55 +2381,53 @@ qsizetype btreeRecordsByteSize(const QVector<ApfsBtreeKeyValue>& records) {
 void sortFsTreeRecords(QVector<ApfsBtreeKeyValue>* records) {
     // File-system B-tree records must be stored in key order (object id, then
     // record type, then key tail) for Apple's binary-search lookups.
-    std::stable_sort(records->begin(),
-                     records->end(),
-                     [](const ApfsBtreeKeyValue& left, const ApfsBtreeKeyValue& right) {
-                         const uint64_t leftHeader = le64(left.key, 0);
-                         const uint64_t rightHeader = le64(right.key, 0);
-                         const uint64_t leftId = leftHeader & ((1ULL << kApfsObjTypeShift) - 1);
-                         const uint64_t rightId = rightHeader & ((1ULL << kApfsObjTypeShift) - 1);
-                         if (leftId != rightId) {
-                             return leftId < rightId;
-                         }
-                         const uint64_t leftType = leftHeader >> kApfsObjTypeShift;
-                         const uint64_t rightType = rightHeader >> kApfsObjTypeShift;
-                         if (leftType != rightType) {
-                             return leftType < rightType;
-                         }
-                         // Sibling directory entries order by the numeric name_len_and_hash
-                         // word, then by the raw NAME bytes -- two names can collide in the
-                         // 22-bit hash (+ equal length) and Apple's comparator breaks the tie
-                         // on the name, so an untied sort could mis-order them.
-                         if (leftType == kApfsRecordDirectoryEntry) {
-                             const uint32_t leftHash = le32(left.key, kApfsDrecNameLengthOffset);
-                             const uint32_t rightHash = le32(right.key, kApfsDrecNameLengthOffset);
-                             if (leftHash != rightHash) {
-                                 return leftHash < rightHash;
-                             }
-                             return left.key.mid(kApfsDrecNameOffset) <
-                                    right.key.mid(kApfsDrecNameOffset);
-                         }
-                         if (leftType == kApfsRecordFileExtent) {
-                             return le64(left.key, kApfsFileExtentKeyLogicalOffset) <
-                                    le64(right.key, kApfsFileExtentKeyLogicalOffset);
-                         }
-                         // Hard-link sibling-link records for one inode order by their
-                         // 8-byte sibling id (the key tail after the object-id header).
-                         if (leftType == kApfsRecordSiblingLink) {
-                             return le64(left.key, kApfsFormattedRootInodeKeyBytes) <
-                                    le64(right.key, kApfsFormattedRootInodeKeyBytes);
-                         }
-                         // Sibling extended attributes order by name (Apple compares
-                         // the xattr name string, not the raw key bytes).
-                         if (leftType == kApfsRecordXattr) {
-                             const auto name = [](const QByteArray& key) {
-                                 return key.mid(kApfsFormattedRootInodeKeyBytes + kUint16Size,
-                                                le16(key, kApfsFormattedRootInodeKeyBytes));
-                             };
-                             return name(left.key) < name(right.key);
-                         }
-                         return left.key < right.key;
-                     });
+    std::ranges::stable_sort(
+        *records, [](const ApfsBtreeKeyValue& left, const ApfsBtreeKeyValue& right) {
+            const uint64_t leftHeader = le64(left.key, 0);
+            const uint64_t rightHeader = le64(right.key, 0);
+            const uint64_t leftId = leftHeader & ((1ULL << kApfsObjTypeShift) - 1);
+            const uint64_t rightId = rightHeader & ((1ULL << kApfsObjTypeShift) - 1);
+            if (leftId != rightId) {
+                return leftId < rightId;
+            }
+            const uint64_t leftType = leftHeader >> kApfsObjTypeShift;
+            const uint64_t rightType = rightHeader >> kApfsObjTypeShift;
+            if (leftType != rightType) {
+                return leftType < rightType;
+            }
+            // Sibling directory entries order by the numeric name_len_and_hash
+            // word, then by the raw NAME bytes -- two names can collide in the
+            // 22-bit hash (+ equal length) and Apple's comparator breaks the tie
+            // on the name, so an untied sort could mis-order them.
+            if (leftType == kApfsRecordDirectoryEntry) {
+                const uint32_t leftHash = le32(left.key, kApfsDrecNameLengthOffset);
+                const uint32_t rightHash = le32(right.key, kApfsDrecNameLengthOffset);
+                if (leftHash != rightHash) {
+                    return leftHash < rightHash;
+                }
+                return left.key.mid(kApfsDrecNameOffset) < right.key.mid(kApfsDrecNameOffset);
+            }
+            if (leftType == kApfsRecordFileExtent) {
+                return le64(left.key, kApfsFileExtentKeyLogicalOffset) <
+                       le64(right.key, kApfsFileExtentKeyLogicalOffset);
+            }
+            // Hard-link sibling-link records for one inode order by their
+            // 8-byte sibling id (the key tail after the object-id header).
+            if (leftType == kApfsRecordSiblingLink) {
+                return le64(left.key, kApfsFormattedRootInodeKeyBytes) <
+                       le64(right.key, kApfsFormattedRootInodeKeyBytes);
+            }
+            // Sibling extended attributes order by name (Apple compares
+            // the xattr name string, not the raw key bytes).
+            if (leftType == kApfsRecordXattr) {
+                const auto name = [](const QByteArray& key) {
+                    return key.mid(kApfsFormattedRootInodeKeyBytes + kUint16Size,
+                                   le16(key, kApfsFormattedRootInodeKeyBytes));
+                };
+                return name(left.key) < name(right.key);
+            }
+            return left.key < right.key;
+        });
 }
 
 // Sorted file-system record set: the base volume entities (tree-root entity
@@ -2553,12 +2551,12 @@ bool writeFsTreeNodeBody(QByteArray* block,
         writeLe16(block,
                   toc + kApfsBtreeVariableTocValueLengthOffset,
                   static_cast<uint16_t>(record.value.size()));
-        std::copy(record.key.cbegin(),
-                  record.key.cend(),
-                  block->begin() + keyAreaStart + keyCursor);
-        std::copy(record.value.cbegin(),
-                  record.value.cend(),
-                  block->begin() + valueAreaEnd - valueBackCursor);
+        std::ranges::copy(record.key,
+
+                          block->begin() + keyAreaStart + keyCursor);
+        std::ranges::copy(record.value,
+
+                          block->begin() + valueAreaEnd - valueBackCursor);
         keyCursor += record.key.size();
     }
     writeLe16(block, 0x2C, static_cast<uint16_t>(keyCursor));
@@ -2883,7 +2881,7 @@ QByteArray buildNxSuperblock(uint32_t blockSize,
     writeLe64(&block, kApfsNxBlockCountOffset, blockCount);
     writeLe64(&block, 0x30, 1);
     writeLe64(&block, kApfsNxIncompatibleFeaturesOffset, kApfsContainerIncompatVersion2);
-    std::copy(containerUuid.cbegin(), containerUuid.cend(), block.begin() + kApfsNxUuidOffset);
+    std::ranges::copy(containerUuid, block.begin() + kApfsNxUuidOffset);
     writeLe64(&block, kApfsNxNextOidOffset, position.nextOid);
     writeLe64(&block, kApfsNxNextXidOffset, position.xid + 1);
     writeLe32(&block, kApfsNxXpDescBlocksOffset, kApfsFormatCheckpointDescBlocks);
@@ -3211,11 +3209,11 @@ ApfsMainFqNodeSet buildMainFreeQueueNodes(const ApfsMainFqBuild& build,
     const uint64_t rootOid = build.rootOid;
     const uint64_t leafBaseOid = build.leafBaseOid;
     const uint64_t xid = build.xid;
-    std::sort(entries.begin(),
-              entries.end(),
-              [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
-                  return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
-              });
+    std::ranges::sort(entries,
+
+                      [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
+                          return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
+                      });
     ApfsMainFqNodeSet set;
     const qsizetype leafCount = mainFreeQueueLeafCount(blockSize, entries.size());
     if (leafCount == 0) {
@@ -3327,11 +3325,11 @@ QVector<ExtentRefPhysRecord> collectExtentRefRecords(uint32_t blockSize,
             }
         }
     }
-    std::sort(records.begin(),
-              records.end(),
-              [](const ExtentRefPhysRecord& left, const ExtentRefPhysRecord& right) {
-                  return left.paddr < right.paddr;
-              });
+    std::ranges::sort(records,
+
+                      [](const ExtentRefPhysRecord& left, const ExtentRefPhysRecord& right) {
+                          return left.paddr < right.paddr;
+                      });
     return records;
 }
 
@@ -3887,8 +3885,8 @@ QByteArray buildVariableKvLeafBlock(const ApfsVariableKvTree& tree, QStringList*
         writeLe16(&block,
                   toc + kApfsBtreeVariableTocValueLengthOffset,
                   static_cast<uint16_t>(value.size()));
-        std::copy(key.cbegin(), key.cend(), block.begin() + keyAreaStart + keyCursor);
-        std::copy(value.cbegin(), value.cend(), block.begin() + valueAreaEnd - valueBackCursor);
+        std::ranges::copy(key, block.begin() + keyAreaStart + keyCursor);
+        std::ranges::copy(value, block.begin() + valueAreaEnd - valueBackCursor);
         keyCursor += key.size();
         longestKey = std::max<uint32_t>(longestKey, static_cast<uint32_t>(key.size()));
         longestValue = std::max<uint32_t>(longestValue, static_cast<uint32_t>(value.size()));
@@ -4163,12 +4161,12 @@ QVector<ApfsBtreeKeyValue> buildSnapMetaRecords(const ApfsSnapshotMetadata& snap
     writeLe32(&metaVal, kApfsSnapMetaExtentRefTypeOffset, kApfsExtentRefTreeType);
     writeLe32(&metaVal, kApfsSnapMetaFlagsOffset, 0);
     writeLe16(&metaVal, kApfsSnapMetaNameLenOffset, nameLen);
-    std::copy(nameZ.cbegin(), nameZ.cend(), metaVal.begin() + kApfsSnapMetaNameOffset);
+    std::ranges::copy(nameZ, metaVal.begin() + kApfsSnapMetaNameOffset);
 
     QByteArray nameKey(10 + nameZ.size(), '\0');
     writeLe64(&nameKey, 0, (kApfsJObjTypeSnapName << kApfsObjTypeShift) | kApfsJObjIdMask);
     writeLe16(&nameKey, 8, nameLen);
-    std::copy(nameZ.cbegin(), nameZ.cend(), nameKey.begin() + 10);
+    std::ranges::copy(nameZ, nameKey.begin() + 10);
     QByteArray nameVal(8, '\0');
     writeLe64(&nameVal, 0, snap.snapXid);
 
@@ -4846,9 +4844,9 @@ QByteArray buildVolumeSuperblock(const ApfsVolumeSuperblockFields& fields, QStri
     writeLe64(&block, kApfsVolumeRootTreeOidOffset, fields.rootTreeOid);
     writeLe64(&block, 0x90, fields.extentRefTreeBlock);
     writeLe64(&block, kApfsVolumeSnapMetaTreeOidOffset, fields.snapMetaTreeBlock);
-    std::copy(fields.volumeUuid.cbegin(),
-              fields.volumeUuid.cend(),
-              block.begin() + kApfsVolumeUuidOffset);
+    std::ranges::copy(fields.volumeUuid,
+
+                      block.begin() + kApfsVolumeUuidOffset);
     writeAscii(&block,
                kApfsVolumeNameOffset,
                fields.volumeName.toUtf8(),
@@ -6118,11 +6116,11 @@ QVector<ApfsFreeQueueEntry> buildIpFreeQueueWindow(const ApfsCheckpointAdvanceRe
     for (uint64_t freedIpBlock : request.extraFreedIpBlocks) {
         entries.append({newXid, freedIpBlock, 1});
     }
-    std::sort(entries.begin(),
-              entries.end(),
-              [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
-                  return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
-              });
+    std::ranges::sort(entries,
+
+                      [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
+                          return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
+                      });
     return entries;
 }
 
@@ -6660,11 +6658,11 @@ QByteArray buildContainerOmapTreeBlock(uint32_t blockSize,
                                        QStringList* blockers) {
     QVector<ApfsObjectMapEntry> mappings = preservedVolumes;
     mappings.append(mutatedVolume);
-    std::sort(mappings.begin(),
-              mappings.end(),
-              [](const ApfsObjectMapEntry& a, const ApfsObjectMapEntry& b) {
-                  return a.oid != b.oid ? a.oid < b.oid : a.xid < b.xid;
-              });
+    std::ranges::sort(mappings,
+
+                      [](const ApfsObjectMapEntry& a, const ApfsObjectMapEntry& b) {
+                          return a.oid != b.oid ? a.oid < b.oid : a.xid < b.xid;
+                      });
     return buildObjectMapTreeBlock(blockSize, treeOid, mappings, mutatedVolume.xid, blockers);
 }
 
@@ -8011,7 +8009,7 @@ QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
             extents.append({logicalBytes / kSupportedApfsBlockSizeBytes, paddr, blockCount});
         }
     }
-    std::sort(extents.begin(), extents.end(), [](const ApfsDataExtent& a, const ApfsDataExtent& b) {
+    std::ranges::sort(extents, [](const ApfsDataExtent& a, const ApfsDataExtent& b) {
         return a.logicalBlock < b.logicalBlock;
     });
     return extents;
@@ -8499,7 +8497,7 @@ QVector<QPair<uint64_t, uint64_t>> collectLiveFsrootExtentRanges(QIODevice* imag
     for (const ExtentRefPhysRecord& r : byPaddr) {
         ranges.append({r.paddr, r.paddr + r.blockCount});
     }
-    std::sort(ranges.begin(), ranges.end());
+    std::ranges::sort(ranges);
     return ranges;
 }
 
@@ -8591,7 +8589,7 @@ QVector<uint64_t> extentFoldBoundaries(const QVector<ExtentRefPhysRecord>& base,
         }
     }
     QVector<uint64_t> bounds(set.begin(), set.end());
-    std::sort(bounds.begin(), bounds.end());
+    std::ranges::sort(bounds);
     return bounds;
 }
 
@@ -8799,11 +8797,11 @@ QVector<ApfsInodeSibling> recoverInodeSiblings(QIODevice* image,
             siblings.append(sibling);
         }
     }
-    std::sort(siblings.begin(),
-              siblings.end(),
-              [](const ApfsInodeSibling& a, const ApfsInodeSibling& b) {
-                  return a.siblingId < b.siblingId;
-              });
+    std::ranges::sort(siblings,
+
+                      [](const ApfsInodeSibling& a, const ApfsInodeSibling& b) {
+                          return a.siblingId < b.siblingId;
+                      });
     return siblings;
 }
 
@@ -9229,7 +9227,7 @@ QVector<uint64_t> spilledChunkIndices(const QVector<uint64_t>& blocks, uint64_t 
             }
         }
     }
-    std::sort(chunks.begin(), chunks.end());
+    std::ranges::sort(chunks);
     return chunks;
 }
 
@@ -9247,7 +9245,7 @@ QVector<uint64_t> touchedSpilledChunkIndices(const QVector<uint64_t>& allocated,
             chunks.append(c);
         }
     }
-    std::sort(chunks.begin(), chunks.end());
+    std::ranges::sort(chunks);
     return chunks;
 }
 
@@ -9610,8 +9608,9 @@ QVector<uint64_t> oldChainFreedBlocks(const ApfsLiveFsChain& chain,
     // De-duplicate so freedCount (freed.size() at the caller) matches the coalesced runs, which
     // drop exact duplicates: an aliased chain oid (e.g. omap_oid == extentref_tree_oid) otherwise
     // drifts the published spaceman/cib free counts by one per alias.
-    std::sort(freed.begin(), freed.end());
-    freed.erase(std::unique(freed.begin(), freed.end()), freed.end());
+    std::ranges::sort(freed);
+    const auto duplicates = std::ranges::unique(freed);
+    freed.erase(duplicates.begin(), duplicates.end());
     return freed;
 }
 
@@ -9698,7 +9697,7 @@ uint64_t findEphemeralPaddrByOid(QIODevice* image,
     const auto overLongRun = [](const ApfsFreeQueueEntry& entry) {
         return entry.length > kApfsFreeQueueMaxRunBlocks;
     };
-    return std::none_of(entries.cbegin(), entries.cend(), overLongRun) &&
+    return std::ranges::none_of(entries, overLongRun) &&
            freeQueueExpandedBlockCount(entries).has_value();
 }
 
@@ -9849,7 +9848,7 @@ QVector<ApfsFreeQueueEntry> parseMainFreeQueueTree(QIODevice* image,
 
 // Coalesce freed blocks into ascending contiguous runs tagged at this xid.
 QVector<ApfsFreeQueueEntry> coalesceFreedRuns(QVector<uint64_t> blocks, uint64_t xid) {
-    std::sort(blocks.begin(), blocks.end());
+    std::ranges::sort(blocks);
     QVector<ApfsFreeQueueEntry> runs;
     for (uint64_t block : blocks) {
         if (!runs.isEmpty() && runs.last().paddr + runs.last().length == block) {
@@ -11805,11 +11804,11 @@ ApfsMainFqAdvance advanceForeignAwareMainFq(const ApfsFsCommitContext& ctx,
     }
     if (!deferred.isEmpty()) {
         mainFq.entries += deferred;
-        std::sort(mainFq.entries.begin(),
-                  mainFq.entries.end(),
-                  [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
-                      return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
-                  });
+        std::ranges::sort(mainFq.entries,
+
+                          [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
+                              return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
+                          });
     }
     return mainFq;
 }
@@ -12023,7 +12022,7 @@ std::optional<QVector<uint64_t>> buildSpillIpUsedSet(
         }
         relative.append(block - geo.ipBase);
     }
-    std::sort(relative.begin(), relative.end());
+    std::ranges::sort(relative);
     return relative;
 }
 
@@ -12066,9 +12065,9 @@ std::optional<QVector<QPair<uint64_t, uint64_t>>> finalLiveChunkSlots(
     QVector<QPair<uint64_t, uint64_t>> live = chunkSlots;
     for (uint64_t c : liveSpilled) {
         const bool rewritten =
-            std::any_of(chunkSlots.cbegin(),
-                        chunkSlots.cend(),
-                        [c](const QPair<uint64_t, uint64_t>& s) { return s.first == c; });
+            std::ranges::any_of(chunkSlots,
+
+                                [c](const QPair<uint64_t, uint64_t>& s) { return s.first == c; });
         if (!rewritten) {
             const auto addr = liveChunkBitmapAddr(ctx, c, blockers);
             if (!addr) {
@@ -12123,7 +12122,7 @@ bool planCibKCopyOnWrite(const ApfsFsCommitFinalize& f,
             touchedCibs.append(k);
         }
     }
-    std::sort(touchedCibs.begin(), touchedCibs.end());
+    std::ranges::sort(touchedCibs);
     for (uint64_t k : touchedCibs) {
         const uint64_t slot = lowestFreeIpBlock(geo, *excluded);
         if (slot == 0) {
@@ -12933,11 +12932,11 @@ void extendDivergeExtentRecords(const ApfsFsCommitContext& ctx,
     // The extent-ref B-tree is keyed by paddr and bulk-loaded in order, so keep the record set
     // paddr-sorted after appending. A no-op on the certified insert path (its fresh extent is the
     // highest paddr); needed once a diverge patch mixes in lower-paddr KIND_UPDATE deltas.
-    std::sort(diverge->liveExtentRefRecords.begin(),
-              diverge->liveExtentRefRecords.end(),
-              [](const ExtentRefPhysRecord& a, const ExtentRefPhysRecord& b) {
-                  return a.paddr < b.paddr;
-              });
+    std::ranges::sort(diverge->liveExtentRefRecords,
+
+                      [](const ExtentRefPhysRecord& a, const ExtentRefPhysRecord& b) {
+                          return a.paddr < b.paddr;
+                      });
 }
 
 struct ApfsInsertFsNodes {
@@ -13731,22 +13730,21 @@ QVector<ApfsBtreeKeyValue> buildAllSnapMetaRecords(const QVector<ApfsSnapshotMet
     for (const ApfsSnapshotMetadata& snap : snapshots) {
         records.append(buildSnapMetaRecords(snap));
     }
-    std::sort(
-        records.begin(), records.end(), [](const ApfsBtreeKeyValue& a, const ApfsBtreeKeyValue& b) {
-            // APFS keycmp order: object id, then type, then the name string. For a
-            // j_snap_name key the name follows the 8-byte header + 2-byte length, so
-            // key.mid(10) is exactly the NUL-terminated name and its byte compare equals
-            // strcmp (j_snap_metadata keys have no name and never tie on id).
-            const uint64_t ha = le64(a.key, 0);
-            const uint64_t hb = le64(b.key, 0);
-            if ((ha & kApfsJObjIdMask) != (hb & kApfsJObjIdMask)) {
-                return (ha & kApfsJObjIdMask) < (hb & kApfsJObjIdMask);
-            }
-            if ((ha >> kApfsObjTypeShift) != (hb >> kApfsObjTypeShift)) {
-                return (ha >> kApfsObjTypeShift) < (hb >> kApfsObjTypeShift);
-            }
-            return a.key.mid(kApfsSnapNameKeyNameOffset) < b.key.mid(kApfsSnapNameKeyNameOffset);
-        });
+    std::ranges::sort(records, [](const ApfsBtreeKeyValue& a, const ApfsBtreeKeyValue& b) {
+        // APFS keycmp order: object id, then type, then the name string. For a
+        // j_snap_name key the name follows the 8-byte header + 2-byte length, so
+        // key.mid(10) is exactly the NUL-terminated name and its byte compare equals
+        // strcmp (j_snap_metadata keys have no name and never tie on id).
+        const uint64_t ha = le64(a.key, 0);
+        const uint64_t hb = le64(b.key, 0);
+        if ((ha & kApfsJObjIdMask) != (hb & kApfsJObjIdMask)) {
+            return (ha & kApfsJObjIdMask) < (hb & kApfsJObjIdMask);
+        }
+        if ((ha >> kApfsObjTypeShift) != (hb >> kApfsObjTypeShift)) {
+            return (ha >> kApfsObjTypeShift) < (hb >> kApfsObjTypeShift);
+        }
+        return a.key.mid(kApfsSnapNameKeyNameOffset) < b.key.mid(kApfsSnapNameKeyNameOffset);
+    });
     return records;
 }
 
@@ -14658,7 +14656,7 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
     if (!ipUsedSetWithinSpan(bs, plan, out->ipUsedSet, blockers)) {
         return false;
     }
-    std::sort(out->ipUsedSet.begin(), out->ipUsedSet.end());
+    std::ranges::sort(out->ipUsedSet);
     return true;
 }
 
@@ -14895,7 +14893,7 @@ bool writeGrownMultiCibAllocator(ApfsFsCommitContext* ctx,
             return false;
         }
     }
-    std::sort(mc.ipUsedSet.begin(), mc.ipUsedSet.end());
+    std::ranges::sort(mc.ipUsedSet);
     out->liveCib = liveCib;
     out->cibCount = p.cibCount;
     out->cibArrayRepoints = mc.cibArrayRepoints;

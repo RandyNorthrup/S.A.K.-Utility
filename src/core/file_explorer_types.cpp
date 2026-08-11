@@ -151,15 +151,13 @@ int FileExplorerSelection::count() const {
 }
 
 bool FileExplorerSelection::containsDirectory() const {
-    return std::any_of(entries.cbegin(), entries.cend(), [](const FileManagementEntry& entry) {
-        return entry.directory;
-    });
+    return std::ranges::any_of(entries,
+                               [](const FileManagementEntry& entry) { return entry.directory; });
 }
 
 bool FileExplorerSelection::containsRegularFile() const {
-    return std::any_of(entries.cbegin(), entries.cend(), [](const FileManagementEntry& entry) {
-        return entry.regular_file;
-    });
+    return std::ranges::any_of(entries,
+                               [](const FileManagementEntry& entry) { return entry.regular_file; });
 }
 
 uint64_t FileExplorerSelection::totalRegularFileBytes() const {

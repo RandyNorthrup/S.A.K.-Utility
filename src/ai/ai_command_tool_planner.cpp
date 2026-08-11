@@ -72,7 +72,7 @@ bool previewNeedsQuoting(const QString& value) {
     if (value.isEmpty()) {
         return true;
     }
-    return std::any_of(value.cbegin(), value.cend(), [](QChar ch) {
+    return std::ranges::any_of(value, [](QChar ch) {
         return ch.isSpace() || isControlChar(ch) || ch == QLatin1Char('"');
     });
 }

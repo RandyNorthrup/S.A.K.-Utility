@@ -83,10 +83,9 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
         {.ext = "lzma", .format = "xz"},
     };
 
-    const auto* it =
-        std::find_if(std::begin(kExtensions), std::end(kExtensions), [&suffix](const auto& entry) {
-            return suffix == QLatin1String(entry.ext);
-        });
+    const auto* it = std::ranges::find_if(kExtensions, [&suffix](const auto& entry) {
+        return suffix == QLatin1String(entry.ext);
+    });
     if (it != std::end(kExtensions)) {
         return QLatin1String(it->format);
     }
@@ -98,10 +97,9 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
         {.ext = ".bz2", .format = "bzip2"},
         {.ext = ".xz", .format = "xz"},
     };
-    const auto* compound_it = std::find_if(
-        std::begin(kCompound), std::end(kCompound), [&completeSuffix](const auto& entry) {
-            return completeSuffix.endsWith(QLatin1String(entry.ext));
-        });
+    const auto* compound_it = std::ranges::find_if(kCompound, [&completeSuffix](const auto& entry) {
+        return completeSuffix.endsWith(QLatin1String(entry.ext));
+    });
     if (compound_it != std::end(kCompound)) {
         return QLatin1String(compound_it->format);
     }

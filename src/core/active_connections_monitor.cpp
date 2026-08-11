@@ -11,6 +11,8 @@
 
 #include <QtGlobal>
 
+#include <algorithm>
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
@@ -328,22 +330,18 @@ void ActiveConnectionsMonitor::applyFilters(QVector<ConnectionInfo>& connections
         return;
     }
 
-    connections.erase(std::remove_if(connections.begin(),
-                                     connections.end(),
-                                     [this](const ConnectionInfo& c) {
-                                         if (!m_config.filterProcessName.isEmpty() &&
-                                             !c.processName.contains(m_config.filterProcessName,
-                                                                     Qt::CaseInsensitive)) {
-                                             return true;
-                                         }
-                                         if (m_config.filterPort != 0 &&
-                                             c.localPort != m_config.filterPort &&
-                                             c.remotePort != m_config.filterPort) {
-                                             return true;
-                                         }
-                                         return false;
-                                     }),
-                      connections.end());
+    const auto stale = std::ranges::remove_if(connections, [this](const ConnectionInfo& c) {
+        if (!m_config.filterProcessName.isEmpty() &&
+            !c.processName.contains(m_config.filterProcessName, Qt::CaseInsensitive)) {
+            return true;
+        }
+        if (m_config.filterPort != 0 && c.localPort != m_config.filterPort &&
+            c.remotePort != m_config.filterPort) {
+            return true;
+        }
+        return false;
+    });
+    connections.erase(stale.begin(), stale.end());
 }
 
 void ActiveConnectionsMonitor::detectChanges(const QVector<ConnectionInfo>& current) {
