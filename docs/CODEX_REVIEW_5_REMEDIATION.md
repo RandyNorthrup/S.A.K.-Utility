@@ -3739,11 +3739,11 @@ So the suite itself must be audited for tests that pass regardless of the code.
   - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
       campaign, prove it by reverting the fix locally and observing the failure
 - [~] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
+  - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear. A full sweep for any remaining accidental env-dependence (e.g. test_active_connections_monitor asserting a live system has TCP connections) is the residual, tracked with the test-quality track.
       test_active_connections_monitor asserting a live system has TCP connections is the
       known instance
-- [~] R5-G18-6 Measure and publish SKIPPED counts. ctest reports a binary that skipped
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
+- [x] R5-G18-6 Measure and publish SKIPPED counts. ctest reports a binary that skipped
+  - RESOLVED 2026-08-12 [DONE]: scripts/check_test_skips.ps1 reads the per-test QtTest logs (every test writes build/test_results/<test>.txt) and publishes the skip summary (functions passed/skipped, distinct skipping functions, skipped share of executed), then holds every skip to the reviewed tests/skip_baseline.txt -- failing on an unreviewed skip, a stale baseline entry, or a registered test with no log. The baseline groups its 35 accepted skips by defensibility (destructive-hardware / host-privilege / live-network / missing-fixture) with a reason each. It is now WIRED into CI as the "Test-skip audit" step after the release ctest. The baseline was made deterministic (the elevation entry that had been fixed to assert both orderings was removed; the three live-UUP-API tests are now opt-in per G18-5) so the audit passes reproducibly: 35 skips, all reviewed, none stale.
       every one of its test functions as Passed, because QSKIP leaves the exit code
       at 0. There are 145 QSKIP sites, and many are environment-conditional
       (qgetenv, adapter present, drive mounted), so the skip set differs per machine
@@ -3765,8 +3765,8 @@ So the suite itself must be audited for tests that pass regardless of the code.
       full binary, because ordering and load changed the timing. Any flake hunt that
       only runs the single failing function will conclude, wrongly, that nothing is
       broken
-- [~] R5-G18-9 QSignalSpy::wait() misuse, MEASURED: 62 <spy>.wait() call sites across
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
+- [x] R5-G18-9 QSignalSpy::wait() misuse, MEASURED: 62 <spy>.wait() call sites across
+  - RESOLVED 2026-08-12 [DONE, verified]: a whole-suite sweep for the misuse (a bare <spy>.wait() / QVERIFY(<spy>.wait()) that latches origCount and blocks for a second emission) finds ZERO remaining -- every prior site was converted to the count-polling QTRY_COMPARE / QTRY_VERIFY_WITH_TIMEOUT form, each with an in-place comment explaining why (grep of tests for spy.wait now returns only those comments plus one deliberately-negative QVERIFY(!spy.wait(1000)) that asserts a signal does NOT arrive). The pattern is fixed, not deferred.
       12 test files, 52 in the risky QVERIFY(<spy>.wait(...)) form. QSignalSpy
       connects with Qt::DirectConnection and wait() returns 'size() > origCount', so
       any signal emitted by another thread BEFORE the main thread reaches wait() is

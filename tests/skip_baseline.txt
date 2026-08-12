@@ -40,7 +40,6 @@ test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::li
 # ---------------------------------------------------------------------------
 test_elevation_hardening::TestElevationHardening::gate_alreadyElevatedSkipsDialog = Asserts the already-elevated bypass path, which only exists when the process is already running elevated. The suite deliberately runs unelevated.
 test_elevation_ux::TestElevationUx::testCreateElevationBannerReturnsNullWhenAdmin = The banner is suppressed only for an admin process; unelevated is the correct default for a test run.
-test_mixed_tier_operations::TestMixedTierOperations::testTryTakeOwnershipInvalidSid = The code path under test sits behind an isAdmin() check, so an unelevated run cannot reach it.
 test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::symlinkFileEntriesSkippedAcrossWalkOps = Creating an NTFS file symlink needs SeCreateSymbolicLinkPrivilege or Developer Mode; neither is guaranteed on a build agent.
 test_file_scanner::FileScannerTests::symlink_notFollowedWhenDisabled = Same privilege requirement for a directory symlink.
 test_file_scanner::FileScannerTests::canDescendInto_refusesWhenCanonicalUnresolved = Needs a directory whose canonical path cannot be resolved. This host resolves canonical() even on an exclusively opened directory, so the precondition cannot be staged here.
@@ -91,3 +90,6 @@ test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_spillsIntoCib
 test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree = Slow full-tree omap read/free walk; SAK_OMAP_DRIFT=1 opts in so the default suite stays under its time budget.
 test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_probeForeignMultiBlockIp = Needs a container produced by a real mkapfs with a multi-block internal-pool bitmap; SAK_IPBM_ORACLE.
 test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_probeForeignSparsePreserve = Probe-emit only: needs a real-Apple sparse oracle via SAK_SPARSE_ORACLE plus SAK_CERT_OUT.
+test_windows_iso_downloader::WindowsISODownloaderTests::testFetchBuilds = Live UUP dump API network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set, so the automated suite never depends on live network (G18-5).
+test_windows_iso_downloader::WindowsISODownloaderTests::testGetFilesReturnsResults = Live UUP dump API network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set (G18-5).
+test_windows_iso_downloader::WindowsISODownloaderTests::testFileUrlsAreValid = Live UUP dump API network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set (G18-5).

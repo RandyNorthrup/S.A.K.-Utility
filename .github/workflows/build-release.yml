@@ -472,6 +472,16 @@ jobs:
       run: |
         ctest --test-dir build -C $env:BUILD_TYPE --output-on-failure
 
+    # G18-6: ctest reports a binary as Passed even when every one of its functions called QSKIP,
+    # so a subsystem can quietly stop being exercised while the suite still reads green. This gate
+    # reads the per-test QtTest logs ctest just wrote and holds every skip to the reviewed
+    # tests/skip_baseline.txt -- failing on an unreviewed skip, a stale baseline entry, or a
+    # registered test that produced no log at all.
+    - name: Test-skip audit (skips held to the reviewed baseline)
+      shell: pwsh
+      run: |
+        & scripts/check_test_skips.ps1
+
     - name: Package Application
       shell: pwsh
       run: |
