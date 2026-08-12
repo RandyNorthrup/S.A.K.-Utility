@@ -58,6 +58,8 @@ constexpr double kMemoryScoreScale = 1000.0;
 constexpr int kCommittedFillByte = 0xAA;
 constexpr int kZeroFillByte = 0x00;
 constexpr size_t kBandwidthUnrollFactor = 8;
+/// A copy moves each byte twice (one read + one write), so effective traffic is 2x buffer size.
+constexpr double kCopyTrafficFactor = 2.0;
 constexpr uint64_t kWriteBandwidthPattern = 0xDE'AD'BE'EF'CA'FE'BA'BEULL;
 constexpr uint64_t kLatencyShuffleSeed = 0xC0'FF'EE;
 constexpr size_t kLatencyWarmupChases = 1000;
@@ -298,7 +300,8 @@ double MemoryBenchmarkWorker::runCopyBandwidth() {
         const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
                                    kNanosecondsPerSecond;
         // Copy touches both read and write = 2x buffer size
-        const double gbps = static_cast<double>(src.size()) / sak::kBytesPerGBf / elapsed_sec;
+        const double gbps = kCopyTrafficFactor * static_cast<double>(src.size()) /
+                            sak::kBytesPerGBf / elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
     }
 

@@ -696,7 +696,11 @@ void DiagnosticController::advanceSuiteStep(SuiteState completedStep) {
 void DiagnosticController::finalizeSuiteAndComplete() {
     m_suite_state = SuiteState::ReportGeneration;
     Q_EMIT suiteStateChanged(m_suite_state);
-    Q_EMIT suiteProgress(kSuiteReportGenerationProgress, "Generating report...");
+    // This phase only aggregates the collected results; it writes no report file.
+    // Report files are produced separately by generateReport() once the user supplies
+    // an output directory and formats. Announce what actually happens here so progress
+    // text does not promise a report that this step never writes.
+    Q_EMIT suiteProgress(kSuiteReportGenerationProgress, "Aggregating results...");
     aggregateResults();
     m_suite_state = SuiteState::Complete;
     Q_EMIT suiteStateChanged(m_suite_state);

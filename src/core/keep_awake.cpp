@@ -16,12 +16,66 @@
 namespace sak {
 
 namespace {
-// Per-thread count of active KeepAwake requests installed on THIS thread.
-// SetThreadExecutionState is thread-affine: a continuous request set on one thread is
-// cleared only by that same thread (or when the thread exits). So every starting thread
-// installs and clears its OWN request; KeepAwake::s_active_count tracks the process-wide
-// total that drives isActive().
-thread_local int t_thread_active_count = 0;
+// Process-global power request created on demand (PowerCreateRequest). Guarded by
+// KeepAwake::s_mutex. Unlike SetThreadExecutionState -- which is thread-affine and is dropped
+// when the installing thread exits -- a power request is owned by the PROCESS, so one worker
+// thread can install it and any other thread can release it. That is what lets the refcount
+// and flag union below be process-global and correct across overlapping worker threads.
+HANDLE s_power_request = nullptr;
+
+// Reason string surfaced by `powercfg /requests` while a request is held.
+constexpr wchar_t kPowerRequestReason[] = L"SAK Utility operation in progress";
+
+// Create the process power request if one is not already held. Fail closed: return false
+// (leaving s_power_request null) when the OS refuses so start() reports the real error.
+bool ensurePowerRequest() {
+    if (s_power_request != nullptr) {
+        return true;
+    }
+    REASON_CONTEXT context{};
+    context.Version = POWER_REQUEST_CONTEXT_VERSION;
+    context.Flags = POWER_REQUEST_CONTEXT_SIMPLE_STRING;
+    // SimpleReasonString is non-const in the SDK struct but the API never mutates it.
+    context.Reason.SimpleReasonString = const_cast<wchar_t*>(kPowerRequestReason);
+    HANDLE const handle = PowerCreateRequest(&context);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    s_power_request = handle;
+    return true;
+}
+
+// Install every request type newly present in @p new_flags but not @p old_flags. Fail closed
+// on the first PowerSetRequest failure; releasePowerRequest clears whatever was set, so a
+// partial application never leaks a stuck request.
+bool addPowerRequestTypes(int old_flags, int new_flags) {
+    const int added = new_flags & ~old_flags;
+    if ((added & static_cast<int>(KeepAwake::PowerRequest::System)) != 0 &&
+        PowerSetRequest(s_power_request, PowerRequestSystemRequired) == 0) {
+        return false;
+    }
+    if ((added & static_cast<int>(KeepAwake::PowerRequest::Display)) != 0 &&
+        PowerSetRequest(s_power_request, PowerRequestDisplayRequired) == 0) {
+        return false;
+    }
+    return true;
+}
+
+// Clear the installed request types and destroy the process power request. Requests are
+// cleared explicitly before the handle is closed (MSDN: release every request first).
+void releasePowerRequest(int flags) {
+    if (s_power_request == nullptr) {
+        return;
+    }
+    if ((flags & static_cast<int>(KeepAwake::PowerRequest::System)) != 0) {
+        PowerClearRequest(s_power_request, PowerRequestSystemRequired);
+    }
+    if ((flags & static_cast<int>(KeepAwake::PowerRequest::Display)) != 0) {
+        PowerClearRequest(s_power_request, PowerRequestDisplayRequired);
+    }
+    CloseHandle(s_power_request);
+    s_power_request = nullptr;
+}
 }  // namespace
 
 unsigned KeepAwake::executionStateForFlags(int power_flags) noexcept {
@@ -39,23 +93,28 @@ auto KeepAwake::start(PowerRequest request, const char* reason)
     -> std::expected<void, sak::error_code> {
     const std::lock_guard<std::mutex> lock(s_mutex);
 
-    // Install (re-apply) this thread's continuous request on EVERY start. The old code
-    // installed only on the first thread's start and let every later (cross-thread) start
-    // ride on it -- so if that first thread exited while a second guard was still active,
-    // the OS dropped the request and the system could sleep while s_active_count still read
-    // active. Installing on each starting thread keeps protection tied to a live thread. The
-    // accumulated flag union drives the state so a later Display request is still honored.
-    const int new_flags = s_active_flags | static_cast<int>(request);
-    const auto state = static_cast<EXECUTION_STATE>(executionStateForFlags(new_flags));
-    if (SetThreadExecutionState(state) == 0) {
+    // A process power request is process-global, so it stays in force regardless of which
+    // worker thread later calls stop() -- unlike the old per-thread SetThreadExecutionState,
+    // which a second overlapping guard on another thread could silently defeat or leak.
+    if (!ensurePowerRequest()) {
         DWORD const error = GetLastError();
-        sak::logError("Failed to set thread execution state: error {}", error);
-        // Fail closed: do not count a request whose state was not installed.
+        sak::logError("Failed to create power request: error {}", error);
+        return std::unexpected(sak::error_code::platform_not_supported);
+    }
+
+    const int new_flags = s_active_flags | static_cast<int>(request);
+    if (!addPowerRequestTypes(s_active_flags, new_flags)) {
+        DWORD const error = GetLastError();
+        sak::logError("Failed to set power request: error {}", error);
+        // Fail closed: nothing is counted. If this start created the request, drop it so a
+        // partially-applied request cannot linger.
+        if (s_active_count == 0) {
+            releasePowerRequest(new_flags);
+        }
         return std::unexpected(sak::error_code::platform_not_supported);
     }
 
     s_active_flags = new_flags;
-    ++t_thread_active_count;
     ++s_active_count;
     sak::logInfo("KeepAwake started: {}", reason);
 
@@ -65,36 +124,22 @@ auto KeepAwake::start(PowerRequest request, const char* reason)
 auto KeepAwake::stop() -> std::expected<void, sak::error_code> {
     const std::lock_guard<std::mutex> lock(s_mutex);
 
-    // A stop() from a thread that installed nothing is a no-op: it must never clear
-    // another thread's request or underflow the count. This also fail-closes a stray or
-    // stale stop() -- it can only ever release a request THIS thread actually holds.
-    if (t_thread_active_count == 0) {
-        return {};
-    }
-
-    // Not this thread's final release: keep its request installed on this thread.
-    if (t_thread_active_count > 1) {
-        --t_thread_active_count;
-        --s_active_count;
-        return {};
-    }
-
-    // Final release on THIS thread: clear the continuous request this thread installed.
-    if (SetThreadExecutionState(ES_CONTINUOUS) == 0) {
-        DWORD const error = GetLastError();
-        sak::logError("Failed to clear thread execution state: error {}", error);
-        // Fail closed: keep the reference (and union) so callers stay awake.
-        return std::unexpected(sak::error_code::platform_not_supported);
-    }
-
-    t_thread_active_count = 0;
-    --s_active_count;
-    // Once the last thread across the process releases, drop the flag union so a fresh
-    // cycle starts from the newly requested flags only.
+    // A stop() with nothing outstanding is a no-op: never underflow the count or release a
+    // request the process does not hold. This fail-closes a stray or doubled stop().
     if (s_active_count <= 0) {
-        s_active_count = 0;
-        s_active_flags = 0;
+        return {};
     }
+
+    --s_active_count;
+    if (s_active_count > 0) {
+        // Other guards remain active -- keep the process request installed.
+        return {};
+    }
+
+    // Final release across the whole process: clear every installed request type and drop the
+    // handle so a fresh cycle starts from the newly requested flags only.
+    releasePowerRequest(s_active_flags);
+    s_active_flags = 0;
     sak::logInfo("KeepAwake stopped");
 
     return {};

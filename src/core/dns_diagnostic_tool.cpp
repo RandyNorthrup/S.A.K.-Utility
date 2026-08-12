@@ -119,12 +119,35 @@ WORD mapRecordType(const QString& recordType) {
         {.name = "SRV", .type = DNS_TYPE_SRV},
         {.name = "PTR", .type = DNS_TYPE_PTR},
     };
+    // isSupportedRecordType() accepts a type case-insensitively, so normalize here before the
+    // (case-sensitive) name compare -- otherwise "aaaa"/"mx" would fall through and silently query
+    // an A record instead of the type the caller asked for.
+    const QString normalized = recordType.toUpper();
     for (const auto& entry : kTypes) {
-        if (recordType == QLatin1String(entry.name)) {
+        if (normalized == QLatin1String(entry.name)) {
             return entry.type;
         }
     }
     return DNS_TYPE_A;
+}
+
+// First successful answer -- including an empty answer set -- establishes the agreement baseline,
+// so the count of successes (not firstAnswers being empty) is what tells the comparison whether a
+// baseline already exists.
+int countSuccessfulResults(const QVector<sak::DnsQueryResult>& results) {
+    return static_cast<int>(
+        std::ranges::count_if(results, [](const sak::DnsQueryResult& r) { return r.success; }));
+}
+
+// Fail-closed failure text for 'ipconfig /displaydns', appending the child's stderr when present so
+// the real OS error reaches the user instead of an empty cache being reported.
+QString displayDnsFailureMessage(const sak::ProcessResult& result) {
+    const QString detail = result.std_err.trimmed();
+    QString message = QStringLiteral("Failed to read the DNS resolver cache.");
+    if (!detail.isEmpty()) {
+        message += QLatin1Char(' ') + detail;
+    }
+    return message;
 }
 
 void appendTxtRecords(DNS_RECORD* rec, sak::DnsQueryResult& result) {
@@ -317,9 +340,17 @@ void DnsDiagnosticTool::updateComparisonWithResult(const DnsQueryResult& result,
         comparison.fastestServer = result.dnsServer;
     }
 
-    if (firstAnswers.isEmpty() && result.success) {
+    if (!result.success) {
+        return;
+    }
+
+    // The first success (already appended above, so count == 1) sets the baseline even when its
+    // answer set is empty; every later success is compared against it. Keying off the success
+    // count -- not firstAnswers.isEmpty() -- stops an empty-answer baseline from being skipped and
+    // a later differing answer from being mistaken for the baseline.
+    if (countSuccessfulResults(comparison.results) == 1) {
         firstAnswers = result.answers;
-    } else if (result.success && !answersEquivalent(result.answers, firstAnswers)) {
+    } else if (!answersEquivalent(result.answers, firstAnswers)) {
         comparison.allAgree = false;
     }
 }
@@ -361,11 +392,13 @@ void DnsDiagnosticTool::compareServers(const QString& hostname,
         comparison.fastestTimeMs = 0.0;
     }
 
-    // Fail closed: allAgree is a positive assurance. If no server produced a
-    // successful answer (empty server list or every query failed) there is no
-    // baseline to agree on, and a run cancelled part-way never compared them all,
-    // so report no agreement rather than a misleading true (R5).
-    if (firstAnswers.isEmpty() || m_cancelled.load()) {
+    // Fail closed: allAgree is a positive assurance that at least two servers returned the same
+    // answer. With fewer than two successful queries there is nothing to compare (a lone server
+    // cannot agree with itself, and an all-failed/empty-list run has no baseline at all), and a
+    // run cancelled part-way never compared them all -- so report no agreement rather than a
+    // misleading true (R5).
+    constexpr int kMinComparableAnswers = 2;
+    if (countSuccessfulResults(comparison.results) < kMinComparableAnswers || m_cancelled.load()) {
         comparison.allAgree = false;
     }
 
@@ -377,10 +410,10 @@ void DnsDiagnosticTool::inspectDnsCache() {
 
     // System32-qualified ipconfig, never the bare name: CreateProcess searches the current
     // directory ahead of System32, so a planted ipconfig could feed this tool a fabricated
-    // DNS cache. Unresolvable -> report no results (fail closed), never a PATH/CWD launch.
+    // DNS cache. Unresolvable -> surface the error (fail closed), never a PATH/CWD launch.
     const QString ipconfig_exe = sak::system32Path(QStringLiteral("ipconfig.exe"));
     if (ipconfig_exe.isEmpty()) {
-        Q_EMIT dnsCacheResults({});
+        Q_EMIT errorOccurred(QStringLiteral("Could not locate the System32 ipconfig.exe."));
         return;
     }
 
@@ -388,8 +421,10 @@ void DnsDiagnosticTool::inspectDnsCache() {
                                         {QStringLiteral("/displaydns")},
                                         kDisplayDnsTimeoutMs,
                                         [this]() { return m_cancelled.load(); });
+    // Fail closed: a failed 'ipconfig /displaydns' must surface as an error, not an empty cache --
+    // emitting no results here would be indistinguishable from a genuinely empty resolver cache.
     if (!result.succeeded()) {
-        Q_EMIT dnsCacheResults({});
+        Q_EMIT errorOccurred(displayDnsFailureMessage(result));
         return;
     }
 

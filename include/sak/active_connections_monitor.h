@@ -12,7 +12,6 @@
 #include <QObject>
 #include <QTimer>
 
-#include <atomic>
 #include <cstdint>
 #include <type_traits>
 
@@ -74,7 +73,6 @@ private:
     QTimer* m_refreshTimer = nullptr;  ///< Owned; QObject parent = this
     QVector<ConnectionInfo> m_lastConnections;
     MonitorConfig m_config;
-    std::atomic<bool> m_monitoring{false};
     bool m_lastRefreshError = false;
     bool m_hasBaseline = false;  ///< True once a first successful refresh established a baseline
 

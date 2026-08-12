@@ -347,20 +347,7 @@ bool MigrationReport::importFromJson(const QString& file_path) {
     }
 
     // Parse metadata + entries into LOCALS; commit only after both succeed.
-    ReportMetadata meta = m_metadata;  // keep current values for any field the import omits
-    if (root.contains("metadata")) {
-        QJsonObject metadata = root["metadata"].toObject();
-        meta.source_machine = metadata["source_machine"].toString();
-        meta.source_os = metadata["source_os"].toString();
-        meta.source_os_version = metadata["source_os_version"].toString();
-        meta.created_by = metadata["created_by"].toString();
-        meta.created_at = QDateTime::fromString(metadata["created_at"].toString(), Qt::ISODate);
-        meta.total_apps = metadata["total_apps"].toInt();
-        meta.matched_apps = metadata["matched_apps"].toInt();
-        meta.selected_apps = metadata["selected_apps"].toInt();
-        meta.match_rate = metadata["match_rate"].toDouble();
-        meta.report_version = metadata["report_version"].toString();
-    }
+    const ReportMetadata meta = parseMetadataFromJson(root, m_metadata);
 
     std::vector<MigrationEntry> parsed;
     const QJsonArray entries = root["entries"].toArray();
@@ -379,7 +366,33 @@ bool MigrationReport::importFromJson(const QString& file_path) {
     m_metadata = meta;
     m_entries = std::move(parsed);
 
+    // Derive the counts from the parsed entries rather than trusting the file's totals
+    // (P10-49): a report whose header claims different totals cannot misreport statistics.
+    m_metadata.total_apps = static_cast<int>(m_entries.size());
+    m_metadata.matched_apps = getMatchedCount();
+    m_metadata.selected_apps = getSelectedCount();
+    m_metadata.match_rate = getMatchRate();
+
     return true;
+}
+
+MigrationReport::ReportMetadata MigrationReport::parseMetadataFromJson(
+    const QJsonObject& root, const ReportMetadata& current) {
+    // Start from the current values so any field the import omits is preserved.
+    ReportMetadata meta = current;
+    if (root.contains("metadata")) {
+        QJsonObject metadata = root["metadata"].toObject();
+        meta.source_machine = metadata["source_machine"].toString();
+        meta.source_os = metadata["source_os"].toString();
+        meta.source_os_version = metadata["source_os_version"].toString();
+        meta.created_by = metadata["created_by"].toString();
+        meta.created_at = QDateTime::fromString(metadata["created_at"].toString(), Qt::ISODate);
+        // total_apps/matched_apps/selected_apps/match_rate are deliberately NOT read from the
+        // file: they are recomputed from the entries actually parsed (see the commit block) so a
+        // tampered or stale header cannot desync the displayed statistics from the real data.
+        meta.report_version = metadata["report_version"].toString();
+    }
+    return meta;
 }
 
 MigrationReport::MigrationEntry MigrationReport::parseEntryFromJson(const QJsonObject& obj) {

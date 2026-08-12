@@ -21,6 +21,7 @@
 #include <QTimer>
 #include <QUuid>
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <thread>
@@ -43,6 +44,16 @@ constexpr qint64 kSpeedTestControlResponseCap = 64 * 1024;  // 64 KB
 // far under a megabyte. Cap the bytes before parsing so a corrupt or hostile stream
 // cannot drive an unbounded JSON allocation; oversized output fails closed (unparseable).
 constexpr qint64 kMaxIperfJsonBytes = 16 * 1024 * 1024;  // 16 MiB
+
+// iPerf3 client parameters arrive from the GUI/AI layer; clamp them to sane bands before they
+// reach the argv so a negative, zero, or absurd value cannot produce a nonsensical invocation.
+// Actual runtime is still separately bounded by kProcessTimeout.
+constexpr int kMinIperfDurationSec = 1;
+constexpr int kMaxIperfDurationSec = 3600;    // 1 hour ceiling; well past any real bandwidth run
+constexpr int kMinIperfStreams = 1;
+constexpr int kMaxIperfStreams = 128;         // iperf3's own parallel-stream maximum
+constexpr int kMinUdpBandwidthMbps = 1;
+constexpr int kMaxUdpBandwidthMbps = 10'000;  // 10 Gbps
 
 const auto kIperf3Exe = QStringLiteral("iperf3.exe");
 
@@ -235,7 +246,10 @@ bool BandwidthTester::isIperf3Available() const {
 }
 
 bool BandwidthTester::isServerRunning() const {
-    return m_serverProcess != nullptr && m_serverProcess->state() == QProcess::Running;
+    // Treat the brief Starting window (before started() fires) as running too, not just
+    // Running: a caller that gates re-entry or teardown on this must see a server that is
+    // coming up as live, or it could orphan it and leak its inbound firewall rule.
+    return m_serverProcess != nullptr && m_serverProcess->state() != QProcess::NotRunning;
 }
 
 QString BandwidthTester::findIperf3Path() const {
@@ -263,10 +277,11 @@ void BandwidthTester::startIperfServer(uint16_t port) {
 
     if (m_serverProcess != nullptr) {
         // Reject re-entry while a server object exists in ANY state -- Running OR the brief
-        // Starting window before started() fires. isServerRunning() is Running-only, so a
-        // second start during Starting would overwrite m_serverProcess and
-        // m_firewallRuleName, orphaning the first server and leaking its inbound rule.
-        // Both teardown handlers null m_serverProcess, so a genuine restart still proceeds.
+        // Starting window before started() fires. Guarding on the pointer (not just the
+        // Running state) means a second start during Starting cannot overwrite
+        // m_serverProcess and m_firewallRuleName, orphaning the first server and leaking its
+        // inbound rule. Both teardown handlers null m_serverProcess, so a genuine restart
+        // still proceeds.
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 server is already running"));
         return;
     }
@@ -370,6 +385,20 @@ void BandwidthTester::stopIperfServer() {
     m_serverProcess = nullptr;
 }
 
+// Return a copy of @p config with duration/streams/UDP-bandwidth clamped to sane bands. The
+// caller-supplied values reach both the iperf3 argv and the reported result metadata, so a
+// negative, zero, or absurd value must be corrected here rather than passed through.
+static BandwidthTester::IperfConfig clampIperfConfig(const BandwidthTester::IperfConfig& config) {
+    BandwidthTester::IperfConfig clamped = config;
+    clamped.durationSec =
+        std::clamp(config.durationSec, kMinIperfDurationSec, kMaxIperfDurationSec);
+    clamped.parallelStreams =
+        std::clamp(config.parallelStreams, kMinIperfStreams, kMaxIperfStreams);
+    clamped.udpBandwidthMbps =
+        std::clamp(config.udpBandwidthMbps, kMinUdpBandwidthMbps, kMaxUdpBandwidthMbps);
+    return clamped;
+}
+
 static QStringList buildIperfClientArgs(const BandwidthTester::IperfConfig& config) {
     QStringList args = {
         QStringLiteral("-c"),
@@ -393,8 +422,9 @@ static QStringList buildIperfClientArgs(const BandwidthTester::IperfConfig& conf
     return args;
 }
 
-void BandwidthTester::runIperfTest(const IperfConfig& config) {
+void BandwidthTester::runIperfTest(const IperfConfig& requested) {
     m_cancelled.store(false);
+    const IperfConfig config = clampIperfConfig(requested);
 
     if (!isIperf3Available()) {
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 not found. Place iperf3.exe in tools/iperf3/"));
@@ -518,6 +548,11 @@ std::optional<BandwidthTestResult> BandwidthTester::parseIperfJson(const QByteAr
     // Parse UDP specific fields
     if (end.contains(QStringLiteral("sum"))) {
         const auto udpSum = end.value(QStringLiteral("sum")).toObject();
+        // A UDP test carries throughput only in end.sum (TCP uses sum_sent/sum_received,
+        // read above), so pull it here or the run would report a bogus 0 Mbps success.
+        const double udpBitsPerSecond = udpSum.value(QStringLiteral("bits_per_second")).toDouble();
+        result.uploadMbps = udpBitsPerSecond / kMegabit;
+        result.downloadMbps = udpBitsPerSecond / kMegabit;
         result.jitterMs = udpSum.value(QStringLiteral("jitter_ms")).toDouble();
         result.packetLossPercent = udpSum.value(QStringLiteral("lost_percent")).toDouble();
     }

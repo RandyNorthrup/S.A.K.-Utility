@@ -112,7 +112,11 @@ CpuBenchmarkWorker::CpuBenchmarkWorker(QObject* parent) : WorkerBase(parent) {}
 auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     logInfo("Starting CPU benchmark suite");
     m_result = CpuBenchmarkResult{};
-    m_result.thread_count = std::thread::hardware_concurrency();
+    // Clamp once to >=1 (hardware_concurrency() returns 0 when "not computable") and reuse
+    // this single value for the reported thread_count, the multi-thread pass, and scoring --
+    // otherwise a 0 leaks into calculateScores and forces multi_thread_score to 0 even though
+    // the multi-thread pass actually ran.
+    m_result.thread_count = std::max(1U, std::thread::hardware_concurrency());
 
     if (auto single_thread_result = runSingleThreadBenchmarks(); !single_thread_result) {
         return single_thread_result;
@@ -191,11 +195,11 @@ std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark
         return std::unexpected(sak::error_code::operation_cancelled);
     }
 
-    // std::thread::hardware_concurrency() may return 0 ("not computable"). Clamp to >=1 so the
-    // multi-thread pass runs one thread instead of tripping runMultiThreaded's Q_ASSERT_X(>0),
-    // which would abort a Debug build (0xC0000409) -- now reachable when this worker is driven
-    // headless (diagnostics.run_benchmark) off the GUI thread.
-    const int hw_threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+    // m_result.thread_count was already clamped to >=1 in execute() (hardware_concurrency()
+    // may return 0 = "not computable"). Reuse that single value so the pass runs one thread
+    // instead of tripping runMultiThreaded's Q_ASSERT_X(>0), which would abort a Debug build
+    // (0xC0000409) -- reachable when this worker is driven headless off the GUI thread.
+    const int hw_threads = static_cast<int>(m_result.thread_count);
     const double mt_total = runMultiThreaded(hw_threads);
 
     // Scaling efficiency compares the SAME per-thread workload run once single-threaded
@@ -387,8 +391,9 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
     QElapsedTimer timer;
     timer.start();
 
-    // AES-like S-Box substitution with key mixing -- representative of
-    // real encryption workload without requiring a full AES implementation.
+    // S-box substitution + key XOR proxy (NOT a real AES cipher): a byte-permutation
+    // workload representative of encryption-style CPU load without a full AES implementation.
+    // The figure below is a substitution-proxy throughput, not AES-128 cipher throughput.
     // Processes data in 16-byte blocks, applying SubBytes + AddRoundKey x 10 rounds.
     for (size_t block = 0; block + kAesBlockBytes <= data_size; block += kAesBlockBytes) {
         for (int round = 0; round < kAesRounds; ++round) {
@@ -408,7 +413,7 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
     m_aes_throughput_mbps = static_cast<double>(data_size) / sak::kBytesPerMBf /
                             (elapsed_ms / kBenchmarkMillisecondsPerSecond);
 
-    logInfo("AES: {} MB encrypted in {:.1f} ms ({:.1f} MB/s)",
+    logInfo("S-box substitution proxy: {} MB in {:.1f} ms ({:.1f} MB/s, NOT real AES)",
             data_size_mb,
             elapsed_ms,
             m_aes_throughput_mbps);
@@ -416,8 +421,8 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
 }
 
 double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
-    // Invariant: runMultiThreadBenchmark is this private helper's only caller and clamps with
-    // std::max(1, hardware_concurrency()) before calling.
+    // Invariant: runMultiThreadBenchmark is this private helper's only caller and passes
+    // m_result.thread_count, which execute() clamped to std::max(1U, hardware_concurrency()).
     Q_ASSERT_X(thread_count > 0, "runMultiThreaded", "thread_count must be positive");
     // The per-thread workload is a REDUCED prime sieve + matrix multiply (smaller than the
     // single-thread suite), chosen to keep the parallel pass short. To make the scaling
@@ -479,8 +484,9 @@ void CpuBenchmarkWorker::calculateScores() {
 
     m_result.single_thread_score = static_cast<int>(geometric_mean * kBaselineScore);
 
-    // Multi-thread score: single_thread x thread_count x efficiency
-    const int hw_threads = static_cast<int>(std::thread::hardware_concurrency());
+    // Multi-thread score: single_thread x thread_count x efficiency. Reuse the clamped
+    // thread_count computed in execute() so an unknown (0) core count cannot zero the score.
+    const int hw_threads = static_cast<int>(m_result.thread_count);
     m_result.multi_thread_score = static_cast<int>(m_result.single_thread_score *
                                                    static_cast<double>(hw_threads) *
                                                    m_result.thread_scaling_efficiency);

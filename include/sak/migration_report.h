@@ -118,7 +118,11 @@ public:
         return m_entries[static_cast<size_t>(index)];
     }
     MigrationEntry& getEntry(int index) {
-        static MigrationEntry s_scratch_entry;
+        // Callers (e.g. app_installation_worker) mutate the returned reference, so a valid index
+        // must yield the live entry. An out-of-range index instead returns a thread_local scratch:
+        // it keeps the bounds-safety guard (a stray OOB write is discarded, not UB) while removing
+        // the cross-thread data race a single shared static would create (P10-55).
+        static thread_local MigrationEntry s_scratch_entry;
         if (index < 0 || index >= static_cast<int>(m_entries.size())) {
             s_scratch_entry = MigrationEntry{};  // reset so a prior stray write never leaks back
             return s_scratch_entry;
@@ -145,15 +149,14 @@ public:
 
 private:
     // Helper methods
-    QString getSystemInfo() const;
-    QString getOSVersion() const;
     QString getComputerName() const;
     QString getCurrentUser() const;
 
-    QString escapeJsonString(const QString& str) const;
     static QString escapeCsvField(const QString& field);
     QString formatHtmlReport() const;
     static MigrationEntry parseEntryFromJson(const QJsonObject& obj);
+    static ReportMetadata parseMetadataFromJson(const QJsonObject& root,
+                                                const ReportMetadata& current);
     static void populateMatchFields(MigrationEntry& entry,
                                     const QMap<QString, PackageMatcher::MatchResult>& match_map,
                                     const QString& app_name);

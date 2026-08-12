@@ -25,6 +25,8 @@ constexpr int kSecondsPerHour = 3600;
 constexpr int kSha256PreviewChars = 16;
 constexpr qsizetype kReportHtmlReserveChars = 8192;
 constexpr int kGigabyteDisplayPrecision = 2;
+constexpr char16_t kEmDashCodePoint = 0x2014;    // Unicode em dash (U+2014)
+constexpr char16_t kEllipsisCodePoint = 0x2026;  // Unicode horizontal ellipsis (U+2026)
 }  // namespace
 
 // ======================================================================
@@ -200,8 +202,9 @@ QString ConversionReportGenerator::generateCsvManifest(
     {
         QTextStream out(&file);
 
-        // Header row
-        out << "NodeId,Subject,SenderName,SenderEmail,Date,MessageClass";
+        // Header row. The final fixed column carries item.message_id (see writeCsvDataRows),
+        // so name it MessageId to match the value written (P10-47).
+        out << "NodeId,Subject,SenderName,SenderEmail,Date,MessageId";
 
         const QList<QString> sorted_names = collectManifestPropertyColumns(all_properties);
         for (const auto& name : sorted_names) {
@@ -260,6 +263,20 @@ QString ConversionReportGenerator::buildSummaryStatsHtml(const OstConversionBatc
 }
 
 namespace {
+// Render a SHA-256 digest as a short, HTML-safe preview. The digest is app-computed hex; a value
+// that is empty or not pure hex is treated as absent (em-dash) rather than emitted -- this both
+// validates it as hex and keeps it consistent with the other escaped columns (P10-48).
+QString sha256PreviewHtml(const QString& sha256) {
+    const auto is_hex = [](QChar c) {
+        const char16_t u = c.unicode();
+        return (u >= u'0' && u <= u'9') || (u >= u'a' && u <= u'f') || (u >= u'A' && u <= u'F');
+    };
+    if (sha256.isEmpty() || !std::ranges::all_of(sha256, is_hex)) {
+        return QString(QChar(kEmDashCodePoint));
+    }
+    return sha256.left(kSha256PreviewChars) + QString(QChar(kEllipsisCodePoint));
+}
+
 // The CSS status class for one file-result row.
 QString fileResultRowStatusClass(const OstConversionResult& result) {
     if (result.items_failed > 0 && result.items_converted == 0) {
@@ -316,10 +333,7 @@ QString ConversionReportGenerator::buildFileResultsTableHtml(
                     .arg(result.items_recovered)
                     .arg(formatBytes(result.bytes_written))
                     .arg(formatDuration(file_dur))
-                    .arg(result.source_sha256.isEmpty()
-                             ? QStringLiteral("\u2014")
-                             : result.source_sha256.left(kSha256PreviewChars) +
-                                   QStringLiteral("\u2026"));
+                    .arg(sha256PreviewHtml(result.source_sha256));
     }
 
     html += QStringLiteral("</table>");

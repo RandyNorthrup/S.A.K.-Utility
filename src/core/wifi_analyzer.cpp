@@ -203,7 +203,38 @@ struct IeSecurityScan {
     return scan;
 }
 
-[[nodiscard]] WiFiNetworkInfo networkFromBssEntry(const WLAN_BSS_ENTRY& bss) {
+struct IeSpan {
+    const unsigned char* data = nullptr;
+    int len = 0;
+};
+
+// Validate the driver-reported IE blob location before parsing it. ulIeOffset must clear the fixed
+// WLAN_BSS_ENTRY header and the whole [ulIeOffset, ulIeOffset+ulIeSize) span must lie inside the
+// WlanGetNetworkBssList allocation (@p listBase, @p listSize bytes). A malformed offset/size --
+// ultimately beacon data from a possibly-rogue AP -- yields an empty span so deriveBssSecurity
+// falls back to the beacon Privacy bit instead of walking the IE parser at an out-of-bounds base.
+[[nodiscard]] IeSpan validatedIeSpan(const WLAN_BSS_ENTRY& bss,
+                                     const unsigned char* listBase,
+                                     size_t listSize) {
+    const auto* entryBase = reinterpret_cast<const unsigned char*>(&bss);
+    if (entryBase < listBase) {
+        return {};
+    }
+    const size_t entryStart = static_cast<size_t>(entryBase - listBase);
+    if (listSize < entryStart || listSize - entryStart < sizeof(WLAN_BSS_ENTRY)) {
+        return {};
+    }
+    const size_t room = listSize - entryStart;  // bytes from this entry to the allocation end
+    if (bss.ulIeOffset < sizeof(WLAN_BSS_ENTRY) || bss.ulIeSize == 0 || bss.ulIeOffset > room ||
+        bss.ulIeSize > room - bss.ulIeOffset) {
+        return {};
+    }
+    return {.data = entryBase + bss.ulIeOffset, .len = static_cast<int>(bss.ulIeSize)};
+}
+
+[[nodiscard]] WiFiNetworkInfo networkFromBssEntry(const WLAN_BSS_ENTRY& bss,
+                                                  const unsigned char* listBase,
+                                                  size_t listSize) {
     WiFiNetworkInfo info;
 
     info.ssid = ssidFromDot11Ssid(bss.dot11Ssid);
@@ -218,12 +249,11 @@ struct IeSecurityScan {
     info.bssType = bssTypeString(bss.dot11BssType);
 
     // Authoritative per-BSSID security straight from THIS AP's beacon, so a rogue
-    // AP cannot borrow a sibling BSSID's security label via a shared SSID.
-    const auto* base = reinterpret_cast<const unsigned char*>(&bss);
+    // AP cannot borrow a sibling BSSID's security label via a shared SSID. The IE
+    // blob location is bounds-checked against the returned allocation first.
     const bool privacy = (bss.usCapabilityInformation & kCapabilityPrivacy) != 0;
-    const WiFiBssSecurity sec = WiFiAnalyzer::deriveBssSecurity(privacy,
-                                                                base + bss.ulIeOffset,
-                                                                static_cast<int>(bss.ulIeSize));
+    const IeSpan ie = validatedIeSpan(bss, listBase, listSize);
+    const WiFiBssSecurity sec = WiFiAnalyzer::deriveBssSecurity(privacy, ie.data, ie.len);
     info.authentication = sec.authentication;
     info.encryption = sec.encryption;
     info.isSecure = sec.isSecure;
@@ -233,9 +263,11 @@ struct IeSecurityScan {
 }
 
 void appendBssNetworks(const WLAN_BSS_LIST& bssList, QVector<WiFiNetworkInfo>& networks) {
+    const auto* listBase = reinterpret_cast<const unsigned char*>(&bssList);
+    const size_t listSize = bssList.dwTotalSize;
     for (DWORD j = 0; j < bssList.dwNumberOfItems; ++j) {
         const auto& bss = bssList.wlanBssEntries[j];
-        networks.append(networkFromBssEntry(bss));
+        networks.append(networkFromBssEntry(bss, listBase, listSize));
     }
 }
 
@@ -344,6 +376,14 @@ void applyAvailableNetworkList(const WLAN_AVAILABLE_NETWORK_LIST& netList,
 // failure instead of a misleading empty success.
 constexpr int kScanCompleteTimeoutMs = 4000;  // upper bound on waiting for a scan to finish
 
+// Set within a triggered scan pass when the fresh scan's completion could NOT be confirmed
+// (WlanScan failed, the ACM scan-complete wait timed out, or the completion notification could
+// not be registered) so the BSS-list read returns the driver's possibly-stale cache. scan()
+// reads it to surface the staleness instead of emitting a stale list as a fresh success.
+// thread_local: the whole scan pass runs synchronously on the calling thread, so concurrent
+// WiFiAnalyzer scans on different threads never clobber one another's flag.
+thread_local bool t_freshScanUnconfirmed = false;
+
 void CALLBACK onWlanScanNotification(PWLAN_NOTIFICATION_DATA data, PVOID context) {
     if (context == nullptr || data == nullptr) {
         return;
@@ -373,22 +413,29 @@ void triggerScanAndWait(HANDLE handle, const GUID& guid) {
                                                      nullptr,
                                                      &prevSource) == ERROR_SUCCESS;
 
+    bool confirmed = false;
     const DWORD scanStatus = WlanScan(handle, &guid, nullptr, nullptr, nullptr);
     if (scanStatus != ERROR_SUCCESS) {
         logWarning("WiFi: WlanScan failed ({}); reading the driver's cached BSS list", scanStatus);
-    }
-    if (scanStatus == ERROR_SUCCESS && registered) {
+    } else if (registered) {
         const DWORD waited = WaitForSingleObject(scanDone, kScanCompleteTimeoutMs);
-        if (waited != WAIT_OBJECT_0) {
+        if (waited == WAIT_OBJECT_0) {
+            confirmed = true;
+        } else {
             // WAIT_TIMEOUT / WAIT_FAILED: the completion never signalled, so the BSS
             // list read below may return stale cached results -- surface that.
             logWarning("WiFi: scan-complete wait did not signal ({}); results may be stale",
                        waited);
         }
-    } else if (scanStatus == ERROR_SUCCESS && !registered) {
+    } else {
         // Scan started but we could not register for the ACM completion notification;
         // give the driver a bounded moment to refresh before reading its cache.
         QThread::msleep(kForcedScanDelayMs);
+    }
+    // Record that this fresh scan could not be confirmed complete so scan() can surface the
+    // resulting stale-cache read rather than passing it off as a fresh success.
+    if (!confirmed) {
+        t_freshScanUnconfirmed = true;
     }
 
     if (registered) {
@@ -560,6 +607,7 @@ void WiFiAnalyzer::scan() {
     }
 
     bool scanError = false;
+    t_freshScanUnconfirmed = false;
     auto networks = performWlanScan(true, scanError);
     m_lastScan = networks;
 
@@ -572,6 +620,14 @@ void WiFiAnalyzer::scan() {
             "wireless interface)"));
         Q_EMIT scanComplete(networks);
         return;
+    }
+
+    // The scan returned data but its completion could not be confirmed, so the list may be the
+    // driver's cached results. Surface that as an advisory WITHOUT withholding the still-useful
+    // data -- scanComplete is emitted below regardless.
+    if (t_freshScanUnconfirmed) {
+        Q_EMIT errorOccurred(QStringLiteral(
+            "WiFi scan results may be stale: the adapter did not confirm scan completion"));
     }
 
     Q_EMIT scanComplete(networks);

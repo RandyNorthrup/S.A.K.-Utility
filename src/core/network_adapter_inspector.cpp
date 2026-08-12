@@ -9,6 +9,8 @@
 #endif
 #include "sak/network_adapter_inspector.h"
 
+#include "sak/logger.h"
+
 #include <QCoreApplication>
 
 #include <memory>
@@ -191,7 +193,14 @@ void populateDnsServers(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInf
 void populateIfStats(ULONG ifIndex, sak::NetworkAdapterInfo& info) {
     MIB_IF_ROW2 ifRow{};
     ifRow.InterfaceIndex = ifIndex;
-    if (GetIfEntry2(&ifRow) != NO_ERROR) {
+    const DWORD status = GetIfEntry2(&ifRow);
+    if (status != NO_ERROR) {
+        // Surface the failed stats read instead of leaving the counters at their zero
+        // defaults, where a failure is indistinguishable from genuine zero traffic. The
+        // NetworkAdapterInfo struct carries no stats-valid field, so report via the log.
+        sak::logWarning("GetIfEntry2 failed for interface index {}: error {}",
+                        static_cast<unsigned long>(ifIndex),
+                        static_cast<unsigned long>(status));
         return;
     }
 

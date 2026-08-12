@@ -9,8 +9,10 @@
 #include "sak/io_write_utils.h"
 #include "sak/process_runner.h"
 
+#include <QAbstractSocket>
 #include <QDateTime>
 #include <QFile>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -25,6 +27,37 @@ namespace sak {
 namespace {
 constexpr int kAdapterTypeCaptureGroup = 3;
 constexpr int kAdapterNameCaptureGroup = 4;
+
+// 4 MiB. An Ethernet config backup is a few hundred bytes; a larger file is not a trusted backup
+// and must be rejected before it is read into memory (self-DoS guard).
+constexpr qint64 kMaxBackupFileBytes = 4LL * 1024 * 1024;
+
+// Accepts only a dotted-quad IPv4 literal. QHostAddress rejects hostnames and IPv6, so a malformed
+// captured field fails closed here before it can reach a live netsh apply.
+bool isIpv4Literal(const QString& value) {
+    QHostAddress addr;
+    return addr.setAddress(value) && addr.protocol() == QAbstractSocket::IPv4Protocol;
+}
+
+// Every captured IPv4 field that is PRESENT must be a well-formed dotted-quad; empty optional
+// fields (gateway, DNS, and the whole set on the DHCP path) are legitimate and are not rejected.
+bool ipv4FieldsWellFormed(const EthernetConfigSnapshot& snap) {
+    if (!snap.ipv4Address.isEmpty() && !isIpv4Literal(snap.ipv4Address)) {
+        return false;
+    }
+    if (!snap.ipv4SubnetMask.isEmpty() && !isIpv4Literal(snap.ipv4SubnetMask)) {
+        return false;
+    }
+    if (!snap.ipv4Gateway.isEmpty() && !isIpv4Literal(snap.ipv4Gateway)) {
+        return false;
+    }
+    for (const QString& dns : snap.ipv4DnsServers) {
+        if (!isIpv4Literal(dns)) {
+            return false;
+        }
+    }
+    return true;
+}
 }  // namespace
 
 // -- EthernetConfigSnapshot --------------------------------------------------
@@ -81,7 +114,12 @@ bool EthernetConfigSnapshot::isValid() const {
     // Require a meaningful captured configuration so a localized/failed parse (which recognized no
     // fields, leaving dhcpEnabled=false AND ipv4Address empty) fails closed instead of persisting
     // or restoring an empty backup.
-    return dhcpEnabled || !ipv4Address.isEmpty();
+    if (!dhcpEnabled && ipv4Address.isEmpty()) {
+        return false;
+    }
+    // Reject malformed IPv4 values before they can reach a live netsh apply: restoreStaticIp sets
+    // the address before DNS, so a malformed field would otherwise leave a partial reconfiguration.
+    return ipv4FieldsWellFormed(*this);
 }
 
 // -- EthernetConfigManager ---------------------------------------------------
@@ -174,6 +212,16 @@ EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePa
         return {};
     }
 
+    // Reject an oversized file before readAll() pulls it into memory: a backup is a few hundred
+    // bytes, so anything past the cap is not a trusted configuration and must fail closed.
+    const qint64 fileSize = file.size();
+    if (fileSize > kMaxBackupFileBytes) {
+        Q_EMIT errorOccurred(
+            QString("Backup file is too large to be a valid configuration (%1 bytes).")
+                .arg(fileSize));
+        return {};
+    }
+
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
     file.close();
@@ -211,23 +259,28 @@ bool EthernetConfigManager::restoreDhcpMode(const QString& adapterName, bool* dn
         return false;
     }
 
-    // Set DNS to automatic too. IPv4 DHCP above is the authoritative success, but the
-    // DNS result was previously discarded -- capture it so the caller can report the
-    // ACTUAL DNS outcome rather than implying DNS is always automatic.
-    bool dnsOk = false;
+    // Switch DNS to automatic too. netsh returns a NON-ZERO exit for the benign "DNS is already
+    // automatic" no-op and prints a message that never contains "error", so exit status alone
+    // would false-close a restore that already reached the DHCP-DNS target state. Treat the DNS
+    // switch as failed only on a genuine netsh error, or when the command could not run at all
+    // (empty output + non-success) -- both leave DNS pinned to the old static servers, so the
+    // restore is genuinely partial and must not be reported as a full success.
+    bool dnsCmdOk = false;
     const QString dnsResult = runNetsh({"interface",
                                         "ip",
                                         "set",
                                         "dnsservers",
                                         QString("name=%1").arg(adapterName),
                                         "source=dhcp"},
-                                       &dnsOk);
-    dnsOk = dnsOk && !dnsResult.contains("error", Qt::CaseInsensitive);
-    if (!dnsOk) {
-        Q_EMIT logOutput("Warning: could not set DNS to automatic (DHCP); set DNS manually");
-    }
+                                       &dnsCmdOk);
+    const bool dnsFailed = dnsResult.contains("error", Qt::CaseInsensitive) ||
+                           (!dnsCmdOk && dnsResult.isEmpty());
     if (dnsApplied != nullptr) {
-        *dnsApplied = dnsOk;
+        *dnsApplied = !dnsFailed;
+    }
+    if (dnsFailed) {
+        Q_EMIT errorOccurred(QString("Failed to set DNS to automatic (DHCP): %1").arg(dnsResult));
+        return false;
     }
     return true;
 }

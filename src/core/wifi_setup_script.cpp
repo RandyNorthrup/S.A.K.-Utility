@@ -55,8 +55,9 @@ bool securityIsEnterprise(const QString& upper) {
            upper.contains("EAP") || upper.contains("ONEX");
 }
 
-// Resolve a Windows WLAN authentication/encryption pair, or std::nullopt for an
-// unsupported security type (enterprise/802.1X) that must fail closed.
+// Resolve a Windows WLAN authentication/encryption pair, or std::nullopt for a security type that
+// must fail closed: an unsupported enterprise/802.1X label, or an unrecognized non-empty security
+// string (never silently downgraded to a WPA2-PSK default).
 // A WPA3/SAE-ONLY label maps to WPA3SAE. A combined/transitional label -- notably the WiFi
 // panel's own default "WPA/WPA2/WPA3", and any label that also names WPA2 -- must NOT become a
 // WPA3SAE-only profile (it would fail to associate with a WPA2-only AP and is rejected outright
@@ -66,23 +67,47 @@ bool isWpa3SaeOnly(const QString& upper) {
            !upper.contains("WPA/");
 }
 
+// True if the label names a WPA-personal scheme (WPA/WPA2/WPA3/PSK/SAE), including the combined
+// transitional "WPA/WPA2/WPA3" default. Enterprise labels are screened out separately.
+bool namesWpaPersonal(const QString& upper) {
+    return upper.contains("WPA") || upper.contains("PSK") || upper.contains("SAE");
+}
+
+// True for a WEP-only label: it names WEP or 802.11 "Shared Key" (WEP-only authentication) and
+// NOT any WPA variant. A mixed "WPA2, not WEP" is a WPA2 network and "Pre-Shared Key" is WPA, so
+// both are excluded via @p names_wpa_personal (the caller's already-computed namesWpaPersonal).
+bool securityIsWepOnly(const QString& upper, bool names_wpa_personal) {
+    return (upper.contains("WEP") || upper.contains("SHARED")) && !names_wpa_personal;
+}
+
+// True for an open network with no key material: an explicit NONE/OPEN label, or OWE
+// (Opportunistic Wireless Encryption, which associates without a pre-shared passphrase).
+bool securityIsOpen(const QString& upper) {
+    return upper.contains("NONE") || upper.contains("OPEN") || upper.contains("OWE");
+}
+
 std::optional<WlanAuthConfig> resolveWlanAuth(const QString& security) {
     const QString upper = security.toUpper();
     if (securityIsEnterprise(upper)) {
         return std::nullopt;
     }
-    // WEP only when the label names WEP and no WPA variant: a mixed label like "WPA2, not WEP"
-    // is a WPA2 network, not an (insecure) open/WEP one.
-    if (upper.contains("WEP") && !upper.contains("WPA")) {
+    const bool wpa = namesWpaPersonal(upper);
+    if (securityIsWepOnly(upper, wpa)) {
         return WlanAuthConfig{.auth_type = "open", .enc_type = "WEP"};
     }
-    if (upper.contains("NONE") || upper.contains("OPEN") || upper.contains("OWE")) {
+    if (securityIsOpen(upper)) {
         return WlanAuthConfig{.auth_type = "open", .enc_type = "none"};
     }
     if (isWpa3SaeOnly(upper)) {
         return WlanAuthConfig{.auth_type = "WPA3SAE", .enc_type = "AES"};
     }
-    return WlanAuthConfig{.auth_type = "WPA2PSK", .enc_type = "AES"};
+    // Interoperable WPA2-PSK for a recognized WPA-personal label, or an EMPTY label (the caller's
+    // "use the default" sentinel). Fail CLOSED on any other non-empty, unrecognized string rather
+    // than silently downgrading it to a WPA2-PSK profile -- the label can come from a rogue AP.
+    if (upper.isEmpty() || wpa) {
+        return WlanAuthConfig{.auth_type = "WPA2PSK", .enc_type = "AES"};
+    }
+    return std::nullopt;
 }
 
 QString buildWlanXmlContent(const QString& ssid,
@@ -282,6 +307,17 @@ static std::optional<WlanAuthConfig> validateConnectInputs(const QString& ssid,
     return auth;
 }
 
+// Write the profile XML into the open temp file, failing closed on a short write or flush error --
+// otherwise netsh would be handed a truncated profile (or none). Returns false with @p error set.
+static bool writeProfileXmlTempFile(QTemporaryFile& file, const QString& xml, QString& error) {
+    const QByteArray bytes = xml.toUtf8();
+    if (file.write(bytes) != bytes.size() || !file.flush()) {
+        error = QStringLiteral("Could not fully write the temporary WLAN profile file");
+        return false;
+    }
+    return true;
+}
+
 WifiConnectResult connectWifiWindows(const QString& ssid,
                                      const QString& password,
                                      const QString& security,
@@ -300,8 +336,10 @@ WifiConnectResult connectWifiWindows(const QString& ssid,
         result.error = QStringLiteral("Could not create a temporary WLAN profile file");
         return result;
     }
-    xml_file.write(xml.toUtf8());
-    xml_file.flush();
+    // Fail closed on a partial write: never hand netsh a truncated profile file.
+    if (!writeProfileXmlTempFile(xml_file, xml, result.error)) {
+        return result;
+    }
 
     // netsh runs shell-free via an argv vector (no shell, no interpolation). Both calls need
     // administrator rights, so a non-elevated run fails HONESTLY here rather than silently.

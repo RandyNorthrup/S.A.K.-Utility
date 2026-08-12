@@ -38,6 +38,11 @@ struct scan_statistics {
     std::size_t errors_encountered = 0;  ///< Number of errors during scan
     std::uintmax_t total_size = 0;       ///< Total size of all files (bytes)
     std::size_t skipped_by_filter = 0;   ///< Items skipped by filters
+
+    /// @brief Explicit completeness indicator for callers that require a fully-walked tree.
+    /// @return True only if no open/entry error was skipped (errors_encountered == 0); a caller
+    ///         requiring completeness must treat a false result as an incomplete scan.
+    [[nodiscard]] bool is_complete() const noexcept { return errors_encountered == 0; }
 };
 
 /// @brief Callback function for each found entry

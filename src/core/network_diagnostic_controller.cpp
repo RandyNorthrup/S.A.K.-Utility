@@ -27,6 +27,7 @@
 #include <QThread>
 #include <QTimer>
 
+#include <atomic>
 #include <utility>
 
 namespace sak {
@@ -54,6 +55,20 @@ constexpr int kLanIdleTimeoutMs = 30'000;
 // Cap the per-session speed-sample history so a long-lived transfer cannot grow the sample
 // vector without bound; once reached, further samples are measured but not retained.
 constexpr int kLanMaxSpeedSamples = 100'000;
+// Absolute per-session ceiling for a received transfer, independent of activity. The idle
+// timeout closes a silent peer; this additionally bounds a peer that streams continuously, so an
+// unauthenticated client cannot hold the single accepted slot indefinitely (and the received
+// total is bounded by link-speed times this ceiling). Sized well above the longest legitimate
+// client run (kMaxLanDurationSec == 3600 s) so a full-length test never trips it.
+constexpr int kLanReceiveMaxSessionSec = 7200;
+constexpr int kLanReceiveMaxSessionMs = kLanReceiveMaxSessionSec *
+                                        static_cast<int>(kNetworkMillisecondsPerSecond);
+
+// Set true by NetworkDiagnosticController::cancel() to abort an in-flight LAN upload
+// cooperatively; the upload worker polls this in pump() and finishes fail-closed. Only one LAN
+// upload runs at a time (State::RunningLanTransfer is a single-instance worker group), so one
+// TU-local flag suffices; runLanUpload() clears it before each new transfer.
+std::atomic<bool> g_lanUploadCancelled{false};
 
 // Drain and drop any client sockets queued behind the one already being served, enforcing the
 // single-client cap even if several peers connect within one event-loop turn.
@@ -908,8 +923,11 @@ void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
     }
 
     m_lanTransferServerRunning.store(true, std::memory_order_release);
-    Q_EMIT lanTransferServerStarted(port);
-    Q_EMIT logOutput(QStringLiteral("LAN transfer server listening on port %1").arg(port));
+    // Report the actual bound port, not the caller's request: a port==0 request binds an
+    // ephemeral port the OS chooses, and the peer must be told the real port to connect to.
+    const uint16_t bound_port = m_lanTransferServer->serverPort();
+    Q_EMIT lanTransferServerStarted(bound_port);
+    Q_EMIT logOutput(QStringLiteral("LAN transfer server listening on port %1").arg(bound_port));
 
     connect(m_lanTransferServer, &QTcpServer::newConnection, this, [this]() {
         auto* socket = m_lanTransferServer->nextPendingConnection();
@@ -944,6 +962,18 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
         socket->abort();
     });
     idle_timer->start(kLanIdleTimeoutMs);
+
+    // Absolute-session cap: unlike the idle timer (reset on every read), this one is never
+    // restarted, so even a peer that streams continuously cannot hold the single accepted slot
+    // past kLanReceiveMaxSessionMs. Parented to the socket, so it dies with it.
+    auto* session_timer = new QTimer(socket);
+    session_timer->setSingleShot(true);
+    connect(session_timer, &QTimer::timeout, this, [this, socket]() {
+        Q_EMIT logOutput(QStringLiteral("LAN transfer: session limit reached, closing peer %1")
+                             .arg(socket->peerAddress().toString()));
+        socket->abort();
+    });
+    session_timer->start(kLanReceiveMaxSessionMs);
 
     connect(socket, &QTcpSocket::readyRead, this, [this, socket, ctx, idle_timer]() {
         idle_timer->start(kLanIdleTimeoutMs);
@@ -1018,8 +1048,18 @@ void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket
 }
 
 void NetworkDiagnosticController::stopLanTransferServer() {
-    if ((m_lanTransferServer != nullptr) && m_lanTransferServer->isListening()) {
-        m_lanTransferServer->close();
+    if (m_lanTransferServer != nullptr) {
+        // Abort any in-flight served client (nextPendingConnection() parents the socket to the
+        // server) so a stop/cancel tears the transfer down at once instead of waiting for the
+        // idle/session timeout. abort() emits disconnected -> handleLanClientDisconnected, which
+        // deleteLater()s the socket; the isListening() guard below then skips its resumeAccepting.
+        const auto served = m_lanTransferServer->findChildren<QTcpSocket*>();
+        for (auto* socket : served) {
+            socket->abort();
+        }
+        if (m_lanTransferServer->isListening()) {
+            m_lanTransferServer->close();
+        }
     }
     m_lanTransferServerRunning.store(false, std::memory_order_release);
     Q_EMIT lanTransferServerStopped();
@@ -1079,6 +1119,10 @@ public:
         m_pumpTimer = new QTimer(this);
         m_pumpTimer->setInterval(kLanUploadPumpIntervalMs);
         connectSignals();
+        // Run the pump timer from the start (not just post-connect): pump() polls the cancel
+        // flag and returns early until the socket is connected, so a cancel during the connect
+        // window is honored within one pump interval instead of waiting on the connect timeout.
+        m_pumpTimer->start();
         m_connectTimer->start(kLanUploadConnectTimeoutMs);
         m_socket->connectToHost(m_request.target_addr, m_request.port);
     }
@@ -1126,7 +1170,17 @@ private:
     }
 
     void pump() {
-        if (m_finished || m_socket->state() != QAbstractSocket::ConnectedState) {
+        if (m_finished) {
+            return;
+        }
+        // Cooperative cancel: controller cancel()/teardown sets this so an in-flight upload
+        // aborts promptly instead of blocking on the duration timer (up to kMaxLanDurationSec).
+        // The transfer never reached its measured duration, so finish fail-closed.
+        if (g_lanUploadCancelled.load(std::memory_order_acquire)) {
+            finish(false, QStringLiteral("LAN transfer test cancelled"));
+            return;
+        }
+        if (m_socket->state() != QAbstractSocket::ConnectedState) {
             return;
         }
         while (m_socket->bytesToWrite() < m_blockSize * kLanSocketQueueBlocks) {
@@ -1135,6 +1189,11 @@ private:
                 finish(false,
                        QStringLiteral("LAN transfer write error: %1").arg(m_socket->errorString()));
                 return;
+            }
+            if (written == 0) {
+                // The socket accepted no bytes this iteration; break rather than spin. The
+                // pump/bytesWritten timers resume the transfer once the buffer drains.
+                break;
             }
             m_totalSent += written;
             report();
@@ -1173,7 +1232,7 @@ private:
         m_timer.start();
         m_durationTimer->start(m_request.duration_sec *
                                static_cast<int>(kNetworkMillisecondsPerSecond));
-        m_pumpTimer->start();
+        // m_pumpTimer is already running (started in start()); pump once now to begin sending.
         pump();
     }
 
@@ -1210,6 +1269,9 @@ static LanUploadOutcome runLanUpload(const QString& targetAddr,
                                      int durationSec,
                                      int blockSizeKB,
                                      const std::function<void(double, double, qint64)>& progress) {
+    // Clear any cancel request left from a prior transfer so this run starts uncancelled; only
+    // one LAN upload runs at a time, so this cannot race a concurrent transfer.
+    g_lanUploadCancelled.store(false, std::memory_order_release);
     LanUploadOutcome outcome;
     QThread thread;
     QSemaphore done;
@@ -1493,6 +1555,10 @@ void NetworkDiagnosticController::cancel() {
     m_shareBrowser->cancel();
     m_wifiAnalyzer->stopContinuousScan();
     m_connectionMonitor->stopMonitoring();
+    // Signal any in-flight LAN upload worker to abort promptly (it polls this in pump());
+    // otherwise teardown would block on cleanupThread()'s join until the duration timer fires
+    // (up to kMaxLanDurationSec). runLanUpload() clears the flag before the next transfer.
+    g_lanUploadCancelled.store(true, std::memory_order_release);
     if (m_lanTransferServerRunning.load(std::memory_order_acquire)) {
         stopLanTransferServer();
     }

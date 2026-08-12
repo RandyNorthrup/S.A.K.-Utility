@@ -95,9 +95,9 @@ WifiProfileInfo readOneProfile(
         detail_ok = true;
     } else {
         detail_ok = false;
-        // The detail read failed: this record carries no security type and no re-importable
-        // XML. Do NOT leave it flagged selected, so a failed/empty profile is never backed up
-        // or exported as if it were a real one (fail closed on the incomplete record).
+        // The detail read failed: this record carries no security type and no re-importable XML.
+        // The caller omits it from the results (detail_ok=false); leaving selected=false as well
+        // keeps the record itself fail-closed if it is ever inspected directly.
         info.selected = false;
         sak::logWarning("WlanGetProfile failed for '{}'", info.profile_name.toStdString());
     }
@@ -126,9 +126,14 @@ bool appendInterfaceProfiles(HANDLE handle,
     }
     for (DWORD p = 0; p < profile_list->dwNumberOfItems; ++p) {
         bool detail_ok = false;
-        out.append(readOneProfile(
-            handle, guid, profile_list->ProfileInfo[p].strProfileName, include_xml, detail_ok));
-        if (!detail_ok) {
+        const WifiProfileInfo info = readOneProfile(
+            handle, guid, profile_list->ProfileInfo[p].strProfileName, include_xml, detail_ok);
+        if (detail_ok) {
+            out.append(info);
+        } else {
+            // Omit the hollow record (no security type, no re-importable XML) rather than
+            // appending an incomplete profile; count it so scan_ok fails closed and the caller
+            // learns the enumeration was not fully authoritative.
             ++detail_failures;
         }
     }
@@ -151,9 +156,11 @@ void reportScanOutcome(const WifiScanLogger& logger,
         *scan_ok = enumeration_complete && (detail_failures == 0);
     }
     if (detail_failures > 0 && logger) {
+        // `profiles` now holds only the fully-read records, so the attempted total is those plus
+        // the omitted detail failures.
         logger(QStringLiteral("%1 of %2 profiles could not be fully read")
                    .arg(detail_failures)
-                   .arg(profiles.size()));
+                   .arg(profiles.size() + detail_failures));
     }
 }
 

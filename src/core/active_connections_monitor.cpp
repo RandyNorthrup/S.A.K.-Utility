@@ -29,7 +29,11 @@ namespace sak {
 
 namespace {
 constexpr uint32_t kWindowsSystemProcessId = 4;
-}
+// Positive floor for the refresh timer. A 0 ms (or negative) interval would fire on every
+// event-loop turn and re-enumerate the TCP/UDP tables continuously (CPU spin); clamp up to
+// this floor. The default and every legitimate configured interval sit well above it.
+constexpr int kMinConnRefreshMs = 100;
+}  // namespace
 
 namespace {
 constexpr DWORD kInitialBufferSize = 32'768;
@@ -80,18 +84,18 @@ ActiveConnectionsMonitor::~ActiveConnectionsMonitor() {
 void ActiveConnectionsMonitor::startMonitoring(const MonitorConfig& config) {
     stopMonitoring();
     m_config = config;
-    m_monitoring.store(true);
 
     m_refreshTimer = new QTimer(this);
     connect(m_refreshTimer, &QTimer::timeout, this, &ActiveConnectionsMonitor::refreshNow);
-    m_refreshTimer->start(config.refreshIntervalMs);
+    // Clamp to a positive floor so a 0 ms (or negative) configured interval cannot spin the
+    // event loop; a real interval is never below the floor, so no legitimate config is altered.
+    m_refreshTimer->start(std::max(config.refreshIntervalMs, kMinConnRefreshMs));
 
     // Initial refresh
     refreshNow();
 }
 
 void ActiveConnectionsMonitor::stopMonitoring() {
-    m_monitoring.store(false);
     if (m_refreshTimer != nullptr) {
         m_refreshTimer->stop();
         delete m_refreshTimer;

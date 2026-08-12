@@ -102,6 +102,11 @@ qint64 StreamingDecompressor::read(char* data, qint64 maxSize) {
     const qint64 bytesProduced = maxSize - static_cast<qint64>(outputRemaining());
     m_decompressedBytesProduced += bytesProduced;
 
+    if (exceededMaxOutput()) {
+        m_failed = true;
+        return -1;
+    }
+
     // Emit progress every ~1 MB
     if (m_decompressedBytesProduced % sak::kBytesPerMB < bytesProduced) {
         Q_EMIT progressUpdated(m_compressedBytesRead, m_decompressedBytesProduced);
@@ -120,6 +125,12 @@ qint64 StreamingDecompressor::compressedBytesRead() const {
 
 qint64 StreamingDecompressor::decompressedBytesProduced() const {
     return m_decompressedBytesProduced;
+}
+
+void StreamingDecompressor::setMaxDecompressedBytes(qint64 maxBytes) {
+    // <= 0 stores 0 (disabled): a file-target consumer opts in with a positive bound,
+    // while the flash consumer leaves it unset and keeps its unbounded reads.
+    m_maxDecompressedBytes = (maxBytes > 0) ? maxBytes : 0;
 }
 
 StreamingDecompressor::MemberBoundary StreamingDecompressor::onMemberEnd() {
@@ -151,6 +162,21 @@ bool StreamingDecompressor::isTruncatedStream(size_t output_before) {
     m_lastError = QStringLiteral(
         "Compressed stream is truncated: the input ended before the decoder "
         "reached end-of-stream");
+    logError(m_lastError.toStdString());
+    return true;
+}
+
+bool StreamingDecompressor::exceededMaxOutput() {
+    // No ceiling configured (the default): reads stay unbounded, as the fixed-capacity
+    // flash consumer requires. An expansion RATIO is deliberately not used: a mostly-zero
+    // disk image legitimately expands thousandsfold, so only an absolute total avoids
+    // false-closing a real image while still bounding storage for a file target.
+    if (m_maxDecompressedBytes <= 0 || m_decompressedBytesProduced <= m_maxDecompressedBytes) {
+        return false;
+    }
+    m_lastError = QStringLiteral(
+        "Decompressed output exceeded the configured maximum: the stream expands "
+        "beyond the allowed size");
     logError(m_lastError.toStdString());
     return true;
 }

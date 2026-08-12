@@ -18,6 +18,7 @@
 
 #include <QThread>
 #include <QUrl>
+#include <QVariant>
 
 #include <algorithm>
 #include <chrono>
@@ -35,7 +36,11 @@ constexpr int kReplyExtraSize = 8;  // Extra bytes for ICMP_ECHO_REPLY
 constexpr double kFullPercent = 100.0;
 constexpr WORD kWinsockMajorVersion = 2;
 constexpr WORD kWinsockMinorVersion = 2;
-constexpr int kUrlSchemeSeparatorLength = 3;
+
+// Dynamic-property key holding a non-zero WSAStartup error code. Stored as a per-instance dynamic
+// property (the header is not modified) so the destructor can skip an unbalanced WSACleanup and
+// operations can fail closed with the real Winsock error instead of a misleading resolve failure.
+constexpr char kWsaInitErrorProperty[] = "sak_wsaInitError";
 
 void updateHopStats(sak::MtrHopStats& stats,
                     const sak::PingReply& reply,
@@ -182,24 +187,35 @@ void finalizeHopStats(QVector<MtrHopStats>& hopStats) {
 void populateMtrResult(MtrResult& result,
                        const QVector<MtrHopStats>& hopStats,
                        int maxDiscoveredHop,
-                       bool cancelled) {
+                       int completedCycles) {
     result.hops.clear();
     const int hopCount = static_cast<int>(hopStats.size());
     const int limit = std::min(maxDiscoveredHop, hopCount);
     for (int i = 0; i < limit; ++i) {
         result.hops.append(hopStats[i]);
     }
-    result.totalCycles = cancelled ? 0 : (result.hops.isEmpty() ? 0 : result.hops.first().sent);
+    // Report cycles that actually completed, independent of hop responsiveness: a run in which no
+    // hop ever replies still executed its cycles, so an empty hop list must not zero the count.
+    result.totalCycles = completedCycles;
 }
 }  // namespace
 
 ConnectivityTester::ConnectivityTester(QObject* parent) : QObject(parent) {
     WSADATA wsa_data{};
-    WSAStartup(MAKEWORD(kWinsockMajorVersion, kWinsockMinorVersion), &wsa_data);
+    // WSAStartup returns the error code directly (it does not set the last-error). Record a
+    // failure so operations fail closed with the true cause and the destructor skips cleanup.
+    const int wsaStatus = WSAStartup(MAKEWORD(kWinsockMajorVersion, kWinsockMinorVersion),
+                                     &wsa_data);
+    if (wsaStatus != 0) {
+        setProperty(kWsaInitErrorProperty, wsaStatus);
+    }
 }
 
 ConnectivityTester::~ConnectivityTester() {
-    WSACleanup();
+    // Only balance a successful WSAStartup; calling WSACleanup after a failed init is incorrect.
+    if (property(kWsaInitErrorProperty).toInt() == 0) {
+        WSACleanup();
+    }
 }
 
 void ConnectivityTester::cancel() {
@@ -208,6 +224,14 @@ void ConnectivityTester::cancel() {
 
 QString ConnectivityTester::resolveTargetIpOrEmitError(const QString& target,
                                                        const QString& operation) {
+    if (const int wsaError = property(kWsaInitErrorProperty).toInt(); wsaError != 0) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("%1 unavailable: Winsock initialization failed (error %2)")
+                .arg(operation)
+                .arg(wsaError));
+        return {};
+    }
+
     const QString trimmed = target.trimmed();
     if (trimmed.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("%1 target cannot be empty").arg(operation));
@@ -240,12 +264,12 @@ QString ConnectivityTester::resolveHostname(const QString& hostname) {
     // Strip URL scheme (http://, https://, ftp://, etc.)
     if (host.contains(QStringLiteral("://"))) {
         const QUrl url(host);
-        if (url.isValid() && !url.host().isEmpty()) {
-            host = url.host();
-        } else {
-            // Fallback: remove scheme manually
-            host = host.mid(host.indexOf(QStringLiteral("://")) + kUrlSchemeSeparatorLength);
+        // Reject a malformed URL rather than hand-stripping the scheme: a bad URL is untrusted
+        // input, and getaddrinfo below already fails closed for anything left unresolvable.
+        if (!url.isValid() || url.host().isEmpty()) {
+            return {};
         }
+        host = url.host();
     }
 
     // Strip path, query, and fragment (anything after the host)
@@ -572,6 +596,7 @@ void ConnectivityTester::mtr(const MtrConfig& rawConfig) {
     QVector<MtrHopStats> hopStats = initHopStats(config.maxHops);
 
     int maxDiscoveredHop = 0;
+    int completedCycles = 0;
 
     for (int cycle = 0; cycle < config.cycles; ++cycle) {
         if (m_cancelled.load()) {
@@ -580,10 +605,11 @@ void ConnectivityTester::mtr(const MtrConfig& rawConfig) {
 
         runMtrCycle(targetIP, config, hopStats, maxDiscoveredHop);
 
-        // Do not publish an update for a cycle that cancellation cut short mid-way: it would
-        // report cycle+1 as a completed cycle when its hop sweep was interrupted.
+        // Do not count or publish a cycle that cancellation cut short mid-way: it would report a
+        // completed cycle when its hop sweep was interrupted.
         if (!m_cancelled.load()) {
-            Q_EMIT mtrUpdate(visibleHopStats(hopStats, maxDiscoveredHop), cycle + 1);
+            ++completedCycles;
+            Q_EMIT mtrUpdate(visibleHopStats(hopStats, maxDiscoveredHop), completedCycles);
         }
 
         if (!m_cancelled.load() && cycle < config.cycles - 1) {
@@ -593,7 +619,7 @@ void ConnectivityTester::mtr(const MtrConfig& rawConfig) {
 
     finalizeHopStats(hopStats);
 
-    populateMtrResult(result, hopStats, maxDiscoveredHop, m_cancelled.load());
+    populateMtrResult(result, hopStats, maxDiscoveredHop, completedCycles);
 
     Q_EMIT mtrComplete(result);
 }

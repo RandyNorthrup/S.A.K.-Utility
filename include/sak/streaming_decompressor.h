@@ -56,6 +56,15 @@ public:
     ///         than decoding against a library stream left in an undefined state.
     qint64 read(char* data, qint64 maxSize);
 
+    /// @brief Cap the total decompressed output this stream may produce.
+    /// @param maxBytes Positive to enforce a ceiling; <= 0 disables it (the default).
+    ///        The default-off behavior preserves the unbounded reads the fixed-capacity
+    ///        flash consumer relies on -- that consumer writes to a bounded device and
+    ///        must not set a cap. A file-target consumer, whose destination has no such
+    ///        bound, sets a positive limit so a decompression bomb cannot exhaust
+    ///        storage: read() fails closed once the running total exceeds it.
+    void setMaxDecompressedBytes(qint64 maxBytes);
+
     /// @brief Check if at end of decompressed data
     [[nodiscard]] bool atEnd() const;
 
@@ -143,6 +152,11 @@ private:
     ///        exhausted before end-of-stream: a truncated stream.
     bool isTruncatedStream(size_t output_before);
 
+    /// @brief True (and records the error) when an output ceiling is configured and the
+    ///        running decompressed total has passed it. Always false when no ceiling is
+    ///        set (the default), so the fixed-capacity flash consumer is unaffected.
+    bool exceededMaxOutput();
+
     /// @brief Attempt to refill input; marks the input exhausted at end of file
     /// @return true if input available or file exhausted, false on read error
     bool tryRefillInput();
@@ -165,6 +179,11 @@ private:
     bool m_failed{false};
     qint64 m_compressedBytesRead{0};
     qint64 m_decompressedBytesProduced{0};
+    /// Optional ceiling on total decompressed output; <= 0 disables it (the default,
+    /// which keeps reads unbounded for the fixed-capacity flash consumer). A file-target
+    /// consumer sets a positive bound via setMaxDecompressedBytes() so read() fails
+    /// closed once the running total exceeds it.
+    qint64 m_maxDecompressedBytes{0};
 };
 
 }  // namespace sak

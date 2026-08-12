@@ -1236,7 +1236,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: testReadWriteAccess sets canRead=true from dir.exists() alone (235-236); the subsequent entryInfoList result is discarded via (void)entries (239-240), so a share reachable but not listable is reported readable. The write test correctly uses NewOnly (B9-06), so only the read-capability report is over-stated (no access is actually granted).
   - Fix: Base canRead on a successful directory enumeration, not merely exists().
-- [ ] **R5-P9-20** [LOW] [PARTIAL] file_scanner skip_permission_denied converts open/entry failures into successful scans
+- [x] **R5-P9-20** [LOW] [PARTIAL] file_scanner skip_permission_denied converts open/entry failures into successful scans
+  - RESOLVED 2026-08-11 [fixed]: Added a first-class completeness accessor `[[nodiscard]] bool is_complete() const noexcept { return errors_encountered == 0; }` to `scan_statistics` in include/sak/file_scanner.h, immediately after the members. This gives...
   - Files: src/core/file_scanner.cpp:455, src/core/file_scanner.cpp:463, src/core/file_scanner.cpp:431
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The scanner uses directory_options::skip_permission_denied (455) and on a directory-open error (463-467) or per-entry exception (431-439) increments stats.errors_encountered and continues, returning a success expected. Incompleteness IS surfaced via the returned stats.errors_encountered (74-77) -- it is a count-and-continue bulk scanner, not a silent fail-open. Residual is caller-dependent: a caller that checks only the expected<> and not errors_encountered would treat a partially-enumerated scan as complete.
@@ -1318,77 +1319,92 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 52 actionable
 
-- [ ] **R5-P10-1** [LOW] [PARTIAL] Release accepts null buffer / negative maxSize -> OOB write
+- [x] **R5-P10-1** [LOW] [PARTIAL] Release accepts null buffer / negative maxSize -> OOB write
+  - RESOLVED 2026-08-11 [already-correct]: read() (streaming_decompressor.cpp:74) already uses a release check `if (data == nullptr || maxSize <= 0 || maxSize > kMaxSingleReadBytes) { ... return -1; }` instead of the Q_ASSERT the finding described. This was landed by...
   - Files: src/core/streaming_decompressor.cpp:60, src/core/streaming_decompressor.cpp:71
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: read() guards data/maxSize only with Q_ASSERT (60-62) which is a no-op in release; setOutput casts maxSize to size_t/uint. But the sole caller (flash_worker.cpp:620/909/947) always passes a heap AlignedBuffer(64MB, kFlashBufferSize=64MB) that is allocated+validity-checked and never null/negative. maxSize is app-chosen, not from untrusted bytes.
   - Fix: Replace the Q_ASSERTs with an explicit release check: if(!data||maxSize<0) return -1;
-- [ ] **R5-P10-2** [LOW] [PARTIAL] gzip/bzip2 truncate 64-bit output to 32 bits; bytesProduced overruns
+- [x] **R5-P10-2** [LOW] [PARTIAL] gzip/bzip2 truncate 64-bit output to 32 bits; bytesProduced overruns
+  - RESOLVED 2026-08-11 [already-correct]: Rather than silently clamping, read() (streaming_decompressor.cpp:74) now refuses maxSize > kMaxSingleReadBytes (0xFFFFFFFF = UINT_MAX), so setOutput()'s `static_cast<unsigned int>(maxSize)` in gzip/bzip2 can never truncate....
   - Files: src/core/gzip_decompressor.cpp:44, src/core/bzip2_decompressor.cpp:39, src/core/streaming_decompressor.cpp:77
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: setOutput casts maxSize to unsigned int (avail_out); read() computes bytesProduced=maxSize-outputRemaining(). Only misbehaves when maxSize>UINT_MAX. In practice maxSize is always kFlashBufferSize=64MB (flash_worker.cpp:33), far below 4GiB, so never triggered.
   - Fix: Clamp maxSize to UINT_MAX in setOutput and derive bytesProduced from the actual delta of avail_out, not the raw maxSize.
-- [ ] **R5-P10-3** [LOW] [PARTIAL] No decompressed-output/expansion cap (decompression bomb)
+- [x] **R5-P10-3** [LOW] [PARTIAL] No decompressed-output/expansion cap (decompression bomb)
+  - RESOLVED 2026-08-11 [fixed]: Added an optional, default-OFF max-output ceiling on the streaming reader. New setMaxDecompressedBytes(qint64) stores a positive bound (<=0 = disabled default), a new private exceededMaxOutput() helper fails read() closed...
   - Files: src/core/streaming_decompressor.cpp:60, src/core/streaming_decompressor.cpp:78, src/core/streaming_decompressor.cpp:133
   - Boundary: untrusted-input (reachable)
   - Evidence: Streaming read has no total-output/ratio cap. m_decompressedBytesProduced is qint64 (78); a signed overflow needs ~2^63 bytes (unrealistic). The main consumer CompressedImageSource->FlashWorker writes to a fixed-capacity device (bounded); storage exhaustion only matters for a file-target consumer.
   - Fix: Add an optional max-output / expansion-ratio ceiling on the streaming reader for file-target consumers.
-- [ ] **R5-P10-4** [LOW] [CONFIRMED_REAL] Bare netsh.exe/ipconfig/powershell.exe/nvidia-smi PATH-CWD hijack
+- [x] **R5-P10-4** [LOW] [CONFIRMED_REAL] Bare netsh.exe/ipconfig/powershell.exe/nvidia-smi PATH-CWD hijack
+  - RESOLVED 2026-08-11 [already-correct]: wifi_setup_script.cpp part only. connectWifiWindows already resolves netsh via sak::system32Path("netsh.exe") with a fail-closed empty-path guard, and both runProcess calls use that qualified path (committed 988b4d4). The...
   - Files: src/core/wifi_setup_script.cpp:291, src/core/ethernet_config_manager.cpp:414, src/core/dns_diagnostic_tool.cpp:368
   - Boundary: local-config-or-registry (reachable)
   - Evidence: runProcess("netsh.exe") at wifi:291/310 and ethernet:414; runProcess("ipconfig") at dns:368; runProcess("powershell.exe") at thermal:88; thermal PS script also PATH-resolves 'nvidia-smi' (thermal:173). CreateProcess searches CWD/app-dir before System32. The repo already has sak::system32Path()/runPowerShell (process_runner.cpp:224-249) and R4 wave5 (doc line 214-220) qualified this class elsewhere -- these network-diag sites were missed.
   - Fix: Route through sak::system32Path("netsh.exe"/"ipconfig.exe") and runPowerShell(); R4 rated this class LOW.
-- [ ] **R5-P10-5** [LOW] [CONFIRMED_REAL] Diagnostic HTML injects hardware strings unescaped
+- [x] **R5-P10-5** [LOW] [CONFIRMED_REAL] Diagnostic HTML injects hardware strings unescaped
+  - RESOLVED 2026-08-11 [already-correct]: All five named fields already carry .toHtmlEscaped() in committed code: mod.memory_type (diagnostic_report_generator.cpp:583), dev.interface_type/media_type (592-593), gpu.driver_version (601), inv.os_build (607). No unescaped...
   - Files: src/core/diagnostic_report_generator.cpp:589, src/core/diagnostic_report_generator.cpp:598, src/core/diagnostic_report_generator.cpp:607
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: mod.memory_type (589), dev.interface_type/media_type (598-599), gpu.driver_version (607) and inv.os_build (613) are .arg()'d WITHOUT toHtmlEscaped(), while sibling fields (manufacturer/model/name/os_name) ARE escaped. These come from WMI/SMBIOS and are normally system-normalized, so markup injection is largely theoretical, but the inconsistency is a real XSS/defense-in-depth gap.
   - Fix: Add .toHtmlEscaped() to memory_type, interface_type, media_type, driver_version, os_build.
-- [ ] **R5-P10-6** [LOW] [CONFIRMED_REAL] CSV escaping ignores embedded carriage returns
+- [x] **R5-P10-6** [LOW] [CONFIRMED_REAL] CSV escaping ignores embedded carriage returns
+  - RESOLVED 2026-08-11 [already-correct]: Both CSV escapers already treat embedded CR as a quote trigger: diagnostic csvEscape checks contains('\r') (diagnostic_report_generator.cpp:54) and its formula-lead set includes '\r' (40); migration escapeCsvField checks...
   - Files: src/core/diagnostic_report_generator.cpp:53, src/core/migration_report.cpp:484
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: diagnostic csvEscape quotes only on ',' '/"' '/n' (53-54) and migration escapeCsvField likewise (484); neither treats a non-leading '/r' as needing quoting, so an embedded CR passes through and can inject a spreadsheet row. (conversion csvSafeCell:67 DOES include /r, confirming the intended rule.)
   - Fix: Add '/r' to the quote-trigger set in both csvEscape and escapeCsvField.
-- [ ] **R5-P10-8** [LOW] [CONFIRMED_REAL] Uncapped queue depth + unbounded latency vectors -> multi-GB RAM
+- [x] **R5-P10-8** [LOW] [CONFIRMED_REAL] Uncapped queue depth + unbounded latency vectors -> multi-GB RAM
+  - RESOLVED 2026-08-11 [fixed]: queue_depth clamp was already implemented (validateQueueDepths() + kMaxQueueDepth=1024) and left as-is. Closed the remaining unbounded-latency gap: new anon-namespace recordLatencySample() applies reservoir sampling (Algorithm...
   - Files: src/core/disk_benchmark_worker.cpp:775, src/core/disk_benchmark_worker.cpp:785, src/core/disk_benchmark_worker.cpp:996
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: queue_depth (queue_depth_high) is only Q_ASSERT'd >0 (764/974), never upper-bounded, and sizes AlignedBuffer(m_rand_block_bytes*queue_depth) (775/985) -- alloc failure is handled though. latencies vector push_backs every op for up to random_duration_sec=3600s (785/862/936) with only reserve(100k), growing unbounded (GBs at high IOPS over 1h).
   - Fix: Clamp queue_depth to a sane max; bound/downsample retained latency samples (reservoir).
-- [ ] **R5-P10-9** [LOW] [CONFIRMED_REAL] Stress cpu_threads unbounded -> enormous std::async fan-out
+- [x] **R5-P10-9** [LOW] [CONFIRMED_REAL] Stress cpu_threads unbounded -> enormous std::async fan-out
+  - RESOLVED 2026-08-11 [already-correct]: resolveCpuThreadCount (src/core/stress_test_worker.cpp:346-358) already clamps an explicit request via std::min(configThreads, kMaxCpuStressThreads) with kMaxCpuStressThreads=4096 (line 66). Clamp lives at the point of use...
   - Files: src/core/stress_test_worker.cpp:277, src/core/stress_test_worker.cpp:305
   - Boundary: untrusted-input (reachable)
   - Evidence: resolveCpuThreadCount returns configThreads verbatim when >0 (278-279) with no ceiling; launchStressThreads loops thread_index<threads spawning std::async each (305-307). validateStressConfig (183-196) never bounds cpu_threads. A config/AI-tool value spawns that many threads (self-DoS).
   - Fix: Clamp cpu_threads to a sane cap (e.g. min(config, N*hardware_concurrency)) in validateStressConfig.
-- [ ] **R5-P10-11** [LOW] [CONFIRMED_REAL] Second iPerf start during QProcess::Starting orphans server + leaks rule
+- [x] **R5-P10-11** [LOW] [CONFIRMED_REAL] Second iPerf start during QProcess::Starting orphans server + leaks rule
+  - RESOLVED 2026-08-11 [fixed]: isServerRunning() now returns m_serverProcess != nullptr && state() != QProcess::NotRunning, so the brief Starting window reports as running (was Running-only). Also updated the stale comment in startIperfServer that claimed...
   - Files: src/core/bandwidth_tester.cpp:227, src/core/bandwidth_tester.cpp:261
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: isServerRunning() checks state()==Running only (228). During the Starting window the guard at 254 passes, so a re-entrant startIperfServer overwrites m_serverProcess (265) and m_firewallRuleName (261): the first QProcess is orphaned (still a running server) and its rule name is lost (removeFirewallRule later deletes only the new one -> leaked rule).
   - Fix: Make isServerRunning() treat state()!=NotRunning (include Starting) as running.
-- [ ] **R5-P10-12** [LOW] [PARTIAL] iPerf duration/streams/UDP-bw forwarded without range validation
+- [x] **R5-P10-12** [LOW] [PARTIAL] iPerf duration/streams/UDP-bw forwarded without range validation
+  - RESOLVED 2026-08-11 [fixed]: Added named constexpr bands (kMin/kMaxIperfDurationSec=1/3600, kMin/kMaxIperfStreams=1/128, kMin/kMaxUdpBandwidthMbps=1/10000) and a static clampIperfConfig() helper (CCN 1). runIperfTest's param renamed to 'requested' with a...
   - Files: include/sak/bandwidth_tester.h:31, src/core/bandwidth_tester.cpp:351, src/core/bandwidth_tester.cpp:374
   - Boundary: gui-local-user (reachable)
   - Evidence: buildIperfClientArgs (351) inlines durationSec/parallelStreams/udpBandwidthMbps into the argv; runIperfTest (374) never range-checks them. Passed as an argv vector (no shell injection) and bounded by kProcessTimeout=120s (31), so exhaustion is self-limited to the local bundled iperf3.
   - Fix: Clamp durationSec/parallelStreams/udpBandwidthMbps to sane ranges before building args.
-- [ ] **R5-P10-13** [LOW] [PARTIAL] LAN receive server unauthenticated, all-interfaces, no total/duration cap
+- [x] **R5-P10-13** [LOW] [PARTIAL] LAN receive server unauthenticated, all-interfaces, no total/duration cap
+  - RESOLVED 2026-08-11 [fixed]: Added absolute per-session duration cap to the LAN receive server: single-shot session_timer parented to the served socket, never restarted (unlike the idle timer), aborting after named constexpr kLanReceiveMaxSessionMs...
   - Files: src/core/network_diagnostic_controller.cpp:858, src/core/network_diagnostic_controller.cpp:905
   - Boundary: untrusted-input (reachable)
   - Evidence: listen(QHostAddress::Any,port) (858) with no auth; readyRead reads socket->read(bytesAvailable()) (905-906). But guards exist: setMaxPendingConnections(1)+pauseAccepting/rejectExtraPendingClients single-client cap (857/877-878) and a 30s idle-timeout (901). Reads are fully drained each event (no unbounded socket buffer) and speed_samples is capped (916). Residual: no absolute total-byte/session-duration cap and binds Any rather than a chosen NIC. It is an intentionally-unauthenticated LAN speed-test receiver.
   - Fix: Add a total-bytes/absolute-duration cap and optionally bind a selected interface.
-- [ ] **R5-P10-14** [LOW] [CONFIRMED_REAL] Stop/cancel cannot abort active LAN transfer -> teardown blocks up to 1h
+- [x] **R5-P10-14** [LOW] [CONFIRMED_REAL] Stop/cancel cannot abort active LAN transfer -> teardown blocks up to 1h
+  - RESOLVED 2026-08-11 [fixed]: Added TU-local std::atomic<bool> g_lanUploadCancelled (anonymous namespace, internal linkage; single-upload-at-a-time invariant since State::RunningLanTransfer is a single-instance worker group). LanUploadWorker::pump() polls...
   - Files: src/core/network_diagnostic_controller.cpp:968, src/core/network_diagnostic_controller.cpp:1152, src/core/network_diagnostic_controller.cpp:1420
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: stopLanTransferServer (968-975) closes the listener but never abort()s the in-flight served socket. runLanUpload blocks on done.acquire() (1171) and the LanUploadWorker has NO cancel path -- only its m_durationTimer (duration_sec, up to kMaxLanDurationSec=3600s) fires finish(). controller cancel() (1420) never signals it, and cleanupThread() does thread->wait(); so cancel/shutdown during an upload blocks until the duration elapses.
   - Fix: Add a cancel flag to LanUploadWorker checked in pump()/finish(); abort the active served socket in stopLanTransferServer.
-- [ ] **R5-P10-16** [LOW] [CONFIRMED_REAL] Port-scan timeout unvalidated; negative disables timer -> done.acquire() hang
+- [x] **R5-P10-16** [LOW] [CONFIRMED_REAL] Port-scan timeout unvalidated; negative disables timer -> done.acquire() hang
+  - RESOLVED 2026-08-11 [already-correct]: The hang the finding describes cannot occur in the current tree, so no change was made (adding a redundant ScanConfig-level clamp would be dead defensive code the quality gate flags). scanPort clamps the untrusted timeout...
   - Files: src/core/port_scanner.cpp:163, src/core/port_scanner.cpp:186, src/core/port_scanner.cpp:318
   - Boundary: untrusted-input (reachable)
   - Evidence: scan() (318) and controller scanPorts never validate config.timeoutMs; startTcpProbe does connect_timer->start(connectTimeoutMs) (163). A negative interval makes QTimer refuse to start, so on a filtered host that neither connects nor errors, finishTcpProbe/done.release() never runs and runTcpProbe blocks on done.acquire() (186) indefinitely, hanging the scan thread.
   - Fix: Reject/clamp timeoutMs>0 in ScanConfig validation before probing.
-- [ ] **R5-P10-17** [LOW] [PARTIAL] Unbounded readAll() on attacker-selected backup/report JSON
+- [x] **R5-P10-17** [LOW] [PARTIAL] Unbounded readAll() on attacker-selected backup/report JSON
+  - RESOLVED 2026-08-11 [fixed]: loadFromFile: added constexpr qint64 kMaxBackupFileBytes = 4 MiB and a file.size() > cap check immediately after open(), before readAll(). Oversized files fail closed with a surfaced errorOccurred rather than being read into...
   - Files: src/core/ethernet_config_manager.cpp:174, src/core/migration_report.cpp:319
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: loadFromFile (174) and importFromJson (319) do file.readAll() with no size cap before JSON parse. The file is chosen by the local user via a picker and parsed with full JSON validation + isValid() checks; worst case is self-DoS memory exhaustion on an oversized local file.
   - Fix: Reject files above a sane size (e.g. a few MB) before readAll().
-- [ ] **R5-P10-18** [LOW] [CONFIRMED_REAL] Skipped suite steps not recorded -> aggregate can report AllPassed
+- [x] **R5-P10-18** [LOW] [CONFIRMED_REAL] Skipped suite steps not recorded -> aggregate can report AllPassed
+  - RESOLVED 2026-08-11 [already-correct]: skipCurrentStep (src/core/diagnostic_controller.cpp:393-448) already appends each skipped step to m_suite_failures in every case, and stopStressTest (379-391) does the same; aggregateResults consumes m_suite_failures via...
   - Files: src/core/diagnostic_controller.cpp:356, src/core/diagnostic_controller.cpp:676
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: skipCurrentStep (356-397) requestStop()s the worker and queues advanceSuiteStep but never appends to m_suite_failures. The cpu/disk/memory benchmarks connect only failed+complete (not cancelled), so a skipped step produces neither a result nor a failure record, and aggregateResults (676-692) -- which only inspects m_suite_failures -- leaves overall_status=AllPassed despite the omitted work.
@@ -1398,112 +1414,134 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: populateBasic/AdvancedReportSections only insert a section when the cached result is non-empty/positive (e.g. m_cachedPing.sent>0 at 1273, downloadMbps>0||uploadMbps>0 at 1295). clearCacheFor drops stale results before each run so no stale success leaks, but a diagnostic that ran and failed simply vanishes from the report with no failed/not-run marker -- a design 'include-what-we-have' report.
   - Fix: Track and render a per-section not-run/failed state instead of silently omitting.
-- [ ] **R5-P10-20** [LOW] [PARTIAL] DHCP restore returns success when DNS->DHCP switch fails
+- [x] **R5-P10-20** [LOW] [PARTIAL] DHCP restore returns success when DNS->DHCP switch fails
+  - RESOLVED 2026-08-11 [fixed]: restoreDhcpMode: folded a GENUINE DNS-to-DHCP failure into the return value (returns false -> restoreSettings returns false -> controller reports partial restore, not full success). Benign already-automatic no-op is NOT...
   - Files: src/core/ethernet_config_manager.cpp:210, src/core/network_diagnostic_controller.cpp:1403
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: restoreDhcpMode treats IPv4 set-source=dhcp as authoritative and returns true even when set dnsservers source=dhcp fails, only logging a warning and setting the optional dnsApplied out-param (210-228). restoreSettings' DHCP branch returns that true (328) and controller restoreEthernetSettings (1403) passes dnsApplied=nullptr, so the DNS-to-DHCP failure never reaches the user's success/failure verdict, only a log line.
   - Fix: Fold the DNS-to-DHCP result into the restore verdict (or surface dnsApplied) so a partial DHCP restore is not reported as full success.
-- [ ] **R5-P10-21** [LOW] [PARTIAL] WiFi scan failure/timeout falls back to cached BSS, emitted as success
+- [x] **R5-P10-21** [LOW] [PARTIAL] WiFi scan failure/timeout falls back to cached BSS, emitted as success
+  - RESOLVED 2026-08-11 [fixed]: triggerScanAndWait now records a thread_local t_freshScanUnconfirmed when the fresh scan's completion could not be confirmed (WlanScan failed, ACM scan-complete wait timed out/failed, or notification registration failed)....
   - Files: src/core/wifi_analyzer.cpp:356, src/core/wifi_analyzer.cpp:383
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: triggerScanAndWait logs (not surfaces) a warning on WlanScan failure/wait-timeout/WAIT_FAILED (358/365) then proceeds; scanInterface reads WlanGetNetworkBssList which returns the driver's cached list and sets readOk=true (399-402), so scan() emits scanComplete as a successful fresh scan. Stale data is only distinguished by a log line -- a soft stale-cache fallback, but WiFi list data is informational.
   - Fix: Emit errorOccurred (or a 'results may be stale' flag) when the fresh-scan completion could not be confirmed.
-- [ ] **R5-P10-22** [LOW] [PARTIAL] Per-interface profile-list failure skipped; incomplete profiles appended; scan_ok true
+- [x] **R5-P10-22** [LOW] [PARTIAL] Per-interface profile-list failure skipped; incomplete profiles appended; scan_ok true
+  - RESOLVED 2026-08-11 [fixed]: The WlanGetProfileList per-interface failure is already logged and folded into scan_ok (return false; 760f129). Closed the residual by making appendInterfaceProfiles SKIP appending a profile whose WlanGetProfile detail read...
   - Files: src/core/wifi_profile_scanner.cpp:115, src/core/wifi_profile_scanner.cpp:121
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: appendInterfaceProfiles returns silently if WlanGetProfileList fails (115-118) with no log/error. readOneProfile always out.append()s the profile even on WlanGetProfile failure (121, empty security_type) and only bumps detail_failures. scan_ok is set true whenever enumeration ran (174). Detail failures ARE surfaced via logger (177-181); residual is the silent per-interface list-read skip plus the empty appended profiles.
   - Fix: Log/report the WlanGetProfileList per-interface failure and skip appending profiles whose detail read failed.
-- [ ] **R5-P10-23** [LOW] [CONFIRMED_REAL] Unknown WiFi security -> WPA2-PSK; WEP -> open, key omitted
+- [x] **R5-P10-23** [LOW] [CONFIRMED_REAL] Unknown WiFi security -> WPA2-PSK; WEP -> open, key omitted
+  - RESOLVED 2026-08-11 [fixed]: WEP half was already done (e37fede6: resolveWlanAuth maps WEP->{open,WEP} and buildWlanXmlContent emits keyType=networkKey keyMaterial). Closed the remaining half: resolveWlanAuth now returns std::nullopt for any non-empty...
   - Files: src/core/wifi_setup_script.cpp:64, src/core/wifi_setup_script.cpp:72, src/core/wifi_setup_script.cpp:99
   - Boundary: untrusted-input (reachable)
   - Evidence: resolveWlanAuth returns WPA2PSK for any unrecognized security string (72) -- a silent wrong default. WEP maps to {auth_type="open",enc="WEP"} (64); buildWlanXmlContent emits <keyMaterial> only when auth.auth_type!="open" (99), so a WEP network's supplied key is dropped and the generated profile cannot connect. SSID/security can originate from a scanned (rogue) AP.
   - Fix: Fail closed on unknown security; for WEP emit authentication=open + encryption=WEP with keyType=networkKey keyMaterial.
-- [ ] **R5-P10-24** [LOW] [PARTIAL] WiFi script ignores plaintext-XML delete + temp write/flush results
+- [x] **R5-P10-24** [LOW] [PARTIAL] WiFi script ignores plaintext-XML delete + temp write/flush results
+  - RESOLVED 2026-08-11 [fixed]: connectWifiWindows now checks the temp-file write and flush: extracted writeProfileXmlTempFile() which fails closed (returns false, sets result.error) when QFile::write() is short/-1 or flush() fails, so netsh is never run...
   - Files: src/core/wifi_setup_script.cpp:190, src/core/wifi_setup_script.cpp:281
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: Generated .cmd uses 'del ...2>nul' best-effort (186/190). connectWifiWindows calls xml_file.write()/flush() (281-282) ignoring return values. Mitigated: QTemporaryFile setAutoRemove(true) (276) cleans up the plaintext XML, and a failed write makes the downstream netsh add-profile fail closed (298).
   - Fix: Check xml_file.write()/flush() success and abort if the profile XML was not fully written.
-- [ ] **R5-P10-25** [LOW] [CONFIRMED_REAL] Zero-byte write infinite loop; 1TiB fill has no cancellation
+- [x] **R5-P10-25** [LOW] [CONFIRMED_REAL] Zero-byte write infinite loop; 1TiB fill has no cancellation
+  - RESOLVED 2026-08-11 [fixed]: fillTestFileWithRandom now takes an injected const std::function<bool()>& stop_requested (createTestFile passes [this]{return stopRequested();}), checks it each loop iteration, and fails on bytes_written==0 (|| in the...
   - Files: src/core/disk_benchmark_worker.cpp:223, src/core/disk_benchmark_worker.cpp:742
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: fillTestFileWithRandom loops while written_total<total_bytes with no stopRequested() check and breaks only on WriteFile==FALSE (224-234) -- a TRUE return with bytes_written==0 never advances (infinite loop) and a 1TiB create cannot be cancelled. writeSequentialPass has the same zero-byte gap (742-750). (readSequentialPass:664 DOES break on 0.)
   - Fix: Break/fail on bytes_written==0 and add stopRequested() checks inside the fill/write loops.
-- [ ] **R5-P10-26** [LOW] [CONFIRMED_REAL] Sequential write ignores FlushFileBuffers failure
+- [x] **R5-P10-26** [LOW] [CONFIRMED_REAL] Sequential write ignores FlushFileBuffers failure
+  - RESOLVED 2026-08-11 [fixed]: runSequentialWrite now captures FlushFileBuffers(h) into flush_ok; new classifyWritePass() fails the pass with write_error on flush failure (message 'FlushFileBuffers failed -- durability not guaranteed', mirroring...
   - Files: src/core/disk_benchmark_worker.cpp:710
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: runSequentialWrite calls FlushFileBuffers(h) (710) and ignores its return, then reports throughput -- unlike stress_test_worker.cpp:665 which checks it. A flush failure is scored as a successful pass.
   - Fix: Check FlushFileBuffers(h) and fail the pass on failure.
-- [ ] **R5-P10-27** [LOW] [PARTIAL] Stress continues when temp unavailable; NaN thermal limit disables abort
+- [x] **R5-P10-27** [LOW] [PARTIAL] Stress continues when temp unavailable; NaN thermal limit disables abort
+  - RESOLVED 2026-08-11 [already-correct]: validateThermalLimit (lines 201-206) already rejects non-finite (NaN/Inf via !std::isfinite) and <=0.0 thermal_limit_celsius, and is wired into validateStressConfig at line 234. A large FINITE limit is still accepted for a...
   - Files: src/core/stress_test_worker.cpp:378, src/core/stress_test_worker.cpp:183
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The 'continue when temp<=0/NaN unavailable' branch is a documented deliberate accommodation (373-378). Residual: validateStressConfig (183-196) never checks thermal_limit_celsius is finite/positive, so a NaN limit makes 'temp>=limit' always false -> thermal abort silently disabled.
   - Fix: Validate thermal_limit_celsius is finite and >0 in validateStressConfig.
-- [ ] **R5-P10-29** [LOW] [PARTIAL] Memory error totals use signed int without saturation
+- [x] **R5-P10-29** [LOW] [PARTIAL] Memory error totals use signed int without saturation
+  - RESOLVED 2026-08-11 [already-correct]: Cross-pass accumulation is already saturated: total_errors is int64_t (line 573), summed in 64-bit (line 584), then clamped to INT_MAX before the int report/return (lines 590-591). The lone memory future feeds that...
   - Files: src/core/stress_test_worker.cpp:493, src/core/stress_test_worker.cpp:314
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: patternVerify already saturates each pass to INT_MAX (86-87). Residual: cross-pass total_errors+=errors (504) is int and m_error_count.fetch_add(int) (314) can signed-overflow only after summing ~2^31 real bit-errors across passes -- hardware would be dead long before. Theoretical.
   - Fix: Saturate the cross-pass accumulation as well (clamp total_errors).
-- [ ] **R5-P10-30** [LOW] [CONFIRMED_REAL] KeepAwake refcounts a thread-local execution state globally
+- [x] **R5-P10-30** [LOW] [CONFIRMED_REAL] KeepAwake refcounts a thread-local execution state globally
+  - RESOLVED 2026-08-11 [fixed]: keep_awake.cpp rewritten to a process-global mechanism (PowerCreateRequest/PowerSetRequest/PowerClearRequest) instead of the thread-affine SetThreadExecutionState. A single process-owned power request handle (file-local...
   - Files: src/core/keep_awake.cpp:29, src/core/keep_awake.cpp:55
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: SetThreadExecutionState affects only the CALLING thread, but start()/stop() use a process-global s_active_count/s_active_flags. With overlapping guards on different worker threads, the second start() sees new_flags==old and skips SetThreadExecutionState (38) so its thread never gets ES_SYSTEM_REQUIRED, and a stop() on a different thread clears the wrong thread's state (70) -- leaving a stale system-required request or defeating keep-awake on the actual working thread.
   - Fix: Use a process-global mechanism (PowerCreateRequest/PowerSetRequest) or drive SetThreadExecutionState from one dedicated persistent thread.
-- [ ] **R5-P10-31** [LOW] [CONFIRMED_REAL] DNS type validation case-insensitive but mapping case-sensitive
+- [x] **R5-P10-31** [LOW] [CONFIRMED_REAL] DNS type validation case-insensitive but mapping case-sensitive
+  - RESOLVED 2026-08-11 [fixed]: mapRecordType (anon-namespace, called from performQuery) compared recordType against the uppercase name table case-sensitively and defaulted to DNS_TYPE_A, so isSupportedRecordType-accepted 'aaaa'/'mx' silently queried an A...
   - Files: src/core/dns_diagnostic_tool.cpp:69, src/core/dns_diagnostic_tool.cpp:105
   - Boundary: gui-local-user (reachable)
   - Evidence: isSupportedRecordType uses contains(...,CaseInsensitive) (69) so 'aaaa' passes; mapRecordType compares recordType==QLatin1String(entry.name) case-sensitively (121) and returns DNS_TYPE_A default (125), so 'aaaa'/'mx' silently query an A record -- a wrong-type coercion, not a rejection.
   - Fix: Normalize recordType (toUpper) before the mapRecordType comparison, or compare case-insensitively.
-- [ ] **R5-P10-32** [LOW] [CONFIRMED_REAL] DNS compare reports allAgree=true on failures / empty-answer baseline
+- [x] **R5-P10-32** [LOW] [CONFIRMED_REAL] DNS compare reports allAgree=true on failures / empty-answer baseline
+  - RESOLVED 2026-08-11 [fixed]: Two-part fix, no header/signature change. (1) updateComparisonWithResult now establishes the agreement baseline on the FIRST successful result even when its answer set is empty, keyed off...
   - Files: src/core/dns_diagnostic_tool.cpp:318, src/core/dns_diagnostic_tool.cpp:325
   - Boundary: untrusted-input (reachable)
   - Evidence: updateComparisonWithResult sets firstAnswers only from a successful result (318); a successful-but-empty answer keeps firstAnswers empty so no baseline is ever established, and later differing answers are treated as the baseline instead of a disagreement. Failed servers are skipped entirely and allAgree stays at its default true (346), so all-failed or empty-answer comparisons report agreement.
   - Fix: Track a baseline-established flag (set on first success incl. empty) and count server failures so allAgree is only true with >=2 comparable successful answers.
-- [ ] **R5-P10-33** [LOW] [CONFIRMED_REAL] DNS cache inspection turns process failure into silent empty result
+- [x] **R5-P10-33** [LOW] [CONFIRMED_REAL] DNS cache inspection turns process failure into silent empty result
+  - RESOLVED 2026-08-11 [fixed]: inspectDnsCache turned a failed 'ipconfig /displaydns' into a silent empty result (Q_EMIT dnsCacheResults({})), indistinguishable from a genuinely empty cache. Now emits errorOccurred with the child's trimmed std_err detail...
   - Files: src/core/dns_diagnostic_tool.cpp:372
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: inspectDnsCache: if(!result.succeeded()) emits dnsCacheResults({}) and returns with no errorOccurred (372-375), so a failed 'ipconfig /displaydns' looks like an empty cache -- a log-then-return-empty fail-open.
   - Fix: Emit errorOccurred on process failure instead of an empty dnsCacheResults.
-- [ ] **R5-P10-34** [LOW] [CONFIRMED_REAL] WSAStartup unchecked; every zero-reply ICMP labeled timeout
+- [x] **R5-P10-34** [LOW] [CONFIRMED_REAL] WSAStartup unchecked; every zero-reply ICMP labeled timeout
+  - RESOLVED 2026-08-11 [fixed]: Part 2 (distinguish IP_REQ_TIMED_OUT from other GetLastError when numReplies==0) was already present in the tree via settleEchoOutcome + the sendError capture in sendIcmpEcho -- left as-is (already-correct). Completed the...
   - Files: src/core/connectivity_tester.cpp:170, src/core/connectivity_tester.cpp:343
   - Boundary: untrusted-input (reachable)
   - Evidence: ctor calls WSAStartup ignoring the return (170) (mostly fails-closed downstream via getaddrinfo). sendIcmpEcho's else branch labels ALL numReplies==0 as 'Request timed out' (343-348) without consulting GetLastError(), so a real error (e.g. network-unreachable) is mislabeled as a timeout in ping/traceroute/MTR classification.
   - Fix: Check WSAStartup; distinguish IP_REQ_TIMED_OUT from other GetLastError() codes when numReplies==0.
-- [ ] **R5-P10-35** [LOW] [PARTIAL] Invalid URL parsing falls back to manual scheme stripping
+- [x] **R5-P10-35** [LOW] [PARTIAL] Invalid URL parsing falls back to manual scheme stripping
+  - RESOLVED 2026-08-11 [fixed]: resolveHostname now rejects a malformed URL (return {}) instead of hand-stripping the scheme when QUrl is invalid or has an empty host. Fail-closed: an unparseable/scheme-only URL yields empty, and resolveTargetIpOrEmitError...
   - Files: src/core/connectivity_tester.cpp:211, src/core/connectivity_tester.cpp:217
   - Boundary: gui-local-user (reachable)
   - Evidence: resolveHostname: when QUrl is invalid it manually strips the scheme (216-219) rather than rejecting -- a fallback per the standing rule. However the result is fed to getaddrinfo (251) which fails closed for an unresolvable host, so the fallback is benign (worst case a bad host fails to resolve).
   - Fix: On an invalid URL, reject the input instead of manual scheme stripping.
-- [ ] **R5-P10-36** [LOW] [CONFIRMED_REAL] MTR reports zero completed cycles when no hop responds
+- [x] **R5-P10-36** [LOW] [CONFIRMED_REAL] MTR reports zero completed cycles when no hop responds
+  - RESOLVED 2026-08-11 [fixed]: mtr() now counts fully-completed cycles in a local completedCycles (incremented only when the cycle's hop sweep was not cut short by cancellation) and passes it to populateMtrResult, whose signature changed from bool cancelled...
   - Files: src/core/connectivity_tester.cpp:163, src/core/connectivity_tester.cpp:532
   - Boundary: untrusted-input (reachable)
   - Evidence: populateMtrResult derives totalCycles from result.hops.first().sent (163-164); when no hop ever responds, maxDiscoveredHop stays 0 so visibleHops/hops is empty and totalCycles reports 0 even though config.cycles cycles actually ran (532-557).
   - Fix: Report totalCycles from the actual completed cycle count, independent of hop responsiveness.
-- [ ] **R5-P10-37** [LOW] [CONFIRMED_REAL] Active-connection refresh accepts zero/negative interval -> event-loop spin
+- [x] **R5-P10-37** [LOW] [CONFIRMED_REAL] Active-connection refresh accepts zero/negative interval -> event-loop spin
+  - RESOLVED 2026-08-11 [fixed]: active_connections_monitor.cpp:startMonitoring now clamps the timer interval up to a positive floor: m_refreshTimer->start(std::max(config.refreshIntervalMs, kMinConnRefreshMs)) with new file-local constexpr int...
   - Files: src/core/active_connections_monitor.cpp:85
   - Boundary: gui-local-user (reachable)
   - Evidence: startMonitoring does m_refreshTimer->start(config.refreshIntervalMs) (85) with no clamp; a 0 ms interval fires every event-loop turn, continuously re-enumerating the TCP/UDP tables (CPU spin). Contrast thermal_monitor.cpp:48 and wifi_analyzer.cpp:564 which both reject non-positive intervals.
   - Fix: Clamp refreshIntervalMs to a positive minimum before starting the timer.
-- [ ] **R5-P10-38** [LOW] [PARTIAL] WLAN IE offset/length trusted without bounds vs BSS allocation
+- [x] **R5-P10-38** [LOW] [PARTIAL] WLAN IE offset/length trusted without bounds vs BSS allocation
+  - RESOLVED 2026-08-11 [fixed]: Added validatedIeSpan(): before parsing, it verifies bss.ulIeOffset >= sizeof(WLAN_BSS_ENTRY) and that [ulIeOffset, ulIeOffset+ulIeSize) lies wholly inside the WlanGetNetworkBssList allocation (bounds computed via listBase +...
   - Files: src/core/wifi_analyzer.cpp:202, src/core/wifi_analyzer.cpp:186
   - Boundary: untrusted-input (reachable)
   - Evidence: networkFromBssEntry passes base+bss.ulIeOffset with length bss.ulIeSize (202-206) without checking they stay inside the BSS-entry allocation. scanSecurityIes internally bounds its walk to ieLen (168-171), so within-blob parsing is safe, but a malformed ulIeOffset/ulIeSize from the driver (beacon data ultimately from a rogue AP) is trusted. In practice the OS driver fills these consistently.
   - Fix: Validate ulIeOffset>=sizeof(WLAN_BSS_ENTRY) and ulIeOffset+ulIeSize within the entry before parsing.
-- [ ] **R5-P10-39** [LOW] [CONFIRMED_REAL] iPerf UDP throughput not read; UDP result becomes zero-throughput success
+- [x] **R5-P10-39** [LOW] [CONFIRMED_REAL] iPerf UDP throughput not read; UDP result becomes zero-throughput success
+  - RESOLVED 2026-08-11 [fixed]: parseIperfJson's UDP branch (end.contains("sum")) now reads end.sum.bits_per_second into both result.uploadMbps and result.downloadMbps before jitter/loss. TCP output has no top-level "sum" key so the TCP path...
   - Files: src/core/bandwidth_tester.cpp:456, src/core/bandwidth_tester.cpp:469
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: parseIperfJson accepts end.sum as proof of throughput (456-458) but computes upload/download only from sum_sent/sum_received (466-470); for a UDP test only end.sum exists, so uploadMbps/downloadMbps come out 0 while jitter/loss are read from udpSum (494-498). A UDP run reports a successful 0 Mbps result.
   - Fix: For UDP, read throughput from end.sum.bits_per_second into download/upload.
-- [ ] **R5-P10-40** [LOW] [CONFIRMED_REAL] HTTP latency failure coerced to 0.0 alongside a successful result
+- [x] **R5-P10-40** [LOW] [CONFIRMED_REAL] HTTP latency failure coerced to 0.0 alongside a successful result
+  - RESOLVED 2026-08-11 [already-correct]: Current runHttpSpeedTest already passes the possibly-negative latencyMs (from measureHttpHeadLatencyMs, -1 on failure) straight into the sole successful httpSpeedTestComplete emission without coercing to 0.0. The all-zero...
   - Files: src/core/bandwidth_tester.cpp:518
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: measureHttpHeadLatencyMs returns -1 on failure (186), but runHttpSpeedTest sets latencyMs=0.0 (518-520) and still reports it with a successful download/upload result (553-554), presenting an unknown latency as an impossibly-perfect 0 ms.
   - Fix: Report latency as unknown/-1 to the UI rather than coercing to 0.
-- [ ] **R5-P10-41** [LOW] [CONFIRMED_REAL] netsh path built from mutable %SystemRoot% env, not canonical
+- [x] **R5-P10-41** [LOW] [CONFIRMED_REAL] netsh path built from mutable %SystemRoot% env, not canonical
+  - RESOLVED 2026-08-11 [already-correct]: resolveNetshPath() already resolves via sak::system32Path("netsh.exe") (GetSystemDirectoryW) on Windows and fails closed (empty) off-Windows; it no longer reads %SystemRoot%. Only an explanatory comment mentions the env var....
   - Files: src/core/bandwidth_tester.cpp:576
   - Boundary: local-config-or-registry (reachable)
   - Evidence: resolveNetshPath uses qEnvironmentVariable("SystemRoot") + /System32/netsh.exe (565-576) instead of GetSystemDirectoryW. SystemRoot is inheritable process-environment data; the repo already has sak::system32Path() (GetSystemDirectoryW) and R4 doc line 323 A2#1 flagged exactly this ('netsh via %SystemRoot% (use GetSystemDirectoryW)') -- current code still uses env.
   - Fix: Resolve netsh via sak::system32Path("netsh.exe") (GetSystemDirectoryW), not the SystemRoot env var.
-- [ ] **R5-P10-42** [LOW] [CONFIRMED_REAL] Memory bandwidth alloc failure returns 0 (no fail); copy counts one side
+- [x] **R5-P10-42** [LOW] [CONFIRMED_REAL] Memory bandwidth alloc failure returns 0 (no fail); copy counts one side
+  - RESOLVED 2026-08-11 [fixed]: Copy bandwidth now multiplied by 2x via new named constant kCopyTrafficFactor=2.0 (src/core/memory_benchmark_worker.cpp:61,303-304), matching the code's own 'both read and write = 2x buffer size' comment; previously it counted...
   - Files: src/core/memory_benchmark_worker.cpp:98, src/core/memory_benchmark_worker.cpp:274
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: runReadBandwidth/runWriteBandwidth/runCopyBandwidth return 0.0 on alloc failure (184/223/258); runBandwidthBenchmarks (98-118) stores them without checking, so a bandwidth alloc failure is scored as 0 GB/s success (only the latency path fails closed at 133). runCopyBandwidth's comment says 'both read and write = 2x' but computes gbps from src.size() only (273-274), under-reporting copy bandwidth ~2x.
@@ -1513,7 +1551,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: runAesEncryption is S-box substitution+XOR (comment 374-376) reported as 'AES Throughput'. runMultiThreaded runs only prime(2M)+matrix(256) smaller workloads per thread (416-417), yet thread_scaling_efficiency = st_total(4 full ST benchmarks)/mt_total(2 smaller) / hw_threads (204) -- comparing different workloads, so the scaling metric is meaningless. Quality/methodology, not a memory bug.
   - Fix: Rename the 'AES' metric to reflect it is a substitution proxy and run the same ST workload set in the MT pass (or compute scaling from matched work).
-- [ ] **R5-P10-44** [LOW] [CONFIRMED_REAL] hardware_concurrency()==0 yields contradictory MT thread-count/score
+- [x] **R5-P10-44** [LOW] [CONFIRMED_REAL] hardware_concurrency()==0 yields contradictory MT thread-count/score
+  - RESOLVED 2026-08-11 [fixed]: Clamped thread count is now computed exactly once. execute() sets m_result.thread_count = std::max(1U, std::thread::hardware_concurrency()) (thread_count is uint32_t, so the unsigned 1U max is type-clean)....
   - Files: src/core/cpu_benchmark_worker.cpp:115, src/core/cpu_benchmark_worker.cpp:449
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: execute stores m_result.thread_count=hardware_concurrency() (115) (0 when unknown); runMultiThreadBenchmark clamps hw_threads=max(1,...) and runs 1 thread (200), but calculateScores re-fetches hardware_concurrency() UNclamped (449) so multi_thread_score = single*0*eff = 0 -- the MT pass ran but scores 0 with thread_count reported 0.
@@ -1523,57 +1562,68 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The finding is factually correct -- runRandom4KReadLoop issues each op synchronously on one non-overlapped handle, so queue_depth>1 measures serialized QD1 -- but this is explicitly documented as a known benchmark-fidelity limitation in the code comment (879-882) and results are still labeled QD32.
   - Fix: Either implement overlapped/async I/O for true QD or relabel the reported metric to reflect serialized QD1.
-- [ ] **R5-P10-46** [LOW] [CONFIRMED_REAL] Conversion HTML/CSV writers ignore stream/close errors
+- [x] **R5-P10-46** [LOW] [CONFIRMED_REAL] Conversion HTML/CSV writers ignore stream/close errors
+  - RESOLVED 2026-08-11 [already-correct]: conversion_report_generator.cpp already fails closed on write errors: both generateHtmlReport and generateCsvManifest use QSaveFile, check out.status()!=Ok (cancelWriting + return {}) and check file.commit() (return {} on...
   - Files: src/core/conversion_report_generator.cpp:47, src/core/conversion_report_generator.cpp:145
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: generateHtmlReport does out<<html; file.close(); then returns report_path with no out.status()/file.error() check (46-51). generateCsvManifest likewise (143-148). A short write/disk-full returns a success path -- contrast diagnostic/migration generators which do check status.
   - Fix: After flush/close check out.status()==Ok and file.error()==NoError; return {} on failure.
-- [ ] **R5-P10-47** [LOW] [CONFIRMED_REAL] CSV manifest truncates to shorter array; MessageClass column holds message_id
+- [x] **R5-P10-47** [LOW] [CONFIRMED_REAL] CSV manifest truncates to shorter array; MessageClass column holds message_id
+  - RESOLVED 2026-08-11 [fixed]: conversion_report_generator.cpp: renamed the CSV manifest header column MessageClass -> MessageId to match the value written (item.message_id in writeCsvDataRows). The items/properties length-mismatch was already handled...
   - Files: src/core/conversion_report_generator.cpp:82, src/core/conversion_report_generator.cpp:88
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: writeCsvDataRows uses count=qMin(items.size(),all_properties.size()) (82), silently dropping rows if the two arrays differ in length. The header column is 'MessageClass' (126) but the data row writes csvSafeCell(item.message_id) (88) -- header/value mismatch.
   - Fix: Rename the header to MessageId (or write message_class) and handle an items/properties length mismatch explicitly.
-- [ ] **R5-P10-48** [LOW] [PARTIAL] Conversion HTML injects source_sha256 unescaped/unvalidated
+- [x] **R5-P10-48** [LOW] [PARTIAL] Conversion HTML injects source_sha256 unescaped/unvalidated
+  - RESOLVED 2026-08-11 [fixed]: conversion_report_generator.cpp: added file-local sha256PreviewHtml() that validates the digest is pure hex (via std::ranges::all_of, matching the file's existing csvSafeCell pattern) and fails closed to an em-dash for...
   - Files: src/core/conversion_report_generator.cpp:228
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: result.source_sha256 is .arg()'d without toHtmlEscaped() (228-230) while sibling fields (source_path 220, errors 267) are escaped. However source_sha256 is an app-computed SHA-256 hex string produced in-process during conversion, not deserialized from untrusted input, so markup injection is not reachable; escaping is a consistency nicety.
   - Fix: Escape/validate source_sha256 as hex for consistency with the other escaped fields.
-- [ ] **R5-P10-49** [LOW] [PARTIAL] Migration import coerces non-object/wrong-type entries and trusts counts
+- [x] **R5-P10-49** [LOW] [PARTIAL] Migration import coerces non-object/wrong-type entries and trusts counts
+  - RESOLVED 2026-08-11 [fixed]: migration_report.cpp importFromJson: non-object entries were already rejected (fail closed). Added the missing half: removed the four count fields (total_apps/matched_apps/selected_apps/match_rate) from the trusted metadata...
   - Files: src/core/migration_report.cpp:347, src/core/migration_report.cpp:359
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: parseEntryFromJson uses obj[...].toString()/toBool()/toDouble() with default coercion (370-392); a non-object entry becomes val.toObject()=={} -> blank record (359). Metadata omitted keeps prior m_metadata (339) and total_apps/matched_apps are taken from the file (347-349) without recompute from parsed.size(). The report file is user-selected locally, so this is fail-open coercion on a trusted-ish path, not remote input.
   - Fix: Reject non-object/wrong-typed entries and recompute counts from the parsed entries instead of trusting the file's totals.
-- [ ] **R5-P10-50** [LOW] [PARTIAL] Ethernet backup validation too weak; malformed fields reach live reconfig
+- [x] **R5-P10-50** [LOW] [PARTIAL] Ethernet backup validation too weak; malformed fields reach live reconfig
+  - RESOLVED 2026-08-11 [fixed]: isValid() now validates IPv4 formats of any PRESENT field via ipv4FieldsWellFormed() using QHostAddress (rejects hostnames/IPv6/garbage). Empty optional fields (gateway, DNS, and all fields on the DHCP path) remain legitimate...
   - Files: src/core/ethernet_config_manager.cpp:74, src/core/ethernet_config_manager.cpp:231
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: isValid() only checks adapterName+backupTimestamp non-empty and dhcpEnabled||ipv4Address non-empty (74-82); malformed ipv4Address/mask/gateway/DNS pass. restoreStaticIp/restoreDnsServers forward them as netsh argv (231-307). netsh rejects malformed values (fails closed, error surfaced), but restoreStaticIp sets the address before DNS, so a malformed DNS can leave a partial reconfiguration. Backup file is locally user-selected.
   - Fix: Validate IPv4 address/mask/gateway/DNS formats in isValid() before any live netsh apply.
-- [ ] **R5-P10-51** [LOW] [CONFIRMED_REAL] Report-format parsing uses substring match ('nothtml' accepted)
+- [x] **R5-P10-51** [LOW] [CONFIRMED_REAL] Report-format parsing uses substring match ('nothtml' accepted)
+  - RESOLVED 2026-08-11 [already-correct]: requestedReportFormats (466-489) splits formats on ',' (Qt::SkipEmptyParts), trims+lowercases each token, and exact-matches against the known {html,json,csv} list, returning {} (fail closed) on any unknown token so...
   - Files: src/core/diagnostic_controller.cpp:419
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: requestedReportFormats does formats.contains(fmt,CaseInsensitive) (423), so 'nothtml' contains 'html' and is accepted, generating an HTML report instead of failing closed. Contrast network_diagnostic_controller.cpp:1331 which uses exact compare.
   - Fix: Split formats on the delimiter and exact-match each token.
-- [ ] **R5-P10-52** [LOW] [PARTIAL] Extension-first detection skips magic; magic rejects valid <16-byte streams
+- [x] **R5-P10-52** [LOW] [PARTIAL] Extension-first detection skips magic; magic rejects valid <16-byte streams
+  - RESOLVED 2026-08-11 [already-correct]: readMagicNumber (decompressor_factory.cpp:170) already returns the actual `static_cast<int>(bytesRead)`, not the requested size, and only -1 on read fault. detectByMagicNumber (line 137) skips any table entry where...
   - Files: src/core/decompressor_factory.cpp:53, src/core/decompressor_factory.cpp:160
   - Boundary: untrusted-input (reachable)
   - Evidence: detectFormat returns extension-based format without verifying magic (53-55) -- but a mislabeled .gz that isn't gzip just makes create()'s decompressor fail closed at open/decode, so this is intentional and safe. Real residual: readMagicNumber returns bytesRead==size where size=16 (160), so a valid compressed stream shorter than 16 bytes and lacking a known extension fails magic detection even though its 2-6 byte signature is present.
   - Fix: Accept bytesRead>=kMaxMagicSignatureBytes and compare only the bytes actually read.
-- [ ] **R5-P10-53** [LOW] [PARTIAL] LAN server misreports port 0; upload write()==0 tight loop
+- [x] **R5-P10-53** [LOW] [PARTIAL] LAN server misreports port 0; upload write()==0 tight loop
+  - RESOLVED 2026-08-11 [fixed]: startLanTransferServer now captures m_lanTransferServer->serverPort() after a successful listen() and emits lanTransferServerStarted(bound_port) plus logs the bound port, so a port==0 ephemeral bind reports the OS-chosen port...
   - Files: src/core/network_diagnostic_controller.cpp:867, src/core/network_diagnostic_controller.cpp:1076
   - Boundary: untrusted-input (reachable)
   - Evidence: Confirmed: startLanTransferServer emits lanTransferServerStarted(port) with the original param (867) not m_lanTransferServer->serverPort(), so a port==0 ephemeral bind reports 0. The pump() loop 'while(bytesToWrite < m_blockSize*64){written=write(); if(written<0)... m_totalSent+=written}' (1076-1084) does not guard written==0; but QTcpSocket::write buffers internally and returns the full length or -1, so written==0 is not reachable for a non-empty buffer.
   - Fix: Emit serverPort() as the actual bound port; add a written==0 break/guard in pump() for robustness.
-- [ ] **R5-P10-54** [LOW] [CONFIRMED_REAL] Failed adapter-stat query yields zero counters, indistinguishable from real
+- [x] **R5-P10-54** [LOW] [CONFIRMED_REAL] Failed adapter-stat query yields zero counters, indistinguishable from real
+  - RESOLVED 2026-08-11 [fixed]: network_adapter_inspector.cpp:populateIfStats now captures the GetIfEntry2 status and, on failure, emits sak::logWarning("GetIfEntry2 failed for interface index {}: error {}", ifIndex, status) before returning -- so a failed...
   - Files: src/core/network_adapter_inspector.cpp:185
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: populateIfStats returns early when GetIfEntry2(&ifRow)!=NO_ERROR (185-186), leaving info.bytesReceived/Sent/packets/errors at their zero struct defaults with no error surfaced -- a failed stats read looks like genuine zero traffic.
   - Fix: Track a stats-valid flag (or surface the failure) so a failed GetIfEntry2 is distinguishable from real zeros.
-- [ ] **R5-P10-55** [LOW] [PARTIAL] Mutable getEntry out-of-range returns shared writable scratch
+- [x] **R5-P10-55** [LOW] [PARTIAL] Mutable getEntry out-of-range returns shared writable scratch
+  - RESOLVED 2026-08-11 [fixed]: migration_report.h non-const getEntry: changed the OOB scratch to `static thread_local`. Literal return-by-value was rejected as a false-close: app_installation_worker.cpp:262-462 mutates entries through the returned reference...
   - Files: include/sak/migration_report.h:120
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The non-const getEntry(int) returns a reference to a function-local static s_scratch_entry on an out-of-range index (120-127). It is a deliberate bounds-safety guard (avoids vector::operator[] UB) but the shared mutable static both swallows a bad-index write and is a cross-thread data race if two callers hit the out-of-range path. Migration report is GUI-thread in practice.
   - Fix: Return by value or require the caller to check getEntryCount() rather than handing out a shared mutable static.
-- [ ] **R5-P10-56** [LOW] [CONFIRMED_REAL] Dead declarations / unread flag / no-op ReportGeneration step
+- [x] **R5-P10-56** [LOW] [CONFIRMED_REAL] Dead declarations / unread flag / no-op ReportGeneration step
+  - RESOLVED 2026-08-11 [fixed]: MY ASSIGNED PART (the unread m_monitoring flag) done: removed std::atomic<bool> m_monitoring from active_connections_monitor.h, removed its two store() calls in active_connections_monitor.cpp (startMonitoring/stopMonitoring),...
   - Files: include/sak/migration_report.h:148, include/sak/active_connections_monitor.h:77, src/core/diagnostic_controller.cpp:603
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: migration_report.h declares getSystemInfo/getOSVersion/escapeJsonString (148-153) that are never defined in migration_report.cpp (grep: no matches). active_connections_monitor m_monitoring (h:77) is only ever store()d (cpp:81,92), never load()ed -- dead state. finalizeSuiteAndComplete (diagnostic_controller.cpp:603-613) sets the ReportGeneration state and emits 'Generating report...' but only calls aggregateResults() and writes no report file.

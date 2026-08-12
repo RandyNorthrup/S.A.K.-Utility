@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <numeric>
 #include <random>
 #include <vector>
@@ -56,6 +57,8 @@ constexpr unsigned int kCreateFileSeed = 789;
 constexpr unsigned int kSequentialWriteSeed = 321;
 constexpr unsigned int kRandomReadOffsetSeed = 654;
 constexpr unsigned int kRandomWriteOffsetSeed = 876;
+// Seed for the latency-reservoir RNG (Algorithm R downsampling of retained samples).
+constexpr uint64_t kLatencyReservoirSeed = 424'242;
 constexpr double kNanosecondsPerSecond = 1'000'000'000.0;
 constexpr double kNanosecondsPerMicrosecond = 1000.0;
 constexpr int kBenchmarkMillisecondsPerSecond = 1000;
@@ -88,6 +91,37 @@ constexpr double kRefSeqReadMbps = 7000.0;
 constexpr double kRefSeqWriteMbps = 5000.0;
 constexpr double kRefRand4KReadIops = 800000.0;
 constexpr double kRefRand4KWriteIops = 1000000.0;
+
+// A createTestFile() failure is a disk read error UNLESS the user cancelled during the
+// (potentially multi-hundred-GB) fill, in which case the fill was aborted on request and
+// the correct verdict is a cancellation, not a disk error.
+sak::error_code createTestFileFailureCode(bool stopped) {
+    return stopped ? sak::error_code::operation_cancelled : sak::error_code::read_error;
+}
+
+// Classify a sequential-write pass. A short transfer is a disk error unless the user
+// cancelled mid-pass (report that as a cancellation); a failed FlushFileBuffers means the
+// writes never reached the device, so the pass fails closed rather than scoring a
+// non-durable flush as a good result.
+std::expected<void, sak::error_code> classifyWritePass(size_t written_total,
+                                                       size_t total_bytes,
+                                                       bool flush_ok,
+                                                       bool stopped) {
+    if (written_total < total_bytes) {
+        if (stopped) {
+            return std::unexpected(sak::error_code::operation_cancelled);
+        }
+        logError("Sequential write: short write ({} of {} bytes) -- disk I/O error",
+                 written_total,
+                 total_bytes);
+        return std::unexpected(sak::error_code::write_error);
+    }
+    if (!flush_ok) {
+        logError("Sequential write: FlushFileBuffers failed -- durability not guaranteed");
+        return std::unexpected(sak::error_code::write_error);
+    }
+    return {};
+}
 
 #ifdef SAK_PLATFORM_WINDOWS
 // Fail closed if a freshly-opened handle resolved to a reparse point (a symlink or
@@ -206,10 +240,36 @@ void finalizeLatencies(std::vector<double>& latencies,
     }
 }
 
+// Bound the retained latency samples with reservoir sampling (Algorithm R): an unbounded
+// push_back would grow this vector into the GBs at high IOPS over a long duration. Keep
+// every sample until kLatencySampleReserve are held; after that the incoming (samples_seen-th,
+// 0-based) sample replaces a uniformly-random existing slot with probability
+// kLatencySampleReserve/(samples_seen+1). The retained set stays a uniform random sample of
+// the full stream, so the average and P99 derived from it remain representative while memory
+// stays capped.
+void recordLatencySample(std::vector<double>& latencies, uint64_t samples_seen, double sample_us) {
+    if (latencies.size() < kLatencySampleReserve) {
+        latencies.push_back(sample_us);
+        return;
+    }
+    // thread_local: each benchmark worker runs its I/O loop on its own thread, so this RNG is
+    // never shared between concurrent runs.
+    static thread_local std::mt19937_64 reservoir_rng(kLatencyReservoirSeed);
+    std::uniform_int_distribution<uint64_t> slot(0, samples_seen);
+    const uint64_t index = slot(reservoir_rng);
+    if (index < kLatencySampleReserve) {
+        latencies[index] = sample_us;
+    }
+}
+
 // Fill a freshly-created benchmark file with @p total_bytes of reproducible
-// pseudo-random data via direct, sector-aligned writes of @p block_bytes. Closes
-// @p h on failure.
-bool fillTestFileWithRandom(HANDLE h, size_t total_bytes, size_t block_bytes) {
+// pseudo-random data via direct, sector-aligned writes of @p block_bytes. Aborts on a
+// cancellation request (@p stop_requested) so a multi-hundred-GB fill is interruptible.
+// Closes @p h on failure or cancellation.
+bool fillTestFileWithRandom(HANDLE h,
+                            size_t total_bytes,
+                            size_t block_bytes,
+                            const std::function<bool()>& stop_requested) {
     const AlignedBuffer buf(block_bytes, kSectorAlignment);
     if (!buf.valid()) {
         CloseHandle(h);
@@ -225,10 +285,18 @@ bool fillTestFileWithRandom(HANDLE h, size_t total_bytes, size_t block_bytes) {
 
     size_t written_total = 0;
     while (written_total < total_bytes) {
+        // Fail closed on cancellation rather than run an uninterruptible fill to the end.
+        if (stop_requested()) {
+            CloseHandle(h);
+            return false;
+        }
         DWORD bytes_written = 0;
         const DWORD to_write =
             static_cast<DWORD>(std::min(buf.size(), total_bytes - written_total));
-        if (WriteFile(h, buf.data(), to_write, &bytes_written, nullptr) == 0) {
+        // A TRUE WriteFile that advanced 0 bytes would spin here forever; treat a
+        // zero-byte (or failed) write as a hard error.
+        if (WriteFile(h, buf.data(), to_write, &bytes_written, nullptr) == 0 ||
+            bytes_written == 0) {
             logError("Failed to write test file at offset {}", written_total);
             CloseHandle(h);
             return false;
@@ -285,10 +353,10 @@ auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     // Create test file
     reportProgress(sak::progress::kStart, kDiskBenchmarkStepTotal, "Creating test file...");
     if (!createTestFile()) {
-        // A fill failure (e.g. disk full mid-write) leaves a partially-written temp
-        // file after m_test_file_path was recorded; remove it rather than orphan it.
+        // A fill failure or mid-fill cancel leaves a partially-written temp file after
+        // m_test_file_path was recorded; remove it, and report cancel vs disk error.
         cleanupTestFile();
-        return std::unexpected(sak::error_code::read_error);
+        return std::unexpected(createTestFileFailureCode(stopRequested()));
     }
 
     auto benchmark_result = runAllBenchmarks();
@@ -585,8 +653,10 @@ bool DiskBenchmarkWorker::createTestFile() {
     m_test_file_path = path;
 
     const size_t total_bytes = static_cast<size_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
-    if (!fillTestFileWithRandom(h, total_bytes, m_seq_block_bytes)) {
-        return false;  // helper closed the handle
+    if (!fillTestFileWithRandom(h, total_bytes, m_seq_block_bytes, [this] {
+            return stopRequested();
+        })) {
+        return false;  // helper closed the handle (I/O error or cancellation)
     }
 
     CloseHandle(h);
@@ -733,16 +803,15 @@ auto DiskBenchmarkWorker::runSequentialWrite() -> std::expected<void, sak::error
 
         const size_t written_total = writeSequentialPass(h, buf.data(), buf.size(), total_bytes);
 
-        FlushFileBuffers(h);
+        // Confirm the writes reached the device; an ignored FlushFileBuffers failure would
+        // score a non-durable pass as success.
+        const bool flush_ok = FlushFileBuffers(h) != 0;
         CloseHandle(h);
 
-        // A short write means WriteFile failed mid-run: a genuine disk error, not a
-        // measurement. Fail closed rather than scoring the partial transfer.
-        if (written_total < total_bytes) {
-            logError("Sequential write: short write ({} of {} bytes) -- disk I/O error",
-                     written_total,
-                     total_bytes);
-            return std::unexpected(sak::error_code::write_error);
+        const auto status =
+            classifyWritePass(written_total, total_bytes, flush_ok, stopRequested());
+        if (!status) {
+            return status;
         }
 
         const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
@@ -767,9 +836,15 @@ size_t DiskBenchmarkWorker::writeSequentialPass(void* file_handle,
     HANDLE h = static_cast<HANDLE>(file_handle);
     size_t written_total = 0;
     while (written_total < total_bytes) {
+        // Stop promptly on cancellation; the short return fails the pass in the caller.
+        if (stopRequested()) {
+            break;
+        }
         DWORD bytes_written = 0;
         const DWORD to_write = static_cast<DWORD>(std::min(bufSize, total_bytes - written_total));
-        if (WriteFile(h, buffer, to_write, &bytes_written, nullptr) == 0) {
+        // A TRUE WriteFile that advanced 0 bytes would spin forever; treat a zero-byte
+        // (or failed) write as a stop so the caller fails the pass.
+        if (WriteFile(h, buffer, to_write, &bytes_written, nullptr) == 0 || bytes_written == 0) {
             break;
         }
         written_total += bytes_written;
@@ -888,8 +963,9 @@ void DiskBenchmarkWorker::processRandomReadOp(
         return;
     }
 
-    stats.latencies.push_back(static_cast<double>(op_timer.nsecsElapsed()) /
-                              kNanosecondsPerMicrosecond);
+    const double latency_us = static_cast<double>(op_timer.nsecsElapsed()) /
+                              kNanosecondsPerMicrosecond;
+    recordLatencySample(stats.latencies, stats.total_ops, latency_us);
     stats.total_bytes += bytes_read;
     ++stats.total_ops;
 }
@@ -963,8 +1039,9 @@ void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
         return;
     }
 
-    stats.latencies.push_back(static_cast<double>(op_timer.nsecsElapsed()) /
-                              kNanosecondsPerMicrosecond);
+    const double latency_us = static_cast<double>(op_timer.nsecsElapsed()) /
+                              kNanosecondsPerMicrosecond;
+    recordLatencySample(stats.latencies, stats.total_ops, latency_us);
     stats.total_bytes += bytes_written;
     ++stats.total_ops;
 }
