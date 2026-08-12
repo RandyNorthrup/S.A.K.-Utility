@@ -1026,13 +1026,11 @@ void EmailInspectorPanel::onItemListCellClicked(int row, int column) {
 void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
     QMenu menu(this);
     menu.addAction(tr("Open in Detail Panel"), this, [this] {
-        const int row = m_item_list->currentRow();
-        if (row >= 0) {
-            auto* subject_item = m_item_list->item(row, ColSubject);
-            if (subject_item) {
-                const uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
-                m_controller->loadItemDetail(nid);
-            }
+        // itemIdForRow fails closed: a missing or wrong-typed role yields nullopt,
+        // so the action does nothing rather than acting on node id 0 (a VALID MBOX
+        // message index) that a defaulted toULongLong would have produced.
+        if (const auto nid = itemIdForRow(m_item_list->currentRow())) {
+            m_controller->loadItemDetail(*nid);
         }
     });
     menu.addSeparator();
@@ -1049,14 +1047,11 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
         }
     });
     menu.addAction(tr("View MAPI Properties"), this, [this] {
-        const int row = m_item_list->currentRow();
-        if (row >= 0) {
-            auto* subject_item = m_item_list->item(row, ColSubject);
-            if (subject_item) {
-                const uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
-                m_controller->loadItemProperties(nid);
-                m_detail_tabs->setCurrentIndex(kPropertiesDetailTabIndex);
-            }
+        // Fail closed on a missing or wrong-typed role rather than defaulting to
+        // node id 0 (a VALID MBOX message index) as a bare toULongLong would.
+        if (const auto nid = itemIdForRow(m_item_list->currentRow())) {
+            m_controller->loadItemProperties(*nid);
+            m_detail_tabs->setCurrentIndex(kPropertiesDetailTabIndex);
         }
     });
     menu.exec(m_item_list->viewport()->mapToGlobal(pos));
@@ -1329,6 +1324,7 @@ void EmailInspectorPanel::exportFolderAs(sak::ExportFormat format,
     config.format = format;
     config.output_path = dir_path;
     config.folder_id = *folder_id;
+    config.has_folder = true;  // *folder_id may be 0 (MBOX root); mark the folder as set
     config.save_attachments_with_messages = true;
     m_controller->exportItems(config);
 }

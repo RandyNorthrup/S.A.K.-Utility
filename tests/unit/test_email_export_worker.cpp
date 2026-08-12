@@ -63,6 +63,7 @@ void TestEmailExportWorker::configDefaults() {
     QVERIFY(config.output_path.isEmpty());
     QVERIFY(config.item_ids.isEmpty());
     QCOMPARE(config.folder_id, static_cast<uint64_t>(0));
+    QVERIFY(!config.has_folder);
     QVERIFY(!config.recurse_subfolders);
     QVERIFY(config.csv_columns.isEmpty());
     QCOMPARE(config.csv_delimiter, QLatin1Char(','));

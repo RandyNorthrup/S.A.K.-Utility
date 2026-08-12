@@ -8,6 +8,8 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QHash>
+#include <QMutex>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -16,6 +18,34 @@
 #endif
 
 namespace sak {
+
+namespace {
+#ifdef Q_OS_WIN
+
+// True only when the shell reports a USABLE Recycle Bin for @p volume_root. DRIVE_FIXED is
+// necessary but NOT sufficient: a fixed volume whose bin is disabled by policy still looks
+// fixed, yet FOF_ALLOWUNDO would then silently and PERMANENTLY delete. SHQueryRecycleBinW is
+// the authority; ANY failure fails closed. Cached per volume root for the process run -- the
+// query can enumerate the bin and policy does not change mid-run -- and the mutex guards the
+// worker threads that share this predicate (R5-G22-4).
+bool volumeRecycleBinIsUsable(LPCWSTR volume_root) {
+    static QMutex cache_mutex;
+    static QHash<QString, bool> cache;
+    const QString key = QString::fromWCharArray(volume_root).toLower();
+    const QMutexLocker locker(&cache_mutex);
+    const auto cached = cache.constFind(key);
+    if (cached != cache.constEnd()) {
+        return cached.value();
+    }
+    SHQUERYRBINFO info{};
+    info.cbSize = sizeof(info);
+    const bool usable = SUCCEEDED(SHQueryRecycleBinW(volume_root, &info));
+    cache.insert(key, usable);
+    return usable;
+}
+
+#endif  // Q_OS_WIN
+}  // namespace
 
 bool pathVolumeHasRecycleBin(const QString& path) {
 #ifdef Q_OS_WIN
@@ -36,13 +66,19 @@ bool pathVolumeHasRecycleBin(const QString& path) {
         return false;
     }
     // Resolve the volume the path actually lives on (a mount point under C:\ can
-    // be a different volume than C:), then require a fixed volume -- the proxy the
-    // leftover-cleanup recycle gate already relies on for "has a Recycle Bin".
+    // be a different volume than C:), then require a fixed volume: removable, optical
+    // and network volumes have no Recycle Bin the shell will use.
     wchar_t volume_root[MAX_PATH] = {};
     if (GetVolumePathNameW(reinterpret_cast<LPCWSTR>(native.utf16()), volume_root, MAX_PATH) == 0) {
         return false;
     }
-    return GetDriveTypeW(volume_root) == DRIVE_FIXED;
+    if (GetDriveTypeW(volume_root) != DRIVE_FIXED) {
+        return false;
+    }
+    // DRIVE_FIXED alone would still pass a fixed volume whose Recycle Bin is disabled by
+    // policy, where FOF_ALLOWUNDO silently becomes a permanent delete; ask the shell for
+    // the volume's actual bin and fail closed when it has none.
+    return volumeRecycleBinIsUsable(volume_root);
 #else
     Q_UNUSED(path)
     return false;

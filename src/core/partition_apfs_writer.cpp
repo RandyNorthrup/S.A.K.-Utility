@@ -19235,7 +19235,11 @@ bool collectFullFsTree(const QString& sourcePath,
                        QVector<ApfsRootDirectoryPayload>* directories,
                        QStringList* blockers) {
     QSet<quint64> visitedDirectories;
-    return collectDirectorySubtree({sourcePath, files, directories, blockers, &visitedDirectories},
+    return collectDirectorySubtree({.sourcePath = sourcePath,
+                                    .files = files,
+                                    .directories = directories,
+                                    .blockers = blockers,
+                                    .visitedDirectories = &visitedDirectories},
                                    QStringLiteral("/"),
                                    kApfsRootDirectoryId,
                                    0);
@@ -23661,6 +23665,18 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyRes
     return result;
 }
 
+namespace {
+// Copy the four checkpoint bookkeeping fields from an in-place commit into an
+// image-only commit result (shared by the image-only directory mutation commits).
+void assignCheckpointResult(const ApfsInPlaceCheckpointResult& commit,
+                            PartitionApfsImageCheckpointCommitResult* result) {
+    result->previous_xid = commit.previous_xid;
+    result->new_xid = commit.new_xid;
+    result->checkpoint_map_block = commit.checkpoint_map_block;
+    result->superblock_block = commit.superblock_block;
+}
+}  // namespace
+
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDirectoryCreate(
     const PartitionApfsImageRootDirectoryMutationRequest& request) {
     PartitionApfsImageCheckpointCommitResult result;
@@ -23694,11 +23710,12 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     QVector<ApfsRootFilePayload> existingFiles;
     QVector<ApfsRootDirectoryPayload> directories;
     uint64_t parentDirectoryId = kApfsRootDirectoryId;
+    const ApfsTreeCollect collect{.sourcePath = result.source_image_path,
+                                  .files = &existingFiles,
+                                  .directories = &directories,
+                                  .blockers = &result.blockers};
     if (!prepareDirectoryCreate(
-            {result.source_image_path, &existingFiles, &directories, &result.blockers},
-            request.parent_directory_path,
-            cleanDirectoryName,
-            &parentDirectoryId)) {
+            collect, request.parent_directory_path, cleanDirectoryName, &parentDirectoryId)) {
         return result;
     }
     if (!copyToScratchImage(result.source_image_path,
@@ -23721,10 +23738,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
             {existingFiles, directories, cleanDirectoryName, parentDirectoryId},
             &commit,
             &commitBlockers)) {
-        result.previous_xid = commit.previous_xid;
-        result.new_xid = commit.new_xid;
-        result.checkpoint_map_block = commit.checkpoint_map_block;
-        result.superblock_block = commit.superblock_block;
+        assignCheckpointResult(commit, &result);
     }
     image.close();
     result.blockers.append(commitBlockers);
@@ -24780,11 +24794,13 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     QVector<ApfsRootFilePayload> existingFiles;
     QVector<ApfsRootDirectoryPayload> directories;
     uint64_t parentDirectoryId = kApfsRootDirectoryId;
-    if (!prepareDirectoryCreate(
-            {result.written_image_path, &existingFiles, &directories, &result.blockers},
-            request.parent_directory_path,
-            cleanDirectoryName,
-            &parentDirectoryId)) {
+    if (!prepareDirectoryCreate({.sourcePath = result.written_image_path,
+                                 .files = &existingFiles,
+                                 .directories = &directories,
+                                 .blockers = &result.blockers},
+                                request.parent_directory_path,
+                                cleanDirectoryName,
+                                &parentDirectoryId)) {
         return result;
     }
     auto target =

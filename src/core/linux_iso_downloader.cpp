@@ -58,6 +58,22 @@ QString formatSize(qint64 bytes) {
     return sak::formatBytes(bytes);
 }
 
+// Turn a failed checksum fetch into a message the user can act on. A mirror redirector
+// (e.g. download.fedoraproject.org) can bounce an HTTPS request onto a plain-HTTP mirror;
+// NoLessSafeRedirectPolicy refuses that downgrade, and Qt reports InsecureRedirectError.
+// That refusal is a safety measure -- not the user's fault -- so name the cause plainly
+// instead of surfacing a bare framework string the user cannot interpret.
+QString checksumFetchErrorMessage(QNetworkReply* reply) {
+    if (reply->error() == QNetworkReply::InsecureRedirectError) {
+        return QStringLiteral(
+            "Checksum download refused for safety: the download mirror redirected to an "
+            "insecure (unencrypted HTTP) server, which was blocked so the checksum cannot be "
+            "tampered with in transit. This is a mirror-side problem, not a problem with your "
+            "settings -- please retry, which usually selects a different mirror.");
+    }
+    return QStringLiteral("Checksum fetch failed: ") + reply->errorString();
+}
+
 /// @brief Parse aria2c speed string (e.g. "2.3MiB", "512KiB") to MB/s
 double parseAria2cSpeedMBps(const QString& dlSpeedStr) {
     if (dlSpeedStr.endsWith("MiB")) {
@@ -666,7 +682,7 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply,
     }
 
     if (reply->error() != QNetworkReply::NoError) {
-        const QString error = "Checksum fetch failed: " + reply->errorString();
+        const QString error = checksumFetchErrorMessage(reply);
         sak::logWarning(error.toStdString());
         setPhase(Phase::Failed, "Checksum fetch failed");
         Q_EMIT downloadError(error);

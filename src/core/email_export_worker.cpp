@@ -586,8 +586,10 @@ QVector<uint64_t> EmailExportWorker::collectItemIds(PstParser* parser,
     // export) takes precedence; fall back to the single folder_id. The caller
     // serializes exports and CSV/ICS write one output file, so all folders must
     // be unioned here rather than exported one call at a time.
+    // Gate on has_folder, not folder_id != 0: a folder id of 0 is legitimate (the
+    // MBOX root), so treating 0 as "unset" would drop a whole-folder export of it.
     QVector<uint64_t> folders = config.folder_ids;
-    if (folders.isEmpty() && config.folder_id != 0) {
+    if (folders.isEmpty() && config.has_folder) {
         folders.append(config.folder_id);
     }
     // Honor recurse_subfolders: fold each requested folder's descendant folders

@@ -827,11 +827,29 @@ std::optional<uint64_t> partitionProbeRequestedBytes(const QJsonObject& payload,
     return requested;
 }
 
-std::optional<PartitionProbeRequest> partitionProbeRequest(const QJsonObject& payload,
-                                                           QString* error_message) {
-    const QString device_path = payload.value(QStringLiteral("device_path")).toString();
+// Refuse an absent or wrong-typed device_path at the field boundary rather than coercing it to an
+// empty string: this required field selects the raw disk that gets read, so a missing or non-string
+// value is rejected, never defaulted. isAllowedPhysicalDrivePath then constrains the string's shape
+// as defence in depth.
+std::optional<QString> partitionProbeDevicePath(const QJsonObject& payload,
+                                                QString* error_message) {
+    const QJsonValue device_value = payload.value(QStringLiteral("device_path"));
+    if (!device_value.isString()) {
+        *error_message = QStringLiteral("Raw probe device_path is required and must be a string");
+        return std::nullopt;
+    }
+    const QString device_path = device_value.toString();
     if (!isAllowedPhysicalDrivePath(device_path)) {
         *error_message = QStringLiteral("Raw probe target must be \\\\.\\PhysicalDriveN");
+        return std::nullopt;
+    }
+    return device_path;
+}
+
+std::optional<PartitionProbeRequest> partitionProbeRequest(const QJsonObject& payload,
+                                                           QString* error_message) {
+    const auto device_path = partitionProbeDevicePath(payload, error_message);
+    if (!device_path.has_value()) {
         return std::nullopt;
     }
 
@@ -860,7 +878,7 @@ std::optional<PartitionProbeRequest> partitionProbeRequest(const QJsonObject& pa
         *error_message = QStringLiteral("Raw probe byte limit is invalid");
         return std::nullopt;
     }
-    return PartitionProbeRequest{.m_device_path = device_path,
+    return PartitionProbeRequest{.m_device_path = *device_path,
                                  .m_offset_bytes = *offset,
                                  .m_read_limit = read_limit};
 }

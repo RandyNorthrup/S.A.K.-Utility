@@ -670,7 +670,6 @@ bool UserProfileRestoreWorker::copyDirectory(const QString& sourceDir,
     const QFileInfoList entries = dir.entryInfoList(
         QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
 
-    // cppcheck-suppress useStlAlgorithm ; loop has side effects (file copy, cancellation)
     for (const QFileInfo& entry : entries) {
         if (m_cancelled) {
             return false;

@@ -572,7 +572,6 @@ ExtensionInstallResult BrowserExtensionInstaller::install() {
 
 // Not const by design: it is the semantic pair of the (mutating) install(), and both perform an
 // external registry/filesystem mutation even though neither writes a data member.
-// cppcheck-suppress functionConst
 ExtensionInstallResult BrowserExtensionInstaller::uninstall() {
     ExtensionInstallResult r;
     const ForcelistRemoval fl = removeOurForcelistEntries(config_.forcelist_key_path);

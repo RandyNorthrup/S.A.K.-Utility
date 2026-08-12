@@ -60,8 +60,6 @@ constexpr int kFinalPathBufferChars = 1024;
 constexpr int kExtendedUncPrefixLength = 8;
 // Length of the "\\?\" extended-length prefix that finalPathOfHandle strips.
 constexpr int kExtendedPathPrefixLength = 4;
-// Characters in a Windows drive root ("C:\") -- drive letter, ':' and separator.
-constexpr int kWindowsDriveRootLength = 3;
 
 // Open a handle to the EXACT path for delete-time verification, WITHOUT following a leaf reparse
 // point (FILE_FLAG_OPEN_REPARSE_POINT). Ancestor junctions are still traversed by the OS during
@@ -173,24 +171,6 @@ bool registryKeyIsSymbolicLink(HKEY hive, const QString& subkey) {
 }
 #endif  // Q_OS_WIN
 
-// True if @p path is on a volume that actually HAS a Recycle Bin. On a removable / network /
-// optical volume, the shell's FOF_ALLOWUNDO "recycle" silently PERMANENTLY deletes, so recycle-only
-// (auto-clean) mode must refuse there rather than assume recoverability. A fixed drive is the fast,
-// reliable proxy for "has a Recycle Bin".
-bool volumeSupportsRecycleBin(const QString& path) {
-#ifdef Q_OS_WIN
-    const QString root =
-        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(kWindowsDriveRootLength);
-    if (root.size() < kWindowsDriveRootLength || root[1] != QLatin1Char(':')) {
-        return false;
-    }
-    return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16())) == DRIVE_FIXED;
-#else
-    Q_UNUSED(path)
-    return true;
-#endif
-}
-
 // Above this the item is deemed too large to GUARANTEE it fits the Recycle Bin (the shell silently
 // PERMANENTLY deletes an item exceeding the bin's configured max). Conservative: a default bin
 // holds GBs, so 4 GiB leaves the common small app leftover recyclable while a huge one is left for
@@ -228,7 +208,10 @@ qint64 boundedItemSize(const QString& path, qint64 limit) {
 // AND the item is small enough to actually fit it. A huge item can be silently nuked past the bin's
 // max even on a fixed drive, so it is left for human review instead.
 bool recoverableRecycleAllowed(const QString& path) {
-    return volumeSupportsRecycleBin(path) &&
+    // Single authority on "has a Recycle Bin": the shared predicate (GetVolumePathNameW
+    // resolves mount points and now also consults the shell for a policy-disabled bin),
+    // instead of a second, weaker copy that only sliced the drive letter (R5-G22-3).
+    return pathVolumeHasRecycleBin(path) &&
            boundedItemSize(path, kRecoverableRecycleSizeCap) <= kRecoverableRecycleSizeCap;
 }
 

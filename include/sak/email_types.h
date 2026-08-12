@@ -333,7 +333,8 @@ struct EmailExportConfig {
     ExportFormat format = ExportFormat::Eml;
     QString output_path;           ///< Directory to export into
     QVector<uint64_t> item_ids;    ///< Specific items (empty = entire folder)
-    uint64_t folder_id = 0;        ///< Single folder to export (0 = all selected)
+    bool has_folder = false;       ///< True => folder_id names a folder; false => unset
+    uint64_t folder_id = 0;        ///< Single folder to export; read only when has_folder
     QVector<uint64_t> folder_ids;  ///< Multiple folders to aggregate in one pass
     bool recurse_subfolders = false;
 
