@@ -29,6 +29,7 @@
 #include <QFont>
 #include <QFormLayout>
 #include <QFrame>
+#include <QFutureWatcher>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -39,6 +40,7 @@
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QtConcurrent>
 #include <QTextBlock>
 #include <QTextStream>
 #include <QTreeWidget>
@@ -755,21 +757,33 @@ void AdvancedSearchPanel::connectSearchBarSignals() {
         Q_EMIT statusMessage(tr("Mounted search targets refreshed"), sak::kTimerStatusMessageMs);
     });
     connect(m_target_scan_button, &QPushButton::clicked, this, [this]() {
+        // Run the (potentially multi-second) disk/partition enumeration off the GUI thread so
+        // the panel does not freeze. Disable only the scan button (re-entrancy guard) rather
+        // than the whole panel; the heap watcher is parented to this and self-deletes on
+        // finish, so it is lifetime-safe if the panel closes mid-scan. scanCurrentSystem is a
+        // bounded system enumeration with no cooperative-cancel hook, so this closes the
+        // GUI-thread freeze (there is no long carve to abort).
         Q_EMIT statusMessage(tr("Scanning disk and partition search targets..."), 0);
-        setEnabled(false);
-        const auto inventory = StorageInventoryWorker::scanCurrentSystem();
-        setEnabled(true);
-        populateSearchTargets(FileManagementFileSystemBridge::targetsFromInventory(inventory));
-        if (inventory.hasPartitionEnumerationFailure() || !inventory.warnings.isEmpty()) {
-            // Enumeration was not faithful (a disk's partitions failed to enumerate, or the
-            // scan recorded warnings), so the target list is incomplete. Report it as such
-            // instead of a clean "scanned" that hides the missing volumes.
-            Q_EMIT statusMessage(
-                tr("Search targets scanned with warnings; some disks may be missing"),
-                sak::kTimerStatusDefaultMs);
-        } else {
-            Q_EMIT statusMessage(tr("Search targets scanned"), sak::kTimerStatusDefaultMs);
-        }
+        m_target_scan_button->setEnabled(false);
+        auto* watcher = new QFutureWatcher<PartitionInventory>(this);
+        connect(watcher, &QFutureWatcher<PartitionInventory>::finished, this, [this, watcher]() {
+            const auto inventory = watcher->result();
+            watcher->deleteLater();
+            m_target_scan_button->setEnabled(true);
+            populateSearchTargets(FileManagementFileSystemBridge::targetsFromInventory(inventory));
+            if (inventory.hasPartitionEnumerationFailure() || !inventory.warnings.isEmpty()) {
+                // Enumeration was not faithful (a disk's partitions failed to enumerate, or the
+                // scan recorded warnings), so the target list is incomplete. Report it as such
+                // instead of a clean "scanned" that hides the missing volumes.
+                Q_EMIT statusMessage(
+                    tr("Search targets scanned with warnings; some disks may be missing"),
+                    sak::kTimerStatusDefaultMs);
+            } else {
+                Q_EMIT statusMessage(tr("Search targets scanned"), sak::kTimerStatusDefaultMs);
+            }
+        });
+        watcher->setFuture(
+            QtConcurrent::run([]() { return StorageInventoryWorker::scanCurrentSystem(); }));
     });
     connect(m_target_manual_button,
             &QPushButton::clicked,
