@@ -267,6 +267,17 @@ repos:
         language: system
         pass_filenames: false
 
+      # Build-system lint (G23-9): a real if(CMAKE_BUILD_TYPE STREQUAL ...) guard is
+      # DEAD under the Visual Studio multi-config generator (one such guard had
+      # silently disabled AddressSanitizer project-wide). Fail if one reappears.
+      - id: build-system-lint
+        name: "Build-system lint (no dead CMAKE_BUILD_TYPE guards)"
+        description: "Reject a dead config-guard that is inert under the multi-config generator"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_build_system_lint.ps1
+        language: system
+        pass_filenames: false
+
       # -------------------------------------------------------------------
       # 8b. Partition Manager certification / release-claim integrity gates.
       #     These verify that the documented certification matrices, release
