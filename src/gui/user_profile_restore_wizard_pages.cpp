@@ -8,6 +8,7 @@
 #include "sak/style_constants.h"
 #include "sak/user_profile_restore_selection.h"
 #include "sak/user_profile_restore_wizard.h"
+#include "sak/view_empty_state.h"
 #include "sak/windows_user_scanner.h"
 
 #include <QApplication>
@@ -146,6 +147,9 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     m_mappingTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mappingTable->verticalHeader()->setVisible(false);
     layout->addWidget(m_mappingTable);
+    // Designed empty/loading overlay (R5-G20-7). The destination-user scan in
+    // initializePage() fills this table, so it carries a loading state.
+    m_mappingEmptyState = new sak::ui::ViewEmptyState(m_mappingTable, tr("No users to map"));
 
     // Summary
     m_summaryLabel = new QLabel(this);
@@ -166,11 +170,15 @@ void UserProfileRestoreUserMappingPage::setupUi() {
 }
 
 void UserProfileRestoreUserMappingPage::initializePage() {
+    Q_ASSERT(m_mappingEmptyState);
+    m_mappingEmptyState->setLoading(tr("Scanning this system for user accounts..."));
+
     // Scan destination users
     m_destinationUsers = m_scanner->scanUsers();
 
     loadMappingTable();
     updateSummary();
+    m_mappingEmptyState->clearLoading();
 }
 
 void UserProfileRestoreUserMappingPage::loadMappingTable() {
@@ -420,6 +428,9 @@ void UserProfileRestoreMergeConfigPage::setupUi() {
     m_mergeTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_mergeTable->verticalHeader()->setVisible(false);
     layout->addWidget(m_mergeTable);
+    // Empty-only overlay (R5-G20-7): filled synchronously from prior-page mappings,
+    // so no loading state; parented to the table, which owns its lifetime.
+    new sak::ui::ViewEmptyState(m_mergeTable, tr("No user mappings to configure"));
 
     // Summary
     m_summaryLabel = new QLabel(this);
@@ -590,6 +601,9 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
     m_folderTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_folderTable->verticalHeader()->setVisible(false);
     layout->addWidget(m_folderTable);
+    // Empty-only overlay (R5-G20-7): filled synchronously from the in-memory manifest,
+    // so no loading state; parented to the table, which owns its lifetime.
+    new sak::ui::ViewEmptyState(m_folderTable, tr("No folders available to restore"));
 
     // Summary
     m_summaryLabel = new QLabel(this);
@@ -804,6 +818,9 @@ void UserProfileRestoreAppDataPage::setupUi() {
             this,
             &UserProfileRestoreAppDataPage::onItemChanged);
     layout->addWidget(m_appDataTree);
+    // Designed empty/loading overlay (R5-G20-7); loadAppDataSources() populates it.
+    m_appDataEmptyState = new sak::ui::ViewEmptyState(m_appDataTree,
+                                                      tr("No application data to restore"));
 
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
@@ -834,7 +851,10 @@ void UserProfileRestoreAppDataPage::setupUi() {
 
 void UserProfileRestoreAppDataPage::initializePage() {
     if (!m_loaded) {
+        Q_ASSERT(m_appDataEmptyState);
+        m_appDataEmptyState->setLoading(tr("Reading application data from the backup..."));
         loadAppDataSources();
+        m_appDataEmptyState->clearLoading();
     }
 }
 
@@ -1097,6 +1117,9 @@ void UserProfileRestoreNetworksPage::setupUi() {
             this,
             &UserProfileRestoreNetworksPage::onItemChanged);
     layout->addWidget(m_networkTree);
+    // Designed empty/loading overlay (R5-G20-7); loadNetworkProfiles() populates it.
+    m_networkEmptyState = new sak::ui::ViewEmptyState(m_networkTree,
+                                                      tr("No WiFi networks in the backup"));
 
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
@@ -1127,7 +1150,10 @@ void UserProfileRestoreNetworksPage::setupUi() {
 
 void UserProfileRestoreNetworksPage::initializePage() {
     if (!m_loaded) {
+        Q_ASSERT(m_networkEmptyState);
+        m_networkEmptyState->setLoading(tr("Reading WiFi profiles from the backup..."));
         loadNetworkProfiles();
+        m_networkEmptyState->clearLoading();
     }
 }
 
@@ -1318,6 +1344,9 @@ void UserProfileRestoreEthernetPage::setupUi() {
     m_ethernetTable->verticalHeader()->setVisible(false);
     m_ethernetTable->setEnabled(false);
     layout->addWidget(m_ethernetTable);
+    // Empty-only overlay (R5-G20-7): filled synchronously from the in-memory manifest,
+    // so no loading state; parented to the table, which owns its lifetime.
+    new sak::ui::ViewEmptyState(m_ethernetTable, tr("No ethernet adapters in the backup"));
 
     auto* button_layout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
@@ -1672,6 +1701,10 @@ UserProfileRestoreAppRestorePage::UserProfileRestoreAppRestorePage(QWidget* pare
     setSubTitle(tr("Install applications that were saved during backup (optional)"));
 
     setupUi();
+    // Designed empty/loading overlay (R5-G20-7); loadApps() populates m_appTree. Built here
+    // rather than in setupUi() (which is at the function-length limit) -- the widget already
+    // exists and is configured once setupUi() returns.
+    m_appEmptyState = new sak::ui::ViewEmptyState(m_appTree, tr("No apps found in the backup"));
 }
 
 void UserProfileRestoreAppRestorePage::setupUi() {
@@ -1747,7 +1780,10 @@ void UserProfileRestoreAppRestorePage::setupUi() {
 
 void UserProfileRestoreAppRestorePage::initializePage() {
     if (!m_loaded) {
+        Q_ASSERT(m_appEmptyState);
+        m_appEmptyState->setLoading(tr("Reading the installed-apps list from the backup..."));
         loadApps();
+        m_appEmptyState->clearLoading();
     }
 }
 

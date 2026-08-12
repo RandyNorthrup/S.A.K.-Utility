@@ -30,6 +30,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -802,7 +803,14 @@ EmailCalendarDialog::EmailCalendarDialog(::EmailInspectorController* controller,
 EmailCalendarDialog::~EmailCalendarDialog() = default;
 
 bool EmailCalendarDialog::eventFilter(QObject* watched, QEvent* event) {
-    if (event->type() == QEvent::MouseButtonPress) {
+    // Activate the month/year quick-jump on a mouse press OR a keyboard
+    // Enter/Return/Space, so the labels are fully keyboard-operable (R5-G20-6).
+    const bool activate = event->type() == QEvent::MouseButtonPress ||
+                          (event->type() == QEvent::KeyPress &&
+                           (static_cast<QKeyEvent*>(event)->key() == Qt::Key_Return ||
+                            static_cast<QKeyEvent*>(event)->key() == Qt::Key_Enter ||
+                            static_cast<QKeyEvent*>(event)->key() == Qt::Key_Space));
+    if (activate) {
         if (watched == m_month_label) {
             onMonthLabelClicked();
             return true;
@@ -887,14 +895,20 @@ void EmailCalendarDialog::setupNavButtons(QHBoxLayout* layout) {
     m_month_label = new QLabel(this);
     m_month_label->setStyleSheet(label_style);
     m_month_label->setCursor(Qt::PointingHandCursor);
-    m_month_label->setToolTip(tr("Click to select month"));
+    m_month_label->setToolTip(tr("Click or press Enter to select month"));
+    // Keyboard operability (R5-G20-6): the quick-jump labels were mouse-only.
+    // StrongFocus makes them Tab-reachable; the eventFilter handles Enter/Space.
+    m_month_label->setFocusPolicy(Qt::StrongFocus);
+    m_month_label->setAccessibleName(tr("Select month"));
     m_month_label->installEventFilter(this);
     layout->addWidget(m_month_label);
 
     m_year_label = new QLabel(this);
     m_year_label->setStyleSheet(label_style);
     m_year_label->setCursor(Qt::PointingHandCursor);
-    m_year_label->setToolTip(tr("Click to select year"));
+    m_year_label->setToolTip(tr("Click or press Enter to select year"));
+    m_year_label->setFocusPolicy(Qt::StrongFocus);
+    m_year_label->setAccessibleName(tr("Select year"));
     m_year_label->installEventFilter(this);
     layout->addWidget(m_year_label);
 }

@@ -557,6 +557,8 @@ QWidget* EmailInspectorPanel::createFolderTreePanel() {
             this,
             &EmailInspectorPanel::onFolderTreeContextMenu);
     layout->addWidget(m_folder_tree, 1);
+    // Designed empty state before any mail store is opened (self-managed, parented to the tree).
+    new ui::ViewEmptyState(m_folder_tree, tr("Open a PST/OST/MBOX file to browse folders"));
 
     return group;
 }

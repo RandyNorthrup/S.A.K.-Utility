@@ -24,6 +24,10 @@
 
 class QVBoxLayout;
 
+namespace sak::ui {
+class ViewEmptyState;
+}  // namespace sak::ui
+
 namespace sak {
 
 class WindowsUserScanner;
@@ -83,6 +87,7 @@ private:
     UserMapping buildMappingForRow(int row, const BackupManifest& manifest) const;
 
     QTableWidget* m_mappingTable;
+    sak::ui::ViewEmptyState* m_mappingEmptyState{nullptr};  ///< empty/loading overlay
     QLabel* m_summaryLabel;
     QPushButton* m_autoMapButton;
 
@@ -176,6 +181,7 @@ private:
     void updateParentCheckState(QTreeWidgetItem* parent);
 
     QTreeWidget* m_appDataTree{nullptr};
+    sak::ui::ViewEmptyState* m_appDataEmptyState{nullptr};  ///< empty/loading overlay
     QPushButton* m_selectAllButton{nullptr};
     QPushButton* m_selectNoneButton{nullptr};
     QLabel* m_statusLabel{nullptr};
@@ -221,6 +227,7 @@ private:
                                                    QPointer<UserProfileRestoreAppRestorePage> page);
 
     QTreeWidget* m_appTree{nullptr};
+    sak::ui::ViewEmptyState* m_appEmptyState{nullptr};  ///< empty/loading overlay
     QPushButton* m_selectAllButton{nullptr};
     QPushButton* m_selectNoneButton{nullptr};
     QPushButton* m_installButton{nullptr};
@@ -261,6 +268,7 @@ private:
     void populateTree(const QVector<WifiProfileInfo>& profiles);
 
     QTreeWidget* m_networkTree{nullptr};
+    sak::ui::ViewEmptyState* m_networkEmptyState{nullptr};  ///< empty/loading overlay
     QPushButton* m_selectAllButton{nullptr};
     QPushButton* m_selectNoneButton{nullptr};
     QLabel* m_statusLabel{nullptr};
