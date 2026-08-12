@@ -46,9 +46,10 @@ public:
     static constexpr std::size_t MAX_CHUNK_SIZE = 256u * 1024u * 1024u;
 
     /// @brief Constructor
-    /// @param algorithm Hash algorithm to use
+    /// @param algorithm Hash algorithm to use (defaults to the collision-resistant SHA-256;
+    ///        md5 is corruption-detection only and must be requested explicitly)
     /// @param chunk_size Size of chunks to read
-    explicit file_hasher(hash_algorithm algorithm = hash_algorithm::md5,
+    explicit file_hasher(hash_algorithm algorithm = hash_algorithm::sha256,
                          std::size_t chunk_size = DEFAULT_CHUNK_SIZE) noexcept;
 
     /// @brief Calculate hash of a file

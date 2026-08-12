@@ -12,6 +12,7 @@
 #include <QTemporaryDir>
 
 #include <filesystem>
+#include <limits>
 #include <system_error>
 #include <utility>
 
@@ -33,6 +34,26 @@ constexpr qsizetype kSiblingTempNameChars = 64;
 constexpr int kHexTokenWidth = 16;
 // Base-16 (hexadecimal) formatting for the entropy suffix.
 constexpr int kHexBase = 16;
+
+// Cosmetic progress totals only: fold a byte count into a running qint64 sum without
+// signed-overflow UB or a negative wrap from a quint64 that exceeds INT64_MAX (raw-tree
+// entry sizes are untrusted). Saturates at the qint64 max so the percentage denominator and
+// numerator stay well-ordered; it never gates the authoritative lastTransferComplete().
+qint64 accumulateBytes(const qint64 running, const quint64 delta) {
+    const qint64 base = running > 0 ? running : 0;
+    const quint64 headroom = static_cast<quint64>(std::numeric_limits<qint64>::max()) -
+                             static_cast<quint64>(base);
+    if (delta > headroom) {
+        return std::numeric_limits<qint64>::max();
+    }
+    return base + static_cast<qint64>(delta);
+}
+
+// Overload for a signed byte delta (QFileInfo::size / transfer observer): a negative value
+// is nonsensical for a byte count, so it contributes nothing to the running total.
+qint64 accumulateBytes(const qint64 running, const qint64 delta) {
+    return accumulateBytes(running, delta > 0 ? static_cast<quint64>(delta) : quint64{0});
+}
 
 QString transferItemName(const QString& path) {
     QString clean = path;
@@ -562,7 +583,7 @@ void FileExplorerTransferWorker::discover(FileExplorerStatusProgressReporter* re
             continue;
         }
         if (!item.directory) {
-            m_discovered_bytes += static_cast<qint64>(item.size_bytes);
+            m_discovered_bytes = accumulateBytes(m_discovered_bytes, item.size_bytes);
         } else if (m_request.source_target.local_file_system) {
             discoverHostTree(item.source_path, reporter);
         } else {
@@ -590,7 +611,7 @@ void FileExplorerTransferWorker::discoverHostTree(const QString& path,
         it.next();
         const QFileInfo info = it.fileInfo();
         if (info.isFile() && !info.isSymLink()) {
-            m_discovered_bytes += info.size();
+            m_discovered_bytes = accumulateBytes(m_discovered_bytes, info.size());
         }
         reporter->setTotalSize(m_discovered_bytes);
         reporter->report();
@@ -615,7 +636,7 @@ void FileExplorerTransferWorker::discoverRawTree(const QString& path,
         if (entry.directory) {
             discoverRawTree(entry.path, depth + 1, reporter);
         } else if (entry.regular_file) {
-            m_discovered_bytes += static_cast<qint64>(entry.size_bytes);
+            m_discovered_bytes = accumulateBytes(m_discovered_bytes, entry.size_bytes);
         }
         reporter->setTotalSize(m_discovered_bytes);
         reporter->report();
@@ -662,7 +683,7 @@ bool FileExplorerTransferWorker::transferOne(const FileExplorerTransferItem& ite
     const FileManagementTransferObserver observer{
         .on_bytes =
             [this, reporter](const qint64 delta) {
-                m_processed_bytes += delta;
+                m_processed_bytes = accumulateBytes(m_processed_bytes, delta);
                 reporter->setProcessedSize(m_processed_bytes);
                 reporter->report();
             },

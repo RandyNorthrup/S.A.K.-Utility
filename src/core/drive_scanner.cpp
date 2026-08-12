@@ -39,9 +39,10 @@ bool containsDevicePath(const QList<sak::DriveInfo>& drives, const QString& devi
     });
 }
 
-// @param query_ok Set true when QueryDosDeviceW returned the real device-name table (the drive
-// list is authoritative); false when every attempt failed and the returned {0} fallback is a
-// best-effort guess. Lets callers report an incomplete enumeration honestly.
+// @param query_ok Set true when QueryDosDeviceW returned the real device-name table AND it held
+// at least one PhysicalDrive entry (the drive list is authoritative); false when the query failed
+// or no entry was found. On a false result the returned set is empty -- never coerced to a probe
+// of drive 0 -- so callers can report an incomplete enumeration honestly.
 QVector<int> enumeratePhysicalDriveNumbers(bool& query_ok) {
     query_ok = false;
     QVector<int> drive_numbers;

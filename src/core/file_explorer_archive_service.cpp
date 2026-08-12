@@ -302,6 +302,12 @@ bool extractZipEntry(const QZipReader& reader,
     const QString& destination_dir = ctx->destination_dir;
     FileExplorerArchiveResult* result = ctx->result;
     if (!info.isValid()) {
+        // Surface the dropped entry: a corrupt central-directory record must not be
+        // silently omitted from an extraction still reported ok=true (P9-9). Skipping
+        // it (rather than failing the whole archive) preserves the valid entries.
+        result->warnings.append(
+            QStringLiteral("Skipped a corrupt or unreadable archive entry (invalid "
+                           "central-directory record); it was not extracted."));
         return true;
     }
     if (info.isSymLink) {
@@ -359,6 +365,20 @@ bool addFileEntry(QZipWriter* writer,
     if (!file.open(QIODevice::ReadOnly)) {
         blockers->append(
             QStringLiteral("Could not read %1: %2").arg(host_path, file.errorString()));
+        return false;
+    }
+    // Re-verify no-follow AFTER opening: the caller's pre-open symlink filter and this
+    // open are separate syscalls, so a source swapped to a symlink in between would
+    // otherwise be followed and its TARGET archived (P9-33 stat-then-open TOCTOU). A
+    // regular file never reaches here (symlinks are filtered upstream), so this only
+    // trips on a swapped-in link -- fail closed rather than archive an unexpected
+    // target. isSymLink() (not the broad reparse-point attribute) is used so a
+    // OneDrive/cloud or WOF file placeholder, which carries a non-symlink reparse tag,
+    // is not false-rejected.
+    if (QFileInfo(host_path).isSymLink()) {
+        blockers->append(
+            QStringLiteral("Refused %1 (it became a symlink or junction during compression).")
+                .arg(host_path));
         return false;
     }
     writer->addFile(entry_name, &file);
@@ -551,6 +571,22 @@ FileExplorerArchiveResult FileExplorerArchiveService::extractZip(const QString& 
     const auto entries = boundedZipEntries(zip_path, reader, &entries_error);
     if (!entries) {
         result.blockers.append(entries_error);
+        return result;
+    }
+    // The destination root must not itself be a symlink or junction: one planted at
+    // destination_dir would redirect the whole (lexically-contained) extraction outside
+    // it -- a case the per-entry traversesReparsePoint (which only walks components
+    // BELOW the root) never sees (P9-3). A non-existent destination is created fresh as a
+    // normal directory just below, so this only rejects a pre-existing symlink/junction
+    // root. isSymLink() (not the broad reparse-point attribute) is used deliberately so a
+    // OneDrive/cloud or WOF directory placeholder -- a common, legitimate extraction
+    // target that carries a non-symlink reparse tag -- is NOT false-rejected. Ancestors
+    // are intentionally not walked: the GUI raw-import and the round-trip path extract
+    // under the system temp tree whose ancestors may legitimately be reparse points.
+    if (QFileInfo(destination_dir).isSymLink()) {
+        result.blockers.append(
+            QStringLiteral("Refused destination %1 (it is a symlink or junction).")
+                .arg(destination_dir));
         return result;
     }
     if (!QDir().mkpath(destination_dir)) {

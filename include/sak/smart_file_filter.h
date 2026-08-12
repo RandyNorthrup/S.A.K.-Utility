@@ -84,6 +84,17 @@ public:
      */
     const QStringList& invalidPatterns() const { return m_invalidPatterns; }
 
+    /**
+     * @brief Whether any configured exclude pattern was rejected.
+     *
+     * True when at least one exclude_patterns entry failed to compile or
+     * exceeded the length bound and was therefore dropped from the active set.
+     * A caller that requires the exclusion set to be complete (every configured
+     * pattern honored) should check this and fail closed -- refusing to proceed
+     * rather than backing up files an invalid rule was meant to exclude.
+     */
+    bool hasInvalidPatterns() const { return !m_invalidPatterns.isEmpty(); }
+
 private:
     void compileRegexPatterns();
     bool matchesPattern(const QString& fileName) const;

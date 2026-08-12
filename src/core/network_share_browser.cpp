@@ -9,8 +9,6 @@
 #endif
 #include "sak/network_share_browser.h"
 
-#include <QDir>
-#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QHostAddress>
@@ -142,6 +140,25 @@ struct ShareServer {
 [[nodiscard]] bool isProbeableDiskShare(const NetworkShareInfo& info) {
     return info.type == NetworkShareInfo::ShareType::Disk && !isSpecialShare(info.shareName) &&
            isSafeShareName(info.shareName);
+}
+
+// Confirm the share ROOT is actually enumerable, not merely reachable. FindFirstFileW performs the
+// "list folder contents" access check that QDir::exists()/GetFileAttributes skip, so a share that
+// is reachable but ACL-denied listing no longer reports canRead=true (R5-P9-19). An empty but
+// accessible directory is still readable: an enumeration that reaches the directory yet finds no
+// entries fails only with ERROR_FILE_NOT_FOUND / ERROR_NO_MORE_FILES, both of which count as a
+// successful (empty) listing; ERROR_ACCESS_DENIED and every other error fail closed. The probe is
+// bounded -- FindFirstFileW fetches only the first entry, never materializing the whole listing.
+[[nodiscard]] bool shareRootIsEnumerable(const QString& uncPath) {
+    const QString pattern = uncPath + QStringLiteral("\\*");
+    WIN32_FIND_DATAW findData{};
+    const HANDLE handle = FindFirstFileW(reinterpret_cast<LPCWSTR>(pattern.utf16()), &findData);
+    if (handle != INVALID_HANDLE_VALUE) {
+        FindClose(handle);
+        return true;
+    }
+    const DWORD err = GetLastError();
+    return err == ERROR_FILE_NOT_FOUND || err == ERROR_NO_MORE_FILES;
 }
 }  // namespace
 
@@ -321,20 +338,12 @@ QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPat
     // Both callers guarantee it: testAccess() rejects an empty uncPath before calling, and
     // appendSharesFromBuffer() passes makeShareInfo()'s uncPath, always "\\\\host\\share".
     Q_ASSERT(!uncPath.isEmpty());
-    bool canRead = false;
+
+    // Test read access. Require a SUCCESSFUL directory enumeration, not mere reachability: a share
+    // whose root is visible but whose ACL denies "list folder contents" must NOT report canRead;
+    // the old exists()-only check discarded the listing and over-stated readability (R5-P9-19).
+    const bool canRead = shareRootIsEnumerable(uncPath);
     bool canWrite = false;
-
-    // Test read access
-    const QDir dir(uncPath);
-    if (dir.exists()) {
-        canRead = true;
-
-        // Bounded read probe: confirm the root is enumerable WITHOUT materializing a (possibly
-        // hostile or huge) full directory listing. Touching just the first entry exercises real
-        // read access; entryInfoList() would stat and copy the entire directory first.
-        const QDirIterator it(uncPath, QDir::AllEntries | QDir::NoDotAndDotDot);
-        (void)it.hasNext();
-    }
 
     // Test write access by creating a temporary file
     if (canRead) {

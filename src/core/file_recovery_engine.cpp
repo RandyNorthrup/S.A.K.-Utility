@@ -192,6 +192,36 @@ std::optional<CandidateMatch> matchAt(const QByteArray& data,
     return std::nullopt;
 }
 
+bool isReservedDeviceName(const QString& name) {
+    // Windows opens these as devices regardless of extension ("CON.txt" is the console,
+    // not a file). Match the stem -- the text before the first '.' -- case-folded.
+    static const QStringList kReservedDeviceNames = {
+        QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
+        QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
+        QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
+        QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
+        QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
+        QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
+        QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
+        QStringLiteral("LPT9")};
+    const QString stem = name.section(QLatin1Char('.'), 0, 0).trimmed();
+    return kReservedDeviceNames.contains(stem, Qt::CaseInsensitive);
+}
+
+bool isUnsafeRestoreName(const QString& name) {
+    // Defense in depth atop the bare-filename confinement (B8-15): reject an alternate-
+    // data-stream colon, a trailing dot or space (Windows silently strips these, so
+    // "a.txt." would alias "a.txt"), and reserved device names. The engine's own
+    // candidate ids never produce these; only a hand-crafted caller id could (R5-P9-22).
+    if (name.contains(QLatin1Char(':'))) {
+        return true;
+    }
+    if (name.endsWith(QLatin1Char('.')) || name.endsWith(QLatin1Char(' '))) {
+        return true;
+    }
+    return isReservedDeviceName(name);
+}
+
 QString restoredFilePath(const QString& destinationDirectory,
                          const FileRecoveryCandidate& candidate) {
     // Confine the candidate id to a bare filename so a crafted id ("../evil", "a/b")
@@ -200,6 +230,9 @@ QString restoredFilePath(const QString& destinationDirectory,
     // rejected (empty return => the caller skips the candidate).
     const QString name = QFileInfo(candidate.id).fileName();
     if (name.isEmpty() || name == QStringLiteral(".") || name == QStringLiteral("..")) {
+        return {};
+    }
+    if (isUnsafeRestoreName(name)) {
         return {};
     }
     return QDir(destinationDirectory).filePath(name);
@@ -396,11 +429,47 @@ bool candidateBytesMatch(const QByteArray& bytes,
     return true;
 }
 
-bool writeRecoveredFile(const QString& outputPath, const QByteArray& bytes, QStringList* warnings) {
-    // Atomic write: QSaveFile stages to a temporary and only renames into place on
-    // commit(), so a short write (disk full) or a flush failure never leaves a
-    // truncated recovered file reported as a success. writeFully loops over partial
-    // writes; commit() flushes+closes and fails closed on any I/O error (B8-13).
+bool writeRecoveredExclusive(const QString& outputPath,
+                             const QByteArray& bytes,
+                             QStringList* warnings) {
+    // overwrite_existing=false: create the FINAL path with exclusive semantics (NewOnly) so a
+    // file raced into the restore directory AFTER the existence pre-check fails closed instead of
+    // being clobbered (R5-P9-23). A short write or flush failure removes the partial file, so no
+    // truncated output is ever reported as restored.
+    QFile output(outputPath);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        warnings->append(
+            QStringLiteral("Restore target already exists (raced in?): %1").arg(outputPath));
+        return false;
+    }
+    if (!sak::writeFully(output, bytes)) {
+        output.close();
+        output.remove();
+        warnings->append(
+            QStringLiteral("Short write recovering file (disk full?): %1").arg(outputPath));
+        return false;
+    }
+    if (!output.flush()) {
+        output.close();
+        output.remove();
+        warnings->append(
+            QStringLiteral("Could not finalize recovered file (disk full?): %1").arg(outputPath));
+        return false;
+    }
+    return true;
+}
+
+bool writeRecoveredFile(const QString& outputPath,
+                        const QByteArray& bytes,
+                        bool overwriteExisting,
+                        QStringList* warnings) {
+    if (!overwriteExisting) {
+        return writeRecoveredExclusive(outputPath, bytes, warnings);
+    }
+    // overwrite_existing=true: QSaveFile stages to a temporary and only renames into place on
+    // commit(), so a short write (disk full) or a flush failure never leaves a truncated
+    // recovered file reported as a success. writeFully loops over partial writes; commit()
+    // flushes+closes and fails closed on any I/O error (B8-13).
     QSaveFile output(outputPath);
     if (!output.open(QIODevice::WriteOnly)) {
         warnings->append(QStringLiteral("Could not write recovered file: %1").arg(outputPath));
@@ -436,7 +505,8 @@ void restoreCandidate(const RestoreContext& context, const FileRecoveryCandidate
     if (!candidateBytesMatch(bytes, candidate, &context.result->warnings)) {
         return;
     }
-    if (!writeRecoveredFile(outputPath, bytes, &context.result->warnings)) {
+    if (!writeRecoveredFile(
+            outputPath, bytes, context.overwrite_existing, &context.result->warnings)) {
         return;
     }
     context.result->restored_paths.append(outputPath);
@@ -477,6 +547,7 @@ QByteArray readScanData(QFile* image,
         result->warnings.append(
             QStringLiteral("Scan limited to first %1 byte(s)").arg(QString::number(scanBytes)));
         result->scan_cancelled = true;
+        result->scan_truncated = true;
     }
 
     // Fill up to scanBytes over repeated reads: a single QFile::read can short-read a device, and
@@ -596,6 +667,7 @@ FileRecoveryScanResult FileRecoveryEngine::scanOfflineImage(const FileRecoverySc
         // partial (like the work-budget bound) so callers do not report the scan as complete (F12).
         result.warnings.append(QStringLiteral("Candidate limit reached"));
         result.scan_cancelled = true;
+        result.scan_truncated = true;
     }
     return result;
 }

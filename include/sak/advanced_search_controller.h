@@ -178,8 +178,4 @@ static_assert(!std::is_copy_constructible_v<AdvancedSearchController>,
 static_assert(!std::is_move_constructible_v<AdvancedSearchController>,
               "AdvancedSearchController must not be move-constructible.");
 
-/// AdvancedSearchController must not be copyable.
-static_assert(!std::is_copy_constructible_v<AdvancedSearchController>,
-              "AdvancedSearchController must not be copy-constructible.");
-
 }  // namespace sak

@@ -15,6 +15,11 @@ namespace sak {
 namespace {
 constexpr int kFileSizeDisplayPrecision = 1;
 constexpr int kFileSizeLimitDisplayPrecision = 0;
+
+// Upper bound on an exclude-pattern's source length. Filename-matching regexes
+// are short in practice; anything longer is treated as invalid rather than
+// compiled, bounding the work a pathological rule can force on every filename.
+constexpr int kMaxExcludePatternLength = 1024;
 }  // namespace
 
 SmartFileFilter::SmartFileFilter(const SmartFilter& rules) : m_rules(rules) {
@@ -62,18 +67,25 @@ void SmartFileFilter::compileRegexPatterns() {
     m_invalidPatterns.clear();
 
     for (const QString& pattern : m_rules.exclude_patterns) {
-        const QRegularExpression regex(pattern, QRegularExpression::CaseInsensitiveOption);
-        if (regex.isValid()) {
-            m_compiledPatterns.append(regex);
+        // Record and log every rejected rule instead of dropping it silently:
+        // otherwise files the user meant to exclude are processed with no
+        // indication the pattern was invalid. Callers can fail closed via
+        // hasInvalidPatterns().
+        QString error;
+        if (pattern.length() > kMaxExcludePatternLength) {
+            error =
+                QStringLiteral("pattern exceeds %1-character limit").arg(kMaxExcludePatternLength);
         } else {
-            // Record and log the rejected rule instead of dropping it silently:
-            // otherwise files the user meant to exclude are processed with no
-            // indication the pattern was invalid.
-            const QString detail = QStringLiteral("%1: %2").arg(pattern, regex.errorString());
-            m_invalidPatterns.append(detail);
-            logWarning("SmartFileFilter: ignoring invalid exclude pattern {}",
-                       detail.toStdString());
+            const QRegularExpression regex(pattern, QRegularExpression::CaseInsensitiveOption);
+            if (regex.isValid()) {
+                m_compiledPatterns.append(regex);
+                continue;
+            }
+            error = regex.errorString();
         }
+        const QString detail = QStringLiteral("%1: %2").arg(pattern, error);
+        m_invalidPatterns.append(detail);
+        logWarning("SmartFileFilter: ignoring invalid exclude pattern {}", detail.toStdString());
     }
 }
 

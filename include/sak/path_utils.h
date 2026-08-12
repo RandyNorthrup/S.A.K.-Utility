@@ -48,6 +48,13 @@ public:
     struct DirectorySizeInfo {
         std::uintmax_t total_bytes{0};
         std::uintmax_t file_count{0};
+        /// @brief False when one or more subtrees were skipped (permission
+        ///        denied) so total_bytes/file_count under-report. A caller
+        ///        gating a capacity/fit decision MUST treat an incomplete
+        ///        result as "unknown", never as "fits".
+        bool complete{true};
+        /// @brief Count of directory subtrees skipped due to permission denied.
+        std::uintmax_t skipped_dirs{0};
     };
 
     /// @brief Calculate total size and file count of a directory (recursive)

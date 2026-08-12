@@ -40,7 +40,14 @@ DeletedItemScanner::DeletedItemScanner(PstParser* parser, QObject* parent)
 // Public API
 // ======================================================================
 
+void DeletedItemScanner::resetCancelForNewScan() {
+    // cancel() latches m_cancelled permanently; clear it so a reused scanner is not stuck
+    // returning reliable-but-empty. See the header note on why the parser is not re-armed here.
+    m_cancelled.store(false);
+}
+
 QVector<PstItemDetail> DeletedItemScanner::scanRecoverableItems() {
+    resetCancelForNewScan();
     QVector<PstItemDetail> recovered;
     m_recoverable_reliable = true;
 
@@ -103,10 +110,12 @@ void DeletedItemScanner::scanRecoverableFolder(const PstFolder& folder,
     while (!m_cancelled.load()) {
         auto items_result = m_parser->readFolderItems(folder.node_id, offset, kScanBatchSize);
         if (!items_result.has_value()) {
-            // A read error leaves the recovered set incomplete. Cancellation is reported through
-            // the caller's timeout channel, not as unreliability; any OTHER error means a real
-            // failure that must not masquerade as "nothing to recover" (fail-open honesty hole).
-            if (items_result.error() != error_code::operation_cancelled) {
+            // A read error leaves the recovered set incomplete. A cancel WE requested this scan
+            // (m_cancelled) is reported through the caller's timeout channel, not as unreliability;
+            // any OTHER error -- or an operation_cancelled we did NOT request, i.e. a stale parser
+            // cancel latched by a prior reused scan -- means a real failure that must not
+            // masquerade as "nothing to recover" (fail-open honesty hole).
+            if (items_result.error() != error_code::operation_cancelled || !m_cancelled.load()) {
                 m_recoverable_reliable = false;
             }
             break;
@@ -137,10 +146,11 @@ bool DeletedItemScanner::appendRecoverableBatch(const QVector<PstItemSummary>& i
         if (detail.has_value()) {
             recovered.append(detail.value());
             Q_EMIT recoveryProgress(static_cast<int>(recovered.size()), 0);
-        } else if (detail.error() != error_code::operation_cancelled) {
-            // A per-item detail read that fails (corruption) drops that item; the
-            // recovered set is then incomplete and must not be reported as reliable
-            // -- mirror the folder-items read error above (B8-23).
+        } else if (detail.error() != error_code::operation_cancelled || !m_cancelled.load()) {
+            // A per-item detail read that fails (corruption) drops that item; the recovered set
+            // is then incomplete and must not be reported as reliable -- mirror the folder-items
+            // read error above (B8-23). An operation_cancelled we did NOT request (stale parser
+            // cancel from a reused scan) is a real incompletion, not our benign timeout.
             m_recoverable_reliable = false;
         }
     }
@@ -148,6 +158,7 @@ bool DeletedItemScanner::appendRecoverableBatch(const QVector<PstItemSummary>& i
 }
 
 QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
+    resetCancelForNewScan();
     QVector<PstItemDetail> recovered;
     m_orphan_reliable = true;
 
@@ -214,6 +225,7 @@ QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
 }
 
 QVector<PstItemDetail> DeletedItemScanner::recoverAll() {
+    resetCancelForNewScan();
     // The orphan pass has enumerated nothing until it actually runs; a cancel between the two
     // passes must not leave a previous run's "orphans reliable" verdict standing.
     m_orphan_reliable = false;
@@ -300,9 +312,10 @@ std::optional<PstItemDetail> DeletedItemScanner::tryReadOrphanedNode(uint64_t ni
     }
     // A per-node detail read that fails (corruption, or a crafted node the parser refuses)
     // drops that orphan candidate; the orphan set is then incomplete and must not be reported
-    // as a complete scan -- mirror the recoverable path (B8-23). Cancellation is reported
-    // through the caller's timeout channel, not as unreliability.
-    if (result.error() != error_code::operation_cancelled) {
+    // as a complete scan -- mirror the recoverable path (B8-23). A cancel WE requested is reported
+    // through the caller's timeout channel, not as unreliability; an operation_cancelled we did
+    // NOT request (stale parser cancel from a reused scan) is a real incompletion.
+    if (result.error() != error_code::operation_cancelled || !m_cancelled.load()) {
         m_orphan_reliable = false;
     }
     return std::nullopt;

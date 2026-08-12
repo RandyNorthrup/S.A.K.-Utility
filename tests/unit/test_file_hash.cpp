@@ -110,7 +110,7 @@ void FileHashTests::cleanupTestCase() {
 
 void FileHashTests::constructor_defaultValues() {
     sak::file_hasher hasher;
-    QCOMPARE(hasher.getAlgorithm(), sak::hash_algorithm::md5);
+    QCOMPARE(hasher.getAlgorithm(), sak::hash_algorithm::sha256);
     QCOMPARE(hasher.getChunkSize(), sak::file_hasher::DEFAULT_CHUNK_SIZE);
 }
 

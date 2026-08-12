@@ -78,6 +78,18 @@ Q_SIGNALS:
     void recoveryProgress(int items_found, int nodes_scanned);
 
 private:
+    /// Re-arm this scanner for a fresh scan by clearing m_cancelled, which cancel() otherwise
+    /// leaves set permanently. Without this a scanner reused after a cancel bails on the first
+    /// read gate and returns an EMPTY result while still reporting reliable -- a fail-open
+    /// "nothing to recover". Called at the start of every public scan entry point; it does not
+    /// touch the within-single-scan cancel semantics (a cancel raised DURING a scan is still
+    /// observed by the loops). The underlying PstParser's own cancel flag is NOT reset here: it is
+    /// cleared only by its owner re-opening the file (PstParser::open), and clearing it after a
+    /// wall-time cancel would defeat the caller's deadline. Should a reused scanner run against a
+    /// still-cancelled parser, the per-read operation_cancelled is attributed as unreliable (see
+    /// the m_cancelled guard on each read-error branch) rather than masquerading as reliable-empty.
+    void resetCancelForNewScan();
+
     /// Build the set of all NIDs reachable from the folder hierarchy
     void buildReachableSet();
 

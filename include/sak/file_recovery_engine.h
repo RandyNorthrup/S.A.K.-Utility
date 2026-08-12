@@ -48,6 +48,12 @@ struct FileRecoveryScanResult {
     /// stopping before EOF, or a mid-scan read error. When true the candidate list is a partial
     /// result -- callers must not report the scan as complete.
     bool scan_cancelled{false};
+    /// True when a CONFIGURED bound cut the carve short of the whole source: the byte-scan cap
+    /// stopping before EOF, or the candidate cap. Unlike scan_cancelled (a deadline / hostile-image
+    /// abort), a truncated scan finished its configured work but did not cover everything, so the
+    /// candidate list is still partial -- raising the cap and re-scanning can surface more. A
+    /// caller wanting whole-source coverage must treat EITHER flag as incomplete (R5-P9-24).
+    bool scan_truncated{false};
 };
 
 struct FileRecoveryRestoreOptions {

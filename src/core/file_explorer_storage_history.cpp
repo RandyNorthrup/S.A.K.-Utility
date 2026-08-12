@@ -18,6 +18,14 @@ void FileExplorerStorageHistoryWrapper::add(FileExplorerStorageHistory history) 
     if (m_index + 1 < m_histories.size()) {
         m_histories.remove(m_index + 1, m_histories.size() - m_index - 1);
     }
+    // Bound long-session memory: retain only the most recent entries, dropping
+    // the oldest. m_index always sits at the newest entry here, so shifting it
+    // down by the same count leaves undo/redo within the cap unchanged.
+    if (m_histories.size() > kMaxRetainedEntries) {
+        const int overflow = static_cast<int>(m_histories.size()) - kMaxRetainedEntries;
+        m_histories.remove(0, overflow);
+        m_index -= overflow;
+    }
 }
 
 bool FileExplorerStorageHistoryWrapper::canUndo() const {

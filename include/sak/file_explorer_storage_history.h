@@ -38,10 +38,17 @@ struct FileExplorerStorageHistory {
     QVector<FileExplorerHistoryItem> items;
 };
 
-/// Files StorageHistoryWrapper: an unbounded history list plus an index that
-/// starts at -1; pushing a new entry truncates any redo branch beyond it.
+/// Files StorageHistoryWrapper: a history list plus an index that starts at
+/// -1; pushing a new entry truncates any redo branch beyond it. Unlike the
+/// unbounded Files original, the retained length is capped at
+/// kMaxRetainedEntries; once full the oldest entries are dropped, leaving
+/// undo/redo behaviour within the cap unchanged (bounds long-session memory).
 class FileExplorerStorageHistoryWrapper {
 public:
+    /// Upper bound on retained undo/redo entries; the oldest are dropped once a
+    /// new entry would exceed it, bounding long-session memory (R5-P9-39).
+    static constexpr int kMaxRetainedEntries = 256;
+
     void add(FileExplorerStorageHistory history);
     [[nodiscard]] bool canUndo() const;
     [[nodiscard]] bool canRedo() const;

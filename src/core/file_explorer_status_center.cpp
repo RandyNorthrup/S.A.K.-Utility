@@ -8,6 +8,7 @@
 #include <QDateTime>
 
 #include <algorithm>
+#include <limits>
 
 namespace sak {
 
@@ -30,6 +31,23 @@ constexpr int kResultBranchCount = 4;
 // Percentage full scale: progress ratios are scaled to, and clamped within,
 // [0, kPercentScale].
 constexpr qint64 kPercentScale = 100;
+
+// Scale processed/total into the clamped [0, kPercentScale] card percentage without letting
+// processed * kPercentScale overflow qint64 (it would past ~92 PB of bytes, or a comparably
+// huge item count). Cosmetic progress only; total is > 0 per the caller. When the product
+// would overflow, divide first -- the ratio is well under full scale on that path anyway.
+int percentOfTotal(const qint64 processed, const qint64 total) {
+    if (processed <= 0) {
+        return 0;
+    }
+    if (processed >= total) {
+        return static_cast<int>(kPercentScale);
+    }
+    const qint64 scaled = (processed <= std::numeric_limits<qint64>::max() / kPercentScale)
+                              ? processed * kPercentScale / total
+                              : processed / (total / kPercentScale);
+    return static_cast<int>(std::clamp<qint64>(scaled, 0, kPercentScale));
+}
 
 // Files seeds _previousReportTime one second (in ms) before StartTime so the
 // first speed sample has a sane denominator.
@@ -383,15 +401,12 @@ void FileExplorerStatusCenterItem::applyProgressPercentAndSpeed(
     const FileExplorerStatusProgress& progress) {
     double graph_speed = 0.0;
     if (progress.total_size > 0) {
-        m_progress_percentage = static_cast<int>(std::clamp<qint64>(
-            progress.processed_size * kPercentScale / progress.total_size, 0, kPercentScale));
+        m_progress_percentage = percentOfTotal(progress.processed_size, progress.total_size);
         m_speed_text = tr("%1/s").arg(formatBytes(static_cast<qint64>(progress.size_speed)));
         graph_speed = progress.size_speed;
     } else if (progress.items_count > 0) {
-        m_progress_percentage = static_cast<int>(std::clamp<qint64>(
-            progress.processed_items_count * kPercentScale / progress.items_count,
-            0,
-            kPercentScale));
+        m_progress_percentage = percentOfTotal(progress.processed_items_count,
+                                               progress.items_count);
         m_speed_text = tr("%1 items/s").arg(progress.items_speed, 0, 'f', 0);
         graph_speed = progress.items_speed;
     } else {

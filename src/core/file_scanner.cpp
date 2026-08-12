@@ -85,6 +85,12 @@ auto file_scanner::scan(const std::filesystem::path& root_path,
                "file_scanner::scan",
                "scan stats must be consistent");
 
+    // Incomplete-scan contract (R5-P9-20): this is a count-and-continue bulk scan.
+    // A non-zero stats.errors_encountered means one or more directories/entries could
+    // not be enumerated, so the returned statistics describe a PARTIAL scan. A caller
+    // that requires completeness must treat errors_encountered > 0 as incomplete and
+    // must not trust a successful expected<> alone. errors_encountered is the explicit
+    // incomplete indicator surfaced in the returned value.
     return stats;
 }
 
@@ -174,10 +180,15 @@ bool isExcludedDirectory(const std::filesystem::path& path,
 }
 
 bool checkSizeFilter(const std::filesystem::directory_entry& entry, const scan_options& options) {
+    const bool has_size_limit = options.min_file_size > 0 || options.max_file_size > 0;
     std::error_code ec;
     auto size = entry.file_size(ec);
     if (ec) {
-        return true;
+        // Fail closed (R5-P9-32): a size that cannot be stat'd cannot be shown to
+        // satisfy a configured min/max limit, so exclude the file rather than letting
+        // it bypass the limit. With no limit configured there is nothing to enforce,
+        // so the stat failure alone must not drop the file from an unfiltered scan.
+        return !has_size_limit;
     }
     if (options.min_file_size > 0 && size < options.min_file_size) {
         return false;

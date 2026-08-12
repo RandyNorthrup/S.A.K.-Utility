@@ -31,6 +31,14 @@
 #include <optional>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+// Undefine Windows macros that conflict with Qt
+#undef emit
+#undef signals
+#undef slots
+#endif
+
 namespace sak {
 
 namespace {
@@ -1848,6 +1856,53 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
 
 namespace {
 
+// True when @p path is a reparse point (symlink, junction, or mount point). A
+// Windows JUNCTION is missed by QFileInfo::isSymLink() and std::filesystem's
+// symlink checks, so the reparse attribute is read directly (mirrors
+// archive_service isReparsePoint / file_scanner isReparsePointEntry). Such an
+// entry must never be traversed by a recursive delete: descending would delete
+// the LINK's target, which lives outside the user-selected tree (R5-P9-2).
+bool isReparsePointPath(const QString& path) {
+#ifdef _WIN32
+    const DWORD attrs = GetFileAttributesW(path.toStdWString().c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+    return QFileInfo(path).isSymLink();
+#endif
+}
+
+// Remove a reparse-point entry by unlinking the LINK itself, never its target.
+// RemoveDirectoryW (QDir::rmdir) drops a directory junction/mount point without
+// touching the tree it points at; a file symlink is removed with QFile::remove.
+bool removeReparsePointEntry(const QString& path) {
+    if (QDir().rmdir(path)) {
+        return true;
+    }
+    return QFile::remove(path);
+}
+
+// Depth-first delete that removes reparse-point children as links (without
+// traversing them) and recurses only into real directories, then removes the
+// now-empty directory. Mirrors QDir::removeRecursively but with the reparse
+// check that catches Windows junctions QFileInfo::isSymLink() misses (R5-P9-2).
+bool removeTreeNoReparse(const QString& dir_path) {
+    QDir dir(dir_path);
+    bool ok = true;
+    const QFileInfoList entries =
+        dir.entryInfoList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
+    for (const QFileInfo& entry : entries) {
+        const QString child = entry.absoluteFilePath();
+        if (isReparsePointPath(child)) {
+            ok = removeReparsePointEntry(child) && ok;
+        } else if (entry.isDir()) {
+            ok = removeTreeNoReparse(child) && ok;
+        } else {
+            ok = QFile::remove(child) && ok;
+        }
+    }
+    return dir.rmdir(dir_path) && ok;
+}
+
 // Local recursive directory delete, with its own catastrophic-target refusal.
 FileManagementMutationResult deleteLocalDirectory(const FileManagementTarget& target,
                                                   const QString& path) {
@@ -1865,8 +1920,11 @@ FileManagementMutationResult deleteLocalDirectory(const FileManagementTarget& ta
                 .arg(path));
         return result;
     }
-    QDir dir(path);
-    result.ok = dir.removeRecursively();
+    // A reparse-point target is removed as a LINK, never traversed; otherwise walk
+    // the tree with the same rule applied to every child so a junction planted
+    // inside the selected tree cannot redirect the delete outside it (R5-P9-2).
+    result.ok = isReparsePointPath(path) ? removeReparsePointEntry(path)
+                                         : removeTreeNoReparse(path);
     if (!result.ok) {
         result.blockers.append(QStringLiteral("Unable to delete directory: %1").arg(path));
     }
@@ -1993,8 +2051,8 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectoryTree
         return *blocked;
     }
     const QString fs = normalizedFileSystem(target.file_system);
-    // Local (QDir::removeRecursively) and HFS+ (deleteFolderTree) already remove a
-    // whole tree in one operation; everything else empties depth-first first.
+    // Local (reparse-aware recursive walk) and HFS+ (deleteFolderTree) already
+    // remove a whole tree in one operation; everything else empties depth-first.
     if (target.local_file_system || fs == QStringLiteral("hfsplus") ||
         fs == QStringLiteral("hfsx")) {
         return deleteDirectory(target, path);

@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <cctype>
 #include <limits>
+#include <system_error>
+#include <vector>
 
 namespace sak {
 
@@ -57,6 +59,93 @@ bool accumulateFileEntry(const std::filesystem::directory_entry& entry,
         ++info.file_count;
     }
     return true;
+}
+
+/// @brief Outcome of trying to open a directory for enumeration.
+enum class OpenDirResult {
+    opened,
+    skipped_denied,
+    failed
+};
+
+/// @brief Open dir_path for iteration, distinguishing a permission-denied skip
+///        (kept non-fatal so a scan does not crash on a system tree) from a
+///        genuine read error (which must fail the whole scan closed).
+OpenDirResult openDirectory(const std::filesystem::path& dir_path,
+                            std::filesystem::directory_iterator& out) {
+    std::error_code ec;
+    std::filesystem::directory_iterator it(dir_path, ec);
+    if (!ec) {
+        out = std::move(it);
+        return OpenDirResult::opened;
+    }
+    if (ec == std::errc::permission_denied) {
+        return OpenDirResult::skipped_denied;
+    }
+    return OpenDirResult::failed;
+}
+
+/// @brief True when entry is a real subdirectory to descend into. Symlinked and
+///        junction directories are NOT followed (matches the previous
+///        recursive_directory_iterator with no follow_directory_symlink), which
+///        also keeps the walk free of symlink cycles.
+bool shouldRecurse(const std::filesystem::directory_entry& entry) {
+    std::error_code ec;
+    if (entry.is_symlink(ec) || ec) {
+        return false;
+    }
+    return entry.is_directory(ec) && !ec;
+}
+
+/// @brief Push child_path's iterator onto stack. A permission-denied directory
+///        is skipped and recorded on info (info.complete=false) instead of
+///        aborting; only a genuine read error returns false (fail closed).
+bool pushDirectory(const std::filesystem::path& child_path,
+                   std::vector<std::filesystem::directory_iterator>& stack,
+                   path_utils::DirectorySizeInfo& info) {
+    std::filesystem::directory_iterator child;
+    switch (openDirectory(child_path, child)) {
+    case OpenDirResult::opened:
+        stack.push_back(std::move(child));
+        return true;
+    case OpenDirResult::skipped_denied:
+        info.complete = false;
+        ++info.skipped_dirs;
+        return true;
+    case OpenDirResult::failed:
+        return false;
+    }
+    return false;  // unreachable: all enum cases return above
+}
+
+/// @brief Size a directory tree with an explicit stack of directory_iterators.
+///        Permission-denied subtrees are skipped and flagged on info; an
+///        unreadable regular file or any other iteration error fails closed.
+/// @return error_code::success on a completed (possibly partial) walk.
+error_code walkDirectoryTree(const std::filesystem::path& root,
+                             path_utils::DirectorySizeInfo& info) {
+    std::vector<std::filesystem::directory_iterator> stack;
+    if (!pushDirectory(root, stack, info)) {
+        return error_code::read_error;
+    }
+    const std::filesystem::directory_iterator end;
+    while (!stack.empty()) {
+        auto& level = stack.back();
+        if (level == end) {
+            stack.pop_back();
+            continue;
+        }
+        const std::filesystem::directory_entry entry = *level;
+        std::error_code ec;
+        level.increment(ec);
+        if (ec || !accumulateFileEntry(entry, info)) {
+            return error_code::read_error;
+        }
+        if (shouldRecurse(entry) && !pushDirectory(entry.path(), stack, info)) {
+            return error_code::read_error;
+        }
+    }
+    return error_code::success;
 }
 
 }  // anonymous namespace
@@ -191,12 +280,13 @@ auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
     DirectorySizeInfo info;
 
     try {
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(
-                 dir_path, std::filesystem::directory_options::skip_permission_denied)) {
-            if (!accumulateFileEntry(entry, info)) {
-                logError("Failed to read the size of a regular file under: {}", dir_path.string());
-                return std::unexpected(error_code::read_error);
-            }
+        // A permission-denied subtree is skipped (info.complete is set false and
+        // info.skipped_dirs counted) rather than crashing the scan on a system
+        // tree; an unreadable regular file or any other read error fails closed.
+        if (const auto walk_ec = walkDirectoryTree(dir_path, info);
+            walk_ec != error_code::success) {
+            logError("Failed to calculate the size of directory: {}", dir_path.string());
+            return std::unexpected(walk_ec);
         }
     } catch (const std::filesystem::filesystem_error& e) {
         logError("Failed to calculate directory size: {}", e.what());

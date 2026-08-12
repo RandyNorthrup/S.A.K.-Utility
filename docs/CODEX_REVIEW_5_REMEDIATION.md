@@ -915,7 +915,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: registerAction only checks non-empty id / non-null invoke / no duplicate (l.26-46); it does not assert flag relationships. Descriptors are trusted compile-time app constants (makeDescriptor/mutatingDescriptor), not untrusted input; the gate keys off the individual descriptor flags in the run handler. A contradictory descriptor would be an authoring bug, not attacker-influenced.
   - Fix: Add a debug assert/reject for inconsistent flags (destructive/catastrophic=>mutating, requires_admin without a real elevation path) as authoring hygiene.
-- [ ] **R5-P8-6** [LOW] [PARTIAL] New-or-empty-dir / ZIP output check-then-write TOCTOU
+- [x] **R5-P8-6** [LOW] [PARTIAL] New-or-empty-dir / ZIP output check-then-write TOCTOU
+  - RESOLVED 2026-08-11 [already-correct]: compressToZip already opens the output WriteOnly|NewOnly (exclusive-create) so the requireNewOrEmptyDir check-then-write window is closed and remove-on-failure only deletes the file it created (compressToZip_refusesExistingOutputWithoutClobber test).
   - Files: src/core/app_mutating_actions.cpp:194, src/core/app_mutating_actions.cpp:3401
   - Boundary: gui-local-user (reachable)
   - Evidence: requireNewOrEmptyDir (194-221) and the compress zip_info.exists() check (3401) are pathname-based; pathReparseUnsafe guards the symlink/junction redirect vector (197,3394). Residual: a co-located local attacker with write access to the destination dir could plant a regular file in the check->write window (compressToZip clobbers+removes on failure). Inherent to non-atomic pathname writers; low.
@@ -1026,7 +1027,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: calculateHash calls std::filesystem::exists()/is_regular_file() (throwing overloads) at 61-70 outside any try, so a filesystem_error escapes a function declared to return std::expected. hashFileInChunks casts file.size() (qint64) to size_t (240); a negative -1 becomes huge, though it only feeds progress reporting.
   - Fix: Use the std::error_code overloads of exists/is_regular_file and return unexpected(invalid_path); guard a negative QFile::size().
-- [ ] **R5-P8-31** [LOW] [DESIGN_INTENT] MD5 is the default hasher and offered as an integrity-verification option
+- [x] **R5-P8-31** [LOW] [DESIGN_INTENT] MD5 is the default hasher and offered as an integrity-verification option
+  - RESOLVED 2026-08-11 [fixed]: flipped the file_hasher ctor default from md5 to sha256 (md5 relabeled corruption-detection-only opt-in) and updated the test_file_hash constructor_defaultValues assertion to sha256; no other caller relies on the class default.
   - Files: include/sak/file_hash.h:45, src/core/app_readonly_actions.cpp:1218
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: The file_hasher ctor defaults to md5 (h.45, a footgun) but the exposed hash_file tool defaults to sha256 and md5 is explicit opt-in (app_readonly_actions.cpp:1218-1222). MD5 is spec-appropriate for accidental-corruption / backup verification (not adversarial collision resistance).
@@ -1037,7 +1039,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: readExecutionResultFile does file.readAll() unbounded (103) and coerces fields via toBool(false)/toString/toDouble(0) (115-121); actionStatusFromString maps unknown to Idle (54); writeExecutionResultFile uses WriteOnly|Truncate (non-atomic, 74). The source is the app's OWN elevated helper output at an app-controlled path, not an external attacker, so exposure is marginal.
   - Fix: Bound the read size, strict-type the fields, reject unknown status, and write atomically (QSaveFile).
-- [ ] **R5-P8-33** [LOW] [DESIGN_INTENT] Directory sizing skips permission-denied/size errors then returns successful incomplete total
+- [x] **R5-P8-33** [LOW] [DESIGN_INTENT] Directory sizing skips permission-denied/size errors then returns successful incomplete total
+  - RESOLVED 2026-08-11 [fixed]: added a caller-visible completeness signal to DirectorySizeInfo (bool complete{true} + std::uintmax_t skipped_dirs), set when accumulateFileEntry skips a size error or the iterator skips a permission-denied subtree; skip_permission_denied resilience is kept (no false-close on system trees).
   - Files: src/core/path_utils.cpp:39, src/core/path_utils.cpp:164
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: accumulateFileEntry skips entries whose file_size errors (39-41) and the iterator uses skip_permission_denied (164) -- an intentional trade-off so a scan does not crash on system dirs. The under-reported total is informational; no security decision fails open on it.
@@ -1209,22 +1212,26 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: getMountPoints' do/while (FindNextVolumeW ...) loop (603-611) does NOT check GetLastError() for ERROR_NO_MORE_FILES vs an abnormal error and returns a QStringList with no ok signal, so a mid-enumeration failure yields a silently partial list -- the sibling getVolumeRootsForDrive DOES perform exactly this check (677-679). collectMountPaths returns dropping all paths when GetVolumePathNamesForVolumeNameW fails, e.g. ERROR_MORE_DATA on a too-small fixed buffer (696-700). Local drive state, not attacker-controlled; likely an informational path.
   - Fix: In getMountPoints check GetLastError()!=ERROR_NO_MORE_FILES (as getVolumeRootsForDrive does) and handle ERROR_MORE_DATA in collectMountPaths by growing the buffer.
-- [ ] **R5-P9-2** [LOW] [PARTIAL] Recursive local delete: empty/root lexical check then path-based removeRecursively (junction redirect)
+- [x] **R5-P9-2** [LOW] [PARTIAL] Recursive local delete: empty/root lexical check then path-based removeRecursively (junction redirect)
+  - RESOLVED 2026-08-11 [fixed]: recursive local delete no longer uses QDir::removeRecursively (whose isSymLink descent misses junctions); reparse-attribute helpers (isReparsePointPath via GetFileAttributesW) refuse/skip reparse-point entries during the walk. The empty/root guard is kept.
   - Files: src/core/file_management_file_system.cpp:1684, src/core/file_management_file_system.cpp:1692
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The catastrophic case IS guarded: isUnsafeLocalDeletePath refuses empty path / filesystem root (1684-1690, B8-01). Residual: QDir::removeRecursively (1693) can traverse a junction planted inside the user-selected tree. Requires a co-located attacker to plant the junction and a user/AI to delete that tree; no privilege boundary crossed (user-privilege delete of user-selected content).
   - Fix: Refuse/skip reparse-point entries during the recursive delete (mirror archive_service isReparsePoint / file_scanner isReparsePointEntry).
-- [ ] **R5-P9-3** [LOW] [PARTIAL] ZIP extraction does not reject reparse destination root/ancestors; component checks TOCTOU-prone
+- [x] **R5-P9-3** [LOW] [PARTIAL] ZIP extraction does not reject reparse destination root/ancestors; component checks TOCTOU-prone
+  - RESOLVED 2026-08-11 [fixed]: extractZip rejects a destination_dir that is itself a symlink/junction pre-mkpath (the per-entry check only walks components below the root); scoped to the root (not ancestors) and uses isSymLink() not the broad reparse attribute to avoid false-closing %TEMP% raw-import targets and OneDrive/WOF placeholders.
   - Files: src/core/file_explorer_archive_service.cpp:146, src/core/file_explorer_archive_service.cpp:280
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: Intermediate-component reparse IS guarded: traversesReparsePoint checks every descended component between root and leaf (146-162,280-285) plus zip-slip (274) and exclusive NewOnly writes (240). Residual: destination_dir root itself and its ancestors are not reparse-checked. But the archive controls only entry NAMES (guarded); the destination is user-chosen, so the untrusted archive bytes cannot exploit a root/ancestor junction (that needs a separate co-located attacker).
   - Fix: Also reject when destination_dir or an ancestor is a reparse point before extraction.
-- [ ] **R5-P9-9** [LOW] [PARTIAL] Invalid/symlink archive entries skipped while extraction/compression report ok=true
+- [x] **R5-P9-9** [LOW] [PARTIAL] Invalid/symlink archive entries skipped while extraction/compression report ok=true
+  - RESOLVED 2026-08-11 [fixed]: extractZipEntry appends a warning when a zip entry is dropped for !isValid() so a corrupt central-directory record is not silently omitted from an ok=true extraction (valid entries still extract).
   - Files: src/core/file_explorer_archive_service.cpp:266, src/core/file_explorer_archive_service.cpp:269, src/core/file_explorer_archive_service.cpp:371
   - Boundary: untrusted-input (reachable)
   - Evidence: Symlink skips are DESIGN_INTENT: deliberate (links not extracted/archived) and surfaced as warnings (269-272,371-374); a missing compress source is already a hard blocker (386-388, B8-21). Residual: an !isValid() zip entry is skipped silently with NO warning (266-267) while extractZip still sets ok=true (502).
   - Fix: Append a warning (or blocker) when an entry is dropped for !isValid() so a corrupt central-directory record is not silently omitted from a 'successful' extraction.
-- [ ] **R5-P9-19** [LOW] [CONFIRMED_REAL] Share read access marked true purely from QDir::exists()
+- [x] **R5-P9-19** [LOW] [CONFIRMED_REAL] Share read access marked true purely from QDir::exists()
+  - RESOLVED 2026-08-11 [fixed]: testReadWriteAccess bases canRead on an actual bounded directory enumeration (shareRootIsEnumerable via FindFirstFileW) instead of QDir::exists() alone, so a reachable-but-not-listable share is no longer reported readable.
   - Files: src/core/network_share_browser.cpp:235, src/core/network_share_browser.cpp:239
   - Boundary: untrusted-input (reachable)
   - Evidence: testReadWriteAccess sets canRead=true from dir.exists() alone (235-236); the subsequent entryInfoList result is discarded via (void)entries (239-240), so a share reachable but not listable is reported readable. The write test correctly uses NewOnly (B9-06), so only the read-capability report is over-stated (no access is actually granted).
@@ -1234,62 +1241,74 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The scanner uses directory_options::skip_permission_denied (455) and on a directory-open error (463-467) or per-entry exception (431-439) increments stats.errors_encountered and continues, returning a success expected. Incompleteness IS surfaced via the returned stats.errors_encountered (74-77) -- it is a count-and-continue bulk scanner, not a silent fail-open. Residual is caller-dependent: a caller that checks only the expected<> and not errors_encountered would treat a partially-enumerated scan as complete.
   - Fix: Callers requiring completeness should treat errors_encountered>0 as incomplete; optionally return an incomplete indicator from scan() itself.
-- [ ] **R5-P9-22** [LOW] [PARTIAL] Recovery output names reject only path components, not device names/ADS/dots; path-based dest validation
+- [x] **R5-P9-22** [LOW] [PARTIAL] Recovery output names reject only path components, not device names/ADS/dots; path-based dest validation
+  - RESOLVED 2026-08-11 [fixed]: restoredFilePath now also rejects ADS colon, trailing dot/space, and reserved DOS device names (isUnsafeRestoreName/isReservedDeviceName) on top of the existing bare-filename confinement (defense-in-depth; engine ids are recovered_<hex>.<ext>).
   - Files: src/core/file_recovery_engine.cpp:189, src/core/file_recovery_engine.cpp:298
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: restoredFilePath confines to a bare filename and rejects .//..//empty (189-192, B8-15), blocking traversal -- the primary risk. It does not reject reserved device names (CON/NUL), ADS colons, or trailing dots/spaces. But candidate.id is engine-generated from offset+extension (scanCandidateFromMatch:456 candidateId), NOT from carved image content, so those unsafe names cannot arise from untrusted disk bytes. Residuals (a caller passing a hand-crafted candidate id; an ancestor-junction TOCTOU on a user-chosen destination) are not reachable from the untrusted-bytes surface.
   - Fix: For defense in depth, also reject reserved device names / colon / trailing dot-space in restoredFilePath.
-- [ ] **R5-P9-23** [LOW] [PARTIAL] overwrite_existing=false enforced by exists()+QSaveFile (raced-in destination overwritten)
+- [x] **R5-P9-23** [LOW] [PARTIAL] overwrite_existing=false enforced by exists()+QSaveFile (raced-in destination overwritten)
+  - RESOLVED 2026-08-11 [fixed]: for overwrite_existing=false the final path is written with exclusive semantics (QFile WriteOnly|NewOnly, writeRecoveredExclusive) so a file raced into the restore dir fails closed instead of being overwritten by QSaveFile::commit.
   - Files: src/core/file_recovery_engine.cpp:341, src/core/file_recovery_engine.cpp:368
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: skippedExistingRestoreFile checks QFileInfo::exists then returns (341-348); writeRecoveredFile uses QSaveFile whose commit() replaces any file at outputPath (368-389). A file raced into the restore dir between check and commit is overwritten despite overwrite_existing=false. Requires a co-located attacker writing to the user-chosen restore directory; unlike compressToZip this path lacks exclusive-create.
   - Fix: When overwrite_existing=false, create the final file with exclusive semantics (QFile NewOnly) so a raced-in file fails closed.
-- [ ] **R5-P9-24** [LOW] [PARTIAL] Recovery scan caps/short-reads/candidate-limit lack an authoritative completeness flag
+- [x] **R5-P9-24** [LOW] [PARTIAL] Recovery scan caps/short-reads/candidate-limit lack an authoritative completeness flag
+  - RESOLVED 2026-08-11 [fixed]: added an explicit bool scan_truncated to FileRecoveryScanResult, set true on the byte-scan-cap and candidate-limit paths, so a caller relying on the flag knows a byte/candidate-capped scan was partial (scan_cancelled previously covered only cancel/budget).
   - Files: src/core/file_recovery_engine.cpp:439, src/core/file_recovery_engine.cpp:528, include/sak/file_recovery_engine.h:41
   - Boundary: untrusted-input (reachable)
   - Evidence: scan_cancelled is set only for cancel (490) and work-budget exhaustion (496). For scan-byte-cap (439-442) and candidate-limit (528-530) only a warning is appended; scan_cancelled stays false. Incompleteness IS surfaced via warnings, but a caller relying solely on the scan_cancelled boolean would treat a byte-capped or candidate-capped (thus partial) scan as complete.
   - Fix: Add an explicit truncated/complete flag set true on the byte-cap and candidate-limit paths.
-- [ ] **R5-P9-25** [LOW] [CONFIRMED_REAL] DeletedItemScanner::cancel() permanent; reused scans report reliable-but-empty
+- [x] **R5-P9-25** [LOW] [CONFIRMED_REAL] DeletedItemScanner::cancel() permanent; reused scans report reliable-but-empty
+  - RESOLVED 2026-08-11 [fixed]: scanRecoverableItems/scanOrphanedNodes/recoverAll now reset m_cancelled=false (and re-arm the parser) at entry so a scanner reused after a cancel no longer returns reliable-but-empty; the within-single-scan cancel semantics are unchanged.
   - Files: src/core/deleted_item_scanner.cpp:199, src/core/deleted_item_scanner.cpp:41, src/core/deleted_item_scanner.cpp:80
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: cancel() stores m_cancelled=true permanently and also cancels the parser (199-208). scanRecoverableItems sets m_recoverable_reliable=true (41) but never resets m_cancelled; scanRecoverableFolder then bails immediately (80-82). So a scanner reused after a cancel returns an empty set with recoverable_reliable=true -- a reliable-looking 'nothing to recover'. Within a single scan, keeping reliable=true on cancel is intentional (reported via the timeout channel).
   - Fix: Reset m_cancelled=false (and re-arm the parser) at the start of scanRecoverableItems/scanOrphanedNodes/recoverAll, or document/enforce single-use.
-- [ ] **R5-P9-28** [LOW] [PARTIAL] Transfer totals cast quint64->qint64, unchecked accumulation, multiply-before-divide
+- [x] **R5-P9-28** [LOW] [PARTIAL] Transfer totals cast quint64->qint64, unchecked accumulation, multiply-before-divide
+  - RESOLVED 2026-08-11 [fixed]: transfer size totals use saturating/unsigned accumulation and the *100 percentage is guarded against overflow before dividing (cosmetic progress only; the authoritative lastTransferComplete() gating is untouched).
   - Files: src/core/file_explorer_transfer_worker.cpp:334, src/core/file_explorer_status_center.cpp:361
   - Boundary: untrusted-input (reachable)
   - Evidence: Discovery casts item/entry size_bytes (from a possibly-crafted raw image) to qint64 and accumulates unchecked (334,387); status_center computes processed_size*100/total_size (361-363). A crafted huge size can skew the progress numbers, but the percentage is clamped to [0,100] (363,367), and move source-deletion is gated on engine->lastTransferComplete() (actual completeness, 435), NOT on these progress numbers -- so no data loss or false success results. Impact is limited to a cosmetic progress display.
   - Fix: Use unsigned/saturating accumulation and guard the *100 against overflow before dividing.
-- [ ] **R5-P9-30** [LOW] [PARTIAL] Properties size-walk recurses symlinked dirs, no visited-identity guard, ignores warnings
+- [x] **R5-P9-30** [LOW] [PARTIAL] Properties size-walk recurses symlinked dirs, no visited-identity guard, ignores warnings
+  - RESOLVED 2026-08-11 [already-correct]: treeSize already skips entries flagged symlink (committed e37fede, wave 7); stale checkbox.
   - Files: src/core/file_explorer_properties_calc.cpp:41, src/core/file_explorer_properties_calc.cpp:43
   - Boundary: untrusted-input (reachable)
   - Evidence: treeSize recurses on entry.directory (41-43) without skipping entries also flagged symlink and with no canonical visited-set, so a symlinked directory is followed and can count out-of-tree data or double-count. Depth is bounded by max_depth (20-25) so there is no runaway, and truncation/entry-cap incompleteness IS tracked via result.complete (23,34,38,45). Impact is a mis-reported size number, not a security boundary.
   - Fix: Skip entries flagged symlink in treeSize; optionally track canonical visited paths.
-- [ ] **R5-P9-31** [LOW] [PARTIAL] SmartFileFilter drops invalid exclusion regexes and continues; no complexity guard
+- [x] **R5-P9-31** [LOW] [PARTIAL] SmartFileFilter drops invalid exclusion regexes and continues; no complexity guard
+  - RESOLVED 2026-08-11 [fixed]: added a caller-observable hasInvalidPatterns() accessor so a completeness-requiring caller can fail closed when an exclude pattern failed to compile; the existing record+log of invalid patterns is retained.
   - Files: src/core/smart_file_filter.cpp:52, src/core/smart_file_filter.cpp:138
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: An invalid exclude pattern is NOT dropped silently: compileRegexPatterns records it in m_invalidPatterns and logs a warning (52-65), then continues filtering with the valid ones -- the incompleteness is surfaced, not hidden. Residual: no ReDoS/complexity guard on valid pathological patterns, but exclude_patterns come from the user's own SmartFilter config, not untrusted input.
   - Fix: Have callers enforce fail-closed when m_invalidPatterns is non-empty; optionally bound pattern complexity.
-- [ ] **R5-P9-32** [LOW] [CONFIRMED_REAL] File-size filter returns 'passes' on stat failure -> unknown-size files bypass limits
+- [x] **R5-P9-32** [LOW] [CONFIRMED_REAL] File-size filter returns 'passes' on stat failure -> unknown-size files bypass limits
+  - RESOLVED 2026-08-11 [fixed]: checkSizeFilter fails closed on a file_size() error WHEN a min/max limit is configured (un-stattable file excluded, no bypass); with no limit configured the stat failure does not drop the file (avoids a false-close on ordinary scans).
   - Files: src/core/file_scanner.cpp:169
   - Boundary: untrusted-input (reachable)
   - Evidence: checkSizeFilter returns true on file_size() error (170-173), so a file whose size cannot be stat'd bypasses configured min/max size limits and is included. A fail-open per the codebase's fail-closed rule; reachable when scanning an untrusted tree, though impact is over-inclusion of an un-stattable file, not a boundary crossing.
   - Fix: On file_size() failure, fail closed (exclude / surface an error) rather than returning passes-filter.
-- [ ] **R5-P9-33** [LOW] [PARTIAL] Archive compression: reparse-sensitive stat then path-based open (source swap TOCTOU)
+- [x] **R5-P9-33** [LOW] [PARTIAL] Archive compression: reparse-sensitive stat then path-based open (source swap TOCTOU)
+  - RESOLVED 2026-08-11 [fixed]: addFileEntry re-verifies QFileInfo::isSymLink() AFTER opening the compress source and fails closed if it became a symlink/junction, closing the stat-then-open source-swap TOCTOU.
   - Files: src/core/file_explorer_archive_service.cpp:371, src/core/file_explorer_archive_service.cpp:307
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: addCompressSource stats info.isSymLink() (371) then addFileEntry opens the path (307-308); a source swapped to a symlink between check and open would archive the link target. Requires a co-located attacker swapping the user-selected source, and no privilege boundary is crossed (the user archives a file they can already read). The output archive is created exclusively (NewOnly, 440).
   - Fix: Open the source with no-follow semantics or re-verify it is not a reparse point after opening.
-- [ ] **R5-P9-37** [LOW] [CONFIRMED_REAL] Docs contradict implementation (response-size 0=unlimited; drive-0 fallback)
+- [x] **R5-P9-37** [LOW] [CONFIRMED_REAL] Docs contradict implementation (response-size 0=unlimited; drive-0 fallback)
+  - RESOLVED 2026-08-11 [fixed]: doc-only: corrected the stale drive_scanner comment (a failed physical-drive query returns an empty set with query_ok=false -- NO drive-0 probe) and the network_transfer_runner header comment (max_response_bytes 0 is clamped, not unlimited).
   - Files: include/sak/network_transfer_runner.h:33, src/core/network_transfer_runner.cpp:189, src/core/drive_scanner.cpp:78
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: network_transfer_runner.h:33-34 documents 'max_response_bytes 0 = no limit', but runNetworkTransfer clamps <=0 to kDefaultMaxResponseBytes (189-191) so 0 is bounded, not unlimited. drive_scanner.h:166-169 documents that a failed physical-drive query yields 'a best-effort probe of drive 0 only', but drive_scanner.cpp:78-84 explicitly REFUSES to coerce to drive 0 and returns an empty set with query_ok=false. Both comments are stale/wrong.
   - Fix: Update both header comments to match the fail-closed implementation (0 is clamped; empty set on query failure, no drive-0 probe).
-- [ ] **R5-P9-38** [LOW] [CONFIRMED_REAL] Duplicated copy-constructibility static_assert in AdvancedSearchController
+- [x] **R5-P9-38** [LOW] [CONFIRMED_REAL] Duplicated copy-constructibility static_assert in AdvancedSearchController
+  - RESOLVED 2026-08-11 [fixed]: removed the duplicated static_assert(!is_copy_constructible AdvancedSearchController) block.
   - Files: include/sak/advanced_search_controller.h:164, include/sak/advanced_search_controller.h:172
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: Lines 164-166 and 172-174 are identical: static_assert(!std::is_copy_constructible_v<AdvancedSearchController>, 'AdvancedSearchController must not be copy-constructible.'). A verbatim duplicate.
   - Fix: Delete the duplicate static_assert at 172-174.
-- [ ] **R5-P9-39** [LOW] [DESIGN_INTENT] Explorer undo/redo history deliberately unbounded
+- [x] **R5-P9-39** [LOW] [DESIGN_INTENT] Explorer undo/redo history deliberately unbounded
+  - RESOLVED 2026-08-11 [fixed]: capped the Explorer undo/redo history at a named constexpr kMaxRetainedEntries=256, dropping the oldest when exceeded (undo/redo semantics within the cap unchanged).
   - Files: include/sak/file_explorer_storage_history.h:41, src/core/file_explorer_storage_history.cpp:13
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The finding itself acknowledges the unbounded history is deliberate. It is a GUI-session undo/redo stack; unbounded growth is a minor long-session memory concern, not a security or correctness fault, and is not driven by untrusted input.
