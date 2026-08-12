@@ -2225,6 +2225,28 @@ add_test(NAME test_fuzz_command_classifier COMMAND test_fuzz_command_classifier
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_command_classifier")
 
+# test_fuzz_mbox_headers - deterministic mutation-fuzz of the RFC 5322 header parser
+# (G14-6). Header-only pure seam (sak/mbox_header_parser.h), no extra link deps.
+add_executable(test_fuzz_mbox_headers
+    unit/test_fuzz_mbox_headers.cpp
+    ../include/sak/mbox_header_parser.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_mbox_headers PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_mbox_headers PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_fuzz_mbox_headers PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_mbox_headers COMMAND test_fuzz_mbox_headers
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_mbox_headers.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_mbox_headers")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp

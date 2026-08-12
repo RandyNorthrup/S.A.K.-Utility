@@ -10,6 +10,7 @@
 #include "sak/error_codes.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/mbox_header_parser.h"
 
 #include <QMutex>
 #include <QRegularExpression>
@@ -439,57 +440,10 @@ std::expected<QByteArray, error_code> MboxParser::readRawMessage(int message_ind
 // ============================================================================
 
 QMap<QString, QString> MboxParser::parseHeaders(const QByteArray& raw_message) {
-    QMap<QString, QString> headers;
-
-    // Find the header/body boundary
-    int header_end = static_cast<int>(raw_message.indexOf("\r\n\r\n"));
-    if (header_end < 0) {
-        header_end = static_cast<int>(raw_message.indexOf("\n\n"));
-    }
-
-    const QByteArray header_block = (header_end >= 0) ? raw_message.left(header_end) : raw_message;
-
-    // Split into lines and handle continuation (folded headers)
-    const QList<QByteArray> lines = header_block.split('\n');
-
-    QString current_name;
-    QString current_value;
-
-    auto flushHeader = [&]() {
-        if (!current_name.isEmpty()) {
-            headers.insert(current_name.toLower().trimmed(), current_value.trimmed());
-        }
-        current_name.clear();
-        current_value.clear();
-    };
-
-    for (const auto& raw_line : lines) {
-        QByteArray line = raw_line;
-        if (line.endsWith('\r')) {
-            line.chop(1);
-        }
-
-        if (line.isEmpty()) {
-            break;
-        }
-
-        // Continuation line (starts with whitespace)
-        if (line.startsWith(' ') || line.startsWith('\t')) {
-            current_value += QLatin1Char(' ') + QString::fromUtf8(line).trimmed();
-            continue;
-        }
-
-        // New header
-        flushHeader();
-        const int colon = static_cast<int>(line.indexOf(':'));
-        if (colon > 0) {
-            current_name = QString::fromUtf8(line.left(colon));
-            current_value = QString::fromUtf8(line.mid(colon + 1)).trimmed();
-        }
-    }
-    flushHeader();
-
-    return headers;
+    // Delegates to the pure, stateless seam (sak/mbox_header_parser.h) so the same
+    // RFC 5322 parsing is fuzzable with raw byte buffers without an open file. Behaviour
+    // is identical -- this method historically WAS this code.
+    return sak::mbox::parseRfc5322Headers(raw_message);
 }
 
 // ============================================================================

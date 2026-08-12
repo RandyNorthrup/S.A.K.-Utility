@@ -3454,15 +3454,21 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     the run log shows the parser fail-closing there ("Corrupted BTree structure",
     "integrity check failed") without a single fault. NEXT INCREMENT: add
     page-trailer-valid store seeds so accepted files exercise the LTP/messaging layers.
-- [~] R5-G14-6 Fuzz harness: MBOX and EML parsers
-  - PARTIAL 2026-08-12: the reusable fuzz core (tests/fuzz/fuzz_harness.h, see G14-5) is
-    the pattern these plug into. The untrusted-email HTML sanitizer - the same
-    attacker-controlled email surface, and the higher security risk (script/handler
-    stripping, ReDoS-prone regex passes) - is now fuzzed in
-    tests/unit/test_fuzz_email_sanitizer.cpp with two invariants that must hold for every
-    input: the sanitizer never grows its output, and it converges (a second pass is a
-    no-op). The MBOX/EML MIME parsers themselves still need a byte-in seam (both are
-    QFile+QObject today); wiring them to the core is the remaining work.
+- [x] R5-G14-6 Fuzz harness: MBOX and EML parsers
+  - RESOLVED 2026-08-12 [DONE]: two fuzz targets now cover this attacker-controlled email
+    surface. (1) The untrusted-email HTML sanitizer - the highest security risk here
+    (script/handler stripping, ReDoS-prone regex passes) - is fuzzed in
+    test_fuzz_email_sanitizer with two invariants (never grows output, always converges).
+    (2) The RFC 5322 header parser was a private QFile-bound MboxParser member and could
+    not be fuzzed on its own, so it was lifted to a pure header-only seam
+    (sak::mbox::parseRfc5322Headers in include/sak/mbox_header_parser.h) with
+    MboxParser::parseHeaders now delegating to it, behaviour identical and the existing
+    test_mbox_parser still green. test_fuzz_mbox_headers feeds mutated header blocks
+    (folded lines, missing colons, embedded CRs, no terminator) and asserts the output
+    contract: every emitted header name is non-empty, lower-cased, and trimmed. NEXT
+    INCREMENT: the MIME body decode (base64/quoted-printable + multipart walk) still needs
+    its own byte-in seam - it currently reads member state (m_attachment_sink,
+    m_mime_decode_failed) so the extraction is larger than the pure header parse was.
 - [~] R5-G14-7 Fuzz harness: APFS reader/writer structures
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
 - [~] R5-G14-8 Fuzz harness: HFS+ reader structures
