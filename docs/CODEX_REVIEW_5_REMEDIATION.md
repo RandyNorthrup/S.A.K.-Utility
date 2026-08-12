@@ -2861,21 +2861,32 @@ coverage but provides none.
 - [x] **R5-G8-2** run scripts/check_gui_magic_numbers.ps1 (magic numbers in GUI code), fix every finding, then wire it into pre-commit and CI -- DONE: 18 raw literals folded into sak::ui margin/spacing tokens + per-file Files-xaml metric constants; hook 6d wired
 - [x] **R5-G8-3** run scripts/check_gui_style_tokens.ps1 (GUI style-token compliance), fix every finding, then wire it into pre-commit and CI -- DONE (2bee958): the lone residual was a QColor::rgba() method read, not a raw token; matcher fixed, hook 6c wired
 - [x] **R5-G8-4** run scripts/check_gui_stylesheet_literals.ps1 (inline stylesheet literals that override the root QSS), fix every finding, then wire it into pre-commit and CI -- DONE (f4dd100): 70 explorer QSS templates -> include/sak/file_explorer_style_constants.h, rich-text wrapper -> rich_text_constants.h, 2 prose false-positives fixed by requiring a real ;-terminated declaration; hook 6e wired
-- [ ] **R5-G8-5** run scripts/check_accessibility_patterns.ps1 (accessibility patterns), fix every finding, then wire it into pre-commit and CI
-- [ ] **R5-G8-6** run scripts/check_logged_message_boxes.ps1 (message boxes that must also be logged), fix every finding, then wire it into pre-commit and CI
-- [ ] **R5-G8-7** run scripts/check_partition_filesystem_tool_manifest.ps1 (partition filesystem tool manifest integrity), fix every finding, then wire it into pre-commit and CI
+- [x] **R5-G8-5** run scripts/check_accessibility_patterns.ps1 (accessibility patterns), fix every finding, then wire it into pre-commit and CI
+  - RESOLVED 2026-08-11 [fixed]: check_accessibility_patterns runtime audit was failing (missing=2): the Deployment payload QComboBox and the 'Air-gap install (packed only)' QCheckBox in app_installation_panel lacked accessible names -- added setAccessibleName to both; audit now passes (623 explicit accessors, 0 missing). Needs a current build, so wired into CI (not pre-commit).
+- [x] **R5-G8-6** run scripts/check_logged_message_boxes.ps1 (message boxes that must also be logged), fix every finding, then wire it into pre-commit and CI
+  - RESOLVED 2026-08-11 [already-correct]: check_logged_message_boxes is ALREADY wired in .pre-commit-config.yaml (id: logged-message-boxes) and passes; stale checkbox.
+- [x] **R5-G8-7** run scripts/check_partition_filesystem_tool_manifest.ps1 (partition filesystem tool manifest integrity), fix every finding, then wire it into pre-commit and CI
+  - RESOLVED 2026-08-11 [already-correct]: check_partition_filesystem_tool_manifest is ALREADY wired (id: partition-fs-tool-manifest) and passes; stale checkbox.
 
 Release-claim and certification-integrity checkers are also unwired, which means the
 project's own release and certification claims are not machine-verified:
 
-- [ ] **R5-G8-8** run and wire scripts/check_partition_manager_release_claims.ps1
-- [ ] **R5-G8-9** run and wire scripts/check_partition_manager_feature_matrix.ps1
-- [ ] **R5-G8-10** run and wire scripts/check_partition_manager_certification_matrix_integrity.ps1
-- [ ] **R5-G8-11** run and wire scripts/check_partition_manager_commercial_gate_matrix.ps1
-- [ ] **R5-G8-12** run and wire scripts/check_partition_manager_certification_gap_report.ps1
-- [ ] **R5-G8-13** run and wire scripts/check_partition_manager_external_checklist.ps1
-- [ ] **R5-G8-14** run and wire scripts/verify_build.ps1
-- [ ] **R5-G8-15** run and wire scripts/verify_partition_manager_certification.ps1
+- [x] **R5-G8-8** run and wire scripts/check_partition_manager_release_claims.ps1
+  - RESOLVED 2026-08-11 [fixed]: check_partition_manager_release_claims was failing on a FALSE POSITIVE: its HardwareCertified blocker-phrase scan did a blanket $allText.Contains() and matched 'VHD or VM/hardware/lab evidence is incomplete' inside the GLOSSARY definition of the lower CodeCompleteOnly level (CERTIFICATION.md:808), unlike its sibling Assert-NoUnsupportedClaims which excludes such contexts. Fixed to skip claim-level glossary definition lines (- `Level` - ...) and match per-line; now passes for level HardwareCertified. Wired pre-commit + CI.
+- [x] **R5-G8-9** run and wire scripts/check_partition_manager_feature_matrix.ps1
+  - RESOLVED 2026-08-11 [fixed]: check_partition_manager_feature_matrix passes (12 feature groups verified); wired into pre-commit + CI.
+- [x] **R5-G8-10** run and wire scripts/check_partition_manager_certification_matrix_integrity.ps1
+  - RESOLVED 2026-08-11 [fixed]: check_partition_manager_certification_matrix_integrity passes (12 VHD scenarios, 18 external gates); wired into pre-commit + CI.
+- [x] **R5-G8-11** run and wire scripts/check_partition_manager_commercial_gate_matrix.ps1
+  - RESOLVED 2026-08-11 [fixed]: check_partition_manager_commercial_gate_matrix was failing because it expected evidence 'manage-bde.exe -unlock' in partition_script_builder.cpp, but BitLocker unlock is DELIBERATELY done via the in-process Unlock-BitLocker cmdlet (not manage-bde.exe, which would leak the recovery password on a child-process argv -- see the buildBitLockerScript security note). Corrected the checker's stale evidence pattern to 'Unlock-BitLocker' (the actual, more secure implementation); now passes (16 feature groups). Wired pre-commit + CI.
+- [x] **R5-G8-12** run and wire scripts/check_partition_manager_certification_gap_report.ps1
+  - RESOLVED 2026-08-11 [fixed]: check_partition_manager_certification_gap_report passes (30 incomplete gates enumerated + verified consistent); wired into pre-commit + CI.
+- [x] **R5-G8-13** run and wire scripts/check_partition_manager_external_checklist.ps1
+  - RESOLVED 2026-08-11 [fixed]: check_partition_manager_external_checklist passes (18 external gates verified); wired into pre-commit + CI.
+- [x] **R5-G8-14** run and wire scripts/verify_build.ps1
+  - RESOLVED 2026-08-11 [fixed]: verify_build.ps1 (structural: required files / 7 action sources / CMake refs / vcpkg) passes; wired into the CI build-release workflow (CI already performs the full compile build).
+- [x] **R5-G8-15** run and wire scripts/verify_partition_manager_certification.ps1
+  - RESOLVED 2026-08-11 [fixed]: verify_partition_manager_certification passes (the stored strict-VHD certification report matches the matrix); wired into pre-commit + CI.
 
 ### G9 - style, literal, and accessibility debt (MEASURED)
 

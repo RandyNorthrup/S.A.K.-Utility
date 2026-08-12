@@ -256,6 +256,24 @@ jobs:
       run: |
         & scripts/clang_tidy_naming_gate.ps1
 
+    # Partition Manager certification / release-claim integrity gates + the
+    # accessibility runtime audit. The accessibility audit runs the freshly built
+    # sak_utility.exe, so it belongs after Build (it cannot run in pre-commit, which
+    # has no guaranteed current build). The matrix/claim gates also run in pre-commit;
+    # re-running them here is defense in depth against a bypassed local hook.
+    - name: Partition Manager + accessibility gates
+      shell: pwsh
+      run: |
+        & scripts/check_accessibility_patterns.ps1
+        & scripts/check_partition_manager_release_claims.ps1
+        & scripts/check_partition_manager_feature_matrix.ps1
+        & scripts/check_partition_manager_certification_matrix_integrity.ps1
+        & scripts/check_partition_manager_commercial_gate_matrix.ps1
+        & scripts/check_partition_manager_certification_gap_report.ps1
+        & scripts/check_partition_manager_external_checklist.ps1
+        & scripts/verify_partition_manager_certification.ps1
+        & scripts/verify_build.ps1
+
     - name: Bundle vcpkg runtime DLLs
       working-directory: build/Release
       shell: pwsh

@@ -265,6 +265,71 @@ repos:
         pass_filenames: false
 
       # -------------------------------------------------------------------
+      # 8b. Partition Manager certification / release-claim integrity gates.
+      #     These verify that the documented certification matrices, release
+      #     claims, feature/commercial matrices and external checklist stay
+      #     consistent with the code and with each other. Fast static checks
+      #     (docs + source grep + a stored certification report); wired now
+      #     that all pass. Build-requiring gates (accessibility runtime audit,
+      #     verify_build) run in CI, not here.
+      # -------------------------------------------------------------------
+      - id: partition-release-claims
+        name: "Partition Manager release-claims consistency"
+        description: "Release-facing docs must match the declared certification level"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_release_claims.ps1
+        language: system
+        pass_filenames: false
+
+      - id: partition-feature-matrix
+        name: "Partition Manager feature matrix"
+        description: "Every feature group maps to real code + certification IDs"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_feature_matrix.ps1
+        language: system
+        pass_filenames: false
+
+      - id: partition-cert-matrix-integrity
+        name: "Partition Manager certification matrix integrity"
+        description: "VHD scenarios and external gates in the matrix are internally consistent"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_certification_matrix_integrity.ps1
+        language: system
+        pass_filenames: false
+
+      - id: partition-commercial-gate-matrix
+        name: "Partition Manager commercial gate matrix"
+        description: "Each commercial gate has its required code/UI/test/cert evidence"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_commercial_gate_matrix.ps1
+        language: system
+        pass_filenames: false
+
+      - id: partition-cert-gap-report
+        name: "Partition Manager certification gap report"
+        description: "Incomplete certification gates are enumerated and consistent"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_certification_gap_report.ps1
+        language: system
+        pass_filenames: false
+
+      - id: partition-external-checklist
+        name: "Partition Manager external checklist"
+        description: "External VM/hardware/lab gates match the certification matrix"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_external_checklist.ps1
+        language: system
+        pass_filenames: false
+
+      - id: partition-cert-verification
+        name: "Partition Manager certification verification"
+        description: "The stored strict-VHD certification report matches the matrix"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/verify_partition_manager_certification.ps1
+        language: system
+        pass_filenames: false
+
+      # -------------------------------------------------------------------
       # 9. Third-party licenses (previously CI-only)
       # -------------------------------------------------------------------
       - id: third-party-licenses

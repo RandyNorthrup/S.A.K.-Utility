@@ -207,7 +207,10 @@ $gates = @(
         ids = @("external.bitlocker", "external.bitlocker-mutation")
         evidence = @(
             @{ path = $uiPath; patterns = @("Manage BitLocker", "Queue BitLocker unlock", "BitLockerUnlock") },
-            @{ path = $scriptBuilderPath; patterns = @("manage-bde.exe -unlock", "manage-bde.exe -protectors -disable", "manage-bde.exe -protectors -enable") },
+            # Unlock is done via the in-process Unlock-BitLocker cmdlet, NOT manage-bde.exe -unlock,
+            # so the recovery password never lands on a child-process command line (see
+            # partition_script_builder.cpp buildBitLockerScript security note).
+            @{ path = $scriptBuilderPath; patterns = @("Unlock-BitLocker", "manage-bde.exe -protectors -disable", "manage-bde.exe -protectors -enable") },
             @{ path = $panelTestPath; patterns = @("Manage BitLocker", "manageBitLockerShowsStatusDialog") },
             @{ path = $certificationPath; patterns = @("BitLocker locked/unlocked data-volume blocker proof", "In-app BitLocker unlock/suspend/resume mutation proof") }
         )

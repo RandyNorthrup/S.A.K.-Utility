@@ -199,10 +199,21 @@ function Assert-RequiredCaveats {
             "VHD or VM/hardware/lab evidence is incomplete",
             "Do not mark the Partition Manager destructive paths fully certified until those reports exist"
         )
-        foreach ($phrase in $forbidden) {
-            $normalizedPhrase = $phrase -replace "\s+", " "
-            if ($allText.Contains($normalizedPhrase)) {
-                throw "Stale Partition Manager certification blocker remains in release-facing docs: $phrase"
+        # Match blocker phrases per line, but SKIP the claim-level GLOSSARY definitions
+        # (markdown list items of the form "- `LevelName` - ..."). Those define what the
+        # LOWER levels mean and legitimately describe incomplete evidence; they are not a
+        # stale status blocker sitting beside the HardwareCertified claim. This mirrors the
+        # allowed-context exclusion Assert-NoUnsupportedClaims already applies.
+        $definitionPattern = '^\s*-\s*`[A-Za-z]+`\s*-'
+        foreach ($claim in $ClaimLines) {
+            if ($claim.text -match $definitionPattern) { continue }
+            $normalizedLine = $claim.text -replace "\s+", " "
+            foreach ($phrase in $forbidden) {
+                $normalizedPhrase = $phrase -replace "\s+", " "
+                if ($normalizedLine.Contains($normalizedPhrase)) {
+                    throw ("Stale Partition Manager certification blocker remains in " +
+                        "release-facing docs: $($claim.path):$($claim.line_number): $phrase")
+                }
             }
         }
     }

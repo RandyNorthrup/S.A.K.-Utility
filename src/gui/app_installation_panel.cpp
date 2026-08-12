@@ -585,9 +585,11 @@ void AppInstallationPanel::setupPayloadModeControls(QVBoxLayout* actions_layout)
         tr("Full Bundle: download and pack every installer now (bundle once, deploy many; "
            "minimal bandwidth at deploy).\nThin Bundle: record only package names/versions; the "
            "target fetches each installer at install time."));
+    m_payloadModeCombo->setAccessibleName(tr("Deployment payload type"));
     payload_row->addWidget(m_payloadModeCombo, 1);
 
     m_airGapCheck = new QCheckBox(tr("Air-gap install (packed only)"), this);
+    m_airGapCheck->setAccessibleName(tr("Air-gap install (packed only)"));
     m_airGapCheck->setToolTip(
         tr("When installing on a disconnected machine, install only fully-packed packages and "
            "skip any that would still need to download."));
