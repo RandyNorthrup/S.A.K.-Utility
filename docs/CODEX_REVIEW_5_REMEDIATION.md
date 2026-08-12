@@ -3533,9 +3533,22 @@ behaviour is what catches defects; the percentage only proves nothing was skippe
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
       mid-operation failure paths are actually executed by tests. Two of the five real
       bugs were exactly 'what happens if this fails halfway'
-- [~] R5-G14-18 Property tests over the AI command classifiers: generated obfuscations
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+- [x] R5-G14-18 Property tests over the AI command classifiers: generated obfuscations
       must not change the classification of a destructive command
+  - RESOLVED 2026-08-12 [DONE]: test_fuzz_command_classifier is exactly this property, and
+    it targets the one bug class the campaign proved static tools cannot catch -- the
+    shipped "fo^rmat C:" that split a keyword with a cmd caret and bypassed all three risk
+    classifiers. It reuses the fuzz core's deterministic PRNG to generate shell-transparent
+    obfuscations of catastrophic base commands (intra-word cmd carets, intra-word PowerShell
+    backticks, executable suffixes, case flips -- every transform the interpreter strips
+    before executing) and asserts commandLooksCatastrophic stays true for all of them; a
+    mirrored property obfuscates benign read-only commands and asserts they are never
+    promoted to catastrophic. The property is NON-VACUOUS by construction: a caret-split
+    keyword (fo^rmat) matches only via the classifier's escape-strip path, so a green run
+    proves that path works and a regression that removed it would go red. Both hold across
+    the run. NOTE: confined to the intra-word escape shape the classifier is designed to
+    strip; a non-intra-word caret (e.g. "format^ c:") is an intentionally-untouched case
+    (it is still caught at the risky tier) and is out of scope for this invariant.
 - [~] R5-G14-19 Replace primitive IDs with strong types where a mix-up is silent
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
       (message index vs row index, disk vs partition index, validated vs raw target)

@@ -2200,6 +2200,31 @@ add_test(NAME test_fuzz_mcp_framing COMMAND test_fuzz_mcp_framing
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_mcp_framing")
 
+# test_fuzz_command_classifier - property-fuzz of the AI command risk classifier
+# (G14-18): a catastrophic command stays catastrophic under every shell-transparent
+# obfuscation (intra-word carets/backticks, exe suffixes, case), and a benign command
+# never becomes catastrophic. Guards the "fo^rmat C:" shipped-bug class.
+add_executable(test_fuzz_command_classifier
+    unit/test_fuzz_command_classifier.cpp
+    ../src/ai/ai_tool_policy.cpp
+    ../include/sak/ai/ai_tool_policy.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_command_classifier PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_command_classifier PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_fuzz_command_classifier PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_command_classifier COMMAND test_fuzz_command_classifier
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_command_classifier.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_command_classifier")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
