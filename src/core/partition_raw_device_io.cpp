@@ -697,7 +697,11 @@ bool flushDeviceBuffers(QIODevice* device, QString* errorMessage) {
         }
         return true;
     }
-    return true;
+    // openFileOrRawDevice* only ever hands back a WindowsRawDevice or a QFile, both handled
+    // above. An unrecognized QIODevice subtype cannot be proven durably flushed, so fail
+    // closed rather than reporting a success we did not perform.
+    setError(errorMessage, QStringLiteral("Cannot flush unrecognized device type"));
+    return false;
 }
 
 std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(const QString& path, QString* errorMessage) {

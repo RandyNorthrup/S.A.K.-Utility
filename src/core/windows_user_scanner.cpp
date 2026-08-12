@@ -36,8 +36,20 @@ constexpr int kFolderSelectionFileLimit = 10'000;
 WindowsUserScanner::WindowsUserScanner(QObject* parent) : QObject(parent) {}
 
 QVector<UserProfile> WindowsUserScanner::scanUsers() {
-    bool ignored = false;
-    return scanUsers(ignored);
+    // Convenience overload for callers that do not track completeness. It must NOT let a hard
+    // enumeration failure pass as a genuine empty user set: scanUsers(bool&) already clears the
+    // list and reports queryOk == false on a NetUserEnum failure, so surface that failure here
+    // instead of silently returning an ambiguous empty vector.
+    bool queryOk = false;
+    QVector<UserProfile> profiles = scanUsers(queryOk);
+#ifdef Q_OS_WIN
+    if (!queryOk) {
+        sak::logError(
+            "WindowsUserScanner::scanUsers(): enumeration failed; the empty result "
+            "must not be read as 'no users found'");
+    }
+#endif
+    return profiles;
 }
 
 QVector<UserProfile> WindowsUserScanner::scanUsers(bool& queryOk) {

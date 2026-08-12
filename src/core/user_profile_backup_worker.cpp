@@ -161,6 +161,26 @@ bool pathIsWithin(const QString& child, const QString& parent) {
     }
     return c.startsWith(p, cs);
 }
+
+// True when @p item's realized PARENT directory (junctions/symlinks fully resolved) is at or
+// under @p canonicalRoot, which must itself be a canonicalFilePath. The per-entry leaf reparse
+// check catches @p item itself, but an ANCESTOR directory that is (or becomes) a junction after it
+// was descended into would redirect the read or write outside the root while the leaf still looks
+// clean; re-checking the realized parent on every entry catches that. Fails closed on an empty
+// root or an unresolvable parent. canonicalFilePath yields '/'-paths, so the trailing-'/' test
+// rejects a sibling-prefix (Root vs RootX). Mirrors the restore worker's
+// destinationParentWithinRoot.
+bool parentWithinCanonicalRoot(const QString& canonicalRoot, const QString& item) {
+    if (canonicalRoot.isEmpty()) {
+        return false;
+    }
+    const QString canonicalParent = QFileInfo(QFileInfo(item).absolutePath()).canonicalFilePath();
+    if (canonicalParent.isEmpty()) {
+        return false;
+    }
+    return canonicalParent == canonicalRoot ||
+           canonicalParent.startsWith(canonicalRoot + QLatin1Char('/'));
+}
 }  // namespace
 
 UserProfileBackupWorker::UserProfileBackupWorker(QObject* parent)
@@ -254,6 +274,8 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
     m_lastProgressFileCount = 0;
     m_lastProgressByteCount = 0;
     m_currentUserProfile.clear();
+    m_currentSourceRoot.clear();
+    m_currentDestRoot.clear();
 
     applySmartFilterRules(smartFilter);
 
@@ -407,6 +429,21 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
         return false;
     }
 
+    // Pin the CANONICAL source-profile and destination-backup roots for this user (both
+    // directories exist now: the profile was verified by validateSourcePaths and userBackupPath
+    // was just created). Every enumerated entry re-checks its realized parent against these so an
+    // ancestor directory that is (or becomes) a junction cannot redirect a read out of the profile
+    // or a write out of the backup, mirroring the restore worker's destinationParentWithinRoot
+    // (R5-P7-36). Fail closed if either root cannot be resolved.
+    m_currentSourceRoot = QFileInfo(user.profile_path).canonicalFilePath();
+    m_currentDestRoot = QFileInfo(userBackupPath).canonicalFilePath();
+    if (m_currentSourceRoot.isEmpty() || m_currentDestRoot.isEmpty()) {
+        Q_EMIT logMessage(
+            tr("Unable to resolve canonical backup roots for user: %1").arg(user.username), true);
+        ++m_filesErrored;
+        return false;
+    }
+
     // Backup each selected folder
     for (const auto& folder : user.folder_selections) {
         if (m_cancelled) {
@@ -521,6 +558,16 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
         return true;
     }
 
+    // QDirIterator reports a directory it cannot open exactly like an empty one (hasNext() is
+    // immediately false), so an enumeration/open failure would copy nothing yet still succeed.
+    // canReadPath only ruled out the elevation case; confirm the directory is actually listable
+    // so a genuine failure is counted, not mistaken for an empty tree (R5-P7-35).
+    if (!QDir(sourceDir).isReadable()) {
+        Q_EMIT logMessage(tr("Failed to enumerate source directory: %1").arg(sourceDir), true);
+        ++m_filesErrored;
+        return false;
+    }
+
     // Create destination directory
     if (!createDirectory(destDir)) {
         // Counted here (once) as the leaf failure; callers only log/propagate so the
@@ -559,6 +606,20 @@ void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
         // omitting the linked subtree/file (B7-20).
         Q_EMIT logMessage(
             tr("Refusing to follow reparse point (not backed up): %1").arg(sourceItem), true);
+        ++m_filesErrored;
+        return;
+    }
+
+    // Re-validate the realized parent of BOTH sides against the pinned canonical roots: the leaf
+    // reparse check above misses an ANCESTOR directory that is (or became) a junction after it was
+    // descended into, which would redirect this read out of the profile or this write out of the
+    // backup. Fail closed on any escape (R5-P7-36).
+    if (!parentWithinCanonicalRoot(m_currentSourceRoot, sourceItem) ||
+        !parentWithinCanonicalRoot(m_currentDestRoot, destItem)) {
+        Q_EMIT logMessage(
+            tr("Refusing entry: path escapes the pinned backup root (reparse point): %1")
+                .arg(sourceItem),
+            true);
         ++m_filesErrored;
         return;
     }

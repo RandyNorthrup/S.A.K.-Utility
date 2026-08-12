@@ -420,6 +420,34 @@ QString hivePrefix(HKEY hive) {
     return {};
 }
 
+// Shared completeness warning for a registry Uninstall scan that could not be fully read (a
+// denied/erroring hive, or a subkey that could not be counted, enumerated, or opened). Mirrors
+// warnIfAppxIncomplete: the partial list is still returned, but the caller is told it may be
+// incomplete rather than silently reading fewer programs as the whole truth.
+const auto kRegistryIncompleteMessage = QStringLiteral(
+    "Some installed programs could not be read from the registry; "
+    "the installed-programs list may be incomplete.");
+
+// Number of direct subkeys under an opened Uninstall key. @p ok is false when the count could not
+// be read: the hive then enumerates as empty, which is an INCOMPLETE result (surfaced by the
+// caller), never a genuine "no programs installed".
+DWORD registrySubkeyCount(HKEY key, bool& ok) {
+    DWORD count = 0;
+    ok = RegQueryInfoKeyW(key,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          &count,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr) == ERROR_SUCCESS;
+    return count;
+}
+
 }  // namespace
 
 QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
@@ -430,22 +458,22 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
     HKEY uninstall_key = nullptr;
     LONG rc = RegOpenKeyExW(hive, subkey, 0, KEY_READ, &uninstall_key);
     if (rc != ERROR_SUCCESS) {
+        // An ABSENT Uninstall key (ERROR_FILE_NOT_FOUND: no WOW64 view on 32-bit Windows, or no
+        // per-user key on a fresh profile) is a legitimately empty -- but COMPLETE -- hive. Any
+        // other failure (notably ACCESS_DENIED) means the hive could not be read, so the inventory
+        // is incomplete: warn rather than silently returning fewer programs.
+        if (rc != ERROR_FILE_NOT_FOUND) {
+            Q_EMIT enumerationWarning(kRegistryIncompleteMessage);
+        }
         return results;
     }
 
-    DWORD subkey_count = 0;
-    RegQueryInfoKeyW(uninstall_key,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     &subkey_count,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr);
+    // Completeness signal threaded through this hive scan (mirrors the vuln scanner's
+    // scanFastRegistryHive): a failed count/enum/sub-open means an entry may be missing, so the
+    // list is surfaced as possibly-incomplete instead of being read as an authoritative empty.
+    bool count_ok = true;
+    const DWORD subkey_count = registrySubkeyCount(uninstall_key, count_ok);
+    bool complete = count_ok;
 
     const QString hive_name = hivePrefix(hive);
     constexpr DWORD kMaxSubkeyName = 256;
@@ -456,12 +484,14 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
         rc = RegEnumKeyExW(
             uninstall_key, i, subkey_name, &name_len, nullptr, nullptr, nullptr, nullptr);
         if (rc != ERROR_SUCCESS) {
+            complete = false;  // a subkey name could not be read -> an entry was missed
             continue;
         }
 
         HKEY app_key = nullptr;
         rc = RegOpenKeyExW(uninstall_key, subkey_name, 0, KEY_READ, &app_key);
         if (rc != ERROR_SUCCESS) {
+            complete = false;  // this program's subkey could not be opened -> inventory incomplete
             continue;
         }
 
@@ -475,6 +505,9 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
     }
 
     RegCloseKey(uninstall_key);
+    if (!complete) {
+        Q_EMIT enumerationWarning(kRegistryIncompleteMessage);
+    }
     return results;
 }
 

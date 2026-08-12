@@ -18,6 +18,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QRandomGenerator>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
@@ -61,6 +62,21 @@ QString backupPathIdentity(const QString& path) {
 bool sameBackupObject(const QString& a, const QString& b) {
     const QString ia = backupPathIdentity(a);
     return !ia.isEmpty() && ia == backupPathIdentity(b);
+}
+
+// Base for the random hex staging-token suffix.
+constexpr int kStagingTokenBase = 16;
+
+/// @brief An unpredictable per-operation staging path beside @p target.
+///
+/// A fixed ".sak_old"/".sak_tmp" suffix is guessable: a local attacker can pre-plant a dangling
+/// symlink at the known path in the window before the rename/copy so the operation follows it and
+/// writes OUTSIDE the target's directory. A 64-bit random token closes that (the rename/copy still
+/// refuses an existing target, so a planted collision fails closed rather than being followed).
+QString stagingPath(const QString& target, const QString& tag) {
+    const quint64 token = QRandomGenerator::global()->generate64();
+    return target + QStringLiteral(".sak-") + tag + QStringLiteral("-") +
+           QString::number(token, kStagingTokenBase) + QStringLiteral(".tmp");
 }
 
 /// @brief Append paths that exist for the given name variants in a base directory.
@@ -624,6 +640,19 @@ bool UserDataManager::deleteBackup(const QString& backup_path) {
         return false;
     }
 
+    // Delete-TIME ancestor-junction-swap re-screen. filePathDeletionRefusal screened the ancestor
+    // chain at validate time, but removeRecursively below re-resolves the path STRING and would
+    // walk into a redirected real target if a local user swapped an ancestor into a junction in the
+    // meantime. Re-verify the leaf-and-ancestor reparse state immediately before the destructive
+    // call so a fresh swap is refused fail-closed. (This is the string-level TOCTOU narrowing that
+    // fits within this file; the full per-node handle-verified walk lives in cleanup_worker.)
+    if (sak::pathReparseUnsafe(backup_path)) {
+        Q_EMIT operationError(QFileInfo(backup_path).fileName(),
+                              QStringLiteral("Refusing to delete backup: path is (or is nested "
+                                             "under) a symlink/junction at delete time"));
+        return false;
+    }
+
     bool success = true;
     // Delete the payload. An uncompressed backup is a DIRECTORY, which QFile::remove cannot
     // delete -- it would leave the backup on disk forever; remove such payloads recursively.
@@ -1084,7 +1113,9 @@ bool UserDataManager::atomicReplaceFile(const QString& tmp, const QString& targe
     // onto target fails, roll the original back into place. The original is never destroyed while
     // the swap is incomplete (fail closed, no data-loss window that the old delete-then-rename
     // left when a rename failed between the two steps).
-    const QString backup = target + QStringLiteral(".sak_old");
+    // Unpredictable aside-name so a fixed ".sak_old" cannot be pre-planted as a symlink in the
+    // window before the rename and redirect the moved-aside original outside the directory.
+    const QString backup = stagingPath(target, QStringLiteral("old"));
     QFile::remove(backup);
     const bool had_target = QFileInfo::exists(target);
     if (had_target && !QFile::rename(target, backup)) {
@@ -1092,8 +1123,13 @@ bool UserDataManager::atomicReplaceFile(const QString& tmp, const QString& targe
         return false;
     }
     if (!QFile::rename(tmp, target)) {
-        if (had_target) {
-            QFile::rename(backup, target);  // restore the untouched original
+        if (had_target && !QFile::rename(backup, target)) {
+            // Rollback failed: the original is intact but stranded under the staging name, NOT back
+            // at target. Surface it -- a bare false here must not be read as "original untouched at
+            // target" when recovery now requires renaming `backup` into place by hand.
+            sak::logError(
+                "[UserDataManager] atomicReplaceFile rollback failed; original preserved at {}",
+                backup.toStdString());
         }
         QFile::remove(tmp);
         return false;
@@ -1105,8 +1141,10 @@ bool UserDataManager::atomicReplaceFile(const QString& tmp, const QString& targe
 
 bool UserDataManager::overwriteFile(const QString& source_file, const QString& dest_file) {
     // Stage the replacement beside the target first: if this copy fails the original
-    // destination is still fully intact (no truncate/remove has happened yet).
-    const QString tmp = dest_file + QStringLiteral(".sak_tmp");
+    // destination is still fully intact (no truncate/remove has happened yet). The staging name
+    // carries an unpredictable per-op token so a fixed ".sak_tmp" path cannot be pre-planted as a
+    // symlink in the remove/copy window and redirect the write outside the destination directory.
+    const QString tmp = stagingPath(dest_file, QStringLiteral("tmp"));
     QFile::remove(tmp);
     if (!QFile::copy(source_file, tmp)) {
         return false;

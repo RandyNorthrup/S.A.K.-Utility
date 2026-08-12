@@ -1375,6 +1375,121 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
     finalizeSuccessfulConversion();
 }
 
+namespace {
+
+// ISO 9660 / El Torito use 2048-byte logical sectors.
+constexpr qint64 kIsoLogicalBlockSize = 2048;
+constexpr qint64 kElToritoBootRecordSector = 17;
+
+// El Torito on-disk field offsets/markers (ECMA-167 / "El Torito" bootable-CD spec).
+constexpr int kByteBits = 8;                        // bits per byte for LE assembly
+constexpr int kLe32Bytes = 4;                       // bytes in a little-endian u32
+constexpr int kCatalogPointerOffset = 0x47;         // LE u32 -> boot catalog LBA
+constexpr quint8 kBootRecordDescriptorType = 0x00;  // BRVD descriptor type
+constexpr int kCd001Length = 5;                     // "CD001" at offset 1
+constexpr int kBootSystemIdOffset = 7;              // "EL TORITO SPECIFICATION"
+constexpr int kBootSystemIdLength = 23;
+constexpr int kBootCatalogEntrySize = 32;           // every catalog entry is 32 bytes
+constexpr int kMinCatalogEntries = 2;               // validation entry + >=1 default
+constexpr quint8 kValidationEntryHeader = 0x01;     // catalog[0]
+constexpr int kValidationKeyOffset1 = 30;           // 0x55 key byte
+constexpr int kValidationKeyOffset2 = 31;           // 0xAA key byte
+constexpr quint8 kValidationKeyByte1 = 0x55;
+constexpr quint8 kValidationKeyByte2 = 0xAA;
+constexpr quint8 kBootableIndicator = 0x88;  // entry[0] of a bootable slot
+
+// Little-endian u32 from a raw byte pointer (both-endian ISO fields store the LE
+// half first).
+quint32 readLe32(const quint8* p) {
+    quint32 value = 0;
+    for (int i = 0; i < kLe32Bytes; ++i) {
+        value |= static_cast<quint32>(p[i]) << (i * kByteBits);
+    }
+    return value;
+}
+
+// Read exactly [length] bytes at [offset] from an open ISO; empty on any short read.
+QByteArray readIsoRange(QFile& file, qint64 offset, qint64 length) {
+    if (offset < 0 || length <= 0 || !file.seek(offset)) {
+        return {};
+    }
+    const QByteArray bytes = file.read(length);
+    return bytes.size() == length ? bytes : QByteArray();
+}
+
+// The El Torito Boot Record Volume Descriptor lives in sector 17: type 0x00,
+// "CD001", then boot-system identifier "EL TORITO SPECIFICATION". It points (LE u32
+// at offset 0x47) to the boot catalog. Returns the catalog LBA, or 0 if absent.
+quint32 elToritoCatalogLba(QFile& file) {
+    const QByteArray brvd =
+        readIsoRange(file, kElToritoBootRecordSector * kIsoLogicalBlockSize, kIsoLogicalBlockSize);
+    if (brvd.size() < kIsoLogicalBlockSize) {
+        return 0;
+    }
+    if (static_cast<quint8>(brvd[0]) != kBootRecordDescriptorType ||
+        brvd.mid(1, kCd001Length) != QByteArrayLiteral("CD001") ||
+        brvd.mid(kBootSystemIdOffset, kBootSystemIdLength) !=
+            QByteArrayLiteral("EL TORITO SPECIFICATION")) {
+        return 0;
+    }
+    return readLe32(reinterpret_cast<const quint8*>(brvd.constData()) + kCatalogPointerOffset);
+}
+
+// A well-formed boot catalog opens with a validation entry (header 0x01, key bytes
+// 0x55 0xAA at offsets 30-31) and carries at least one bootable entry (boot
+// indicator 0x88 at a 32-byte-aligned slot: the initial/default entry or a section).
+bool bootCatalogHasBootableEntry(const QByteArray& catalog) {
+    if (catalog.size() < kMinCatalogEntries * kBootCatalogEntrySize) {
+        return false;
+    }
+    const auto* p = reinterpret_cast<const quint8*>(catalog.constData());
+    if (p[0] != kValidationEntryHeader || p[kValidationKeyOffset1] != kValidationKeyByte1 ||
+        p[kValidationKeyOffset2] != kValidationKeyByte2) {
+        return false;
+    }
+    for (int off = kBootCatalogEntrySize; off + kBootCatalogEntrySize <= catalog.size();
+         off += kBootCatalogEntrySize) {
+        if (p[off] == kBootableIndicator) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// True only if [isoPath] carries a structurally valid, bootable El Torito catalog.
+// Rejects a zero-exit converter output that is CD001-bearing but not bootable (its
+// USB would not boot). It deliberately does NOT parse the file tree for install.wim/
+// esd: real Windows/UUP ISOs store that payload in UDF, not ISO 9660 or Joliet, so a
+// directory-tree parse would false-reject every genuine Windows ISO.
+bool hasBootableElToritoImage(const QString& isoPath) {
+    QFile file(isoPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    const quint32 catalogLba = elToritoCatalogLba(file);
+    if (catalogLba == 0) {
+        return false;
+    }
+    const QByteArray catalog = readIsoRange(file,
+                                            static_cast<qint64>(catalogLba) * kIsoLogicalBlockSize,
+                                            kIsoLogicalBlockSize);
+    return bootCatalogHasBootableEntry(catalog);
+}
+
+// Definite converter failure markers. Unlike the noisy bare "error" substring
+// (collected only for diagnostics), each of these appears only when ISO creation has
+// actually failed, so they are safe to hard-gate a zero-exit result on.
+bool hasHardConverterFailure(const QString& log) {
+    return log.contains("conversion failed", Qt::CaseInsensitive) ||
+           log.contains("iso creation failed", Qt::CaseInsensitive) ||
+           log.contains("failed to create iso", Qt::CaseInsensitive) ||
+           log.contains("failed to create the iso", Qt::CaseInsensitive) ||
+           log.contains("could not create iso", Qt::CaseInsensitive) ||
+           log.contains("unable to create iso", Qt::CaseInsensitive);
+}
+
+}  // namespace
+
 void UupIsoBuilder::finalizeSuccessfulConversion() {
     const QFileInfo builtInfo(m_converterOutputPath);
     if (!builtInfo.exists() || builtInfo.size() <= 0) {
@@ -1402,6 +1517,26 @@ void UupIsoBuilder::finalizeSuccessfulConversion() {
         Q_EMIT buildError(
             "The converter exited successfully but produced a file with no ISO 9660 "
             "volume descriptor signature (not a valid ISO): " +
+            m_converterOutputPath);
+        return;
+    }
+
+    // A zero exit code is not proof of success: reject a zero-exit result that still
+    // emitted a definite ISO-creation failure marker (the bare "error" substring is
+    // too noisy to gate on -- only unambiguous failure phrases count).
+    if (hasHardConverterFailure(m_converterErrors.join('\n') + '\n' + m_converterOutputTail)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError(classifyConverterFailure());
+        return;
+    }
+
+    // The image must actually boot: require a valid, bootable El Torito boot catalog,
+    // not merely a CD001 signature (install.wim/esd lives in UDF; see R5-P5-13).
+    if (!hasBootableElToritoImage(m_converterOutputPath)) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError(
+            "The converter exited successfully but produced an ISO with no "
+            "valid El Torito boot catalog (it would not boot): " +
             m_converterOutputPath);
         return;
     }

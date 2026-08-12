@@ -149,9 +149,20 @@ void NuGetDependencyResolver::addRoot(const QString& root_id, const QString& roo
 
 void NuGetDependencyResolver::recordConstraint(const QString& id, const QString& range) {
     QVector<QString>& ranges = m_constraints[id.toLower()];
-    if (!ranges.contains(range)) {
-        ranges.append(range);
+    if (ranges.contains(range)) {
+        return;  // this exact (id, range) constraint is already recorded
     }
+    // A non-empty range we cannot parse is MALFORMED (an empty range is the permissive
+    // "any"). Keep it recorded so selection stays fail-closed -- a malformed range
+    // satisfies no version -- but surface it as a distinct resolution warning so it is
+    // not silently mistaken for an unconstrained edge (P7-46).
+    if (!range.isEmpty() && !NuGetVersionRange::parse(range).isValid()) {
+        m_errors.append(
+            QStringLiteral("Malformed version range '%1' declared for %2; no version can satisfy "
+                           "it (fail-closed)")
+                .arg(range, id));
+    }
+    ranges.append(range);
 }
 
 bool NuGetDependencyResolver::satisfiesAllConstraints(const QString& id,

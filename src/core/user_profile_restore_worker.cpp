@@ -163,8 +163,10 @@ QString makeRestoreTempPath(const QString& finalDestPath, const QString& tag) {
 // Replace an existing destination file only after the new copy is fully written.
 // The original is moved aside by RENAME (never deleted) before the replacement is
 // swapped in, and restored if the swap fails, so no failure can lose the original
-// destination. When backupExisting is set, the original is also preserved to a
-// `.sakbak` recovery copy for user-visible undo.
+// destination. On a successful swap the moved-aside original is NOT deleted here but
+// returned via `movedAsideOriginal`; the caller finalizes it (finalizeMovedAsideOriginal)
+// only after applyPermissions+verifyFile pass, restoring it if they fail. When
+// backupExisting is set, the original is also preserved to a `.sakbak` recovery copy.
 // Put the backup payload at `target`. A verbatim copy stays a copy; a codec container is
 // decoded (decompressed and/or decrypted). readBackupFile stages and verifies before it
 // publishes, so a wrong password or a corrupted container leaves no file at `target` --
@@ -181,7 +183,8 @@ bool materializeBackupPayload(const QString& source,
 bool copyFileReplacingExisting(const QString& source,
                                const QString& finalDestPath,
                                bool backupExisting,
-                               const QString& password) {
+                               const QString& password,
+                               QString& movedAsideOriginal) {
     if (!QFileInfo::exists(finalDestPath)) {
         return materializeBackupPayload(source, finalDestPath, password);
     }
@@ -220,8 +223,37 @@ bool copyFileReplacingExisting(const QString& source,
         QFile::remove(tempPath);
         return false;
     }
-    QFile::remove(oldPath);  // Replacement is in place; drop the moved-aside original.
+    // Replacement is in place, but the moved-aside original is KEPT: the caller drops it
+    // only after applyPermissions+verifyFile pass, and restores it on their failure
+    // (finalizeMovedAsideOriginal). Removing it here would destroy the original before
+    // the copy is proven good on a verify/permission failure.
+    movedAsideOriginal = oldPath;
     return true;
+}
+
+// Finalize the rename-aside swap performed by copyFileReplacingExisting once the caller has
+// run applyPermissions + verifyFile. On success the moved-aside original is discarded; on
+// failure the unverified replacement is removed and the ORIGINAL is moved back into place, so
+// a permission/verify failure never leaves an unverified copy where the original stood.
+// `movedAsideOriginal` is empty when no original was displaced (a freshly created file), in
+// which case there is nothing to finalize.
+void finalizeMovedAsideOriginal(const QString& finalDestPath,
+                                const QString& movedAsideOriginal,
+                                bool restored) {
+    if (movedAsideOriginal.isEmpty()) {
+        return;
+    }
+    if (restored) {
+        QFile::remove(movedAsideOriginal);  // Commit: drop the moved-aside original.
+        return;
+    }
+    QFile::remove(finalDestPath);  // Roll back: discard the unverified replacement...
+    if (!QFile::rename(movedAsideOriginal, finalDestPath)) {  // ...and restore the original.
+        sak::logError(
+            "Restore rollback failed: original preserved at '{}' (could not move back to '{}')",
+            movedAsideOriginal.toStdString(),
+            finalDestPath.toStdString());
+    }
 }
 }  // namespace
 
@@ -731,7 +763,11 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
 
     // Copy the file (atomically replacing an existing destination, if any). When
     // the safety option is on, the pre-restore file is saved to `.sakbak` first.
-    if (!copyFileReplacingExisting(source, finalDestPath, m_createBackup, m_password)) {
+    // A displaced original is moved aside (not deleted) and returned so it can be
+    // restored below if the permission/verify steps fail.
+    QString movedAsideOriginal;
+    if (!copyFileReplacingExisting(
+            source, finalDestPath, m_createBackup, m_password, movedAsideOriginal)) {
         Q_EMIT logMessage(tr("Error copying file: %1").arg(source), true);
         m_filesErrored++;
         return false;
@@ -752,7 +788,11 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
         Q_EMIT logMessage(tr("Error: File verification failed: %1").arg(finalDestPath), true);
     }
 
-    if (!permsOk || !verifyOk) {
+    // Commit the swap only when perms+verify both pass; otherwise restore the original
+    // that copyFileReplacingExisting moved aside so a failure never destroys it.
+    const bool restored = permsOk && verifyOk;
+    finalizeMovedAsideOriginal(finalDestPath, movedAsideOriginal, restored);
+    if (!restored) {
         m_filesErrored++;
         return false;
     }

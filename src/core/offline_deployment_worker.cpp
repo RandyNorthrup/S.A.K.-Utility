@@ -91,10 +91,14 @@ QString installCompletionMessage(const BatchStats& stats) {
 
 /// @brief Validate the id + version a manifest entry will pass to choco: a safe
 /// package component AND non-option-like (defense in depth vs a tampered manifest).
+/// An EMPTY version is a legitimate unpinned List/Thin entry -- choco fetches the
+/// latest from the feed and --version is omitted entirely (see chocoInstallArgs).
+/// A PRESENT version must still pass the option-injection screen so a tampered
+/// manifest cannot smuggle a leading-'-' flag through the version field.
 bool entryInstallTokensValid(const DeploymentManifestEntry& entry) {
     return PackageInternalizationEngine::isSafePackageComponent(entry.package_id) &&
            OfflineDeploymentWorker::isSafeInstallToken(entry.package_id) &&
-           OfflineDeploymentWorker::isSafeInstallToken(entry.version);
+           (entry.version.isEmpty() || OfflineDeploymentWorker::isSafeInstallToken(entry.version));
 }
 
 /// @brief Build the header fields (no packages) of a deployment manifest.
@@ -1248,15 +1252,16 @@ void OfflineDeploymentWorker::emitPackageOutcome(const DeploymentManifestEntry& 
 // framework from a local-only source.
 static QStringList chocoInstallArgs(const DeploymentManifestEntry& entry,
                                     const BundleInstallContext& install_ctx) {
-    QStringList args{QStringLiteral("install"),
-                     entry.package_id,
-                     QStringLiteral("--version"),
-                     entry.version,
-                     QStringLiteral("--source"),
-                     install_ctx.source,
-                     QStringLiteral("--yes"),
-                     QStringLiteral("--no-progress"),
-                     QStringLiteral("--force")};
+    QStringList args{QStringLiteral("install"), entry.package_id};
+    // A pinned version is requested exactly. An unpinned (empty) version omits
+    // --version so choco fetches the latest from the feed -- the normal case for a
+    // List/Thin entry that was never version-pinned; emitting an empty --version
+    // value would otherwise fail the install.
+    if (!entry.version.isEmpty()) {
+        args << QStringLiteral("--version") << entry.version;
+    }
+    args << QStringLiteral("--source") << install_ctx.source << QStringLiteral("--yes")
+         << QStringLiteral("--no-progress") << QStringLiteral("--force");
     if (install_ctx.ignore_dependencies) {
         args.append(QStringLiteral("--ignore-dependencies"));
     }

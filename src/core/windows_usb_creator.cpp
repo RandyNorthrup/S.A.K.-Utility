@@ -575,9 +575,18 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
     // Not asserted: copyISOContents below rejects a missing ISO (QFile::exists) and an
     // invalid drive letter (copyISO_normalizeDestination), both via m_lastError.
     // ==================== STEP 2: EXTRACT ====================
-    // TOCTOU guard: confirm the drive letter still maps to the pinned target disk before 7z
-    // writes anything, so a hot-plug that reassigned the letter cannot redirect the extraction
-    // onto an unrelated NTFS volume.
+    // TOCTOU guard: re-pin the target disk's identity (UniqueId + size) immediately before 7z
+    // overwrites files, mirroring the destructive clean/format steps. A hot-plug that reassigned
+    // disk numbers between the format and here could leave the letter->number mapping intact
+    // while that number now points at a different physical disk; fail closed on any mismatch.
+    if (!reverifyTargetDiskIdentity(m_diskNumber)) {
+        Q_EMIT failed(lastError());
+        return false;
+    }
+    // Confirm the drive letter still maps to the pinned target disk before 7z writes anything,
+    // so a hot-plug that reassigned the letter cannot redirect the extraction onto an unrelated
+    // NTFS volume. Together with the identity re-pin above, the letter resolves to the pinned
+    // UniqueId/disk number.
     if (!verifyDriveLetterMapsToTarget(driveLetter)) {
         Q_EMIT failed(lastError());
         return false;

@@ -127,6 +127,73 @@ struct ParsedCommand {
     return QStringLiteral("\"%1\" /x %2 %3").arg(QDir::toNativeSeparators(msiexec), guid, tail);
 }
 
+#ifdef Q_OS_WIN
+/// @brief True only if @p postHivePath sits STRICTLY beneath a Windows Uninstall root (native or
+/// WOW6432): a non-empty leaf must follow it. The Uninstall container itself, and anything outside
+/// the subtree, is refused. The strict-leaf requirement also subsumes the hive-root screen -- an
+/// empty post-hive subkey can never satisfy it. Pure; mirrors the confinement cleanup_worker
+/// applies at validate time.
+[[nodiscard]] bool pathIsUnderUninstallRoot(const QString& postHivePath) {
+    static const QString kUninstallRoot =
+        QStringLiteral("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\");
+    static const QString kUninstallRootWow =
+        QStringLiteral("SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\");
+    return (postHivePath.startsWith(kUninstallRoot, Qt::CaseInsensitive) &&
+            postHivePath.size() > kUninstallRoot.size()) ||
+           (postHivePath.startsWith(kUninstallRootWow, Qt::CaseInsensitive) &&
+            postHivePath.size() > kUninstallRootWow.size());
+}
+
+/// @brief True only if the key opened WITHOUT following the link (REG_OPTION_OPEN_LINK affects the
+/// FINAL path component only) carries the reserved "SymbolicLinkValue" REG_LINK value that marks a
+/// link key. Fails CLOSED: a probe that cannot be resolved (ACCESS_DENIED, sharing, ...) reports AS
+/// a link so the caller refuses rather than let RegDeleteKeyExW re-resolve through an indeterminate
+/// key. ERROR_FILE_NOT_FOUND is the one benign "not a link" (a nonexistent key makes
+/// the subsequent delete a no-op). Mirrors the sibling screen in cleanup_worker.cpp.
+[[nodiscard]] bool registryLeafComponentIsLink(HKEY hive, const QString& prefix, bool& notFound) {
+    notFound = false;
+    HKEY key = nullptr;
+    const LONG rc = RegOpenKeyExW(hive,
+                                  reinterpret_cast<LPCWSTR>(prefix.utf16()),
+                                  REG_OPTION_OPEN_LINK,
+                                  KEY_QUERY_VALUE,
+                                  &key);
+    if (rc == ERROR_FILE_NOT_FOUND) {
+        notFound = true;
+        return false;
+    }
+    if (rc != ERROR_SUCCESS) {
+        return true;  // fail closed: an indeterminate probe is treated as a link
+    }
+    DWORD type = 0;
+    const LONG q = RegQueryValueExW(key, L"SymbolicLinkValue", nullptr, &type, nullptr, nullptr);
+    RegCloseKey(key);
+    return q == ERROR_SUCCESS && type == REG_LINK;
+}
+
+/// @brief True if any component of @p subkey (leaf or ancestor) is -- or cannot be proven not to be
+/// -- a REG_LINK symbolic-link key. RegDeleteKeyExW re-resolves the whole pathname, so a link
+/// anywhere along the path redirects the delete to a different key. Probe EVERY component from the
+/// root down (each as the final component of its own prefix, since REG_OPTION_OPEN_LINK only
+/// suppresses resolution of the last component). Mirrors cleanup_worker.cpp.
+[[nodiscard]] bool registryKeyIsSymbolicLink(HKEY hive, const QString& subkey) {
+    const QStringList components = subkey.split(QLatin1Char('\\'), Qt::SkipEmptyParts);
+    QString prefix;
+    for (const QString& component : components) {
+        prefix = prefix.isEmpty() ? component : prefix + QLatin1Char('\\') + component;
+        bool notFound = false;
+        if (registryLeafComponentIsLink(hive, prefix, notFound)) {
+            return true;
+        }
+        if (notFound) {
+            // Nonexistent component: nothing deeper can exist, and the delete no-ops. Not a link.
+            return false;
+        }
+    }
+    return false;
+}
+#endif  // Q_OS_WIN
+
 }  // namespace
 
 UninstallWorker::UninstallWorker(const ProgramInfo& program,
@@ -463,17 +530,20 @@ bool UninstallWorker::removeRegistryEntry() {
     // Confine this ELEVATED key deletion to the Uninstall subtree. registryKeyPath is read from
     // the registry (attacker-writable), so RegDeleteKeyExW must never be pointed at an arbitrary
     // HKLM/HKCU key. Require the target to sit STRICTLY beneath a known Uninstall root (a non-empty
-    // leaf must follow it) and fail closed on anything else, including the Uninstall container.
-    static const QString kUninstallRoot =
-        QStringLiteral("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\");
-    static const QString kUninstallRootWow =
-        QStringLiteral("SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\");
-    const bool underUninstall = (path.startsWith(kUninstallRoot, Qt::CaseInsensitive) &&
-                                 path.size() > kUninstallRoot.size()) ||
-                                (path.startsWith(kUninstallRootWow, Qt::CaseInsensitive) &&
-                                 path.size() > kUninstallRootWow.size());
-    if (!underUninstall) {
+    // leaf must follow it) and fail closed on anything else, including the Uninstall container. The
+    // strict-leaf rule also subsumes the hive-root screen: an empty post-hive subkey never passes.
+    if (!pathIsUnderUninstallRoot(path)) {
         sak::logWarning("Refusing registry-only removal of key outside the Uninstall subtree: '{}'",
+                        m_program.registryKeyPath.toStdString());
+        return false;
+    }
+
+    // Mirror cleanup_worker::deleteRegistryKey: refuse a REG_LINK key, or any REG_LINK ancestor
+    // along the path. RegDeleteKeyExW re-resolves the whole pathname, so a link (which any user
+    // can create under HKCU\...\Uninstall) redirects this ELEVATED delete to a leaf OUTSIDE the
+    // subtree the confinement check just screened. Fail closed on any link or unprovable probe.
+    if (registryKeyIsSymbolicLink(hive, path)) {
+        sak::logWarning("Refusing registry-only removal of symbolic-link (REG_LINK) key: '{}'",
                         m_program.registryKeyPath.toStdString());
         return false;
     }

@@ -216,6 +216,12 @@ private:
     // profile_path of the user currently being backed up, so smart-filter exclusion
     // rules key on the RIGHT user's profile instead of always m_users[0] (B7-34).
     QString m_currentUserProfile;
+    // Canonical (junction/symlink-resolved) source-profile and destination-backup roots for the
+    // user in progress. Every enumerated entry's realized parent is re-checked against these so an
+    // ancestor directory that is (or becomes) a junction cannot redirect a read out of the profile
+    // or a write out of the backup (R5-P7-36). Pinned in backupUser once both directories exist.
+    QString m_currentSourceRoot;
+    QString m_currentDestRoot;
 
     // Instances for operations
     SmartFileFilter* m_fileFilter{nullptr};

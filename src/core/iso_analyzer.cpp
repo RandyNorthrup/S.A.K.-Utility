@@ -225,6 +225,13 @@ void scanBootCatalogSections(const std::array<char, kSectorSize>& catalog,
     }
 }
 
+// A boot-record volume descriptor is present but its catalog is absent, unreadable,
+// or carries no recognizable bootable entry: that is not proof of a bootable image, so
+// it is reported distinctly from the recognized boot types below (read-only analyzer).
+QString unknownBootType() {
+    return QStringLiteral("Unknown/Invalid");
+}
+
 QString bootTypeFromFlags(const BootCatalogFlags& flags) {
     if (flags.has_efi && flags.has_legacy) {
         return QStringLiteral("UEFI + Legacy BIOS");
@@ -232,7 +239,11 @@ QString bootTypeFromFlags(const BootCatalogFlags& flags) {
     if (flags.has_efi) {
         return QStringLiteral("UEFI");
     }
-    return QStringLiteral("Legacy BIOS");
+    if (flags.has_legacy) {
+        return QStringLiteral("Legacy BIOS");
+    }
+    // No bootable entry recognized in the catalog.
+    return unknownBootType();
 }
 
 bool hasWindowsMetadata(const QString& label, const QString& app) {
@@ -547,13 +558,14 @@ void IsoAnalyzer::readElToritoBootRecord(QIODevice& device, IsoInfo& info) {
             continue;  // some other VD, or a boot record that is not El Torito
         }
 
-        info.is_bootable = true;
-
-        // Read boot catalog pointer (LE 32-bit at offset 71)
+        // A boot-record VD alone does not make an image bootable: El Torito requires a
+        // boot catalog with at least one valid entry. Read the pointer and classify; a
+        // zero/unreadable/malformed catalog stays non-bootable and reports Unknown/Invalid.
         uint32_t catalog_lba = 0;
         std::memcpy(&catalog_lba, sector.data() + kElToritoBootCatalogOffset, sizeof(catalog_lba));
-        info.boot_type = (catalog_lba == 0) ? QStringLiteral("Legacy BIOS")
+        info.boot_type = (catalog_lba == 0) ? unknownBootType()
                                             : classifyBootCatalog(device, catalog_lba);
+        info.is_bootable = (info.boot_type != unknownBootType());
         return;
     }
 }
@@ -564,14 +576,14 @@ void IsoAnalyzer::readElToritoBootRecord(QIODevice& device, IsoInfo& info) {
 
 QString IsoAnalyzer::classifyBootCatalog(QIODevice& device, uint32_t catalog_lba) {
     // Private helper: the device came open from analyze(), and the sole caller
-    // (readElToritoBootRecord) routes catalog_lba == 0 to "Legacy BIOS" without calling here.
+    // (readElToritoBootRecord) routes catalog_lba == 0 to Unknown/Invalid without calling here.
     Q_ASSERT(device.isOpen());
     Q_ASSERT(catalog_lba > 0);
 
     std::array<char, kSectorSize> catalog{};
     const qint64 catalog_offset = static_cast<qint64>(catalog_lba) * kSectorSize;
     if (!readSectorAt(device, catalog_offset, catalog)) {
-        return QStringLiteral("Legacy BIOS");
+        return unknownBootType();  // catalog pointer past EOF or unreadable: not bootable
     }
 
     BootCatalogFlags flags;

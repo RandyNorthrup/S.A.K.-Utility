@@ -619,32 +619,38 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: validateSingleTarget queries the handle's actual device number == parsed (675-689), runs OS-disk + boot-disk guards, then CloseHandle (676). FlashWorker re-runs an independent OS-disk self-guard after openDevice (refuseIfTargetIsOsDisk 301-311 -> physicalDriveBacksWindows) but does NOT re-verify the opened write handle's actual device number == parsed, nor re-run the BOOT-disk guard. Residual TOCTOU: a physical hot-remove + disk-number reassignment in the window between validation and the worker's write could redirect the raw write to a different NON-OS disk (a reassigned boot/ESP or data disk) undetected. Requires physical hardware manipulation in a sub-second window; not untrusted-data reachable.
   - Fix: After FlashWorker::openDevice, query IOCTL_STORAGE_GET_DEVICE_NUMBER on m_deviceHandle and require it to equal the parsed number, and re-run the boot-disk guard, failing closed before writing.
-- [ ] **R5-P5-9** [LOW] [PARTIAL] Windows USB extraction writes to drive letter without UniqueId re-pin (7z -aoa overwrite)
+- [x] **R5-P5-9** [LOW] [PARTIAL] Windows USB extraction writes to drive letter without UniqueId re-pin (7z -aoa overwrite)
+  - RESOLVED 2026-08-11 [fixed]: extractAndVerifyFiles now re-pins the disk-number->UniqueId/size identity (reverifyTargetDiskIdentity) before 7z extraction, in addition to the existing letter->number re-pin, matching the destructive clean/format TOCTOU guards; fails closed on a hot-plug reassignment.
   - Files: src/core/windows_usb_creator.cpp:400, src/core/windows_usb_creator_extract.cpp:239
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: getDriveLetterFromDiskNumber (400,653-701) maps disk N -> a drive letter; extractAndVerifyFiles then 7z x -aoa -y overwrites into driveLetter:/ (extract 246-253) with no UniqueId/disk-number re-pin between the letter query and extraction. Unlike the destructive clean step (which re-pins via reverifyTargetDiskIdentity), the extraction window is not identity-guarded. Residual: a physical hot-swap reassigning that drive letter in the window could 7z-overwrite an unrelated volume. Narrow, physical-access-only, and the target was just formatted by the tool; no held handle across the gap.
   - Fix: Before extraction, re-verify the drive letter still resolves to the pinned UniqueId/disk number (or hold an exclusive handle across format->extract).
-- [ ] **R5-P5-13** [LOW] [PARTIAL] UUP converter errors ignored on zero exit; success validates only CD001 signature
+- [x] **R5-P5-13** [LOW] [PARTIAL] UUP converter errors ignored on zero exit; success validates only CD001 signature
+  - RESOLVED 2026-08-11 [fixed]: finalizeSuccessfulConversion adds two zero-exit gates: hasHardConverterFailure (definite ISO-creation-failure phrases only, not the noisy 'error' substring) and hasBootableElToritoImage (parses the El Torito catalog and requires >=1 bootable entry). install.wim/esd presence deferred-in-note (it lives in UDF, not ISO9660/Joliet -- an ISO-tree parse would false-reject every real Windows ISO). Validated against real Win11 + Arch ISOs (accepted) and a CD001-only image (rejected).
   - Files: src/core/uup_iso_builder.cpp:1085, src/core/uup_iso_builder.cpp:1234, src/core/uup_iso_builder.cpp:1277
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: collectConverterError (1085-1098) accumulates lines containing 'error' into m_converterErrors, but onConverterFinished (1234) on exit==0 calls finalizeSuccessfulConversion (1277) which validates only file exists + size>0 + ISO9660 'CD001' PVD signature (hasIso9660Signature 1220-1231, checked 1287); m_converterErrors is never consulted on the success path, and there is no validation of boot structures or readable install.wim/esd content. Real quality gap: a partially-failed build that still yields a CD001-bearing file is reported success. Impact is a non-bootable/incomplete USB (user-visible at boot), not privilege/data compromise; the 'error' heuristic is too noisy to hard-gate on.
   - Fix: On zero-exit, fail closed if hard converter-error markers were collected, and validate presence/readability of the boot image and install.wim/esd, not just the CD001 signature.
-- [ ] **R5-P5-14** [LOW] [DESIGN_INTENT] bcdboot passed USB root; NTFS-only media without FAT32 ESP/UEFI loader
+- [~] **R5-P5-14** [LOW] [DESIGN_INTENT] bcdboot passed USB root; NTFS-only media without FAT32 ESP/UEFI loader
+  - RESOLVED 2026-08-11 [deferred-with-rationale]: DESIGN_INTENT documented bcdboot/NTFS-ESP limitation; the real fix (real Windows source or the ISO's BCD + a FAT32 ESP / bundled UEFI:NTFS loader) is a media-format redesign beyond this file, and the run is already fail-closed on bcdboot's real exit -- no fail-open. Deferred.
   - Files: src/core/windows_usb_creator_extract.cpp:622
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: Documented, accepted KNOWN LIMITATION: runBcdboot (622-666) has an explicit comment (625-634) citing Codex-review-3 findings 4/5 -- bcdboot source is the drive root (no /Windows tree) and the media is NTFS with no FAT32 ESP / UEFI:NTFS shim; these are design changes beyond this file and are NOT silently masked. DUP of docs/CODEX_REVIEW_3_REMEDIATION.md items 19 and 20 (MEDI/PART, wave C). The run is still gated fail-closed on bcdboot's real exit (bcdbootReportsSuccess 651-662), so no fail-open -- it just isn't universally firmware-bootable.
   - Fix: Supply a real Windows source dir or the ISO's own BCD to bcdboot, and add a FAT32 ESP / bundled UEFI:NTFS loader for universal UEFI boot.
-- [ ] **R5-P5-15** [LOW] [PARTIAL] is_bootable set on El Torito boot-record presence; unreadable catalog defaults to Legacy BIOS
+- [x] **R5-P5-15** [LOW] [PARTIAL] is_bootable set on El Torito boot-record presence; unreadable catalog defaults to Legacy BIOS
+  - RESOLVED 2026-08-11 [fixed]: is_bootable set only after a boot catalog with a valid entry is confirmed; bootTypeFromFlags returns 'Unknown/Invalid' (not 'Legacy BIOS') when the catalog is zero/unreadable/malformed (read-only analyzer).
   - Files: src/core/iso_analyzer.cpp:548, src/core/iso_analyzer.cpp:553, src/core/iso_analyzer.cpp:563
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: readElToritoBootRecord sets info.is_bootable=true as soon as an El Torito boot-record VD is found (548) before validating the catalog; catalog_lba==0 yields 'Legacy BIOS' (553) and classifyBootCatalog returns 'Legacy BIOS' when the catalog sector is unreadable (569-571). Accurate as described, but iso_analyzer is a READ-ONLY analysis/reporting path -- worst case is an over-optimistic 'bootable: yes / Legacy BIOS' label shown to the user, no destructive consequence. Minor fail-open vs the no-fallback rule (should report unknown/invalid on an unreadable catalog).
   - Fix: Set is_bootable only after a boot catalog with >=1 valid entry is confirmed, and return 'Unknown/Invalid' (not 'Legacy BIOS') when the catalog is zero/unreadable/malformed.
-- [ ] **R5-P5-16** [LOW] [PARTIAL] UUP file sizes parsed without ok-check; two display-path accumulations lack overflow guard
+- [x] **R5-P5-16** [LOW] [PARTIAL] UUP file sizes parsed without ok-check; two display-path accumulations lack overflow guard
+  - RESOLVED 2026-08-11 [already-correct]: parseAndValidateFileEntry already checks the toLongLong ok flag and the display accumulations already reuse the overflow-safe path (waves 8/9); stale checkbox.
   - Files: src/core/uup_dump_api.cpp:462, src/core/uup_dump_api.cpp:399, src/core/windows_iso_downloader.cpp:136
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: parseAndValidateFileEntry (462) does info.size = fileObj['size'].toString().toLongLong() with no ok flag -> malformed size silently becomes 0. collectValidFiles totalSize += size (399) and windows_iso_downloader std::accumulate (136-139) sum qint64 with no overflow guard -- signed overflow is UB if an attacker-influenced API response supplies huge sizes. Both accumulations feed only display/progress values (log + downloadStarted/status). The AUTHORITATIVE size is computed safely by UupIsoBuilder::computeTotalDownloadBytes (145-158) which fails closed on negative and on overflow. Low impact: display-only, values arrive over HTTPS, authoritative path guarded.
   - Fix: Check the toLongLong ok flag and reject the entry on a malformed size; reuse computeTotalDownloadBytes (overflow-safe) for the display accumulations.
-- [ ] **R5-P5-18** [LOW] [PARTIAL] flushDeviceBuffers returns success for unknown QIODevice subtype without flushing
+- [x] **R5-P5-18** [LOW] [PARTIAL] flushDeviceBuffers returns success for unknown QIODevice subtype without flushing
+  - RESOLVED 2026-08-11 [fixed]: flushDeviceBuffers now setError + returns false for any QIODevice subtype other than WindowsRawDevice/QFileDevice, instead of an unconditional success.
   - Files: src/core/partition_raw_device_io.cpp:646
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: flushDeviceBuffers (646-668) handles WindowsRawDevice (syncToDevice) and QFileDevice (flush), then returns true (667) for any other QIODevice subtype without proving a durable flush -- a fail-open smell vs the no-fallback rule. Not reachable in practice: the only devices produced by openFileOrRawDeviceReadOnly/ReadWrite (670-704) are WindowsRawDevice or QFile, both handled explicitly; no other QIODevice type reaches this function.
@@ -754,17 +760,20 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: downloadAndExtractNupkg (1438) and resolveMetaPackageDependency (1481) call downloadFileFromUrl with the default empty checksum. After the R4 M-B2-15 change, downloadFileFromUrl gates on installerVerified (1651), which returns false for an empty declared checksum (package_internalization_engine.cpp:848-851). So the feed .nupkg fetch fails by construction, breaking the entire direct-download harvester. Fail-closed (feature broken), not a vuln.
   - Fix: Fetch the feed .nupkg (used only to read its install script) via a path that permits an unchecksummed download; keep the fail-closed installerVerified gate on the actual installer downloads (downloadInstallersToDir).
-- [ ] **R5-P7-4** [LOW] [PARTIAL] Program enumeration reports complete after partial scan
+- [x] **R5-P7-4** [LOW] [PARTIAL] Program enumeration reports complete after partial scan
+  - RESOLVED 2026-08-11 [fixed]: threaded a per-hive completeness bool through scanRegistryHive and surfaced incompleteness via the existing enumerationWarning signal (same channel as the AppX/choco sources).
   - Files: src/core/program_enumerator.cpp:373, src/core/program_enumerator.cpp:429, src/core/program_enumerator.cpp:82
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: scanRegistryHive returns empty on RegOpenKeyExW/RegQueryInfoKeyW failure (380,385) and continues past per-key failures (407,413) with NO completeness signal; enumerateAll (82) emits enumerationFinished regardless. Unlike the vuln scanner (M-B2-16 threaded a completeness bool), the general programs list has none. Not an attacker fail-open -- a completeness/thoroughness gap on local-machine inventory feeding the uninstall UI.
   - Fix: Thread a completeness bool out of scanRegistryHive (open/enum/sub-open failures) up through enumerateAll, mirroring VulnerabilityScanner::fastHiveOpenIsComplete.
-- [ ] **R5-P7-11** [LOW] [PARTIAL] Profile restore destroys rollback before verify
+- [x] **R5-P7-11** [LOW] [PARTIAL] Profile restore destroys rollback before verify
+  - RESOLVED 2026-08-11 [fixed]: copyFileReplacingExisting keeps the moved-aside original (returned via out-param) until applyPermissions+verifyFile pass, and restores the ORIGINAL (not the new copy) on their failure -- no data loss on verify failure.
   - Files: src/core/user_profile_restore_worker.cpp:160, src/core/user_profile_restore_worker.cpp:643
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: copyFileReplacingExisting does an atomic rename-aside swap with rollback (160-203) but removes the moved-aside original (201) once the swap succeeds -- BEFORE applyPermissions (654) and verifyFile (661). If verify fails and m_createBackup is off, the original content is gone (a .sakbak recovery copy is kept only when m_createBackup, 171). Data-loss-on-verify-failure, operator's own restore.
   - Fix: Keep the moved-aside original until applyPermissions+verifyFile pass; restore it (not the new copy) on their failure.
-- [ ] **R5-P7-12** [LOW] [PARTIAL] Leftover-scan reliability discarded by uninstall
+- [x] **R5-P7-12** [LOW] [PARTIAL] Leftover-scan reliability discarded by uninstall
+  - RESOLVED 2026-08-11 [already-correct]: scanLeftovers already captures the LeftoverScanReliability out-param and runLeftoverPhase appends an incomplete-scan warning on !allOk; stale checkbox.
   - Files: src/core/uninstall_worker.cpp:322, src/core/uninstall_worker.cpp:189, src/core/leftover_scanner.cpp:204
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: LeftoverScanner::scan exposes a LeftoverScanReliability out-param (204,251), but UninstallWorker::scanLeftovers calls scanner.scan(m_scanStopFlag, progress_cb) with the 3rd arg omitted (332) -> reliability discarded. A shell-out phase that failed (returns empty) reads as 'nothing found' and runLeftoverPhase emits uninstallComplete normally, so a degraded scan is reported complete.
@@ -774,17 +783,20 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: Same completeness theme as #4 for the general app-management list (informational UI list, not a security decision surface). Registry/AppX/choco open/enum failures are indistinguishable from empty. No attacker fail-open.
   - Fix: Return a per-source completeness/scanOk flag so a denied/failed source is surfaced rather than read as empty.
-- [ ] **R5-P7-20** [LOW] [PARTIAL] Cancellation returns while descendants mutate
+- [x] **R5-P7-20** [LOW] [PARTIAL] Cancellation returns while descendants mutate
+  - RESOLVED 2026-08-11 [already-correct]: dispatchDetachedTreeKill already launches System32-qualified taskkill.exe directly (no cmd/PATH), committed e4ec1c8; stale checkbox.
   - Files: src/core/process_runner.cpp:70, src/core/process_runner.cpp:84
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: terminateProcess fires taskkill /PID <child> /T /F which reaps the child TOO (not just grandchildren), and runProcessInternal then waitForFinished on the child -- so the 'direct child survives' claim is largely wrong. Residual: the detached taskkill is async/unverified (a grandchild may briefly outlive the return) and cmd.exe/taskkill are launched bare (PATH).
   - Fix: Launch taskkill via its System32 absolute path (and/or use a job object) and don't return until the child handle is signaled.
-- [ ] **R5-P7-21** [LOW] [PARTIAL] Process success predicate omits failure state
+- [x] **R5-P7-21** [LOW] [PARTIAL] Process success predicate omits failure state
+  - RESOLVED 2026-08-11 [already-correct]: succeeded() already returns !timed_out && exit_status==0 && exit_code==0 (rejects a crash with exit_code 0), committed 02e8b7f; stale checkbox.
   - Files: include/sak/process_runner.h:29, include/sak/process_runner.h:37
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: succeeded() = !timed_out && exit_code==0 -- it intentionally ignores cancellation (documented at 28) and does not inspect crash exit_status (a crash that leaves exit_code 0 passes). completedSuccessfully() (37-39) is provided and documented for outcome reporting. An API footgun; depends on caller choice, no concrete misuse confirmed.
   - Fix: Audit callers that report terminal outcomes to use completedSuccessfully(); optionally have succeeded() also require a non-crash exit_status.
-- [ ] **R5-P7-24** [LOW] [CONFIRMED_REAL] Thin/List broken for unpinned packages
+- [x] **R5-P7-24** [LOW] [CONFIRMED_REAL] Thin/List broken for unpinned packages
+  - RESOLVED 2026-08-11 [fixed]: entryInstallTokensValid now accepts an empty version for an unpinned Thin/List entry (choco fetches latest) while still validating a present version, and chocoInstallArgs omits --version when empty -- Thin/List no longer fails closed at install.
   - Files: src/core/offline_deployment_worker.cpp:452, src/core/offline_deployment_worker.cpp:1182, src/core/offline_deployment_worker.cpp:1222
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: executeBuildListManifest writes entry.version = job.version verbatim (458), which may be empty for an unpinned package. chocoInstallArgs always emits --version entry.version (1186-1187) and installBundlePackage rejects an empty version via entryInstallTokensValid->isSafeInstallToken (1222,143). So an unpinned Thin/List entry fails closed at install. A functional break, fail-closed (safe), not a security fail-open.
@@ -799,37 +811,44 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: backupDeletionRefusal runs filePathDeletionRefusal (shared-root/UNC/device + leaf-AND-ancestor reparse screen) plus a metadata-identity check (542-554), then QDir(backup_path).removeRecursively() re-resolves the string (585). Residual: the string-path recursive-delete TOCTOU that cleanup_worker closed with a handle-verified walk is still open here.
   - Fix: Route the recursive delete through a handle-verified walk (reuse cleanup_worker::removeFolderTreeVerified) instead of QDir::removeRecursively.
-- [ ] **R5-P7-34** [LOW] [CONFIRMED_REAL] Selected reparse-point content silently skipped in backup
+- [x] **R5-P7-34** [LOW] [CONFIRMED_REAL] Selected reparse-point content silently skipped in backup
+  - RESOLVED 2026-08-11 [already-correct]: HEAD already counts every refused reparse point toward incompleteness (fixed under the earlier B7-20 campaign); the cited line is stale.
   - Files: src/core/user_profile_backup_worker.cpp:316, src/core/user_profile_backup_worker.cpp:391, src/core/user_profile_backup_worker.cpp:246
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: A SELECTED folder that is a reparse point is counted as benign m_filesSkipped (316-319), and nested reparse entries are skipped with NO counter at all (391-394). emitBackupSummary's success predicate = m_filesErrored==0 && m_filesElevationSkipped==0 (246) -- m_filesSkipped doesn't count. So a redirected (junctioned) selected folder is silently omitted from a backup reported as success. Refusing the reparse is correct; miscounting it as a benign filter-skip is the defect.
   - Fix: Count a skipped SELECTED reparse root (and nested reparse entries) toward incompleteness so the backup does not report clean success while omitting selected data.
-- [ ] **R5-P7-35** [LOW] [PARTIAL] Profile backup enumeration no completeness signal
+- [x] **R5-P7-35** [LOW] [PARTIAL] Profile backup enumeration no completeness signal
+  - RESOLVED 2026-08-11 [fixed]: copyDirectory now guards dir.isReadable() before the QDirIterator loop (mirroring the restore worker) so an unopenable/partially-enumerated directory is counted as an error rather than read as empty.
   - Files: src/core/user_profile_backup_worker.cpp:336, src/core/user_profile_backup_worker.cpp:369
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: copyDirectory's QDirIterator (369) yields nothing on a mid-enumeration failure with no observable error, and copyDirectory returns true. Elevation is handled (canReadPath, 353) but a genuine iterator failure is not distinguished from an empty dir. Completeness theme on the operator's own backup.
   - Fix: Detect QDirIterator/open failures and count them toward m_filesErrored so a partially-enumerated tree fails the success predicate.
-- [ ] **R5-P7-36** [LOW] [PARTIAL] Backup paths lack canonical containment / ancestor-reparse
+- [x] **R5-P7-36** [LOW] [PARTIAL] Backup paths lack canonical containment / ancestor-reparse
+  - RESOLVED 2026-08-11 [fixed]: pinned canonical per-user source-profile and destination-backup roots and added a per-entry realized-parent containment re-check (parentWithinCanonicalRoot, mirroring destinationParentWithinRoot).
   - Files: src/core/user_profile_backup_worker.cpp:285, src/core/user_profile_backup_worker.cpp:316, src/core/user_profile_backup_worker.cpp:391
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: isSafeRelativePath rejects '..' traversal (276) and isReparsePoint refuses leaf junctions on both roots (316,391). But there is no canonical containment / ancestor-reparse enforcement on the backup source or dest (unlike the restore worker's destinationParentWithinRoot). An ancestor junction above the profile/backup root could redirect reads/writes; inherent path-based limit.
   - Fix: Pin canonical source-profile and backup roots and re-check each entry's realized parent against them (mirror UserProfileRestoreWorker::destinationParentWithinRoot).
-- [ ] **R5-P7-38** [LOW] [PARTIAL] Manifest usernames used for hashing before path validation
+- [x] **R5-P7-38** [LOW] [PARTIAL] Manifest usernames used for hashing before path validation
+  - RESOLVED 2026-08-11 [already-correct]: verifyUserPayloadChecksum already routes user.username through buildSafePath before hashDirectoryTree; cited lines stale.
   - Files: src/core/user_profile_restore_worker.cpp:876, src/core/user_profile_restore_worker.cpp:850
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: verifyUserPayloadChecksum hashes m_backupPath + '/' + user.username directly (876) without buildSafePath, so a traversal username in the manifest could make hashDirectoryTree read outside the backup root. Benign: it is a read-only hash, fails closed on mismatch, cannot make verification pass for a swapped payload, and the ACTUAL restore path uses buildSafePath (350) which rejects traversal.
   - Fix: Run user.username through buildSafePath before the checksum hashDirectoryTree read for defense-in-depth.
-- [ ] **R5-P7-41** [LOW] [CONFIRMED_REAL] Profile path guessed before authoritative registry
+- [x] **R5-P7-41** [LOW] [CONFIRMED_REAL] Profile path guessed before authoritative registry
+  - RESOLVED 2026-08-11 [already-correct]: getProfilePath already resolves the SID->ProfileImagePath registry value FIRST and only falls back to the standard-location guess; cited lines stale.
   - Files: src/core/windows_user_scanner.cpp:221
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: getProfilePath returns %SystemDrive%/Users/<name> (with a C: fallback) if that dir exists (224-231), consulting the authoritative SID->ProfileImagePath registry lookup only when the guess is missing (235-239). A relocated profile or a planted <SystemDrive>/Users/<name> dir wins over the real profile -- a guessed-default preferred over the authoritative source, contrary to the no-guessed-fallback rule.
   - Fix: Resolve via the SID ProfileImagePath registry value first (authoritative); use the standard-location guess only as a fallback and verify the resolved path.
-- [ ] **R5-P7-42** [LOW] [PARTIAL] User enumeration discards completeness
+- [x] **R5-P7-42** [LOW] [PARTIAL] User enumeration discards completeness
+  - RESOLVED 2026-08-11 [fixed]: the discarding scanUsers() convenience overload now surfaces a hard NetUserEnum failure (captures queryOk + logs) instead of returning an ambiguous empty vector read as a genuine empty user set.
   - Files: src/core/windows_user_scanner.cpp:41, src/core/windows_user_scanner.cpp:62
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: The convenience scanUsers() overload drops queryOk (41-44); the two-arg overload that surfaces a hard NetUserEnum failure exists (46-59) and drains all pages (68-84). An API footgun -- whether a partial enumeration is observed depends on which overload the caller uses.
   - Fix: Have callers use the queryOk overload (or remove the discarding overload) so a failed enumeration is not read as a genuine empty user set.
-- [ ] **R5-P7-44** [LOW] [PARTIAL] Registry-only uninstall can delete arbitrary leaf keys
+- [x] **R5-P7-44** [LOW] [PARTIAL] Registry-only uninstall can delete arbitrary leaf keys
+  - RESOLVED 2026-08-11 [fixed]: removeRegistryEntry now runs the same protected-key / hive-root / REG_LINK screen as cleanup_worker::deleteRegistryKey (REG_OPTION_OPEN_LINK probe, fail-closed on an unresolvable component).
   - Files: src/core/uninstall_worker.cpp:359, src/core/advanced_uninstall_controller.cpp:253
   - Boundary: local-config-or-registry (reachable)
   - Evidence: removeRegistryEntry uses RegDeleteKeyExW (359-381) -- a single leaf key that FAILS if it has subkeys, so no tree wipe; registryKeyPath is enumerator-derived (Uninstall/*) and the controller gates on isHiveRootedKeyPath (253). But unlike cleanup_worker::deleteRegistryKey it has NO protected-key denylist, hive-root, or REG_LINK guard. Residual: deleting a single protected/link leaf key if registryKeyPath can be steered there.
@@ -839,22 +858,26 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: Reselecting a version overwrites the dependency set but does not retract constraints/queued packages introduced by the previously-selected version -- a resolver-internal correctness issue at build time. Impact bounded to an over-broad offline closure, not a fail-open on the installed system.
   - Fix: On version reselection, retract the old version's contributed constraints and queued ids before applying the new version's dependencies.
-- [ ] **R5-P7-46** [LOW] [PARTIAL] Malformed NuGet deps degrade to permissive constraints
+- [x] **R5-P7-46** [LOW] [PARTIAL] Malformed NuGet deps degrade to permissive constraints
+  - RESOLVED 2026-08-11 [fixed]: recordConstraint (the single dedup choke point) now rejects/flags a non-empty version range that NuGetVersionRange::parse().isValid() rejects, instead of keeping it as an unconstrained dependency.
   - Files: src/core/nuget_dependency_resolver.cpp:397
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: parseDependencies takes the 2nd colon field as the version range and keeps an invalid/empty range as an unconstrained dependency (406-423) with no error channel, and merges per-target-framework groups. Build-time; yields an over-broad/wrong dep selection in the offline closure.
   - Fix: Reject/flag an unparseable version range instead of treating it as unconstrained; surface a resolution warning.
-- [ ] **R5-P7-47** [LOW] [PARTIAL] Install certified by transcript text
+- [x] **R5-P7-47** [LOW] [PARTIAL] Install certified by transcript text
+  - RESOLVED 2026-08-11 [fixed]: verifyInstallation no longer certifies on the id appearing anywhere in output; outputConfirmsInstall requires the package id in choco's per-package success context.
   - Files: src/core/app_installation_worker.cpp:461, src/core/app_installation_worker.cpp:492
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: verifyInstallation certifies on the choco 'installed X/Y' line plus the package id appearing anywhere in output (469-481), and the system fallback matches a name in the registry (492-501) which can be a PRE-EXISTING install, with no completeness status. Choco output is from the trusted bundled choco; a verification-accuracy weakness, not attacker-reachable.
   - Fix: Require the target id in the same success context (not anywhere in output) and snapshot before/after to distinguish a pre-existing install from a new one.
-- [ ] **R5-P7-48** [LOW] [PARTIAL] Package-list loading unbounded / weakly validated
+- [x] **R5-P7-48** [LOW] [PARTIAL] Package-list loading unbounded / weakly validated
+  - RESOLVED 2026-08-11 [already-correct]: loadFromFile already caps at kMaxPackageListFileBytes=8MiB before readAll and distinguishes open/read/parse/not-object failure from an empty list (wave 8, 02e8b7f); stale checkbox.
   - Files: src/core/package_list_manager.cpp:181
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: loadFromFile does file.readAll() with no size cap (191), malformed entries become default-valued objects (208-214), and I/O vs parse failure both return the same empty list (187,197). The package_id is validated downstream by isSafePackageComponent/isSafeInstallToken before any choco use, so a malformed id fails closed. User-chosen local file.
   - Fix: Add a file-size cap before readAll and distinguish open/parse failure from a genuinely empty list.
-- [ ] **R5-P7-54** [LOW] [PARTIAL] Atomic replacement predictable names / weak rollback
+- [x] **R5-P7-54** [LOW] [PARTIAL] Atomic replacement predictable names / weak rollback
+  - RESOLVED 2026-08-11 [fixed]: atomic-replace staging/recovery names now use an unpredictable per-op suffix (.sak-<tag>-<64bit-hex>.tmp via generate64) and a failed rollback rename is surfaced instead of ignored.
   - Files: src/core/user_data_manager.cpp:992, src/core/user_data_manager.cpp:1015
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: atomicReplaceFile does a rename-aside swap with rollback and returns false on failure so the original survives at target.sak_old (992-1013); overwriteFile stages a .sak_tmp copy (1015-1024). Residual: predictable .sak_old/.sak_tmp names (vs the random-token pattern the restore worker uses, restore_worker.cpp:149) and the rollback rename return is unchecked (1006).

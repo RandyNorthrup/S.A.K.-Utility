@@ -13,6 +13,7 @@
 
 #include <QMetaObject>
 #include <QRegularExpression>
+#include <QSet>
 #include <QtConcurrent>
 #include <QtGlobal>
 #include <QThread>
@@ -46,6 +47,103 @@ ChocolateyManager::InstallConfig makeInstallConfig(const MigrationJob& job) {
     config.force = true;
     config.allow_unofficial = false;
     return config;
+}
+
+// Stable name+version identity for a scanned app, used to compare the system
+// state before and after an install (R5-P7-47). The unit separator cannot occur
+// in a display name or version, so the join is unambiguous.
+QString appSignature(const AppScanner::AppInfo& app) {
+    return app.name + QChar(u'\x1f') + app.version;
+}
+
+// Signatures of installed apps that ALREADY match the target, captured BEFORE
+// the install so the post-install system check can tell a NEW install from a
+// pre-existing one (R5-P7-47). Registry keys on the app name; AppX also matches
+// the package id, mirroring verifyNewSystemInstall below.
+QSet<QString> snapshotMatchingApps(const MigrationJob& job) {
+    QSet<QString> present;
+    AppScanner scanner;
+    for (const auto& app : scanner.scanRegistry()) {
+        if (AppInstallationWorker::nameIndicatesApp(app.name, job.appName)) {
+            present.insert(appSignature(app));
+        }
+    }
+    for (const auto& app : AppScanner::scanAppX()) {
+        if (AppInstallationWorker::nameIndicatesApp(app.name, job.appName) ||
+            AppInstallationWorker::nameIndicatesApp(app.name, job.packageId)) {
+            present.insert(appSignature(app));
+        }
+    }
+    return present;
+}
+
+// True iff a SINGLE line of choco output names @p packageId AND reports that
+// package installed successfully. Choco prints "The install of <id> was
+// successful." per package, so a dependency's success line cannot certify the
+// target and the id merely appearing somewhere in the transcript is not enough
+// (R5-P7-47).
+bool outputConfirmsInstall(const QString& output, const QString& packageId) {
+    const auto lines = output.split(QChar(u'\n'), Qt::SkipEmptyParts);
+    for (const auto& line : lines) {
+        if (line.contains(packageId, Qt::CaseInsensitive) &&
+            line.contains(QStringLiteral("was successful"), Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Choco's completion line "Chocolatey installed 0/Y packages." is a definitive
+// failure: the system-state fallback must NOT override it (R5-P7-47).
+bool chocoReportedZeroInstalled(const QString& output) {
+    static const QRegularExpression kZeroPattern(
+        QStringLiteral("Chocolatey installed 0/\\d+ packages"));
+    return kZeroPattern.match(output).hasMatch();
+}
+
+// Registry match that is NOT in the pre-install snapshot -- a new name or a
+// changed version -- so a pre-existing install cannot certify the job.
+bool newInstallInRegistry(const MigrationJob& job, const QSet<QString>& preInstallApps) {
+    AppScanner scanner;
+    for (const auto& app : scanner.scanRegistry()) {
+        if (AppInstallationWorker::nameIndicatesApp(app.name, job.appName) &&
+            !preInstallApps.contains(appSignature(app))) {
+            sak::logInfo("[AppInstallationWorker] Verified new install via registry: {}",
+                         app.name.toStdString());
+            return true;
+        }
+    }
+    return false;
+}
+
+// AppX/MSIX match that is NOT in the pre-install snapshot (R5-P7-47).
+bool newInstallInAppX(const MigrationJob& job, const QSet<QString>& preInstallApps) {
+    for (const auto& app : AppScanner::scanAppX()) {
+        const bool name_match = AppInstallationWorker::nameIndicatesApp(app.name, job.appName) ||
+                                AppInstallationWorker::nameIndicatesApp(app.name, job.packageId);
+        if (name_match && !preInstallApps.contains(appSignature(app))) {
+            sak::logInfo("[AppInstallationWorker] Verified new install via AppX: {}",
+                         app.name.toStdString());
+            return true;
+        }
+    }
+    return false;
+}
+
+// Independent system check that certifies ONLY a NEW install: a registry or
+// AppX app that matches the target AND was absent (by name+version) at install
+// start (R5-P7-47).
+bool verifyNewSystemInstall(const MigrationJob& job, const QSet<QString>& preInstallApps) {
+    if (newInstallInRegistry(job, preInstallApps)) {
+        return true;
+    }
+    if (newInstallInAppX(job, preInstallApps)) {
+        return true;
+    }
+    sak::logWarning("[AppInstallationWorker] Could not verify a NEW install of {} ({})",
+                    job.appName.toStdString(),
+                    job.packageId.toStdString());
+    return false;
 }
 
 }  // namespace
@@ -461,16 +559,22 @@ bool AppInstallationWorker::installPackage(int jobIndex, MigrationJob& job) {
     Q_EMIT jobStatusChanged(job.entryIndex, job);
     Q_EMIT jobProgress(job.entryIndex, "Installing " + job.packageId + "...");
 
+    // Snapshot matching apps BEFORE the install so post-install verification can
+    // tell a NEW install from a pre-existing one (R5-P7-47).
+    const QSet<QString> pre_install_apps = snapshotMatchingApps(job);
+
     auto result = m_chocoManager->installPackage(makeInstallConfig(job));
     bool success = result.success;
     bool verification_failed = false;
 
-    // Verify installation via multi-source check
+    // Choco transcript first, then a snapshot-aware system check -- but a
+    // definitive "0 installed" line is authoritative and is never overridden.
     if (success) {
-        verification_failed = !verifyInstallation(job, result);
-        if (verification_failed) {
-            success = false;
-        }
+        const bool verified = verifyInstallation(job, result) ||
+                              (!chocoReportedZeroInstalled(result.output) &&
+                               verifyNewSystemInstall(job, pre_install_apps));
+        verification_failed = !verified;
+        success = verified;
     }
 
     // Update status
@@ -506,61 +610,35 @@ bool AppInstallationWorker::installPackage(int jobIndex, MigrationJob& job) {
 
 bool AppInstallationWorker::verifyInstallation(const MigrationJob& job,
                                                const ChocolateyManager::Result& choco_result) {
-    // Primary: parse Chocolatey output for definitive package count
-    // Choco prints "Chocolatey installed X/Y packages." on completion
+    // Parse the choco completion line "Chocolatey installed X/Y packages." and
+    // certify ONLY when the target id appears in a per-package SUCCESS line
+    // ("The install of <id> was successful."), not merely somewhere in the
+    // transcript -- a DEPENDENCY succeeding while the target failed must not
+    // certify it (R5-P7-47). An inconclusive count line returns false so the
+    // caller can fall back to an independent, snapshot-aware system check.
     static const QRegularExpression kPackageCountPattern(
         QStringLiteral("Chocolatey installed (\\d+)/(\\d+) packages"));
 
-    auto count_match = kPackageCountPattern.match(choco_result.output);
-    if (count_match.hasMatch()) {
-        const int installed = count_match.captured(1).toInt();
-        if (installed <= 0) {
-            sak::logWarning("[AppInstallationWorker] Choco reports 0 packages for {}",
-                            job.packageId.toStdString());
-            return false;
-        }
-        // installed>0 alone could reflect a DEPENDENCY succeeding while the target
-        // failed. Only certify when the target package id also appears in the
-        // transcript; otherwise fall through to independent system verification.
-        if (choco_result.output.contains(job.packageId, Qt::CaseInsensitive)) {
-            return true;
-        }
-        sak::logWarning("[AppInstallationWorker] Count line lacks target {}; verifying via system",
+    const auto count_match = kPackageCountPattern.match(choco_result.output);
+    if (!count_match.hasMatch()) {
+        return false;
+    }
+
+    const int installed = count_match.captured(1).toInt();
+    if (installed <= 0) {
+        sak::logWarning("[AppInstallationWorker] Choco reports 0 packages for {}",
                         job.packageId.toStdString());
+        return false;
     }
 
-    // Fallback: choco output didn't contain package count line
-    // Check system directly across multiple sources
-    sak::logInfo("[AppInstallationWorker] Checking system for {} ({})",
-                 job.appName.toStdString(),
-                 job.packageId.toStdString());
-
-    // Check Windows Registry (covers MSI/EXE installers). Whole-word match so an
-    // unrelated program whose name merely embeds the target token cannot certify.
-    AppScanner scanner;
-    for (const auto& app : scanner.scanRegistry()) {
-        if (nameIndicatesApp(app.name, job.appName)) {
-            sak::logInfo("[AppInstallationWorker] Verified via registry: {}",
-                         app.name.toStdString());
-            return true;
-        }
+    if (outputConfirmsInstall(choco_result.output, job.packageId)) {
+        return true;
     }
 
-    // Check AppX/MSIX packages (covers Store/UWP apps like Teams)
-    for (const auto& app : AppScanner::scanAppX()) {
-        if (nameIndicatesApp(app.name, job.appName) || nameIndicatesApp(app.name, job.packageId)) {
-            sak::logInfo("[AppInstallationWorker] Verified via AppX: {}", app.name.toStdString());
-            return true;
-        }
-    }
-
-    // No source confirmed the install: choco printed no "installed X/Y" count line
-    // AND neither the registry nor AppX shows the app. Do NOT certify it installed
-    // on the exit code alone -- require positive confirmation (the caller reports
-    // "reported success but could not be verified" so the user can check).
-    sak::logWarning("[AppInstallationWorker] Could not independently verify {} ({})",
-                    job.appName.toStdString(),
-                    job.packageId.toStdString());
+    sak::logWarning(
+        "[AppInstallationWorker] Count line lacks a success line for {}; "
+        "verifying via system",
+        job.packageId.toStdString());
     return false;
 }
 
