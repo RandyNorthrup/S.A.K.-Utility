@@ -3120,7 +3120,8 @@ AppActionResult dnsFailureResult(const QString& adapter,
                                "revert with set_adapter_dhcp if this is wrong.")
                     .arg(adapter,
                          primary_dns,
-                         error_text.isEmpty() ? QStringLiteral("unknown error") : error_text),
+                         error_text.isEmpty() ? QStringLiteral("netsh returned no error detail")
+                                              : error_text),
                 QJsonObject{{QStringLiteral("adapter_name"), adapter},
                             {QStringLiteral("primary_dns_applied"), primary_dns},
                             {QStringLiteral("dns_partially_applied"), true}}};
@@ -3642,7 +3643,7 @@ AppActionResult buildArchiveResult(const FileExplorerArchiveResult& res, const Q
                     .arg(res.entries == 1 ? QStringLiteral("y") : QStringLiteral("ies")),
                 data};
     }
-    const QString reason = res.blockers.isEmpty() ? QStringLiteral("unknown error")
+    const QString reason = res.blockers.isEmpty() ? QStringLiteral("no blocker detail was recorded")
                                                   : res.blockers.first();
     return {false, QStringLiteral("%1 failed: %2").arg(verb, reason), data};
 }

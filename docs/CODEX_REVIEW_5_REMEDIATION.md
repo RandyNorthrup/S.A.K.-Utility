@@ -39,8 +39,11 @@ USER DECISIONS (do not re-litigate):
 - Supply-chain (G23-6): dropped -- bundles sourced from trusted upstreams.
 - NEXT tracks chosen: bounded G23 gates/tests (G23-5/8/12 + perf budget) + G20 UX audit.
 
-IN FLIGHT: bounded G23 gates/tests (error-message uniqueness, config-schema versioning,
-doc-accuracy). THEN: G23-3 perf budget, then G20 UX audit.
+- Bounded G23 gates/tests DONE: G23-12 error-message-uniqueness gate + 14 'unknown error'
+  rewordings; G23-5 config-schema versioning + migration test; G23-8 doc-accuracy gate. Three
+  new gates wired into pre-commit + CI.
+
+IN FLIGHT / NEXT: G23-3 CI startup-time perf budget, then G20 UX audit (7 dimensions).
 
 DEFERRED [~] as large multi-session frameworks (not selected): G14 fuzz/coverage/mutation,
 G18 test-quality, G23-1 concurrency harness, G23-2 crash reporting, G23-4 hostile-env matrix,
@@ -3504,8 +3507,8 @@ rather than as generic advice.
       language-independent proof. Test the matrix: non-C: system drive, paths over 260
       characters, UNC-only working directories, no administrator, no network,
       non-English locale, and missing bundled tools
-- [~] R5-G23-5 CONFIG SCHEMA VERSIONING. Nothing tests what happens when this version
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+- [x] R5-G23-5 CONFIG SCHEMA VERSIONING. Nothing tests what happens when this version
+  - RESOLVED 2026-08-12 [fixed]: config schema versioning added: ConfigManager persists meta/schema_version (kCurrentSchemaVersion=1); reconcileSchemaVersion migrates an older/absent version forward preserving every value (no silent data loss) and, on a newer/rollback read, preserves all keys + fails isHealthy() closed without wiping. New test_config_schema_versioning (9 cases) + no regression in test_config_manager (24). Same-version read is byte-identical.
       reads an older config, or when a rollback makes an older version read this one's.
       Silent data loss on upgrade is a classic failure and is currently untested
 - [~] R5-G23-6 SUPPLY CHAIN. Vendored lzfse, qrcodegen and e2fsprogs, the vcpkg
@@ -3520,8 +3523,8 @@ rather than as generic advice.
       never write outside the validated target; the source stays intact until the
       destination is verified; recycle means recycle; and every destructive operation
       either has a rollback or explicitly acknowledges that it has none
-- [~] R5-G23-8 DOC-ACCURACY GATES. tests/README.md asserted coverage that did not exist,
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+- [x] R5-G23-8 DOC-ACCURACY GATES. tests/README.md asserted coverage that did not exist,
+  - RESOLVED 2026-08-12 [fixed]: added scripts/check_doc_accuracy.ps1 (wired pre-commit + CI): machine-verifies the test-count / test-name / coverage claims in tests/README.md against the real add_test(NAME ...) registration + test_*.cpp files -- the exact failure mode that once hid nine dead test files. README reconciled to reality; gate green (226 tests / 218 sources).
       which is precisely how nine dead test files stayed hidden. Any document asserting
       a fact about the code must be machine-verified, the way the partition filesystem
       tool manifest gate already is
@@ -3537,8 +3540,8 @@ rather than as generic advice.
       real Outlook and Thunderbird, the same way APFS and HFS+ images are already
       certified against a real macOS kernel. Generalize that discipline to every format
       this application writes for another program to read
-- [~] R5-G23-12 ERROR MESSAGE UNIQUENESS. No two distinct failures may share a message,
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+- [x] R5-G23-12 ERROR MESSAGE UNIQUENESS. No two distinct failures may share a message,
+  - RESOLVED 2026-08-12 [fixed]: added scripts/check_error_message_uniqueness.ps1 (wired pre-commit + CI): hard-fails on any 'unknown error' literal and on a NEW duplicate error message across two distinct sink sites (930 sinks; 50 legacy duplicate clusters grandfathered in error_message_duplicate_baseline.json). RAN it and fixed all 14 'unknown error' literals to name the real failure.
       and no message may say 'unknown error'. Field support is only tractable when the
       message identifies the failure
 

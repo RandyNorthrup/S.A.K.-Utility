@@ -409,7 +409,7 @@ struct Aria2cExitEntry {
 };
 
 static constexpr Aria2cExitEntry kAria2cExitCodes[] = {
-    {.code = 1, .message = "Unknown error occurred"},
+    {.code = 1, .message = "aria2c reported a generic failure (exit code 1)"},
     {.code = 2, .message = "Connection timed out"},
     {.code = 3, .message = "Resource not found (404)"},
     {.code = 4, .message = "Max retries reached \xe2\x80\x94 check your internet connection"},

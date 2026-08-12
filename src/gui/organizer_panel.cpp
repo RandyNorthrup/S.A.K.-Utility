@@ -1102,8 +1102,9 @@ void OrganizerPanel::onWorkerFailed(int error_code, const QString& error_message
     Q_ASSERT(m_progress_bar);
     setOperationRunning(false);
     m_progress_bar->setVisible(false);
-    const QString safe_error = error_message.trimmed().isEmpty() ? tr("Unknown error")
-                                                                 : error_message;
+    const QString safe_error = error_message.trimmed().isEmpty()
+                                   ? tr("the organizer reported no error detail")
+                                   : error_message;
     Q_EMIT statusMessage(tr("Organization failed"), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, kProgressMaximum);
     logMessage(QString("Organization failed: Error %1: %2").arg(error_code).arg(safe_error));
@@ -1545,8 +1546,9 @@ void OrganizerPanel::onDedupWorkerFailed(int error_code, const QString& error_me
     Q_ASSERT(m_dedup_progress_bar);
     setDedupRunning(false);
     m_dedup_progress_bar->setVisible(false);
-    const QString safe_error = error_message.trimmed().isEmpty() ? tr("Unknown error")
-                                                                 : error_message;
+    const QString safe_error = error_message.trimmed().isEmpty()
+                                   ? tr("the duplicate scan reported no error detail")
+                                   : error_message;
     Q_EMIT statusMessage(tr("Duplicate scan failed"), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, kProgressMaximum);
     logMessage(QString("Duplicate scan failed: Error %1: %2").arg(error_code).arg(safe_error));

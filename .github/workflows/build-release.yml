@@ -296,6 +296,9 @@ jobs:
         & scripts/check_partition_manager_external_checklist.ps1
         & scripts/verify_partition_manager_certification.ps1
         & scripts/verify_build.ps1
+        & scripts/check_build_system_lint.ps1
+        & scripts/check_error_message_uniqueness.ps1
+        & scripts/check_doc_accuracy.ps1
 
     # G7-2: cppcheck runs in pre-commit on CHANGED files only; run it whole-tree in CI
     # so a defect in an unchanged file (or a bypassed local hook) is still caught.

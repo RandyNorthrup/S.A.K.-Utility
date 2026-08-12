@@ -222,7 +222,7 @@ inline constexpr ErrorCodeMessage kErrorCodeMessages[] = {
     {error_code::crypto_error, "Cryptographic error"},
     {error_code::decrypt_failed, "Decryption failed"},
     {error_code::invalid_format, "Invalid format"},
-    {error_code::unknown_error, "Unknown error"},
+    {error_code::unknown_error, "Unclassified error (no specific error code was set)"},
     {error_code::not_implemented, "Not implemented"},
     {error_code::internal_error, "Internal error"},
     {error_code::assertion_failed, "Assertion failed"},

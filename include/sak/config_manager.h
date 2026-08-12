@@ -90,7 +90,12 @@ public:
 
     /**
      * @brief Whether the settings store is currently healthy.
-     * @return true iff QSettings::status() == NoError (no access/format error).
+     * @return true iff QSettings::status() == NoError (no access/format error)
+     *         AND the persisted schema version is not newer than this build's
+     *         (see kCurrentSchemaVersion). A config stamped by a newer build is
+     *         reported unhealthy so callers fail closed rather than risk
+     *         operating on a schema they do not understand; its data is never
+     *         altered or wiped (see reconcileSchemaVersion).
      */
     [[nodiscard]] bool isHealthy() const;
 
@@ -99,6 +104,42 @@ public:
      * @note Pure + static for unit testing.
      */
     [[nodiscard]] static QString describeSettingsStatus(QSettings::Status status);
+
+    // ------------------------------------------------------------------
+    // Schema versioning
+    // ------------------------------------------------------------------
+
+    /// Schema version this build writes. Bump when a persisted field's meaning
+    /// changes so an older config can be migrated forward and a newer config
+    /// (a rollback read this store) can be detected instead of corrupted.
+    static constexpr int kCurrentSchemaVersion = 1;
+
+    /// Sentinel for a store that predates schema versioning (key absent). Such a
+    /// store is treated as the oldest version and migrated forward on load.
+    static constexpr int kNoSchemaVersion = 0;
+
+    /// Key under which the persisted schema version lives.
+    static constexpr char kSchemaVersionKey[] = "meta/schema_version";
+
+    /// Outcome of reconciling a persisted schema version against this build.
+    enum class SchemaVersionState {
+        Current,    ///< Stored == current: no change, byte-identical read.
+        Migrated,   ///< Stored < current: stamped forward, all values preserved.
+        FromFuture  ///< Stored > current: newer build wrote it; preserved, unhealthy.
+    };
+
+    /// Reconcile the persisted schema version against kCurrentSchemaVersion.
+    /// - Stored == current: no write (Current).
+    /// - Stored < current (or absent): every existing value is left untouched and
+    ///   the current version is stamped (Migrated) -- never any data loss.
+    /// - Stored > current: every key is preserved (including ones this build does
+    ///   not recognize) and the stored version is left intact so the newer build
+    ///   still reads it (FromFuture); isHealthy() then reports the mismatch.
+    /// Pure + static for unit testing: it touches only `settings`, never globals.
+    [[nodiscard]] static SchemaVersionState reconcileSchemaVersion(QSettings& settings);
+
+    /// Persisted schema version, or kNoSchemaVersion if the key is absent.
+    [[nodiscard]] int storedSchemaVersion() const;
 
     // Backup settings
     [[nodiscard]] int getBackupThreadCount() const;

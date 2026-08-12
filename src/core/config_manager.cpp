@@ -97,6 +97,16 @@ ConfigManager::ConfigManager(QObject* parent) : QObject(parent) {
         return;
     }
     logInfo("ConfigManager initialized: {}", m_settings->fileName().toStdString());
+    // Reconcile the persisted schema version before touching defaults: an older
+    // store is migrated forward (values preserved) and stamped; a newer store is
+    // left intact and surfaced as unhealthy. See reconcileSchemaVersion.
+    if (reconcileSchemaVersion(*m_settings) == SchemaVersionState::FromFuture) {
+        logWarning(
+            "ConfigManager: config schema v{} is newer than supported v{}; "
+            "preserving unknown keys and reporting unhealthy",
+            storedSchemaVersion(),
+            kCurrentSchemaVersion);
+    }
     initializeDefaults();
 }
 
@@ -203,8 +213,35 @@ void ConfigManager::clear() {
 
 void ConfigManager::resetToDefaults() {
     clear();
+    // clear() drops the schema key too; re-stamp it so a reset store is fully
+    // formed and reads back at the current version. The classification is not
+    // needed here (an empty store always migrates forward).
+    static_cast<void>(reconcileSchemaVersion(*m_settings));
     initializeDefaults();
     logInfo("Settings reset to defaults");
+}
+
+ConfigManager::SchemaVersionState ConfigManager::reconcileSchemaVersion(QSettings& settings) {
+    const int stored = settings.value(QLatin1String(kSchemaVersionKey), kNoSchemaVersion).toInt();
+    if (stored == kCurrentSchemaVersion) {
+        return SchemaVersionState::Current;
+    }
+    if (stored > kCurrentSchemaVersion) {
+        // A newer build wrote this config. Preserve every key -- including ones
+        // this build does not recognize -- and leave the stored version intact
+        // so the newer build still reads it. isHealthy() surfaces the mismatch.
+        return SchemaVersionState::FromFuture;
+    }
+    // stored < current (kNoSchemaVersion == a legacy/pre-versioning store, or a
+    // fresh one). Existing values are already present and untouched; migrating
+    // forward only stamps the current version. Field-level migrations chain in
+    // here oldest-first as kCurrentSchemaVersion grows.
+    settings.setValue(QLatin1String(kSchemaVersionKey), kCurrentSchemaVersion);
+    return SchemaVersionState::Migrated;
+}
+
+int ConfigManager::storedSchemaVersion() const {
+    return m_settings->value(QLatin1String(kSchemaVersionKey), kNoSchemaVersion).toInt();
 }
 
 QString ConfigManager::describeSettingsStatus(QSettings::Status status) {
@@ -220,7 +257,13 @@ QString ConfigManager::describeSettingsStatus(QSettings::Status status) {
 }
 
 bool ConfigManager::isHealthy() const {
-    return m_settings->status() == QSettings::NoError;
+    if (m_settings->status() != QSettings::NoError) {
+        return false;
+    }
+    // A config stamped by a newer build carries a schema version this build does
+    // not understand. Fail closed rather than risk operating on it -- but never
+    // rewrite or wipe it (see reconcileSchemaVersion).
+    return storedSchemaVersion() <= kCurrentSchemaVersion;
 }
 
 bool ConfigManager::sync() {

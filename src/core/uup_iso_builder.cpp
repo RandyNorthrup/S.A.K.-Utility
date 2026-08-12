@@ -1042,7 +1042,7 @@ void UupIsoBuilder::connectConverterSignals() {
                     break;
                 case QProcess::UnknownError:
                 default:
-                    errorText = "converter process unknown error";
+                    errorText = "converter process reported an unspecified QProcess error";
                     break;
                 }
                 sak::logError("UUPMediaConverter error: " + errorText.toStdString() + " - " +

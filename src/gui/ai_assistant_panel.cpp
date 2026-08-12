@@ -5684,8 +5684,9 @@ void AiAssistantPanel::beginToolTurn(const ai::OpenAIResponseResult& response) {
                     .arg(kMaxToolCallsPerResponse);
     }
     if (too_many_calls || !m_toolTurn.begin(response.id, response.function_calls, &error)) {
-        const QString message = tr("Pending tool turn could not start: %1")
-                                    .arg(error.isEmpty() ? tr("unknown error") : error);
+        const QString detail = error.isEmpty() ? tr("the tool turn reported no start detail")
+                                               : error;
+        const QString message = tr("Pending tool turn could not start: %1").arg(detail);
         appendLocalEvent(message);
         appendTranscriptMessage(QStringLiteral("System"), message, true);
         traceAiEvent(QStringLiteral("tool_queue"),
@@ -8713,8 +8714,9 @@ QJsonObject AiAssistantPanel::pendingToolTurnState() const {
 bool AiAssistantPanel::restorePendingToolTurnState(const QJsonObject& state) {
     QString error;
     if (!m_toolTurn.restore(state, &error)) {
-        appendLocalEvent(tr("Pending tool turn restore failed: %1")
-                             .arg(error.isEmpty() ? tr("unknown error") : error));
+        appendLocalEvent(
+            tr("Pending tool turn restore failed: %1")
+                .arg(error.isEmpty() ? tr("the restore reported no failure detail") : error));
         return false;
     }
 
@@ -11034,10 +11036,11 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
             launch.workflow.id,
             QStringLiteral("Workflow orchestration crashed: %1").arg(QString::fromUtf8(ex.what())));
     } catch (...) {
-        return failedWorkflowResult(launch.run_id,
-                                    launch.workflow.id,
-                                    QStringLiteral(
-                                        "Workflow orchestration crashed with an unknown error"));
+        return failedWorkflowResult(
+            launch.run_id,
+            launch.workflow.id,
+            QStringLiteral("Workflow orchestration crashed with a non-standard exception "
+                           "(not derived from std::exception)"));
     }
 }
 

@@ -278,6 +278,27 @@ repos:
         language: system
         pass_filenames: false
 
+      # G23-12: no "unknown error" literals; no NEW duplicate error message across two
+      # distinct sink sites (legacy duplicates grandfathered in a committed baseline).
+      - id: error-message-uniqueness
+        name: "Error-message uniqueness"
+        description: "No 'unknown error' literals; no NEW duplicate error messages (baseline-gated)"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_error_message_uniqueness.ps1
+        language: system
+        pass_filenames: false
+
+      # G23-8: any factual claim in tests/README.md (test counts / names / coverage) must
+      # match the real ctest registration and test_*.cpp files -- this is how nine dead
+      # test files once stayed hidden behind a README that asserted coverage that did not exist.
+      - id: doc-accuracy
+        name: "Doc-accuracy gate (tests/README.md vs real ctest list)"
+        description: "Machine-verify the test-count/coverage claims in tests/README.md against reality"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_doc_accuracy.ps1
+        language: system
+        pass_filenames: false
+
       # -------------------------------------------------------------------
       # 8b. Partition Manager certification / release-claim integrity gates.
       #     These verify that the documented certification matrices, release

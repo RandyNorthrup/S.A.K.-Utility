@@ -1159,6 +1159,31 @@ add_test(NAME test_config_manager COMMAND test_config_manager
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_config_manager")
 
+# test_config_schema_versioning - R5-G23-5: persisted schema_version; current
+# round-trip, older-version migrate (no data loss), newer-version preserve+unhealthy
+add_executable(test_config_schema_versioning
+    unit/test_config_schema_versioning.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/config_manager.cpp
+    ../src/core/logger.cpp
+    ../include/sak/app_paths.h
+    ../include/sak/config_manager.h
+)
+set_target_properties(test_config_schema_versioning PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_config_schema_versioning PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_config_schema_versioning PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_config_schema_versioning COMMAND test_config_schema_versioning
+         -o "${TEST_OUTPUT_DIR}/test_config_schema_versioning.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_config_schema_versioning")
+
 # test_smart_file_filter - dangerous files, size limits, pattern/folder exclusion
 add_executable(test_smart_file_filter
     unit/test_smart_file_filter.cpp

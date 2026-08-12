@@ -1,0 +1,222 @@
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+/// @file test_config_schema_versioning.cpp
+/// @brief R5-G23-5: config schema versioning -- current round-trip, older-version
+///        read migrates forward (no data loss), newer-version read preserves
+///        unknown keys and reports unhealthy.
+
+#include "sak/config_manager.h"
+
+#include <QByteArray>
+#include <QCoreApplication>
+#include <QFile>
+#include <QSettings>
+#include <QString>
+#include <QTemporaryDir>
+#include <QtTest/QtTest>
+#include <QVariant>
+
+using sak::ConfigManager;
+
+namespace {
+
+// A value written by a hypothetical future build; used only to fabricate a
+// "rolled back to this build" store. Named so the intent is not a bare literal.
+constexpr int kFutureSchemaVersion = ConfigManager::kCurrentSchemaVersion + 1;
+
+// Distinctive probe values so a preserved key is unmistakable in a failure diff.
+constexpr int kBackupThreadProbe = 7;
+constexpr int kPreciseProbe = 4242;
+constexpr int kFutureFeatureProbe = 9001;
+
+QByteArray readAllBytes(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return file.readAll();
+}
+
+QString schemaKey() {
+    return QLatin1String(ConfigManager::kSchemaVersionKey);
+}
+
+}  // namespace
+
+class ConfigSchemaVersioningTests : public QObject {
+    Q_OBJECT
+
+private Q_SLOTS:
+    void cleanup();
+
+    // Pure seam: reconcileSchemaVersion(QSettings&)
+    void reconcile_currentVersion_isByteIdenticalNoWrite();
+    void reconcile_olderVersion_migratesAndPreservesValues();
+    void reconcile_legacyNoVersionKey_migratesAndPreservesValues();
+    void reconcile_newerVersion_preservesUnknownKeysAndVersion();
+
+    // Singleton integration
+    void singleton_freshStore_isCurrentVersionAndHealthy();
+    void singleton_currentVersionRoundTrip_valueSurvives();
+    void singleton_newerVersion_isUnhealthyAndDataPreserved();
+};
+
+void ConfigSchemaVersioningTests::cleanup() {
+    // Restore a clean, current-version store after each test so a poked future
+    // version cannot leak into the next case.
+    ConfigManager::instance().resetToDefaults();
+}
+
+// ============================================================================
+// Pure seam -- reconcileSchemaVersion
+// ============================================================================
+
+// Current-version round-trip: a store already at the current schema is not
+// rewritten at all -- the file is byte-identical before and after reconcile.
+void ConfigSchemaVersioningTests::reconcile_currentVersion_isByteIdenticalNoWrite() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("cfg.ini"));
+
+    {
+        QSettings seed(path, QSettings::IniFormat);
+        seed.setValue(schemaKey(), ConfigManager::kCurrentSchemaVersion);
+        seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
+        seed.sync();
+    }
+    const QByteArray before = readAllBytes(path);
+    QVERIFY(!before.isEmpty());
+
+    QSettings store(path, QSettings::IniFormat);
+    const auto state = ConfigManager::reconcileSchemaVersion(store);
+    store.sync();
+
+    QCOMPARE(static_cast<int>(state), static_cast<int>(ConfigManager::SchemaVersionState::Current));
+    QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
+    QCOMPARE(store.value(schemaKey()).toInt(), ConfigManager::kCurrentSchemaVersion);
+    QCOMPARE(readAllBytes(path), before);
+}
+
+// Older-version read: the version is stamped forward to current and every
+// pre-existing value is preserved (no silent data loss on upgrade).
+void ConfigSchemaVersioningTests::reconcile_olderVersion_migratesAndPreservesValues() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("cfg.ini"));
+
+    {
+        QSettings seed(path, QSettings::IniFormat);
+        // One version behind whatever the current build is (future-proof as the
+        // constant grows). With current == 1 this is kNoSchemaVersion.
+        seed.setValue(schemaKey(), ConfigManager::kCurrentSchemaVersion - 1);
+        seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
+        seed.setValue(QStringLiteral("duplicate/keep_strategy"), QStringLiteral("newest"));
+        seed.sync();
+    }
+
+    QSettings store(path, QSettings::IniFormat);
+    const auto state = ConfigManager::reconcileSchemaVersion(store);
+
+    QCOMPARE(static_cast<int>(state),
+             static_cast<int>(ConfigManager::SchemaVersionState::Migrated));
+    QCOMPARE(store.value(schemaKey()).toInt(), ConfigManager::kCurrentSchemaVersion);
+    QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
+    QCOMPARE(store.value(QStringLiteral("duplicate/keep_strategy")).toString(),
+             QStringLiteral("newest"));
+}
+
+// A store predating schema versioning has no version key at all. It is treated
+// as the oldest version, migrated forward, and its values preserved.
+void ConfigSchemaVersioningTests::reconcile_legacyNoVersionKey_migratesAndPreservesValues() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("cfg.ini"));
+
+    {
+        QSettings seed(path, QSettings::IniFormat);
+        seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
+        seed.sync();
+        QVERIFY(!seed.contains(schemaKey()));
+    }
+
+    QSettings store(path, QSettings::IniFormat);
+    const auto state = ConfigManager::reconcileSchemaVersion(store);
+
+    QCOMPARE(static_cast<int>(state),
+             static_cast<int>(ConfigManager::SchemaVersionState::Migrated));
+    QCOMPARE(store.value(schemaKey()).toInt(), ConfigManager::kCurrentSchemaVersion);
+    QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
+}
+
+// Newer-version read (a rollback opened a config a newer build wrote): the
+// stored version is left untouched and every key -- including one this build
+// does not recognize -- survives. No data is wiped or downgraded.
+void ConfigSchemaVersioningTests::reconcile_newerVersion_preservesUnknownKeysAndVersion() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("cfg.ini"));
+
+    {
+        QSettings seed(path, QSettings::IniFormat);
+        seed.setValue(schemaKey(), kFutureSchemaVersion);
+        seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
+        seed.setValue(QStringLiteral("future/unknown_feature"), kFutureFeatureProbe);
+        seed.sync();
+    }
+
+    QSettings store(path, QSettings::IniFormat);
+    const auto state = ConfigManager::reconcileSchemaVersion(store);
+
+    QCOMPARE(static_cast<int>(state),
+             static_cast<int>(ConfigManager::SchemaVersionState::FromFuture));
+    // Version left intact so the newer build still recognizes its own store.
+    QCOMPARE(store.value(schemaKey()).toInt(), kFutureSchemaVersion);
+    // Known and unknown keys both preserved.
+    QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
+    QCOMPARE(store.value(QStringLiteral("future/unknown_feature")).toInt(), kFutureFeatureProbe);
+}
+
+// ============================================================================
+// Singleton integration
+// ============================================================================
+
+// A freshly reset store is stamped at the current version and reports healthy.
+void ConfigSchemaVersioningTests::singleton_freshStore_isCurrentVersionAndHealthy() {
+    auto& mgr = ConfigManager::instance();
+    mgr.resetToDefaults();
+
+    QCOMPARE(mgr.storedSchemaVersion(), ConfigManager::kCurrentSchemaVersion);
+    QVERIFY(mgr.isHealthy());
+}
+
+// Same-version write/read round-trip: a value persists and the schema version is
+// unchanged, matching the pre-existing config behavior for current stores.
+void ConfigSchemaVersioningTests::singleton_currentVersionRoundTrip_valueSurvives() {
+    auto& mgr = ConfigManager::instance();
+    mgr.setValue(QStringLiteral("test/roundtrip"), QStringLiteral("keep-me"));
+    QVERIFY(mgr.sync());
+
+    QCOMPARE(mgr.getValue(QStringLiteral("test/roundtrip")).toString(), QStringLiteral("keep-me"));
+    QCOMPARE(mgr.storedSchemaVersion(), ConfigManager::kCurrentSchemaVersion);
+    QVERIFY(mgr.isHealthy());
+}
+
+// A store that carries a newer schema version is reported unhealthy (surfaced
+// via isHealthy()) yet loses no data -- the newer version and the surrounding
+// values both remain readable.
+void ConfigSchemaVersioningTests::singleton_newerVersion_isUnhealthyAndDataPreserved() {
+    auto& mgr = ConfigManager::instance();
+    mgr.resetToDefaults();
+    mgr.setValue(QStringLiteral("test/precious"), kPreciseProbe);
+
+    // Simulate a newer build having stamped this store.
+    mgr.setValue(schemaKey(), kFutureSchemaVersion);
+
+    QVERIFY(!mgr.isHealthy());
+    QCOMPARE(mgr.storedSchemaVersion(), kFutureSchemaVersion);
+    QCOMPARE(mgr.getValue(QStringLiteral("test/precious")).toInt(), kPreciseProbe);
+}
+
+QTEST_GUILESS_MAIN(ConfigSchemaVersioningTests)
+#include "test_config_schema_versioning.moc"

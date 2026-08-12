@@ -766,7 +766,7 @@ bool ChocolateyManager::parseExitCode(int exit_code) const {
 
 QString ChocolateyManager::extractErrorMessage(const QString& output) const {
     if (output.isEmpty()) {
-        return "Unknown error";
+        return "Chocolatey produced no output";
     }
     // Look for common error patterns in Chocolatey output
     const QStringList lines = output.split('\n');
@@ -789,7 +789,7 @@ QString ChocolateyManager::extractErrorMessage(const QString& output) const {
         }
     }
 
-    return "Unknown error";
+    return "Chocolatey output contained no recognizable error line";
 }
 
 bool ChocolateyManager::isNetworkError(const QString& output) const {
