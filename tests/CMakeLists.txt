@@ -2270,6 +2270,30 @@ add_test(NAME test_fuzz_mbox_transfer_decoder COMMAND test_fuzz_mbox_transfer_de
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_mbox_transfer_decoder")
 
+# test_fuzz_iso_analyzer - deterministic mutation-fuzz of the ISO 9660 / El Torito / UDF
+# volume-descriptor parser via the IsoAnalyzer::analyzeDevice byte-in seam (G14).
+add_executable(test_fuzz_iso_analyzer
+    unit/test_fuzz_iso_analyzer.cpp
+    ../src/core/iso_analyzer.cpp
+    ../src/core/logger.cpp
+    ../include/sak/iso_analyzer.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_iso_analyzer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_iso_analyzer PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_iso_analyzer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_iso_analyzer COMMAND test_fuzz_iso_analyzer
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_iso_analyzer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_iso_analyzer")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp

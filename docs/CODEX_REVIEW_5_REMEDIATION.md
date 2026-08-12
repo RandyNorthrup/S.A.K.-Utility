@@ -3508,6 +3508,17 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     A nightly can widen coverage with SAK_FUZZ_ITERS / SAK_FUZZ_SEED without a code change.
     Remaining under this item: a scheduled long-run job that uploads any reproducer as a CI
     artifact (the archive-on-crash half), which lands with the remaining parser targets.
+- [x] R5-G14-ISO Fuzz harness: ISO 9660 / El Torito / UDF volume-descriptor parser
+  - RESOLVED 2026-08-12 [DONE]: not in the original named 5-12 list, but iso_analyzer parses
+    attacker-controlled install media (to classify Windows vs Linux, bootable, editions), so
+    it belongs in the same fuzz sweep. The parsing read from a QIODevice behind
+    IsoAnalyzer::analyze(const QString&), which opened a QFile, so it could not be driven with
+    a raw buffer; a byte-in seam IsoAnalyzer::analyzeDevice(QIODevice&) now does the stream
+    work and analyze() just wraps it around a QFile::open() (behaviour identical,
+    test_iso_analyzer still green). test_fuzz_iso_analyzer runs the seam over mutated images in
+    a QBuffer (seeds sized past the 32 KiB system area so mutants reach the PVD scan, El Torito
+    and UDF reads) and asserts the parser never crashes or hangs and reports the media size
+    straight from the stream it read.
 - [~] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
 - [~] R5-G14-16 Publish the coverage number per subsystem as the baseline

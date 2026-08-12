@@ -64,6 +64,16 @@ public:
     /// @return Extracted info (check isValid())
     static IsoInfo analyze(const QString& file_path);
 
+    /// @brief Analyze an already-open, readable image stream (the byte-in seam).
+    /// @param device An open, readable QIODevice positioned anywhere (it is seeked
+    ///        internally). Its size() bounds the media, and only its bytes are read.
+    /// @return Extracted info (check isValid())
+    /// @note analyze() is this method wrapped around a QFile::open(). Splitting it out lets
+    ///       the ISO 9660 volume-descriptor / El Torito / UDF parsing be exercised with an
+    ///       in-memory QBuffer of attacker bytes, without a file on disk. Behaviour for a
+    ///       file is identical.
+    static IsoInfo analyzeDevice(QIODevice& device);
+
     /// @brief Whether the analyzed image is Windows installation media
     /// @param info Result of analyze()
     /// @return true iff it needs the Windows install (diskpart/wim) USB path

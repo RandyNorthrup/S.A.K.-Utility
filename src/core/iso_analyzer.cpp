@@ -419,28 +419,31 @@ namespace sak {
 // ============================================================================
 
 IsoInfo IsoAnalyzer::analyze(const QString& file_path) {
-    IsoInfo info;
-
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
         logWarning("IsoAnalyzer: Could not open file: " + file_path.toStdString());
-        return info;
+        return {};
     }
-    // Size the media from the handle we actually parse, not a separate QFileInfo stat of the
-    // path: a second path resolution can race a reparse/target swap and size a file we never
-    // read, letting a stale size clear the minimum-size gate below.
-    info.file_size = file.size();
+    // Parse from the handle we actually opened. analyzeDevice sizes the media from the
+    // device itself, not a separate QFileInfo stat of the path: a second path resolution
+    // can race a reparse/target swap and size a file we never read.
+    return analyzeDevice(file);
+}
 
-    // Need at least system area + one sector for any ISO 9660
+IsoInfo IsoAnalyzer::analyzeDevice(QIODevice& device) {
+    IsoInfo info;
+    info.file_size = device.size();
+
+    // Need at least system area + one sector for any ISO 9660.
     constexpr qint64 kMinIsoSize = kPrimaryVolumeDescriptorOffset + kSectorSize;
     if (info.file_size < kMinIsoSize) {
-        logInfo("IsoAnalyzer: File too small for ISO 9660: " + file_path.toStdString());
+        logInfo("IsoAnalyzer: stream too small for ISO 9660");
         return info;
     }
 
-    readPrimaryVolumeDescriptor(file, info);
-    readElToritoBootRecord(file, info);
-    detectUdf(file, info);
+    readPrimaryVolumeDescriptor(device, info);
+    readElToritoBootRecord(device, info);
+    detectUdf(device, info);
 
     // Set filesystem type based on what we found
     if (info.filesystem.isEmpty()) {
