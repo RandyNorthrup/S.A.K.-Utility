@@ -82,6 +82,7 @@ private Q_SLOTS:
     void onRunCpuBenchmarkClicked();
     void onRunDiskBenchmarkClicked();
     void onRunMemoryBenchmarkClicked();
+    void onStopBenchmarkClicked();
     void onCpuBenchmarkComplete(const sak::CpuBenchmarkResult& result);
     void onDiskBenchmarkComplete(const sak::DiskBenchmarkResult& result);
     void onMemoryBenchmarkComplete(const sak::MemoryBenchmarkResult& result);
@@ -240,6 +241,11 @@ private:
     QLabel* m_mem_score_label{nullptr};
     QProgressBar* m_mem_score_bar{nullptr};
     QPushButton* m_mem_benchmark_button{nullptr};
+
+    // Shared Stop for the individual CPU/disk/memory benchmarks (R5-G20-2). Enabled
+    // while one of those benchmarks runs, disabled at every terminal path; clicking it
+    // cooperatively stops the running benchmark via DiagnosticController::cancelCurrent.
+    QPushButton* m_benchmark_stop_button{nullptr};
 
     // -- Stress Test Widgets -------------------------------------
     QCheckBox* m_stress_cpu_check{nullptr};

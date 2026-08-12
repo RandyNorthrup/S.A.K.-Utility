@@ -663,6 +663,23 @@ void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout) {
 
     status_row->addStretch();
 
+    // R5-G20-2: in-panel Stop for the running enumeration/uninstall/cleanup. It is the single
+    // control setOperationRunning(true) leaves enabled (every other control is disabled), so the
+    // technician can halt work mid-run. Clicking it calls the controller's cooperative
+    // cancelOperation() (requestCancel/requestStop on the workers -- a real stop, not a detach).
+    // Hidden+disabled until an op starts; setOperationRunning drives its visible/enabled state.
+    m_cancel_button = new QPushButton(tr("Cancel"), this);
+    m_cancel_button->setToolTip(tr("Stop the running operation"));
+    m_cancel_button->setAccessibleName(tr("Cancel current operation"));
+    m_cancel_button->setStyleSheet(ui::kDangerButtonStyle);
+    m_cancel_button->setVisible(false);
+    m_cancel_button->setEnabled(false);
+    status_row->addWidget(m_cancel_button);
+    connect(m_cancel_button,
+            &QPushButton::clicked,
+            m_controller.get(),
+            &AdvancedUninstallController::cancelOperation);
+
     layout->addLayout(status_row);
 }
 
@@ -1529,6 +1546,13 @@ void AdvancedUninstallPanel::logMessage(const QString& message) {
 }
 
 void AdvancedUninstallPanel::setOperationRunning(bool running) {
+    // R5-G20-2: the Cancel/Stop button is the inverse of every other control -- shown and enabled
+    // only WHILE an op runs, hidden+disabled otherwise. Every start handler passes running=true
+    // and every terminal handler (success, error, and cancel alike) passes running=false, so it is
+    // never stranded enabled after the op ends nor stuck disabled while one is in flight.
+    m_cancel_button->setVisible(running);
+    m_cancel_button->setEnabled(running);
+
     m_refresh_button->setEnabled(!running);
     m_batch_button->setEnabled(!running);
     m_search_edit->setEnabled(!running);

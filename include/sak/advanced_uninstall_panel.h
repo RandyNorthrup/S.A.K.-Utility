@@ -202,6 +202,11 @@ private:
     QPushButton* m_forced_uninstall_button{nullptr};
     QPushButton* m_batch_button{nullptr};
     QPushButton* m_settings_button{nullptr};
+    // R5-G20-2 in-panel Stop. The one control setOperationRunning(true) leaves ENABLED so a
+    // technician can halt a running enumeration/uninstall/cleanup; clicking it invokes the
+    // controller's cooperative cancelOperation(). Shown+enabled at every start, hidden+disabled
+    // at every terminal (success/error/cancel all reach setOperationRunning(false)).
+    QPushButton* m_cancel_button{nullptr};
 
     // -- Program Table --
     QTableWidget* m_program_table{nullptr};

@@ -137,9 +137,11 @@ private Q_SLOTS:
 
     // Bandwidth
     void onStartBandwidthTest();
+    void onStopBandwidthTest();
     void onStartIperfServer();
     void onStopIperfServer();
     void onRunHttpSpeedTest();
+    void onStopHttpSpeedTest();
     void onBandwidthComplete(sak::BandwidthTestResult result);
     void onHttpSpeedComplete(double down, double up, double latency);
 
@@ -406,11 +408,13 @@ private:
     QCheckBox* m_bwBidirectional = nullptr;
     QLabel* m_bwResultLabel = nullptr;
     QPushButton* m_bwTestBtn = nullptr;
+    QPushButton* m_bwStopBtn = nullptr;  ///< Cancels the iPerf3 bandwidth test (R5-G20-2)
     QPushButton* m_bwServerStartBtn = nullptr;
     QPushButton* m_bwServerStopBtn = nullptr;
     QLabel* m_bwServerStatus = nullptr;
     QLabel* m_httpSpeedLabel = nullptr;
-    QPushButton* m_httpSpeedBtn = nullptr;  ///< Owned by layout hierarchy
+    QPushButton* m_httpSpeedBtn = nullptr;      ///< Owned by layout hierarchy
+    QPushButton* m_httpSpeedStopBtn = nullptr;  ///< Cancels the HTTP speed test (R5-G20-2)
 
     // -- WiFi UI --
     QTableWidget* m_wifiTable = nullptr;

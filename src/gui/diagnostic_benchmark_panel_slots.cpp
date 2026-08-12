@@ -247,6 +247,7 @@ void DiagnosticBenchmarkPanel::onRunCpuBenchmarkClicked() {
     Q_ASSERT(m_controller);
     logMessage("Starting CPU benchmark...");
     setOperationRunning(true);
+    m_benchmark_stop_button->setEnabled(true);
     m_controller->runCpuBenchmark();
 }
 
@@ -254,6 +255,7 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(const CpuBenchmarkResult& 
     Q_ASSERT(m_cpu_single_score_label);
     Q_ASSERT(m_cpu_multi_score_label);
     setOperationRunning(false);
+    m_benchmark_stop_button->setEnabled(false);
 
     m_cpu_single_score_label->setText(QString("Single-Thread: %1").arg(result.single_thread_score));
     m_cpu_multi_score_label->setText(QString("Multi-Thread: %1").arg(result.multi_thread_score));
@@ -308,6 +310,7 @@ void DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked() {
 
     logMessage(QString("Starting disk benchmark on %1...").arg(config.drive_path));
     setOperationRunning(true);
+    m_benchmark_stop_button->setEnabled(true);
     m_controller->runDiskBenchmark(config);
 }
 
@@ -315,6 +318,7 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
     Q_ASSERT(m_disk_seq_label);
     Q_ASSERT(m_disk_rand_label);
     setOperationRunning(false);
+    m_benchmark_stop_button->setEnabled(false);
 
     m_disk_seq_label->setText(QString("Sequential -- Read: %1 MB/s | Write: %2 MB/s")
                                   .arg(result.seq_read_mbps, 0, 'f', 1)
@@ -357,6 +361,7 @@ void DiagnosticBenchmarkPanel::onRunMemoryBenchmarkClicked() {
     Q_ASSERT(m_controller);
     logMessage("Starting memory benchmark...");
     setOperationRunning(true);
+    m_benchmark_stop_button->setEnabled(true);
     m_controller->runMemoryBenchmark();
 }
 
@@ -364,6 +369,7 @@ void DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete(const MemoryBenchmarkRe
     Q_ASSERT(m_mem_bandwidth_label);
     Q_ASSERT(m_mem_latency_label);
     setOperationRunning(false);
+    m_benchmark_stop_button->setEnabled(false);
 
     m_mem_bandwidth_label->setText(QString("Read: %1 GB/s | Write: %2 GB/s | Copy: %3 GB/s")
                                        .arg(result.read_bandwidth_gbps, 0, 'f', 1)
@@ -384,6 +390,24 @@ void DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete(const MemoryBenchmarkRe
 
     logMessage(QString("Memory benchmark complete -- Score: %1").arg(result.overall_score));
     Q_EMIT statusMessage("Memory benchmark complete", sak::kTimerStatusMessageMs);
+}
+
+// ============================================================================
+// Slot: Stop Benchmark (shared CPU/disk/memory)
+// ============================================================================
+
+void DiagnosticBenchmarkPanel::onStopBenchmarkClicked() {
+    Q_ASSERT(m_controller);
+    logMessage("Stopping benchmark...");
+    // cancelCurrent() cooperatively stops the running CPU/disk/memory benchmark worker
+    // (it polls the cancel flag) and waits its future -- a true stop, not a detach. A
+    // cancelled standalone benchmark emits neither benchmarkComplete nor failed(), so no
+    // completion slot runs to clear the operation state. Reset it here -- exactly as
+    // onCancelSuiteClicked does for the suite -- or the panel would stay stuck with every
+    // primary control disabled and this Stop button stranded enabled.
+    m_controller->cancelCurrent();
+    setOperationRunning(false);
+    m_benchmark_stop_button->setEnabled(false);
 }
 
 // ============================================================================
@@ -806,6 +830,13 @@ void DiagnosticBenchmarkPanel::onErrorOccurred(const QString& message) {
     // Note: Do NOT call setOperationRunning(false) here.
     // SmartDiskAnalyzer emits non-fatal per-drive errors while analysis
     // continues. The completion handler takes care of re-enabling buttons.
+
+    // A failed standalone benchmark reaches the panel only through this error path (the
+    // worker emits failed(), not benchmarkComplete), so its Stop button would be stranded
+    // enabled. Disable it here -- fail closed. It is enabled only by the benchmark start
+    // handlers, so during a SMART non-fatal per-drive error it is already disabled and
+    // this is a harmless no-op.
+    m_benchmark_stop_button->setEnabled(false);
 
     // Reset suite state if suite was running
     if (m_suite_running) {

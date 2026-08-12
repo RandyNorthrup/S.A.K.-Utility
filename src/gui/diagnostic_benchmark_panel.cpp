@@ -337,6 +337,20 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection() {
     layout->addWidget(createDiskBenchmarkGroup());
     layout->addWidget(createMemoryBenchmarkGroup());
 
+    // Single shared Stop for the CPU/disk/memory benchmarks (R5-G20-2). Copies the
+    // m_suite_cancel_button pattern: danger style, medium width, disabled until a
+    // benchmark starts. Clicking it cooperatively stops the running benchmark.
+    auto* stop_row = new QHBoxLayout();
+    stop_row->addStretch();
+    m_benchmark_stop_button = new QPushButton(tr("Stop Benchmark"), this);
+    m_benchmark_stop_button->setMinimumWidth(sak::kButtonWidthMedium);
+    m_benchmark_stop_button->setEnabled(false);
+    m_benchmark_stop_button->setAccessibleName(tr("Stop Benchmark"));
+    m_benchmark_stop_button->setToolTip(tr("Stop the running CPU, disk, or memory benchmark"));
+    m_benchmark_stop_button->setStyleSheet(sak::ui::kDangerButtonStyle);
+    stop_row->addWidget(m_benchmark_stop_button);
+    layout->addLayout(stop_row);
+
     connect(m_cpu_benchmark_button,
             &QPushButton::clicked,
             this,
@@ -349,6 +363,10 @@ QGroupBox* DiagnosticBenchmarkPanel::createBenchmarkSection() {
             &QPushButton::clicked,
             this,
             &DiagnosticBenchmarkPanel::onRunMemoryBenchmarkClicked);
+    connect(m_benchmark_stop_button,
+            &QPushButton::clicked,
+            this,
+            &DiagnosticBenchmarkPanel::onStopBenchmarkClicked);
 
     return group;
 }

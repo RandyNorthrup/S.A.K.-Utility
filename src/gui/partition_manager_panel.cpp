@@ -8943,6 +8943,17 @@ void PartitionManagerPanel::rebuildDiskMap(const PartitionInventory& inventory) 
         return;
     }
     clearLayout(layout);
+    if (inventory.disks.empty()) {
+        // Designed empty state for the model-less disk-map container (R5-G20-7):
+        // without this the map is a blank pane, indistinguishable from a pending scan.
+        auto* placeholder = new QLabel(tr("No disks to map - click Scan Disks"),
+                                       m_diskMapContainer);
+        placeholder->setAlignment(Qt::AlignCenter);
+        placeholder->setStyleSheet(ui::textColorStyle(ui::kColorTextMuted));
+        layout->addWidget(placeholder);
+        layout->addStretch();
+        return;
+    }
     for (const auto& disk : inventory.disks) {
         addDiskMapRow(layout, disk);
     }

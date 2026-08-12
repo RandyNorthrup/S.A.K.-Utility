@@ -288,6 +288,11 @@ private:
     // Status
     QLabel* m_status_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};
+    /// Stop control for the running long operation (open/load/export). Shown and enabled
+    /// only while an operation is in flight (see setOperationRunning): its click asks the
+    /// controller to cooperatively cancel every parser/worker, so a technician is never
+    /// stranded watching an indeterminate progress bar with no way out.
+    QPushButton* m_cancel_operation_button{nullptr};
 
     // Search results
     QTableWidget* m_search_results_table{nullptr};

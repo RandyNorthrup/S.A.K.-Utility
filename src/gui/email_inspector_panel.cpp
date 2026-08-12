@@ -318,6 +318,22 @@ void EmailInspectorPanel::setupUi() {
     m_progress_bar->setVisible(false);
     m_progress_bar->setAccessibleName(QStringLiteral("Email Operation Progress"));
     status_row->addWidget(m_progress_bar);
+
+    // Stop control for the in-flight operation. Starts hidden+disabled (matching the
+    // progress bar) and is driven purely through setOperationRunning, the single
+    // operation-lifecycle chokepoint, so it is never stranded enabled after an op ends.
+    m_cancel_operation_button = new QPushButton(tr("Stop"), this);
+    m_cancel_operation_button->setEnabled(false);
+    m_cancel_operation_button->setVisible(false);
+    m_cancel_operation_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    m_cancel_operation_button->setAccessibleName(tr("Stop Email Operation"));
+    m_cancel_operation_button->setToolTip(tr("Stop the running email operation"));
+    connect(m_cancel_operation_button,
+            &QAbstractButton::clicked,
+            m_controller.get(),
+            &EmailInspectorController::cancelOperation);
+    status_row->addWidget(m_cancel_operation_button);
+
     root_layout->addLayout(status_row);
 
     addPreviewControlRow(root_layout);
@@ -1865,6 +1881,11 @@ void EmailInspectorPanel::onMboxMessageDetailLoaded(sak::MboxMessageDetail detai
 void EmailInspectorPanel::setOperationRunning(bool running) {
     m_open_button->setEnabled(!running);
     m_progress_bar->setVisible(running);
+    // Show+enable the Stop control on the running edge; hide+disable it on EVERY terminal
+    // edge (success, error, or the cancel itself all reach here via onStateChanged(Idle)),
+    // so the cancel is never stranded enabled after the operation ends.
+    m_cancel_operation_button->setVisible(running);
+    m_cancel_operation_button->setEnabled(running);
     if (running) {
         m_progress_bar->setRange(0, 0);
     }

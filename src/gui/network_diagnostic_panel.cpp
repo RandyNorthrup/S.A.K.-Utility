@@ -1146,6 +1146,13 @@ void NetworkDiagnosticPanel::setupBandwidthIperfControls(QWidget* widget,
     setAccessible(m_bwTestBtn, tr("Run iPerf3 bandwidth test"));
     iperf_btn_row->addWidget(m_bwTestBtn);
 
+    m_bwStopBtn = new QPushButton(tr("Stop"), widget);
+    m_bwStopBtn->setStyleSheet(ui::kDangerButtonStyle);
+    m_bwStopBtn->setEnabled(false);
+    m_bwStopBtn->setToolTip(tr("Cancel the current iPerf3 bandwidth test"));
+    setAccessible(m_bwStopBtn, tr("Stop iPerf3 bandwidth test"));
+    iperf_btn_row->addWidget(m_bwStopBtn);
+
     m_bwServerStartBtn = new QPushButton(tr("Start Server"), widget);
     m_bwServerStartBtn->setStyleSheet(ui::kSuccessButtonStyle);
     m_bwServerStartBtn->setToolTip(
@@ -1185,11 +1192,23 @@ void NetworkDiagnosticPanel::setupBandwidthHttpSection(QWidget* widget, QVBoxLay
     m_httpSpeedBtn->setToolTip(tr("Download from public CDN servers to measure internet speed"));
     setAccessible(m_httpSpeedBtn, tr("HTTP speed test"));
     http_btn_row->addWidget(m_httpSpeedBtn);
+
+    m_httpSpeedStopBtn = new QPushButton(tr("Stop"), widget);
+    m_httpSpeedStopBtn->setStyleSheet(ui::kDangerButtonStyle);
+    m_httpSpeedStopBtn->setEnabled(false);
+    m_httpSpeedStopBtn->setToolTip(tr("Cancel the current HTTP speed test"));
+    setAccessible(m_httpSpeedStopBtn, tr("Stop HTTP speed test"));
+    http_btn_row->addWidget(m_httpSpeedStopBtn);
+
     http_btn_row->addStretch();
     http_layout->addLayout(http_btn_row);
 
     connect(
         m_httpSpeedBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onRunHttpSpeedTest);
+    connect(m_httpSpeedStopBtn,
+            &QPushButton::clicked,
+            this,
+            &NetworkDiagnosticPanel::onStopHttpSpeedTest);
 
     m_httpSpeedLabel = new QLabel(widget);
     m_httpSpeedLabel->setWordWrap(true);
@@ -1789,6 +1808,7 @@ void NetworkDiagnosticPanel::connectProbeUiSignals() {
 void NetworkDiagnosticPanel::connectBandwidthWifiUiSignals() {
     connect(
         m_bwTestBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartBandwidthTest);
+    connect(m_bwStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopBandwidthTest);
     connect(m_bwServerStartBtn,
             &QPushButton::clicked,
             this,
@@ -4228,6 +4248,7 @@ void NetworkDiagnosticPanel::onStartBandwidthTest() {
 
     m_bwResultLabel->setText(tr("Running bandwidth test..."));
     m_bwTestBtn->setEnabled(false);
+    m_bwStopBtn->setEnabled(true);
 
     m_controller->runBandwidthTest({.server_addr = server,
                                     .port = static_cast<uint16_t>(m_bwPort->value()),
@@ -4235,6 +4256,13 @@ void NetworkDiagnosticPanel::onStartBandwidthTest() {
                                     .streams = m_bwStreams->value(),
                                     .bidirectional = m_bwBidirectional->isChecked(),
                                     .udp = false});  // TCP mode
+}
+
+void NetworkDiagnosticPanel::onStopBandwidthTest() {
+    Q_ASSERT(m_controller);
+    m_controller->cancel();
+    m_bwTestBtn->setEnabled(true);
+    m_bwStopBtn->setEnabled(false);
 }
 
 void NetworkDiagnosticPanel::onStartIperfServer() {
@@ -4247,14 +4275,23 @@ void NetworkDiagnosticPanel::onStopIperfServer() {
 
 void NetworkDiagnosticPanel::onRunHttpSpeedTest() {
     m_httpSpeedBtn->setEnabled(false);
+    m_httpSpeedStopBtn->setEnabled(true);
     m_httpSpeedLabel->setText(tr("Running HTTP speed test..."));
     m_controller->runHttpSpeedTest();
+}
+
+void NetworkDiagnosticPanel::onStopHttpSpeedTest() {
+    Q_ASSERT(m_controller);
+    m_controller->cancel();
+    m_httpSpeedBtn->setEnabled(true);
+    m_httpSpeedStopBtn->setEnabled(false);
 }
 
 void NetworkDiagnosticPanel::onBandwidthComplete(BandwidthTestResult result) {
     Q_ASSERT(m_bwTestBtn);
     Q_ASSERT(m_bwResultLabel);
     m_bwTestBtn->setEnabled(true);
+    m_bwStopBtn->setEnabled(false);
 
     m_bwResultLabel->setText(QStringLiteral("<b>Download:</b> %1 Mbps | <b>Upload:</b> %2 Mbps<br>"
                                             "<b>Jitter:</b> %3 ms | <b>Packet Loss:</b> %4% | "
@@ -4268,6 +4305,7 @@ void NetworkDiagnosticPanel::onBandwidthComplete(BandwidthTestResult result) {
 
 void NetworkDiagnosticPanel::onHttpSpeedComplete(double down, double up, double latency) {
     m_httpSpeedBtn->setEnabled(true);
+    m_httpSpeedStopBtn->setEnabled(false);
 
     m_httpSpeedLabel->setText(QStringLiteral("<b>Download:</b> %1 Mbps | <b>Upload:</b> %2 Mbps | "
                                              "<b>Latency:</b> %3 ms")
@@ -4783,7 +4821,9 @@ void NetworkDiagnosticPanel::resetToolButtons(int finished_state) {
     switch (state) {
     case S::RunningBandwidthTest:
         m_bwTestBtn->setEnabled(true);
+        m_bwStopBtn->setEnabled(false);
         m_httpSpeedBtn->setEnabled(true);
+        m_httpSpeedStopBtn->setEnabled(false);
         m_bwResultLabel->clear();
         m_httpSpeedLabel->clear();
         break;
