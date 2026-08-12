@@ -115,6 +115,87 @@ jobs:
       run: |
         ctest --test-dir build-debug -C Debug --output-on-failure
 
+  # ==========================================================================
+  # Line coverage (OpenCppCoverage). Opt-in via workflow_dispatch only: an
+  # instrumented run is far too slow to sit on every push, and it needs a
+  # RelWithDebInfo build (the Release build strips the PDBs coverage maps
+  # against). Closes CODEX_REVIEW_5 MEASURED GAP 3 -- see docs/COVERAGE_BASELINE.md.
+  # ==========================================================================
+  coverage:
+    name: Line coverage (core subsystems)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-2022
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{ env.QT_VERSION }}
+        host: 'windows'
+        target: 'desktop'
+        arch: 'win64_msvc2022_64'
+        cache: true
+
+    - name: Setup MSVC
+      uses: microsoft/setup-msbuild@v3
+      with:
+        vs-version: '17'
+
+    - name: Cache vcpkg
+      uses: actions/cache@v5
+      with:
+        path: |
+          ${{ env.VCPKG_ROOT }}/installed
+          ${{ env.VCPKG_ROOT }}/packages
+          ${{ env.VCPKG_ROOT }}/buildtrees
+        key: ${{ runner.os }}-vcpkg-${{ hashFiles('**/CMakeLists.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-vcpkg-
+
+    - name: Install vcpkg dependencies
+      run: |
+        vcpkg install zlib:${{ env.VCPKG_TRIPLET }} bzip2:${{ env.VCPKG_TRIPLET }} liblzma:${{ env.VCPKG_TRIPLET }}
+        vcpkg integrate install
+
+    - name: Install OpenCppCoverage
+      run: choco install opencppcoverage -y --no-progress
+
+    - name: Configure (RelWithDebInfo)
+      run: |
+        cmake -B build -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_PREFIX_PATH="${{ env.Qt6_DIR }}" `
+          -DVCPKG_APPLOCAL_DEPS=OFF `
+          -DVCPKG_TARGET_TRIPLET=${{ env.VCPKG_TRIPLET }} `
+          -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake"
+
+    - name: Build core tests (RelWithDebInfo)
+      run: |
+        cmake --build build --config RelWithDebInfo --parallel --target `
+          test_pst_parser test_fuzz_pst_parser test_mbox_parser test_fuzz_mbox_headers `
+          test_fuzz_mbox_transfer_decoder test_iso_analyzer test_fuzz_iso_analyzer `
+          test_ai_tool_policy test_fuzz_command_classifier test_fuzz_email_sanitizer `
+          test_fuzz_mcp_framing test_crash_reporter test_encryption test_input_validator `
+          test_path_utils test_email_types
+
+    - name: Measure coverage
+      shell: pwsh
+      env:
+        QT_QPA_PLATFORM: offscreen
+      run: |
+        & scripts/run_coverage.ps1 `
+          -TestRegex '^test_(pst_parser|fuzz_pst_parser|mbox_parser|fuzz_mbox_headers|fuzz_mbox_transfer_decoder|iso_analyzer|fuzz_iso_analyzer|ai_tool_policy|fuzz_command_classifier|fuzz_email_sanitizer|fuzz_mcp_framing|crash_reporter|encryption|input_validator|path_utils|email_types)$' `
+          -OutDir build/coverage `
+          -QtBin "$env:QT_ROOT_DIR/bin"
+
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-html
+        path: build/coverage/html
+
   build-windows:
     name: Build, verify, package, and publish Windows release
     # Pinned to windows-2022 (Visual Studio 2022 / v17). windows-latest rolled to

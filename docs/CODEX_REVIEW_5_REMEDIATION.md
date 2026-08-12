@@ -3519,10 +3519,30 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     a QBuffer (seeds sized past the 32 KiB system area so mutants reach the PVD scan, El Torito
     and UDF reads) and asserts the parser never crashes or hangs and reports the media size
     straight from the stream it read.
-- [~] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
-- [~] R5-G14-16 Publish the coverage number per subsystem as the baseline
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+- [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
+  - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
+    0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen
+    set of tests -- it runs them under OpenCppCoverage (--cover_children over ctest), against a
+    RelWithDebInfo build (the Release build strips the PDBs coverage needs), filtered to
+    src/ + include/, and prints covered/total per source subsystem. A CI job "coverage"
+    (.github/workflows/build-release.yml, workflow_dispatch only so it never slows a push)
+    installs the tool, builds the core tests, runs the script, and uploads the HTML report.
+    The tool measures LINE coverage only; branch coverage (needed for the 100% target) is a
+    separate tool decision, noted in docs/COVERAGE_BASELINE.md. Widening the measured set from
+    the core subsystems to the full 235-test suite is the remaining work under this item.
+- [x] R5-G14-16 Publish the coverage number per subsystem as the baseline
+  - RESOLVED 2026-08-12 [DONE]: docs/COVERAGE_BASELINE.md records the first real numbers
+    (measured 2026-08-12 over the parser + security core). Per subsystem: src\ai 88.89%,
+    include\sak 86.99%, src\win32mcp 100%, src\core 40.65% (pessimistic -- the exes link many
+    core files this set does not exercise), 48.32% over all measured lines. The per-file table
+    is the sharper signal and drove two concrete follow-ups that were previously invisible:
+    pst_parser.cpp is only 30.6% because the PST fuzz fail-closes at the header/CRC layer and
+    never reaches the BTree/LTP/messaging code (quantifies the page-valid-seed increment noted
+    under G14-5), and crash_reporter.cpp is 25% because the dump-writing path needs a real
+    fault (manual cert, G23-2). The newly-fuzzed seams (sanitizer, mbox header, mbox transfer
+    decoder, native messaging) are all at 100%. R5-G14-16a/b (enforce 100% line AND branch on
+    all testable code) stay a program: full-suite measurement + the exclusion inventory
+    (16c) + a wired gate (16d) + a branch-coverage tool.
 
 COVERAGE TARGET, decided 2026-08-04: FLAT 100 PERCENT LINE AND BRANCH COVERAGE ON ALL
 TESTABLE CODE. One rule, no tiers, no 'critical' vs 'non-critical' judgement calls, so
