@@ -90,6 +90,25 @@ bool anyRangeTargetsPrerelease(const QString& own_range, const QVector<QString>&
     return std::ranges::any_of(constraints, rangeTargetsPrerelease);
 }
 
+/// ASCII unit separator; joins the fields of a composite provenance/constraint key
+/// so no package id or version can collide with the delimiter.
+constexpr char kUnitSep = '\x1f';
+
+/// Provenance version placeholder for a root's OWN pin constraint. A root is never
+/// reselected, so its self-constraint contribution is permanent; the placeholder
+/// cannot collide with a real (numeric) feed version.
+const QString kRootContributorVersion = QStringLiteral("(root)");
+
+/// @brief Composite key for a declared constraint: lowercased id + range.
+QString constraintKey(const QString& id, const QString& range) {
+    return id.toLower() + QLatin1Char(kUnitSep) + range;
+}
+
+/// @brief Provenance key for a declaring package version: lowercased id + version.
+QString contributorKey(const QString& id, const QString& version) {
+    return id.toLower() + QLatin1Char(kUnitSep) + version;
+}
+
 }  // namespace
 
 NuGetDependencyResolver::NuGetDependencyResolver(int max_depth, int max_packages)
@@ -103,6 +122,8 @@ void NuGetDependencyResolver::start(const QString& root_id, const QString& root_
     m_errors.clear();
     m_feeds.clear();
     m_items.clear();
+    m_constraint_src.clear();
+    m_demand_src.clear();
     m_validated = false;
     addRoot(root_id, root_version);
 }
@@ -144,13 +165,19 @@ void NuGetDependencyResolver::addRoot(const QString& root_id, const QString& roo
     root.is_root = true;
     root.root_version = root_version;
     m_queue.append(root);
-    recordConstraint(root_id, root.version_range);
+    recordConstraint(root_id, root.version_range, contributorKey(root_id, kRootContributorVersion));
 }
 
-void NuGetDependencyResolver::recordConstraint(const QString& id, const QString& range) {
+void NuGetDependencyResolver::recordConstraint(const QString& id,
+                                               const QString& range,
+                                               const QString& contributor) {
+    // Track provenance for EVERY edge (even one whose range is already active) so a
+    // reselection can withdraw exactly this contribution later without dropping a
+    // range another still-selected package also declares.
+    m_constraint_src[constraintKey(id, range)].insert(contributor);
     QVector<QString>& ranges = m_constraints[id.toLower()];
     if (ranges.contains(range)) {
-        return;  // this exact (id, range) constraint is already recorded
+        return;  // this exact (id, range) constraint is already active
     }
     // A non-empty range we cannot parse is MALFORMED (an empty range is the permissive
     // "any"). Keep it recorded so selection stays fail-closed -- a malformed range
@@ -298,7 +325,7 @@ void NuGetDependencyResolver::resolveDequeued(const QueueItem& item,
     m_feeds.insert(lower, versions);
     m_items.insert(lower, item);
 
-    enqueueDependencies(*chosen, item.depth);
+    enqueueDependencies(*chosen, item.depth, contributorKey(item.id, chosen->version));
 }
 
 int NuGetDependencyResolver::resolvedIndex(const QString& lower_id) const {
@@ -332,6 +359,11 @@ void NuGetDependencyResolver::reselectIfResolved(const QString& id) {
 }
 
 void NuGetDependencyResolver::applyReselection(int idx, const FeedPackageVersion& chosen) {
+    const QString pkg_id = m_resolved[idx].package_id;
+    // Withdraw the SUPERSEDED version's own edges before applying the new ones, so a
+    // constraint or queued id that only the replaced version demanded does not linger
+    // as stale state (an over-broad closure / spurious conflict).
+    withdrawOldContribution(pkg_id, m_resolved[idx].version);
     m_resolved[idx].version = chosen.version;
     m_resolved[idx].dependencies.clear();
     for (const NuGetDependency& dep : chosen.dependencies) {
@@ -339,7 +371,67 @@ void NuGetDependencyResolver::applyReselection(int idx, const FeedPackageVersion
             m_resolved[idx].dependencies.append(dep.id);
         }
     }
-    enqueueDependencies(chosen, m_resolved[idx].depth);
+    enqueueDependencies(chosen, m_resolved[idx].depth, contributorKey(pkg_id, chosen.version));
+}
+
+void NuGetDependencyResolver::withdrawOldContribution(const QString& pkg_id,
+                                                      const QString& old_version) {
+    const QVector<FeedPackageVersion> feed = m_feeds.value(pkg_id.toLower());
+    for (const FeedPackageVersion& fv : feed) {
+        if (fv.version == old_version) {
+            retractContribution(contributorKey(pkg_id, old_version), fv.dependencies);
+            return;
+        }
+    }
+}
+
+void NuGetDependencyResolver::retractContribution(const QString& contributor,
+                                                  const QVector<NuGetDependency>& deps) {
+    for (const NuGetDependency& dep : deps) {
+        if (dep.id.isEmpty()) {
+            continue;
+        }
+        withdrawConstraint(dep.id, dep.version_range, contributor);
+        withdrawDemand(dep.id, contributor);
+    }
+}
+
+void NuGetDependencyResolver::withdrawConstraint(const QString& id,
+                                                 const QString& range,
+                                                 const QString& contributor) {
+    const auto it = m_constraint_src.find(constraintKey(id, range));
+    if (it == m_constraint_src.end()) {
+        return;  // never recorded (e.g. dropped past a depth/package cap) -- no-op
+    }
+    it->remove(contributor);
+    if (!it->isEmpty()) {
+        return;  // another still-selected package legitimately declares this range
+    }
+    m_constraint_src.erase(it);
+    m_constraints[id.toLower()].removeAll(range);
+}
+
+void NuGetDependencyResolver::withdrawDemand(const QString& id, const QString& contributor) {
+    const QString lower = id.toLower();
+    const auto it = m_demand_src.find(lower);
+    if (it == m_demand_src.end()) {
+        return;
+    }
+    it->remove(contributor);
+    if (!it->isEmpty()) {
+        return;  // still demanded by another package -- keep it scheduled
+    }
+    m_demand_src.erase(it);
+    dropPendingUnneeded(lower);
+}
+
+void NuGetDependencyResolver::dropPendingUnneeded(const QString& lower_id) {
+    const int qi = pendingIndexForId(lower_id);
+    if (qi < 0 || m_queue.at(qi).is_root) {
+        return;  // already resolved / not queued, or a root fetch (never withdrawn)
+    }
+    m_queue.removeAt(qi);
+    m_visited.remove(lower_id);
 }
 
 void NuGetDependencyResolver::maybeValidateOnDrain() {
@@ -349,7 +441,9 @@ void NuGetDependencyResolver::maybeValidateOnDrain() {
     }
 }
 
-void NuGetDependencyResolver::enqueueDependencies(const FeedPackageVersion& selected, int depth) {
+void NuGetDependencyResolver::enqueueDependencies(const FeedPackageVersion& selected,
+                                                  int depth,
+                                                  const QString& contributor) {
     if (selected.dependencies.isEmpty()) {
         return;
     }
@@ -363,9 +457,11 @@ void NuGetDependencyResolver::enqueueDependencies(const FeedPackageVersion& sele
         if (dep.id.isEmpty()) {
             continue;
         }
-        // Record the constraint for EVERY edge, even one whose id is already
-        // scheduled (a diamond's second edge) so it is not silently discarded.
-        recordConstraint(dep.id, dep.version_range);
+        // Record the constraint AND the demand for EVERY edge, even one whose id is
+        // already scheduled (a diamond's second edge), attributing both to this
+        // contributor so it is neither silently discarded nor blindly retractable.
+        recordConstraint(dep.id, dep.version_range, contributor);
+        m_demand_src[dep.id.toLower()].insert(contributor);
         // If that id is ALREADY resolved, its earlier selection did not see this
         // edge's range; re-select over its cached feed so a resolvable diamond is
         // corrected now instead of only erroring at the final validation pass.

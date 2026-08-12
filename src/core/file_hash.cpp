@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <system_error>
 #include <vector>
 
 namespace sak {
@@ -64,14 +65,25 @@ auto file_hasher::calculateHash(const std::filesystem::path& file_path,
     // An empty path is rejected by the exists() check below and reported as
     // file_not_found. No assert, for the reason given on the constructor.
 
-    // Validate file exists
-    if (!std::filesystem::exists(file_path)) {
+    // Validate file exists. Use the non-throwing std::error_code overloads: this
+    // function is declared to return std::expected, so the throwing exists()/
+    // is_regular_file() overloads would let a filesystem_error (e.g. a permission
+    // fault statting a parent directory) escape it. A stat error fails closed as
+    // invalid_path; a clean "does not exist" as file_not_found.
+    std::error_code ec;
+    const bool present = std::filesystem::exists(file_path, ec);
+    if (ec) {
+        logError("Cannot stat path: {}", file_path.string());
+        return std::unexpected(error_code::invalid_path);
+    }
+    if (!present) {
         logError("File not found: {}", file_path.string());
         return std::unexpected(error_code::file_not_found);
     }
 
-    // Validate it's a regular file
-    if (!std::filesystem::is_regular_file(file_path)) {
+    // Validate it's a regular file (non-throwing overload, same rationale).
+    const bool regular = std::filesystem::is_regular_file(file_path, ec);
+    if (ec || !regular) {
         logError("Path is not a regular file: {}", file_path.string());
         return std::unexpected(error_code::invalid_path);
     }
@@ -251,7 +263,15 @@ bool file_hasher::hashFileInChunks(
     // cppcheck-suppress constParameterReference ; move_only_function has non-const operator()
     hash_progress_callback& progress,
     const std::stop_token& stop_token) const {
-    const auto file_size = static_cast<std::size_t>(file.size());
+    // QFile::size() returns -1 when the size is unknown/unreadable; casting that to
+    // size_t would yield a huge value that the concurrent-mutation check below then
+    // compares against (and it also feeds progress reporting). Fail closed instead.
+    const qint64 raw_file_size = file.size();
+    if (raw_file_size < 0) {
+        logError("Cannot determine size of '{}' for hashing", file.fileName().toStdString());
+        return false;
+    }
+    const auto file_size = static_cast<std::size_t>(raw_file_size);
     std::size_t bytes_processed = 0;
 
     while (!stop_token.stop_requested()) {

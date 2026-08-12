@@ -40,6 +40,7 @@
 #include "sak/iso_analyzer.h"
 #include "sak/leftover_scan_provenance.h"
 #include "sak/leftover_scanner.h"
+#include "sak/logger.h"
 #include "sak/mbox_parser.h"
 #include "sak/memory_benchmark_worker.h"
 #include "sak/network_adapter_inspector.h"
@@ -71,6 +72,7 @@
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
+#include <QtGlobal>
 #include <QVector>
 
 #include <algorithm>
@@ -5321,11 +5323,28 @@ static void registerFileReadOnlyOps(const AddActionFn& add) {
         hashFile);
 }
 
+// A read-only app action fails to register only on a startup programming error -- an
+// empty or duplicate id, or a null invoke. A silently dropped action would just vanish
+// from the assistant's catalog with no trace, so surface it and abort in Debug rather
+// than hide the collision.
+static void reportUnregisteredReadOnlyAction(const AppActionDescriptor& descriptor,
+                                             const QString& error) {
+    logError("Read-only app action '{}' not registered: {}",
+             descriptor.id.toStdString(),
+             error.toStdString());
+    Q_ASSERT_X(false,
+               "registerReadOnlyAppActionsInto",
+               "app action registration rejected (duplicate/empty id or null invoke)");
+}
+
 int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
     int registered = 0;
     const auto add = [&](const AppActionDescriptor& descriptor, AppActionInvoke invoke) {
-        if (registry.registerAction(descriptor, std::move(invoke))) {
+        QString error;
+        if (registry.registerAction(descriptor, std::move(invoke), &error)) {
             ++registered;
+        } else {
+            reportUnregisteredReadOnlyAction(descriptor, error);
         }
     };
 

@@ -137,7 +137,12 @@ private:
         QString root_version;  ///< only meaningful when is_root
     };
 
-    void enqueueDependencies(const FeedPackageVersion& selected, int depth);
+    /// @param contributor Provenance key ("<id>\x1f<version>") of the package
+    ///        version whose edges these are, so a later reselection can withdraw
+    ///        EXACTLY this contribution.
+    void enqueueDependencies(const FeedPackageVersion& selected,
+                             int depth,
+                             const QString& contributor);
     [[nodiscard]] std::optional<FeedPackageVersion> selectVersion(
         const QueueItem& item, const QVector<FeedPackageVersion>& versions) const;
 
@@ -159,7 +164,11 @@ private:
     ///        package -- including a second diamond edge whose enqueue is skipped
     ///        because the id is already visited -- records its constraint here, so
     ///        selection and the final validation see the FULL constraint set.
-    void recordConstraint(const QString& id, const QString& range);
+    ///        @p contributor is the provenance key of the declaring package version
+    ///        (or the root sentinel); it is tracked so a reselection can withdraw
+    ///        this exact contribution without dropping a range another package
+    ///        still declares.
+    void recordConstraint(const QString& id, const QString& range, const QString& contributor);
 
     /// @brief True if @p version satisfies @p own_range AND every other recorded
     ///        constraint for @p id (so a diamond's second edge is honored).
@@ -187,7 +196,33 @@ private:
 
     /// @brief Overwrite a resolved package with a re-selected feed version (new
     ///        version + dependency ids) and enqueue that version's dependencies.
+    ///        Before applying, the SUPERSEDED version's own constraint/demand
+    ///        contribution is withdrawn (see withdrawOldContribution) so no stale
+    ///        edge from the version being replaced survives.
     void applyReselection(int idx, const FeedPackageVersion& chosen);
+
+    /// @brief Withdraw every constraint and demand the pre-overwrite version of
+    ///        @p pkg_id contributed, derived from its cached feed entry whose
+    ///        version == @p old_version. Only THIS contribution is removed; a
+    ///        constraint another still-selected package also declared is retained.
+    void withdrawOldContribution(const QString& pkg_id, const QString& old_version);
+
+    /// @brief Withdraw @p contributor from the constraint and demand recorded for
+    ///        each of @p deps (the superseded version's declared dependencies).
+    void retractContribution(const QString& contributor, const QVector<NuGetDependency>& deps);
+
+    /// @brief Remove @p contributor from the (id, range) constraint's provenance;
+    ///        drop the range from the active set only when no contributor remains.
+    void withdrawConstraint(const QString& id, const QString& range, const QString& contributor);
+
+    /// @brief Remove @p contributor from @p id's demand provenance; if nothing else
+    ///        demands it, drop its still-pending (non-root) fetch so a package no
+    ///        package needs is not fetched into the closure.
+    void withdrawDemand(const QString& id, const QString& contributor);
+
+    /// @brief Drop @p lower_id from the pending queue + visited set when it is still
+    ///        pending and is not a root fetch (a root is never withdrawn).
+    void dropPendingUnneeded(const QString& lower_id);
 
     int m_max_depth;
     int m_max_packages;
@@ -202,6 +237,14 @@ private:
     /// constraint can re-run selection without a network refetch.
     QHash<QString, QVector<FeedPackageVersion>> m_feeds;  ///< lowercased id -> feed
     QHash<QString, QueueItem> m_items;                    ///< lowercased id -> resolved item
+
+    /// Per-constraint / per-demand provenance for EXACT retraction on reselection.
+    /// Each edge records its declaring package-version contributor; a superseded
+    /// version withdraws only its own contribution, so a constraint or queued id
+    /// another still-selected package legitimately declared is never dropped
+    /// (a blind removal would be a fail-open). Contributor key = "<id>\x1f<version>".
+    QHash<QString, QSet<QString>> m_constraint_src;  ///< "<id>\x1f<range>" -> contributors
+    QHash<QString, QSet<QString>> m_demand_src;      ///< lowercased id -> demanding contributors
 };
 
 }  // namespace sak

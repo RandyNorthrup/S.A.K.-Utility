@@ -20,6 +20,10 @@ namespace sak {
 namespace {
 constexpr int kDefaultBackupThreadCount = 4;
 constexpr int kDefaultLargeDriveThresholdGb = 128;
+// Sane upper bound (in MB) for the flasher read/write buffer. The settings dialog
+// caps at 512 MB; the only larger legitimate values are the app default and tests,
+// so anything above this can only come from a hand-edited INI or a foreign writer.
+constexpr int kMaxImageFlasherBufferSizeMb = 4096;
 
 // Getter-side invariant enforcement: a stored value can be out of range (older
 // config, hand-edited INI, or a foreign writer) even though the setters reject
@@ -35,6 +39,30 @@ qint64 nonNegativeOrDefault(qint64 value, qint64 default_value) {
 
 QString nonEmptyOrDefault(const QString& value, const QString& default_value) {
     return value.isEmpty() ? default_value : value;
+}
+
+// Getter-side enum enforcement: validation_mode must be one of the fixed set the
+// flasher understands ("full"/"quick"/"none"; the canonical map lives in
+// validationModeFromSetting). A value outside that set (older config, hand-edited
+// INI, or a foreign writer) resolves to the safest, most thorough default so a
+// caller never receives an unrecognized mode.
+QString validValidationModeOrDefault(const QString& value) {
+    if (value == QLatin1String("full") || value == QLatin1String("quick") ||
+        value == QLatin1String("none")) {
+        return value;
+    }
+    return QStringLiteral("full");
+}
+
+// Getter-side magnitude bound: a buffer size (in MB) outside the sane range
+// [1, kMaxImageFlasherBufferSizeMb] -- from older config, a hand-edited INI, or a
+// foreign writer -- is replaced with the default rather than propagated into an
+// absurd allocation request.
+int boundedBufferSizeOrDefault(int value, int default_value) {
+    if (value <= 0 || value > kMaxImageFlasherBufferSizeMb) {
+        return default_value;
+    }
+    return value;
 }
 }  // namespace
 
@@ -59,9 +87,14 @@ ConfigManager::ConfigManager(QObject* parent) : QObject(parent) {
     // were simply new.
     const QString load_error = describeSettingsStatus(m_settings->status());
     if (!load_error.isEmpty()) {
+        // Do not write defaults over a corrupt or inaccessible store: initializing
+        // defaults here would clobber a recoverable file or hammer a failing backend.
+        // Surface the error and leave the store untouched; callers observe isHealthy()
+        // and fail closed.
         logError("ConfigManager: {} at '{}'",
                  load_error.toStdString(),
                  m_settings->fileName().toStdString());
+        return;
     }
     logInfo("ConfigManager initialized: {}", m_settings->fileName().toStdString());
     initializeDefaults();
@@ -269,8 +302,8 @@ void ConfigManager::setDuplicateKeepStrategy(const QString& strategy) {
 
 // Image Flasher settings
 QString ConfigManager::getImageFlasherValidationMode() const {
-    return nonEmptyOrDefault(getValue("image_flasher/validation_mode", "full").toString(),
-                             QStringLiteral("full"));
+    return validValidationModeOrDefault(
+        getValue("image_flasher/validation_mode", "full").toString());
 }
 
 void ConfigManager::setImageFlasherValidationMode(const QString& mode) {
@@ -282,7 +315,7 @@ void ConfigManager::setImageFlasherValidationMode(const QString& mode) {
 }
 
 int ConfigManager::getImageFlasherBufferSize() const {
-    return positiveOrDefault(
+    return boundedBufferSizeOrDefault(
         getValue("image_flasher/buffer_size", static_cast<int>(sak::kBufferAlignment)).toInt(),
         static_cast<int>(sak::kBufferAlignment));
 }

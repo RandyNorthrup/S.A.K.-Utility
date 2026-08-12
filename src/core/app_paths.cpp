@@ -61,6 +61,18 @@ bool isWritableDirectory(const QString& path) {
     return true;
 }
 
+// Join a child onto a data root, propagating the fail-closed empty sentinel. When
+// dataRoot() (or a derived directory) is empty, QDir(QString()).filePath(child)
+// would resolve to a current-working-directory-relative path (e.g. "./config"),
+// silently reintroducing the CWD-derived path this module refuses to produce. An
+// empty root must stay empty so ConfigManager's mkpath fails and startup fails closed.
+QString joinDataPath(const QString& root, const QString& child) {
+    if (root.trimmed().isEmpty()) {
+        return QString();
+    }
+    return QDir(root).filePath(child);
+}
+
 }  // namespace
 
 QString applicationDirectory() {
@@ -109,19 +121,19 @@ QString dataRoot() {
 }
 
 QString configDirectory() {
-    return QDir(dataRoot()).filePath(QStringLiteral("config"));
+    return joinDataPath(dataRoot(), QStringLiteral("config"));
 }
 
 QString configFilePath() {
-    return QDir(configDirectory()).filePath(QStringLiteral("Utility.ini"));
+    return joinDataPath(configDirectory(), QStringLiteral("Utility.ini"));
 }
 
 QString logsDirectory() {
-    return QDir(dataRoot()).filePath(QStringLiteral("logs"));
+    return joinDataPath(dataRoot(), QStringLiteral("logs"));
 }
 
 QString tempDirectory() {
-    return QDir(dataRoot()).filePath(QStringLiteral("temp"));
+    return joinDataPath(dataRoot(), QStringLiteral("temp"));
 }
 
 bool ensureDirectory(const QString& path) {

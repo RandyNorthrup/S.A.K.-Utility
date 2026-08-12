@@ -112,8 +112,40 @@ public:
     }
 };
 
-/// @brief Secure string type that zeros memory on destruction
-using secure_string = std::basic_string<char, std::char_traits<char>, secure_allocator<char>>;
+/// @brief Smallest capacity secure_string forces so its storage lives on the heap.
+/// @details The standard library keeps short strings in a small buffer INSIDE the string
+/// object (15 chars on MSVC and libstdc++), and that buffer is never handed to the allocator
+/// -- so secure_allocator::deallocate() never wipes it. Reserving past the largest such small
+/// buffer routes the characters through the heap, where deallocate() wipes the whole
+/// allocation (including any residual tail from a previously longer value) on destruction.
+inline constexpr std::size_t kSecureStringMinCapacity = 32;
+
+/// @brief Secure string type that zeros its storage on destruction.
+/// @details std::basic_string parameterised with secure_allocator wipes only heap storage.
+/// This subclass forces heap storage for the default-construct-then-fill path (the way a
+/// secret is normally built up) and, as a belt-and-suspenders for any value that still lands
+/// in the small-string buffer, wipes the live characters directly in its destructor.
+class secure_string
+    : public std::basic_string<char, std::char_traits<char>, secure_allocator<char>> {
+    using base = std::basic_string<char, std::char_traits<char>, secure_allocator<char>>;
+
+public:
+    using base::base;
+    using base::operator=;
+
+    secure_string() { base::reserve(kSecureStringMinCapacity); }
+
+    secure_string(const secure_string&) = default;
+    secure_string(secure_string&&) noexcept = default;
+    secure_string& operator=(const secure_string&) = default;
+    secure_string& operator=(secure_string&&) noexcept = default;
+
+    ~secure_string() {
+        if (!empty()) {
+            secure_wiper::wipe(data(), size());
+        }
+    }
+};
 
 /// @brief RAII wrapper for secure memory regions
 /// @tparam T Element type

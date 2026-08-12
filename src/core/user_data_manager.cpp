@@ -3,6 +3,7 @@
 
 #include "sak/user_data_manager.h"
 
+#include "sak/cleanup_worker.h"
 #include "sak/encryption.h"
 #include "sak/layout_constants.h"
 #include "sak/leftover_cleanup_guard.h"
@@ -641,11 +642,12 @@ bool UserDataManager::deleteBackup(const QString& backup_path) {
     }
 
     // Delete-TIME ancestor-junction-swap re-screen. filePathDeletionRefusal screened the ancestor
-    // chain at validate time, but removeRecursively below re-resolves the path STRING and would
-    // walk into a redirected real target if a local user swapped an ancestor into a junction in the
-    // meantime. Re-verify the leaf-and-ancestor reparse state immediately before the destructive
-    // call so a fresh swap is refused fail-closed. (This is the string-level TOCTOU narrowing that
-    // fits within this file; the full per-node handle-verified walk lives in cleanup_worker.)
+    // chain at validate time; re-verify the leaf-and-ancestor reparse state immediately before the
+    // destructive call so a fresh swap is refused fail-closed. A DIRECTORY payload is then removed
+    // through CleanupWorker's per-node handle-verified walk (every node opened + verified before
+    // each syscall), which closes the residual string re-resolution TOCTOU a bare removeRecursively
+    // left open; this lexical re-screen also fail-closes the file-payload QFile::remove string
+    // unlink below.
     if (sak::pathReparseUnsafe(backup_path)) {
         Q_EMIT operationError(QFileInfo(backup_path).fileName(),
                               QStringLiteral("Refusing to delete backup: path is (or is nested "
@@ -658,7 +660,7 @@ bool UserDataManager::deleteBackup(const QString& backup_path) {
     // delete -- it would leave the backup on disk forever; remove such payloads recursively.
     const QFileInfo payload(backup_path);
     if (payload.isDir()) {
-        success &= QDir(backup_path).removeRecursively();
+        success &= CleanupWorker::deleteFolderTreeVerified(backup_path);
     } else if (payload.exists()) {
         success &= QFile::remove(backup_path);
     }

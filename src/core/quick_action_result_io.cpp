@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 
 #include <cmath>
 #include <limits>
@@ -38,6 +39,31 @@ bool readResultCounter(const QJsonValue& value, qint64* out) {
     return true;
 }
 
+// Parses a persisted status token into an ActionStatus. Returns true and fills *out on a
+// recognised value; returns false (leaving *out untouched) on an empty or unknown token so a
+// reader can fail closed on a corrupt result file. Case-insensitive, whitespace-tolerant.
+bool tryActionStatusFromString(const QString& status, QuickAction::ActionStatus* out) {
+    const QString normalized = status.trimmed().toLower();
+    if (normalized == "idle") {
+        *out = QuickAction::ActionStatus::Idle;
+    } else if (normalized == "scanning") {
+        *out = QuickAction::ActionStatus::Scanning;
+    } else if (normalized == "ready") {
+        *out = QuickAction::ActionStatus::Ready;
+    } else if (normalized == "running") {
+        *out = QuickAction::ActionStatus::Running;
+    } else if (normalized == "success") {
+        *out = QuickAction::ActionStatus::Success;
+    } else if (normalized == "failed") {
+        *out = QuickAction::ActionStatus::Failed;
+    } else if (normalized == "cancelled") {
+        *out = QuickAction::ActionStatus::Cancelled;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 QString actionStatusToString(QuickAction::ActionStatus status) {
@@ -62,27 +88,13 @@ QString actionStatusToString(QuickAction::ActionStatus status) {
 }
 
 QuickAction::ActionStatus actionStatusFromString(const QString& status) {
-    // Reads a status out of a persisted result file. An empty or unrecognised
-    // value maps to Idle, which is the conservative answer: it never claims an
-    // action succeeded. No assert -- a damaged result file is data.
-    const QString normalized = status.trimmed().toLower();
-    if (normalized == "scanning") {
-        return QuickAction::ActionStatus::Scanning;
-    }
-    if (normalized == "ready") {
-        return QuickAction::ActionStatus::Ready;
-    }
-    if (normalized == "running") {
-        return QuickAction::ActionStatus::Running;
-    }
-    if (normalized == "success") {
-        return QuickAction::ActionStatus::Success;
-    }
-    if (normalized == "failed") {
-        return QuickAction::ActionStatus::Failed;
-    }
-    if (normalized == "cancelled") {
-        return QuickAction::ActionStatus::Cancelled;
+    // Public contract: an empty or unrecognised value maps to Idle, the conservative answer --
+    // it never claims an action succeeded. No assert; a damaged value is data. Callers that
+    // need to reject a corrupt persisted status use the strict tryActionStatusFromString below
+    // (readExecutionResultFile does), which fails closed instead of mapping to Idle.
+    QuickAction::ActionStatus parsed = QuickAction::ActionStatus::Idle;
+    if (tryActionStatusFromString(status, &parsed)) {
+        return parsed;
     }
     return QuickAction::ActionStatus::Idle;
 }
@@ -103,8 +115,11 @@ bool writeExecutionResultFile(const QString& file_path,
 
     const QJsonDocument doc(json);
 
-    QFile file(file_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    // QSaveFile writes to a sibling temp file and atomically renames it into place on commit(),
+    // so a reader never observes a half-written result and a crash mid-write cannot corrupt the
+    // previous good file. A failed write/commit discards the temp, leaving any prior file intact.
+    QSaveFile file(file_path);
+    if (!file.open(QIODevice::WriteOnly)) {
         if (error_message != nullptr) {
             *error_message = QString("Failed to write result file: %1").arg(file.errorString());
         }
@@ -113,8 +128,15 @@ bool writeExecutionResultFile(const QString& file_path,
 
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Compact);
     if (file.write(json_bytes) != json_bytes.size()) {
+        file.cancelWriting();
         if (error_message != nullptr) {
             *error_message = QStringLiteral("Incomplete write of result file");
+        }
+        return false;
+    }
+    if (!file.commit()) {
+        if (error_message != nullptr) {
+            *error_message = QString("Failed to commit result file: %1").arg(file.errorString());
         }
         return false;
     }
@@ -202,8 +224,14 @@ bool readExecutionResultFile(const QString& file_path,
         }
     }
 
-    if (status != nullptr) {
-        *status = actionStatusFromString(json.value("status").toString());
+    // A persisted result is written by writeExecutionResultFile, which always records a known
+    // status token. A missing or unrecognised "status" therefore means the file is corrupt or
+    // was produced by something else -- fail closed rather than silently mapping it to Idle.
+    if (status != nullptr && !tryActionStatusFromString(json.value("status").toString(), status)) {
+        if (error_message != nullptr) {
+            *error_message = QStringLiteral("Result file has a missing or unknown status field.");
+        }
+        return false;
     }
 
     return true;

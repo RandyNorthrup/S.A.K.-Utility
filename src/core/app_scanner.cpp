@@ -29,6 +29,16 @@ constexpr int kRegistrySubKeyNameChars = 256;
 constexpr int kRegistryValueBufferChars = 1024;
 constexpr int kChocolateyListFieldCount = 2;
 
+// Mark a scan source incomplete when a hive open / enum / subkey-open / AppX /
+// choco step fails, so a denied or failed source is surfaced to the caller
+// rather than silently read as an empty inventory. Only ever clears the flag;
+// the aggregating caller initializes it to true.
+void markSourceIncomplete(bool* scanOk) {
+    if (scanOk != nullptr) {
+        *scanOk = false;
+    }
+}
+
 #ifdef _WIN32
 // Short hive label so a registry_key identifier disambiguates HKLM vs HKCU
 // entries that share the same Uninstall subkey path.
@@ -55,50 +65,66 @@ static const wchar_t* REGISTRY_UNINSTALL_WOW64 =
 AppScanner::AppScanner() = default;
 AppScanner::~AppScanner() = default;
 
-std::vector<AppScanner::AppInfo> AppScanner::scanAll() {
+std::vector<AppScanner::AppInfo> AppScanner::scanAll(bool* scanOk) {
     std::vector<AppInfo> all_apps;
 
     // Scan registry (HKLM + HKCU)
-    auto registry_apps = scanRegistry();
+    bool registry_ok = true;
+    auto registry_apps = scanRegistry(&registry_ok);
     sak::logDebug("AppScanner: Registry scan found {} apps", registry_apps.size());
     all_apps.insert(all_apps.end(), registry_apps.begin(), registry_apps.end());
 
     // Scan AppX packages
-    auto appx_apps = scanAppX();
+    bool appx_ok = true;
+    auto appx_apps = scanAppX(&appx_ok);
     sak::logDebug("AppScanner: AppX scan found {} apps", appx_apps.size());
     all_apps.insert(all_apps.end(), appx_apps.begin(), appx_apps.end());
 
     // Scan Chocolatey packages
-    auto choco_apps = scanChocolatey();
+    bool choco_ok = true;
+    auto choco_apps = scanChocolatey(&choco_ok);
     sak::logDebug("AppScanner: Chocolatey scan found {} apps", choco_apps.size());
     all_apps.insert(all_apps.end(), choco_apps.begin(), choco_apps.end());
 
+    if (scanOk != nullptr) {
+        *scanOk = registry_ok && appx_ok && choco_ok;
+    }
     sak::logDebug("AppScanner: Total apps found: {}", all_apps.size());
     return all_apps;
 }
 
-std::vector<AppScanner::AppInfo> AppScanner::scanRegistry() {
+std::vector<AppScanner::AppInfo> AppScanner::scanRegistry(bool* scanOk) {
+    // Initialize once here (the aggregate over all hives); scanRegistryHive only
+    // ever clears the flag, so a failure in any hive is not undone by a later one.
+    if (scanOk != nullptr) {
+        *scanOk = true;
+    }
     std::vector<AppInfo> apps;
 
     // Scan HKEY_LOCAL_MACHINE (system-wide apps)
     auto hklm_apps = scanRegistryHive(HKEY_LOCAL_MACHINE,
-                                      QString::fromWCharArray(REGISTRY_UNINSTALL_HKLM));
+                                      QString::fromWCharArray(REGISTRY_UNINSTALL_HKLM),
+                                      scanOk);
     apps.insert(apps.end(), hklm_apps.begin(), hklm_apps.end());
 
     // Scan HKEY_LOCAL_MACHINE WOW6432Node (32-bit apps on 64-bit Windows)
     auto wow64_apps = scanRegistryHive(HKEY_LOCAL_MACHINE,
-                                       QString::fromWCharArray(REGISTRY_UNINSTALL_WOW64));
+                                       QString::fromWCharArray(REGISTRY_UNINSTALL_WOW64),
+                                       scanOk);
     apps.insert(apps.end(), wow64_apps.begin(), wow64_apps.end());
 
     // Scan HKEY_CURRENT_USER (user-specific apps)
     auto hkcu_apps = scanRegistryHive(HKEY_CURRENT_USER,
-                                      QString::fromWCharArray(REGISTRY_UNINSTALL_HKCU));
+                                      QString::fromWCharArray(REGISTRY_UNINSTALL_HKCU),
+                                      scanOk);
     apps.insert(apps.end(), hkcu_apps.begin(), hkcu_apps.end());
 
     return apps;
 }
 
-std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const QString& subkey) {
+std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive,
+                                                              const QString& subkey,
+                                                              bool* scanOk) {
     // scanRegistry is the only caller; it passes a predefined HKEY root and one of the
     // REGISTRY_UNINSTALL_* string constants.
     Q_ASSERT(hive);
@@ -111,9 +137,19 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
 
     if (result != ERROR_SUCCESS) {
         sak::logWarning("AppScanner: Failed to open registry key: {}", subkey.toStdString());
+        markSourceIncomplete(scanOk);
         return apps;
     }
 
+    enumerateHiveApps(hKey, hive, subkey, apps, scanOk);
+
+    RegCloseKey(hKey);
+    return apps;
+}
+
+void AppScanner::enumerateHiveApps(
+    void* openKey, void* hive, const QString& subkey, std::vector<AppInfo>& apps, bool* scanOk) {
+    HKEY const hKey = static_cast<HKEY>(openKey);
     // Enumerate subkeys (each represents an app). Classify the return code
     // explicitly: an ERROR_MORE_DATA (a single over-long subkey name) or a
     // transient error must SKIP that one entry, not silently halt the entire
@@ -135,12 +171,14 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
             // subkey and keep going so a single bad entry never truncates the scan.
             sak::logWarning("AppScanner: skipping registry subkey (enum status {})",
                             static_cast<long>(enumResult));
+            markSourceIncomplete(scanOk);
             continue;
         }
 
         // Open this application's registry key
         HKEY appKey;
         if (RegOpenKeyExW(hKey, subKeyName, 0, KEY_READ, &appKey) != ERROR_SUCCESS) {
+            markSourceIncomplete(scanOk);
             continue;
         }
 
@@ -164,9 +202,6 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
 
         RegCloseKey(appKey);
     }
-
-    RegCloseKey(hKey);
-    return apps;
 }
 
 QString AppScanner::readRegistryValue(void* key,
@@ -269,7 +304,10 @@ QString AppScanner::composePowerShellPath(const QString& systemRoot) {
                            QStringLiteral("/System32/WindowsPowerShell/v1.0/powershell.exe"));
 }
 
-std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
+std::vector<AppScanner::AppInfo> AppScanner::scanAppX(bool* scanOk) {
+    if (scanOk != nullptr) {
+        *scanOk = true;
+    }
     std::vector<AppInfo> apps;
 
     // Resolve PowerShell under the OS-authoritative Windows directory, never the
@@ -278,6 +316,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     const QString powershell = composePowerShellPath(authoritativeWindowsRoot());
     if (powershell.isEmpty()) {
         sak::logWarning("AppScanner: cannot resolve System32 PowerShell; skipping AppX scan");
+        markSourceIncomplete(scanOk);
         return apps;
     }
 
@@ -290,6 +329,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
         sak::kTimeoutProcessLongMs);
     if (!result.succeeded()) {
         sak::logWarning("AppScanner: PowerShell failed/timed out while scanning AppX packages");
+        markSourceIncomplete(scanOk);
         return apps;
     }
 
@@ -300,6 +340,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     if (error.error != QJsonParseError::NoError) {
         sak::logWarning("AppScanner: Failed to parse AppX JSON {}",
                         error.errorString().toStdString());
+        markSourceIncomplete(scanOk);
         return apps;
     }
 
@@ -330,7 +371,35 @@ std::vector<AppScanner::AppInfo> AppScanner::scanAppX() {
     return apps;
 }
 
-std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
+namespace {
+// Parse `choco list --limit-output` rows (name|version|...) into AppInfo entries.
+std::vector<AppScanner::AppInfo> parseChocolateyListOutput(const QString& output) {
+    std::vector<AppScanner::AppInfo> apps;
+    const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+    for (const auto& line : lines) {
+        if (line.trimmed().isEmpty() || line.startsWith("Chocolatey")) {
+            continue;
+        }
+        const QStringList parts = line.split('|');
+        if (parts.size() >= kChocolateyListFieldCount) {
+            AppScanner::AppInfo app;
+            app.source = AppScanner::AppInfo::Source::Chocolatey;
+            app.name = parts[0].trimmed();
+            app.version = parts[1].trimmed();
+            app.publisher = "Chocolatey";
+            app.choco_package = app.name;
+            app.choco_available = true;
+            apps.push_back(app);
+        }
+    }
+    return apps;
+}
+}  // namespace
+
+std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey(bool* scanOk) {
+    if (scanOk != nullptr) {
+        *scanOk = true;
+    }
     std::vector<AppInfo> apps;
 
     // Bundled portable choco ONLY. A portable technician tool must never depend on
@@ -340,6 +409,9 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
     // to a PATH choco.
     const auto& tools = BundledToolsManager::instance();
     if (!tools.toolExists(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"))) {
+        // A designed, legitimate "no Chocolatey source" state (e.g. Thin Bundle),
+        // NOT a scan failure -- leave scanOk true so the common no-choco machine
+        // does not read as a perpetually incomplete inventory.
         sak::logWarning("Bundled Chocolatey not present; skipping Chocolatey package scan");
         return apps;
     }
@@ -353,6 +425,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
         sak::logWarning(
             "Bundled choco.exe failed authenticity verification; skipping Chocolatey "
             "package scan");
+        markSourceIncomplete(scanOk);
         return apps;
     }
 
@@ -370,31 +443,11 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
         sak::logWarning(
             "Chocolatey package scan failed/timed out after 10s -- choco may not be installed "
             "or is unresponsive");
+        markSourceIncomplete(scanOk);
         return apps;
     }
 
-    const QString output = result.std_out;
-
-    const QStringList lines = output.split('\n', Qt::SkipEmptyParts);
-    for (const auto& line : lines) {
-        if (line.trimmed().isEmpty() || line.startsWith("Chocolatey")) {
-            continue;
-        }
-
-        QStringList parts = line.split('|');
-        if (parts.size() >= kChocolateyListFieldCount) {
-            AppInfo app;
-            app.source = AppInfo::Source::Chocolatey;
-            app.name = parts[0].trimmed();
-            app.version = parts[1].trimmed();
-            app.publisher = "Chocolatey";
-            app.choco_package = app.name;
-            app.choco_available = true;
-            apps.push_back(app);
-        }
-    }
-
-    return apps;
+    return parseChocolateyListOutput(result.std_out);
 }
 
 }  // namespace sak

@@ -778,7 +778,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: LeftoverScanner::scan exposes a LeftoverScanReliability out-param (204,251), but UninstallWorker::scanLeftovers calls scanner.scan(m_scanStopFlag, progress_cb) with the 3rd arg omitted (332) -> reliability discarded. A shell-out phase that failed (returns empty) reads as 'nothing found' and runLeftoverPhase emits uninstallComplete normally, so a degraded scan is reported complete.
   - Fix: Capture LeftoverScanReliability in scanLeftovers and surface unreliable phases into the report (mirror captureSnapshotOrWarn).
-- [ ] **R5-P7-16** [LOW] [PARTIAL] App inventory has no completeness result
+- [x] **R5-P7-16** [LOW] [PARTIAL] App inventory has no completeness result
+  - RESOLVED 2026-08-11 [fixed]: added an optional trailing bool* scanOk=nullptr out-param to scanAll/scanRegistry/scanAppX/scanChocolatey (and scanRegistryHive) so every existing caller compiles unchanged; scanAll ANDs the per-source flags so a denied/failed source is surfaced structurally, not just in the log.
   - Files: src/core/app_scanner.cpp:56, src/core/app_scanner.cpp:99, src/core/app_scanner.cpp:270
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: Same completeness theme as #4 for the general app-management list (informational UI list, not a security decision surface). Registry/AppX/choco open/enum failures are indistinguishable from empty. No attacker fail-open.
@@ -801,12 +802,14 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: executeBuildListManifest writes entry.version = job.version verbatim (458), which may be empty for an unpinned package. chocoInstallArgs always emits --version entry.version (1186-1187) and installBundlePackage rejects an empty version via entryInstallTokensValid->isSafeInstallToken (1222,143). So an unpinned Thin/List entry fails closed at install. A functional break, fail-closed (safe), not a security fail-open.
   - Fix: For List/unpinned entries omit --version so choco fetches latest from the feed, or resolve+pin the version at build time.
-- [ ] **R5-P7-29** [LOW] [PARTIAL] Malformed/paginated NuGet feed becomes authoritative partial
+- [x] **R5-P7-29** [LOW] [PARTIAL] Malformed/paginated NuGet feed becomes authoritative partial
+  - RESOLVED 2026-08-11 [fixed]: fetchFeedVersions no longer sets ok=true purely on transfer success: fetchFeedPage runs scanFeedBody (a QXmlStreamReader validity pass) so a non-empty-but-unparseable body is treated as a fetch failure, and OData next-link continuation is followed/flagged.
   - Files: src/core/nuget_dependency_resolver.cpp:428, src/core/offline_deployment_worker.cpp:523
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: parseODataFeedVersions returns an empty list on QDomDocument::setContent failure (431-432), and fetchFeedVersions sets ok=true purely on HTTP success (536) -- so a malformed body is treated as an authoritative 'no versions'. OData continuation links are ignored, so a truncated first page reads as the full version list. Build-time over HTTPS; impact is mostly fail-closed (unmet dep warned).
   - Fix: Treat an unparseable feed body as a fetch failure (ok=false), and follow OData next-links or flag truncation when a next-link is present.
-- [ ] **R5-P7-31** [LOW] [PARTIAL] Backup deletion validate-then-recursive-delete by string
+- [x] **R5-P7-31** [LOW] [PARTIAL] Backup deletion validate-then-recursive-delete by string
+  - RESOLVED 2026-08-11 [fixed]: UserDataManager::deleteBackup now routes the directory-payload delete through cleanup_worker's handle-verified per-node walk (new public static entry point), closing the QDir::removeRecursively string re-resolution TOCTOU; the delete-time reparse re-screen is retained.
   - Files: src/core/user_data_manager.cpp:536, src/core/user_data_manager.cpp:585
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: backupDeletionRefusal runs filePathDeletionRefusal (shared-root/UNC/device + leaf-AND-ancestor reparse screen) plus a metadata-identity check (542-554), then QDir(backup_path).removeRecursively() re-resolves the string (585). Residual: the string-path recursive-delete TOCTOU that cleanup_worker closed with a handle-verified walk is still open here.
@@ -853,7 +856,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: local-config-or-registry (reachable)
   - Evidence: removeRegistryEntry uses RegDeleteKeyExW (359-381) -- a single leaf key that FAILS if it has subkeys, so no tree wipe; registryKeyPath is enumerator-derived (Uninstall/*) and the controller gates on isHiveRootedKeyPath (253). But unlike cleanup_worker::deleteRegistryKey it has NO protected-key denylist, hive-root, or REG_LINK guard. Residual: deleting a single protected/link leaf key if registryKeyPath can be steered there.
   - Fix: Route removeRegistryEntry through the same protected-key / hive-root / REG_LINK screen used by cleanup_worker::deleteRegistryKey.
-- [ ] **R5-P7-45** [LOW] [PARTIAL] NuGet version reselection leaves stale state
+- [x] **R5-P7-45** [LOW] [PARTIAL] NuGet version reselection leaves stale state
+  - RESOLVED 2026-08-11 [fixed]: added per-edge constraint provenance (contributor id+version in header-owned m_constraint_src/m_demand_src) so version reselection retracts EXACTLY the previously-selected version's contribution (not a blind removal that could drop another still-selected package's constraint -- which would be fail-open).
   - Files: src/core/nuget_dependency_resolver.cpp:305
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: Reselecting a version overwrites the dependency set but does not retract constraints/queued packages introduced by the previously-selected version -- a resolver-internal correctness issue at build time. Impact bounded to an over-broad offline closure, not a fail-open on the installed system.
@@ -899,12 +903,14 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: clean_leftovers builds CleanupWorker via the 2-arg ctor (app_mutating_actions.cpp:2064) and never calls setRequireRecoverable, so m_requireRecoverable stays false (cleanup_worker.h:86). With use_recycle_bin=true (default) but requireRecoverable=false, attemptRecycle on SHFileOperation failure returns FallThrough -> permanent delete (cleanup_worker.cpp:451-456); the auto-clean GUI path fails closed at 446-449 but the AI action does not. It is surfaced in permanently_deleted, but the recycle (recoverable) contract is broken on failure.
   - Fix: clean_leftovers should worker.setRequireRecoverable(use_recycle_bin) so a recycle failure leaves the item in place instead of permanent-deleting.
-- [ ] **R5-P8-4** [LOW] [DESIGN_INTENT] executeAction ignores require_confirmation; bridge passes false
+- [x] **R5-P8-4** [LOW] [DESIGN_INTENT] executeAction ignores require_confirmation; bridge passes false
+  - RESOLVED 2026-08-11 [already-correct]: executeAction already refuses (logs+returns) when require_confirmation is true; the parameter is an active gate, not vestigial (prior wave). Stale checkbox.
   - Files: src/core/quick_action_controller.cpp:254, src/core/app_action_bridge.cpp:169
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: executeAction Q_UNUSED(require_confirmation) (l.254) and the bridge passes false (l.169) BY DESIGN: confirmation is enforced upstream at the AI tool-policy/panel human-gate (ai_tool_policy.cpp:531-562; ai_assistant_panel restore-point/catastrophic gate) before the action runs. The controller parameter is vestigial. No untrusted caller reaches executeAction un-gated.
   - Fix: Remove/rename the vestigial require_confirmation parameter or assert it, to stop implying the controller gates.
-- [ ] **R5-P8-5** [LOW] [DESIGN_INTENT] Registry accepts contradictory descriptors; no invariant enforcement
+- [x] **R5-P8-5** [LOW] [DESIGN_INTENT] Registry accepts contradictory descriptors; no invariant enforcement
+  - RESOLVED 2026-08-11 [fixed]: registrationError now rejects a descriptor with destructive/catastrophic set but mutating unset (would slip a data-loss op past the mutating-driven human gate); requires_admin-elevation half documented (not registry-checkable). No false-close: all real destructive descriptors use mutatingDescriptor().
   - Files: src/core/app_action_registry.cpp:23
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: registerAction only checks non-empty id / non-null invoke / no duplicate (l.26-46); it does not assert flag relationships. Descriptors are trusted compile-time app constants (makeDescriptor/mutatingDescriptor), not untrusted input; the gate keys off the individual descriptor flags in the run handler. A contradictory descriptor would be an authoring bug, not attacker-influenced.
@@ -914,67 +920,80 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: gui-local-user (reachable)
   - Evidence: requireNewOrEmptyDir (194-221) and the compress zip_info.exists() check (3401) are pathname-based; pathReparseUnsafe guards the symlink/junction redirect vector (197,3394). Residual: a co-located local attacker with write access to the destination dir could plant a regular file in the check->write window (compressToZip clobbers+removes on failure). Inherent to non-atomic pathname writers; low.
   - Fix: Create the zip via exclusive-create (QSaveFile / O_EXCL semantics); accept the residual for directory-adding writers or document it.
-- [ ] **R5-P8-8** [LOW] [PARTIAL] Export count ceiling only applies to explicit item_ids; whole-store uncapped by count
+- [x] **R5-P8-8** [LOW] [PARTIAL] Export count ceiling only applies to explicit item_ids; whole-store uncapped by count
+  - RESOLVED 2026-08-11 [fixed]: whole-store export now caps item COUNT (not just bytes) for export_mbox/export_pst: collectCappedMboxItemIds / collectCappedPstItemIds page and cap at kMaxExportItems (item_ids_capped reported), handing the worker an explicit list; fails closed on a page/folder read error.
   - Files: src/core/app_mutating_actions.cpp:142, src/core/app_mutating_actions.cpp:510
   - Boundary: untrusted-input (reachable)
   - Evidence: kMaxExportItems=5000 is enforced only inside exportItemIdsFromArgs/pstExportItemIdsFromArgs (142,425). When item_ids is omitted the whole store is exported (510-512, collectPstFolderNodeIds) bounded only by the byte cap (2GB PST / kMaxMboxBytes) + required-empty output dir + human gate. The count 'file-spray' bound the comment (78-81) advertises is not applied to the whole-store path.
   - Fix: Cap the whole-store export item count too (pass a max to EmailExportWorker / truncate + report item_ids_capped).
-- [ ] **R5-P8-13** [LOW] [PARTIAL] DHCP reports success when DNS failed; wifi success when no connect issued
+- [~] **R5-P8-13** [LOW] [PARTIAL] DHCP reports success when DNS failed; wifi success when no connect issued
+  - RESOLVED 2026-08-11 [deferred-with-rationale]: keeping DHCP success=true when dns_applied is false is deliberate: netsh reports 'DNS already automatic' as a non-zero exit for an already-automatic adapter, so dns_applied=false does not reliably distinguish a real failure from a benign no-op, and live netsh cert is forbidden ([[no-vm-networking-cert]]); a false-close is worse than the gap. The partial state is fully surfaced in the message + data.dns_automatic. (matches the R5 netsh-already-enabled quirk.)
   - Files: src/core/app_mutating_actions.cpp:2462, src/core/app_mutating_actions.cpp:2934
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: DHCP path returns {true} with dns_automatic=false and a message stating DNS could NOT be set (2455-2466) -- primary IPv4-to-DHCP succeeded, DNS sub-step surfaced. Wifi returns {true} for profile-installed-only with connect_issued=false and an honest 'will connect when in range' message (2934-2938). Failures are surfaced but success=true; inconsistent with the static-IP path which returns false on DNS failure (2633).
   - Fix: For consistency, return success=false (or a distinct partial status) on the DHCP path when dns_applied is false.
-- [ ] **R5-P8-14** [LOW] [CONFIRMED_REAL] Wrong-typed dns_servers silently becomes empty; static IP proceeds without DNS
+- [x] **R5-P8-14** [LOW] [CONFIRMED_REAL] Wrong-typed dns_servers silently becomes empty; static IP proceeds without DNS
+  - RESOLVED 2026-08-11 [fixed]: staticDnsFromArgs fails closed on a present-but-non-array dns_servers and any non-string entry (dnsServersArray helper) instead of coercing to an empty/partial list; an omitted/null dns_servers still legitimately leaves DNS unchanged.
   - Files: src/core/app_mutating_actions.cpp:2532, src/core/app_mutating_actions.cpp:2534
   - Boundary: untrusted-input (reachable)
   - Evidence: staticDnsFromArgs does args.value('dns_servers').toArray() with no isArray() check (2532) and value.toString() per entry (2534): a mistyped dns_servers (e.g. a bare string) yields an empty list and a numeric element is silently skipped, so setAdapterStaticIp applies the static IP with NO DNS and reports success -- a fail-open coercion unlike the item_ids parsers which fail closed.
   - Fix: Reject a non-array dns_servers and any non-string entry (fail closed) instead of coercing to empty/skipping.
-- [ ] **R5-P8-15** [LOW] [DESIGN_INTENT] Corrupt config only logs then continues with defaults + init writes
+- [x] **R5-P8-15** [LOW] [DESIGN_INTENT] Corrupt config only logs then continues with defaults + init writes
+  - RESOLVED 2026-08-11 [fixed]: ConfigManager ctor returns early (skips initializeDefaults) when QSettings::status()!=NoError, so defaults are never written over a corrupt/inaccessible store; isHealthy() still surfaces the bad state.
   - Files: src/core/config_manager.cpp:60, src/core/config_manager.cpp:67
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: The load status IS surfaced: describeSettingsStatus logs the error (60-65) and isHealthy() exposes it (184-186) -- a deliberate prior remediation (comment 56-59). Residual: the ctor still calls initializeDefaults() which writes defaults over a corrupt/inaccessible store and nothing aborts on unhealthy. Config is app-owned and the defaults are safe.
   - Fix: Skip initializeDefaults() writes when status()!=NoError and let callers observe isHealthy() to fail closed.
-- [ ] **R5-P8-16** [LOW] [PARTIAL] Config has no schema/integrity/ACL; controls warnings + flasher params
+- [x] **R5-P8-16** [LOW] [PARTIAL] Config has no schema/integrity/ACL; controls warnings + flasher params
+  - RESOLVED 2026-08-11 [fixed]: getter-side validation added: validation_mode enum-checked against {full,quick,none} (safest default full); buffer_size magnitude-bounded to [1,kMaxImageFlasherBufferSizeMb].
   - Files: src/core/config_manager.cpp:28, src/core/config_manager.cpp:301
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: Numeric getters re-clamp on read (positiveOrDefault/nonNegativeOrDefault 28-34); the real flash SAFETY is code-enforced by unsafeFlashReason, NOT config -- show_system_drive_warning only toggles a UI warning, not the actual system-disk refusal. Residual: string/bool config values (validation_mode, buffer_size magnitude) aren't range-bounded, but are non-safety-critical and app-owned.
   - Fix: Range/enum-validate string+bool config on read; note safety is not config-driven so no integrity/ACL layer is required for the guard.
-- [ ] **R5-P8-17** [LOW] [PARTIAL] Path validation lacks ADS / trailing-dot / 8.3 / extended-namespace handling
+- [x] **R5-P8-17** [LOW] [PARTIAL] Path validation lacks ADS / trailing-dot / 8.3 / extended-namespace handling
+  - RESOLVED 2026-08-11 [fixed]: containsSuspiciousPatterns now rejects ADS colon-streams (any colon not the drive-letter separator at index 1), trailing dot/space, and //?/ extended-namespace forms (Windows-only helpers).
   - Files: src/core/input_validator.cpp:527, src/core/path_utils.cpp:87
   - Boundary: untrusted-input (reachable)
   - Evidence: validatePathWithinBase uses weakly_canonical + component-wise containment (527-562) and is pathname-based BY CONTRACT; the ancestor reparse walk in validatePathExistence + destructive callers' GetFinalPathNameByHandleW handle re-verify close the real redirect gap (comment 529-534). Residual: ADS (name::$DATA), trailing dot/space, 8.3 short names and //?/ extended-namespace forms are not explicitly normalized/rejected in the string validator; any caller not doing handle re-verify carries the residual.
   - Fix: Reject ADS colon-streams, trailing dot/space, and //?/ extended-namespace in the validator; ensure every destructive caller does handle re-verify.
-- [ ] **R5-P8-19** [LOW] [PARTIAL] Regex inputs: no length/complexity/timeout; disk-loaded not syntax-validated
+- [x] **R5-P8-19** [LOW] [PARTIAL] Regex inputs: no length/complexity/timeout; disk-loaded not syntax-validated
+  - RESOLVED 2026-08-11 [fixed]: loadCustomPatterns already validated isValid()/dedup; added the length/count caps (kMaxPatternLength=4096, kMaxCustomPatterns) so disk-loaded patterns match the add/update paths.
   - Files: src/core/regex_pattern_library.cpp:254, src/core/regex_pattern_library.cpp:97
   - Boundary: local-config-or-registry (reachable)
   - Evidence: addCustomPattern (97-103) and updateCustomPattern (132-138) validate QRegularExpression.isValid(), but loadCustomPatterns only checks non-empty key/pattern (254) and skips the isValid() check -- inconsistent. No explicit length/complexity cap, though PCRE has internal match limits and the search/scan actions run under an outer invocation timeout that bounds ReDoS.
   - Fix: Validate isValid() (and cap pattern length/count) in loadCustomPatterns to match the add/update paths.
-- [ ] **R5-P8-20** [LOW] [DESIGN_INTENT] Encryption params permit 1 iteration, 8-byte salt, AES-128/192
+- [x] **R5-P8-20** [LOW] [DESIGN_INTENT] Encryption params permit 1 iteration, 8-byte salt, AES-128/192
+  - RESOLVED 2026-08-11 [fixed]: valid_encryption_params tightened to AES-256 only (rejects a downgrade to AES-128/192); safe because no caller/test sets a weaker key_size and the app default is already AES-256.
   - Files: src/core/encryption.cpp:180, include/sak/encryption.h:27
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: valid_encryption_params (180-184) is a sanity floor rejecting non-AES key sizes / zero iterations / <8 salt. EncryptionParams is an app-controlled C++ struct whose defaults are strong (100k iters, 32B salt, AES-256, h.19-31); no untrusted path sets weaker params, and the ciphertext does not embed them, so an attacker cannot force a downgrade.
   - Fix: Optionally raise the floor (min iteration count, forbid <256-bit key) as hardening; not attacker-reachable today.
-- [ ] **R5-P8-21** [LOW] [CONFIRMED_REAL] secure_string does not wipe MSVC small-string (SSO) storage
+- [x] **R5-P8-21** [LOW] [CONFIRMED_REAL] secure_string does not wipe MSVC small-string (SSO) storage
+  - RESOLVED 2026-08-11 [fixed]: CONFIRMED_REAL SSO gap: secure_string is now a subclass whose default ctor reserve()s kSecureStringMinCapacity=32 to force heap storage, so the allocator's zero-on-deallocate wipes short secrets that MSVC would otherwise keep in the inline SSO buffer.
   - Files: include/sak/secure_memory.h:89, include/sak/secure_memory.h:111
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: secure_string = basic_string with secure_allocator, which zeroes only on deallocate() (89-95). MSVC SSO stores strings up to 15 chars INSIDE the std::string object, so deallocate() is never called and the inline buffer is not wiped on destruction -- a genuine gap in the security primitive for short secrets. Requires local memory disclosure to exploit.
   - Fix: Don't rely on the allocator for wiping short strings: use a fixed secure_buffer for secrets, reserve() to force heap, or wrap with an explicit-wipe destructor.
-- [ ] **R5-P8-22** [LOW] [CONFIRMED_REAL] Permission strategies non-transactional; Hybrid accepts empty SID
+- [x] **R5-P8-22** [LOW] [CONFIRMED_REAL] Permission strategies non-transactional; Hybrid accepts empty SID
+  - RESOLVED 2026-08-11 [already-correct]: the Hybrid strip-then-set branch lacking the empty-SID guard was fully removed in commit 3ec09a6 (ancestor of HEAD); the code no longer exists. Stale checkbox.
   - Files: src/core/permission_manager.cpp:323, src/core/permission_manager.cpp:326
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: applyPermissionStrategy Hybrid strips then sets permissions (326) with NO empty-SID check, unlike AssignToDestination which validates the SID first (311-314). A mid-sequence failure (or empty SID) leaves the path stripped with permissions half-applied. Mode/SID are app-controlled, not untrusted input.
   - Fix: Validate destinationUserSID non-empty for Hybrid before stripping; report a clear error on partial application.
-- [ ] **R5-P8-23** [LOW] [CONFIRMED_REAL] Logger writes messages verbatim: no redaction / newline sanitization
+- [x] **R5-P8-23** [LOW] [CONFIRMED_REAL] Logger writes messages verbatim: no redaction / newline sanitization
+  - RESOLVED 2026-08-11 [fixed]: CWE-117 log-forging: sanitizeLogText()/appendEscapedControl() escape CR/LF and other control characters before writing, routed through logInternal and logOperation.
   - Files: src/core/logger.cpp:108, src/core/quick_action_controller.cpp:481
   - Boundary: untrusted-input (reachable)
   - Evidence: logInternal formats the message straight into the log line (108-114) with no CR/LF stripping, and logOperation writes action name+message to file directly (481-490). Attacker-controlled substrings (filenames, disk paths, PST fields, model tool args) containing newlines can forge log records (CWE-117). Secret redaction is broader/speculative -- the crypto path wipes rather than logs secrets.
   - Fix: Strip/escape CR/LF and other control characters from the message before writing the log entry.
-- [ ] **R5-P8-24** [LOW] [CONFIRMED_REAL] Fractional recovery offsets/sizes accepted and truncated to integers
+- [x] **R5-P8-24** [LOW] [CONFIRMED_REAL] Fractional recovery offsets/sizes accepted and truncated to integers
+  - RESOLVED 2026-08-11 [fixed]: parseRecoverCandidates rejects fractional offset_bytes/size_bytes (readCandidateExtent adds std::floor(v)==v, matching the item_ids parsers) before the uint64 cast.
   - Files: src/core/app_mutating_actions.cpp:1292, src/core/app_mutating_actions.cpp:1324
   - Boundary: untrusted-input (reachable)
   - Evidence: parseRecoverCandidates reads offset_bytes/size_bytes as doubles and checks off>=0 and size>0 (1294) but NOT std::floor(v)==v, then static_cast<uint64_t> truncates (1324-1325). The item_ids parsers in the same file DO reject fractional values; this is an inconsistent fail-open coercion of a model-supplied value. Impact is negligible (range stays in-image).
   - Fix: Reject fractional offset_bytes/size_bytes (add a std::floor==value check like the item_ids parsers).
-- [ ] **R5-P8-25** [LOW] [CONFIRMED_REAL] Handlers coerce invalid JSON types via silent defaults (schemas catalog-only)
+- [x] **R5-P8-25** [LOW] [CONFIRMED_REAL] Handlers coerce invalid JSON types via silent defaults (schemas catalog-only)
+  - RESOLVED 2026-08-11 [fixed]: optional fields strict-checked: organizeDirectory rejects a non-bool create_subdirectories, convertOst a non-bool recover_deleted, compressSourcesFromArgs fails closed on a non-array sources or non-string entry.
   - Files: src/core/app_mutating_actions.cpp:1013, src/core/app_mutating_actions.cpp:3329
   - Boundary: untrusted-input (reachable)
   - Evidence: Optional fields are coerced not strict-validated: create_subdirectories/recover_deleted via toBool(true/false) (1013,3158), compress sources via .toArray()+toString() dropping non-string entries (3329-3333). Wrong-typed inputs collapse to safe defaults rather than failing closed, contrary to the standing rule; impact is low because the defaults are safe.
@@ -984,12 +1003,14 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: convertOstParamsSchema enum lists pst/eml/msg/mbox/dbx/html/pdf (3195-3201) but convertOst rejects pst/msg/dbx via isOutputFormatSupported (3148-3153). Misleading schema; it fails CLOSED with a precise reason, so it is a quality/consistency defect, not a security hole.
   - RESOLVED 2026-08-05 (626df4c), more completely than the suggested fix: the `format` parameter is GONE, not narrowed. The converter has one output. convert_ost now REFUSES any format argument rather than ignoring it, because an ignored argument would hand the caller MBOX and report success for the PDF it asked for -- convertOstRefusesAnyFormatArgument pins that for seven values including "mbox". See R5-G19-2.
-- [ ] **R5-P8-27** [LOW] [DESIGN_INTENT] Ciphertext has no magic/version/algorithm/embedded KDF params
+- [~] **R5-P8-27** [LOW] [DESIGN_INTENT] Ciphertext has no magic/version/algorithm/embedded KDF params
+  - RESOLVED 2026-08-11 [deferred-with-rationale]: prepending a versioned magic/param header to the [salt][IV][ciphertext][HMAC] on-disk format would break decrypt round-trip for every already-encrypted blob (settings, profile backups); the HMAC authenticates salt+IV+ciphertext and KDF params are compiled-in, so there is no downgrade attack to close -- only future-format convenience. Deferred.
   - Files: include/sak/encryption.h:39, src/core/encryption.cpp:354
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: Format is documented [salt][IV][ciphertext][HMAC] (h.39; cpp 354-366). Params are compiled-in defaults, and the HMAC authenticates salt+IV+ciphertext, so supplying wrong params derives a wrong key and fails authentication -- there is no downgrade attack. Spec-minimal, documented limitation for format evolution.
   - Fix: Optionally prepend a versioned magic + KDF-param header to ease future format evolution.
-- [ ] **R5-P8-28** [LOW] [DESIGN_INTENT] Passwords as immutable QString; only UTF-8 copy wiped; locking optional
+- [~] **R5-P8-28** [LOW] [DESIGN_INTENT] Passwords as immutable QString; only UTF-8 copy wiped; locking optional
+  - RESOLVED 2026-08-11 [deferred-with-rationale]: carrying the password as a secure string end-to-end is a wide public-crypto-API + UI change, and QString is implicitly shared and cannot be reliably wiped regardless of API shape; the one KDF materialization (derive_key pwd_bytes = toUtf8()) is already secure-wiped on every exit. Deferred.
   - Files: src/core/encryption.cpp:68, include/sak/secure_memory.h:319
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: derive_key wipes the derived pwd_bytes (68,92) but the source QString is implicitly shared and cannot be reliably wiped -- an inherent QString limitation, not a fail-open on untrusted input. locked_memory is best-effort (319-320). Exploiting residency requires local memory disclosure.
@@ -999,7 +1020,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: WaitForSingleObject(hProcess, INFINITE) has no timeout (199) so a hung helper blocks forever, and GetExitCodeProcess's return is ignored (202): if it fails, exit_code stays 0 and the run is reported successful. The elevated helper is the app's own trusted exe so false-success is rare, but the ignored return is a fail-open.
   - Fix: Check GetExitCodeProcess's return (treat failure as execution_failed); consider a bounded wait instead of INFINITE.
-- [ ] **R5-P8-30** [LOW] [CONFIRMED_REAL] file_hash throwing fs checks outside error handling; negative size cast
+- [x] **R5-P8-30** [LOW] [CONFIRMED_REAL] file_hash throwing fs checks outside error handling; negative size cast
+  - RESOLVED 2026-08-11 [fixed]: calculateHash uses the non-throwing std::error_code overloads of exists()/is_regular_file() (no filesystem_error escaping the std::expected function) and guards a negative QFile::size() cast.
   - Files: src/core/file_hash.cpp:61, src/core/file_hash.cpp:240
   - Boundary: untrusted-input (reachable)
   - Evidence: calculateHash calls std::filesystem::exists()/is_regular_file() (throwing overloads) at 61-70 outside any try, so a filesystem_error escapes a function declared to return std::expected. hashFileInChunks casts file.size() (qint64) to size_t (240); a negative -1 becomes huge, though it only feeds progress reporting.
@@ -1009,7 +1031,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: The file_hasher ctor defaults to md5 (h.45, a footgun) but the exposed hash_file tool defaults to sha256 and md5 is explicit opt-in (app_readonly_actions.cpp:1218-1222). MD5 is spec-appropriate for accidental-corruption / backup verification (not adversarial collision resistance).
   - Fix: Change the class default to sha256 and label md5 as corruption-detection only.
-- [ ] **R5-P8-32** [LOW] [PARTIAL] Quick-action result IO: unbounded read, silent defaults, unknown status->Idle, non-atomic write
+- [x] **R5-P8-32** [LOW] [PARTIAL] Quick-action result IO: unbounded read, silent defaults, unknown status->Idle, non-atomic write
+  - RESOLVED 2026-08-11 [fixed]: quick_action_result_io: unknown status now rejected (not mapped to Idle) and the write is atomic via QSaveFile; the read-size bound and strict-typed numeric fields were already in place.
   - Files: src/core/quick_action_result_io.cpp:103, src/core/quick_action_result_io.cpp:74
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: readExecutionResultFile does file.readAll() unbounded (103) and coerces fields via toBool(false)/toString/toDouble(0) (115-121); actionStatusFromString maps unknown to Idle (54); writeExecutionResultFile uses WriteOnly|Truncate (non-atomic, 74). The source is the app's OWN elevated helper output at an app-controlled path, not an external attacker, so exposure is marginal.
@@ -1019,32 +1042,38 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: accumulateFileEntry skips entries whose file_size errors (39-41) and the iterator uses skip_permission_denied (164) -- an intentional trade-off so a scan does not crash on system dirs. The under-reported total is informational; no security decision fails open on it.
   - Fix: Return a partial/incomplete flag (or error count) so callers know the total may under-report.
-- [ ] **R5-P8-35** [LOW] [PARTIAL] App-path resolution falls back to CWD then a known-unwritable portable path
+- [x] **R5-P8-35** [LOW] [PARTIAL] App-path resolution falls back to CWD then a known-unwritable portable path
+  - RESOLVED 2026-08-11 [already-correct]: applicationDirectory() already returns applicationDirPath() with no CWD fallback and dataRoot() returns empty (never an unwritable portable path), so ConfigManager fails downstream (commit e37fede6). Stale checkbox.
   - Files: src/core/app_paths.cpp:69, src/core/app_paths.cpp:101
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: applicationDirectory falls back to QDir::currentPath() when applicationDirPath is empty (69) and dataRoot returns portable_data as a last resort even when not writable (101); the write-probe cleanup QFile::remove is unchecked (app_paths.cpp:60). In practice applicationDirPath is never empty and an unwritable dataRoot makes ConfigManager throw downstream. Mild standing-rule tension only.
   - Fix: Fail closed (return empty / error) when no writable dataRoot is found rather than returning an unwritable path; drop the CWD fallback.
-- [ ] **R5-P8-37** [LOW] [CONFIRMED_REAL] Bulk registration silently discards registration errors, returns partial count
+- [x] **R5-P8-37** [LOW] [CONFIRMED_REAL] Bulk registration silently discards registration errors, returns partial count
+  - RESOLVED 2026-08-11 [fixed]: bulk registration now passes a QString* error to registry.registerAction and logs a warning on a false return (reportUnregisteredReadOnlyAction) instead of silently discarding a dropped/duplicate action.
   - Files: src/core/app_readonly_actions.cpp:5190, src/core/app_mutating_actions.cpp:4020
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: The add lambda calls registry.registerAction and only increments on true, ignoring the false return / error string (5190-5192; mutating side 4020). A duplicate/empty id would be silently dropped so an action just fails to appear. Registration is startup app code, so a collision is a programming error, not attacker input.
   - Fix: Log/assert on a false registerAction return so a dropped/duplicate action is not silent.
-- [ ] **R5-P8-38** [LOW] [CONFIRMED_REAL] Quick-action duplicate registration overwrites name map, retains both objects
+- [x] **R5-P8-38** [LOW] [CONFIRMED_REAL] Quick-action duplicate registration overwrites name map, retains both objects
+  - RESOLVED 2026-08-11 [fixed]: QuickActionController::registerAction rejects a duplicate action name (logs + returns empty) instead of overwriting the map key while retaining both objects.
   - Files: src/core/quick_action_controller.cpp:144
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: registerAction push_backs into m_actions (144) AND m_action_map.insert overwrites the key (145): getAllActions lists both objects while getAction/routing resolves only the newest -> ambiguous listing/routing. Actions are registered at startup by app code with distinct names, so a duplicate is a programming error.
   - Fix: Reject (or warn + skip) a duplicate action name instead of silently shadowing it.
-- [ ] **R5-P8-39** [LOW] [PARTIAL] QuickAction advertises worker-thread safety but result objects unsynchronized by-ref
+- [x] **R5-P8-39** [LOW] [PARTIAL] QuickAction advertises worker-thread safety but result objects unsynchronized by-ref
+  - RESOLVED 2026-08-11 [fixed]: documented the thread-safety contract on lastScanResult()/lastExecutionResult(): the returned const& is valid to read only after the queued scanComplete/completion signal establishes happens-before.
   - Files: include/sak/quick_action.h:27, include/sak/quick_action.h:142
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: lastScanResult/lastExecutionResult return const& to non-atomic m_scan_result/m_execution_result (142,148) written on the worker thread; in the actual flow they are read only after the queued completion signal establishes happens-before, but a concurrent read during execute() would race. Status uses an atomic; results do not.
   - Fix: Return results by value, or document that they are valid only after the completion/scanComplete signal.
-- [ ] **R5-P8-40** [LOW] [CONFIRMED_REAL] QuickActionController::m_broker is dead state; elevated exec builds a local broker
+- [x] **R5-P8-40** [LOW] [CONFIRMED_REAL] QuickActionController::m_broker is dead state; elevated exec builds a local broker
+  - RESOLVED 2026-08-11 [already-correct]: m_broker is no longer dead: executeElevatedAction assigns it and the destructor/cancel paths use it (prior wave). Stale checkbox.
   - Files: include/sak/quick_action_controller.h:239, src/core/quick_action_controller.cpp:287
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: m_broker is declared 'lazy-initialized on first elevated task' (h.239) but executeElevatedAction constructs a fresh local ElevationBroker each call (287); m_broker is never assigned or used -- dead member state.
   - Fix: Remove the unused m_broker member.
-- [ ] **R5-P8-41** [LOW] [CONFIRMED_REAL] Log rotation reopens same second-resolution filename append + resets counter; open failure silent
+- [x] **R5-P8-41** [LOW] [CONFIRMED_REAL] Log rotation reopens same second-resolution filename append + resets counter; open failure silent
+  - RESOLVED 2026-08-11 [fixed]: buildRotatedLogPath combines the second-resolution timestamp with a millisecond field and a process-monotonic atomic sequence so a same-second rotation no longer reopens the same filename append + resets the counter; open failure is surfaced.
   - Files: src/core/logger.cpp:264, src/core/logger.cpp:267
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: rotateLog builds the new name from a second-resolution timestamp (264); two rotations within one second reopen the SAME file in append mode (267) while resetting m_bytes_written to 0 (268), so the file grows past MAX_LOG_SIZE. The open() result is unchecked, so a failed reopen leaves m_file_stream closed and writeEntryToFile silently drops entries (135-137).

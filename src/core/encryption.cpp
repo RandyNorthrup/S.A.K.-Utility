@@ -346,9 +346,10 @@ bool constant_time_equal(const QByteArray& a, const QByteArray& b) {
     return diff == 0;
 }
 
-/// @brief Reject a hostile or default-broken EncryptionParams before any crypto runs: a
-/// non-AES key size, an IV that is not one AES block, a too-small salt, or a non-positive
-/// iteration count would otherwise derive weak keys or drive BCrypt into undefined behavior.
+/// @brief Reject a hostile or default-broken EncryptionParams before any crypto runs: a key
+/// size other than AES-256, an IV that is not one AES block, an out-of-range salt, or an
+/// iteration count below the floor would otherwise derive weak keys or drive BCrypt into
+/// undefined behavior.
 // Upper bounds so a hostile or defaulted-broken EncryptionParams cannot drive a
 // multi-gigabyte salt allocation (and the salt_size + iv_size int overflow that follows) or
 // an attacker-chosen PBKDF2 iteration count that pins the CPU. The defaults (salt 32,
@@ -357,13 +358,17 @@ constexpr int kMaxEncryptionSaltBytes = 1024;
 constexpr int kMaxPbkdf2Iterations = 100'000'000;
 // A salt shorter than this offers too little collision resistance to derive keys from.
 constexpr int kMinEncryptionSaltBytes = 8;
+// PBKDF2 iteration floor. The API default is kDefaultPbkdf2Iterations (100000); this floor
+// only rejects absurdly low work factors (e.g. a single iteration). It sits at the lowest
+// count any exercised path uses so a deliberately-fast one is not rejected as a side effect.
+constexpr int kMinPbkdf2Iterations = 10'000;
 
 bool valid_encryption_params(const EncryptionParams& params) {
-    const bool aes_key = params.key_size == 16 || params.key_size == 24 || params.key_size == 32;
-    return aes_key && params.iv_size == kAesBlockBytes &&
+    // AES-256 only: no caller derives a shorter key, so forbid a downgrade to AES-128/192.
+    return params.key_size == kAes256KeyBytes && params.iv_size == kAesBlockBytes &&
            params.salt_size >= kMinEncryptionSaltBytes &&
-           params.salt_size <= kMaxEncryptionSaltBytes && params.iterations > 0 &&
-           params.iterations <= kMaxPbkdf2Iterations;
+           params.salt_size <= kMaxEncryptionSaltBytes &&
+           params.iterations >= kMinPbkdf2Iterations && params.iterations <= kMaxPbkdf2Iterations;
 }
 
 /// @brief Derive separate AES and HMAC keys from a password (encrypt-then-MAC)

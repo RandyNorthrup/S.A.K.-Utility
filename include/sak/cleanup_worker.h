@@ -86,6 +86,17 @@ public:
     /// the choice of root; empty means fail closed.
     [[nodiscard]] static QString launchableSystemTool(const QString& exeName);
 
+    /// @brief Handle-verified recursive delete of @p path's tree, exposed as a standalone entry so
+    ///        a separate manager (e.g. UserDataManager::deleteBackup) can REUSE this exact
+    ///        security-critical walk instead of QDir::removeRecursively's string re-resolution. On
+    ///        Windows it drives the same per-node open+GetFinalPathNameByHandleW walk cleanup uses,
+    ///        so an ancestor-junction swapped in mid-delete is caught at every node (fail closed);
+    ///        off Windows there is no reparse-ancestor TOCTOU to close, so it delegates to
+    ///        QDir::removeRecursively. This is the delete PRIMITIVE, not the policy gate: a caller
+    ///        MUST still run the path-deletion screens (filePathDeletionRefusal, reparse re-screen)
+    ///        first. Returns true only when the whole tree was removed.
+    [[nodiscard]] static bool deleteFolderTreeVerified(const QString& path);
+
 Q_SIGNALS:
     void itemCleaned(const QString& path, bool success);
     void cleanupComplete(int succeeded, int failed, qint64 bytesRecovered);

@@ -18,6 +18,76 @@
 
 namespace sak {
 
+namespace {
+
+// C0 control characters and DEL, escaped so an attacker-controlled substring
+// (filename, disk path, PST field, model tool argument) cannot embed a raw
+// newline and forge a separate, well-formed log record (CWE-117). Any byte at
+// or above this ceiling, other than DEL, passes through untouched -- including
+// every UTF-8 lead/continuation byte.
+constexpr unsigned char kControlCeiling = 0x20;
+constexpr unsigned char kDelByte = 0x7F;
+
+// Render one C0/DEL control byte as a printable escape.
+void appendEscapedControl(std::string& out, unsigned char byte) {
+    switch (byte) {
+    case '\n':
+        out += "\\n";
+        return;
+    case '\r':
+        out += "\\r";
+        return;
+    case '\t':
+        out += "\\t";
+        return;
+    default:
+        break;
+    }
+    static constexpr char kHexDigits[] = "0123456789abcdef";
+    constexpr unsigned kNibbleBits = 4;
+    constexpr unsigned kNibbleMask = 0x0FU;
+    out += "\\x";
+    out.push_back(kHexDigits[(byte >> kNibbleBits) & kNibbleMask]);
+    out.push_back(kHexDigits[byte & kNibbleMask]);
+}
+
+// Return a copy of text with CR/LF and every other C0/DEL control character
+// escaped, so a message can never inject a line break into the log stream.
+std::string sanitizeLogText(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (const char raw : text) {
+        const auto byte = static_cast<unsigned char>(raw);
+        if (byte >= kControlCeiling && byte != kDelByte) {
+            out.push_back(raw);
+            continue;
+        }
+        appendEscapedControl(out, byte);
+    }
+    return out;
+}
+
+// Build a uniquely named rotated log path. A bare second-resolution timestamp
+// collides when two rotations (or an init immediately followed by a rotation)
+// land in the same wall-clock second: reopening the SAME file in append mode
+// while resetting the byte counter lets it grow past MAX_LOG_SIZE. A sub-second
+// millisecond field plus a process-monotonic sequence keeps every name distinct
+// so rotation never appends onto an existing log.
+std::filesystem::path buildRotatedLogPath(const std::filesystem::path& dir,
+                                          std::string_view prefix) {
+    static std::atomic<std::uint64_t> rotate_seq{0};
+    const auto seq = rotate_seq.fetch_add(1, std::memory_order_relaxed);
+    const auto now = std::chrono::system_clock::now();
+    const auto since_epoch = now.time_since_epoch();
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(since_epoch);
+    const auto millis =
+        std::chrono::duration_cast<std::chrono::milliseconds>(since_epoch - secs).count();
+    const auto stamp = std::format("{:%Y-%m-%d_%H-%M-%S}", now);
+    return dir / std::format("{}_{}-{:03}-{}.log", prefix, stamp, millis, seq);
+}
+
+}  // namespace
+
 logger& logger::instance() noexcept {
     static logger instance;
     return instance;
@@ -113,7 +183,7 @@ void logger::logInternal(log_level level,
         // exception would terminate the process. Guard it.
         if (m_console_output.load(std::memory_order_relaxed)) {
             try {
-                std::println(std::cerr, "[{}] {}", to_string(level), message);
+                std::println(std::cerr, "[{}] {}", to_string(level), sanitizeLogText(message));
             } catch (...) {
                 (void)std::fprintf(stderr, "SAK Logger: console write failed\n");
             }
@@ -126,6 +196,10 @@ void logger::logInternal(log_level level,
         auto timestamp = getTimestamp();
         auto level_str = to_string(level);
         auto filename = std::filesystem::path(loc.file_name()).filename().string();
+        // Neutralize CR/LF and other control characters in the (potentially
+        // attacker-controlled) message so it cannot forge a separate log
+        // record (CWE-117). The trailing '\n' below is the ONE intended break.
+        auto safe_message = sanitizeLogText(message);
 
         auto log_entry = std::format("[{}] [{}] [{}:{}:{}] {}\n",
                                      timestamp,
@@ -133,7 +207,7 @@ void logger::logInternal(log_level level,
                                      filename,
                                      loc.line(),
                                      loc.function_name(),
-                                     message);
+                                     safe_message);
 
         writeEntryToFile(log_entry, level);
         writeEntryToConsole(log_entry, level);
@@ -290,9 +364,11 @@ void logger::rotateLog() noexcept {
             log_files.erase(log_files.begin());
         }
 
-        // Create new log file
-        auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
-        m_log_file = m_log_dir / std::format("{}_{}.log", m_prefix, timestamp);
+        // Create a NEW, uniquely named log file -- never reopen the just-closed one. A bare
+        // same-second timestamp would reopen it in append mode and reset m_bytes_written,
+        // defeating rotation; buildRotatedLogPath adds a sub-second + monotonic-sequence token
+        // so the name is always distinct.
+        m_log_file = buildRotatedLogPath(m_log_dir, m_prefix);
 
         m_file_stream.open(m_log_file, std::ios::out | std::ios::app);
         m_bytes_written.store(0, std::memory_order_relaxed);

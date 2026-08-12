@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSaveFile>
 
 #include <algorithm>
@@ -24,6 +25,52 @@ namespace {
 // A custom-patterns file is a short JSON array; reject anything implausibly large
 // BEFORE readAll() so a tampered or oversized file cannot exhaust memory.
 constexpr qint64 kMaxCustomPatternsBytes = 4LL * 1024 * 1024;  // 4 MiB
+
+// A single regex pattern is a short string; a multi-kilobyte pattern is a tampered or
+// pathological entry, not a real user pattern. Cap it on every ingress (add/update/load).
+constexpr int kMaxPatternLength = 4096;
+
+// The custom-patterns list is user-curated and small; bound its size so a tampered file
+// cannot inject an unbounded number of entries even while staying under the byte cap.
+constexpr int kMaxCustomPatternCount = 1000;
+
+// Enforce, for one candidate entry, the SAME invariants addCustomPattern() enforces so a
+// hand-edited or tampered file cannot inject entries the in-memory API would reject:
+// non-empty key+pattern, pattern-length cap, no built-in/existing-custom key collision, and
+// valid regex. Returns true only for an entry that would also round-trip through the add path.
+bool customEntryAccepted(const RegexPatternInfo& info,
+                         const QVector<RegexPatternInfo>& builtin,
+                         const QVector<RegexPatternInfo>& accepted) {
+    if (info.key.isEmpty() || info.pattern.isEmpty()) {
+        logWarning("RegexPatternLibrary: skipping custom pattern with empty key or pattern");
+        return false;
+    }
+    if (info.pattern.size() > kMaxPatternLength) {
+        logWarning("RegexPatternLibrary: skipping custom pattern '{}' whose length {} exceeds {}",
+                   info.key.toStdString(),
+                   static_cast<long long>(info.pattern.size()),
+                   kMaxPatternLength);
+        return false;
+    }
+    if (std::ranges::any_of(builtin, [&info](const auto& p) { return p.key == info.key; })) {
+        logWarning("RegexPatternLibrary: skipping custom pattern '{}' (conflicts with built-in)",
+                   info.key.toStdString());
+        return false;
+    }
+    if (std::ranges::any_of(accepted, [&info](const auto& p) { return p.key == info.key; })) {
+        logWarning("RegexPatternLibrary: skipping duplicate custom pattern key '{}'",
+                   info.key.toStdString());
+        return false;
+    }
+    const QRegularExpression testRegex(info.pattern);
+    if (!testRegex.isValid()) {
+        logWarning("RegexPatternLibrary: skipping custom pattern '{}' with invalid regex: {}",
+                   info.key.toStdString(),
+                   testRegex.errorString().toStdString());
+        return false;
+    }
+    return true;
+}
 }  // namespace
 
 // -- Construction ------------------------------------------------------------
@@ -113,6 +160,20 @@ void RegexPatternLibrary::addCustomPattern(const QString& key,
         logWarning("RegexPatternLibrary: empty key or pattern rejected");
         return;
     }
+    // Bound a single pattern's length and the total custom-pattern count so neither the
+    // interactive path nor a scripted caller can grow them without limit (the same caps
+    // loadCustomPatterns() enforces on a persisted file).
+    if (pattern.size() > kMaxPatternLength) {
+        logWarning("RegexPatternLibrary: pattern length {} exceeds cap {}, rejected",
+                   static_cast<long long>(pattern.size()),
+                   kMaxPatternLength);
+        return;
+    }
+    if (m_custom_patterns.size() >= kMaxCustomPatternCount) {
+        logWarning("RegexPatternLibrary: custom pattern count cap {} reached, rejected",
+                   kMaxCustomPatternCount);
+        return;
+    }
     // Check for duplicate keys in both built-in and custom patterns
     if (std::ranges::any_of(m_builtin_patterns, [&key](const auto& p) { return p.key == key; })) {
         logWarning("RegexPatternLibrary: key '{}' conflicts with built-in pattern, rejected",
@@ -175,6 +236,14 @@ void RegexPatternLibrary::updateCustomPattern(const QString& key,
     // matches everywhere and would not round-trip through storage.
     if (key.isEmpty() || pattern.isEmpty()) {
         logWarning("RegexPatternLibrary: empty key or pattern rejected for update");
+        return;
+    }
+    // Cap the replacement pattern's length for the same reason add does (a stored pattern
+    // must also survive the loadCustomPatterns() length cap on the next start).
+    if (pattern.size() > kMaxPatternLength) {
+        logWarning("RegexPatternLibrary: updated pattern length {} exceeds cap {}, rejected",
+                   static_cast<long long>(pattern.size()),
+                   kMaxPatternLength);
         return;
     }
     // Validate regex before accepting update
@@ -322,6 +391,14 @@ void RegexPatternLibrary::loadCustomPatterns() {
     m_custom_patterns.clear();
 
     for (const auto& val : arr) {
+        // Bound the number of entries taken from a persisted (possibly tampered) file, even
+        // one that stayed under the byte cap; stop scanning -- do not silently keep going --
+        // once the count cap is reached.
+        if (m_custom_patterns.size() >= kMaxCustomPatternCount) {
+            logWarning("RegexPatternLibrary: custom pattern count cap {} reached; ignoring rest",
+                       kMaxCustomPatternCount);
+            break;
+        }
         if (!val.isObject()) {
             logWarning("RegexPatternLibrary: skipping non-object custom-pattern entry");
             continue;
@@ -333,36 +410,12 @@ void RegexPatternLibrary::loadCustomPatterns() {
         info.pattern = obj["pattern"].toString();
         info.enabled = false;  // Always start disabled
 
-        // Enforce the SAME invariants addCustomPattern() enforces, so a hand-edited or
-        // tampered file cannot inject patterns the in-memory API would reject:
-        // non-empty key+pattern, no built-in/custom key collision, and valid regex.
-        if (info.key.isEmpty() || info.pattern.isEmpty()) {
-            logWarning("RegexPatternLibrary: skipping custom pattern with empty key or pattern");
-            continue;
+        // customEntryAccepted() applies the SAME invariants addCustomPattern() enforces
+        // (non-empty key+pattern, length cap, no key collision, valid regex), so a
+        // hand-edited or tampered file cannot inject patterns the in-memory API would reject.
+        if (customEntryAccepted(info, m_builtin_patterns, m_custom_patterns)) {
+            m_custom_patterns.append(info);
         }
-        if (std::ranges::any_of(m_builtin_patterns,
-
-                                [&info](const auto& p) { return p.key == info.key; })) {
-            logWarning(
-                "RegexPatternLibrary: skipping custom pattern '{}' (conflicts with built-in)",
-                info.key.toStdString());
-            continue;
-        }
-        if (std::ranges::any_of(m_custom_patterns,
-                                [&info](const auto& p) { return p.key == info.key; })) {
-            logWarning("RegexPatternLibrary: skipping duplicate custom pattern key '{}'",
-                       info.key.toStdString());
-            continue;
-        }
-        const QRegularExpression testRegex(info.pattern);
-        if (!testRegex.isValid()) {
-            logWarning("RegexPatternLibrary: skipping custom pattern '{}' with invalid regex: {}",
-                       info.key.toStdString(),
-                       testRegex.errorString().toStdString());
-            continue;
-        }
-
-        m_custom_patterns.append(info);
     }
 
     logInfo("RegexPatternLibrary: loaded {} custom patterns", m_custom_patterns.size());

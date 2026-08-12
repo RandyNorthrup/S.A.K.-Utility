@@ -24,8 +24,9 @@ namespace sak {
 
 /// @brief Hash algorithm selection
 enum class hash_algorithm {
-    md5,    ///< MD5 hash (fast, less secure)
-    sha256  ///< SHA-256 hash (slower, more secure)
+    md5,    ///< MD5: fast but NOT collision-resistant -- corruption-detection only
+            ///< (accidental damage / backup verification), never for adversarial use
+    sha256  ///< SHA-256: collision-resistant; the correct general-purpose choice
 };
 
 /// @brief Progress callback function type

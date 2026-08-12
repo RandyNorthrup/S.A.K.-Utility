@@ -138,12 +138,24 @@ public:
     /**
      * @brief Get last scan result
      * @return Most recent scan result
+     *
+     * Thread-Safety: m_scan_result is not synchronized. scan() may write it from a
+     * worker thread, so this reference is only valid to read AFTER the queued
+     * scanComplete() signal has been delivered (that queued-connection delivery
+     * establishes the happens-before edge). Do NOT read it concurrently while a
+     * scan() is in progress on a worker thread -- that is an unsynchronized race.
      */
     const ScanResult& lastScanResult() const { return m_scan_result; }
 
     /**
      * @brief Get last execution result
      * @return Most recent execution result
+     *
+     * Thread-Safety: m_execution_result is not synchronized. execute() may write it
+     * from a worker thread, so this reference is only valid to read AFTER the queued
+     * executionComplete() signal has been delivered (that queued-connection delivery
+     * establishes the happens-before edge). Do NOT read it concurrently while an
+     * execute() is in progress on a worker thread -- that is an unsynchronized race.
      */
     const ExecutionResult& lastExecutionResult() const { return m_execution_result; }
 

@@ -18,6 +18,7 @@
 #include "sak/cleanup_worker.h"
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/email_attachment_saver.h"
+#include "sak/email_constants.h"
 #include "sak/email_export_worker.h"
 #include "sak/email_types.h"
 #include "sak/ethernet_config_manager.h"
@@ -201,6 +202,11 @@ struct ExportPathLabels {
 // ever ADDS files -- hence destructive=false stays honest. Refuses a reparse-point destination
 // (a symlink/junction target could be off-box or redirect the writes). Shared by email export
 // (validateExportPaths) and files.extract_zip.
+// TOCTOU: this is a pathname-based check, so a co-located local attacker with write access to the
+// destination could plant a file in the check->write window. That residual is ACCEPTED for these
+// directory-adding writers: they only ever add per-item files, the human gate + reparse guard bound
+// the exposure, and there is no single file whose exclusive-create (O_EXCL) would close it -- an
+// atomic guarantee would have to live inside each writer, not this shared pathname pre-check.
 std::optional<AppActionResult> requireNewOrEmptyDir(const QString& output_path,
                                                     const QString& dest_field) {
     const QFileInfo out_info(output_path);
@@ -304,6 +310,50 @@ AppActionResult buildExportResult(const EmailExportResult& captured,
     return {ok, message, serializeExportResult(captured, item_ids_capped)};
 }
 
+// Enumerate the whole mailbox's message indices, capped at kMaxExportItems so a huge mailbox cannot
+// spray an unbounded number of files. The byte cap alone would still permit that with many tiny
+// messages, so bound the COUNT too. Sets @p capped on truncation. Fails CLOSED (returns an error
+// result) on a page read error rather than exporting a silently incomplete set. Mirrors
+// EmailExportWorker's whole-store MBOX paging (readMessages), but bounded -- the worker never
+// sees an empty item_ids for the whole-store case, so it does not re-enumerate.
+std::optional<AppActionResult> collectCappedMboxItemIds(MboxParser& parser,
+                                                        QVector<uint64_t>& out,
+                                                        bool& capped) {
+    for (int offset = 0;; offset += email::kMaxItemsPerLoad) {
+        const auto messages = parser.readMessages(offset, email::kMaxItemsPerLoad);
+        if (!messages.has_value()) {
+            return AppActionResult{false,
+                                   QStringLiteral("MBOX read error at offset %1").arg(offset),
+                                   {}};
+        }
+        const auto& page = messages.value();
+        for (const auto& msg : page) {
+            if (out.size() >= kMaxExportItems) {
+                capped = true;
+                return std::nullopt;
+            }
+            out.append(static_cast<uint64_t>(msg.message_index));
+        }
+        if (page.size() < email::kMaxItemsPerLoad) {
+            break;
+        }
+    }
+    return std::nullopt;
+}
+
+// Fill config.item_ids for an MBOX export: explicit (already capped) ids, or the whole mailbox
+// capped at kMaxExportItems (item_ids_capped set on truncation). Fails closed on a read error.
+std::optional<AppActionResult> resolveMboxExportIds(MboxParser& parser,
+                                                    const QVector<uint64_t>& item_ids,
+                                                    EmailExportConfig& config,
+                                                    bool& item_ids_capped) {
+    if (!item_ids.isEmpty()) {
+        config.item_ids = item_ids;
+        return std::nullopt;
+    }
+    return collectCappedMboxItemIds(parser, config.item_ids, item_ids_capped);
+}
+
 AppActionResult exportMbox(const QJsonObject& args) {
     const QString path = args.value(QStringLiteral("path")).toString().trimmed();
     const QString output_path = args.value(QStringLiteral("output_path")).toString().trimmed();
@@ -327,19 +377,21 @@ AppActionResult exportMbox(const QJsonObject& args) {
         return *error;
     }
 
-    // MboxParser opens the file READ-ONLY; the export writer creates NEW files under
-    // output_path, which validateExportInputs has already required to be new/empty, so
-    // no pre-existing file can be overwritten -- the op only ADDS files, never
-    // overwrites or deletes. Hence mutating, not destructive.
+    // MboxParser opens READ-ONLY; writer creates NEW files under output_path (required new/empty),
+    // so nothing pre-existing is overwritten -- the op only ADDS files, not destructive.
     MboxParser parser;
     parser.open(path);
     if (!parser.isOpen()) {
         return {false, QStringLiteral("Not a valid MBOX file: %1").arg(path), {}};
     }
 
+    // item_ids omitted => whole mailbox, count-capped (resolveMboxExportIds).
     EmailExportConfig config;
     config.output_path = output_path;
-    config.item_ids = item_ids;
+    if (const std::optional<AppActionResult> error =
+            resolveMboxExportIds(parser, item_ids, config, item_ids_capped)) {
+        return *error;
+    }
 
     // exportMboxItems() runs synchronously and emits exportComplete inline on THIS
     // thread (early failures too, via emitEarlyFailure), so a direct connection
@@ -465,6 +517,69 @@ void collectPstFolderNodeIds(const QVector<PstFolder>& folders, QVector<uint64_t
     }
 }
 
+// Append one folder's item node ids to @p out, stopping at kMaxExportItems (sets @p capped).
+// Returns false if a page could not be read so the caller can fail closed. Mirrors the worker's
+// pageFolderItemIds paging, but bounded by the export item cap.
+bool pageCappedPstFolderItems(PstParser& parser,
+                              uint64_t folder_id,
+                              QVector<uint64_t>& out,
+                              bool& capped) {
+    for (int offset = 0;; offset += email::kMaxItemsPerLoad) {
+        const auto items = parser.readFolderItems(folder_id, offset, email::kMaxItemsPerLoad);
+        if (!items.has_value()) {
+            return false;
+        }
+        const auto& page = items.value();
+        for (const auto& item : page) {
+            if (out.size() >= kMaxExportItems) {
+                capped = true;
+                return true;
+            }
+            out.append(item.node_id);
+        }
+        if (page.size() < email::kMaxItemsPerLoad) {
+            return true;
+        }
+    }
+}
+
+// Enumerate every item node id in the store (all folders, depth-first), capped at kMaxExportItems
+// so a whole-store export cannot write an unbounded number of files -- the byte cap alone would
+// still permit that with many tiny messages. Sets @p capped on truncation. Fails CLOSED (returns an
+// error result) if a folder's item page cannot be read, rather than exporting an incomplete set.
+std::optional<AppActionResult> collectCappedPstItemIds(PstParser& parser,
+                                                       QVector<uint64_t>& out,
+                                                       bool& capped) {
+    QVector<uint64_t> folder_ids;
+    collectPstFolderNodeIds(parser.folderTree(), folder_ids);
+    for (const uint64_t folder_id : folder_ids) {
+        if (!pageCappedPstFolderItems(parser, folder_id, out, capped)) {
+            return AppActionResult{
+                false,
+                QStringLiteral("Failed to read items from PST folder %1").arg(folder_id),
+                {}};
+        }
+        if (capped) {
+            break;
+        }
+    }
+    return std::nullopt;
+}
+
+// Fill config.item_ids for a PST export: explicit (already capped) ids, or the whole store's items
+// capped at kMaxExportItems (item_ids_capped set on truncation). Fails closed on a folder read
+// error. Enumerating here (rather than seeding folder_ids) is what bounds the whole-store COUNT.
+std::optional<AppActionResult> resolvePstExportIds(PstParser& parser,
+                                                   const QVector<uint64_t>& item_ids,
+                                                   EmailExportConfig& config,
+                                                   bool& item_ids_capped) {
+    if (!item_ids.isEmpty()) {
+        config.item_ids = item_ids;
+        return std::nullopt;
+    }
+    return collectCappedPstItemIds(parser, config.item_ids, item_ids_capped);
+}
+
 QJsonObject exportPstParamsSchema() {
     return emailExportParamsSchema(
         QStringLiteral("Absolute path to the source PST or OST file"),
@@ -508,15 +623,14 @@ AppActionResult exportPst(const QJsonObject& args) {
         return {false, QStringLiteral("Not a valid PST/OST file: %1").arg(path), {}};
     }
 
+    // No explicit item_ids => export the WHOLE store, but bound the ITEM count (not only the byte
+    // size): resolvePstExportIds enumerates + caps the items so a store with a huge number of tiny
+    // messages cannot spray an unbounded number of files (truncation reported via item_ids_capped).
     EmailExportConfig config;
     config.output_path = output_path;
-    config.item_ids = item_ids;
-    // No explicit item_ids => export the WHOLE store. PST enumeration is folder-based, so seed
-    // every folder's node id (the schema documents omit-item_ids as "export every message in the
-    // store"); without this collectItemIds would find nothing and report a false "No items to
-    // export".
-    if (item_ids.isEmpty()) {
-        collectPstFolderNodeIds(parser.folderTree(), config.folder_ids);
+    if (const std::optional<AppActionResult> error =
+            resolvePstExportIds(parser, item_ids, config, item_ids_capped)) {
+        return *error;
     }
 
     EmailExportWorker worker;
@@ -1141,6 +1255,14 @@ AppActionResult organizeDirectory(const QJsonObject& args) {
             validateOrganizeInputs(target, collision_strategy, mapping)) {
         return *error;
     }
+    // Reject a present-but-non-bool create_subdirectories rather than coercing it to the default
+    // via toBool: a wrong-typed optional must fail closed, not silently pick a behavior.
+    if (args.contains(QStringLiteral("create_subdirectories")) &&
+        !args.value(QStringLiteral("create_subdirectories")).isBool()) {
+        return {false,
+                QStringLiteral("create_subdirectories must be a boolean (true or false)"),
+                {}};
+    }
 
     OrganizerWorker::Config config;
     config.target_directory = target;
@@ -1432,6 +1554,24 @@ bool isExecutableOrAutoRunExtension(const QString& ext) {
 // offset/size range into the image (bytes are re-read by the engine) and a sanitized extension; the
 // id (output name) is derived here, never taken from the model. Rejects an out-of-image or
 // oversized range. Caps the count (reports truncation).
+// Read a candidate's offset_bytes/size_bytes as WHOLE non-negative byte counts. Fails CLOSED on a
+// missing, negative, fractional, or NaN value -- matching the item_ids parsers -- rather than
+// truncating a fractional model-supplied value via static_cast. offset may be 0; size must be > 0.
+std::optional<AppActionResult> readCandidateExtent(const QJsonObject& obj,
+                                                   double& off,
+                                                   double& size) {
+    off = obj.value(QStringLiteral("offset_bytes")).toDouble(-1.0);
+    size = obj.value(QStringLiteral("size_bytes")).toDouble(-1.0);
+    if (!(off >= 0.0) || !(size > 0.0) || std::floor(off) != off || std::floor(size) != size) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "each candidate needs whole-number offset_bytes >= 0 and "
+                                   "size_bytes > 0"),
+                               {}};
+    }
+    return std::nullopt;
+}
+
 std::optional<AppActionResult> parseRecoverCandidates(const QJsonArray& raw,
                                                       qint64 image_size,
                                                       QVector<sak::FileRecoveryCandidate>& out,
@@ -1444,13 +1584,11 @@ std::optional<AppActionResult> parseRecoverCandidates(const QJsonArray& raw,
             break;
         }
         const QJsonObject obj = value.toObject();
-        const double off = obj.value(QStringLiteral("offset_bytes")).toDouble(-1.0);
-        const double size = obj.value(QStringLiteral("size_bytes")).toDouble(-1.0);
-        if (!(off >= 0.0) || !(size > 0.0)) {
-            return AppActionResult{false,
-                                   QStringLiteral(
-                                       "each candidate needs offset_bytes >= 0 and size_bytes > 0"),
-                                   {}};
+        double off = 0.0;
+        double size = 0.0;
+        if (const std::optional<AppActionResult> extent_error =
+                readCandidateExtent(obj, off, size)) {
+            return *extent_error;
         }
         if (size > static_cast<double>(sak::kFileRecoveryDefaultMaxCandidateBytes)) {
             return AppActionResult{
@@ -2647,6 +2785,14 @@ AppActionResult setAdapterDhcp(const QJsonObject& args) {
                   "Set adapter '%1' IPv4 to automatic (DHCP), but DNS could NOT be set "
                   "to automatic -- set DNS manually")
                   .arg(resolved);
+    // success stays TRUE even when dns_applied is false: the authoritative IPv4->DHCP step
+    // succeeded, and the DNS sub-step here only sets DNS to AUTOMATIC. netsh reports "DHCP already
+    // enabled" as a non-zero exit with an empty stderr for a DNS list that is ALREADY automatic, so
+    // dns_applied=false does not reliably tell a real failure from a benign already-automatic no-op
+    // -- flipping success to false would falsely fail a legitimate reset (a false-close), which
+    // cannot be validated without live netsh cert (forbidden). Unlike the static-IP path, which
+    // applies user-specified DNS (a real failure when it does not go live), this partial state is
+    // fully and honestly surfaced in both the message and data.dns_automatic below.
     return {true,
             message,
             QJsonObject{{QStringLiteral("adapter_name"), resolved},
@@ -2706,10 +2852,30 @@ std::optional<AppActionResult> validateStaticIpArgs(const QString& adapter,
     return std::nullopt;
 }
 
-// Read + validate the optional dns_servers array. Each entry must be a valid IPv4 address; the
-// first invalid entry fails the whole op (via @p error). Entries are de-duplicated and normalized
-// to their canonical dotted form, then capped at kMaxStaticDnsServers. De-duping matters: netsh's
-// "add dnsservers" fails ("The object already exists.", non-zero exit) if the same address is added
+// Return the dns_servers array to iterate, or set @p error and return nullopt on a present-but-
+// non-array value (fail closed). An OMITTED dns_servers yields an empty array -- the caller decides
+// what empty means (static IP leaves DNS unchanged; set_adapter_dns requires a non-empty result). A
+// JSON null is treated as omitted (leave unchanged). This closes the fail-open where a bare-string
+// dns_servers silently coerced to an empty list via toArray().
+std::optional<QJsonArray> dnsServersArray(const QJsonObject& args,
+                                          std::optional<AppActionResult>& error) {
+    const QJsonValue raw_val = args.value(QStringLiteral("dns_servers"));
+    if (raw_val.isUndefined() || raw_val.isNull()) {
+        return QJsonArray{};
+    }
+    if (!raw_val.isArray()) {
+        error = AppActionResult{
+            false, QStringLiteral("dns_servers must be an array of IPv4 address strings"), {}};
+        return std::nullopt;
+    }
+    return raw_val.toArray();
+}
+
+// Read + validate the optional dns_servers array. Each entry must be a string holding a valid IPv4
+// address; a wrong-typed array, a non-string entry, or an invalid address fails the whole op (via
+// @p error) rather than being silently dropped. Entries are de-duplicated and normalized to their
+// canonical dotted form, then capped at kMaxStaticDnsServers. De-duping matters: netsh's "add
+// dnsservers" fails ("The object already exists.", non-zero exit) if the same address is added
 // twice, which -- since the static IP is applied FIRST -- would otherwise turn a live, applied
 // address into a reported failure (see setAdapterStaticIp). Canonicalizing also feeds netsh the
 // exact dotted form even if a non-dotted numeric IPv4 spelling was supplied.
@@ -2717,8 +2883,16 @@ QStringList staticDnsFromArgs(const QJsonObject& args, std::optional<AppActionRe
     QStringList dns;
     QSet<QString> seen;
     error = std::nullopt;
-    const QJsonArray raw = args.value(QStringLiteral("dns_servers")).toArray();
-    for (const QJsonValue& value : raw) {
+    const std::optional<QJsonArray> raw = dnsServersArray(args, error);
+    if (!raw) {
+        return {};
+    }
+    for (const QJsonValue& value : *raw) {
+        if (!value.isString()) {
+            error = AppActionResult{
+                false, QStringLiteral("each dns_servers entry must be a string IPv4 address"), {}};
+            return {};
+        }
         const QString entry = value.toString().trimmed();
         if (entry.isEmpty()) {
             continue;
@@ -3308,6 +3482,12 @@ AppActionResult convertOst(const QJsonObject& args) {
                                "email.export_pst."),
                 {}};
     }
+    // Reject a present-but-non-bool recover_deleted rather than coercing it to false via toBool: a
+    // wrong-typed optional must fail closed, not silently pick a behavior.
+    if (args.contains(QStringLiteral("recover_deleted")) &&
+        !args.value(QStringLiteral("recover_deleted")).isBool()) {
+        return {false, QStringLiteral("recover_deleted must be a boolean (true or false)"), {}};
+    }
 
     OstConversionConfig config;
     config.output_directory = output_dir;
@@ -3467,9 +3647,27 @@ AppActionResult buildArchiveResult(const FileExplorerArchiveResult& res, const Q
     return {false, QStringLiteral("%1 failed: %2").arg(verb, reason), data};
 }
 
-QStringList compressSourcesFromArgs(const QJsonObject& args) {
+// Read the compress `sources` array. Fails CLOSED (via @p error) on a present-but-non-array value
+// or any non-string entry rather than coercing a mistyped value to an empty/partial list --
+// otherwise a bare-string sources, or a numeric entry, would silently collapse the source set.
+// Empty (after trim) string entries are skipped; validateCompressInputs rejects an empty result.
+QStringList compressSourcesFromArgs(const QJsonObject& args,
+                                    std::optional<AppActionResult>& error) {
+    error = std::nullopt;
+    const QJsonValue raw_val = args.value(QStringLiteral("sources"));
+    if (!raw_val.isArray()) {
+        error = AppActionResult{
+            false, QStringLiteral("sources must be an array of absolute file/folder paths"), {}};
+        return {};
+    }
     QStringList sources;
-    for (const QJsonValue& value : args.value(QStringLiteral("sources")).toArray()) {
+    for (const QJsonValue& value : raw_val.toArray()) {
+        if (!value.isString()) {
+            error = AppActionResult{false,
+                                    QStringLiteral("each sources entry must be a string path"),
+                                    {}};
+            return {};
+        }
         const QString path = value.toString().trimmed();
         if (!path.isEmpty()) {
             sources.append(path);
@@ -3547,6 +3745,11 @@ std::optional<AppActionResult> validateCompressInputs(const QStringList& sources
             QStringLiteral("output_path already exists (refusing to overwrite): %1").arg(zip_path),
             {}};
     }
+    // TOCTOU residual: this exists() check is pathname-based, so a co-located local attacker could
+    // plant a file at zip_path in the window before compressToZip opens it (the writer clobbers,
+    // and removes on failure). Closing it atomically requires an exclusive-create (O_EXCL /
+    // QSaveFile) at the point of open inside FileExplorerArchiveService::compressToZip; the reparse
+    // guard above plus the human gate bound the exposure until then.
     if (!QFileInfo(zip_info.absolutePath()).isDir()) {
         return AppActionResult{
             false,
@@ -3560,7 +3763,11 @@ std::optional<AppActionResult> validateCompressInputs(const QStringList& sources
 // (static, synchronous, symlink-skipping, entry-capped). Mutating but not destructive: writes ONE
 // new archive that must not already exist, never touches the sources.
 AppActionResult compressZip(const QJsonObject& args) {
-    const QStringList sources = compressSourcesFromArgs(args);
+    std::optional<AppActionResult> sources_error;
+    const QStringList sources = compressSourcesFromArgs(args, sources_error);
+    if (sources_error) {
+        return *sources_error;
+    }
     const QString zip_path = args.value(QStringLiteral("output_path")).toString().trimmed();
     if (auto fail = validateCompressInputs(sources, zip_path)) {
         return *fail;

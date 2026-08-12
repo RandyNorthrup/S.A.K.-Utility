@@ -822,6 +822,21 @@ bool CleanupWorker::removeFolderTreeVerified(const QString& path, int depth) {
 }
 #endif  // Q_OS_WIN
 
+bool CleanupWorker::deleteFolderTreeVerified(const QString& path) {
+#ifdef Q_OS_WIN
+    // Reuse the exact per-node handle-verified walk WITHOUT forking it. The tree walk reads no item
+    // list and no recycle config -- only the reboot-schedule bookkeeping tryScheduleReboot touches
+    // -- so a throwaway, empty-item worker drives it correctly. Its rebootPendingItems signal is
+    // unconnected here; MoveFileEx scheduling of a genuinely locked leftover still happens.
+    const QVector<LeftoverItem> noItems;
+    CleanupWorker worker(noItems);
+    return worker.removeFolderTreeVerified(path);
+#else
+    // No reparse-ancestor-swap TOCTOU exists off Windows; keep the recursive delete behavior.
+    return QDir(path).removeRecursively();
+#endif
+}
+
 bool CleanupWorker::unlinkReparsePoint(const QString& path) {
     // rmdir (RemoveDirectoryW) unlinks a directory reparse point; QFile::remove unlinks a file
     // symlink -- both remove the LINK only, never the target's contents.

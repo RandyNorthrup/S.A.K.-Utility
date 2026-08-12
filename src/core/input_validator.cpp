@@ -569,6 +569,49 @@ validation_result input_validator::validatePathWithinBase(const std::filesystem:
     }
 }
 
+namespace {
+
+#ifdef _WIN32
+// A colon in a Windows path is legitimate only as the drive-letter separator at
+// index 1 ("C:\..."). Every other colon opens an NTFS Alternate Data Stream --
+// e.g. "file.txt::$DATA" or "name:stream" -- which resolves to a different
+// on-disk object and can smuggle a write past an exact-name/extension check.
+// Treat any non-drive colon as suspicious.
+bool hasAdsColonStream(const std::string& path_str) noexcept {
+    constexpr std::size_t kDriveColonIndex = 1;
+    for (std::size_t i = 0; i < path_str.size(); ++i) {
+        if (path_str[i] != ':') {
+            continue;
+        }
+        const bool is_drive_colon = i == kDriveColonIndex &&
+                                    std::isalpha(static_cast<unsigned char>(path_str[0])) != 0;
+        if (!is_drive_colon) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Windows silently strips a trailing '.' or ' ' from a path component, so
+// "secret.txt." or "secret.txt " resolves to "secret.txt" and can slip past an
+// exact-name/extension check. Flag a dot/space that ends the whole path or any
+// component (immediately precedes a separator).
+bool hasTrailingDotOrSpace(const std::string& path_str) noexcept {
+    for (std::size_t i = 0; i < path_str.size(); ++i) {
+        if (path_str[i] != '.' && path_str[i] != ' ') {
+            continue;
+        }
+        const bool ends_component = i + 1 == path_str.size() || isPathSeparator(path_str[i + 1]);
+        if (ends_component) {
+            return true;
+        }
+    }
+    return false;
+}
+#endif  // _WIN32
+
+}  // namespace
+
 bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& path) noexcept {
     // An empty path has no suspicious pattern; do not assert non-empty (debug-only
     // crash on a legitimate empty query).
@@ -581,9 +624,17 @@ bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& pa
         return true;
     }
 
-    // UNC paths (Windows network paths)
+    // UNC paths (Windows network paths). This doubled-separator prefix also
+    // rejects the extended-length ("\\?\"), device ("\\.\") and "//?/" / "//./"
+    // namespaces, all of which begin with two separators and can bypass the
+    // normalization and length checks that operate on ordinary Win32 paths.
 #ifdef _WIN32
     if (path_str.starts_with("\\\\") || path_str.starts_with("//")) {
+        return true;
+    }
+    // Alternate Data Streams and a trailing dot/space both resolve to a
+    // different on-disk name than the text shown, bypassing exact-name checks.
+    if (hasAdsColonStream(path_str) || hasTrailingDotOrSpace(path_str)) {
         return true;
     }
 #endif

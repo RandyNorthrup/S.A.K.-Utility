@@ -27,7 +27,13 @@ namespace {
 // the assistant's gate treats a read_only action with zero risk flags as ungated
 // (isUngatedReadOnlyAction), so a descriptor that is both read_only and
 // mutating/destructive/catastrophic is rejected here rather than stored to be misread
-// later.
+// later. Descriptors are trusted compile-time app constants, so a contradictory flag
+// set is an authoring bug; rejecting it at registration surfaces that bug loudly
+// instead of storing an incoherent risk profile the gate would then misread. The
+// destructive=>mutating / catastrophic=>mutating invariant is checked for the same
+// reason: a destructive or catastrophic action that is not also mutating would slip a
+// data-loss op past the mutating-driven human gate. (Whether requires_admin has a real
+// elevation path is not knowable at this layer -- the run handler/bridge owns that.)
 QString registrationError(const QString& id,
                           const AppActionDescriptor& descriptor,
                           const AppActionInvoke& invoke) {
@@ -41,6 +47,11 @@ QString registrationError(const QString& id,
         (descriptor.mutating || descriptor.destructive || descriptor.catastrophic)) {
         return QStringLiteral(
                    "App action '%1' is marked read_only but also carries a state-change flag")
+            .arg(id);
+    }
+    if ((descriptor.destructive || descriptor.catastrophic) && !descriptor.mutating) {
+        return QStringLiteral(
+                   "App action '%1' is destructive/catastrophic but is not marked mutating")
             .arg(id);
     }
     return QString();

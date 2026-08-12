@@ -185,6 +185,20 @@ QString QuickActionController::registerAction(std::unique_ptr<QuickAction> actio
     }
 
     QString action_name = action->name();
+
+    // Fail closed: refuse a duplicate name instead of shadowing it. m_action_map.insert would
+    // overwrite the key so getAction()/routing resolves only the newest object, while
+    // getAllActions() would still list BOTH -- an ambiguous listing/routing split. Actions are
+    // registered once at startup with distinct names, so a collision is an authoring bug: skip
+    // the duplicate (nothing is stored) and surface it rather than silently shadow the first.
+    if (m_action_map.contains(action_name)) {
+        sak::logWarning("Rejected duplicate quick-action registration: {}",
+                        action_name.toStdString());
+        Q_EMIT logMessage(
+            QStringLiteral("Rejected duplicate quick-action registration: %1").arg(action_name));
+        return QString();
+    }
+
     QuickAction* action_ptr = action.get();
 
     // Store action
