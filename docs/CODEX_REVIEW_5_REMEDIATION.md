@@ -63,8 +63,28 @@ USER DECISIONS (do not re-litigate):
   constructed (dead scaffolding, not deleted). Minor open copy-review: profile-restore status
   strings that name the internal installed_apps.json.
 
-IN PROGRESS: infra tiers (user "do all", ordered): G23-2 crash reporting -> G15 CI hardening ->
-G14 coverage + G18 test-quality -> G14 fuzz harnesses. Plus G22-10 ISO pin + style re-sweep.
+INFRA PROGRESS (user "do all", ordered crash > CI > coverage/test-quality > fuzz):
+- G23-2 CRASH REPORTING DONE (5218ce4): sak::CrashReporter (SetUnhandledExceptionFilter +
+  MiniDumpWriteDump .dmp + .txt summary to app_paths::crashesDirectory(); dbghelp linked; pure
+  helpers unit-tested in test_crash_reporter; dump write needs a real-fault manual cert).
+- G15 CI mostly ALREADY IN PLACE (d3cfca7): the workflow already runs a Debug+AddressSanitizer
+  suite, whole-tree cppcheck, the clang-tidy naming gate, and the partition/accessibility gates on
+  push/PR; added a whole-tree ASCII CI step. G15-2/3/4 [x]. G15-1 (MSVC /analyze) deferred as a
+  large SAL-triage fix-effort, the same class the user scoped to safe subsets for clang-tidy.
+- G18: G18-9 (the 62 QSignalSpy::wait sites) was ALREADY remediated (converted to QTRY_COMPARE);
+  G18-2 vacuous asserts -- the few remaining QVERIFY(true) are documented-intentional smoke checks;
+  G18-6 skip-count gate (check_test_skips.ps1 + tests/skip_baseline.txt) is BUILT but UNWIRED;
+  G18-5 (3d9c88a) env-gated the three live-UUP-API tests behind SAK_RUN_LIVE_UUP_TESTS so the suite
+  is network-deterministic.
+
+REMAINING -- all genuine multi-week frameworks or network/tooling-dependent changes, awaiting the
+user's steer on scope/approach: wire the skip gate (needs the elevation-dependent skip made
+deterministic + a baseline regen); G14 OpenCppCoverage over the suite + 100% line/branch; G14 fuzz
+harnesses x8 (needs a clang-cl/MinGW build); G18-1 mutation testing; G18-4 break-every-fix; G23-1
+concurrency harness; G23-4 hostile-env matrix; G23-7 destructive-op property tests; G23-10 soak;
+G23-11 output-format compatibility; G22-10 ISO version-discovery (derive the filename from the
+rolling-dir SHA256SUMS, a downloader-architecture change that needs live-network cert); style
+re-sweep for any newly-safe subset.
 
 KNOWN FLAKE (to root-cause, unrelated to any shipped diff): during the G20 gate,
 test_offline_package_builder (integration, real-FS offline bundle build) failed once at ~240s
