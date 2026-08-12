@@ -3517,8 +3517,8 @@ rather than as generic advice.
       teardown crash (806d5c5) were both found by crashing, not by a gate. Add a
       clang-cl configuration so TSan is reachable at all, and add deterministic
       scheduler seams so a race reproduces on demand instead of one run in fifty
-- [~] R5-G23-2 CRASH REPORTING. A crash on a technician's machine currently yields
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+- [x] R5-G23-2 CRASH REPORTING. A crash on a technician's machine currently yields
+  - RESOLVED 2026-08-12 [DONE]: sak::CrashReporter (include/sak/crash_reporter.h + src/core/crash_reporter.cpp) installs a process-wide SetUnhandledExceptionFilter early in main() (right after the logger). On an unhandled SEH fault -- an access violation, stack overflow, etc. that a C++ try/catch cannot see -- it writes a MiniDumpWriteDump .dmp plus a human-readable .txt summary (time, pid, tid, exception code + symbolic name, fault address) into the crashes directory (app_paths::crashesDirectory(), a sibling of logs), with a re-entrancy guard, then lets the process terminate so a technician has an artifact to send. dbghelp linked via PLATFORM_LIBS. The dump write needs a real crash (manual/soak cert); the deterministic parts -- crashFileStem naming, exceptionCodeName map, formatSummary -- are unit-tested (test_crash_reporter, 6 cases). Full Release ctest 228/228.
       nothing. Diagnosing the shutdown crash required debug PDBs, a DbgHelp unhandled-
       exception probe, and multi-run bisection. Ship an unhandled-exception handler that
       writes a minidump, so a field crash becomes a fixable bug instead of an anecdote

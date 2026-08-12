@@ -436,7 +436,7 @@ if(PLATFORM_WINDOWS)
     # Windows-specific: Registry access, WMI, DXGI, performance counters,
     # networking (IP Helper, Winsock, DNS, WLAN, NetBIOS), COM (Firewall)
     set(PLATFORM_LIBS advapi32 crypt32 shell32 user32 dxgi pdh
-        iphlpapi ws2_32 dnsapi wlanapi netapi32 ole32 oleaut32)
+        iphlpapi ws2_32 dnsapi wlanapi netapi32 ole32 oleaut32 dbghelp)
 elseif(PLATFORM_MACOS)
     # macOS-specific: CoreFoundation, IOKit
     find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
@@ -480,6 +480,7 @@ include_directories(
 set(CORE_SOURCES
     src/core/logger.cpp
     src/core/app_paths.cpp
+    src/core/crash_reporter.cpp
     src/core/file_hash.cpp
     src/core/file_scanner.cpp
     src/core/path_utils.cpp
@@ -583,6 +584,7 @@ set(CORE_SOURCES
     src/core/partition_report_generator.cpp
     include/sak/logger.h
     include/sak/app_paths.h
+    include/sak/crash_reporter.h
     include/sak/file_hash.h
     include/sak/file_scanner.h
     include/sak/path_utils.h

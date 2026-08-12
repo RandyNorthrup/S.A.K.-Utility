@@ -132,6 +132,10 @@ QString logsDirectory() {
     return joinDataPath(dataRoot(), QStringLiteral("logs"));
 }
 
+QString crashesDirectory() {
+    return joinDataPath(dataRoot(), QStringLiteral("crashes"));
+}
+
 QString tempDirectory() {
     return joinDataPath(dataRoot(), QStringLiteral("temp"));
 }

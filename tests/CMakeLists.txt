@@ -2105,6 +2105,29 @@ add_test(NAME test_view_empty_state COMMAND test_view_empty_state
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_view_empty_state")
 
+add_executable(test_crash_reporter
+    unit/test_crash_reporter.cpp
+    ../src/core/crash_reporter.cpp
+    ../include/sak/crash_reporter.h
+)
+set_target_properties(test_crash_reporter PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_crash_reporter PRIVATE
+    Qt6::Core Qt6::Test
+)
+if(WIN32)
+    target_link_libraries(test_crash_reporter PRIVATE dbghelp)
+endif()
+target_include_directories(test_crash_reporter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_crash_reporter COMMAND test_crash_reporter
+         -o "${TEST_OUTPUT_DIR}/test_crash_reporter.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_crash_reporter")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp

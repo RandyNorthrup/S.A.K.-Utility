@@ -5,6 +5,7 @@
 /// @brief SAK Utility main entry point
 
 #include "sak/app_paths.h"
+#include "sak/crash_reporter.h"
 #include "sak/error_codes.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -570,6 +571,12 @@ int runApplication(int argc, char* argv[]) {
     configureLoggingForMode(options);
     if (!initializeLogger()) {
         return 1;
+    }
+    // Install the crash reporter right after the logger, so an unhandled SEH fault at any point
+    // in the main run writes a minidump + summary instead of the process vanishing silently.
+    if (!sak::CrashReporter::install(
+            std::filesystem::path(sak::app_paths::crashesDirectory().toStdWString()))) {
+        sak::logWarning("Crash reporter not installed (crash directory unavailable)");
     }
     if (options.accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("logger-initialized"));
