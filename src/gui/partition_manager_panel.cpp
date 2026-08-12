@@ -7350,6 +7350,89 @@ void showSpaceAnalyzerDialog(QWidget* parent, const QString& root_path, const QS
     dialog.exec();
 }
 
+// Run the (potentially long) offline-image carve off the GUI thread behind a modal progress
+// dialog whose Cancel sets the engine's cooperative-cancel flag, so the UI stays responsive and
+// the scan is abortable. Returns the scan result (scan_cancelled set if the user cancelled).
+FileRecoveryScanResult runFileRecoveryScanWithProgress(QWidget* parent,
+                                                       const FileRecoveryScanOptions& options,
+                                                       const QString& source_path) {
+    QDialog dialog(parent);
+    dialog.setObjectName(QStringLiteral("partitionDataRecoveryScanDialog"));
+    dialog.setWindowTitle(QObject::tr("Data Recovery"));
+    dialog.setAccessibleName(QObject::tr("Data recovery scan"));
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
+    auto* status = new QLabel(
+        QObject::tr("Scanning %1 for recoverable files...")
+            .arg(QDir::toNativeSeparators(source_path).left(kSpaceAnalyzerPathPreviewChars)),
+        &dialog);
+    status->setWordWrap(true);
+    status->setAccessibleName(QObject::tr("Data recovery scan status"));
+    layout->addWidget(status);
+
+    auto* progress = new QProgressBar(&dialog);
+    progress->setRange(0, 0);
+    progress->setAccessibleName(QObject::tr("Data recovery scan progress"));
+    layout->addWidget(progress);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttons);
+
+    auto cancel_flag = std::make_shared<std::atomic_bool>(false);
+    QFutureWatcher<FileRecoveryScanResult> watcher(&dialog);
+    QObject::connect(&dialog, &QDialog::finished, [&cancel_flag]() {
+        cancel_flag->store(true, std::memory_order_relaxed);
+    });
+    QObject::connect(&watcher, &QFutureWatcher<FileRecoveryScanResult>::finished, &dialog, [&]() {
+        dialog.accept();
+    });
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    watcher.setFuture(QtConcurrent::run([options, cancel_flag]() {
+        return FileRecoveryEngine::scanOfflineImage(options, cancel_flag.get());
+    }));
+    dialog.exec();
+    // If the user cancelled, the carve observes the flag and returns promptly with
+    // scan_cancelled set; result() waits only for that brief unwind.
+    return watcher.result();
+}
+
+// Run the file restore off the GUI thread behind a modal progress dialog. There is NO cancel:
+// restoreCandidates has no cancel hook and a restore interrupted mid-file would leave partial
+// output, so the dialog only closes when the write completes.
+FileRecoveryRestoreResult runFileRecoveryRestoreWithProgress(
+    QWidget* parent, const FileRecoveryRestoreOptions& options) {
+    QDialog dialog(parent);
+    dialog.setObjectName(QStringLiteral("partitionDataRecoveryRestoreDialog"));
+    dialog.setWindowTitle(QObject::tr("Data Recovery"));
+    dialog.setAccessibleName(QObject::tr("Data recovery restore"));
+    dialog.setWindowFlags(dialog.windowFlags() & ~Qt::WindowCloseButtonHint);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
+    auto* status = new QLabel(QObject::tr("Restoring recovered files..."), &dialog);
+    status->setWordWrap(true);
+    status->setAccessibleName(QObject::tr("Data recovery restore status"));
+    layout->addWidget(status);
+
+    auto* progress = new QProgressBar(&dialog);
+    progress->setRange(0, 0);
+    progress->setAccessibleName(QObject::tr("Data recovery restore progress"));
+    layout->addWidget(progress);
+
+    QFutureWatcher<FileRecoveryRestoreResult> watcher(&dialog);
+    QObject::connect(&watcher,
+                     &QFutureWatcher<FileRecoveryRestoreResult>::finished,
+                     &dialog,
+                     [&]() { dialog.accept(); });
+    watcher.setFuture(
+        QtConcurrent::run([options]() { return FileRecoveryEngine::restoreCandidates(options); }));
+    dialog.exec();
+    return watcher.result();
+}
+
 QTableWidget* createFileRecoveryTable(QWidget* parent) {
     auto* table = new QTableWidget(0, kFileRecoveryColumnCount, parent);
     table->setObjectName(QStringLiteral("partitionFileRecoveryCandidateTable"));
@@ -11434,7 +11517,13 @@ void PartitionManagerPanel::onDataRecovery() {
 
     FileRecoveryScanOptions scan_options;
     scan_options.image_path = source_path;
-    const auto scan = FileRecoveryEngine::scanOfflineImage(scan_options);
+    // Carve off the GUI thread with a cancellable modal progress dialog (was a synchronous
+    // call that froze the UI for the whole scan of a potentially large image).
+    const auto scan = runFileRecoveryScanWithProgress(this, scan_options, source_path);
+    if (scan.scan_cancelled) {
+        Q_EMIT statusMessage(tr("Data Recovery scan cancelled"), sak::kTimerStatusDefaultMs);
+        return;
+    }
     if (scan.candidates.isEmpty()) {
         showInformationLogged(this,
                               tr("Data Recovery"),
@@ -11449,7 +11538,8 @@ void PartitionManagerPanel::onDataRecovery() {
     restore_options.image_path = source_path;
     restore_options.destination_directory = destination_path;
     restore_options.candidates = scan.candidates;
-    const auto restore = FileRecoveryEngine::restoreCandidates(restore_options);
+    // Write the restored files off the GUI thread behind a modal progress dialog.
+    const auto restore = runFileRecoveryRestoreWithProgress(this, restore_options);
     const QString warning_text = restore.warnings.isEmpty()
                                      ? QString()
                                      : tr("\nWarnings: %1").arg(restore.warnings.join("; "));
