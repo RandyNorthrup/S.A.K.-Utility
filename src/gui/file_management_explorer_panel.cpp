@@ -69,6 +69,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
+#include <QProgressDialog>
 #include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
@@ -528,6 +529,10 @@ FileManagementExplorerPanel::FileManagementExplorerPanel(QWidget* parent) : QWid
 }
 
 FileManagementExplorerPanel::~FileManagementExplorerPanel() {
+    // Abort a background hash (if any) so a large-file digest does not run on after the panel is
+    // gone. The detached QtConcurrent task holds its own token copy and simply discards its
+    // result; requesting stop lets it return promptly instead of hashing to completion.
+    m_hashStopSource.request_stop();
     if (m_search_worker != nullptr) {
         // Destruction is the one place a join is required: a running child
         // QThread must not be destroyed with the panel. Interactive stops go
@@ -2819,14 +2824,36 @@ void FileManagementExplorerPanel::hashSelectedFile() {
     const QString path = entry.path;
     Q_EMIT statusMessage(tr("Hashing %1...").arg(entry.name), sak::kTimerStatusMessageMs);
 
+    // Fresh cancel source for this hash (drops any token from a prior run).
+    m_hashStopSource = std::stop_source{};
+    const std::stop_token stop_token = m_hashStopSource.get_token();
+
+    // A cancellable progress dialog that only appears if the hash runs long (setMinimumDuration),
+    // so a quick hash of a small file stays silent while a large local file becomes abortable.
+    constexpr int kHashProgressMinDurationMs = 500;
+    auto* progress =
+        new QProgressDialog(tr("Hashing %1...").arg(entry.name), tr("Cancel"), 0, 0, this);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setMinimumDuration(kHashProgressMinDurationMs);
+    connect(progress, &QProgressDialog::canceled, this, [this]() {
+        m_hashStopSource.request_stop();
+    });
+
     auto* watcher = new QFutureWatcher<FileManagementHashResult>(this);
     const QString hash_target_id = FileExplorerTargetId::fromTarget(target).value;
     connect(watcher,
             &QFutureWatcher<FileManagementHashResult>::finished,
             this,
-            [this, watcher, name = entry.name, hash_target_id]() {
+            [this, watcher, progress, name = entry.name, hash_target_id]() {
+                progress->close();
+                progress->deleteLater();
                 watcher->deleteLater();
                 const FileManagementHashResult result = watcher->result();
+                if (result.cancelled) {
+                    Q_EMIT statusMessage(tr("Hashing of %1 cancelled").arg(name),
+                                         sak::kTimerStatusMessageMs);
+                    return;
+                }
                 if (!result.ok) {
                     Q_EMIT statusMessage(
                         tr("Hash failed: %1").arg(result.blockers.join(QStringLiteral("; "))),
@@ -2843,8 +2870,9 @@ void FileManagementExplorerPanel::hashSelectedFile() {
                 Q_EMIT statusMessage(tr("SHA-256 of %1: %2").arg(name, result.sha256),
                                      sak::kTimerStatusMessageMs);
             });
-    watcher->setFuture(QtConcurrent::run([target, path]() {
-        return FileManagementFileSystemBridge::hashFile(target, path, kExplorerHashMaxBytes);
+    watcher->setFuture(QtConcurrent::run([target, path, stop_token]() {
+        return FileManagementFileSystemBridge::hashFile(
+            target, path, kExplorerHashMaxBytes, stop_token);
     }));
 }
 

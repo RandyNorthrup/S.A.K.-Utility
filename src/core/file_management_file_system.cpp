@@ -1239,16 +1239,27 @@ bool FileManagementFileSystemBridge::readWasCapped(bool reader_truncated,
 }
 
 FileManagementHashResult FileManagementFileSystemBridge::hashFile(
-    const FileManagementTarget& target, const QString& path, uint64_t max_bytes) {
+    const FileManagementTarget& target,
+    const QString& path,
+    uint64_t max_bytes,
+    std::stop_token stop_token) {
     FileManagementHashResult result;
     result.file_system = displayFileSystem(normalizedFileSystem(target.file_system));
 
     if (target.local_file_system) {
         // Local files hash in full through the chunked reader (memory-safe for large files).
+        // The chunked hasher polls stop_token, so a caller-requested cancel aborts the digest
+        // of even a very large file rather than running to completion off-screen.
         const QString local = path.trimmed().isEmpty() ? target.root_path : path;
-        const auto digest = file_hasher(hash_algorithm::sha256)
-                                .calculateHash(std::filesystem::path(local.toStdWString()));
+        const auto digest =
+            file_hasher(hash_algorithm::sha256)
+                .calculateHash(std::filesystem::path(local.toStdWString()), nullptr, stop_token);
         if (!digest) {
+            if (stop_token.stop_requested()) {
+                result.cancelled = true;
+                result.blockers.append(QStringLiteral("Hashing of %1 was cancelled.").arg(local));
+                return result;
+            }
             result.blockers.append(QStringLiteral("Could not hash %1.").arg(local));
             return result;
         }
@@ -1267,7 +1278,15 @@ FileManagementHashResult FileManagementFileSystemBridge::hashFile(
         return result;
     }
 
-    // Raw/non-native targets are read through their reader up to the cap, then hashed.
+    // Raw/non-native targets are read through their reader up to the cap, then hashed. The
+    // read is a single bounded (<= max_bytes) call and cannot be interrupted mid-read, so honor
+    // a cancel requested before it starts; the digest itself is trivial on the capped buffer.
+    if (stop_token.stop_requested()) {
+        result.cancelled = true;
+        result.blockers.append(
+            QStringLiteral("Hashing of %1 was cancelled before the read started.").arg(path));
+        return result;
+    }
     // Request one extra byte so a file of exactly max_bytes is provably complete and is
     // not falsely reported as capped.
     const FileManagementReadResult read = readFile(target, path, readCapProbe(max_bytes));

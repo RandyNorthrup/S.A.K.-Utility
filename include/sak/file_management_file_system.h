@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <stop_token>
 
 namespace sak {
 
@@ -152,6 +153,7 @@ struct FileManagementHashResult {
     QString sha256;            ///< Lowercase hex SHA-256 digest.
     bool capped{false};        ///< True when only the first @ref hashed_bytes were hashed.
     uint64_t hashed_bytes{0};  ///< Number of source bytes fed into the digest.
+    bool cancelled{false};     ///< True when the hash was stopped by the caller's stop_token.
     QStringList blockers;
 };
 
@@ -289,7 +291,8 @@ public:
 
     [[nodiscard]] static FileManagementHashResult hashFile(const FileManagementTarget& target,
                                                            const QString& path,
-                                                           uint64_t max_bytes);
+                                                           uint64_t max_bytes,
+                                                           std::stop_token stop_token = {});
     /// Render @p data (already capped to a preview window by the caller) into a display-ready
     /// preview: decoded UTF-8/Latin-1 text when the bytes look textual, otherwise a hex+ASCII
     /// dump. @p truncated marks that the source file has more bytes past this window.

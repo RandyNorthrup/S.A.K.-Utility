@@ -37,6 +37,7 @@
 
 #include <array>
 #include <functional>
+#include <stop_token>
 
 class QJsonArray;
 class QComboBox;
@@ -914,6 +915,9 @@ private:
     QString m_last_hash_name;
     QString m_last_hash_sha256;
     bool m_last_hash_capped{false};
+    // Cooperative-cancel source for the in-flight background hash; request_stop() aborts the
+    // digest of a large file (from the Cancel of its progress dialog, or on panel teardown).
+    std::stop_source m_hashStopSource;
     // Targets the hash and the mutation evidence above were produced on. The
     // Evidence tab is headed by the CURRENT target, so evidence carrying no
     // identity of its own would be read as belonging to whatever disk is selected.
