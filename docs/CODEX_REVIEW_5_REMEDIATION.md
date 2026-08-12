@@ -1016,7 +1016,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: derive_key wipes the derived pwd_bytes (68,92) but the source QString is implicitly shared and cannot be reliably wiped -- an inherent QString limitation, not a fail-open on untrusted input. locked_memory is best-effort (319-320). Exploiting residency requires local memory disclosure.
   - Fix: Carry the password in a secure string type end-to-end (from the input widget) if this is worth hardening.
-- [ ] **R5-P8-29** [LOW] [CONFIRMED_REAL] executeElevated ignores wait/exit-code API failures and waits forever
+- [x] **R5-P8-29** [LOW] [CONFIRMED_REAL] executeElevated ignores wait/exit-code API failures and waits forever
+  - RESOLVED 2026-08-11 [fixed]: the CONFIRMED_REAL fail-open (ignored GetExitCodeProcess -> false success) is closed: waitForElevatedExit fails closed on a null handle, a failed wait, an unreadable exit code, AND a non-zero exit code. The remaining WaitForSingleObject INFINITE is retained deliberately -- the elevated helper is the app's own trusted, Job-Object-contained exe running a bounded task (an elevated flash/cleanup can legitimately run long), so a bounded timeout would false-close a legitimate long-running elevated op ([[no-fallbacks-fail-closed]] + a false-close is worse than the gap).
   - Files: src/core/elevation_manager.cpp:199, src/core/elevation_manager.cpp:202
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: WaitForSingleObject(hProcess, INFINITE) has no timeout (199) so a hung helper blocks forever, and GetExitCodeProcess's return is ignored (202): if it fails, exit_code stays 0 and the run is reported successful. The elevated helper is the app's own trusted exe so false-success is rare, but the ignored return is a fail-open.
