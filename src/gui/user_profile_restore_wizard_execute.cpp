@@ -97,8 +97,14 @@ void UserProfileRestoreExecutePage::setupUi() {
 void UserProfileRestoreExecutePage::initializePage() {
     Q_ASSERT(m_overallProgressBar);
     Q_ASSERT(m_currentProgressBar);
+    // A finished restore is latched for the life of this wizard page. A profile
+    // restore is destructive, so re-entering the page (Back then forward) must
+    // neither clear the completed result nor silently run the restore a second
+    // time; only a fresh wizard (a new instance) may start another restore.
+    if (m_restoreComplete) {
+        return;
+    }
     // Reset state
-    m_restoreComplete = false;
     m_restoreSuccess = false;
     m_overallProgressBar->setValue(0);
     m_currentProgressBar->setValue(0);

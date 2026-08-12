@@ -53,6 +53,12 @@ struct AiOrchestrationOptions {
     QVector<AiPhaseExecution> resume_prior_phases;
     QSet<QString> resume_flags;
     QJsonObject resume_phase_results;
+    // Identity of the persisted resume record (P1-15). When non-empty the orchestrator trusts
+    // the resume records only if these match the workflow/run actually executing; a mismatch
+    // means the record is from a different run and the resume is ignored (fresh run, normal
+    // per-phase gates). Callers that persist no identity leave these empty (enforcement skipped).
+    QString resume_workflow_id;
+    QString resume_run_id;
 };
 
 struct AiOrchestratorResult {
@@ -182,6 +188,11 @@ private:
                             const QString& run_id,
                             RunState* state) const;
     void applyResumeState(const WorkflowTemplate& workflow, RunState* state) const;
+    // True when the persisted resume identity (options.resume_workflow_id/resume_run_id) is
+    // either unset or matches the workflow/run being executed. A present-but-mismatched id
+    // means the record belongs to a different run and must not be trusted (P1-15).
+    [[nodiscard]] bool resumeIdentityMatches(const WorkflowTemplate& workflow,
+                                             const RunState& state) const;
     static void seedResumeExecutedIndex(const WorkflowTemplate& workflow,
                                         const AiPhaseExecution& prior,
                                         RunState* state);

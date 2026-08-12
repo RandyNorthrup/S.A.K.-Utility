@@ -15,7 +15,11 @@
 #include "sak/package_list_manager.h"
 
 #include <QApplication>
+#include <QFile>
 #include <QFileDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMessageBox>
 #include <QtConcurrent>
 
@@ -51,6 +55,65 @@ namespace {
         cleaned.append(QStringLiteral("..."));
     }
     return cleaned;
+}
+
+// Max package names listed in the pre-install review dialog before a "... and N more"
+// summary; bounds the dialog height for a large bundle while still previewing the set.
+constexpr int kMaxReviewNamesShown = 40;
+
+// Best-effort read of a deployment manifest's package list for the pre-install review
+// dialog. Mirrors OfflineDeploymentWorker::readManifest's extraction (size cap + the
+// "packages" array) but is display-only: the worker still performs the authoritative
+// fail-closed validation before any package is written. Returns an empty list on any
+// read/parse failure, which the caller treats as fail-closed.
+[[nodiscard]] QStringList readBundlePackageLabels(const QString& manifest_path) {
+    QFile file(manifest_path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    if (file.size() > offline::kMaxManifestBytes) {
+        return {};
+    }
+    QJsonParseError parse_error;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
+    file.close();
+    if (parse_error.error != QJsonParseError::NoError) {
+        return {};
+    }
+    QStringList labels;
+    const QJsonArray packages = doc.object().value(QStringLiteral("packages")).toArray();
+    for (const auto& value : packages) {
+        const QJsonObject pkg = value.toObject();
+        const QString id = pkg.value(QStringLiteral("package_id")).toString();
+        if (id.isEmpty()) {
+            continue;
+        }
+        const QString version = pkg.value(QStringLiteral("version")).toString();
+        labels.append(version.isEmpty() ? id : QStringLiteral("%1 (%2)").arg(id, version));
+    }
+    return labels;
+}
+
+// Show the bundle package-review confirmation (parity with onInstallAll's count confirm).
+// Returns true only when the user explicitly accepts; fails closed on any other reply.
+[[nodiscard]] bool confirmBundleInstall(QWidget* parent, const QStringList& labels) {
+    QStringList shown = labels;
+    QString overflow;
+    if (shown.size() > kMaxReviewNamesShown) {
+        overflow = QObject::tr("\n... and %1 more").arg(shown.size() - kMaxReviewNamesShown);
+        shown = shown.mid(0, kMaxReviewNamesShown);
+    }
+    const QString body = QObject::tr(
+                             "Install the following %1 package(s) from the deployment bundle?\n\n"
+                             "%2%3\n\n"
+                             "This may take several minutes depending on package sizes.")
+                             .arg(labels.size())
+                             .arg(shown.join(QStringLiteral("\n")), overflow);
+    const auto reply = sak::showQuestionLogged(parent,
+                                               QObject::tr("Confirm Bundle Installation"),
+                                               body,
+                                               QMessageBox::Yes | QMessageBox::No);
+    return reply == QMessageBox::Yes;
 }
 }  // namespace
 
@@ -657,6 +720,22 @@ void AppInstallationPanel::onInstallFromBundle() {
         tr("Install from Bundle"),
         tr("Installing packages from a deployment payload requires administrator privileges."));
     if (gate != sak::ElevationGateResult::AlreadyElevated) {
+        return;
+    }
+
+    // Package-review confirmation (parity with onInstallAll's count confirm): a bundle
+    // install is a destructive multi-package system change, so preview the packages the
+    // manifest will install and require an explicit confirm before the worker writes
+    // anything. This read is display-only; the worker still runs authoritative validation.
+    const QStringList package_labels = readBundlePackageLabels(manifest_path);
+    if (package_labels.isEmpty()) {
+        sak::showWarningLogged(
+            this,
+            tr("Manifest Unreadable"),
+            tr("The deployment manifest lists no installable packages or could not be read."));
+        return;
+    }
+    if (!confirmBundleInstall(this, package_labels)) {
         return;
     }
 

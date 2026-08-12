@@ -689,7 +689,7 @@ QString DiagnosticReportGenerator::buildBenchmarkSection() const {
                     .arg(cb.thread_scaling_efficiency * kPercentMaxF, 0, 'f', 1);
         html += QString("<tr><td>ZLIB Throughput</td><td>%1 MB/s</td></tr>\n")
                     .arg(cb.zlib_throughput_mbps, 0, 'f', 1);
-        html += QString("<tr><td>AES Throughput</td><td>%1 MB/s</td></tr>\n")
+        html += QString("<tr><td>AES Throughput (S-box proxy)</td><td>%1 MB/s</td></tr>\n")
                     .arg(cb.aes_throughput_mbps, 0, 'f', 1);
         html += "</table>\n";
     }

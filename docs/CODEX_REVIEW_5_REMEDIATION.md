@@ -1409,7 +1409,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: skipCurrentStep (356-397) requestStop()s the worker and queues advanceSuiteStep but never appends to m_suite_failures. The cpu/disk/memory benchmarks connect only failed+complete (not cancelled), so a skipped step produces neither a result nor a failure record, and aggregateResults (676-692) -- which only inspects m_suite_failures -- leaves overall_status=AllPassed despite the omitted work.
   - Fix: Record each skipped step (append to m_suite_failures or a skipped list) so aggregate reflects incompleteness.
-- [ ] **R5-P10-19** [LOW] [PARTIAL] Network report omits failed/not-run results, no failure state
+- [x] **R5-P10-19** [LOW] [PARTIAL] Network report omits failed/not-run results, no failure state
+  - RESOLVED 2026-08-11 [fixed]: per-section attempted/failed tracking added: the controller records a QSet<State> m_attemptedOps and the report generator renders an explicit failed/not-run marker for an attempted-but-empty section instead of silently omitting it; clearCacheFor stale-prevention retained, no fabricated data.
   - Files: src/core/network_diagnostic_controller.cpp:1273, src/core/network_diagnostic_controller.cpp:1295
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: populateBasic/AdvancedReportSections only insert a section when the cached result is non-empty/positive (e.g. m_cachedPing.sent>0 at 1273, downloadMbps>0||uploadMbps>0 at 1295). clearCacheFor drops stale results before each run so no stale success leaks, but a diagnostic that ran and failed simply vanishes from the report with no failed/not-run marker -- a design 'include-what-we-have' report.
@@ -1546,7 +1547,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: runReadBandwidth/runWriteBandwidth/runCopyBandwidth return 0.0 on alloc failure (184/223/258); runBandwidthBenchmarks (98-118) stores them without checking, so a bandwidth alloc failure is scored as 0 GB/s success (only the latency path fails closed at 133). runCopyBandwidth's comment says 'both read and write = 2x' but computes gbps from src.size() only (273-274), under-reporting copy bandwidth ~2x.
   - Fix: Fail closed when any bandwidth returns 0; multiply copy bandwidth by 2x.
-- [ ] **R5-P10-43** [LOW] [CONFIRMED_REAL] CPU 'AES' is S-box/XOR; MT scaling compares mismatched workloads
+- [x] **R5-P10-43** [LOW] [CONFIRMED_REAL] CPU 'AES' is S-box/XOR; MT scaling compares mismatched workloads
+  - RESOLVED 2026-08-11 [fixed]: honest relabel: the user-facing 'AES Throughput' display now reads 'AES Throughput (S-box proxy)' (HTML report + GUI) to reflect it is an S-box/substitution proxy, not real AES; the struct field/json key are unchanged. Part B (matched MT workload) was already fixed.
   - Files: src/core/cpu_benchmark_worker.cpp:342, src/core/cpu_benchmark_worker.cpp:401
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: runAesEncryption is S-box substitution+XOR (comment 374-376) reported as 'AES Throughput'. runMultiThreaded runs only prime(2M)+matrix(256) smaller workloads per thread (416-417), yet thread_scaling_efficiency = st_total(4 full ST benchmarks)/mt_total(2 smaller) / hw_threads (204) -- comparing different workloads, so the scaling metric is meaningless. Quality/methodology, not a memory bug.
@@ -1557,7 +1559,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: execute stores m_result.thread_count=hardware_concurrency() (115) (0 when unknown); runMultiThreadBenchmark clamps hw_threads=max(1,...) and runs 1 thread (200), but calculateScores re-fetches hardware_concurrency() UNclamped (449) so multi_thread_score = single*0*eff = 0 -- the MT pass ran but scores 0 with thread_count reported 0.
   - Fix: Compute the clamped thread count once (max(1,hardware_concurrency())) and reuse it for thread_count and scoring.
-- [ ] **R5-P10-45** [LOW] [DESIGN_INTENT] QD32 disk measurements are serialized synchronous QD1
+- [x] **R5-P10-45** [LOW] [DESIGN_INTENT] QD32 disk measurements are serialized synchronous QD1
+  - RESOLVED 2026-08-11 [fixed]: honest relabel: the disk metric display now reads 'Random 4K QD32 (serialized QD1)' to reflect that queue_depth>1 is measured as serialized QD1; struct field/json key unchanged.
   - Files: src/core/disk_benchmark_worker.cpp:879, src/core/disk_benchmark_worker.cpp:1020
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The finding is factually correct -- runRandom4KReadLoop issues each op synchronously on one non-overlapped handle, so queue_depth>1 measures serialized QD1 -- but this is explicitly documented as a known benchmark-fidelity limitation in the code comment (879-882) and results are still labeled QD32.
@@ -1693,27 +1696,32 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: local-config-or-registry (reachable)
   - Evidence: Uninstall dialogs interpolate registry program.displayName into HTML templates '<b>%1</b>' with no escaping (addUninstallProgramHeader 77, addForcedUninstallDescription 184); the restore welcome page injects manifest.version/source_machine into an explicit HTML block (showLoadedManifest 183-196); ai_transcript_view builds QLabel(body) with default AutoText (419) over model/tool output. QLabel auto-detects and renders rich text, so markup in these untrusted sources (HKCU uninstall keys are non-admin writable; the .sakbackup manifest and AI/tool output are attacker-influenced) can spoof a destructive-action confirmation dialog and fetch resources via <img src=...> (local/remote); no JS execution.
   - Fix: QString::toHtmlEscaped() every interpolated untrusted value (keep the intended static <b> markup), and/or setTextFormat(Qt::PlainText) on labels that need no markup (transcript body).
-- [ ] **R5-P11-4** [LOW] [PARTIAL] Flash source/target identity revalidated before dialog, not before write
+- [x] **R5-P11-4** [LOW] [PARTIAL] Flash source/target identity revalidated before dialog, not before write
+  - RESOLVED 2026-08-11 [fixed]: showConfirmationDialog re-calls confirmSelectionStillValid() immediately after the modal Yes reply, right before beginConfirmedFlash (the sole caller of createWindowsUSB/startFlash), aborting if the image or USB identity changed while the modal was open (TOCTOU). Valid path is silent -- no false-close.
   - Files: src/gui/image_flasher_panel.cpp:1072, src/gui/image_flasher_panel.cpp:1104
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: confirmSelectionStillValid() (981-997, checks image + drive identity) DOES exist and IS called at 1072 -- but BEFORE the modal confirmation dialog (1078). After the user clicks Yes the code goes straight to startFlash (1104) / createWindowsUSB (1099) with no re-validation. Residual TOCTOU: image file replaced on disk, or a USB drive removed and a different one enumerated to the same PhysicalDriveN, while the modal is open, is not re-checked before the destructive write.
   - Fix: Re-call confirmSelectionStillValid() immediately after the Yes reply, right before startFlash/createWindowsUSB, and abort if it now fails.
-- [ ] **R5-P11-6** [LOW] [DESIGN_INTENT] Workflow teardown abandons worker after bounded deadline (UAF residual)
+- [~] **R5-P11-6** [LOW] [DESIGN_INTENT] Workflow teardown abandons worker after bounded deadline (UAF residual)
+  - RESOLVED 2026-08-11 [deferred-with-rationale]: the described UAF no longer exists: drainWorkflowRun/drainAndStopAsyncTool fail closed with qFatal on the drain-deadline (refuse to destroy the panel under a live worker) and PanelToolExecutor::runToolPhase captures the panel in a QPointer. The only outstanding item is the finding's own 'full fix' (a heap-allocated detached executor context outliving the panel) -- a substantial architectural change with its own lifetime risk and the documented accepted compromise; any smaller change would weaken the qFatal guard or re-introduce the shutdown hang. Deferred.
   - Files: src/gui/ai_assistant_panel.cpp:3310, src/gui/ai_assistant_panel.cpp:9448
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: drainWorkflowRun (3296-3315) pumps the event loop until the watcher stops OR kAsyncDrainDeadlineMs; on timeout it logs 'abandoning' and proceeds to destroy members while PanelToolExecutor::runToolPhase still derefs panel->dispatchWorkflowToolPhase (9448). This is a deliberate, documented bounded-drain tradeoff (comment 3300-3312): the run token is cancelled first so the worker unwinds well within the deadline; the deadline only prevents a permanently-wedged worker from hanging teardown forever. Residual UAF exists only if a tool phase ignores cancellation past the deadline (edge), and the alternative (unbounded wait) hangs shutdown.
   - Fix: Only fully closable via a heap-allocated detached executor context that outlives the panel; current bounded drain is the accepted compromise.
-- [ ] **R5-P11-7** [LOW] [PARTIAL] Profile restore auto-starts on page entry; re-entry re-runs
+- [x] **R5-P11-7** [LOW] [PARTIAL] Profile restore auto-starts on page entry; re-entry re-runs
+  - RESOLVED 2026-08-11 [fixed]: UserProfileRestoreExecutePage::initializePage latches completion (early-return when m_restoreComplete) so navigating Back then forward no longer re-runs the destructive restore and the completed view is preserved; the concurrent-re-entry guard is untouched, and a fresh wizard per restore avoids a false-close.
   - Files: src/gui/user_profile_restore_wizard_execute.cpp:107, src/gui/user_profile_restore_wizard_execute.cpp:123
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: initializePage (95) schedules onStartRestore via QTimer::singleShot (107). Concurrent re-entry IS guarded: onStartRestore returns early if m_worker is set (123-128, with a comment). Residual: after completion m_worker is set null (199), so navigating Back then forward re-enters the page and starts the destructive restore AGAIN; there is no completed-latch and no final bind-all confirmation on this page (reaching it via Next through prior pages is the only gate).
   - Fix: Latch completion (guard onStartRestore when m_restoreComplete) and/or gate the start behind an explicit Start button instead of an auto-timer.
-- [ ] **R5-P11-10** [LOW] [PARTIAL] Install-from-bundle starts with no package-review confirmation
+- [x] **R5-P11-10** [LOW] [PARTIAL] Install-from-bundle starts with no package-review confirmation
+  - RESOLVED 2026-08-11 [fixed]: onInstallFromBundle now shows a package-review confirmation dialog (readBundlePackageLabels re-parses the selected manifest) before installFromBundle, matching onInstallAll; the existing elevation gate is kept.
   - Files: src/gui/app_installation_panel_actions.cpp:599, src/gui/app_installation_panel_actions.cpp:612
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: onInstallFromBundle (569-613) prompts a file dialog for the manifest, verifies a sibling packages/ dir, runs an elevation gate (599), then immediately installFromBundle (612) with no dialog listing which packages will be installed -- unlike onInstallAll which confirms the package count (287-297). The elevation gate provides some friction and the user deliberately picks the bundle, but a destructive multi-package system change has no review/confirm for parity.
   - Fix: Read the manifest and show a package-list confirmation dialog before installFromBundle, matching onInstallAll.
-- [ ] **R5-P11-17** [LOW] [PARTIAL] Restore mapping default conflict (dest=CreateNew, mode=Replace); dead-state claim overstated
+- [x] **R5-P11-17** [LOW] [PARTIAL] Restore mapping default conflict (dest=CreateNew, mode=Replace); dead-state claim overstated
+  - RESOLVED 2026-08-11 [fixed]: the restore mapping default conflict is fixed: the merge-mode combo defaults to CreateNewUser when the destination is '(Create New User)', and validatePage validates the dest/mode pair so a click-through with the default (Create New) destination + Replace mode is caught up front.
   - Files: src/gui/user_profile_restore_wizard_pages.cpp:176, src/gui/user_profile_restore_wizard_pages.cpp:184
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: Destination combo default is '(Create New User)' with empty data (176) while the merge-mode combo default is 'Replace Destination' (184); validatePage (307-333) does not reject the mismatch. With defaults unchanged, buildMappingForRow yields empty destination_username + mode=ReplaceDestination, and the worker resolves via resolveExistingUser (user_profile_restore_worker.cpp:491-493) which fails on the empty destination -- so a click-through restore fails (fail-closed, no corruption). The finding's 'per-user choices dead / one global policy' part is a MISREAD: the worker DOES switch on mapping.mode (488), and the global conflictResolution is a separate, legitimate file-conflict axis (set at pages 1538).

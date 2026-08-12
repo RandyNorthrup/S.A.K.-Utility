@@ -609,7 +609,25 @@ void AiOrchestrator::initializeRunState(const WorkflowTemplate& workflow,
     }
 }
 
+bool AiOrchestrator::resumeIdentityMatches(const WorkflowTemplate& workflow,
+                                           const RunState& state) const {
+    if (!m_options.resume_workflow_id.isEmpty() && m_options.resume_workflow_id != workflow.id) {
+        return false;
+    }
+    if (!m_options.resume_run_id.isEmpty() && m_options.resume_run_id != state.result.run_id) {
+        return false;
+    }
+    return true;
+}
+
 void AiOrchestrator::applyResumeState(const WorkflowTemplate& workflow, RunState* state) const {
+    // P1-15: only trust the persisted resume records when their identity matches the run being
+    // executed. A snapshot captured under a different workflow_id/run_id (e.g. a tampered or
+    // cross-run user-dir file) is ignored entirely so the run proceeds fresh under the normal
+    // per-phase human/policy gates rather than replaying or skipping another run's phases.
+    if (!resumeIdentityMatches(workflow, *state)) {
+        return;
+    }
     state->result.phases = m_options.resume_prior_phases;
     state->result.flags = m_options.resume_flags;
     state->context.phase_results = m_options.resume_phase_results;

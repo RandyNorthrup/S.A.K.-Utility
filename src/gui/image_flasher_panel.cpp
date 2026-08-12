@@ -1286,6 +1286,12 @@ void ImageFlasherPanel::showConfirmationDialog() {
         return;
     }
 
+    // Re-validate after the modal: the image or a target drive could have been swapped
+    // (file replaced, USB removed and re-enumerated) while the dialog was open. Fail closed.
+    if (!confirmSelectionStillValid()) {
+        return;
+    }
+
     beginConfirmedFlash(is_windows_iso);
 }
 

@@ -240,8 +240,14 @@ private:
     void populateBasicReportSections(QSet<NetworkDiagnosticReportGenerator::Section>& sections);
     void populateAdvancedReportSections(QSet<NetworkDiagnosticReportGenerator::Section>& sections);
 
+    /// @brief Report sections whose diagnostic was attempted this session (mapped from
+    ///        m_attemptedOps). Subtracting the with-data sections yields the attempted-but-
+    ///        empty set the report renders as an explicit "not run" marker.
+    [[nodiscard]] QSet<NetworkDiagnosticReportGenerator::Section> attemptedReportSections() const;
+
     State m_state = State::Idle;  ///< Legacy: first active op or Idle
     QSet<State> m_activeOps;      ///< Currently running operations
+    QSet<State> m_attemptedOps;   ///< Every op attempted this session (for not-run report state)
 
     std::unique_ptr<NetworkAdapterInspector> m_adapterInspector;
     std::unique_ptr<ConnectivityTester> m_connectivityTester;

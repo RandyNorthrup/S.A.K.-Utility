@@ -261,7 +261,7 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(const CpuBenchmarkResult& 
 
     m_cpu_details_label->setText(
         QString("Prime Sieve: %1 ms | Matrix: %2 ms (%3 GFLOPS) | "
-                "ZLIB: %4 MB/s | AES: %5 MB/s | Scaling: %6% | "
+                "ZLIB: %4 MB/s | AES (S-box proxy): %5 MB/s | Scaling: %6% | "
                 "%7% of baseline (i5-12400)")
             .arg(result.prime_sieve_time_ms, 0, 'f', 1)
             .arg(result.matrix_multiply_time_ms, 0, 'f', 1)
@@ -318,7 +318,7 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
 
     m_disk_rand_label->setText(
         QString("Random 4K QD1 -- R: %1 MB/s (%2 IOPS) | W: %3 MB/s (%4 IOPS)\n"
-                "Random 4K QD32 -- R: %5 MB/s (%6 IOPS) | W: %7 MB/s (%8 IOPS)")
+                "Random 4K QD32 (serialized QD1) -- R: %5 MB/s (%6 IOPS) | W: %7 MB/s (%8 IOPS)")
             .arg(result.rand_4k_read_mbps, 0, 'f', 1)
             .arg(result.rand_4k_read_iops, 0, 'f', 0)
             .arg(result.rand_4k_write_mbps, 0, 'f', 1)

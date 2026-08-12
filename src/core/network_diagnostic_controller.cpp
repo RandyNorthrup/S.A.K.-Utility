@@ -182,6 +182,9 @@ void NetworkDiagnosticController::runOnThread(std::function<void()> work, State 
     // Drop any prior cached result for this op BEFORE it runs: if this run fails or is
     // cancelled, the stale prior-run data must not remain eligible for the next report.
     clearCacheFor(operationState);
+    // Record that this diagnostic was attempted so the report can render an explicit
+    // "not run" marker if the run fails or yields nothing, instead of silently omitting it.
+    m_attemptedOps.insert(operationState);
 
     cleanupThread(operationState);
     addOperation(operationState);
@@ -869,6 +872,9 @@ void NetworkDiagnosticController::startConnectionMonitor(
     // Drop any stale prior-run connections so a monitor that yields nothing this run cannot
     // surface a previous run's connections in a report.
     clearCacheFor(State::MonitoringConnections);
+    // The monitor does not run through runOnThread(); record its attempt here so an empty
+    // result renders a "not run" marker in the report rather than being omitted.
+    m_attemptedOps.insert(State::MonitoringConnections);
     setState(State::MonitoringConnections);
     m_connectionMonitor->startMonitoring(config);
 }
@@ -1387,6 +1393,33 @@ NetworkDiagnosticController::populateReportSections() {
     return sections;
 }
 
+QSet<NetworkDiagnosticReportGenerator::Section>
+NetworkDiagnosticController::attemptedReportSections() const {
+    using S = NetworkDiagnosticReportGenerator::Section;
+    // Table (not a switch) so this stays well under the lizard CCN limit. Ops with no report
+    // section (MTR, LAN transfer, report generation) simply have no entry and are skipped.
+    static const QHash<State, S> kOpToSection = {
+        {State::ScanningAdapters, S::AdapterConfig},
+        {State::RunningPing, S::PingResults},
+        {State::RunningTraceroute, S::TracerouteResults},
+        {State::RunningDnsQuery, S::DnsResults},
+        {State::ScanningPorts, S::PortScanResults},
+        {State::RunningBandwidthTest, S::BandwidthResults},
+        {State::ScanningWiFi, S::WiFiAnalysis},
+        {State::AuditingFirewall, S::FirewallAudit},
+        {State::MonitoringConnections, S::ActiveConnections},
+        {State::BrowsingShares, S::NetworkShares},
+    };
+    QSet<S> sections;
+    for (auto op : m_attemptedOps) {
+        const auto it = kOpToSection.constFind(op);
+        if (it != kOpToSection.constEnd()) {
+            sections.insert(it.value());
+        }
+    }
+    return sections;
+}
+
 void NetworkDiagnosticController::populateBasicReportSections(
     QSet<NetworkDiagnosticReportGenerator::Section>& sections) {
     using S = NetworkDiagnosticReportGenerator::Section;
@@ -1466,7 +1499,13 @@ void NetworkDiagnosticController::generateReport(const QString& outputPath,
     m_reportGenerator->setTicketNumber(ticket);
     m_reportGenerator->setNotes(notes);
 
-    m_reportGenerator->setIncludedSections(populateReportSections());
+    // Sections with data render fully; sections whose diagnostic was attempted but produced
+    // nothing (failed / empty) render an explicit "not run" marker instead of vanishing.
+    const auto withData = populateReportSections();
+    auto notRun = attemptedReportSections();
+    notRun.subtract(withData);
+    m_reportGenerator->setIncludedSections(withData);
+    m_reportGenerator->setNotRunSections(notRun);
 
     Q_EMIT statusMessage(QStringLiteral("Generating report..."), 0);
 

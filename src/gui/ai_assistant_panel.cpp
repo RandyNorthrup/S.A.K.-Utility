@@ -8752,6 +8752,19 @@ void AiAssistantPanel::restorePendingRunIdentity(const QString& run_id,
 bool AiAssistantPanel::completeResumedToolGateWithOutput(const ai::AiHumanGate& gate,
                                                          const QJsonObject& output_json) {
     const QJsonObject turn_state = gate.metadata.value(QStringLiteral("tool_turn")).toObject();
+    // P1-29: cross-check the persisted tool-turn snapshot's own run id against the gate record's
+    // authoritative run id (mirrors AiToolTurn::restore's expected_run_id) and fail closed on a
+    // mismatch, so a tampered user-dir snapshot cannot be resumed under a different run. Enforce
+    // only when BOTH ids are present so a run-less snapshot (the synthetic gate_wait_ fallback
+    // captures no run id) is never false-closed on resume.
+    const QString snapshot_run_id = turn_state.value(QStringLiteral("run_id")).toString().trimmed();
+    const QString authoritative_run_id = gate.run_id.trimmed();
+    if (!snapshot_run_id.isEmpty() && !authoritative_run_id.isEmpty() &&
+        snapshot_run_id != authoritative_run_id) {
+        appendLocalEvent(
+            tr("Pending tool turn restore refused: snapshot run id does not match this gate"));
+        return false;
+    }
     if (!restorePendingToolTurnState(turn_state)) {
         return false;
     }
@@ -11170,6 +11183,10 @@ void AiAssistantPanel::applyWorkflowResumeState(ai::AiOrchestrationOptions* opti
     options->resume_flags =
         stringSetFromJson(resume_state.value(QStringLiteral("flags")).toArray());
     options->resume_phase_results = resume_state.value(QStringLiteral("phase_results")).toObject();
+    // P1-15: carry the snapshot's identity so the orchestrator can reject a resume record whose
+    // workflow_id/run_id does not match the run it is actually executing (fresh run on mismatch).
+    options->resume_workflow_id = resume_state.value(QStringLiteral("workflow_id")).toString();
+    options->resume_run_id = resume_state.value(QStringLiteral("run_id")).toString();
 }
 
 void AiAssistantPanel::connectWorkflowOrchestratorCallbacks(

@@ -46,6 +46,10 @@ void NetworkDiagnosticReportGenerator::setIncludedSections(const QSet<Section>& 
     m_sections = sections;
 }
 
+void NetworkDiagnosticReportGenerator::setNotRunSections(const QSet<Section>& sections) {
+    m_notRunSections = sections;
+}
+
 void NetworkDiagnosticReportGenerator::setAdapterData(const QVector<NetworkAdapterInfo>& adapters) {
     m_adapters = adapters;
 }
@@ -570,6 +574,17 @@ QString NetworkDiagnosticReportGenerator::buildShareSection() const {
     return html;
 }
 
+QString NetworkDiagnosticReportGenerator::buildNotRunSection(const QString& title) const {
+    // Render an explicit marker for a diagnostic that was attempted but returned no data
+    // (it failed or produced nothing), rather than silently omitting the section. No data
+    // is fabricated -- only the not-run state is stated.
+    return QStringLiteral(
+               "<h2>%1</h2>\n"
+               "<p class=\"warning\">This diagnostic was run but returned no "
+               "results (it failed or produced no data).</p>\n")
+        .arg(title.toHtmlEscaped());
+}
+
 QString NetworkDiagnosticReportGenerator::buildHtmlFooter() const {
     return QStringLiteral(
         "<hr>\n"
@@ -595,33 +610,44 @@ void NetworkDiagnosticReportGenerator::appendHtmlSections(QString& html) const {
     struct SectionBuilder {
         Section section;
         Builder builder;
+        const char* name;
     };
     static const SectionBuilder kBuilders[] = {
-        {.section = Section::AdapterConfig,
-         .builder = &NetworkDiagnosticReportGenerator::buildAdapterSection},
-        {.section = Section::PingResults,
-         .builder = &NetworkDiagnosticReportGenerator::buildPingSection},
-        {.section = Section::TracerouteResults,
-         .builder = &NetworkDiagnosticReportGenerator::buildTracerouteSection},
-        {.section = Section::DnsResults,
-         .builder = &NetworkDiagnosticReportGenerator::buildDnsSection},
-        {.section = Section::PortScanResults,
-         .builder = &NetworkDiagnosticReportGenerator::buildPortScanSection},
-        {.section = Section::BandwidthResults,
-         .builder = &NetworkDiagnosticReportGenerator::buildBandwidthSection},
-        {.section = Section::WiFiAnalysis,
-         .builder = &NetworkDiagnosticReportGenerator::buildWiFiSection},
-        {.section = Section::FirewallAudit,
-         .builder = &NetworkDiagnosticReportGenerator::buildFirewallSection},
-        {.section = Section::ActiveConnections,
-         .builder = &NetworkDiagnosticReportGenerator::buildConnectionSection},
-        {.section = Section::NetworkShares,
-         .builder = &NetworkDiagnosticReportGenerator::buildShareSection},
+        {Section::AdapterConfig,
+         &NetworkDiagnosticReportGenerator::buildAdapterSection,
+         "Network Adapters"},
+        {Section::PingResults, &NetworkDiagnosticReportGenerator::buildPingSection, "Ping Results"},
+        {Section::TracerouteResults,
+         &NetworkDiagnosticReportGenerator::buildTracerouteSection,
+         "Traceroute"},
+        {Section::DnsResults,
+         &NetworkDiagnosticReportGenerator::buildDnsSection,
+         "DNS Query Results"},
+        {Section::PortScanResults,
+         &NetworkDiagnosticReportGenerator::buildPortScanSection,
+         "Port Scan Results"},
+        {Section::BandwidthResults,
+         &NetworkDiagnosticReportGenerator::buildBandwidthSection,
+         "Bandwidth Test Results"},
+        {Section::WiFiAnalysis,
+         &NetworkDiagnosticReportGenerator::buildWiFiSection,
+         "WiFi Analysis"},
+        {Section::FirewallAudit,
+         &NetworkDiagnosticReportGenerator::buildFirewallSection,
+         "Firewall Audit"},
+        {Section::ActiveConnections,
+         &NetworkDiagnosticReportGenerator::buildConnectionSection,
+         "Active Connections"},
+        {Section::NetworkShares,
+         &NetworkDiagnosticReportGenerator::buildShareSection,
+         "Network Shares"},
     };
 
     for (const auto& entry : kBuilders) {
         if (m_sections.contains(entry.section)) {
             html += (this->*entry.builder)();
+        } else if (m_notRunSections.contains(entry.section)) {
+            html += buildNotRunSection(QString::fromLatin1(entry.name));
         }
     }
 }
@@ -631,34 +657,51 @@ void NetworkDiagnosticReportGenerator::appendJsonSections(QJsonObject& root) con
     struct SectionAppender {
         Section section;
         Appender appender;
+        const char* name;
     };
     static const SectionAppender kAppenders[] = {
-        {.section = Section::AdapterConfig,
-         .appender = &NetworkDiagnosticReportGenerator::appendAdapterConfigJson},
-        {.section = Section::PingResults,
-         .appender = &NetworkDiagnosticReportGenerator::appendPingResultsJson},
-        {.section = Section::TracerouteResults,
-         .appender = &NetworkDiagnosticReportGenerator::appendTracerouteResultsJson},
-        {.section = Section::DnsResults,
-         .appender = &NetworkDiagnosticReportGenerator::appendDnsResultsJson},
-        {.section = Section::PortScanResults,
-         .appender = &NetworkDiagnosticReportGenerator::appendPortScanResultsJson},
-        {.section = Section::BandwidthResults,
-         .appender = &NetworkDiagnosticReportGenerator::appendBandwidthResultsJson},
-        {.section = Section::WiFiAnalysis,
-         .appender = &NetworkDiagnosticReportGenerator::appendWiFiAnalysisJson},
-        {.section = Section::FirewallAudit,
-         .appender = &NetworkDiagnosticReportGenerator::appendFirewallAuditJson},
-        {.section = Section::ActiveConnections,
-         .appender = &NetworkDiagnosticReportGenerator::appendActiveConnectionsJson},
-        {.section = Section::NetworkShares,
-         .appender = &NetworkDiagnosticReportGenerator::appendNetworkSharesJson},
+        {Section::AdapterConfig,
+         &NetworkDiagnosticReportGenerator::appendAdapterConfigJson,
+         "Network Adapters"},
+        {Section::PingResults,
+         &NetworkDiagnosticReportGenerator::appendPingResultsJson,
+         "Ping Results"},
+        {Section::TracerouteResults,
+         &NetworkDiagnosticReportGenerator::appendTracerouteResultsJson,
+         "Traceroute"},
+        {Section::DnsResults,
+         &NetworkDiagnosticReportGenerator::appendDnsResultsJson,
+         "DNS Query Results"},
+        {Section::PortScanResults,
+         &NetworkDiagnosticReportGenerator::appendPortScanResultsJson,
+         "Port Scan Results"},
+        {Section::BandwidthResults,
+         &NetworkDiagnosticReportGenerator::appendBandwidthResultsJson,
+         "Bandwidth Test Results"},
+        {Section::WiFiAnalysis,
+         &NetworkDiagnosticReportGenerator::appendWiFiAnalysisJson,
+         "WiFi Analysis"},
+        {Section::FirewallAudit,
+         &NetworkDiagnosticReportGenerator::appendFirewallAuditJson,
+         "Firewall Audit"},
+        {Section::ActiveConnections,
+         &NetworkDiagnosticReportGenerator::appendActiveConnectionsJson,
+         "Active Connections"},
+        {Section::NetworkShares,
+         &NetworkDiagnosticReportGenerator::appendNetworkSharesJson,
+         "Network Shares"},
     };
 
+    QJsonArray notRun;
     for (const auto& entry : kAppenders) {
         if (m_sections.contains(entry.section)) {
             (this->*entry.appender)(root);
+        } else if (m_notRunSections.contains(entry.section)) {
+            notRun.append(QString::fromLatin1(entry.name));
         }
+    }
+    if (!notRun.isEmpty()) {
+        root[QStringLiteral("sectionsNotRun")] = notRun;
     }
 }
 

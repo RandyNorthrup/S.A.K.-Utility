@@ -68,6 +68,39 @@ constexpr int kTreePackageColumn = 2;
 constexpr int kTreeDetailColumn = 2;
 constexpr int kSizeDisplayPrecision = 2;
 constexpr int kMegabyteDisplayPrecision = 1;
+
+// Select the merge-mode combo entry whose data equals `mode` (no-op if absent).
+void setMergeModeValue(QComboBox* mode_combo, MergeMode mode) {
+    const int index = mode_combo->findData(static_cast<int>(mode));
+    if (index >= 0) {
+        mode_combo->setCurrentIndex(index);
+    }
+}
+
+// Keep the merge mode consistent with the destination selection (R5-P11-17): the
+// "(Create New User)" entry (empty data) can only pair with CreateNewUser, and an
+// existing destination can only pair with a replace/merge mode. This overrides only an
+// incompatible mode, so it never blocks a legitimate manual Replace-vs-Merge choice.
+void syncMergeModeToDestination(QComboBox* dest_combo, QComboBox* mode_combo) {
+    if ((dest_combo == nullptr) || (mode_combo == nullptr)) {
+        return;
+    }
+    const bool create_new = dest_combo->currentData().toString().isEmpty();
+    const auto current_mode = static_cast<MergeMode>(mode_combo->currentData().toInt());
+    if (create_new) {
+        setMergeModeValue(mode_combo, MergeMode::CreateNewUser);
+    } else if (current_mode == MergeMode::CreateNewUser) {
+        setMergeModeValue(mode_combo, MergeMode::ReplaceDestination);
+    }
+}
+
+// A new-user destination requires CreateNewUser; an existing destination forbids it.
+bool isMappingPairValid(const QString& dest_username, MergeMode mode) {
+    if (dest_username.isEmpty()) {
+        return mode == MergeMode::CreateNewUser;
+    }
+    return mode != MergeMode::CreateNewUser;
+}
 }  // namespace
 
 // ============================================================================
@@ -188,6 +221,10 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
         mode_combo->addItem(tr("Create New User"), static_cast<int>(MergeMode::CreateNewUser));
         m_mappingTable->setCellWidget(row, KMappingColumnMergeMode, mode_combo);
 
+        // Destination defaults to "(Create New User)" (empty data), so start the merge mode on
+        // CreateNewUser to keep the dest/mode pair consistent for a plain click-through.
+        syncMergeModeToDestination(dest_combo, mode_combo);
+
         // Connect signals
         connect(dest_combo,
                 QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -227,8 +264,15 @@ void UserProfileRestoreUserMappingPage::onAutoMap() {
 }
 
 void UserProfileRestoreUserMappingPage::onMappingChanged(int row, int column) {
-    Q_UNUSED(row);
-    Q_UNUSED(column);
+    if (column == KMappingColumnDestination) {
+        // Realign the merge mode with the newly chosen destination (also covers Auto-Map,
+        // which drives the destination combo for matched rows).
+        auto* dest_combo =
+            qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, KMappingColumnDestination));
+        auto* mode_combo =
+            qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, KMappingColumnMergeMode));
+        syncMergeModeToDestination(dest_combo, mode_combo);
+    }
     updateSummary();
 }
 
@@ -325,6 +369,20 @@ bool UserProfileRestoreUserMappingPage::validatePage() {
         sak::showWarningLogged(this,
                                tr("No Users Selected"),
                                tr("Please select at least one user to restore."));
+        return false;
+    }
+
+    for (const auto& mapping : mappings) {
+        if (isMappingPairValid(mapping.destination_username, mapping.mode)) {
+            continue;
+        }
+        sak::logWarning("Restore mapping has an incompatible destination/merge-mode pair");
+        sak::showWarningLogged(
+            this,
+            tr("Incompatible Merge Mode"),
+            tr("Cannot restore '%1': its merge mode does not match its destination. Choose "
+               "'Create New User' for a new account, or Replace/Merge for an existing one.")
+                .arg(mapping.source_username));
         return false;
     }
 
