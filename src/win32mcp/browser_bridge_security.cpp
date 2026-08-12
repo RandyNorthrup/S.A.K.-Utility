@@ -11,6 +11,8 @@
 #include <QStandardPaths>
 #include <QVector>
 
+#include <cmath>
+
 #include <sddl.h>
 
 namespace sak::win32mcp {
@@ -23,6 +25,10 @@ constexpr int kHexBase = 16;
 // Upper bound for a valid app_pid: the largest value that survives a double->qint64 cast
 // exactly. Anything above this exact-integer double range fails the record closed.
 constexpr double kMaxAppPidExactDouble = 9.0e15;
+
+// A well-formed rendezvous record (pipe_name, token, protocol, app_pid) is well under 1 KiB.
+// Cap the read so a corrupt/oversized file cannot force an unbounded allocation before parse.
+constexpr qint64 kMaxRendezvousRecordBytes = 64 * 1024;
 
 void setError(QString* error, const QString& message) {
     if (error != nullptr) {
@@ -126,8 +132,14 @@ bool readRendezvousRecord(const QString& path, RendezvousRecord* out, QString* e
         setError(error, QStringLiteral("Cannot open %1: %2").arg(path, file.errorString()));
         return false;
     }
+    // Bound the read: an over-cap file is a corrupt/hostile record, not our own writer's output.
+    const QByteArray raw = file.read(kMaxRendezvousRecordBytes + 1);
+    if (raw.size() > kMaxRendezvousRecordBytes) {
+        setError(error, QStringLiteral("Rendezvous record is too large."));
+        return false;
+    }
     QJsonParseError parse_error;
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
         setError(error,
                  QStringLiteral("Malformed rendezvous record: %1").arg(parse_error.errorString()));
@@ -139,10 +151,13 @@ bool readRendezvousRecord(const QString& path, RendezvousRecord* out, QString* e
     out->protocol = object.value(QStringLiteral("protocol")).toInt();
     // app_pid must be a positive integer within the exact-integer double range: casting a
     // NaN/negative/2^63-overflow double straight to qint64 is UB (the same hazard the codebase
-    // fixed in clampMs). A malformed value fails the record closed rather than yielding garbage.
+    // fixed in clampMs). A non-integral value (e.g. 1234.5) is a forged/wrapped record, not a
+    // real Windows PID; reject it rather than silently truncating. A malformed value fails the
+    // record closed rather than yielding garbage.
     const QJsonValue pid_value = object.value(QStringLiteral("app_pid"));
     const double pid_raw = pid_value.toDouble(-1.0);
-    if (!pid_value.isDouble() || pid_raw < 1.0 || pid_raw > kMaxAppPidExactDouble) {
+    if (!pid_value.isDouble() || pid_raw < 1.0 || pid_raw > kMaxAppPidExactDouble ||
+        std::floor(pid_raw) != pid_raw) {
         setError(error, QStringLiteral("Rendezvous record has an invalid app_pid."));
         return false;
     }

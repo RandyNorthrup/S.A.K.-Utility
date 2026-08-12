@@ -18,6 +18,21 @@ QString cleanString(const QJsonObject& object, const QString& key) {
     return object.value(key).toString().trimmed();
 }
 
+// A 'required' flag that is PRESENT but not a JSON bool (e.g. the string "true") would
+// coerce to false via toBool(false) and silently drop the input/requirement from the
+// required set -- a fail-open authoring error. Reject it at load rather than treat a
+// mistyped value as "optional". An absent flag legitimately defaults to false.
+void checkRequiredFlagType(const QJsonObject& object,
+                           const QString& subject,
+                           const QString& id,
+                           QStringList* errors) {
+    if (errors == nullptr || !object.contains(QStringLiteral("required")) ||
+        object.value(QStringLiteral("required")).isBool()) {
+        return;
+    }
+    errors->append(QStringLiteral("%1 '%2' has a non-boolean 'required' value").arg(subject, id));
+}
+
 QStringList stringListFromJson(const QJsonValue& value) {
     QStringList result;
     const QJsonArray array = value.toArray();
@@ -30,7 +45,8 @@ QStringList stringListFromJson(const QJsonValue& value) {
     return result;
 }
 
-QVector<WorkflowRequiredInput> requiredInputsFromJson(const QJsonValue& value) {
+QVector<WorkflowRequiredInput> requiredInputsFromJson(const QJsonValue& value,
+                                                      QStringList* errors) {
     QVector<WorkflowRequiredInput> result;
     const QJsonArray array = value.toArray();
     result.reserve(array.size());
@@ -44,12 +60,13 @@ QVector<WorkflowRequiredInput> requiredInputsFromJson(const QJsonValue& value) {
         input.label = cleanString(object, QStringLiteral("label"));
         input.type = cleanString(object, QStringLiteral("type"));
         input.required = object.value(QStringLiteral("required")).toBool(false);
+        checkRequiredFlagType(object, QStringLiteral("Required input"), input.id, errors);
         result.append(input);
     }
     return result;
 }
 
-QVector<WorkflowRequirement> requirementsFromJson(const QJsonValue& value) {
+QVector<WorkflowRequirement> requirementsFromJson(const QJsonValue& value, QStringList* errors) {
     QVector<WorkflowRequirement> result;
     const QJsonArray array = value.toArray();
     result.reserve(array.size());
@@ -62,6 +79,7 @@ QVector<WorkflowRequirement> requirementsFromJson(const QJsonValue& value) {
         requirement.id = cleanString(object, QStringLiteral("id"));
         requirement.kind = cleanString(object, QStringLiteral("kind"));
         requirement.required = object.value(QStringLiteral("required")).toBool(false);
+        checkRequiredFlagType(object, QStringLiteral("Required software"), requirement.id, errors);
         requirement.install_policy = cleanString(object, QStringLiteral("install_policy"));
         result.append(requirement);
     }
@@ -87,7 +105,7 @@ QVector<WorkflowAgent> agentsFromJson(const QJsonValue& value) {
     return result;
 }
 
-QVector<WorkflowPhase> phasesFromJson(const QJsonValue& value) {
+QVector<WorkflowPhase> phasesFromJson(const QJsonValue& value, QStringList* errors) {
     QVector<WorkflowPhase> result;
     const QJsonArray array = value.toArray();
     result.reserve(array.size());
@@ -96,6 +114,14 @@ QVector<WorkflowPhase> phasesFromJson(const QJsonValue& value) {
             continue;
         }
         const QJsonObject object = item.toObject();
+        // A PRESENT-but-non-object 'arguments' (e.g. a string or array) would coerce to {} via
+        // toObject(), so a tool phase authored with a mistyped arguments block would silently
+        // run with no command/parameters. Reject it at load rather than execute an empty action.
+        if (errors != nullptr && object.contains(QStringLiteral("arguments")) &&
+            !object.value(QStringLiteral("arguments")).isObject()) {
+            errors->append(QStringLiteral("Phase %1 has non-object arguments")
+                               .arg(cleanString(object, QStringLiteral("id"))));
+        }
         WorkflowPhase phase;
         phase.id = cleanString(object, QStringLiteral("id"));
         phase.type = cleanString(object, QStringLiteral("type"));
@@ -211,6 +237,15 @@ void validateWorkflowPhases(const WorkflowTemplate& workflow, QStringList* error
             // surface as a per-phase error, hiding the author's typo (e.g. "tool-action").
             errors->append(
                 QStringLiteral("Phase %1 has unsupported type '%2'").arg(phase.id, phase.type));
+        }
+        // A tool_action phase dispatches to phase.tool via runToolPhase; with no tool it is a
+        // silent no-op that reports success without doing anything. Require the tool at load.
+        // (cleanup phases legitimately run without a tool -- they are model-driven housekeeping
+        // steps -- so this applies only to tool_action.)
+        if (phase.type.compare(QStringLiteral("tool_action"), Qt::CaseInsensitive) == 0 &&
+            phase.tool.isEmpty()) {
+            errors->append(
+                QStringLiteral("Phase %1 is a tool_action but names no tool").arg(phase.id));
         }
         if (phase.prompt.isEmpty() && phase.completion.isEmpty()) {
             errors->append(QStringLiteral("Phase %1 needs prompt or completion").arg(phase.id));
@@ -348,13 +383,13 @@ WorkflowTemplate WorkflowTemplate::fromJson(const QJsonObject& object,
     workflow.description = cleanString(object, QStringLiteral("description"));
     workflow.starter_prompt = cleanString(object, QStringLiteral("starter_prompt"));
     workflow.required_inputs =
-        requiredInputsFromJson(object.value(QStringLiteral("required_inputs")));
+        requiredInputsFromJson(object.value(QStringLiteral("required_inputs")), errors);
     workflow.required_software =
-        requirementsFromJson(object.value(QStringLiteral("required_software")));
+        requirementsFromJson(object.value(QStringLiteral("required_software")), errors);
     workflow.instructions = stringListFromJson(object.value(QStringLiteral("instructions")));
     workflow.skills = stringListFromJson(object.value(QStringLiteral("skills")));
     workflow.agents = agentsFromJson(object.value(QStringLiteral("agents")));
-    workflow.phases = phasesFromJson(object.value(QStringLiteral("phases")));
+    workflow.phases = phasesFromJson(object.value(QStringLiteral("phases")), errors);
     workflow.acceptance_criteria =
         stringListFromJson(object.value(QStringLiteral("acceptance_criteria")));
     workflow.cancel_policy = cancelPolicyFromJson(object.value(QStringLiteral("cancel_policy")));

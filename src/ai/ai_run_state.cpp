@@ -113,7 +113,13 @@ AiRunState AiRunState::fromJson(const QJsonObject& object) {
         state.pending_human_gate =
             AiHumanGate::fromJson(object.value(QStringLiteral("pending_human_gate")).toObject());
         if (state.pending_human_gate.gate_id.isEmpty()) {
-            state.has_pending_human_gate = false;
+            // Fail closed: a snapshot that asserts a pending human gate but carries a
+            // malformed, identity-less gate payload is corrupt or tampered -- normal
+            // serialization never emits has_pending_human_gate with an empty gate_id.
+            // Clearing the flag here would silently drop a genuine approval and let the run
+            // resume unattended; instead keep the pending flag and force WaitingForHuman so
+            // the run stays blocked until a human intervenes.
+            state.status = AiRunStatus::WaitingForHuman;
         }
     }
     return state;

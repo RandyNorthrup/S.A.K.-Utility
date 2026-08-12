@@ -21,6 +21,7 @@
 #endif
 
 #include <atomic>
+#include <limits>
 #include <utility>
 
 namespace sak::ai {
@@ -377,9 +378,14 @@ StdioCallState performStdioToolCall(const AiMcpStdioCallRequest& request) {
     stdio_thread.start();
     // Timed acquire so a worker thread that failed to start cannot hang the caller forever; the
     // worker releases within its own request timeout on every normal path, so a grace past it
-    // only fires on a genuine start failure.
-    const int acquire_timeout_ms = qMax(request.timeout_ms, kMinimumRequestTimeoutMs) +
-                                   kSemaphoreWaitGraceMs;
+    // only fires on a genuine start failure. Bound the base wait below INT_MAX - grace so adding
+    // kSemaphoreWaitGraceMs cannot signed-overflow int (UB); upstream MCP timeouts are clamped far
+    // below this cap, so a legitimate long-scan wait is never truncated -- the cap only makes the
+    // overflow bound explicit.
+    constexpr int kMaxAcquireBaseMs = std::numeric_limits<int>::max() - kSemaphoreWaitGraceMs;
+    const int acquire_timeout_ms =
+        qBound(kMinimumRequestTimeoutMs, request.timeout_ms, kMaxAcquireBaseMs) +
+        kSemaphoreWaitGraceMs;
     if (!done.tryAcquire(1, acquire_timeout_ms)) {
         state.m_error_message = QStringLiteral("MCP stdio worker thread did not start");
     }

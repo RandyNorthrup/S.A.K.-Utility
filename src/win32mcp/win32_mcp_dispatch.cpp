@@ -156,8 +156,19 @@ bool win32McpJsonMatchesType(const QString& type, const QJsonValue& value) {
         return value.isDouble();
     }
     if (type == QLatin1String("integer")) {
-        return value.isDouble() &&
-               static_cast<double>(static_cast<qint64>(value.toDouble())) == value.toDouble();
+        if (!value.isDouble()) {
+            return false;
+        }
+        const double raw = value.toDouble();
+        // Bound the magnitude BEFORE the qint64 cast: casting an out-of-range double (e.g. 1e300)
+        // to an integer is UB. 9.0e15 is the largest value still exactly representable as a double,
+        // so anything beyond +/-that range cannot be an exact integer and is rejected here rather
+        // than collapsing through the cast. Mirrors asBackendId in browser_contract.cpp.
+        constexpr double kMaxExactIntegerDouble = 9.0e15;
+        if (raw < -kMaxExactIntegerDouble || raw > kMaxExactIntegerDouble) {
+            return false;
+        }
+        return static_cast<double>(static_cast<qint64>(raw)) == raw;
     }
     return true;  // schema left the type unconstrained: nothing to reject (faithful, not fail-open)
 }

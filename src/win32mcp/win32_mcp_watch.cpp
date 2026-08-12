@@ -74,9 +74,21 @@ QJsonObject toolEntry(const QString& name, const QString& description, const QJs
 
 // -- fingerprints ------------------------------------------------------------
 
-// Capture the window (matched by title) and reduce it to a fingerprint + its on-screen size.
-// Returns an error string on lookup/capture failure, empty on success.
-QString captureFingerprint(const QString& title, QByteArray& fp, int& width, int& height) {
+// A stored screenshot baseline: the fingerprint plus the exact window it was taken from. The HWND
+// and on-screen size are kept so compare_screenshots can tell that the title now resolves to a
+// DIFFERENT window (the handle changed) or that the same window was resized -- either of which
+// makes a raw fingerprint diff misleading (a cross-window compare, or a resize the downscaled
+// fingerprint can miss).
+struct WindowBaseline {
+    QByteArray fp;
+    void* hwnd = nullptr;  // exact HWND captured (WindowRect uses void* to stay windows.h-free)
+    int width = 0;         // on-screen width at capture time
+    int height = 0;        // on-screen height at capture time
+};
+
+// Capture the window (matched by title) and reduce it to a fingerprint plus the resolved window's
+// handle and on-screen size. Returns an error string on lookup/capture failure, empty on success.
+QString captureFingerprint(const QString& title, WindowBaseline& out) {
     WindowRect wr;
     QString err;
     if (!windowRectByTitle(title.toLower(), wr, err)) {
@@ -92,15 +104,16 @@ QString captureFingerprint(const QString& title, QByteArray& fp, int& width, int
     if (!captureBgra(req, bits, err)) {
         return err;
     }
-    fp = fingerprint(bits.bgra, bits.width, bits.height);
-    width = static_cast<int>(wr.right - wr.left);
-    height = static_cast<int>(wr.bottom - wr.top);
+    out.fp = fingerprint(bits.bgra, bits.width, bits.height);
+    out.hwnd = wr.hwnd;
+    out.width = static_cast<int>(wr.right - wr.left);
+    out.height = static_cast<int>(wr.bottom - wr.top);
     return {};
 }
 
 // Baselines from get_window_snapshot, keyed by lower-cased title, compared by
 // compare_screenshots. The native server is single-threaded, so a plain map is safe.
-QHash<QString, QByteArray> g_baselines;
+QHash<QString, WindowBaseline> g_baselines;
 
 // -- window existence --------------------------------------------------------
 
@@ -181,17 +194,15 @@ ToolResult toolGetWindowSnapshot(const QJsonObject& args) {
     if (title.isEmpty()) {
         return errorResult(QStringLiteral("window_title is required"));
     }
-    QByteArray fp;
-    int width = 0;
-    int height = 0;
-    const QString err = captureFingerprint(title, fp, width, height);
+    WindowBaseline base;
+    const QString err = captureFingerprint(title, base);
     if (!err.isEmpty()) {
         return errorResult(err);
     }
-    g_baselines.insert(title.toLower(), fp);
+    g_baselines.insert(title.toLower(), base);
     return jsonResult(QJsonObject{{QStringLiteral("window"), title},
-                                  {QStringLiteral("width"), width},
-                                  {QStringLiteral("height"), height},
+                                  {QStringLiteral("width"), base.width},
+                                  {QStringLiteral("height"), base.height},
                                   {QStringLiteral("baseline_stored"), true}});
 }
 
@@ -200,22 +211,38 @@ ToolResult toolCompareScreenshots(const QJsonObject& args) {
     if (title.isEmpty()) {
         return errorResult(QStringLiteral("window_title is required"));
     }
-    const QByteArray baseline = g_baselines.value(title.toLower());
-    if (baseline.isEmpty()) {
+    if (!g_baselines.contains(title.toLower())) {
         return errorResult(
             QStringLiteral("No baseline for that window; call get_window_snapshot first."));
     }
-    QByteArray fp;
-    int width = 0;
-    int height = 0;
-    const QString err = captureFingerprint(title, fp, width, height);
+    const WindowBaseline baseline = g_baselines.value(title.toLower());
+    WindowBaseline current;
+    const QString err = captureFingerprint(title, current);
     if (!err.isEmpty()) {
         return errorResult(err);
     }
-    const double ratio = fingerprintDiff(baseline, fp);
-    return jsonResult(QJsonObject{{QStringLiteral("window"), title},
-                                  {QStringLiteral("changed"), fingerprintChanged(baseline, fp)},
-                                  {QStringLiteral("diff_ratio"), ratio}});
+    // Identity + size guard: the baseline is keyed by a title SUBSTRING, so the title can now
+    // resolve to a different window, or the same window may have been resized. Either makes a raw
+    // fingerprint diff meaningless -- a cross-window compare, or a resize the 64px-downscaled
+    // fingerprint can read as changed:false. Treat either as a definite change and say why, rather
+    // than reporting a smaller-than-real (or absent) diff against the wrong reference.
+    const bool window_replaced = current.hwnd != baseline.hwnd;
+    const bool size_changed = current.width != baseline.width || current.height != baseline.height;
+    const double ratio = fingerprintDiff(baseline.fp, current.fp);
+    QJsonObject out{{QStringLiteral("window"), title},
+                    {QStringLiteral("changed"),
+                     window_replaced || size_changed ||
+                         fingerprintChanged(baseline.fp, current.fp)},
+                    {QStringLiteral("diff_ratio"), ratio}};
+    if (window_replaced) {
+        out.insert(QStringLiteral("window_replaced"), true);
+    }
+    if (size_changed) {
+        out.insert(QStringLiteral("size_changed"), true);
+        out.insert(QStringLiteral("width"), current.width);
+        out.insert(QStringLiteral("height"), current.height);
+    }
+    return jsonResult(out);
 }
 
 ToolResult toolWaitForWindow(const QJsonObject& args) {
@@ -262,13 +289,12 @@ ToolResult toolWaitForIdle(const QJsonObject& args) {
     QByteArray previous;
     ULONGLONG stable_since = start;
     for (;;) {
-        QByteArray fp;
-        int width = 0;
-        int height = 0;
-        const QString err = captureFingerprint(title, fp, width, height);
+        WindowBaseline sample;
+        const QString err = captureFingerprint(title, sample);
         if (!err.isEmpty()) {
             return errorResult(err);
         }
+        const QByteArray& fp = sample.fp;
         const ULONGLONG now = GetTickCount64();
         if (previous.isEmpty() || fingerprintChanged(previous, fp)) {
             previous = fp;
@@ -308,7 +334,9 @@ void appendPixelTools(QJsonArray& tools) {
     tools.append(toolEntry(QStringLiteral("compare_screenshots"),
                            QStringLiteral(
                                "Re-capture a window and compare it to the last get_window_snapshot "
-                               "baseline. Returns changed=true/false and a 0..1 diff_ratio."),
+                               "baseline. Returns changed=true/false and a 0..1 diff_ratio; also "
+                               "flags window_replaced=true if the title now matches a different "
+                               "window and size_changed=true if it was resized."),
                            windowTitleSchema()));
 }
 

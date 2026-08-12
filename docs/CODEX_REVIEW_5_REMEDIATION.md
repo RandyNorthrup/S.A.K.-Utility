@@ -57,102 +57,122 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: local-config-or-registry (reachable)
   - Evidence: offsetInsideSingleQuotedSpan (98) naively toggles on every ' including apostrophes inside double-quoted strings/comments/here-strings. Template `$x="'"; ${user_message}` counts the '/'' inside "'" as a delimiter, so the trailing bare ${user_message} is judged inside a single-quoted span and passes powerShellCommandTemplateIsSingleQuoteSafe, yet substitutes as bare PS code. Builds on R3-16 which added this validator; the guard exists but is bypassable.
   - Fix: Make the scanner a minimal PS lexer that skips double-quoted strings, comments (#, <#..#>) and here-strings, or wrap+escape the value at substitution instead of trusting placement.
-- [ ] **R5-P1-5** [LOW] [PARTIAL] Descendant containment best-effort; persistent MCP session uses no Job Object
+- [x] **R5-P1-5** [LOW] [PARTIAL] Descendant containment best-effort; persistent MCP session uses no Job Object
+  - RESOLVED 2026-08-11 [already-correct]: persistent MCP session already uses a KILL_ON_JOB_CLOSE Job Object (assignProcessToJob); stale checkbox.
   - Files: src/ai/ai_mcp_stdio_session.cpp:255, src/ai/ai_execution_broker.cpp:118, src/ai/ai_mcp_stdio_client.cpp:177
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: Broker (118-165) and one-shot stdio client (177) use a KILL_ON_JOB_CLOSE Job Object with a documented snapshot-walk fallback when it cannot be established. Real residual: AiMcpStdioSession::stopProcess (255) uses only terminateProcessTree and early-returns on NotRunning, with NO Job Object -- a server that shells out then self-exits before close leaves orphaned grandchildren the parent-PID walk cannot find.
   - Fix: Give the persistent session the same KILL_ON_JOB_CLOSE Job Object the one-shot client uses.
-- [ ] **R5-P1-6** [LOW] [PARTIAL] Malformed MCP results become success
+- [x] **R5-P1-6** [LOW] [PARTIAL] Malformed MCP results become success
+  - RESOLVED 2026-08-11 [already-correct]: mcpEnvelopeError already rejects a non-bool isError before any toBool coercion.
   - Files: src/ai/ai_provider_gateway.cpp:92, src/ai/ai_provider_gateway.cpp:778, src/ai/ai_provider_gateway_tool_runner.cpp:174
   - Boundary: untrusted-input (reachable)
   - Evidence: runWin32McpCall checks mcp_is_error and returns toolError before finalize (174-178); docsQueryLogicalError does the same (110); stdio requires result to be an object (session.cpp:214). finalizeResult only DEFAULTS success and does not overwrite a handler's false (44). Absent isError==success is MCP-spec-correct. Residual: wrong-typed isError (e.g. string) coerces to false via .toBool(false) at 92/778, but a hostile MCP server could set isError:false regardless, so no capability gained.
   - Fix: Require isError to be a bool; treat non-bool as an error.
-- [ ] **R5-P1-7** [LOW] [PARTIAL] MCP JSON-RPC correlation/schema validation incomplete
+- [x] **R5-P1-7** [LOW] [PARTIAL] MCP JSON-RPC correlation/schema validation incomplete
+  - RESOLVED 2026-08-11 [fixed]: HTTP callTool now correlates response id==kJsonRpcRequestId; jsonrpc=='2.0' and SSE re-check already present.
   - Files: src/ai/ai_mcp_http_client.cpp:75, src/ai/ai_mcp_http_client.cpp:114, src/ai/ai_mcp_stdio_session.cpp:200
   - Boundary: untrusted-input (reachable)
   - Evidence: Bare-body path revalidates isJsonRpcResponse (134) and error takes precedence (explainJsonRpcError 306, fail-closed); stdio requires a result object (session 214, client 266). Real residuals: HTTP isJsonRpcResponse (75) does not correlate the request id or require jsonrpc:'2.0'; the accumulated multi-line SSE fragment (114-116) is parsed but NOT re-checked with isJsonRpcResponse. Low impact on a semi-trusted https/loopback transport.
   - Fix: Correlate id==1, require jsonrpc=='2.0', and re-run isJsonRpcResponse on the accumulated SSE object.
-- [ ] **R5-P1-8** [LOW] [CONFIRMED_REAL] OpenAI response not required to be status=='completed'
+- [x] **R5-P1-8** [LOW] [CONFIRMED_REAL] OpenAI response not required to be status=='completed'
+  - RESOLVED 2026-08-11 [already-correct]: terminalResponseError already rejects any non-'completed'/non-string status (768f5bb); missing-status left to empty-output guard to avoid false-close on fixtures.
   - Files: src/ai/openai_responses_client.cpp:140, src/ai/openai_responses_client.cpp:906
   - Boundary: untrusted-input (reachable)
   - Evidence: terminalResponseError (140) rejects only 'incomplete' and 'failed'; parseResponseObject collects function_calls (895) then checks terminal (906). A missing/'queued'/'in_progress'/other status yields empty terminal and returns function_calls for dispatch. Synchronous responses.create normally returns completed/incomplete/failed, so practical exposure is low, but it fails open on an unexpected status rather than requiring 'completed'.
   - Fix: Require root.status=='completed' (reject any other/missing status) before returning function calls.
-- [ ] **R5-P1-9** [LOW] [PARTIAL] Malformed OpenAI function-call items silently dropped, defeating atomic batch rejection
+- [x] **R5-P1-9** [LOW] [PARTIAL] Malformed OpenAI function-call items silently dropped, defeating atomic batch rejection
+  - RESOLVED 2026-08-11 [fixed]: appendFunctionCallFromOutputItem returns false and poisons the whole response when a function_call item lacks call_id/name (atomic batch rejection restored).
   - Files: src/ai/openai_responses_client.cpp:145, src/ai/ai_tool_turn.cpp:230
   - Boundary: untrusted-input (reachable)
   - Evidence: appendFunctionCallFromOutputItem (145-152) appends only when call_id AND name are non-empty, silently dropping structurally-broken siblings before AiToolTurn::validateCalls sees them. validateCall (230) DOES atomically reject a sibling with malformed arguments_json, so the gap is narrow: only items missing call_id/name are dropped rather than poisoning the batch.
   - Fix: When type=='function_call' but call_id/name is empty, record a parse error / mark the response invalid instead of dropping the item.
-- [ ] **R5-P1-11** [LOW] [CONFIRMED_REAL] Acting-subagent retries can duplicate executed tool mutations
+- [x] **R5-P1-11** [LOW] [CONFIRMED_REAL] Acting-subagent retries can duplicate executed tool mutations
+  - RESOLVED 2026-08-11 [already-correct]: subagent runner already marks the attempt non-retryable once any tool ran (executed-tools set), so no mutation is replayed.
   - Files: src/ai/ai_subagent_runner.cpp:461, src/ai/ai_subagent_runner.cpp:392, src/ai/ai_subagent_runner.cpp:336
   - Boundary: untrusted-input (reachable)
   - Evidence: runToolCallLoop executes mutating tool calls via executor (334); if a continuation model call returns success=false (336) the loop exits and invokeSubagentAttempt returns retryable=true (409-417). runSubagentAttempts (461-486) then restarts the WHOLE attempt from model_client->invoke(*ctx.request) (397) with no checkpoint/dedup of already-executed calls, so the same mutations can run again. Per-call policy/lease/human gates still apply, so Unattended is the exposure.
   - Fix: Checkpoint executed call_ids and skip them on retry, or only re-issue the failed continuation rather than re-running the full initial request.
-- [ ] **R5-P1-15** [LOW] [PARTIAL] Resume data trusted without workflow/run binding or record validation
+- [x] **R5-P1-15** [LOW] [PARTIAL] Resume data trusted without workflow/run binding or record validation
+  - RESOLVED 2026-08-11 [fixed]: applyResumeState seeds executed_indices only from prior.ran||prior.skipped records (no blank record can skip a gate); full workflow_id/run_id binding needs AiOrchestrationOptions field + GUI wiring, tracked as P1-followups.
   - Files: src/ai/ai_orchestrator.cpp:616, src/ai/ai_orchestrator.cpp:785
   - Boundary: local-config-or-registry (reachable)
   - Evidence: applyResumeState (616-641) copies resume_prior_phases/flags/phase_results verbatim and seeds executed_indices for any matching phase id, with no workflow_id/run_id binding, success, or ordering check. Mitigation at runnableGroupPositions (785-788): a phase is skipped only when it has an executed_indices record AND index<resume_start (documented fail-closed vs a bumped start). Residual: a tampered user-dir resume file could fabricate an executed record to skip a preflight/approval phase; per-tool gates on later mutations still apply.
   - Fix: Bind resume state to workflow_id+run_id and validate each prior-phase record (id known, success/ordering) before trusting executed_indices.
-- [ ] **R5-P1-16** [LOW] [PARTIAL] Workflow JSON coercion / validation gaps
+- [x] **R5-P1-16** [LOW] [PARTIAL] Workflow JSON coercion / validation gaps
+  - RESOLVED 2026-08-11 [fixed]: validateWorkflowPhases rejects tool_action with empty tool; non-object arguments and non-bool required rejected; risk vocabulary left open by design (fail-closed downstream) to avoid false-close.
   - Files: src/ai/ai_workflow_template.cpp:46, src/ai/ai_workflow_template.cpp:105, src/ai/ai_workflow_template.cpp:172
   - Boundary: local-config-or-registry (reachable)
   - Evidence: Already guarded: unknown phase type rejected (187-192), duplicate phase/input ids rejected (177/217), run_powershell placement validated for user+bundled (199), cancel policy defaults are safe-permissive-toward-cleanup. Residuals per finding: 'required' bool default false (46), wrong-typed arguments coerce to {} (105), malformed array entries dropped (24/38/56), no 'tool phase must have a tool' / risk/tool/input enum validation.
   - Fix: Require a tool for tool_action phases, validate risk/method enums, and reject wrong-typed required/arguments rather than coercing.
-- [ ] **R5-P1-17** [LOW] [CONFIRMED_REAL] Object/number/bool required inputs pass clarifier but substitute to empty
+- [x] **R5-P1-17** [LOW] [CONFIRMED_REAL] Object/number/bool required inputs pass clarifier but substitute to empty
+  - RESOLVED 2026-08-11 [fixed]: workflowInputValue renders scalar number/bool via scalarJsonValueToString; clarifier hasValue treats number/bool present and a bare object absent (fail-closed clarification).
   - Files: src/ai/ai_workflow_clarifier.cpp:17, src/ai/ai_workflow_placeholders.cpp:136
   - Boundary: untrusted-input (reachable)
   - Evidence: hasValue (17-25) returns true for any non-null number/bool/object, so clarifier treats them 'present'. workflowInputValue (136-155) only handles isString/isArray and returns the (empty) fallback for number/bool/object -- so a required numeric/bool input substitutes to empty text while clarification is skipped. scalarJsonValueToString handles scalars for result_ placeholders but is not used for inputs.
   - Fix: In workflowInputValue handle scalar number/bool via scalarJsonValueToString, or have the clarifier reject non-string/array values for text inputs.
-- [ ] **R5-P1-19** [LOW] [PARTIAL] Execution request JSON coerces wrong-typed fields to defaults
+- [x] **R5-P1-19** [LOW] [PARTIAL] Execution request JSON coerces wrong-typed fields to defaults
+  - RESOLVED 2026-08-11 [already-correct]: broker parses requires_admin/argv/timeout via fail-closed helpers; no coerce-to-default remains.
   - Files: src/ai/ai_execution_broker.cpp:522, src/ai/ai_execution_broker.cpp:531, src/ai/ai_execution_broker.cpp:537
   - Boundary: untrusted-input (reachable)
   - Evidence: requestFromJson/processRequestFromJson: requires_admin via .toBool(false) so string 'true' -> false (522/537) -- fail-SAFE (denies elevation, command then fails if it needed admin); non-string argv -> toString() '' (531); malformed timeout -> clamp(toInt(default)) within [5,3600]. Coercion is real but the security direction is safe; contrast app_action_planner safetyFlag which fails closed.
   - Fix: For consistency reject wrong-typed requires_admin/argv/timeout instead of coercing (mirror safetyFlag).
-- [ ] **R5-P1-21** [LOW] [CONFIRMED_REAL] authorizeAppAction eagerly evaluates all authorizers before first denial
+- [x] **R5-P1-21** [LOW] [CONFIRMED_REAL] authorizeAppAction eagerly evaluates all authorizers before first denial
+  - RESOLVED 2026-08-11 [fixed]: authorizeAppAction short-circuits on first denial (no eager multi-prompt/restore-point side effects).
   - Files: src/ai/ai_provider_gateway_tool_runner.cpp:251
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The brace-init list {authorizeCatastrophic..., authorizeSensitive..., authorizeAssisted..., authorizeUnattendedRisky...} (251-254) invokes ALL four authorizers -- each calling callbacks.confirm / offer_restore_point -- before the loop checks the first non-empty error. Declining the catastrophic confirm still pops the assisted confirm and can create/offer a restore point as a side effect. Still fails closed (first error denies), so this is over-prompting/side-effects, not a bypass.
   - Fix: Evaluate authorizers lazily and return on the first denial (short-circuit).
-- [ ] **R5-P1-22** [LOW] [CONFIRMED_REAL] Success shaping checks exit_code==0 but not NormalExit
+- [x] **R5-P1-22** [LOW] [CONFIRMED_REAL] Success shaping checks exit_code==0 but not NormalExit
+  - RESOLVED 2026-08-11 [fixed]: success expression now requires exit_status==NormalExit(0) in resultJson and appActionResultJson (crash-with-exit-code-0 no longer reported success).
   - Files: src/ai/ai_workflow_powershell_tool_runner.cpp:29, src/ai/ai_provider_gateway_tool_runner.cpp:302, src/ai/ai_execution_broker.cpp:421
   - Boundary: untrusted-input (reachable)
   - Evidence: resultJson (29-30) and appActionResultJson (302-303) compute success = started && !cancelled && !timed_out && exit_code==0, ignoring exit_status. AiCommandResult carries exit_status (CrashExit) but onProcessError ignores non-FailedToStart errors (425), so a crashed process with exit_code 0 is reported success. Fail-open on a crash.
   - Fix: Require exit_status == NormalExit(0) in the success expression.
-- [ ] **R5-P1-23** [LOW] [ALREADY_GUARDED] MCP semaphore timeout + grace can overflow signed int
+- [x] **R5-P1-23** [LOW] [ALREADY_GUARDED] MCP semaphore timeout + grace can overflow signed int
+  - RESOLVED 2026-08-11 [fixed]: stdio performStdioToolCall now qBound(min,timeout,INT_MAX-grace)+grace (overflow-safe); HTTP path already clamped.
   - Files: src/ai/ai_mcp_http_client.cpp:271, src/ai/ai_mcp_stdio_client.cpp:381
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: tryAcquire(1, timeout_ms + kSemaphoreWaitGraceMs=30000) (271/381) is a raw int add, but upstream MCP timeouts are clamped far below INT_MAX -- kWin32McpMaximumTimeoutMs=7,200,000ms (provider_gateway.cpp:32); overflow needs ~2.1e9ms (~24 days). Not reachable in practice.
   - Fix: Clamp/qMin the timeout before adding the grace to make the bound explicit.
-- [ ] **R5-P1-24** [LOW] [PARTIAL] Malformed pending human-gate state converted to 'no pending gate'
+- [x] **R5-P1-24** [LOW] [PARTIAL] Malformed pending human-gate state converted to 'no pending gate'
+  - RESOLVED 2026-08-11 [fixed]: AiRunState::fromJson keeps has_pending_human_gate=true and forces WaitingForHuman on a malformed gate payload (fail-closed); gate store already surfaces malformed lines.
   - Files: src/ai/ai_run_state.cpp:96, src/ai/ai_human_gate_store.cpp:105
   - Boundary: local-config-or-registry (reachable)
   - Evidence: AiRunState::fromJson: has_pending_human_gate with an empty-gate_id payload silently sets has_pending_human_gate=false (96-101) -- a corrupted/tampered run-state could drop a genuinely pending approval gate on resume. loadGates (105-112) skips malformed JSONL audit lines. User-writable data dir; corruption not surfaced.
   - Fix: Fail closed (surface an error / keep the run WaitingForHuman) when has_pending_human_gate is set but the gate payload is malformed.
-- [ ] **R5-P1-29** [LOW] [PARTIAL] Pending tool-turn restore not run-bound; no outputs==index / call-id cross-check
+- [x] **R5-P1-29** [LOW] [PARTIAL] Pending tool-turn restore not run-bound; no outputs==index / call-id cross-check
+  - RESOLVED 2026-08-11 [fixed]: restore validates run_id well-formedness plus an optional expected_run_id cross-check; outputs.size()==call_index and per-output call_id cross-check already present; wiring the GUI caller to pass the authoritative run_id tracked as P1-followups.
   - Files: src/ai/ai_tool_turn.cpp:146, src/ai/ai_tool_turn.cpp:185
   - Boundary: local-config-or-registry (reachable)
   - Evidence: restore (146-197) validates schema, response_id, non-empty calls, call_index range, and outputs.size()<=call_index (185), but ignores the run_id it wrote in toJson (124), allows outputs.size()<call_index (skipped calls with no output), and never cross-checks each output.call_id against calls[i].call_id. A tampered user-dir snapshot could resume with mismatched/short outputs.
   - Fix: Bind restore to the expected run_id, require outputs.size()==call_index, and verify each output call_id equals the corresponding call's id.
-- [ ] **R5-P1-30** [LOW] [CONFIRMED_REAL] Subagent usage accumulation uses non-saturating signed add
+- [x] **R5-P1-30** [LOW] [CONFIRMED_REAL] Subagent usage accumulation uses non-saturating signed add
+  - RESOLVED 2026-08-11 [already-correct]: addUsage already sums each token field via addSaturatingTokens.
   - Files: src/ai/ai_subagent_runner.cpp:233, src/ai/ai_token_usage_tracker.cpp:35
   - Boundary: untrusted-input (reachable)
   - Evidence: addUsage (233-239) does raw += on qint64 token fields, unlike the main tracker's saturatingAdd (token_usage_tracker.cpp:35). fromJson clamps each field to [0,INT64_MAX], so summing several near-max model-reported turns can overflow qint64 (signed UB).
   - Fix: Use saturatingAdd in addUsage.
-- [ ] **R5-P1-31** [LOW] [CONFIRMED_REAL] Async tool-runner destructor waits forever for non-cooperative work
+- [x] **R5-P1-31** [LOW] [CONFIRMED_REAL] Async tool-runner destructor waits forever for non-cooperative work
+  - RESOLVED 2026-08-11 [fixed]: added a CancelToken raised by detach()/dtor (real cooperative cancellation); the unbounded join is kept as the correct backstop (abandoning a task that captured owner state would be a use-after-free).
   - Files: src/ai/ai_async_tool_runner.cpp:19, src/ai/ai_async_tool_runner.cpp:36
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: ~AiAsyncToolRunner calls m_watcher.waitForFinished() unbounded (22); detach() only clears m_attached to suppress the finished signal (36-38) and provides no cancellation. A long-running QtConcurrent task blocks shutdown. Inherent QtConcurrent::run limitation (no cancellation token).
   - Fix: Thread a cancellation token into the work and check it, or bound the wait and detach the pool task.
-- [ ] **R5-P1-32** [LOW] [PARTIAL] Provider registry defaults missing 'enabled' to true; unknown transport stays available
+- [x] **R5-P1-32** [LOW] [PARTIAL] Provider registry defaults missing 'enabled' to true; unknown transport stays available
+  - RESOLVED 2026-08-11 [fixed]: an unknown provider transport is now marked unavailable with a missing_reason; the enabled default stays true (flipping to false false-closes an established contract asserted by a passing test).
   - Files: src/ai/ai_provider_registry.cpp:96, src/ai/ai_provider_registry.cpp:99
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: providerStatusObject: available = enabled.toBool(true) (96) so a missing/malformed enabled is permissively available; a transport other than planned/stdio/http hits no branch and stays available (99-121). Providers.json is an app-controlled resource with a user override; an unknown-transport provider marked available is inert (no callWin32Mcp/HTTP/stdio path resolves it), so no capability is granted.
   - Fix: Default missing enabled to false and mark unknown transports unavailable with a missing_reason.
-- [ ] **R5-P1-33** [LOW] [CONFIRMED_REAL] GUI recipe failure uses 'error' while orchestrator reads 'error_message'
+- [x] **R5-P1-33** [LOW] [CONFIRMED_REAL] GUI recipe failure uses 'error' while orchestrator reads 'error_message'
+  - RESOLVED 2026-08-11 [fixed]: win32_gui finish() emits the recipe failure under 'error_message' (and keeps 'error') so the orchestrator recovers the real failure text.
   - Files: src/ai/ai_win32_gui_runner.cpp:16, src/ai/ai_orchestrator.cpp:507
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: finish() writes the recipe-level failure under key 'error' (win32_gui_runner.cpp:16) and runWin32GuiAction returns it verbatim (tool_runner 471-482); executeToolPhase reads tool_result['error_message'] (507). On a recipe failure success=false but error_message is empty, so recoveryDecisionFor gets an empty error and falls to abortDecision (still fail-closed) with the real failure text lost.
   - Fix: Emit the recipe failure under 'error_message' (or have the orchestrator read both keys).
-- [ ] **R5-P1-36** [LOW] [CONFIRMED_REAL] Tool-turn accepts empty arguments while router rejects them as invalid JSON
+- [x] **R5-P1-36** [LOW] [CONFIRMED_REAL] Tool-turn accepts empty arguments while router rejects them as invalid JSON
+  - RESOLVED 2026-08-11 [fixed]: router parseArguments treats empty/whitespace arguments_json as {}, agreeing with AiToolTurn::validateCall (legitimate no-arg tool call no longer fails at dispatch).
   - Files: src/ai/ai_tool_turn.cpp:244, src/ai/ai_tool_call_router.cpp:77
   - Boundary: untrusted-input (reachable)
   - Evidence: validateCall explicitly allows empty arguments_json ('Empty arguments are allowed', 244-254) so the batch begins; parseArguments (77-86) then runs QJsonDocument::fromJson('') which errors and returns 'Invalid arguments'. Contradictory contracts across the two validators delay the error and would break a legitimate no-arg tool call.
@@ -162,87 +182,104 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
 
 17 actionable
 
-- [ ] **R5-P2-6** [LOW] [PARTIAL] dismiss_dialog auto-invokes a lone button incl. Delete/Cancel/Quit; explicit match takes first substring
+- [x] **R5-P2-6** [LOW] [PARTIAL] dismiss_dialog auto-invokes a lone button incl. Delete/Cancel/Quit; explicit match takes first substring
+  - RESOLVED 2026-08-11 [already-correct]: chooseDialogButton size==1 branch already refuses a lone destructive/negative caption via hasDestructiveWord; nameless lone button still auto-presses.
   - Files: src/win32mcp/win32_mcp_dialog_choice.cpp:166, src/win32mcp/win32_mcp_desktop.cpp:903
   - Boundary: gui-local-user (reachable)
   - Evidence: R3 F1 (wave E1) added whole-word matching, destructive-word rejection in affirmativeRank (90-94), and the truncated-tree refusal (desktop 903-908). RESIDUAL: chooseDialogButton's size==1 fallback (166-168) returns the lone button UNCONDITIONALLY, so a lone Delete/Format/Quit/Cancel button is still auto-invoked -- contradicting the tool's own guarantee (desktop 1001 'Never presses Cancel/No/Quit unless you name it'). hasDestructiveWord is not applied to the lone-button path.
   - Fix: in chooseDialogButton size==1 branch, refuse (require explicit 'button') when the lone caption hasDestructiveWord, mirroring affirmativeRank
-- [ ] **R5-P2-8** [LOW] [PARTIAL] UIA activation conflates pattern-absent with Invoke failure and falls through to Toggle/Select
+- [x] **R5-P2-8** [LOW] [PARTIAL] UIA activation conflates pattern-absent with Invoke failure and falls through to Toggle/Select
+  - RESOLVED 2026-08-11 [fixed]: tri-state PatternResult{Absent,Done,Failed}: a present Invoke/Toggle/Select whose HRESULT fails now surfaces the error instead of masking it as no-pattern and falling through.
   - Files: src/win32mcp/win32_mcp_desktop.cpp:758
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: tryInvoke (758-765) returns false both when the InvokePattern is absent AND when Invoke() returns a failing HRESULT; invokeElement (785-799) then tries Toggle then Select. A control exposing Invoke whose Invoke() genuinely fails is reported as 'cannot be invoked (no pattern)', masking the HRESULT, and could fall through to a different pattern. In practice Invoke/Toggle/Select are mutually exclusive per control-type, so fall-through-to-different-action is rare; a diagnosability nit on a local desktop-driving path.
   - Fix: distinguish HRESULT failure of a PRESENT pattern from pattern-absence and surface the failing HRESULT instead of falling through
-- [ ] **R5-P2-9** [LOW] [CONFIRMED_REAL] Integer schema check casts unbounded double to qint64 (UB); qint64-valid but >INT_MAX collapses via toInt()
+- [x] **R5-P2-9** [LOW] [CONFIRMED_REAL] Integer schema check casts unbounded double to qint64 (UB); qint64-valid but >INT_MAX collapses via toInt()
+  - RESOLVED 2026-08-11 [fixed]: integer type-check guards |raw|<=9.0e15 before the qint64 cast (mirrors asBackendId), removing the unbounded-double cast UB.
   - Files: src/win32mcp/win32_mcp_dispatch.cpp:135, src/win32mcp/win32_mcp_ocr.cpp:221
   - Boundary: untrusted-input (reachable)
   - Evidence: dispatch win32McpJsonMatchesType 'integer' (135-137) does static_cast<qint64>(value.toDouble()) with NO magnitude pre-guard -- casting e.g. 1e300 to qint64 is UB. Every other cast site in the subsystem guards first (asBackendId contract:61, clampMs json_clamp:15-17, rendezvous app_pid security:141). Downstream this check only bounds to qint64, so a value like 3e9 passes then collapses through toInt() in read-only consumers (ocr resolveRegion 221-224, get_pixel_color watch:144-147). mouse_click is NOT affected (exactScreenInt int32-guards, input:251-262).
   - Fix: guard std::abs(value.toDouble())<=9.0e15 before the qint64 cast in dispatch:136, mirroring asBackendId
-- [ ] **R5-P2-10** [LOW] [PARTIAL] Browser validation is scalar-type-only: no enum/range/length/dependent-field enforcement
+- [x] **R5-P2-10** [LOW] [PARTIAL] Browser validation is scalar-type-only: no enum/range/length/dependent-field enforcement
+  - RESOLVED 2026-08-11 [fixed]: copyArg enforces button/click_count/direction enums in lockstep with the extension; per-tool 'action' enum left to the extension to avoid false-close.
   - Files: src/win32mcp/browser_contract.cpp:482, src/win32mcp/browser_contract.cpp:1322
   - Boundary: untrusted-input (reachable)
   - Evidence: argTypeMismatch/copyArg (482-519) validate type and int32-range (isRepresentableInt 473-477) but not enums (button/action/direction), value ranges (click_count, volume 0..1), lengths, or dependent fields (drag from+to; select exactly-one; emulate width+height). By design these semantic checks live in the extension (background.js validates actions/enums and dependent args downstream). Type + int32-range + unknown-key rejection (rejectUnknownArgs 605-613) ARE enforced natively.
   - Fix: optional defense-in-depth: add enum/range/dependent-field checks in buildExtensionCommand for the highest-value fields (button, action, click_count)
-- [ ] **R5-P2-11** [LOW] [ALREADY_GUARDED] browser_download.filename forwards absolute/`..` unchanged; nav/download URLs get no scheme check
+- [x] **R5-P2-11** [LOW] [ALREADY_GUARDED] browser_download.filename forwards absolute/`..` unchanged; nav/download URLs get no scheme check
+  - RESOLVED 2026-08-11 [fixed]: browser_download now self-enforces http(s) url + relative filename (mirrors the extension); bare-domain navigation left unmirrored to avoid false-close.
   - Files: src/win32mcp/browser_contract.cpp:1155, browser/extension/background.js:2337
   - Boundary: untrusted-input (reachable)
   - Evidence: The contract copies filename/url verbatim, but the actual executor (browser/extension/background.js) enforces both: filename traversal rejected at bg.js:2337-2342 (/^([a-zA-Z]:|//|//)/ or '..' throws), and navigation http(s)-only at bg.js:1809 (rejects javascript:/data:/file:). Chrome's chrome.downloads API additionally rejects absolute/parent filenames. The doc-string promise is honored by the extension layer.
   - Fix: optional: mirror the extension's filename/url validation in copyArg so the contract's own doc-string promise is self-enforcing
-- [ ] **R5-P2-13** [LOW] [PARTIAL] UIA ref identity is only role+truncated-name+bbox-origin; getter failures share zero identity
+- [x] **R5-P2-13** [LOW] [PARTIAL] UIA ref identity is only role+truncated-name+bbox-origin; getter failures share zero identity
+  - RESOLVED 2026-08-11 [deferred-with-rationale]: adding UIA RuntimeId to ref identity would false-close virtualized lists (RuntimeIds are not stable across re-materialization) and uiaRefDrifted fails closed on any mismatch; existing IsWindow+exact-title precheck and live re-walk already bound the pragmatic-identity collision the finding itself calls not reachable harm.
   - Files: src/win32mcp/win32_mcp_uia_ref.cpp:8, src/win32mcp/win32_mcp_desktop.cpp:627
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: uiaRefDrifted (8-15) compares role/name/left/top; toRefNodes (627-634) builds that from UiaNode. Two same-role same-(or empty)name same-origin controls collide, and defaulted getters (role='control',left=top=0) produce a shared identity. Mitigations: uiaSnapshotPrecheck requires IsWindow + exact-title match (703-715) and the ref is re-walked live before use. Exploiting it needs a tree that preserves role+name+position while swapping the control -- a documented pragmatic identity, not a reachable-harm defect.
   - Fix: optional: include UIA RuntimeId (GetRuntimeId) in UiaRefNode identity
-- [ ] **R5-P2-14** [LOW] [DUP_R4] wait_for_text suppresses target-resolution failures (incl. ambiguous) as 'not yet', returns found:false on timeout
+- [x] **R5-P2-14** [LOW] [DUP_R4] wait_for_text suppresses target-resolution failures (incl. ambiguous) as 'not yet', returns found:false on timeout
+  - RESOLVED 2026-08-11 [fixed]: wait_for_text surfaces an ambiguous-title resolution error immediately (permanent) while a not-yet-appeared window stays retryable; degrades safe if the message text changes.
   - Files: src/win32mcp/win32_mcp_ocr.cpp:424
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: R3 F15 [HIGH/PART] (wave E1) addressed the wait-timeout family; wait_for_window malformed-state is now rejected (watch:213-216). Residual accepted in R3: wait_for_text (424) treats a false resolveTextTarget as 'window not there yet -> keep waiting', legitimate retry for a not-yet-appeared window, but conflates it with an ambiguous-title match (never resolves, burns full timeout returning found:false). find_text surfaces the same failure as an error (365-374); only the wait path swallows it.
   - Fix: in wait_for_text, distinguish ambiguous-match/enumeration errors from plain not-found and return them immediately
-- [ ] **R5-P2-16** [LOW] [PARTIAL] Inconsistent transport caps; pipe sends without 1MiB precheck; 64MiB replies into uncapped MCP response
+- [x] **R5-P2-16** [LOW] [PARTIAL] Inconsistent transport caps; pipe sends without 1MiB precheck; 64MiB replies into uncapped MCP response
+  - RESOLVED 2026-08-11 [fixed]: generic browser reply capped at 8MiB in fillResult (mirrors the screenshot/PDF cap); the 64MiB native-messaging decoder cap is intentionally generous for screenshots.
   - Files: src/win32mcp/browser_bridge.cpp:234, include/sak/win32mcp/native_messaging.h:25
   - Boundary: untrusted-input (reachable)
   - Evidence: R4 M-A3-16 added kMaxHostToBrowserBytes (1MiB); writeStdoutFrame refuses an oversized Chrome-facing frame (relay:129). So the host->browser cap IS enforced at the Chrome boundary; the pipe writeFrame (pipe:115-118) lacking a precheck only means an over-cap command wastefully crosses the pipe before the relay rejects it (not a bypass). RESIDUAL: a generic browser reply (e.g. browser_read of a hostile page) up to the 64MiB decoder cap (native_messaging.h:25) is echoed via compactJson (bridge:234) with no MCP-response-size cap; snapshot/screenshot/print DO cap.
   - Fix: cap the generic reply text length in fillResult (bridge.cpp:234) like screenshot/PDF/snapshot already do
-- [ ] **R5-P2-18** [LOW] [PARTIAL] Extension 'installed' state proves only registry shape; unreadable native-host default collapses to absent
+- [x] **R5-P2-18** [LOW] [PARTIAL] Extension 'installed' state proves only registry shape; unreadable native-host default collapses to absent
+  - RESOLVED 2026-08-11 [fixed]: nativeHostPresence returns -1 (Error) on an unreadable/wrong-type default value via readStringStatus tri-state, matching forcelistPresence; missing key still returns 0 (absent).
   - Files: src/win32mcp/browser_extension_installer.cpp:430, src/win32mcp/browser_extension_installer.cpp:164
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: forcelistPresence (408-428) fails closed to -1/Error on a genuine read error. RESIDUAL: nativeHostPresence (430-441) returns 0 (absent) when readString of the default value fails (440) -- conflating 'key exists but value unreadable/corrupt/wrong-type' with 'absent', inconsistent with forcelistPresence and the openReadStatus tri-state rationale (261). isOurForcelistData prefix-match (164-166) is correct identity matching. Read-only status-report accuracy gap on a user-writable HKCU key (same-user boundary).
   - Fix: in nativeHostPresence, return -1 (Error) when the key opens but readString of the default value fails for a reason other than absence
-- [ ] **R5-P2-19** [LOW] [PARTIAL] Win32 query failures partial: EnumWindows/GetWindowRect/class/PID ignored, DPI defaults 96, capture-monitor skips failed monitor
+- [x] **R5-P2-19** [LOW] [PARTIAL] Win32 query failures partial: EnumWindows/GetWindowRect/class/PID ignored, DPI defaults 96, capture-monitor skips failed monitor
+  - RESOLVED 2026-08-11 [fixed]: collectMonitorRectProc aborts and toolCaptureMonitor fails closed on GetMonitorInfoW failure, so capture_monitor index N matches list_monitors index N.
   - Files: src/win32mcp/win32_mcp_desktop.cpp:266, src/win32mcp/win32_mcp_tools.cpp:235
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: Concrete real inconsistency: desktop collectMonitorRectProc (266-274) SKIPS a monitor whose GetMonitorInfoW fails, shifting indices, whereas tools collectMonitorProc (235-243) ABORTS the enumeration on the same failure -- so capture_monitor index N can disagree with list_monitors index N. Other cited points are read-only info robustness: describeWindow ignores GetWindowRect (85-95, bounds->0,0,0,0), EnumWindows return ignored (192), DPI defaults 96 (tools:244-246). Harm is a misleading read-only report.
   - Fix: make desktop collectMonitorRectProc abort on GetMonitorInfoW failure and toolCaptureMonitor fail closed, matching list_monitors
-- [ ] **R5-P2-23** [LOW] [PARTIAL] Invalid max_depth (0/neg/>40) silently replaced with 40; depth-limited walk not marked truncated
+- [x] **R5-P2-23** [LOW] [PARTIAL] Invalid max_depth (0/neg/>40) silently replaced with 40; depth-limited walk not marked truncated
+  - RESOLVED 2026-08-11 [fixed]: walkElement sets truncated=true only when a real child is clipped by the depth cap (a leaf sitting at max_depth is not falsely flagged).
   - Files: src/win32mcp/win32_mcp_desktop.cpp:607, src/win32mcp/win32_mcp_desktop.cpp:517
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: clampUiaDepth (607-613) replaces an out-of-band max_depth with the default/max 40 -- an acceptable bounded safety clamp like clampMs. REAL RESIDUAL: walkElement returns at depth>=max_depth (517-519) WITHOUT setting state.truncated (contrast the node-cap and walk-failure paths which do, 509,522,536). A tree deeper than the cap is silently depth-clipped and reported truncated:false. Read-only inspection; deep (>40) UI trees are uncommon.
   - Fix: set state.truncated=true in walkElement when returning because depth>=max_depth (desktop.cpp:517)
-- [ ] **R5-P2-25** [LOW] [PARTIAL] Empty/CR-only type_text yields typed:0 success; partial-injection cleanup ignores its own SendInput result
+- [x] **R5-P2-25** [LOW] [PARTIAL] Empty/CR-only type_text yields typed:0 success; partial-injection cleanup ignores its own SendInput result
+  - RESOLVED 2026-08-11 [fixed]: sendInputAll now checks the release SendInput return and warns 'modifiers/buttons may remain held' on under-delivery; still fail-closed.
   - Files: src/win32mcp/win32_mcp_input.cpp:146, src/win32mcp/win32_mcp_input.cpp:351
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: Empty/CR-only text -> planTypeText emits no events (input_plan 61-72) -> sendInputAll returns true (138-140) -> typed:0: HONEST reporting of a benign no-op, not a fail-open (non-string text IS rejected, 359-361). Minor residual: the recovery SendInput in sendInputAll (146-148) ignores its own return, so if the modifier/button RELEASE after a partial delivery itself partially fails, a held Ctrl/Shift/button could be stranded and unreported (the tool already returns failure via injectionBlockedError).
   - Fix: check the release SendInput return in sendInputAll (input.cpp:148) and note 'modifiers may be held' when it under-delivers
-- [ ] **R5-P2-28** [LOW] [PARTIAL] Rendezvous parsing unbounded/shallow: readAll no cap, fields coerced, fractional app_pid, DWORD wrap
+- [x] **R5-P2-28** [LOW] [PARTIAL] Rendezvous parsing unbounded/shallow: readAll no cap, fields coerced, fractional app_pid, DWORD wrap
+  - RESOLVED 2026-08-11 [fixed]: readRendezvousRecord caps the read at 64KiB and rejects a non-integral app_pid (std::floor check); relay pipe-owner check remains the security backstop.
   - Files: src/win32mcp/browser_bridge_security.cpp:119, src/win32mcp/browser_bridge_relay.cpp:200
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: readRendezvousRecord (119-147) file.readAll has no size cap and app_pid is range-checked [1,9e15] but NOT integrality-checked (1234.5 truncates to 1234). BUT the rendezvous file lives in the user's own LOCALAPPDATA (Medium-IL, not writable by a low-IL renderer), and the security-critical binding is authoritative: relayConnect verifies the ACTUAL connected pipe's server is our own binary via GetNamedPipeServerProcessId + pidIsOwnImage (relay 200-206), catching a forged/wrapped/coerced pid or pipe_name. Same-user is the trust boundary.
   - Fix: cap file.readAll size and reject a non-integral app_pid in readRendezvousRecord
-- [ ] **R5-P2-29** [LOW] [PARTIAL] Malformed JSON-RPC lines silently dropped; oversized/write-fail only log; server exits status 0
+- [x] **R5-P2-29** [LOW] [PARTIAL] Malformed JSON-RPC lines silently dropped; oversized/write-fail only log; server exits status 0
+  - RESOLVED 2026-08-11 [fixed]: serveRequests returns bool and runWin32McpProcess exits 1 on a TooLong/write-failure teardown so the parent gateway distinguishes a desync from a clean EOF (normal EOF still exits 0).
   - Files: src/win32mcp/win32_mcp_entry.cpp:99, src/win32mcp/win32_mcp_entry.cpp:194
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: A malformed line carries no reliable id to answer, so dropping it and continuing (102-106) is defensible per JSON-RPC. readBoundedLine TooLong and writeResponse failure both break the serve loop (90-95,108-111) -- correct fail-closed teardown. Residual nit: runWin32McpProcess returns 0 (194-196) even after an abnormal TooLong/write-failure teardown, so the parent cannot distinguish clean EOF from a desync. Peer is the app's own gateway over a pipe.
   - Fix: return a non-zero exit code when serveRequests broke on TooLong or a write failure
-- [ ] **R5-P2-30** [LOW] [PARTIAL] Screenshot baselines keyed by caller query, not resolved HWND/size; window replacement compares cross-window
+- [x] **R5-P2-30** [LOW] [PARTIAL] Screenshot baselines keyed by caller query, not resolved HWND/size; window replacement compares cross-window
+  - RESOLVED 2026-08-11 [fixed]: screenshot baseline stores the resolved HWND + on-screen size; compare_screenshots forces changed:true with window_replaced/size_changed flags when the title maps to a different window or the window was resized.
   - Files: src/win32mcp/win32_mcp_watch.cpp:76, src/win32mcp/win32_mcp_watch.cpp:163
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: g_baselines is keyed by lower-cased title (97,175) and captureFingerprint re-resolves windowRectByTitle each call (78-92), so if a different window now matches the same title substring, compare_screenshots diffs against another window. The fingerprint is downscaled to a 64px edge (kFpMaxEdge 32), so a pure resize may still read changed:false. Read-only visual-diff helpers for the model's own driving; a misleading diff is the only consequence.
   - Fix: store the resolved HWND + on-screen size with the baseline and refuse/flag a compare when window identity or size changed
-- [ ] **R5-P2-31** [LOW] [CONFIRMED_REAL] Result/schema/window-lookup helpers heavily duplicated; behavior has drifted between copies
+- [x] **R5-P2-31** [LOW] [CONFIRMED_REAL] Result/schema/window-lookup helpers heavily duplicated; behavior has drifted between copies
+  - RESOLVED 2026-08-11 [deferred-with-rationale]: pure DRY: the only real consequence (monitor-enum drift between tools.cpp and desktop.cpp) is closed by P2-19; a full 5-file shared-helper extraction is behavior-neutral churn, deferred.
   - Files: src/win32mcp/win32_mcp_tools.cpp:39, src/win32mcp/win32_mcp_desktop.cpp:41
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: jsonResult/errorResult/stringProperty/toolSchema/toolEntry are copy-pasted across tools(39-47), desktop(41-86), input(36-72), ocr(55-91), watch(41-72); pickUniqueWindow/collectMatchProc duplicated in tools(146) and desktop(127). The drift the finding predicts is REAL and is the root of finding 19: tools collectMonitorProc aborts on GetMonitorInfoW failure while desktop collectMonitorRectProc silently skips. Pure quality/DRY debt, not a security defect.
   - Fix: extract the shared result/schema helpers and window-lookup into one module used by all tool files
-- [ ] **R5-P2-32** [LOW] [CONFIRMED_REAL] Test-only native host under production source duplicates relay framing; writer ignores short writes/flush
+- [x] **R5-P2-32** [LOW] [CONFIRMED_REAL] Test-only native host under production source duplicates relay framing; writer ignores short writes/flush
+  - RESOLVED 2026-08-11 [already-correct]: writeFrame already checks the fwrite count + fflush return (fixed in G12-10 / 20d10a6); the file is test-only per its header, so relocating it is churn with no code-defect benefit.
   - Files: src/win32mcp/win32_mcp_native_host.cpp:3, src/win32mcp/win32_mcp_native_host.cpp:63
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: The header (3-8) documents it is NOT compiled into the shipping binary -- built only by tests/CMakeLists.txt as a framing/ping reference; production host is browser_bridge_relay.cpp. It does sit under src/ and duplicates the relay's framing, and its writeFrame (63-67) ignores the fwrite count and fflush return. Being test-only, the ignored-write is a test-harness robustness nit, not a shipping defect.

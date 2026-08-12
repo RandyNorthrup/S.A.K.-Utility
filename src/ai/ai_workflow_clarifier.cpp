@@ -23,7 +23,11 @@ bool hasValue(const QJsonValue& value) {
     if (value.isArray()) {
         return !value.toArray().isEmpty();
     }
-    return !value.isNull() && !value.isUndefined();
+    // A number or bool renders through workflowInputValue (scalarJsonValueToString) and so
+    // counts as supplied. A plain object has no text/list rendering -- it would substitute to
+    // an empty value -- so it is treated as absent, forcing clarification rather than letting
+    // a required input silently resolve to blank. null/undefined are likewise absent.
+    return value.isDouble() || value.isBool();
 }
 
 bool containsAny(const QString& haystack, const QStringList& needles) {

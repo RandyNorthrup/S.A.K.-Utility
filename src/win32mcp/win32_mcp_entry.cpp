@@ -80,18 +80,21 @@ bool writeResponse(const QJsonObject& response) {
 
 // Serve newline-delimited JSON-RPC until EOF, or until a line exceeds the size ceiling -- at which
 // point we stop serving (the stream is desynchronized and cannot be trusted to re-frame).
-void serveRequests(BrowserControl* browser_ptr, const Win32McpServerPolicy& policy) {
+// Returns true on a clean end-of-stream (the peer closed our stdin) and false on an ABNORMAL
+// teardown -- an oversized line that desynchronized the stream, or a failed response write -- so
+// the caller can propagate the distinction as an exit code instead of always exiting 0.
+bool serveRequests(BrowserControl* browser_ptr, const Win32McpServerPolicy& policy) {
     std::string line;
     while (true) {
         const LineRead status = readBoundedLine(std::cin, line);
         if (status == LineRead::Eof) {
-            break;
+            return true;  // clean end-of-stream
         }
         if (status == LineRead::TooLong) {
             (void)std::fprintf(stderr,
                                "win32 mcp: request line exceeded %zu bytes; closing stream\n",
                                kMaxRequestLineBytes);
-            break;
+            return false;  // desynchronized stream: abnormal teardown
         }
         if (line.empty()) {
             continue;
@@ -107,7 +110,7 @@ void serveRequests(BrowserControl* browser_ptr, const Win32McpServerPolicy& poli
         const std::optional<QJsonObject> response = handleRequest(request, browser_ptr, policy);
         if (response.has_value() && !writeResponse(response.value())) {
             (void)std::fprintf(stderr, "win32 mcp: response write failed; closing stream\n");
-            break;
+            return false;  // lost response ack: abnormal teardown
         }
     }
 }
@@ -191,9 +194,12 @@ int runWin32McpProcess(int argc, char** argv) {
     const sak::win32mcp::Win32McpServerPolicy policy =
         sak::win32mcp::Win32McpServerPolicy::fromEnvironment();
 
-    serveRequests(browser_ptr, policy);
+    const bool clean_exit = serveRequests(browser_ptr, policy);
     browser.stop();
-    return 0;
+    // A clean EOF (the gateway closed our stdin) exits 0; an abnormal teardown -- an oversized line
+    // that desynchronized the stream, or a failed response write -- exits non-zero so the parent
+    // gateway can distinguish a normal shutdown from a protocol desync rather than reading success.
+    return clean_exit ? 0 : 1;
 }
 
 }  // namespace sak::win32mcp

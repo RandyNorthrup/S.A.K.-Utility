@@ -7,7 +7,9 @@
 #include <QJsonObject>
 #include <QObject>
 
+#include <atomic>
 #include <functional>
+#include <memory>
 
 namespace sak::ai {
 
@@ -41,12 +43,24 @@ public:
 
     [[nodiscard]] bool isRunning() const { return m_running; }
 
+    /// Cooperative cancellation flag for the in-flight job. QtConcurrent::run has
+    /// no built-in cancellation, so a token the Work polls is the only lever that
+    /// can stop it early: detach() and destruction raise it. To use it, obtain the
+    /// token BEFORE building the Work, capture it, and return promptly once it
+    /// reads true. Work that ignores it still runs to completion (the destructor
+    /// then blocks on the join, by design). The token is per-job: start() lowers it
+    /// for the new job, so a token captured for one job is not disturbed by later
+    /// ones (a new job cannot start until the previous one has drained).
+    using CancelToken = std::shared_ptr<const std::atomic_bool>;
+    [[nodiscard]] CancelToken cancelToken() const { return m_cancel; }
+
     /// Abandons the in-flight job: its result will be dropped and finished()
-    /// will not be emitted for it. The pool task keeps running to completion in
-    /// the background; a new start() is allowed once it finishes. isRunning()
-    /// stays true until it does, because the abandoned work is still mutating
-    /// the machine -- callers must keep treating the runner as busy and wait for
-    /// drained() rather than assuming the job stopped.
+    /// will not be emitted for it, and the cancellation token is raised so
+    /// cooperative Work can return promptly. The pool task keeps running to
+    /// completion in the background; a new start() is allowed once it finishes.
+    /// isRunning() stays true until it does, because the abandoned work is still
+    /// mutating the machine -- callers must keep treating the runner as busy and
+    /// wait for drained() rather than assuming the job stopped.
     void detach();
 
 Q_SIGNALS:
@@ -63,6 +77,7 @@ private:
     void onWatcherFinished();
 
     QFutureWatcher<QJsonObject> m_watcher;
+    std::shared_ptr<std::atomic_bool> m_cancel{std::make_shared<std::atomic_bool>(false)};
     bool m_running{false};
     bool m_attached{true};
 };

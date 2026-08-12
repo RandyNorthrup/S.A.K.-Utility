@@ -266,6 +266,25 @@ const QRegularExpression& workflowPlaceholderPattern() {
     return kPattern;
 }
 
+// A malformed member makes the WHOLE array unresolvable. Dropping the non-string or blank
+// members and rendering the survivors turned "act on these five items" into "act on three"
+// with no error on any channel -- a silently incomplete enumeration driving real work. The
+// caller gets @p fallback (absent), never a partial list.
+QString workflowArrayInputValue(const QJsonArray& array, const QString& fallback) {
+    QStringList parts;
+    for (const auto& item : array) {
+        if (!item.isString()) {
+            return fallback;
+        }
+        const QString text = item.toString().trimmed();
+        if (text.isEmpty()) {
+            return fallback;
+        }
+        parts << text;
+    }
+    return parts.isEmpty() ? fallback : parts.join(QStringLiteral(", "));
+}
+
 }  // namespace
 
 bool powerShellCommandTemplateIsSingleQuoteSafe(const QString& command, QString* error) {
@@ -311,23 +330,16 @@ QString workflowInputValue(const AiWorkflowPhaseContext& context,
         return text.isEmpty() ? fallback : text;
     }
     if (value.isArray()) {
-        // A malformed member makes the WHOLE array unresolvable. Dropping the non-string or
-        // blank members and rendering the survivors turned "act on these five items" into
-        // "act on three" with no error on any channel -- a silently incomplete enumeration
-        // driving real work. The caller gets @p fallback (absent), never a partial list.
-        QStringList parts;
-        const auto array = value.toArray();
-        for (const auto& item : array) {
-            if (!item.isString()) {
-                return fallback;
-            }
-            const QString text = item.toString().trimmed();
-            if (text.isEmpty()) {
-                return fallback;
-            }
-            parts << text;
-        }
-        return parts.isEmpty() ? fallback : parts.join(QStringLiteral(", "));
+        return workflowArrayInputValue(value.toArray(), fallback);
+    }
+    if (value.isDouble() || value.isBool()) {
+        // A required numeric/bool input passes the clarifier's presence check, but without this
+        // branch it rendered to the (empty) fallback here -- silently injecting an empty value
+        // into the phase while clarification was skipped. scalarJsonValueToString renders an
+        // integer or bool and itself fails closed (empty) on a fractional/non-finite/out-of-range
+        // number, which then falls through to the fallback rather than a silently rounded value.
+        const QString text = scalarJsonValueToString(value);
+        return text.isEmpty() ? fallback : text;
     }
     return fallback;
 }

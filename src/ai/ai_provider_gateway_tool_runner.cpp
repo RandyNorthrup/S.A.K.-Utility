@@ -248,13 +248,23 @@ QJsonObject authorizeAppAction(const AiAppActionPlan& plan,
     // Catastrophic first and in EVERY mode: a format/wipe/mass-delete or obfuscated manifest
     // command takes the same mandatory hard human confirm as the shell/own-action/workflow
     // paths, so it can never be satisfied by only the Unattended restore-point offer below.
-    for (const QJsonObject& error : {authorizeCatastrophicAppAction(plan, callbacks),
-                                     authorizeSensitiveAppAction(plan, callbacks),
-                                     authorizeAssistedAppAction(plan, access, callbacks),
-                                     authorizeUnattendedRiskyAppAction(plan, access, callbacks)}) {
-        if (!error.isEmpty()) {
-            return error;
-        }
+    //
+    // Evaluate lazily and return on the FIRST denial: each authorizer invokes callbacks
+    // (confirm / offer_restore_point) with side effects, so declining the catastrophic confirm
+    // must not still pop a later confirm or create/offer a restore point. A brace-init list would
+    // eagerly run all four before this check.
+    if (QJsonObject error = authorizeCatastrophicAppAction(plan, callbacks); !error.isEmpty()) {
+        return error;
+    }
+    if (QJsonObject error = authorizeSensitiveAppAction(plan, callbacks); !error.isEmpty()) {
+        return error;
+    }
+    if (QJsonObject error = authorizeAssistedAppAction(plan, access, callbacks); !error.isEmpty()) {
+        return error;
+    }
+    if (QJsonObject error = authorizeUnattendedRiskyAppAction(plan, access, callbacks);
+        !error.isEmpty()) {
+        return error;
     }
     return {};
 }
@@ -299,8 +309,13 @@ QJsonObject appActionResultJson(const AiCommandResult& command_result,
     result[QStringLiteral("display_name")] = plan.display_name;
     result[QStringLiteral("manifest_method")] = plan.method;
     result[QStringLiteral("evidence")] = plan.evidence;
+    // exit_status == 0 is QProcess::NormalExit: a process that CRASHED can report exit_code 0
+    // (onProcessError ignores the non-FailedToStart crash), so require a normal exit too or a
+    // crash would be recorded as a success.
     result[QStringLiteral("success")] = command_result.started && !command_result.cancelled &&
-                                        !command_result.timed_out && command_result.exit_code == 0;
+                                        !command_result.timed_out &&
+                                        command_result.exit_code == 0 &&
+                                        command_result.exit_status == 0;
     result[QStringLiteral("operation")] = QStringLiteral("app_run_action");
     return result;
 }

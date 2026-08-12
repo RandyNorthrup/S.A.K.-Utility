@@ -30,6 +30,9 @@ constexpr int kMaxRequestBytes = 1024 * 1024;
 // START (finish() never runs) can never deadlock the caller on an unconditional acquire.
 constexpr int kSemaphoreWaitGraceMs = 30'000;
 constexpr qsizetype kSseDataPrefixLength = 5;
+// Every tool call this client issues uses this fixed JSON-RPC request id; a response is only ours
+// when it echoes the same id (JSON-RPC correlation), so a stray/out-of-band message is rejected.
+constexpr int kJsonRpcRequestId = 1;
 constexpr int kMinimumRequestTimeoutMs = sak::kMillisecondsPerSecond;
 // Upper bound on the caller-supplied timeout: rejects negative/zero waits and keeps
 // timeout_ms + kSemaphoreWaitGraceMs from signed-overflowing int.
@@ -56,7 +59,7 @@ struct HttpWorkerSinks {
 [[nodiscard]] QJsonObject toolCallPayload(const QString& tool_name, const QJsonObject& arguments) {
     return QJsonObject{
         {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
-        {QStringLiteral("id"), 1},
+        {QStringLiteral("id"), kJsonRpcRequestId},
         {QStringLiteral("method"), QStringLiteral("tools/call")},
         {QStringLiteral("params"),
          QJsonObject{{QStringLiteral("name"), tool_name},
@@ -83,7 +86,8 @@ struct HttpWorkerSinks {
 // A JSON-RPC response carries jsonrpc "2.0", an id, and either a result or an error; a
 // notification (e.g. notifications/progress) has a method and no id. Only the former is our
 // answer. Requiring the version string rejects arbitrary id+result objects that are not
-// JSON-RPC at all.
+// JSON-RPC at all. The id is correlated against the request id on the production path in
+// callTool (this helper stays id-agnostic so it can extract any JSON-RPC response shape).
 [[nodiscard]] bool isJsonRpcResponse(const QJsonObject& object) {
     return object.value(QStringLiteral("jsonrpc")).toString() == QStringLiteral("2.0") &&
            object.contains(QStringLiteral("id")) &&
@@ -469,6 +473,16 @@ QJsonObject AiMcpHttpClient::callTool(const QUrl& endpoint,
 
     QJsonObject message = extractJsonRpcMessage(state.m_response_body, error_message);
     if (message.isEmpty()) {
+        return {};
+    }
+    // Correlate the JSON-RPC id: the response to our single request MUST echo the request id
+    // (JSON-RPC 2.0). A mismatched -- or non-numeric -- id means this is not our answer, so fail
+    // closed rather than accept an out-of-band message (or a stray one crafted by the transport)
+    // as the tool result. Error responses also echo the request id, so correlate before that.
+    if (message.value(QStringLiteral("id")).toInt(-1) != kJsonRpcRequestId) {
+        if (error_message != nullptr) {
+            *error_message = QStringLiteral("MCP response id did not match the request");
+        }
         return {};
     }
     if (explainJsonRpcError(message, error_message)) {

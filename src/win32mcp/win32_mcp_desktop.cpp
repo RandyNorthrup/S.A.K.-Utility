@@ -274,9 +274,12 @@ BOOL CALLBACK collectMonitorRectProc(HMONITOR monitor, HDC, LPRECT, LPARAM param
     auto* rects = reinterpret_cast<QVector<RECT>*>(param);
     MONITORINFO info{};
     info.cbSize = sizeof(info);
-    if (GetMonitorInfoW(monitor, &info) != FALSE) {
-        rects->append(info.rcMonitor);
+    if (GetMonitorInfoW(monitor, &info) == FALSE) {
+        // Abort the whole enumeration so a read failure surfaces as an error below, rather than
+        // silently omitting a monitor and shifting the indices relative to list_monitors.
+        return FALSE;
     }
+    rects->append(info.rcMonitor);
     return TRUE;
 }
 
@@ -286,7 +289,13 @@ ToolResult toolCaptureMonitor(const QJsonObject& args) {
     }
     const int index = args.value(QStringLiteral("index")).toInt(-1);
     QVector<RECT> rects;
-    EnumDisplayMonitors(nullptr, nullptr, collectMonitorRectProc, reinterpret_cast<LPARAM>(&rects));
+    // EnumDisplayMonitors returns FALSE on a genuine enumeration failure OR when
+    // collectMonitorRectProc aborted on a GetMonitorInfo failure; either way the list cannot be
+    // vouched for, so fail closed rather than index a short/shifted set. Matches list_monitors.
+    if (EnumDisplayMonitors(
+            nullptr, nullptr, collectMonitorRectProc, reinterpret_cast<LPARAM>(&rects)) == FALSE) {
+        return errorResult(QStringLiteral("Could not enumerate the monitors."));
+    }
     if (index < 0 || index >= rects.size()) {
         return errorResult(
             QStringLiteral("No monitor at index %1 (there are %2).").arg(index).arg(rects.size()));
@@ -521,9 +530,6 @@ void walkElement(WalkState& state, IUIAutomationElement* element, int depth) {
     if (state.m_elements != nullptr) {
         state.m_elements->append(ComPtr<IUIAutomationElement>(element));
     }
-    if (depth >= state.m_max_depth) {
-        return;
-    }
     ComPtr<IUIAutomationElement> child;
     if (FAILED(state.m_walker->GetFirstChildElement(element, &child))) {
         state.m_truncated =
@@ -531,7 +537,13 @@ void walkElement(WalkState& state, IUIAutomationElement* element, int depth) {
         return;
     }
     if (child == nullptr) {
-        return;  // genuinely no children
+        return;  // genuinely no children -- a leaf is fully described, not truncated
+    }
+    if (depth >= state.m_max_depth) {
+        // Children exist but the depth cap stops us from walking them: the tree is clipped here,
+        // so flag it truncated instead of reporting the depth-limited subtree as complete.
+        state.m_truncated = true;
+        return;
     }
     while (child != nullptr) {
         walkElement(state, child.Get(), depth + 1);
@@ -768,48 +780,96 @@ ToolResult toolUiaGetControlValue(const QJsonObject& args) {
 }
 
 // Programmatic activation via UI Automation patterns (no cursor movement): Invoke a button/menu
-// item, else Toggle a checkbox, else Select a list/tab item. Each returns true only if the
-// control exposes that pattern and the call succeeds.
-bool tryInvoke(IUIAutomationElement* element) {
+// item, else Toggle a checkbox, else Select a list/tab item. A control that does not expose a
+// pattern (Absent) is a reason to try the next one; a pattern that IS present but whose call
+// fails (Failed) is a real error to surface, not a reason to silently fall through to a different
+// action on the same control.
+enum class PatternResult {
+    Absent,
+    Done,
+    Failed
+};
+
+PatternResult tryInvoke(IUIAutomationElement* element, HRESULT& hr) {
     ComPtr<IUnknown> unknown;
     if (FAILED(element->GetCurrentPattern(UIA_InvokePatternId, &unknown)) || (unknown == nullptr)) {
-        return false;
+        return PatternResult::Absent;
     }
     ComPtr<IUIAutomationInvokePattern> pattern;
-    return SUCCEEDED(unknown.As(&pattern)) && (pattern != nullptr) && SUCCEEDED(pattern->Invoke());
+    if (FAILED(unknown.As(&pattern)) || (pattern == nullptr)) {
+        hr = E_NOINTERFACE;  // pattern advertised but its interface is unusable
+        return PatternResult::Failed;
+    }
+    hr = pattern->Invoke();
+    return SUCCEEDED(hr) ? PatternResult::Done : PatternResult::Failed;
 }
 
-bool tryToggle(IUIAutomationElement* element) {
+PatternResult tryToggle(IUIAutomationElement* element, HRESULT& hr) {
     ComPtr<IUnknown> unknown;
     if (FAILED(element->GetCurrentPattern(UIA_TogglePatternId, &unknown)) || (unknown == nullptr)) {
-        return false;
+        return PatternResult::Absent;
     }
     ComPtr<IUIAutomationTogglePattern> pattern;
-    return SUCCEEDED(unknown.As(&pattern)) && (pattern != nullptr) && SUCCEEDED(pattern->Toggle());
+    if (FAILED(unknown.As(&pattern)) || (pattern == nullptr)) {
+        hr = E_NOINTERFACE;
+        return PatternResult::Failed;
+    }
+    hr = pattern->Toggle();
+    return SUCCEEDED(hr) ? PatternResult::Done : PatternResult::Failed;
 }
 
-bool trySelect(IUIAutomationElement* element) {
+PatternResult trySelect(IUIAutomationElement* element, HRESULT& hr) {
     ComPtr<IUnknown> unknown;
     if (FAILED(element->GetCurrentPattern(UIA_SelectionItemPatternId, &unknown)) ||
         (unknown == nullptr)) {
-        return false;
+        return PatternResult::Absent;
     }
     ComPtr<IUIAutomationSelectionItemPattern> pattern;
-    return SUCCEEDED(unknown.As(&pattern)) && (pattern != nullptr) && SUCCEEDED(pattern->Select());
+    if (FAILED(unknown.As(&pattern)) || (pattern == nullptr)) {
+        hr = E_NOINTERFACE;
+        return PatternResult::Failed;
+    }
+    hr = pattern->Select();
+    return SUCCEEDED(hr) ? PatternResult::Done : PatternResult::Failed;
+}
+
+constexpr int kHresultHexWidth = 8;  // 32-bit HRESULT as zero-padded hex
+constexpr int kHexBase = 16;
+
+QString patternFailureMessage(const QString& which, HRESULT hr) {
+    return QStringLiteral("The control's %1 pattern is present but the call failed (HRESULT 0x%2).")
+        .arg(which)
+        .arg(static_cast<quint32>(hr), kHresultHexWidth, kHexBase, QLatin1Char('0'));
 }
 
 QString invokeElement(IUIAutomationElement* element, QString& action) {
-    if (tryInvoke(element)) {
+    HRESULT hr = S_OK;
+    switch (tryInvoke(element, hr)) {
+    case PatternResult::Done:
         action = QStringLiteral("invoke");
         return {};
+    case PatternResult::Failed:
+        return patternFailureMessage(QStringLiteral("Invoke"), hr);
+    case PatternResult::Absent:
+        break;
     }
-    if (tryToggle(element)) {
+    switch (tryToggle(element, hr)) {
+    case PatternResult::Done:
         action = QStringLiteral("toggle");
         return {};
+    case PatternResult::Failed:
+        return patternFailureMessage(QStringLiteral("Toggle"), hr);
+    case PatternResult::Absent:
+        break;
     }
-    if (trySelect(element)) {
+    switch (trySelect(element, hr)) {
+    case PatternResult::Done:
         action = QStringLiteral("select");
         return {};
+    case PatternResult::Failed:
+        return patternFailureMessage(QStringLiteral("Select"), hr);
+    case PatternResult::Absent:
+        break;
     }
     return QStringLiteral("This control cannot be invoked (no Invoke/Toggle/Select pattern).");
 }

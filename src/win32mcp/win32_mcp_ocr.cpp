@@ -438,6 +438,19 @@ ToolResult toolAssertText(const QJsonObject& args) {
     return textQuery(args, true);
 }
 
+// True when a resolveTextTarget failure is DETERMINISTIC -- it will recur identically on every
+// poll and can never clear by waiting -- so wait_for_text must surface it now instead of
+// swallowing it as "not yet" until the timeout expires with found:false. The ambiguous-title case
+// ("'<needle>' matches N visible windows; use a more specific title.") is exactly that: the vague
+// title matches the same set every poll and never resolves. A plain "no visible window matching"
+// is the legitimate not-appeared-yet case and MUST stay retryable (waiting for a window to open is
+// the tool's whole purpose). Detection degrades safe: if the source message text ever changes this
+// reverts to the prior retry-until-timeout behavior, never to a false rejection of a not-yet
+// window.
+bool textTargetErrorIsPermanent(const QString& err) {
+    return err.contains(QStringLiteral("use a more specific title"));
+}
+
 ToolResult toolWaitForText(const QJsonObject& args) {
     const QString query = args.value(QStringLiteral("text")).toString().trimmed();
     if (query.isEmpty()) {
@@ -459,6 +472,8 @@ ToolResult toolWaitForText(const QJsonObject& args) {
                 return errorResult(ocr_err);  // an engine problem is not a "not yet"
             }
             matches = matchesToJson(hits, query, args.value(QStringLiteral("contains")).toBool());
+        } else if (textTargetErrorIsPermanent(err)) {
+            return errorResult(err);  // ambiguous title never resolves -- do not burn the timeout
         }
         const qint64 waited = static_cast<qint64>(GetTickCount64() - start);
         if (!matches.isEmpty()) {

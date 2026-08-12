@@ -167,6 +167,15 @@ constexpr auto kAppManifestFileRoot = "data/ai/app_manifests";
             status[QStringLiteral("missing_reason")] =
                 QStringLiteral("Bundled MCP command missing");
         }
+    } else if (transport != QLatin1String("http") && transport != QLatin1String("native")) {
+        // "http" (docs over HTTP) and "native" (filesystem/vendor/package providers served
+        // in-process) are the only remaining transports the gateway can actually dispatch. Any
+        // other value -- a typo, or a disk-override providers.json naming a transport with no
+        // launcher -- resolves to no capability path, so fail closed rather than leaving the
+        // provider permissively "available" with no way to reach it.
+        status[QStringLiteral("available")] = false;
+        status[QStringLiteral("missing_reason")] =
+            QStringLiteral("Unknown provider transport: %1").arg(transport);
     }
 
     return status;

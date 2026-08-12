@@ -531,6 +531,59 @@ QString argTypeMismatch(const QString& key, const QString& type, const QJsonValu
     return value.isString() ? QString() : QStringLiteral("%1 must be a string").arg(key);
 }
 
+// button: matched case-insensitively against the extension's mouseButton set; an empty button
+// defers to the extension's "left" default. Empty on success.
+QString buttonSemanticError(const QJsonValue& value) {
+    const QString button = value.toString().toLower();
+    if (!button.isEmpty() && button != QLatin1String("left") && button != QLatin1String("right") &&
+        button != QLatin1String("middle")) {
+        return QStringLiteral("button must be left, right, or middle");
+    }
+    return QString();
+}
+
+// click_count: the extension's clickCountOf accepts only 1, 2, or 3. Empty on success.
+constexpr int kMinClickCount = 1;
+constexpr int kMaxClickCount = 3;
+QString clickCountSemanticError(const QJsonValue& value) {
+    const int count = value.toInt();
+    if (count < kMinClickCount || count > kMaxClickCount) {
+        return QStringLiteral("click_count must be 1, 2, or 3");
+    }
+    return QString();
+}
+
+// direction: trimmed and lower-cased the same way the extension's scrollDirection is. Empty on
+// success.
+QString directionSemanticError(const QJsonValue& value) {
+    const QString direction = value.toString().trimmed().toLower();
+    if (direction != QLatin1String("up") && direction != QLatin1String("down")) {
+        return QStringLiteral("direction must be \"up\" or \"down\"");
+    }
+    return QString();
+}
+
+// Enum/range constraints for the small set of fields whose legal values the extension enforces
+// downstream (background.js mouseButton / clickCountOf / scrollDirection). Type + int32-range are
+// already checked; this refuses a well-typed but out-of-domain value -- a misspelled "rihgt"
+// button, a click_count of 5, a "sideways" scroll -- at the contract boundary instead of letting
+// it round-trip to the extension only to fail there. Kept in EXACT lockstep with the extension so
+// nothing it accepts is rejected here: button is matched case-insensitively and an empty button
+// defers to the extension's "left" default; direction is trimmed and lower-cased the same way.
+// Empty on success or for a key that carries no modeled constraint.
+QString argSemanticError(const QString& key, const QJsonValue& value) {
+    if (key == QLatin1String("button")) {
+        return buttonSemanticError(value);
+    }
+    if (key == QLatin1String("click_count")) {
+        return clickCountSemanticError(value);
+    }
+    if (key == QLatin1String("direction")) {
+        return directionSemanticError(value);
+    }
+    return QString();
+}
+
 QString copyArg(const QJsonObject& args, const ArgSpec& spec, QJsonObject& command) {
     if (!args.contains(spec.m_key)) {
         return spec.m_required ? QStringLiteral("%1 is required").arg(spec.m_key) : QString();
@@ -539,6 +592,10 @@ QString copyArg(const QJsonObject& args, const ArgSpec& spec, QJsonObject& comma
     const QString mismatch = argTypeMismatch(spec.m_key, spec.m_type, value);
     if (!mismatch.isEmpty()) {
         return mismatch;
+    }
+    const QString semantic = argSemanticError(spec.m_key, value);
+    if (!semantic.isEmpty()) {
+        return semantic;
     }
     if (spec.m_type == QLatin1String("int")) {
         command.insert(spec.m_key, value.toInt());
@@ -597,6 +654,49 @@ QString applySelectValues(const QJsonObject& arguments, QJsonObject& command) {
     return QString();
 }
 
+// browser_download's own doc-string PROMISES an http(s) url and a filename that is a relative name
+// with no absolute path and no "..". The extension (chrome.downloads path) enforces both, but they
+// are mirrored here so the contract is self-enforcing rather than trusting a downstream layer to
+// honor its documented guarantee. Kept byte-for-byte in step with background.js handleDownload so
+// nothing the extension would accept is refused: the url is tested un-trimmed against the http(s)
+// scheme, and a filename is only constrained when non-empty after trimming, rejecting a leading
+// drive letter (a-zA-Z followed by ':'), '/' or '\\', or a ".." anywhere.
+// True when the (non-empty) name begins with a Windows drive-letter prefix: an ASCII letter
+// (a-zA-Z) immediately followed by ':'.
+constexpr qsizetype kDriveLetterPrefixMinLength = 2;  // "X:" -- letter + colon
+bool hasDriveLetterPrefix(const QString& filename) {
+    const QChar first = filename.at(0);
+    const bool ascii_letter = (first >= QLatin1Char('a') && first <= QLatin1Char('z')) ||
+                              (first >= QLatin1Char('A') && first <= QLatin1Char('Z'));
+    return ascii_letter && filename.size() >= kDriveLetterPrefixMinLength &&
+           filename.at(1) == QLatin1Char(':');
+}
+
+// A download filename is constrained only when non-empty after trimming: it must be a relative
+// name, rejecting a leading drive letter, a leading '/' or '\\', or a ".." anywhere. Empty on
+// success.
+QString downloadFilenameError(const QString& filename) {
+    if (filename.isEmpty()) {
+        return QString();
+    }
+    const QChar first = filename.at(0);
+    if (hasDriveLetterPrefix(filename) || first == QLatin1Char('/') || first == QLatin1Char('\\') ||
+        filename.contains(QStringLiteral(".."))) {
+        return QStringLiteral("browser_download filename must be a relative name without '..'");
+    }
+    return QString();
+}
+
+QString applyDownloadExtra(const QJsonObject& arguments) {
+    const QString url = arguments.value(QStringLiteral("url")).toString();
+    if (!url.startsWith(QLatin1String("http:"), Qt::CaseInsensitive) &&
+        !url.startsWith(QLatin1String("https:"), Qt::CaseInsensitive)) {
+        return QStringLiteral("browser_download needs an http(s) url");
+    }
+    const QString filename = arguments.value(QStringLiteral("filename")).toString().trimmed();
+    return downloadFilenameError(filename);
+}
+
 // Tool-specific extras the generic ref/scalar-arg copiers do not cover. Returns an error
 // string (empty on success).
 QString applyToolExtras(const QString& tool,
@@ -608,6 +708,9 @@ QString applyToolExtras(const QString& tool,
     }
     if (tool == QLatin1String("browser_select")) {
         return applySelectValues(arguments, command);
+    }
+    if (tool == QLatin1String("browser_download")) {
+        return applyDownloadExtra(arguments);
     }
     return QString();
 }

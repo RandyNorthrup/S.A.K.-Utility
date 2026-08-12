@@ -622,12 +622,7 @@ void AiOrchestrator::applyResumeState(const WorkflowTemplate& workflow, RunState
         if (!state->context.phase_results.contains(prior.phase_id)) {
             state->context.phase_results.insert(prior.phase_id, phaseExecutionToJson(prior));
         }
-        for (int phase_index = 0; phase_index < workflow.phases.size(); ++phase_index) {
-            if (workflow.phases.at(phase_index).id == prior.phase_id) {
-                state->executed_indices.insert(phase_index);
-                break;
-            }
-        }
+        seedResumeExecutedIndex(workflow, prior, state);
         if (prior.ran && !prior.skipped) {
             state->result.flags.insert(QStringLiteral("%1_%2").arg(
                 prior.phase_id,
@@ -635,6 +630,29 @@ void AiOrchestrator::applyResumeState(const WorkflowTemplate& workflow, RunState
         }
     }
     state->context.flags = state->result.flags;
+}
+
+// Only a record that represents an ACTUAL prior execution may authorize a
+// resume-skip of its phase (executed_indices is one half of the skip gate in
+// runnableGroupPositions). A record that neither ran nor was skipped did not
+// complete -- a blank/fabricated resume entry looks exactly like this -- so it
+// must not seed executed_indices, otherwise a tampered user-dir snapshot could
+// fake an execution to skip a preflight/approval phase. Fail closed: an
+// unproven phase re-runs under its normal per-phase human/policy gates. (A
+// failed phase legitimately counts as executed here -- that is the ask-human
+// recovery path -- so success is deliberately NOT required.)
+void AiOrchestrator::seedResumeExecutedIndex(const WorkflowTemplate& workflow,
+                                             const AiPhaseExecution& prior,
+                                             RunState* state) {
+    if (!(prior.ran || prior.skipped)) {
+        return;
+    }
+    for (int phase_index = 0; phase_index < workflow.phases.size(); ++phase_index) {
+        if (workflow.phases.at(phase_index).id == prior.phase_id) {
+            state->executed_indices.insert(phase_index);
+            break;
+        }
+    }
 }
 
 AiPhaseExecution AiOrchestrator::executeWorkflowPhase(const WorkflowTemplate& workflow,

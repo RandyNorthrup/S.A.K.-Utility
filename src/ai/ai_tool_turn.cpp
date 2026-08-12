@@ -29,6 +29,57 @@ void setError(QString* error_message, const QString& message) {
     }
 }
 
+// Bind the snapshot to the run it belongs to. toJson writes a non-empty run_id, so a
+// present-but-empty or wrong-typed run_id is tampering, not something a faithful
+// snapshot produces -- reject it. When the caller knows which run it is resuming
+// (expected_run_id non-empty), a mismatch means this pending turn is from a different
+// run and must not be resumed here.
+bool validateSnapshotRunId(const QJsonObject& state,
+                           const QString& expected_run_id,
+                           QString* error_message) {
+    const QJsonValue run_id_value = state.value(QStringLiteral("run_id"));
+    QString snapshot_run_id;
+    if (!run_id_value.isUndefined() && !run_id_value.isNull()) {
+        if (!run_id_value.isString() || run_id_value.toString().trimmed().isEmpty()) {
+            setError(error_message,
+                     QStringLiteral("Pending tool turn snapshot run id is not a valid string"));
+            return false;
+        }
+        snapshot_run_id = run_id_value.toString().trimmed();
+    }
+    const QString expected = expected_run_id.trimmed();
+    if (!expected.isEmpty() && snapshot_run_id != expected) {
+        setError(error_message,
+                 QStringLiteral(
+                     "Pending tool turn snapshot run id does not match the expected run"));
+        return false;
+    }
+    return true;
+}
+
+// Validate the snapshot's required scalar identity fields. The values themselves stay in
+// restore() (they are needed for the final commit); only the guards move here so restore()
+// reads as a flat sequence of fail-closed checks.
+bool validateSnapshotScalarFields(const QString& response_id,
+                                  const QJsonArray& calls_json,
+                                  int call_index,
+                                  QString* error_message) {
+    if (response_id.isEmpty()) {
+        setError(error_message, QStringLiteral("Pending tool turn snapshot missing response id"));
+        return false;
+    }
+    if (calls_json.isEmpty()) {
+        setError(error_message, QStringLiteral("Pending tool turn snapshot has no calls"));
+        return false;
+    }
+    if (call_index < 0 || call_index >= calls_json.size()) {
+        setError(error_message,
+                 QStringLiteral("Pending tool turn snapshot has invalid call index"));
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 bool AiToolTurn::begin(QString response_id,
@@ -195,7 +246,9 @@ bool AiToolTurn::validateSnapshotOutputsMatchCalls(const QVector<OpenAIFunctionO
     return true;
 }
 
-bool AiToolTurn::restore(const QJsonObject& state, QString* error_message) {
+bool AiToolTurn::restore(const QJsonObject& state,
+                         QString* error_message,
+                         const QString& expected_run_id) {
     // Fail CLOSED without destroying existing state: like begin(), validate the whole
     // (untrusted, user-dir-persisted) snapshot into locals and commit only on full success, so
     // a rejected/tampered snapshot cannot wipe an in-flight turn.
@@ -205,20 +258,14 @@ bool AiToolTurn::restore(const QJsonObject& state, QString* error_message) {
         return false;
     }
 
+    if (!validateSnapshotRunId(state, expected_run_id, error_message)) {
+        return false;
+    }
+
     const QString response_id = state.value(QStringLiteral("response_id")).toString().trimmed();
     const QJsonArray calls_json = state.value(QStringLiteral("calls")).toArray();
     const int call_index = state.value(QStringLiteral("call_index")).toInt(-1);
-    if (response_id.isEmpty()) {
-        setError(error_message, QStringLiteral("Pending tool turn snapshot missing response id"));
-        return false;
-    }
-    if (calls_json.isEmpty()) {
-        setError(error_message, QStringLiteral("Pending tool turn snapshot has no calls"));
-        return false;
-    }
-    if (call_index < 0 || call_index >= calls_json.size()) {
-        setError(error_message,
-                 QStringLiteral("Pending tool turn snapshot has invalid call index"));
+    if (!validateSnapshotScalarFields(response_id, calls_json, call_index, error_message)) {
         return false;
     }
 

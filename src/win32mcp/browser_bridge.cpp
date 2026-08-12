@@ -34,6 +34,14 @@ constexpr int kMaxScreenshotBase64 = 16 * 1024 * 1024;
 // telling the caller to narrow it with page_ranges.
 constexpr int kMaxPdfBase64 = 24 * 1024 * 1024;
 
+// A generic (non-snapshot/screenshot/PDF) reply -- e.g. a browser_read of page content -- flows
+// straight into the model's text context as compact JSON. The native-messaging decoder permits a
+// frame up to kMaxNativeMessageBytes (64 MiB), so without a response-side cap a hostile or
+// pathological page could flood the transport and the model context. 8 MiB of JSON text is far
+// beyond any real page read; a larger reply is refused with an honest error, matching the way
+// screenshot/PDF replies are capped rather than passed through.
+constexpr int kMaxReplyTextChars = 8 * 1024 * 1024;
+
 // Where a browser_print PDF lands: the user's Downloads under a SAK-Utility subfolder -- the
 // natural, visible place for a saved page. Falls back to the temp dir if Downloads is
 // unavailable. The name is timestamped and the bytes are written by US (the extension only
@@ -126,6 +134,25 @@ bool isNavigationCmd(const QString& cmd) {
            cmd == QLatin1String("closeTab");
 }
 
+// A result-typed frame is NOT implicitly a success: the extension may report an operation-level
+// failure as {ok:false} inside the payload. When it does, fill `incoming` as an error (preferring
+// the payload's own error/message text over a generic fallback) and report handled; otherwise
+// leave `incoming` untouched so the caller proceeds to the success paths.
+bool fillPayloadFailure(const QJsonObject& payload, BrowserBridgeSession::Incoming& incoming) {
+    if (!payload.value(QStringLiteral("ok")).isBool() ||
+        payload.value(QStringLiteral("ok")).toBool()) {
+        return false;
+    }
+    incoming.is_error = true;
+    QString message = payload.value(QStringLiteral("error")).toString();
+    if (message.isEmpty()) {
+        message = payload.value(QStringLiteral("message")).toString();
+    }
+    incoming.error = message.isEmpty() ? QStringLiteral("Browser command reported failure.")
+                                       : message;
+    return true;
+}
+
 }  // namespace
 
 void BrowserBridgeSession::onHostConnected() {
@@ -202,15 +229,7 @@ void BrowserBridgeSession::fillResult(const QString& sent_cmd,
     // A result-typed frame is NOT implicitly a success: the extension may report an
     // operation-level failure as {ok:false} inside the payload. Treat that as an error rather
     // than passing the failed payload through as a successful text/ref/screenshot/PDF result.
-    if (payload.value(QStringLiteral("ok")).isBool() &&
-        !payload.value(QStringLiteral("ok")).toBool()) {
-        incoming.is_error = true;
-        QString message = payload.value(QStringLiteral("error")).toString();
-        if (message.isEmpty()) {
-            message = payload.value(QStringLiteral("message")).toString();
-        }
-        incoming.error = message.isEmpty() ? QStringLiteral("Browser command reported failure.")
-                                           : message;
+    if (fillPayloadFailure(payload, incoming)) {
         return;
     }
     // Only a reply to a snapshot WE issued may install ref_index -- and only if the
@@ -242,7 +261,17 @@ void BrowserBridgeSession::fillResult(const QString& sent_cmd,
     if (isNavigationCmd(sent_cmd)) {
         ref_index_stale_ = true;
     }
-    incoming.text = compactJson(payload);
+    // A generic reply is echoed verbatim into the model context. Cap its size the way
+    // screenshot/PDF replies are capped so a hostile/pathological page reply (up to the 64 MiB
+    // decoder limit) cannot flood the transport; refuse an oversized reply with an honest error.
+    const QString reply_text = compactJson(payload);
+    if (reply_text.size() > kMaxReplyTextChars) {
+        incoming.is_error = true;
+        incoming.error =
+            QStringLiteral("The browser reply is too large to return; narrow the request.");
+        return;
+    }
+    incoming.text = reply_text;
 }
 
 void BrowserBridgeSession::reconcileDomEpoch(const QString& sent_cmd, const QJsonObject& frame) {

@@ -13,6 +13,11 @@ QJsonObject finish(QJsonArray results, bool success, const QString& error) {
     out[QStringLiteral("step_count")] = results.size();
     out[QStringLiteral("success")] = success;
     if (!error.isEmpty()) {
+        // Emit under both keys: 'error_message' is the tool-result convention the
+        // orchestrator (executeToolPhase) and every other runner read, so the real
+        // recipe-failure text reaches recovery/abort decisions instead of being lost;
+        // 'error' is retained for the step-level naming and existing consumers.
+        out[QStringLiteral("error_message")] = error;
         out[QStringLiteral("error")] = error;
     }
     return out;

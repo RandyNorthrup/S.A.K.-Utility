@@ -73,6 +73,17 @@ AiToolCallRouter::ParsedArguments AiToolCallRouter::parseArguments(const OpenAIF
     ParsedArguments parsed;
     parsed.output.call_id = call.call_id;
 
+    // An empty arguments_json is a no-argument tool call. AiToolTurn::validateCall accepts
+    // empty arguments as valid, so the two validators must agree here: treat empty (or
+    // whitespace-only) arguments as an empty JSON object rather than feeding "" to
+    // QJsonDocument::fromJson, which would error and reject a legitimate no-arg call at
+    // dispatch. A tool that requires fields still fails on the missing field downstream.
+    if (call.arguments_json.trimmed().isEmpty()) {
+        parsed.arguments = QJsonObject{};
+        parsed.ok = true;
+        return parsed;
+    }
+
     QJsonParseError parse_error;
     const QJsonDocument doc = QJsonDocument::fromJson(call.arguments_json.toUtf8(), &parse_error);
     if (parse_error.error == QJsonParseError::NoError && doc.isObject()) {

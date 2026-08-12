@@ -288,25 +288,33 @@ bool setString(HKEY key, const wchar_t* name, const QString& value) {
                           static_cast<DWORD>(bytes)) == ERROR_SUCCESS;
 }
 
-// Read one REG_SZ value ("" name -> default). Returns false if absent/not a string.
-bool readString(HKEY key, const wchar_t* name, QString& out) {
+// Read one REG_SZ value ("" name -> default), returning the raw status so callers can tell
+// genuine absence (ERROR_FILE_NOT_FOUND) from a read/type error. A non-string type reports
+// ERROR_UNSUPPORTED_TYPE (fail closed) so it can never be mistaken for absence.
+LSTATUS readStringStatus(HKEY key, const wchar_t* name, QString& out) {
     DWORD type = 0;
     DWORD bytes = 0;
-    if (RegQueryValueExW(key, name, nullptr, &type, nullptr, &bytes) != ERROR_SUCCESS) {
-        return false;
+    LSTATUS status = RegQueryValueExW(key, name, nullptr, &type, nullptr, &bytes);
+    if (status != ERROR_SUCCESS) {
+        return status;
     }
     if (type != REG_SZ && type != REG_EXPAND_SZ) {
-        return false;
+        return ERROR_UNSUPPORTED_TYPE;
     }
     std::vector<wchar_t> buf((bytes / sizeof(wchar_t)) + 1, L'\0');
     DWORD out_bytes = bytes;
-    if (RegQueryValueExW(
-            key, name, nullptr, &type, reinterpret_cast<BYTE*>(buf.data()), &out_bytes) !=
-        ERROR_SUCCESS) {
-        return false;
+    status = RegQueryValueExW(
+        key, name, nullptr, &type, reinterpret_cast<BYTE*>(buf.data()), &out_bytes);
+    if (status != ERROR_SUCCESS) {
+        return status;
     }
     out = QString::fromWCharArray(buf.data());
-    return true;
+    return ERROR_SUCCESS;
+}
+
+// Read one REG_SZ value ("" name -> default). Returns false if absent/not a string.
+bool readString(HKEY key, const wchar_t* name, QString& out) {
+    return readStringStatus(key, name, out) == ERROR_SUCCESS;
 }
 
 struct RegValue {
@@ -440,7 +448,14 @@ int nativeHostPresence(const ExtensionInstallConfig& c) {
         return -1;
     }
     QString def;
-    return (readString(key.get(), nullptr, def) && !def.isEmpty()) ? 1 : 0;
+    const LSTATUS read = readStringStatus(key.get(), nullptr, def);
+    if (read == ERROR_FILE_NOT_FOUND) {
+        return 0;  // key exists but has no default value: genuinely not registered
+    }
+    if (read != ERROR_SUCCESS) {
+        return -1;  // unreadable/corrupt/wrong-type: never downgrade to "absent"
+    }
+    return def.isEmpty() ? 0 : 1;
 }
 
 // Outcome of trying to remove our force-install policy values from the forcelist key.

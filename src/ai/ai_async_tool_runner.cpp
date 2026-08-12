@@ -21,10 +21,15 @@ AiAsyncToolRunner::AiAsyncToolRunner(QObject* parent) : QObject(parent) {
 AiAsyncToolRunner::~AiAsyncToolRunner() {
     // Do not leave a pool task writing into a destroyed watcher: wait it out.
     if (m_running) {
-        // SAK-ALLOW-BLOCKING: a QtConcurrent pool task cannot be cancelled, and it writes
+        // Raise the cancellation token first so cooperative Work observes it and returns
+        // promptly, shortening the join below. QtConcurrent::run has no built-in
+        // cancellation, so this token is the only lever we have over an in-flight task.
+        m_cancel->store(true, std::memory_order_relaxed);
+        // SAK-ALLOW-BLOCKING: Work that ignores the token cannot be cancelled, and it writes
         // into m_watcher, which is destroyed the moment this body returns. Giving up on the
-        // wait would hand the pool a dangling watcher. Callers cancel the inner op first so
-        // the task returns promptly.
+        // wait would hand the pool a dangling watcher AND risk the task touching owner state
+        // that is being torn down, so we still join. Callers cancel the inner op first so the
+        // task returns promptly.
         m_watcher.waitForFinished();
     }
 }
@@ -35,12 +40,19 @@ bool AiAsyncToolRunner::start(Work work) {
     }
     m_running = true;
     m_attached = true;
+    // Lower the token for the new job. Safe without synchronization: start() is refused
+    // while m_running is true, and m_running only clears in onWatcherFinished after the
+    // previous Work callable returned, so no prior task is still polling this flag.
+    m_cancel->store(false, std::memory_order_relaxed);
     m_watcher.setFuture(QtConcurrent::run(std::move(work)));
     return true;
 }
 
 void AiAsyncToolRunner::detach() {
     m_attached = false;
+    // Signal cooperative Work to stop. Without this, detach() only hides the result and
+    // lets the task keep running; a QtConcurrent::run task has no other cancellation path.
+    m_cancel->store(true, std::memory_order_relaxed);
 }
 
 void AiAsyncToolRunner::onWatcherFinished() {

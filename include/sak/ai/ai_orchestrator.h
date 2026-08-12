@@ -182,6 +182,9 @@ private:
                             const QString& run_id,
                             RunState* state) const;
     void applyResumeState(const WorkflowTemplate& workflow, RunState* state) const;
+    static void seedResumeExecutedIndex(const WorkflowTemplate& workflow,
+                                        const AiPhaseExecution& prior,
+                                        RunState* state);
     [[nodiscard]] AiPhaseExecution executeWorkflowPhase(const WorkflowTemplate& workflow,
                                                         const WorkflowPhase& phase,
                                                         const RunState& state,

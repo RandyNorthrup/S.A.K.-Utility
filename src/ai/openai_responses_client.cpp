@@ -185,14 +185,21 @@ std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* e
     return {};
 }
 
-void appendFunctionCallFromOutputItem(OpenAIResponseResult* result, const QJsonObject& item) {
+// Returns false when the item is a function_call missing its call_id or name -- a
+// structurally-broken tool call. Such an item must poison the whole response rather than
+// be silently dropped: dropping it would let a well-formed sibling call execute from a set
+// the model only partially emitted, defeating atomic batch rejection downstream.
+[[nodiscard]] bool appendFunctionCallFromOutputItem(OpenAIResponseResult* result,
+                                                    const QJsonObject& item) {
     OpenAIFunctionCall call;
     call.call_id = item.value(QStringLiteral("call_id")).toString();
     call.name = item.value(QStringLiteral("name")).toString();
     call.arguments_json = item.value(QStringLiteral("arguments")).toString();
-    if (!call.call_id.isEmpty() && !call.name.isEmpty()) {
-        result->function_calls.append(call);
+    if (call.call_id.isEmpty() || call.name.isEmpty()) {
+        return false;
     }
+    result->function_calls.append(call);
+    return true;
 }
 
 void appendMessageFromOutputItem(OpenAIResponseResult* result,
@@ -206,17 +213,54 @@ void appendMessageFromOutputItem(OpenAIResponseResult* result,
     collectCitationsFromValue(content_value, result->citations);
 }
 
-void appendOutputItem(OpenAIResponseResult* result,
-                      QStringList* output_parts,
-                      const QJsonObject& item) {
+// Returns false only when a function_call item is structurally broken (see
+// appendFunctionCallFromOutputItem); other item types never fail parsing here.
+[[nodiscard]] bool appendOutputItem(OpenAIResponseResult* result,
+                                    QStringList* output_parts,
+                                    const QJsonObject& item) {
     const QString type = item.value(QStringLiteral("type")).toString();
     if (type == QLatin1String("function_call")) {
-        appendFunctionCallFromOutputItem(result, item);
-        return;
+        return appendFunctionCallFromOutputItem(result, item);
     }
     if (type == QLatin1String("message")) {
         appendMessageFromOutputItem(result, output_parts, item);
     }
+    return true;
+}
+
+// Parse the response "output" array into result/output_parts. Returns false (and sets a
+// non-empty error) when any function_call item is structurally broken, so the whole
+// response fails closed instead of dispatching a well-formed sibling from a partially
+// parsed set.
+[[nodiscard]] bool collectResponseOutput(const QJsonObject& root,
+                                         OpenAIResponseResult* result,
+                                         QStringList* output_parts,
+                                         QString* error_message) {
+    const auto output = root.value(QStringLiteral("output")).toArray();
+    for (const auto& output_value : output) {
+        if (!appendOutputItem(result, output_parts, output_value.toObject())) {
+            if (error_message != nullptr) {
+                *error_message = QStringLiteral(
+                    "OpenAI response contained a function call missing its call_id or name");
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+// Report a terminal (non-success) response through the optional error out-parameter.
+// Returns true when the response terminated in a non-success state and the caller must
+// fail closed, dropping any partial output/calls.
+[[nodiscard]] bool reportTerminalResponseError(const QJsonObject& root, QString* error_message) {
+    const QString terminal = terminalResponseError(root);
+    if (terminal.isEmpty()) {
+        return false;
+    }
+    if (error_message != nullptr) {
+        *error_message = terminal;
+    }
+    return true;
 }
 
 QJsonArray functionOutputInputItems(const QVector<OpenAIFunctionOutput>& outputs) {
@@ -937,9 +981,11 @@ OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray
     result.usage = TokenUsageTracker::fromJson(root->value(QStringLiteral("usage")).toObject());
 
     QStringList output_parts;
-    const auto output = root->value(QStringLiteral("output")).toArray();
-    for (const auto& output_value : output) {
-        appendOutputItem(&result, &output_parts, output_value.toObject());
+    // A function_call item missing its call_id or name is structurally broken; fail
+    // closed on the whole response instead of dropping the item, so a well-formed
+    // sibling call can never be dispatched from a partially-parsed set.
+    if (!collectResponseOutput(*root, &result, &output_parts, error_message)) {
+        return {};
     }
 
     result.output_text = output_parts.join(QStringLiteral("\n"));
@@ -953,11 +999,7 @@ OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray
     // closed and drop any partial output/calls, regardless of whether the caller asked
     // for an error string, so a nullptr error_message can never turn a terminal-error
     // response into a usable partial result.
-    const QString terminal = terminalResponseError(*root);
-    if (!terminal.isEmpty()) {
-        if (error_message != nullptr) {
-            *error_message = terminal;
-        }
+    if (reportTerminalResponseError(*root, error_message)) {
         return {};
     }
 

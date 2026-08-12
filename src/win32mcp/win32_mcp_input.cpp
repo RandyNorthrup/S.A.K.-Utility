@@ -153,7 +153,17 @@ bool sendInputAll(QVector<INPUT>& seq) {
     }
     QVector<INPUT> ups = releaseSequenceForPartial(seq, sent);
     if (!ups.isEmpty()) {
-        SendInput(static_cast<UINT>(ups.size()), ups.data(), sizeof(INPUT));
+        // The recovery release can ITSELF be short-delivered by the same UIPI/secure-desktop block
+        // that refused the press. Check its return: if fewer ups landed than we attempted, a
+        // modifier (Ctrl/Shift/Alt) or mouse button pressed by the accepted prefix may remain held
+        // on the desktop. We still fail closed (return false) so the caller reports the injection
+        // failure; surface the stranded-key detail on stderr since it has no other channel.
+        const UINT released = SendInput(static_cast<UINT>(ups.size()), ups.data(), sizeof(INPUT));
+        if (released < static_cast<UINT>(ups.size())) {
+            qWarning("win32_mcp: partial input release (%u/%u); modifiers/buttons may remain held.",
+                     released,
+                     static_cast<UINT>(ups.size()));
+        }
     }
     return false;
 }

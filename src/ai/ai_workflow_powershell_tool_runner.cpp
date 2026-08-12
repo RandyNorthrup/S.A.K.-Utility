@@ -26,8 +26,12 @@ QJsonObject resultJson(const AiCommandRequest& request,
                        const QString& preview,
                        const AiCommandResult& result) {
     QJsonObject result_json = result.toJson();
+    // exit_status == 0 is QProcess::NormalExit: a crashed process can report exit_code 0
+    // (onProcessError ignores the non-FailedToStart crash), so require a normal exit too or a
+    // crash would be recorded as a success.
     result_json[QStringLiteral("success")] = result.started && !result.cancelled &&
-                                             !result.timed_out && result.exit_code == 0;
+                                             !result.timed_out && result.exit_code == 0 &&
+                                             result.exit_status == 0;
     result_json[QStringLiteral("command_id")] = command_id;
     result_json[QStringLiteral("command")] = CredentialStore::redactSecrets(request.command);
     result_json[QStringLiteral("preview")] = CredentialStore::redactSecrets(preview);

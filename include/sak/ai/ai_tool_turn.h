@@ -48,7 +48,13 @@ public:
     [[nodiscard]] QVector<OpenAIFunctionOutput> takeOutputs();
 
     [[nodiscard]] QJsonObject toJson(const QString& run_id = {}) const;
-    [[nodiscard]] bool restore(const QJsonObject& state, QString* error_message = nullptr);
+    /// Restore a persisted pending-turn snapshot, failing closed on any tampered/malformed
+    /// field. When @p expected_run_id is non-empty, the snapshot's run_id must match it,
+    /// binding the resume to the run that owns it; an empty expected_run_id skips that
+    /// cross-check (the snapshot's run_id is still validated for well-formedness).
+    [[nodiscard]] bool restore(const QJsonObject& state,
+                               QString* error_message = nullptr,
+                               const QString& expected_run_id = {});
 
     [[nodiscard]] static QJsonObject functionCallToJson(const OpenAIFunctionCall& call);
     [[nodiscard]] static OpenAIFunctionCall functionCallFromJson(const QJsonObject& obj);
