@@ -758,6 +758,42 @@ bool BackupBitlockerKeysAction::extractKeysGatePassed(const QDateTime& start_tim
     return false;
 }
 
+// A cancellation between writes must not leave plaintext recovery keys on disk: remove
+// the partial backup directory before reporting the cancel. If the removal itself fails,
+// plaintext keys may remain, so that is a failure -- not a clean cancel.
+void BackupBitlockerKeysAction::emitCancelWithCleanup(const QString& backup_dir_path,
+                                                      const QDateTime& start_time) {
+    if (!QDir(backup_dir_path).removeRecursively()) {
+        emitFailedResult(
+            "BitLocker key backup cancelled, but the partial backup directory "
+            "could not be removed; plaintext recovery keys may remain at " +
+                backup_dir_path,
+            QString(),
+            start_time);
+        return;
+    }
+    emitCancelledResult("BitLocker key backup cancelled", start_time);
+}
+
+// A failed write must not leave a partial (restricted-ACL but plaintext) key backup on
+// disk, symmetric with emitCancelWithCleanup: remove the backup directory before reporting
+// the failure. If the removal itself fails, surface that plaintext keys may remain rather
+// than claiming a clean failure.
+void BackupBitlockerKeysAction::emitFailWithCleanup(const QString& message,
+                                                    const QString& log,
+                                                    const QString& backup_dir_path,
+                                                    const QDateTime& start_time) {
+    if (!QDir(backup_dir_path).removeRecursively()) {
+        const QString partial = message +
+                                "; the partial backup directory could not be removed, so plaintext "
+                                "recovery keys may remain at " +
+                                backup_dir_path;
+        emitFailedResult(partial, log, start_time);
+        return;
+    }
+    emitFailedResult(message, log, start_time);
+}
+
 bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
                                                     QString& backup_dir_path,
                                                     int& key_files_written,
@@ -766,58 +802,44 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
 
-    // A cancellation between writes must not leave plaintext recovery keys on
-    // disk: remove the partial backup directory before reporting the cancel. If the
-    // removal itself fails, plaintext keys may remain, so that is a failure -- not a
-    // clean cancel.
-    auto cancel_with_cleanup = [&]() {
-        if (!QDir(backup_dir_path).removeRecursively()) {
-            emitFailedResult(
-                "BitLocker key backup cancelled, but the partial backup directory "
-                "could not be removed; plaintext recovery keys may remain at " +
-                    backup_dir_path,
-                QString(),
-                start_time);
-            return;
-        }
-        emitCancelledResult("BitLocker key backup cancelled", start_time);
-    };
-
     if (isCancelled()) {
-        cancel_with_cleanup();
+        emitCancelWithCleanup(backup_dir_path, start_time);
         return false;
     }
 
     Q_EMIT executionProgress("Writing recovery key document...", progress::kStep70);
     if (!writeRecoveryDocument(backup_dir_path)) {
-        emitFailedResult("Failed to write recovery key document", QString(), start_time);
+        emitFailWithCleanup(
+            "Failed to write recovery key document", QString(), backup_dir_path, start_time);
         return false;
     }
     if (isCancelled()) {
-        cancel_with_cleanup();
+        emitCancelWithCleanup(backup_dir_path, start_time);
         return false;
     }
 
     Q_EMIT executionProgress("Writing per-volume key files...", progress::kStep80);
     if (!writePerVolumeKeyFiles(backup_dir_path, key_files_written)) {
-        emitFailedResult("Failed to write a per-volume recovery key file",
-                         "A recovery key file could not be durably written; the incomplete "
-                         "backup was not certified.",
-                         start_time);
+        emitFailWithCleanup("Failed to write a per-volume recovery key file",
+                            "A recovery key file could not be durably written; the incomplete "
+                            "backup was not certified.",
+                            backup_dir_path,
+                            start_time);
         return false;
     }
     if (isCancelled()) {
-        cancel_with_cleanup();
+        emitCancelWithCleanup(backup_dir_path, start_time);
         return false;
     }
 
     Q_EMIT executionProgress("Writing JSON backup...", progress::kStep85);
     if (!writeJsonBackup(backup_dir_path)) {
-        emitFailedResult("Failed to write BitLocker key backup file", QString(), start_time);
+        emitFailWithCleanup(
+            "Failed to write BitLocker key backup file", QString(), backup_dir_path, start_time);
         return false;
     }
     if (isCancelled()) {
-        cancel_with_cleanup();
+        emitCancelWithCleanup(backup_dir_path, start_time);
         return false;
     }
 

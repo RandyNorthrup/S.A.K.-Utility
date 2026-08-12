@@ -22,6 +22,12 @@
 
 #include <algorithm>
 
+#ifdef Q_OS_WIN
+#include <vector>
+
+#include <windows.h>
+#endif
+
 namespace sak {
 
 namespace {
@@ -237,6 +243,122 @@ bool subfolderEscapes(const QString& output_dir, const QString& target_dir) {
     const QString resolved = QDir::cleanPath(target_dir);
     return resolved != base && !resolved.startsWith(base + QLatin1Char('/'));
 }
+
+#ifdef Q_OS_WIN
+// wchar_t capacity for the GetFinalPathNameByHandleW output buffer.
+constexpr int kFinalPathBufferChars = 4096;
+// Length of the Win32 "\\?\" extended-length path prefix stripped from a resolved path.
+constexpr int kWin32ExtendedPrefixLength = 4;
+
+// Fully resolve an EXISTING path through every reparse point (junction AND symlink) to its real
+// on-disk location via GetFinalPathNameByHandleW. QFileInfo::canonicalFilePath does NOT follow
+// directory junctions on Windows, so it cannot detect a junction-based escape. Returns a
+// forward-slash path with the \\?\ prefix stripped, or empty if the path cannot be opened.
+QString realCanonicalPath(const QString& path) {
+    HANDLE handle = CreateFileW(reinterpret_cast<const wchar_t*>(path.utf16()),
+                                0,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                FILE_FLAG_BACKUP_SEMANTICS,  // required to open a directory handle
+                                nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return {};
+    }
+    std::vector<wchar_t> buffer(kFinalPathBufferChars);
+    const DWORD written = GetFinalPathNameByHandleW(
+        handle, buffer.data(), static_cast<DWORD>(buffer.size()), FILE_NAME_NORMALIZED);
+    CloseHandle(handle);
+    if (written == 0 || written >= buffer.size()) {
+        return {};
+    }
+    QString result = QString::fromWCharArray(buffer.data(), static_cast<int>(written));
+    if (result.startsWith(QStringLiteral("\\\\?\\"))) {
+        result = result.mid(kWin32ExtendedPrefixLength);
+    }
+    return QDir::fromNativeSeparators(result);
+}
+#else
+QString realCanonicalPath(const QString& path) {
+    return QFileInfo(path).canonicalFilePath();
+}
+#endif
+
+// Deepest existing ancestor directory of @p abs_path (which itself may not exist yet), or empty if
+// none of its ancestors exist. A junction/symlink can only redirect through an EXISTING reparse
+// point, so this is the component that must be canonicalized for a real containment check.
+QString deepestExistingAncestor(const QString& abs_path) {
+    QString existing = abs_path;
+    while (!existing.isEmpty() && !QFileInfo::exists(existing)) {
+        const QString parent = QFileInfo(existing).path();
+        if (parent == existing) {
+            return {};  // reached the filesystem root without finding an existing component
+        }
+        existing = parent;
+    }
+    return existing;
+}
+
+// True iff @p target_dir's real on-disk location -- junctions/symlinks resolved -- stays inside
+// the real @p output_dir. The lexical subfolderEscapes check above collapses "..", but a junction
+// pre-planted under the output dir would pass a textual prefix check while redirecting the write
+// elsewhere. Mirrors EmailProfileManager::destinationWithinRoot.
+bool targetWithinRoot(const QString& output_dir, const QString& target_dir) {
+    QString root_real = realCanonicalPath(output_dir);
+    if (root_real.isEmpty()) {
+        root_real = QDir::cleanPath(QDir(output_dir).absolutePath());
+    }
+    const QString abs = QDir::cleanPath(QFileInfo(target_dir).absoluteFilePath());
+    const QString existing = deepestExistingAncestor(abs);
+    if (existing.isEmpty()) {
+        return false;
+    }
+    const QString existing_real = realCanonicalPath(existing);
+    if (existing_real.isEmpty()) {
+        return false;
+    }
+    QString root_slash = root_real;
+    if (!root_slash.endsWith(QLatin1Char('/'))) {
+        root_slash += QLatin1Char('/');
+    }
+    return existing_real.compare(root_real, Qt::CaseInsensitive) == 0 ||
+           (existing_real + QLatin1Char('/')).startsWith(root_slash, Qt::CaseInsensitive);
+}
+
+// Resolve the write target under the output root: append the subfolder when preserving folders,
+// reject a lexical escape, create the directory tree, and reject a junction/symlink escape of the
+// created target. Returns the target directory, or the error the caller must propagate. Extracted
+// from writeMessage to stay under the complexity gate; the checks and their order are unchanged.
+std::expected<QString, error_code> resolveTargetDir(const QString& output_dir,
+                                                    bool preserve_folders,
+                                                    const QString& subfolder_path) {
+    QString target_dir = output_dir;
+    if (preserve_folders && !subfolder_path.isEmpty()) {
+        target_dir = output_dir + "/" + subfolder_path;
+        if (subfolderEscapes(output_dir, target_dir)) {
+            logError("EmlWriter: subfolder path escapes output dir: {}",
+                     subfolder_path.toStdString());
+            return std::unexpected(error_code::path_traversal_attempt);
+        }
+    }
+
+    const QDir dir;
+    if (!dir.mkpath(target_dir)) {
+        logError("EmlWriter: failed to create directory: {}", target_dir.toStdString());
+        return std::unexpected(error_code::write_error);
+    }
+
+    // The lexical check above is prefix-only; a junction/symlink pre-planted under the output dir
+    // would redirect the created target elsewhere while still passing it. Resolve the target
+    // through every reparse point and fail closed if its real location leaves the output root.
+    if (preserve_folders && !subfolder_path.isEmpty() &&
+        !targetWithinRoot(output_dir, target_dir)) {
+        logError("EmlWriter: target dir resolves outside output dir (junction/symlink): {}",
+                 target_dir.toStdString());
+        return std::unexpected(error_code::path_traversal_attempt);
+    }
+    return target_dir;
+}
 }  // namespace
 
 // ============================================================================
@@ -256,21 +378,11 @@ std::expected<QString, error_code> EmlWriter::writeMessage(
     const PstItemDetail& item,
     const QVector<QPair<QString, QByteArray>>& attachment_data,
     const QString& subfolder_path) {
-    QString target_dir = m_output_dir;
-    if (m_preserve_folders && !subfolder_path.isEmpty()) {
-        target_dir = m_output_dir + "/" + subfolder_path;
-        if (subfolderEscapes(m_output_dir, target_dir)) {
-            logError("EmlWriter: subfolder path escapes output dir: {}",
-                     subfolder_path.toStdString());
-            return std::unexpected(error_code::path_traversal_attempt);
-        }
+    const auto target = resolveTargetDir(m_output_dir, m_preserve_folders, subfolder_path);
+    if (!target.has_value()) {
+        return std::unexpected(target.error());
     }
-
-    const QDir dir;
-    if (!dir.mkpath(target_dir)) {
-        logError("EmlWriter: failed to create directory: {}", target_dir.toStdString());
-        return std::unexpected(error_code::write_error);
-    }
+    const QString& target_dir = target.value();
 
     const QString filename = sanitizeFilename(item.subject, item.date);
     const QString full_path = resolveCollisionPath(target_dir, filename);

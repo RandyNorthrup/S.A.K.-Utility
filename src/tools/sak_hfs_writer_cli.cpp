@@ -833,21 +833,24 @@ void registerPositionalCommand(QCommandLineParser& parser) {
 }
 
 #ifdef Q_OS_WIN
-// Physical drive number backing the OS system volume, or -1 if it cannot be
-// determined. Native (no elevation needed).
-int osSystemPhysicalDrive() {
+// Physical drive numbers backing the OS system volume, or empty if they cannot be
+// determined. Native (no elevation needed). A spanned/striped/mirrored system volume
+// can be backed by more than one physical disk, so every reported extent's disk is
+// returned, not just the first.
+std::vector<int> osSystemPhysicalDrives() {
+    std::vector<int> drives;
     wchar_t win_dir[MAX_PATH] = {};
     const UINT len = GetWindowsDirectoryW(win_dir, MAX_PATH);
     if (len == 0 || len >= MAX_PATH || win_dir[1] != L':') {
-        return -1;
+        return drives;
     }
     const wchar_t volume_path[] = {L'\\', L'\\', L'.', L'\\', win_dir[0], L':', L'\0'};
     HANDLE h_vol = CreateFileW(
         volume_path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (h_vol == INVALID_HANDLE_VALUE) {
-        return -1;
+        return drives;
     }
-    constexpr DWORD kMaxExtents = 16;
+    constexpr DWORD kMaxExtents = 32;
     const DWORD buf_size = sizeof(VOLUME_DISK_EXTENTS) + ((kMaxExtents - 1) * sizeof(DISK_EXTENT));
     std::vector<unsigned char> buffer(buf_size, 0);
     auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
@@ -861,10 +864,13 @@ int osSystemPhysicalDrive() {
                                     &bytes_returned,
                                     nullptr);
     CloseHandle(h_vol);
-    if ((ok == 0) || extents->NumberOfDiskExtents == 0) {
-        return -1;
+    if (ok == 0) {
+        return drives;
     }
-    return static_cast<int>(extents->Extents[0].DiskNumber);
+    for (DWORD i = 0; i < extents->NumberOfDiskExtents; ++i) {
+        drives.push_back(static_cast<int>(extents->Extents[i].DiskNumber));
+    }
+    return drives;
 }
 
 // Physical drive numbers backing a volume/device alias (\\.\C:, \\?\Volume{GUID},
@@ -913,7 +919,9 @@ bool isDriveLetterVolumePath(const QString& path) {
 
 // Raw volume/device aliases that resolve to a whole disk but are NOT the
 // \\.\PhysicalDriveN form the numeric guard covers: drive-letter volumes,
-// \Volume{GUID} handles, and GLOBALROOT device paths.
+// \Volume{GUID} handles, GLOBALROOT device paths, and the NT device forms
+// \\.\HarddiskVolumeN and \\.\HarddiskN\PartitionM. The backing disk of any of
+// these is resolved via IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS.
 bool isWindowsRawVolumeAliasPath(const QString& path) {
     if (isDriveLetterVolumePath(path)) {
         return true;
@@ -922,7 +930,10 @@ bool isWindowsRawVolumeAliasPath(const QString& path) {
         return false;
     }
     return path.contains(QStringLiteral("Volume{"), Qt::CaseInsensitive) ||
-           path.contains(QStringLiteral("GLOBALROOT"), Qt::CaseInsensitive);
+           path.contains(QStringLiteral("GLOBALROOT"), Qt::CaseInsensitive) ||
+           path.contains(QStringLiteral("HarddiskVolume"), Qt::CaseInsensitive) ||
+           (path.contains(QStringLiteral("Harddisk"), Qt::CaseInsensitive) &&
+            path.contains(QStringLiteral("Partition"), Qt::CaseInsensitive));
 }
 
 // Refuse a \\.\PhysicalDriveN target that is PhysicalDrive0 or the OS system disk.
@@ -938,12 +949,12 @@ QString physicalDriveTargetRefusal(const QString& path, const QString& prefix) {
         return QStringLiteral("Refusing raw HFS write to PhysicalDrive0 (the first physical disk)");
     }
 #ifdef Q_OS_WIN
-    const int os_drive = osSystemPhysicalDrive();
-    if (os_drive < 0) {
+    const std::vector<int> os_drives = osSystemPhysicalDrives();
+    if (os_drives.empty()) {
         return QStringLiteral(
             "Refusing raw HFS write: could not establish the OS system-disk identity");
     }
-    if (os_drive == drive) {
+    if (std::ranges::find(os_drives, drive) != os_drives.end()) {
         return QStringLiteral(
             "Refusing raw HFS write: target PhysicalDrive backs the OS system volume");
     }
@@ -956,8 +967,8 @@ QString physicalDriveTargetRefusal(const QString& path, const QString& prefix) {
 // or the alias's backing drive cannot be resolved.
 QString volumeAliasTargetRefusal(const QString& path) {
 #ifdef Q_OS_WIN
-    const int os_drive = osSystemPhysicalDrive();
-    if (os_drive < 0) {
+    const std::vector<int> os_drives = osSystemPhysicalDrives();
+    if (os_drives.empty()) {
         return QStringLiteral(
             "Refusing raw HFS write: could not establish the OS system-disk identity");
     }
@@ -967,8 +978,8 @@ QString volumeAliasTargetRefusal(const QString& path) {
             "Refusing raw HFS write: could not resolve the backing physical drive of the "
             "volume/device target");
     }
-    if (std::ranges::any_of(drives, [os_drive](const int drive) {
-            return drive == 0 || drive == os_drive;
+    if (std::ranges::any_of(drives, [&os_drives](const int drive) {
+            return drive == 0 || std::ranges::find(os_drives, drive) != os_drives.end();
         })) {
         return QStringLiteral(
             "Refusing raw HFS write: volume/device target resolves to the OS system disk "
@@ -983,16 +994,22 @@ QString volumeAliasTargetRefusal(const QString& path) {
 // Defense-in-depth OS-disk guard for --allow-raw-target HFS commands, mirroring the
 // APFS CLI. image_only = !allow_raw_target, so --allow-raw-target enables raw device
 // writes and a path typo could otherwise hit PhysicalDrive0 or the OS disk. Covers the
-// \\.\PhysicalDriveN form and volume/device aliases that resolve to the OS volume.
+// \\.\PhysicalDriveN and \\?\PhysicalDriveN forms and volume/device aliases
+// (\\.\C:, \Volume{GUID}, GLOBALROOT, \\.\HarddiskVolumeN, \\.\HarddiskN\PartitionM)
+// that resolve to the OS volume.
 QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
     if (!invocation.m_allow_raw_target) {
         return QString();
     }
     QString path = invocation.m_target_image_path.trimmed();
     path.replace(QLatin1Char('/'), QLatin1Char('\\'));
-    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
-    if (path.startsWith(prefix, Qt::CaseInsensitive)) {
-        return physicalDriveTargetRefusal(path, prefix);
+    const QString dot_prefix = QStringLiteral("\\\\.\\PhysicalDrive");
+    const QString qm_prefix = QStringLiteral("\\\\?\\PhysicalDrive");
+    if (path.startsWith(dot_prefix, Qt::CaseInsensitive)) {
+        return physicalDriveTargetRefusal(path, dot_prefix);
+    }
+    if (path.startsWith(qm_prefix, Qt::CaseInsensitive)) {
+        return physicalDriveTargetRefusal(path, qm_prefix);
     }
     if (isWindowsRawVolumeAliasPath(path)) {
         return volumeAliasTargetRefusal(path);

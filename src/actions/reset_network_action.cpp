@@ -11,8 +11,8 @@
 #include "sak/process_runner.h"
 
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QThread>
 
@@ -329,33 +329,43 @@ void ResetNetworkAction::executeResetFirewall(QStringList& errors) {
 }
 
 QString ResetNetworkAction::exportFirewallRules(QStringList& errors) {
-    QTemporaryFile backup_file(QDir::temp().filePath(QStringLiteral("sak_fw_XXXXXX.wfw")));
-    if (!backup_file.open()) {
-        errors << "Failed to create temp file for firewall backup";
+    // Host the backup in a freshly-made, uniquely-named subdirectory instead of a
+    // shared-%TEMP% placeholder. QTemporaryDir creates the directory atomically with a
+    // random name (the underlying mkdir fails if the name already exists), so it is owned
+    // by this (elevated) process and cannot be pre-seeded by another user. netsh then
+    // writes the .wfw for the first time inside a directory only we can write to, which
+    // removes the delete-then-recreate window the old create-placeholder/remove/re-export
+    // sequence opened.
+    QTemporaryDir backup_dir(QDir::temp().filePath(QStringLiteral("sak_fw_XXXXXX")));
+    if (!backup_dir.isValid()) {
+        errors << "Failed to create temp directory for firewall backup";
         return {};
     }
-    const QString backup_path = backup_file.fileName();
-    backup_file.close();
-    // netsh writes the .wfw itself; remove the placeholder so export creates it
-    // fresh and we can verify it is non-empty afterwards.
-    QFile::remove(backup_path);
+    // Verify the freshly-created directory is not a reparse point BEFORE netsh writes into
+    // it: a symlink/junction here would redirect the elevated write off-target.
+    if (QFileInfo(backup_dir.path()).isSymLink()) {
+        errors << "Firewall backup directory is a reparse point; refusing to export";
+        return {};
+    }
 
+    const QString backup_path = backup_dir.filePath(QStringLiteral("firewall_rules.wfw"));
     const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("netsh.exe")),
                                           QStringList() << "advfirewall" << "export" << backup_path,
                                           sak::kTimeoutNetworkReadMs,
                                           [this]() { return isCancelled(); });
     const QFileInfo backup_info(backup_path);
-    if (stepFailed(proc.timed_out, proc.exit_code) || backup_info.isSymLink() ||
-        backup_info.size() <= 0) {
-        // isSymLink() catches an attacker who recreated the just-deleted path as a
-        // junction/symlink so netsh's elevated write landed on a redirected target; such a
-        // "backup" is not trustworthy, so refuse it and do not proceed to wipe the rules.
+    if (stepFailed(proc.timed_out, proc.exit_code) || QFileInfo(backup_dir.path()).isSymLink() ||
+        backup_info.isSymLink() || backup_info.size() <= 0) {
+        // Re-check the hosting directory AND the exported file for a reparse point after the
+        // write: either being a junction/symlink means netsh's elevated write may have landed
+        // on a redirected target, so the "backup" is not trustworthy. Refuse it (QTemporaryDir
+        // auto-removes any partial output) and do not proceed to wipe the rules.
         errors << QString("Firewall rules export failed (exit %1)").arg(proc.exit_code);
-        QFile::remove(backup_path);
         return {};
     }
 
-    backup_file.setAutoRemove(false);
+    // Keep the backup and its hosting directory on disk as the rollback reference.
+    backup_dir.setAutoRemove(false);
     m_firewall_backup_path = backup_path;
     return backup_path;
 }

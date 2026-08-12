@@ -125,6 +125,10 @@ struct OstConversionResult {
     QDateTime started;
     QDateTime finished;
     QString source_sha256;  ///< SHA-256 of source file
+    /// True when convert() returned early because the user cancelled the run, so the counts
+    /// above are partial and the output is incomplete. classifyOutcome maps this to Cancelled
+    /// (never Complete) even when no item failed and no error was recorded.
+    bool cancelled = false;
 };
 
 /// @brief Aggregate result of the entire conversion batch

@@ -50,6 +50,26 @@ QVector<QChar> enumerateWritableDriveLetters() {
     return drives;
 }
 
+/// @brief Describe WHY a scan subprocess did not finish cleanly, surfacing the
+///        authoritative process status -- cancellation, a crash exit-status, or
+///        the child's exit code -- so the per-drive report states the real cause
+///        instead of a generic "did not complete cleanly". Truncated output is
+///        annotated because a capped stdout cannot be trusted even at exit 0.
+QString describeProcessFailure(const ProcessResult& proc) {
+    QString reason;
+    if (proc.cancelled) {
+        reason = QStringLiteral("cancelled");
+    } else if (proc.exit_status != 0) {
+        reason = QStringLiteral("process crashed (exit code %1)").arg(proc.exit_code);
+    } else {
+        reason = QStringLiteral("exit code %1").arg(proc.exit_code);
+    }
+    if (proc.output_truncated) {
+        reason += QStringLiteral(", output truncated");
+    }
+    return reason;
+}
+
 }  // namespace
 
 CheckDiskErrorsAction::CheckDiskErrorsAction(QObject* parent) : QuickAction(parent) {}
@@ -281,7 +301,9 @@ void CheckDiskErrorsAction::executeRunChkdsk(const QVector<QChar>& drives,
         // its output truncated is not a trustworthy result. Do not parse its stdout as a
         // successful scan -- count the drive as not scanned instead.
         if (!proc.completedSuccessfully() || proc.output_truncated) {
-            report += QString("Drive %1: - scan process did not complete cleanly\n\n").arg(drive);
+            report += QString("Drive %1: - scan process did not complete cleanly (%2)\n\n")
+                          .arg(drive)
+                          .arg(describeProcessFailure(proc));
             continue;
         }
 

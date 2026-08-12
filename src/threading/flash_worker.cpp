@@ -6,6 +6,7 @@
 
 #include "sak/flash_worker.h"
 
+#include "sak/drive_scanner.h"
 #include "sak/keep_awake.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -22,6 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <unordered_set>
 #include <vector>
 
 #include <windows.h>
@@ -95,6 +97,14 @@ double verificationSpeedMBps(qint64 bytes, qint64 elapsed_ms) {
            (static_cast<double>(elapsed_ms) / sak::kMillisecondsPerSecondF);
 }
 
+// Emit the standard flash-completed log line: the elapsed wall-clock window
+// rendered as fractional seconds.
+void logFlashCompletion(qint64 elapsed_ms) {
+    sak::logInfo(QString("Flash completed in %1 seconds")
+                     .arg(static_cast<double>(elapsed_ms) / sak::kMillisecondsPerSecondF)
+                     .toStdString());
+}
+
 // Fail closed: if fewer than the intended sample blocks were read back and compared (all reads
 // failed, a partial-read failure, or mid-loop cancellation), the flash cannot be called verified.
 void markIncompleteVerification(sak::ValidationResult& result, int verified, int expected) {
@@ -105,6 +115,49 @@ void markIncompleteVerification(sak::ValidationResult& result, int verified, int
                 .arg(verified)
                 .arg(expected));
     }
+}
+
+// Pick up to @p num_samples DISTINCT block indices in [0, total_blocks). Sampling
+// WITHOUT replacement makes the advertised sample count map to that many distinct
+// blocks; a per-iteration bounded() draw samples WITH replacement, which can re-verify
+// one block and silently under-cover the image. Returns fewer than num_samples only
+// when the image holds fewer blocks than requested (then markIncompleteVerification
+// fails the pass closed).
+QList<qint64> pickDistinctBlockIndices(qint64 total_blocks, int num_samples) {
+    QList<qint64> indices;
+    if (total_blocks <= 0 || num_samples <= 0) {
+        return indices;
+    }
+    // Cannot draw more distinct blocks than exist.
+    const qint64 wanted = std::min<qint64>(num_samples, total_blocks);
+    // Dense sample: enumerate every block and partially shuffle. Rejection sampling
+    // below degrades toward the coupon-collector limit as wanted approaches
+    // total_blocks; take this branch once the sample would cover at least half the
+    // blocks (wanted >= total_blocks / kDenseSampleDivisor).
+    constexpr qint64 kDenseSampleDivisor = 2;
+    if (wanted * kDenseSampleDivisor >= total_blocks) {
+        indices.reserve(total_blocks);
+        for (qint64 block = 0; block < total_blocks; ++block) {
+            indices.append(block);
+        }
+        for (qint64 i = 0; i < wanted; ++i) {
+            const qint64 j = i + QRandomGenerator::global()->bounded(total_blocks - i);
+            indices.swapItemsAt(i, j);
+        }
+        indices.resize(wanted);
+        return indices;
+    }
+    // Sparse sample: rejection-sample distinct indices (expected draws ~ wanted).
+    std::unordered_set<qint64> seen;
+    seen.reserve(static_cast<size_t>(wanted));
+    indices.reserve(wanted);
+    while (static_cast<qint64>(indices.size()) < wanted) {
+        const qint64 idx = QRandomGenerator::global()->bounded(total_blocks);
+        if (seen.insert(idx).second) {
+            indices.append(idx);
+        }
+    }
+    return indices;
 }
 
 // Parse the physical-drive number from a "\\.\PhysicalDriveN" path; -1 if absent.
@@ -280,7 +333,7 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
     // Defense in depth: refuse to raw-write the running OS disk even if this worker
     // was constructed directly, bypassing FlashCoordinator's authoritative guard.
     if (refuseIfTargetIsOsDisk()) {
-        return std::unexpected(sak::error_code::invalid_argument);
+        return std::unexpected(sak::error_code::validation_failed);
     }
 
     // Fail closed when the image cannot fit (oversized write would clobber the
@@ -291,12 +344,15 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
 
     lockAndDismountBestEffort();
 
-    // Write image
+    // Write image. A user cancellation surfaces as WorkerBase::cancelled() (run() checks
+    // stopRequested() before this returned code is ever read), so a failure that reaches
+    // the failed() channel here is a genuine write I/O failure, not a cancellation --
+    // report it as such rather than collapsing it into operation_cancelled.
     if (!writeImage()) {
         sak::logError("Failed to write image");
         Q_EMIT error("Failed to write image");
         cleanupFlashResources();
-        return std::unexpected(sak::error_code::operation_cancelled);
+        return std::unexpected(sak::error_code::write_error);
     }
 
     Q_EMIT writeCompleted(m_bytesWritten.load(std::memory_order_relaxed));
@@ -308,10 +364,7 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
     // Cleanup
     cleanupFlashResources();
 
-    const qint64 elapsed_ms = timer.elapsed();
-    sak::logInfo(QString("Flash completed in %1 seconds")
-                     .arg(static_cast<double>(elapsed_ms) / sak::kMillisecondsPerSecondF)
-                     .toStdString());
+    logFlashCompletion(timer.elapsed());
 
     return {};
 }
@@ -334,7 +387,10 @@ auto FlashWorker::runVerificationStage() -> std::expected<void, sak::error_code>
         // info and the coordinator handles it via onWorkerCompleted(); a second signal
         // would double-count the drive as failed.
         cleanupFlashResources();
-        return std::unexpected(sak::error_code::operation_cancelled);
+        // runVerificationStage() returns {} early when stopRequested(), so reaching here
+        // means verification genuinely FAILED -- report verification_failed, not the
+        // misleading operation_cancelled the old coarse mapping emitted.
+        return std::unexpected(sak::error_code::verification_failed);
     }
     return {};
 }
@@ -354,15 +410,34 @@ bool FlashWorker::refuseIfTargetIsOsDisk() {
         cleanupFlashResources();
         return true;
     }
-    if (!physicalDriveBacksWindows(drive_number)) {
-        return false;
+    if (physicalDriveBacksWindows(drive_number)) {
+        sak::logError(QString("Refusing raw write to %1: it backs the current OS disk")
+                          .arg(m_targetDevice)
+                          .toStdString());
+        Q_EMIT error("Refusing to write the current OS disk");
+        cleanupFlashResources();
+        return true;
     }
-    sak::logError(QString("Refusing raw write to %1: it backs the current OS disk")
-                      .arg(m_targetDevice)
-                      .toStdString());
-    Q_EMIT error("Refusing to write the current OS disk");
-    cleanupFlashResources();
-    return true;
+    // Re-run the boot-disk guard on the just-opened target. FlashCoordinator cleared this
+    // drive as non-boot at validation, but on a SEPARATE handle it has since closed; a
+    // hot-remove + disk-number reassignment in the interim could repoint
+    // "\\.\PhysicalDriveN" at a DIFFERENT physical disk (e.g. a split-boot ESP/boot disk)
+    // that openDevice()'s device-number recheck cannot distinguish -- the new disk really
+    // IS number N. Refuse on a POSITIVE boot-disk match. An Undetermined probe is NOT
+    // treated as a refusal here: the coordinator has already offlined this cleared target,
+    // which can make its volumes transiently unqueryable (-> Undetermined), so failing
+    // closed on Undetermined would reject a legitimate flash the coordinator already
+    // cleared. The coordinator remains the authoritative fail-closed guard (it refuses
+    // Undetermined at validation, before any offlining).
+    if (DriveScanner::physicalDriveBootProbe(drive_number) == sak::DiskProbe::Yes) {
+        sak::logError(QString("Refusing raw write to %1: it now resolves to a Windows boot disk")
+                          .arg(m_targetDevice)
+                          .toStdString());
+        Q_EMIT error("Refusing to write a Windows boot/system disk");
+        cleanupFlashResources();
+        return true;
+    }
+    return false;
 }
 
 bool FlashWorker::ensureImageFitsTarget() {
@@ -993,8 +1068,17 @@ int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
     Q_ASSERT(target_data != nullptr);
     int samples_verified = 0;
 
-    for (int i = 0; i < config.num_samples && !stopRequested(); ++i) {
-        const qint64 block_index = QRandomGenerator::global()->bounded(config.total_blocks);
+    // Draw the block indices WITHOUT replacement so the advertised sample count maps to
+    // that many DISTINCT blocks; a per-iteration bounded() draw could re-verify one block
+    // and under-cover the image. num_samples <= total_blocks here (verifySample() caps the
+    // sample at 10% of the image), so this yields exactly num_samples distinct indices.
+    const QList<qint64> block_indices = pickDistinctBlockIndices(config.total_blocks,
+                                                                 config.num_samples);
+
+    for (const qint64 block_index : block_indices) {
+        if (stopRequested()) {
+            break;
+        }
         const qint64 offset_bytes = block_index * config.block_size;
 
         if (!m_imageSource->seek(offset_bytes)) {

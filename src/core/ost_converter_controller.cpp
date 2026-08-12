@@ -294,6 +294,12 @@ void OstConverterController::finalizeBatch() {
 
 OstConversionJob::Status OstConverterController::classifyOutcome(
     const OstConversionResult& result) {
+    // A user-cancelled run is never Complete: convert() returned early, so the counts are
+    // partial even when no item failed and no error was recorded. Surface it as Cancelled so
+    // the batch accounting and the completion line distinguish it from a clean conversion.
+    if (result.cancelled) {
+        return OstConversionJob::Status::Cancelled;
+    }
     // Any failed item or recorded error (e.g. a source-open failure, or a message
     // whose attachment could not be read) means the conversion was not clean.
     // A negative counter cannot occur on a real run and signals a corrupt result, so it
@@ -335,6 +341,11 @@ void OstConverterController::onWorkerFinished(OstConversionResult result) {
                                 ? tr("%1 item(s) failed").arg(result.items_failed)
                                 : result.errors.first();
         ++m_batch_result.files_failed;
+    } else if (job.status == OstConversionJob::Status::Cancelled) {
+        // Count a cancelled result into files_cancelled, never files_succeeded, so the
+        // succeeded + failed + cancelled == total accounting stays exact. (cancelAll() only
+        // tallies jobs still Queued/Converting, so a job counted here is never double-counted.)
+        ++m_batch_result.files_cancelled;
     } else {
         ++m_batch_result.files_succeeded;
     }

@@ -35,8 +35,13 @@ constexpr int kDuplicateVirtualBrowseMaxEntries = 10'000;
 constexpr int kHashCancelPollMs = 50;
 }  // namespace
 
+// SHA-256 (not MD5) is the dedup hash: files are grouped as duplicates purely by digest equality,
+// so a hash collision would report two DIFFERENT files as a duplicate group. MD5 has practical
+// collisions, so a locally planted colliding pair could form a false group; SHA-256's collision
+// resistance makes that infeasible. All three hashing sites (this sequential hasher, the parallel
+// task hasher, and the file-system-target buffer hash) use SHA-256 so a run is self-consistent.
 DuplicateFinderWorker::DuplicateFinderWorker(const Config& config, QObject* parent)
-    : WorkerBase(parent), m_config(config), m_hasher(sak::hash_algorithm::md5) {}
+    : WorkerBase(parent), m_config(config), m_hasher(sak::hash_algorithm::sha256) {}
 
 DuplicateFinderWorker::~DuplicateFinderWorker() {
     // Join the worker thread HERE, while m_hash_stop / m_hasher / m_config are still alive.
@@ -425,8 +430,10 @@ auto DuplicateFinderWorker::hashVirtualFiles(const QVector<VirtualFile>& files)
             sak::logWarning("Failed to read file-system target entry: {}", file.path.toStdString());
             continue;
         }
+        // SHA-256 to match the on-disk hashing sites: dedup groups by digest equality, so a weak
+        // hash would let a colliding pair form a false duplicate group (see the constructor note).
         const QByteArray hash =
-            QCryptographicHash::hash(read.data, QCryptographicHash::Md5).toHex();
+            QCryptographicHash::hash(read.data, QCryptographicHash::Sha256).toHex();
         hashed.append({file, QString::fromLatin1(hash)});
     }
     return hashed;
@@ -560,7 +567,9 @@ std::function<void(int)> makeParallelHashTask(const std::shared_ptr<ParallelHash
             return;
         }
         const auto& file = job->m_files[static_cast<size_t>(index)];
-        const sak::file_hasher hasher(sak::hash_algorithm::md5);
+        // SHA-256 to match the sequential path (see the constructor note): grouping is by digest
+        // equality, so a weak-hash collision would report distinct files as one duplicate group.
+        const sak::file_hasher hasher(sak::hash_algorithm::sha256);
         // Honor the cancel token so a stop breaks this file at the next 1 MB chunk (not at EOF); on
         // cancel calculateHash returns operation_cancelled and the whole result set is discarded by
         // calculateHashesParallel's post-blockingMap checkStop().

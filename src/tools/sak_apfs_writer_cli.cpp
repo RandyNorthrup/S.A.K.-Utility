@@ -355,6 +355,10 @@ struct CliInvocation {
     QString m_command;
     QString m_target_path;
     uint64_t m_target_size_bytes{0};
+    // Grow-to size for commit-raw-resize (--new-size-bytes). Defaults to
+    // m_target_size_bytes when the option is unset (grow the container to fill the
+    // device); only commit-raw-resize reads it.
+    uint64_t m_new_size_bytes{0};
     uint32_t m_block_size_bytes{kDefaultApfsBlockSizeBytes};
     QString m_volume_name;
     QStringList m_additional_volume_names;
@@ -402,6 +406,7 @@ std::optional<uint64_t> patchOffsetForCommand(const QCommandLineParser& parser,
 struct CliParserOptions {
     const QCommandLineOption* m_target{nullptr};
     const QCommandLineOption* m_size{nullptr};
+    const QCommandLineOption* m_new_size{nullptr};
     const QCommandLineOption* m_block_size{nullptr};
     const QCommandLineOption* m_volume_name{nullptr};
     const QCommandLineOption* m_additional_volume_name{nullptr};
@@ -459,6 +464,7 @@ struct CliParserOptions {
 
 struct CliNumericInputs {
     uint64_t m_size{0};
+    uint64_t m_new_size{0};
     uint32_t m_block_size{kDefaultApfsBlockSizeBytes};
 };
 
@@ -501,7 +507,18 @@ std::optional<CliNumericInputs> numericInputsFromParser(const QCommandLineParser
     if (block_size == 0) {
         return std::nullopt;
     }
-    return CliNumericInputs{.m_size = *size, .m_block_size = block_size};
+    // --new-size-bytes is the grow-to size for commit-raw-resize; when unset it defaults to
+    // --size-bytes so the container grows to fill the device (the certified default). When
+    // set it is a distinct positive size, letting a raw grow stop short of the full device.
+    uint64_t new_size = *size;
+    if (parser.isSet(*options.m_new_size)) {
+        const auto parsed_new_size = parseUInt64Option(parser, *options.m_new_size, error);
+        if (!parsed_new_size.has_value()) {
+            return std::nullopt;
+        }
+        new_size = *parsed_new_size;
+    }
+    return CliNumericInputs{.m_size = *size, .m_new_size = new_size, .m_block_size = block_size};
 }
 
 std::optional<CliMutationInputs> mutationInputsFromParser(const QCommandLineParser& parser,
@@ -650,6 +667,7 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
         .m_command = *command,
         .m_target_path = *target,
         .m_target_size_bytes = numeric->m_size,
+        .m_new_size_bytes = numeric->m_new_size,
         .m_block_size_bytes = numeric->m_block_size,
         .m_volume_name = parser.value(*options.m_volume_name),
         .m_additional_volume_names = parser.values(*options.m_additional_volume_name),
@@ -1843,7 +1861,7 @@ std::optional<QJsonObject> buildCommitRawResizeReport(const CliInvocation& invoc
     const auto commit = sak::PartitionApfsWriter::commitRawResize(
         {.target_path = invocation.m_target_path,
          .target_container_bytes = invocation.m_target_size_bytes,
-         .new_size_bytes = invocation.m_target_size_bytes,
+         .new_size_bytes = invocation.m_new_size_bytes,
          .target_mutation_confirmed = invocation.m_confirm_target,
          .allow_raw_device_target = invocation.m_allow_raw_target,
          .options = rawWriteOptions(invocation.m_evidence_id)});
@@ -2077,6 +2095,12 @@ struct CliOptions {
     QCommandLineOption m_size{{QStringLiteral("size-bytes")},
                               QStringLiteral("Target APFS container size in bytes."),
                               QStringLiteral("bytes")};
+    QCommandLineOption m_new_size{
+        {QStringLiteral("new-size-bytes")},
+        QStringLiteral("New (larger) grow-to container size in bytes for commit-raw-resize; "
+                       "--size-bytes is the raw device size and defaults the grow-to size when "
+                       "this is omitted (grow to fill the device)."),
+        QStringLiteral("bytes")};
     QCommandLineOption m_block_size{{QStringLiteral("block-size-bytes")},
                                     QStringLiteral("APFS block size, default 4096."),
                                     QStringLiteral("bytes")};
@@ -2192,6 +2216,7 @@ struct CliOptions {
 void registerCliOptions(QCommandLineParser& parser, CliOptions& options) {
     parser.addOptions({options.m_target,
                        options.m_size,
+                       options.m_new_size,
                        options.m_block_size,
                        options.m_volume_name,
                        options.m_additional_volume_name,
@@ -2233,6 +2258,7 @@ std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser
     return invocationFromParser(parser,
                                 {.m_target = &options.m_target,
                                  .m_size = &options.m_size,
+                                 .m_new_size = &options.m_new_size,
                                  .m_block_size = &options.m_block_size,
                                  .m_volume_name = &options.m_volume_name,
                                  .m_additional_volume_name = &options.m_additional_volume_name,
@@ -2265,21 +2291,24 @@ std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser
 }  // namespace
 
 #ifdef _WIN32
-// Physical drive number backing the OS system volume, or -1 if it cannot be
-// determined. Native (no elevation needed).
-static int osSystemPhysicalDrive() {
+// Physical drive numbers backing the OS system volume, or empty if they cannot be
+// determined. Native (no elevation needed). A spanned/striped/mirrored system volume
+// can be backed by more than one physical disk, so every reported extent's disk is
+// returned, not just the first.
+static std::vector<int> osSystemPhysicalDrives() {
+    std::vector<int> drives;
     wchar_t win_dir[MAX_PATH] = {};
     const UINT len = GetWindowsDirectoryW(win_dir, MAX_PATH);
     if (len == 0 || len >= MAX_PATH || win_dir[1] != L':') {
-        return -1;
+        return drives;
     }
     const wchar_t volume_path[] = {L'\\', L'\\', L'.', L'\\', win_dir[0], L':', L'\0'};
     HANDLE h_vol = CreateFileW(
         volume_path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (h_vol == INVALID_HANDLE_VALUE) {
-        return -1;
+        return drives;
     }
-    constexpr DWORD kMaxExtents = 16;
+    constexpr DWORD kMaxExtents = 32;
     const DWORD buf_size = sizeof(VOLUME_DISK_EXTENTS) + ((kMaxExtents - 1) * sizeof(DISK_EXTENT));
     std::vector<unsigned char> buffer(buf_size, 0);
     auto* extents = reinterpret_cast<VOLUME_DISK_EXTENTS*>(buffer.data());
@@ -2293,10 +2322,13 @@ static int osSystemPhysicalDrive() {
                                     &bytes_returned,
                                     nullptr);
     CloseHandle(h_vol);
-    if ((ok == 0) || extents->NumberOfDiskExtents == 0) {
-        return -1;
+    if (ok == 0) {
+        return drives;
     }
-    return static_cast<int>(extents->Extents[0].DiskNumber);
+    for (DWORD i = 0; i < extents->NumberOfDiskExtents; ++i) {
+        drives.push_back(static_cast<int>(extents->Extents[i].DiskNumber));
+    }
+    return drives;
 }
 
 // Physical drive numbers backing a volume/device alias (\\.\C:, \\?\Volume{GUID},
@@ -2346,8 +2378,10 @@ static bool isDriveLetterVolumePath(const QString& path) {
 
 // Raw volume/device aliases that resolve to a whole disk but are NOT the
 // \\.\PhysicalDriveN form the numeric guard covers: drive-letter volumes,
-// \Volume{GUID} handles, and GLOBALROOT device paths. A \\.\C: alias resolves to
-// the OS volume yet slips past a PhysicalDrive-prefix-only check.
+// \Volume{GUID} handles, GLOBALROOT device paths, and the NT device forms
+// \\.\HarddiskVolumeN and \\.\HarddiskN\PartitionM. A \\.\C: alias resolves to
+// the OS volume yet slips past a PhysicalDrive-prefix-only check; the backing
+// disk of any of these is resolved via IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS.
 static bool isWindowsRawVolumeAliasPath(const QString& path) {
     if (isDriveLetterVolumePath(path)) {
         return true;
@@ -2356,7 +2390,10 @@ static bool isWindowsRawVolumeAliasPath(const QString& path) {
         return false;
     }
     return path.contains(QStringLiteral("Volume{"), Qt::CaseInsensitive) ||
-           path.contains(QStringLiteral("GLOBALROOT"), Qt::CaseInsensitive);
+           path.contains(QStringLiteral("GLOBALROOT"), Qt::CaseInsensitive) ||
+           path.contains(QStringLiteral("HarddiskVolume"), Qt::CaseInsensitive) ||
+           (path.contains(QStringLiteral("Harddisk"), Qt::CaseInsensitive) &&
+            path.contains(QStringLiteral("Partition"), Qt::CaseInsensitive));
 }
 
 // Refuse a \\.\PhysicalDriveN target that is PhysicalDrive0 or the OS system disk.
@@ -2373,12 +2410,12 @@ static QString physicalDriveTargetRefusal(const QString& path, const QString& pr
             "Refusing raw APFS write to PhysicalDrive0 (the first physical disk)");
     }
 #ifdef _WIN32
-    const int os_drive = osSystemPhysicalDrive();
-    if (os_drive < 0) {
+    const std::vector<int> os_drives = osSystemPhysicalDrives();
+    if (os_drives.empty()) {
         return QStringLiteral(
             "Refusing raw APFS write: could not establish the OS system-disk identity");
     }
-    if (os_drive == drive) {
+    if (std::ranges::find(os_drives, drive) != os_drives.end()) {
         return QStringLiteral(
             "Refusing raw APFS write: target PhysicalDrive backs the OS system volume");
     }
@@ -2391,8 +2428,8 @@ static QString physicalDriveTargetRefusal(const QString& path, const QString& pr
 // or the alias's backing drive cannot be resolved.
 static QString volumeAliasTargetRefusal(const QString& path) {
 #ifdef _WIN32
-    const int os_drive = osSystemPhysicalDrive();
-    if (os_drive < 0) {
+    const std::vector<int> os_drives = osSystemPhysicalDrives();
+    if (os_drives.empty()) {
         return QStringLiteral(
             "Refusing raw APFS write: could not establish the OS system-disk identity");
     }
@@ -2402,8 +2439,8 @@ static QString volumeAliasTargetRefusal(const QString& path) {
             "Refusing raw APFS write: could not resolve the backing physical drive of the "
             "volume/device target");
     }
-    if (std::ranges::any_of(drives, [os_drive](const int drive) {
-            return drive == 0 || drive == os_drive;
+    if (std::ranges::any_of(drives, [&os_drives](const int drive) {
+            return drive == 0 || std::ranges::find(os_drives, drive) != os_drives.end();
         })) {
         return QStringLiteral(
             "Refusing raw APFS write: volume/device target resolves to the OS system disk "
@@ -2418,9 +2455,10 @@ static QString volumeAliasTargetRefusal(const QString& path) {
 // Defense-in-depth OS-disk guard for confirmed raw-device APFS commands. The GUI
 // path is guarded by PartitionSafetyValidator::isUnsafeRawWriteTargetDisk, but
 // this CLI bypasses it, so a confirmed --allow-raw path typo could otherwise
-// format PhysicalDrive0 or the OS disk. Covers both the \\.\PhysicalDriveN form
-// and volume/device aliases (\\.\C:, \Volume{GUID}, GLOBALROOT) that resolve to
-// the OS volume yet bypass a PhysicalDrive-prefix-only check. Returns a refusal
+// format PhysicalDrive0 or the OS disk. Covers the \\.\PhysicalDriveN and
+// \\?\PhysicalDriveN forms and volume/device aliases (\\.\C:, \Volume{GUID},
+// GLOBALROOT, \\.\HarddiskVolumeN, \\.\HarddiskN\PartitionM) that resolve to the
+// OS volume yet bypass a PhysicalDrive-prefix-only check. Returns a refusal
 // reason, or an empty string when the target is provably a different disk / not a
 // raw whole-disk form this guard covers.
 static QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
@@ -2429,9 +2467,13 @@ static QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
     }
     QString path = invocation.m_target_path.trimmed();
     path.replace(QLatin1Char('/'), QLatin1Char('\\'));
-    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
-    if (path.startsWith(prefix, Qt::CaseInsensitive)) {
-        return physicalDriveTargetRefusal(path, prefix);
+    const QString dot_prefix = QStringLiteral("\\\\.\\PhysicalDrive");
+    const QString qm_prefix = QStringLiteral("\\\\?\\PhysicalDrive");
+    if (path.startsWith(dot_prefix, Qt::CaseInsensitive)) {
+        return physicalDriveTargetRefusal(path, dot_prefix);
+    }
+    if (path.startsWith(qm_prefix, Qt::CaseInsensitive)) {
+        return physicalDriveTargetRefusal(path, qm_prefix);
     }
     if (isWindowsRawVolumeAliasPath(path)) {
         return volumeAliasTargetRefusal(path);

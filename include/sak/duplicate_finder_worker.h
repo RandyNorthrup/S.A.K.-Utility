@@ -23,7 +23,7 @@
 /**
  * @brief Worker thread for duplicate file detection
  *
- * Scans directories for duplicate files using MD5 hash comparison.
+ * Scans directories for duplicate files using SHA-256 hash comparison.
  * Groups duplicates and reports space savings potential.
  *
  * Thread-Safety: All signals are emitted from worker thread and should
@@ -37,7 +37,7 @@ public:
      * @brief Information about a duplicate file group
      */
     struct DuplicateGroup {
-        QString hash;                 ///< MD5 hash of files
+        QString hash;                 ///< SHA-256 hash of files
         QVector<QString> file_paths;  ///< Paths to duplicate files
         qint64 file_size{0};          ///< Size of each file
         qint64 wasted_space{0};       ///< Total space wasted by duplicates

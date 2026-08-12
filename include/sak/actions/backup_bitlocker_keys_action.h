@@ -211,6 +211,15 @@ private:
                              QString& backup_dir_path,
                              int& key_files_written,
                              bool& permissions_set);
+    /// @brief Remove the partial backup and emit a clean cancel; if the removal
+    /// itself fails, plaintext keys may remain, so emit a failure instead.
+    void emitCancelWithCleanup(const QString& backup_dir_path, const QDateTime& start_time);
+    /// @brief Remove the partial backup and emit @p message as a failure; if the
+    /// removal itself fails, note that plaintext keys may remain.
+    void emitFailWithCleanup(const QString& message,
+                             const QString& log,
+                             const QString& backup_dir_path,
+                             const QDateTime& start_time);
     /// @brief Screen and canonicalize a caller-supplied backup destination.
     ///
     /// The location arrives in the elevated helper's task payload (client-supplied, and the

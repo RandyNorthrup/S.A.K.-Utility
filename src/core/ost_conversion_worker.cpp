@@ -93,6 +93,7 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
     }
 
     if (m_cancelled.load()) {
+        result.cancelled = true;
         result.finished = QDateTime::currentDateTime();
         Q_EMIT conversionFinished(result);
         return;
@@ -127,6 +128,11 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
     }
 
     finalizeWriters(result);
+
+    // Record whether a user cancel cut the run short (processFolderTree/processRecoveredItems
+    // return early on cancel), so the controller classifies it Cancelled rather than Complete:
+    // a cancelled run's counts are partial even when nothing failed and no error was recorded.
+    result.cancelled = m_cancelled.load();
 
     result.finished = QDateTime::currentDateTime();
 

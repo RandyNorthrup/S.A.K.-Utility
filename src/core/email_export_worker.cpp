@@ -1315,9 +1315,22 @@ QString EmailExportWorker::resolveFilenameConflict(const QString& dir, const QSt
         }
     }
 
-    // Fallback with timestamp
-    return base + QLatin1Char('_') + QString::number(QDateTime::currentMSecsSinceEpoch()) +
-           QLatin1Char('.') + ext;
+    // Numbered attempts exhausted: try a single timestamp-tagged candidate, but
+    // only accept it if it does not already exist -- never overwrite via an
+    // unchecked fallback (R5-P6-23). Append the extension only when present so an
+    // extensionless name does not gain a trailing dot.
+    QString ts_candidate = base + QLatin1Char('_') +
+                           QString::number(QDateTime::currentMSecsSinceEpoch());
+    if (!ext.isEmpty()) {
+        ts_candidate += QLatin1Char('.') + ext;
+    }
+    if (!QFile::exists(dir + QLatin1Char('/') + ts_candidate)) {
+        return ts_candidate;
+    }
+
+    // Even the timestamped name collides: fail closed with an empty name so the
+    // caller's file open() fails rather than clobbering an existing file.
+    return {};
 }
 
 // ============================================================================

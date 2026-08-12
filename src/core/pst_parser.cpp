@@ -21,6 +21,7 @@
 #include <array>
 #include <cstring>
 #include <format>
+#include <limits>
 
 using sak::error_code;
 
@@ -1972,6 +1973,18 @@ std::expected<QByteArray, error_code> PstParser::decompressBlockIf4k(const QByte
         return std::unexpected(error_code::pst_decompression_failed);
     }
 
+    // The footer's uncompressed_size is the block's declared inflated length; qUncompress trusts
+    // the BE size prefix only for its allocation hint, so a stream that inflates to a different
+    // length is a corrupt (or crafted) block. Enforce the exact-size invariant fail-closed rather
+    // than handing a short/long buffer to the size-sensitive readers downstream.
+    if (decompressed.size() != uncompressed_size) {
+        sak::logError("Block decompressed size {} != declared {} at offset {}",
+                      std::to_string(decompressed.size()),
+                      std::to_string(uncompressed_size),
+                      std::to_string(file_offset));
+        return std::unexpected(error_code::pst_decompression_failed);
+    }
+
     return decompressed;
 }
 
@@ -3436,16 +3449,21 @@ template uint64_t PstParser::readLE<uint64_t>(const QByteArray&, int);
 template int64_t PstParser::readLE<int64_t>(const QByteArray&, int);
 
 int PstParser::countTotalItems() const {
-    std::function<int(const sak::PstFolderTree&)> count_recursive;
-    count_recursive = [&](const sak::PstFolderTree& tree) -> int {
-        int total = 0;
+    // folder.content_count is read straight from the store, so a crafted tree of large counts
+    // would overflow a signed int accumulator (UB) before the total is even returned. Accumulate
+    // in int64_t and saturate at INT_MAX after every add so the running sum can never overflow the
+    // int64_t either, then narrow the (already in-range) result back to the int the API exposes.
+    std::function<int64_t(const sak::PstFolderTree&)> count_recursive;
+    count_recursive = [&](const sak::PstFolderTree& tree) -> int64_t {
+        int64_t total = 0;
         for (const auto& folder : tree) {
             total += folder.content_count;
             total += count_recursive(folder.children);
+            total = std::min<int64_t>(total, std::numeric_limits<int>::max());
         }
         return total;
     };
-    return count_recursive(m_folder_tree);
+    return static_cast<int>(count_recursive(m_folder_tree));
 }
 
 int PstParser::countFolders(const sak::PstFolderTree& tree) {

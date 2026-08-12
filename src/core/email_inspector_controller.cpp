@@ -61,6 +61,32 @@ void accumulateFolderStats(const sak::PstFolderTree& tree, EmailReportGenerator:
         accumulateFolderStats(folder.children, data);
     }
 }
+
+/// Clean up a partial HTML/JSON report pair and build its failure message.
+/// If one output was written before the other failed, remove the written file so no
+/// misleading half-pair is left behind, then return the "could not write ..." message
+/// naming the outputs that failed (B7-B). Removals happen in html-then-json order to
+/// match the original inline side-effect order.
+QString cleanupPartialReport(const QString& html_path,
+                             bool html_ok,
+                             const QString& json_path,
+                             bool json_ok) {
+    if (html_ok) {
+        QFile::remove(html_path);
+    }
+    if (json_ok) {
+        QFile::remove(json_path);
+    }
+    QStringList failed;
+    if (!html_ok) {
+        failed.append(QStringLiteral("HTML"));
+    }
+    if (!json_ok) {
+        failed.append(QStringLiteral("JSON"));
+    }
+    return QStringLiteral("Report generation failed: could not write %1")
+        .arg(failed.join(QStringLiteral(", ")));
+}
 }  // namespace
 
 // ============================================================================
@@ -423,15 +449,9 @@ void EmailInspectorController::generateReport(const QString& output_path,
         Q_EMIT logOutput(QStringLiteral("Report saved to %1").arg(output_path));
         Q_EMIT reportGenerated(output_path);
     } else {
-        QStringList failed;
-        if (!html_ok) {
-            failed.append(QStringLiteral("HTML"));
-        }
-        if (!json_ok) {
-            failed.append(QStringLiteral("JSON"));
-        }
-        const auto message = QStringLiteral("Report generation failed: could not write %1")
-                                 .arg(failed.join(QStringLiteral(", ")));
+        // A partial HTML/JSON pair is a misleading deliverable: remove whichever file was
+        // written and fail closed, naming the output(s) that failed (B7-B).
+        const auto message = cleanupPartialReport(html_path, html_ok, json_path, json_ok);
         sak::logError("Report: {}", message.toStdString());
         Q_EMIT errorOccurred(message);
     }

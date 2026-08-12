@@ -295,57 +295,68 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: collectVirtualFiles ignores its depth parameter (Q_UNUSED at 330) and recurses on every directory entry (351-356) with NO depth cap, cycle/visited-set, or total-entry bound while walking an UNTRUSTED file-system image (APFS/HFS/ext bytes). listDirectory is single-level so the reader's own B-tree cycle guards do not bound this hierarchy recursion; the export walker DOES cap depth (file_management_file_system.cpp:1301) but this path does not. A corrupt/malicious image with a directory-hierarchy cycle or extreme depth -> unbounded recursion / stack-overflow DoS. The '/' default is benign (image root).
   - Fix: Enforce depth <= kDirectoryExportMaxDepth in collectVirtualFiles (mirror the export walker) and/or track visited directory object-ids; bound total collected entries.
-- [ ] **R5-P3-5** [LOW] [PARTIAL] Raw OS-disk namespace bypass
+- [x] **R5-P3-5** [LOW] [PARTIAL] Raw OS-disk namespace bypass
+  - RESOLVED 2026-08-11 [fixed]: osSystemPhysicalDrive()->osSystemPhysicalDrives() compares ALL OS-volume disk extents (spanned/striped guarded); guard now recognizes //?/PhysicalDriveN and //./HarddiskVolumeN and //./HarddiskN/PartitionM forms. Only ADDS refusal coverage; certified //./PhysicalDriveN path byte-identical. Landed byte-parallel in both apfs and hfs writer CLIs.
   - Files: src/tools/sak_apfs_writer_cli.cpp:2294, src/tools/sak_hfs_writer_cli.cpp:897
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: The alias guard added in R3 (doc 405/408) covers //./PhysicalDriveN, drive-letter volumes, Volume{GUID}, GLOBALROOT (apfs 2306-2315, 2381-2395). Residual: it is path-form gated -- //?/PhysicalDriveN (question-mark form) and //./HarddiskN/PartitionM are not recognized (isWindowsRawVolumeAliasPath returns false), and osSystemPhysicalDrive uses only Extents[0] (2256) so a 2nd disk backing a spanned OS volume is unguarded. Defense-in-depth on a manually-operated trusted certifier CLI (GUI path uses PartitionSafetyValidator).
   - Fix: Open every raw target and run IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS to resolve its backing disk(s) regardless of path form; compare against ALL OS-volume extents, not just Extents[0].
-- [ ] **R5-P3-9** [LOW] [PARTIAL] Elevated backup temp-file TOCTOU (winsock/firewall)
+- [x] **R5-P3-9** [LOW] [PARTIAL] Elevated backup temp-file TOCTOU (winsock/firewall)
+  - RESOLVED 2026-08-11 [fixed]: exportFirewallRules now hosts the backup in a fresh unique QTemporaryDir (atomic mkdir, elevated-owned), verifies no reparse point before AND after netsh writes, and lets netsh create the .wfw once (no delete-then-recreate window). Winsock backup already writes through an open handle -- left unchanged.
   - Files: src/actions/reset_network_action.cpp:143, src/actions/reset_network_action.cpp:323
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: Acknowledged in R4 doc 328 (B3 #3 'winsock reopen reparse residual'). When run elevated via the helper, TMP/TEMP is redirected to a controlled dir (elevated_helper_main.cpp configurePortableRuntimeDirs), mitigating the shared-%TEMP% attack. Residual: exportFirewallRules removes the placeholder then lets netsh recreate the .wfw (333-336) -- a delete-then-recreate window with a semi-predictable name.
   - Fix: Create the backup in a freshly-made unique elevated-owned subdir and verify no reparse point before/after netsh writes it.
-- [ ] **R5-P3-13** [LOW] [PARTIAL] BitLocker plaintext survives failed backup
+- [x] **R5-P3-13** [LOW] [PARTIAL] BitLocker plaintext survives failed backup
+  - RESOLVED 2026-08-11 [fixed]: write-FAILURE paths (writeRecoveryDocument/writePerVolumeKeyFiles/writeJsonBackup) now removeRecursively(backup_dir) before emitFailedResult (symmetric with cancel cleanup) so a partial restricted-ACL key backup is not left on disk; on removal failure the message warns keys may remain (fail closed).
   - Files: src/actions/backup_bitlocker_keys_action.cpp:698
   - Boundary: local-config-or-registry (not-attacker-reachable)
   - Evidence: The backup dir ACL is restricted BEFORE any key is written (createBackupDirectory 790-804, R3 doc 406), so keys are never under a permissive ACL, and the cancel path cleans up (710-721). Residual: the write-FAILURE paths (729-732, 739-745, 752-755) return without removeRecursively, leaving a partial restricted-ACL backup on disk after a reported failure -- asymmetric with the cancel path.
   - Fix: On writeRecoveryDocument/writePerVolumeKeyFiles/writeJsonBackup failure, removeRecursively(backup_dir_path) like cancelWithCleanup before emitFailedResult.
-- [ ] **R5-P3-14** [LOW] [PARTIAL] Elevated process containment fails open (job object)
+- [x] **R5-P3-14** [LOW] [PARTIAL] Elevated process containment fails open (job object)
+  - RESOLVED 2026-08-11 [already-correct]: assign() already calls terminateUncontained(pid) (OpenProcess PROCESS_TERMINATE + TerminateProcess) when ensureJob() fails, honoring the never-leave-a-child-uncontained invariant; cited line numbers were stale.
   - Files: src/elevated/elevated_helper_main.cpp:198, src/elevated/elevated_helper_main.cpp:408
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: AssignProcessToJobObject failure now terminates the child (241-245, R3 doc 422). Residual: if ensureJob() itself fails (CreateJobObject/SetInformationJobObject), assign() early-returns at line 229 (`if (!ensureJob() || pid<=0) return;`) WITHOUT terminating the already-started child, violating the fix's own 'unassigned child must be terminated' invariant. Job-creation failure is an env condition; child runs a trusted command.
   - Fix: In assign(), when ensureJob() returns false, still OpenProcess(PROCESS_TERMINATE)+TerminateProcess(pid) so a started elevated child is never left uncontained.
-- [ ] **R5-P3-16** [LOW] [CONFIRMED_REAL] APFS raw resize passes identical old/new sizes
+- [x] **R5-P3-16** [LOW] [CONFIRMED_REAL] APFS raw resize passes identical old/new sizes
+  - RESOLVED 2026-08-11 [fixed]: added --new-size-bytes to the APFS CLI, wired to new_size_bytes distinct from target_container_bytes; DEFAULTS to --size-bytes when omitted so the certified physical-USB raw-grow path is byte-identical.
   - Files: src/tools/sak_apfs_writer_cli.cpp:1800
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: buildCommitRawResizeReport sets both target_container_bytes and new_size_bytes to invocation.target_size_bytes (1804-1805). CliInvocation has no separate new-size field (348-376) and no --new-size option is registered, so the resize command can only ever request X->X -- a no-op or engine-rejected. Functional defect in the trusted CLI, not a security issue.
   - Fix: Add a --new-size-bytes option and wire new_size_bytes to it (distinct from target_container_bytes).
-- [ ] **R5-P3-19** [LOW] [DESIGN_INTENT] MD5 permits false duplicate groups
+- [x] **R5-P3-19** [LOW] [DESIGN_INTENT] MD5 permits false duplicate groups
+  - RESOLVED 2026-08-11 [fixed]: upgraded the dedup hash from MD5 to SHA-256 at all three call sites (sequential, parallel, fs-target); byte-identical files still group exactly, so no false-close, and a locally planted MD5-colliding pair can no longer form a false duplicate group. Report-only (no auto-delete). Header doc-comments corrected MD5->SHA-256.
   - Files: src/threading/duplicate_finder_worker.cpp:38, src/threading/duplicate_finder_worker.cpp:382
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: The finder only REPORTS candidate duplicate groups (buildDuplicateGroups/generateSummary); it never auto-deletes on hash alone -- the user reviews and chooses. MD5-colliding files planted locally could be grouped but cannot cause data loss without user action. Weak-hash choice, not an attacker-reachable data-loss path.
   - Fix: Optionally upgrade dedup hash to SHA-256, or add a byte-compare confirm before any delete UI acts on a group.
-- [ ] **R5-P3-22** [LOW] [PARTIAL] Screenshot captures spoofed window / kills unrelated Settings
+- [x] **R5-P3-22** [LOW] [PARTIAL] Screenshot captures spoofed window / kills unrelated Settings
+  - RESOLVED 2026-08-11 [fixed]: exact basename SystemSettings.exe compare and startDetached-result check were already present; added by-PID kill: record the owning PID (GetWindowThreadProcessId) of the exact matched window and taskkill /PID it, keeping /IM only as best-effort for the no-instance-tracked cancel/retry paths.
   - Files: src/actions/screenshot_settings_action.cpp:214, src/actions/screenshot_settings_action.cpp:226
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: 'Window not found -> refuse to capture an arbitrary foreground window' is guarded (254-260). Residual real nits in a LOCAL diagnostic: window matched by wcsstr(exe_path,'SystemSettings') substring (243) so a same-user process whose image path contains that string could match; closeSettingsApp taskkills ALL SystemSettings.exe (215-216); startDetached result ignored (274). No untrusted-input reachability; impact is a wrong local screenshot / a closed Settings window.
   - Fix: Track the PID launched via explorer/ms-settings and match/kill by that PID; require exact image basename SystemSettings.exe.
-- [ ] **R5-P3-23** [LOW] [PARTIAL] Check-disk ignores authoritative process status
+- [x] **R5-P3-23** [LOW] [PARTIAL] Check-disk ignores authoritative process status
+  - RESOLVED 2026-08-11 [fixed]: the per-drive chkdsk process status (cancel/crash/exit-code) is now appended to the report line via describeProcessFailure; the folder-mount misattribution was already guarded (enumerateWritableDriveLetters skips non 'X:' roots). GUID/letter-less-volume enumeration deferred-with-rationale (Repair-Volume -DriveLetter is certified/tested and fundamentally requires a letter).
   - Files: src/actions/check_disk_errors_action.cpp:24, src/actions/check_disk_errors_action.cpp:108
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: Real robustness gaps in a local diagnostic: enumerateWritableDriveLetters takes rootPath().at(0) as the drive letter (33), so a folder mount point is attributed to its host drive and letter-less volumes are omitted; chkdsk output is text-parsed. Runs on the technician's own disks at their request; not untrusted-input reachable.
   - Fix: Enumerate volumes by GUID/device path and skip folder-mounted volumes rather than mapping rootPath[0]; surface per-drive chkdsk exit codes in the report.
-- [ ] **R5-P3-25** [LOW] [DESIGN_INTENT] Flash sampling may repeatedly verify same blocks
+- [x] **R5-P3-25** [LOW] [DESIGN_INTENT] Flash sampling may repeatedly verify same blocks
+  - RESOLVED 2026-08-11 [fixed]: verifySampleBlocks now draws distinct indices (rejection-sampling in the sparse case, partial Fisher-Yates in the dense case) so the advertised sample count maps to distinct blocks; verifySample guarantees num_samples<=total_blocks so no false-close.
   - Files: src/threading/flash_worker.cpp:898, src/threading/flash_worker.cpp:1013
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: verifySampleBlocks uses QRandomGenerator::bounded with replacement (899), marginally reducing coverage of a sample-mode verify of the app's OWN just-written flash; markIncompleteVerification fails closed if too few blocks read back (98-106,833). calculateChecksum returns empty on ReadFile error -> verifyFull fails (749-753). Not attacker-reachable.
   - Fix: Sample block indices without replacement (shuffle/partition) so advertised sample count maps to distinct blocks.
-- [ ] **R5-P3-36** [LOW] [PARTIAL] Flash error mapping hides real failures
+- [x] **R5-P3-36** [LOW] [PARTIAL] Flash error mapping hides real failures
+  - RESOLVED 2026-08-11 [fixed]: split coarse codes where safe: write failure->write_error, verify failure->verification_failed, safety refusal->validation_failed (coordinator ignores the int code). image/device-open kept file_not_found (asserted by test_flash_worker), and the capacity gate kept invalid_argument (its bool folds three subcases whose accurate cause is already in the error() message); both deferred-with-rationale to avoid a false-close/test break.
   - Files: src/threading/flash_worker.cpp:231, src/threading/flash_worker.cpp:284
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: execute() collapses distinct failures into coarse error_code enums (file_not_found 226/236, invalid_argument 242/248, operation_cancelled 258) BUT the specific human-readable cause is always surfaced via Q_EMIT error(...) and verificationCompleted carries details. Not fail-open, only imprecise enum granularity. Quality issue.
   - Fix: Return distinct error_code values for open/capacity/os-disk/io/flush/verify failures so callers can branch on the enum, not just the message.
-- [ ] **R5-P3-37** [LOW] [PARTIAL] Shared HFS/APFS safety code duplicated with matching defects
+- [x] **R5-P3-37** [LOW] [PARTIAL] Shared HFS/APFS safety code duplicated with matching defects
+  - RESOLVED 2026-08-11 [deferred-with-rationale]: the substantive residual (the P3-5 namespace gap in both CLI copies) is CLOSED by landing P3-5 in both; the remaining shared-header extraction is pure maintainability, needs a new header + CMake wiring, and the two copies intentionally differ (APFS/HFS strings, _WIN32 vs Q_OS_WIN) -- deferred rather than risk a build-system change from a code-only pass.
   - Files: src/tools/sak_hfs_writer_cli.cpp:828, src/tools/sak_apfs_writer_cli.cpp:2225
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: osSystemPhysicalDrive/volumeBackingPhysicalDrives/isDriveLetterVolumePath/isWindowsRawVolumeAliasPath and the report/alias/evidence helpers are byte-for-byte duplicated across both CLIs, so the finding #5 namespace residual exists identically in both copies. Real maintainability/quality issue; not a bug per se.
@@ -602,7 +613,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: Validator physicalDriveNumberFromPath (518-533) and isExtendedRawDevicePath (500-510), and raw-I/O isWindowsRawDevicePath (633-644), accept //?/PhysicalDriveN / //?/GLOBALROOT / //?/Volume{}. So RestoreImage/MigrateOs/CloneDisk with target_path=//?/PhysicalDrive2 passes validation (disk resolved, isUnsafeRawWriteTargetDisk checked at plan time). But the generated clone/image PowerShell recognizes only //./: Get-SakPhysicalDriveNumber (2250-2254) returns $null for a //?/ path so Assert-SakRawWriteTarget SKIPS taking the disk offline and skips the runtime IsBoot/IsSystem re-check (2255-2263), and Open-SakWrite (2209) opens it with FileMode::Create (file semantics) instead of raw-device Open. Real inconsistency: offline-guard bypass + wrong open-mode for a validator-approved spelling (OS-disk still blocked at plan time, so not a wrong-disk write).
   - Fix: Make Get-SakPhysicalDriveNumber and Open-SakWrite recognize the same extended //?/ spellings the validator accepts, or normalize all raw targets to //./PhysicalDriveN before building the script (or reject //?/ at validation for these ops).
-- [ ] **R5-P5-5** [LOW] [PARTIAL] Flash target identity verified via handle then closed; worker reopens by number
+- [x] **R5-P5-5** [LOW] [PARTIAL] Flash target identity verified via handle then closed; worker reopens by number
+  - RESOLVED 2026-08-11 [fixed]: openDevice already re-verifies IOCTL_STORAGE_GET_DEVICE_NUMBER==parsed; added the missing boot-disk re-guard in refuseIfTargetIsOsDisk via physicalDriveBootProbe (refuse on Yes only, not Undetermined -- the coordinator already offlined the cleared target which can make it transiently unqueryable). Coordinator remains the authoritative Undetermined-fail-closed gate.
   - Files: src/core/flash_coordinator.cpp:630, src/core/flash_coordinator.cpp:675, src/threading/flash_worker.cpp:301
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: validateSingleTarget queries the handle's actual device number == parsed (675-689), runs OS-disk + boot-disk guards, then CloseHandle (676). FlashWorker re-runs an independent OS-disk self-guard after openDevice (refuseIfTargetIsOsDisk 301-311 -> physicalDriveBacksWindows) but does NOT re-verify the opened write handle's actual device number == parsed, nor re-run the BOOT-disk guard. Residual TOCTOU: a physical hot-remove + disk-number reassignment in the window between validation and the worker's write could redirect the raw write to a different NON-OS disk (a reassigned boot/ESP or data disk) undetected. Requires physical hardware manipulation in a sub-second window; not untrusted-data reachable.
@@ -648,42 +660,50 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: handleReadable does `m_buffer += QString::fromUtf8(m_socket->readAll())` (379) with NO cap. handleGreeting waits for '/r/n' (404) and tagged handling waits for a complete line, so a server streaming bytes without a line terminator grows m_buffer unbounded. kImapReadBufferSize (line 27) is declared but grep confirms it is used nowhere. A malicious/MITM IMAP server = untrusted network peer. Not covered by R3 (which fixed greeting-parse and input coercion, not the buffer ceiling).
   - Fix: cap m_buffer to a max response size; failConnection(protocol_error) once exceeded before a complete line arrives
-- [ ] **R5-P6-6** [LOW] [PARTIAL] PST data-tree size cap checked only after append (~2 GiB transient)
+- [x] **R5-P6-6** [LOW] [PARTIAL] PST data-tree size cap checked only after append (~2 GiB transient)
+  - RESOLVED 2026-08-11 [already-correct]: readXblockChildren/readXxblockChildren already check result.size()+child_data.size()>cap BEFORE append (fixed wave 9), holding peak near 1GiB.
   - Files: src/core/pst_parser.cpp:1792, src/core/pst_parser.cpp:1823
   - Boundary: untrusted-input (reachable)
   - Evidence: kMaxAssembledDataTreeSize=1GiB (line 83). readXblockChildren/readXxblockChildren append child_data THEN check result.size()>cap (1792/1823). A nested child can itself return ~1GiB, so parent peaks ~2GiB before rejection. Bounded (shared visited set means total<=sum of distinct blocks, i.e. requires a genuinely multi-GiB file); not unbounded OOM as claimed.
   - Fix: check result.size()+child_data.size()>cap BEFORE append (or cap child contribution) to hold peak at ~1GiB
-- [ ] **R5-P6-10** [LOW] [PARTIAL] Export confinement is lexical only; junctions/symlinks redirect writes outside root
+- [x] **R5-P6-10** [LOW] [PARTIAL] Export confinement is lexical only; junctions/symlinks redirect writes outside root
+  - RESOLVED 2026-08-11 [fixed]: eml/html/pdf export writers now resolve the final target through reparse points (realCanonicalPath via GetFinalPathNameByHandleW + deepestExistingAncestor + real-root containment, mirroring EmailProfileManager::destinationWithinRoot) and reject targets whose real path leaves the output root, returning the existing path_traversal_attempt; runs only on the preserve-folders subfolder vector so a straight export to the picked root is untouched.
   - Files: src/core/eml_writer.cpp:232, src/core/html_email_writer.cpp:104, src/core/pdf_email_writer.cpp:60
   - Boundary: local-config-or-registry (reachable)
   - Evidence: subfolderEscapes in eml/html/pdf writers is purely lexical (QDir::cleanPath+startsWith, 232/104/60); no reparse-point resolution. mbox getOrCreateFile opens WriteOnly|Truncate (182) so a pre-planted junction target is truncated. Contrast email_profile_manager::destinationWithinRoot (738-768) which DOES resolve reparse points via realCanonicalPath+deepestExistingAncestor -- the export writers were not given that hardening. Requires a local attacker to pre-plant a junction under the user-chosen output dir; content written is the user's own mail.
   - Fix: resolve final target through reparse points (reuse destinationWithinRoot pattern) and reject targets whose real path leaves the output root
-- [ ] **R5-P6-12** [LOW] [DUP_R4] MBOX writer live truncating file, no per-message rollback; finalize ignores flush/close errors
+- [x] **R5-P6-12** [LOW] [DUP_R4] MBOX writer live truncating file, no per-message rollback; finalize ignores flush/close errors
+  - RESOLVED 2026-08-11 [already-correct]: closeOneFile already flush()es, close()s, checks error(), latches m_failed, and finalize's failure is surfaced via hadFailure() which OstConversionWorker::finalizeWriters consumes (appends to errors + emits errorOccurred). finalize stays void by design (also called from the dtor).
   - Files: src/core/mbox_writer.cpp:109, src/core/mbox_writer.cpp:133, src/core/mbox_writer.cpp:147
   - Boundary: untrusted-input (reachable)
   - Evidence: writeMessage fails closed on short write (122-127, explicit corruption comment). Truncate-once-per-run is deliberate (177-181, B7-32). finalize (133-141) calls QFile::close() (void return in Qt, no error to check). No flush()+error check is a minor residual. This is R3:328/333 wave E2, adjudicated LOW.
   - Fix: optional: flush() and check error() in finalize(); surface a finalize failure to the caller
-- [ ] **R5-P6-13** [LOW] [PARTIAL] Cancelled OST conversion can classify Complete; empty page before content_count ends silently
+- [x] **R5-P6-13** [LOW] [PARTIAL] Cancelled OST conversion can classify Complete; empty page before content_count ends silently
+  - RESOLVED 2026-08-11 [fixed]: added result.cancelled (set by convert() on worker-observed cancel); classifyOutcome returns Cancelled first when set (never Complete), and onWorkerFinished counts it into files_cancelled preserving succeeded+failed+cancelled==total. Additive default-false bool on OstConversionResult.
   - Files: src/core/ost_conversion_worker.cpp:502, src/core/ost_conversion_worker.cpp:520, src/core/ost_converter_controller.cpp:271
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: loadAndProcessFolderItems counts remaining as items_failed on read failure (509-511, R3:324) but breaks silently on a successful-but-empty page (520-522) -- defensible since PR_CONTENT_COUNT can legitimately exceed actual table rows. User-driven cancel is marked Status::Cancelled by controller cancel path (147); classifyOutcome (271-280) ignores cancellation, so a worker that self-terminates on cancel and flows through onWorkerFinished could misclassify Complete. Cancellation is not attacker-reachable.
   - Fix: have classifyOutcome treat a cancelled result as Cancelled/Failed (add a result.cancelled flag set by convert())
-- [ ] **R5-P6-18** [LOW] [PARTIAL] Search treats parse failures/cancellation as non-matches, emits searchComplete with partial results
+- [x] **R5-P6-18** [LOW] [PARTIAL] Search treats parse failures/cancellation as non-matches, emits searchComplete with partial results
+  - RESOLVED 2026-08-11 [fixed]: PST/MBOX per-item detail/property read failures now increment a per-search counter and emit a single errorOccurred('N item read failure(s); results may be incomplete') before the terminal searchComplete (previously silent non-matches). The distinct-cancelled-outcome sub-part needs a header-level new signal (sibling AdvancedSearchWorker already has it) -- deferred-with-rationale; the cancel initiator already knows it cancelled.
   - Files: src/core/email_search_worker.cpp:83, src/core/email_search_worker.cpp:105, src/core/email_search_worker.cpp:311
   - Boundary: untrusted-input (reachable)
   - Evidence: searchSingleFolder surfaces a folder-read failure via errorOccurred (105-107, explicit comment) -- the main claim is guarded. But matchPstItem skips body/attachment/recipient matchers when readItemDetail fails (311-322) and matchPstItemMapiProperty returns nullopt when readItemProperties fails (375) -- unparseable items become silent non-matches; cancel breaks and still emits searchComplete (84-91). Read-only best-effort search feature; missing a hit is not attacker-harmful.
   - Fix: optional: surface item-detail/property read failures (errorOccurred or a searched-with-errors flag) and emit a distinct cancelled outcome
-- [ ] **R5-P6-19** [LOW] [ALREADY_GUARDED] Report files truncating; short writes leave partial files; second-report failure leaves first behind
+- [x] **R5-P6-19** [LOW] [ALREADY_GUARDED] Report files truncating; short writes leave partial files; second-report failure leaves first behind
+  - RESOLVED 2026-08-11 [fixed]: generateReport's failure branch now removes whichever report file (html or json) was successfully written so a partial pair is not left behind; op still reported failed.
   - Files: src/core/email_inspector_controller.cpp:26, src/core/email_inspector_controller.cpp:405
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: writeReportFile uses sak::writeFully and rejects short writes (33-40, B7-18). The caller requires BOTH html_ok && json_ok and fails closed otherwise (415-419, B7-B). Residual is only that a leftover first file is not cleaned up when the second write fails -- cosmetic, and the op is reported failed, not success.
   - Fix: optional: remove the first report file if the second write fails
-- [ ] **R5-P6-20** [LOW] [PARTIAL] Unchecked integer arithmetic/casts (pagination, indices, IDs, counts)
+- [x] **R5-P6-20** [LOW] [PARTIAL] Unchecked integer arithmetic/casts (pagination, indices, IDs, counts)
+  - RESOLVED 2026-08-11 [fixed]: countTotalItems now accumulates untrusted content_count in int64_t and saturates at INT_MAX after each add (no signed-int overflow UB), then narrows to the int the API exposes; mbox_parser already guarded.
   - Files: src/core/pst_parser.cpp:2876, src/core/pst_parser.cpp:3350, src/core/mbox_parser.cpp:195
   - Boundary: untrusted-input (reachable)
   - Evidence: readContentsTable now std::clamp(offset,0,rows.size()) with an explicit overflow comment (2876) -- guarded; tcRowOffset does uint64 math (2326) -- guarded; mbox pagination is bounds-checked in readRawMessage (372). Residual: countTotalItems (3350-3360) sums untrusted folder.content_count into a signed int recursively -> signed overflow UB on a crafted store with many large content_counts.
   - Fix: accumulate countTotalItems in int64_t (or saturating) and clamp; audit the remaining split/aggregate casts
-- [ ] **R5-P6-21** [LOW] [PARTIAL] PST 4K decompression accepts any nonempty result without checking declared uncompressed size
+- [x] **R5-P6-21** [LOW] [PARTIAL] PST 4K decompression accepts any nonempty result without checking declared uncompressed size
+  - RESOLVED 2026-08-11 [fixed]: decompressBlockIf4k now rejects decompressed.size()!=footer-declared uncompressed_size with pst_decompression_failed; valid Unicode4k blocks inflate to exactly the declared size by spec, so no false-close.
   - Files: src/core/pst_parser.cpp:1921
   - Boundary: untrusted-input (reachable)
   - Evidence: decompressBlockIf4k reads footer uncompressed_size (1921), qUncompress with a BE size prefix, and only rejects an EMPTY result (1937-1942). It never asserts decompressed.size()==uncompressed_size. The compressed raw bytes are CRC+wSig authenticated by the block trailer (wave F), and downstream heap reads are bounds-checked, so a size mismatch is non-exploitable but is an unverified invariant.
@@ -694,7 +714,8 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: plainAuthCommand/xoauth2 build QByteArray/QString with the user's own password (314-320) that are not scrubbed. This concerns the user's OWN credentials, not attacker-reachable data; QString/QByteArray implicit sharing makes reliable in-place wiping unreliable. QAbstractSocket::write(<0) is the standard error check (a buffered socket queues the full payload). Defense-in-depth hardening, not a fail-open on untrusted input.
   - Fix: optional: hold secrets in a wiped QByteArray and clear after AUTH; not security-critical
-- [ ] **R5-P6-23** [LOW] [CONFIRMED_REAL] Filename-conflict handling falls back to an unchecked timestamp candidate
+- [x] **R5-P6-23** [LOW] [CONFIRMED_REAL] Filename-conflict handling falls back to an unchecked timestamp candidate
+  - RESOLVED 2026-08-11 [fixed]: resolveFilenameConflict now existence-checks the timestamp candidate and returns an empty QString (fail closed) if it too collides, instead of an unchecked overwrite; omits the trailing dot when ext is empty. Empty name makes the caller's open() fail closed.
   - Files: src/core/email_export_worker.cpp:1310
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: resolveFilenameConflict loops _1.._9999 checking existence (1299-1307), then unconditionally returns `base_<ms-epoch>.ext` WITHOUT an existence check (1310-1311) -- a fallback that can collide and overwrite, and produces a trailing dot when ext is empty. Violates the no-fallback/fail-closed rule, though reaching it needs 9999 same-base collisions and a same-ms timestamp collision (practically negligible).

@@ -32,6 +32,16 @@ constexpr int kSettingsCaptureMaxAttempts = 3;
 constexpr int kSettingsCaptureInitialWaitMs = kTimerStatusBriefMs;
 constexpr int kSettingsCaptureRetryWaitMs = kTimerProgressPollMs;
 constexpr int kScreenshotReportFieldWidth = 61;
+
+// PID of the SystemSettings.exe window most recently matched by captureSettingsWindow, so
+// closeSettingsApp() can terminate exactly that instance by PID instead of every
+// SystemSettings.exe by image name (which would also close an unrelated Settings window the
+// user had open). 0 means "no instance tracked" -> fall back to the image-name kill.
+// thread_local: each ScreenshotSettingsAction runs its whole capture loop on its own worker
+// thread, so concurrent actions never share this value. Set at the start of each
+// captureSettingsWindow lookup and consumed (reset to 0) by closeSettingsApp() so a later
+// call can never target a now-dead (or OS-reused) PID.
+thread_local DWORD g_captured_settings_pid = 0;
 }  // namespace
 
 ScreenshotSettingsAction::ScreenshotSettingsAction(const QString& output_location, QObject* parent)
@@ -235,10 +245,20 @@ void ScreenshotSettingsAction::closeSettingsApp() {
             QStringLiteral("Settings close skipped: cannot resolve System32 taskkill.exe path"));
         return;
     }
-    const ProcessResult close_proc = runProcess(taskkill,
-                                                QStringList()
-                                                    << "/IM" << "SystemSettings.exe" << "/F",
-                                                sak::kTimeoutProcessMediumMs);
+    // Prefer terminating the exact SystemSettings.exe instance we captured, tracked by PID,
+    // rather than every SystemSettings.exe by image name. The /IM form is used only when no
+    // specific instance was tracked (a cancel, or a not-running retry where we never matched a
+    // Settings window) -- best-effort cleanup of anything we launched, not an error-silencing
+    // fallback. Consume the tracked PID so a subsequent call cannot target a now-dead PID.
+    const DWORD tracked_pid = g_captured_settings_pid;
+    g_captured_settings_pid = 0;
+    QStringList kill_args;
+    if (tracked_pid != 0) {
+        kill_args << "/PID" << QString::number(tracked_pid) << "/F";
+    } else {
+        kill_args << "/IM" << "SystemSettings.exe" << "/F";
+    }
+    const ProcessResult close_proc = runProcess(taskkill, kill_args, sak::kTimeoutProcessMediumMs);
     if (!close_proc.succeeded()) {
         Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
     }
@@ -247,6 +267,9 @@ void ScreenshotSettingsAction::closeSettingsApp() {
 bool ScreenshotSettingsAction::captureSettingsWindow(const QDir& output_dir,
                                                      const QString& page_name,
                                                      const QString& timestamp) {
+    // Clear any PID tracked by a previous lookup so a stale (possibly OS-reused) PID cannot be
+    // targeted by closeSettingsApp() if this lookup finds no Settings window.
+    g_captured_settings_pid = 0;
     // Find the Settings window by enumerating top-level windows
     HWND settings_hwnd = nullptr;
     EnumWindows(
@@ -288,6 +311,14 @@ bool ScreenshotSettingsAction::captureSettingsWindow(const QDir& output_dir,
                         page_name.toStdString());
         return false;
     }
+
+    // Track the matched SystemSettings.exe instance by the owning PID of the window we are about
+    // to capture, so closeSettingsApp() closes exactly this window rather than every
+    // SystemSettings.exe. The launch goes through explorer/ms-settings, which hands off to a
+    // single-instance Settings process, so explorer's own PID is not this window's owner -- take
+    // the owner PID from the matched window itself. If the window vanished (returns 0) the tracker
+    // stays 0 and closeSettingsApp() cleans up by image name instead.
+    GetWindowThreadProcessId(settings_hwnd, &g_captured_settings_pid);
 
     const QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
     // grabWindow must run on the GUI thread; execute() runs on the worker thread, so marshal it.
