@@ -9,6 +9,7 @@
 #include "sak/uup_dump_api.h"
 #include "sak/windows_iso_downloader.h"
 
+#include <QSet>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
@@ -52,6 +53,18 @@ void WindowsISODownloaderTests::cleanupTestCase() {
 }
 
 void WindowsISODownloaderTests::init() {
+    // The tests that hit the third-party UUP dump API over the network are opt-in, so the
+    // automated suite skips them DETERMINISTICALLY (a network-dependent pass/skip is exactly the
+    // accidental environment dependence G18-5 bans, and it made the skip baseline flaky). A
+    // technician runs the real API by setting SAK_RUN_LIVE_UUP_TESTS. Centralised here so the
+    // guard lives in one place rather than three test bodies.
+    static const QSet<QString> live_network_tests = {QStringLiteral("testFetchBuilds"),
+                                                     QStringLiteral("testGetFilesReturnsResults"),
+                                                     QStringLiteral("testFileUrlsAreValid")};
+    if (live_network_tests.contains(QString::fromLatin1(QTest::currentTestFunction())) &&
+        !qEnvironmentVariableIsSet("SAK_RUN_LIVE_UUP_TESTS")) {
+        QSKIP("Live UUP dump API network test; set SAK_RUN_LIVE_UUP_TESTS=1 to run");
+    }
     downloader = new WindowsISODownloader(this);
     api = new UupDumpApi(this);
 }
@@ -101,6 +114,7 @@ void WindowsISODownloaderTests::testAvailableChannels() {
  * Should emit buildsFetched with at least one result.
  */
 void WindowsISODownloaderTests::testFetchBuilds() {
+    // Opt-in live network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set.
     QSignalSpy buildsSpy(downloader, &WindowsISODownloader::buildsFetched);
     QSignalSpy errorSpy(downloader, &WindowsISODownloader::downloadError);
 
@@ -173,6 +187,7 @@ void WindowsISODownloaderTests::testChannelDisplayNames() {
  * Verifies the URL validation logic accepts Microsoft CDN HTTP URLs.
  */
 void WindowsISODownloaderTests::testGetFilesReturnsResults() {
+    // Opt-in live network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set.
     // First fetch a build UUID from the API
     QSignalSpy buildsSpy(api, &UupDumpApi::buildsFetched);
     QSignalSpy buildErrorSpy(api, &UupDumpApi::apiError);
@@ -220,6 +235,7 @@ void WindowsISODownloaderTests::testGetFilesReturnsResults() {
  * Verifies filenames are safe (no path traversal) and URLs are valid.
  */
 void WindowsISODownloaderTests::testFileUrlsAreValid() {
+    // Opt-in live network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set.
     // First fetch a build UUID
     QSignalSpy buildsSpy(api, &UupDumpApi::buildsFetched);
     QSignalSpy buildErrorSpy(api, &UupDumpApi::apiError);
