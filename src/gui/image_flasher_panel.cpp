@@ -663,10 +663,14 @@ void ImageFlasherPanel::onOpenMicrosoftWindowsDownloadClicked() {
     const QUrl microsoft_windows_iso_url("https://www.microsoft.com/software-download/windows11");
     if (!QDesktopServices::openUrl(microsoft_windows_iso_url)) {
         logWarning("Could not open the Microsoft download page in your default browser.");
+        // Tell the user what to do next: the URL is a fixed, author-controlled literal, so
+        // handing it back for a manual copy/paste is safe and leaves them a way forward.
         sak::showWarningLogged(
             this,
             "Unable to Open Browser",
-            "Could not open the Microsoft download page in your default browser.");
+            QString("Could not open the Microsoft download page in your default browser.\n\n"
+                    "Open this address manually in a browser:\n%1")
+                .arg(microsoft_windows_iso_url.toString()));
     }
 }
 
@@ -1319,8 +1323,16 @@ void ImageFlasherPanel::beginConfirmedFlash(bool is_windows_iso) {
 
     // Use raw disk imaging for other ISOs
     if (!m_flashCoordinator->startFlash(m_selectedImagePath, m_selectedDrives)) {
-        m_isFlashing = false;
-        onFlashError("Failed to start flash operation - flash coordinator returned error");
+        // startFlash fails closed: every false-return path first emits flashError, wired to
+        // onFlashError on this same thread, so the specific reason has already been shown and
+        // m_isFlashing reset before startFlash returned. Only surface a generic last-resort
+        // error if -- against that contract -- nothing did, so a refused start can never leave
+        // the panel stuck on the progress page with no message. Naming the coordinator, as the
+        // old text did, leaked an internal identifier and told the user nothing to act on.
+        if (m_isFlashing) {
+            m_isFlashing = false;
+            onFlashError("The flash could not be started, and no reason was reported.");
+        }
     }
 }
 

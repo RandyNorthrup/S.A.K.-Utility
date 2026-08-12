@@ -4884,7 +4884,9 @@ void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString
 
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        Q_EMIT statusMessage(tr("Failed to open file for writing"), sak::kTimerStatusMessageMs);
+        Q_EMIT statusMessage(
+            tr("Could not open '%1' for CSV export: %2").arg(path, file.errorString()),
+            sak::kTimerStatusMessageMs);
         return;
     }
 

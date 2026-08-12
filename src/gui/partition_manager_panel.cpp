@@ -11602,7 +11602,14 @@ void PartitionManagerPanel::onWipeSelected() {
 
 void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& result) {
     Q_EMIT logOutput(result.report_html);
-    showInformationLogged(this, tr("Partition Manager"), result.message);
+    // Surface a failed or timed-out apply as a warning rather than an information popup so the
+    // technician can tell at a glance the operation did not complete; a user-initiated cancel is
+    // an expected outcome and stays informational.
+    if (result.success || result.cancelled) {
+        showInformationLogged(this, tr("Partition Manager"), result.message);
+        return;
+    }
+    showWarningLogged(this, tr("Partition Manager"), result.message);
 }
 
 std::optional<PartitionTarget> PartitionManagerPanel::selectedTarget() const {

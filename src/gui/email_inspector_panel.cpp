@@ -716,6 +716,7 @@ QWidget* EmailInspectorPanel::createContentTab() {
     // on a link activation. See sak/email_safe_text_browser.h.
     m_content_browser = new EmailSafeTextBrowser(this);
     m_content_browser->setAccessibleName(QStringLiteral("Email Content"));
+    m_content_browser->setPlaceholderText(tr("Select an email to preview its contents"));
     m_content_browser->setStyleSheet(ui::emailContentBrowserStyle());
     layout->addWidget(m_content_browser, 1);
 
@@ -726,6 +727,7 @@ QWidget* EmailInspectorPanel::createHeadersTab() {
     m_headers_browser = new QTextBrowser(this);
     m_headers_browser->setReadOnly(true);
     m_headers_browser->setAccessibleName(QStringLiteral("Email Headers"));
+    m_headers_browser->setPlaceholderText(tr("Select an email to view its transport headers"));
     const QFont mono_font(QStringLiteral("Consolas"), ui::kFontSizeNote);
     m_headers_browser->setFont(mono_font);
     return m_headers_browser;

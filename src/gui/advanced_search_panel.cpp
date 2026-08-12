@@ -1386,6 +1386,14 @@ void AdvancedSearchPanel::onSearchFinished(int total_matches, int total_files, b
     Q_EMIT progressUpdate(total_matches, total_matches);
     m_results_count_label->setText(
         tr("(%1 matches, %2 files)").arg(total_matches).arg(total_files));
+    if (total_matches == 0 && m_results_tree != nullptr &&
+        m_results_tree->topLevelItemCount() == 0) {
+        // Designed empty state: a finished search with no hits would otherwise
+        // leave the results tree a blank widget, reading as "nothing happened".
+        auto* empty_item = new QTreeWidgetItem(m_results_tree);
+        empty_item->setText(0, tr("No matches found."));
+        empty_item->setFlags(Qt::NoItemFlags);
+    }
     if (!complete) {
         // The log pane is the durable record of the run. Writing "Search complete"
         // here for a run that skipped files would contradict the status bar and
@@ -1628,7 +1636,10 @@ void AdvancedSearchPanel::showFilePreview(const QString& file_path,
 
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        m_preview_edit->setPlainText(tr("Unable to open file: %1").arg(file_path));
+        // Name the real reason (permission denied, missing, locked) so the
+        // technician can act, not just the path that would not open.
+        m_preview_edit->setPlainText(
+            tr("Unable to open file %1: %2").arg(file_path, file.errorString()));
         return;
     }
 

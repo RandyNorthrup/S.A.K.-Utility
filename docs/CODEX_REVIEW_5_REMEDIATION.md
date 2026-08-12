@@ -45,7 +45,25 @@ USER DECISIONS (do not re-litigate):
 
 - G23-3 CI startup-time perf budget DONE (check_startup_budget.ps1, wired to CI).
 
-IN FLIGHT / NEXT: G20 UX audit (7 dimensions).
+- G20 UX audit DONE (7-agent qualitative sweep of the GUI panels). Dims 1/4/5 stay
+  gate-enforced (accessible-name / nested-event-loop / style-token + magic-number gates).
+  Dims 2/3/6/7 audited by hand: 12 SAFE fixes landed via existing plumbing across 8 files
+  (empty-state rows + browser placeholders; 6 vague/leaky error messages named; deployment
+  error-teardown; partition warn-vs-info on failed apply); every gap needing NEW UI structure
+  or worker-cancel plumbing is recorded as written backlog under each G20 item. See the G20
+  section for the fixed/backlog split.
+
+DEFERRED [~] G20 backlog (needs new UI infra / worker-cancel plumbing, not safe drop-ins):
+per-action Cancel buttons on ~12 long operations; QTableWidget/QListWidget overlay
+empty/loading states; calendar month/year keyboard operability + partition ribbon mnemonics;
+installed_apps.json copy-review pass.
+
+KNOWN FLAKE (to root-cause, unrelated to any shipped diff): during the G20 gate,
+test_offline_package_builder (integration, real-FS offline bundle build) failed once at ~240s
+(TIMEOUT is 900s, so not a timeout), then PASSED on isolated rerun (229s) AND on a full serial
+re-run of the whole suite (226/226). It links no GUI code, so it is not caused by the
+GUI-only G20 change. Root-cause of the intermittent failure is tracked for the reliability
+tier; the failure log was overwritten by the passing rerun, so capture it on the next flake.
 
 DEFERRED [~] as large multi-session frameworks (not selected): G14 fuzz/coverage/mutation,
 G18 test-quality, G23-1 concurrency harness, G23-2 crash reporting, G23-4 hostile-env matrix,
@@ -3790,24 +3808,31 @@ So the suite itself must be audited for tests that pass regardless of the code.
 
 - [~] R5-G20-1 Every interactive widget has an accessible name and a sensible tab order
   - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
+  - AUDIT 2026-08-12: 7-agent qualitative sweep of the GUI panels (email/partition/file_explorer/diagnostics/deployment/backup_restore/flash_uninstall). Accessible names stay gate-enforced (G8-5). Tab order confirmed sensible in the audited panels (all controls Tab-reachable QToolButtons/widgets in creation order; every context-menu action mirrored by a Tab-reachable sidebar link). BACKLOG (mouse-only reach): the calendar month/year quick-jump QLabels are pointer-only -- keyboard-operability is a focus-policy design change tracked under G20-6.
 - [~] R5-G20-2 Every long-running action shows progress, is cancellable, and the cancel
   - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
       actually stops the work rather than detaching it
+  - AUDIT 2026-08-12: FIXED (safe, existing plumbing) the deployment offline operationError handler -- a terminal error left the progress bar, its label, and the Cancel button stranded on a finished op with no in-panel reason; it now tears them down and shows "Failed: <reason>", mirroring operationCompleted. BACKLOG (needs new worker-cancel plumbing + real abort verification, out of safe scope): add a Cancel affordance to the email open/export, partition data-recovery/browse-non-native, file_explorer disk-scan/hash, diagnostics iperf3/http-speed/benchmark/SFC, deployment package-search, backup_restore choco-install/user-scan, and advanced-uninstall enumerate/uninstall/cleanup long actions; each requires moving work off-thread and threading a cancel token, and verifying the existing cancelOperation()/cancelCurrent()/cancelOperation APIs truly stop the worker rather than detach it.
 - [~] R5-G20-3 Every error surfaced to the user says what failed and what to do about it,
   - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
       with no raw error codes or internal identifiers leaking into the message
+  - AUDIT 2026-08-12: FIXED (safe, unique messages, uniqueness-gate clean) 6 error strings that were vague or leaked internals: advanced_search preview open-fail now appends QFile::errorString(); network CSV-export open-fail now names the path + OS reason (also removed a cross-file duplicate string); app-install save-list fail now names the target file; image_flasher browser-open fail now hands back the Microsoft URL for manual use; image_flasher startFlash-refused no longer leaks "flash coordinator returned error" (guarded fallback, since every false path already surfaced the real reason); partition apply now shows a WARNING (not an information popup) on failure/timeout so a failed destructive apply is not indistinguishable from success. BACKLOG (copy-review pass, not single-string safe): the profile-restore status strings that reference the internal artifact name installed_apps.json.
 - [~] R5-G20-4 No blocking of the GUI thread: close out the 10 measured nested event loop
   - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
       and processEvents violations
+  - AUDIT 2026-08-12: the sweep also surfaced synchronous-on-the-GUI-thread work (partition data-recovery/browse-non-native, file_explorer disk-scan, backup_restore WindowsUserScanner::scanUsers) that overlaps this item; each needs the same off-thread move as its G20-2 cancel backlog entry. Gate ("Nested event loop / unbounded wait check") stays wired; the measured sites remain the tracked backlog.
 - [~] R5-G20-5 Consistent visual language: all styling through the token system, zero raw
   - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
       stylesheet literals, zero magic layout numbers
+  - AUDIT 2026-08-12: gate-enforced (GUI style-token + magic-number gates). The audit's own fixes added no raw stylesheet literals and no magic layout numbers, so the gates stay green.
 - [~] R5-G20-6 Keyboard operability for every flow that a technician uses under time
   - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
       pressure, and no state that can only be reached by mouse
+  - AUDIT 2026-08-12: audited panels are keyboard-operable -- primary/destructive actions are Tab-reachable and every mouse context action has a keyboard-reachable duplicate, so no state is mouse-only EXCEPT the calendar month/year quick-jump QLabels (also reachable via the keyboard Prev/Next/Today buttons). BACKLOG (design pass, not a safe one-liner): give those labels a focus policy + Enter/Space handling + a focus indicator; add Alt-mnemonics to the partition ribbon actions (needs a collision-free set across ~30 labels).
 - [~] R5-G20-7 Empty, loading, partial and error states designed for every panel, not
   - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
       just the success path
+  - AUDIT 2026-08-12: FIXED (safe, existing patterns) the cases with an in-place designed-state hook: advanced_search now shows a disabled "No matches found." row on a zero-hit search; app-install online results now show a disabled "No packages found" row (parity with the offline search); the email Content and Headers browsers now carry placeholder text before a message is selected; the profile-restore corrupt-app-list branch now sets BOTH labels to a coherent error instead of a contradictory "none/invalid". BACKLOG (needs a new QTableWidget/QListWidget overlay empty-state pattern the panels lack -- new UI structure, unverifiable by ctest): in-table empty/loading states for the partition inventory table + disk map, the email item/MAPI/attachments tables, the diagnostics result tables + SMART table, the deployment queue/offline lists + pristine result tables, the profile-restore mapping/merge/folder tables, and the advanced-uninstall program table.
 
 ### G21 - gate coherence and regression-proofing
 

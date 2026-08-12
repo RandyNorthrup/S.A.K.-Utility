@@ -839,6 +839,15 @@ void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
             [this](const QString& error) {
                 sak::logError("[AppInstallationPanel] Offline error: {}", error.toStdString());
                 Q_EMIT logOutput(QString("ERROR: %1").arg(error));
+                // operationError is terminal (no operationCompleted follows). Mirror the
+                // completion teardown so an error after operationStarted does not strand the
+                // progress bar, its label, and the Cancel button; show the reason in the
+                // status label too, so the error state is visible without opening the log.
+                m_offlineProgressBar->setVisible(false);
+                m_offlineProgressLabel->setVisible(false);
+                m_cancelOfflineButton->setVisible(false);
+                m_offlineStatusLabel->setText(tr("Failed: %1").arg(error));
+                m_offlineStatusLabel->setVisible(true);
                 setOfflineInProgressUi(false);
             });
 

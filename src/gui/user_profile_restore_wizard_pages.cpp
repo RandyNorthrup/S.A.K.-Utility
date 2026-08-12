@@ -1808,6 +1808,8 @@ void UserProfileRestoreAppRestorePage::loadApps() {
 
     if (!doc.isArray()) {
         m_statusLabel->setText(tr("Invalid installed_apps.json format"));
+        m_summaryLabel->setText(
+            tr("The backup's application list is corrupted -- no apps are available to restore"));
         return;
     }
 

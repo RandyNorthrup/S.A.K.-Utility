@@ -178,6 +178,14 @@ void AppInstallationPanel::onSearchCompleted(bool success,
         sak::logInfo("[AppInstallationPanel] Search completed successfully ({} bytes output)",
                      output.size());
         updateResultsFromSearch(output);
+        // Parity with the offline search: a successful search that matched nothing shows a
+        // designed empty state rather than a blank table.
+        if (m_onlineResultsModel->rowCount() == 0) {
+            m_onlineResultsModel->setRowCount(1);
+            auto* empty_item = new QStandardItem(tr("No packages found"));
+            empty_item->setEnabled(false);
+            m_onlineResultsModel->setItem(0, RColPackage, empty_item);
+        }
         return;
     }
 
@@ -835,7 +843,9 @@ void AppInstallationPanel::onSaveOfflineList() {
         Q_EMIT logOutput(QString("Package list saved: %1").arg(file_path));
     } else {
         sak::logError("[AppInstallationPanel] Failed to save package list");
-        sak::showWarningLogged(this, tr("Save Failed"), tr("Could not save the package list."));
+        sak::showWarningLogged(this,
+                               tr("Save Failed"),
+                               tr("Could not write the package list to file:\n%1").arg(file_path));
     }
 }
 
