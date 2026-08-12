@@ -25,6 +25,7 @@
 #include "sak/pst_parser.h"
 
 #include "../fuzz/fuzz_harness.h"
+#include "../support/pst_fixture.h"
 
 #include <QByteArray>
 #include <QDir>
@@ -151,6 +152,14 @@ std::vector<QByteArray> pstCorpus() {
         QByteArray(kHeaderSize, '\xFF'),
         buildUnicodeHeaderSeed(),
         buildAnsiHeaderSeed(),
+        // A store with genuine header CRCs AND genuine Node/Block BTree PAGETRAILERs, but
+        // empty BTrees. Unlike the header-only seeds it survives the trailer checks, so the
+        // parser walks INTO parseBTreePage, verifyPageTrailer (success), and buildFolderHierarchy
+        // before failing closed there (no root folder node). That reaches a layer the header-only
+        // seeds never did. Full open() SUCCESS needs a message-store + root-folder fixture -- a
+        // larger build -- and is the next increment for the LTP/messaging layers (see
+        // docs/CODEX_REVIEW_5_REMEDIATION.md, R5-G14-5).
+        sak::pst_fixture::buildEmptyUnicodeStore(),
     };
 }
 

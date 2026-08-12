@@ -2159,6 +2159,7 @@ add_executable(test_fuzz_pst_parser
     ../src/core/logger.cpp
     ../include/sak/pst_parser.h
     fuzz/fuzz_harness.h
+    support/pst_fixture.h
 )
 set_target_properties(test_fuzz_pst_parser PROPERTIES
     AUTOMOC ON

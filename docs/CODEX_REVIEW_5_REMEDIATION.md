@@ -3452,8 +3452,18 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     (stamped with the same MS-PST weak CRC-32 the parser authenticates against), so
     mutants reach past the header-integrity gate into the page-read/BTree-load layer -
     the run log shows the parser fail-closing there ("Corrupted BTree structure",
-    "integrity check failed") without a single fault. NEXT INCREMENT: add
-    page-trailer-valid store seeds so accepted files exercise the LTP/messaging layers.
+    "integrity check failed") without a single fault. A reusable store-fixture builder
+    (tests/support/pst_fixture.h) adds a deeper seed still: genuine header CRCs AND genuine
+    Node/Block BTree PAGETRAILERs (ComputeSig + weak CRC), so it survives the trailer checks
+    and drives parseBTreePage / verifyPageTrailer (success path) / buildFolderHierarchy before
+    failing closed there. MEASURED NEXT INCREMENT (from the coverage baseline, which put
+    pst_parser.cpp at only 30.6%): the deep BTree/LTP/messaging code stays unreached because
+    every seed ultimately fails to OPEN -- an empty-BTree store has no root folder node, and a
+    byte-mutant breaks the CRC and bounces off the trailer. Reaching open() SUCCESS (and thus
+    readContentsTable / readMessage / readPropertyContext under mutation) needs a full
+    message-store + root-folder fixture, then structure-aware mutation that re-stamps the
+    CRC/trailers after corrupting the page bodies so the file stays integral. That is a
+    dedicated build, tracked here as the remaining PST-fuzz depth work.
 - [x] R5-G14-6 Fuzz harness: MBOX and EML parsers
   - RESOLVED 2026-08-12 [DONE]: two fuzz targets now cover this attacker-controlled email
     surface. (1) The untrusted-email HTML sanitizer - the highest security risk here
