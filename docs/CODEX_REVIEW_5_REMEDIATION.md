@@ -73,18 +73,25 @@ INFRA PROGRESS (user "do all", ordered crash > CI > coverage/test-quality > fuzz
   large SAL-triage fix-effort, the same class the user scoped to safe subsets for clang-tidy.
 - G18: G18-9 (the 62 QSignalSpy::wait sites) was ALREADY remediated (converted to QTRY_COMPARE);
   G18-2 vacuous asserts -- the few remaining QVERIFY(true) are documented-intentional smoke checks;
-  G18-6 skip-count gate (check_test_skips.ps1 + tests/skip_baseline.txt) is BUILT but UNWIRED;
+  G18-6 skip-count gate (check_test_skips.ps1 + tests/skip_baseline.txt) WIRED into pre-commit + CI
+  on a deterministic baseline (fa37485);
   G18-5 (3d9c88a) env-gated the three live-UUP-API tests behind SAK_RUN_LIVE_UUP_TESTS so the suite
   is network-deterministic.
+- G14 FUZZ STARTED (this pass): built the reusable MSVC-native fuzz core tests/fuzz/fuzz_harness.h
+  (deterministic fixed-seed splitmix64 mutation fuzzer, reproducible, env-widenable) and wired the
+  first two targets - PstParser via its real open() path (G14-5 [x]) and the untrusted-email HTML
+  sanitizer (G14-6 partial). Both are ordinary ctest targets so CI runs the short fuzz every build
+  (G14-14 [x]); a violation prints a hex reproducer + seed. Remaining parsers (MBOX/EML MIME, APFS,
+  HFS+, ext, ZIP, IMAP, extension-JSON) plug into the same core - byte-in seams and page-valid seeds
+  are the remaining work.
 
-REMAINING -- all genuine multi-week frameworks or network/tooling-dependent changes, awaiting the
-user's steer on scope/approach: wire the skip gate (needs the elevation-dependent skip made
-deterministic + a baseline regen); G14 OpenCppCoverage over the suite + 100% line/branch; G14 fuzz
-harnesses x8 (needs a clang-cl/MinGW build); G18-1 mutation testing; G18-4 break-every-fix; G23-1
-concurrency harness; G23-4 hostile-env matrix; G23-7 destructive-op property tests; G23-10 soak;
-G23-11 output-format compatibility; G22-10 ISO version-discovery (derive the filename from the
-rolling-dir SHA256SUMS, a downloader-architecture change that needs live-network cert); style
-re-sweep for any newly-safe subset.
+REMAINING -- all genuine multi-week frameworks or network/tooling-dependent changes: G14
+OpenCppCoverage over the suite + 100% line/branch (tool not installed locally); the remaining
+per-parser fuzz targets + a scheduled long-run CI job that archives reproducers; G18-1 mutation
+testing; G18-4 break-every-fix; G23-1 concurrency harness; G23-4 hostile-env matrix; G23-7
+destructive-op property tests; G23-10 soak; G23-11 output-format compatibility; G22-10 ISO
+version-discovery (derive the filename from the rolling-dir SHA256SUMS, a downloader-architecture
+change that needs live-network cert); style re-sweep for any newly-safe subset.
 
 KNOWN FLAKE (to root-cause, unrelated to any shipped diff): during the G20 gate,
 test_offline_package_builder (integration, real-FS offline bundle build) failed once at ~240s
@@ -3430,10 +3437,30 @@ the elevation boundary, or the AI tool policy those tests actually execute.
 - [~] R5-G14-4 Add a clang-cl or MinGW build so UBSan is reachable at all (MSVC does not
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
       implement UBSan or TSan); run the suite under UBSan
-- [~] R5-G14-5 Fuzz harness: PST/OST parser
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+- [x] R5-G14-5 Fuzz harness: PST/OST parser
+  - RESOLVED 2026-08-12 [DONE]: built the reusable MSVC-native fuzz core
+    (tests/fuzz/fuzz_harness.h): a fixed-seed splitmix64 PRNG expands a seed corpus by
+    byte mutations (bitflip, boundary-byte, erase, truncate, duplicate, insert), so a
+    failing iteration is reproducible byte-for-byte and the run is a deterministic ctest
+    gate, not a flaky (SAK_FUZZ_ITERS / SAK_FUZZ_SEED widen it for a nightly). Wired the
+    PST/OST parser to it in tests/unit/test_fuzz_pst_parser.cpp: thousands of mutated
+    files go through the real PstParser::open() -> folderTree() -> allNodeIds() ->
+    readItemDetail() pipeline; the invariant is crash-safety and termination (a rejected
+    file is a correct fail-closed outcome). Seeds carry CRC-valid ANSI and Unicode headers
+    (stamped with the same MS-PST weak CRC-32 the parser authenticates against), so
+    mutants reach past the header-integrity gate into the page-read/BTree-load layer -
+    the run log shows the parser fail-closing there ("Corrupted BTree structure",
+    "integrity check failed") without a single fault. NEXT INCREMENT: add
+    page-trailer-valid store seeds so accepted files exercise the LTP/messaging layers.
 - [~] R5-G14-6 Fuzz harness: MBOX and EML parsers
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+  - PARTIAL 2026-08-12: the reusable fuzz core (tests/fuzz/fuzz_harness.h, see G14-5) is
+    the pattern these plug into. The untrusted-email HTML sanitizer - the same
+    attacker-controlled email surface, and the higher security risk (script/handler
+    stripping, ReDoS-prone regex passes) - is now fuzzed in
+    tests/unit/test_fuzz_email_sanitizer.cpp with two invariants that must hold for every
+    input: the sanitizer never grows its output, and it converges (a second pass is a
+    no-op). The MBOX/EML MIME parsers themselves still need a byte-in seam (both are
+    QFile+QObject today); wiring them to the core is the remaining work.
 - [~] R5-G14-7 Fuzz harness: APFS reader/writer structures
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
 - [~] R5-G14-8 Fuzz harness: HFS+ reader structures
@@ -3449,8 +3476,15 @@ the elevation boundary, or the AI tool policy those tests actually execute.
 - [~] R5-G14-13 Seed corpora from the real fixtures already in temp/ost_pst_files and the
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
       APFS/HFS cert images, and check the corpora in so runs are reproducible
-- [~] R5-G14-14 Wire a short fuzz run into CI and archive any crash reproducer
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+- [x] R5-G14-14 Wire a short fuzz run into CI and archive any crash reproducer
+  - RESOLVED 2026-08-12 [DONE]: the two fuzz harnesses are ordinary ctest targets
+    (test_fuzz_pst_parser, test_fuzz_email_sanitizer), so the CI "Run Tests" step executes
+    the short default run (kDefaultIterations) on every build - no separate job needed. On
+    a violation the harness prints a hex reproducer of the exact failing bytes plus the
+    fixed seed, so the crash input is recorded in the test log and reproducible locally.
+    A nightly can widen coverage with SAK_FUZZ_ITERS / SAK_FUZZ_SEED without a code change.
+    Remaining under this item: a scheduled long-run job that uploads any reproducer as a CI
+    artifact (the archive-on-crash half), which lands with the remaining parser targets.
 - [~] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
 - [~] R5-G14-16 Publish the coverage number per subsystem as the baseline

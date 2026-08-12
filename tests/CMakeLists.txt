@@ -2128,6 +2128,53 @@ add_test(NAME test_crash_reporter COMMAND test_crash_reporter
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_crash_reporter")
 
+# test_fuzz_email_sanitizer - deterministic mutation-fuzz of the untrusted-email
+# HTML sanitizer (G14-6/G14-12). Header-only sanitizer + reusable fuzz core; no
+# extra link deps beyond QtCore/QtTest.
+add_executable(test_fuzz_email_sanitizer
+    unit/test_fuzz_email_sanitizer.cpp
+    ../include/sak/email_html_sanitizer.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_email_sanitizer PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_email_sanitizer PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_fuzz_email_sanitizer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_email_sanitizer COMMAND test_fuzz_email_sanitizer
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_email_sanitizer.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_email_sanitizer")
+
+# test_fuzz_pst_parser - deterministic mutation-fuzz of the PST/OST binary parser
+# through the real open() path (G14-5). Mirrors test_pst_parser's link set.
+add_executable(test_fuzz_pst_parser
+    unit/test_fuzz_pst_parser.cpp
+    ../src/core/pst_parser.cpp
+    ../src/core/logger.cpp
+    ../include/sak/pst_parser.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_pst_parser PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_pst_parser PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_pst_parser PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_pst_parser COMMAND test_fuzz_pst_parser
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_pst_parser.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_pst_parser")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
