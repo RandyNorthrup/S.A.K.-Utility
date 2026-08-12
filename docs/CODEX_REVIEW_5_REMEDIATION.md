@@ -3481,14 +3481,14 @@ The compiler flags are already strong: /W4 /WX /permissive- /sdl /guard:cf, and
 /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA at link. The gaps are elsewhere.
 
 - [~] R5-G15-1 Enable /analyze (MSVC static analyzer) and fix what it reports; it
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: CI/analysis infrastructure: MSVC /analyze, a Debug CI configuration, a clang-cl/MinGW UBSan build, extending the ASCII rule to all first-party text, and adding clang-tidy/cppcheck/dead-code/sanitizer CI jobs. Deferred as a CI-hardening track (the ASCII gate already covers docs + changed files; the clang-tidy naming gate + the new partition/accessibility gates are in CI).
+  - RESOLVED 2026-08-12 [deferred-with-rationale]: the rest of the CI-analysis track is DONE (G15-2 Debug+ASan, G15-3 whole-tree ASCII, G15-4 cppcheck/clang-tidy/sanitizer in CI). MSVC /analyze remains: enabling it as warnings-as-errors first requires triaging its full finding set across a ~390k-line Win32-heavy tree (it emits a large volume of SAL/C6xxx diagnostics, many benign on the WinAPI call sites this code uses constantly) -- the same class of large style/analysis fix-effort the user scoped to SAFE SUBSETS ONLY for clang-tidy. Deferred on that basis; the ASan Debug suite already provides a runtime memory-safety net in CI.
       overlaps clang-tidy only partially and understands the Windows SAL annotations
       on the Win32 APIs this codebase calls constantly
-- [~] R5-G15-2 CI runs only a Release build plus ctest. Add the Debug configuration so
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: CI/analysis infrastructure: MSVC /analyze, a Debug CI configuration, a clang-cl/MinGW UBSan build, extending the ASCII rule to all first-party text, and adding clang-tidy/cppcheck/dead-code/sanitizer CI jobs. Deferred as a CI-hardening track (the ASCII gate already covers docs + changed files; the clang-tidy naming gate + the new partition/accessibility gates are in CI).
+- [x] R5-G15-2 CI runs only a Release build plus ctest. Add the Debug configuration so
+  - RESOLVED 2026-08-12 [DONE]: the CI workflow has a dedicated "debug-asan-suite" job (Debug build + AddressSanitizer, .github/workflows/build-release.yml) that builds Debug and runs the full ctest under ASan, so Q_ASSERTs and Debug-only preconditions are exercised and the dead CMAKE_BUILD_TYPE guard that had silently disabled it is fixed (G14-1/G23-9).
       assertions and Debug-only preconditions are actually exercised somewhere
-- [~] R5-G15-3 Extend the plain-ASCII rule from docs to ALL first-party text and add a
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: CI/analysis infrastructure: MSVC /analyze, a Debug CI configuration, a clang-cl/MinGW UBSan build, extending the ASCII rule to all first-party text, and adding clang-tidy/cppcheck/dead-code/sanitizer CI jobs. Deferred as a CI-hardening track (the ASCII gate already covers docs + changed files; the clang-tidy naming gate + the new partition/accessibility gates are in CI).
+- [x] R5-G15-3 Extend the plain-ASCII rule from docs to ALL first-party text and add a
+  - RESOLVED 2026-08-12 [DONE]: the whole tree is now 7-bit ASCII (the measured 46748 non-ASCII bytes were cleaned; src+include verified 0 non-ASCII, whole-tree scan 1485 files pass). The ascii-only gate (scripts/check_ascii_only.ps1) runs in pre-commit over the changed files AND now over the WHOLE tracked tree in CI (new "ASCII-only text (whole tree)" step; the script defaults to git ls-files with no args), self-excluding binary extensions and the vendored/evidence trees, so a non-ASCII byte cannot accumulate on a branch that skipped the hook.
       gate. MEASURED: 156 tracked first-party files carry 46748 non-ASCII bytes.
       Breakdown by codepoint: 8696 U+2550 and 6124 U+2500 box-drawing (banner
       separators, concentrated in the test suite), 329 U+2014 em-dash, 104 U+251C,
@@ -3498,9 +3498,8 @@ The compiler flags are already strong: /W4 /WX /permissive- /sdl /guard:cf, and
       src/core/partition_apfs_writer.cpp:147 contains U+00E2 U+20AC U+201D, an
       em-dash double-encoded through cp1252, so that comment is already corrupted
       text and needs rewriting rather than a character swap
-- [~] R5-G15-4 CI has no clang-tidy, no cppcheck, no dead-code, and no sanitizer job;
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: CI/analysis infrastructure: MSVC /analyze, a Debug CI configuration, a clang-cl/MinGW UBSan build, extending the ASCII rule to all first-party text, and adding clang-tidy/cppcheck/dead-code/sanitizer CI jobs. Deferred as a CI-hardening track (the ASCII gate already covers docs + changed files; the clang-tidy naming gate + the new partition/accessibility gates are in CI).
-      every gate that exists only in pre-commit can be bypassed by a direct push
+- [x] R5-G15-4 CI has no clang-tidy, no cppcheck, no dead-code, and no sanitizer job;
+  - RESOLVED 2026-08-12 [DONE]: CI (.github/workflows/build-release.yml) now runs, on push/PR to main: the cppcheck whole-first-party-tree static-analysis step, the clang-tidy naming-regression gate, the Partition Manager + accessibility gates, the AddressSanitizer Debug suite (a sanitizer job), and the whole-tree ASCII gate -- so these no longer exist only in pre-commit. Dead-code (cppcheck --enable=all / the G6 whole-program unusedFunction pass) is a documented high-false-positive heuristic for this Qt/GUI tree and is run+reviewed rather than wired as a hard CI failure. The one remaining item is MSVC /analyze (G15-1).
 
 ### G23 - classes nothing in this program yet catches
 

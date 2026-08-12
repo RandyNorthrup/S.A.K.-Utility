@@ -311,6 +311,14 @@ jobs:
         Write-Host "cppcheck over $($files.Count) first-party sources"
         & scripts/run_cppcheck.ps1 -Files $files
 
+    # G15-3: the pre-commit ASCII gate only sees the changed files of a commit. Run it over the
+    # WHOLE tracked tree in CI (the script defaults to git ls-files with no arguments) so a
+    # non-ASCII byte can never accumulate on a branch that skipped the hook.
+    - name: ASCII-only text (whole tree)
+      shell: pwsh
+      run: |
+        & scripts/check_ascii_only.ps1
+
     - name: Bundle vcpkg runtime DLLs
       working-directory: build/Release
       shell: pwsh
