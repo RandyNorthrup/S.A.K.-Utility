@@ -78,12 +78,14 @@ INFRA PROGRESS (user "do all", ordered crash > CI > coverage/test-quality > fuzz
   G18-5 (3d9c88a) env-gated the three live-UUP-API tests behind SAK_RUN_LIVE_UUP_TESTS so the suite
   is network-deterministic.
 - G14 FUZZ STARTED (this pass): built the reusable MSVC-native fuzz core tests/fuzz/fuzz_harness.h
-  (deterministic fixed-seed splitmix64 mutation fuzzer, reproducible, env-widenable) and wired the
-  first two targets - PstParser via its real open() path (G14-5 [x]) and the untrusted-email HTML
-  sanitizer (G14-6 partial). Both are ordinary ctest targets so CI runs the short fuzz every build
-  (G14-14 [x]); a violation prints a hex reproducer + seed. Remaining parsers (MBOX/EML MIME, APFS,
-  HFS+, ext, ZIP, IMAP, extension-JSON) plug into the same core - byte-in seams and page-valid seeds
-  are the remaining work.
+  (deterministic fixed-seed splitmix64 mutation fuzzer, reproducible, env-widenable) and wired three
+  targets - PstParser via its real open() path (G14-5 [x]); the untrusted-email HTML sanitizer
+  (G14-6 partial); and the two byte-framed control-bridge transports parseFrame (Chrome native
+  messaging from the browser extension) + parseJsonLine (MCP stdio JSON-RPC) in test_fuzz_mcp_framing
+  (G14-12 [x]). All are ordinary ctest targets so CI runs the short fuzz every build (G14-14 [x]); a
+  violation prints a hex reproducer + seed. Remaining parsers (MBOX/EML MIME, APFS, HFS+, ext, ZIP)
+  plug into the same core - byte-in seams and page-valid PST seeds are the remaining work; IMAP has no
+  first-party response parser to fuzz.
 
 REMAINING -- all genuine multi-week frameworks or network/tooling-dependent changes: G14
 OpenCppCoverage over the suite + 100% line/branch (tool not installed locally); the remaining
@@ -3471,8 +3473,17 @@ the elevation boundary, or the AI tool policy those tests actually execute.
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
 - [~] R5-G14-11 Fuzz harness: IMAP response reader
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
-- [~] R5-G14-12 Fuzz harness: browser-extension JSON contract
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+- [x] R5-G14-12 Fuzz harness: browser-extension JSON contract
+  - RESOLVED 2026-08-12 [DONE]: test_fuzz_mcp_framing wires the reusable core (G14-5) to
+    the two byte-framed transports the control bridge parses from untrusted peers:
+    win32mcp::parseFrame (Chrome native-messaging frames from the browser extension - a
+    4-byte little-endian length prefix + 64 MiB ceiling + endian decode + short-buffer
+    NeedMore path ahead of QJsonDocument::fromJson) and ai::mcp::parseJsonLine (the MCP
+    stdio JSON-RPC line, 16 MiB ceiling + 2.0-version-tag check). The framing contract is
+    asserted for every mutant: parseFrame's consumed count stays within [0, buffer size],
+    an Ok frame consumes a positive count, a NeedMore frame consumes nothing, and
+    re-parsing the tail never faults; parseJsonLine populates exactly one of {object,
+    error}, and any accepted object carries the 2.0 tag. Both hold across the fuzz run.
 - [~] R5-G14-13 Seed corpora from the real fixtures already in temp/ost_pst_files and the
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
       APFS/HFS cert images, and check the corpora in so runs are reproducible

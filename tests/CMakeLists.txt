@@ -2175,6 +2175,31 @@ add_test(NAME test_fuzz_pst_parser COMMAND test_fuzz_pst_parser
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_pst_parser")
 
+# test_fuzz_mcp_framing - deterministic mutation-fuzz of the two byte-framed control-
+# bridge transports (G14-12): Chrome native-messaging frames (parseFrame, needs
+# native_messaging.cpp) and the MCP stdio JSON-RPC line (parseJsonLine, header-only).
+add_executable(test_fuzz_mcp_framing
+    unit/test_fuzz_mcp_framing.cpp
+    ../src/win32mcp/native_messaging.cpp
+    ../include/sak/win32mcp/native_messaging.h
+    ../include/sak/ai/ai_mcp_jsonrpc.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_mcp_framing PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_mcp_framing PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_fuzz_mcp_framing PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_mcp_framing COMMAND test_fuzz_mcp_framing
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_mcp_framing.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_mcp_framing")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
