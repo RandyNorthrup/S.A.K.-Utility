@@ -28,6 +28,10 @@ class QVBoxLayout;
 
 namespace sak {
 
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
+
 class ChocolateyManager;
 class AppInstallationWorker;
 class MigrationReport;
@@ -218,6 +222,7 @@ private:
     // Results table
     QTableView* m_onlineResultsTable{nullptr};
     QStandardItemModel* m_onlineResultsModel{nullptr};
+    ui::ViewEmptyState* m_onlineResultsState{nullptr};  ///< empty/loading overlay
 
     // Queue section
     QListWidget* m_queueList{nullptr};
@@ -245,6 +250,7 @@ private:
     QPushButton* m_offlineSearchButton{nullptr};
     QTableView* m_offlineResultsTable{nullptr};
     QStandardItemModel* m_offlineResultsModel{nullptr};
+    ui::ViewEmptyState* m_offlineResultsState{nullptr};  ///< empty/loading overlay
     QPushButton* m_offlineAddButton{nullptr};
     QPushButton* m_offlineRemoveButton{nullptr};
     QPushButton* m_offlineClearButton{nullptr};

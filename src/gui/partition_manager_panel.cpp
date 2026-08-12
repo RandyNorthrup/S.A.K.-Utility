@@ -22,6 +22,7 @@
 #include "sak/ribbon_tool_button.h"
 #include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 
 #include <QAbstractButton>
 #include <QAbstractItemView>
@@ -8677,6 +8678,9 @@ QWidget* PartitionManagerPanel::createWorkspace(QWidget* parent) {
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     setAccessible(m_table, tr("Disk and partition table"), tr("Select a disk or partition"));
+    // QTableWidget owns its model as soon as it is constructed, so the overlay binds to a
+    // live model here. Parented to m_table, it self-manages its lifetime.
+    m_tableEmptyState = new ui::ViewEmptyState(m_table, tr("No disks scanned - click Scan Disks"));
 
     auto* workspace_splitter = new QSplitter(Qt::Vertical, workspace);
     workspace_splitter->setChildrenCollapsible(false);
@@ -8878,6 +8882,7 @@ void PartitionManagerPanel::connectController() {
 void PartitionManagerPanel::refreshInventory() {
     m_inventoryLoadStarted = true;
     updateRefreshButtonState();
+    m_tableEmptyState->setLoading(tr("Scanning disks for partitions..."));
     Q_EMIT statusMessage(tr("Scanning disks..."), 0);
     m_controller->refreshInventory();
 }
@@ -8912,6 +8917,10 @@ void PartitionManagerPanel::redoQueue() {
 void PartitionManagerPanel::rebuildTable(const PartitionInventory& inventory) {
     m_inventoryLoadStarted = true;
     updateRefreshButtonState();
+    // Single completion point for every inventory refresh (scan, apply, partial): the worker
+    // always returns an inventory, so lifting the loading overlay here fails closed with no
+    // stranded "Scanning" message even when the scan yields zero disks or warnings.
+    m_tableEmptyState->clearLoading();
     rebuildDiskMap(inventory);
     m_table->setRowCount(0);
     for (const auto& disk : inventory.disks) {

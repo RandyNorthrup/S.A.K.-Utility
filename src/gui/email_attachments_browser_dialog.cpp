@@ -12,6 +12,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 
 #include <QApplication>
@@ -214,6 +215,11 @@ QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
             this,
             &EmailAttachmentsBrowserDialog::onTableContextMenu);
 
+    // Built after the widget so the overlay binds to the live model. A loading message
+    // is driven over the table for the duration of the mailbox attachment scan.
+    m_table_empty_state = new ui::ViewEmptyState(m_table,
+                                                 tr("No attachments match the current filter"));
+
     return m_table;
 }
 
@@ -281,6 +287,7 @@ void EmailAttachmentsBrowserDialog::startScan() {
         m_status_label->setText(tr("No mailbox reader is available. Nothing was scanned."));
         return;
     }
+    m_table_empty_state->setLoading(tr("Scanning mailbox for attachments..."));
     m_folders_scanned = 0;
     m_progress_bar->setRange(0, static_cast<int>(m_all_folder_ids.size()));
     m_progress_bar->setValue(0);
@@ -314,6 +321,7 @@ void EmailAttachmentsBrowserDialog::scanNextFolder() {
         if (m_details_total == 0) {
             m_scan_complete = true;
             m_progress_bar->hide();
+            m_table_empty_state->clearLoading();
             updateStatusLabel();
             return;
         }
@@ -333,6 +341,7 @@ void EmailAttachmentsBrowserDialog::requestNextDetail() {
     if (m_details_loaded >= m_pending_detail_ids.size()) {
         m_scan_complete = true;
         m_progress_bar->hide();
+        m_table_empty_state->clearLoading();
         rebuildTable();
         updateStatusLabel();
         updateSaveControls();

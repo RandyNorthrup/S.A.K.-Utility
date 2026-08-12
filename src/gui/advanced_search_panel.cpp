@@ -14,6 +14,7 @@
 #include "sak/regex_pattern_library.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 
 #include <QApplication>
@@ -889,6 +890,11 @@ void AdvancedSearchPanel::createResultsTree() {
                   tr("Click results to preview, double-click to open in editor"));
     container_layout->addWidget(m_results_tree);
 
+    // Designed empty/loading state (R5-G20-7): the QTreeWidget's internal model
+    // exists at construction, so the overlay binds now and self-manages. Parented
+    // to the tree; setLoading/clearLoading are driven from the search handlers.
+    m_results_empty = new sak::ui::ViewEmptyState(m_results_tree, tr("No matches found."));
+
     // Connect results signals
     connect(
         m_results_tree, &QTreeWidget::itemClicked, this, &AdvancedSearchPanel::onResultItemClicked);
@@ -1307,6 +1313,9 @@ SearchConfig AdvancedSearchPanel::buildSearchConfig() const {
 
 void AdvancedSearchPanel::onSearchStarted(const QString& pattern) {
     setSearchRunning(true);
+    if (m_results_empty != nullptr) {
+        m_results_empty->setLoading(tr("Searching..."));
+    }
     Q_EMIT statusMessage(tr("Searching for: %1").arg(pattern), 0);
     Q_EMIT progressUpdate(0, 0);
     logMessage(tr("Search started: %1").arg(pattern));
@@ -1386,13 +1395,10 @@ void AdvancedSearchPanel::onSearchFinished(int total_matches, int total_files, b
     Q_EMIT progressUpdate(total_matches, total_matches);
     m_results_count_label->setText(
         tr("(%1 matches, %2 files)").arg(total_matches).arg(total_files));
-    if (total_matches == 0 && m_results_tree != nullptr &&
-        m_results_tree->topLevelItemCount() == 0) {
-        // Designed empty state: a finished search with no hits would otherwise
-        // leave the results tree a blank widget, reading as "nothing happened".
-        auto* empty_item = new QTreeWidgetItem(m_results_tree);
-        empty_item->setText(0, tr("No matches found."));
-        empty_item->setFlags(Qt::NoItemFlags);
+    // Lift the loading overlay; the shared empty state shows "No matches found."
+    // automatically when the run ends with zero rows in the results tree.
+    if (m_results_empty != nullptr) {
+        m_results_empty->clearLoading();
     }
     if (!complete) {
         // The log pane is the durable record of the run. Writing "Search complete"
@@ -1409,12 +1415,18 @@ void AdvancedSearchPanel::onSearchFinished(int total_matches, int total_files, b
 
 void AdvancedSearchPanel::onSearchFailed(const QString& error) {
     setSearchRunning(false);
+    if (m_results_empty != nullptr) {
+        m_results_empty->clearLoading();
+    }
     Q_EMIT statusMessage(tr("Search failed: %1").arg(error), sak::kTimerStatusDefaultMs);
     logMessage(tr("Search failed: %1").arg(error));
 }
 
 void AdvancedSearchPanel::onSearchCancelled() {
     setSearchRunning(false);
+    if (m_results_empty != nullptr) {
+        m_results_empty->clearLoading();
+    }
     Q_EMIT statusMessage(tr("Search cancelled"), sak::kTimerStatusDefaultMs);
     logMessage(tr("Search cancelled"));
 }

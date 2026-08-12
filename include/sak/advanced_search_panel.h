@@ -35,6 +35,10 @@ namespace sak {
 class AdvancedSearchController;
 class LogToggleSwitch;
 
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
+
 /// @brief Advanced Search Panel -- three-panel grep-style file search UI
 ///
 /// Layout: Search Bar -> [File Explorer | Results Tree | Preview Pane]
@@ -181,6 +185,8 @@ private:
     QTreeWidget* m_results_tree{nullptr};
     QComboBox* m_sort_combo{nullptr};
     QLabel* m_results_count_label{nullptr};
+    // Shared empty/loading overlay for the results tree (R5-G20-7).
+    ui::ViewEmptyState* m_results_empty{nullptr};
 
     // -- Preview Pane (Right Panel) --
     QTextEdit* m_preview_edit{nullptr};

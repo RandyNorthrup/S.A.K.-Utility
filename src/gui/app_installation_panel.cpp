@@ -17,6 +17,7 @@
 #include "sak/offline_deployment_worker.h"
 #include "sak/package_list_manager.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 
 #include <QApplication>
@@ -218,6 +219,9 @@ void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* side_by_side) {
                                                                    QHeaderView::Interactive);
     m_onlineResultsTable->setAccessibleName(QStringLiteral("Package Search Results"));
     m_onlineResultsTable->setToolTip(tr("Select a package and click Add to Queue"));
+    // Designed empty/loading overlay (constructed after setModel, per the helper contract).
+    m_onlineResultsState = new sak::ui::ViewEmptyState(
+        m_onlineResultsTable, tr("No results yet - search for packages to install"));
     search_layout->addWidget(m_onlineResultsTable, 1);
 
     m_addToQueueButton = new QPushButton(tr("Add Selected to Queue  \u25b6"), this);
@@ -239,6 +243,8 @@ void AppInstallationPanel::setupUi_queueSection(QHBoxLayout* side_by_side) {
     m_queueList->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_queueList->setAccessibleName(QStringLiteral("Install Queue List"));
     m_queueList->setToolTip(QStringLiteral("Packages queued for installation"));
+    // Empty-only overlay (no scan): self-managed via the view parent, no stored member.
+    new sak::ui::ViewEmptyState(m_queueList, tr("No packages queued - add from search results"));
     queue_layout->addWidget(m_queueList, 1);
 
     setupUi_queueButtons(queue_layout);
@@ -516,6 +522,9 @@ void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* side_by_side) {
                                                                     QHeaderView::Interactive);
     m_offlineResultsTable->setAccessibleName(QStringLiteral("Package Search Results"));
     m_offlineResultsTable->setToolTip(tr("Select a package from the search results and click Add"));
+    // Designed empty/loading overlay (constructed after setModel, per the helper contract).
+    m_offlineResultsState = new sak::ui::ViewEmptyState(
+        m_offlineResultsTable, tr("No results yet - search for packages to bundle"));
     search_layout->addWidget(m_offlineResultsTable, 1);
 
     m_offlineAddButton = new QPushButton(tr("Add Selected"), this);
@@ -538,6 +547,9 @@ void AppInstallationPanel::setupOfflineDeployListGroup(QHBoxLayout* side_by_side
     m_offlineListWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_offlineListWidget->setAccessibleName(QStringLiteral("Offline Package List"));
     m_offlineListWidget->setToolTip(tr("Packages that will be included in the deployment bundle"));
+    // Empty-only overlay (no scan): self-managed via the view parent, no stored member.
+    new sak::ui::ViewEmptyState(m_offlineListWidget,
+                                tr("No packages selected - add packages to deploy"));
     list_layout->addWidget(m_offlineListWidget, 1);
 
     auto* list_btn_row = new QHBoxLayout();

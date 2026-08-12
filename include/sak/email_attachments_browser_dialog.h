@@ -26,6 +26,10 @@ class QTableWidget;
 class QTimer;
 class QVBoxLayout;
 
+namespace sak::ui {
+class ViewEmptyState;
+}
+
 namespace sak {
 
 /// @brief Enriched attachment entry combining summary and detail data
@@ -119,6 +123,9 @@ private:
     QTimer* m_search_timer{nullptr};
     QComboBox* m_type_filter{nullptr};
     QTableWidget* m_table{nullptr};
+    /// Empty/loading overlay for the attachment table. Shows a scanning message while the
+    /// mailbox is being walked, and an actionable empty message once the scan completes.
+    ui::ViewEmptyState* m_table_empty_state{nullptr};
     QPushButton* m_save_selected_button{nullptr};
     QPushButton* m_save_all_button{nullptr};
     QPushButton* m_close_button{nullptr};

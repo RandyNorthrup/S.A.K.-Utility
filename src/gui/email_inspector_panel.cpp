@@ -22,6 +22,7 @@
 #include "sak/message_box_helpers.h"
 #include "sak/ribbon_tool_button.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 
 #include <QApplication>
 #include <QBuffer>
@@ -669,6 +670,11 @@ void EmailInspectorPanel::configureItemListTable(QWidget* group) {
             updateItemListHeaderCheckState();
         }
     });
+
+    // Built after the widget so the overlay binds to the live model. A loading
+    // message is driven over this list while a folder page is being fetched.
+    m_item_empty_state = new ui::ViewEmptyState(m_item_list,
+                                                tr("Select a folder to list its items"));
 }
 
 QWidget* EmailInspectorPanel::createItemListPanel() {
@@ -743,6 +749,8 @@ QWidget* EmailInspectorPanel::createPropertiesTab() {
     m_properties_table->setSortingEnabled(true);
     m_properties_table->horizontalHeader()->setStretchLastSection(true);
     m_properties_table->verticalHeader()->setVisible(false);
+    // Empty-only overlay (self-managed, parented to the table): no scan drives this tab.
+    new ui::ViewEmptyState(m_properties_table, tr("Select an email to view its MAPI properties"));
     return m_properties_table;
 }
 
@@ -761,6 +769,9 @@ QWidget* EmailInspectorPanel::createAttachmentsTab() {
     m_attachments_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_attachments_table->horizontalHeader()->setStretchLastSection(true);
     m_attachments_table->verticalHeader()->setVisible(false);
+    // Empty-only overlay (self-managed, parented to the table): attachments arrive with
+    // the item detail, not via a separate scan.
+    new ui::ViewEmptyState(m_attachments_table, tr("This email has no attachments"));
     layout->addWidget(m_attachments_table, 1);
 
     auto* button_row = new QHBoxLayout();
@@ -1485,6 +1496,7 @@ void EmailInspectorPanel::onFolderTreeLoaded(sak::PstFolderTree tree) {
 void EmailInspectorPanel::onFileClosed() {
     m_folder_tree->clear();
     m_item_list->setRowCount(0);
+    m_item_empty_state->clearLoading();
     updateItemListHeaderCheckState();
     m_content_browser->clear();
     m_headers_browser->clear();
@@ -1520,6 +1532,9 @@ void EmailInspectorPanel::onFileClosed() {
 void EmailInspectorPanel::onFolderItemsLoaded(uint64_t /*folder_id*/,
                                               QVector<sak::PstItemSummary> items,
                                               int total) {
+    // Lift the loading overlay the moment the page arrives, before any early return, so a
+    // fetch can never leave the item list stranded under a loading message.
+    m_item_empty_state->clearLoading();
     if (m_dialog_active) {
         return;
     }
@@ -1684,6 +1699,9 @@ void EmailInspectorPanel::onExportComplete(sak::EmailExportResult result) {
 }
 
 void EmailInspectorPanel::onErrorOccurred(QString message) {
+    // A folder fetch may have failed: clear any loading overlay so the item list is
+    // never left showing a loading message after the operation ended in error.
+    m_item_empty_state->clearLoading();
     m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
     updateStatusBar(tr("Error: %1").arg(message));
     sak::logError("Email Tools: {}", message.toStdString());
@@ -1723,6 +1741,8 @@ void EmailInspectorPanel::onMboxOpened(int message_count) {
 }
 
 void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> messages, int total) {
+    // Terminal handler for the MBOX item-list fetch: lift the loading overlay.
+    m_item_empty_state->clearLoading();
     m_item_list->setSortingEnabled(false);
     m_item_list->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_item_list);
@@ -2527,6 +2547,7 @@ void EmailInspectorPanel::reloadCurrentPage() {
     if (m_current_folder_id == 0 && !m_mbox_active) {
         return;
     }
+    m_item_empty_state->setLoading(tr("Loading folder contents..."));
     const int page_size = currentPageSize();
     m_controller->loadFolderItems(m_current_folder_id, m_current_page * page_size, page_size);
 }

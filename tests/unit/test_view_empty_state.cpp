@@ -22,6 +22,7 @@ private Q_SLOTS:
     void clearLoadingRestoresRowDrivenState();
     void emptyTextIsShownAndUpdatable();
     void worksOnListWidget();
+    void survivesViewDestruction();
 };
 
 void ViewEmptyStateTests::visibleWhenTableEmpty() {
@@ -87,6 +88,19 @@ void ViewEmptyStateTests::worksOnListWidget() {
     QVERIFY(!empty.isOverlayVisible());
     list.clear();
     QVERIFY(empty.isOverlayVisible());
+}
+
+void ViewEmptyStateTests::survivesViewDestruction() {
+    // Regression: during teardown the view's internal model emits modelReset while
+    // the overlay label (a viewport grandchild) may already be gone. The model-
+    // signal connections must be tied to the label's lifetime so the callback can
+    // never reach a dangling setText(). Destroying a populated view must not crash.
+    auto* table = new QTableWidget(0, 2);
+    new sak::ui::ViewEmptyState(table, QStringLiteral("Nothing here"));
+    table->insertRow(0);
+    table->insertRow(1);
+    delete table;  // triggers the model-reset-during-destruction path
+    QVERIFY(true);
 }
 
 QTEST_MAIN(ViewEmptyStateTests)

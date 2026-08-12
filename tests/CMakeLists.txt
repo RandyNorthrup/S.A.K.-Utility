@@ -570,6 +570,8 @@ endif()
 add_executable(test_partition_manager_panel
     unit/test_partition_manager_panel.cpp
     ../src/gui/partition_manager_panel.cpp
+    ../src/gui/view_empty_state.cpp
+    ../include/sak/view_empty_state.h
     ../src/gui/detachable_log_window.cpp
     ../src/gui/follow_scroll_controller.cpp
     ../src/gui/ribbon_tool_button.cpp
@@ -4255,6 +4257,8 @@ message(STATUS "Added unit test: test_flash_types")
 add_executable(test_image_flasher_panel
     unit/test_image_flasher_panel.cpp
     ../src/gui/image_flasher_panel.cpp
+    ../src/gui/view_empty_state.cpp
+    ../include/sak/view_empty_state.h
     ../src/gui/image_flasher_settings_dialog.cpp
     ../src/gui/windows_iso_download_dialog.cpp
     ../src/gui/linux_iso_download_dialog.cpp

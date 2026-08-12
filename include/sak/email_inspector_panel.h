@@ -41,6 +41,10 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class QVBoxLayout;
 
+namespace sak::ui {
+class ViewEmptyState;
+}
+
 namespace sak {
 
 class LogToggleSwitch;
@@ -255,6 +259,9 @@ private:
 
     // Item List
     QTableWidget* m_item_list{nullptr};
+    /// Empty/loading overlay for the item list. Shows a loading message while a folder
+    /// page is being fetched, and an actionable empty message otherwise.
+    ui::ViewEmptyState* m_item_empty_state{nullptr};
     QLabel* m_item_count_label{nullptr};
     QComboBox* m_page_size_combo{nullptr};
     QToolButton* m_prev_page_button{nullptr};

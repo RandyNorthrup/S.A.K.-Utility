@@ -13,6 +13,7 @@
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 
 #include <QApplication>
@@ -1060,6 +1061,9 @@ void EmailCalendarDialog::setupDayEventList(QVBoxLayout* layout) {
             &QTableWidget::customContextMenuRequested,
             this,
             &EmailCalendarDialog::onDayEventListContextMenu);
+    // Empty-only overlay (self-managed, parented to the table): the day list is filled
+    // from events already in memory, so it needs no loading state of its own.
+    new ui::ViewEmptyState(m_day_event_list, tr("No events on this day"));
     layout->addWidget(m_day_event_list, 1);
 }
 

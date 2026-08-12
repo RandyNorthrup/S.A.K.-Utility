@@ -16,6 +16,7 @@
 #include "sak/restore_point_manager.h"
 #include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 
 #include <QApplication>
@@ -565,6 +566,11 @@ void AdvancedUninstallPanel::createProgramTable(QVBoxLayout* layout) {
         m_total_size_label = ui.total_size_label;
     }
 
+    // Designed empty state over the table body; the loading message is raised/cleared from the
+    // enumeration handlers. The QTableWidget's model exists as soon as the widget is built.
+    m_program_empty_state = new sak::ui::ViewEmptyState(
+        m_program_table, tr("No programs found - click Refresh to scan"));
+
     layout->addWidget(group, kProgramTableStretch);
 
     // Connections
@@ -604,6 +610,10 @@ void AdvancedUninstallPanel::createLeftoverSection(QVBoxLayout* layout) {
         m_deselect_all_button = ui.deselect_all_button;
         m_delete_selected_button = ui.delete_selected_button;
     }
+
+    // Empty state for the leftover table. No scan runs on this table directly, so it needs no
+    // loading state; parented to the table, the overlay self-manages its lifetime.
+    new sak::ui::ViewEmptyState(m_leftover_table, tr("No leftover items found"));
 
     layout->addWidget(m_leftover_section, kLeftoverSectionStretch);
 
@@ -726,6 +736,7 @@ void AdvancedUninstallPanel::onViewFilterChanged(int index) {
 
 void AdvancedUninstallPanel::onEnumerationStarted() {
     setOperationRunning(true);
+    m_program_empty_state->setLoading(tr("Loading installed programs..."));
     Q_EMIT statusMessage(tr("Scanning installed programs..."), 0);
     Q_EMIT progressUpdate(0, 0);
     logMessage("Program enumeration started.");
@@ -738,6 +749,7 @@ void AdvancedUninstallPanel::onEnumerationProgress(int current, int total) {
 void AdvancedUninstallPanel::onEnumerationFinished(QVector<ProgramInfo> programs) {
     m_allPrograms = programs;
     applyFilter();
+    m_program_empty_state->clearLoading();
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
     Q_EMIT statusMessage(tr("Ready"), sak::kTimerStatusMessageMs);
@@ -745,6 +757,7 @@ void AdvancedUninstallPanel::onEnumerationFinished(QVector<ProgramInfo> programs
 }
 
 void AdvancedUninstallPanel::onEnumerationFailed(const QString& error) {
+    m_program_empty_state->clearLoading();
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
     Q_EMIT statusMessage(tr("Enumeration failed"), sak::kTimerStatusDefaultMs);

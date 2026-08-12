@@ -35,11 +35,17 @@ ViewEmptyState::ViewEmptyState(QAbstractItemView* view, QString empty_text)
     // Re-evaluate visibility whenever the model's row set changes. Views in this
     // codebase set their model once at construction, so binding to the current
     // model is sufficient.
+    //
+    // The connection CONTEXT is m_label, not this: during widget teardown the
+    // view's internal model emits modelReset (endResetModel) while the label --
+    // a grandchild of the view via its viewport -- may already be destroyed. Tying
+    // the connection lifetime to m_label makes Qt auto-disconnect the moment the
+    // label dies, so a teardown model signal can never reach a dangling setText().
     if (auto* model = m_view->model()) {
-        connect(model, &QAbstractItemModel::rowsInserted, this, [this] { refresh(); });
-        connect(model, &QAbstractItemModel::rowsRemoved, this, [this] { refresh(); });
-        connect(model, &QAbstractItemModel::modelReset, this, [this] { refresh(); });
-        connect(model, &QAbstractItemModel::layoutChanged, this, [this] { refresh(); });
+        connect(model, &QAbstractItemModel::rowsInserted, m_label, [this] { refresh(); });
+        connect(model, &QAbstractItemModel::rowsRemoved, m_label, [this] { refresh(); });
+        connect(model, &QAbstractItemModel::modelReset, m_label, [this] { refresh(); });
+        connect(model, &QAbstractItemModel::layoutChanged, m_label, [this] { refresh(); });
     }
 
     refresh();

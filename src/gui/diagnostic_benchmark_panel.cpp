@@ -18,6 +18,7 @@
 #include "sak/message_box_helpers.h"
 #include "sak/quick_action_controller.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 
 #include <QApplication>
@@ -291,6 +292,11 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection() {
     m_smart_table->setAccessibleName(QStringLiteral("SMART Health Table"));
     m_smart_table->setToolTip(QStringLiteral("S.M.A.R.T. health data for detected storage drives"));
     layout->addWidget(m_smart_table);
+
+    // Designed empty/loading state (R5-G20-7). QTableWidget's model exists now, so
+    // the overlay binds immediately; parented to the table so it self-manages.
+    m_smart_empty_state = new sak::ui::ViewEmptyState(m_smart_table,
+                                                      tr("No SMART data - click Scan SMART"));
 
     // Warnings label
     m_smart_warnings_label = new QLabel("", this);

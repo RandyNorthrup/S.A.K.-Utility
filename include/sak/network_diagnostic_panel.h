@@ -39,6 +39,10 @@ class LogToggleSwitch;
 class QuickAction;
 class QuickActionController;
 
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
+
 /// @brief Network Diagnostics & Troubleshooting Panel
 ///
 /// Sub-tabbed interface with adapter inspector (always visible),
@@ -324,10 +328,11 @@ private:
     // -- Adapter UI --
     QWidget* m_adapterWidget = nullptr;
     QTableWidget* m_adapterTable = nullptr;
-    QLabel* m_detailIdentity = nullptr;    ///< Name / Description / MAC
-    QLabel* m_detailAddressing = nullptr;  ///< IPv4 / IPv6
-    QLabel* m_detailGatewayDns = nullptr;  ///< Gateways / DNS
-    QLabel* m_detailStatus = nullptr;      ///< DHCP / Speed / Status
+    ui::ViewEmptyState* m_adapterEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
+    QLabel* m_detailIdentity = nullptr;                 ///< Name / Description / MAC
+    QLabel* m_detailAddressing = nullptr;               ///< IPv4 / IPv6
+    QLabel* m_detailGatewayDns = nullptr;               ///< Gateways / DNS
+    QLabel* m_detailStatus = nullptr;                   ///< DHCP / Speed / Status
     QPushButton* m_refreshBtn = nullptr;
     QPushButton* m_copyConfigBtn = nullptr;
     QPushButton* m_backupEthernetBtn = nullptr;
@@ -344,6 +349,7 @@ private:
     QSpinBox* m_pingInterval = nullptr;
     QSpinBox* m_pingPacketSize = nullptr;
     QTableWidget* m_pingTable = nullptr;
+    ui::ViewEmptyState* m_pingEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_pingStatsLabel = nullptr;
     QPushButton* m_pingStartBtn = nullptr;
     QPushButton* m_pingStopBtn = nullptr;
@@ -352,6 +358,7 @@ private:
     QLineEdit* m_traceTarget = nullptr;
     QSpinBox* m_traceMaxHops = nullptr;
     QTableWidget* m_traceTable = nullptr;
+    ui::ViewEmptyState* m_traceEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_traceStatusLabel = nullptr;
     QPushButton* m_traceStartBtn = nullptr;
     QPushButton* m_traceStopBtn = nullptr;
@@ -360,6 +367,7 @@ private:
     QLineEdit* m_mtrTarget = nullptr;
     QSpinBox* m_mtrCycles = nullptr;
     QTableWidget* m_mtrTable = nullptr;
+    ui::ViewEmptyState* m_mtrEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_mtrStatusLabel = nullptr;
     QPushButton* m_mtrStartBtn = nullptr;
     QPushButton* m_mtrStopBtn = nullptr;
@@ -369,11 +377,12 @@ private:
     QComboBox* m_dnsRecordType = nullptr;
     QComboBox* m_dnsServer = nullptr;
     QTableWidget* m_dnsTable = nullptr;
+    ui::ViewEmptyState* m_dnsEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_dnsStatusLabel = nullptr;
-    QPushButton* m_dnsQueryBtn = nullptr;    ///< Owned by layout hierarchy
-    QPushButton* m_dnsReverseBtn = nullptr;  ///< Owned by layout hierarchy
-    QPushButton* m_dnsCompareBtn = nullptr;  ///< Owned by layout hierarchy
-    QPushButton* m_dnsFlushBtn = nullptr;    ///< Owned by layout hierarchy
+    QPushButton* m_dnsQueryBtn = nullptr;           ///< Owned by layout hierarchy
+    QPushButton* m_dnsReverseBtn = nullptr;         ///< Owned by layout hierarchy
+    QPushButton* m_dnsCompareBtn = nullptr;         ///< Owned by layout hierarchy
+    QPushButton* m_dnsFlushBtn = nullptr;           ///< Owned by layout hierarchy
 
     // -- Port Scanner UI --
     QLineEdit* m_portTarget = nullptr;
@@ -383,6 +392,7 @@ private:
     QSpinBox* m_portConcurrent = nullptr;
     QCheckBox* m_portBannerGrab = nullptr;
     QTableWidget* m_portTable = nullptr;
+    ui::ViewEmptyState* m_portEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QProgressBar* m_portProgress = nullptr;
     QLabel* m_portSummaryLabel = nullptr;
     QPushButton* m_portStartBtn = nullptr;
@@ -404,6 +414,7 @@ private:
 
     // -- WiFi UI --
     QTableWidget* m_wifiTable = nullptr;
+    ui::ViewEmptyState* m_wifiEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_wifiChannelLabel = nullptr;
     QPushButton* m_wifiScanBtn = nullptr;
     QPushButton* m_wifiContBtn = nullptr;
@@ -411,6 +422,7 @@ private:
 
     // -- Connection UI --
     QTableWidget* m_connTable = nullptr;
+    ui::ViewEmptyState* m_connEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QCheckBox* m_connShowTcp = nullptr;
     QCheckBox* m_connShowUdp = nullptr;
     QLineEdit* m_connProcessFilter = nullptr;
@@ -421,6 +433,7 @@ private:
 
     // -- Firewall UI --
     QTableWidget* m_fwRuleTable = nullptr;
+    ui::ViewEmptyState* m_fwRuleEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLineEdit* m_fwSearchBox = nullptr;
     QComboBox* m_fwDirFilter = nullptr;
     QComboBox* m_fwActionFilter = nullptr;
@@ -436,7 +449,8 @@ private:
     // -- Shares UI --
     QLineEdit* m_shareHostname = nullptr;
     QTableWidget* m_shareTable = nullptr;
-    QPushButton* m_shareDiscoverBtn = nullptr;  ///< Owned by layout hierarchy
+    ui::ViewEmptyState* m_shareEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
+    QPushButton* m_shareDiscoverBtn = nullptr;        ///< Owned by layout hierarchy
 
     // -- LAN Transfer UI --
     QLineEdit* m_lanTarget = nullptr;

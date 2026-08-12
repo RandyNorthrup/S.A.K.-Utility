@@ -10,6 +10,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -139,6 +140,7 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(const HardwareInventory& i
     // Automatically trigger SMART analysis after hardware scan
     logMessage("Starting SMART disk analysis...");
     setOperationRunning(true);
+    m_smart_empty_state->setLoading(tr("Scanning storage health..."));
     m_controller->runSmartAnalysis();
 }
 
@@ -169,6 +171,7 @@ void DiagnosticBenchmarkPanel::onRescanSmartClicked() {
     Q_ASSERT(m_controller);
     logMessage("Starting SMART disk analysis...");
     setOperationRunning(true);
+    m_smart_empty_state->setLoading(tr("Scanning storage health..."));
     m_controller->runSmartAnalysis();
 }
 
@@ -176,6 +179,7 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
     Q_ASSERT(m_smart_table);
     Q_ASSERT(m_smart_warnings_label);
     setOperationRunning(false);
+    m_smart_empty_state->clearLoading();
 
     m_smart_table->setRowCount(static_cast<int>(reports.size()));
     QStringList warnings_list;

@@ -13,6 +13,7 @@
 #include "sak/offline_deployment_constants.h"
 #include "sak/offline_deployment_worker.h"
 #include "sak/package_list_manager.h"
+#include "sak/view_empty_state.h"
 
 #include <QApplication>
 #include <QFile>
@@ -145,12 +146,9 @@ void AppInstallationPanel::onSearch() {
     m_searchButton->setEnabled(false);
     m_addToQueueButton->setEnabled(false);
 
-    // Show "searching..." indicator in the results table
+    // Clear prior results and show the loading overlay for the duration of the search.
     m_onlineResultsModel->setRowCount(0);
-    m_onlineResultsModel->setRowCount(1);
-    auto* searching_item = new QStandardItem(tr("Searching for \"%1\"...").arg(query));
-    searching_item->setEnabled(false);
-    m_onlineResultsModel->setItem(0, RColPackage, searching_item);
+    m_onlineResultsState->setLoading(tr("Searching packages..."));
 
     Q_EMIT statusMessage(tr("Searching for \"%1\"...").arg(query), 0);
     Q_EMIT logOutput(QString("Searching Chocolatey for: %1").arg(query));
@@ -173,19 +171,15 @@ void AppInstallationPanel::onSearchCompleted(bool success,
                                              const QString& error_message) {
     m_search_in_progress = false;
     m_searchButton->setEnabled(true);
+    // Lift the loading overlay on BOTH outcomes so it is never stranded (fail closed).
+    m_onlineResultsState->clearLoading();
 
     if (success) {
         sak::logInfo("[AppInstallationPanel] Search completed successfully ({} bytes output)",
                      output.size());
         updateResultsFromSearch(output);
-        // Parity with the offline search: a successful search that matched nothing shows a
-        // designed empty state rather than a blank table.
-        if (m_onlineResultsModel->rowCount() == 0) {
-            m_onlineResultsModel->setRowCount(1);
-            auto* empty_item = new QStandardItem(tr("No packages found"));
-            empty_item->setEnabled(false);
-            m_onlineResultsModel->setItem(0, RColPackage, empty_item);
-        }
+        // A zero-result search now shows the shared empty-state overlay (bound to the model
+        // row count) instead of a placeholder row.
         return;
     }
 
@@ -493,10 +487,8 @@ void AppInstallationPanel::onOfflineSearch() {
     m_offlineResultsModel->setRowCount(0);
     m_offlineAddButton->setEnabled(false);
 
-    m_offlineResultsModel->setRowCount(1);
-    auto* searching_item = new QStandardItem(tr("Searching for \"%1\"...").arg(query));
-    searching_item->setEnabled(false);
-    m_offlineResultsModel->setItem(0, RColPackage, searching_item);
+    // Show the loading overlay for the duration of the search (no placeholder row).
+    m_offlineResultsState->setLoading(tr("Searching bundle packages..."));
     Q_EMIT logOutput(QString("Searching Chocolatey repository for: %1").arg(query));
 
     m_offlineSearchFuture = QtConcurrent::run([this, query]() {
@@ -517,6 +509,8 @@ void AppInstallationPanel::onOfflineSearchCompleted(bool success,
     m_offline_search_in_progress = false;
     m_offlineSearchButton->setEnabled(true);
     m_offlineResultsModel->setRowCount(0);
+    // Lift the loading overlay on BOTH outcomes so it is never stranded (fail closed).
+    m_offlineResultsState->clearLoading();
 
     if (!success) {
         const QString safe_error = sanitizeErrorForDisplay(error_message);
@@ -533,10 +527,7 @@ void AppInstallationPanel::onOfflineSearchCompleted(bool success,
     auto packages = m_choco_manager->parseSearchResults(output);
 
     if (packages.empty()) {
-        m_offlineResultsModel->setRowCount(1);
-        auto* item = new QStandardItem(tr("No packages found"));
-        item->setEnabled(false);
-        m_offlineResultsModel->setItem(0, RColPackage, item);
+        // Zero-result: the shared empty-state overlay renders the message; no placeholder row.
         Q_EMIT logOutput("Package search returned no results");
         return;
     }

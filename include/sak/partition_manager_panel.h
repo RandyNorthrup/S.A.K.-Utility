@@ -31,6 +31,10 @@ class QPoint;
 
 namespace sak {
 
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
+
 class LogToggleSwitch;
 
 class PartitionManagerPanel : public QWidget {
@@ -273,6 +277,8 @@ private:
     QAbstractButton* m_redoButton{nullptr};
     QVector<QAbstractButton*> m_targetButtons;
     LogToggleSwitch* m_logToggle{nullptr};
+    // Empty/loading overlay for m_table; parented to m_table, so m_table owns its lifetime.
+    ui::ViewEmptyState* m_tableEmptyState{nullptr};
     bool m_inventoryLoadStarted{false};
 };
 

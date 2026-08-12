@@ -26,6 +26,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 #include "sak/windows_iso_download_dialog.h"
 #include "sak/windows_iso_downloader.h"
@@ -514,7 +515,9 @@ void ImageFlasherPanel::createDriveSelectionPage() {
     auto* group_box = new QGroupBox("Step 2: Select Target Drive(s)", m_driveSelectionPage);
     auto* group_layout = new QVBoxLayout(group_box);
 
-    m_driveCountLabel = new QLabel("No removable drives detected", group_box);
+    // The empty-state message now lives in the list overlay below; this label carries only the
+    // running drive count, filled in by onDriveListUpdated once a scan result arrives.
+    m_driveCountLabel = new QLabel(group_box);
     group_layout->addWidget(m_driveCountLabel);
 
     m_driveListWidget = new QListWidget(group_box);
@@ -522,6 +525,12 @@ void ImageFlasherPanel::createDriveSelectionPage() {
     m_driveListWidget->setAccessibleName(QStringLiteral("Target Drive List"));
     m_driveListWidget->setToolTip(QStringLiteral("Select one or more target drives to flash"));
     group_layout->addWidget(m_driveListWidget);
+    // Designed empty state over the drive-list body (R5-G20-7). DriveScanner exposes no
+    // scan-start signal and emits drivesUpdated only on a change, so there is no reliable hook
+    // to lift a loading overlay on a machine with zero drives; an empty-only overlay avoids a
+    // stranded "loading" message. Parented to the list, it self-manages its lifetime.
+    new sak::ui::ViewEmptyState(m_driveListWidget,
+                                tr("No removable drives detected - insert a USB drive or SD card"));
     connect(m_driveListWidget,
             &QListWidget::itemSelectionChanged,
             this,

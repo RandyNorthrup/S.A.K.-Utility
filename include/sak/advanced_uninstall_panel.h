@@ -32,6 +32,10 @@ class QDialogButtonBox;
 
 namespace sak {
 
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
+
 class AdvancedUninstallController;
 class LogToggleSwitch;
 
@@ -203,6 +207,9 @@ private:
     QTableWidget* m_program_table{nullptr};
     QLabel* m_program_count_label{nullptr};
     QLabel* m_total_size_label{nullptr};
+    // Designed empty/loading overlay for the program table (R5-G20-7); driven from the
+    // enumeration handlers. Parented to the table, so it self-manages its lifetime.
+    ui::ViewEmptyState* m_program_empty_state{nullptr};
 
     // -- Leftover Section --
     QWidget* m_leftover_section{nullptr};

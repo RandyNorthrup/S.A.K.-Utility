@@ -19,6 +19,7 @@
 #include "sak/process_runner.h"
 #include "sak/quick_action_controller.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 
 #include <QApplication>
@@ -435,6 +436,11 @@ void NetworkDiagnosticPanel::setupAdapterTable(QWidget* parent, QVBoxLayout* lay
                   tr("List of network adapters with configuration details"));
     m_adapterTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_adapterTable, 1);
+
+    // Designed empty/loading state (R5-G20-7). QTableWidget's model exists now, so
+    // the overlay binds immediately; parented to the table so it self-manages.
+    m_adapterEmptyState = new sak::ui::ViewEmptyState(
+        m_adapterTable, tr("No adapters found - click Refresh Adapters"));
 }
 
 void NetworkDiagnosticPanel::setupAdapterDetailLabel(QWidget* parent, QVBoxLayout* layout) {
@@ -590,6 +596,9 @@ void NetworkDiagnosticPanel::setupPingResults(QWidget* widget, QVBoxLayout* layo
     setAccessible(m_pingTable, tr("Ping results"));
     m_pingTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_pingTable, 1);
+
+    m_pingEmptyState = new sak::ui::ViewEmptyState(
+        m_pingTable, tr("No ping replies yet - enter a target and Start Ping"));
 }
 
 // -- Traceroute Tab ------------------------------------------------------
@@ -678,6 +687,9 @@ void NetworkDiagnosticPanel::setupTracerouteResults(QWidget* widget, QVBoxLayout
     setAccessible(m_traceTable, tr("Traceroute results"));
     m_traceTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_traceTable, 1);
+
+    m_traceEmptyState = new sak::ui::ViewEmptyState(
+        m_traceTable, tr("No route traced yet - enter a target and Trace Route"));
 }
 
 // -- MTR Tab -------------------------------------------------------------
@@ -767,6 +779,9 @@ void NetworkDiagnosticPanel::setupMtrResults(QWidget* widget, QVBoxLayout* layou
     setAccessible(m_mtrTable, tr("MTR results"));
     m_mtrTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_mtrTable, 1);
+
+    m_mtrEmptyState = new sak::ui::ViewEmptyState(
+        m_mtrTable, tr("No MTR data yet - enter a target and Start MTR"));
 }
 
 // -- DNS Tab -------------------------------------------------------------
@@ -891,6 +906,9 @@ void NetworkDiagnosticPanel::setupDnsResults(QWidget* widget, QVBoxLayout* layou
     setAccessible(m_dnsTable, tr("DNS results"));
     m_dnsTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_dnsTable, 1);
+
+    m_dnsEmptyState = new sak::ui::ViewEmptyState(
+        m_dnsTable, tr("No DNS results yet - enter a hostname and Query"));
 }
 
 // -- Port Scan Tab --------------------------------------------------------
@@ -1034,6 +1052,9 @@ void NetworkDiagnosticPanel::setupPortScanResults(QWidget* widget, QVBoxLayout* 
     setAccessible(m_portTable, tr("Port scan results"));
     m_portTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_portTable, 1);
+
+    m_portEmptyState = new sak::ui::ViewEmptyState(
+        m_portTable, tr("No open ports found - enter a target and Scan Ports"));
 }
 
 // -- Bandwidth Tab -------------------------------------------------------
@@ -1237,6 +1258,9 @@ void NetworkDiagnosticPanel::setupWifiTable(QWidget* widget, QVBoxLayout* layout
     setAccessible(m_wifiTable, tr("WiFi networks"));
     m_wifiTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_wifiTable, 1);
+
+    m_wifiEmptyState = new sak::ui::ViewEmptyState(m_wifiTable,
+                                                   tr("No WiFi networks found - click Scan WiFi"));
 }
 
 void NetworkDiagnosticPanel::setupWifiStatusLabel(QWidget* widget, QVBoxLayout* layout) {
@@ -1367,6 +1391,9 @@ void NetworkDiagnosticPanel::setupConnectionsTable(QWidget* widget, QVBoxLayout*
     setAccessible(m_connTable, tr("Active connections"));
     m_connTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_connTable, 1);
+
+    m_connEmptyState =
+        new sak::ui::ViewEmptyState(m_connTable, tr("No active connections - click Start Monitor"));
 }
 
 // -- Firewall Tab --------------------------------------------------------
@@ -1465,6 +1492,9 @@ void NetworkDiagnosticPanel::setupFirewallRuleTable(QWidget* widget, QVBoxLayout
     setAccessible(m_fwRuleTable, tr("Firewall rules"));
     m_fwRuleTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_fwRuleTable, kFirewallTableStretch);
+
+    m_fwRuleEmptyState = new sak::ui::ViewEmptyState(
+        m_fwRuleTable, tr("No firewall rules to show - run Full Audit or clear filters"));
 }
 
 void NetworkDiagnosticPanel::setupFirewallAnalysis(QWidget* widget, QVBoxLayout* layout) {
@@ -1541,6 +1571,9 @@ QWidget* NetworkDiagnosticPanel::createSharesTab() {
     setAccessible(m_shareTable, tr("Network shares"));
     m_shareTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_shareTable, 1);
+
+    m_shareEmptyState = new sak::ui::ViewEmptyState(
+        m_shareTable, tr("No shares discovered - click Discover Shares"));
 
     return widget;
 }
@@ -2065,11 +2098,13 @@ void NetworkDiagnosticPanel::connectFirewallFilterSignals() {
 
 void NetworkDiagnosticPanel::onRefreshAdapters() {
     Q_ASSERT(m_controller);
+    m_adapterEmptyState->setLoading(tr("Enumerating network adapters..."));
     m_controller->scanAdapters();
 }
 
 void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> adapters) {
     Q_ASSERT(m_adapterTable);
+    m_adapterEmptyState->clearLoading();
     m_adapters = adapters;
     m_adapterTable->setRowCount(0);
     m_adapterTable->setSortingEnabled(false);
@@ -3532,6 +3567,7 @@ void NetworkDiagnosticPanel::onStartPing() {
     m_pingStatsLabel->clear();
     m_pingStartBtn->setEnabled(false);
     m_pingStopBtn->setEnabled(true);
+    m_pingEmptyState->setLoading(tr("Pinging target host..."));
 
     m_controller->ping({.target = target,
                         .count = m_pingCount->value(),
@@ -3546,10 +3582,13 @@ void NetworkDiagnosticPanel::onStopPing() {
     m_controller->cancel();
     m_pingStartBtn->setEnabled(true);
     m_pingStopBtn->setEnabled(false);
+    m_pingEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onPingReply(PingReply reply) {
     Q_ASSERT(m_pingTable);
+    // Lift the loading overlay as soon as replies stream in so it never masks data.
+    m_pingEmptyState->clearLoading();
     const int row = m_pingTable->rowCount();
     m_pingTable->insertRow(row);
 
@@ -3581,6 +3620,7 @@ void NetworkDiagnosticPanel::onPingComplete(PingResult result) {
     Q_ASSERT(m_pingStopBtn);
     m_pingStartBtn->setEnabled(true);
     m_pingStopBtn->setEnabled(false);
+    m_pingEmptyState->clearLoading();
 
     m_pingStatsLabel->setText(QStringLiteral("Sent: %1 | Rcvd: %2 | Lost: %3 (%4%) | "
                                              "Min: %5 ms | Max: %6 ms | Avg: %7 ms | Jitter: %8 ms")
@@ -3613,6 +3653,7 @@ void NetworkDiagnosticPanel::onStartTraceroute() {
     m_traceStatusLabel->clear();
     m_traceStartBtn->setEnabled(false);
     m_traceStopBtn->setEnabled(true);
+    m_traceEmptyState->setLoading(tr("Tracing the network route..."));
 
     m_controller->traceroute(
         target, m_traceMaxHops->value(), kTraceDefaultTimeoutMs, kTraceDefaultProbeCount, true);
@@ -3622,11 +3663,14 @@ void NetworkDiagnosticPanel::onStopTraceroute() {
     m_controller->cancel();
     m_traceStartBtn->setEnabled(true);
     m_traceStopBtn->setEnabled(false);
+    m_traceEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onTracerouteHop(TracerouteHop hop) {
     Q_ASSERT(m_traceTable);
     Q_ASSERT(m_traceStatusLabel);
+    // Lift the loading overlay as soon as hops stream in so it never masks data.
+    m_traceEmptyState->clearLoading();
     const int row = m_traceTable->rowCount();
     m_traceTable->insertRow(row);
 
@@ -3674,6 +3718,7 @@ void NetworkDiagnosticPanel::onTracerouteComplete(TracerouteResult result) {
     Q_ASSERT(m_traceStopBtn);
     m_traceStartBtn->setEnabled(true);
     m_traceStopBtn->setEnabled(false);
+    m_traceEmptyState->clearLoading();
 
     QString status;
     if (result.reachedTarget) {
@@ -3702,6 +3747,7 @@ void NetworkDiagnosticPanel::onStartMtr() {
     m_mtrStatusLabel->clear();
     m_mtrStartBtn->setEnabled(false);
     m_mtrStopBtn->setEnabled(true);
+    m_mtrEmptyState->setLoading(tr("Running MTR analysis..."));
 
     m_controller->mtr(target,
                       m_mtrCycles->value(),
@@ -3714,11 +3760,14 @@ void NetworkDiagnosticPanel::onStopMtr() {
     m_controller->cancel();
     m_mtrStartBtn->setEnabled(true);
     m_mtrStopBtn->setEnabled(false);
+    m_mtrEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onMtrUpdate(QVector<MtrHopStats> hops, int cycle) {
     Q_ASSERT(m_mtrTable);
     Q_ASSERT(m_mtrStatusLabel);
+    // Lift the loading overlay as soon as the first cycle arrives so data is visible.
+    m_mtrEmptyState->clearLoading();
     m_mtrTable->setSortingEnabled(false);
     m_mtrTable->setRowCount(static_cast<int>(hops.size()));
 
@@ -3786,6 +3835,7 @@ void NetworkDiagnosticPanel::onMtrComplete(MtrResult result) {
     Q_ASSERT(m_mtrStopBtn);
     m_mtrStartBtn->setEnabled(true);
     m_mtrStopBtn->setEnabled(false);
+    m_mtrEmptyState->clearLoading();
 
     const int hops = static_cast<int>(result.hops.size());
     const QString status = QStringLiteral("MTR complete -- %1 hops, %2 cycles to %3")
@@ -3810,6 +3860,7 @@ void NetworkDiagnosticPanel::onDnsQuery() {
 
     m_dnsQueryBtn->setEnabled(false);
     m_dnsStatusLabel->setText(tr("Querying..."));
+    m_dnsEmptyState->setLoading(tr("Resolving DNS query..."));
     // Use currentData if a known entry is selected; otherwise parse
     // the user-typed text for a manually-entered DNS server IP.
     const auto server_data = m_dnsServer->currentData();
@@ -3829,6 +3880,7 @@ void NetworkDiagnosticPanel::onDnsReverseLookup() {
 
     m_dnsReverseBtn->setEnabled(false);
     m_dnsStatusLabel->setText(tr("Resolving..."));
+    m_dnsEmptyState->setLoading(tr("Resolving DNS query..."));
     const auto server_data = m_dnsServer->currentData();
     const auto server = server_data.isValid() ? server_data.toString()
                                               : m_dnsServer->currentText().trimmed();
@@ -3854,6 +3906,7 @@ void NetworkDiagnosticPanel::onDnsCompare() {
 
     m_dnsCompareBtn->setEnabled(false);
     m_dnsStatusLabel->setText(tr("Comparing DNS servers..."));
+    m_dnsEmptyState->setLoading(tr("Resolving DNS query..."));
     m_controller->dnsCompare(hostname, m_dnsRecordType->currentText(), servers);
 }
 
@@ -3866,6 +3919,7 @@ void NetworkDiagnosticPanel::onDnsQueryComplete(DnsQueryResult result) {
     Q_ASSERT(m_dnsReverseBtn);
     m_dnsQueryBtn->setEnabled(true);
     m_dnsReverseBtn->setEnabled(true);
+    m_dnsEmptyState->clearLoading();
 
     const int row = m_dnsTable->rowCount();
     m_dnsTable->insertRow(row);
@@ -3898,6 +3952,7 @@ void NetworkDiagnosticPanel::onDnsComparisonComplete(DnsServerComparison compari
     Q_ASSERT(m_dnsCompareBtn);
     Q_ASSERT(m_dnsTable);
     m_dnsCompareBtn->setEnabled(true);
+    m_dnsEmptyState->clearLoading();
 
     m_dnsTable->setRowCount(0);
     for (const auto& result : comparison.results) {
@@ -4057,6 +4112,7 @@ void NetworkDiagnosticPanel::onStartPortScan() {
     m_portProgress->setVisible(true);
     m_portStartBtn->setEnabled(false);
     m_portStopBtn->setEnabled(true);
+    m_portEmptyState->setLoading(tr("Scanning target ports..."));
 
     PortScanRange range;
     QVector<uint16_t> ports;
@@ -4082,6 +4138,7 @@ void NetworkDiagnosticPanel::onStopPortScan() {
     m_portStartBtn->setEnabled(true);
     m_portStopBtn->setEnabled(false);
     m_portProgress->setVisible(false);
+    m_portEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onPortScanned(PortScanResult result) {
@@ -4090,6 +4147,8 @@ void NetworkDiagnosticPanel::onPortScanned(PortScanResult result) {
     if (result.state != PortScanResult::State::Open) {
         return;
     }
+    // First open port arrived: lift the loading overlay so it never masks results.
+    m_portEmptyState->clearLoading();
 
     m_portTable->setSortingEnabled(false);
     const int row = m_portTable->rowCount();
@@ -4128,6 +4187,7 @@ void NetworkDiagnosticPanel::onPortScanComplete(QVector<PortScanResult> results)
     m_portStartBtn->setEnabled(true);
     m_portStopBtn->setEnabled(false);
     m_portProgress->setVisible(false);
+    m_portEmptyState->clearLoading();
 
     int open_count = 0;
     int closed_count = 0;
@@ -4224,6 +4284,7 @@ void NetworkDiagnosticPanel::onScanWiFi() {
         return;
     }
     m_wifiScanBtn->setEnabled(false);
+    m_wifiEmptyState->setLoading(tr("Scanning for WiFi networks..."));
     m_controller->scanWiFi();
 }
 
@@ -4234,6 +4295,7 @@ void NetworkDiagnosticPanel::onStartContinuousWiFi() {
     }
     m_wifiContBtn->setEnabled(false);
     m_wifiStopBtn->setEnabled(true);
+    m_wifiEmptyState->setLoading(tr("Scanning for WiFi networks..."));
     m_controller->startContinuousWiFiScan(sak::kTimerRefreshMs);
 }
 
@@ -4241,12 +4303,14 @@ void NetworkDiagnosticPanel::onStopContinuousWiFi() {
     m_controller->stopContinuousWiFiScan();
     m_wifiContBtn->setEnabled(true);
     m_wifiStopBtn->setEnabled(false);
+    m_wifiEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onWiFiScanComplete(QVector<WiFiNetworkInfo> networks) {
     Q_ASSERT(m_wifiScanBtn);
     Q_ASSERT(m_wifiTable);
     m_wifiScanBtn->setEnabled(true);
+    m_wifiEmptyState->clearLoading();
     m_wifiTable->setSortingEnabled(false);
     m_wifiTable->setRowCount(0);
 
@@ -4296,6 +4360,7 @@ void NetworkDiagnosticPanel::onStartConnectionMonitor() {
     Q_ASSERT(m_connStopBtn);
     m_connStartBtn->setEnabled(false);
     m_connStopBtn->setEnabled(true);
+    m_connEmptyState->setLoading(tr("Loading active connections..."));
 
     m_controller->startConnectionMonitor(m_connRefreshRate->value(),
                                          m_connShowTcp->isChecked(),
@@ -4308,11 +4373,14 @@ void NetworkDiagnosticPanel::onStopConnectionMonitor() {
     m_controller->stopConnectionMonitor();
     m_connStartBtn->setEnabled(true);
     m_connStopBtn->setEnabled(false);
+    m_connEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onConnectionsUpdated(QVector<ConnectionInfo> connections) {
     Q_ASSERT(m_connTable);
     Q_ASSERT(m_connSummaryLabel);
+    // Lift the loading overlay on the first monitor update so data is visible.
+    m_connEmptyState->clearLoading();
     m_connTable->setSortingEnabled(false);
     m_connTable->setRowCount(static_cast<int>(connections.size()));
 
@@ -4376,6 +4444,7 @@ void NetworkDiagnosticPanel::onAuditFirewall() {
     m_fwConflictText->clear();
     m_fwGapText->clear();
     m_fwSummaryLabel->setText(tr("Auditing..."));
+    m_fwRuleEmptyState->setLoading(tr("Running firewall audit..."));
     m_controller->auditFirewall();
 }
 
@@ -4385,6 +4454,7 @@ void NetworkDiagnosticPanel::onFirewallAuditComplete(QVector<FirewallRule> rules
     m_cachedFwRules = rules;
     filterFirewallRules();
     m_fwAuditBtn->setEnabled(true);
+    m_fwRuleEmptyState->clearLoading();
 
     // Populate conflicts
     if (conflicts.isEmpty()) {
@@ -4543,6 +4613,7 @@ void NetworkDiagnosticPanel::onDiscoverShares() {
         hostname = QStringLiteral("localhost");
     }
     m_shareTable->setRowCount(0);
+    m_shareEmptyState->setLoading(tr("Enumerating network shares..."));
     m_controller->discoverShares(hostname);
 }
 
@@ -4550,6 +4621,7 @@ void NetworkDiagnosticPanel::onSharesDiscovered(QVector<NetworkShareInfo> shares
     Q_ASSERT(m_shareDiscoverBtn);
     Q_ASSERT(m_shareTable);
     m_shareDiscoverBtn->setEnabled(true);
+    m_shareEmptyState->clearLoading();
 
     m_shareTable->setRowCount(static_cast<int>(shares.size()));
 
@@ -4665,31 +4737,39 @@ void NetworkDiagnosticPanel::resetDiagnosticButtons(int finished_state) {
     using S = NetworkDiagnosticController::State;
     const auto state = static_cast<S>(finished_state);
 
+    // Also lift any loading overlay here: this is the shared finished sink reached on
+    // success, error, and cancel, so the overlay can never be left stranded.
     switch (state) {
     case S::ScanningAdapters:
         m_refreshBtn->setEnabled(true);
+        m_adapterEmptyState->clearLoading();
         break;
     case S::RunningPing:
         m_pingStartBtn->setEnabled(true);
         m_pingStopBtn->setEnabled(false);
+        m_pingEmptyState->clearLoading();
         break;
     case S::RunningTraceroute:
         m_traceStartBtn->setEnabled(true);
         m_traceStopBtn->setEnabled(false);
+        m_traceEmptyState->clearLoading();
         break;
     case S::RunningMtr:
         m_mtrStartBtn->setEnabled(true);
         m_mtrStopBtn->setEnabled(false);
+        m_mtrEmptyState->clearLoading();
         break;
     case S::RunningDnsQuery:
         m_dnsQueryBtn->setEnabled(true);
         m_dnsReverseBtn->setEnabled(true);
         m_dnsCompareBtn->setEnabled(true);
         m_dnsFlushBtn->setEnabled(true);
+        m_dnsEmptyState->clearLoading();
         break;
     case S::ScanningPorts:
         m_portStartBtn->setEnabled(true);
         m_portStopBtn->setEnabled(false);
+        m_portEmptyState->clearLoading();
         break;
     default:
         break;
@@ -4711,16 +4791,20 @@ void NetworkDiagnosticPanel::resetToolButtons(int finished_state) {
         m_wifiScanBtn->setEnabled(true);
         m_wifiContBtn->setEnabled(true);
         m_wifiStopBtn->setEnabled(false);
+        m_wifiEmptyState->clearLoading();
         break;
     case S::MonitoringConnections:
         m_connStartBtn->setEnabled(true);
         m_connStopBtn->setEnabled(false);
+        m_connEmptyState->clearLoading();
         break;
     case S::AuditingFirewall:
         m_fwAuditBtn->setEnabled(true);
+        m_fwRuleEmptyState->clearLoading();
         break;
     case S::BrowsingShares:
         m_shareDiscoverBtn->setEnabled(true);
+        m_shareEmptyState->clearLoading();
         break;
     case S::RunningLanTransfer:
         m_lanTestBtn->setEnabled(true);

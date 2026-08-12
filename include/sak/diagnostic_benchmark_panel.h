@@ -34,6 +34,10 @@ class LogToggleSwitch;
 class QuickAction;
 class QuickActionController;
 
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
+
 /// @brief Diagnostic & Benchmarking panel providing hardware inventory,
 ///        SMART health, CPU/disk/memory benchmarks, stress testing,
 ///        thermal monitoring, and professional report generation.
@@ -210,6 +214,7 @@ private:
 
     // -- SMART Health Widgets ------------------------------------
     QTableWidget* m_smart_table{nullptr};
+    ui::ViewEmptyState* m_smart_empty_state{nullptr};  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_smart_warnings_label{nullptr};
     QPushButton* m_smart_rescan_button{nullptr};
 
