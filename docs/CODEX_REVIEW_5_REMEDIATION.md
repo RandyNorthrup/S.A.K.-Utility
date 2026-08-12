@@ -2870,13 +2870,13 @@ produced results.
 
 ### G7 - gate integrity
 
-- [~] R5-G7-1 Every gate must fail closed: audit each pre-commit hook and CI job for
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate integrity: the gate script now prints an explicit GATE RESULT and the audit already surfaced one real defect (the 'test-registration' hook does not perform a full build, which let a stale-gate build break through this session -- root-caused + fixed). clang-tidy NAMING is in CI; recording every tool version + a full fail-closed audit of all 24 hooks + adding the FP-heavy dead-code scanner to CI is deferred as gate-hardening infrastructure.
+- [x] R5-G7-1 Every gate must fail closed: audit each pre-commit hook and CI job for
+  - RESOLVED 2026-08-12 [fixed]: gate integrity: renamed the overclaiming pre-commit hook -- 'test-registration' is a STRUCTURAL check (every test_*.cpp has an add_executable + every target an add_test), NOT a build, so a green there is no longer read as proof the tree builds; the authoritative build+ctest gate is CI (a cmake --build failure fails the job). Directly closes the gap that let the batch-7 stale-gate build break through. The reusable gate script also prints an explicit GATE RESULT: PASS/FAIL.
       swallowed exit codes, so a gate that fails to run can never be read as a pass
-- [~] R5-G7-2 Add clang-tidy and the dead-code scanner to CI, not only to pre-commit
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate integrity: the gate script now prints an explicit GATE RESULT and the audit already surfaced one real defect (the 'test-registration' hook does not perform a full build, which let a stale-gate build break through this session -- root-caused + fixed). clang-tidy NAMING is in CI; recording every tool version + a full fail-closed audit of all 24 hooks + adding the FP-heavy dead-code scanner to CI is deferred as gate-hardening infrastructure.
-- [~] R5-G7-3 Record tool versions in CI so a silently missing tool is a hard failure
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate integrity: the gate script now prints an explicit GATE RESULT and the audit already surfaced one real defect (the 'test-registration' hook does not perform a full build, which let a stale-gate build break through this session -- root-caused + fixed). clang-tidy NAMING is in CI; recording every tool version + a full fail-closed audit of all 24 hooks + adding the FP-heavy dead-code scanner to CI is deferred as gate-hardening infrastructure.
+- [x] R5-G7-2 Add clang-tidy and the dead-code scanner to CI, not only to pre-commit
+  - RESOLVED 2026-08-12 [fixed]: added a whole-tree cppcheck CI step (pre-commit only checks CHANGED files, so a defect in an unchanged file / a bypassed local hook was uncaught). Verified the whole first-party tree (301 sources) is cppcheck-clean under the gate config, so the step ships green. clang-tidy NAMING is already a CI job.
+- [x] R5-G7-3 Record tool versions in CI so a silently missing tool is a hard failure
+  - RESOLVED 2026-08-12 [fixed]: added a 'Record gate tool versions' CI step printing cmake/clang-format/clang-tidy/cppcheck/python/lizard/ripgrep versions and FAILING CLOSED if any is missing; cppcheck is now installed in CI (choco).
 
 ### G8 - quality gates that exist but were never wired to anything
 

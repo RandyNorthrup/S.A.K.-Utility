@@ -209,9 +209,32 @@ jobs:
       shell: pwsh
       run: |
         choco install ripgrep -y --no-progress
+        choco install cppcheck -y --no-progress
         python -m pip install --disable-pip-version-check lizard==1.21.2
-        rg --version
-        lizard --version
+
+    # G7-3: record every gate tool's version so a silently missing or wrong-version
+    # tool is a hard failure, not a quietly-skipped check. Fail closed if any required
+    # tool cannot be resolved.
+    - name: Record gate tool versions
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $cppcheck = "C:\Program Files\Cppcheck\cppcheck.exe"
+        $tools = [ordered]@{
+          'cmake'        = { cmake --version | Select-Object -First 1 }
+          'clang-format' = { clang-format --version }
+          'clang-tidy'   = { clang-tidy --version | Select-Object -First 1 }
+          'cppcheck'     = { & $cppcheck --version }
+          'python'       = { python --version }
+          'lizard'       = { lizard --version }
+          'ripgrep'      = { rg --version | Select-Object -First 1 }
+        }
+        $missing = @()
+        foreach ($name in $tools.Keys) {
+          try { $v = (& $tools[$name]) -join ' '; Write-Host ("{0,-13} {1}" -f $name, $v) }
+          catch { $missing += $name; Write-Host ("{0,-13} MISSING" -f $name) }
+        }
+        if ($missing.Count -gt 0) { throw "Required gate tool(s) missing: $($missing -join ', ')" }
 
     - name: Verify Qt resource manifests
       shell: pwsh
@@ -273,6 +296,17 @@ jobs:
         & scripts/check_partition_manager_external_checklist.ps1
         & scripts/verify_partition_manager_certification.ps1
         & scripts/verify_build.ps1
+
+    # G7-2: cppcheck runs in pre-commit on CHANGED files only; run it whole-tree in CI
+    # so a defect in an unchanged file (or a bypassed local hook) is still caught.
+    - name: Static analysis (cppcheck, whole first-party tree)
+      shell: pwsh
+      run: |
+        $files = Get-ChildItem -Path src -Recurse -Include *.cpp |
+          Where-Object { $_.FullName -notmatch '\\third_party\\' } |
+          ForEach-Object { $_.FullName }
+        Write-Host "cppcheck over $($files.Count) first-party sources"
+        & scripts/run_cppcheck.ps1 -Files $files
 
     - name: Bundle vcpkg runtime DLLs
       working-directory: build/Release

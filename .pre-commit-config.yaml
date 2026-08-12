@@ -64,8 +64,11 @@ repos:
       #     that nothing builds, and a target that ctest never runs.
       # -------------------------------------------------------------------
       - id: test-registration
-        name: "Test registration (every test builds and runs)"
-        description: "Fail if a test source has no target, or a target has no add_test"
+        name: "Test registration structure (target + ctest entry per test)"
+        description: "Static CMakeLists cross-check: every test source has an add_executable and
+          every target an add_test. This does NOT compile or run anything -- the authoritative
+          build+ctest gate is CI (a full build failure fails the job). Do not read a green here
+          as proof the tree builds."
         entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
           -File scripts/check_test_registration.ps1
         language: system
