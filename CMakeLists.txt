@@ -605,6 +605,7 @@ set(CORE_SOURCES
     include/sak/aligned_buffer.h
     include/sak/format_utils.h
     include/sak/widget_helpers.h
+    include/sak/view_empty_state.h
     include/sak/config_manager.h
     include/sak/app_scanner.h
     include/sak/drive_scanner.h
@@ -818,6 +819,7 @@ set(THREADING_SOURCES
 # GUI sources
 set(GUI_SOURCES
     src/gui/main_window.cpp
+    src/gui/view_empty_state.cpp
     src/gui/user_migration_panel.cpp
     src/gui/organizer_panel.cpp
     src/gui/file_explorer_sidebar.cpp

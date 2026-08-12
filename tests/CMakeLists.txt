@@ -2083,6 +2083,26 @@ add_test(NAME test_ai_transcript_view COMMAND test_ai_transcript_view
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_ai_transcript_view")
 
+add_executable(test_view_empty_state
+    unit/test_view_empty_state.cpp
+    ../src/gui/view_empty_state.cpp
+    ../include/sak/view_empty_state.h
+)
+set_target_properties(test_view_empty_state PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_view_empty_state PRIVATE
+    Qt6::Core Qt6::Widgets Qt6::Test
+)
+target_include_directories(test_view_empty_state PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_view_empty_state COMMAND test_view_empty_state
+         -o "${TEST_OUTPUT_DIR}/test_view_empty_state.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_view_empty_state")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
