@@ -14,6 +14,38 @@ Do the optionals. Nothing is DELETED to make a finding go away -- a half-built f
 FINISHED, and any removal needs the user's explicit authorization. Plain 7-bit ASCII docs.
 Full Release ctest must pass before every commit.
 
+## CAMPAIGN STATUS (live -- updated 2026-08-12)
+
+ZERO open findings in this document: every item is [x] fixed/already-correct or [~]
+deferred-with-written-rationale. Tally: ~476 [x] / ~148 [~] / 0 [ ].
+
+DONE this session:
+- All 201 open subsystem LOW findings (P1-P11) closed in 7 gated workflow-waves (Release
+  ctest 225/225 each): 4906f5b P1+P2, ded2bce P3+P6, b553db7 P5+P7, 72157b3 P8+P7deep,
+  e80c3c0 P9, 638cc62 P10, eef65d8 P11, 2e417fc P8-29.
+- Build-break repair 46630db (a STALE-GATE read let a real sak_utility compile error + 4
+  unit-test link gaps through batch-7; gate hardened to print GATE RESULT: PASS/FAIL).
+- G8 f7da6bf: ran + wired the 9 unwired gate scripts (fixed accessibility names +
+  release-claims false-positive + commercial-gate stale pattern, no fabricated evidence).
+- Decided/style-tier disposition 647710e + 8fd1c0f (safe-subsets-only + tool-limitations).
+- G7 gate-hardening 4217df1 (honest test-registration hook, CI cppcheck + tool versions).
+- G6 dead-code 19207f4: cppcheck unusedFunction EVIDENCE-VERIFIED unusable here (flags live
+  GUI/test-called fns); reliable --enable=all is clean + wired. G23-9 build-system-lint gate.
+
+USER DECISIONS (do not re-litigate):
+- Style/type mega-tier (G1-3/G2/G4-14/G12-4/5): SAFE SUBSETS ONLY.
+- Branch protection (G21-6): dropped.
+- Dead-code (G6): verify + delete authorized (verified -> nothing safe to delete).
+- Supply-chain (G23-6): dropped -- bundles sourced from trusted upstreams.
+- NEXT tracks chosen: bounded G23 gates/tests (G23-5/8/12 + perf budget) + G20 UX audit.
+
+IN FLIGHT: bounded G23 gates/tests (error-message uniqueness, config-schema versioning,
+doc-accuracy). THEN: G23-3 perf budget, then G20 UX audit.
+
+DEFERRED [~] as large multi-session frameworks (not selected): G14 fuzz/coverage/mutation,
+G18 test-quality, G23-1 concurrency harness, G23-2 crash reporting, G23-4 hostile-env matrix,
+G23-7 destructive-op property tests, G23-10 soak, G23-11 output-format cert vs real clients.
+
 ## PHASE 1 RESULT (11 subsystem passes)
 
 Raw Codex findings: 398. Verified by 11 independent Claude verifier agents against the
@@ -3477,7 +3509,7 @@ rather than as generic advice.
       reads an older config, or when a rollback makes an older version read this one's.
       Silent data loss on upgrade is a classic failure and is currently untested
 - [~] R5-G23-6 SUPPLY CHAIN. Vendored lzfse, qrcodegen and e2fsprogs, the vcpkg
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+  - RESOLVED 2026-08-12 [deferred-with-rationale]: deferred per Randy's decision (2026-08-12): third-party bundles are sourced from trusted upstreams, so supply-chain hardening (per-payload hash pinning + SBOM + CVE scan) is not pursued. Note: the elevated-run bundled choco.exe IS already Authenticode-verified (ChocolateyManager::isAuthenticChocoBinary via WinVerifyTrust) before launch.
       dependency set, and the bundled chocolatey, smartmontools, aria2c and iPerf3
       payloads. Pin every one to a hash, scan for known CVEs, and publish an SBOM.
       Highest-value item in this group: VERIFY THE AUTHENTICODE SIGNATURE OF EVERY
