@@ -11,6 +11,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/mbox_header_parser.h"
+#include "sak/mbox_transfer_decoder.h"
 
 #include <QMutex>
 #include <QRegularExpression>
@@ -30,10 +31,6 @@ constexpr qint64 kFromLineProbeBytes = 1024;
 constexpr int kIndexProgressStepPercent = 5;
 constexpr int kCrLfHeaderBoundaryBytes = 4;
 constexpr int kLfHeaderBoundaryBytes = 2;
-constexpr int kQuotedPrintableHexDigitCount = 2;
-constexpr int kQuotedPrintableFirstHexOffset = 1;
-constexpr int kQuotedPrintableSecondHexOffset = 2;
-constexpr int kQuotedPrintableNibbleShift = 4;
 constexpr int kFromLineMinimumLength = 6;
 constexpr int kFromLineSenderOffset = 5;
 // Filename regex capture groups: 1 is the quoted value, 2 is the bare unquoted token.
@@ -540,45 +537,6 @@ QVector<QByteArray> splitMimeParts(const QByteArray& body, const QByteArray& del
     return mime_parts;
 }
 
-/// Decode quoted-printable encoded data
-QByteArray decodeQuotedPrintable(const QByteArray& data) {
-    QByteArray result;
-    result.reserve(data.size());
-
-    for (int idx = 0; idx < data.size(); ++idx) {
-        const char current_char = data[idx];
-        if (current_char != '=') {
-            result.append(current_char);
-            continue;
-        }
-        if (idx + kQuotedPrintableHexDigitCount >= data.size()) {
-            result.append(current_char);
-            continue;
-        }
-        const char hex1 = data[idx + kQuotedPrintableFirstHexOffset];
-        const char hex2 = data[idx + kQuotedPrintableSecondHexOffset];
-
-        // Soft line break
-        if (hex1 == '\r' || hex1 == '\n') {
-            idx += (hex1 == '\r' && hex2 == '\n') ? kQuotedPrintableHexDigitCount
-                                                  : kQuotedPrintableFirstHexOffset;
-            continue;
-        }
-        // Hex-encoded byte
-        bool ok_first = false;
-        bool ok_second = false;
-        const int val1 = QByteArray(1, hex1).toInt(&ok_first, sak::kHexBase);
-        const int val2 = QByteArray(1, hex2).toInt(&ok_second, sak::kHexBase);
-        if (ok_first && ok_second) {
-            result.append(static_cast<char>((val1 << kQuotedPrintableNibbleShift) | val2));
-            idx += kQuotedPrintableHexDigitCount;
-            continue;
-        }
-        result.append(current_char);
-    }
-    return result;
-}
-
 /// Extract charset value from a Content-Type header
 QString extractCharset(const QString& content_type) {
     static const QRegularExpression charset_regex(QStringLiteral(
@@ -843,26 +801,16 @@ std::expected<QVector<MboxAttachmentPayload>, error_code> MboxParser::readAllAtt
 // ============================================================================
 
 QByteArray MboxParser::decodeTransferEncoding(const QByteArray& data, const QString& encoding) {
-    if (encoding.compare(QLatin1String("base64"), Qt::CaseInsensitive) == 0) {
-        // Strip the line-wrapping whitespace MIME inserts, then decode strictly: Qt's default
-        // decoder silently yields partial bytes for malformed input, so any remaining invalid
-        // character fails the decode (m_mime_decode_failed) instead of producing garbage.
-        QByteArray compact = data;
-        compact.removeIf(
-            [](char byte) { return byte == '\r' || byte == '\n' || byte == ' ' || byte == '\t'; });
-        const auto decoded = QByteArray::fromBase64Encoding(
-            compact, QByteArray::Base64Encoding | QByteArray::AbortOnBase64DecodingErrors);
-        if (!decoded) {
-            m_mime_decode_failed = true;
-            return {};
-        }
-        return decoded.decoded;
+    // Delegates to the pure seam (sak/mbox_transfer_decoder.h). Behaviour is identical;
+    // the seam's strict-base64 failure is turned back into the m_mime_decode_failed flag so
+    // the caller still fails the part closed rather than using a partial decode.
+    const sak::mbox::TransferDecodeResult result = sak::mbox::decodeTransferEncoding(data,
+                                                                                     encoding);
+    if (!result.ok) {
+        m_mime_decode_failed = true;
+        return {};
     }
-    if (encoding.compare(QLatin1String("quoted-printable"), Qt::CaseInsensitive) == 0) {
-        return decodeQuotedPrintable(data);
-    }
-    // 7bit, 8bit, binary -- no decoding needed
-    return data;
+    return result.bytes;
 }
 
 QString MboxParser::decodeCharset(const QByteArray& data, const QString& charset) {

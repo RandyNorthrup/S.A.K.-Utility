@@ -3465,10 +3465,16 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     MboxParser::parseHeaders now delegating to it, behaviour identical and the existing
     test_mbox_parser still green. test_fuzz_mbox_headers feeds mutated header blocks
     (folded lines, missing colons, embedded CRs, no terminator) and asserts the output
-    contract: every emitted header name is non-empty, lower-cased, and trimmed. NEXT
-    INCREMENT: the MIME body decode (base64/quoted-printable + multipart walk) still needs
-    its own byte-in seam - it currently reads member state (m_attachment_sink,
-    m_mime_decode_failed) so the extraction is larger than the pure header parse was.
+    contract: every emitted header name is non-empty, lower-cased, and trimmed. (3) The MIME
+    transfer decoders (strict base64 + quoted-printable) were likewise lifted to a pure seam
+    (sak::mbox::decodeTransferEncoding / decodeQuotedPrintable in
+    include/sak/mbox_transfer_decoder.h) returning a {bytes, ok} result; MboxParser turns
+    ok == false back into its m_mime_decode_failed flag, behaviour identical and
+    test_mbox_parser still green. test_fuzz_mbox_transfer_decoder asserts base64 fails closed
+    (ok == false, empty bytes) on any invalid character rather than yielding a partial decode,
+    that neither decoder ever grows its input, and that the dispatcher matches the direct QP
+    helper. NEXT INCREMENT: the multipart body walk (splitMimeParts + processMimePart) still
+    reads member state (m_attachment_sink) so that extraction is larger than these two were.
 - [~] R5-G14-7 Fuzz harness: APFS reader/writer structures
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
 - [~] R5-G14-8 Fuzz harness: HFS+ reader structures
