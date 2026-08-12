@@ -317,6 +317,14 @@ jobs:
       run: |
         & ../../scripts/bundle_vcpkg_runtime.ps1 -DestinationPath .
 
+    # G23-3: startup performance budget. Boots the freshly built app headless via its
+    # --smoke-test path (Qt DLLs are bundled above) and fails if cold startup exceeds
+    # the budget -- catches a regression like the DirectWrite 1s->31s one no gate saw.
+    - name: Startup performance budget
+      shell: pwsh
+      run: |
+        & scripts/check_startup_budget.ps1
+
     - name: Verify build output
       working-directory: build/Release
       shell: pwsh

@@ -43,7 +43,9 @@ USER DECISIONS (do not re-litigate):
   rewordings; G23-5 config-schema versioning + migration test; G23-8 doc-accuracy gate. Three
   new gates wired into pre-commit + CI.
 
-IN FLIGHT / NEXT: G23-3 CI startup-time perf budget, then G20 UX audit (7 dimensions).
+- G23-3 CI startup-time perf budget DONE (check_startup_budget.ps1, wired to CI).
+
+IN FLIGHT / NEXT: G20 UX audit (7 dimensions).
 
 DEFERRED [~] as large multi-session frameworks (not selected): G14 fuzz/coverage/mutation,
 G18 test-quality, G23-1 concurrency harness, G23-2 crash reporting, G23-4 hostile-env matrix,
@@ -3494,8 +3496,8 @@ rather than as generic advice.
       nothing. Diagnosing the shutdown crash required debug PDBs, a DbgHelp unhandled-
       exception probe, and multi-run bisection. Ship an unhandled-exception handler that
       writes a minidump, so a field crash becomes a fixable bug instead of an anecdote
-- [~] R5-G23-3 PERFORMANCE BUDGETS IN CI. Startup regressed from about 1 second to 31
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+- [x] R5-G23-3 PERFORMANCE BUDGETS IN CI. Startup regressed from about 1 second to 31
+  - RESOLVED 2026-08-12 [fixed]: added scripts/check_startup_budget.ps1 (wired into the CI build job after the exe+Qt-DLL bundle): boots the app headless via its existing --smoke-test path and FAILS if cold startup exceeds a 15s budget (normal offscreen startup ~1.7s; the DirectWrite regression was 31s). Not pre-commit -- it needs the built exe. Catches the exact class no gate saw.
       seconds through a DirectWrite font-database regression (e5836aa). Nothing caught
       it; it was noticed by using the application. Add startup and key-operation time
       budgets as CI assertions
