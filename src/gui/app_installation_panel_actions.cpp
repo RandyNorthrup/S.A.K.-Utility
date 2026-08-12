@@ -71,7 +71,7 @@ constexpr int kMaxReviewNamesShown = 40;
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return {};
     }
-    if (file.size() > offline::kMaxManifestBytes) {
+    if (file.size() > sak::offline::kMaxManifestBytes) {
         return {};
     }
     QJsonParseError parse_error;

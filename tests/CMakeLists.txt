@@ -468,6 +468,8 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/flash_live_certif
     add_executable(flash_live_certifier
         certification/flash_live_certifier.cpp
         ../src/threading/flash_worker.cpp
+        ../src/core/drive_scanner.cpp
+        ../include/sak/drive_scanner.h
         ../src/threading/worker_base.cpp
         ../src/core/image_source.cpp
         ../src/core/decompressor_factory.cpp
@@ -492,7 +494,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/flash_live_certif
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(flash_live_certifier PRIVATE
-        Qt6::Core ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA sak_lzfse ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Concurrent ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA sak_lzfse ${PLATFORM_LIBS}
     )
     target_include_directories(flash_live_certifier PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -4356,6 +4358,11 @@ message(STATUS "Added unit test: test_user_profile_types")
 add_executable(test_user_data_manager
     unit/test_user_data_manager.cpp
     ../src/core/user_data_manager.cpp
+    ../src/core/cleanup_worker.cpp
+    ../include/sak/cleanup_worker.h
+    ../src/threading/worker_base.cpp
+    ../include/sak/worker_base.h
+    ../src/core/recycle_bin.cpp
     ../include/sak/user_data_manager.h
     ../src/core/encryption.cpp
     ../src/core/secure_memory.cpp
@@ -4367,7 +4374,7 @@ set_target_properties(test_user_data_manager PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_user_data_manager PRIVATE
-    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_user_data_manager PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -4572,6 +4579,8 @@ message(STATUS "Added unit test: test_windows_usb_creator")
 add_executable(test_flash_worker
     unit/test_flash_worker.cpp
     ../src/threading/flash_worker.cpp
+    ../src/core/drive_scanner.cpp
+    ../include/sak/drive_scanner.h
     ../src/threading/worker_base.cpp
     ../src/core/image_source.cpp
     ../src/core/streaming_decompressor.cpp
@@ -4596,7 +4605,7 @@ set_target_properties(test_flash_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_flash_worker PRIVATE
-    Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+    Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
 target_compile_definitions(test_flash_worker PRIVATE
     QT_DISABLE_DEPRECATED_BEFORE=0x060000
@@ -5832,6 +5841,7 @@ message(STATUS "Added unit test: test_image_source")
 add_executable(test_network_adapter_inspector
     unit/test_network_adapter_inspector.cpp
     ../src/core/network_adapter_inspector.cpp
+    ../src/core/logger.cpp
     ../include/sak/network_adapter_inspector.h
 )
 set_target_properties(test_network_adapter_inspector PROPERTIES
