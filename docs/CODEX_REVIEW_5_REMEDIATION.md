@@ -3632,6 +3632,18 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     non-determinism. (The APFS nx_superblock and HFS+ volume-header READER fuzz -- G14-7/8 -- still
     need the rich accept-path fixtures extracted the way ext's was in 4e025128; that groundwork is a
     dedicated cycle. This closes the detector layer they all sit behind.)
+- [x] R5-G14-INSTALL Fuzz harness: Chocolatey install-script parser
+  - RESOLVED 2026-08-13 [DONE]: InstallScriptParser::parse runs static, regex-heavy analysis over
+    chocolateyInstall.ps1 scripts pulled from THIRD-PARTY Chocolatey packages to extract download
+    URLs / checksums for the technician -- untrusted text through a hand-written pile of
+    QRegularExpression matches, the classic shape for catastrophic-backtracking (ReDoS) hangs.
+    test_fuzz_install_script drives parse() over mutated scripts and asserts: no crash/hang (a
+    ReDoS hang trips the ctest timeout with the hex reproducer); determinism (the parser carries no
+    state, so a second pass must not diverge); and every extracted resource reports a non-negative
+    line number (the position math never underflows). Seeds carry the real shapes
+    (Install-ChocolateyPackage / Install-ChocolateyZipPackage / Get-ChocolateyWebFile / @packageArgs
+    splatting) plus deliberately pathological unbalanced quote/paren/variable runs. 45k parses
+    across two seeds, no crash, no hang, no non-determinism.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

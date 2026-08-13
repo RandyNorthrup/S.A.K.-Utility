@@ -2412,6 +2412,31 @@ add_test(NAME test_fuzz_fs_detector COMMAND test_fuzz_fs_detector
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_fs_detector")
 
+# test_fuzz_install_script - deterministic mutation-fuzz of the Chocolatey install-script parser.
+# The script text comes from third-party packages and the parser is regex-heavy, so this asserts
+# no crash/hang (ReDoS), determinism, and non-negative resource line numbers over mutated scripts.
+add_executable(test_fuzz_install_script
+    unit/test_fuzz_install_script.cpp
+    ../src/core/install_script_parser.cpp
+    ../src/core/logger.cpp
+    ../include/sak/install_script_parser.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_install_script PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_install_script PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_install_script PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_install_script COMMAND test_fuzz_install_script
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_install_script.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_install_script")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
