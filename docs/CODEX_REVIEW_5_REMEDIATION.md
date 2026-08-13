@@ -3540,8 +3540,24 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     reads member state (m_attachment_sink) so that extraction is larger than these two were.
 - [~] R5-G14-7 Fuzz harness: APFS reader/writer structures
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
-- [~] R5-G14-8 Fuzz harness: HFS+ reader structures
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+- [x] R5-G14-8 Fuzz harness: HFS+ reader structures
+  - RESOLVED 2026-08-13 [DONE]: test_fuzz_hfs_reader wires the reusable core (G14-5) to the
+    read-only HFS+ file browser (PartitionHfsFileSystemReader). Every field the reader trusts is
+    attacker-controlled: the volume header, the allocation fork, the catalog B-tree (header node,
+    index/leaf nodes, variable-length keyed records) and each file's fork extents. Each mutated
+    image is driven through the real listDirectoryFromImage() / readFileFromImage() entry points
+    (root, each nested folder, and each regular-file read) and four invariants are asserted for
+    every input: (1) no crash/hang; (2) a not-ok result always names a blocker
+    ([[no-fallbacks-fail-closed]]); (3) a successful listing never exceeds the requested entry cap
+    even when the B-tree records claim more; (4) a file read never exceeds the caller's byte cap.
+    The seed corpus reuses the genuine walkable image from the new tests/support/hfs_fixture.h so
+    mutations reach deep catalog/fork parsing, plus zero/0xFF/magic-only/truncated images that reach
+    the volume-header and B-tree sizing rejections. NO DUPLICATION: the HFS image layout (87 kTestHfs
+    constants + the fork/record/B-tree-node builders + hfsReaderFixture) previously lived inline in
+    test_partition_manager_core.cpp; it was extracted to tests/support/hfs_fixture.h (byte pokers
+    already shared via tests/support/byte_writer.h from the ext work), and the big partition test now
+    consumes it -- so the accept-path lock tests there and this fuzz harness share one home. Names
+    kept byte-identical so the partition test needed no call-site renames.
 - [x] R5-G14-9 Fuzz harness: ext reader structures
   - RESOLVED 2026-08-12 [DONE]: test_fuzz_ext_reader wires the reusable core (G14-5) to the
     read-only ext2/ext3/ext4 file browser (PartitionExtFileSystemReader). Every field the reader

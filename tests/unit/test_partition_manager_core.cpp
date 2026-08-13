@@ -27,6 +27,7 @@
 
 #include "../support/byte_writer.h"
 #include "../support/ext_fixture.h"
+#include "../support/hfs_fixture.h"
 
 #include <QBuffer>
 #include <QCryptographicHash>
@@ -51,6 +52,7 @@ namespace {
 // fuzz harness; the byte pokers likewise. See tests/support/{ext_fixture,byte_writer}.h.
 using namespace sak::testfixtures;
 using namespace sak::testfixtures::ext;
+using namespace sak::testfixtures::hfs;
 
 constexpr int kExpectedRecoveredFixtureCount = 2;
 constexpr qsizetype kTestXfsBlockSizeOffset = 4;
@@ -80,7 +82,6 @@ constexpr qsizetype kTestBtrfsCompatFlagsOffset = 0xAC;
 constexpr qsizetype kTestBtrfsCompatRoFlagsOffset = 0xB4;
 constexpr qsizetype kTestBtrfsIncompatFlagsOffset = 0xBC;
 constexpr qsizetype kTestBtrfsLabelOffset = 0x12B;
-constexpr qsizetype kTestHfsHeaderOffset = 1024;
 constexpr qsizetype kTestApfsMagicOffset = 0x20;
 constexpr qsizetype kTestApfsChecksumObjectBytes = 12;
 constexpr uint64_t kTestApfsChecksumZeroObject = 0xFF'FF'FF'FF'FF'FF'FF'FFULL;
@@ -184,83 +185,6 @@ constexpr qsizetype kTestBootSectorOemOffset = 3;
 constexpr qsizetype kTestFat16TypeOffset = 54;
 constexpr qsizetype kTestFat32TypeOffset = 82;
 constexpr qsizetype kTestBootSectorSignatureOffset = 510;
-constexpr qsizetype kTestHfsVersionOffset = 2;
-constexpr qsizetype kTestHfsAttributesOffset = 4;
-constexpr qsizetype kTestHfsFileCountOffset = 32;
-constexpr qsizetype kTestHfsFolderCountOffset = 36;
-constexpr qsizetype kTestHfsBlockSizeOffset = 40;
-constexpr qsizetype kTestHfsTotalBlocksOffset = 44;
-constexpr qsizetype kTestHfsFreeBlocksOffset = 48;
-constexpr qsizetype kTestHfsWrapperMdbOffset = 1024;
-constexpr qsizetype kTestHfsWrapperAllocationBlockSizeOffset = 0x14;
-constexpr qsizetype kTestHfsWrapperAllocationBlockStartOffset = 0x1C;
-constexpr qsizetype kTestHfsWrapperEmbeddedSignatureOffset = 0x7C;
-constexpr qsizetype kTestHfsWrapperEmbeddedExtentStartOffset = 0x7E;
-constexpr qsizetype kTestHfsWrapperEmbeddedExtentCountOffset = 0x80;
-constexpr qsizetype kTestHfsAllocationForkOffset = 112;
-constexpr qsizetype kTestHfsExtentsForkOffset = 192;
-constexpr qsizetype kTestHfsCatalogForkOffset = 272;
-constexpr qsizetype kTestHfsAttributesForkOffset = 352;
-constexpr qsizetype kTestHfsForkLogicalSizeOffset = 0;
-constexpr qsizetype kTestHfsForkTotalBlocksOffset = 12;
-constexpr qsizetype kTestHfsForkExtentsOffset = 16;
-constexpr qsizetype kTestHfsExtentStartBlockOffset = 0;
-constexpr qsizetype kTestHfsExtentBlockCountOffset = 4;
-constexpr qsizetype kTestHfsCatalogFileDataForkOffset = 88;
-constexpr qsizetype kTestHfsForkDataBytes = 80;
-constexpr qsizetype kTestHfsCatalogFileResourceForkOffset = kTestHfsCatalogFileDataForkOffset +
-                                                            kTestHfsForkDataBytes;
-constexpr qsizetype kTestHfsBTreeKindOffset = 8;
-constexpr qsizetype kTestHfsBTreeHeightOffset = 9;
-constexpr qsizetype kTestHfsBTreeNumRecordsOffset = 10;
-constexpr qsizetype kTestHfsBTreeHeaderRecordOffset = 14;
-constexpr qsizetype kTestHfsBTreeHeaderTreeDepthOffset = 0;
-constexpr qsizetype kTestHfsBTreeHeaderRootNodeOffset = 2;
-constexpr qsizetype kTestHfsBTreeHeaderLeafRecordsOffset = 6;
-constexpr qsizetype kTestHfsBTreeHeaderFirstLeafNodeOffset = 10;
-constexpr qsizetype kTestHfsBTreeHeaderLastLeafNodeOffset = 14;
-constexpr qsizetype kTestHfsBTreeHeaderNodeSizeOffset = 18;
-constexpr qsizetype kTestHfsBTreeHeaderMaxKeyLengthOffset = 20;
-constexpr qsizetype kTestHfsBTreeHeaderTotalNodesOffset = 22;
-constexpr qsizetype kTestHfsBTreeHeaderFreeNodesOffset = 26;
-constexpr qsizetype kTestHfsBTreeHeaderKeyCompareTypeOffset = 37;
-constexpr qsizetype kTestHfsBTreeHeaderAttributesOffset = 38;
-constexpr qsizetype kTestHfsBTreeHeaderMapRecordOffset = 248;
-constexpr qsizetype kTestHfsBTreeNodeDescriptorSize = 14;
-constexpr uint32_t kTestHfsBTreeBigKeysMask = 0x00'00'00'02;
-constexpr uint32_t kTestHfsBTreeVariableIndexKeysMask = 0x00'00'00'04;
-constexpr uint32_t kTestHfsSplitCatalogTotalNodes = 8;
-constexpr uint16_t kTestHfsCatalogMaxKeyLength = 516;
-constexpr uint16_t kTestHfsExtentsMaxKeyLength = 10;
-constexpr int kTestHfsSplitFixtureFileCount = 14;
-constexpr qsizetype kTestHfsCatalogRecordIdOffset = 8;
-constexpr qsizetype kTestHfsExtentsKeyLength = 10;
-constexpr qsizetype kTestHfsExtentsRecordBytes = 64;
-constexpr uint32_t kTestHfsJournaledMask = 0x00'00'20'00;
-constexpr uint32_t kTestHfsWrapperAllocationBlockSize = 4096;
-constexpr uint16_t kTestHfsWrapperAllocationStartSector = 8;
-constexpr uint16_t kTestHfsWrapperEmbeddedStartBlock = 10;
-constexpr uint16_t kTestHfsWrapperEmbeddedBlockCount = 64;
-constexpr uint32_t kTestHfsBlockSize = 4096;
-constexpr uint32_t kTestHfsCatalogStartBlock = 2;
-constexpr uint32_t kTestHfsCatalogNodeSize = 4096;
-constexpr uint32_t kTestHfsCatalogTotalNodes = 2;
-constexpr uint32_t kTestHfsAttributesStartBlock = 50;
-constexpr uint32_t kTestHfsAttributesNodeSize = 4096;
-constexpr uint32_t kTestHfsAttributesTotalNodes = 2;
-constexpr uint32_t kTestHfsHelloFileBlock = 4;
-constexpr qsizetype kTestHfsVolumeJournalInfoBlockOffset = 12;
-constexpr uint32_t kTestHfsNoteFileBlock = 5;
-constexpr uint32_t kTestHfsExtentsStartBlock = 6;
-constexpr uint32_t kTestHfsExtentsNodeSize = 1024;
-constexpr uint32_t kTestHfsDataForkType = 0x00;
-constexpr uint32_t kTestHfsResourceForkType = 0xFF;
-constexpr uint32_t kTestHfsCatalogFileId = 4;
-constexpr uint32_t kTestHfsAllocationStartBlock = 60;
-constexpr uint32_t kTestHfsAttributeInlineRecord = 0x10;
-constexpr uint32_t kTestHfsAttributeForkRecord = 0x20;
-constexpr uint32_t kTestHfsResourceFileBlock = 9;
-constexpr uint32_t kTestHfsAttributeForkValueBlock = 56;
 
 QByteArray fileSha256(const QString& path) {
     QFile file(path);
@@ -322,240 +246,6 @@ void writeBootSectorSignature(QByteArray* bytes) {
     Q_ASSERT(bytes);
     (*bytes)[kTestBootSectorSignatureOffset] = static_cast<char>(0x55);
     (*bytes)[kTestBootSectorSignatureOffset + 1] = static_cast<char>(0xAA);
-}
-
-void writeHfsExtent(QByteArray* bytes, qsizetype offset, uint32_t startBlock, uint32_t blockCount) {
-    writeBe32(bytes, offset + kTestHfsExtentStartBlockOffset, startBlock);
-    writeBe32(bytes, offset + kTestHfsExtentBlockCountOffset, blockCount);
-}
-
-struct HfsForkFixture {
-    uint64_t logical_size{0};
-    uint32_t total_blocks{0};
-    uint32_t first_block{0};
-    uint32_t first_block_count{0};
-};
-
-struct HfsFileRecordFixture {
-    uint32_t file_id{0};
-    HfsForkFixture data_fork;
-    HfsForkFixture resource_fork;
-};
-
-void writeHfsFork(QByteArray* bytes,
-                  qsizetype offset,
-                  uint64_t logicalSize,
-                  uint32_t totalBlocks,
-                  uint32_t firstBlock) {
-    writeBe64(bytes, offset + kTestHfsForkLogicalSizeOffset, logicalSize);
-    writeBe32(bytes, offset + kTestHfsForkTotalBlocksOffset, totalBlocks);
-    writeHfsExtent(bytes, offset + kTestHfsForkExtentsOffset, firstBlock, totalBlocks);
-}
-
-void setHfsAllocationBit(QByteArray* bytes, uint32_t block) {
-    const qsizetype offset =
-        static_cast<qsizetype>(kTestHfsAllocationStartBlock * kTestHfsBlockSize + block / 8U);
-    const char mask = static_cast<char>(0x80U >> (block % 8U));
-    (*bytes)[offset] = static_cast<char>((*bytes)[offset] | mask);
-}
-
-void clearHfsAllocationBit(QByteArray* bytes, uint32_t block) {
-    const qsizetype offset =
-        static_cast<qsizetype>(kTestHfsAllocationStartBlock * kTestHfsBlockSize + block / 8U);
-    const char mask = static_cast<char>(0x80U >> (block % 8U));
-    (*bytes)[offset] = static_cast<char>((*bytes)[offset] & ~mask);
-}
-
-bool hfsAllocationBitSet(const QByteArray& bytes, uint32_t block) {
-    const qsizetype offset =
-        static_cast<qsizetype>(kTestHfsAllocationStartBlock * kTestHfsBlockSize + block / 8U);
-    const auto value = static_cast<unsigned char>(bytes.at(offset));
-    const auto mask = static_cast<unsigned char>(0x80U >> (block % 8U));
-    return (value & mask) != 0;
-}
-
-void writeHfsAllocationFork(QByteArray* image, const QVector<uint32_t>& allocatedBlocks) {
-    writeHfsFork(image,
-                 kTestHfsHeaderOffset + kTestHfsAllocationForkOffset,
-                 kTestHfsBlockSize,
-                 1,
-                 kTestHfsAllocationStartBlock);
-    for (uint32_t block : allocatedBlocks) {
-        setHfsAllocationBit(image, block);
-    }
-}
-
-void writeHfsForkWithInitialExtent(QByteArray* bytes,
-                                   qsizetype offset,
-                                   const HfsForkFixture& fork) {
-    writeBe64(bytes, offset + kTestHfsForkLogicalSizeOffset, fork.logical_size);
-    writeBe32(bytes, offset + kTestHfsForkTotalBlocksOffset, fork.total_blocks);
-    writeHfsExtent(
-        bytes, offset + kTestHfsForkExtentsOffset, fork.first_block, fork.first_block_count);
-}
-
-QByteArray hfsCatalogKey(uint32_t parentId, const QString& name) {
-    const uint16_t keyLength = static_cast<uint16_t>(6 + name.size() * 2);
-    QByteArray key(2 + keyLength, '\0');
-    writeBe16(&key, 0, keyLength);
-    writeBe32(&key, 2, parentId);
-    writeBe16(&key, 6, static_cast<uint16_t>(name.size()));
-    for (qsizetype index = 0; index < name.size(); ++index) {
-        writeBe16(&key, 8 + index * 2, name.at(index).unicode());
-    }
-    return key;
-}
-
-QByteArray hfsFolderRecord(uint32_t folderId) {
-    QByteArray record(88, '\0');
-    writeBe16(&record, 0, 1);
-    writeBe32(&record, kTestHfsCatalogRecordIdOffset, folderId);
-    return record;
-}
-
-QByteArray hfsFileRecord(uint32_t fileId, const QByteArray& data, uint32_t firstBlock) {
-    QByteArray record(248, '\0');
-    writeBe16(&record, 0, 2);
-    writeBe32(&record, kTestHfsCatalogRecordIdOffset, fileId);
-    writeHfsFork(&record,
-                 kTestHfsCatalogFileDataForkOffset,
-                 static_cast<uint64_t>(data.size()),
-                 1,
-                 firstBlock);
-    return record;
-}
-
-QByteArray hfsFileRecordWithInitialExtent(uint32_t fileId,
-                                          uint64_t logicalSize,
-                                          uint32_t totalBlocks,
-                                          uint32_t firstBlock,
-                                          uint32_t firstBlockCount) {
-    QByteArray record(248, '\0');
-    writeBe16(&record, 0, 2);
-    writeBe32(&record, kTestHfsCatalogRecordIdOffset, fileId);
-    writeHfsForkWithInitialExtent(&record,
-                                  kTestHfsCatalogFileDataForkOffset,
-                                  HfsForkFixture{.logical_size = logicalSize,
-                                                 .total_blocks = totalBlocks,
-                                                 .first_block = firstBlock,
-                                                 .first_block_count = firstBlockCount});
-    return record;
-}
-
-QByteArray hfsFileRecordWithForks(const HfsFileRecordFixture& fixture) {
-    QByteArray record(248, '\0');
-    writeBe16(&record, 0, 2);
-    writeBe32(&record, kTestHfsCatalogRecordIdOffset, fixture.file_id);
-    writeHfsForkWithInitialExtent(&record, kTestHfsCatalogFileDataForkOffset, fixture.data_fork);
-    writeHfsForkWithInitialExtent(&record,
-                                  kTestHfsCatalogFileResourceForkOffset,
-                                  fixture.resource_fork);
-    return record;
-}
-
-QByteArray hfsCatalogRecord(uint32_t parentId, const QString& name, const QByteArray& data) {
-    QByteArray record = hfsCatalogKey(parentId, name);
-    record.append(data);
-    if ((record.size() % 2) != 0) {
-        record.append('\0');
-    }
-    return record;
-}
-
-void writeHfsNodeOffsets(QByteArray* node,
-                         const QVector<qsizetype>& offsets,
-                         qsizetype freeOffset) {
-    for (int index = 0; index < offsets.size(); ++index) {
-        writeBe16(node, node->size() - ((index + 1) * 2), static_cast<uint16_t>(offsets.at(index)));
-    }
-    writeBe16(node, node->size() - ((offsets.size() + 1) * 2), static_cast<uint16_t>(freeOffset));
-}
-
-void setFixtureMapBit(QByteArray* node, uint32_t nodeNumber, bool set) {
-    const qsizetype offset = kTestHfsBTreeHeaderMapRecordOffset + nodeNumber / 8;
-    const auto mask = static_cast<char>(0x80U >> (nodeNumber % 8U));
-    (*node)[offset] = set ? static_cast<char>((*node)[offset] | mask)
-                          : static_cast<char>((*node)[offset] & ~mask);
-}
-
-void writeHfsCatalogHeaderNode(QByteArray* image) {
-    const qsizetype nodeOffset = kTestHfsCatalogStartBlock * kTestHfsBlockSize;
-    QByteArray node(kTestHfsCatalogNodeSize, '\0');
-    node[kTestHfsBTreeKindOffset] = static_cast<char>(1);
-    writeBe16(&node, kTestHfsBTreeNumRecordsOffset, 3);
-
-    const qsizetype header = kTestHfsBTreeHeaderRecordOffset;
-    writeBe16(&node, header + kTestHfsBTreeHeaderTreeDepthOffset, 1);
-    writeBe32(&node, header + kTestHfsBTreeHeaderRootNodeOffset, 1);
-    writeBe32(&node, header + kTestHfsBTreeHeaderLeafRecordsOffset, 3);
-    writeBe32(&node, header + kTestHfsBTreeHeaderFirstLeafNodeOffset, 1);
-    writeBe32(&node, header + kTestHfsBTreeHeaderLastLeafNodeOffset, 1);
-    writeBe16(&node, header + kTestHfsBTreeHeaderNodeSizeOffset, kTestHfsCatalogNodeSize);
-    writeBe16(&node, header + kTestHfsBTreeHeaderMaxKeyLengthOffset, kTestHfsCatalogMaxKeyLength);
-    writeBe32(&node, header + kTestHfsBTreeHeaderTotalNodesOffset, kTestHfsCatalogTotalNodes);
-    writeBe32(&node, header + kTestHfsBTreeHeaderFreeNodesOffset, 0);
-    node[header + kTestHfsBTreeHeaderKeyCompareTypeOffset] = static_cast<char>(0xCF);
-    writeBe32(&node,
-              header + kTestHfsBTreeHeaderAttributesOffset,
-              kTestHfsBTreeBigKeysMask | kTestHfsBTreeVariableIndexKeysMask);
-    writeHfsNodeOffsets(&node, {14, 120, 248}, 256);
-    setFixtureMapBit(&node, 0, true);
-    setFixtureMapBit(&node, 1, true);
-
-    std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
-}
-
-void writeHfsCatalogLeafNode(QByteArray* image) {
-    const QByteArray hello("hello from hfs\n");
-    const QByteArray note("nested hfs note\n");
-    const QVector<QByteArray> records{
-        hfsCatalogRecord(2, QStringLiteral("Docs"), hfsFolderRecord(16)),
-        hfsCatalogRecord(
-            2, QStringLiteral("hello.txt"), hfsFileRecord(17, hello, kTestHfsHelloFileBlock)),
-        hfsCatalogRecord(
-            16, QStringLiteral("note.txt"), hfsFileRecord(18, note, kTestHfsNoteFileBlock))};
-
-    const qsizetype nodeOffset = (kTestHfsCatalogStartBlock + 1) * kTestHfsBlockSize;
-    QByteArray node(kTestHfsCatalogNodeSize, '\0');
-    node[kTestHfsBTreeKindOffset] = static_cast<char>(0xFF);
-    node[kTestHfsBTreeHeightOffset] = static_cast<char>(1);
-    writeBe16(&node, kTestHfsBTreeNumRecordsOffset, static_cast<uint16_t>(records.size()));
-
-    QVector<qsizetype> offsets;
-    qsizetype cursor = 14;
-    for (const auto& record : records) {
-        offsets.append(cursor);
-        std::copy(record.cbegin(), record.cend(), node.begin() + cursor);
-        cursor += record.size();
-    }
-    writeHfsNodeOffsets(&node, offsets, cursor);
-    std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
-    std::copy(hello.cbegin(),
-              hello.cend(),
-              image->begin() + static_cast<qsizetype>(kTestHfsHelloFileBlock * kTestHfsBlockSize));
-    std::copy(note.cbegin(),
-              note.cend(),
-              image->begin() + static_cast<qsizetype>(kTestHfsNoteFileBlock * kTestHfsBlockSize));
-}
-
-void writeHfsCatalogLeafRecords(QByteArray* image,
-                                uint32_t physicalBlock,
-                                const QVector<QByteArray>& records) {
-    const qsizetype nodeOffset = static_cast<qsizetype>(physicalBlock * kTestHfsBlockSize);
-    QByteArray node(kTestHfsCatalogNodeSize, '\0');
-    node[kTestHfsBTreeKindOffset] = static_cast<char>(0xFF);
-    node[kTestHfsBTreeHeightOffset] = static_cast<char>(1);
-    writeBe16(&node, kTestHfsBTreeNumRecordsOffset, static_cast<uint16_t>(records.size()));
-
-    QVector<qsizetype> offsets;
-    qsizetype cursor = 14;
-    for (const auto& record : records) {
-        offsets.append(cursor);
-        std::copy(record.cbegin(), record.cend(), node.begin() + cursor);
-        cursor += record.size();
-    }
-    writeHfsNodeOffsets(&node, offsets, cursor);
-    std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
 }
 
 QByteArray hfsInlineAttributeValue() {
@@ -659,8 +349,6 @@ void writeHfsAttributesLeafNode(QByteArray* image) {
     std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
 }
 
-QByteArray hfsReaderFixture();
-
 QByteArray hfsReaderAttributeFixture() {
     QByteArray image = hfsReaderFixture();
     writeBe32(&image, kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset, 37);
@@ -744,32 +432,6 @@ void writeHfsExtentsLeafNode(QByteArray* image, const QVector<QByteArray>& recor
     }
     writeHfsNodeOffsets(&node, offsets, cursor);
     std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
-}
-
-QByteArray hfsReaderFixture() {
-    QByteArray image(static_cast<qsizetype>(64 * kTestHfsBlockSize), '\0');
-    writeAscii(&image, kTestHfsHeaderOffset, "H+");
-    writeBe16(&image, kTestHfsHeaderOffset + kTestHfsVersionOffset, 4);
-    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsAttributesOffset, kTestHfsJournaledMask);
-    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsFileCountOffset, 2);
-    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsFolderCountOffset, 1);
-    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsBlockSizeOffset, kTestHfsBlockSize);
-    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsTotalBlocksOffset, 64);
-    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset, 40);
-    writeHfsAllocationFork(&image,
-                           {kTestHfsCatalogStartBlock,
-                            kTestHfsCatalogStartBlock + 1,
-                            kTestHfsHelloFileBlock,
-                            kTestHfsNoteFileBlock,
-                            kTestHfsAllocationStartBlock});
-    writeHfsFork(&image,
-                 kTestHfsHeaderOffset + kTestHfsCatalogForkOffset,
-                 kTestHfsCatalogNodeSize * kTestHfsCatalogTotalNodes,
-                 kTestHfsCatalogTotalNodes,
-                 kTestHfsCatalogStartBlock);
-    writeHfsCatalogHeaderNode(&image);
-    writeHfsCatalogLeafNode(&image);
-    return image;
 }
 
 void writeHfsOverflowFixtureForks(QByteArray* image) {

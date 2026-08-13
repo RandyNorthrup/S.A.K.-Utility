@@ -2437,6 +2437,37 @@ add_test(NAME test_fuzz_install_script COMMAND test_fuzz_install_script
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_install_script")
 
+# test_fuzz_hfs_reader - deterministic mutation-fuzz of the read-only HFS+ file browser (G14-8)
+# through the real listDirectoryFromImage() / readFileFromImage() entry points. Asserts no
+# crash/hang, fail-closed-with-a-blocker, bounded listings, and bounded reads. Reuses the shared
+# HFS image builder in tests/support/hfs_fixture.h.
+add_executable(test_fuzz_hfs_reader
+    unit/test_fuzz_hfs_reader.cpp
+    ../src/core/partition_hfs_file_system_reader.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../include/sak/partition_hfs_file_system_reader.h
+    ../include/sak/partition_raw_device_io.h
+    ../include/sak/partition_export_containment.h
+    ../include/sak/partition_hfs_internal.h
+    support/byte_writer.h
+    support/hfs_fixture.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_hfs_reader PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_hfs_reader PRIVATE
+    Qt6::Core Qt6::Test sak_lzfse ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_hfs_reader PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_hfs_reader COMMAND test_fuzz_hfs_reader
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_hfs_reader.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_hfs_reader")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
