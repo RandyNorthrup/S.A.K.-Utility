@@ -3544,8 +3544,25 @@ the elevation boundary, or the AI tool policy those tests actually execute.
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
 - [~] R5-G14-9 Fuzz harness: ext reader structures
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
-- [~] R5-G14-10 Fuzz harness: ZIP and archive entry decoding
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+- [x] R5-G14-10 Fuzz harness: ZIP and archive entry decoding
+  - RESOLVED 2026-08-12 [DONE]: test_fuzz_decompressor wires the reusable core (G14-5) to the
+    first-party archive-decompression surface -- the streaming decompressors gzip / bzip2 / xz,
+    which feed zlib / libbz2 / liblzma with attacker-supplied compressed bytes for the ISO pipeline
+    and the archive services. Each mutated input is driven through the real
+    DecompressorFactory -> open() -> read() pipeline of all three decoders (a gzip stream is valid
+    input to the gzip decoder and malformed input to the other two, so both accept and reject paths
+    run), and three invariants are asserted for EVERY input: (1) no crash and no hang; (2) the
+    decompression-BOMB guard holds -- with setMaxDecompressedBytes configured, the produced total
+    never runs past the cap by more than one read buffer (read() fails closed after the chunk that
+    crosses the cap) even as the stream is corrupted; (3) terminal failure is sticky -- once read()
+    returns < 0 the decompressor stays failed and a later read cannot resume past the error. The
+    seed corpus carries a real zlib gzip stream, a highly-compressible gzip that expands past the
+    cap (the bomb path), a truncated gzip, and bzip2 / xz magic headers, so mutations reach the
+    inflate accept path and the header/format rejection alike. Held across 10000 + 5000 iterations
+    over two PRNG seeds, no crash / hang / bomb-cap overrun. NOTE: the ZIP container itself
+    (central directory / local file headers) is parsed by Qt's QZipReader in
+    file_explorer_archive_service, i.e. library code outside the first-party fuzz scope; the
+    first-party decode surface is these streaming decompressors, which this covers.
 - [~] R5-G14-11 Fuzz harness: IMAP response reader
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
 - [x] R5-G14-12 Fuzz harness: browser-extension JSON contract

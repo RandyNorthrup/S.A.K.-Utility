@@ -2203,6 +2203,39 @@ add_test(NAME test_fuzz_pst_structure COMMAND test_fuzz_pst_structure
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_pst_structure")
 
+# test_fuzz_decompressor - deterministic mutation-fuzz of the streaming archive decompressors
+# (gzip / bzip2 / xz) through the real DecompressorFactory -> open() -> read() pipeline (G14-10).
+# Asserts no crash/hang, that the decompression-bomb cap holds, and that terminal failure sticks.
+# Mirrors test_streaming_decompressor's link set.
+add_executable(test_fuzz_decompressor
+    unit/test_fuzz_decompressor.cpp
+    ../src/core/streaming_decompressor.cpp
+    ../src/core/decompressor_factory.cpp
+    ../src/core/gzip_decompressor.cpp
+    ../src/core/bzip2_decompressor.cpp
+    ../src/core/xz_decompressor.cpp
+    ../src/core/logger.cpp
+    ../include/sak/streaming_decompressor.h
+    ../include/sak/gzip_decompressor.h
+    ../include/sak/bzip2_decompressor.h
+    ../include/sak/xz_decompressor.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_decompressor PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_decompressor PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_decompressor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_decompressor COMMAND test_fuzz_decompressor
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_decompressor.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_decompressor")
+
 # test_fuzz_mcp_framing - deterministic mutation-fuzz of the two byte-framed control-
 # bridge transports (G14-12): Chrome native-messaging frames (parseFrame, needs
 # native_messaging.cpp) and the MCP stdio JSON-RPC line (parseJsonLine, header-only).
