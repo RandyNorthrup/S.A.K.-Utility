@@ -3618,6 +3618,20 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     a QBuffer (seeds sized past the 32 KiB system area so mutants reach the PVD scan, El Torito
     and UDF reads) and asserts the parser never crashes or hangs and reports the media size
     straight from the stream it read.
+- [x] R5-G14-DETECT Fuzz harness: raw file-system signature detector
+  - RESOLVED 2026-08-12 [DONE]: PartitionFileSystemDetector::detectBytes is the untrusted-bytes
+    gate that runs before any reader -- it reads magic signatures and raw geometry across every
+    family (FAT / exFAT / NTFS / ext / HFS+ / APFS / ISO / XFS / ...) straight out of the attacker's
+    disk, so it belongs in the raw-block fuzz sweep alongside 7/8/9. test_fuzz_fs_detector drives
+    detectBytes over mutated signature-bearing buffers three ways (declared size, size 0, truncated
+    prefix) and asserts: no crash/hang; determinism (a pure function must agree with itself on the
+    same bytes -- a mismatch would mean a read ran off the end into indeterminate memory); and a
+    returned detection always names a non-empty family. Seeds poke each family's real magic via the
+    shared byte pokers (tests/support/byte_writer.h), so mutation reaches each family's signature
+    parser rather than bouncing off a zeroed image. 45k detections across two seeds, no crash and no
+    non-determinism. (The APFS nx_superblock and HFS+ volume-header READER fuzz -- G14-7/8 -- still
+    need the rich accept-path fixtures extracted the way ext's was in 4e025128; that groundwork is a
+    dedicated cycle. This closes the detector layer they all sit behind.)
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

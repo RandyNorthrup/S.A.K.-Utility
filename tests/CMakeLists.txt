@@ -2385,6 +2385,33 @@ add_test(NAME test_fuzz_ext_reader COMMAND test_fuzz_ext_reader
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_ext_reader")
 
+# test_fuzz_fs_detector - deterministic mutation-fuzz of the raw file-system signature detector,
+# the untrusted-bytes gate that runs before any reader (FAT/exFAT/NTFS/ext/HFS+/APFS/...). Asserts
+# no crash/hang across the three call shapes, determinism (pure function), and non-empty family.
+add_executable(test_fuzz_fs_detector
+    unit/test_fuzz_fs_detector.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../include/sak/partition_file_system_detector.h
+    ../include/sak/partition_raw_device_io.h
+    support/byte_writer.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_fs_detector PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_fs_detector PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_fs_detector PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_fs_detector COMMAND test_fuzz_fs_detector
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_fs_detector.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_fs_detector")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
