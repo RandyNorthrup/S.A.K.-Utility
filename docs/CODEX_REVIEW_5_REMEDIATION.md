@@ -3542,8 +3542,27 @@ the elevation boundary, or the AI tool policy those tests actually execute.
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
 - [~] R5-G14-8 Fuzz harness: HFS+ reader structures
   - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
-- [~] R5-G14-9 Fuzz harness: ext reader structures
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+- [x] R5-G14-9 Fuzz harness: ext reader structures
+  - RESOLVED 2026-08-12 [DONE]: test_fuzz_ext_reader wires the reusable core (G14-5) to the
+    read-only ext2/ext3/ext4 file browser (PartitionExtFileSystemReader). Every field the reader
+    trusts is attacker-controlled: the superblock, the group descriptor, the inode table, directory
+    records, and (for ext4) the extent tree. Each mutated image is driven through the real
+    listDirectoryFromImage() / readFileFromImage() entry points (root, a nested path, and a
+    regular-file read) and four invariants are asserted for every input: (1) no crash/hang;
+    (2) a not-ok result always names a blocker, so a rejection can never masquerade as an
+    empty-but-successful listing ([[no-fallbacks-fail-closed]]); (3) a successful listing never
+    exceeds the requested entry cap even when the directory records claim more; (4) a file read
+    never exceeds the caller's byte cap. The seed corpus reuses the genuine walkable image from
+    the new tests/support/ext_fixture.h (both the direct-block and the ext4 extent-mapped variant)
+    so mutations reach the accept path, plus zero/0xFF/magic-only/truncated images that reach the
+    superblock and sizing rejections. NO DUPLICATION: the ext image layout (constants, inode/dirent
+    helpers, extReaderFixture) previously lived inline in test_partition_manager_core.cpp; it was
+    extracted to tests/support/ext_fixture.h and the byte pokers to tests/support/byte_writer.h,
+    and the big partition test now consumes both -- so the accept-path lock tests there and this
+    fuzz harness share one home and can never drift. Wide confidence run over 20k iterations plus
+    the pinned seeds, no crash/overrun.
+- [~] R5-G14-7/8 (APFS / HFS+) remain the last raw-block fuzz gaps; ext (G14-9) is now closed the
+  same way, so the APFS nx_superblock and HFS+ volume-header readers are the next candidates.
 - [x] R5-G14-10 Fuzz harness: ZIP and archive entry decoding
   - RESOLVED 2026-08-12 [DONE]: test_fuzz_decompressor wires the reusable core (G14-5) to the
     first-party archive-decompression surface -- the streaming decompressors gzip / bzip2 / xz,

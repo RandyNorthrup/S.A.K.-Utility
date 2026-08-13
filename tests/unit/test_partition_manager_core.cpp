@@ -25,6 +25,9 @@
 #include "sak/partition_script_builder.h"
 #include "sak/storage_inventory_worker.h"
 
+#include "../support/byte_writer.h"
+#include "../support/ext_fixture.h"
+
 #include <QBuffer>
 #include <QCryptographicHash>
 #include <QDir>
@@ -44,28 +47,12 @@ using namespace sak;
 
 namespace {
 
+// ext image layout (constants, helpers, extReaderFixture) lives in one home shared with the ext
+// fuzz harness; the byte pokers likewise. See tests/support/{ext_fixture,byte_writer}.h.
+using namespace sak::testfixtures;
+using namespace sak::testfixtures::ext;
+
 constexpr int kExpectedRecoveredFixtureCount = 2;
-constexpr qsizetype kTestExtSuperblockOffset = 1024;
-constexpr qsizetype kTestExtInodesCountOffset = 0x0;
-constexpr qsizetype kTestExtBlocksCountLoOffset = 0x4;
-constexpr qsizetype kTestExtFreeBlocksCountLoOffset = 0xC;
-constexpr qsizetype kTestExtFreeInodesCountOffset = 0x10;
-constexpr qsizetype kTestExtFirstDataBlockOffset = 0x14;
-constexpr qsizetype kTestExtLogBlockSizeOffset = 0x18;
-constexpr qsizetype kTestExtBlocksPerGroupOffset = 0x20;
-constexpr qsizetype kTestExtInodesPerGroupOffset = 0x28;
-constexpr qsizetype kTestExtMagicOffset = 0x38;
-constexpr qsizetype kTestExtFeatureCompatOffset = 0x5C;
-constexpr qsizetype kTestExtFeatureIncompatOffset = 0x60;
-constexpr qsizetype kTestExtFeatureRoCompatOffset = 0x64;
-constexpr qsizetype kTestExtVolumeNameOffset = 0x78;
-constexpr qsizetype kTestExtInodeSizeOffset = 0x58;
-constexpr qsizetype kTestExtGroupDescriptorInodeTableLoOffset = 0x08;
-constexpr qsizetype kTestExtInodeModeOffset = 0x00;
-constexpr qsizetype kTestExtInodeSizeLoOffset = 0x04;
-constexpr qsizetype kTestExtInodeFlagsOffset = 0x20;
-constexpr qsizetype kTestExtInodeBlocksOffset = 0x28;
-constexpr qsizetype kTestExtInodeSizeHiOffset = 0x6C;
 constexpr qsizetype kTestXfsBlockSizeOffset = 4;
 constexpr qsizetype kTestXfsDataBlocksOffset = 8;
 constexpr qsizetype kTestXfsUuidOffset = 32;
@@ -249,18 +236,7 @@ constexpr int kTestHfsSplitFixtureFileCount = 14;
 constexpr qsizetype kTestHfsCatalogRecordIdOffset = 8;
 constexpr qsizetype kTestHfsExtentsKeyLength = 10;
 constexpr qsizetype kTestHfsExtentsRecordBytes = 64;
-constexpr uint32_t kTestExtCompatHasJournal = 0x0004;
-constexpr uint32_t kTestExtIncompatExtents = 0x0040;
-constexpr uint32_t kTestExtInodeFlagExtents = 0x00'08'00'00;
 constexpr uint32_t kTestHfsJournaledMask = 0x00'00'20'00;
-constexpr uint32_t kTestExtBlockSize = 1024;
-constexpr uint32_t kTestExtInodeSize = 128;
-constexpr qsizetype kTestExtInodeBlockBytes = 60;
-constexpr uint32_t kTestExtInodeTableBlock = 5;
-constexpr uint32_t kTestExtRootDirectoryBlock = 10;
-constexpr uint32_t kTestExtHelloFileBlock = 11;
-constexpr uint32_t kTestExtDocsDirectoryBlock = 12;
-constexpr uint32_t kTestExtNoteFileBlock = 13;
 constexpr uint32_t kTestHfsWrapperAllocationBlockSize = 4096;
 constexpr uint16_t kTestHfsWrapperAllocationStartSector = 8;
 constexpr uint16_t kTestHfsWrapperEmbeddedStartBlock = 10;
@@ -342,249 +318,10 @@ QByteArray signatureFixture() {
     return QByteArray(PartitionFileSystemDetector::maxProbeBytes(), '\0');
 }
 
-void writeAscii(QByteArray* bytes, qsizetype offset, const char* value) {
-    Q_ASSERT(bytes);
-    const QByteArray text(value);
-    for (qsizetype index = 0; index < text.size(); ++index) {
-        (*bytes)[offset + index] = text.at(index);
-    }
-}
-
-void writeRaw(QByteArray* bytes, qsizetype offset, const QByteArray& value) {
-    Q_ASSERT(bytes);
-    for (qsizetype index = 0; index < value.size(); ++index) {
-        (*bytes)[offset + index] = value.at(index);
-    }
-}
-
-void writeLe32(QByteArray* bytes, qsizetype offset, uint32_t value) {
-    Q_ASSERT(bytes);
-    (*bytes)[offset] = static_cast<char>(value & 0xFF);
-    (*bytes)[offset + 1] = static_cast<char>((value >> 8) & 0xFF);
-    (*bytes)[offset + 2] = static_cast<char>((value >> 16) & 0xFF);
-    (*bytes)[offset + 3] = static_cast<char>((value >> 24) & 0xFF);
-}
-
-void writeLe16(QByteArray* bytes, qsizetype offset, uint16_t value) {
-    Q_ASSERT(bytes);
-    (*bytes)[offset] = static_cast<char>(value & 0xFF);
-    (*bytes)[offset + 1] = static_cast<char>((value >> 8) & 0xFF);
-}
-
-void writeLe64(QByteArray* bytes, qsizetype offset, uint64_t value) {
-    Q_ASSERT(bytes);
-    (*bytes)[offset] = static_cast<char>(value & 0xFF);
-    (*bytes)[offset + 1] = static_cast<char>((value >> 8) & 0xFF);
-    (*bytes)[offset + 2] = static_cast<char>((value >> 16) & 0xFF);
-    (*bytes)[offset + 3] = static_cast<char>((value >> 24) & 0xFF);
-    (*bytes)[offset + 4] = static_cast<char>((value >> 32) & 0xFF);
-    (*bytes)[offset + 5] = static_cast<char>((value >> 40) & 0xFF);
-    (*bytes)[offset + 6] = static_cast<char>((value >> 48) & 0xFF);
-    (*bytes)[offset + 7] = static_cast<char>((value >> 56) & 0xFF);
-}
-
-void writeBe16(QByteArray* bytes, qsizetype offset, uint16_t value) {
-    Q_ASSERT(bytes);
-    (*bytes)[offset] = static_cast<char>((value >> 8) & 0xFF);
-    (*bytes)[offset + 1] = static_cast<char>(value & 0xFF);
-}
-
-void writeBe32(QByteArray* bytes, qsizetype offset, uint32_t value) {
-    Q_ASSERT(bytes);
-    (*bytes)[offset] = static_cast<char>((value >> 24) & 0xFF);
-    (*bytes)[offset + 1] = static_cast<char>((value >> 16) & 0xFF);
-    (*bytes)[offset + 2] = static_cast<char>((value >> 8) & 0xFF);
-    (*bytes)[offset + 3] = static_cast<char>(value & 0xFF);
-}
-
-uint16_t readBe16(const QByteArray& bytes, qsizetype offset) {
-    return qFromBigEndian<uint16_t>(bytes.constData() + offset);
-}
-
-uint32_t readBe32(const QByteArray& bytes, qsizetype offset) {
-    return (static_cast<uint32_t>(static_cast<unsigned char>(bytes.at(offset))) << 24) |
-           (static_cast<uint32_t>(static_cast<unsigned char>(bytes.at(offset + 1))) << 16) |
-           (static_cast<uint32_t>(static_cast<unsigned char>(bytes.at(offset + 2))) << 8) |
-           static_cast<uint32_t>(static_cast<unsigned char>(bytes.at(offset + 3)));
-}
-
-void writeBe64(QByteArray* bytes, qsizetype offset, uint64_t value) {
-    Q_ASSERT(bytes);
-    (*bytes)[offset] = static_cast<char>((value >> 56) & 0xFF);
-    (*bytes)[offset + 1] = static_cast<char>((value >> 48) & 0xFF);
-    (*bytes)[offset + 2] = static_cast<char>((value >> 40) & 0xFF);
-    (*bytes)[offset + 3] = static_cast<char>((value >> 32) & 0xFF);
-    (*bytes)[offset + 4] = static_cast<char>((value >> 24) & 0xFF);
-    (*bytes)[offset + 5] = static_cast<char>((value >> 16) & 0xFF);
-    (*bytes)[offset + 6] = static_cast<char>((value >> 8) & 0xFF);
-    (*bytes)[offset + 7] = static_cast<char>(value & 0xFF);
-}
-
 void writeBootSectorSignature(QByteArray* bytes) {
     Q_ASSERT(bytes);
     (*bytes)[kTestBootSectorSignatureOffset] = static_cast<char>(0x55);
     (*bytes)[kTestBootSectorSignatureOffset + 1] = static_cast<char>(0xAA);
-}
-
-qsizetype testExtInodeOffset(uint32_t inodeNumber) {
-    return static_cast<qsizetype>(kTestExtInodeTableBlock * kTestExtBlockSize +
-                                  (inodeNumber - 1) * kTestExtInodeSize);
-}
-
-uint16_t alignedExtRecordLength(qsizetype nameLength) {
-    return static_cast<uint16_t>((8 + nameLength + 3) & ~3);
-}
-
-struct ExtDirectoryEntryFixture {
-    uint32_t inode{0};
-    QByteArray name;
-    uint8_t file_type{0};
-    uint16_t record_length{0};
-};
-
-void writeExtDirectoryEntry(QByteArray* bytes,
-                            qsizetype offset,
-                            const ExtDirectoryEntryFixture& entry) {
-    writeLe32(bytes, offset, entry.inode);
-    writeLe16(bytes, offset + 4, entry.record_length);
-    (*bytes)[offset + 6] = static_cast<char>(entry.name.size());
-    (*bytes)[offset + 7] = static_cast<char>(entry.file_type);
-    for (qsizetype index = 0; index < entry.name.size(); ++index) {
-        (*bytes)[offset + 8 + index] = entry.name.at(index);
-    }
-}
-
-void writeExtExtentMappedBlock(QByteArray* bytes,
-                               qsizetype inodeOffset,
-                               uint32_t physicalBlock,
-                               uint16_t blockCount) {
-    const qsizetype blockMap = inodeOffset + kTestExtInodeBlocksOffset;
-    writeLe16(bytes, blockMap, 0xF30A);
-    writeLe16(bytes, blockMap + 2, 1);
-    writeLe16(bytes, blockMap + 4, 4);
-    writeLe16(bytes, blockMap + 6, 0);
-    writeLe32(bytes, blockMap + 12, 0);
-    writeLe16(bytes, blockMap + 16, blockCount);
-    writeLe16(bytes, blockMap + 18, 0);
-    writeLe32(bytes, blockMap + 20, physicalBlock);
-}
-
-struct ExtInodeFixture {
-    uint32_t inode_number{0};
-    uint16_t mode{0};
-    uint64_t size{0};
-    uint32_t first_block{0};
-    bool extent_mapped{false};
-    QByteArray inline_data;
-};
-
-void writeExtInode(QByteArray* bytes, const ExtInodeFixture& inode) {
-    const qsizetype offset = testExtInodeOffset(inode.inode_number);
-    writeLe16(bytes, offset + kTestExtInodeModeOffset, inode.mode);
-    writeLe32(bytes, offset + kTestExtInodeSizeLoOffset, static_cast<uint32_t>(inode.size));
-    writeLe32(bytes, offset + kTestExtInodeSizeHiOffset, static_cast<uint32_t>(inode.size >> 32));
-    if (inode.extent_mapped) {
-        writeLe32(bytes, offset + kTestExtInodeFlagsOffset, kTestExtInodeFlagExtents);
-        writeExtExtentMappedBlock(bytes, offset, inode.first_block, 1);
-    } else if (!inode.inline_data.isEmpty()) {
-        const qsizetype blockMap = offset + kTestExtInodeBlocksOffset;
-        for (qsizetype index = 0;
-             index < inode.inline_data.size() && index < kTestExtInodeBlockBytes;
-             ++index) {
-            (*bytes)[blockMap + index] = inode.inline_data.at(index);
-        }
-    } else {
-        writeLe32(bytes, offset + kTestExtInodeBlocksOffset, inode.first_block);
-    }
-}
-
-void writeExtDirectoryBlock(QByteArray* bytes,
-                            uint32_t blockNumber,
-                            const QVector<std::tuple<uint32_t, QByteArray, uint8_t>>& entries) {
-    qsizetype offset = static_cast<qsizetype>(blockNumber * kTestExtBlockSize);
-    qsizetype remaining = kTestExtBlockSize;
-    for (int index = 0; index < entries.size(); ++index) {
-        const auto& [inode, name, fileType] = entries.at(index);
-        const uint16_t recordLength = index == entries.size() - 1
-                                          ? static_cast<uint16_t>(remaining)
-                                          : alignedExtRecordLength(name.size());
-        writeExtDirectoryEntry(bytes,
-                               offset,
-                               ExtDirectoryEntryFixture{.inode = inode,
-                                                        .name = name,
-                                                        .file_type = fileType,
-                                                        .record_length = recordLength});
-        offset += recordLength;
-        remaining -= recordLength;
-    }
-}
-
-QByteArray extReaderFixture(bool extentMappedHello = false) {
-    QByteArray image(static_cast<qsizetype>(64 * kTestExtBlockSize), '\0');
-    writeLe32(&image, kTestExtSuperblockOffset + kTestExtInodesCountOffset, 64);
-    writeLe32(&image, kTestExtSuperblockOffset + kTestExtBlocksCountLoOffset, 64);
-    writeLe32(&image, kTestExtSuperblockOffset + kTestExtFirstDataBlockOffset, 1);
-    writeLe32(&image, kTestExtSuperblockOffset + kTestExtLogBlockSizeOffset, 0);
-    writeLe32(&image, kTestExtSuperblockOffset + kTestExtBlocksPerGroupOffset, 8192);
-    writeLe32(&image, kTestExtSuperblockOffset + kTestExtInodesPerGroupOffset, 64);
-    writeLe16(&image, kTestExtSuperblockOffset + kTestExtMagicOffset, 0xEF53);
-    writeLe16(&image, kTestExtSuperblockOffset + kTestExtInodeSizeOffset, kTestExtInodeSize);
-    if (extentMappedHello) {
-        writeLe32(&image,
-                  kTestExtSuperblockOffset + kTestExtFeatureIncompatOffset,
-                  kTestExtIncompatExtents);
-    }
-    writeLe32(&image,
-              2 * kTestExtBlockSize + kTestExtGroupDescriptorInodeTableLoOffset,
-              kTestExtInodeTableBlock);
-
-    const QByteArray hello("hello from ext\n");
-    const QByteArray note("nested note\n");
-    const QByteArray helloLink("hello.txt");
-    writeExtInode(&image,
-                  ExtInodeFixture{.inode_number = 2,
-                                  .mode = 0x4000 | 0755,
-                                  .size = kTestExtBlockSize,
-                                  .first_block = kTestExtRootDirectoryBlock});
-    writeExtInode(&image,
-                  ExtInodeFixture{.inode_number = 12,
-                                  .mode = 0x8000 | 0644,
-                                  .size = static_cast<uint64_t>(hello.size()),
-                                  .first_block = kTestExtHelloFileBlock,
-                                  .extent_mapped = extentMappedHello});
-    writeExtInode(&image,
-                  ExtInodeFixture{.inode_number = 13,
-                                  .mode = 0x4000 | 0755,
-                                  .size = kTestExtBlockSize,
-                                  .first_block = kTestExtDocsDirectoryBlock});
-    writeExtInode(&image,
-                  ExtInodeFixture{.inode_number = 14,
-                                  .mode = 0x8000 | 0644,
-                                  .size = static_cast<uint64_t>(note.size()),
-                                  .first_block = kTestExtNoteFileBlock});
-    writeExtInode(&image,
-                  ExtInodeFixture{.inode_number = 15,
-                                  .mode = 0xA000 | 0777,
-                                  .size = static_cast<uint64_t>(helloLink.size()),
-                                  .inline_data = helloLink});
-    writeExtDirectoryBlock(&image,
-                           kTestExtRootDirectoryBlock,
-                           {{2, QByteArray("."), 2},
-                            {2, QByteArray(".."), 2},
-                            {12, QByteArray("hello.txt"), 1},
-                            {13, QByteArray("docs"), 2},
-                            {15, QByteArray("hello-link"), 7}});
-    writeExtDirectoryBlock(
-        &image,
-        kTestExtDocsDirectoryBlock,
-        {{13, QByteArray("."), 2}, {2, QByteArray(".."), 2}, {14, QByteArray("note.txt"), 1}});
-    std::copy(hello.cbegin(),
-              hello.cend(),
-              image.begin() + static_cast<qsizetype>(kTestExtHelloFileBlock * kTestExtBlockSize));
-    std::copy(note.cbegin(),
-              note.cend(),
-              image.begin() + static_cast<qsizetype>(kTestExtNoteFileBlock * kTestExtBlockSize));
-    return image;
 }
 
 void writeHfsExtent(QByteArray* bytes, qsizetype offset, uint32_t startBlock, uint32_t blockCount) {
