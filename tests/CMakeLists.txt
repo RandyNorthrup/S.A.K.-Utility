@@ -2468,6 +2468,40 @@ add_test(NAME test_fuzz_hfs_reader COMMAND test_fuzz_hfs_reader
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_hfs_reader")
 
+# test_fuzz_apfs_reader - deterministic mutation-fuzz of the read-only APFS container reader
+# (G14-7). An APFS container has a 64 MiB floor, so instead of whole-buffer mutation the harness
+# builds one genuine walkable container with the real writer and overlays a mutated front window
+# (nx_superblock + checkpoint + object map) onto its head each iteration. Asserts no crash/hang,
+# fail-closed-with-a-blocker, bounded listings, and bounded reads.
+add_executable(test_fuzz_apfs_reader
+    unit/test_fuzz_apfs_reader.cpp
+    ../src/core/partition_apfs_file_system_reader.cpp
+    ../src/core/partition_apfs_writer.cpp
+    ../src/core/apfs_crypto.cpp
+    ../src/core/apfs_keybag.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../include/sak/partition_apfs_file_system_reader.h
+    ../include/sak/partition_apfs_writer.h
+    ../include/sak/partition_raw_device_io.h
+    ../include/sak/partition_export_containment.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_apfs_reader PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_apfs_reader PRIVATE
+    Qt6::Core Qt6::Test sak_lzfse ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_apfs_reader PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_apfs_reader COMMAND test_fuzz_apfs_reader
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_apfs_reader.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_apfs_reader")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
@@ -7189,7 +7223,8 @@ foreach(_sak_core_test_target
         test_file_management_file_system
         test_duplicate_finder_worker
         test_advanced_search_worker
-        test_advanced_search_controller)
+        test_advanced_search_controller
+        test_fuzz_apfs_reader)
     if(TARGET ${_sak_core_test_target})
         target_compile_definitions(${_sak_core_test_target} PRIVATE QT_NO_KEYWORDS)
     endif()

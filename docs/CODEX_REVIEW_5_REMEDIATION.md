@@ -3538,8 +3538,26 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     that neither decoder ever grows its input, and that the dispatcher matches the direct QP
     helper. NEXT INCREMENT: the multipart body walk (splitMimeParts + processMimePart) still
     reads member state (m_attachment_sink) so that extraction is larger than these two were.
-- [~] R5-G14-7 Fuzz harness: APFS reader/writer structures
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+- [x] R5-G14-7 Fuzz harness: APFS reader/writer structures
+  - RESOLVED 2026-08-13 [DONE]: test_fuzz_apfs_reader wires the reusable core (G14-5) to the
+    read-only APFS container reader (PartitionApfsFileSystemReader). Every field the reader trusts is
+    attacker-controlled: the nx_superblock, the checkpoint descriptor/data rings, the container and
+    volume object maps, the volume superblock, and the catalog (file-system) B-tree. An APFS
+    container has a hard 64 MiB floor (kMinimumApfsContainerBytes), far too large to copy-and-mutate
+    whole-buffer per iteration, so the harness generates ONE genuine walkable container with the real
+    APFS writer (buildImageOnlyFormatImage + commitImageOnlyFileWrite of root.txt), keeps it on disk,
+    and per input overlays a mutated copy of only the front window (nx_superblock + checkpoint +
+    object map, 2 MiB) onto the container's head, leaving the valid tail intact -- every mutant is a
+    real container with a corrupted head, exactly the bytes the container-level parser trusts first.
+    Four invariants per input: (1) no crash/hang; (2) a not-ok result always names a blocker
+    ([[no-fallbacks-fail-closed]]); (3) a successful listing never exceeds the entry cap; (4) a file
+    read never exceeds the byte cap. The unmutated window overlays onto itself (identity), so the
+    accept path -- a valid container listing root.txt -- is exercised and pinned by a lock-in test.
+    NO fixture extraction was needed: the APFS writer IS the single home for container layout, so the
+    seed is writer-generated rather than hand-laid (unlike ext/HFS). GOTCHAS: the target compiles
+    partition_apfs_writer.cpp, which uses `slots` as an ordinary variable name, so it must be built
+    with QT_NO_KEYWORDS (added to the core-test list); the writer also pulls
+    PartitionFileSystemDetector, so the detector source is linked.
 - [x] R5-G14-8 Fuzz harness: HFS+ reader structures
   - RESOLVED 2026-08-13 [DONE]: test_fuzz_hfs_reader wires the reusable core (G14-5) to the
     read-only HFS+ file browser (PartitionHfsFileSystemReader). Every field the reader trusts is
