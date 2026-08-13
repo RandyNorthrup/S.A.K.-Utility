@@ -167,6 +167,11 @@ std::vector<QByteArray> pstCorpus() {
         // block trailer, HN/BTH bounds), the LTP/messaging accept path the reject-only seeds
         // never touched (see docs/CODEX_REVIEW_5_REMEDIATION.md, R5-G14-5).
         sak::pst_fixture::buildOpenableUnicodeStore(),
+        // A FOLDERED store: the root folder's hierarchy Table Context lists one child folder, so
+        // the unmutated seed additionally drives the TC/row-matrix accept path (readTableContext,
+        // parseTcInfo, buildTcRows, materializeTcRow, buildTcCell, extractChildNids) and the
+        // recursion into the child's PC. Mutations reach those TC parsers with hostile input.
+        sak::pst_fixture::buildFolderedUnicodeStore(),
     };
 }
 

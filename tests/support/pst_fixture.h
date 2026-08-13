@@ -124,6 +124,53 @@ inline constexpr int kOpenableBlockOffset = kPageSize * 4;         // 0x800
 inline constexpr int kOpenableFileSize = kOpenableBlockOffset + kRootBlockDiskSize;
 inline constexpr int kLeafPageBodyLen = kPageSize - kTrailerSize;  // CRC-covered page body
 
+// Foldered store: a root folder whose hierarchy Table Context lists one child folder, so
+// PstParser::open() walks readTableContext -> parseTcInfo -> buildTcRows -> extractChildNids
+// -> recurse into the child. The hierarchy TC node NID is (root & ~0x1F) | NID_TYPE_HIERARCHY.
+inline constexpr uint32_t kHierarchyTableNid = 0x12D;  // (0x122 & ~0x1F) | 0x0D
+inline constexpr uint32_t kChildFolderNid = 0x142;
+inline constexpr uint64_t kHierarchyDataBid = 8;       // external (0x02 clear)
+inline constexpr uint64_t kChildFolderDataBid = 12;
+
+// Table Context on-heap layout (MS-PST 2.3.4). A single 4-byte column (PidTagLtpRowId, whose
+// cell IS the child NID) and no TCROWID BTH (hidRowIndex 0 -> the parser enumerates the one row).
+inline constexpr uint8_t kTcClientSignature = 0x7C;  // HNHDR.bClientSig for a TC; also TCINFO.bType
+inline constexpr int kTcinfoBTypeOffset = 0;
+inline constexpr int kTcinfoColCountOffset = 1;
+inline constexpr int kTcinfoRgib4bOffset = 2;
+inline constexpr int kTcinfoRgib2bOffset = 4;
+inline constexpr int kTcinfoRgib1bOffset = 6;  // CEB offset within a row
+inline constexpr int kTcinfoRgibBmOffset = 8;  // row size
+inline constexpr int kTcinfoHidRowIndexOffset = 10;
+inline constexpr int kTcinfoHnidRowsOffset = 14;
+inline constexpr int kTcinfoHeaderLen = 22;
+inline constexpr int kTcColDescLen = 8;
+inline constexpr int kTcColTypeOffset = 0;
+inline constexpr int kTcColPropIdOffset = 2;
+inline constexpr int kTcColIbDataOffset = 4;
+inline constexpr int kTcColDataSizeOffset = 6;
+inline constexpr int kTcColBitIndexOffset = 7;
+inline constexpr uint16_t kPidTagLtpRowId = 0x67F2;
+inline constexpr int kTcRowCellSize = 4;              // the LtpRowId cell (a 4-byte NID)
+inline constexpr int kTcRowSize = 5;                  // 4-byte cell + 1 CEB byte
+inline constexpr uint8_t kCebFirstColPresent = 0x80;  // CEB high bit set == column 0 present
+inline constexpr uint32_t kTcHidUserRoot = 0x20;      // HID index 1 (TCINFO)
+inline constexpr uint32_t kTcHnidRows = 0x40;         // HID index 2 (row matrix)
+inline constexpr int kTcinfoOffset = kHnHdrSize;      // 12
+inline constexpr int kTcRowMatrixOffset = kTcinfoOffset + kTcinfoHeaderLen + kTcColDescLen;  // 42
+inline constexpr int kTcPageMapOffset = kTcRowMatrixOffset + kTcRowSize;                     // 47
+inline constexpr int kTcBlockCb = kTcPageMapOffset +
+                                  10;  // + HNPAGEMAP(cAlloc/cFree + 3 rgib) == 57
+inline constexpr int kTcBlockDiskSize = ((kTcBlockCb + kTrailerSize + 63) / 64) * 64;  // 128
+
+// Foldered store block offsets (same NBT/BBT pages as the openable store; three blocks after).
+inline constexpr int kFolderedRootBlockOffset = kOpenableBlockOffset;                     // 0x800
+inline constexpr int kFolderedTcBlockOffset = kFolderedRootBlockOffset +
+                                              kRootBlockDiskSize;                         // 0x840
+inline constexpr int kFolderedChildBlockOffset = kFolderedTcBlockOffset +
+                                                 kTcBlockDiskSize;                        // 0x8C0
+inline constexpr int kFolderedFileSize = kFolderedChildBlockOffset + kRootBlockDiskSize;  // 0x900
+
 inline void writeLe16(QByteArray& data, int offset, uint16_t value) {
     data[offset] = static_cast<char>(value & 0xFF);
     data[offset + 1] = static_cast<char>((value >> kByteBits) & 0xFF);
@@ -217,17 +264,15 @@ inline QByteArray buildEmptyUnicodeStore() {
     return file;
 }
 
-// A legacy-Unicode BTree leaf page holding exactly one entry (count 1, level 0) with a
-// valid PAGETRAILER. entry_bytes is copied to page offset 0 and must be entry_size long.
-inline QByteArray makeLeafPageWithEntry(uint8_t ptype,
-                                        int entry_size,
-                                        int page_offset,
-                                        const QByteArray& entry_bytes) {
+// A legacy-Unicode BTree leaf page holding entry_count entries (level 0) with a valid
+// PAGETRAILER. entries (entry_count * entry_size bytes) is copied to page offset 0.
+inline QByteArray makeLeafPageWithEntries(
+    uint8_t ptype, int entry_size, int page_offset, const QByteArray& entries, int entry_count) {
     QByteArray page(kPageSize, '\0');
     const int trailer_offset = kPageSize - kTrailerSize;
     const int meta_offset = trailer_offset - kMetaPad - kMetaSize;
-    page.replace(0, entry_bytes.size(), entry_bytes);
-    page[meta_offset] = 1;  // cEnt: one leaf entry
+    page.replace(0, entries.size(), entries);
+    page[meta_offset] = static_cast<char>(entry_count);  // cEnt
     page[meta_offset + 1] = static_cast<char>(kMaxEntriesPerPage);
     page[meta_offset + 2] = static_cast<char>(entry_size);
     page[meta_offset + 3] = 0;  // cLevel 0 == leaf
@@ -238,11 +283,35 @@ inline QByteArray makeLeafPageWithEntry(uint8_t ptype,
     return page;
 }
 
-// The root folder's data block: a Heap-on-Node whose PC BTree-on-Heap has hidRoot == 0
-// (an empty property context). PstParser::readPropertyContext walks HNHDR -> BTHHEADER,
-// sees the zero root HID, and returns an empty-but-valid PC -- which is what lets
-// buildFolderHierarchy(kNidRootFolder) succeed. A genuine BLOCKTRAILER (cb/wSig/dwCRC/bid)
-// authenticates the block. The 64-byte disk region is (cb + 16) rounded to 64.
+// One-entry convenience wrapper (the openable store's NBT/BBT each carry a single entry).
+inline QByteArray makeLeafPageWithEntry(uint8_t ptype,
+                                        int entry_size,
+                                        int page_offset,
+                                        const QByteArray& entry_bytes) {
+    return makeLeafPageWithEntries(ptype, entry_size, page_offset, entry_bytes, 1);
+}
+
+// The on-disk span of a block: cb data bytes + a 16-byte BLOCKTRAILER, rounded up to 64.
+inline int blockDiskSize(int cb) {
+    return ((cb + kTrailerSize + 63) / 64) * 64;
+}
+
+// Stamp a BLOCKTRAILER at the end of the block that begins at block_pos in buf: cb, wSig from
+// (sig_offset, bid), dwCRC over the cb data bytes, and the bid. The single source for the
+// trailer formula, used by every block builder and by the structure-fuzz re-stamp.
+inline void stampBlockTrailer(
+    QByteArray& buf, int block_pos, int cb, uint64_t bid, uint64_t sig_offset) {
+    const int t = block_pos + blockDiskSize(cb) - kTrailerSize;
+    writeLe16(buf, t + kBlockTrailerCbField, static_cast<uint16_t>(cb));
+    writeLe16(buf, t + kBlockTrailerSigField, computeSig(sig_offset, bid));
+    writeLe32(buf, t + kBlockTrailerCrcField, weakCrc(buf, block_pos, cb));
+    writeLe64(buf, t + kBlockTrailerBidField, bid);
+}
+
+// The root/child folder's data block: a Heap-on-Node whose PC BTree-on-Heap has hidRoot == 0
+// (an empty property context). PstParser::readPropertyContext walks HNHDR -> BTHHEADER, sees the
+// zero root HID, and returns an empty-but-valid PC -- which is what lets buildFolderHierarchy
+// succeed for that folder NID. A genuine BLOCKTRAILER authenticates the 64-byte disk region.
 inline QByteArray buildRootFolderPcBlock(uint64_t file_offset, uint64_t bid) {
     QByteArray blk(kRootBlockDiskSize, '\0');
     // HNHDR
@@ -261,12 +330,47 @@ inline QByteArray buildRootFolderPcBlock(uint64_t file_offset, uint64_t bid) {
     writeLe16(blk, kHnPmCfreeOffset, 0);
     writeLe16(blk, kHnPmRgib0Offset, static_cast<uint16_t>(kBthHdrOffset));
     writeLe16(blk, kHnPmRgib1Offset, static_cast<uint16_t>(kHnPageMapOffset));
-    // BLOCKTRAILER over the kRootBlockCb data bytes.
-    const int t = kRootBlockTrailerOffset;
-    writeLe16(blk, t + kBlockTrailerCbField, static_cast<uint16_t>(kRootBlockCb));
-    writeLe16(blk, t + kBlockTrailerSigField, computeSig(file_offset, bid));
-    writeLe32(blk, t + kBlockTrailerCrcField, weakCrc(blk, 0, kRootBlockCb));
-    writeLe64(blk, t + kBlockTrailerBidField, bid);
+    stampBlockTrailer(blk, 0, kRootBlockCb, bid, file_offset);
+    return blk;
+}
+
+// The root folder's hierarchy Table Context data block: an HN (client sig 0x7C) whose TCINFO
+// declares one PidTagLtpRowId column and one row whose cell is @p child_nid. hidRowIndex is 0,
+// so the parser enumerates the single physical row. Walking it yields exactly one child folder.
+inline QByteArray buildHierarchyTcBlock(uint64_t file_offset, uint64_t bid, uint32_t child_nid) {
+    QByteArray blk(blockDiskSize(kTcBlockCb), '\0');
+    // HNHDR -> TCINFO as the user root.
+    writeLe16(blk, kHnHdrIbHnpmOffset, static_cast<uint16_t>(kTcPageMapOffset));
+    blk[kHnHdrSigOffset] = static_cast<char>(kHnSignature);
+    blk[kHnHdrClientSigOffset] = static_cast<char>(kTcClientSignature);
+    writeLe32(blk, kHnHdrRootHidOffset, kTcHidUserRoot);
+    // TCINFO (heap allocation 1): one 4-byte column, row size 5, CEB at offset 4.
+    const int ti = kTcinfoOffset;
+    blk[ti + kTcinfoBTypeOffset] = static_cast<char>(kTcClientSignature);
+    blk[ti + kTcinfoColCountOffset] = 1;
+    writeLe16(blk, ti + kTcinfoRgib4bOffset, static_cast<uint16_t>(kTcRowCellSize));
+    writeLe16(blk, ti + kTcinfoRgib2bOffset, static_cast<uint16_t>(kTcRowCellSize));
+    writeLe16(blk, ti + kTcinfoRgib1bOffset, static_cast<uint16_t>(kTcRowCellSize));
+    writeLe16(blk, ti + kTcinfoRgibBmOffset, static_cast<uint16_t>(kTcRowSize));
+    writeLe32(blk, ti + kTcinfoHidRowIndexOffset, 0);
+    writeLe32(blk, ti + kTcinfoHnidRowsOffset, kTcHnidRows);
+    // Column descriptor (PtypInteger32 so the 4 cell bytes are read literally, not HNID-resolved).
+    const int col = ti + kTcinfoHeaderLen;
+    writeLe16(blk, col + kTcColTypeOffset, sak::email::kPropTypeInt32);
+    writeLe16(blk, col + kTcColPropIdOffset, kPidTagLtpRowId);
+    writeLe16(blk, col + kTcColIbDataOffset, 0);
+    blk[col + kTcColDataSizeOffset] = static_cast<char>(kTcRowCellSize);
+    blk[col + kTcColBitIndexOffset] = 0;
+    // Row matrix (heap allocation 2): the child NID cell + a CEB marking column 0 present.
+    writeLe32(blk, kTcRowMatrixOffset, child_nid);
+    blk[kTcRowMatrixOffset + kTcRowCellSize] = static_cast<char>(kCebFirstColPresent);
+    // HNPAGEMAP: two allocations -- TCINFO [12, 42) and the row matrix [42, 47).
+    writeLe16(blk, kTcPageMapOffset, 2);
+    writeLe16(blk, kTcPageMapOffset + 2, 0);
+    writeLe16(blk, kTcPageMapOffset + 4, static_cast<uint16_t>(kTcinfoOffset));
+    writeLe16(blk, kTcPageMapOffset + 6, static_cast<uint16_t>(kTcRowMatrixOffset));
+    writeLe16(blk, kTcPageMapOffset + 8, static_cast<uint16_t>(kTcPageMapOffset));
+    stampBlockTrailer(blk, 0, kTcBlockCb, bid, file_offset);
     return blk;
 }
 
@@ -282,19 +386,47 @@ inline void restampLeafPageTrailer(QByteArray& file, int page_offset) {
 
 // Re-stamp the PC block's BLOCKTRAILER over its (possibly mutated) kRootBlockCb data bytes.
 inline void restampBlockTrailer(QByteArray& file, int block_offset, uint64_t bid) {
-    const int trailer_offset = block_offset + kRootBlockTrailerOffset;
-    writeLe16(file,
-              trailer_offset + kBlockTrailerSigField,
-              computeSig(static_cast<uint64_t>(block_offset), bid));
-    writeLe32(file,
-              trailer_offset + kBlockTrailerCrcField,
-              weakCrc(file, block_offset, kRootBlockCb));
+    stampBlockTrailer(file, block_offset, kRootBlockCb, bid, static_cast<uint64_t>(block_offset));
 }
 
 // Re-stamp the header dwCRCPartial + dwCRCFull. Call after any header-body change.
 inline void restampHeaderCrc(QByteArray& file) {
     writeLe32(file, kCrcPartialOffset, weakCrc(file, kCrcPartialStart, kCrcPartialLen));
     writeLe32(file, kCrcFullOffset, weakCrc(file, kCrcFullStart, kCrcFullLen));
+}
+
+// A Unicode NBTENTRY: node NID -> data BID, no sub-node, no parent.
+inline QByteArray makeNbtEntry(uint32_t nid, uint64_t data_bid) {
+    QByteArray entry(kNbtEntrySize, '\0');
+    writeLe64(entry, kNbtEntryNidOffset, nid);
+    writeLe64(entry, kNbtEntryDataBidOffset, data_bid);
+    writeLe64(entry, kNbtEntrySubBidOffset, 0);
+    writeLe32(entry, kNbtEntryParentOffset, 0);
+    return entry;
+}
+
+// A Unicode BBTENTRY: block BID -> file offset + cb.
+inline QByteArray makeBbtEntry(uint64_t bid, int file_offset, int cb) {
+    QByteArray entry(kBbtEntrySize, '\0');
+    writeLe64(entry, kBbtEntryBidOffset, bid);
+    writeLe64(entry, kBbtEntryIbOffset, static_cast<uint64_t>(file_offset));
+    writeLe16(entry, kBbtEntryCbOffset, static_cast<uint16_t>(cb));
+    writeLe16(entry, kBbtEntryRefOffset, 2);  // cRef (>=2; not validated by the reader)
+    return entry;
+}
+
+// Magic, content type, Unicode version, no-encryption, and the ROOT BREFs (file size / NBT / BBT).
+inline void writeUnicodeStoreHeader(QByteArray& file, int nbt_offset, int bbt_offset) {
+    file[0] = static_cast<char>(kMagicByte0);
+    file[1] = static_cast<char>(kMagicByte1);
+    file[2] = static_cast<char>(kMagicByte2);
+    file[3] = static_cast<char>(kMagicByte3);
+    writeLe16(file, kContentTypeOffset, sak::email::kPstContentType);
+    writeLe16(file, kVersionOffset, sak::email::kUnicodeVersion);
+    file[kCryptOffsetUnicode] = static_cast<char>(sak::email::kEncryptNone);
+    writeLe64(file, kRootOffset + kRootFileSizeField, static_cast<uint64_t>(file.size()));
+    writeLe64(file, kRootOffset + kRootNbtField, static_cast<uint64_t>(nbt_offset));
+    writeLe64(file, kRootOffset + kRootBbtField, static_cast<uint64_t>(bbt_offset));
 }
 
 /// Build a legacy-Unicode PST that PstParser::open() ACCEPTS: the Node BTree carries a
@@ -311,41 +443,69 @@ inline QByteArray buildOpenableUnicodeStore() {
     const int file_size = kOpenableFileSize;
 
     QByteArray file(file_size, '\0');
-    file[0] = static_cast<char>(kMagicByte0);
-    file[1] = static_cast<char>(kMagicByte1);
-    file[2] = static_cast<char>(kMagicByte2);
-    file[3] = static_cast<char>(kMagicByte3);
-    writeLe16(file, kContentTypeOffset, sak::email::kPstContentType);
-    writeLe16(file, kVersionOffset, sak::email::kUnicodeVersion);
-    file[kCryptOffsetUnicode] = static_cast<char>(sak::email::kEncryptNone);
+    writeUnicodeStoreHeader(file, nbt_offset, bbt_offset);
 
-    writeLe64(file, kRootOffset + kRootFileSizeField, static_cast<uint64_t>(file_size));
-    writeLe64(file, kRootOffset + kRootNbtField, static_cast<uint64_t>(nbt_offset));
-    writeLe64(file, kRootOffset + kRootBbtField, static_cast<uint64_t>(bbt_offset));
-
-    // NBTENTRY for the root folder -> data BID, no sub-node, no parent.
-    QByteArray nbt_entry(kNbtEntrySize, '\0');
-    writeLe64(nbt_entry, kNbtEntryNidOffset, kRootFolderNid);
-    writeLe64(nbt_entry, kNbtEntryDataBidOffset, kRootFolderDataBid);
-    writeLe64(nbt_entry, kNbtEntrySubBidOffset, 0);
-    writeLe32(nbt_entry, kNbtEntryParentOffset, 0);
     file.replace(nbt_offset,
                  kPageSize,
-                 makeLeafPageWithEntry(kPtypeNbt, kNbtEntrySize, nbt_offset, nbt_entry));
-
-    // BBTENTRY mapping that BID to the PC block region.
-    QByteArray bbt_entry(kBbtEntrySize, '\0');
-    writeLe64(bbt_entry, kBbtEntryBidOffset, kRootFolderDataBid);
-    writeLe64(bbt_entry, kBbtEntryIbOffset, static_cast<uint64_t>(block_offset));
-    writeLe16(bbt_entry, kBbtEntryCbOffset, static_cast<uint16_t>(kRootBlockCb));
-    writeLe16(bbt_entry, kBbtEntryRefOffset, 2);  // cRef (>=2; not validated by the reader)
-    file.replace(bbt_offset,
-                 kPageSize,
-                 makeLeafPageWithEntry(kPtypeBbt, kBbtEntrySize, bbt_offset, bbt_entry));
-
+                 makeLeafPageWithEntry(kPtypeNbt,
+                                       kNbtEntrySize,
+                                       nbt_offset,
+                                       makeNbtEntry(kRootFolderNid, kRootFolderDataBid)));
+    file.replace(
+        bbt_offset,
+        kPageSize,
+        makeLeafPageWithEntry(kPtypeBbt,
+                              kBbtEntrySize,
+                              bbt_offset,
+                              makeBbtEntry(kRootFolderDataBid, block_offset, kRootBlockCb)));
     file.replace(block_offset,
                  kRootBlockDiskSize,
                  buildRootFolderPcBlock(static_cast<uint64_t>(block_offset), kRootFolderDataBid));
+
+    restampHeaderCrc(file);
+    return file;
+}
+
+/// Build a legacy-Unicode PST whose root folder has ONE child folder, reached through a real
+/// hierarchy Table Context. PstParser::open() walks loadChildFolders -> readTableContext ->
+/// parseTcInfo -> buildTcRows -> materializeTcRow -> buildTcCell -> extractChildNids and then
+/// recurses into the child's PC -- the TC/row-matrix code that neither the empty nor the
+/// single-folder openable store reaches. Three nodes (root PC, hierarchy TC, child PC) each get
+/// an NBT + BBT entry and a CRC/trailer-genuine block.
+inline QByteArray buildFolderedUnicodeStore() {
+    const int nbt_offset = kOpenableNbtOffset;
+    const int bbt_offset = kOpenableBbtOffset;
+    const int root_block = kFolderedRootBlockOffset;    // PC, disk 64
+    const int tc_block = kFolderedTcBlockOffset;        // hierarchy TC, disk 128
+    const int child_block = kFolderedChildBlockOffset;  // child PC, disk 64
+
+    QByteArray file(kFolderedFileSize, '\0');
+    writeUnicodeStoreHeader(file, nbt_offset, bbt_offset);
+
+    const QByteArray nbt = makeNbtEntry(kRootFolderNid, kRootFolderDataBid) +
+                           makeNbtEntry(kHierarchyTableNid, kHierarchyDataBid) +
+                           makeNbtEntry(kChildFolderNid, kChildFolderDataBid);
+    file.replace(nbt_offset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeNbt, kNbtEntrySize, nbt_offset, nbt, 3));
+
+    const QByteArray bbt = makeBbtEntry(kRootFolderDataBid, root_block, kRootBlockCb) +
+                           makeBbtEntry(kHierarchyDataBid, tc_block, kTcBlockCb) +
+                           makeBbtEntry(kChildFolderDataBid, child_block, kRootBlockCb);
+    file.replace(bbt_offset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeBbt, kBbtEntrySize, bbt_offset, bbt, 3));
+
+    file.replace(root_block,
+                 kRootBlockDiskSize,
+                 buildRootFolderPcBlock(static_cast<uint64_t>(root_block), kRootFolderDataBid));
+    file.replace(
+        tc_block,
+        kTcBlockDiskSize,
+        buildHierarchyTcBlock(static_cast<uint64_t>(tc_block), kHierarchyDataBid, kChildFolderNid));
+    file.replace(child_block,
+                 kRootBlockDiskSize,
+                 buildRootFolderPcBlock(static_cast<uint64_t>(child_block), kChildFolderDataBid));
 
     restampHeaderCrc(file);
     return file;

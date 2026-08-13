@@ -3478,10 +3478,22 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     HNHDR/HNPAGEMAP/BTHHEADER, a root NID or data BID pointing nowhere -- so the fail-closed bounds
     logic in loadNodeBTree / loadBlockBTree / readPropertyContext / readHeapOnNode runs under fuzz
     for the first time. Same absolute invariant (no crash, no hang); the unmutated seed is asserted
-    to still open first. Held across 20000 iterations and an alternate PRNG seed. REMAINING
-    PST-fuzz depth: a multi-message contents-table fixture (a hierarchy table + a message PC with
-    real properties) to reach readContentsTable / readMessage / readAttachments on populated data
-    -- the last uncovered LTP slice.
+    to still open first. Held across 20000 iterations and an alternate PRNG seed. HIERARCHY TABLE
+    CONTEXT ADDED 2026-08-12 (buildFolderedUnicodeStore): a root folder whose hierarchy Table
+    Context lists one child folder (a single PidTagLtpRowId column, one row, hidRowIndex 0 so the
+    parser enumerates the row). open() now walks loadChildFolders -> readTableContext -> parseTcInfo
+    -> buildTcRows -> materializeTcRow -> buildTcCell -> extractChildNids and recurses into the
+    child's PC -- the TC/row-matrix accept path that neither the empty nor the single-folder store
+    reaches. A deterministic lock-in test
+    (TestPstParser::reusableFolderedFixtureReachesChildViaHierarchyTable: open succeeds, root has
+    exactly one child at the expected NID/parent) proves the byte layout, and the foldered store is
+    now a seed in BOTH PST fuzz targets -- the plain fuzz walks the TC accept path on its unmutated
+    pass, and the structure-aware fuzz gained a hierarchy-TC-block arena (integral-but-corrupt
+    TCINFO/column/row-matrix), held across 15000 iterations and an alternate seed. The block-builder
+    machinery was generalized (blockDiskSize / stampBlockTrailer, one implementation shared by the
+    PC block, the TC block, and the structure-fuzz re-stamp). REMAINING PST-fuzz depth: a CONTENTS
+    table + message PC (subject/sender properties, a sub-node attachment table) to reach
+    readContentsTable / readMessage / readAttachments on populated messages -- the last LTP slice.
 - [x] R5-G14-6 Fuzz harness: MBOX and EML parsers
   - RESOLVED 2026-08-12 [DONE]: two fuzz targets now cover this attacker-controlled email
     surface. (1) The untrusted-email HTML sanitizer - the highest security risk here

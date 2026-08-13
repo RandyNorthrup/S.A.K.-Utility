@@ -224,6 +224,7 @@ private Q_SLOTS:
     void unicode4kOstReads4096ByteBTreePages();
     void compressibleEncryptedPstDecodesRootPropertyContext();
     void reusableOpenableFixtureReachesRootFolder();
+    void reusableFolderedFixtureReachesChildViaHierarchyTable();
     void rejectsUnknownDataVersion();
     void rejectsMistypedNodeBTreePage();
 
@@ -588,6 +589,34 @@ void TestPstParser::reusableOpenableFixtureReachesRootFolder() {
     QCOMPARE(parser.fileInfo().encryption_type, sak::email::kEncryptNone);
     QCOMPARE(parser.folderTree().size(), 1);
     QCOMPARE(parser.folderTree().first().node_id,
+             static_cast<uint64_t>(sak::email::kNidRootFolder));
+}
+
+void TestPstParser::reusableFolderedFixtureReachesChildViaHierarchyTable() {
+    // Locks the shared foldered store (tests/support/pst_fixture.h): open() must walk the root
+    // folder's hierarchy Table Context -- readTableContext -> parseTcInfo -> buildTcRows ->
+    // materializeTcRow -> extractChildNids -> recurse -- and yield the root folder with exactly
+    // one child (the PidTagLtpRowId cell). This exercises the TC/row-matrix accept path that the
+    // single-folder openable store does not, and fails deterministically here if it regresses.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildFolderedUnicodeStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+    QCOMPARE(parser.folderTree().size(), 1);
+    const sak::PstFolder& root = parser.folderTree().first();
+    QCOMPARE(root.node_id, static_cast<uint64_t>(sak::email::kNidRootFolder));
+    QCOMPARE(root.children.size(), 1);
+    QCOMPARE(root.children.first().node_id,
+             static_cast<uint64_t>(sak::pst_fixture::kChildFolderNid));
+    QCOMPARE(root.children.first().parent_node_id,
              static_cast<uint64_t>(sak::email::kNidRootFolder));
 }
 
