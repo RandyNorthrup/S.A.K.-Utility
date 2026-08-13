@@ -129,8 +129,15 @@ inline constexpr int kLeafPageBodyLen = kPageSize - kTrailerSize;  // CRC-covere
 // -> recurse into the child. The hierarchy TC node NID is (root & ~0x1F) | NID_TYPE_HIERARCHY.
 inline constexpr uint32_t kHierarchyTableNid = 0x12D;  // (0x122 & ~0x1F) | 0x0D
 inline constexpr uint32_t kChildFolderNid = 0x142;
-inline constexpr uint64_t kHierarchyDataBid = 8;       // external (0x02 clear)
-inline constexpr uint64_t kChildFolderDataBid = 12;
+inline constexpr uint64_t kHierarchyDataBid = 8;     // external (0x02 clear); generic 2nd-block BID
+inline constexpr uint64_t kChildFolderDataBid = 12;  // generic 3rd-block BID
+
+// Messaging store: the root folder's CONTENTS Table Context lists one message, so open() + a
+// readFolderItems() walk drive readContentsTable -> readTableContext and readItemDetail ->
+// readMessage. Same three-block layout as the foldered store; only the TC node type (0x0E
+// contents vs 0x0D hierarchy) and the leaf node type (0x04 message vs a folder) differ.
+inline constexpr uint32_t kContentsTableNid = 0x12E;  // (0x122 & ~0x1F) | 0x0E
+inline constexpr uint32_t kMessageNid = 0x24;         // (1 << 5) | 0x04 normal-message type
 
 // Table Context on-heap layout (MS-PST 2.3.4). A single 4-byte column (PidTagLtpRowId, whose
 // cell IS the child NID) and no TCROWID BTH (hidRowIndex 0 -> the parser enumerates the one row).
@@ -334,10 +341,11 @@ inline QByteArray buildRootFolderPcBlock(uint64_t file_offset, uint64_t bid) {
     return blk;
 }
 
-// The root folder's hierarchy Table Context data block: an HN (client sig 0x7C) whose TCINFO
-// declares one PidTagLtpRowId column and one row whose cell is @p child_nid. hidRowIndex is 0,
-// so the parser enumerates the single physical row. Walking it yields exactly one child folder.
-inline QByteArray buildHierarchyTcBlock(uint64_t file_offset, uint64_t bid, uint32_t child_nid) {
+// A single-row Table Context data block: an HN (client sig 0x7C) whose TCINFO declares one
+// PidTagLtpRowId column and one row whose cell is @p row_value. hidRowIndex is 0, so the parser
+// enumerates the single physical row. As a hierarchy table row_value is a child folder NID; as a
+// contents table it is a message NID -- the byte layout is identical, only the owning node differs.
+inline QByteArray buildSingleRowTcBlock(uint64_t file_offset, uint64_t bid, uint32_t row_value) {
     QByteArray blk(blockDiskSize(kTcBlockCb), '\0');
     // HNHDR -> TCINFO as the user root.
     writeLe16(blk, kHnHdrIbHnpmOffset, static_cast<uint16_t>(kTcPageMapOffset));
@@ -361,8 +369,8 @@ inline QByteArray buildHierarchyTcBlock(uint64_t file_offset, uint64_t bid, uint
     writeLe16(blk, col + kTcColIbDataOffset, 0);
     blk[col + kTcColDataSizeOffset] = static_cast<char>(kTcRowCellSize);
     blk[col + kTcColBitIndexOffset] = 0;
-    // Row matrix (heap allocation 2): the child NID cell + a CEB marking column 0 present.
-    writeLe32(blk, kTcRowMatrixOffset, child_nid);
+    // Row matrix (heap allocation 2): the row-value cell + a CEB marking column 0 present.
+    writeLe32(blk, kTcRowMatrixOffset, row_value);
     blk[kTcRowMatrixOffset + kTcRowCellSize] = static_cast<char>(kCebFirstColPresent);
     // HNPAGEMAP: two allocations -- TCINFO [12, 42) and the row matrix [42, 47).
     writeLe16(blk, kTcPageMapOffset, 2);
@@ -466,32 +474,30 @@ inline QByteArray buildOpenableUnicodeStore() {
     return file;
 }
 
-/// Build a legacy-Unicode PST whose root folder has ONE child folder, reached through a real
-/// hierarchy Table Context. PstParser::open() walks loadChildFolders -> readTableContext ->
-/// parseTcInfo -> buildTcRows -> materializeTcRow -> buildTcCell -> extractChildNids and then
-/// recurses into the child's PC -- the TC/row-matrix code that neither the empty nor the
-/// single-folder openable store reaches. Three nodes (root PC, hierarchy TC, child PC) each get
-/// an NBT + BBT entry and a CRC/trailer-genuine block.
-inline QByteArray buildFolderedUnicodeStore() {
+/// Build a legacy-Unicode PST with three nodes: the root folder PC, a single-row Table Context
+/// (@p tc_nid), and a leaf PC (@p leaf_nid, also the TC row's value). Whether the TC is a
+/// hierarchy table (open() recurses into a child folder) or a contents table (readFolderItems()
+/// lists a message) is decided entirely by tc_nid's type -- the byte layout is identical.
+inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid, uint32_t leaf_nid) {
     const int nbt_offset = kOpenableNbtOffset;
     const int bbt_offset = kOpenableBbtOffset;
-    const int root_block = kFolderedRootBlockOffset;    // PC, disk 64
-    const int tc_block = kFolderedTcBlockOffset;        // hierarchy TC, disk 128
-    const int child_block = kFolderedChildBlockOffset;  // child PC, disk 64
+    const int root_block = kFolderedRootBlockOffset;   // root PC, disk 64
+    const int tc_block = kFolderedTcBlockOffset;       // single-row TC, disk 128
+    const int leaf_block = kFolderedChildBlockOffset;  // leaf PC, disk 64
 
     QByteArray file(kFolderedFileSize, '\0');
     writeUnicodeStoreHeader(file, nbt_offset, bbt_offset);
 
     const QByteArray nbt = makeNbtEntry(kRootFolderNid, kRootFolderDataBid) +
-                           makeNbtEntry(kHierarchyTableNid, kHierarchyDataBid) +
-                           makeNbtEntry(kChildFolderNid, kChildFolderDataBid);
+                           makeNbtEntry(tc_nid, kHierarchyDataBid) +
+                           makeNbtEntry(leaf_nid, kChildFolderDataBid);
     file.replace(nbt_offset,
                  kPageSize,
                  makeLeafPageWithEntries(kPtypeNbt, kNbtEntrySize, nbt_offset, nbt, 3));
 
     const QByteArray bbt = makeBbtEntry(kRootFolderDataBid, root_block, kRootBlockCb) +
                            makeBbtEntry(kHierarchyDataBid, tc_block, kTcBlockCb) +
-                           makeBbtEntry(kChildFolderDataBid, child_block, kRootBlockCb);
+                           makeBbtEntry(kChildFolderDataBid, leaf_block, kRootBlockCb);
     file.replace(bbt_offset,
                  kPageSize,
                  makeLeafPageWithEntries(kPtypeBbt, kBbtEntrySize, bbt_offset, bbt, 3));
@@ -502,13 +508,28 @@ inline QByteArray buildFolderedUnicodeStore() {
     file.replace(
         tc_block,
         kTcBlockDiskSize,
-        buildHierarchyTcBlock(static_cast<uint64_t>(tc_block), kHierarchyDataBid, kChildFolderNid));
-    file.replace(child_block,
+        buildSingleRowTcBlock(static_cast<uint64_t>(tc_block), kHierarchyDataBid, leaf_nid));
+    file.replace(leaf_block,
                  kRootBlockDiskSize,
-                 buildRootFolderPcBlock(static_cast<uint64_t>(child_block), kChildFolderDataBid));
+                 buildRootFolderPcBlock(static_cast<uint64_t>(leaf_block), kChildFolderDataBid));
 
     restampHeaderCrc(file);
     return file;
+}
+
+/// The root folder has ONE child folder, reached through a hierarchy Table Context. open() walks
+/// loadChildFolders -> readTableContext -> parseTcInfo -> buildTcRows -> extractChildNids and
+/// recurses into the child's PC -- TC/row-matrix code the openable store never reaches.
+inline QByteArray buildFolderedUnicodeStore() {
+    return buildStoreWithSingleRowTc(kHierarchyTableNid, kChildFolderNid);
+}
+
+/// The root folder has a CONTENTS Table Context listing ONE message. readFolderItems(root) drives
+/// readContentsTable -> readTableContext -> the summary loop, and readItemDetail(message) drives
+/// readMessage -> readPropertyContext + readAttachments -- the message-read path no folder-only
+/// store reaches.
+inline QByteArray buildMessagingUnicodeStore() {
+    return buildStoreWithSingleRowTc(kContentsTableNid, kMessageNid);
 }
 
 }  // namespace sak::pst_fixture

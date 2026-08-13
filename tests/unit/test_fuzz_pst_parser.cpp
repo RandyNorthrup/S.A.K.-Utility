@@ -172,6 +172,10 @@ std::vector<QByteArray> pstCorpus() {
         // parseTcInfo, buildTcRows, materializeTcRow, buildTcCell, extractChildNids) and the
         // recursion into the child's PC. Mutations reach those TC parsers with hostile input.
         sak::pst_fixture::buildFolderedUnicodeStore(),
+        // A MESSAGING store: the root folder's CONTENTS Table Context lists one message. The walk's
+        // readFolderItems drives readContentsTable -> the summary loop, and readItemDetail on the
+        // message node drives readMessage. Mutations reach the contents-table + message-read code.
+        sak::pst_fixture::buildMessagingUnicodeStore(),
     };
 }
 
@@ -205,6 +209,7 @@ void walkOpenedParser(PstParser& parser) {
         static_cast<void>(parser.readItemDetail(nid));
         static_cast<void>(parser.readItemProperties(nid));
         static_cast<void>(parser.readAttachments(nid));
+        static_cast<void>(parser.readFolderItems(nid, 0, kNodeWalkBudget));
     }
 }
 

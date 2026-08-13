@@ -7,9 +7,10 @@
 /// The plain byte-mutation fuzz (test_fuzz_pst_parser) corrupts a seed anywhere, which
 /// almost always breaks an MS-PST CRC and bounces the file off the FIRST integrity gate --
 /// so the deep BTree/heap/property code past those gates never runs under it. This harness
-/// is the complement: it starts from an openable store (tests/support/pst_fixture.h -- either the
-/// single-folder store or the foldered store whose root has a hierarchy Table Context), mutates
-/// the BODY of exactly one region (a Node/Block BTree page, a PC block, or the hierarchy TC block),
+/// is the complement: it starts from an openable store (tests/support/pst_fixture.h -- the
+/// single-folder store, the foldered store whose root has a hierarchy Table Context, or the
+/// messaging store whose root has a contents Table Context listing a message), mutates the BODY of
+/// exactly one region (a Node/Block BTree page, a PC block, or the single-row TC block),
 /// then RE-STAMPS that region's PAGETRAILER / BLOCKTRAILER so the file stays byte-integral. The
 /// parser therefore ACCEPTS every integrity check and walks the mutated structure -- hostile entry
 /// counts and levels, a corrupt HNHDR/HNPAGEMAP/BTHHEADER, a corrupt TCINFO/column/row-matrix, a
@@ -40,13 +41,15 @@
 #include <array>
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 namespace {
 
 // Which openable store an arena belongs to.
 enum class Store {
     Openable,
-    Foldered
+    Foldered,
+    Messaging
 };
 
 // One mutable region of a store: a [begin, begin + length) BODY span whose bytes the parser reads
@@ -62,68 +65,73 @@ struct Arena {
     uint64_t block_bid;  // block BID (is_block only)
 };
 
-const std::array<Arena, 8>& arenas() {
+// Arenas for the openable store (3) plus, for each TC store (foldered + messaging, which share an
+// identical three-block layout and differ only in node type), five more: NBT page, BBT page, root
+// PC, single-row TC block, leaf PC. Built once in a loop so the shared layout is not duplicated.
+const std::vector<Arena>& arenas() {
     namespace pf = sak::pst_fixture;
-    static const std::array<Arena, 8> kArenas{{
-        // Openable store: NBT page, BBT page, root PC block.
-        {Store::Openable,
-         pf::kOpenableNbtOffset,
-         pf::kLeafPageBodyLen,
-         pf::kOpenableNbtOffset,
-         false,
-         0,
-         0},
-        {Store::Openable,
-         pf::kOpenableBbtOffset,
-         pf::kLeafPageBodyLen,
-         pf::kOpenableBbtOffset,
-         false,
-         0,
-         0},
-        {Store::Openable,
-         pf::kOpenableBlockOffset,
-         pf::kRootBlockCb,
-         pf::kOpenableBlockOffset,
-         true,
-         pf::kRootBlockCb,
-         pf::kRootFolderDataBid},
-        // Foldered store: NBT/BBT pages (3 entries each), root PC, hierarchy TC, child PC blocks.
-        {Store::Foldered,
-         pf::kOpenableNbtOffset,
-         pf::kLeafPageBodyLen,
-         pf::kOpenableNbtOffset,
-         false,
-         0,
-         0},
-        {Store::Foldered,
-         pf::kOpenableBbtOffset,
-         pf::kLeafPageBodyLen,
-         pf::kOpenableBbtOffset,
-         false,
-         0,
-         0},
-        {Store::Foldered,
-         pf::kFolderedRootBlockOffset,
-         pf::kRootBlockCb,
-         pf::kFolderedRootBlockOffset,
-         true,
-         pf::kRootBlockCb,
-         pf::kRootFolderDataBid},
-        {Store::Foldered,
-         pf::kFolderedTcBlockOffset,
-         pf::kTcBlockCb,
-         pf::kFolderedTcBlockOffset,
-         true,
-         pf::kTcBlockCb,
-         pf::kHierarchyDataBid},
-        {Store::Foldered,
-         pf::kFolderedChildBlockOffset,
-         pf::kRootBlockCb,
-         pf::kFolderedChildBlockOffset,
-         true,
-         pf::kRootBlockCb,
-         pf::kChildFolderDataBid},
-    }};
+    static const std::vector<Arena> kArenas = [] {
+        std::vector<Arena> v;
+        v.push_back({Store::Openable,
+                     pf::kOpenableNbtOffset,
+                     pf::kLeafPageBodyLen,
+                     pf::kOpenableNbtOffset,
+                     false,
+                     0,
+                     0});
+        v.push_back({Store::Openable,
+                     pf::kOpenableBbtOffset,
+                     pf::kLeafPageBodyLen,
+                     pf::kOpenableBbtOffset,
+                     false,
+                     0,
+                     0});
+        v.push_back({Store::Openable,
+                     pf::kOpenableBlockOffset,
+                     pf::kRootBlockCb,
+                     pf::kOpenableBlockOffset,
+                     true,
+                     pf::kRootBlockCb,
+                     pf::kRootFolderDataBid});
+        for (const Store store : {Store::Foldered, Store::Messaging}) {
+            v.push_back({store,
+                         pf::kOpenableNbtOffset,
+                         pf::kLeafPageBodyLen,
+                         pf::kOpenableNbtOffset,
+                         false,
+                         0,
+                         0});
+            v.push_back({store,
+                         pf::kOpenableBbtOffset,
+                         pf::kLeafPageBodyLen,
+                         pf::kOpenableBbtOffset,
+                         false,
+                         0,
+                         0});
+            v.push_back({store,
+                         pf::kFolderedRootBlockOffset,
+                         pf::kRootBlockCb,
+                         pf::kFolderedRootBlockOffset,
+                         true,
+                         pf::kRootBlockCb,
+                         pf::kRootFolderDataBid});
+            v.push_back({store,
+                         pf::kFolderedTcBlockOffset,
+                         pf::kTcBlockCb,
+                         pf::kFolderedTcBlockOffset,
+                         true,
+                         pf::kTcBlockCb,
+                         pf::kHierarchyDataBid});
+            v.push_back({store,
+                         pf::kFolderedChildBlockOffset,
+                         pf::kRootBlockCb,
+                         pf::kFolderedChildBlockOffset,
+                         true,
+                         pf::kRootBlockCb,
+                         pf::kChildFolderDataBid});
+        }
+        return v;
+    }();
     return kArenas;
 }
 
@@ -151,12 +159,21 @@ void mutateOneByteInArena(QByteArray& file, int begin, int length, sak::fuzz::Pr
     }
 }
 
+QByteArray buildStore(Store store) {
+    switch (store) {
+    case Store::Foldered:
+        return sak::pst_fixture::buildFolderedUnicodeStore();
+    case Store::Messaging:
+        return sak::pst_fixture::buildMessagingUnicodeStore();
+    default:
+        return sak::pst_fixture::buildOpenableUnicodeStore();
+    }
+}
+
 // Produce one integral-but-structurally-corrupt mutant: mutate one region's body, re-stamp it.
 QByteArray makeStructuralMutant(sak::fuzz::Prng& prng) {
     const Arena& arena = arenas()[prng.below(static_cast<uint32_t>(arenas().size()))];
-    QByteArray file = (arena.store == Store::Foldered)
-                          ? sak::pst_fixture::buildFolderedUnicodeStore()
-                          : sak::pst_fixture::buildOpenableUnicodeStore();
+    QByteArray file = buildStore(arena.store);
     const uint32_t rounds = 1u + prng.below(kMaxStructMutations);
     for (uint32_t i = 0; i < rounds; ++i) {
         mutateOneByteInArena(file, arena.body_begin, arena.body_length, prng);
@@ -197,6 +214,7 @@ void walkOpenedParser(PstParser& parser) {
         static_cast<void>(parser.readItemDetail(nid));
         static_cast<void>(parser.readItemProperties(nid));
         static_cast<void>(parser.readAttachments(nid));
+        static_cast<void>(parser.readFolderItems(nid, 0, kNodeWalkBudget));
     }
 }
 
@@ -227,7 +245,8 @@ private Q_SLOTS:
 
         for (const auto& [seed, label] :
              {std::pair{sak::pst_fixture::buildOpenableUnicodeStore(), "openable"},
-              std::pair{sak::pst_fixture::buildFolderedUnicodeStore(), "foldered"}}) {
+              std::pair{sak::pst_fixture::buildFolderedUnicodeStore(), "foldered"},
+              std::pair{sak::pst_fixture::buildMessagingUnicodeStore(), "messaging"}}) {
             QVERIFY(writeWholeFile(path, seed));
             PstParser seed_parser;
             seed_parser.open(path);

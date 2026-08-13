@@ -225,6 +225,7 @@ private Q_SLOTS:
     void compressibleEncryptedPstDecodesRootPropertyContext();
     void reusableOpenableFixtureReachesRootFolder();
     void reusableFolderedFixtureReachesChildViaHierarchyTable();
+    void reusableMessagingFixtureListsMessageViaContentsTable();
     void rejectsUnknownDataVersion();
     void rejectsMistypedNodeBTreePage();
 
@@ -618,6 +619,34 @@ void TestPstParser::reusableFolderedFixtureReachesChildViaHierarchyTable() {
              static_cast<uint64_t>(sak::pst_fixture::kChildFolderNid));
     QCOMPARE(root.children.first().parent_node_id,
              static_cast<uint64_t>(sak::email::kNidRootFolder));
+}
+
+void TestPstParser::reusableMessagingFixtureListsMessageViaContentsTable() {
+    // Locks the shared messaging store (tests/support/pst_fixture.h): the root folder's CONTENTS
+    // Table Context must list one item -- readFolderItems -> readContentsTable -> readTableContext
+    // -> the summary loop -- and the message node must read back through readItemDetail ->
+    // readMessage -> readPropertyContext. This is the message-read accept path no folder-only
+    // fixture exercises; it fails deterministically here if it regresses.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildMessagingUnicodeStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+
+    const auto items = parser.readFolderItems(sak::email::kNidRootFolder, 0, 10);
+    QVERIFY2(items.has_value(), "readFolderItems must succeed on the contents table");
+    QCOMPARE(items->size(), 1);
+
+    const auto detail = parser.readItemDetail(sak::pst_fixture::kMessageNid);
+    QVERIFY2(detail.has_value(), "readItemDetail must read the message PC");
+    QCOMPARE(detail->node_id, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
 }
 
 void TestPstParser::rejectsUnknownDataVersion() {
