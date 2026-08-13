@@ -115,6 +115,15 @@ inline constexpr uint32_t kRootFolderNid = sak::email::kNidRootFolder;  // 0x122
 inline constexpr uint64_t kRootFolderDataBid = 4;  // external (fInternal bit 0x02 clear)
 inline constexpr uint32_t kBthHeaderHid = 0x20;    // HID: index 1, block 0 (1 << 5)
 
+// buildOpenableUnicodeStore region offsets (two zero pages of headroom, then NBT / BBT /
+// PC block). Exposed so a structure-aware fuzz can mutate one region's BODY and re-stamp
+// just that region's integrity fields, keeping the file integral (see the restamp*() below).
+inline constexpr int kOpenableNbtOffset = kPageSize * 2;           // 0x400
+inline constexpr int kOpenableBbtOffset = kPageSize * 3;           // 0x600
+inline constexpr int kOpenableBlockOffset = kPageSize * 4;         // 0x800
+inline constexpr int kOpenableFileSize = kOpenableBlockOffset + kRootBlockDiskSize;
+inline constexpr int kLeafPageBodyLen = kPageSize - kTrailerSize;  // CRC-covered page body
+
 inline void writeLe16(QByteArray& data, int offset, uint16_t value) {
     data[offset] = static_cast<char>(value & 0xFF);
     data[offset + 1] = static_cast<char>((value >> kByteBits) & 0xFF);
@@ -261,6 +270,33 @@ inline QByteArray buildRootFolderPcBlock(uint64_t file_offset, uint64_t bid) {
     return blk;
 }
 
+// Re-stamp a legacy leaf page's PAGETRAILER over its (possibly mutated) body: recompute
+// dwCRC over [page_offset, page_offset + kLeafPageBodyLen) and wSig from (page_offset, bid 0).
+// A structure-aware fuzz mutates the page BODY then calls this so the file stays integral and
+// the parser accepts the trailer and walks the corrupt entries/meta -- the accept-path code.
+inline void restampLeafPageTrailer(QByteArray& file, int page_offset) {
+    const int trailer_offset = page_offset + kPageSize - kTrailerSize;
+    writeLe16(file, trailer_offset + 2, computeSig(static_cast<uint64_t>(page_offset), 0));
+    writeLe32(file, trailer_offset + 4, weakCrc(file, page_offset, kLeafPageBodyLen));
+}
+
+// Re-stamp the PC block's BLOCKTRAILER over its (possibly mutated) kRootBlockCb data bytes.
+inline void restampBlockTrailer(QByteArray& file, int block_offset, uint64_t bid) {
+    const int trailer_offset = block_offset + kRootBlockTrailerOffset;
+    writeLe16(file,
+              trailer_offset + kBlockTrailerSigField,
+              computeSig(static_cast<uint64_t>(block_offset), bid));
+    writeLe32(file,
+              trailer_offset + kBlockTrailerCrcField,
+              weakCrc(file, block_offset, kRootBlockCb));
+}
+
+// Re-stamp the header dwCRCPartial + dwCRCFull. Call after any header-body change.
+inline void restampHeaderCrc(QByteArray& file) {
+    writeLe32(file, kCrcPartialOffset, weakCrc(file, kCrcPartialStart, kCrcPartialLen));
+    writeLe32(file, kCrcFullOffset, weakCrc(file, kCrcFullStart, kCrcFullLen));
+}
+
 /// Build a legacy-Unicode PST that PstParser::open() ACCEPTS: the Node BTree carries a
 /// single leaf entry for the root folder (kNidRootFolder), the Block BTree maps that
 /// node's data BID to a Heap-on-Node PC block, and every CRC/signature is genuine. Unlike
@@ -269,10 +305,10 @@ inline QByteArray buildRootFolderPcBlock(uint64_t file_offset, uint64_t bid) {
 /// readPropertyContext, readHeapOnNode, and the folder-tree walk -- so a fuzz seed built
 /// from it exercises the success branches of the integrity gates, not just their rejects.
 inline QByteArray buildOpenableUnicodeStore() {
-    const int nbt_offset = kPageSize * 2;
-    const int bbt_offset = nbt_offset + kPageSize;
-    const int block_offset = bbt_offset + kPageSize;
-    const int file_size = block_offset + kRootBlockDiskSize;
+    const int nbt_offset = kOpenableNbtOffset;
+    const int bbt_offset = kOpenableBbtOffset;
+    const int block_offset = kOpenableBlockOffset;
+    const int file_size = kOpenableFileSize;
 
     QByteArray file(file_size, '\0');
     file[0] = static_cast<char>(kMagicByte0);
@@ -311,8 +347,7 @@ inline QByteArray buildOpenableUnicodeStore() {
                  kRootBlockDiskSize,
                  buildRootFolderPcBlock(static_cast<uint64_t>(block_offset), kRootFolderDataBid));
 
-    writeLe32(file, kCrcPartialOffset, weakCrc(file, kCrcPartialStart, kCrcPartialLen));
-    writeLe32(file, kCrcFullOffset, weakCrc(file, kCrcFullStart, kCrcFullLen));
+    restampHeaderCrc(file);
     return file;
 }
 

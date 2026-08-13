@@ -3468,10 +3468,20 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     (TestPstParser::reusableOpenableFixtureReachesRootFolder: open() succeeds, one root folder,
     unencrypted), so a regression that breaks the accept path fails there, not only under fuzz.
     Mutations of this seed now hit the SUCCESS-then-corrupt branch of each integrity gate rather
-    than only the first-gate reject. REMAINING PST-fuzz depth: structure-aware mutation that
-    re-stamps the CRC/trailers after corrupting page BODIES (so a mutant stays integral deeper
-    in), plus a multi-message contents-table fixture to reach readContentsTable / readMessage.
-    That structure-aware re-stamp is the tracked next increment.
+    than only the first-gate reject. STRUCTURE-AWARE FUZZ ADDED 2026-08-12
+    (test_fuzz_pst_structure): the complement to the plain byte fuzz, which almost always breaks
+    a CRC and rejects at the first gate. It mutates the BODY of exactly one region of the openable
+    store (the Node BTree page, the Block BTree page, or the PC block) and then RE-STAMPS that
+    region's PAGETRAILER / BLOCKTRAILER (restampLeafPageTrailer / restampBlockTrailer in
+    pst_fixture.h) so the file stays byte-integral. The parser therefore ACCEPTS every integrity
+    check and walks the mutated structure -- hostile entry counts/levels, a corrupt
+    HNHDR/HNPAGEMAP/BTHHEADER, a root NID or data BID pointing nowhere -- so the fail-closed bounds
+    logic in loadNodeBTree / loadBlockBTree / readPropertyContext / readHeapOnNode runs under fuzz
+    for the first time. Same absolute invariant (no crash, no hang); the unmutated seed is asserted
+    to still open first. Held across 20000 iterations and an alternate PRNG seed. REMAINING
+    PST-fuzz depth: a multi-message contents-table fixture (a hierarchy table + a message PC with
+    real properties) to reach readContentsTable / readMessage / readAttachments on populated data
+    -- the last uncovered LTP slice.
 - [x] R5-G14-6 Fuzz harness: MBOX and EML parsers
   - RESOLVED 2026-08-12 [DONE]: two fuzz targets now cover this attacker-controlled email
     surface. (1) The untrusted-email HTML sanitizer - the highest security risk here

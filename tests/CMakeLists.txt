@@ -2176,6 +2176,33 @@ add_test(NAME test_fuzz_pst_parser COMMAND test_fuzz_pst_parser
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_pst_parser")
 
+# test_fuzz_pst_structure - structure-aware mutation-fuzz of the PST LTP accept path
+# (G14-5 depth): mutates one region body of the openable store and re-stamps its trailer
+# so the file stays integral, driving the deep BTree/heap/property code the plain fuzz
+# (which breaks a CRC and rejects at the first gate) cannot reach. Same link set.
+add_executable(test_fuzz_pst_structure
+    unit/test_fuzz_pst_structure.cpp
+    ../src/core/pst_parser.cpp
+    ../src/core/logger.cpp
+    ../include/sak/pst_parser.h
+    fuzz/fuzz_harness.h
+    support/pst_fixture.h
+)
+set_target_properties(test_fuzz_pst_structure PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_pst_structure PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_pst_structure PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_pst_structure COMMAND test_fuzz_pst_structure
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_pst_structure.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_pst_structure")
+
 # test_fuzz_mcp_framing - deterministic mutation-fuzz of the two byte-framed control-
 # bridge transports (G14-12): Chrome native-messaging frames (parseFrame, needs
 # native_messaging.cpp) and the MCP stdio JSON-RPC line (parseJsonLine, header-only).
