@@ -139,6 +139,26 @@ inline constexpr uint64_t kChildFolderDataBid = 12;  // generic 3rd-block BID
 inline constexpr uint32_t kContentsTableNid = 0x12E;  // (0x122 & ~0x1F) | 0x0E
 inline constexpr uint32_t kMessageNid = 0x24;         // (1 << 5) | 0x04 normal-message type
 
+// Populated message PC: a non-empty PC BTree-on-Heap with one Subject record whose value is an
+// HNID pointing at a heap-stored UTF-16 string. Exercises parsePropertyRecords' variable-type
+// branch -> resolveHnid -> formatUnicodeValue -> the Subject detail setter. Three heap allocations:
+// the BTHHEADER, a one-record BTH leaf, and the subject string.
+inline constexpr uint16_t kSubjectPropId =
+    0x0037;                                  // PidTagSubjectW (== sak::email::kPropIdSubject)
+inline constexpr int kPcRecordKeySize = 2;   // wPropId
+inline constexpr int kPcValueRefOffset = 2;  // dwValueHnid sits key+2 into the record
+inline constexpr int kPcRecordSize = 8;      // key(2) + type(2) + HNID(4)
+inline constexpr int kMsgBthHdrOffset = kHnHdrSize;                           // 12
+inline constexpr int kMsgBthLeafOffset = kMsgBthHdrOffset + kBthHdrSize;      // 20
+inline constexpr int kMsgSubjectOffset = kMsgBthLeafOffset + kPcRecordSize;   // 28
+inline constexpr int kMsgSubjectCharCount = 4;                                // "FUZZ"
+inline constexpr int kMsgSubjectLen = kMsgSubjectCharCount * 2;               // UTF-16LE bytes == 8
+inline constexpr int kMsgPageMapOffset = kMsgSubjectOffset + kMsgSubjectLen;  // 36
+inline constexpr int kMessagePcCb = kMsgPageMapOffset +
+                                    12;           // + HNPAGEMAP(cAlloc/cFree + 4 rgib)==48
+inline constexpr uint32_t kMsgBthLeafHid = 0x40;  // HID index 2 (BTH leaf)
+inline constexpr uint32_t kMsgSubjectHid = 0x60;  // HID index 3 (subject string)
+
 // Table Context on-heap layout (MS-PST 2.3.4). A single 4-byte column (PidTagLtpRowId, whose
 // cell IS the child NID) and no TCROWID BTH (hidRowIndex 0 -> the parser enumerates the one row).
 inline constexpr uint8_t kTcClientSignature = 0x7C;  // HNHDR.bClientSig for a TC; also TCINFO.bType
@@ -382,6 +402,44 @@ inline QByteArray buildSingleRowTcBlock(uint64_t file_offset, uint64_t bid, uint
     return blk;
 }
 
+// A message's data block: a Heap-on-Node whose PC BTree-on-Heap carries ONE property record --
+// the Subject (a variable-length Unicode string). readPropertyContext walks HNHDR -> BTHHEADER ->
+// the BTH leaf, and for the variable-type record resolves the record's HNID to the heap-stored
+// UTF-16 string, so readMessage/readItemProperties return a populated subject. The subject text is
+// "FUZZ" (see kMsgSubject* constants). A genuine BLOCKTRAILER authenticates the disk region.
+inline QByteArray buildMessagePcBlock(uint64_t file_offset, uint64_t bid) {
+    QByteArray blk(blockDiskSize(kMessagePcCb), '\0');
+    // HNHDR -> BTHHEADER as the user root.
+    writeLe16(blk, kHnHdrIbHnpmOffset, static_cast<uint16_t>(kMsgPageMapOffset));
+    blk[kHnHdrSigOffset] = static_cast<char>(kHnSignature);
+    blk[kHnHdrClientSigOffset] = static_cast<char>(kPcClientSignature);
+    writeLe32(blk, kHnHdrRootHidOffset, kBthHeaderHid);
+    // BTHHEADER (heap allocation 1): key 2 / data 6, root HID -> the one-record leaf.
+    blk[kMsgBthHdrOffset] = static_cast<char>(kBthSignature);
+    blk[kMsgBthHdrOffset + kBthKeySizeField] = static_cast<char>(kPcBthKeySize);
+    blk[kMsgBthHdrOffset + kBthDataSizeField] = static_cast<char>(kPcBthDataSize);
+    blk[kMsgBthHdrOffset + kBthIdxLevelsField] = 0;
+    writeLe32(blk, kMsgBthHdrOffset + kBthRootHidField, kMsgBthLeafHid);
+    // BTH leaf (heap allocation 2): one PC record -- propId, type Unicode, then the value HNID.
+    writeLe16(blk, kMsgBthLeafOffset, kSubjectPropId);
+    writeLe16(blk, kMsgBthLeafOffset + kPcRecordKeySize, sak::email::kPropTypeUnicode);
+    writeLe32(blk, kMsgBthLeafOffset + kPcRecordKeySize + kPcValueRefOffset, kMsgSubjectHid);
+    // Subject string (heap allocation 3): "FUZZ" as UTF-16LE.
+    const char subject[] = "FUZZ";
+    for (int i = 0; i < kMsgSubjectCharCount; ++i) {
+        writeLe16(blk, kMsgSubjectOffset + (i * 2), static_cast<uint16_t>(subject[i]));
+    }
+    // HNPAGEMAP: three allocations.
+    writeLe16(blk, kMsgPageMapOffset, 3);
+    writeLe16(blk, kMsgPageMapOffset + 2, 0);
+    writeLe16(blk, kMsgPageMapOffset + 4, static_cast<uint16_t>(kMsgBthHdrOffset));
+    writeLe16(blk, kMsgPageMapOffset + 6, static_cast<uint16_t>(kMsgBthLeafOffset));
+    writeLe16(blk, kMsgPageMapOffset + 8, static_cast<uint16_t>(kMsgSubjectOffset));
+    writeLe16(blk, kMsgPageMapOffset + 10, static_cast<uint16_t>(kMsgPageMapOffset));
+    stampBlockTrailer(blk, 0, kMessagePcCb, bid, file_offset);
+    return blk;
+}
+
 // Re-stamp a legacy leaf page's PAGETRAILER over its (possibly mutated) body: recompute
 // dwCRC over [page_offset, page_offset + kLeafPageBodyLen) and wSig from (page_offset, bid 0).
 // A structure-aware fuzz mutates the page BODY then calls this so the file stays integral and
@@ -474,16 +532,24 @@ inline QByteArray buildOpenableUnicodeStore() {
     return file;
 }
 
+// Whether the leaf node's PC is empty (a folder) or a populated message (a Subject record).
+enum class LeafPc {
+    Empty,
+    Message
+};
+
 /// Build a legacy-Unicode PST with three nodes: the root folder PC, a single-row Table Context
-/// (@p tc_nid), and a leaf PC (@p leaf_nid, also the TC row's value). Whether the TC is a
-/// hierarchy table (open() recurses into a child folder) or a contents table (readFolderItems()
-/// lists a message) is decided entirely by tc_nid's type -- the byte layout is identical.
-inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid, uint32_t leaf_nid) {
+/// (@p tc_nid), and a leaf node (@p leaf_nid, also the TC row's value). @p leaf_kind selects the
+/// leaf's PC -- an empty folder PC or a populated message PC. Whether the TC is a hierarchy table
+/// (open() recurses into a child folder) or a contents table (readFolderItems() lists a message)
+/// is decided by tc_nid's type; the block layout is identical (both leaf PCs are a 64-byte block).
+inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid, uint32_t leaf_nid, LeafPc leaf_kind) {
     const int nbt_offset = kOpenableNbtOffset;
     const int bbt_offset = kOpenableBbtOffset;
     const int root_block = kFolderedRootBlockOffset;   // root PC, disk 64
     const int tc_block = kFolderedTcBlockOffset;       // single-row TC, disk 128
     const int leaf_block = kFolderedChildBlockOffset;  // leaf PC, disk 64
+    const int leaf_cb = (leaf_kind == LeafPc::Message) ? kMessagePcCb : kRootBlockCb;
 
     QByteArray file(kFolderedFileSize, '\0');
     writeUnicodeStoreHeader(file, nbt_offset, bbt_offset);
@@ -497,7 +563,7 @@ inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid, uint32_t leaf_nid) 
 
     const QByteArray bbt = makeBbtEntry(kRootFolderDataBid, root_block, kRootBlockCb) +
                            makeBbtEntry(kHierarchyDataBid, tc_block, kTcBlockCb) +
-                           makeBbtEntry(kChildFolderDataBid, leaf_block, kRootBlockCb);
+                           makeBbtEntry(kChildFolderDataBid, leaf_block, leaf_cb);
     file.replace(bbt_offset,
                  kPageSize,
                  makeLeafPageWithEntries(kPtypeBbt, kBbtEntrySize, bbt_offset, bbt, 3));
@@ -509,9 +575,11 @@ inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid, uint32_t leaf_nid) 
         tc_block,
         kTcBlockDiskSize,
         buildSingleRowTcBlock(static_cast<uint64_t>(tc_block), kHierarchyDataBid, leaf_nid));
-    file.replace(leaf_block,
-                 kRootBlockDiskSize,
-                 buildRootFolderPcBlock(static_cast<uint64_t>(leaf_block), kChildFolderDataBid));
+    const QByteArray leaf_pc =
+        (leaf_kind == LeafPc::Message)
+            ? buildMessagePcBlock(static_cast<uint64_t>(leaf_block), kChildFolderDataBid)
+            : buildRootFolderPcBlock(static_cast<uint64_t>(leaf_block), kChildFolderDataBid);
+    file.replace(leaf_block, kRootBlockDiskSize, leaf_pc);
 
     restampHeaderCrc(file);
     return file;
@@ -519,17 +587,18 @@ inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid, uint32_t leaf_nid) 
 
 /// The root folder has ONE child folder, reached through a hierarchy Table Context. open() walks
 /// loadChildFolders -> readTableContext -> parseTcInfo -> buildTcRows -> extractChildNids and
-/// recurses into the child's PC -- TC/row-matrix code the openable store never reaches.
+/// recurses into the child's (empty) PC -- TC/row-matrix code the openable store never reaches.
 inline QByteArray buildFolderedUnicodeStore() {
-    return buildStoreWithSingleRowTc(kHierarchyTableNid, kChildFolderNid);
+    return buildStoreWithSingleRowTc(kHierarchyTableNid, kChildFolderNid, LeafPc::Empty);
 }
 
-/// The root folder has a CONTENTS Table Context listing ONE message. readFolderItems(root) drives
-/// readContentsTable -> readTableContext -> the summary loop, and readItemDetail(message) drives
-/// readMessage -> readPropertyContext + readAttachments -- the message-read path no folder-only
-/// store reaches.
+/// The root folder has a CONTENTS Table Context listing ONE message, and the message's PC carries
+/// a Subject. readFolderItems(root) drives readContentsTable -> the summary loop, and
+/// readItemDetail(message) drives readMessage -> readPropertyContext -> the populated-PC path
+/// (parsePropertyRecords variable-type -> resolveHnid -> formatUnicodeValue) no folder-only store
+/// reaches.
 inline QByteArray buildMessagingUnicodeStore() {
-    return buildStoreWithSingleRowTc(kContentsTableNid, kMessageNid);
+    return buildStoreWithSingleRowTc(kContentsTableNid, kMessageNid, LeafPc::Message);
 }
 
 }  // namespace sak::pst_fixture

@@ -3503,11 +3503,20 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     (TestPstParser::reusableMessagingFixtureListsMessageViaContentsTable: readFolderItems returns
     one item, readItemDetail reads the message node back) proves it. The messaging store is a seed
     in both fuzz targets, and the structure-aware fuzz gained its five arenas (13 total across three
-    stores), held across 12000 + 6000 iterations across two seeds. REMAINING PST-fuzz depth: only a
-    POPULATED message -- a non-empty PC BTH and a variable-length string property (subject) resolved
-    through an HNID into the heap, plus a sub-node attachment table -- to exercise parsePropertyRecords'
-    variable-type / resolveHnid branch and readSingleAttachment on real bytes. The node/table/message
-    skeleton is fully covered; only cell-value population remains.
+    stores), held across 12000 + 6000 iterations across two seeds. POPULATED MESSAGE ADDED
+    2026-08-12 (buildMessagePcBlock): the messaging store's message node now carries a non-empty PC
+    BTree-on-Heap -- one Subject record (PidTagSubjectW, type Unicode) whose value is an HNID pointing
+    at a heap-stored UTF-16 string ("FUZZ"). readMessage / readItemProperties now drive
+    parsePropertyRecords' variable-type branch -> resolveHnid -> formatUnicodeValue -> the Subject
+    detail setter on real bytes -- the property-VALUE path every earlier fixture (empty PCs only)
+    skipped. The messaging lock-in test asserts the Subject reads back as "FUZZ"; the leaf-PC choice
+    is a parameter of the one shared buildStoreWithSingleRowTc (empty folder PC vs populated message
+    PC), and the structure fuzz's message-leaf arena covers the populated block's larger cb (a further
+    12000 + 6000 iterations, no crash). REMAINING PST-fuzz depth is now minor: a variable-length HNID
+    CELL in the contents Table Context (buildTcCell's isHnidResolvableType branch, distinct from the
+    PC value path just covered) and a sub-node attachment table (readSingleAttachment /
+    extractAttachmentFromSubnode). The node / BTree / heap / PC / TC / folder / message-read paths --
+    including populated property values -- are all covered.
 - [x] R5-G14-6 Fuzz harness: MBOX and EML parsers
   - RESOLVED 2026-08-12 [DONE]: two fuzz targets now cover this attacker-controlled email
     surface. (1) The untrusted-email HTML sanitizer - the highest security risk here

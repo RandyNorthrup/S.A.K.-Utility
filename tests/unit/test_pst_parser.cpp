@@ -647,6 +647,19 @@ void TestPstParser::reusableMessagingFixtureListsMessageViaContentsTable() {
     const auto detail = parser.readItemDetail(sak::pst_fixture::kMessageNid);
     QVERIFY2(detail.has_value(), "readItemDetail must read the message PC");
     QCOMPARE(detail->node_id, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
+
+    // The populated PC path: the Subject record's HNID must resolve to the heap-stored UTF-16
+    // string, proving parsePropertyRecords -> resolveHnid -> formatUnicodeValue on real bytes.
+    const auto props = parser.readItemProperties(sak::pst_fixture::kMessageNid);
+    QVERIFY2(props.has_value(), "readItemProperties must read the message PC");
+    bool found_subject = false;
+    for (const auto& prop : *props) {
+        if (prop.tag_id == sak::email::kPropIdSubject) {
+            QCOMPARE(prop.display_value, QStringLiteral("FUZZ"));
+            found_subject = true;
+        }
+    }
+    QVERIFY2(found_subject, "the message PC must expose its Subject property");
 }
 
 void TestPstParser::rejectsUnknownDataVersion() {

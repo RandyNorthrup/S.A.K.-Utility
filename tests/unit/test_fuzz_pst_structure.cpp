@@ -94,6 +94,9 @@ const std::vector<Arena>& arenas() {
                      pf::kRootBlockCb,
                      pf::kRootFolderDataBid});
         for (const Store store : {Store::Foldered, Store::Messaging}) {
+            // The messaging store's leaf is a populated message PC (a larger cb) rather than an
+            // empty folder PC; the re-stamp must cover the right number of data bytes.
+            const int leaf_cb = (store == Store::Messaging) ? pf::kMessagePcCb : pf::kRootBlockCb;
             v.push_back({store,
                          pf::kOpenableNbtOffset,
                          pf::kLeafPageBodyLen,
@@ -124,10 +127,10 @@ const std::vector<Arena>& arenas() {
                          pf::kHierarchyDataBid});
             v.push_back({store,
                          pf::kFolderedChildBlockOffset,
-                         pf::kRootBlockCb,
+                         leaf_cb,
                          pf::kFolderedChildBlockOffset,
                          true,
-                         pf::kRootBlockCb,
+                         leaf_cb,
                          pf::kChildFolderDataBid});
         }
         return v;
