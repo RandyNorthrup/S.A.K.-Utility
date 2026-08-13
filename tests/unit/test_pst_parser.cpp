@@ -7,6 +7,8 @@
 #include "sak/email_constants.h"
 #include "sak/pst_parser.h"
 
+#include "../support/pst_fixture.h"
+
 #include <QByteArray>
 #include <QDir>
 #include <QFileInfo>
@@ -221,6 +223,7 @@ private Q_SLOTS:
     void legacyUnicodePstReads512ByteBTreePages();
     void unicode4kOstReads4096ByteBTreePages();
     void compressibleEncryptedPstDecodesRootPropertyContext();
+    void reusableOpenableFixtureReachesRootFolder();
     void rejectsUnknownDataVersion();
     void rejectsMistypedNodeBTreePage();
 
@@ -562,6 +565,30 @@ void TestPstParser::compressibleEncryptedPstDecodesRootPropertyContext() {
     QCOMPARE(info.is_ost, false);
     QCOMPARE(info.encryption_type, sak::email::kEncryptCompressible);
     QCOMPARE(info.total_folders, 1);
+}
+
+void TestPstParser::reusableOpenableFixtureReachesRootFolder() {
+    // Locks the shared, reusable openable store (tests/support/pst_fixture.h) that the PST
+    // fuzz harness seeds from: it must drive the parser through the full LTP accept path --
+    // loadNodeBTree -> loadBlockBTree -> readPropertyContext(kNidRootFolder) success ->
+    // buildFolderHierarchy -- and yield exactly one (root) folder, unencrypted. If a future
+    // change breaks the accept path, this fails deterministically here, not only under fuzz.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildOpenableUnicodeStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+    QCOMPARE(parser.fileInfo().encryption_type, sak::email::kEncryptNone);
+    QCOMPARE(parser.folderTree().size(), 1);
+    QCOMPARE(parser.folderTree().first().node_id,
+             static_cast<uint64_t>(sak::email::kNidRootFolder));
 }
 
 void TestPstParser::rejectsUnknownDataVersion() {

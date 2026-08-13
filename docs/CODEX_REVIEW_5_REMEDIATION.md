@@ -3456,14 +3456,22 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     (tests/support/pst_fixture.h) adds a deeper seed still: genuine header CRCs AND genuine
     Node/Block BTree PAGETRAILERs (ComputeSig + weak CRC), so it survives the trailer checks
     and drives parseBTreePage / verifyPageTrailer (success path) / buildFolderHierarchy before
-    failing closed there. MEASURED NEXT INCREMENT (from the coverage baseline, which put
-    pst_parser.cpp at only 30.6%): the deep BTree/LTP/messaging code stays unreached because
-    every seed ultimately fails to OPEN -- an empty-BTree store has no root folder node, and a
-    byte-mutant breaks the CRC and bounces off the trailer. Reaching open() SUCCESS (and thus
-    readContentsTable / readMessage / readPropertyContext under mutation) needs a full
-    message-store + root-folder fixture, then structure-aware mutation that re-stamps the
-    CRC/trailers after corrupting the page bodies so the file stays integral. That is a
-    dedicated build, tracked here as the remaining PST-fuzz depth work.
+    failing closed there. DEPTH INCREMENT ADDED 2026-08-12 (the coverage baseline put
+    pst_parser.cpp at only 30.6% because every seed ultimately failed to OPEN -- an empty-BTree
+    store has no root folder node): buildOpenableUnicodeStore() now assembles a genuinely
+    OPENABLE legacy-Unicode store -- a root-folder NBTENTRY -> BBTENTRY -> a Heap-on-Node
+    Property-Context block whose BTH root HID is 0 (an empty-but-valid PC), every CRC/wSig
+    stamped -- so the unmutated seed drives PstParser::open() all the way to SUCCESS and the
+    walk then exercises the LTP accept path (readPropertyContext, readHeapOnNode, the folder-tree
+    walk, readItemDetail on the root node). The byte layout is proven correct against the
+    parser's own success path by a new deterministic lock-in test
+    (TestPstParser::reusableOpenableFixtureReachesRootFolder: open() succeeds, one root folder,
+    unencrypted), so a regression that breaks the accept path fails there, not only under fuzz.
+    Mutations of this seed now hit the SUCCESS-then-corrupt branch of each integrity gate rather
+    than only the first-gate reject. REMAINING PST-fuzz depth: structure-aware mutation that
+    re-stamps the CRC/trailers after corrupting page BODIES (so a mutant stays integral deeper
+    in), plus a multi-message contents-table fixture to reach readContentsTable / readMessage.
+    That structure-aware re-stamp is the tracked next increment.
 - [x] R5-G14-6 Fuzz harness: MBOX and EML parsers
   - RESOLVED 2026-08-12 [DONE]: two fuzz targets now cover this attacker-controlled email
     surface. (1) The untrusted-email HTML sanitizer - the highest security risk here

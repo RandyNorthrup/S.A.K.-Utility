@@ -17,9 +17,11 @@
 /// The seed corpus carries CRC-valid ANSI and Unicode headers (stamped with the same
 /// MS-PST weak CRC-32 the parser authenticates against), so mutations reach past the
 /// header-integrity gate into the page-read and BTree-load layer rather than bouncing
-/// off the magic check. Deepening the corpus with fully page-trailer-valid stores (to
-/// exercise the LTP/messaging layers on accepted files) is the next increment and is
-/// noted in docs/CODEX_REVIEW_5_REMEDIATION.md.
+/// off the magic check. It also carries two page-trailer-valid stores from
+/// tests/support/pst_fixture.h: an empty-BTree store (reaches buildFolderHierarchy before
+/// failing closed) and an OPENABLE store whose unmutated form drives open() to SUCCESS,
+/// so the walk exercises the LTP/messaging accept path (readPropertyContext, readHeapOnNode,
+/// the folder-tree walk) and mutations hit the success-then-corrupt branch of each gate.
 
 #include "sak/email_constants.h"
 #include "sak/pst_parser.h"
@@ -156,10 +158,15 @@ std::vector<QByteArray> pstCorpus() {
         // empty BTrees. Unlike the header-only seeds it survives the trailer checks, so the
         // parser walks INTO parseBTreePage, verifyPageTrailer (success), and buildFolderHierarchy
         // before failing closed there (no root folder node). That reaches a layer the header-only
-        // seeds never did. Full open() SUCCESS needs a message-store + root-folder fixture -- a
-        // larger build -- and is the next increment for the LTP/messaging layers (see
-        // docs/CODEX_REVIEW_5_REMEDIATION.md, R5-G14-5).
+        // seeds never did.
         sak::pst_fixture::buildEmptyUnicodeStore(),
+        // An OPENABLE store: a root-folder NBT entry + BBT entry + Heap-on-Node PC block, so the
+        // unmutated seed drives PstParser::open() all the way to SUCCESS -- readPropertyContext,
+        // readHeapOnNode, and the folder-tree walk on an accepted file. Mutations of it exercise
+        // the SUCCESS-then-corrupt branches of every integrity gate (header CRC, page trailer,
+        // block trailer, HN/BTH bounds), the LTP/messaging accept path the reject-only seeds
+        // never touched (see docs/CODEX_REVIEW_5_REMEDIATION.md, R5-G14-5).
+        sak::pst_fixture::buildOpenableUnicodeStore(),
     };
 }
 
