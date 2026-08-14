@@ -3691,6 +3691,19 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     carry real shapes (bare minimum, bracketed intervals, exact, open-upper, prerelease) plus
     pathological long digit/dot/bracket runs. 45k parses across two seeds, no crash, no fail-open,
     no non-determinism.
+- [x] R5-G14-BACKUP Fuzz harness: backup-file container decoder
+  - RESOLVED 2026-08-13 [DONE]: readBackupFile restores a file from a backup container that may have
+    been produced by another tool, transferred over an untrusted medium, or corrupted on disk. The
+    container carries a magic header, a zlib layer, and an AES-GCM layer; its central security
+    contract is fail-closed -- the plaintext is staged beside the destination and only renamed into
+    place AFTER the tag verifies, so an unauthenticated or corrupt payload never appears under the
+    final name. test_fuzz_backup_codec generates one genuine encrypted+compressed container with the
+    real writer and drives the decoder over mutated copies, asserting four invariants per input: no
+    crash/hang; backupContainerKind (the only metadata readable without the password) never crashes
+    and returns a defined kind; FAIL-CLOSED (a rejected decode leaves NO destination file behind --
+    [[no-fallbacks-fail-closed]]); and determinism. Seeds carry the valid container plus
+    empty/zeroed/0xFF/truncated variants so mutation reaches the header, zlib, and AES-GCM tag-verify
+    paths. 16k decodes across two seeds, no crash, no fail-open, no non-determinism.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

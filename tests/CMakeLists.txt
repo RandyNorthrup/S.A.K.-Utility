@@ -2527,6 +2527,34 @@ add_test(NAME test_fuzz_nuget_version_range COMMAND test_fuzz_nuget_version_rang
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_nuget_version_range")
 
+# test_fuzz_backup_codec - deterministic mutation-fuzz of the backup-file container decoder. The
+# container carries a magic header, a zlib layer, and an AES-GCM layer; the decoder is fail-closed
+# (staged plaintext is renamed into place only after the tag verifies). Asserts no crash/hang, that
+# the metadata classify never crashes, that a rejected container leaves no destination file, and
+# determinism. Mirrors test_backup_file_codec's link set.
+add_executable(test_fuzz_backup_codec
+    unit/test_fuzz_backup_codec.cpp
+    ../src/core/backup_file_codec.cpp
+    ../src/core/encryption.cpp
+    ../src/core/secure_memory.cpp
+    ../src/core/logger.cpp
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_backup_codec PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_backup_codec PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_backup_codec PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_backup_codec COMMAND test_fuzz_backup_codec
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_backup_codec.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_backup_codec")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
