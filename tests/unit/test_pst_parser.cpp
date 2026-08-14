@@ -226,6 +226,7 @@ private Q_SLOTS:
     void reusableOpenableFixtureReachesRootFolder();
     void reusableFolderedFixtureReachesChildViaHierarchyTable();
     void reusableMessagingFixtureListsMessageViaContentsTable();
+    void reusableAttachmentFixtureExposesSubnodeAttachment();
     void rejectsUnknownDataVersion();
     void rejectsMistypedNodeBTreePage();
 
@@ -660,6 +661,42 @@ void TestPstParser::reusableMessagingFixtureListsMessageViaContentsTable() {
         }
     }
     QVERIFY2(found_subject, "the message PC must expose its Subject property");
+}
+
+void TestPstParser::reusableAttachmentFixtureExposesSubnodeAttachment() {
+    // Locks the shared attachment store (tests/support/pst_fixture.h): the message node carries a
+    // sub-node BTree with one attachment. This is the sub-node/attachment accept path no other
+    // fixture reaches -- readAttachments -> readSubNodeBTree -> readSubNodeLeafEntries ->
+    // readSingleAttachment -> populateAttachmentFromLeaf, and readAttachmentData ->
+    // extractAttachmentFromSubnode -> resolveHnid to the payload. It fails deterministically here
+    // if any of that regresses.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildAttachmentUnicodeStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+
+    // readAttachments walks the message's sub-node BTree and returns the one attachment sub-node.
+    const auto attachments = parser.readAttachments(sak::pst_fixture::kMessageNid);
+    QVERIFY2(attachments.has_value(), "readAttachments must walk the sub-node BTree");
+    QCOMPARE(attachments->size(), 1);
+    QCOMPARE(attachments->first().index, 0);
+
+    // readAttachmentData resolves the attachment PC's PidTagAttachData HNID to the heap payload.
+    const auto data = parser.readAttachmentData(sak::pst_fixture::kMessageNid, 0);
+    QVERIFY2(data.has_value(), "readAttachmentData must resolve the attachment payload");
+    QCOMPARE(*data, sak::pst_fixture::attachPayloadBytes());
+
+    // A missing attachment index must fail closed, not return another attachment's bytes.
+    const auto missing = parser.readAttachmentData(sak::pst_fixture::kMessageNid, 1);
+    QVERIFY2(!missing.has_value(), "an out-of-range attachment index must fail closed");
 }
 
 void TestPstParser::rejectsUnknownDataVersion() {

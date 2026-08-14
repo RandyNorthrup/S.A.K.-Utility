@@ -3749,6 +3749,25 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     Seeds carry a valid two-message multipart archive plus boundary-only / >From / body-prose-From /
     non-mbox variants. A lock test pins the two-message accept path (subject, one attachment, body).
     Full Release ctest 247/247.
+- [x] R5-G14-PST-ATTACH Coverage depth: PST sub-node attachment table
+  - RESOLVED 2026-08-13 [DONE]: Re-measuring line coverage over the PST tests (RelWithDebInfo +
+    OpenCppCoverage) showed pst_parser.cpp at 59.6% (the structure fuzz had already lifted it well
+    past the stale 30.6% under G14-16), and named the single largest remaining dead cluster: the
+    sub-node + attachment extraction path -- readSubNodeBTree / readSubNodeLeafEntries /
+    readSingleAttachment / populateAttachmentFromLeaf / extractAttachmentFromSubnode /
+    readAttachmentData -- entirely unreachable because no fixture built a message with a sub-node
+    attachment table. Closed it in tests/support/pst_fixture.h: buildMessagePcBlock is generalized
+    into buildOneVarRecordPcBlock (one home for the one-variable-record PC heap layout, reused by
+    both the message Subject and the attachment data -- no duplication), and a new
+    buildAttachmentUnicodeStore adds an SLBLOCK sub-node BTree (one SLENTRY, NID type 0x05) pointing
+    at an attachment PC whose PidTagAttachData HNID resolves to an 8-byte payload. A new accept-path
+    test (reusableAttachmentFixtureExposesSubnodeAttachment) locks it: readAttachments returns the
+    one attachment, readAttachmentData returns exactly the payload, and an out-of-range index fails
+    closed. The store is also wired into test_fuzz_pst_structure as a fourth arena set (sub-node
+    block + attachment PC), so the newly-reached code is mutation-fuzzed integral-but-corrupt, not
+    just executed once. Every byte was verified against the parser's own constants before building.
+    Re-measured pst_parser.cpp line coverage rose 59.6% -> 66.4% (915 -> 1019 of 1534 lines) from this
+    one increment. Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

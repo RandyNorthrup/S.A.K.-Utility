@@ -198,6 +198,30 @@ inline constexpr int kFolderedChildBlockOffset = kFolderedTcBlockOffset +
                                                  kTcBlockDiskSize;                        // 0x8C0
 inline constexpr int kFolderedFileSize = kFolderedChildBlockOffset + kRootBlockDiskSize;  // 0x900
 
+// Attachment store: the messaging store's message extended with a sub-node BTree carrying ONE
+// attachment node (NID type 0x05). Drives the whole attachment path no other fixture reaches --
+// readSubNodeBTree -> readSubNodeLeafEntries, readAttachments -> readSingleAttachment ->
+// populateAttachmentFromLeaf, and readAttachmentData -> extractAttachmentFromSubnode ->
+// resolveHnid.
+inline constexpr uint32_t kAttachmentNid = (1u << 5) | sak::email::kNidTypeAttachment;  // 0x25
+inline constexpr uint64_t kAttachSubnodeBid = 16;  // message's sub-node BTree block (external BID)
+inline constexpr uint64_t kAttachDataBid = 20;     // attachment PC data block
+// Sub-node SLBLOCK (MS-PST 2.2.2.8.3.3): an 8-byte header (btype, cLevel, cEnt[u16], pad[4]) then
+// 24-byte Unicode SLENTRYs (nid[8] + bidData[8] + bidSub[8]).
+inline constexpr int kSubnodeBlockHeaderLen = 8;
+inline constexpr int kSubnodeCEntOffset = 2;
+inline constexpr int kSlEntryDataBidOffset = 8;
+inline constexpr int kSlEntrySubBidOffset = 16;
+inline constexpr int kSlEntryLen = 24;
+inline constexpr int kSubnodeBlockCb = kSubnodeBlockHeaderLen + kSlEntryLen;  // 32
+inline constexpr uint8_t kSubnodeBlockBType = 0x02;  // SLBLOCK btype (realistic; not validated)
+// Attachment store block offsets: the three foldered blocks, then the sub-node block + attach PC.
+inline constexpr int kAttachSubnodeBlockOffset = kFolderedChildBlockOffset +
+                                                 kRootBlockDiskSize;               // 0x900
+inline constexpr int kAttachPcBlockOffset = kAttachSubnodeBlockOffset +
+                                            kRootBlockDiskSize;                    // 0x940
+inline constexpr int kAttachFileSize = kAttachPcBlockOffset + kRootBlockDiskSize;  // 0x980
+
 inline void writeLe16(QByteArray& data, int offset, uint16_t value) {
     data[offset] = static_cast<char>(value & 0xFF);
     data[offset + 1] = static_cast<char>((value >> kByteBits) & 0xFF);
@@ -402,12 +426,19 @@ inline QByteArray buildSingleRowTcBlock(uint64_t file_offset, uint64_t bid, uint
     return blk;
 }
 
-// A message's data block: a Heap-on-Node whose PC BTree-on-Heap carries ONE property record --
-// the Subject (a variable-length Unicode string). readPropertyContext walks HNHDR -> BTHHEADER ->
-// the BTH leaf, and for the variable-type record resolves the record's HNID to the heap-stored
-// UTF-16 string, so readMessage/readItemProperties return a populated subject. The subject text is
-// "FUZZ" (see kMsgSubject* constants). A genuine BLOCKTRAILER authenticates the disk region.
-inline QByteArray buildMessagePcBlock(uint64_t file_offset, uint64_t bid) {
+// A Heap-on-Node PC block carrying ONE variable-type property record: HNHDR -> BTHHEADER -> a
+// one-record BTH leaf whose value is an HNID pointing at an 8-byte heap allocation. readProperty
+// context (and, for an attachment sub-node, collectBthLeafData + populateAttachmentFromLeaf) walks
+// that chain and resolves the record's HNID to the heap bytes. The single home for this layout;
+// both the message-Subject block and the attachment-data block are thin wrappers around it, so the
+// heap geometry (three allocations, an 8-byte value) is never duplicated. @p value8 is the 8 heap
+// bytes (a UTF-16 string for the Subject, arbitrary binary for an attachment). A genuine
+// BLOCKTRAILER authenticates the disk region.
+inline QByteArray buildOneVarRecordPcBlock(uint64_t file_offset,
+                                           uint64_t bid,
+                                           uint16_t prop_id,
+                                           uint16_t prop_type,
+                                           const QByteArray& value8) {
     QByteArray blk(blockDiskSize(kMessagePcCb), '\0');
     // HNHDR -> BTHHEADER as the user root.
     writeLe16(blk, kHnHdrIbHnpmOffset, static_cast<uint16_t>(kMsgPageMapOffset));
@@ -420,14 +451,13 @@ inline QByteArray buildMessagePcBlock(uint64_t file_offset, uint64_t bid) {
     blk[kMsgBthHdrOffset + kBthDataSizeField] = static_cast<char>(kPcBthDataSize);
     blk[kMsgBthHdrOffset + kBthIdxLevelsField] = 0;
     writeLe32(blk, kMsgBthHdrOffset + kBthRootHidField, kMsgBthLeafHid);
-    // BTH leaf (heap allocation 2): one PC record -- propId, type Unicode, then the value HNID.
-    writeLe16(blk, kMsgBthLeafOffset, kSubjectPropId);
-    writeLe16(blk, kMsgBthLeafOffset + kPcRecordKeySize, sak::email::kPropTypeUnicode);
+    // BTH leaf (heap allocation 2): one PC record -- propId, type, then the value HNID.
+    writeLe16(blk, kMsgBthLeafOffset, prop_id);
+    writeLe16(blk, kMsgBthLeafOffset + kPcRecordKeySize, prop_type);
     writeLe32(blk, kMsgBthLeafOffset + kPcRecordKeySize + kPcValueRefOffset, kMsgSubjectHid);
-    // Subject string (heap allocation 3): "FUZZ" as UTF-16LE.
-    const char subject[] = "FUZZ";
-    for (int i = 0; i < kMsgSubjectCharCount; ++i) {
-        writeLe16(blk, kMsgSubjectOffset + (i * 2), static_cast<uint16_t>(subject[i]));
+    // Value (heap allocation 3): the 8 bytes the HNID resolves to.
+    for (int i = 0; i < kMsgSubjectLen; ++i) {
+        blk[kMsgSubjectOffset + i] = (i < value8.size()) ? value8.at(i) : '\0';
     }
     // HNPAGEMAP: three allocations.
     writeLe16(blk, kMsgPageMapOffset, 3);
@@ -438,6 +468,18 @@ inline QByteArray buildMessagePcBlock(uint64_t file_offset, uint64_t bid) {
     writeLe16(blk, kMsgPageMapOffset + 10, static_cast<uint16_t>(kMsgPageMapOffset));
     stampBlockTrailer(blk, 0, kMessagePcCb, bid, file_offset);
     return blk;
+}
+
+// A message's data block: the one-record PC above carrying the Subject (a variable-length Unicode
+// string "FUZZ"). readMessage/readItemProperties return a populated subject.
+inline QByteArray buildMessagePcBlock(uint64_t file_offset, uint64_t bid) {
+    QByteArray subject(kMsgSubjectLen, '\0');
+    const char text[] = "FUZZ";
+    for (int i = 0; i < kMsgSubjectCharCount; ++i) {
+        writeLe16(subject, i * 2, static_cast<uint16_t>(text[i]));
+    }
+    return buildOneVarRecordPcBlock(
+        file_offset, bid, kSubjectPropId, sak::email::kPropTypeUnicode, subject);
 }
 
 // Re-stamp a legacy leaf page's PAGETRAILER over its (possibly mutated) body: recompute
@@ -468,6 +510,14 @@ inline QByteArray makeNbtEntry(uint32_t nid, uint64_t data_bid) {
     writeLe64(entry, kNbtEntryDataBidOffset, data_bid);
     writeLe64(entry, kNbtEntrySubBidOffset, 0);
     writeLe32(entry, kNbtEntryParentOffset, 0);
+    return entry;
+}
+
+// A Unicode NBTENTRY whose node carries a sub-node BTree (bidSub != 0): the message node points at
+// its attachment sub-node block. Same layout as makeNbtEntry with the sub-node BID filled in.
+inline QByteArray makeNbtEntryWithSub(uint32_t nid, uint64_t data_bid, uint64_t sub_bid) {
+    QByteArray entry = makeNbtEntry(nid, data_bid);
+    writeLe64(entry, kNbtEntrySubBidOffset, sub_bid);
     return entry;
 }
 
@@ -599,6 +649,94 @@ inline QByteArray buildFolderedUnicodeStore() {
 /// reaches.
 inline QByteArray buildMessagingUnicodeStore() {
     return buildStoreWithSingleRowTc(kContentsTableNid, kMessageNid, LeafPc::Message);
+}
+
+// The 8 heap bytes an attachment's PidTagAttachData HNID resolves to. Exposed so the accept-path
+// test can assert readAttachmentData returns exactly these bytes.
+inline QByteArray attachPayloadBytes() {
+    return QByteArrayLiteral("ATCHDATA");  // exactly kMsgSubjectLen (8) bytes
+}
+
+// The message's attachment sub-node BTree: a leaf SLBLOCK with ONE SLENTRY whose NID has the
+// attachment type (0x05), pointing at the attachment PC data block (no nested sub-node). A genuine
+// BLOCKTRAILER authenticates the region; the structure fuzz can mutate the body and re-stamp it.
+inline QByteArray buildAttachmentSubnodeBlock(uint64_t file_offset, uint64_t bid) {
+    QByteArray blk(blockDiskSize(kSubnodeBlockCb), '\0');
+    blk[0] = static_cast<char>(kSubnodeBlockBType);
+    blk[1] = 0;  // cLevel 0 == leaf
+    writeLe16(blk, kSubnodeCEntOffset, 1);
+    const int entry = kSubnodeBlockHeaderLen;
+    writeLe64(blk, entry, kAttachmentNid);
+    writeLe64(blk, entry + kSlEntryDataBidOffset, kAttachDataBid);
+    writeLe64(blk, entry + kSlEntrySubBidOffset, 0);
+    stampBlockTrailer(blk, 0, kSubnodeBlockCb, bid, file_offset);
+    return blk;
+}
+
+// The attachment's data block: the one-record PC carrying PidTagAttachData (binary) whose HNID
+// resolves to attachPayloadBytes().
+inline QByteArray buildAttachmentPcBlock(uint64_t file_offset, uint64_t bid) {
+    return buildOneVarRecordPcBlock(file_offset,
+                                    bid,
+                                    sak::email::kPropIdAttachData,
+                                    sak::email::kPropTypeBinary,
+                                    attachPayloadBytes());
+}
+
+/// The root folder's CONTENTS Table Context lists ONE message, and that message node carries a
+/// sub-node BTree with one attachment. open() + readFolderItems reach the message exactly as the
+/// messaging store does; readAttachments(kMessageNid) then drives readSubNodeBTree ->
+/// readSubNodeLeafEntries -> readSingleAttachment -> populateAttachmentFromLeaf, and
+/// readAttachmentData(kMessageNid, 0) drives extractAttachmentFromSubnode -> resolveHnid to the
+/// payload -- the sub-node/attachment code path no other fixture exercises.
+inline QByteArray buildAttachmentUnicodeStore() {
+    const int nbt_offset = kOpenableNbtOffset;
+    const int bbt_offset = kOpenableBbtOffset;
+
+    QByteArray file(kAttachFileSize, '\0');
+    writeUnicodeStoreHeader(file, nbt_offset, bbt_offset);
+
+    const QByteArray nbt = makeNbtEntry(kRootFolderNid, kRootFolderDataBid) +
+                           makeNbtEntry(kContentsTableNid, kHierarchyDataBid) +
+                           makeNbtEntryWithSub(kMessageNid, kChildFolderDataBid, kAttachSubnodeBid);
+    file.replace(nbt_offset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeNbt, kNbtEntrySize, nbt_offset, nbt, 3));
+
+    const QByteArray bbt =
+        makeBbtEntry(kRootFolderDataBid, kFolderedRootBlockOffset, kRootBlockCb) +
+        makeBbtEntry(kHierarchyDataBid, kFolderedTcBlockOffset, kTcBlockCb) +
+        makeBbtEntry(kChildFolderDataBid, kFolderedChildBlockOffset, kMessagePcCb) +
+        makeBbtEntry(kAttachSubnodeBid, kAttachSubnodeBlockOffset, kSubnodeBlockCb) +
+        makeBbtEntry(kAttachDataBid, kAttachPcBlockOffset, kMessagePcCb);
+    file.replace(bbt_offset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeBbt, kBbtEntrySize, bbt_offset, bbt, 5));
+
+    file.replace(kFolderedRootBlockOffset,
+                 kRootBlockDiskSize,
+                 buildRootFolderPcBlock(static_cast<uint64_t>(kFolderedRootBlockOffset),
+                                        kRootFolderDataBid));
+    file.replace(kFolderedTcBlockOffset,
+                 kTcBlockDiskSize,
+                 buildSingleRowTcBlock(static_cast<uint64_t>(kFolderedTcBlockOffset),
+                                       kHierarchyDataBid,
+                                       kMessageNid));
+    file.replace(kFolderedChildBlockOffset,
+                 kRootBlockDiskSize,
+                 buildMessagePcBlock(static_cast<uint64_t>(kFolderedChildBlockOffset),
+                                     kChildFolderDataBid));
+    file.replace(kAttachSubnodeBlockOffset,
+                 kRootBlockDiskSize,
+                 buildAttachmentSubnodeBlock(static_cast<uint64_t>(kAttachSubnodeBlockOffset),
+                                             kAttachSubnodeBid));
+    file.replace(kAttachPcBlockOffset,
+                 kRootBlockDiskSize,
+                 buildAttachmentPcBlock(static_cast<uint64_t>(kAttachPcBlockOffset),
+                                        kAttachDataBid));
+
+    restampHeaderCrc(file);
+    return file;
 }
 
 }  // namespace sak::pst_fixture

@@ -49,7 +49,8 @@ namespace {
 enum class Store {
     Openable,
     Foldered,
-    Messaging
+    Messaging,
+    Attachment
 };
 
 // One mutable region of a store: a [begin, begin + length) BODY span whose bytes the parser reads
@@ -65,27 +66,54 @@ struct Arena {
     uint64_t block_bid;  // block BID (is_block only)
 };
 
-// Arenas for the openable store (3) plus, for each TC store (foldered + messaging, which share an
-// identical three-block layout and differ only in node type), five more: NBT page, BBT page, root
-// PC, single-row TC block, leaf PC. Built once in a loop so the shared layout is not duplicated.
+// The two leaf-page arenas (NBT + BBT) every store shares.
+void pushPageArenas(std::vector<Arena>& v, Store store) {
+    namespace pf = sak::pst_fixture;
+    v.push_back(
+        {store, pf::kOpenableNbtOffset, pf::kLeafPageBodyLen, pf::kOpenableNbtOffset, false, 0, 0});
+    v.push_back(
+        {store, pf::kOpenableBbtOffset, pf::kLeafPageBodyLen, pf::kOpenableBbtOffset, false, 0, 0});
+}
+
+// The five arenas a TC store (foldered / messaging / attachment) shares: two pages plus the root
+// PC, single-row TC, and leaf PC blocks. @p leaf_cb is the leaf block's data length (a populated
+// message PC is larger than an empty folder PC), so the re-stamp covers the right byte count.
+void pushTcStoreArenas(std::vector<Arena>& v, Store store, int leaf_cb) {
+    namespace pf = sak::pst_fixture;
+    pushPageArenas(v, store);
+    v.push_back({store,
+                 pf::kFolderedRootBlockOffset,
+                 pf::kRootBlockCb,
+                 pf::kFolderedRootBlockOffset,
+                 true,
+                 pf::kRootBlockCb,
+                 pf::kRootFolderDataBid});
+    v.push_back({store,
+                 pf::kFolderedTcBlockOffset,
+                 pf::kTcBlockCb,
+                 pf::kFolderedTcBlockOffset,
+                 true,
+                 pf::kTcBlockCb,
+                 pf::kHierarchyDataBid});
+    v.push_back({store,
+                 pf::kFolderedChildBlockOffset,
+                 leaf_cb,
+                 pf::kFolderedChildBlockOffset,
+                 true,
+                 leaf_cb,
+                 pf::kChildFolderDataBid});
+}
+
+// Every store's mutable regions. The openable store adds one PC block to the two shared pages; the
+// foldered/messaging stores add the five TC-store arenas; the attachment store adds those five plus
+// the message's sub-node BTree block and the attachment PC block -- the sub-node/attachment regions
+// no other arena reaches, so mutating them (then re-stamping) drives readSubNodeLeafEntries and the
+// attachment parse over integral-but-corrupt bytes when walkOpenedParser calls readAttachments.
 const std::vector<Arena>& arenas() {
     namespace pf = sak::pst_fixture;
     static const std::vector<Arena> kArenas = [] {
         std::vector<Arena> v;
-        v.push_back({Store::Openable,
-                     pf::kOpenableNbtOffset,
-                     pf::kLeafPageBodyLen,
-                     pf::kOpenableNbtOffset,
-                     false,
-                     0,
-                     0});
-        v.push_back({Store::Openable,
-                     pf::kOpenableBbtOffset,
-                     pf::kLeafPageBodyLen,
-                     pf::kOpenableBbtOffset,
-                     false,
-                     0,
-                     0});
+        pushPageArenas(v, Store::Openable);
         v.push_back({Store::Openable,
                      pf::kOpenableBlockOffset,
                      pf::kRootBlockCb,
@@ -93,46 +121,23 @@ const std::vector<Arena>& arenas() {
                      true,
                      pf::kRootBlockCb,
                      pf::kRootFolderDataBid});
-        for (const Store store : {Store::Foldered, Store::Messaging}) {
-            // The messaging store's leaf is a populated message PC (a larger cb) rather than an
-            // empty folder PC; the re-stamp must cover the right number of data bytes.
-            const int leaf_cb = (store == Store::Messaging) ? pf::kMessagePcCb : pf::kRootBlockCb;
-            v.push_back({store,
-                         pf::kOpenableNbtOffset,
-                         pf::kLeafPageBodyLen,
-                         pf::kOpenableNbtOffset,
-                         false,
-                         0,
-                         0});
-            v.push_back({store,
-                         pf::kOpenableBbtOffset,
-                         pf::kLeafPageBodyLen,
-                         pf::kOpenableBbtOffset,
-                         false,
-                         0,
-                         0});
-            v.push_back({store,
-                         pf::kFolderedRootBlockOffset,
-                         pf::kRootBlockCb,
-                         pf::kFolderedRootBlockOffset,
-                         true,
-                         pf::kRootBlockCb,
-                         pf::kRootFolderDataBid});
-            v.push_back({store,
-                         pf::kFolderedTcBlockOffset,
-                         pf::kTcBlockCb,
-                         pf::kFolderedTcBlockOffset,
-                         true,
-                         pf::kTcBlockCb,
-                         pf::kHierarchyDataBid});
-            v.push_back({store,
-                         pf::kFolderedChildBlockOffset,
-                         leaf_cb,
-                         pf::kFolderedChildBlockOffset,
-                         true,
-                         leaf_cb,
-                         pf::kChildFolderDataBid});
-        }
+        pushTcStoreArenas(v, Store::Foldered, pf::kRootBlockCb);
+        pushTcStoreArenas(v, Store::Messaging, pf::kMessagePcCb);
+        pushTcStoreArenas(v, Store::Attachment, pf::kMessagePcCb);
+        v.push_back({Store::Attachment,
+                     pf::kAttachSubnodeBlockOffset,
+                     pf::kSubnodeBlockCb,
+                     pf::kAttachSubnodeBlockOffset,
+                     true,
+                     pf::kSubnodeBlockCb,
+                     pf::kAttachSubnodeBid});
+        v.push_back({Store::Attachment,
+                     pf::kAttachPcBlockOffset,
+                     pf::kMessagePcCb,
+                     pf::kAttachPcBlockOffset,
+                     true,
+                     pf::kMessagePcCb,
+                     pf::kAttachDataBid});
         return v;
     }();
     return kArenas;
@@ -168,6 +173,8 @@ QByteArray buildStore(Store store) {
         return sak::pst_fixture::buildFolderedUnicodeStore();
     case Store::Messaging:
         return sak::pst_fixture::buildMessagingUnicodeStore();
+    case Store::Attachment:
+        return sak::pst_fixture::buildAttachmentUnicodeStore();
     default:
         return sak::pst_fixture::buildOpenableUnicodeStore();
     }
@@ -249,7 +256,8 @@ private Q_SLOTS:
         for (const auto& [seed, label] :
              {std::pair{sak::pst_fixture::buildOpenableUnicodeStore(), "openable"},
               std::pair{sak::pst_fixture::buildFolderedUnicodeStore(), "foldered"},
-              std::pair{sak::pst_fixture::buildMessagingUnicodeStore(), "messaging"}}) {
+              std::pair{sak::pst_fixture::buildMessagingUnicodeStore(), "messaging"},
+              std::pair{sak::pst_fixture::buildAttachmentUnicodeStore(), "attachment"}}) {
             QVERIFY(writeWholeFile(path, seed));
             PstParser seed_parser;
             seed_parser.open(path);
