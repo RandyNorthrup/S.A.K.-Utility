@@ -3849,6 +3849,20 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     80.7% (1219 -> 1238 of 1534 lines); extractTcRowIndicesFromLeaf is fully covered and
     collectTcLiveRowIndices all but its unreadable-leaf fail branch (line 2453). Full Release ctest
     247/247.
+- [x] R5-G14-PST-BLOCKTRAILER Coverage depth: verifyBlockTrailer fail-closed integrity branches
+  - RESOLVED 2026-08-14 [DONE]: postProcessBlock authenticates every block against its on-disk
+    BLOCKTRAILER via verifyBlockTrailer, which fails closed on four independent mismatches -- declared
+    cb, dwCRC, wSig, and the trailer's own bid. The cb/dwCRC/wSig branches were only incidentally
+    covered and the bid-mismatch branch (line 1928) -- a swapped/forged block bid that every other
+    check passes -- had NO coverage at all. A new negative test (corruptBlockTrailerFieldFailsClosed)
+    corrupts exactly one trailer field of the messaging store's on-demand message-leaf block (leaving
+    the header CRC, which does not cover block trailers, intact) and asserts the file still open()s
+    but readItemProperties fails closed -- once per field, so all four integrity checks now have an
+    explicit deterministic regression lock rather than incidental coverage. Re-measured pst_parser.cpp
+    line coverage 80.7% -> 80.8% (1238 -> 1239 of 1534 lines; the +1 is the previously-untested
+    bid-mismatch branch). verifyBlockTrailer's only remaining uncovered line is its
+    internal-msPstWeakCrc-failure guard (line 1916), unreachable via field corruption because the CRC
+    routine cannot fail over an in-bounds cb. Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

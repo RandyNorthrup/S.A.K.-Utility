@@ -227,6 +227,7 @@ private Q_SLOTS:
     void reusableFolderedFixtureReachesChildViaHierarchyTable();
     void reusableMessagingFixtureListsMessageViaContentsTable();
     void rowIndexedTcFixtureListsMessageViaLiveRowBth();
+    void corruptBlockTrailerFieldFailsClosed();
     void reusableAttachmentFixtureExposesSubnodeAttachment();
     void reusableXblockFixtureReassemblesMultiBlockData();
     void reusableXxblockFixtureReassemblesTwoLevelDataTree();
@@ -694,6 +695,46 @@ void TestPstParser::rowIndexedTcFixtureListsMessageViaLiveRowBth() {
     QVERIFY2(items.has_value(), "readFolderItems must succeed on the row-indexed contents table");
     QCOMPARE(items->size(), 1);
     QCOMPARE(items->first().node_id, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
+}
+
+void TestPstParser::corruptBlockTrailerFieldFailsClosed() {
+    // Exercises verifyBlockTrailer's fail-closed branches (postProcessBlock authenticates every
+    // block against its on-disk BLOCKTRAILER). The messaging store is byte-integral, so open()
+    // succeeds; the message leaf PC block is only read on demand by readItemProperties. Corrupting
+    // ONE trailer field of that block -- without re-stamping -- leaves the header CRC intact (it
+    // does not cover block trailers), so the file opens but the block read must fail closed. Each
+    // field trips a distinct check: declared cb, dwCRC, wSig, and the trailer's own bid.
+    namespace pf = sak::pst_fixture;
+    const int trailer_off = pf::kFolderedChildBlockOffset + pf::blockDiskSize(pf::kMessagePcCb) -
+                            pf::kTrailerSize;
+    // {byte offset within the 16-byte Unicode trailer, which check it defeats}.
+    constexpr int kCbFieldOffset = 0;
+    constexpr int kSigFieldOffset = 2;
+    constexpr int kCrcFieldOffset = 4;
+    constexpr int kBidFieldOffset = 8;
+    for (const auto& [field_off, label] : {std::pair{kCbFieldOffset, "cb"},
+                                           std::pair{kSigFieldOffset, "wSig"},
+                                           std::pair{kCrcFieldOffset, "dwCRC"},
+                                           std::pair{kBidFieldOffset, "bid"}}) {
+        QByteArray store = pf::buildMessagingUnicodeStore();
+        // Flip a byte in exactly one trailer field; the block's data (and thus the header CRC) is
+        // untouched, so nothing but this field's own check can reject it.
+        store[trailer_off + field_off] =
+            static_cast<char>(static_cast<uint8_t>(store[trailer_off + field_off]) ^ 0xFF);
+
+        QTemporaryFile temp_file;
+        QVERIFY(temp_file.open());
+        temp_file.write(store);
+        temp_file.close();
+
+        PstParser parser;
+        parser.open(temp_file.fileName());
+        QVERIFY2(parser.isOpen(),
+                 label);  // the corruption is in an on-demand block, not the header
+        const auto props = parser.readItemProperties(sak::pst_fixture::kMessageNid);
+        QVERIFY2(!props.has_value(),
+                 label);  // the corrupt trailer field must fail the block closed
+    }
 }
 
 void TestPstParser::reusableAttachmentFixtureExposesSubnodeAttachment() {
