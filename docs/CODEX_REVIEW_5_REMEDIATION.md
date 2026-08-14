@@ -3805,6 +3805,17 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     tree -- left untouched (implement-never-drop) and flagged for a wire-up-or-remove decision. Every
     byte verified against the parser's own constants. Re-measured pst_parser.cpp line coverage rose
     68.5% -> 75.9% (1051 -> 1165 of 1534 lines). Full Release ctest 247/247.
+- [x] R5-G14-PST-ASYNC Coverage depth: PST async load API (detail / properties / attachment)
+  - RESOLVED 2026-08-14 [DONE]: The GUI-facing async read wrappers -- loadItemDetail,
+    loadItemProperties, loadAttachmentContent -- each wrap a sync read and emit their result signal
+    (itemDetailLoaded / itemPropertiesLoaded / attachmentContentReady) INLINE; their success branches
+    had no coverage. A new test (loadAsyncApiEmitsDetailPropertiesAndAttachment) drives all three via
+    connect() lambdas (no event loop needed): loadItemDetail/loadItemProperties over the messaging
+    store assert the emitted detail's node_id and a non-empty property set, and loadAttachmentContent
+    over the attachment store asserts attachmentContentReady delivers exactly the attachment payload.
+    The three wrappers were also added to test_fuzz_pst_structure's accessor walk, so they run over
+    mutated stores too. No fixture change. Re-measured pst_parser.cpp line coverage rose 75.9% ->
+    78.0% (1165 -> 1196 of 1534 lines). Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

@@ -275,8 +275,13 @@ void walkOpenedParser(PstParser& parser) {
         static_cast<void>(parser.readAttachments(nid));
         static_cast<void>(parser.readFolderItems(nid, 0, kNodeWalkBudget));
         // loadFolderItems runs the per-item enrichment pass (extractSenderFromLeaf /
-        // scanBthForSubjectAndClass) that readFolderItems skips; it emits to no receiver here.
+        // scanBthForSubjectAndClass) that readFolderItems skips; the load* wrappers emit their
+        // result signals to no receiver here -- they just drive the async accept path under
+        // mutation.
         parser.loadFolderItems(nid, 0, kNodeWalkBudget);
+        parser.loadItemDetail(nid);
+        parser.loadItemProperties(nid);
+        parser.loadAttachmentContent(nid, 0);
     }
 }
 

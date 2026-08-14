@@ -229,6 +229,7 @@ private Q_SLOTS:
     void reusableAttachmentFixtureExposesSubnodeAttachment();
     void reusableXblockFixtureReassemblesMultiBlockData();
     void loadFolderItemsEnrichesSenderAndClass();
+    void loadAsyncApiEmitsDetailPropertiesAndAttachment();
     void rejectsUnknownDataVersion();
     void rejectsMistypedNodeBTreePage();
 
@@ -772,6 +773,70 @@ void TestPstParser::loadFolderItemsEnrichesSenderAndClass() {
     // The enrichment pass resolved the sender name and classified the message from its class prop.
     QCOMPARE(captured.first().sender_name, QStringLiteral("Alice"));
     QCOMPARE(captured.first().item_type, sak::EmailItemType::Email);
+}
+
+void TestPstParser::loadAsyncApiEmitsDetailPropertiesAndAttachment() {
+    // Locks the GUI-facing async read API (tests/support/pst_fixture.h fixtures). loadItemDetail /
+    // loadItemProperties / loadAttachmentContent each wrap a sync read and emit their result signal
+    // inline, so no event loop is needed. Their success branches had no coverage.
+    QTemporaryFile msg_file;
+    QVERIFY(msg_file.open());
+    msg_file.write(sak::pst_fixture::buildMessagingUnicodeStore());
+    msg_file.close();
+
+    PstParser msg_parser;
+    msg_parser.open(msg_file.fileName());
+    QVERIFY(msg_parser.isOpen());
+
+    bool got_detail = false;
+    uint64_t detail_nid = 0;
+    QObject::connect(&msg_parser,
+                     &PstParser::itemDetailLoaded,
+                     &msg_parser,
+                     [&](const sak::PstItemDetail& detail) {
+                         got_detail = true;
+                         detail_nid = detail.node_id;
+                     });
+    msg_parser.loadItemDetail(sak::pst_fixture::kMessageNid);
+    QVERIFY2(got_detail, "loadItemDetail must emit itemDetailLoaded");
+    QCOMPARE(detail_nid, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
+
+    bool got_props = false;
+    int prop_count = 0;
+    QObject::connect(&msg_parser,
+                     &PstParser::itemPropertiesLoaded,
+                     &msg_parser,
+                     [&](uint64_t, const QVector<sak::MapiProperty>& props) {
+                         got_props = true;
+                         prop_count = static_cast<int>(props.size());
+                     });
+    msg_parser.loadItemProperties(sak::pst_fixture::kMessageNid);
+    QVERIFY2(got_props, "loadItemProperties must emit itemPropertiesLoaded");
+    QVERIFY(prop_count >= 1);
+
+    // The attachment store's message has one sub-node attachment; loadAttachmentContent must
+    // deliver its decoded payload.
+    QTemporaryFile att_file;
+    QVERIFY(att_file.open());
+    att_file.write(sak::pst_fixture::buildAttachmentUnicodeStore());
+    att_file.close();
+
+    PstParser att_parser;
+    att_parser.open(att_file.fileName());
+    QVERIFY(att_parser.isOpen());
+
+    bool got_att = false;
+    QByteArray att_data;
+    QObject::connect(&att_parser,
+                     &PstParser::attachmentContentReady,
+                     &att_parser,
+                     [&](uint64_t, int, const QByteArray& data, const QString&) {
+                         got_att = true;
+                         att_data = data;
+                     });
+    att_parser.loadAttachmentContent(sak::pst_fixture::kMessageNid, 0);
+    QVERIFY2(got_att, "loadAttachmentContent must emit attachmentContentReady");
+    QCOMPARE(att_data, sak::pst_fixture::attachPayloadBytes());
 }
 
 void TestPstParser::rejectsUnknownDataVersion() {
