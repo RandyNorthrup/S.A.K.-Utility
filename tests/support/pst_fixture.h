@@ -31,6 +31,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 namespace sak::pst_fixture {
 
@@ -159,6 +160,15 @@ inline constexpr int kMessagePcCb = kMsgPageMapOffset +
 inline constexpr uint32_t kMsgBthLeafHid = 0x40;  // HID index 2 (BTH leaf)
 inline constexpr uint32_t kMsgSubjectHid = 0x60;  // HID index 3 (subject string)
 
+// Generic Heap-on-Node PC geometry, for a block carrying N variable-type records (each an 8-byte
+// BTH record whose HNID resolves to a heap value). HID == (allocation-index << 5); the BTHHEADER is
+// index 1, the BTH leaf index 2, and the first value index 3.
+inline constexpr int kHnPmHeaderLen = 4;       // HNPAGEMAP: cAlloc(u16) + cFree(u16)
+inline constexpr int kHnPmEntryLen = 2;        // each rgibAlloc boundary entry (u16)
+inline constexpr int kPcFixedAllocCount = 2;   // BTHHEADER + BTH leaf, before the value allocations
+inline constexpr int kHidIndexShift = 5;       // HID = (allocation index << 5), block 0
+inline constexpr int kFirstValueHidIndex = 3;  // first value allocation is HID index 3
+
 // Table Context on-heap layout (MS-PST 2.3.4). A single 4-byte column (PidTagLtpRowId, whose
 // cell IS the child NID) and no TCROWID BTH (hidRowIndex 0 -> the parser enumerates the one row).
 inline constexpr uint8_t kTcClientSignature = 0x7C;  // HNHDR.bClientSig for a TC; also TCINFO.bType
@@ -242,6 +252,15 @@ inline constexpr int kXblockBlockOffset = kFolderedChildBlockOffset;            
 inline constexpr int kXblockChild0Offset = kXblockBlockOffset + kRootBlockDiskSize;   // 0x900
 inline constexpr int kXblockChild1Offset = kXblockChild0Offset + kRootBlockDiskSize;  // 0x940
 inline constexpr int kXblockFileSize = kXblockChild1Offset + kRootBlockDiskSize;      // 0x980
+
+// Enrichable message store: the message PC carries Subject + MessageClass + SenderName, so a
+// loadFolderItems() enrichment pass (extractSenderFromLeaf + scanBthForSubjectAndClass +
+// classifyMessageClass) actually populates item_type and sender_name -- the enrichment code the
+// single-Subject message never triggers. Same three-slot layout; the leaf PC's cb is dynamic, so
+// its block offsets reuse the foldered offsets and its disk size is computed at build time.
+inline constexpr int kEnrichRootBlockOffset = kFolderedRootBlockOffset;  // 0x800
+inline constexpr int kEnrichTcBlockOffset = kFolderedTcBlockOffset;      // 0x840
+inline constexpr int kEnrichPcBlockOffset = kFolderedChildBlockOffset;   // 0x8C0
 
 inline void writeLe16(QByteArray& data, int offset, uint16_t value) {
     data[offset] = static_cast<char>(value & 0xFF);
@@ -447,48 +466,98 @@ inline QByteArray buildSingleRowTcBlock(uint64_t file_offset, uint64_t bid, uint
     return blk;
 }
 
-// A Heap-on-Node PC block carrying ONE variable-type property record: HNHDR -> BTHHEADER -> a
-// one-record BTH leaf whose value is an HNID pointing at an 8-byte heap allocation. readProperty
-// context (and, for an attachment sub-node, collectBthLeafData + populateAttachmentFromLeaf) walks
-// that chain and resolves the record's HNID to the heap bytes. The single home for this layout;
-// both the message-Subject block and the attachment-data block are thin wrappers around it, so the
-// heap geometry (three allocations, an 8-byte value) is never duplicated. @p value8 is the 8 heap
-// bytes (a UTF-16 string for the Subject, arbitrary binary for an attachment). A genuine
-// BLOCKTRAILER authenticates the disk region.
-inline QByteArray buildOneVarRecordPcBlock(uint64_t file_offset,
-                                           uint64_t bid,
-                                           uint16_t prop_id,
-                                           uint16_t prop_type,
-                                           const QByteArray& value8) {
-    QByteArray blk(blockDiskSize(kMessagePcCb), '\0');
+// One variable-type PC record: a property id + type whose value is stored (via an HNID) in the
+// heap.
+struct PcRecord {
+    uint16_t prop_id;
+    uint16_t prop_type;
+    QByteArray value;
+};
+
+// Total cb (data bytes, no trailer) of a PC block holding @p records:
+// HNHDR + BTHHEADER + BTH leaf (8 bytes each) + the concatenated values + HNPAGEMAP.
+inline int multiRecordPcCb(const std::vector<PcRecord>& records) {
+    const int n = static_cast<int>(records.size());
+    int values_len = 0;
+    for (const auto& rec : records) {
+        values_len += static_cast<int>(rec.value.size());
+    }
+    const int alloc_count = kPcFixedAllocCount + n;
+    const int pagemap_len = kHnPmHeaderLen + (kHnPmEntryLen * (alloc_count + 1));
+    return kHnHdrSize + kBthHdrSize + (kPcRecordSize * n) + values_len + pagemap_len;
+}
+
+// A Heap-on-Node PC block carrying N variable-type records: HNHDR -> BTHHEADER -> an N-record BTH
+// leaf, each record's HNID resolving to its heap value. readPropertyContext (and, for an attachment
+// sub-node, collectBthLeafData + populateAttachmentFromLeaf) walks that chain. The single home for
+// the PC heap layout -- the message-Subject block, the multi-property message, and the attachment
+// data block are all thin wrappers, so the geometry (HNPAGEMAP boundaries, HID indices) lives here
+// once. For a single 8-byte record this produces byte-for-byte the classic 48-byte message PC.
+inline QByteArray buildMultiRecordPcBlock(uint64_t file_offset,
+                                          uint64_t bid,
+                                          const std::vector<PcRecord>& records) {
+    const int n = static_cast<int>(records.size());
+    const int cb = multiRecordPcCb(records);
+    const int bth_leaf_off = kHnHdrSize + kBthHdrSize;
+    const int values_off = bth_leaf_off + (kPcRecordSize * n);
+    int values_len = 0;
+    for (const auto& rec : records) {
+        values_len += static_cast<int>(rec.value.size());
+    }
+    const int pagemap_off = values_off + values_len;
+
+    QByteArray blk(blockDiskSize(cb), '\0');
     // HNHDR -> BTHHEADER as the user root.
-    writeLe16(blk, kHnHdrIbHnpmOffset, static_cast<uint16_t>(kMsgPageMapOffset));
+    writeLe16(blk, kHnHdrIbHnpmOffset, static_cast<uint16_t>(pagemap_off));
     blk[kHnHdrSigOffset] = static_cast<char>(kHnSignature);
     blk[kHnHdrClientSigOffset] = static_cast<char>(kPcClientSignature);
     writeLe32(blk, kHnHdrRootHidOffset, kBthHeaderHid);
-    // BTHHEADER (heap allocation 1): key 2 / data 6, root HID -> the one-record leaf.
+    // BTHHEADER (heap allocation 1): key 2 / data 6, root HID -> the BTH leaf.
     blk[kMsgBthHdrOffset] = static_cast<char>(kBthSignature);
     blk[kMsgBthHdrOffset + kBthKeySizeField] = static_cast<char>(kPcBthKeySize);
     blk[kMsgBthHdrOffset + kBthDataSizeField] = static_cast<char>(kPcBthDataSize);
     blk[kMsgBthHdrOffset + kBthIdxLevelsField] = 0;
     writeLe32(blk, kMsgBthHdrOffset + kBthRootHidField, kMsgBthLeafHid);
-    // BTH leaf (heap allocation 2): one PC record -- propId, type, then the value HNID.
-    writeLe16(blk, kMsgBthLeafOffset, prop_id);
-    writeLe16(blk, kMsgBthLeafOffset + kPcRecordKeySize, prop_type);
-    writeLe32(blk, kMsgBthLeafOffset + kPcRecordKeySize + kPcValueRefOffset, kMsgSubjectHid);
-    // Value (heap allocation 3): the 8 bytes the HNID resolves to.
-    for (int i = 0; i < kMsgSubjectLen; ++i) {
-        blk[kMsgSubjectOffset + i] = (i < value8.size()) ? value8.at(i) : '\0';
+    // BTH leaf records + their heap values.
+    int value_off = values_off;
+    for (int i = 0; i < n; ++i) {
+        const int rec = bth_leaf_off + (i * kPcRecordSize);
+        const uint32_t value_hid = static_cast<uint32_t>((kFirstValueHidIndex + i)
+                                                         << kHidIndexShift);
+        writeLe16(blk, rec, records[i].prop_id);
+        writeLe16(blk, rec + kPcRecordKeySize, records[i].prop_type);
+        writeLe32(blk, rec + kPcRecordKeySize + kPcValueRefOffset, value_hid);
+        blk.replace(value_off, static_cast<int>(records[i].value.size()), records[i].value);
+        value_off += static_cast<int>(records[i].value.size());
     }
-    // HNPAGEMAP: three allocations.
-    writeLe16(blk, kMsgPageMapOffset, 3);
-    writeLe16(blk, kMsgPageMapOffset + 2, 0);
-    writeLe16(blk, kMsgPageMapOffset + 4, static_cast<uint16_t>(kMsgBthHdrOffset));
-    writeLe16(blk, kMsgPageMapOffset + 6, static_cast<uint16_t>(kMsgBthLeafOffset));
-    writeLe16(blk, kMsgPageMapOffset + 8, static_cast<uint16_t>(kMsgSubjectOffset));
-    writeLe16(blk, kMsgPageMapOffset + 10, static_cast<uint16_t>(kMsgPageMapOffset));
-    stampBlockTrailer(blk, 0, kMessagePcCb, bid, file_offset);
+    // HNPAGEMAP: alloc_count allocations, then alloc_count+1 boundary offsets.
+    const int alloc_count = kPcFixedAllocCount + n;
+    writeLe16(blk, pagemap_off, static_cast<uint16_t>(alloc_count));
+    writeLe16(blk, pagemap_off + kHnPmEntryLen, 0);  // cFree
+    const int rgib = pagemap_off + kHnPmHeaderLen;
+    writeLe16(blk, rgib, static_cast<uint16_t>(kMsgBthHdrOffset));
+    writeLe16(blk, rgib + kHnPmEntryLen, static_cast<uint16_t>(bth_leaf_off));
+    int boundary = values_off;
+    for (int i = 0; i < n; ++i) {
+        writeLe16(blk,
+                  rgib + ((kPcFixedAllocCount + i) * kHnPmEntryLen),
+                  static_cast<uint16_t>(boundary));
+        boundary += static_cast<int>(records[i].value.size());
+    }
+    writeLe16(blk,
+              rgib + ((kPcFixedAllocCount + n) * kHnPmEntryLen),
+              static_cast<uint16_t>(pagemap_off));
+    stampBlockTrailer(blk, 0, cb, bid, file_offset);
     return blk;
+}
+
+// One-record convenience wrapper (an 8-byte value): the message-Subject and attachment-data blocks.
+inline QByteArray buildOneVarRecordPcBlock(uint64_t file_offset,
+                                           uint64_t bid,
+                                           uint16_t prop_id,
+                                           uint16_t prop_type,
+                                           const QByteArray& value8) {
+    return buildMultiRecordPcBlock(file_offset, bid, {{prop_id, prop_type, value8}});
 }
 
 // A message's data block: the one-record PC above carrying the Subject (a variable-length Unicode
@@ -670,6 +739,66 @@ inline QByteArray buildFolderedUnicodeStore() {
 /// reaches.
 inline QByteArray buildMessagingUnicodeStore() {
     return buildStoreWithSingleRowTc(kContentsTableNid, kMessageNid, LeafPc::Message);
+}
+
+// ASCII text as a UTF-16LE byte string (the PtypString on-disk encoding). Test values are ASCII.
+inline QByteArray asciiUtf16le(const char* text) {
+    QByteArray out;
+    for (const char* p = text; *p != '\0'; ++p) {
+        out.append(*p);
+        out.append('\0');
+    }
+    return out;
+}
+
+/// The root folder's CONTENTS Table Context lists ONE message whose PC carries three properties --
+/// Subject, MessageClass ("IPM.Note"), and SenderName ("Alice"). loadFolderItems(root) then runs
+/// the enrichment pass (enrichItemSenders -> enrichSingleItemProps -> enrichItemFromBth ->
+/// extractSenderFromLeaf + scanBthForSubjectAndClass -> classifyMessageClass), populating the
+/// summary's sender_name and item_type -- the enrichment code the single-Subject message never
+/// triggers.
+inline QByteArray buildEnrichableMessageStore() {
+    const std::vector<PcRecord> records = {
+        {kSubjectPropId, sak::email::kPropTypeUnicode, asciiUtf16le("FUZZ")},
+        {sak::email::kPropIdMessageClass, sak::email::kPropTypeUnicode, asciiUtf16le("IPM.Note")},
+        {sak::email::kPropIdSenderName, sak::email::kPropTypeUnicode, asciiUtf16le("Alice")},
+    };
+    const int pc_cb = multiRecordPcCb(records);
+    const int pc_disk = blockDiskSize(pc_cb);
+    const int file_size = kEnrichPcBlockOffset + pc_disk;
+
+    QByteArray file(file_size, '\0');
+    writeUnicodeStoreHeader(file, kOpenableNbtOffset, kOpenableBbtOffset);
+
+    const QByteArray nbt = makeNbtEntry(kRootFolderNid, kRootFolderDataBid) +
+                           makeNbtEntry(kContentsTableNid, kHierarchyDataBid) +
+                           makeNbtEntry(kMessageNid, kChildFolderDataBid);
+    file.replace(kOpenableNbtOffset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeNbt, kNbtEntrySize, kOpenableNbtOffset, nbt, 3));
+
+    const QByteArray bbt = makeBbtEntry(kRootFolderDataBid, kEnrichRootBlockOffset, kRootBlockCb) +
+                           makeBbtEntry(kHierarchyDataBid, kEnrichTcBlockOffset, kTcBlockCb) +
+                           makeBbtEntry(kChildFolderDataBid, kEnrichPcBlockOffset, pc_cb);
+    file.replace(kOpenableBbtOffset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeBbt, kBbtEntrySize, kOpenableBbtOffset, bbt, 3));
+
+    file.replace(kEnrichRootBlockOffset,
+                 kRootBlockDiskSize,
+                 buildRootFolderPcBlock(static_cast<uint64_t>(kEnrichRootBlockOffset),
+                                        kRootFolderDataBid));
+    file.replace(kEnrichTcBlockOffset,
+                 kTcBlockDiskSize,
+                 buildSingleRowTcBlock(
+                     static_cast<uint64_t>(kEnrichTcBlockOffset), kHierarchyDataBid, kMessageNid));
+    file.replace(kEnrichPcBlockOffset,
+                 pc_disk,
+                 buildMultiRecordPcBlock(
+                     static_cast<uint64_t>(kEnrichPcBlockOffset), kChildFolderDataBid, records));
+
+    restampHeaderCrc(file);
+    return file;
 }
 
 // The 8 heap bytes an attachment's PidTagAttachData HNID resolves to. Exposed so the accept-path

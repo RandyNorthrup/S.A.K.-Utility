@@ -228,6 +228,7 @@ private Q_SLOTS:
     void reusableMessagingFixtureListsMessageViaContentsTable();
     void reusableAttachmentFixtureExposesSubnodeAttachment();
     void reusableXblockFixtureReassemblesMultiBlockData();
+    void loadFolderItemsEnrichesSenderAndClass();
     void rejectsUnknownDataVersion();
     void rejectsMistypedNodeBTreePage();
 
@@ -732,6 +733,45 @@ void TestPstParser::reusableXblockFixtureReassemblesMultiBlockData() {
         }
     }
     QVERIFY2(found_subject, "the XBLOCK-reassembled message PC must expose its Subject");
+}
+
+void TestPstParser::loadFolderItemsEnrichesSenderAndClass() {
+    // Locks the enrichable store (tests/support/pst_fixture.h): loadFolderItems() -- the async list
+    // API -- runs the per-item enrichment pass (enrichItemSenders -> enrichSingleItemProps ->
+    // enrichItemFromBth -> extractSenderFromLeaf + scanBthForSubjectAndClass ->
+    // classifyMessageClass) that the sync readFolderItems never does. The message PC carries
+    // SenderName "Alice" and MessageClass "IPM.Note", so the emitted summary must have those
+    // resolved. loadFolderItems emits folderItemsLoaded inline, so no event loop is needed.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildEnrichableMessageStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+
+    QVector<sak::PstItemSummary> captured;
+    bool got = false;
+    QObject::connect(&parser,
+                     &PstParser::folderItemsLoaded,
+                     &parser,
+                     [&](uint64_t, const QVector<sak::PstItemSummary>& items, int) {
+                         captured = items;
+                         got = true;
+                     });
+
+    parser.loadFolderItems(sak::email::kNidRootFolder, 0, 10);
+
+    QVERIFY2(got, "loadFolderItems must emit folderItemsLoaded");
+    QCOMPARE(captured.size(), 1);
+    QCOMPARE(captured.first().node_id, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
+    // The enrichment pass resolved the sender name and classified the message from its class prop.
+    QCOMPARE(captured.first().sender_name, QStringLiteral("Alice"));
+    QCOMPARE(captured.first().item_type, sak::EmailItemType::Email);
 }
 
 void TestPstParser::rejectsUnknownDataVersion() {

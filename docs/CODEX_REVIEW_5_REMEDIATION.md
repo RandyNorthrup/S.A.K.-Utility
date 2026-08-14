@@ -3786,6 +3786,25 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     child BIDs -- exercising the fail-closed overrun and cycle guards. Every byte verified against the
     parser's own constants. Re-measured pst_parser.cpp line coverage rose 66.4% -> 68.5% (1019 -> 1051
     of 1534 lines). Full Release ctest 247/247.
+- [x] R5-G14-PST-ENRICH Coverage depth: PST folder-item sender/class enrichment
+  - RESOLVED 2026-08-13 [DONE]: Re-mapping the 68.5% coverage named the next dead cluster: the
+    per-item enrichment pass (enrichItemSenders -> enrichSingleItemProps -> loadNodeHeapContext ->
+    enrichItemFromBth -> extractSenderFromLeaf + scanBthForSubjectAndClass -> classifyMessageClass),
+    reached only from loadFolderItems (the async list API, which emits folderItemsLoaded INLINE); the
+    sync readFolderItems the other tests use never enriches. The single-Subject message PC also gave
+    the sender/class scanners nothing to resolve. Closed both in tests/support/pst_fixture.h: the
+    one-record PC builder is generalized into buildMultiRecordPcBlock (N variable-type records, with
+    the HNPAGEMAP boundaries and HID indices computed once -- for a single 8-byte record it produces
+    byte-for-byte the classic 48-byte message PC, so the messaging/attachment/XBLOCK stores are
+    unchanged), and buildEnrichableMessageStore gives the message a PC with Subject, MessageClass
+    ("IPM.Note"), and SenderName ("Alice"). A new test (loadFolderItemsEnrichesSenderAndClass) drives
+    loadFolderItems and asserts the emitted summary has sender_name "Alice" and item_type Email --
+    the enrichment resolved the sender HNID and classified the message. loadFolderItems was also added
+    to test_fuzz_pst_structure's accessor walk, so the enrichment pass is mutation-fuzzed across every
+    message store. NOTE: readSenderFromPC (a lightweight-sender helper) has no caller anywhere in the
+    tree -- left untouched (implement-never-drop) and flagged for a wire-up-or-remove decision. Every
+    byte verified against the parser's own constants. Re-measured pst_parser.cpp line coverage rose
+    68.5% -> 75.9% (1051 -> 1165 of 1534 lines). Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen
