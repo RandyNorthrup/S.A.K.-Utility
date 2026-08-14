@@ -2613,6 +2613,35 @@ add_test(NAME test_fuzz_smart_report COMMAND test_fuzz_smart_report
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_smart_report")
 
+# test_fuzz_mbox_container - deterministic mutation-fuzz of the MBOX container splitter + full read
+# pipeline. The header parser and MIME transfer decoder are already fuzzed as pure seams; this covers
+# the part that only exists behind an open file: the "From " separator scan (buildMessageIndex/
+# isFromLine), the per-message boundary math (readRawMessage), and the recursive MIME walk with its
+# part/depth caps. Writes each mutated input to a temp file and drives open->index->read. Asserts no
+# crash/hang, determinism, open-implies-at-least-one-message, and well-formed reads. Mirrors
+# test_mbox_parser's link set.
+add_executable(test_fuzz_mbox_container
+    unit/test_fuzz_mbox_container.cpp
+    ../src/core/mbox_parser.cpp
+    ../src/core/logger.cpp
+    ../include/sak/mbox_parser.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_mbox_container PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_mbox_container PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_mbox_container PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_mbox_container COMMAND test_fuzz_mbox_container
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_mbox_container.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_mbox_container")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp

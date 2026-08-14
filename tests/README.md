@@ -2,13 +2,13 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **246 registered CTest tests** across **238 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **247 registered CTest tests** across **239 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
 
 ## Structure
 
 ```
 tests/
-+-- unit/                                  # Unit tests (235 C++ files, including actions/)
++-- unit/                                  # Unit tests (236 C++ files, including actions/)
 |   +-- actions/                           # Quick action validation tests
 |   |   +-- test_action_factory.cpp
 |   |   +-- test_all_actions_metadata.cpp
@@ -441,6 +441,6 @@ QCOMPARE(spy.count(), 1);
 ---
 
 **Test Framework:** Qt Test
-**Registered Tests:** 246 (CTest)
-**Test Files:** 238 C++ test source files plus script-backed helper tests
+**Registered Tests:** 247 (CTest)
+**Test Files:** 239 C++ test source files plus script-backed helper tests
 **Platform:** Windows 10/11

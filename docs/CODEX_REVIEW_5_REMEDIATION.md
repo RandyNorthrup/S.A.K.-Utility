@@ -3732,6 +3732,23 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     (hardest rule, restated independently); and the pipeline always emits at least one
     recommendation. Seeds carry healthy-SATA/failed/NVMe/data-less/phantom-table/truncated/non-JSON
     variants. A lock test pins the accept/Unknown/Critical anchors. Full Release ctest 246/246.
+- [x] R5-G14-MBOX Fuzz harness: MBOX container splitter + full read pipeline
+  - RESOLVED 2026-08-13 [DONE]: An MBOX file is untrusted input (a mail archive from anywhere). The
+    RFC 5322 header parser (test_fuzz_mbox_headers) and the MIME transfer decoder
+    (test_fuzz_mbox_transfer_decoder) are already fuzzed as pure seams; this closes the remaining
+    surface that only exists behind an open file -- the "From " separator scan that splits the
+    archive (buildMessageIndex/isFromLine), the per-message boundary math (readRawMessage: the >From
+    un-escaping and the size caps), and the recursive MIME walk with its part cap (kMaxMimeParts) and
+    depth cap (kMaxMimeDepth). test_fuzz_mbox_container writes each mutated input to a temp file and
+    drives the real public pipeline (open -> indexMessages -> readMessages -> readMessageDetail),
+    asserting per input: no crash/hang (the caps survive an archive of nothing but boundary
+    delimiters or deeply nested multiparts); determinism (two full passes yield the same message
+    count and per-message fingerprint); a parser that reports open indexes at least one message
+    (open() validated a leading "From " line, so the index can never contradict it with zero --
+    [[no-fallbacks-fail-closed]]); and every readMessageDetail resolves to a well-formed expected.
+    Seeds carry a valid two-message multipart archive plus boundary-only / >From / body-prose-From /
+    non-mbox variants. A lock test pins the two-message accept path (subject, one attachment, body).
+    Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen
