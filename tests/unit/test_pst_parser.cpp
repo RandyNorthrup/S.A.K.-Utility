@@ -228,6 +228,7 @@ private Q_SLOTS:
     void reusableMessagingFixtureListsMessageViaContentsTable();
     void reusableAttachmentFixtureExposesSubnodeAttachment();
     void reusableXblockFixtureReassemblesMultiBlockData();
+    void reusableXxblockFixtureReassemblesTwoLevelDataTree();
     void loadFolderItemsEnrichesSenderAndClass();
     void loadAsyncApiEmitsDetailPropertiesAndAttachment();
     void rejectsUnknownDataVersion();
@@ -734,6 +735,41 @@ void TestPstParser::reusableXblockFixtureReassemblesMultiBlockData() {
         }
     }
     QVERIFY2(found_subject, "the XBLOCK-reassembled message PC must expose its Subject");
+}
+
+void TestPstParser::reusableXxblockFixtureReassemblesTwoLevelDataTree() {
+    // Locks the shared XXBLOCK store (tests/support/pst_fixture.h): the message's data is a
+    // two-level data tree -- an XXBLOCK (cLevel==2) over two XBLOCKs (cLevel==1), each over two
+    // external data blocks. readItemProperties drives readDataTree, which must recurse
+    // readXxblockChildren -> readXblockChildren -> readBlock and reassemble all four external
+    // slices, in order, into the 48-byte message PC. It fails deterministically here if the
+    // deepest data-tree level regresses -- the path the flat single-XBLOCK fixture never reaches.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildXxblockMessageStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+
+    // The Subject only reads back if all four external blocks were concatenated in order across
+    // both levels and parsed as one Heap-on-Node PC.
+    const auto props = parser.readItemProperties(sak::pst_fixture::kMessageNid);
+    QVERIFY2(props.has_value(),
+             "readItemProperties must reassemble the XXBLOCK two-level data tree");
+    bool found_subject = false;
+    for (const auto& prop : *props) {
+        if (prop.tag_id == sak::email::kPropIdSubject) {
+            QCOMPARE(prop.display_value, QStringLiteral("FUZZ"));
+            found_subject = true;
+        }
+    }
+    QVERIFY2(found_subject, "the XXBLOCK-reassembled message PC must expose its Subject");
 }
 
 void TestPstParser::loadFolderItemsEnrichesSenderAndClass() {

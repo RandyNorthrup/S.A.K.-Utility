@@ -3816,6 +3816,20 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     The three wrappers were also added to test_fuzz_pst_structure's accessor walk, so they run over
     mutated stores too. No fixture change. Re-measured pst_parser.cpp line coverage rose 75.9% ->
     78.0% (1165 -> 1196 of 1534 lines). Full Release ctest 247/247.
+- [x] R5-G14-PST-XXBLOCK Coverage depth: PST two-level data tree (XXBLOCK)
+  - RESOLVED 2026-08-14 [DONE]: The single-XBLOCK fixture only exercised a one-level data tree
+    (cLevel==1); readXxblockChildren -- the cLevel==2 path that recurses an XXBLOCK to its child
+    XBLOCKs before concatenating -- had no coverage. A new reusable fixture (buildXxblockMessageStore
+    in tests/support/pst_fixture.h) makes the message's data BID an XXBLOCK over two XBLOCKs, each
+    over two external data blocks, quartering the 48-byte message PC across the four leaves; internal
+    blocks carry fInternal (bid & 0x02) and externals clear it. A new accept test
+    (reusableXxblockFixtureReassemblesTwoLevelDataTree) proves readItemProperties recurses
+    readXxblockChildren -> readXblockChildren -> readBlock and reassembles all four slices, in order,
+    into the "FUZZ" Subject. The store was also added to test_fuzz_pst_structure (new Store::Xxblock,
+    pushXxblockStoreArenas over its nine block regions, buildStore case, seed-open assert), so the
+    two-level tree is mutation-fuzzed too. Re-measured pst_parser.cpp line coverage rose 78.0% ->
+    79.5% (1196 -> 1219 of 1534 lines); readXxblockChildren is now fully covered except its
+    near-limit size-cap fail-closed branch (line 1855). Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

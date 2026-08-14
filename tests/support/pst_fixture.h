@@ -253,6 +253,33 @@ inline constexpr int kXblockChild0Offset = kXblockBlockOffset + kRootBlockDiskSi
 inline constexpr int kXblockChild1Offset = kXblockChild0Offset + kRootBlockDiskSize;  // 0x940
 inline constexpr int kXblockFileSize = kXblockChild1Offset + kRootBlockDiskSize;      // 0x980
 
+// Two-level XXBLOCK message store: the message data BID is an XXBLOCK (cLevel==2) whose two entries
+// are XBLOCKs (cLevel==1), and each XBLOCK's two entries are external data blocks. readDataTree
+// recurses XXBLOCK -> XBLOCK -> data and concatenates the four external children into the 48-byte
+// message PC. This is the readXxblockChildren path (the deepest data-tree level) that the flat
+// single-XBLOCK fixture never reaches. Internal blocks carry fInternal (bid & 0x02 SET); external
+// data blocks clear it -- hence the 2-mod-4 vs 0-mod-4 bid split.
+inline constexpr uint64_t kXxblockBid = 10;           // internal XXBLOCK (fInternal SET)
+inline constexpr uint64_t kXxXblock0Bid = 14;         // internal XBLOCK  (fInternal SET)
+inline constexpr uint64_t kXxXblock1Bid = 18;         // internal XBLOCK  (fInternal SET)
+inline constexpr uint64_t kXxData0Bid = 12;           // external data block (fInternal clear)
+inline constexpr uint64_t kXxData1Bid = 16;           // external data block
+inline constexpr uint64_t kXxData2Bid = 20;           // external data block
+inline constexpr uint64_t kXxData3Bid = 24;           // external data block
+inline constexpr uint8_t kXxblockLevel = 2;           // 2 == XXBLOCK
+inline constexpr int kXxDataCb = kMessagePcCb / 4;    // 12: each external block holds a quarter
+inline constexpr int kXxXblockTotal = kXxDataCb * 2;  // 24: bytes under one XBLOCK
+inline constexpr int kXxblockRootBlockOffset = kFolderedRootBlockOffset;           // 0x800
+inline constexpr int kXxblockTcBlockOffset = kFolderedTcBlockOffset;               // 0x840
+inline constexpr int kXxblockBlockOffset = kFolderedChildBlockOffset;              // 0x8C0 XXBLOCK
+inline constexpr int kXxXblock0Offset = kXxblockBlockOffset + kRootBlockDiskSize;  // 0x900
+inline constexpr int kXxXblock1Offset = kXxXblock0Offset + kRootBlockDiskSize;     // 0x940
+inline constexpr int kXxData0Offset = kXxXblock1Offset + kRootBlockDiskSize;       // 0x980
+inline constexpr int kXxData1Offset = kXxData0Offset + kRootBlockDiskSize;         // 0x9C0
+inline constexpr int kXxData2Offset = kXxData1Offset + kRootBlockDiskSize;         // 0xA00
+inline constexpr int kXxData3Offset = kXxData2Offset + kRootBlockDiskSize;         // 0xA40
+inline constexpr int kXxblockFileSize = kXxData3Offset + kRootBlockDiskSize;       // 0xA80
+
 // Enrichable message store: the message PC carries Subject + MessageClass + SenderName, so a
 // loadFolderItems() enrichment pass (extractSenderFromLeaf + scanBthForSubjectAndClass +
 // classifyMessageClass) actually populates item_type and sender_name -- the enrichment code the
@@ -971,6 +998,111 @@ inline QByteArray buildXblockMessageStore() {
                  buildRawDataBlock(static_cast<uint64_t>(kXblockChild1Offset),
                                    kXblockChild1Bid,
                                    pc.mid(kXblockChild0Cb)));
+
+    restampHeaderCrc(file);
+    return file;
+}
+
+// An internal XXBLOCK (cLevel==2): the same 8-byte header as an XBLOCK, then @p entry 8-byte child
+// BIDs that point at XBLOCKs rather than external data. readInternalDataBlock routes level 2 to
+// readXxblockChildren, which recurses each XBLOCK before concatenating.
+inline QByteArray buildXxblock(uint64_t file_offset,
+                               uint64_t bid,
+                               uint64_t xblock0_bid,
+                               uint64_t xblock1_bid,
+                               uint32_t total_bytes) {
+    QByteArray blk(blockDiskSize(kXblockCb), '\0');
+    blk[0] = static_cast<char>(kXblockBType);
+    blk[1] = static_cast<char>(kXxblockLevel);
+    writeLe16(blk, 2, 2);  // cEnt == two child XBLOCKs
+    writeLe32(blk, 4, total_bytes);
+    writeLe64(blk, kXblockHeaderLen, xblock0_bid);
+    writeLe64(blk, kXblockHeaderLen + 8, xblock1_bid);
+    stampBlockTrailer(blk, 0, kXblockCb, bid, file_offset);
+    return blk;
+}
+
+// Place the four external data blocks that hold the quartered message PC, one per XXBLOCK leaf.
+inline void writeXxblockDataBlocks(QByteArray& file, const QByteArray& pc) {
+    const std::array<std::pair<int, uint64_t>, 4> leaves{{
+        {kXxData0Offset, kXxData0Bid},
+        {kXxData1Offset, kXxData1Bid},
+        {kXxData2Offset, kXxData2Bid},
+        {kXxData3Offset, kXxData3Bid},
+    }};
+    for (int i = 0; i < static_cast<int>(leaves.size()); ++i) {
+        const auto [offset, bid] = leaves[i];
+        file.replace(offset,
+                     kRootBlockDiskSize,
+                     buildRawDataBlock(
+                         static_cast<uint64_t>(offset), bid, pc.mid(i * kXxDataCb, kXxDataCb)));
+    }
+}
+
+/// The root folder's CONTENTS Table Context lists ONE message whose data BID is an XXBLOCK. Reading
+/// its property context drives readDataTree, which sees the internal bit, expands the XXBLOCK to
+/// its two XBLOCKs, expands each XBLOCK to its two external data blocks, and reassembles all four
+/// slices (in order) into the 48-byte message PC (the "FUZZ" Subject). This exercises
+/// readXxblockChildren
+/// -- the two-level data-tree path no single-level XBLOCK fixture reaches.
+inline QByteArray buildXxblockMessageStore() {
+    QByteArray file(kXxblockFileSize, '\0');
+    writeUnicodeStoreHeader(file, kOpenableNbtOffset, kOpenableBbtOffset);
+
+    const QByteArray nbt = makeNbtEntry(kRootFolderNid, kRootFolderDataBid) +
+                           makeNbtEntry(kContentsTableNid, kHierarchyDataBid) +
+                           makeNbtEntry(kMessageNid, kXxblockBid);
+    file.replace(kOpenableNbtOffset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeNbt, kNbtEntrySize, kOpenableNbtOffset, nbt, 3));
+
+    const QByteArray bbt = makeBbtEntry(kRootFolderDataBid, kXxblockRootBlockOffset, kRootBlockCb) +
+                           makeBbtEntry(kHierarchyDataBid, kXxblockTcBlockOffset, kTcBlockCb) +
+                           makeBbtEntry(kXxblockBid, kXxblockBlockOffset, kXblockCb) +
+                           makeBbtEntry(kXxXblock0Bid, kXxXblock0Offset, kXblockCb) +
+                           makeBbtEntry(kXxXblock1Bid, kXxXblock1Offset, kXblockCb) +
+                           makeBbtEntry(kXxData0Bid, kXxData0Offset, kXxDataCb) +
+                           makeBbtEntry(kXxData1Bid, kXxData1Offset, kXxDataCb) +
+                           makeBbtEntry(kXxData2Bid, kXxData2Offset, kXxDataCb) +
+                           makeBbtEntry(kXxData3Bid, kXxData3Offset, kXxDataCb);
+    file.replace(kOpenableBbtOffset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeBbt, kBbtEntrySize, kOpenableBbtOffset, bbt, 9));
+
+    file.replace(kXxblockRootBlockOffset,
+                 kRootBlockDiskSize,
+                 buildRootFolderPcBlock(static_cast<uint64_t>(kXxblockRootBlockOffset),
+                                        kRootFolderDataBid));
+    file.replace(kXxblockTcBlockOffset,
+                 kTcBlockDiskSize,
+                 buildSingleRowTcBlock(
+                     static_cast<uint64_t>(kXxblockTcBlockOffset), kHierarchyDataBid, kMessageNid));
+
+    // The 48 message-PC data bytes (the HN, without its own trailer), quartered across four
+    // external data blocks under two XBLOCKs under one XXBLOCK.
+    const QByteArray pc = buildMessagePcBlock(0, kXxblockBid).left(kMessagePcCb);
+    file.replace(kXxblockBlockOffset,
+                 kRootBlockDiskSize,
+                 buildXxblock(static_cast<uint64_t>(kXxblockBlockOffset),
+                              kXxblockBid,
+                              kXxXblock0Bid,
+                              kXxXblock1Bid,
+                              static_cast<uint32_t>(kMessagePcCb)));
+    file.replace(kXxXblock0Offset,
+                 kRootBlockDiskSize,
+                 buildXblock(static_cast<uint64_t>(kXxXblock0Offset),
+                             kXxXblock0Bid,
+                             kXxData0Bid,
+                             kXxData1Bid,
+                             static_cast<uint32_t>(kXxXblockTotal)));
+    file.replace(kXxXblock1Offset,
+                 kRootBlockDiskSize,
+                 buildXblock(static_cast<uint64_t>(kXxXblock1Offset),
+                             kXxXblock1Bid,
+                             kXxData2Bid,
+                             kXxData3Bid,
+                             static_cast<uint32_t>(kXxXblockTotal)));
+    writeXxblockDataBlocks(file, pc);
 
     restampHeaderCrc(file);
     return file;
