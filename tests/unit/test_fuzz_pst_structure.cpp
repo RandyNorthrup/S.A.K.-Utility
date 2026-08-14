@@ -52,7 +52,8 @@ enum class Store {
     Messaging,
     Attachment,
     Xblock,
-    Xxblock
+    Xxblock,
+    RowIndexedTc
 };
 
 // One mutable region of a store: a [begin, begin + length) BODY span whose bytes the parser reads
@@ -78,9 +79,13 @@ void pushPageArenas(std::vector<Arena>& v, Store store) {
 }
 
 // The five arenas a TC store (foldered / messaging / attachment) shares: two pages plus the root
-// PC, single-row TC, and leaf PC blocks. @p leaf_cb is the leaf block's data length (a populated
-// message PC is larger than an empty folder PC), so the re-stamp covers the right byte count.
-void pushTcStoreArenas(std::vector<Arena>& v, Store store, int leaf_cb) {
+// PC, TC, and leaf PC blocks. @p leaf_cb is the leaf block's data length (a populated message PC is
+// larger than an empty folder PC) and @p tc_cb the TC block's data length (the row-indexed TC is
+// larger than the single-row TC), so the re-stamp covers the right byte count in each case.
+void pushTcStoreArenas(std::vector<Arena>& v,
+                       Store store,
+                       int leaf_cb,
+                       int tc_cb = sak::pst_fixture::kTcBlockCb) {
     namespace pf = sak::pst_fixture;
     pushPageArenas(v, store);
     v.push_back({store,
@@ -92,10 +97,10 @@ void pushTcStoreArenas(std::vector<Arena>& v, Store store, int leaf_cb) {
                  pf::kRootFolderDataBid});
     v.push_back({store,
                  pf::kFolderedTcBlockOffset,
-                 pf::kTcBlockCb,
+                 tc_cb,
                  pf::kFolderedTcBlockOffset,
                  true,
-                 pf::kTcBlockCb,
+                 tc_cb,
                  pf::kHierarchyDataBid});
     v.push_back({store,
                  pf::kFolderedChildBlockOffset,
@@ -211,6 +216,7 @@ const std::vector<Arena>& arenas() {
         pushTcStoreArenas(v, Store::Foldered, pf::kRootBlockCb);
         pushTcStoreArenas(v, Store::Messaging, pf::kMessagePcCb);
         pushTcStoreArenas(v, Store::Attachment, pf::kMessagePcCb);
+        pushTcStoreArenas(v, Store::RowIndexedTc, pf::kMessagePcCb, pf::kTcRiBlockCb);
         v.push_back({Store::Attachment,
                      pf::kAttachSubnodeBlockOffset,
                      pf::kSubnodeBlockCb,
@@ -268,6 +274,8 @@ QByteArray buildStore(Store store) {
         return sak::pst_fixture::buildXblockMessageStore();
     case Store::Xxblock:
         return sak::pst_fixture::buildXxblockMessageStore();
+    case Store::RowIndexedTc:
+        return sak::pst_fixture::buildRowIndexedTcStore();
     default:
         return sak::pst_fixture::buildOpenableUnicodeStore();
     }
@@ -360,7 +368,8 @@ private Q_SLOTS:
               std::pair{sak::pst_fixture::buildMessagingUnicodeStore(), "messaging"},
               std::pair{sak::pst_fixture::buildAttachmentUnicodeStore(), "attachment"},
               std::pair{sak::pst_fixture::buildXblockMessageStore(), "xblock"},
-              std::pair{sak::pst_fixture::buildXxblockMessageStore(), "xxblock"}}) {
+              std::pair{sak::pst_fixture::buildXxblockMessageStore(), "xxblock"},
+              std::pair{sak::pst_fixture::buildRowIndexedTcStore(), "rowindexed_tc"}}) {
             QVERIFY(writeWholeFile(path, seed));
             PstParser seed_parser;
             seed_parser.open(path);

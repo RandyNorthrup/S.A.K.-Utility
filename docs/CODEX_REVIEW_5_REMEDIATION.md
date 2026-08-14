@@ -3830,6 +3830,25 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     two-level tree is mutation-fuzzed too. Re-measured pst_parser.cpp line coverage rose 78.0% ->
     79.5% (1196 -> 1219 of 1534 lines); readXxblockChildren is now fully covered except its
     near-limit size-cap fail-closed branch (line 1855). Full Release ctest 247/247.
+- [x] R5-G14-PST-TCROWID Coverage depth: PST live-row TCROWID BTH walk (hidRowIndex != 0)
+  - RESOLVED 2026-08-14 [DONE]: Every TC fixture set hidRowIndex == 0, so the parser always took the
+    physical-slot fallback (fallbackTcRowIndices); the authoritative live-row path --
+    collectTcLiveRowIndices -> extractTcRowIndicesFromLeaf (walk the TCROWID BTH, materialize only
+    the rows it lists) -- had no coverage. Added a row-indexed TC variant: buildRowIndexedTcBlock
+    appends a real TCROWID BTH (a BTHHEADER at HID 0x60 with idxLevels 0, rooting an 8-byte TCROWID
+    leaf at HID 0x80 that names logical row 0) after the row matrix and sets TCINFO hidRowIndex to
+    0x60. The shared TCINFO/column/row-matrix writes were factored into writeTcInfoAndRow so the
+    single-row and row-indexed builders have one home. A new store (buildRowIndexedTcStore, via a
+    TcKind parameter on buildStoreWithSingleRowTc that also widens the TC's BBT cb) carries it as the
+    root's contents table, and a new accept test (rowIndexedTcFixtureListsMessageViaLiveRowBth)
+    asserts readFolderItems lists exactly the one BTH-named message (node_id == the message NID) --
+    not zero (broken walk) and not padding slots (physical enumeration). The store is also wired into
+    test_fuzz_pst_structure (Store::RowIndexedTc; pushTcStoreArenas gained a tc_cb argument so the
+    larger TC block re-stamps correctly), so mutating the BTHHEADER/leaf drives collectTcLiveRowIndices
+    over corrupt key/data sizes and root HIDs. Re-measured pst_parser.cpp line coverage rose 79.5% ->
+    80.7% (1219 -> 1238 of 1534 lines); extractTcRowIndicesFromLeaf is fully covered and
+    collectTcLiveRowIndices all but its unreadable-leaf fail branch (line 2453). Full Release ctest
+    247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

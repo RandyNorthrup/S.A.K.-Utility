@@ -226,6 +226,7 @@ private Q_SLOTS:
     void reusableOpenableFixtureReachesRootFolder();
     void reusableFolderedFixtureReachesChildViaHierarchyTable();
     void reusableMessagingFixtureListsMessageViaContentsTable();
+    void rowIndexedTcFixtureListsMessageViaLiveRowBth();
     void reusableAttachmentFixtureExposesSubnodeAttachment();
     void reusableXblockFixtureReassemblesMultiBlockData();
     void reusableXxblockFixtureReassemblesTwoLevelDataTree();
@@ -665,6 +666,34 @@ void TestPstParser::reusableMessagingFixtureListsMessageViaContentsTable() {
         }
     }
     QVERIFY2(found_subject, "the message PC must expose its Subject property");
+}
+
+void TestPstParser::rowIndexedTcFixtureListsMessageViaLiveRowBth() {
+    // Locks the row-indexed TC store (tests/support/pst_fixture.h): the contents Table Context
+    // carries a real TCROWID BTH (hidRowIndex != 0), so listing it drives readContentsTable ->
+    // buildTcRows -> collectTcLiveRowIndices -> extractTcRowIndicesFromLeaf -- the live-row BTH
+    // walk that resolves the one message from the BTH rather than enumerating physical matrix slots
+    // (the hidRowIndex == 0 fallback the single-row TC takes). It fails deterministically here if
+    // the BTH-driven row-index path regresses.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildRowIndexedTcStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+
+    // Exactly the one live row named by the TCROWID BTH must be listed -- not zero (a broken BTH
+    // walk) and not stale/padding slots (physical enumeration).
+    const auto items = parser.readFolderItems(sak::email::kNidRootFolder, 0, 10);
+    QVERIFY2(items.has_value(), "readFolderItems must succeed on the row-indexed contents table");
+    QCOMPARE(items->size(), 1);
+    QCOMPARE(items->first().node_id, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
 }
 
 void TestPstParser::reusableAttachmentFixtureExposesSubnodeAttachment() {

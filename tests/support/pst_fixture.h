@@ -200,6 +200,25 @@ inline constexpr int kTcBlockCb = kTcPageMapOffset +
                                   10;  // + HNPAGEMAP(cAlloc/cFree + 3 rgib) == 57
 inline constexpr int kTcBlockDiskSize = ((kTcBlockCb + kTrailerSize + 63) / 64) * 64;  // 128
 
+// Row-indexed TC variant: the same one-column single-row TC, but with a real TCROWID BTH after the
+// row matrix so hidRowIndex != 0. The parser then walks the live-row BTH
+// (collectTcLiveRowIndices -> extractTcRowIndicesFromLeaf) to find the one live row instead of
+// enumerating physical matrix slots -- the fallback path the hidRowIndex==0 TC takes. Two extra
+// heap allocations follow the row matrix: the BTHHEADER (HID index 3, 0x60) and its 8-byte TCROWID
+// leaf (HID index 4, 0x80). TCROWID record == dwRowID(4, the key) + dwRowIndex(4, the logical row).
+inline constexpr uint32_t kTcRowIndexBthHid = 0x60;         // HID index 3 (BTHHEADER)
+inline constexpr uint32_t kTcRowIndexLeafHid = 0x80;        // HID index 4 (BTH leaf)
+inline constexpr int kTcRiBthHdrOffset = kTcPageMapOffset;  // 47 (alloc 3)
+inline constexpr int kTcRiBthLeafOffset = kTcRiBthHdrOffset + kBthHdrSize;  // 55 (alloc 4)
+inline constexpr int kTcRowIdRecordSize = 8;  // dwRowID(4) + dwRowIndex(4)
+inline constexpr int kTcRiPageMapOffset = kTcRiBthLeafOffset + kTcRowIdRecordSize;  // 63
+inline constexpr int kTcRiAllocCount = 4;  // TCINFO, row matrix, BTHHEADER, BTH leaf
+inline constexpr int kTcRiPageMapLen = kHnPmHeaderLen +
+                                       (kHnPmEntryLen * (kTcRiAllocCount + 1));            // 14
+inline constexpr int kTcRiBlockCb = kTcRiPageMapOffset + kTcRiPageMapLen;                  // 77
+inline constexpr int kTcRiBlockDiskSize = ((kTcRiBlockCb + kTrailerSize + 63) / 64) * 64;  // 128
+inline constexpr uint8_t kTcRowIdKeyDataSize = 4;  // TCROWID key and data are both 4 bytes
+
 // Foldered store block offsets (same NBT/BBT pages as the openable store; three blocks after).
 inline constexpr int kFolderedRootBlockOffset = kOpenableBlockOffset;                     // 0x800
 inline constexpr int kFolderedTcBlockOffset = kFolderedRootBlockOffset +
@@ -452,14 +471,17 @@ inline QByteArray buildRootFolderPcBlock(uint64_t file_offset, uint64_t bid) {
     return blk;
 }
 
-// A single-row Table Context data block: an HN (client sig 0x7C) whose TCINFO declares one
-// PidTagLtpRowId column and one row whose cell is @p row_value. hidRowIndex is 0, so the parser
-// enumerates the single physical row. As a hierarchy table row_value is a child folder NID; as a
-// contents table it is a message NID -- the byte layout is identical, only the owning node differs.
-inline QByteArray buildSingleRowTcBlock(uint64_t file_offset, uint64_t bid, uint32_t row_value) {
-    QByteArray blk(blockDiskSize(kTcBlockCb), '\0');
+// Write the HNHDR + TCINFO + one PidTagLtpRowId column + the one-row matrix common to both TC
+// variants. @p pagemap_off is the HNPAGEMAP start (it moves when extra allocations follow the row
+// matrix); @p hid_row_index is the TCINFO hidRowIndex (0 == enumerate the single physical row;
+// nonzero == an HID pointing at a TCROWID BTH the parser must walk). @p row_value is the row's one
+// cell -- a child folder NID (hierarchy table) or message NID (contents table).
+inline void writeTcInfoAndRow(QByteArray& blk,
+                              int pagemap_off,
+                              uint32_t hid_row_index,
+                              uint32_t row_value) {
     // HNHDR -> TCINFO as the user root.
-    writeLe16(blk, kHnHdrIbHnpmOffset, static_cast<uint16_t>(kTcPageMapOffset));
+    writeLe16(blk, kHnHdrIbHnpmOffset, static_cast<uint16_t>(pagemap_off));
     blk[kHnHdrSigOffset] = static_cast<char>(kHnSignature);
     blk[kHnHdrClientSigOffset] = static_cast<char>(kTcClientSignature);
     writeLe32(blk, kHnHdrRootHidOffset, kTcHidUserRoot);
@@ -471,7 +493,7 @@ inline QByteArray buildSingleRowTcBlock(uint64_t file_offset, uint64_t bid, uint
     writeLe16(blk, ti + kTcinfoRgib2bOffset, static_cast<uint16_t>(kTcRowCellSize));
     writeLe16(blk, ti + kTcinfoRgib1bOffset, static_cast<uint16_t>(kTcRowCellSize));
     writeLe16(blk, ti + kTcinfoRgibBmOffset, static_cast<uint16_t>(kTcRowSize));
-    writeLe32(blk, ti + kTcinfoHidRowIndexOffset, 0);
+    writeLe32(blk, ti + kTcinfoHidRowIndexOffset, hid_row_index);
     writeLe32(blk, ti + kTcinfoHnidRowsOffset, kTcHnidRows);
     // Column descriptor (PtypInteger32 so the 4 cell bytes are read literally, not HNID-resolved).
     const int col = ti + kTcinfoHeaderLen;
@@ -483,6 +505,15 @@ inline QByteArray buildSingleRowTcBlock(uint64_t file_offset, uint64_t bid, uint
     // Row matrix (heap allocation 2): the row-value cell + a CEB marking column 0 present.
     writeLe32(blk, kTcRowMatrixOffset, row_value);
     blk[kTcRowMatrixOffset + kTcRowCellSize] = static_cast<char>(kCebFirstColPresent);
+}
+
+// A single-row Table Context data block: an HN (client sig 0x7C) whose TCINFO declares one
+// PidTagLtpRowId column and one row whose cell is @p row_value. hidRowIndex is 0, so the parser
+// enumerates the single physical row. As a hierarchy table row_value is a child folder NID; as a
+// contents table it is a message NID -- the byte layout is identical, only the owning node differs.
+inline QByteArray buildSingleRowTcBlock(uint64_t file_offset, uint64_t bid, uint32_t row_value) {
+    QByteArray blk(blockDiskSize(kTcBlockCb), '\0');
+    writeTcInfoAndRow(blk, kTcPageMapOffset, 0, row_value);
     // HNPAGEMAP: two allocations -- TCINFO [12, 42) and the row matrix [42, 47).
     writeLe16(blk, kTcPageMapOffset, 2);
     writeLe16(blk, kTcPageMapOffset + 2, 0);
@@ -490,6 +521,41 @@ inline QByteArray buildSingleRowTcBlock(uint64_t file_offset, uint64_t bid, uint
     writeLe16(blk, kTcPageMapOffset + 6, static_cast<uint16_t>(kTcRowMatrixOffset));
     writeLe16(blk, kTcPageMapOffset + 8, static_cast<uint16_t>(kTcPageMapOffset));
     stampBlockTrailer(blk, 0, kTcBlockCb, bid, file_offset);
+    return blk;
+}
+
+// The row-indexed TC variant: the same one-column single-row TC, but with a real TCROWID BTH so
+// hidRowIndex != 0. The BTHHEADER (alloc 3, HID 0x60) has idxLevels 0 and roots at the 8-byte
+// TCROWID leaf (alloc 4, HID 0x80); the leaf's one record names logical row 0. Reading this table
+// drives collectTcLiveRowIndices -> extractTcRowIndicesFromLeaf (the live-row BTH walk) rather than
+// the physical-slot fallback -- the hidRowIndex != 0 path buildSingleRowTcBlock never reaches.
+inline QByteArray buildRowIndexedTcBlock(uint64_t file_offset, uint64_t bid, uint32_t row_value) {
+    QByteArray blk(blockDiskSize(kTcRiBlockCb), '\0');
+    writeTcInfoAndRow(blk, kTcRiPageMapOffset, kTcRowIndexBthHid, row_value);
+    // BTHHEADER (alloc 3): key 4 / data 4, idxLevels 0, root HID -> the TCROWID leaf.
+    blk[kTcRiBthHdrOffset] = static_cast<char>(kBthSignature);
+    blk[kTcRiBthHdrOffset + kBthKeySizeField] = static_cast<char>(kTcRowIdKeyDataSize);
+    blk[kTcRiBthHdrOffset + kBthDataSizeField] = static_cast<char>(kTcRowIdKeyDataSize);
+    blk[kTcRiBthHdrOffset + kBthIdxLevelsField] = 0;
+    writeLe32(blk, kTcRiBthHdrOffset + kBthRootHidField, kTcRowIndexLeafHid);
+    // TCROWID leaf (alloc 4): dwRowID (the row key, here the same NID) + dwRowIndex (logical row
+    // 0).
+    writeLe32(blk, kTcRiBthLeafOffset, row_value);
+    writeLe32(blk, kTcRiBthLeafOffset + kTcRowIdKeyDataSize, 0);
+    // HNPAGEMAP: four allocations -- TCINFO [12, 42), row matrix [42, 47), BTHHEADER [47, 55),
+    // TCROWID leaf [55, 63).
+    writeLe16(blk, kTcRiPageMapOffset, static_cast<uint16_t>(kTcRiAllocCount));
+    writeLe16(blk, kTcRiPageMapOffset + kHnPmEntryLen, 0);
+    const int rgib = kTcRiPageMapOffset + kHnPmHeaderLen;
+    const std::array<int, 5> boundaries{{kTcinfoOffset,
+                                         kTcRowMatrixOffset,
+                                         kTcRiBthHdrOffset,
+                                         kTcRiBthLeafOffset,
+                                         kTcRiPageMapOffset}};
+    for (int i = 0; i < static_cast<int>(boundaries.size()); ++i) {
+        writeLe16(blk, rgib + (i * kHnPmEntryLen), static_cast<uint16_t>(boundaries[i]));
+    }
+    stampBlockTrailer(blk, 0, kTcRiBlockCb, bid, file_offset);
     return blk;
 }
 
@@ -705,18 +771,31 @@ enum class LeafPc {
     Message
 };
 
+// Which contents/hierarchy Table Context the store carries: the hidRowIndex==0 single-row TC (the
+// parser enumerates the one physical row) or the row-indexed variant (a real TCROWID BTH the parser
+// must walk).
+enum class TcKind {
+    SingleRow,
+    RowIndexed
+};
+
 /// Build a legacy-Unicode PST with three nodes: the root folder PC, a single-row Table Context
 /// (@p tc_nid), and a leaf node (@p leaf_nid, also the TC row's value). @p leaf_kind selects the
 /// leaf's PC -- an empty folder PC or a populated message PC. Whether the TC is a hierarchy table
 /// (open() recurses into a child folder) or a contents table (readFolderItems() lists a message)
 /// is decided by tc_nid's type; the block layout is identical (both leaf PCs are a 64-byte block).
-inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid, uint32_t leaf_nid, LeafPc leaf_kind) {
+inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid,
+                                            uint32_t leaf_nid,
+                                            LeafPc leaf_kind,
+                                            TcKind tc_kind = TcKind::SingleRow) {
     const int nbt_offset = kOpenableNbtOffset;
     const int bbt_offset = kOpenableBbtOffset;
     const int root_block = kFolderedRootBlockOffset;   // root PC, disk 64
-    const int tc_block = kFolderedTcBlockOffset;       // single-row TC, disk 128
+    const int tc_block = kFolderedTcBlockOffset;       // TC, disk 128 (both variants)
     const int leaf_block = kFolderedChildBlockOffset;  // leaf PC, disk 64
     const int leaf_cb = (leaf_kind == LeafPc::Message) ? kMessagePcCb : kRootBlockCb;
+    const bool row_indexed = (tc_kind == TcKind::RowIndexed);
+    const int tc_cb = row_indexed ? kTcRiBlockCb : kTcBlockCb;
 
     QByteArray file(kFolderedFileSize, '\0');
     writeUnicodeStoreHeader(file, nbt_offset, bbt_offset);
@@ -729,7 +808,7 @@ inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid, uint32_t leaf_nid, 
                  makeLeafPageWithEntries(kPtypeNbt, kNbtEntrySize, nbt_offset, nbt, 3));
 
     const QByteArray bbt = makeBbtEntry(kRootFolderDataBid, root_block, kRootBlockCb) +
-                           makeBbtEntry(kHierarchyDataBid, tc_block, kTcBlockCb) +
+                           makeBbtEntry(kHierarchyDataBid, tc_block, tc_cb) +
                            makeBbtEntry(kChildFolderDataBid, leaf_block, leaf_cb);
     file.replace(bbt_offset,
                  kPageSize,
@@ -738,10 +817,11 @@ inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid, uint32_t leaf_nid, 
     file.replace(root_block,
                  kRootBlockDiskSize,
                  buildRootFolderPcBlock(static_cast<uint64_t>(root_block), kRootFolderDataBid));
-    file.replace(
-        tc_block,
-        kTcBlockDiskSize,
-        buildSingleRowTcBlock(static_cast<uint64_t>(tc_block), kHierarchyDataBid, leaf_nid));
+    const QByteArray tc =
+        row_indexed
+            ? buildRowIndexedTcBlock(static_cast<uint64_t>(tc_block), kHierarchyDataBid, leaf_nid)
+            : buildSingleRowTcBlock(static_cast<uint64_t>(tc_block), kHierarchyDataBid, leaf_nid);
+    file.replace(tc_block, kTcBlockDiskSize, tc);
     const QByteArray leaf_pc =
         (leaf_kind == LeafPc::Message)
             ? buildMessagePcBlock(static_cast<uint64_t>(leaf_block), kChildFolderDataBid)
@@ -766,6 +846,17 @@ inline QByteArray buildFolderedUnicodeStore() {
 /// reaches.
 inline QByteArray buildMessagingUnicodeStore() {
     return buildStoreWithSingleRowTc(kContentsTableNid, kMessageNid, LeafPc::Message);
+}
+
+/// Same contents-table store as buildMessagingUnicodeStore, but the TC carries a real TCROWID BTH
+/// (hidRowIndex != 0). readFolderItems(root) then drives readContentsTable -> buildTcRows ->
+/// collectTcLiveRowIndices -> extractTcRowIndicesFromLeaf -- the live-row BTH walk that resolves
+/// the one message from the BTH rather than enumerating physical matrix slots. The message still
+/// reads back identically (its NID is row 0), so the row is exercised end-to-end through the BTH
+/// path.
+inline QByteArray buildRowIndexedTcStore() {
+    return buildStoreWithSingleRowTc(
+        kContentsTableNid, kMessageNid, LeafPc::Message, TcKind::RowIndexed);
 }
 
 // ASCII text as a UTF-16LE byte string (the PtypString on-disk encoding). Test values are ASCII.
