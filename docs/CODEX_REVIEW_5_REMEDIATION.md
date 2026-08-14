@@ -3718,6 +3718,20 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     all the security-critical direction -- an ACCEPT of an oracle-unsafe field is an aria2-injection
     escape and fails the run loudly ([[no-fallbacks-fail-closed]]). A lock test pins the accept/reject
     anchors (a clean entry accepted; each named attack class rejected). Full Release ctest 245/245.
+- [x] R5-G14-SMART Fuzz harness: smartctl JSON health-report parser
+  - RESOLVED 2026-08-13 [DONE]: SmartDiskAnalyzer parses the JSON the bundled smartctl emits for a
+    physical drive -- untrusted input, since a failing drive's firmware, a corrupted capture, or a
+    truncated pipe can all hand it malformed/partial JSON. The central contract is fail-closed: a
+    payload with no usable SMART signal must resolve to Unknown health and never read as a clean
+    drive. parseAndAssessForTesting() runs the whole parse->assess->recommend pipeline over raw
+    bytes; test_fuzz_smart_report drives it over mutated smartctl documents asserting per input: no
+    crash/hang; determinism (a report signature compared across two parses); the fail-closed
+    EQUIVALENCE overall_health==Unknown IFF !reportHasAssessableData (a data-less payload can never
+    earn Healthy/Warning/Critical, and a signal-carrying payload always earns a definite verdict --
+    [[no-fallbacks-fail-closed]]); a self-reported smart_status FAILED is always assessed Critical
+    (hardest rule, restated independently); and the pipeline always emits at least one
+    recommendation. Seeds carry healthy-SATA/failed/NVMe/data-less/phantom-table/truncated/non-JSON
+    variants. A lock test pins the accept/Unknown/Critical anchors. Full Release ctest 246/246.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

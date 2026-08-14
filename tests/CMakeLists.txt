@@ -2582,6 +2582,37 @@ add_test(NAME test_fuzz_uup_manifest_guard COMMAND test_fuzz_uup_manifest_guard
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_uup_manifest_guard")
 
+# test_fuzz_smart_report - deterministic mutation-fuzz of the smartctl JSON health-report parser.
+# smartctl output for a failing/corrupt drive is untrusted input; the parser's central contract is
+# fail-closed (a data-less payload must resolve to Unknown health, never read as a clean drive).
+# parseAndAssessForTesting() runs the whole parse->assess->recommend pipeline over raw bytes. Asserts
+# no crash/hang, determinism, the Unknown-IFF-no-signal equivalence, that FAILED is always Critical,
+# and that a recommendation is always produced. Mirrors test_smart_disk_analyzer's link set.
+add_executable(test_fuzz_smart_report
+    unit/test_fuzz_smart_report.cpp
+    ../src/core/smart_disk_analyzer.cpp
+    ../src/core/bundled_tools_manager.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/smart_disk_analyzer.h
+    ../include/sak/bundled_tools_manager.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_smart_report PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_smart_report PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_smart_report PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_smart_report COMMAND test_fuzz_smart_report
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_smart_report.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_smart_report")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
