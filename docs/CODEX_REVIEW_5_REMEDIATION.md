@@ -3768,6 +3768,24 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     just executed once. Every byte was verified against the parser's own constants before building.
     Re-measured pst_parser.cpp line coverage rose 59.6% -> 66.4% (915 -> 1019 of 1534 lines) from this
     one increment. Full Release ctest 247/247.
+- [x] R5-G14-PST-XBLOCK Coverage depth: PST multi-block data tree (XBLOCK)
+  - RESOLVED 2026-08-13 [DONE]: Re-mapping the 66.4% coverage to functions named the next dead
+    cluster: the multi-block data-tree path (readDataTree -> readInternalDataBlock ->
+    readXblockChildren / readXxblockChildren), unreachable because every fixture stored a node's data
+    in a single block -- no data tree to expand. (The larger sender/enrichment cluster was skipped
+    this pass: its only call site is the ASYNC loadFolderItems, which needs an event-loop-driven test
+    rather than a fixture.) Closed it in tests/support/pst_fixture.h: buildXblockMessageStore points
+    the message's data BID at an internal XBLOCK (fInternal bit 0x02 set) that references two external
+    child data blocks whose bytes concatenate into the 48-byte message PC; readDataTree sees the
+    internal bit, expands the XBLOCK, and reassembles the children. New builders buildRawDataBlock (an
+    opaque data slice + genuine BLOCKTRAILER) and buildXblock (the 8-byte internal-block header + two
+    8-byte child BIDs). A new accept-path test (reusableXblockFixtureReassemblesMultiBlockData) locks
+    it: readItemProperties reads back the Subject only if both children were concatenated in order and
+    parsed as one Heap-on-Node. The store is wired into test_fuzz_pst_structure as a fifth arena set
+    (XBLOCK + both child blocks), so the reassembly runs over integral-but-corrupt entry counts and
+    child BIDs -- exercising the fail-closed overrun and cycle guards. Every byte verified against the
+    parser's own constants. Re-measured pst_parser.cpp line coverage rose 66.4% -> 68.5% (1019 -> 1051
+    of 1534 lines). Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

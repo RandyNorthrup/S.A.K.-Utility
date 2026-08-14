@@ -227,6 +227,7 @@ private Q_SLOTS:
     void reusableFolderedFixtureReachesChildViaHierarchyTable();
     void reusableMessagingFixtureListsMessageViaContentsTable();
     void reusableAttachmentFixtureExposesSubnodeAttachment();
+    void reusableXblockFixtureReassemblesMultiBlockData();
     void rejectsUnknownDataVersion();
     void rejectsMistypedNodeBTreePage();
 
@@ -697,6 +698,40 @@ void TestPstParser::reusableAttachmentFixtureExposesSubnodeAttachment() {
     // A missing attachment index must fail closed, not return another attachment's bytes.
     const auto missing = parser.readAttachmentData(sak::pst_fixture::kMessageNid, 1);
     QVERIFY2(!missing.has_value(), "an out-of-range attachment index must fail closed");
+}
+
+void TestPstParser::reusableXblockFixtureReassemblesMultiBlockData() {
+    // Locks the shared XBLOCK store (tests/support/pst_fixture.h): the message's data is an
+    // internal XBLOCK referencing two external child blocks. readItemProperties drives
+    // readPropertyContext -> readHeapOnNode -> readDataTree, which must see the internal bit,
+    // expand the XBLOCK, and reassemble the children into the 48-byte message PC -- the multi-block
+    // data-tree path (readInternalDataBlock / readXblockChildren) no single-block store reaches. It
+    // fails deterministically here if that reassembly regresses.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildXblockMessageStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+
+    // The Subject only reads back if the two child blocks were concatenated in order and parsed as
+    // one Heap-on-Node PC.
+    const auto props = parser.readItemProperties(sak::pst_fixture::kMessageNid);
+    QVERIFY2(props.has_value(), "readItemProperties must reassemble the XBLOCK data tree");
+    bool found_subject = false;
+    for (const auto& prop : *props) {
+        if (prop.tag_id == sak::email::kPropIdSubject) {
+            QCOMPARE(prop.display_value, QStringLiteral("FUZZ"));
+            found_subject = true;
+        }
+    }
+    QVERIFY2(found_subject, "the XBLOCK-reassembled message PC must expose its Subject");
 }
 
 void TestPstParser::rejectsUnknownDataVersion() {

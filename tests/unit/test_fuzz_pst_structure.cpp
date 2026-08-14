@@ -50,7 +50,8 @@ enum class Store {
     Openable,
     Foldered,
     Messaging,
-    Attachment
+    Attachment,
+    Xblock
 };
 
 // One mutable region of a store: a [begin, begin + length) BODY span whose bytes the parser reads
@@ -104,6 +105,51 @@ void pushTcStoreArenas(std::vector<Arena>& v, Store store, int leaf_cb) {
                  pf::kChildFolderDataBid});
 }
 
+// The seven arenas of the XBLOCK store: two shared pages, the root PC and single-row TC, then the
+// internal XBLOCK and its two external child data blocks -- the multi-block data-tree regions no
+// other store has. Mutating them (then re-stamping) drives readInternalDataBlock /
+// readXblockChildren over corrupt entry counts and child BIDs when walkOpenedParser reads the
+// message's properties.
+void pushXblockStoreArenas(std::vector<Arena>& v) {
+    namespace pf = sak::pst_fixture;
+    pushPageArenas(v, Store::Xblock);
+    v.push_back({Store::Xblock,
+                 pf::kXblockRootBlockOffset,
+                 pf::kRootBlockCb,
+                 pf::kXblockRootBlockOffset,
+                 true,
+                 pf::kRootBlockCb,
+                 pf::kRootFolderDataBid});
+    v.push_back({Store::Xblock,
+                 pf::kXblockTcBlockOffset,
+                 pf::kTcBlockCb,
+                 pf::kXblockTcBlockOffset,
+                 true,
+                 pf::kTcBlockCb,
+                 pf::kHierarchyDataBid});
+    v.push_back({Store::Xblock,
+                 pf::kXblockBlockOffset,
+                 pf::kXblockCb,
+                 pf::kXblockBlockOffset,
+                 true,
+                 pf::kXblockCb,
+                 pf::kXblockBid});
+    v.push_back({Store::Xblock,
+                 pf::kXblockChild0Offset,
+                 pf::kXblockChild0Cb,
+                 pf::kXblockChild0Offset,
+                 true,
+                 pf::kXblockChild0Cb,
+                 pf::kXblockChild0Bid});
+    v.push_back({Store::Xblock,
+                 pf::kXblockChild1Offset,
+                 pf::kXblockChild1Cb,
+                 pf::kXblockChild1Offset,
+                 true,
+                 pf::kXblockChild1Cb,
+                 pf::kXblockChild1Bid});
+}
+
 // Every store's mutable regions. The openable store adds one PC block to the two shared pages; the
 // foldered/messaging stores add the five TC-store arenas; the attachment store adds those five plus
 // the message's sub-node BTree block and the attachment PC block -- the sub-node/attachment regions
@@ -138,6 +184,7 @@ const std::vector<Arena>& arenas() {
                      true,
                      pf::kMessagePcCb,
                      pf::kAttachDataBid});
+        pushXblockStoreArenas(v);
         return v;
     }();
     return kArenas;
@@ -175,6 +222,8 @@ QByteArray buildStore(Store store) {
         return sak::pst_fixture::buildMessagingUnicodeStore();
     case Store::Attachment:
         return sak::pst_fixture::buildAttachmentUnicodeStore();
+    case Store::Xblock:
+        return sak::pst_fixture::buildXblockMessageStore();
     default:
         return sak::pst_fixture::buildOpenableUnicodeStore();
     }
@@ -257,7 +306,8 @@ private Q_SLOTS:
              {std::pair{sak::pst_fixture::buildOpenableUnicodeStore(), "openable"},
               std::pair{sak::pst_fixture::buildFolderedUnicodeStore(), "foldered"},
               std::pair{sak::pst_fixture::buildMessagingUnicodeStore(), "messaging"},
-              std::pair{sak::pst_fixture::buildAttachmentUnicodeStore(), "attachment"}}) {
+              std::pair{sak::pst_fixture::buildAttachmentUnicodeStore(), "attachment"},
+              std::pair{sak::pst_fixture::buildXblockMessageStore(), "xblock"}}) {
             QVERIFY(writeWholeFile(path, seed));
             PstParser seed_parser;
             seed_parser.open(path);

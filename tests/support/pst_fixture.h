@@ -222,6 +222,27 @@ inline constexpr int kAttachPcBlockOffset = kAttachSubnodeBlockOffset +
                                             kRootBlockDiskSize;                    // 0x940
 inline constexpr int kAttachFileSize = kAttachPcBlockOffset + kRootBlockDiskSize;  // 0x980
 
+// XBLOCK store: the message's data is an internal XBLOCK (MS-PST 2.2.2.8.3.2) referencing two
+// external child data blocks whose bytes concatenate into the 48-byte message PC. readDataTree sees
+// the internal bit, expands the XBLOCK, and reassembles the children -- the multi-block data-tree
+// path (readInternalDataBlock / readXblockChildren) no single-block fixture reaches.
+inline constexpr uint64_t kXblockBid = 10;        // internal (fInternal bit 0x02 SET)
+inline constexpr uint64_t kXblockChild0Bid = 12;  // external data block (bit 0x02 clear)
+inline constexpr uint64_t kXblockChild1Bid = 16;  // external data block
+inline constexpr int kXblockHeaderLen = 8;        // btype + cLevel + cEnt(u16) + lcbTotal(u32)
+inline constexpr int kXblockCb = kXblockHeaderLen +
+                                 (2 * 8);         // header + two 8-byte child BIDs == 24
+inline constexpr uint8_t kXblockBType = 0x01;     // internal block btype
+inline constexpr uint8_t kXblockLevel = 1;        // 1 == XBLOCK (2 == XXBLOCK)
+inline constexpr int kXblockChild0Cb = 32;        // first slice of the 48-byte message PC
+inline constexpr int kXblockChild1Cb = kMessagePcCb - kXblockChild0Cb;                // 16
+inline constexpr int kXblockRootBlockOffset = kFolderedRootBlockOffset;               // 0x800
+inline constexpr int kXblockTcBlockOffset = kFolderedTcBlockOffset;                   // 0x840
+inline constexpr int kXblockBlockOffset = kFolderedChildBlockOffset;                  // 0x8C0
+inline constexpr int kXblockChild0Offset = kXblockBlockOffset + kRootBlockDiskSize;   // 0x900
+inline constexpr int kXblockChild1Offset = kXblockChild0Offset + kRootBlockDiskSize;  // 0x940
+inline constexpr int kXblockFileSize = kXblockChild1Offset + kRootBlockDiskSize;      // 0x980
+
 inline void writeLe16(QByteArray& data, int offset, uint16_t value) {
     data[offset] = static_cast<char>(value & 0xFF);
     data[offset + 1] = static_cast<char>((value >> kByteBits) & 0xFF);
@@ -734,6 +755,93 @@ inline QByteArray buildAttachmentUnicodeStore() {
                  kRootBlockDiskSize,
                  buildAttachmentPcBlock(static_cast<uint64_t>(kAttachPcBlockOffset),
                                         kAttachDataBid));
+
+    restampHeaderCrc(file);
+    return file;
+}
+
+// A raw external data block: @p data bytes followed by a genuine BLOCKTRAILER. Used for the XBLOCK
+// child blocks, which hold opaque slices of a larger data stream (not a Heap-on-Node of their own).
+inline QByteArray buildRawDataBlock(uint64_t file_offset, uint64_t bid, const QByteArray& data) {
+    const int cb = static_cast<int>(data.size());
+    QByteArray blk(blockDiskSize(cb), '\0');
+    blk.replace(0, cb, data);
+    stampBlockTrailer(blk, 0, cb, bid, file_offset);
+    return blk;
+}
+
+// An internal XBLOCK: an 8-byte header (btype, cLevel==1, cEnt[u16], lcbTotal[u32]) then @p entry
+// 8-byte child BIDs. readDataTree expands it and concatenates the children's bytes.
+inline QByteArray buildXblock(uint64_t file_offset,
+                              uint64_t bid,
+                              uint64_t child0_bid,
+                              uint64_t child1_bid,
+                              uint32_t total_bytes) {
+    QByteArray blk(blockDiskSize(kXblockCb), '\0');
+    blk[0] = static_cast<char>(kXblockBType);
+    blk[1] = static_cast<char>(kXblockLevel);
+    writeLe16(blk, 2, 2);  // cEnt == two children
+    writeLe32(blk, 4, total_bytes);
+    writeLe64(blk, kXblockHeaderLen, child0_bid);
+    writeLe64(blk, kXblockHeaderLen + 8, child1_bid);
+    stampBlockTrailer(blk, 0, kXblockCb, bid, file_offset);
+    return blk;
+}
+
+/// The root folder's CONTENTS Table Context lists ONE message whose data BID is an internal XBLOCK,
+/// so readItemProperties(kMessageNid) drives readPropertyContext -> readHeapOnNode -> readDataTree,
+/// which sees the internal bit, expands the XBLOCK, and reassembles the two child blocks into the
+/// 48-byte message PC (the "FUZZ" Subject). This is the multi-block data-tree path
+/// (readInternalDataBlock / readXblockChildren) no single-block store reaches.
+inline QByteArray buildXblockMessageStore() {
+    QByteArray file(kXblockFileSize, '\0');
+    writeUnicodeStoreHeader(file, kOpenableNbtOffset, kOpenableBbtOffset);
+
+    const QByteArray nbt = makeNbtEntry(kRootFolderNid, kRootFolderDataBid) +
+                           makeNbtEntry(kContentsTableNid, kHierarchyDataBid) +
+                           makeNbtEntry(kMessageNid, kXblockBid);
+    file.replace(kOpenableNbtOffset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeNbt, kNbtEntrySize, kOpenableNbtOffset, nbt, 3));
+
+    const QByteArray bbt = makeBbtEntry(kRootFolderDataBid, kXblockRootBlockOffset, kRootBlockCb) +
+                           makeBbtEntry(kHierarchyDataBid, kXblockTcBlockOffset, kTcBlockCb) +
+                           makeBbtEntry(kXblockBid, kXblockBlockOffset, kXblockCb) +
+                           makeBbtEntry(kXblockChild0Bid, kXblockChild0Offset, kXblockChild0Cb) +
+                           makeBbtEntry(kXblockChild1Bid, kXblockChild1Offset, kXblockChild1Cb);
+    file.replace(kOpenableBbtOffset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeBbt, kBbtEntrySize, kOpenableBbtOffset, bbt, 5));
+
+    file.replace(kXblockRootBlockOffset,
+                 kRootBlockDiskSize,
+                 buildRootFolderPcBlock(static_cast<uint64_t>(kXblockRootBlockOffset),
+                                        kRootFolderDataBid));
+    file.replace(kXblockTcBlockOffset,
+                 kTcBlockDiskSize,
+                 buildSingleRowTcBlock(
+                     static_cast<uint64_t>(kXblockTcBlockOffset), kHierarchyDataBid, kMessageNid));
+
+    // The 48 message-PC data bytes (the HN, without its own trailer), split across two child
+    // blocks.
+    const QByteArray pc = buildMessagePcBlock(0, kXblockBid).left(kMessagePcCb);
+    file.replace(kXblockBlockOffset,
+                 kRootBlockDiskSize,
+                 buildXblock(static_cast<uint64_t>(kXblockBlockOffset),
+                             kXblockBid,
+                             kXblockChild0Bid,
+                             kXblockChild1Bid,
+                             static_cast<uint32_t>(kMessagePcCb)));
+    file.replace(kXblockChild0Offset,
+                 kRootBlockDiskSize,
+                 buildRawDataBlock(static_cast<uint64_t>(kXblockChild0Offset),
+                                   kXblockChild0Bid,
+                                   pc.left(kXblockChild0Cb)));
+    file.replace(kXblockChild1Offset,
+                 kRootBlockDiskSize,
+                 buildRawDataBlock(static_cast<uint64_t>(kXblockChild1Offset),
+                                   kXblockChild1Bid,
+                                   pc.mid(kXblockChild0Cb)));
 
     restampHeaderCrc(file);
     return file;
