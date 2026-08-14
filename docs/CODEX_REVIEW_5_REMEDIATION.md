@@ -3704,6 +3704,20 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     [[no-fallbacks-fail-closed]]); and determinism. Seeds carry the valid container plus
     empty/zeroed/0xFF/truncated variants so mutation reaches the header, zlib, and AES-GCM tag-verify
     paths. 16k decodes across two seeds, no crash, no fail-open, no non-determinism.
+- [x] R5-G14-UUP Fuzz harness: UUP-dump aria2 manifest-entry guard
+  - RESOLVED 2026-08-13 [DONE]: The UUP dump JSON API (api.uupdump.net) is a third-party service;
+    its file records (fileName/url/sha1) are attacker-influenced strings that SAK serializes into an
+    aria2 input manifest and hands to the downloader. UupDumpApi::isSafeAria2FileEntry() is the
+    security boundary that stops a malicious record from injecting an out=/uri directive, escaping
+    the download dir (../), aliasing a drive/ADS (C: or name:stream), opening a reserved DOS device
+    (CON/NUL/COM1...), or normalizing to a different on-disk name than the one integrity-checked
+    (trailing dot/space); isValidSha1() is the companion checksum gate. test_fuzz_uup_manifest_guard
+    drives both guards over mutated field strings and checks each verdict against an INDEPENDENT
+    re-derivation of the safety rules (the property restated, not the guard's control flow copied).
+    Invariants per input: no crash/hang; determinism; the guard AGREES with the oracle; and above
+    all the security-critical direction -- an ACCEPT of an oracle-unsafe field is an aria2-injection
+    escape and fails the run loudly ([[no-fallbacks-fail-closed]]). A lock test pins the accept/reject
+    anchors (a clean entry accepted; each named attack class rejected). Full Release ctest 245/245.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

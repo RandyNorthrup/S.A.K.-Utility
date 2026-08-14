@@ -2555,6 +2555,33 @@ add_test(NAME test_fuzz_backup_codec COMMAND test_fuzz_backup_codec
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_backup_codec")
 
+# test_fuzz_uup_manifest_guard - deterministic mutation-fuzz of the UUP-dump aria2 manifest-entry
+# guard. The UUP dump JSON API is a third-party service; its fileName/url/sha1 fields are serialized
+# into an aria2 input manifest, so isSafeAria2FileEntry()/isValidSha1() are the injection boundary.
+# Asserts no crash/hang, determinism, that the guard agrees with an independent oracle, and above all
+# that an oracle-unsafe field is NEVER accepted. Mirrors test_uup_dump_api's link set.
+add_executable(test_fuzz_uup_manifest_guard
+    unit/test_fuzz_uup_manifest_guard.cpp
+    ../src/core/uup_dump_api.cpp
+    ../include/sak/uup_dump_api.h
+    ../src/core/logger.cpp
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_uup_manifest_guard PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_uup_manifest_guard PRIVATE
+    Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_uup_manifest_guard PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_uup_manifest_guard COMMAND test_fuzz_uup_manifest_guard
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_uup_manifest_guard.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_uup_manifest_guard")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
