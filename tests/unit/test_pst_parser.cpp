@@ -228,6 +228,7 @@ private Q_SLOTS:
     void reusableMessagingFixtureListsMessageViaContentsTable();
     void rowIndexedTcFixtureListsMessageViaLiveRowBth();
     void corruptBlockTrailerFieldFailsClosed();
+    void hnidCellTcFixtureResolvesHeapValue();
     void reusableAttachmentFixtureExposesSubnodeAttachment();
     void reusableXblockFixtureReassemblesMultiBlockData();
     void reusableXxblockFixtureReassemblesTwoLevelDataTree();
@@ -735,6 +736,33 @@ void TestPstParser::corruptBlockTrailerFieldFailsClosed() {
         QVERIFY2(!props.has_value(),
                  label);  // the corrupt trailer field must fail the block closed
     }
+}
+
+void TestPstParser::hnidCellTcFixtureResolvesHeapValue() {
+    // Locks the two-column TC store (tests/support/pst_fixture.h): the contents Table Context's
+    // second column is an HNID-resolvable Unicode Subject whose 4-byte cell is an HID pointing at a
+    // heap allocation holding "HI". Listing the folder drives readContentsTable -> buildTcRows ->
+    // materializeTcRow -> buildTcCell, which must take the resolveHnid branch (isHnidResolvableType
+    // && cb_data == 4) and surface the resolved heap string as the item's subject -- the HNID-cell
+    // path the literal Int32 column never triggers. It fails deterministically here if that branch
+    // regresses (a literal 4-byte HID would surface as garbage, not "HI").
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildHnidCellTcStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+
+    const auto items = parser.readFolderItems(sak::email::kNidRootFolder, 0, 10);
+    QVERIFY2(items.has_value(), "readFolderItems must succeed on the two-column contents table");
+    QCOMPARE(items->size(), 1);
+    QCOMPARE(items->first().subject, QStringLiteral("HI"));
 }
 
 void TestPstParser::reusableAttachmentFixtureExposesSubnodeAttachment() {

@@ -3863,6 +3863,21 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     bid-mismatch branch). verifyBlockTrailer's only remaining uncovered line is its
     internal-msPstWeakCrc-failure guard (line 1916), unreachable via field corruption because the CRC
     routine cannot fail over an in-bounds cb. Full Release ctest 247/247.
+- [x] R5-G14-PST-TCHNID Coverage depth: buildTcCell HNID-resolved cell
+  - RESOLVED 2026-08-14 [DONE]: Every TC fixture's single column was a literal PtypInteger32 read
+    straight from the row bytes, so buildTcCell's resolveHnid branch (isHnidResolvableType(prop_type)
+    && cb_data == kPropertyValueRefSize -- read the 4-byte cell as an HNID and resolve it to a heap or
+    sub-node value) had no coverage. Added a two-column TC variant (buildHnidCellTcBlock): column 0
+    stays PidTagLtpRowId (so the row's NID is still extractable and the message still lists), column 1
+    is an HNID-resolvable Unicode Subject whose 4-byte cell is an HID pointing at a heap allocation
+    holding "HI" (UTF-16LE). A new store (buildHnidCellTcStore, via a third TcKind on
+    buildStoreWithSingleRowTc; the per-kind cb/block selection was factored into tcCbForKind /
+    buildTcForKind so the store builder stays one small function) carries it as the contents table,
+    and a new accept test (hnidCellTcFixtureResolvesHeapValue) asserts readFolderItems surfaces the
+    resolved heap string as the item's subject ("HI") -- proving the cell was HNID-resolved, not read
+    literally. The store is also wired into test_fuzz_pst_structure (Store::HnidCellTc). Re-measured
+    pst_parser.cpp line coverage rose 80.8% -> 81.4% (1239 -> 1249 of 1534 lines); the buildTcCell
+    HNID-resolve branch is now fully covered. Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

@@ -219,6 +219,31 @@ inline constexpr int kTcRiBlockCb = kTcRiPageMapOffset + kTcRiPageMapLen;       
 inline constexpr int kTcRiBlockDiskSize = ((kTcRiBlockCb + kTrailerSize + 63) / 64) * 64;  // 128
 inline constexpr uint8_t kTcRowIdKeyDataSize = 4;  // TCROWID key and data are both 4 bytes
 
+// Two-column TC variant: column 0 is the literal PidTagLtpRowId (so the row's NID is still
+// extractable), column 1 is an HNID-resolvable Unicode column whose 4-byte cell is an HID pointing
+// at a heap allocation holding the value bytes. Reading the row drives buildTcCell's resolveHnid
+// branch (isHnidResolvableType && cb_data == kPropertyValueRefSize) -- the HNID-cell path the
+// literal Int32 column never triggers. Three heap allocations: TCINFO (two columns), the row
+// matrix, and the resolved value.
+inline constexpr int kTc2ColCount = 2;
+inline constexpr int kTc2CellSize = 4;                  // each cell: the LtpRowId NID / the HNID
+inline constexpr int kTc2CebOffset = kTc2CellSize * 2;  // 8: CEB byte after the two 4-byte cells
+inline constexpr int kTc2RowSize = kTc2CebOffset + 1;   // 9: two cells + one CEB byte
+inline constexpr int kTc2ColDescOffset = kTcinfoOffset + kTcinfoHeaderLen;    // 34: first col desc
+inline constexpr int kTc2Col1DescOffset = kTc2ColDescOffset + kTcColDescLen;  // 42: second col desc
+inline constexpr int kTc2RowMatrixOffset = kTc2ColDescOffset +
+                                           (kTcColDescLen * kTc2ColCount);    // 50
+inline constexpr int kTc2ValueOffset = kTc2RowMatrixOffset + kTc2RowSize;     // 59
+inline constexpr int kTc2ValueLen = 4;                                        // "HI" as UTF-16LE
+inline constexpr uint32_t kTc2ValueHid = 0x60;  // HID index 3 (the resolved value alloc)
+inline constexpr uint16_t kTc2HnidColPropId = kSubjectPropId;  // Subject (Unicode, HNID-resolved)
+inline constexpr int kTc2PageMapOffset = kTc2ValueOffset + kTc2ValueLen;  // 63
+inline constexpr int kTc2AllocCount = 3;  // TCINFO, row matrix, resolved value
+inline constexpr int kTc2PageMapLen = kHnPmHeaderLen +
+                                      (kHnPmEntryLen * (kTc2AllocCount + 1));  // 12
+inline constexpr int kTc2BlockCb = kTc2PageMapOffset + kTc2PageMapLen;         // 75
+inline constexpr uint8_t kTc2Col1BitIndex = 1;  // column 1's CEB bit (column 0 is bit 0)
+
 // Foldered store block offsets (same NBT/BBT pages as the openable store; three blocks after).
 inline constexpr int kFolderedRootBlockOffset = kOpenableBlockOffset;                     // 0x800
 inline constexpr int kFolderedTcBlockOffset = kFolderedRootBlockOffset +
@@ -559,6 +584,79 @@ inline QByteArray buildRowIndexedTcBlock(uint64_t file_offset, uint64_t bid, uin
     return blk;
 }
 
+// One TCINFO column descriptor: MAPI type, property id, ib_data (cell offset within the row),
+// cb_data (cell byte width), and the CEB bit index that marks the column present.
+struct TcColSpec {
+    uint16_t type;
+    uint16_t prop_id;
+    int ib_data;
+    int cb_data;
+    int bit;
+};
+
+// Write one TCINFO column descriptor at @p off.
+inline void writeTcColDesc(QByteArray& blk, int off, const TcColSpec& col) {
+    writeLe16(blk, off + kTcColTypeOffset, col.type);
+    writeLe16(blk, off + kTcColPropIdOffset, col.prop_id);
+    writeLe16(blk, off + kTcColIbDataOffset, static_cast<uint16_t>(col.ib_data));
+    blk[off + kTcColDataSizeOffset] = static_cast<char>(col.cb_data);
+    blk[off + kTcColBitIndexOffset] = static_cast<char>(col.bit);
+}
+
+// A two-column single-row TC whose second column is an HNID-resolvable Unicode cell: the 4-byte
+// cell holds an HID pointing at a heap allocation with the value "HI" (UTF-16LE). Reading the row
+// drives buildTcCell's resolveHnid branch (isHnidResolvableType && cb_data == 4) -- the HNID-cell
+// path the literal Int32 column never triggers. Column 0 stays PidTagLtpRowId so the row's NID is
+// still extractable and the message still lists.
+inline QByteArray buildHnidCellTcBlock(uint64_t file_offset, uint64_t bid, uint32_t row_value) {
+    QByteArray blk(blockDiskSize(kTc2BlockCb), '\0');
+    // HNHDR -> TCINFO as the user root.
+    writeLe16(blk, kHnHdrIbHnpmOffset, static_cast<uint16_t>(kTc2PageMapOffset));
+    blk[kHnHdrSigOffset] = static_cast<char>(kHnSignature);
+    blk[kHnHdrClientSigOffset] = static_cast<char>(kTcClientSignature);
+    writeLe32(blk, kHnHdrRootHidOffset, kTcHidUserRoot);
+    // TCINFO: two 4-byte columns, CEB at offset 8, row size 9.
+    const int ti = kTcinfoOffset;
+    blk[ti + kTcinfoBTypeOffset] = static_cast<char>(kTcClientSignature);
+    blk[ti + kTcinfoColCountOffset] = static_cast<char>(kTc2ColCount);
+    writeLe16(blk, ti + kTcinfoRgib4bOffset, static_cast<uint16_t>(kTc2CebOffset));
+    writeLe16(blk, ti + kTcinfoRgib2bOffset, static_cast<uint16_t>(kTc2CebOffset));
+    writeLe16(blk, ti + kTcinfoRgib1bOffset, static_cast<uint16_t>(kTc2CebOffset));
+    writeLe16(blk, ti + kTcinfoRgibBmOffset, static_cast<uint16_t>(kTc2RowSize));
+    writeLe32(blk, ti + kTcinfoHidRowIndexOffset, 0);
+    writeLe32(blk, ti + kTcinfoHnidRowsOffset, kTcHnidRows);
+    // Column 0: literal LtpRowId (Int32). Column 1: HNID-resolved Unicode (cell is an HID).
+    writeTcColDesc(blk,
+                   kTc2ColDescOffset,
+                   {sak::email::kPropTypeInt32, kPidTagLtpRowId, 0, kTc2CellSize, 0});
+    writeTcColDesc(blk,
+                   kTc2Col1DescOffset,
+                   {sak::email::kPropTypeUnicode,
+                    kTc2HnidColPropId,
+                    kTc2CellSize,
+                    kTc2CellSize,
+                    kTc2Col1BitIndex});
+    // Row matrix: cell 0 = the row NID, cell 1 = the HNID, then a CEB marking both columns present.
+    writeLe32(blk, kTc2RowMatrixOffset, row_value);
+    writeLe32(blk, kTc2RowMatrixOffset + kTc2CellSize, kTc2ValueHid);
+    blk[kTc2RowMatrixOffset + kTc2CebOffset] =
+        static_cast<char>(kCebFirstColPresent | (kCebFirstColPresent >> kTc2Col1BitIndex));
+    // The resolved value (heap allocation 3): "HI" as UTF-16LE.
+    blk[kTc2ValueOffset + 0] = 'H';
+    blk[kTc2ValueOffset + 2] = 'I';
+    // HNPAGEMAP: three allocations -- TCINFO [12, 50), row matrix [50, 59), value [59, 63).
+    writeLe16(blk, kTc2PageMapOffset, static_cast<uint16_t>(kTc2AllocCount));
+    writeLe16(blk, kTc2PageMapOffset + kHnPmEntryLen, 0);
+    const int rgib = kTc2PageMapOffset + kHnPmHeaderLen;
+    const std::array<int, 4> boundaries{
+        {kTcinfoOffset, kTc2RowMatrixOffset, kTc2ValueOffset, kTc2PageMapOffset}};
+    for (int i = 0; i < static_cast<int>(boundaries.size()); ++i) {
+        writeLe16(blk, rgib + (i * kHnPmEntryLen), static_cast<uint16_t>(boundaries[i]));
+    }
+    stampBlockTrailer(blk, 0, kTc2BlockCb, bid, file_offset);
+    return blk;
+}
+
 // One variable-type PC record: a property id + type whose value is stored (via an HNID) in the
 // heap.
 struct PcRecord {
@@ -776,8 +874,35 @@ enum class LeafPc {
 // must walk).
 enum class TcKind {
     SingleRow,
-    RowIndexed
+    RowIndexed,
+    HnidCell
 };
+
+// The TC block's data length (cb) for each variant -- the row-indexed and two-column TCs are larger
+// than the single-row TC, so the store's BBT entry must declare the right size.
+inline int tcCbForKind(TcKind tc_kind) {
+    switch (tc_kind) {
+    case TcKind::RowIndexed:
+        return kTcRiBlockCb;
+    case TcKind::HnidCell:
+        return kTc2BlockCb;
+    default:
+        return kTcBlockCb;
+    }
+}
+
+// The TC data block for each variant, stamped at @p tc_block for BID kHierarchyDataBid.
+inline QByteArray buildTcForKind(TcKind tc_kind, int tc_block, uint32_t row_value) {
+    const auto offset = static_cast<uint64_t>(tc_block);
+    switch (tc_kind) {
+    case TcKind::RowIndexed:
+        return buildRowIndexedTcBlock(offset, kHierarchyDataBid, row_value);
+    case TcKind::HnidCell:
+        return buildHnidCellTcBlock(offset, kHierarchyDataBid, row_value);
+    default:
+        return buildSingleRowTcBlock(offset, kHierarchyDataBid, row_value);
+    }
+}
 
 /// Build a legacy-Unicode PST with three nodes: the root folder PC, a single-row Table Context
 /// (@p tc_nid), and a leaf node (@p leaf_nid, also the TC row's value). @p leaf_kind selects the
@@ -794,8 +919,7 @@ inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid,
     const int tc_block = kFolderedTcBlockOffset;       // TC, disk 128 (both variants)
     const int leaf_block = kFolderedChildBlockOffset;  // leaf PC, disk 64
     const int leaf_cb = (leaf_kind == LeafPc::Message) ? kMessagePcCb : kRootBlockCb;
-    const bool row_indexed = (tc_kind == TcKind::RowIndexed);
-    const int tc_cb = row_indexed ? kTcRiBlockCb : kTcBlockCb;
+    const int tc_cb = tcCbForKind(tc_kind);
 
     QByteArray file(kFolderedFileSize, '\0');
     writeUnicodeStoreHeader(file, nbt_offset, bbt_offset);
@@ -817,11 +941,7 @@ inline QByteArray buildStoreWithSingleRowTc(uint32_t tc_nid,
     file.replace(root_block,
                  kRootBlockDiskSize,
                  buildRootFolderPcBlock(static_cast<uint64_t>(root_block), kRootFolderDataBid));
-    const QByteArray tc =
-        row_indexed
-            ? buildRowIndexedTcBlock(static_cast<uint64_t>(tc_block), kHierarchyDataBid, leaf_nid)
-            : buildSingleRowTcBlock(static_cast<uint64_t>(tc_block), kHierarchyDataBid, leaf_nid);
-    file.replace(tc_block, kTcBlockDiskSize, tc);
+    file.replace(tc_block, kTcBlockDiskSize, buildTcForKind(tc_kind, tc_block, leaf_nid));
     const QByteArray leaf_pc =
         (leaf_kind == LeafPc::Message)
             ? buildMessagePcBlock(static_cast<uint64_t>(leaf_block), kChildFolderDataBid)
@@ -857,6 +977,15 @@ inline QByteArray buildMessagingUnicodeStore() {
 inline QByteArray buildRowIndexedTcStore() {
     return buildStoreWithSingleRowTc(
         kContentsTableNid, kMessageNid, LeafPc::Message, TcKind::RowIndexed);
+}
+
+/// Same contents-table store as buildMessagingUnicodeStore, but the TC has a second,
+/// HNID-resolvable Unicode column whose cell is an HID. readFolderItems(root) -> readContentsTable
+/// -> buildTcRows -> materializeTcRow -> buildTcCell must resolve that HNID to the heap-stored "HI"
+/// -- the resolveHnid cell branch the single literal-Int32 column never triggers.
+inline QByteArray buildHnidCellTcStore() {
+    return buildStoreWithSingleRowTc(
+        kContentsTableNid, kMessageNid, LeafPc::Message, TcKind::HnidCell);
 }
 
 // ASCII text as a UTF-16LE byte string (the PtypString on-disk encoding). Test values are ASCII.
