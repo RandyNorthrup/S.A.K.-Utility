@@ -2502,6 +2502,31 @@ add_test(NAME test_fuzz_apfs_reader COMMAND test_fuzz_apfs_reader
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_apfs_reader")
 
+# test_fuzz_nuget_version_range - deterministic mutation-fuzz of the NuGet version / version-range
+# parsers, which consume version strings from third-party package metadata. Asserts no crash/hang,
+# determinism, the fail-closed contract (an invalid range satisfies nothing), and that
+# selectHighestSatisfying only returns a satisfying version.
+add_executable(test_fuzz_nuget_version_range
+    unit/test_fuzz_nuget_version_range.cpp
+    ../src/core/nuget_version_range.cpp
+    ../include/sak/nuget_version_range.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_nuget_version_range PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_nuget_version_range PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_nuget_version_range PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_nuget_version_range COMMAND test_fuzz_nuget_version_range
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_nuget_version_range.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_nuget_version_range")
+
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp

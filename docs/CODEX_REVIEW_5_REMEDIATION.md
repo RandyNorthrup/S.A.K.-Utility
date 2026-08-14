@@ -3678,6 +3678,19 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     (Install-ChocolateyPackage / Install-ChocolateyZipPackage / Get-ChocolateyWebFile / @packageArgs
     splatting) plus deliberately pathological unbalanced quote/paren/variable runs. 45k parses
     across two seeds, no crash, no hang, no non-determinism.
+- [x] R5-G14-NUGET Fuzz harness: NuGet version / version-range parsers
+  - RESOLVED 2026-08-13 [DONE]: NuGetVersion::parse and NuGetVersionRange::parse consume version
+    and range strings straight out of THIRD-PARTY package metadata (nuspec dependency nodes, feed
+    responses). The range parser is security-relevant -- fail-closed by contract: an unparseable
+    range is INVALID and must satisfy NOTHING, never silently accept every version.
+    test_fuzz_nuget_version_range drives both parsers over mutated strings and asserts four
+    invariants per input: no crash/hang (a ReDoS hang trips the ctest timeout); determinism (both
+    parsers agree with themselves on identical input); the FAIL-CLOSED contract (an invalid range
+    reports isAny()==false and satisfies()==false for every probe version -- [[no-fallbacks-fail-closed]]);
+    and selectHighestSatisfying only ever returns a version that actually satisfies the range. Seeds
+    carry real shapes (bare minimum, bracketed intervals, exact, open-upper, prerelease) plus
+    pathological long digit/dot/bracket runs. 45k parses across two seeds, no crash, no fail-open,
+    no non-determinism.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen
