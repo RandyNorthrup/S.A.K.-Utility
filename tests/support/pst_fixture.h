@@ -1048,6 +1048,71 @@ inline QByteArray buildEnrichableMessageStore() {
     return file;
 }
 
+// The message store's own node (NID_MESSAGE_STORE, 0x21) and its data BID.
+inline constexpr uint32_t kMessageStoreNid = sak::email::kNidMessageStore;  // 0x21
+inline constexpr uint64_t kMessageStoreDataBid = 8;  // external (fInternal bit 0x02 clear)
+inline constexpr int kMessageStoreBlockOffset = kFolderedRootBlockOffset +
+                                                kRootBlockDiskSize;  // 0x840
+
+/// A store with the root folder plus ONE extra node (@p node_nid) whose PC carries @p records. The
+/// root folder lets open() succeed with one folder; the extra node is read on demand -- as the
+/// message store (loadMessageStoreDisplayName) or a message (readItemDetail), depending on
+/// node_nid.
+inline QByteArray buildRootPlusNodeStore(uint32_t node_nid, const std::vector<PcRecord>& records) {
+    const int pc_cb = multiRecordPcCb(records);
+    const int pc_disk = blockDiskSize(pc_cb);
+    const int file_size = kMessageStoreBlockOffset + pc_disk;
+
+    QByteArray file(file_size, '\0');
+    writeUnicodeStoreHeader(file, kOpenableNbtOffset, kOpenableBbtOffset);
+
+    const QByteArray nbt = makeNbtEntry(kRootFolderNid, kRootFolderDataBid) +
+                           makeNbtEntry(node_nid, kMessageStoreDataBid);
+    file.replace(kOpenableNbtOffset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeNbt, kNbtEntrySize, kOpenableNbtOffset, nbt, 2));
+
+    const QByteArray bbt =
+        makeBbtEntry(kRootFolderDataBid, kFolderedRootBlockOffset, kRootBlockCb) +
+        makeBbtEntry(kMessageStoreDataBid, kMessageStoreBlockOffset, pc_cb);
+    file.replace(kOpenableBbtOffset,
+                 kPageSize,
+                 makeLeafPageWithEntries(kPtypeBbt, kBbtEntrySize, kOpenableBbtOffset, bbt, 2));
+
+    file.replace(kFolderedRootBlockOffset,
+                 kRootBlockDiskSize,
+                 buildRootFolderPcBlock(static_cast<uint64_t>(kFolderedRootBlockOffset),
+                                        kRootFolderDataBid));
+    file.replace(kMessageStoreBlockOffset,
+                 pc_disk,
+                 buildMultiRecordPcBlock(static_cast<uint64_t>(kMessageStoreBlockOffset),
+                                         kMessageStoreDataBid,
+                                         records));
+
+    restampHeaderCrc(file);
+    return file;
+}
+
+/// A store whose NID_MESSAGE_STORE node's PC carries PidTagDisplayName ("STORE"). open() calls
+/// loadMessageStoreDisplayName, which reads that node's property context and surfaces the name on
+/// PstFileInfo -- the message-store-name path no root-folder-only fixture reaches (they lack 0x21).
+inline QByteArray buildMessageStoreNamedStore() {
+    return buildRootPlusNodeStore(
+        kMessageStoreNid,
+        {{sak::email::kPropIdDisplayName, sak::email::kPropTypeUnicode, asciiUtf16le("STORE")}});
+}
+
+/// A store whose message node's PC carries PidTagHtmlBody but NO plain-text body.
+/// readItemDetail(message) -> readMessage takes the HTML-to-plain-text branch (body_plain empty,
+/// body_html set), sanitizing "<b>hi</b>" through the email-body sanitizer and flattening it to
+/// "hi" -- the body-derivation path a Subject-only message never triggers.
+inline QByteArray buildHtmlBodyMessageStore() {
+    return buildRootPlusNodeStore(kMessageNid,
+                                  {{sak::email::kPropIdHtmlBody,
+                                    sak::email::kPropTypeBinary,
+                                    QByteArrayLiteral("<b>hi</b>")}});
+}
+
 // The 8 heap bytes an attachment's PidTagAttachData HNID resolves to. Exposed so the accept-path
 // test can assert readAttachmentData returns exactly these bytes.
 inline QByteArray attachPayloadBytes() {

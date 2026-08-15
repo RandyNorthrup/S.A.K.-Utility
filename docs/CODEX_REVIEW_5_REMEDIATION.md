@@ -3894,6 +3894,17 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     lines); decompressBlockIf4k's inflate path is now covered (its remaining uncovered lines are the
     footer-read/passthrough/decompress-fail/size-mismatch fail-closed branches, which need corrupt-4k
     negative fixtures). Full Release ctest 247/247.
+- [x] R5-G14-PST-LTPTAIL Coverage depth: message-store display name + HTML-only message body
+  - RESOLVED 2026-08-14 [DONE]: Two reachable LTP paths had no fixture. (1) loadMessageStoreDisplayName
+    early-returned in every store for want of a NID_MESSAGE_STORE (0x21) node. (2) readMessage's
+    HTML-to-plain-text derivation (body_plain empty, body_html set) never ran because every message
+    PC was Subject-only. Added a shared skeleton (buildRootPlusNodeStore: root folder + one extra
+    node whose PC carries caller-supplied records) with two thin wrappers: buildMessageStoreNamedStore
+    (0x21 node with PidTagDisplayName "STORE") and buildHtmlBodyMessageStore (a message node with
+    PidTagHtmlBody "<b>hi</b>" and no plain body). Two new tests assert open() surfaces the store
+    display name on PstFileInfo, and readItemDetail sanitizes+flattens the HTML to body_plain "hi".
+    Re-measured pst_parser.cpp line coverage rose 83.0% -> 83.8% (1273 -> 1285 of 1534 lines);
+    loadMessageStoreDisplayName and readMessage are now fully covered. Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

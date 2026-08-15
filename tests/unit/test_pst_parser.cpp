@@ -230,6 +230,8 @@ private Q_SLOTS:
     void rowIndexedTcFixtureListsMessageViaLiveRowBth();
     void corruptBlockTrailerFieldFailsClosed();
     void hnidCellTcFixtureResolvesHeapValue();
+    void messageStoreDisplayNameIsRead();
+    void htmlOnlyMessageDerivesPlainText();
     void reusableAttachmentFixtureExposesSubnodeAttachment();
     void reusableXblockFixtureReassemblesMultiBlockData();
     void reusableXxblockFixtureReassemblesTwoLevelDataTree();
@@ -851,6 +853,51 @@ void TestPstParser::hnidCellTcFixtureResolvesHeapValue() {
     QVERIFY2(items.has_value(), "readFolderItems must succeed on the two-column contents table");
     QCOMPARE(items->size(), 1);
     QCOMPARE(items->first().subject, QStringLiteral("HI"));
+}
+
+void TestPstParser::messageStoreDisplayNameIsRead() {
+    // Locks the message-store-name store (tests/support/pst_fixture.h): a NID_MESSAGE_STORE node
+    // whose PC carries PidTagDisplayName. open() runs loadMessageStoreDisplayName, which reads that
+    // node's property context and surfaces the name on PstFileInfo -- the path every
+    // root-folder-only fixture skips (its early return fires for want of the 0x21 node).
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildMessageStoreNamedStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    QSignalSpy opened_spy(&parser, &PstParser::fileOpened);
+    parser.open(temp_file.fileName());
+
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+    QCOMPARE(opened_spy.count(), 1);
+    const auto info = opened_spy.first().at(0).value<sak::PstFileInfo>();
+    QCOMPARE(info.display_name, QStringLiteral("STORE"));
+}
+
+void TestPstParser::htmlOnlyMessageDerivesPlainText() {
+    // Locks the HTML-only message store (tests/support/pst_fixture.h): the message PC carries
+    // PidTagHtmlBody but no plain-text body, so readMessage must take the HTML-to-plain-text branch
+    // -- sanitize the attacker-authored HTML, then flatten it via QTextDocument -- and populate
+    // body_plain from body_html. A Subject-only message never triggers it.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildHtmlBodyMessageStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+
+    const auto detail = parser.readItemDetail(sak::pst_fixture::kMessageNid);
+    QVERIFY2(detail.has_value(), "readItemDetail must read the HTML-only message");
+    QCOMPARE(detail->body_plain, QStringLiteral("hi"));
 }
 
 void TestPstParser::reusableAttachmentFixtureExposesSubnodeAttachment() {
