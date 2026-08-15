@@ -228,6 +228,7 @@ private Q_SLOTS:
     void reusableFolderedFixtureReachesChildViaHierarchyTable();
     void reusableMessagingFixtureListsMessageViaContentsTable();
     void rowIndexedTcFixtureListsMessageViaLiveRowBth();
+    void multiLevelRowIndexTcWalksBthDescent();
     void corruptBlockTrailerFieldFailsClosed();
     void hnidCellTcFixtureResolvesHeapValue();
     void messageStoreDisplayNameIsRead();
@@ -968,6 +969,30 @@ void TestPstParser::reusableXblockFixtureReassemblesMultiBlockData() {
         }
     }
     QVERIFY2(found_subject, "the XBLOCK-reassembled message PC must expose its Subject");
+}
+
+void TestPstParser::multiLevelRowIndexTcWalksBthDescent() {
+    // Locks the multi-level TCROWID BTH store (tests/support/pst_fixture.h): the contents TC's row
+    // index BTH has idxLevels == 1, so listing it drives collectTcLiveRowIndices -> readBthLeafData
+    // -> readBthLeafDataGuarded, which must descend the level-1 index node to the level-0 leaf and
+    // materialize the one live row. It fails deterministically here if the multi-level BTH descent
+    // regresses (a broken walk lists zero rows).
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildMultiLevelRowIndexTcStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+
+    const auto items = parser.readFolderItems(sak::email::kNidRootFolder, 0, 10);
+    QVERIFY2(items.has_value(), "readFolderItems must succeed on the multi-level row-index table");
+    QCOMPARE(items->size(), 1);
+    QCOMPARE(items->first().node_id, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
 }
 
 void TestPstParser::reusableXxblockFixtureReassemblesTwoLevelDataTree() {

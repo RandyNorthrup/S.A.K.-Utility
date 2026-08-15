@@ -3905,6 +3905,23 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     display name on PstFileInfo, and readItemDetail sanitizes+flattens the HTML to body_plain "hi".
     Re-measured pst_parser.cpp line coverage rose 83.0% -> 83.8% (1273 -> 1285 of 1534 lines);
     loadMessageStoreDisplayName and readMessage are now fully covered. Full Release ctest 247/247.
+- [x] R5-G14-PST-MLBTH Coverage depth: multi-level TCROWID BTH descent
+  - RESOLVED 2026-08-14 [DONE]: Every TCROWID BTH had idxLevels == 0, so collectTcLiveRowIndices
+    always read the leaf directly and the multi-level walker readBthLeafDataGuarded (the recursive
+    index-node descent large tables use) never ran. Added a fourth TcKind (MultiLevelRowIndex) with
+    buildMultiLevelRowIndexTcBlock: the TCROWID BTHHEADER has idxLevels == 1 and roots at a level-1
+    index node whose one {key, child HID} entry points at the level-0 leaf. A new store
+    (buildMultiLevelRowIndexTcStore) carries it as the contents table, a new accept test
+    (multiLevelRowIndexTcWalksBthDescent) asserts the one live row still lists via the index-node
+    descent, and the store is wired into test_fuzz_pst_structure (Store::MultiLevelTc).
+    readBthLeafDataGuarded's descent (the level-0 return and the child-append) and
+    collectTcLiveRowIndices's idxLevels != 0 dispatch are now covered; the two lines left in
+    readBthLeafDataGuarded are its cycle-guard and its >1GiB assembled-size cap, both fail-closed
+    branches that need a deliberately cyclic/oversized BTH. Aggregate pst_parser.cpp line coverage
+    reads 83.7% (1284 of 1534) -- flat versus the prior 83.8% because adding a fuzz arena reshuffles
+    the structure-fuzz PRNG's mutation sequence, so a few incidentally-hit defensive lines move; the
+    real gain is a deterministic regression lock on the multi-level descent that no longer depends on
+    fuzz luck. Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen

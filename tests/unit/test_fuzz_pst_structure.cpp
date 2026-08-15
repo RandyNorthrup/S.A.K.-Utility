@@ -54,7 +54,8 @@ enum class Store {
     Xblock,
     Xxblock,
     RowIndexedTc,
-    HnidCellTc
+    HnidCellTc,
+    MultiLevelTc
 };
 
 // One mutable region of a store: a [begin, begin + length) BODY span whose bytes the parser reads
@@ -219,6 +220,7 @@ const std::vector<Arena>& arenas() {
         pushTcStoreArenas(v, Store::Attachment, pf::kMessagePcCb);
         pushTcStoreArenas(v, Store::RowIndexedTc, pf::kMessagePcCb, pf::kTcRiBlockCb);
         pushTcStoreArenas(v, Store::HnidCellTc, pf::kMessagePcCb, pf::kTc2BlockCb);
+        pushTcStoreArenas(v, Store::MultiLevelTc, pf::kMessagePcCb, pf::kTcMlBlockCb);
         v.push_back({Store::Attachment,
                      pf::kAttachSubnodeBlockOffset,
                      pf::kSubnodeBlockCb,
@@ -280,6 +282,8 @@ QByteArray buildStore(Store store) {
         return sak::pst_fixture::buildRowIndexedTcStore();
     case Store::HnidCellTc:
         return sak::pst_fixture::buildHnidCellTcStore();
+    case Store::MultiLevelTc:
+        return sak::pst_fixture::buildMultiLevelRowIndexTcStore();
     default:
         return sak::pst_fixture::buildOpenableUnicodeStore();
     }
@@ -374,7 +378,8 @@ private Q_SLOTS:
               std::pair{sak::pst_fixture::buildXblockMessageStore(), "xblock"},
               std::pair{sak::pst_fixture::buildXxblockMessageStore(), "xxblock"},
               std::pair{sak::pst_fixture::buildRowIndexedTcStore(), "rowindexed_tc"},
-              std::pair{sak::pst_fixture::buildHnidCellTcStore(), "hnidcell_tc"}}) {
+              std::pair{sak::pst_fixture::buildHnidCellTcStore(), "hnidcell_tc"},
+              std::pair{sak::pst_fixture::buildMultiLevelRowIndexTcStore(), "multilevel_tc"}}) {
             QVERIFY(writeWholeFile(path, seed));
             PstParser seed_parser;
             seed_parser.open(path);

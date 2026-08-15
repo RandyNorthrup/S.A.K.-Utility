@@ -244,6 +244,27 @@ inline constexpr int kTc2PageMapLen = kHnPmHeaderLen +
 inline constexpr int kTc2BlockCb = kTc2PageMapOffset + kTc2PageMapLen;         // 75
 inline constexpr uint8_t kTc2Col1BitIndex = 1;  // column 1's CEB bit (column 0 is bit 0)
 
+// Multi-level TCROWID BTH variant: like the row-indexed TC, but the BTHHEADER has idxLevels == 1,
+// so its root HID points at a level-1 INDEX node (one {key(4), child HID(4)} entry) that in turn
+// points at the level-0 leaf holding the TCROWID record. collectTcLiveRowIndices then dispatches to
+// readBthLeafData -> readBthLeafDataGuarded, which recurses the index node down to the leaf -- the
+// multi-level BTH walk the flat idxLevels==0 BTH never exercises. Four extra allocations after the
+// row matrix: BTHHEADER (0x60), index node (0x80), leaf (0xA0).
+inline constexpr uint8_t kTcMlIdxLevels = 1;     // BTHHEADER idxLevels (1 == one index level)
+inline constexpr int kBthChildHidSize = 4;       // the child-HID half of an index entry
+inline constexpr uint32_t kTcMlBthHid = 0x60;    // HID index 3 (BTHHEADER)
+inline constexpr uint32_t kTcMlIndexHid = 0x80;  // HID index 4 (level-1 index node)
+inline constexpr uint32_t kTcMlLeafHid = 0xA0;   // HID index 5 (level-0 leaf)
+inline constexpr int kTcMlBthHdrOffset = kTcPageMapOffset;                    // 47 (alloc 3)
+inline constexpr int kTcMlIndexOffset = kTcMlBthHdrOffset + kBthHdrSize;      // 55 (alloc 4)
+inline constexpr int kTcMlIndexLen = kTcRowIdKeyDataSize + kBthChildHidSize;  // 8: key + child HID
+inline constexpr int kTcMlLeafOffset = kTcMlIndexOffset + kTcMlIndexLen;      // 63 (alloc 5)
+inline constexpr int kTcMlPageMapOffset = kTcMlLeafOffset + kTcRowIdRecordSize;  // 71
+inline constexpr int kTcMlAllocCount = 5;  // TCINFO, row matrix, BTHHEADER, index node, leaf
+inline constexpr int kTcMlPageMapLen = kHnPmHeaderLen +
+                                       (kHnPmEntryLen * (kTcMlAllocCount + 1));  // 16
+inline constexpr int kTcMlBlockCb = kTcMlPageMapOffset + kTcMlPageMapLen;        // 87
+
 // Foldered store block offsets (same NBT/BBT pages as the openable store; three blocks after).
 inline constexpr int kFolderedRootBlockOffset = kOpenableBlockOffset;                     // 0x800
 inline constexpr int kFolderedTcBlockOffset = kFolderedRootBlockOffset +
@@ -584,6 +605,44 @@ inline QByteArray buildRowIndexedTcBlock(uint64_t file_offset, uint64_t bid, uin
     return blk;
 }
 
+// The row-indexed TC with a two-LEVEL TCROWID BTH (idxLevels == 1): the BTHHEADER roots at a
+// level-1 index node whose one {key, child HID} entry points at the level-0 leaf.
+// collectTcLiveRowIndices then walks readBthLeafDataGuarded down the index node to the leaf -- the
+// multi-level BTH descent the flat (idxLevels == 0) TCROWID BTH never reaches.
+inline QByteArray buildMultiLevelRowIndexTcBlock(uint64_t file_offset,
+                                                 uint64_t bid,
+                                                 uint32_t row_value) {
+    QByteArray blk(blockDiskSize(kTcMlBlockCb), '\0');
+    writeTcInfoAndRow(blk, kTcMlPageMapOffset, kTcMlBthHid, row_value);
+    // BTHHEADER (alloc 3): key 4 / data 4, idxLevels 1, root HID -> the level-1 index node.
+    blk[kTcMlBthHdrOffset] = static_cast<char>(kBthSignature);
+    blk[kTcMlBthHdrOffset + kBthKeySizeField] = static_cast<char>(kTcRowIdKeyDataSize);
+    blk[kTcMlBthHdrOffset + kBthDataSizeField] = static_cast<char>(kTcRowIdKeyDataSize);
+    blk[kTcMlBthHdrOffset + kBthIdxLevelsField] = static_cast<char>(kTcMlIdxLevels);
+    writeLe32(blk, kTcMlBthHdrOffset + kBthRootHidField, kTcMlIndexHid);
+    // Index node (alloc 4, level 1): one entry -- key(4) then the child HID -> the leaf.
+    writeLe32(blk, kTcMlIndexOffset, 0);
+    writeLe32(blk, kTcMlIndexOffset + kTcRowIdKeyDataSize, kTcMlLeafHid);
+    // TCROWID leaf (alloc 5, level 0): dwRowID (the row key) + dwRowIndex (logical row 0).
+    writeLe32(blk, kTcMlLeafOffset, row_value);
+    writeLe32(blk, kTcMlLeafOffset + kTcRowIdKeyDataSize, 0);
+    // HNPAGEMAP: five allocations -- TCINFO, row matrix, BTHHEADER, index node, leaf.
+    writeLe16(blk, kTcMlPageMapOffset, static_cast<uint16_t>(kTcMlAllocCount));
+    writeLe16(blk, kTcMlPageMapOffset + kHnPmEntryLen, 0);
+    const int rgib = kTcMlPageMapOffset + kHnPmHeaderLen;
+    const std::array<int, 6> boundaries{{kTcinfoOffset,
+                                         kTcRowMatrixOffset,
+                                         kTcMlBthHdrOffset,
+                                         kTcMlIndexOffset,
+                                         kTcMlLeafOffset,
+                                         kTcMlPageMapOffset}};
+    for (int i = 0; i < static_cast<int>(boundaries.size()); ++i) {
+        writeLe16(blk, rgib + (i * kHnPmEntryLen), static_cast<uint16_t>(boundaries[i]));
+    }
+    stampBlockTrailer(blk, 0, kTcMlBlockCb, bid, file_offset);
+    return blk;
+}
+
 // One TCINFO column descriptor: MAPI type, property id, ib_data (cell offset within the row),
 // cb_data (cell byte width), and the CEB bit index that marks the column present.
 struct TcColSpec {
@@ -875,7 +934,8 @@ enum class LeafPc {
 enum class TcKind {
     SingleRow,
     RowIndexed,
-    HnidCell
+    HnidCell,
+    MultiLevelRowIndex
 };
 
 // The TC block's data length (cb) for each variant -- the row-indexed and two-column TCs are larger
@@ -886,6 +946,8 @@ inline int tcCbForKind(TcKind tc_kind) {
         return kTcRiBlockCb;
     case TcKind::HnidCell:
         return kTc2BlockCb;
+    case TcKind::MultiLevelRowIndex:
+        return kTcMlBlockCb;
     default:
         return kTcBlockCb;
     }
@@ -899,6 +961,8 @@ inline QByteArray buildTcForKind(TcKind tc_kind, int tc_block, uint32_t row_valu
         return buildRowIndexedTcBlock(offset, kHierarchyDataBid, row_value);
     case TcKind::HnidCell:
         return buildHnidCellTcBlock(offset, kHierarchyDataBid, row_value);
+    case TcKind::MultiLevelRowIndex:
+        return buildMultiLevelRowIndexTcBlock(offset, kHierarchyDataBid, row_value);
     default:
         return buildSingleRowTcBlock(offset, kHierarchyDataBid, row_value);
     }
@@ -986,6 +1050,16 @@ inline QByteArray buildRowIndexedTcStore() {
 inline QByteArray buildHnidCellTcStore() {
     return buildStoreWithSingleRowTc(
         kContentsTableNid, kMessageNid, LeafPc::Message, TcKind::HnidCell);
+}
+
+/// Same contents-table store as buildRowIndexedTcStore, but the TCROWID BTH is two-level
+/// (idxLevels == 1). readFolderItems(root) -> buildTcRows -> collectTcLiveRowIndices ->
+/// readBthLeafData
+/// -> readBthLeafDataGuarded descends the index node to the leaf -- the multi-level BTH walk no
+/// flat-BTH fixture reaches. The one message still lists (its NID is the single live row).
+inline QByteArray buildMultiLevelRowIndexTcStore() {
+    return buildStoreWithSingleRowTc(
+        kContentsTableNid, kMessageNid, LeafPc::Message, TcKind::MultiLevelRowIndex);
 }
 
 // ASCII text as a UTF-16LE byte string (the PtypString on-disk encoding). Test values are ASCII.
