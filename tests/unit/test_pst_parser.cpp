@@ -34,6 +34,7 @@ constexpr int kRootPcHeapPageMapOffsetForTest = 20;
 constexpr int kRootPcBthHeaderOffsetForTest = 12;
 constexpr uint32_t kRootPcHidRootForTest = 0x20;
 constexpr uint64_t kRootPcDataBidForTest = 0x1000;
+constexpr int kOffByFive = 5;  // a small nonzero delta to mis-declare a 4k block's inflated size
 
 struct PermuteBytePair {
     uint8_t plain;
@@ -223,6 +224,9 @@ private Q_SLOTS:
     void legacyUnicodePstReads512ByteBTreePages();
     void unicode4kOstReads4096ByteBTreePages();
     void unicode4kCompressedBlockInflates();
+    void unicode4kUncompressedBlockPassesThrough();
+    void unicode4kBadZlibFailsClosed();
+    void unicode4kDecompressSizeMismatchFailsClosed();
     void compressibleEncryptedPstDecodesRootPropertyContext();
     void reusableOpenableFixtureReachesRootFolder();
     void reusableFolderedFixtureReachesChildViaHierarchyTable();
@@ -271,7 +275,8 @@ private:
                                      uint16_t version_override = 0);
     QByteArray buildStoreWithEmptyBTrees(uint16_t content_type, uint16_t version);
     QByteArray buildCompressibleEncryptedRootPst();
-    QByteArray buildUnicode4kCompressedRootStore();
+    QByteArray buildUnicode4kBlockStore(const QByteArray& block, uint16_t declared_uncompressed);
+    QByteArray rootHeapZlibStream();
 };
 
 void TestPstParser::initTestCase() {
@@ -405,13 +410,16 @@ QByteArray TestPstParser::buildCompressibleEncryptedRootPst() {
     return file;
 }
 
-// Build a Unicode4k (wVer=36) OST whose single root-folder node's data BID maps to a
-// zlib-COMPRESSED block. postProcessBlock authenticates the compressed bytes against the 24-byte
-// 4k footer, then decompressBlockIf4k inflates them (the footer's uncompressed_size != cb) back to
-// the root PC heap -- the compression path no legacy-Unicode fixture reaches. The parser rebuilds
-// qUncompress's input as BE32(uncompressed_size) + raw, so the on-disk bytes are qCompress(P) with
-// its own 4-byte size prefix stripped (a bare zlib stream).
-QByteArray TestPstParser::buildUnicode4kCompressedRootStore() {
+// Build a Unicode4k (wVer=36) OST whose single root-folder node's data BID maps to a 4k block of
+// exactly @p block bytes, with a 24-byte 4k footer declaring @p declared_uncompressed as the
+// inflated size. postProcessBlock authenticates @p block against the footer, then
+// decompressBlockIf4k either passes it through (declared == cb) or inflates it (declared != cb) via
+// qUncompress(BE32(declared) + block). Vary the two arguments to drive the compression path and its
+// fail-closed branches: a real zlib stream with declared = the true inflated size decompresses; a
+// non-zlib block decompresses-fails; a real stream with a wrong declared size trips the exact-size
+// check. No legacy-Unicode fixture reaches any of this.
+QByteArray TestPstParser::buildUnicode4kBlockStore(const QByteArray& block,
+                                                   uint16_t declared_uncompressed) {
     constexpr int kPageSize = sak::email::kUnicodePageSize;               // 4096
     constexpr int kFooter = sak::email::kBlock4kFooterSize;               // 24
     constexpr int kAlign = sak::email::kBlock4kAlignment;                 // 512
@@ -422,10 +430,7 @@ QByteArray TestPstParser::buildUnicode4kCompressedRootStore() {
     const int bbt_offset = nbt_offset + kPageSize;
     const int data_offset = bbt_offset + kPageSize;
 
-    constexpr int kQtCompressPrefixLen = 4;               // qCompress prepends a BE32 size
-    const QByteArray payload = buildRootPcHeapForTest();  // the inflated root PC heap
-    const QByteArray compressed = qCompress(payload).mid(kQtCompressPrefixLen);  // bare zlib stream
-    const int cb = static_cast<int>(compressed.size());
+    const int cb = static_cast<int>(block.size());
     int aligned = ((cb + kAlign - 1) / kAlign) * kAlign;
     if ((aligned - cb) < kFooter) {
         aligned += kAlign;
@@ -452,18 +457,25 @@ QByteArray TestPstParser::buildUnicode4kCompressedRootStore() {
     writeLe64(file, bbt_offset + 8, data_offset);
     writeLe16(file, bbt_offset + 16, static_cast<uint16_t>(cb));
 
-    file.replace(data_offset, cb, compressed);
+    file.replace(data_offset, cb, block);
     const int foot = data_offset + aligned - kFooter;
     writeLe16(file, foot + 0, static_cast<uint16_t>(cb));
     writeLe16(file, foot + 2, computeSigForTest(data_offset, kRootPcDataBidForTest));
     writeLe32(file, foot + 4, weakCrcForTest(file, data_offset, cb));
     writeLe64(file, foot + 8, kRootPcDataBidForTest);
-    writeLe16(file, foot + kUncompSizeOff, static_cast<uint16_t>(payload.size()));
+    writeLe16(file, foot + kUncompSizeOff, declared_uncompressed);
 
     finalizePageTrailerForTest(file, nbt_offset, kPageSize, k4kTrailer, 0);
     finalizePageTrailerForTest(file, bbt_offset, kPageSize, k4kTrailer, 0);
     finalizeHeaderCrcForTest(file, true);
     return file;
+}
+
+// The bare zlib stream (qCompress with its 4-byte BE size prefix stripped) and the inflated length
+// of the root PC heap -- the compressed-block inputs the 4k tests share.
+QByteArray TestPstParser::rootHeapZlibStream() {
+    constexpr int kQtCompressPrefixLen = 4;  // qCompress prepends a BE32 size
+    return qCompress(buildRootPcHeapForTest()).mid(kQtCompressPrefixLen);
 }
 
 // ============================================================================
@@ -628,9 +640,12 @@ void TestPstParser::unicode4kCompressedBlockInflates() {
     // decompressBlockIf4k inflates them (footer uncompressed_size != cb) back to the root PC heap.
     // open() succeeds only if the inflated bytes parse as the root folder PC -- proving the block
     // was actually decompressed, not passed through. No legacy-Unicode fixture reaches this path.
+    const int inflated = static_cast<int>(buildRootPcHeapForTest().size());
     QTemporaryFile temp_file;
     QVERIFY(temp_file.open());
-    temp_file.write(buildUnicode4kCompressedRootStore());
+    // A real zlib stream whose declared inflated size differs from cb -> the compressed path.
+    temp_file.write(
+        buildUnicode4kBlockStore(rootHeapZlibStream(), static_cast<uint16_t>(inflated)));
     temp_file.close();
 
     PstParser parser;
@@ -645,6 +660,57 @@ void TestPstParser::unicode4kCompressedBlockInflates() {
     const auto info = opened_spy.first().at(0).value<sak::PstFileInfo>();
     QCOMPARE(info.is_ost, true);
     QCOMPARE(info.total_folders, 1);
+}
+
+void TestPstParser::unicode4kUncompressedBlockPassesThrough() {
+    // decompressBlockIf4k passthrough branch: when the footer's uncompressed_size equals cb, the
+    // block is stored verbatim and returned as-is (no inflate). Store the root PC heap uncompressed
+    // with declared == cb; open() must succeed with the heap read directly.
+    const QByteArray heap = buildRootPcHeapForTest();
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(buildUnicode4kBlockStore(heap, static_cast<uint16_t>(heap.size())));
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+}
+
+void TestPstParser::unicode4kBadZlibFailsClosed() {
+    // decompressBlockIf4k decompress-failure branch: the footer marks the block compressed
+    // (uncompressed_size != cb) but the bytes are not a valid zlib stream, so qUncompress fails.
+    // The block must fail closed (pst_decompression_failed), not surface the garbage bytes.
+    const QByteArray heap = buildRootPcHeapForTest();  // not a zlib stream
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(
+        buildUnicode4kBlockStore(heap, static_cast<uint16_t>(heap.size() + kOffByFive)));
+    temp_file.close();
+
+    PstParser parser;
+    parser.open(temp_file.fileName());
+    QVERIFY(!parser.isOpen());  // the root block cannot be read, so open() fails closed
+}
+
+void TestPstParser::unicode4kDecompressSizeMismatchFailsClosed() {
+    // decompressBlockIf4k exact-size branch: a real zlib stream inflates to the true size, but the
+    // footer declares a DIFFERENT uncompressed_size. A stream that inflates to != the declared
+    // length is corrupt/crafted and must fail closed rather than hand a wrong-length buffer
+    // downstream.
+    const int inflated = static_cast<int>(buildRootPcHeapForTest().size());
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(buildUnicode4kBlockStore(rootHeapZlibStream(),
+                                             static_cast<uint16_t>(inflated + kOffByFive)));
+    temp_file.close();
+
+    PstParser parser;
+    parser.open(temp_file.fileName());
+    QVERIFY(!parser.isOpen());  // inflated size != declared -> fail closed
 }
 
 void TestPstParser::compressibleEncryptedPstDecodesRootPropertyContext() {

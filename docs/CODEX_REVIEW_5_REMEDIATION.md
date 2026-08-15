@@ -3922,6 +3922,20 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     the structure-fuzz PRNG's mutation sequence, so a few incidentally-hit defensive lines move; the
     real gain is a deterministic regression lock on the multi-level descent that no longer depends on
     fuzz luck. Full Release ctest 247/247.
+- [x] R5-G14-PST-4KNEG Coverage depth: Unicode4k decompression passthrough + fail-closed branches
+  - RESOLVED 2026-08-14 [DONE]: decompressBlockIf4k's non-inflate branches had no coverage: the
+    passthrough (footer uncompressed_size == cb -> return the block verbatim), the decompress-failure
+    (footer marks it compressed but the bytes are not a valid zlib stream), and the exact-size check
+    (a real stream that inflates to a length != the declared uncompressed_size). Generalized the 4k
+    builder into buildUnicode4kBlockStore(block, declared_uncompressed) -- it lays any block bytes
+    with any declared inflated size -- plus a rootHeapZlibStream() helper, then added three tests: an
+    uncompressed block (declared == cb) opens via passthrough; a non-zlib block marked compressed
+    fails closed (pst_decompression_failed); and a real zlib stream with a wrong declared size fails
+    closed on the exact-size check. The pre-existing inflate test now uses the same generalized
+    builder. Re-measured pst_parser.cpp line coverage rose 83.7% -> 84.0% (1284 -> 1288 of 1534
+    lines); decompressBlockIf4k is now fully covered except line 1950 (its footer-read guard), which
+    is unreachable in normal flow because postProcessBlock's verifyBlockTrailer already reads and
+    validates the same 24-byte footer before decompressBlockIf4k runs. Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen
