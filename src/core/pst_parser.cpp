@@ -3090,39 +3090,6 @@ std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult
     return {results[0], results[1]};
 }
 
-std::pair<QString, QString> PstParser::readSenderFromPC(uint64_t message_nid) {
-    auto node_it = m_nbt_cache.find(message_nid);
-    if (node_it == m_nbt_cache.end()) {
-        return {};
-    }
-
-    const auto& node = node_it.value();
-    if (node.data_bid == 0) {
-        return {};
-    }
-
-    HeapContext ctx;
-    auto data_result = readDataTree(node.data_bid, &ctx.block_offsets);
-    if (!data_result) {
-        return {};
-    }
-    ctx.heap_data = std::move(*data_result);
-
-    if (node.subnode_bid != 0) {
-        auto sn_result = readSubNodeBTree(node.subnode_bid);
-        if (sn_result) {
-            ctx.subnode_map = std::move(*sn_result);
-        }
-    }
-
-    auto bth = collectBthLeafData(ctx, kPcSignature);
-    if (!bth) {
-        return {};
-    }
-
-    return extractSenderFromLeaf(*bth, ctx);
-}
-
 bool PstParser::loadNodeHeapContext(const sak::PstNode& entry, HeapContext& ctx) {
     auto data_result = readDataTree(entry.data_bid, &ctx.block_offsets);
     if (!data_result) {

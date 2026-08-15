@@ -544,9 +544,6 @@ private:
     [[nodiscard]] std::expected<sak::PstItemDetail, sak::error_code> readMessage(
         uint64_t message_nid);
 
-    /// Read just the sender name+email from a message PC (lightweight)
-    [[nodiscard]] std::pair<QString, QString> readSenderFromPC(uint64_t message_nid);
-
     /// Extract sender fields from collected BTH leaf data
     [[nodiscard]] std::pair<QString, QString> extractSenderFromLeaf(const BthLeafResult& bth,
                                                                     const HeapContext& ctx);

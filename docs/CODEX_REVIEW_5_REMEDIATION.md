@@ -3769,6 +3769,21 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     degenerate/non-object/truncated bodies; a lock test pins the completed-call / broken-call /
     terminal-status anchors. Held across the default run plus a 20000-iteration confidence run, no
     crash/hang/fail-open. Mirrors test_openai_responses_client's link set. Full Release ctest 248/248.
+- [x] R5-G14-PST-DEADSENDER Dead code: remove the orphaned readSenderFromPC
+  - RESOLVED 2026-08-14 [DONE, Randy authorized "if it does not make sense remove it, if it does
+    implement it"]: readSenderFromPC(message_nid) had no caller anywhere (0 references outside its own
+    definition + header declaration). Investigated whether to wire it: its body is a STRICT SUBSET of
+    the live enrichment path -- enrichSingleItemProps -> loadNodeHeapContext (readDataTree + subnode
+    BTree) + collectBthLeafData(kPcSignature) + enrichItemFromBth, which loads the node's PC BTH ONCE
+    and extracts sender AND subject AND message class in that single pass, whereas readSenderFromPC
+    loads the same BTH only to extract sender. There is no call site where "just the sender, nothing
+    else" is needed as a cheaper separate operation: the folder-listing path already gets sender from
+    the enrichment's single pass, and readItemDetail gets it from the full property context. Wiring it
+    would either duplicate the enrichment's BTH load or replace a superset with a subset (losing
+    subject/class). It is a superseded earlier implementation -- genuinely dead and redundant -- so it
+    was removed (definition + header declaration); extractSenderFromLeaf, which it called and which
+    the enrichment still uses, is untouched. pst_parser.cpp line coverage rose 84.0% -> 85.1% (1288 of
+    1513 lines; 21 dead uncovered lines removed from the denominator). Full Release ctest 248/248.
 - [x] R5-G14-PST-ATTACH Coverage depth: PST sub-node attachment table
   - RESOLVED 2026-08-13 [DONE]: Re-measuring line coverage over the PST tests (RelWithDebInfo +
     OpenCppCoverage) showed pst_parser.cpp at 59.6% (the structure fuzz had already lifted it well
