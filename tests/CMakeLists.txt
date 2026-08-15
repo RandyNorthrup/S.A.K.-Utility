@@ -2613,6 +2613,40 @@ add_test(NAME test_fuzz_smart_report COMMAND test_fuzz_smart_report
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_smart_report")
 
+# test_fuzz_ai_response - deterministic mutation-fuzz of the OpenAI Responses reply parser. The HTTP
+# response body is untrusted, and the function_calls parseResponseObject extracts are dispatched to
+# real tools, so the contract is fail-closed: a broken tool call poisons the whole response, a
+# terminal/non-success status yields nothing, and bad JSON / an API-error envelope yields nothing.
+# Asserts no crash/hang, determinism, that every returned call is structurally complete, and an
+# independent oracle that a must-be-empty response never surfaces a usable field. Mirrors
+# test_openai_responses_client's link set.
+add_executable(test_fuzz_ai_response
+    unit/test_fuzz_ai_response.cpp
+    ../src/ai/openai_responses_client.cpp
+    ../src/core/app_paths.cpp
+    ../src/ai/ai_token_usage_tracker.cpp
+    ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/core/secure_memory.cpp
+    ../src/core/logger.cpp
+    ../include/sak/ai/openai_responses_client.h
+    fuzz/fuzz_harness.h
+)
+set_target_properties(test_fuzz_ai_response PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fuzz_ai_response PRIVATE
+    Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+)
+target_include_directories(test_fuzz_ai_response PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_fuzz_ai_response COMMAND test_fuzz_ai_response
+         -o "${TEST_OUTPUT_DIR}/test_fuzz_ai_response.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fuzz_ai_response")
+
 # test_fuzz_mbox_container - deterministic mutation-fuzz of the MBOX container splitter + full read
 # pipeline. The header parser and MIME transfer decoder are already fuzzed as pure seams; this covers
 # the part that only exists behind an open file: the "From " separator scan (buildMessageIndex/

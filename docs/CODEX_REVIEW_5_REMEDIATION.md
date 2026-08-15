@@ -3749,6 +3749,26 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     Seeds carry a valid two-message multipart archive plus boundary-only / >From / body-prose-From /
     non-mbox variants. A lock test pins the two-message accept path (subject, one attachment, body).
     Full Release ctest 247/247.
+- [x] R5-G14-AIRESP Fuzz harness: OpenAI Responses reply parser
+  - RESOLVED 2026-08-14 [DONE]: OpenAIResponsesClient::parseResponseObject turns a raw HTTP response
+    body into an OpenAIResponseResult, and the function_calls it extracts are dispatched to real
+    tools -- so a compromised/buggy endpoint, a proxy, or a truncated stream handing hostile or
+    partial JSON is a live attack surface, and the contract is fail-closed. test_fuzz_ai_response
+    drives the pure static parseResponseObject over thousands of mutated bodies and asserts per input:
+    (1) no crash/hang; (2) determinism (id + output_text + per-call call_id/name/arguments signature
+    stable across two parses); (3) STRUCTURAL INTEGRITY -- every function_call that reaches the result
+    has a non-empty call_id AND name, so the half-formed tool call the parser must poison the whole
+    response on can never slip through to dispatch; (4) an INDEPENDENT oracle, re-derived from the
+    JSON rather than copied from the parser's control flow, that a must-be-empty response (oversized
+    body, non-JSON, non-object, an API-error envelope, or a terminal/non-success status -- incomplete,
+    failed, in_progress, a non-string status, or any value != "completed") never surfaces a usable
+    field. The oracle is one-directional (sufficient-not-exhaustive: it never asserts non-emptiness,
+    since a well-formed-status response can still be empty for reasons it does not model, e.g. a broken
+    call). Seeds carry a completed tool call, a completed text message, a name-less (broken) call, each
+    terminal status, a non-string status, an API-error envelope, a status-less fixture-style body, and
+    degenerate/non-object/truncated bodies; a lock test pins the completed-call / broken-call /
+    terminal-status anchors. Held across the default run plus a 20000-iteration confidence run, no
+    crash/hang/fail-open. Mirrors test_openai_responses_client's link set. Full Release ctest 248/248.
 - [x] R5-G14-PST-ATTACH Coverage depth: PST sub-node attachment table
   - RESOLVED 2026-08-13 [DONE]: Re-measuring line coverage over the PST tests (RelWithDebInfo +
     OpenCppCoverage) showed pst_parser.cpp at 59.6% (the structure fuzz had already lifted it well
