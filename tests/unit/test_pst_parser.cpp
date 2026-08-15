@@ -222,6 +222,7 @@ private Q_SLOTS:
     void detectsAnsiVersion();
     void legacyUnicodePstReads512ByteBTreePages();
     void unicode4kOstReads4096ByteBTreePages();
+    void unicode4kCompressedBlockInflates();
     void compressibleEncryptedPstDecodesRootPropertyContext();
     void reusableOpenableFixtureReachesRootFolder();
     void reusableFolderedFixtureReachesChildViaHierarchyTable();
@@ -267,6 +268,7 @@ private:
                                      uint16_t version_override = 0);
     QByteArray buildStoreWithEmptyBTrees(uint16_t content_type, uint16_t version);
     QByteArray buildCompressibleEncryptedRootPst();
+    QByteArray buildUnicode4kCompressedRootStore();
 };
 
 void TestPstParser::initTestCase() {
@@ -397,6 +399,67 @@ QByteArray TestPstParser::buildCompressibleEncryptedRootPst() {
     finalizePageTrailerForTest(file, kBbtOffset, kPageSize, kLegacyPageTrailerSizeForTest, 0);
     finalizeHeaderCrcForTest(file, true);
 
+    return file;
+}
+
+// Build a Unicode4k (wVer=36) OST whose single root-folder node's data BID maps to a
+// zlib-COMPRESSED block. postProcessBlock authenticates the compressed bytes against the 24-byte
+// 4k footer, then decompressBlockIf4k inflates them (the footer's uncompressed_size != cb) back to
+// the root PC heap -- the compression path no legacy-Unicode fixture reaches. The parser rebuilds
+// qUncompress's input as BE32(uncompressed_size) + raw, so the on-disk bytes are qCompress(P) with
+// its own 4-byte size prefix stripped (a bare zlib stream).
+QByteArray TestPstParser::buildUnicode4kCompressedRootStore() {
+    constexpr int kPageSize = sak::email::kUnicodePageSize;               // 4096
+    constexpr int kFooter = sak::email::kBlock4kFooterSize;               // 24
+    constexpr int kAlign = sak::email::kBlock4kAlignment;                 // 512
+    constexpr int kUncompSizeOff = sak::email::kBlock4kUncompSizeOffset;  // 18
+    constexpr int k4kTrailer = 24;
+    constexpr int k4kMetaOff = kPageSize - k4kTrailer - 8 - 8;  // meta(8)+pad(8) before trailer
+    const int nbt_offset = kPageSize * 2;
+    const int bbt_offset = nbt_offset + kPageSize;
+    const int data_offset = bbt_offset + kPageSize;
+
+    constexpr int kQtCompressPrefixLen = 4;               // qCompress prepends a BE32 size
+    const QByteArray payload = buildRootPcHeapForTest();  // the inflated root PC heap
+    const QByteArray compressed = qCompress(payload).mid(kQtCompressPrefixLen);  // bare zlib stream
+    const int cb = static_cast<int>(compressed.size());
+    int aligned = ((cb + kAlign - 1) / kAlign) * kAlign;
+    if ((aligned - cb) < kFooter) {
+        aligned += kAlign;
+    }
+    const int file_size = data_offset + aligned;
+    QByteArray file(file_size, '\0');
+    const QByteArray header = buildMinimalPstHeader(
+        true, sak::email::kEncryptNone, sak::email::kOstContentType, sak::email::kUnicode4kVersion);
+    file.replace(0, header.size(), header);
+    writeUnicodeRootPointersForTest(file, file_size, nbt_offset, bbt_offset);
+
+    auto write4kPage = [&](int off, uint8_t ptype, int entry_size) {
+        file[off + k4kMetaOff] = 1;  // cEnt == 1 (low byte; count < 256)
+        file[off + k4kMetaOff + 2] = static_cast<char>(0xA9);
+        file[off + k4kMetaOff + 4] = static_cast<char>(entry_size);
+        file[off + kPageSize - k4kTrailer] = static_cast<char>(ptype);
+        file[off + kPageSize - k4kTrailer + 1] = static_cast<char>(ptype);
+    };
+    write4kPage(nbt_offset, 0x81, 32);
+    writeLe64(file, nbt_offset, sak::email::kNidRootFolder);
+    writeLe64(file, nbt_offset + 8, kRootPcDataBidForTest);
+    write4kPage(bbt_offset, 0x80, 24);
+    writeLe64(file, bbt_offset, kRootPcDataBidForTest);
+    writeLe64(file, bbt_offset + 8, data_offset);
+    writeLe16(file, bbt_offset + 16, static_cast<uint16_t>(cb));
+
+    file.replace(data_offset, cb, compressed);
+    const int foot = data_offset + aligned - kFooter;
+    writeLe16(file, foot + 0, static_cast<uint16_t>(cb));
+    writeLe16(file, foot + 2, computeSigForTest(data_offset, kRootPcDataBidForTest));
+    writeLe32(file, foot + 4, weakCrcForTest(file, data_offset, cb));
+    writeLe64(file, foot + 8, kRootPcDataBidForTest);
+    writeLe16(file, foot + kUncompSizeOff, static_cast<uint16_t>(payload.size()));
+
+    finalizePageTrailerForTest(file, nbt_offset, kPageSize, k4kTrailer, 0);
+    finalizePageTrailerForTest(file, bbt_offset, kPageSize, k4kTrailer, 0);
+    finalizeHeaderCrcForTest(file, true);
     return file;
 }
 
@@ -554,6 +617,31 @@ void TestPstParser::unicode4kOstReads4096ByteBTreePages() {
     const QString error = error_spy.takeFirst().at(0).toString();
     QVERIFY2(!error.contains(QStringLiteral("Failed to load Node BTree")), qPrintable(error));
     QVERIFY2(error.contains(QStringLiteral("Failed to build folder hierarchy")), qPrintable(error));
+}
+
+void TestPstParser::unicode4kCompressedBlockInflates() {
+    // Drives the Unicode4k zlib-decompression path: the root node's block is stored compressed, so
+    // postProcessBlock authenticates the compressed bytes against the 24-byte 4k footer and
+    // decompressBlockIf4k inflates them (footer uncompressed_size != cb) back to the root PC heap.
+    // open() succeeds only if the inflated bytes parse as the root folder PC -- proving the block
+    // was actually decompressed, not passed through. No legacy-Unicode fixture reaches this path.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(buildUnicode4kCompressedRootStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    QSignalSpy opened_spy(&parser, &PstParser::fileOpened);
+    parser.open(temp_file.fileName());
+
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+    QCOMPARE(opened_spy.count(), 1);
+    const auto info = opened_spy.first().at(0).value<sak::PstFileInfo>();
+    QCOMPARE(info.is_ost, true);
+    QCOMPARE(info.total_folders, 1);
 }
 
 void TestPstParser::compressibleEncryptedPstDecodesRootPropertyContext() {

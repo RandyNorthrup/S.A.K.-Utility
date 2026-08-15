@@ -3878,6 +3878,22 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     literally. The store is also wired into test_fuzz_pst_structure (Store::HnidCellTc). Re-measured
     pst_parser.cpp line coverage rose 80.8% -> 81.4% (1239 -> 1249 of 1534 lines); the buildTcCell
     HNID-resolve branch is now fully covered. Full Release ctest 247/247.
+- [x] R5-G14-PST-4KDECOMP Coverage depth: Unicode4k zlib block decompression
+  - RESOLVED 2026-08-14 [DONE]: Every fixture was a legacy-Unicode (wVer=23) store, so the
+    Unicode4k (wVer=36) zlib-decompression path -- postProcessBlock's m_is_4k branch and all of
+    decompressBlockIf4k -- had no coverage. Added buildUnicode4kCompressedRootStore: a wVer=36 OST
+    with 4096-byte BTree pages, 24-byte 4k page trailers, and a root-folder node whose data block is
+    zlib-COMPRESSED. The on-disk block is qCompress(root PC heap) with its 4-byte Qt size prefix
+    stripped (a bare zlib stream), and the 24-byte 4k block footer carries the compressed cb, a
+    genuine wSig/dwCRC over the compressed bytes, the bid, and the uncompressed_size. postProcessBlock
+    authenticates the compressed bytes against that footer, then decompressBlockIf4k rebuilds
+    qUncompress's BE32(uncompressed_size)+raw input and inflates back to the root PC heap. A new test
+    (unicode4kCompressedBlockInflates) asserts open() succeeds and reports is_ost with one folder --
+    which happens only if the block was actually decompressed and the inflated bytes parsed as the
+    root PC. Re-measured pst_parser.cpp line coverage rose 81.4% -> 83.0% (1249 -> 1273 of 1534
+    lines); decompressBlockIf4k's inflate path is now covered (its remaining uncovered lines are the
+    footer-read/passthrough/decompress-fail/size-mismatch fail-closed branches, which need corrupt-4k
+    negative fixtures). Full Release ctest 247/247.
 - [x] R5-G14-15 Add coverage measurement (OpenCppCoverage on MSVC) over the full suite
   - RESOLVED 2026-08-12 [DONE for the tooling; full-suite widening remains]: OpenCppCoverage
     0.9.9.0 is installed, and scripts/run_coverage.ps1 measures line coverage over a chosen
