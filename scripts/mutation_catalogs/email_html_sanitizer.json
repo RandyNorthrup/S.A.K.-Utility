@@ -1,0 +1,73 @@
+{
+  "_comment": "R5-G18-1 catalog #2: the untrusted-email HTML sanitizer (sak::sanitizeEmailBodyHtml + emailResourceIsAllowed in include/sak/email_html_sanitizer.h). This is the XSS / local-file-disclosure boundary for attacker-authored message bodies, so a surviving mutant is a real active-content bypass the suite would not catch. Mutants 1-3 pin defenses the header comments claim but no unit test exercised before this slice (the solidus attribute boundary <svg/onload=>, the multi-line <script> body via DotMatchesEverything, and the multi-pass reassembly of <scr<form>ipt>); the tests slashDelimitedEventHandlerIsRemoved / multiLineScriptBlockIsRemoved / reassembledScriptTagIsRemoved were added in the same commit to close them. Run: python scripts/run_mutation_test.py scripts/mutation_catalogs/email_html_sanitizer.json",
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_email_html_sanitizer",
+  "ctest_regex": "^test_email_html_sanitizer$",
+  "mutants": [
+    {
+      "id": "event-handler-boundary: drop solidus from [\\s/]",
+      "file": "include/sak/email_html_sanitizer.h",
+      "find": "[\\\\s/]on",
+      "replace": "[\\\\s]on",
+      "expect": "killed",
+      "why": "HTML5 treats '/' as an attribute separator, so <svg/onload=alert(1)> is a live handler with no whitespace before 'on'. Dropping '/' from the boundary lets the solidus form through. slashDelimitedEventHandlerIsRemoved pins it (the hostile-newsletter body only ever uses whitespace-preceded handlers, so this was an untested defense before the slice)."
+    },
+    {
+      "id": "script-block: drop DotMatchesEverythingOption",
+      "file": "include/sak/email_html_sanitizer.h",
+      "find": " | QRegularExpression::DotMatchesEverythingOption",
+      "replace": "",
+      "expect": "killed",
+      "why": "Without DotMatchesEverything the '.' in <script...>.*?</script> cannot cross a newline, so a multi-line script body is not removed (only its bare tags are, by kDangerTags), leaving the script source as visible text. multiLineScriptBlockIsRemoved pins the multi-line body."
+    },
+    {
+      "id": "sanitize-loop: 8 passes -> 1 (no re-scan)",
+      "file": "include/sak/email_html_sanitizer.h",
+      "find": "kMaxSanitizePasses = 8",
+      "replace": "kMaxSanitizePasses = 1",
+      "expect": "killed",
+      "why": "A single forward scan is defeatable: stripping <form> from <scr<form>ipt> reassembles <script> that the first pass already walked past. One pass leaves the reassembled tag live. reassembledScriptTagIsRemoved requires >=2 passes."
+    },
+    {
+      "id": "script-uri: drop vbscript alternative",
+      "file": "include/sak/email_html_sanitizer.h",
+      "find": "(javascript|vbscript)\\\\s*:",
+      "replace": "(javascript)\\\\s*:",
+      "expect": "killed",
+      "why": "Dropping the vbscript alternative leaves 'VBScript:evil()' un-neutralized; scriptSchemeUrisAreNeutralized asserts no 'vbscript:' remains."
+    },
+    {
+      "id": "css-url: remove data: negative lookahead",
+      "file": "include/sak/email_html_sanitizer.h",
+      "find": "(?!data:)",
+      "replace": "",
+      "expect": "killed",
+      "why": "Without (?!data:) the url() rule also rewrites a self-contained data: URI to 'none', breaking inline images; cssExpressionAndResourceUrlsAreNeutralized asserts the data: url() survives verbatim."
+    },
+    {
+      "id": "css-url: invert data: lookahead (only data: removed)",
+      "file": "include/sak/email_html_sanitizer.h",
+      "find": "(?!data:)",
+      "replace": "(?=data:)",
+      "expect": "killed",
+      "why": "Inverting the lookahead removes ONLY data: url() and lets remote/file url() through; the same test asserts bg.png and file:// url() are gone."
+    },
+    {
+      "id": "danger-tags: drop iframe alternative",
+      "file": "include/sak/email_html_sanitizer.h",
+      "find": "iframe|",
+      "replace": "",
+      "expect": "killed",
+      "why": "Removing iframe from the danger-tag set stops <iframe> being stripped; framingAndLoadingTagsAreRemoved asserts no '<iframe' remains."
+    },
+    {
+      "id": "sanitize-loop: invert convergence guard",
+      "file": "include/sak/email_html_sanitizer.h",
+      "find": "out != previous",
+      "replace": "out == previous",
+      "expect": "killed",
+      "why": "For any non-empty body out != previous('') on entry, so 'out == previous' is false and the loop body never runs -- the raw attacker HTML is returned unchanged. Every content assertion fails."
+    }
+  ]
+}

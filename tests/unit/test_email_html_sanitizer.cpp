@@ -57,6 +57,10 @@ private Q_SLOTS:
     void ordinaryFormattingSurvives();
     void sanitizerIsIdempotent();
 
+    void slashDelimitedEventHandlerIsRemoved();
+    void multiLineScriptBlockIsRemoved();
+    void reassembledScriptTagIsRemoved();
+
     void resourcePolicyAllowsOnlyDataUris();
     void resourcePolicyDeniesLocalFileAndUnc();
     void resourcePolicyDeniesRemoteAndCid();
@@ -140,6 +144,45 @@ void EmailHtmlSanitizerTests::sanitizerIsIdempotent() {
     // the sanitizer twice must not corrupt an already-clean body.
     const QString once = sanitizeEmailBodyHtml(hostileNewsletter());
     QCOMPARE(sanitizeEmailBodyHtml(once), once);
+}
+
+void EmailHtmlSanitizerTests::slashDelimitedEventHandlerIsRemoved() {
+    // HTML5 accepts a solidus as an attribute separator, so "<svg/onload=...>" is a live handler
+    // with no whitespace before `on`. The [\s/] boundary in the handler pattern is what catches it;
+    // a whitespace-only boundary would let this through. Pin the solidus form independently.
+    const QString clean = sanitizeEmailBodyHtml(QStringLiteral("<svg/onload=alert(1)>x</svg>"));
+    QVERIFY(!containsCi(clean, "onload"));
+    QVERIFY(!containsCi(clean, "alert(1)"));
+    QVERIFY(clean.contains(QStringLiteral("x")));  // benign content survives
+}
+
+void EmailHtmlSanitizerTests::multiLineScriptBlockIsRemoved() {
+    // A hostile <script> body routinely spans newlines. Removing the block's contents requires the
+    // dot to match newlines (DotMatchesEverythingOption); without it only the bare tags go and the
+    // script source survives as visible text. Pin the multi-line body, not just the single-line
+    // one.
+    const QString clean =
+        sanitizeEmailBodyHtml(QStringLiteral("<p>hi</p><script>\n  var beacon = 'exfil-marker';\n  "
+                                             "fetch(beacon);\n</script><p>bye</p>"));
+    QVERIFY(!containsCi(clean, "<script"));
+    QVERIFY(!containsCi(clean, "exfil-marker"));
+    QVERIFY(!containsCi(clean, "fetch"));
+    QVERIFY(clean.contains(QStringLiteral("<p>hi</p>")));
+    QVERIFY(clean.contains(QStringLiteral("<p>bye</p>")));
+}
+
+void EmailHtmlSanitizerTests::reassembledScriptTagIsRemoved() {
+    // Stripping one danger tag can splice two fragments into a fresh <script> the single forward
+    // scan already walked past: removing <form> from "<scr<form>ipt>" yields "<script>". Only the
+    // multi-pass loop catches the reassembled tag on a later pass; a one-pass sanitizer leaves it.
+    const QString clean =
+        sanitizeEmailBodyHtml(QStringLiteral("<scr<form>ipt>alert(1)</script>tail"));
+    // The defense targets the reformed <script> TAG: pass 1 strips <form> (and the closing
+    // </script>) leaving "<script>alert(1)tail", pass 2 strips that reopened tag. A one-pass
+    // sanitizer stops after pass 1 with the live <script> still present -- so pin the tag, not the
+    // now-inert "alert(1)" body text that legitimately survives once no tag wraps it.
+    QVERIFY(!containsCi(clean, "<script"));
+    QVERIFY(clean.contains(QStringLiteral("tail")));
 }
 
 void EmailHtmlSanitizerTests::resourcePolicyAllowsOnlyDataUris() {
