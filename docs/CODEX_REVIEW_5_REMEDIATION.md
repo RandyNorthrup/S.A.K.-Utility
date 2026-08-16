@@ -3616,8 +3616,16 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     (central directory / local file headers) is parsed by Qt's QZipReader in
     file_explorer_archive_service, i.e. library code outside the first-party fuzz scope; the
     first-party decode surface is these streaming decompressors, which this covers.
-- [~] R5-G14-11 Fuzz harness: IMAP response reader
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+- [x] R5-G14-11 Fuzz harness: IMAP response reader
+  - RESOLVED 2026-08-16 [NOT-ACTIONABLE, verified]: there is no IMAP response reader in the
+    codebase to fuzz. A tree-wide search for an IMAP parser (grep -ri imap over src/ include/)
+    finds only two hits, neither a parser: port_scanner.cpp has a static port-number -> name
+    label table ({143,"IMAP"}, {993,"IMAPS"}), and ost_converter_widget.cpp carries a comment
+    documenting that the IMAP upload output format was REMOVED (the OstOutputFormat enum was
+    renumbered after PST/DBX/IMAP upload were dropped). No untrusted IMAP protocol data is
+    parsed anywhere, so there is no attack surface for a fuzz harness. Closed as not-actionable
+    rather than deferred -- deferring implies future work that will never exist. If an IMAP
+    reader is ever added, this item reopens with it.
 - [x] R5-G14-12 Fuzz harness: browser-extension JSON contract
   - RESOLVED 2026-08-12 [DONE]: test_fuzz_mcp_framing wires the reusable core (G14-5) to
     the two byte-framed transports the control bridge parses from untrusted peers:
@@ -4340,7 +4348,18 @@ So the suite itself must be audited for tests that pass regardless of the code.
       (-o file,txt) flushes per line and does not have this problem; consider making
       it the default for CI runs so a failure is always legible
 - [~] R5-G18-8 Ban the assumption that a test binary's functions are independent.
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
+  - PROGRESS 2026-08-16: the named instance is fixed and the whole-binary guarantee is in
+    place; the tree-wide flake soak is the remaining residual. (1) pauseResumeToggles
+    (test_app_installation_worker.cpp:164) no longer passes on timing: it forces concurrency 1
+    with a 200-job queue to hold the pause() window open, and states its precondition as an
+    explicit assertion -- QVERIFY2(worker.isRunning(), "worker finished before pause() was
+    called; ...") -- so if the race ever returns the test fails LOUDLY on the missing
+    precondition instead of quietly asserting a state that no longer exists. (2) CTest runs
+    each test as a whole binary (one add_test per executable, functions in declaration order),
+    not per-function, so ordering-and-load-dependent behaviour is exercised the way it ships.
+    (3) RESIDUAL, still deferred with the soak-test infra track (G23-10): a repeat-run flake
+    soak that runs the whole suite N times and flags any function whose pass/fail depends on
+    run order or load. That is a dedicated harness, not a per-test fix.
       pauseResumeToggles passed in isolation 40 times in a row and failed inside the
       full binary, because ordering and load changed the timing. Any flake hunt that
       only runs the single failing function will conclude, wrongly, that nothing is
