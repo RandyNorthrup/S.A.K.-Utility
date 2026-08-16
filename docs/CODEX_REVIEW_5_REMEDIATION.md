@@ -4485,6 +4485,22 @@ So the suite itself must be audited for tests that pass regardless of the code.
       300 while the code under test was correct every time. Each site must be
       checked against whether its emitter can complete first, and converted to
       QTRY_COMPARE on the spy count where it can. Do NOT mass-rewrite unread
+- [x] R5-G18-10 QThread::wait() return/timeout misuse (distinct from G18-9's QSignalSpy::wait)
+  - RESOLVED 2026-08-16 [fixed]: G18-9 closed the QSignalSpy::wait() class; this closes the
+    OTHER wait-misuse -- QThread::wait() (the thread join) whose bool return is ignored, so a
+    worker that does not finish falls through to assert on partial state (a false/vacuous pass)
+    or, unbounded, hangs the whole suite. Swept tests/ for it; the two real unit-test sites are
+    fixed: (1) test_advanced_search_worker runWorker() did worker.wait(10'000) and ignored the
+    result -- it is a VALUE-returning helper (42 callers), so it cannot use QVERIFY (its early
+    return is illegal in a non-void function); it now bounds the join, and on timeout requestStop()s
+    the WorkerBase cooperative stop, joins, and fails the test via QTest::qVerify(false, ...) (the
+    non-returning primitive QVERIFY wraps). (2) test_user_profile_backup_worker runBackup() did a
+    bare unbounded worker.wait() after a 5s completion poll; it now bounds the join to 2s and, on
+    timeout, cancel()s and joins, so outcome.done stays false and the caller's QVERIFY2 fails
+    rather than the suite hanging. FOLLOW-UP (not a ctest binary, so not this slice): the three
+    QThread::wait() sites in the live certifiers (file_management_live_certifier x2, flash_live_
+    certifier x1) are human-run diagnostic tools; they build under the gate but do not run in
+    ctest, and each fix needs that tool's own pass/fail reporting flow -- tracked, not vacuous-CI.
 
 ### G19 - implementation completeness: nothing half-wired
 

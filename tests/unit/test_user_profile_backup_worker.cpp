@@ -117,7 +117,14 @@ TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackupWit
     for (int i = 0; i < 500 && !outcome.done.load(); ++i) {
         QTest::qWait(10);
     }
-    worker.wait();
+    // Bound the join so a wedged worker cannot hang the suite forever (the poll above already
+    // waited up to 5s for completion). A bare, unbounded worker.wait() would block indefinitely
+    // on a stuck run. On timeout, cancel and join; the returned outcome.done is then false, which
+    // the caller asserts on -- a stuck worker fails the test rather than hanging it.
+    if (!worker.wait(2000)) {
+        worker.cancel();
+        worker.wait();
+    }
     return {outcome.done.load(), outcome.success};
 }
 

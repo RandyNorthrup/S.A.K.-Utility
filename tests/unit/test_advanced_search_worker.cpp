@@ -469,7 +469,20 @@ QVector<SearchMatch> AdvancedSearchWorkerTests::runWorker(const SearchConfig& co
     QSignalSpy failedSpy(&worker, &WorkerBase::failed);
 
     worker.start();
-    worker.wait(10'000);  // 10s timeout
+    // A worker that has not finished must not fall through to read partial results, nor be
+    // destroyed while its QThread is still running (a qFatal). A bare worker.wait(10s) whose
+    // return is ignored did exactly that. On timeout, request the cooperative stop, join, and
+    // FAIL the test -- QTest::qVerify (not QVERIFY) because this helper returns a value and
+    // QVERIFY's early return is illegal in a non-void function.
+    if (!worker.wait(10'000)) {
+        worker.requestStop();
+        worker.wait();
+        QTest::qVerify(false,
+                       "worker.wait(10000)",
+                       "AdvancedSearchWorker did not finish within 10s",
+                       __FILE__,
+                       __LINE__);
+    }
 
     for (int i = 0; i < resultsSpy.count(); ++i) {
         const auto matches = resultsSpy[i][0].value<QVector<SearchMatch>>();
