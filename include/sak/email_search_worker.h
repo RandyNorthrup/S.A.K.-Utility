@@ -48,11 +48,22 @@ public:
 Q_SIGNALS:
     void searchHit(sak::EmailSearchHit hit);
     void searchComplete(int total_hits, double elapsed_seconds);
+    /// Terminal outcome for a user-initiated cancel: the scan stopped early, so the hits
+    /// carried here are PARTIAL. Emitted instead of searchComplete so a truncated search is
+    /// never announced as a finished one (R5-P6-18). Like searchComplete it is a terminal
+    /// event -- exactly one of the two fires per run, and both return the caller to idle.
+    void searchCancelled(int partial_hits, double elapsed_seconds);
     void progressUpdated(int items_searched, int total_items);
     void errorOccurred(QString error);
 
 private:
     std::atomic<bool> m_cancelled{false};
+
+    /// Emit the single terminal event for a finished run: searchCancelled when a cancel is
+    /// pending (m_cancelled is still set from cancel(); it is cleared only at the next search
+    /// entry), searchComplete otherwise. Both PST and MBOX tails route through here so the
+    /// cancel-vs-complete distinction is decided in exactly one place.
+    void emitTerminal(int total_hits, double elapsed_seconds);
 
     /// Check if text matches the search query
     [[nodiscard]] bool matchesQuery(const QString& text,

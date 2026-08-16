@@ -115,7 +115,7 @@ void EmailSearchWorker::search(PstParser* parser, const sak::EmailSearchCriteria
                                  .arg(t_item_read_failures));
     }
     const double elapsed = static_cast<double>(timer.elapsed()) / sak::kMillisecondsPerSecondF;
-    Q_EMIT searchComplete(state.total_hits, elapsed);
+    emitTerminal(state.total_hits, elapsed);
 }
 
 void EmailSearchWorker::searchSingleFolder(PstParser* parser,
@@ -263,7 +263,7 @@ void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCri
                                  .arg(t_item_read_failures));
     }
     const double elapsed = static_cast<double>(timer.elapsed()) / sak::kMillisecondsPerSecondF;
-    Q_EMIT searchComplete(state.total_hits, elapsed);
+    emitTerminal(state.total_hits, elapsed);
 }
 
 bool EmailSearchWorker::searchMessagePage(MboxParser* parser,
@@ -315,6 +315,20 @@ bool EmailSearchWorker::searchMessagePage(MboxParser* parser,
 
 void EmailSearchWorker::cancel() {
     m_cancelled.store(true, std::memory_order_relaxed);
+}
+
+void EmailSearchWorker::emitTerminal(int total_hits, double elapsed_seconds) {
+    // A pending cancel means the loops broke out early, so total_hits is only what was found
+    // before the stop -- announce that as searchCancelled, not searchComplete, so the UI cannot
+    // render a truncated scan as a finished one. m_cancelled is still true here (cancel() sets
+    // it; only a fresh search() / searchMbox() entry clears it). A cancel that lands in the
+    // narrow window between the last loop check and this call harmlessly labels an otherwise
+    // complete run as cancelled -- the initiator did ask to cancel, and the hit count is honest.
+    if (m_cancelled.load(std::memory_order_relaxed)) {
+        Q_EMIT searchCancelled(total_hits, elapsed_seconds);
+        return;
+    }
+    Q_EMIT searchComplete(total_hits, elapsed_seconds);
 }
 
 // ============================================================================

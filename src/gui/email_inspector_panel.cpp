@@ -951,6 +951,10 @@ void EmailInspectorPanel::connectControllerSearchSignals() {
             &EmailInspectorController::searchComplete,
             this,
             &EmailInspectorPanel::onSearchComplete);
+    connect(m_controller.get(),
+            &EmailInspectorController::searchCancelled,
+            this,
+            &EmailInspectorPanel::onSearchCancelled);
 }
 
 void EmailInspectorPanel::connectControllerExportSignals() {
@@ -1712,6 +1716,14 @@ void EmailInspectorPanel::onSearchComplete(int total_hits) {
     updateStatusBar(tr("Search complete: %1 hits").arg(total_hits));
 }
 
+void EmailInspectorPanel::onSearchCancelled(int partial_hits) {
+    // A user-initiated cancel is not a failure, but the results ARE partial -- show it in the
+    // caution colour so it never reads as a clean "Search complete". The colour is applied
+    // AFTER updateStatusBar because that method resets the label style to muted on every call.
+    updateStatusBar(tr("Search cancelled: %1 partial hit(s)").arg(partial_hits));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorWarning));
+}
+
 void EmailInspectorPanel::onExportStarted(int total) {
     m_progress_bar->setVisible(true);
     m_progress_bar->setRange(0, total);
@@ -1728,12 +1740,14 @@ void EmailInspectorPanel::onExportComplete(sak::EmailExportResult result) {
     m_progress_bar->setVisible(false);
     if (result.items_failed > 0 || !result.errors.isEmpty()) {
         // A partial or failed export must not read as a clean success. Surface the failed
-        // count and every recorded error instead of the flat "Export complete".
-        m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
+        // count and every recorded error instead of the flat "Export complete". The error
+        // colour is applied AFTER updateStatusBar, which resets the label style to muted on
+        // every call -- setting it first (as this once did) was silently overwritten.
         updateStatusBar(tr("Export INCOMPLETE: %1 exported, %2 failed (to %3)")
                             .arg(result.items_exported)
                             .arg(result.items_failed)
                             .arg(result.export_path));
+        m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
         Q_EMIT logOutput(tr("Export INCOMPLETE: %1 exported, %2 failed (%3 bytes)")
                              .arg(result.items_exported)
                              .arg(result.items_failed)
@@ -1754,8 +1768,10 @@ void EmailInspectorPanel::onErrorOccurred(QString message) {
     // A folder fetch may have failed: clear any loading overlay so the item list is
     // never left showing a loading message after the operation ended in error.
     m_item_empty_state->clearLoading();
-    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
+    // Colour applied AFTER updateStatusBar: that method resets the label style to muted every
+    // call, so an error colour set beforehand was silently overwritten and never shown.
     updateStatusBar(tr("Error: %1").arg(message));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
     sak::logError("Email Tools: {}", message.toStdString());
     Q_EMIT logOutput(tr("Error: %1").arg(message));
 

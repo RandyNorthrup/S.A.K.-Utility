@@ -27,6 +27,7 @@ private Q_SLOTS:
 
     // -- Cancel ----------------------------------------------------------
     void cancelBeforeSearchDoesNotPoisonNextSearch();
+    void cancelMidSearchEmitsSearchCancelledNotComplete();
 
     // -- Search With Null Parser -----------------------------------------
     void searchWithNullPstParserFailsClosed();
@@ -151,6 +152,61 @@ void TestEmailSearchWorker::cancelBeforeSearchDoesNotPoisonNextSearch() {
     QCOMPARE(done_spy.count(), 1);
     QCOMPARE(hit_spy.count(), 1);
     QCOMPARE(done_spy.first().at(0).toInt(), 1);  // the run was not cut short
+    parser.close();
+}
+
+// A cancel raised WHILE the search is running must terminate on searchCancelled -- carrying
+// the partial hit count -- and must NOT emit searchComplete. Otherwise a truncated scan is
+// announced to the UI as a finished one (R5-P6-18). The cancel is injected from the searchHit
+// slot on the first match; searchMbox runs synchronously here, so the slot fires inline and the
+// second message's top-of-loop cancel check stops the run before it completes.
+void TestEmailSearchWorker::cancelMidSearchEmitsSearchCancelledNotComplete() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    QByteArray content;
+    content += "From a@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "Subject: MATCHME first\r\n";
+    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
+    content += "\r\n";
+    content += "Body one.\r\n";
+    content += "\r\n";
+    content += "From b@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: B <b@example.com>\r\n";
+    content += "Subject: MATCHME second\r\n";
+    content += "Date: Mon, 01 Jan 2024 00:00:01 +0000\r\n";
+    content += "\r\n";
+    content += "Body two.\r\n";
+    mbox.write(content);
+    mbox.close();
+
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    sak::EmailSearchCriteria criteria;
+    criteria.query_text = QStringLiteral("MATCHME");
+    criteria.search_body = false;
+    criteria.search_sender = false;
+
+    EmailSearchWorker worker;
+    QSignalSpy hit_spy(&worker, &EmailSearchWorker::searchHit);
+    QSignalSpy done_spy(&worker, &EmailSearchWorker::searchComplete);
+    QSignalSpy cancel_spy(&worker, &EmailSearchWorker::searchCancelled);
+
+    // Cancel the moment the first hit is seen, so the second message is never searched.
+    QObject::connect(&worker,
+                     &EmailSearchWorker::searchHit,
+                     &worker,
+                     [&worker](sak::EmailSearchHit) { worker.cancel(); });
+
+    worker.searchMbox(&parser, criteria);
+
+    QCOMPARE(hit_spy.count(), 1);                   // only the first match, before the cancel
+    QCOMPARE(done_spy.count(), 0);                  // NOT announced as a completed search
+    QCOMPARE(cancel_spy.count(), 1);                // the single terminal event is the cancel
+    QCOMPARE(cancel_spy.first().at(0).toInt(), 1);  // partial_hits carries the one hit found
     parser.close();
 }
 

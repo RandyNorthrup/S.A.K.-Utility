@@ -616,6 +616,17 @@ void EmailInspectorController::connectSearchSignals() {
         setState(State::Idle);
     });
 
+    // searchCancelled is the OTHER terminal event (the worker emits exactly one of the two per
+    // run). It must also return the controller to Idle -- otherwise a cancelled search would
+    // latch the busy state forever and block every later operation. The partial hits are real
+    // matches found before the stop, so they still count toward m_total_search_hits.
+    connect(m_search_worker.get(), &EmailSearchWorker::searchCancelled, this, [this](int partial) {
+        m_total_search_hits += partial;
+        Q_EMIT searchCancelled(partial);
+        Q_EMIT logOutput(QStringLiteral("Search cancelled: %1 partial hit(s)").arg(partial));
+        setState(State::Idle);
+    });
+
     connect(m_search_worker.get(), &EmailSearchWorker::errorOccurred, this, [this](QString err) {
         // A search errorOccurred is NON-terminal: EmailSearchWorker reports a per-folder read
         // failure and keeps scanning the remaining folders, then always emits searchComplete on

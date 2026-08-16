@@ -119,6 +119,7 @@ private Q_SLOTS:
     void onAttachmentContentFailed(uint64_t message_id, int index, const QString& error);
     void onSearchHit(sak::EmailSearchHit hit);
     void onSearchComplete(int total_hits);
+    void onSearchCancelled(int partial_hits);
     void onExportStarted(int total);
     void onExportProgress(int done, int total, qint64 bytes);
     void onExportComplete(sak::EmailExportResult result);

@@ -2922,6 +2922,14 @@ void connectSearchOutcome(EmailSearchWorker& worker, EmailSearchOutcome& outcome
     QObject::connect(&worker, &EmailSearchWorker::searchComplete, &worker, [&outcome](int, double) {
         outcome.completed = true;
     });
+    // searchCancelled is the OTHER terminal event. The headless driver never calls cancel(), so
+    // this cannot fire today, but handling it keeps the terminal contract complete: if a cancel
+    // path is ever added here, the run still resolves (completed = true over the partial hits
+    // already appended) instead of leaving the caller blocked on an outcome that never completes.
+    QObject::connect(&worker,
+                     &EmailSearchWorker::searchCancelled,
+                     &worker,
+                     [&outcome](int, double) { outcome.completed = true; });
     QObject::connect(&worker,
                      &EmailSearchWorker::errorOccurred,
                      &worker,

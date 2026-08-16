@@ -155,6 +155,9 @@ Q_SIGNALS:
     // Search
     void searchHit(sak::EmailSearchHit hit);
     void searchComplete(int total_hits);
+    /// Terminal outcome for a cancelled search: partial_hits were found before the user stopped
+    /// it. Distinct from searchComplete so the UI reports a cancel as a cancel (R5-P6-18).
+    void searchCancelled(int partial_hits);
 
     // Export
     void exportStarted(int total_items);
