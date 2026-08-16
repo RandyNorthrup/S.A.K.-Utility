@@ -6368,7 +6368,7 @@ set_target_properties(test_active_connections_monitor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_active_connections_monitor PRIVATE
-    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_active_connections_monitor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include

@@ -7,8 +7,12 @@
 #include "sak/active_connections_monitor.h"
 #include "sak/network_diagnostic_types.h"
 
+#include <QHostAddress>
 #include <QSignalSpy>
+#include <QTcpServer>
 #include <QtTest/QtTest>
+
+#include <algorithm>
 
 using namespace sak;
 
@@ -116,6 +120,19 @@ void TestActiveConnectionsMonitor::startMonitoring_emitsConnectionsUpdated() {
 void TestActiveConnectionsMonitor::startStop_lifecycle() {
     ActiveConnectionsMonitor monitor;
 
+    // Open a real loopback TCP listener owned by THIS test process, so the enumeration
+    // has a deterministic connection to find. The prior assertion -- "a running system
+    // should have active TCP/UDP connections" -- was environment-dependent (G18-5): an
+    // isolated CI runner or a quiet host can legitimately have zero connections at the
+    // sampled instant, so it passed or failed by accident of the machine, not the code.
+    // A LISTEN socket we open ourselves is returned by
+    // GetExtendedTcpTable(TCP_TABLE_OWNER_PID_ALL) regardless of host activity, so the
+    // non-empty claim now genuinely tests that enumeration surfaces a known connection.
+    QTcpServer server;
+    QVERIFY2(server.listen(QHostAddress::LocalHost, 0),
+             qPrintable(QStringLiteral("loopback listen failed: %1").arg(server.errorString())));
+    const quint16 knownPort = server.serverPort();
+
     ActiveConnectionsMonitor::MonitorConfig config;
     config.refreshIntervalMs = 100;
     config.resolveHostnames = false;
@@ -129,7 +146,12 @@ void TestActiveConnectionsMonitor::startStop_lifecycle() {
     QTRY_VERIFY_WITH_TIMEOUT(updated_spy.count() >= 1, 3000);
 
     const auto connections = monitor.getCurrentConnections();
-    QVERIFY2(!connections.isEmpty(), "Running system should have active TCP/UDP connections");
+    const bool foundKnownListener =
+        std::ranges::any_of(connections, [knownPort](const ConnectionInfo& c) {
+            return c.protocol == ConnectionInfo::Protocol::TCP && c.localPort == knownPort;
+        });
+    QVERIFY2(foundKnownListener,
+             "Enumeration must surface this process's own loopback TCP listener");
 
     monitor.stopMonitoring();
 

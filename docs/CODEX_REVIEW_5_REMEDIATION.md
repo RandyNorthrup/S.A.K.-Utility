@@ -4291,10 +4291,25 @@ So the suite itself must be audited for tests that pass regardless of the code.
 - [~] R5-G18-4 Every test must fail without its fix. For each regression test in this
   - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
       campaign, prove it by reverting the fix locally and observing the failure
-- [~] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
-  - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear. A full sweep for any remaining accidental env-dependence (e.g. test_active_connections_monitor asserting a live system has TCP connections) is the residual, tracked with the test-quality track.
-      test_active_connections_monitor asserting a live system has TCP connections is the
-      known instance
+- [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
+  - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.
+  - RESOLVED 2026-08-16 [DONE]: fixed the one named residual and swept the tree for the rest.
+    test_active_connections_monitor::startStop_lifecycle asserted !connections.isEmpty()
+    with the message "Running system should have active TCP/UDP connections" -- an assertion
+    on host busyness that a quiet or isolated CI runner can fail at the sampled instant. It
+    now opens its OWN loopback TCP listener (QTcpServer on 127.0.0.1:0, port kept), and asserts
+    the enumeration surfaces that known local port -- GetExtendedTcpTable(TCP_TABLE_OWNER_PID_ALL)
+    returns LISTEN sockets regardless of host activity, so the non-empty claim is now
+    deterministic AND stronger (it proves enumeration finds a real connection we control, not
+    that the host happens to be busy). Proven non-vacuous by the G18-4 discipline: disabling TCP
+    enumeration (showTcp=false) turns the assertion red. Full sweep of tests/unit for the class
+    (assert-non-empty on live enumeration, and assertions on volatile host identity/time/env)
+    found NO other accidental env-dependence: the imaging.list_drives listing QSKIPs on an
+    enumeration-denied host and >=1 physical drive is a hard invariant; the network.mtr hop
+    assertion is loopback-deterministic (comment: "Deterministic, no network"); the
+    leftover-scanner SystemRoot/ProgramData/USERPROFILE checks assert scanner coverage of OS
+    paths that always exist on the target platform (stable contract, not host-variable). Test
+    now links Qt6::Network.
 - [x] R5-G18-6 Measure and publish SKIPPED counts. ctest reports a binary that skipped
   - RESOLVED 2026-08-12 [DONE]: scripts/check_test_skips.ps1 reads the per-test QtTest logs (every test writes build/test_results/<test>.txt) and publishes the skip summary (functions passed/skipped, distinct skipping functions, skipped share of executed), then holds every skip to the reviewed tests/skip_baseline.txt -- failing on an unreviewed skip, a stale baseline entry, or a registered test with no log. The baseline groups its 35 accepted skips by defensibility (destructive-hardware / host-privilege / live-network / missing-fixture) with a reason each. It is now WIRED into CI as the "Test-skip audit" step after the release ctest. The baseline was made deterministic (the elevation entry that had been fixed to assert both orderings was removed; the three live-UUP-API tests are now opt-in per G18-5) so the audit passes reproducibly: 35 skips, all reviewed, none stale.
       every one of its test functions as Passed, because QSKIP leaves the exit code
@@ -4305,8 +4320,20 @@ So the suite itself must be audited for tests that pass regardless of the code.
       run where N tests skipped is coverage of a smaller program than intended.
       Publish per-run skip counts and fail the gate on any skip without a recorded
       reason
-- [~] R5-G18-7 Audit tests whose stdout is lost on failure. Several failures in this
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
+- [x] R5-G18-7 Audit tests whose stdout is lost on failure. Several failures in this
+  - RESOLVED 2026-08-16 [DONE, verified]: audited every add_test registration. All 239
+    QtTest C++ binaries are registered with the dual logger `-o "<dir>/<test>.txt,txt" -o -,txt`
+    -- the FILE logger (the recommended fix: flushes per line, so a QVERIFY message survives
+    even if the process aborts and block-buffered stdout is lost) PLUS a stdout copy that
+    ctest --output-on-failure renders on the console. This is the universal established pattern,
+    applied by the UNIT_TESTS foreach and by every standalone add_test, so no QtTest test can
+    lose its failure message. The only registrations without the QtTest logger are the
+    non-QtTest tests -- the PowerShell guard tests (test_pack_extension, test_register_native_host,
+    test_partition_manager_certification_tools) and the node browser-extension suite
+    (test_browser_extension_pure) -- where the QtTest logger is inapplicable and the
+    block-buffered-abort failure mode does not exist (pwsh/node stdout is line-buffered and
+    ctest captures it on failure). No code change needed; the recommendation was already
+    implemented tree-wide.
       campaign produced NO output at all, because stdout is block-buffered when
       redirected and abort() never flushes it. That turned a one-line assertion
       message into a multi-hour investigation, twice. The QtTest FILE logger
