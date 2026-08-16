@@ -561,7 +561,7 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: The ext4 EXTENT path DOES bound physical against blocks_count (960-961), but the legacy direct/indirect path (physicalBlockFromLegacyMap 837 -> readBlock 534) checks only checkedMul offset overflow, not blocks_count. A legacy inode can name a block past the declared FS (still device-bounded by readAt short-read). Read-only recovery; on a whole-disk device this reads adjacent-partition data as file content.
   - Fix: In readBlock reject blockNumber>=blocks_count (fail closed), matching the extent path's guard at 960.
-  - FIXED 2026-08-05 (commit pending): readBlock now refuses a block at or past
+  - FIXED 2026-08-05 (commit 3152bef1): readBlock now refuses a block at or past
     s_blocks_count and readInode refuses an inode past s_inodes_count (the count is now
     stored; kExtInodesCountOffset existed but was never read). The geometry blockers gained
     blocks_count!=0, inodes_count!=0, inode_size<=block_size, and the format's fixed
@@ -576,7 +576,7 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: ExtSuperblock has no inodes_count field (134-146) and readInode (543) computes group=inodeNumber/inodes_per_group with no upper bound. An out-of-range inode reads a group descriptor/inode table possibly past the FS but within device (readAt returns nullopt past device end 520-531), yielding garbage parsed as an inode. Read-only; device-bounded, no OOB.
   - Fix: Store s_inodes_count and reject inodeNumber>inodes_count in readInode.
-  - FIXED 2026-08-05 (commit pending): readBlock now refuses a block at or past
+  - FIXED 2026-08-05 (commit 3152bef1): readBlock now refuses a block at or past
     s_blocks_count and readInode refuses an inode past s_inodes_count (the count is now
     stored; kExtInodesCountOffset existed but was never read). The geometry blockers gained
     blocks_count!=0, inodes_count!=0, inode_size<=block_size, and the format's fixed
@@ -591,7 +591,7 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: untrusted-input (reachable)
   - Evidence: appendSuperblockGeometryBlockers (468-479) checks block_size, inode_size min+pow2, and blocks_per_group/inodes_per_group nonzero, but omits blocks_count!=0, device-size reconciliation, first_data_block validity, group-count consistency, and inode_size<=block_size. Real omissions, but every read is device-bounded (readAt) and read-only. Same LOW cluster as R4 A4 #24/#25 (doc:325).
   - Fix: Add blocks_count!=0, inode_size<=block_size, first_data_block (0/1) and device-size reconciliation blockers.
-  - FIXED 2026-08-05 (commit pending): readBlock now refuses a block at or past
+  - FIXED 2026-08-05 (commit 3152bef1): readBlock now refuses a block at or past
     s_blocks_count and readInode refuses an inode past s_inodes_count (the count is now
     stored; kExtInodesCountOffset existed but was never read). The geometry blockers gained
     blocks_count!=0, inodes_count!=0, inode_size<=block_size, and the format's fixed
