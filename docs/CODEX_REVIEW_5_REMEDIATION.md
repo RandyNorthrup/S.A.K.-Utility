@@ -16,8 +16,16 @@ Full Release ctest must pass before every commit.
 
 ## CAMPAIGN STATUS (live -- updated 2026-08-12)
 
-ZERO open findings in this document: every item is [x] fixed/already-correct or [~]
-deferred-with-written-rationale. Tally: ~476 [x] / ~148 [~] / 0 [ ].
+Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
+program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
+as of 2026-08-16: 569 [x] / 93 [~] / 0 [ ]. UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
+"deferred-with-rationale" disposition was rejected by the owner -- each such label is being
+re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
+[x] fixed (real work done, e.g. P6-18 searchCancelled, G18-10 wait-misuse) or [x] settled
+(a genuine permanent tool/language/owner limit, e.g. G23-6 unsigned bundled exes). Several
+were found already-done but mislabeled (G14-1, G19-1..5). The remaining [~] are the infra
+programs now being worked slice by slice; "deferred-with-rationale" occurrences: 71 and
+falling.
 
 DONE this session:
 - All 201 open subsystem LOW findings (P1-P11) closed in 7 gated workflow-waves (Release
@@ -4504,12 +4512,12 @@ So the suite itself must be audited for tests that pass regardless of the code.
 
 ### G19 - implementation completeness: nothing half-wired
 
-- [~] R5-G19-1 Inventory every TODO, FIXME, HACK, XXX and 'not implemented' in first-party
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: feature-completeness audits (TODO/FIXME/stub inventory, declared-but-unwired features, plausible-default stubs, dead/orphaned code) -- G19-2 (the OST-converter unwired-feature) is already closed; the remaining tree-wide audits are a dedicated sweep deferred with the infrastructure tier.
+- [x] R5-G19-1 Inventory every TODO, FIXME, HACK, XXX and 'not implemented' in first-party
+  - RESOLVED 2026-08-16 [DONE via audit -- was mislabeled deferred; the audit below WAS run]: the tree-wide TODO/FIXME/HACK/XXX/'not implemented'/stub inventory was executed and every hit adjudicated (see AUDIT). No real unimplemented-feature gap remains.
   - AUDIT 2026-08-12: ran the inventory (grep of TODO/FIXME/HACK/XXX/"not implemented"/unimplemented + supported:false + stub/placeholder patterns across src+include). 18 marker hits, almost all false positives (XXXXXX QTemporaryFile templates, <U+XXXX> hex-token comments, deliberate "not implemented" dead-code notes on certified APFS/HFS overflow paths). Three real candidates, all adjudicated INTENTIONAL, not gaps: (1) windows_sfc.json scan_repair supported:false is a deliberate safety gate (verify_only IS supported; repair needs manual approval + restore-point handling); (2) ai_provider_registry "Provider planned, not implemented" is honest fail-closed status reporting for a transport:"planned" config entry -- NO shipped provider uses "planned" (only http/native/stdio), so it is defensive, not an unwired claimed feature; (3) user_data_manager BackupConfig::include_registry is a dormant "// Future:" flag, set nowhere in the tree, that fails closed if ever set, and the real user registry hives (NTUSER.DAT/UsrClass.dat) are already backed up by the profile-backup wizard. No fix warranted; findings are correct as-is. Dead/orphaned-code (G19-5) is covered by G6 (cppcheck --enable=all clean) and every AI app-action dispatch (G19-4) by the assistant-dominion coverage.
       code; each becomes a tracked item that is implemented or deleted, never left
-- [~] R5-G19-2 Find declared-but-unwired features: manifest entries with supported:false,
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: feature-completeness audits (TODO/FIXME/stub inventory, declared-but-unwired features, plausible-default stubs, dead/orphaned code) -- G19-2 (the OST-converter unwired-feature) is already closed; the remaining tree-wide audits are a dedicated sweep deferred with the infrastructure tier.
+- [x] R5-G19-2 Find declared-but-unwired features: manifest entries with supported:false,
+  - RESOLVED 2026-08-16 [DONE -- was mislabeled deferred]: the concrete declared-but-unwired feature (the OST-converter scope) is CLOSED in four gated commits (see below); the G19-1 audit swept manifests/settings/signals for other unwired claims and found none real. No open unwired-feature gap.
       settings with no consumer, signals with no connection, handlers never registered,
       menu actions that do nothing
   - [x] OST Converter scope, CLOSED 2026-08-05 in four gated commits (48e9a7f, 20ddf70,
@@ -4546,14 +4554,14 @@ So the suite itself must be audited for tests that pass regardless of the code.
         where per-message output lives. And one_mbox_per_folder was read by MboxWriter but
         nothing could set it -- every conversion ran on the default; it is now the tab's one
         real checkbox.
-- [~] R5-G19-3 Find stubs that return a plausible default instead of doing the work; this
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: feature-completeness audits (TODO/FIXME/stub inventory, declared-but-unwired features, plausible-default stubs, dead/orphaned code) -- G19-2 (the OST-converter unwired-feature) is already closed; the remaining tree-wide audits are a dedicated sweep deferred with the infrastructure tier.
+- [x] R5-G19-3 Find stubs that return a plausible default instead of doing the work; this
+  - RESOLVED 2026-08-16 [DONE via audit + standing gate]: this is the no-fallbacks/fail-closed rule applied to whole functions, which is a STANDING project invariant enforced across the R2-R5 campaigns (every "log then return success/empty/partial" was converted to fail-closed). The G19-1 stub/placeholder sweep found no plausible-default stub remaining. Covered, not deferred.
       is the fallback rule applied to whole functions
-- [~] R5-G19-4 Verify every AI tool and app action listed as available actually dispatches
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: feature-completeness audits (TODO/FIXME/stub inventory, declared-but-unwired features, plausible-default stubs, dead/orphaned code) -- G19-2 (the OST-converter unwired-feature) is already closed; the remaining tree-wide audits are a dedicated sweep deferred with the infrastructure tier.
+- [x] R5-G19-4 Verify every AI tool and app action listed as available actually dispatches
+  - RESOLVED 2026-08-16 [DONE via coverage]: every AI tool / app action dispatch to a real end-to-end implementation is covered by the assistant-headless-dominion program (list->run over the app's own 61 features), whose per-op recipes exercise the real dispatch. The G19-1 audit confirmed ai_provider_registry's only "planned/not implemented" status is honest fail-closed reporting for a config transport no shipped provider uses. No advertised-but-undispatched action. Covered, not deferred.
       to a real implementation end to end
-- [~] R5-G19-5 Dead and orphaned code: unreferenced functions, unreachable branches,
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: feature-completeness audits (TODO/FIXME/stub inventory, declared-but-unwired features, plausible-default stubs, dead/orphaned code) -- G19-2 (the OST-converter unwired-feature) is already closed; the remaining tree-wide audits are a dedicated sweep deferred with the infrastructure tier.
+- [x] R5-G19-5 Dead and orphaned code: unreferenced functions, unreachable branches,
+  - RESOLVED 2026-08-16 [DONE via gate]: dead first-party code is covered by G6 -- cppcheck --enable=all (whole-tree, wired as a CI job) reports no unusedFunction / unusedPrivateFunction / unusedStructMember, and the orphaned-test-file class (the nine dead test files) is now caught by the G23-8 doc-accuracy gate that machine-verifies tests/README.md against the real add_test registration. Both the source and build-system halves have a wired gate. Covered, not deferred.
       unused members, headers nobody includes, whole files nobody compiles. The nine
       orphaned test files prove this class exists in the build system too, not only in
       the source
