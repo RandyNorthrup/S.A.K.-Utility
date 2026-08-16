@@ -44,6 +44,7 @@ private Q_SLOTS:
     void testFilenameFromChecksumsDebian();
     void testFilenameFromChecksumsBinaryMarker();
     void testFilenameFromChecksumsRejectsPathAndNonRecords();
+    void testFilenameFromChecksumsRejectsPathEvenWhenPatternPermits();
     void testFilenameFromChecksumsEmptyOrInvalidPattern();
     void testRollingDistrosCarryPattern();
 
@@ -262,6 +263,21 @@ void TestLinuxDistroCatalog::testFilenameFromChecksumsRejectsPathAndNonRecords()
                          "notahash  kali-linux-2026.2-installer-amd64.iso\n" +
                          kHash + "  README.txt\n";
     QVERIFY(LinuxDistroCatalog::filenameFromChecksums(sums, kaliPattern()).isEmpty());
+}
+
+void TestLinuxDistroCatalog::testFilenameFromChecksumsRejectsPathEvenWhenPatternPermits() {
+    // Defense in depth that is independent of the anchored per-distro pattern: the
+    // '/' and '\\' rejection must refuse a path-bearing name even when the pattern
+    // itself would fully match it, so a checksums line can never splice a path
+    // separator into the download URL. The permissive ".*" pattern below fully
+    // matches both names (proving the pattern is not what rejects them); only the
+    // path guard refuses them. Without that guard the discovery would return a name
+    // carrying a subdirectory / traversal component.
+    const QString permissive = QStringLiteral(R"(^kali-linux-.*-amd64\.iso$)");
+    const QString slash = kHash + "  kali-linux-2026.2/installer-amd64.iso\n";
+    QVERIFY(LinuxDistroCatalog::filenameFromChecksums(slash, permissive).isEmpty());
+    const QString backslash = kHash + "  kali-linux-2026.2\\installer-amd64.iso\n";
+    QVERIFY(LinuxDistroCatalog::filenameFromChecksums(backslash, permissive).isEmpty());
 }
 
 void TestLinuxDistroCatalog::testFilenameFromChecksumsEmptyOrInvalidPattern() {
