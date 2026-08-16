@@ -115,6 +115,53 @@ private Q_SLOTS:
         }
         QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
     }
+
+    // Exact-value coverage. The property fuzz above only checks that decoding never
+    // grows the input and that base64 fails closed via the ok flag -- it never pins the
+    // decoded VALUE, so a mutation to the =XX arithmetic (nibble shift, hex-digit offsets)
+    // slips through undetected. These lock the decoded bytes for known inputs.
+    void quotedPrintableDecodesExactBytes() {
+        QCOMPARE(sak::mbox::decodeQuotedPrintable(QByteArray("Hello=20World=0A")),
+                 QByteArray("Hello World\n"));
+        QByteArray utf8 = QByteArray::fromHex("E29C93");
+        utf8 += " check mark";
+        QCOMPARE(sak::mbox::decodeQuotedPrintable(QByteArray("=E2=9C=93 check mark")), utf8);
+    }
+
+    // A bare CR after "=" is a malformed soft line break: skip only the CR and keep the
+    // byte that follows; a CRLF skips both. Distinguishes the '&&' soft-break guard from
+    // an over-eager '||' that would also swallow the trailing byte.
+    void quotedPrintableBareCrSoftBreakSkipsOnlyCr() {
+        QCOMPARE(sak::mbox::decodeQuotedPrintable(QByteArray("A=\rB")), QByteArray("AB"));
+        QCOMPARE(sak::mbox::decodeQuotedPrintable(QByteArray("A=\r\nB")), QByteArray("AB"));
+    }
+
+    // SECURITY: strict base64 must fail closed on malformed input (ok == false, empty
+    // bytes) rather than hand back a partial decode, and must decode valid input to the
+    // exact bytes. Pins both the AbortOnBase64DecodingErrors flag and the fail-closed
+    // {{}, false} return -- the property fuzz asserts neither on a known-bad input.
+    void base64IsStrictAndFailsClosed() {
+        const auto good = sak::mbox::decodeTransferEncoding(QByteArray("SGVsbG8gd29ybGQ="),
+                                                            QStringLiteral("base64"));
+        QVERIFY(good.ok);
+        QCOMPARE(good.bytes, QByteArray("Hello world"));
+
+        const QByteArray bad_inputs[] = {QByteArray("abc!@#$%^&*()"), QByteArray("SGVsbG8*")};
+        for (const QByteArray& bad : bad_inputs) {
+            const auto res = sak::mbox::decodeTransferEncoding(bad, QStringLiteral("base64"));
+            QVERIFY2(!res.ok, bad.constData());
+            QVERIFY(res.bytes.isEmpty());
+        }
+    }
+
+    // Content-Transfer-Encoding tokens are case-insensitive per RFC 2045; an upper-case
+    // "BASE64" must still decode, not fall through to verbatim passthrough.
+    void encodingTokenMatchIsCaseInsensitive() {
+        const auto res = sak::mbox::decodeTransferEncoding(QByteArray("SGVsbG8="),
+                                                           QStringLiteral("BASE64"));
+        QVERIFY(res.ok);
+        QCOMPARE(res.bytes, QByteArray("Hello"));
+    }
 };
 
 QTEST_APPLESS_MAIN(MboxTransferDecoderFuzzTests)
