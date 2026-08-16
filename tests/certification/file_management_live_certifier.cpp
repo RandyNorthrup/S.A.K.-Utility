@@ -444,7 +444,12 @@ DuplicateRun runDuplicateWorker(const sak::FileManagementTarget& target,
     loop.exec();
     if (worker.isRunning()) {
         worker.requestStop();
-        worker.wait(15'000);
+        // Missed-requestStop worker would qFatal if destroyed mid-run; record stall, then block.
+        if (!worker.wait(15'000)) {
+            run.timed_out = true;
+            run.error = QStringLiteral("worker did not stop within 15s after requestStop");
+            worker.wait();
+        }
     }
     return run;
 }
@@ -535,7 +540,12 @@ SearchRun runAdvancedSearchWorker(const sak::FileManagementTarget& target,
     loop.exec();
     if (worker.isRunning()) {
         worker.requestStop();
-        worker.wait(15'000);
+        // Missed-requestStop worker would qFatal if destroyed mid-run; record stall, then block.
+        if (!worker.wait(15'000)) {
+            run.timed_out = true;
+            run.error = QStringLiteral("worker did not stop within 15s after requestStop");
+            worker.wait();
+        }
     }
     return run;
 }

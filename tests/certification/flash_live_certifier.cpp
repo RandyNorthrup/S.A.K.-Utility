@@ -282,7 +282,13 @@ CaseResult runCase(const QString& name,
     while (worker.isRunning()) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     }
-    worker.wait();
+    // The busy-loop above only exits once the thread has stopped, so this join returns at once;
+    // still check it rather than discard the result, so a future refactor cannot silently leave a
+    // running QThread to be destroyed under us.
+    if (!worker.wait(5000)) {
+        cr.detail = "worker thread did not join after completion";
+        return cr;
+    }
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);  // drain queued signals
 
     if (!errorText.isEmpty()) {
