@@ -4257,6 +4257,19 @@ review.
     snapshotMatchingApps (AND of both scanOk results); pass it to verifyNewSystemInstall so an
     unreliable before-snapshot makes the system-state fallback decline to certify (return false
     -> verification_failed -> "reported success but could not be verified"), which fails closed.
+  - RESOLVED 2026-08-16 [fixed]: applied the bounded fix. snapshotMatchingApps now takes
+    `bool& reliable` and sets it to `scanRegistry(&registry_ok) && scanAppX(&appx_ok)` -- both
+    seed their scanOk to true and clear it on any hive/AppX enumeration failure. The startJob
+    verification chain now gates the expensive system-state rescan through a new pure static
+    seam AppInstallationWorker::systemStateCheckEligible(preInstallSnapshotReliable,
+    chocoReportedZero) = `reliable && !chocoZero`, so an unreliable before-snapshot (or a
+    definitive "0 installed" line) makes verifyNewSystemInstall never run and the job falls to
+    verification_failed -> "Installation reported success but could not be verified". The choco
+    transcript path (verifyInstallation) is unchanged, and the gate preserves the lazy
+    short-circuit (the registry/AppX rescan still runs only when the transcript did not already
+    confirm). Regression test systemStateCheckEligibleFailsClosed covers the full truth table;
+    proven non-vacuous by the G18-4 discipline (mutating && -> || turns the reliable-guard case
+    red at test line 373). Full Release ctest green.
 
 ACCEPTED AS INHERENT, with the reasoning recorded so it is not re-litigated:
 

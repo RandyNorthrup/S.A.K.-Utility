@@ -100,6 +100,19 @@ public:
     ///        unit-testable.
     [[nodiscard]] static bool nameIndicatesApp(const QString& candidate, const QString& target);
 
+    /// @brief Whether the independent system-state check is ELIGIBLE to certify an
+    ///        install, decided from cheap signals BEFORE the expensive registry/AppX
+    ///        rescan runs. The system-state fallback compares the post-install
+    ///        inventory against a snapshot taken BEFORE the install; if that
+    ///        pre-install snapshot was partial (a hive/AppX source failed to
+    ///        enumerate, @p preInstallSnapshotReliable false) a pre-existing matching
+    ///        app can be absent from it and would be misread as a NEW install, falsely
+    ///        certifying. A definitive choco "0 installed" line
+    ///        (@p chocoReportedZero) is also authoritative and blocks the fallback.
+    ///        Fails closed on either. Pure; unit-testable (R5-G22-12).
+    [[nodiscard]] static bool systemStateCheckEligible(bool preInstallSnapshotReliable,
+                                                       bool chocoReportedZero);
+
     /**
      * @brief Start migration from report
      * @param report Migration report with selected entries
@@ -238,6 +251,18 @@ private:
      * @return True if successful
      */
     bool installPackage(int jobIndex, MigrationJob& job);
+
+    /// @brief Apply the verified install outcome to @p job: set the terminal
+    ///        status/message, emit the progress + status-changed signals, and
+    ///        persist the snapshot. @p verificationFailed distinguishes "choco
+    ///        reported success but nothing could confirm it" from a plain install
+    ///        failure so the surfaced message is accurate; @p chocoError is the
+    ///        ChocolateyManager error text used when the install itself failed.
+    void applyInstallOutcome(int jobIndex,
+                             MigrationJob& job,
+                             bool success,
+                             bool verificationFailed,
+                             const QString& chocoError);
 
     /// @brief Decrement the active-job count and, on a retryable failure, back off
     ///        and re-enqueue the job -- unless a cancel landed during the backoff,

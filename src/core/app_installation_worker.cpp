@@ -60,20 +60,30 @@ QString appSignature(const AppScanner::AppInfo& app) {
 // the install so the post-install system check can tell a NEW install from a
 // pre-existing one (R5-P7-47). Registry keys on the app name; AppX also matches
 // the package id, mirroring verifyNewSystemInstall below.
-QSet<QString> snapshotMatchingApps(const MigrationJob& job) {
+//
+// @p reliable is set true only when BOTH sources enumerated completely. A
+// partial pre-install snapshot can be MISSING a pre-existing matching app,
+// which the post-install check would then misread as a NEW install and falsely
+// certify -- so the caller must decline the system-state fallback when this is
+// false (R5-G22-12). scanRegistry/scanAppX seed their scanOk out-param to true
+// and clear it on any hive/AppX enumeration failure.
+QSet<QString> snapshotMatchingApps(const MigrationJob& job, bool& reliable) {
     QSet<QString> present;
     AppScanner scanner;
-    for (const auto& app : scanner.scanRegistry()) {
+    bool registry_ok = true;
+    for (const auto& app : scanner.scanRegistry(&registry_ok)) {
         if (AppInstallationWorker::nameIndicatesApp(app.name, job.appName)) {
             present.insert(appSignature(app));
         }
     }
-    for (const auto& app : AppScanner::scanAppX()) {
+    bool appx_ok = true;
+    for (const auto& app : AppScanner::scanAppX(&appx_ok)) {
         if (AppInstallationWorker::nameIndicatesApp(app.name, job.appName) ||
             AppInstallationWorker::nameIndicatesApp(app.name, job.packageId)) {
             present.insert(appSignature(app));
         }
     }
+    reliable = registry_ok && appx_ok;
     return present;
 }
 
@@ -196,6 +206,16 @@ AppInstallationWorker::~AppInstallationWorker() {
 
 int AppInstallationWorker::boundConcurrency(int requested) {
     return qBound(0, requested, kMaxInstallConcurrency);
+}
+
+bool AppInstallationWorker::systemStateCheckEligible(bool preInstallSnapshotReliable,
+                                                     bool chocoReportedZero) {
+    // Fail closed: the snapshot-based system-state check may certify an install
+    // ONLY when the pre-install snapshot was complete AND choco did not report a
+    // definitive zero-installed. An unreliable snapshot could omit a pre-existing
+    // matching app (misread post-install as NEW); a "0 installed" line is
+    // authoritative failure the fallback must never override (R5-G22-12).
+    return preInstallSnapshotReliable && !chocoReportedZero;
 }
 
 int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> report,
@@ -560,37 +580,51 @@ bool AppInstallationWorker::installPackage(int jobIndex, MigrationJob& job) {
     Q_EMIT jobProgress(job.entryIndex, "Installing " + job.packageId + "...");
 
     // Snapshot matching apps BEFORE the install so post-install verification can
-    // tell a NEW install from a pre-existing one (R5-P7-47).
-    const QSet<QString> pre_install_apps = snapshotMatchingApps(job);
+    // tell a NEW install from a pre-existing one (R5-P7-47). snapshot_reliable is
+    // false if that pre-install enumeration was partial, which would let the
+    // system-state fallback misread a dropped pre-existing app as a NEW install
+    // and falsely certify (R5-G22-12).
+    bool snapshot_reliable = true;
+    const QSet<QString> pre_install_apps = snapshotMatchingApps(job, snapshot_reliable);
 
     auto result = m_chocoManager->installPackage(makeInstallConfig(job));
     bool success = result.success;
     bool verification_failed = false;
 
-    // Choco transcript first, then a snapshot-aware system check -- but a
-    // definitive "0 installed" line is authoritative and is never overridden.
+    // Choco transcript first, then a snapshot-aware system check -- gated so it
+    // runs (the expensive registry/AppX rescan) only when eligible: a reliable
+    // pre-install snapshot and no definitive "0 installed" line. An unreliable
+    // snapshot fails closed rather than risk a false certification.
     if (success) {
         const bool verified = verifyInstallation(job, result) ||
-                              (!chocoReportedZeroInstalled(result.output) &&
+                              (systemStateCheckEligible(
+                                   snapshot_reliable, chocoReportedZeroInstalled(result.output)) &&
                                verifyNewSystemInstall(job, pre_install_apps));
         verification_failed = !verified;
         success = verified;
     }
 
-    // Update status
     job.endTime = QDateTime::currentDateTime();
+    applyInstallOutcome(jobIndex, job, success, verification_failed, result.error_message);
+    return success;
+}
 
+void AppInstallationWorker::applyInstallOutcome(int jobIndex,
+                                                MigrationJob& job,
+                                                bool success,
+                                                bool verificationFailed,
+                                                const QString& chocoError) {
     if (success) {
         job.status = MigrationStatus::Success;
         Q_EMIT jobProgress(job.entryIndex, "Successfully installed " + job.packageId);
     } else {
         job.status = MigrationStatus::Failed;
-        if (verification_failed) {
+        if (verificationFailed) {
             job.errorMessage = "Installation reported success but could not be verified";
-        } else if (result.error_message.isEmpty()) {
+        } else if (chocoError.isEmpty()) {
             job.errorMessage = "Installation failed";
         } else {
-            job.errorMessage = result.error_message;
+            job.errorMessage = chocoError;
         }
         Q_EMIT jobProgress(job.entryIndex, "Failed to install " + job.packageId);
         sak::logWarning("[AppInstallationWorker] Failed: {} - {}",
@@ -600,8 +634,6 @@ bool AppInstallationWorker::installPackage(int jobIndex, MigrationJob& job) {
 
     storeJobSnapshot(jobIndex, job);
     Q_EMIT jobStatusChanged(job.entryIndex, job);
-
-    return success;
 }
 
 // ======================================================================

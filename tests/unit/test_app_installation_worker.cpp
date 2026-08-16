@@ -357,6 +357,26 @@ private Q_SLOTS:
         QVERIFY(!W::nameIndicatesApp("Notepad", ""));
     }
 
+    /// systemStateCheckEligible (R5-G22-12): the snapshot-based system-state
+    /// fallback may certify an install ONLY when the pre-install snapshot was
+    /// reliable AND choco did not report a definitive "0 installed". An unreliable
+    /// snapshot can omit a pre-existing matching app, which the post-install check
+    /// would misread as a NEW install and falsely certify; a "0 installed" line is
+    /// authoritative failure. Both must fail closed.
+    void systemStateCheckEligibleFailsClosed() {
+        using W = sak::AppInstallationWorker;
+        // The only eligible combination: reliable snapshot, choco not zero.
+        QVERIFY(W::systemStateCheckEligible(/*reliable=*/true, /*chocoZero=*/false));
+        // An unreliable pre-install snapshot fails closed even without a zero line
+        // -- this is the R5-G22-12 fix; dropping the snapshot-reliable guard would
+        // let this certify falsely.
+        QVERIFY(!W::systemStateCheckEligible(/*reliable=*/false, /*chocoZero=*/false));
+        // A definitive "0 installed" line is authoritative failure regardless of
+        // the snapshot.
+        QVERIFY(!W::systemStateCheckEligible(/*reliable=*/true, /*chocoZero=*/true));
+        QVERIFY(!W::systemStateCheckEligible(/*reliable=*/false, /*chocoZero=*/true));
+    }
+
     /// A null ChocolateyManager must never be dereferenced (CODEX REVIEW 3 #11):
     /// construction and startMigration fail closed instead of crashing.
     void nullChocoManagerFailsClosed() {
