@@ -840,6 +840,10 @@ void EmailInspectorPanel::disconnectDialogSignals() {
                this,
                &EmailInspectorPanel::onAttachmentContentReady);
     disconnect(m_controller.get(),
+               &EmailInspectorController::attachmentContentFailed,
+               this,
+               &EmailInspectorPanel::onAttachmentContentFailed);
+    disconnect(m_controller.get(),
                &EmailInspectorController::stateChanged,
                this,
                &EmailInspectorPanel::onStateChanged);
@@ -866,6 +870,10 @@ void EmailInspectorPanel::reconnectDialogSignals() {
             &EmailInspectorController::attachmentContentReady,
             this,
             &EmailInspectorPanel::onAttachmentContentReady);
+    connect(m_controller.get(),
+            &EmailInspectorController::attachmentContentFailed,
+            this,
+            &EmailInspectorPanel::onAttachmentContentFailed);
     connect(m_controller.get(),
             &EmailInspectorController::stateChanged,
             this,
@@ -928,6 +936,10 @@ void EmailInspectorPanel::connectControllerNavigationSignals() {
             &EmailInspectorController::attachmentContentReady,
             this,
             &EmailInspectorPanel::onAttachmentContentReady);
+    connect(m_controller.get(),
+            &EmailInspectorController::attachmentContentFailed,
+            this,
+            &EmailInspectorPanel::onAttachmentContentFailed);
 }
 
 void EmailInspectorPanel::connectControllerSearchSignals() {
@@ -1670,6 +1682,28 @@ void EmailInspectorPanel::onAttachmentContentReady(uint64_t message_id,
     }
 }
 
+void EmailInspectorPanel::onAttachmentContentFailed(uint64_t message_id,
+                                                    int index,
+                                                    const QString& error) {
+    if (m_dialog_active) {
+        return;
+    }
+    // Symmetric to the save branch of onAttachmentContentReady: count the failure only
+    // against the exact attachment this batch requested. recordError refuses any ref the
+    // batch is not waiting on, so an unrelated controller error can neither inflate the
+    // failed count nor complete the batch early. A non-save failure (e.g. an inline CID
+    // image that could not be fetched) simply is not outstanding and is ignored here.
+    const sak::AttachmentRef ref{.message_id = message_id, .index = index};
+    if (!m_batch_save.recordError(ref)) {
+        return;
+    }
+    Q_EMIT logOutput(tr("Attachment save error (message %1 index %2): %3")
+                         .arg(message_id)
+                         .arg(index)
+                         .arg(error));
+    finishAttachmentBatchIfComplete();
+}
+
 void EmailInspectorPanel::onSearchHit(sak::EmailSearchHit /*hit*/) {
     // Incrementally update result count in status bar
 }
@@ -1725,14 +1759,11 @@ void EmailInspectorPanel::onErrorOccurred(QString message) {
     sak::logError("Email Tools: {}", message.toStdString());
     Q_EMIT logOutput(tr("Error: %1").arg(message));
 
-    // A failed attachment read is reported through this signal and names no
-    // attachment, so an in-flight batch has to count it. Without this the batch
-    // never reaches its expected total, and the save controls -- locked for the
-    // duration of a batch -- would stay locked for the rest of the session.
-    if (m_batch_save.isActive()) {
-        m_batch_save.recordError();
-        finishAttachmentBatchIfComplete();
-    }
+    // A save batch's per-attachment failures arrive on the identity-carrying
+    // attachmentContentFailed signal (onAttachmentContentFailed), not here. This generic
+    // error names no attachment, so charging it to the batch would count an unrelated
+    // failure as a save failure -- exactly the miscount this replaces. Every issued
+    // request still resolves (ready or failed), so the batch never latches.
 }
 
 // MBOX-specific handlers

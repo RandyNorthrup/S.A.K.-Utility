@@ -22,6 +22,8 @@ private Q_SLOTS:
     void saveToDirectoryDoesNotTruncateWhenExhausted();
     void batchRefusesArrivalItDidNotRequest();
     void batchRecordsEachExpectedRefOnce();
+    void batchRecordErrorCountsOnlyOutstandingRef();
+    void batchRecordErrorRefusesDuplicate();
     void batchRefusesOverlappingBegin();
     void batchRefusesEmptyExpectation();
 };
@@ -159,6 +161,64 @@ void TestEmailAttachmentSaver::batchRecordsEachExpectedRefOnce() {
     QVERIFY(batch.isComplete());
     QCOMPARE(batch.succeeded(), 2);
     QCOMPARE(batch.failed(), 0);
+}
+
+// G22-9: a batch save must count a FAILURE by attachment identity, not off a bare
+// "something errored" signal. A failure naming an attachment this batch is not waiting
+// on -- an unrelated controller error, or a request refused for a different operation --
+// must never be charged to the batch, because that would inflate the failed count and
+// could complete the batch before its own requests resolved.
+void TestEmailAttachmentSaver::batchRecordErrorCountsOnlyOutstandingRef() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    sak::AttachmentBatchSave batch;
+    const sak::AttachmentRef first{7, 0};
+    const sak::AttachmentRef second{7, 1};
+    QVERIFY(batch.begin(dir.path(), {first, second}));
+
+    // A failure for an attachment this batch never asked for is ignored: nothing
+    // counted, batch not advanced toward completion.
+    QVERIFY(!batch.recordError(sak::AttachmentRef{999, 0}));
+    QCOMPARE(batch.failed(), 0);
+    QVERIFY(!batch.isComplete());
+
+    // A failure for an outstanding attachment counts once and clears the slot.
+    QVERIFY(batch.recordError(first));
+    QCOMPARE(batch.failed(), 1);
+    QVERIFY(!batch.expects(first));
+    QVERIFY(!batch.isComplete());
+
+    // The batch completes only once its real requests have all resolved.
+    QVERIFY(batch.recordOne(second, QStringLiteral("b.txt"), QByteArray("TWO", 3)).success);
+    QVERIFY(batch.isComplete());
+    QCOMPARE(batch.succeeded(), 1);
+    QCOMPARE(batch.failed(), 1);
+    QCOMPARE(batch.expectedCount(), 2);
+}
+
+// A second failure for an attachment that is already resolved -- whether it succeeded
+// or failed -- is no longer outstanding and must not double-count.
+void TestEmailAttachmentSaver::batchRecordErrorRefusesDuplicate() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    sak::AttachmentBatchSave batch;
+    const sak::AttachmentRef only{5, 2};
+    QVERIFY(batch.begin(dir.path(), {only}));
+
+    QVERIFY(batch.recordError(only));
+    QCOMPARE(batch.failed(), 1);
+    QVERIFY(batch.isComplete());
+
+    // A duplicate failure for the same ref is refused: no second increment.
+    QVERIFY(!batch.recordError(only));
+    QCOMPARE(batch.failed(), 1);
+
+    // A late success for the same ref is likewise refused (not outstanding), so the
+    // counts stay honest.
+    QVERIFY(!batch.recordOne(only, QStringLiteral("late.txt"), QByteArray("LATE", 4)).success);
+    QCOMPARE(batch.succeeded(), 0);
 }
 
 void TestEmailAttachmentSaver::batchRefusesOverlappingBegin() {

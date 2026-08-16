@@ -75,6 +75,7 @@ private Q_SLOTS:
                                   int index,
                                   QByteArray content,
                                   QString filename);
+    void onAttachmentContentFailed(uint64_t message_id, int index, const QString& error);
     void onErrorOccurred(const QString& message);
 
 private:

@@ -92,10 +92,14 @@ public:
                                    const QString& filename,
                                    const QByteArray& data);
 
-    /// Record a failure that happened upstream (e.g. controller error signal).
-    /// That signal names no attachment, so this counts against the batch total
-    /// without clearing a specific outstanding entry.
-    void recordError();
+    /// Record a failure for one specific attachment this batch asked for.
+    /// Symmetric to recordOne(): @p ref must still be outstanding, otherwise nothing
+    /// is counted and false is returned. A stray or duplicate failure -- one for an
+    /// attachment this batch never requested, or one already recorded -- is ignored,
+    /// so an unrelated upstream error can neither inflate this batch's failed count
+    /// nor complete it early (the defect the old identity-less recordError had).
+    /// @return true if the failure was counted against an outstanding entry.
+    bool recordError(const AttachmentRef& ref);
 
     /// True once all expected attachments have been processed.
     [[nodiscard]] bool isComplete() const;

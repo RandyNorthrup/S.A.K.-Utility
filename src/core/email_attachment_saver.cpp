@@ -175,16 +175,19 @@ AttachmentSaveResult AttachmentBatchSave::recordOne(const AttachmentRef& ref,
     return result;
 }
 
-void AttachmentBatchSave::recordError() {
-    // Every call site establishes the active batch first: the panel and the
-    // attachments browser test isActive(), and runPstAttachmentSaves() only
-    // reaches this after begin() returned true.
-    Q_ASSERT(isActive());
-    if (!isActive()) {
-        // Release-build fail-closed: never count a failure against a batch that is not running.
-        return;
+bool AttachmentBatchSave::recordError(const AttachmentRef& ref) {
+    // Symmetric to recordOne(): a failure may only be counted for an attachment this
+    // batch is still waiting on. Anything else -- a failure for an attachment the batch
+    // never asked for, or a second failure for one already resolved -- is refused, so an
+    // unrelated upstream error (an inline-image fetch, a leftover from a previous batch,
+    // an "operation in progress" rejection meant for a different request) can never be
+    // charged against this batch or push it to a premature complete count.
+    if (!expects(ref)) {
+        return false;
     }
+    m_outstanding.remove(ref);
     ++m_failed;
+    return true;
 }
 
 bool AttachmentBatchSave::isComplete() const {

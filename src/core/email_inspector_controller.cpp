@@ -269,7 +269,12 @@ void EmailInspectorController::loadItemProperties(uint64_t item_node_id) {
 void EmailInspectorController::loadAttachmentContent(uint64_t message_node_id,
                                                      int attachment_index) {
     if (isBusyWithBackgroundOp()) {
-        Q_EMIT errorOccurred(QStringLiteral("Cannot navigate: operation in progress"));
+        // Refused, but the caller still asked for THIS attachment, so the rejection must
+        // carry its identity: a batch save has to be able to resolve every request it
+        // issued (via ready or failed) or it would hang with the save controls latched.
+        const QString message = QStringLiteral("Cannot load attachment: operation in progress");
+        Q_EMIT attachmentContentFailed(message_node_id, attachment_index, message);
+        Q_EMIT errorOccurred(message);
         return;
     }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
@@ -287,7 +292,11 @@ void EmailInspectorController::loadAttachmentContent(uint64_t message_node_id,
                 Q_EMIT attachmentContentReady(
                     static_cast<uint64_t>(msg_idx), attachment_index, *result, filename);
             } else {
-                Q_EMIT errorOccurred(QStringLiteral("Failed to extract attachment"));
+                const QString message = QStringLiteral("Failed to extract attachment");
+                Q_EMIT attachmentContentFailed(static_cast<uint64_t>(msg_idx),
+                                               attachment_index,
+                                               message);
+                Q_EMIT errorOccurred(message);
             }
         });
     }
@@ -532,6 +541,13 @@ void EmailInspectorController::connectPstSignals() {
             this,
             [this](uint64_t mid, int idx, QByteArray data, QString name) {
                 Q_EMIT attachmentContentReady(mid, idx, data, name);
+            });
+
+    connect(m_pst_parser.get(),
+            &PstParser::attachmentContentFailed,
+            this,
+            [this](uint64_t mid, int idx, QString err) {
+                Q_EMIT attachmentContentFailed(mid, idx, err);
             });
 
     connect(m_pst_parser.get(),

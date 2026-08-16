@@ -1023,7 +1023,7 @@ void runPstAttachmentSaves(PstParser& parser,
         const std::expected<QByteArray, sak::error_code> bytes =
             parser.readAttachmentData(req.message_id, i);
         if (!bytes) {
-            batch.recordError();
+            batch.recordError(sak::AttachmentRef{req.message_id, i});
             tally.errors.append(QStringLiteral("attachment %1: could not read bytes").arg(i));
             ++tally.failed;
             continue;

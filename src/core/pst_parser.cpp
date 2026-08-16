@@ -1123,8 +1123,13 @@ void PstParser::loadAttachmentContent(uint64_t message_node_id, int attachment_i
         Q_EMIT attachmentContentReady(
             message_node_id, attachment_index, std::move(*result), filename);
     } else {
-        Q_EMIT errorOccurred(QStringLiteral("Failed to load attachment: %1")
-                                 .arg(QString::fromUtf8(sak::to_string(result.error()))));
+        const QString message = QStringLiteral("Failed to load attachment: %1")
+                                    .arg(QString::fromUtf8(sak::to_string(result.error())));
+        // Identity-carrying failure first (so a batch save can correlate it to the exact
+        // request), then the generic errorOccurred so existing error-display paths are
+        // unchanged.
+        Q_EMIT attachmentContentFailed(message_node_id, attachment_index, message);
+        Q_EMIT errorOccurred(message);
     }
 }
 

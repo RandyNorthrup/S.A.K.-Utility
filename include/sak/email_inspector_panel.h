@@ -116,6 +116,7 @@ private Q_SLOTS:
                                   int index,
                                   QByteArray data,
                                   QString filename);
+    void onAttachmentContentFailed(uint64_t message_id, int index, const QString& error);
     void onSearchHit(sak::EmailSearchHit hit);
     void onSearchComplete(int total_hits);
     void onExportStarted(int total);

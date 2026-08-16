@@ -144,6 +144,13 @@ Q_SIGNALS:
     void itemDetailLoaded(sak::PstItemDetail detail);
     void itemPropertiesLoaded(uint64_t item_id, QVector<sak::MapiProperty> properties);
     void attachmentContentReady(uint64_t message_id, int index, QByteArray data, QString filename);
+    /// Emitted when a specific attachment's content could NOT be produced (extract
+    /// failure, or a request refused because an operation was already in progress).
+    /// Carries the same (message_id, index) identity as attachmentContentReady so a
+    /// batch save correlates the failure to the exact request it issued. Every
+    /// loadAttachmentContent call resolves to exactly one of ready/failed, so a batch
+    /// never hangs on an unresolved request and never miscounts an unrelated error.
+    void attachmentContentFailed(uint64_t message_id, int index, QString error);
 
     // Search
     void searchHit(sak::EmailSearchHit hit);

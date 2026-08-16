@@ -306,6 +306,10 @@ void EmailAttachmentsBrowserDialog::startScan() {
             this,
             &EmailAttachmentsBrowserDialog::onAttachmentContentReady);
     connect(m_controller,
+            &::EmailInspectorController::attachmentContentFailed,
+            this,
+            &EmailAttachmentsBrowserDialog::onAttachmentContentFailed);
+    connect(m_controller,
             &::EmailInspectorController::errorOccurred,
             this,
             &EmailAttachmentsBrowserDialog::onErrorOccurred);
@@ -721,6 +725,28 @@ void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t message_id
     }
 }
 
+void EmailAttachmentsBrowserDialog::onAttachmentContentFailed(uint64_t message_id,
+                                                              int index,
+                                                              const QString& error) {
+    // Symmetric to onAttachmentContentReady: count the failure only against the exact
+    // attachment this batch requested. recordError refuses any ref this batch is not
+    // waiting on, so an unrelated controller failure -- one for another view, or a
+    // request refused for a different operation -- can neither inflate the failed count
+    // nor complete the batch early. Every loadAttachmentContent request resolves to
+    // exactly one ready/failed, so the batch still always reaches its expected total.
+    const AttachmentRef ref{.message_id = message_id, .index = index};
+    if (!m_batch_save.recordError(ref)) {
+        return;
+    }
+    sak::logWarning(
+        "Attachment save error (message {} index {}): {}", message_id, index, error.toStdString());
+    if (m_batch_save.isComplete()) {
+        m_status_label->setText(m_batch_save.summaryText());
+        m_batch_save.reset();
+        updateSaveControls();
+    }
+}
+
 void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& message) {
     // During detail loading -- skip this item and continue
     if (!m_scan_complete && m_details_total > 0) {
@@ -737,16 +763,11 @@ void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& message) {
         QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::scanNextFolder);
         return;
     }
-    // During save -- count as failure and update status
-    if (m_batch_save.isActive()) {
-        m_batch_save.recordError();
-        sak::logWarning("Attachment save error: {}", message.toStdString());
-        if (m_batch_save.isComplete()) {
-            m_status_label->setText(m_batch_save.summaryText());
-            m_batch_save.reset();
-            updateSaveControls();
-        }
-    }
+    // A save batch's failures arrive on the identity-carrying attachmentContentFailed
+    // signal (onAttachmentContentFailed), not here. This generic error names no
+    // attachment, so charging it to the batch is exactly the miscount that would count
+    // an unrelated failure as a save failure. Nothing to do for a save-phase error.
+    Q_UNUSED(message);
 }
 
 // ============================================================================

@@ -4257,8 +4257,25 @@ review.
   - RESOLVED 2026-08-11 [fixed]: converted all three positional aggregate initializers of ApfsTreeCollect (collectDirectorySubtree + two prepareDirectoryCreate sites) to designated initializers so a future struct member cannot silently misassign; behavior-preserving (omitted visitedDirectories value-inits to its nullptr default as before).
       call sites while the struct is gaining members. Safe today because the new guard
       fails closed, but fragile. Use designated initializers
-- [~] R5-G22-9 The attachment panel's onErrorOccurred counts ANY controller error against
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the attachment-panel onErrorOccurred counting ANY controller error against the in-flight batch is the documented lesser-evil (vs a permanently-latched save control); the real fix -- giving errorOccurred(QString) an attachment identity -- is a cross-cutting signal-signature change across the controller + panel. Current behavior is safe; deferred.
+- [x] R5-G22-9 The attachment panel's onErrorOccurred counts ANY controller error against
+  - RESOLVED 2026-08-16 [fixed]: gave the attachment failure path an identity and counted off it,
+    which turned out NOT to need the feared cross-cutting errorOccurred signature change. New
+    signal attachmentContentFailed(message_id, index, error) on PstParser and
+    EmailInspectorController is emitted for every way a loadAttachmentContent request can fail --
+    extract failure (MBOX read + PstParser) and the "operation in progress" rejection -- each
+    carrying the (message_id, index) the request was issued with. Every loadAttachmentContent call
+    now resolves to exactly one of attachmentContentReady / attachmentContentFailed, so a batch
+    never latches on an unresolved request -- the sole reason the identity-less count-any-error
+    lesser-evil existed. AttachmentBatchSave::recordError(ref) replaces the no-arg recordError():
+    symmetric to recordOne, it counts a failure ONLY for an outstanding ref and refuses a stray or
+    duplicate one, so an unrelated controller error can neither inflate the failed count nor
+    complete the batch early. The attachments dialog and the inspector panel now count save
+    failures in a new identity-correlated onAttachmentContentFailed slot and no longer charge the
+    generic errorOccurred to the batch; the synchronous app-action save path
+    (runPstAttachmentSaves) records by identity too. New unit tests
+    batchRecordErrorCountsOnlyOutstandingRef / batchRecordErrorRefusesDuplicate. Full Release build
+    + ctest 248/248. The generic errorOccurred keeps its QString signature (still used for display
+    everywhere); only the batch-counting path was moved onto the identity signal.
       an in-flight batch, because errorOccurred(QString) carries no attachment identity.
       Chosen as the lesser evil against a permanently latched save control. The real fix
       is to give the error signal an identity
