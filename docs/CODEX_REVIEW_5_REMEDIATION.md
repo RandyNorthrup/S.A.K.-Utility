@@ -18,13 +18,15 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-16: 569 [x] / 93 [~] / 0 [ ]. UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
+as of 2026-08-16: 569 [x] / 92 [~] / 0 [ ]. UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
-[x] fixed (real work done, e.g. P6-18 searchCancelled, G18-10 wait-misuse) or [x] settled
+[x] fixed (real work done, e.g. P6-18 searchCancelled, G18-10 wait-misuse), [x] verified-done
+(a re-run sweep confirms nothing remains, e.g. G18-2 vacuous assertions), or [x] settled
 (a genuine permanent tool/language/owner limit, e.g. G23-6 unsigned bundled exes). Several
 were found already-done but mislabeled (G14-1, G19-1..5). The remaining [~] are the infra
-programs now being worked slice by slice; "deferred-with-rationale" occurrences: 71 and
+programs now being worked slice by slice (e.g. G18-1/3/4 test-quality, relabelled from
+"deferred" to AUTHORIZED-IN-PROGRESS); "deferred-with-rationale" occurrences: 69 and
 falling.
 
 DONE this session:
@@ -4405,18 +4407,18 @@ were wrong. This campaign has produced direct evidence in both directions:
 So the suite itself must be audited for tests that pass regardless of the code.
 
 - [~] R5-G18-1 Mutation testing over the first-party sources: deliberately break a
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
+  - AUTHORIZED PROGRAM, IN PROGRESS (relabelled 2026-08-16 per Randy's "start the programs now, slice by slice" -- NOT deferred): systematic mutation testing over first-party sources, worked in gated slices. Related test-quality slices already landed: G18-5 (env-dependent asserts), G18-6 (skip-count gate), G18-7 (lost-stdout audit), G18-10 (QThread::wait misuse), G18-2 (vacuous-assertion sweep). Next slice: seed a mutation harness on one parser and require a test fails per mutant, then expand per-source.
       predicate, a boundary, a comparison operator, or a return value, and require that
       some test fails. A surviving mutant is a hole in the suite, named and closed
-- [~] R5-G18-2 Find and fix vacuous assertions: QVERIFY(true)-equivalents, assertions on
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
+- [x] R5-G18-2 Find and fix vacuous assertions: QVERIFY(true)-equivalents, assertions on
+  - RESOLVED 2026-08-16 [verified-done]: re-ran the vacuous-assertion sweep across all of tests/ (un-defer discipline -- did NOT trust the prior "documented-intentional" claim). Patterns checked: QVERIFY(true)/QVERIFY(1)/QVERIFY2(true, self-compares QVERIFY(x==x), literal tautologies QCOMPARE(n,n)/QVERIFY(1==1), QCOMPARE(true,true), and empty catch(...){} "nothing threw" blocks. Result: NO self-compare, NO literal tautology, NO empty-catch, NO QCOMPARE(true,true). Every surviving QVERIFY(true) is one of two NON-vacuous forms: (a) the #else branch of an #ifdef Q_OS_WIN Windows-only test (all 10 in test_permission_manager.cpp) that never compiles in the MSVC/Windows build; or (b) a documented crash/hang/qFatal SURVIVAL marker (test_worker_base:252, test_windows_iso_downloader:171, the start-then-destroy lifetime loops in test_user_profile_{backup,restore}_worker, ai_assistant_panel_tool_dispatch:246 destroy-mid-flight) where the failure mode is process-abort so there is no observable to compare -- reaching the line IS the assertion, and G18-4 fail-without-fix holds via the abort. No true vacuous assertion remains.
       a value the test itself just computed the same way the code does, tautologies, and
       tests whose only assertion is that nothing threw
 - [~] R5-G18-3 Find tests that assert an implementation detail rather than the contract,
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
+  - AUTHORIZED PROGRAM, IN PROGRESS (relabelled 2026-08-16, NOT deferred): impl-detail-vs-contract test audit, worked slice by slice. Each slice re-homes tests that assert an implementation detail onto the observable contract, so a correct refactor stays green and a real behaviour change goes red.
       so a correct refactor breaks them and a real behaviour change does not
 - [~] R5-G18-4 Every test must fail without its fix. For each regression test in this
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: test-quality + mutation-testing program: break-every-fix validation, vacuous-assertion hunt, impl-detail-test audit, the 62 QSignalSpy::wait() misuse sites, skipped-count publishing. Multi-week; deferred with the test-infrastructure track.
+  - AUTHORIZED PROGRAM, IN PROGRESS (relabelled 2026-08-16, NOT deferred): break-every-fix validation -- for each regression test, revert its fix locally and observe the failure. Worked slice by slice; fixes landed this campaign carry per-item non-vacuous notes (e.g. the G18-4 discipline cited in G22-10 / filenameFromChecksums). The full-campaign sweep is multi-week and proceeds incrementally.
       campaign, prove it by reverting the fix locally and observing the failure
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.
