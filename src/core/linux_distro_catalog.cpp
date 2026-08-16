@@ -185,7 +185,12 @@ DistroInfo debianLiveDistro() {
             .homepage = "https://www.debian.org/distrib/",
             .githubOwner = {},
             .githubRepo = {},
-            .githubAssetPattern = {}};
+            .githubAssetPattern = {},
+            // current-live/ is a rolling directory but the ISO filename embeds
+            // the point release, so the pinned name 404s on every Debian update.
+            // Discover the current GNOME amd64 live image from the published
+            // SHA256SUMS instead (R5-G22-10).
+            .rollingFilenamePattern = R"(^debian-live-[0-9][0-9.]*-amd64-gnome\.iso$)"};
 }
 
 DistroInfo archLinuxDistro() {
@@ -374,7 +379,13 @@ void LinuxDistroCatalog::addSecurityDistros() {
                .homepage = "https://www.kali.org",
                .githubOwner = {},
                .githubRepo = {},
-               .githubAssetPattern = {}});
+               .githubAssetPattern = {},
+               // current/ is a rolling directory but the ISO filename embeds the
+               // release, so the pinned name 404s on every Kali update. Discover
+               // the current installer amd64 image from the published SHA256SUMS
+               // instead. Anchored so it never matches installer-netinst,
+               // installer-purple, live, or a non-amd64 image (R5-G22-10).
+               .rollingFilenamePattern = R"(^kali-linux-[0-9][0-9.]*-installer-amd64\.iso$)"});
 }
 
 void LinuxDistroCatalog::addSystemRecoveryDistros() {
@@ -537,6 +548,68 @@ QString LinuxDistroCatalog::resolveFileName(const DistroInfo& distro) const {
     }
 
     return substituteVersion(distro.fileName, distro.version);
+}
+
+namespace {
+// Bare ISO filename from a single SHA256SUMS record line, or empty when the line
+// is a comment/blank/prose, its first token is not a digest, or it names a path.
+// Extracted so filenameFromChecksums stays a simple match loop (R5-G22-10).
+QString checksumRecordFilename(const QString& line) {
+    // A checksum record's first token must look like a digest (sha1/sha256/sha512
+    // hex), so a prose line that happens to end in a filename-like word is not
+    // mistaken for a record.
+    static const QRegularExpression hexDigest(QStringLiteral("^[0-9a-fA-F]{40,128}$"));
+    static const QRegularExpression whitespace(QStringLiteral("\\s+"));
+    // A record is at minimum "<digest> <filename>": two whitespace-separated
+    // tokens.
+    constexpr qsizetype kMinChecksumRecordTokens = 2;
+
+    const QString trimmed = line.trimmed();
+    if (trimmed.isEmpty() || trimmed.startsWith('#')) {
+        return {};
+    }
+    const QStringList parts = trimmed.split(whitespace, Qt::SkipEmptyParts);
+    if (parts.size() < kMinChecksumRecordTokens || !hexDigest.match(parts.at(0)).hasMatch()) {
+        return {};  // not a "<digest>  <filename>" record
+    }
+    QString filename = parts.at(1);
+    if (filename.startsWith('*')) {
+        filename = filename.mid(1);  // binary-mode marker "hash *file"
+    }
+    // Only a bare filename may be spliced into the download URL. Reject any record
+    // naming a path so a checksums line can never redirect the download outside
+    // its pinned directory.
+    if (filename.contains('/') || filename.contains('\\')) {
+        return {};
+    }
+    return filename;
+}
+}  // namespace
+
+QString LinuxDistroCatalog::filenameFromChecksums(const QString& checksumsText,
+                                                  const QString& pattern) {
+    if (pattern.isEmpty()) {
+        return {};
+    }
+    const QRegularExpression matcher(pattern);
+    if (!matcher.isValid()) {
+        return {};
+    }
+
+    const QStringList lines = checksumsText.split('\n', Qt::SkipEmptyParts);
+    for (const QString& line : lines) {
+        const QString filename = checksumRecordFilename(line);
+        if (filename.isEmpty()) {
+            continue;
+        }
+        // Full match only, so an unanchored pattern cannot accept a substring.
+        const QRegularExpressionMatch match = matcher.match(filename);
+        if (match.hasMatch() && match.capturedStart() == 0 &&
+            match.capturedLength() == filename.length()) {
+            return filename;
+        }
+    }
+    return {};
 }
 
 QString LinuxDistroCatalog::substituteVersion(const QString& pattern,

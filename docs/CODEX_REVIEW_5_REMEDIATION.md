@@ -4206,7 +4206,31 @@ review.
       an in-flight batch, because errorOccurred(QString) carries no attachment identity.
       Chosen as the lesser evil against a permanently latched save control. The real fix
       is to give the error signal an identity
-- [~] R5-G22-10 Kali and Debian ISO catalog entries are already stale: the catalog pins
+- [x] R5-G22-10 Kali and Debian ISO catalog entries are already stale: the catalog pins
+  - RESOLVED 2026-08-16 [fixed + LIVE-CERTED]: implemented the fail-closed rolling-filename
+    discovery. DistroInfo gained rollingFilenamePattern (anchored regex) and the PURE static
+    LinuxDistroCatalog::filenameFromChecksums(checksumsText, pattern) parses SHA256SUMS records
+    ("<hexdigest>  <file>" / "<hexdigest> *<file>"), skips comments/prose/non-digest-first-token
+    lines, REJECTS any entry naming a path ('/' or '\\'), and returns the first bare filename
+    that FULLY matches the pattern (empty on empty/invalid pattern or no match). Kali and Debian
+    carry patterns anchored to the installer-amd64 / amd64-gnome image. LinuxISODownloader
+    startDownload routes a pattern-carrying DirectURL distro to startRollingFilenameDiscovery,
+    which fetches the SAME HTTPS-pinned checksum URL (NoLessSafeRedirectPolicy + 16MiB cap +
+    operation-generation guard, mirroring verifyChecksum) and, on success, applyDiscoveredFilename
+    swaps ONLY the last path segment of the download URL AND the save path (keeping host/dir and
+    the user's folder), then downloads. ANY fetch/parse failure fails closed (no download) exactly
+    as before -- strictly safer than the guaranteed 404. requirePinnedChecksum still gates it, so
+    the discovered filename is still checksum-verified against that same SHA256SUMS post-download.
+    Six unit tests over filenameFromChecksums (Kali picks installer-amd64 not netinst/purple/live/
+    arm; Debian picks gnome not kde/xfce/...; "*file" binary marker; path/non-record rejection;
+    empty/invalid pattern; rolling distros carry the pattern). Non-vacuous by G18-4: defeating the
+    digest-shape guard turns the path/non-record test red. LIVE-CERT 2026-08-16 (read-only HTTPS
+    GET, no adapter touched -- allowed under the sharpened [[no-vm-networking-cert]]): fetched the
+    real cdimage.kali.org/current/SHA256SUMS (9 iso entries) and cdimage.debian.org current-live
+    SHA256SUMS (9 iso entries); each anchored pattern matched EXACTLY ONE real current filename --
+    kali-linux-2026.2-installer-amd64.iso and debian-live-13.6.0-amd64-gnome.iso -- confirming both
+    the correct-variant selection AND the staleness this fixes (upstream 2026.2/13.6.0 vs the
+    pinned 2026.1/13.5.0). Full Release ctest green.
   - DESIGN READY 2026-08-12 [needs live-network cert]: root cause confirmed -- both use a rolling current/ directory but hardcode {version} into the filename, so they 404 on every upstream release. FAIL-CLOSED design: add a DistroInfo.rollingFilenamePattern (regex) + a PURE static LinuxDistroCatalog::filenameFromChecksums(sha256sums_text, pattern) (unit-testable: parse the "<hash>  <filename>" lines, return the first .iso matching the pattern, empty if none). In LinuxISODownloader::startDownload, a distro carrying a pattern enters a discovery step that fetches m_checksumUrl (the current/SHA256SUMS, already HTTPS-pinned) via the SAME QNetworkAccessManager path as onChecksumReplyFinished, parses the ACTUAL current filename, rebuilds m_downloadUrl = dirOf(downloadUrl)+filename and m_expectedFileName, then downloads. Any fetch/parse failure fails closed exactly as today (no download), so it can never ship an unsafe ISO -- it is strictly safer than the current guaranteed 404. NOT LANDED because it cannot be certified without live network to cdimage.kali.org / cdimage.debian.org (the same reason [[no-vm-networking-cert]] governs netsh): implementing an async network flow that feeds bootable-media flashing without proving it works risks a silent regression. Ready to implement + live-cert when a network run is available.
       2026.1 and 13.5.0 while upstream now serves 2026.2 and 13.6.0. Both 404 and fail
       closed, so nothing unsafe ships, but both features are broken. The cause is

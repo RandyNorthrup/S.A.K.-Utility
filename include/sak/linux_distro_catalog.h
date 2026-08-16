@@ -68,6 +68,16 @@ public:
         QString githubOwner;         ///< GitHub repository owner
         QString githubRepo;          ///< GitHub repository name
         QString githubAssetPattern;  ///< Regex pattern to match the ISO asset filename
+
+        // Rolling-release filename discovery (only used when non-empty). Some
+        // distros publish under a rolling "current/" directory but embed a
+        // version in the ISO filename, so a pinned filename 404s on every
+        // upstream release. When set, the downloader fetches checksumUrl (the
+        // current SHA256SUMS) BEFORE downloading and derives the actual current
+        // filename by matching this anchored regex, then rebuilds the download
+        // URL in the same directory. Fails closed (no download) on any fetch or
+        // match failure, so it can never ship an unverified ISO (R5-G22-10).
+        QString rollingFilenamePattern;
     };
 
     explicit LinuxDistroCatalog(QObject* parent = nullptr);
@@ -129,6 +139,27 @@ public:
      * @return Resolved filename
      */
     QString resolveFileName(const DistroInfo& distro) const;
+
+    /**
+     * @brief First ISO filename in a checksum file whose bare name fully matches
+     *        an anchored regex (rolling-release discovery, R5-G22-10)
+     *
+     * Parses SHA256SUMS-style records ("<hexdigest>  <filename>" or
+     * "<hexdigest> *<filename>"): skips blank/comment/prose lines and any record
+     * whose first token is not a hex digest, rejects any entry naming a path (a
+     * '/' or '\\', so a checksum line can never redirect the download outside its
+     * directory), and returns the first remaining filename that FULLY matches
+     * @p pattern. Returns empty when @p pattern is empty or an invalid regex, or
+     * when nothing matches -- the caller fails closed on empty.
+     *
+     * Pure and static; unit-testable without any network.
+     *
+     * @param checksumsText The fetched checksum file body
+     * @param pattern An anchored regex (e.g. "^kali-linux-[0-9.]+-installer-amd64\\.iso$")
+     * @return The matching filename, or empty if none
+     */
+    [[nodiscard]] static QString filenameFromChecksums(const QString& checksumsText,
+                                                       const QString& pattern);
 
     /**
      * @brief Check for latest version of a GitHub-hosted distro

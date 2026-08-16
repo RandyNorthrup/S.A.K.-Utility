@@ -144,6 +144,7 @@ void LinuxISODownloader::startDownload(const QString& distroId, const QString& s
     ++m_operationGeneration;  // supersede any stale in-flight verify from a prior run
     m_currentDistroId = distroId;
     m_savePath = savePath;
+    m_rollingFilenamePattern.clear();  // set only for a rolling DirectURL distro below
 
     auto distro = m_catalog->distroById(distroId);
     if (distro.id.isEmpty()) {
@@ -167,6 +168,7 @@ void LinuxISODownloader::startDownload(const QString& distroId, const QString& s
         m_expectedFileName = m_catalog->resolveFileName(distro);
         m_totalSize = distro.approximateSize;
         m_sourceType = distro.sourceType;
+        m_rollingFilenamePattern = distro.rollingFilenamePattern;
 
         if (m_downloadUrl.isEmpty()) {
             Q_EMIT downloadError("Could not resolve download URL for " + distro.name);
@@ -176,7 +178,13 @@ void LinuxISODownloader::startDownload(const QString& distroId, const QString& s
             return;
         }
 
-        startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
+        if (m_rollingFilenamePattern.isEmpty()) {
+            startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
+        } else {
+            // Rolling release: the pinned filename would 404, so derive the current
+            // one from the checksum file first, then download (R5-G22-10).
+            startRollingFilenameDiscovery();
+        }
     }
 }
 
@@ -206,6 +214,94 @@ bool LinuxISODownloader::requirePinnedChecksum(const QString& distroName) {
         return false;
     }
     return true;
+}
+
+void LinuxISODownloader::startRollingFilenameDiscovery() {
+    // Reuse the ResolvingVersion phase: to the UI this is still "working out what
+    // to download" before the transfer begins.
+    setPhase(Phase::ResolvingVersion, "Resolving current filename...");
+    Q_EMIT statusMessage("Resolving the current image filename...");
+
+    // Fetch the SAME pinned HTTPS checksum file the post-download verify uses, so
+    // the current filename is derived from the project's own published manifest.
+    // requirePinnedChecksum already validated the URL is HTTPS and well-formed.
+    auto* nam = new QNetworkAccessManager(this);
+    QNetworkRequest request{QUrl(m_checksumUrl)};
+    request.setRawHeader("User-Agent", "SAK-Utility/1.0");
+    // An HTTPS request that redirects onto a plain-HTTP mirror is refused outright
+    // rather than silently followed -- the discovered filename feeds a URL that is
+    // written to removable media, so its transport must not be downgraded.
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+
+    const quint64 generation = m_operationGeneration.load();
+    auto* reply = nam->get(request);
+    // Fail closed on an oversized response so readAll() can never buffer an
+    // unbounded body into memory.
+    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64 total) {
+        if (received > kMaxChecksumBytes || total > kMaxChecksumBytes) {
+            reply->abort();
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, nam, generation]() {
+        onRollingFilenameReplyFinished(reply, nam, generation);
+    });
+}
+
+void LinuxISODownloader::onRollingFilenameReplyFinished(QNetworkReply* reply,
+                                                        QNetworkAccessManager* nam,
+                                                        quint64 generation) {
+    Q_ASSERT(reply);
+    Q_ASSERT(nam);
+    reply->deleteLater();
+    nam->deleteLater();
+
+    if (!shouldApplyVerifyResult(m_cancelled, generation, m_operationGeneration.load())) {
+        return;  // cancelled, or superseded by a newer download
+    }
+
+    if (reply->error() != QNetworkReply::NoError) {
+        const QString error = checksumFetchErrorMessage(reply);
+        sak::logWarning(error.toStdString());
+        setPhase(Phase::Failed, "Filename discovery failed");
+        Q_EMIT downloadError(error);
+        return;
+    }
+
+    const QString checksumData = QString::fromUtf8(reply->readAll());
+    const QString filename = LinuxDistroCatalog::filenameFromChecksums(checksumData,
+                                                                       m_rollingFilenamePattern);
+    if (filename.isEmpty()) {
+        const QString error =
+            "Could not determine the current download filename from the published checksums for " +
+            m_currentDistroId + "; refusing to guess a version that may not exist. Please retry.";
+        sak::logWarning(error.toStdString());
+        setPhase(Phase::Failed, "Filename discovery failed");
+        Q_EMIT downloadError(error);
+        return;
+    }
+
+    applyDiscoveredFilename(filename);
+    startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
+}
+
+void LinuxISODownloader::applyDiscoveredFilename(const QString& filename) {
+    // Swap ONLY the last path segment of the download URL and the save path to the
+    // discovered filename, keeping the pinned host/directory and the user's chosen
+    // folder. filenameFromChecksums already guaranteed a bare filename (no path
+    // separators), so this cannot redirect the download elsewhere. The checksum
+    // verify reads QFileInfo(m_savePath).fileName(), so all three must agree.
+    m_expectedFileName = filename;
+
+    const int urlSlash = static_cast<int>(m_downloadUrl.lastIndexOf('/'));
+    if (urlSlash >= 0) {
+        m_downloadUrl = m_downloadUrl.left(urlSlash + 1) + filename;
+    }
+    const QFileInfo saveInfo(m_savePath);
+    m_savePath = saveInfo.absolutePath() + '/' + filename;
+
+    sak::logInfo("Rolling-release filename resolved: " + filename.toStdString() + " -> " +
+                 m_downloadUrl.toStdString());
 }
 
 // ============================================================================

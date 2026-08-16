@@ -194,6 +194,18 @@ private:
     ///        non-HTTPS checksum URL can be tampered with on the same leg as the artifact.
     ///        Returns false and reports the failure when the download must not proceed.
     bool requirePinnedChecksum(const QString& distroName);
+    /// @brief For a rolling-release distro (DistroInfo::rollingFilenamePattern set), fetch the
+    ///        pinned HTTPS SHA256SUMS and derive the current ISO filename before downloading.
+    ///        Fails closed (no download) on any fetch or parse failure (R5-G22-10).
+    void startRollingFilenameDiscovery();
+    void onRollingFilenameReplyFinished(QNetworkReply* reply,
+                                        QNetworkAccessManager* nam,
+                                        quint64 generation);
+    /// @brief Swap only the version-bearing last path segment of the download URL and save
+    ///        path to the discovered @p filename, keeping the pinned host/directory and the
+    ///        user's chosen folder. Keeps m_downloadUrl, m_savePath and m_expectedFileName
+    ///        consistent so the post-download checksum verify matches the right entry.
+    void applyDiscoveredFilename(const QString& filename);
     void onChecksumReplyFinished(QNetworkReply* reply,
                                  QNetworkAccessManager* nam,
                                  quint64 generation);
@@ -222,6 +234,9 @@ private:
     QString m_checksumUrl;
     QString m_checksumType;
     QString m_expectedFileName;
+    // Non-empty only for a rolling-release distro whose current filename must be
+    // discovered from the checksum file before download (R5-G22-10).
+    QString m_rollingFilenamePattern;
     qint64 m_totalSize = 0;
     std::atomic<bool> m_cancelled{false};
     // Bumped on every new download and on cancel; a background hash tags itself
