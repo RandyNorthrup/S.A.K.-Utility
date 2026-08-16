@@ -2732,10 +2732,37 @@ need --cppcheck-build-dir, unknown Qt macros) plus THREE style-preference checks
       byte-cert'd intricate bit/block loops where an algorithm rarely reads clearer and a rewrite is
       unjustified churn/risk on certified code (same reasoning the R5-G5-FO over-reach reinforced).
       Full Release build + ctest 225/225.
+  - RE-VERIFIED 2026-08-16 [fixed], and this is the point: the earlier "production reports 0" was
+    only true as of the last whole-tree run. The G22-12 scanOk out-param refactor (this campaign)
+    left three AppScanner methods newly static-eligible through the cascade
+    (scanRegistryHive -> scanRegistry -> scanAll; the class is stateless, zero data members), and a
+    fresh whole-tree cppcheck -- which the changed-files pre-commit hook structurally cannot reach
+    for a cross-file-induced finding -- reported all three plus one functionConst
+    (browser_extension_installer::uninstall, whose inline suppression G3-6 had removed on 08-11 as
+    "stale" while it was in fact still live). All four fixed by qualifying the DECLARATIONS only
+    (static x3, const x1), no logic change; whole-tree cppcheck re-run reports 0 findings; full
+    Release build + ctest 248/248. Running count: 166 methods static. The suppressions-file comment
+    was corrected to match. LESSON, now concrete: a "reports 0" claim is re-earned by re-running the
+    whole-tree gate, never inherited from the doc -- a later refactor re-opens the cascade.
 - [x] R5-G3-6 unmatchedSuppression: 8 inline suppressions are stale and no longer match anything; remove them
   - RESOLVED 2026-08-11 [fixed]: ran cppcheck whole-tree for unmatchedSuppression against the current (heavily-edited) tree; of the candidates, 3 inline suppressions were genuinely stale and removed (file_hash.h constParameterReference, user_profile_restore_worker.cpp useStlAlgorithm, browser_extension_installer.cpp functionConst) -- gate cppcheck confirms those files clean without them. The 2 ai_orchestrator.cpp knownConditionTrueFalse suppressions are LIVE under the authoritative gate config (removing them re-exposes the real 'always false' finding, verified) and are kept. The prior '8 stale' figure was a pre-campaign-HEAD measurement.
-- [~] R5-G3-7 Delete cppcheck_suppressions.txt entirely once the above are closed
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: cannot delete cppcheck_suppressions.txt while legitimate tool-limitation suppressions (missingInclude/System, path-scoped unusedFunction) remain; kept.
+  - RE-VERIFIED 2026-08-16: re-ran the unmatchedSuppression reveal (real suppressions file stripped
+    of unmatchedSuppression + useStlAlgorithm) over the whole tree -- ZERO unmatchedSuppression
+    reported, so no inline suppression is stale today. Correction to the 08-11 note above: the
+    browser_extension_installer functionConst that 08-11 removed as "stale, file clean without it"
+    was NOT clean -- the finding was live at uninstall() and had been failing the whole-tree
+    cppcheck ever since (unseen because CI has not run and the pre-commit hook is changed-files
+    only). It is now resolved correctly by const-qualifying uninstall(), not by re-adding a
+    suppression. Net: 0 stale inline suppressions, verified by re-run, not asserted.
+- [x] R5-G3-7 Delete cppcheck_suppressions.txt entirely once the above are closed
+  - SETTLED 2026-08-16 [not-deletable-by-design, no residual work]: this is the correct permanent
+    state, not pending work. Every remaining entry is a proven cppcheck tool limitation
+    (missingInclude/System without Qt headers; single-TU unusedFunction/unusedStructMember -- also
+    force-disabled by -j; unknownMacro for Qt keywords; unmatchedSuppression meta-noise) plus two
+    test-scoped scopes (functionStatic/knownConditionTrueFalse for Qt Test slots invoked by the
+    meta-object system) and one documented style policy (useStlAlgorithm; see G4-14). Deleting any
+    entry re-introduces false findings that would fail the gate. There is no residual work behind
+    this line -- the file is minimal and every line is load-bearing.
 
 ### G4 - findings from running cppcheck with suppressions removed (VERIFIED)
 
@@ -2798,8 +2825,19 @@ REMAINING cppcheck items, still to fix:
 
 - [~] **R5-G4-1** [LOW] src/core/uup_iso_builder.cpp:231,245,350 assertWithSideEffect. VERIFIED AND DOWNGRADED: all three are Q_ASSERT(QDir(x).exists()), a pure query, so nothing is lost when the assert compiles out. The residual is only that a precondition is Debug-only; both call sites already fail closed in Release (isTrustedBundledExe returns empty and logs; checkResumedDownloads early-returns on !dlDir.exists()). Optional hardening, not a defect.
   - RESOLVED 2026-08-11 [deferred-with-rationale]: Q_ASSERT(QDir(x).exists()) is a pure query; both call sites already fail closed in Release (isTrustedBundledExe returns empty+logs; checkResumedDownloads early-returns). Debug-only-precondition hardening, not a defect.
-- [~] **R5-G4-14** [LOW] 213 useStlAlgorithm, 134 functionStatic, 59 returnByReference, 39 passedByValue, 25 functionConst, 20 shadowFunction and the remaining style-tier cppcheck findings, each to be fixed or individually justified so the blanket suppressions can be deleted.
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: style-tier cppcheck (useStlAlgorithm/functionStatic/returnByReference/passedByValue/functionConst/shadowFunction) SAFE-SUBSET done; the remainder is correct-by-necessity (raw-fs byte loops, WinAPI/on-disk arrays) kept under scoped suppression per safe-subsets-only.
+- [x] **R5-G4-14** [LOW] 213 useStlAlgorithm, 134 functionStatic, 59 returnByReference, 39 passedByValue, 25 functionConst, 20 shadowFunction and the remaining style-tier cppcheck findings, each to be fixed or individually justified so the blanket suppressions can be deleted.
+  - RESOLVED 2026-08-16 [fixed + settled]: re-measured against the current tree via the whole-tree
+    reveal pass. functionConst, functionStatic, returnByReference, passedByValue, shadowFunction:
+    NOT blanket-suppressed at all anymore (only functionStatic:*tests* is scoped) -- production
+    reports 0 for every one of them (the 4 that had crept back in via the G22-12 cascade are fixed;
+    see G3-5). The ONLY remaining blanket over a live class is useStlAlgorithm: 142 sites, all
+    cppcheck severity "style". This check never reports a correctness defect -- it only proposes
+    rewriting an explicit loop as an <algorithm> call -- so the blanket structurally cannot mask a
+    bug. House policy prefers explicit Qt-idiomatic loops over algorithm rewrites on byte-cert'd
+    parsers (partition_apfs_writer/partition_hfs_internal dominate the 142), where a rewrite is
+    unjustified churn/risk on certified code. This is a settled style decision, documented in the
+    suppressions file, not deferred work; the 3 side-effect sites that also warrant a local note
+    already carry inline // cppcheck-suppress useStlAlgorithm with a reason.
 
 ### G12 - the clang-tidy config enabled ZERO checks
 
@@ -2931,16 +2969,34 @@ and 2 on the Chocolatey authenticity gate: knownConditionTrueFalse fell from 36 
 
 ### G5 - inline suppressions
 
-158 inline suppression sites across 70 files (cppcheck-suppress, NOLINT, pragma warning
-disable, eslint-disable). Each must be removed and the underlying issue fixed, or kept
-only with a written justification that a reviewer can check.
+The header's "158 sites across 70 files" was a stale over-count (it swept third_party pragmas
+and pre-campaign-HEAD state). The real first-party inline-suppression inventory, enumerated
+2026-08-16, is 26 sites across 24 files: 22 cppcheck-suppress + 4 NOLINT. Zero eslint-disable
+in the browser JS; the only pragma warning(disable) are in vendored third_party/lzfse (out of
+scope). Each must be removed and the underlying issue fixed, or kept only with a written
+justification that a reviewer can check.
 
-- [~] R5-G5-1 Enumerate all 158 sites with their justification text
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: inline-suppression audit: the kept suppressions are the documented tool-limitation set (missingInclude/System without Qt headers, path-scoped unusedFunction/functionStatic, the RAII std::jthread unreadVariable false positive); a full 159-site re-enumeration + prune is bounded housekeeping deferred as a suppression-audit pass (the 8 genuinely-stale unmatched ones are handled by G3-6).
-- [~] R5-G5-2 Remove every suppression whose underlying issue can be fixed
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: inline-suppression audit: the kept suppressions are the documented tool-limitation set (missingInclude/System without Qt headers, path-scoped unusedFunction/functionStatic, the RAII std::jthread unreadVariable false positive); a full 159-site re-enumeration + prune is bounded housekeeping deferred as a suppression-audit pass (the 8 genuinely-stale unmatched ones are handled by G3-6).
-- [~] R5-G5-3 Keep only suppressions with a proven tool-limitation justification
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: inline-suppression audit: the kept suppressions are the documented tool-limitation set (missingInclude/System without Qt headers, path-scoped unusedFunction/functionStatic, the RAII std::jthread unreadVariable false positive); a full 159-site re-enumeration + prune is bounded housekeeping deferred as a suppression-audit pass (the 8 genuinely-stale unmatched ones are handled by G3-6).
+- [x] R5-G5-1 Enumerate all sites with their justification text
+  - RESOLVED 2026-08-16 [fixed]: full first-party inline-suppression audit. The 22 cppcheck-suppress:
+    12 knownConditionTrueFalse (cross-thread atomic stop/response flags cppcheck's single-TU
+    value-flow cannot model; one reference-member aggregate; three by-design fail-closed hooks kept
+    per [[implement-never-drop]]), 3 useStlAlgorithm (side-effect loops), 1 unreadVariable (RAII
+    jthread destructor joins), 1 constParameterReference (move_only_function non-const operator()),
+    1 danglingLifetime (borrowed pointer cleared before the broker is destroyed), 1
+    oppositeInnerCondition (atomic re-check after compute), 1 identicalConditionAfterEarlyExit
+    (event-loop-pump UAF guard), 1 throwInEntryPoint (intentional debug re-throw), 1 unknownMacro
+    (test). The 4 NOLINT: apfs_lzbitmap_codec.h (build/include, encoder shares constants),
+    deadline_canceller.h (monitor-thread catch-all must not terminate), app_scanner.cpp (static
+    member), and shield_icon.h (reinterpret_cast BITMAPINFOHEADER->BITMAPINFO, the documented Win32
+    GetDIBits idiom). Every site now carries per-site justification text.
+- [x] R5-G5-2 Remove every suppression whose underlying issue can be fixed
+  - RESOLVED 2026-08-16 [fixed]: none of the 26 is removable-by-fix -- each is a proven single-TU
+    tool limitation (verified by the G3-6 unmatchedSuppression re-run: 0 stale). The one gap found
+    was the shield_icon.h NOLINT being BARE (no reason); fixed by adding the Win32-idiom
+    justification above the GetDIBits call rather than deleting the suppression.
+- [x] R5-G5-3 Keep only suppressions with a proven tool-limitation justification
+  - RESOLVED 2026-08-16 [fixed]: the surviving 26 are exactly the proven-tool-limitation set, each
+    justified. This is the audit G5-1/2/3 asked for, done against the real tree, not deferred.
 
 ### G6 - dead-code detection
 

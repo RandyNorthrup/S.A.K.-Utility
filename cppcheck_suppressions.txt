@@ -21,7 +21,9 @@ useStlAlgorithm
 // Qt Test slots are invoked by the meta-object system and cannot be static. Scoped to tests/ ONLY
 // -- a global silence hid 114 production "can be static" findings. All were resolved: every pure
 // helper across the HFS/APFS/ext readers, parsers, preset builders, and stateless validators was
-// made static (163 methods over 5 cascade rounds, R5-G3/G5). Production reports 0.
+// made static (166 methods over the cascade, R5-G3/G5). Re-verified whole-tree 2026-08-16 after
+// the G22-12 scanOk refactor re-opened the AppScanner cascade (scanRegistryHive/scanRegistry/
+// scanAll); all three qualified static. Production reports 0.
 functionStatic:*tests*
 
 // Test assertions intentionally verify enum distinctness with known values. Scoped to tests/

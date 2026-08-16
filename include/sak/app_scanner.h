@@ -71,7 +71,7 @@ public:
      *        untouched other than the aggregate result. Pass nullptr to ignore.
      * @return List of discovered applications
      */
-    std::vector<AppInfo> scanAll(bool* scanOk = nullptr);
+    static std::vector<AppInfo> scanAll(bool* scanOk = nullptr);
 
     /**
      * @brief Scan from Windows Registry (HKLM and HKCU)
@@ -79,7 +79,7 @@ public:
      *        hive open/enum/subkey-open failed. Pass nullptr to ignore.
      * @return List of applications from registry
      */
-    std::vector<AppInfo> scanRegistry(bool* scanOk = nullptr);
+    static std::vector<AppInfo> scanRegistry(bool* scanOk = nullptr);
 
     /**
      * @brief Scan Windows Store (AppX) packages
@@ -124,9 +124,9 @@ private:
      *        hive open or any per-subkey enum/open failed. Pass nullptr to ignore.
      * @return List of applications from this hive
      */
-    std::vector<AppInfo> scanRegistryHive(void* hive,
-                                          const QString& subkey,
-                                          bool* scanOk = nullptr);
+    static std::vector<AppInfo> scanRegistryHive(void* hive,
+                                                 const QString& subkey,
+                                                 bool* scanOk = nullptr);
 
     /**
      * @brief Enumerate every app subkey under an already-open hive key, appending

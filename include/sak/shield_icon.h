@@ -51,6 +51,9 @@ namespace sak {
     if (hdc == nullptr) {
         return {};
     }
+    // GetDIBits wants a BITMAPINFO*; bih is a BITMAPINFOHEADER, which is BITMAPINFO's first
+    // member. At biBitCount 32 (BI_RGB) GetDIBits writes only the header and never reads or
+    // writes a color table, so passing the header alone is the documented, safe Win32 idiom.
     const int copied = GetDIBits(hdc,
                                  color_bitmap,
                                  0,

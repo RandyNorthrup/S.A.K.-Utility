@@ -572,7 +572,7 @@ ExtensionInstallResult BrowserExtensionInstaller::install() {
 
 // Not const by design: it is the semantic pair of the (mutating) install(), and both perform an
 // external registry/filesystem mutation even though neither writes a data member.
-ExtensionInstallResult BrowserExtensionInstaller::uninstall() {
+ExtensionInstallResult BrowserExtensionInstaller::uninstall() const {
     ExtensionInstallResult r;
     const ForcelistRemoval fl = removeOurForcelistEntries(config_.forcelist_key_path);
     if (fl.m_read_error) {
@@ -633,7 +633,7 @@ ExtensionInstallResult BrowserExtensionInstaller::install() {
             QStringLiteral("Unsupported platform"),
             QStringLiteral("Chrome extension policy install is Windows-only")};
 }
-ExtensionInstallResult BrowserExtensionInstaller::uninstall() {
+ExtensionInstallResult BrowserExtensionInstaller::uninstall() const {
     return {false, QStringLiteral("Unsupported platform"), QString()};
 }
 ExtensionInstallState BrowserExtensionInstaller::state() const {

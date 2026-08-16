@@ -55,7 +55,7 @@ public:
     // uninstall(): remove only our policy entry and our native host key; Chrome then
     //   auto-removes the extension. Leaves foreign policy entries untouched.
     ExtensionInstallResult install();
-    ExtensionInstallResult uninstall();
+    ExtensionInstallResult uninstall() const;
 
     ExtensionInstallState state() const;
     QString stateString() const;  // "installed" | "not_installed" | "partial" | "error"
