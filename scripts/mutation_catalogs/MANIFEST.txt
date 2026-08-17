@@ -10,4 +10,5 @@ email_html_sanitizer.json
 linux_distro_catalog.json
 mbox_header_parser.json
 mbox_transfer_decoder.json
+nuget_version_range.json
 pst_block_decoder.json
