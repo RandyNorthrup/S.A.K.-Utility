@@ -1,0 +1,80 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_pst_parser",
+  "ctest_regex": "^test_pst_parser$",
+  "mutants": [
+    {
+      "id": "block-trailer-cb-check-inverted",
+      "file": "src/core/pst_parser.cpp",
+      "find": "readLE<uint16_t>(*trailer, kBlockTrailerCbOffset) != static_cast<uint16_t>(cb)",
+      "replace": "readLE<uint16_t>(*trailer, kBlockTrailerCbOffset) == static_cast<uint16_t>(cb)",
+      "expect": "killed",
+      "why": "the BLOCKTRAILER's declared cb must EQUAL the BBT cb; inverting the guard rejects every byte-integral block (valid root PC block fails at open) and accepts a cb-mismatched one"
+    },
+    {
+      "id": "block-trailer-crc-check-inverted",
+      "file": "src/core/pst_parser.cpp",
+      "find": "block_crc != readLE<uint32_t>(*trailer, kBlockTrailerCrcOffset)",
+      "replace": "block_crc == readLE<uint32_t>(*trailer, kBlockTrailerCrcOffset)",
+      "expect": "killed",
+      "why": "the computed weak-CRC over the raw block must EQUAL the trailer dwCRC; inverting the guard fails every authentic block (open reads the root PC block and fails closed)"
+    },
+    {
+      "id": "block-trailer-sig-check-inverted",
+      "file": "src/core/pst_parser.cpp",
+      "find": "msPstComputeSig(file_offset, bid) != readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)",
+      "replace": "msPstComputeSig(file_offset, bid) == readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)",
+      "expect": "killed",
+      "why": "ComputeSig(offset,bid) must EQUAL the trailer wSig; inverting the guard fails every authentic block so open() cannot read the root PC"
+    },
+    {
+      "id": "block-trailer-bid-check-inverted",
+      "file": "src/core/pst_parser.cpp",
+      "find": "trailer_bid != bid",
+      "replace": "trailer_bid == bid",
+      "expect": "killed",
+      "why": "the trailer's own bid must EQUAL the BBT bid; inverting the guard fails every authentic block (open reads the root PC block and fails closed)"
+    },
+    {
+      "id": "4k-passthrough-cb-equal-inverted",
+      "file": "src/core/pst_parser.cpp",
+      "find": "uncompressed_size == static_cast<uint16_t>(cb)",
+      "replace": "uncompressed_size != static_cast<uint16_t>(cb)",
+      "expect": "killed",
+      "why": "declared uncompressed_size == cb marks a STORED (uncompressed) 4k block returned verbatim; inverting the test decompresses a stored block (passthrough fixture fails) and passes a compressed one through raw (compressed fixture fails)"
+    },
+    {
+      "id": "4k-passthrough-zero-guard-removed",
+      "file": "src/core/pst_parser.cpp",
+      "find": "uncompressed_size == 0 || ",
+      "replace": "",
+      "expect": "killed",
+      "why": "a footer uncompressed_size of 0 means the 4k block is not compressed and is returned verbatim; removing that guard drives qUncompress over a stored (non-zlib) block and fails it closed"
+    },
+    {
+      "id": "4k-exact-size-check-inverted",
+      "file": "src/core/pst_parser.cpp",
+      "find": "decompressed.size() != uncompressed_size",
+      "replace": "decompressed.size() == uncompressed_size",
+      "expect": "killed",
+      "why": "an inflated block is accepted only when its length EQUALS the footer's declared uncompressed_size; inverting the guard fails the valid compressed block (its sizes match) so the inflate fixture cannot open"
+    },
+    {
+      "id": "4k-exact-size-check-disabled",
+      "file": "src/core/pst_parser.cpp",
+      "find": "decompressed.size() != uncompressed_size",
+      "replace": "decompressed.size() != decompressed.size()",
+      "expect": "killed",
+      "why": "disabling the exact-size invariant lets a stream whose inflated length differs from the declared uncompressed_size through; the size-mismatch fixture (declared = inflated+5) then opens instead of failing closed. Validates that fail-close test is non-vacuous"
+    },
+    {
+      "id": "4k-decompress-failure-isEmpty-masked",
+      "file": "src/core/pst_parser.cpp",
+      "find": "decompressed.isEmpty()",
+      "replace": "decompressed.size() < 0",
+      "expect": "equivalent",
+      "why": "a failed qUncompress returns an empty buffer; suppressing the isEmpty fail-close (size() < 0 is never true for a signed qsizetype) only defers rejection to the downstream exact-size check (0 != a nonzero declared uncompressed_size), which fails the bad-zlib block closed identically. The emitted result is identical for every input"
+    }
+  ]
+}

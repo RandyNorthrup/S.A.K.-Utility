@@ -225,6 +225,7 @@ private Q_SLOTS:
     void unicode4kOstReads4096ByteBTreePages();
     void unicode4kCompressedBlockInflates();
     void unicode4kUncompressedBlockPassesThrough();
+    void unicode4kZeroDeclaredSizeStoresUncompressed();
     void unicode4kBadZlibFailsClosed();
     void unicode4kDecompressSizeMismatchFailsClosed();
     void compressibleEncryptedPstDecodesRootPropertyContext();
@@ -670,6 +671,27 @@ void TestPstParser::unicode4kUncompressedBlockPassesThrough() {
     QTemporaryFile temp_file;
     QVERIFY(temp_file.open());
     temp_file.write(buildUnicode4kBlockStore(heap, static_cast<uint16_t>(heap.size())));
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+}
+
+void TestPstParser::unicode4kZeroDeclaredSizeStoresUncompressed() {
+    // decompressBlockIf4k zero-size passthrough branch: a footer uncompressed_size of 0 marks the
+    // 4k block as STORED (not compressed), so the raw bytes are returned verbatim -- distinct from
+    // the declared == cb passthrough. Store the root PC heap raw with declared == 0; open() must
+    // succeed by reading the heap directly. Without the `uncompressed_size == 0` guard the parser
+    // would drive qUncompress over the non-zlib heap and fail the block closed, so this pins that
+    // the 0 marker is honoured rather than treated as a compressed block.
+    const QByteArray heap = buildRootPcHeapForTest();
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(buildUnicode4kBlockStore(heap, 0));
     temp_file.close();
 
     PstParser parser;
