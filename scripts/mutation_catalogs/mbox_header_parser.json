@@ -1,0 +1,80 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_fuzz_mbox_headers",
+  "ctest_regex": "^test_fuzz_mbox_headers$",
+  "mutants": [
+    {
+      "id": "name-includes-colon",
+      "file": "include/sak/mbox_header_parser.h",
+      "find": "line.left(colon)",
+      "replace": "line.left(colon + 1)",
+      "expect": "killed",
+      "why": "the header name is the text BEFORE the colon; left(colon + 1) folds the ':' into the name so a Content-Type lookup keyed on the bare token misses"
+    },
+    {
+      "id": "value-includes-colon",
+      "file": "include/sak/mbox_header_parser.h",
+      "find": "line.mid(colon + 1)",
+      "replace": "line.mid(colon)",
+      "expect": "killed",
+      "why": "the value starts one byte AFTER the colon; mid(colon) prefixes every value with a stray ':' that trimming cannot strip"
+    },
+    {
+      "id": "fold-drop-join-space",
+      "file": "include/sak/mbox_header_parser.h",
+      "find": "QLatin1Char(' ') + QString::fromUtf8(line).trimmed()",
+      "replace": "QString::fromUtf8(line).trimmed()",
+      "expect": "killed",
+      "why": "a folded continuation line must be joined to the preceding value with a single space; dropping it concatenates the two tokens (\"folded valuecontinued\")"
+    },
+    {
+      "id": "fold-keep-inner-whitespace",
+      "file": "include/sak/mbox_header_parser.h",
+      "find": "QString::fromUtf8(line).trimmed()",
+      "replace": "QString::fromUtf8(line)",
+      "expect": "killed",
+      "why": "the continuation line's own leading whitespace (space/tab indent) must be stripped before joining; keeping it leaves embedded double spaces / tabs inside the value that the final outer trim cannot reach"
+    },
+    {
+      "id": "name-not-trimmed-in-flush",
+      "file": "include/sak/mbox_header_parser.h",
+      "find": "current_name.toLower().trimmed()",
+      "replace": "current_name.toLower()",
+      "expect": "killed",
+      "why": "'From : x' (space before the colon) yields the raw name 'From ', so the name must be trimmed before use; without it the key is 'from ' and every bare-token lookup misses. This is the ONLY trim applied to the name (extraction does not trim), so removing it is observable"
+    },
+    {
+      "id": "boundary-crlf-truncated",
+      "file": "include/sak/mbox_header_parser.h",
+      "find": "raw_message.indexOf(\"\\r\\n\\r\\n\")",
+      "replace": "raw_message.indexOf(\"\\r\\n\")",
+      "expect": "killed",
+      "why": "the CRLF header/body boundary is the blank line \\r\\n\\r\\n; matching a single \\r\\n cuts the block after the first header, dropping every header after the first from a CRLF message"
+    },
+    {
+      "id": "boundary-lf-truncated",
+      "file": "include/sak/mbox_header_parser.h",
+      "find": "raw_message.indexOf(\"\\n\\n\")",
+      "replace": "raw_message.indexOf(\"\\n\")",
+      "expect": "killed",
+      "why": "the LF-only boundary is the blank line \\n\\n; matching a single \\n cuts the block after the first header, dropping every header after the first from an LF-only message"
+    },
+    {
+      "id": "leading-colon-guard-ge",
+      "file": "include/sak/mbox_header_parser.h",
+      "find": "colon > 0",
+      "replace": "colon >= 0",
+      "expect": "equivalent",
+      "why": "colon == 0 means a leading-colon line with no name; with > 0 it is skipped, with >= 0 the name is left(0) == \"\" and flushHeader's !current_name.isEmpty() guard drops it anyway. indexOf returns -1 when absent (fails both tests). The emitted map is byte-identical for every input"
+    },
+    {
+      "id": "value-extract-trim-redundant",
+      "file": "include/sak/mbox_header_parser.h",
+      "find": "QString::fromUtf8(line.mid(colon + 1)).trimmed()",
+      "replace": "QString::fromUtf8(line.mid(colon + 1))",
+      "expect": "equivalent",
+      "why": "the extracted value is trimmed a SECOND time by flushHeader (current_value.trimmed()) before insertion, so removing this first trim only leaves outer whitespace that the flushHeader trim strips; the inserted value is identical for every input"
+    }
+  ]
+}

@@ -92,6 +92,44 @@ private Q_SLOTS:
         }
         QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
     }
+
+    // Exact-value coverage. The property fuzz above only asserts that every emitted name is
+    // non-empty, lower-cased, and trimmed -- it never pins the VALUE, the header COUNT, or
+    // the header/body boundary, so a mutation to the colon split or the CRLF boundary slips
+    // through. This locks the fields and the count for a known CRLF block.
+    void parsesNameValueAndCountExactly() {
+        const QMap<QString, QString> h = sak::mbox::parseRfc5322Headers(
+            QByteArray("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: hi\r\n\r\nb"));
+        QCOMPARE(h.size(), 3);
+        QCOMPARE(h.value(QStringLiteral("from")), QStringLiteral("alice@example.com"));
+        QCOMPARE(h.value(QStringLiteral("to")), QStringLiteral("bob@example.com"));
+        QCOMPARE(h.value(QStringLiteral("subject")), QStringLiteral("hi"));
+    }
+
+    // A folded continuation line (leading space or tab) joins onto the preceding value with
+    // exactly one space and its own indent stripped -- distinguishes the correct join from a
+    // dropped separator ("valuecontinued") or a kept indent ("value  continued").
+    void foldedContinuationJoinsWithSingleSpace() {
+        const QMap<QString, QString> h = sak::mbox::parseRfc5322Headers(
+            QByteArray("Subject: folded value\r\n continued here\r\n\tand more\r\n\r\nbody"));
+        QCOMPARE(h.value(QStringLiteral("subject")),
+                 QStringLiteral("folded value continued here and more"));
+    }
+
+    // The header/body boundary is a blank line in LF-only messages too, and a name may carry
+    // whitespace before the colon. Pins the LF boundary (so later headers are not lost) and
+    // the name trim -- the property fuzz only catches the latter by chance.
+    void lfBoundaryKeepsAllHeadersAndNameIsTrimmed() {
+        const QMap<QString, QString> lf =
+            sak::mbox::parseRfc5322Headers(QByteArray("From: a@b\nTo: c@d\n\nbody"));
+        QCOMPARE(lf.size(), 2);
+        QCOMPARE(lf.value(QStringLiteral("to")), QStringLiteral("c@d"));
+
+        const QMap<QString, QString> spaced =
+            sak::mbox::parseRfc5322Headers(QByteArray("From : x\r\n\r\n"));
+        QVERIFY(spaced.contains(QStringLiteral("from")));
+        QCOMPARE(spaced.value(QStringLiteral("from")), QStringLiteral("x"));
+    }
 };
 
 QTEST_APPLESS_MAIN(MboxHeaderFuzzTests)
