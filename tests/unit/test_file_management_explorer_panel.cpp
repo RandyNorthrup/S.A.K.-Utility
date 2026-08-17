@@ -615,13 +615,22 @@ private Q_SLOTS:
         QVERIFY(pane.previewText());
         QVERIFY(pane.previewImage());
         QVERIFY(pane.previewCaption());
-        auto* stack = pane.findChild<QStackedWidget*>(QStringLiteral("fileExplorerPreviewStack"));
-        QVERIFY(stack);
-        // The Preview tab hosts a text/hex view (index 0) and an image view (index 1).
+        // Contract: the Preview region shows the text/hex view OR the image view and
+        // swaps between them on showImagePreview(). Assert the caller-observable result --
+        // which view the user actually sees -- rather than the internal QStackedWidget
+        // handle and its page index. This stays green if the pages are reordered or the
+        // stack is swapped for another show/hide mechanism, yet it goes red if
+        // showImagePreview() ever surfaces the WRONG view: a page-order swap that still
+        // setCurrentIndex(1) would satisfy an index check while showing the text view.
+        // isVisibleTo(&pane) reads the explicit hide flags QStackedWidget sets on its
+        // non-current page, so it is correct without show()-ing the top-level pane -- the
+        // same idiom this suite uses for the details scroller (verifyShellDetailsAndPreviewPanes).
         pane.showImagePreview(true);
-        QCOMPARE(stack->currentIndex(), 1);
+        QVERIFY(pane.previewImage()->isVisibleTo(&pane));
+        QVERIFY(!pane.previewText()->isVisibleTo(&pane));
         pane.showImagePreview(false);
-        QCOMPARE(stack->currentIndex(), 0);
+        QVERIFY(pane.previewText()->isVisibleTo(&pane));
+        QVERIFY(!pane.previewImage()->isVisibleTo(&pane));
     }
 
     void explorerTabsOpenAndSwitch() {
