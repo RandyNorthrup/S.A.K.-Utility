@@ -101,9 +101,20 @@ void AiTranscriptViewTests::resultBubbleCopyCopiesOnlyThatMessage() {
     QVERIFY(view.appendMessage(QStringLiteral("Assistant"), QStringLiteral("Second result"), true));
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
-    const auto buttons = view.findChildren<QPushButton*>(QStringLiteral("aiTranscriptCopyButton"));
-    QCOMPARE(buttons.size(), 2);
-    buttons.first()->click();
+    // Locate the copy affordances by their AT-observable accessible name -- the contract a
+    // screen-reader user actually relies on, set unconditionally on every result bubble's copy
+    // button -- rather than the internal test-handle objectName. The Expand/Collapse toggle
+    // carries no accessible name, so this matches exactly the two result-bubble copy buttons and
+    // the user bubble still exposes none. findChildren preserves child order, so the first match
+    // is still the first ("First ...") result's copy button.
+    QList<QPushButton*> copyButtons;
+    for (QPushButton* button : view.findChildren<QPushButton*>()) {
+        if (button != nullptr && button->accessibleName() == QObject::tr("Copy chat result")) {
+            copyButtons.append(button);
+        }
+    }
+    QCOMPARE(copyButtons.size(), 2);
+    copyButtons.first()->click();
 
     QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("First [REDACTED] result"));
 }
