@@ -38,6 +38,8 @@ private Q_SLOTS:
     void testResolveDownloadUrl();
     void testResolveChecksumUrl();
     void testResolveFileName();
+    void testResolveGitHubReleaseBranch();
+    void testResolveGitHubReleaseCachedAsset();
 
     // -- Rolling-release filename discovery (R5-G22-10) ------
     void testFilenameFromChecksumsKali();
@@ -186,10 +188,18 @@ void TestLinuxDistroCatalog::testResolveChecksumUrl() {
     }
 
     const QString url = m_catalog->resolveChecksumUrl(ubuntu);
-    // Some distros may not have checksum URLs
-    if (!ubuntu.checksumUrl.isEmpty()) {
-        QVERIFY(!url.isEmpty());
-    }
+    // ubuntu-desktop publishes a checksum endpoint, so the resolver must return it.
+    QVERIFY2(!ubuntu.checksumUrl.isEmpty(), "ubuntu-desktop should carry a checksum URL");
+    QVERIFY(!url.isEmpty());
+
+    // Kills 'checksum-url-source-swapped-to-download': the resolved CHECKSUM url must be the
+    // SHA256SUMS endpoint itself (ubuntu-desktop's checksumUrl carries no {version}, so the
+    // resolver returns it verbatim) AND must be DISTINCT from the ISO download URL. If
+    // resolveChecksumUrl returned distro.downloadUrl instead, every assert below turns red.
+    QCOMPARE(url, ubuntu.checksumUrl);
+    QCOMPARE(url, QStringLiteral("https://releases.ubuntu.com/resolute/SHA256SUMS"));
+    QVERIFY2(url != m_catalog->resolveDownloadUrl(ubuntu),
+             "checksum URL must not be the ISO download URL (would verify the wrong file)");
 }
 
 void TestLinuxDistroCatalog::testResolveFileName() {
@@ -202,6 +212,70 @@ void TestLinuxDistroCatalog::testResolveFileName() {
     QVERIFY(!name.isEmpty());
     QVERIFY(name.endsWith(".iso"));
     QVERIFY(!name.contains("{version}"));
+
+    // Kills 'filename-middle-segment-wrong': assert the WHOLE expected filename, every segment
+    // included -- not just the .iso suffix. A checksum-by-filename lookup matches the exact
+    // name, so a wrong middle segment ('...-server-...' instead of '...-desktop-...') must turn
+    // this red even though it still ends in ".iso" and carries no "{version}".
+    const QString expected = "ubuntu-" + ubuntu.version + "-desktop-amd64.iso";
+    QCOMPARE(name, expected);
+}
+
+void TestLinuxDistroCatalog::testResolveGitHubReleaseBranch() {
+    // Drives the GitHubRelease branch of the resolvers with REAL catalog distros: before this,
+    // only DirectURL ubuntu-desktop was resolved, leaving the GitHubRelease path uncovered.
+    // shredos and ventoy are the shipped GitHubRelease entries.
+    const auto shredos = m_catalog->distroById("shredos");
+    const auto ventoy = m_catalog->distroById("ventoy");
+    QVERIFY2(!shredos.id.isEmpty(), "shredos (GitHubRelease) missing from catalog");
+    QVERIFY2(!ventoy.id.isEmpty(), "ventoy (GitHubRelease) missing from catalog");
+    QCOMPARE(shredos.sourceType, LinuxDistroCatalog::SourceType::GitHubRelease);
+    QCOMPARE(ventoy.sourceType, LinuxDistroCatalog::SourceType::GitHubRelease);
+
+    // resolveDownloadUrl's GitHubRelease branch ('github-download-resolve-uncovered'): with no
+    // cached asset (no network version check has run in this hermetic test) the download URL
+    // MUST fail closed to empty rather than fall through to a substituted template. These
+    // asserts EXECUTE that branch. The find-key mutation (distro.id -> distro.id + "_x") is only
+    // OBSERVABLE once m_githubAssetUrls holds an entry for distro.id, which is populated solely
+    // by a networked GitHub version check -- unreachable from a hermetic test without a src
+    // seam -- so the empty-cache path returns {} for both original and mutant. The exact,
+    // no-network kill-proof for this branch is carried by resolveFileName below.
+    QVERIFY2(m_catalog->resolveDownloadUrl(shredos).isEmpty(),
+             "GitHubRelease download URL must be empty until a version check caches an asset");
+    QVERIFY2(m_catalog->resolveDownloadUrl(ventoy).isEmpty(),
+             "GitHubRelease download URL must be empty until a version check caches an asset");
+
+    // resolveFileName's GitHubRelease branch: with no cached asset, ventoy falls back to its
+    // static filename template. Assert the EXACT full filename (host/tag/asset are only known
+    // post-version-check, but the filename template is deterministic offline). Kills
+    // 'github-filename-empty-guard-inverted': inverting `if (!distro.fileName.isEmpty())` drops
+    // this fallback and returns empty.
+    const QString expectedVentoyName = "ventoy-" + ventoy.version + "-livecd.iso";
+    QCOMPARE(m_catalog->resolveFileName(ventoy), expectedVentoyName);
+    // shredos ships no static filename template, so its GitHubRelease filename fails closed.
+    QVERIFY(m_catalog->resolveFileName(shredos).isEmpty());
+}
+
+void TestLinuxDistroCatalog::testResolveGitHubReleaseCachedAsset() {
+    // Kills 'github-download-resolve-uncovered' OFFLINE. resolveDownloadUrl's GitHubRelease
+    // branch looks up m_githubAssetUrls.find(distro.id); the mutant changes that key to
+    // distro.id + "_x". The edit is only OBSERVABLE once the cache holds an entry under the real
+    // id, which production fills solely via a networked GitHub version check. Using the
+    // friend-class test seam, seed that private cache directly (no network) with the exact asset
+    // URL a successful resolveGitHubAsset would cache, then assert the resolver returns it
+    // verbatim: the real code finds distro.id and returns the cached URL; the mutant looks up
+    // distro.id + "_x" -> cache miss -> {}, so the QCOMPARE turns red.
+    LinuxDistroCatalog cat;
+    const auto ventoy = cat.distroById("ventoy");
+    QVERIFY2(!ventoy.id.isEmpty(), "ventoy (GitHubRelease) missing from catalog");
+    QCOMPARE(ventoy.sourceType, LinuxDistroCatalog::SourceType::GitHubRelease);
+
+    const QString assetUrl = QStringLiteral(
+        "https://github.com/ventoy/Ventoy/releases/download/v1.1.12/"
+        "ventoy-1.1.12-livecd.iso");
+    cat.m_githubAssetUrls[ventoy.id] = assetUrl;  // friend access; mirrors resolveGitHubAsset
+
+    QCOMPARE(cat.resolveDownloadUrl(ventoy), assetUrl);
 }
 
 // ============================================================================

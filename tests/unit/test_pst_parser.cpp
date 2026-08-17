@@ -232,6 +232,7 @@ private Q_SLOTS:
     void reusableOpenableFixtureReachesRootFolder();
     void reusableFolderedFixtureReachesChildViaHierarchyTable();
     void reusableMessagingFixtureListsMessageViaContentsTable();
+    void messagePropertyExposesHumanReadableName();
     void rowIndexedTcFixtureListsMessageViaLiveRowBth();
     void multiLevelRowIndexTcWalksBthDescent();
     void corruptBlockTrailerFieldFailsClosed();
@@ -847,6 +848,39 @@ void TestPstParser::reusableMessagingFixtureListsMessageViaContentsTable() {
         }
     }
     QVERIFY2(found_subject, "the message PC must expose its Subject property");
+}
+
+void TestPstParser::messagePropertyExposesHumanReadableName() {
+    // Locks propertyIdToName's output on the public parse path: readItemProperties ->
+    // readPropertyContext -> parsePropertyRecords stamps MapiProperty::property_name via
+    // propertyIdToName(tag_id), and that human-readable label is surfaced on every returned
+    // property (consumed by the inspector panel and the conversion report). The messaging store's
+    // message PC carries the Subject property (a KNOWN id), so its property_name must be the exact
+    // table label -- blanking the known names (propertyIdToName returning empty for mapped ids)
+    // would empty this field and turn the assert red.
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(sak::pst_fixture::buildMessagingUnicodeStore());
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+    QVERIFY2(error_spy.isEmpty(),
+             qPrintable(error_spy.isEmpty() ? QString() : error_spy.first().at(0).toString()));
+    QVERIFY(parser.isOpen());
+
+    const auto props = parser.readItemProperties(sak::pst_fixture::kMessageNid);
+    QVERIFY2(props.has_value(), "readItemProperties must read the message PC");
+    bool found_subject = false;
+    for (const auto& prop : *props) {
+        if (prop.tag_id == sak::email::kPropIdSubject) {
+            QCOMPARE(prop.property_name, QStringLiteral("PR_SUBJECT"));
+            found_subject = true;
+        }
+    }
+    QVERIFY2(found_subject,
+             "the message PC must expose its Subject property's human-readable name");
 }
 
 void TestPstParser::rowIndexedTcFixtureListsMessageViaLiveRowBth() {

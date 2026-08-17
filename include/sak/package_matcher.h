@@ -15,6 +15,8 @@
 #include <optional>
 #include <vector>
 
+class PackageMatcherTests;  // unit-test friend (global namespace)
+
 namespace sak {
 
 inline constexpr double kPackageMatcherDefaultMinConfidence = 0.5;
@@ -34,6 +36,8 @@ inline constexpr int kPackageMatcherDefaultThreadCount = 8;
  * Designed to work with real scanned data from AppScanner.
  */
 class PackageMatcher {
+    friend class ::PackageMatcherTests;
+
 public:
     PackageMatcher();
     ~PackageMatcher() = default;

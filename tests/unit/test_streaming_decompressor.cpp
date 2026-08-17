@@ -11,6 +11,7 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <bzlib.h>
 #include <lzma.h>
 #include <zlib.h>
 
@@ -46,6 +47,13 @@ private Q_SLOTS:
     void completeGzip_readsAllBytes();
     void truncatedGzip_reportsError();
 
+    // Truncated vs complete real bzip2 stream. bzip2 is the one format whose decoder
+    // never self-reports a mid-block truncation (BZ2_bzDecompress just keeps returning
+    // BZ_OK asking for input that never comes), so the streaming no-progress backstop
+    // is the SOLE guard that turns a truncated .bz2 into a fail-closed error.
+    void completeBzip2_readsAllBytes();
+    void truncatedBzip2_reportsError();
+
     // A normal xz stream still decodes under the bounded decoder memory limit.
     void realXzStreamDecodesUnderMemLimit();
 
@@ -62,6 +70,7 @@ private:
     QString filePath(const QString& name) const;
     static QByteArray gzipCompress(const QByteArray& input);
     static QByteArray xzCompress(const QByteArray& input);
+    static QByteArray bzip2Compress(const QByteArray& input);
     static qint64 readFully(sak::StreamingDecompressor& decomp);
 };
 
@@ -303,6 +312,87 @@ void StreamingDecompressorTests::truncatedGzip_reportsError() {
     // A truncated stream must fail closed (return -1), not report a clean EOF
     // over the partial output, and it must say why (the message differs depending
     // on whether zlib or the truncation check catches it first).
+    QCOMPARE(readFully(*decomp), static_cast<qint64>(-1));
+    QVERIFY(!decomp->atEnd());
+    QVERIFY(!decomp->lastError().isEmpty());
+}
+
+// Encode @p input as a real .bz2 stream with the same libbz2 the decompressor decodes
+// with, so these tests exercise Bzip2Decompressor::decompressStep on a genuine payload
+// (blockSize100k=9, the largest block; verbosity=0 quiet; workFactor=0 -> library default).
+QByteArray StreamingDecompressorTests::bzip2Compress(const QByteArray& input) {
+    // libbz2's documented one-shot output-buffer floor: sourceLen + sourceLen/100 + 600.
+    unsigned int destLen = static_cast<unsigned int>(input.size() + input.size() / 100 + 600);
+    QByteArray out(static_cast<qsizetype>(destLen), Qt::Uninitialized);
+    const int ret = BZ2_bzBuffToBuffCompress(out.data(),
+                                             &destLen,
+                                             const_cast<char*>(input.constData()),
+                                             static_cast<unsigned int>(input.size()),
+                                             9,
+                                             0,
+                                             0);
+    if (ret != BZ_OK) {
+        return {};
+    }
+    out.truncate(static_cast<qsizetype>(destLen));
+    return out;
+}
+
+void StreamingDecompressorTests::completeBzip2_readsAllBytes() {
+    // A complete .bz2 must decode to the exact original bytes. This is the covering
+    // assert for the bzip2 stream-end completeness check (BZ_STREAM_END): inverting it
+    // makes a normal BZ_OK step report end-of-stream prematurely (the decoder then tries
+    // to parse the block remainder as a fresh member and fails), so the full-payload
+    // compare below no longer holds.
+    QByteArray payload(200'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<char>((i * 41 + 13) & 0xFF);
+    }
+    const QByteArray bz = bzip2Compress(payload);
+    QVERIFY(!bz.isEmpty());
+    writeFile("complete.bz2", bz);
+
+    auto decomp = sak::DecompressorFactory::create(filePath("complete.bz2"));
+    QVERIFY(decomp != nullptr);
+    QVERIFY(decomp->open(filePath("complete.bz2")));
+
+    QByteArray decoded;
+    char buffer[8192];
+    for (;;) {
+        const qint64 n = decomp->read(buffer, sizeof(buffer));
+        QVERIFY(n >= 0);  // never fails on a complete stream
+        if (n == 0) {
+            break;        // clean end-of-stream
+        }
+        decoded.append(buffer, static_cast<qsizetype>(n));
+    }
+    QCOMPARE(decoded.size(), payload.size());
+    QVERIFY(decoded == payload);
+    QVERIFY(decomp->atEnd());
+    QCOMPARE(decomp->decompressedBytesProduced(), static_cast<qint64>(payload.size()));
+}
+
+void StreamingDecompressorTests::truncatedBzip2_reportsError() {
+    // A truncated .bz2 must fail closed (return -1), not report a clean EOF over the
+    // partial output. bzip2 is unique here: BZ2_bzDecompress keeps returning BZ_OK
+    // waiting for the rest of the block, so -- unlike zlib (Z_BUF_ERROR) and liblzma
+    // (LZMA_BUF_ERROR on the second no-progress call) -- the decoder itself NEVER
+    // reports the truncation. The streaming no-progress backstop (isTruncatedStream:
+    // input exhausted, buffer empty, output unchanged) is the sole guard that turns
+    // this into an error; disabling it would spin the pump loop forever on a stalled
+    // decoder instead of failing closed.
+    QByteArray payload(200'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<char>((i * 41 + 13) & 0xFF);
+    }
+    QByteArray bz = bzip2Compress(payload);
+    QVERIFY(bz.size() > 200);
+    bz.chop(bz.size() / 2);  // drop the second half, leaving the final block incomplete
+    writeFile("truncated.bz2", bz);
+
+    auto decomp = sak::DecompressorFactory::create(filePath("truncated.bz2"));
+    QVERIFY(decomp != nullptr);
+    QVERIFY(decomp->open(filePath("truncated.bz2")));
     QCOMPARE(readFully(*decomp), static_cast<qint64>(-1));
     QVERIFY(!decomp->atEnd());
     QVERIFY(!decomp->lastError().isEmpty());

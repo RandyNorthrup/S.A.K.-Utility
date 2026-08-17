@@ -198,6 +198,14 @@ private Q_SLOTS:
     void onGitHubReleaseReply();
 
 private:
+    // Test seam (no behaviour change): the GitHubRelease branch of resolveDownloadUrl reads
+    // m_githubAssetUrls, a private cache that production fills only via a networked GitHub
+    // version check (checkLatestVersion -> parseGitHubRelease/resolveGitHubAsset). This friend
+    // lets the hermetic unit test seed that cache directly -- with no network -- so the
+    // GitHubRelease cached-asset lookup (and its cache-key mutant) is killable offline. Nothing
+    // new is exposed to non-test code.
+    friend class TestLinuxDistroCatalog;
+
     void populateCatalog();
     void addGeneralPurposeDistros();
     void addSecurityDistros();

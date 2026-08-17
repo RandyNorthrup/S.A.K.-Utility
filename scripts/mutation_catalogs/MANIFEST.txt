@@ -12,11 +12,15 @@ email_html_sanitizer.json
 install_script_parser.json
 iso_analyzer.json
 linux_distro_catalog.json
+linux_distro_url_resolvers.json
 mbox_header_parser.json
 mbox_parser.json
 mbox_transfer_decoder.json
 native_messaging.json
 nuget_version_range.json
+package_matcher.json
 pst_block_decoder.json
+pst_field_decoders.json
 smart_disk_analyzer.json
+streaming_decompressor.json
 vulnerability_scanner_version.json

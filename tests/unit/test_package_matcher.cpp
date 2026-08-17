@@ -32,6 +32,10 @@ private Q_SLOTS:
     void findMatch_exactMapping();
     void findMatch_noResult();
 
+    // Fuzzy internals via the cache-seed seam (uninitialized ChocolateyManager)
+    void fuzzyMatch_similarityAtThresholdMatches();
+    void fuzzyMatch_bestSelectTieKeepsFirst();
+
     // Match config
     void matchConfig_defaults();
     void matchConfig_exactOnly();
@@ -165,6 +169,57 @@ void PackageMatcherTests::findMatch_noResult() {
     auto result = matcher.findMatch(info, nullptr, cfg);
 
     QVERIFY(!result.has_value());
+}
+
+// ============================================================================
+// Fuzzy internals (cache-seed seam)
+// ============================================================================
+//
+// fuzzyMatch() is only reachable with a non-null ChocolateyManager, and its
+// scoring path was previously never exercised because every other test passes
+// choco_mgr=nullptr and disables fuzzy matching. fetchSearchOutput() consults
+// the in-object search cache BEFORE it ever calls searchPackage() (whose only
+// m_initialized gate lives), so seeding the cache lets these tests drive the
+// real parse+score path with an UNINITIALIZED manager -- searchPackage() is
+// never reached. The friend seam grants access to cacheSearch()/fuzzyMatch().
+
+void PackageMatcherTests::fuzzyMatch_similarityAtThresholdMatches() {
+    // A candidate whose similarity to the query lands EXACTLY on the fuzzy
+    // threshold (0.6) must be accepted. calculateSimilarity("abcd","axyd") is
+    // exactly 0.6: jaro-winkler("abcd","axyd") == 0.7 (jaro 2/3, one-char common
+    // prefix) and levenshtein-sim == 0.5 (2 subs over length 4), averaged to
+    // (0.7 + 0.5)/2 == 0.6. The real ">=" admits it; a ">" boundary-tighten
+    // would reject it and return nullopt.
+    sak::PackageMatcher matcher;
+    sak::ChocolateyManager choco;  // uninitialized on purpose
+
+    matcher.cacheSearch("abcd", QStringLiteral("axyd|1.0.0\n"));
+
+    auto result = matcher.fuzzyMatch("abcd", &choco);
+
+    QVERIFY(result.has_value());  // kills the ">=" -> ">" boundary tighten
+    QCOMPARE(result->choco_package, QString("axyd"));
+    QCOMPARE(result->match_type, QString("fuzzy"));
+    QVERIFY(qFuzzyCompare(result->confidence, 0.6));
+}
+
+void PackageMatcherTests::fuzzyMatch_bestSelectTieKeepsFirst() {
+    // Two candidates that TIE on similarity: both contain the query "abcd", so
+    // each scores exactly kContainedNameSimilarity (0.85). The real "<=" keeps
+    // the FIRST candidate on a tie (a later equal score is skipped); the "<"
+    // tie-flip mutant lets the second overwrite it. Order is the crafted line
+    // order, so the winner distinguishes the two comparators.
+    sak::PackageMatcher matcher;
+    sak::ChocolateyManager choco;  // uninitialized on purpose
+
+    matcher.cacheSearch("abcd", QStringLiteral("abcde|1.0.0\nabcdz|2.0.0\n"));
+
+    auto result = matcher.fuzzyMatch("abcd", &choco);
+
+    QVERIFY(result.has_value());
+    // Real comparator keeps "abcde" (first); the "<" mutant would pick "abcdz".
+    QCOMPARE(result->choco_package, QString("abcde"));
+    QVERIFY(qFuzzyCompare(result->confidence, 0.85));
 }
 
 // ============================================================================

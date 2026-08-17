@@ -1,0 +1,88 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_streaming_decompressor",
+  "ctest_regex": "^test_streaming_decompressor$",
+  "mutants": [
+    {
+      "id": "gzip-stream-end-detection-inverted",
+      "file": "src/core/gzip_decompressor.cpp",
+      "find": "if (ret == Z_STREAM_END) {",
+      "replace": "if (ret != Z_STREAM_END) {",
+      "expect": "killed",
+      "why": "inverting the zlib end-of-stream test makes every normal Z_OK step report stream_end (member ends early -> reset tries to decode raw deflate as a new gzip member -> fails) while the real Z_STREAM_END falls through to the != Z_OK branch and errors. completeGzip_readsAllBytes asserts QCOMPARE(readFully(*decomp), payload.size()) and QVERIFY(decomp->atEnd())"
+    },
+    {
+      "id": "xz-stream-end-detection-inverted",
+      "file": "src/core/xz_decompressor.cpp",
+      "find": "if (ret == LZMA_STREAM_END) {",
+      "replace": "if (ret != LZMA_STREAM_END) {",
+      "expect": "killed",
+      "why": "inverting the liblzma end-of-stream test makes every LZMA_OK step report stream_end (premature reset decodes the remainder as a bogus new .xz member and errors) and the true LZMA_STREAM_END errors out. realXzStreamDecodesUnderMemLimit asserts QCOMPARE(readFully(*decomp), payload.size())"
+    },
+    {
+      "id": "xz-decoder-memlimit-too-small-rejects-real-stream",
+      "file": "src/core/xz_decompressor.cpp",
+      "find": "constexpr uint64_t kXzDecoderMemLimitBytes = 512ULL * 1024 * 1024;",
+      "replace": "constexpr uint64_t kXzDecoderMemLimitBytes = 1ULL * 1024 * 1024;",
+      "expect": "killed",
+      "why": "a normal xz stream (LZMA_PRESET_DEFAULT needs an 8 MiB dictionary) must still decode under the bounded-memory cap; dropping the cap to 1 MiB makes lzma_code return LZMA_MEMLIMIT_ERROR and wrongly reject a valid file. realXzStreamDecodesUnderMemLimit asserts QCOMPARE(readFully(*decomp), payload.size()) precisely to prove capping memory does not break real files"
+    },
+    {
+      "id": "bzip2-stream-end-detection-inverted",
+      "file": "src/core/bzip2_decompressor.cpp",
+      "find": "if (ret == BZ_STREAM_END) {",
+      "replace": "if (ret != BZ_STREAM_END) {",
+      "expect": "killed",
+      "why": "completeBzip2_readsAllBytes builds a real .bz2 with BZ2_bzBuffToBuffCompress and decodes it, asserting QVERIFY(decoded == payload), QCOMPARE(decoded.size(), payload.size()) and QCOMPARE(decompressedBytesProduced(), payload.size()). Inverting the completeness test makes every normal BZ_OK step report stream_end prematurely -- onMemberEnd then re-inits the decoder and tries to parse the mid-block remainder as a fresh bzip2 member, which fails -- so the full-payload byte compare no longer holds; and the true BZ_STREAM_END falls into the ret != BZ_OK branch and errors. HOLE CLOSED (was: no test decoded a real bzip2 payload, only open/close of a junk test.bz2)"
+    },
+    {
+      "id": "member-boundary-eof-decision-or-not-and",
+      "file": "src/core/streaming_decompressor.cpp",
+      "find": "if (inputEmpty() && m_file.atEnd()) {",
+      "replace": "if (inputEmpty() || m_file.atEnd()) {",
+      "expect": "killed",
+      "why": "a member end is only true EOF when BOTH the buffer is drained AND the file is exhausted; with || a first member that ends while leftover bytes of the next member sit in the buffer (file already fully read into the 128 KB buffer) is declared finished and the remaining members/garbage are dropped. concatenatedGzipMembersDecodeFully asserts QCOMPARE(readFully(*decomp), a.size() + b.size()) and trailingGarbageAfterMemberFailsClosed asserts QCOMPARE(readFully(*decomp), -1)"
+    },
+    {
+      "id": "member-end-does-not-set-eof",
+      "file": "src/core/streaming_decompressor.cpp",
+      "find": "m_eof = true;",
+      "replace": "m_eof = false;",
+      "expect": "killed",
+      "why": "the true end of stream must latch m_eof so atEnd() reports done and the next read() returns a clean 0; leaving it false means atEnd() stays false after a fully-read stream. completeGzip_readsAllBytes asserts QVERIFY(decomp->atEnd()) after readFully consumes the whole payload"
+    },
+    {
+      "id": "bytes-produced-arithmetic-add-not-subtract",
+      "file": "src/core/streaming_decompressor.cpp",
+      "find": "const qint64 bytesProduced = maxSize - static_cast<qint64>(outputRemaining());",
+      "replace": "const qint64 bytesProduced = maxSize + static_cast<qint64>(outputRemaining());",
+      "expect": "killed",
+      "why": "bytes produced this step is the requested size minus what the decoder left unwritten; adding instead over-credits every read by the unused tail, inflating both the return value and decompressedBytesProduced. completeGzip_readsAllBytes asserts QCOMPARE(readFully(*decomp), payload.size()) and QCOMPARE(decomp->decompressedBytesProduced(), payload.size())"
+    },
+    {
+      "id": "pump-loop-output-bound-off-by-one",
+      "file": "src/core/streaming_decompressor.cpp",
+      "find": "while (outputRemaining() > 0 && !m_eof) {",
+      "replace": "while (outputRemaining() >= 0 && !m_eof) {",
+      "expect": "killed",
+      "why": "outputRemaining() is a size_t so >= 0 is always true, removing the buffer-full exit; the loop then calls decompressStep with avail_out == 0, which returns a buffer error and fails the read mid-stream. completeGzip_readsAllBytes asserts QCOMPARE(readFully(*decomp), payload.size()) (readFully fills its 8192-byte buffer many times over 300000 bytes)"
+    },
+    {
+      "id": "read-eof-guard-inverted",
+      "file": "src/core/streaming_decompressor.cpp",
+      "find": "if (m_eof) {",
+      "replace": "if (!m_eof) {",
+      "expect": "killed",
+      "why": "the early return is meant to hand back a clean 0 only AFTER end-of-stream; inverting it returns 0 on the very first read (m_eof still false), so a caller sees an empty stream. completeGzip_readsAllBytes asserts QCOMPARE(readFully(*decomp), payload.size()) -- readFully would stop at the first 0 and report 0 bytes"
+    },
+    {
+      "id": "truncation-detector-progress-test-inverted",
+      "file": "src/core/streaming_decompressor.cpp",
+      "find": "if (!(m_input_exhausted && inputEmpty() && outputRemaining() == output_before)) {",
+      "replace": "if (!(m_input_exhausted && inputEmpty() && outputRemaining() != output_before)) {",
+      "expect": "killed",
+      "why": "NOT equivalent -- the backstop is the SOLE guard for a truncated bzip2 stream. For gzip zlib self-reports Z_BUF_ERROR and for xz liblzma self-reports LZMA_BUF_ERROR on the second consecutive no-progress lzma_code call, so for those two the decoder's own error path (StepResult::error) fires before/independently of this backstop -- truly doubly guarded. bzip2 has no such guard: BZ2_bzDecompress keeps returning BZ_OK waiting for the rest of the block, never an error, so ONLY this no-progress check turns a truncated .bz2 into read()==-1. truncatedBzip2_reportsError builds a real .bz2, chops it in half, and asserts QCOMPARE(readFully(*decomp), -1) plus !atEnd() and a non-empty lastError(); flipping == to != disables the backstop and the pump loop spins forever on the stalled bzip2 decoder (input exhausted, BZ_OK, no output) instead of failing closed, so the -1 assertion no longer holds. HOLE CLOSED"
+    }
+  ]
+}
