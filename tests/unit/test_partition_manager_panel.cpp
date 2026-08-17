@@ -6,6 +6,7 @@
 #include "sak/partition_manager_panel.h"
 #include "sak/style_constants.h"
 
+#include <QAbstractItemDelegate>
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -28,12 +29,15 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPalette>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QStyleOptionViewItem>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTemporaryDir>
@@ -88,7 +92,7 @@ private Q_SLOTS:
     void createDialogExposesSynchronizedHandleControls();
     void wipeActionLetsUserChooseScope();
     void quickPartitionSizesFailClosedOnMalformedCustomAndOverflow();
-    void wizardEntryPointsRespectRunningOperationGuard();
+    void wizardEntryPointsRespectRunningOperationGuard() const;
     void inventoryStateIsHonestAboutFailedPartitionEnumeration();
 };
 
@@ -1248,7 +1252,50 @@ void PartitionManagerPanelTests::partitionTableUsesAomeiListChrome() {
     QCOMPARE(table->frameShape(), QFrame::NoFrame);
     QCOMPARE(table->lineWidth(), 0);
     QCOMPARE(table->midLineWidth(), 0);
-    QCOMPARE(table->itemDelegate()->objectName(), QStringLiteral("partitionDiskSeparatorDelegate"));
+    // Re-homed off the delegate's internal objectName (a pure test handle -- no QSS selector
+    // references "partitionDiskSeparatorDelegate", so a rename would break this test while the
+    // user sees the identical table) onto the delegate's actual visible contract: it paints a
+    // 1px QPalette::Mid separator line along the bottom edge of a "disk" row and nothing on a
+    // non-disk row. Drive the installed delegate's paint() over a synthetic one-column model
+    // (column 0 == ColPartition) with a controlled palette whose Mid role is a distinctive red,
+    // then sample the bottom-edge pixel. This survives a delegate rename and additionally pins
+    // the kind-gating (disk vs partition) that the objectName check never verified.
+    auto* delegate = table->itemDelegate();
+    QVERIFY(delegate != nullptr);
+
+    QTableWidget rows;
+    rows.setColumnCount(1);
+    rows.setRowCount(2);
+    auto* diskItem = new QTableWidgetItem();
+    diskItem->setData(Qt::UserRole, QVariantMap{{QStringLiteral("kind"), QStringLiteral("disk")}});
+    rows.setItem(0, 0, diskItem);
+    auto* partitionItem = new QTableWidgetItem();
+    partitionItem->setData(Qt::UserRole,
+                           QVariantMap{{QStringLiteral("kind"), QStringLiteral("partition")}});
+    rows.setItem(1, 0, partitionItem);
+
+    const QColor separatorColor(255, 0, 0);
+    QStyleOptionViewItem option;
+    option.rect = QRect(0, 0, 40, 16);
+    option.palette.setColor(QPalette::Mid, separatorColor);
+    const int sampleX = option.rect.width() / 2;
+    const int bottomY = option.rect.bottom();
+
+    // Paint the delegate for one model row into a white canvas and return the bottom-edge pixel.
+    // The base QStyledItemDelegate::paint runs first and is identical for both rows, so the only
+    // thing that can tint the bottom edge red is the disk separator drawn on top.
+    const auto bottomPixelForRow = [&](int row) {
+        QImage image(option.rect.size(), QImage::Format_ARGB32);
+        image.fill(Qt::white);
+        {
+            QPainter painter(&image);
+            delegate->paint(&painter, option, rows.model()->index(row, 0));
+        }
+        return image.pixelColor(sampleX, bottomY);
+    };
+
+    QCOMPARE(bottomPixelForRow(0), separatorColor);   // disk row: Mid separator painted
+    QVERIFY(bottomPixelForRow(1) != separatorColor);  // partition row: kind-gated, no separator
 }
 
 void PartitionManagerPanelTests::sidebarIsFixedAndHasNoRedundantPreviewBox() {
@@ -2500,7 +2547,7 @@ void verifyWizardGuardedWhileApplying(const char* slot,
 // The controller queues unconditionally (PlanningOperation -> QueueDirty), so a wizard run
 // during an Apply corrupted the state machine mid-apply and mutated the queue the executor
 // was consuming. Every entry point now goes through the one central guard.
-void PartitionManagerPanelTests::wizardEntryPointsRespectRunningOperationGuard() {
+void PartitionManagerPanelTests::wizardEntryPointsRespectRunningOperationGuard() const {
     verifyWizardGuardedWhileApplying("onQuickPartition", unallocatedAllocateInventoryFixture(), 0);
     verifyWizardGuardedWhileApplying("onAllocateFreeSpace", allocateFreeSpaceInventoryFixture(), 1);
     verifyWizardGuardedWhileApplying("onConvertDynamicDiskToBasic",
