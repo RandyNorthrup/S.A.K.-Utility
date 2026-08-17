@@ -24,6 +24,7 @@ private slots:
     void parse_shortBufferNeedsMore();
     void parse_zeroLengthIsError();
     void parse_oversizedLengthIsError();
+    void parse_exactlyCapSizedLengthIsAccepted();
     void parse_nonObjectBodyIsError();
     void parse_multipleFramesConsumedIndividually();
     void handle_pingReturnsPongWithIdentityAndEchoedId();
@@ -74,6 +75,27 @@ void NativeMessagingTests::parse_oversizedLengthIsError() {
     const NativeFrame parsed = parseFrame(frame);
     QCOMPARE(parsed.status, NativeFrame::Status::Error);
     QVERIFY(parsed.error.contains(QStringLiteral("cap")));
+}
+
+void NativeMessagingTests::parse_exactlyCapSizedLengthIsAccepted() {
+    // The oversize guard is strictly greater-than, so a frame whose declared body length is
+    // EXACTLY the cap is legal and must be accepted. This pins that boundary: a >= mutation
+    // would wrongly reject a maximum-sized message. Body is a valid JSON object of exactly
+    // kMaxNativeMessageBytes bytes ({"p":"aa...a"} -> 8 bytes of fixed overhead).
+    const int cap = kMaxNativeMessageBytes;
+    QByteArray body;
+    body.reserve(cap);
+    body.append(QByteArrayLiteral("{\"p\":\""));
+    body.append(QByteArray(cap - 8, 'a'));
+    body.append(QByteArrayLiteral("\"}"));
+    QCOMPARE(body.size(), cap);
+    QByteArray frame;
+    const quint32 length = qToLittleEndian<quint32>(static_cast<quint32>(cap));
+    frame.append(reinterpret_cast<const char*>(&length), 4);
+    frame.append(body);
+    const NativeFrame parsed = parseFrame(frame);
+    QCOMPARE(parsed.status, NativeFrame::Status::Ok);
+    QCOMPARE(parsed.consumed, frame.size());
 }
 
 void NativeMessagingTests::parse_nonObjectBodyIsError() {

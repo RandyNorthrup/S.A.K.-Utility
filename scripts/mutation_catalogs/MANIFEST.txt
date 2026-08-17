@@ -7,8 +7,12 @@
 # Blank lines and '#' comments are ignored.
 
 email_html_sanitizer.json
+install_script_parser.json
 linux_distro_catalog.json
 mbox_header_parser.json
 mbox_transfer_decoder.json
+native_messaging.json
 nuget_version_range.json
 pst_block_decoder.json
+smart_disk_analyzer.json
+vulnerability_scanner_version.json

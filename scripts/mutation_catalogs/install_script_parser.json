@@ -1,0 +1,96 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_install_script_parser",
+  "ctest_regex": "^test_install_script_parser$",
+  "mutants": [
+    {
+      "id": "quoted-param-value-capture-group",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "return quoted_match.captured(1).trimmed();",
+      "replace": "return quoted_match.captured(0).trimmed();",
+      "expect": "killed",
+      "why": "extractParameter must return the QUOTED value (capture group 1), not the whole match; captured(0) includes the '-Url ' flag and surrounding quotes, so every quoted URL/checksum is mis-extracted. parse_installChocolateyPackage_extractsUrl asserts result.resources.first().url == \"https://example.com/setup.exe\""
+    },
+    {
+      "id": "url64-param-name-select",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "QString url64 = extractParameter(call_text, \"url64bit\");",
+      "replace": "QString url64 = extractParameter(call_text, \"url\");",
+      "expect": "killed",
+      "why": "the 64-bit URL must come from the -Url64bit parameter; selecting -Url instead copies the 32-bit URL into url_64bit. parse_installChocolateyPackage_extractsUrl64 asserts result.resources.first().url_64bit == \"https://example.com/setup-x64.exe\" (mutant yields the x86 URL)"
+    },
+    {
+      "id": "checksum64-param-name-select",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "resource.checksum_64bit = resolveVariables(extractParameter(call_text, \"checksum64\"), script);",
+      "replace": "resource.checksum_64bit = resolveVariables(extractParameter(call_text, \"checksum\"), script);",
+      "expect": "killed",
+      "why": "the 64-bit binary's checksum must come from -Checksum64; selecting -Checksum stores the 32-bit checksum for the 64-bit download (verifies wrong artifact). parse_installChocolateyPackage_extractsChecksum64 asserts result.resources.first().checksum_64bit == \"bbb64\" (mutant yields \"aaa32\")"
+    },
+    {
+      "id": "checksumtype64-param-name-select",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "resource.checksum_type_64bit = resolveVariables(extractParameter(call_text, \"checksumType64\"),",
+      "replace": "resource.checksum_type_64bit = resolveVariables(extractParameter(call_text, \"checksumType\"),",
+      "expect": "killed",
+      "why": "the 64-bit checksum ALGORITHM must come from -ChecksumType64; selecting -ChecksumType reports the 32-bit algorithm for the 64-bit hash. parse_installChocolateyPackage_extractsChecksum64 asserts result.resources.first().checksum_type_64bit == \"sha512\" (mutant yields \"sha256\")"
+    },
+    {
+      "id": "package-type-param-name-select",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "const QString file_type = resolveVariables(extractParameter(call_text, \"fileType\"), script);",
+      "replace": "const QString file_type = resolveVariables(extractParameter(call_text, \"fileName\"), script);",
+      "expect": "killed",
+      "why": "the package type is taken from -FileType; reading -FileName instead leaves file_type empty (no -FileName in the script) so package_type is never set. parse_installChocolateyPackage_extractsPackageType asserts result.package_type == \"msi\""
+    },
+    {
+      "id": "splatting-block-capture-group",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "const QString block = match.captured(2);",
+      "replace": "const QString block = match.captured(1);",
+      "expect": "killed",
+      "why": "the splatting hashtable BODY is capture group 2 of kSplattingPattern (group 1 is the variable name); using group 1 makes block=\"packageArgs\" so no url/checksum is found and no resource is appended. parse_splatting_detectsFlag asserts result.uses_splatting is true"
+    },
+    {
+      "id": "splatting-url-hashkey-select",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "resource.url = resolveVariables(extractHashtableValue(block, \"url\"), script);",
+      "replace": "resource.url = resolveVariables(extractHashtableValue(block, \"url64bit\"), script);",
+      "expect": "killed",
+      "why": "the splatting primary URL must read the 'url' hashtable key; reading 'url64bit' puts the 64-bit URL into the primary url field. parse_splatting_extractsResources asserts result.resources.first().url == \"https://example.com/setup.exe\" (mutant yields the x64 URL)"
+    },
+    {
+      "id": "splatting-append-guard-fail-open",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "if (resource.url.isEmpty() && resource.url_64bit.isEmpty()) {",
+      "replace": "if (resource.url.isEmpty() || resource.url_64bit.isEmpty()) {",
+      "expect": "killed",
+      "why": "the reject-empty guard must drop a splatting resource ONLY when BOTH url and url_64bit are empty; changing && to || drops any resource missing either field, so a valid 32-bit-only splat (url present, url_64bit empty) is discarded. parse_splatting_detectsFlag asserts result.uses_splatting is true"
+    },
+    {
+      "id": "variable-name-capture-fallback-inverted",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "? match.captured(kAlternateVariableNameCaptureGroup)",
+      "replace": "? match.captured(kVariableNameCaptureGroup)",
+      "expect": "killed",
+      "why": "when the ${...} group (1) is empty the variable name must fall back to the bare $name group (2); returning group 1 again yields an empty name so no assignment is found and $downloadUrl is never resolved. parse_variableReference_resolved asserts result.resources.first().url == \"https://example.com/resolved.exe\" (mutant leaves it \"$downloadUrl\")"
+    },
+    {
+      "id": "assigned-value-capture-group",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "return assign_match.captured(1);",
+      "replace": "return assign_match.captured(0);",
+      "expect": "killed",
+      "why": "findVariableAssignment must return the quoted RHS (group 1), not the whole '$x = '...'' match; captured(0) substitutes the entire assignment statement into the URL. parse_variableReference_resolved asserts result.resources.first().url == \"https://example.com/resolved.exe\""
+    },
+    {
+      "id": "variable-assignment-notfound-fail-open",
+      "file": "src/core/install_script_parser.cpp",
+      "find": "if (!assigned_value.has_value()) {",
+      "replace": "if (assigned_value.has_value()) {",
+      "expect": "killed",
+      "why": "resolveVariables must break out (leave the reference unresolved) only when NO assignment is found; inverting the guard breaks out exactly when an assignment IS found, so the substitution never runs and $downloadUrl stays literal. parse_variableReference_resolved asserts result.resources.first().url == \"https://example.com/resolved.exe\""
+    }
+  ]
+}

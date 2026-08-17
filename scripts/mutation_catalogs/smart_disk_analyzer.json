@@ -1,0 +1,104 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_smart_disk_analyzer",
+  "ctest_regex": "^test_smart_disk_analyzer$",
+  "mutants": [
+    {
+      "id": "device-type-sat-not-normalized",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "if (report.interface_type == \"SAT\") {",
+      "replace": "if (report.interface_type == \"SATA\") {",
+      "expect": "killed",
+      "why": "smartctl's SATA device type is the token \"sat\" (upper-cased to \"SAT\"); comparing against the already-normalized \"SATA\" never matches, so interface_type stays \"SAT\". parseOutput_validSataJson asserts QCOMPARE(report.interface_type, QStringLiteral(\"SATA\"))"
+    },
+    {
+      "id": "model-key-mis-selected",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "report.model = root.value(\"model_name\").toString();",
+      "replace": "report.model = root.value(\"model\").toString();",
+      "expect": "killed",
+      "why": "the model lives under the JSON key \"model_name\"; reading \"model\" yields an absent value so report.model becomes empty. parseOutput_validSataJson asserts QCOMPARE(report.model, QStringLiteral(\"Samsung SSD 860 EVO\"))"
+    },
+    {
+      "id": "smart-status-passed-ternary-inverted",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "report.smart_status = status.value(\"passed\").toBool() ? \"PASSED\" : \"FAILED\";",
+      "replace": "report.smart_status = status.value(\"passed\").toBool() ? \"FAILED\" : \"PASSED\";",
+      "expect": "killed",
+      "why": "passed==true must map to \"PASSED\"; inverting labels a passing drive \"FAILED\" (and a failing one \"PASSED\"). parseOutput_validSataJson asserts QCOMPARE(report.smart_status, QStringLiteral(\"PASSED\")) and Healthy; assess_smartStatusFailed asserts Critical for passed:false"
+    },
+    {
+      "id": "power-on-hours-key-mis-selected",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "report.power_on_hours = pot.value(\"hours\").toInteger();",
+      "replace": "report.power_on_hours = pot.value(\"power_on_hours\").toInteger();",
+      "expect": "killed",
+      "why": "inside the power_on_time object the count is under \"hours\"; reading \"power_on_hours\" there is absent so the value defaults to 0. parseOutput_validSataJson asserts QCOMPARE(report.power_on_hours, static_cast<int64_t>(12'000))"
+    },
+    {
+      "id": "sata-raw-value-key-mis-selected",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "attr.raw_value = raw.value(\"value\").toInteger();",
+      "replace": "attr.raw_value = raw.value(\"worst\").toInteger();",
+      "expect": "killed",
+      "why": "the raw counter is the \"value\" member of the raw object; reading \"worst\" (absent there) makes every raw_value 0, collapsing the whole warning/critical ladder and the reallocated-sector metric to zero. healthAssessment_critical asserts overall_health Critical AND QCOMPARE(report.reallocated_sectors, 50) at raw 50; healthAssessment_warning asserts Warning at raw 10"
+    },
+    {
+      "id": "reallocated-sector-attr-id-off",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "constexpr uint8_t kSataAttrReallocatedSectorCount = 5;",
+      "replace": "constexpr uint8_t kSataAttrReallocatedSectorCount = 4;",
+      "expect": "killed",
+      "why": "attribute id 5 is Reallocated_Sector_Ct; changing the routed id to 4 means the id-5 entry never populates report.reallocated_sectors, which stays 0. healthAssessment_critical asserts QCOMPARE(report.reallocated_sectors, static_cast<int64_t>(50)) and warnings.contains(\"Reallocated sectors detected: 50\")"
+    },
+    {
+      "id": "attr-failing-guard-and-to-or",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "if (attr.threshold > 0 && attr.current_value <= attr.threshold) {",
+      "replace": "if (attr.threshold > 0 || attr.current_value <= attr.threshold) {",
+      "expect": "killed",
+      "why": "an attribute is failing only when it has a real threshold AND its normalized value has fallen to/below it; with || any attribute that merely declares a positive threshold is flagged failing. parseOutput_validSataJson (thresh:10, value:100) asserts QVERIFY(!attr.failing) and overall_health Healthy -- with || failing becomes true and health flips to Critical"
+    },
+    {
+      "id": "critical-threshold-boundary-ge-to-gt",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "if (attr.raw_value >= thresh.critical_raw) {",
+      "replace": "if (attr.raw_value > thresh.critical_raw) {",
+      "expect": "killed",
+      "why": "the critical verdict must fire AT the critical raw threshold; relaxing >= to > lets a raw value exactly equal to critical_raw escape to mere Warning. healthAssessment_critical asserts overall_health Critical at raw 50 == critical_raw 50 for id 5"
+    },
+    {
+      "id": "warning-threshold-boundary-ge-to-gt",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "if (attr.raw_value >= thresh.warning_raw) {",
+      "replace": "if (attr.raw_value > thresh.warning_raw) {",
+      "expect": "killed",
+      "why": "the warning verdict must fire AT the warning raw threshold; relaxing >= to > lets a raw value exactly equal to warning_raw read as Healthy. healthAssessment_warning asserts overall_health Warning at raw 10 == warning_raw 10 for id 199 (and Healthy at raw 9)"
+    },
+    {
+      "id": "nvme-media-errors-fail-open-gt-to-ge",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "kNvmeWearCriticalPercent || nvme.media_errors > 0 ||",
+      "replace": "kNvmeWearCriticalPercent || nvme.media_errors >= 0 ||",
+      "expect": "killed",
+      "why": "media_errors is a fault count -- Critical only when it exceeds zero; >= 0 is always true so every NVMe drive reads Critical. parseOutput_validNvmeJson (media_errors:0) asserts QCOMPARE(report.overall_health, sak::SmartHealthStatus::Healthy)"
+    },
+    {
+      "id": "json-parse-error-guard-inverted",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "if (parse_error.error != QJsonParseError::NoError) {",
+      "replace": "if (parse_error.error == QJsonParseError::NoError) {",
+      "expect": "killed",
+      "why": "the guard must bail out ONLY on a parse error; inverting it aborts every well-formed document early, returning an empty (default) report for valid input. parseOutput_validSataJson then sees an empty report and fails QCOMPARE(report.model, QStringLiteral(\"Samsung SSD 860 EVO\"))"
+    },
+    {
+      "id": "assessable-data-signal-or-to-and",
+      "file": "src/core/smart_disk_analyzer.cpp",
+      "find": "!report.smart_status.isEmpty() || !report.attributes.isEmpty()",
+      "replace": "!report.smart_status.isEmpty() && !report.attributes.isEmpty()",
+      "expect": "killed",
+      "why": "ANY one SMART signal (status, attribute, or NVMe log) makes a report assessable; requiring status AND attributes together (via && precedence over the trailing || nvme) makes a status-only report non-assessable and forces Unknown. reportHasAssessableData_signalDetection asserts QVERIFY(reportHasAssessableData(with_status)) for a status-only report; parseOutput_missingFields asserts that a status-only payload is Healthy"
+    }
+  ]
+}
