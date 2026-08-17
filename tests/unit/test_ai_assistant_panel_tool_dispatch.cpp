@@ -101,8 +101,11 @@ private Q_SLOTS:
 #if defined(SAK_WIN_REGISTRY_TESTS)
     // The panel's Install/Uninstall button drives BrowserExtensionInstaller in-process.
     // Point it at a throwaway HKCU key + temp dir (never the real Chrome policy) via the
-    // friend seam, then confirm a click installs and a second click uninstalls, reflected
-    // in the button label.
+    // friend seam, then confirm a click installs and a second click uninstalls, verified
+    // by the OBSERVABLE contract: the real extension install state (the Chrome force-install
+    // policy entry + native host key), read back by an independent installer over the same
+    // config. Asserting that system state -- not the button's caption -- keeps this green
+    // across a label refactor and red only on a genuine install/uninstall regression.
     void browserExtensionButtonInstallsAndUninstalls() {
         AiAssistantPanel panel;
         const std::wstring base = L"Software\\SAK_Test\\PanelExt";
@@ -126,15 +129,19 @@ private Q_SLOTS:
             QStringLiteral("Software\\SAK_Test\\PanelExt\\NativeHost\\com.sak.browsercontrol");
         panel.m_browserExtensionConfig = cfg;
 
+        // Independent probe over the SAME injected config -- reads the live registry/file
+        // state each call, so it observes exactly what the panel's button wrote.
+        const sak::win32mcp::BrowserExtensionInstaller stateProbe(cfg);
+
         panel.refreshBrowserExtensionStatus();
         QVERIFY(panel.m_browserExtensionButton != nullptr);
-        QCOMPARE(panel.m_browserExtensionButton->text(), QStringLiteral("Install extension"));
+        QCOMPARE(stateProbe.stateString(), QStringLiteral("not_installed"));
 
         panel.onBrowserExtensionButtonClicked();  // install
-        QCOMPARE(panel.m_browserExtensionButton->text(), QStringLiteral("Uninstall extension"));
+        QCOMPARE(stateProbe.stateString(), QStringLiteral("installed"));
 
         panel.onBrowserExtensionButtonClicked();  // uninstall
-        QCOMPARE(panel.m_browserExtensionButton->text(), QStringLiteral("Install extension"));
+        QCOMPARE(stateProbe.stateString(), QStringLiteral("not_installed"));
     }
 #endif
 
