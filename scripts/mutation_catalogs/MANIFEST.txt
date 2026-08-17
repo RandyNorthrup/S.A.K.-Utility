@@ -13,6 +13,7 @@ backup_file_codec.json
 decompressor_factory.json
 email_html_sanitizer.json
 ext_reader.json
+fs_detector.json
 hfs_reader.json
 install_script_parser.json
 iso_analyzer.json
@@ -28,4 +29,5 @@ pst_block_decoder.json
 pst_field_decoders.json
 smart_disk_analyzer.json
 streaming_decompressor.json
+uup_aria2_guard.json
 vulnerability_scanner_version.json

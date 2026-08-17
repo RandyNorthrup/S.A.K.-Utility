@@ -152,6 +152,72 @@ private Q_SLOTS:
         }
         QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
     }
+
+    // -------------------------------------------------------------------------------------------
+    // Exact-value covering suite. The fuzz slot above proves detectBytes never crashes and stays
+    // deterministic, but it pins NO bytes -> family value, so a magic-byte, magic-offset, family-
+    // string, or magic-length mutation survives it. These cases craft a minimal buffer carrying
+    // exactly one family's signature at its real offset and assert the EXACT family string, plus
+    // the fail-closed "unknown" verdict on unsigned/garbage bytes. Kills the fs_detector.json
+    // mutation catalog. detectBytes is called with the buffer's own size as the partition size,
+    // matching the primary call shape in detectFromDevice.
+    // -------------------------------------------------------------------------------------------
+
+    void detectsApfsContainerByNxsbMagic() {
+        QByteArray image(kSeedBytes, '\0');
+        sak::testfixtures::writeAscii(&image, kApfsMagicOffset, "NXSB");
+        const auto detection = sak::PartitionFileSystemDetector::detectBytes(
+            image, static_cast<uint64_t>(image.size()));
+        QVERIFY(detection.has_value());
+        QCOMPARE(detection->file_system, QStringLiteral("APFS"));
+    }
+
+    void rejectsApfsWhenFourthMagicByteWrong() {
+        // Only 3 of the 4 magic bytes match ("NXS" + wrong byte). A full 4-byte compare must fail
+        // closed; a shortened length compare would wrongly report APFS.
+        QByteArray image(kSeedBytes, '\0');
+        sak::testfixtures::writeAscii(&image, kApfsMagicOffset, "NXSX");
+        const auto detection = sak::PartitionFileSystemDetector::detectBytes(
+            image, static_cast<uint64_t>(image.size()));
+        QVERIFY(!detection.has_value());
+    }
+
+    void detectsNtfsBySignedBootSectorOemTag() {
+        QByteArray image(kSeedBytes, '\0');
+        sak::testfixtures::writeAscii(&image, kOemTagOffset, "NTFS    ");
+        sak::testfixtures::writeLe16(&image, kBootSignatureOffset, kBootSignature);
+        const auto detection = sak::PartitionFileSystemDetector::detectBytes(
+            image, static_cast<uint64_t>(image.size()));
+        QVERIFY(detection.has_value());
+        QCOMPARE(detection->file_system, QStringLiteral("NTFS"));
+    }
+
+    void detectsExt2ByEf53SuperblockMagic() {
+        // 0xEF53 at 0x438 with no feature flags -> the plain ext2 branch.
+        QByteArray image(kSeedBytes, '\0');
+        sak::testfixtures::writeLe16(&image, kExtMagicOffset, kExtMagic);
+        const auto detection = sak::PartitionFileSystemDetector::detectBytes(
+            image, static_cast<uint64_t>(image.size()));
+        QVERIFY(detection.has_value());
+        QCOMPARE(detection->file_system, QStringLiteral("ext2"));
+    }
+
+    void detectsHfsPlusByVolumeHeaderSignature() {
+        QByteArray image(kSeedBytes, '\0');
+        sak::testfixtures::writeAscii(&image, kHfsHeaderOffset, "H+");
+        const auto detection = sak::PartitionFileSystemDetector::detectBytes(
+            image, static_cast<uint64_t>(image.size()));
+        QVERIFY(detection.has_value());
+        QCOMPARE(detection->file_system, QStringLiteral("HFS+"));
+    }
+
+    void garbageAndEmptyBytesFailClosedToUnknown() {
+        const auto allOnes = sak::PartitionFileSystemDetector::detectBytes(
+            QByteArray(kSeedBytes, '\xFF'), static_cast<uint64_t>(kSeedBytes));
+        QVERIFY(!allOnes.has_value());
+        const auto empty = sak::PartitionFileSystemDetector::detectBytes(QByteArray(), 0);
+        QVERIFY(!empty.has_value());
+    }
 };
 
 QTEST_GUILESS_MAIN(FsDetectorFuzzTests)
