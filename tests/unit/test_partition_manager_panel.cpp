@@ -403,6 +403,24 @@ bool rendersRoundedCorners(QWidget* widget) {
     return interiorFilled && cornerClipped;
 }
 
+// True when the widget paints NOTHING (no fill and no border) along its right edge -- i.e. it
+// renders as a flat text link, not a filled/bordered button. The widget is made wide so the
+// right-edge strip is clear of the left-aligned icon/text, then only its own paintEvent is
+// rendered (empty flags: no auto background fill) over a ground marker and the strip is sampled.
+// A filled or bordered button paints that strip a non-ground colour and fails -- which is exactly
+// the "should not render as filled buttons" counterfactual this certifies against.
+bool paintsFlatRightEdge(QWidget* widget) {
+    const QColor ground(0, 0, 255);
+    widget->resize(200, 22);
+    const QSize sz = widget->size();
+    QImage image(sz, QImage::Format_ARGB32);
+    image.fill(ground);
+    widget->render(&image, QPoint(), QRegion(), QWidget::RenderFlags());
+    const int x = sz.width() - 1;
+    return image.pixelColor(x, 1) == ground && image.pixelColor(x, sz.height() / 2) == ground &&
+           image.pixelColor(x, sz.height() - 2) == ground;
+}
+
 int chroma(const QColor& color) {
     const int high = std::max({color.red(), color.green(), color.blue()});
     const int low = std::min({color.red(), color.green(), color.blue()});
@@ -1360,14 +1378,26 @@ void PartitionManagerPanelTests::sidebarActionsRenderAsCompactTextLinks() {
             return button->accessibleName() == QStringLiteral("Migrate OS to SSD/HDD Wizard");
         });
     QVERIFY2(migrateIt != actions.cend(), "Wizard action should use text-link styling");
-    for (const auto* action : actions) {
+    // Re-homed off the raw QSS-string asserts (action->styleSheet().contains("background:
+    // transparent"/"border: none")) -- brittle to a rephrase (background-color:, a merged rule,
+    // moving the flat styling into a global sheet or a QStyle) that renders identically yet fails
+    // the substring match. Assert the OBSERVABLE flat rendering instead: the link paints no fill
+    // and no border along its right edge, so it reads as a text link rather than a filled button.
+    for (auto* action : actions) {
         QVERIFY2(action->maximumHeight() <= 22, "Sidebar text links should be compact");
         QCOMPARE(action->toolButtonStyle(), Qt::ToolButtonTextBesideIcon);
-        QVERIFY2(action->styleSheet().contains(QStringLiteral("background: transparent")),
-                 "Sidebar text links should not render as filled buttons");
-        QVERIFY2(action->styleSheet().contains(QStringLiteral("border: none")),
-                 "Sidebar text links should not render button borders");
+        QVERIFY2(paintsFlatRightEdge(action),
+                 "Sidebar text links should render flat (no button fill or border), not filled");
     }
+
+    // Non-vacuity control: the same right-edge probe MUST reject an actually filled/bordered
+    // button, proving the assertion above is not passing merely because render() never touches
+    // the sampled strip.
+    QToolButton filledControl;
+    filledControl.setStyleSheet(
+        QStringLiteral("QToolButton { background: #ff0000; border: 2px solid #ff0000; }"));
+    QVERIFY2(!paintsFlatRightEdge(&filledControl),
+             "Flat-render probe must reject a filled button (self-check)");
 }
 
 void PartitionManagerPanelTests::sidebarActionsGateBySelectedTargetKind() {
