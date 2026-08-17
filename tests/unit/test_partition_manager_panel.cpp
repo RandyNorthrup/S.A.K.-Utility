@@ -379,6 +379,30 @@ QColor averageColor(const QImage& image, const QRect& rect) {
             static_cast<int>(blue / count)};
 }
 
+// True when the widget's own paintEvent leaves the extreme (0,0) corner unpainted while filling
+// its interior -- i.e. it actually paints a rounded fill. Forces the fill role(s) (Base, and
+// AlternateBase for a gradient tile) to a distinct marker and selected=false, renders only this
+// widget's paintEvent (empty flags: no child overpaint, no auto background fill) onto a
+// contrasting ground, and samples centre vs corner. Non-vacuous: a square fill would tint the
+// corner the fill marker and fail cornerClipped, while the centre pixel proves the body is filled.
+bool rendersRoundedCorners(QWidget* widget) {
+    const QColor fillMarker(255, 0, 0);
+    const QColor groundMarker(0, 0, 255);
+    QPalette pal = widget->palette();
+    pal.setColor(QPalette::Base, fillMarker);
+    pal.setColor(QPalette::AlternateBase, fillMarker);
+    widget->setPalette(pal);
+    widget->setProperty("selected", false);
+    widget->resize(60, 40);
+    const QSize sz = widget->size();
+    QImage image(sz, QImage::Format_ARGB32);
+    image.fill(groundMarker);
+    widget->render(&image, QPoint(), QRegion(), QWidget::RenderFlags());
+    const bool interiorFilled = image.pixelColor(sz.width() / 2, sz.height() / 2) == fillMarker;
+    const bool cornerClipped = image.pixelColor(0, 0) == groundMarker;
+    return interiorFilled && cornerClipped;
+}
+
 int chroma(const QColor& color) {
     const int high = std::max({color.red(), color.green(), color.blue()});
     const int low = std::min({color.red(), color.green(), color.blue()});
@@ -1633,15 +1657,22 @@ void PartitionManagerPanelTests::diskMapUsesCompactSpacing() {
              "Disk map should keep only a very small outer margin");
     QVERIFY2(mapLayout->spacing() <= 2, "Disk map rows should have a compact gap");
 
+    // Re-homed off the mirror `cornerRadius` dynamic property (a pure test handle). The row and
+    // tile paintEvents round with the kDiskMapRowRadius constant directly via addRoundedRect; the
+    // property only shadows that constant, so it could be renamed, removed, or left stale while
+    // the widget still rounds -- and, worse, it would keep passing if the addRoundedRect were ever
+    // replaced by a square fill. Assert the OBSERVABLE rounding via rendersRoundedCorners (renders
+    // the widget's own fill onto a contrasting ground and proves the extreme corner is left
+    // unpainted while the interior is filled). Strictly stronger and refactor-robust.
     auto* row = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapRow"));
     QVERIFY2(row != nullptr, "Disk map should render disk rows");
-    QVERIFY2(row->property("cornerRadius").toInt() >= 8,
-             "Disk map row container should use rounded corners");
+    QVERIFY2(rendersRoundedCorners(row),
+             "Disk map row should paint a rounded fill (corner clipped, interior filled)");
     QCOMPARE(row->contextMenuPolicy(), Qt::CustomContextMenu);
     auto* diskTile = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapDiskTile"));
     QVERIFY2(diskTile != nullptr, "Disk map should render disk tiles");
-    QVERIFY2(diskTile->property("cornerRadius").toInt() >= 8,
-             "Disk tile container should use rounded corners");
+    QVERIFY2(rendersRoundedCorners(diskTile),
+             "Disk tile should paint a rounded fill (corner clipped, interior filled)");
     QCOMPARE(diskTile->contextMenuPolicy(), Qt::CustomContextMenu);
     auto* segment = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapSegment"));
     QVERIFY2(segment != nullptr, "Disk map should render partition segments");
