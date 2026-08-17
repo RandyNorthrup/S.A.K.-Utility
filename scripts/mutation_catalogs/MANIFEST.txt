@@ -1,0 +1,13 @@
+# Mutation-catalog coverage ratchet (R5-G18-1).
+#
+# One catalog basename per line. This file is the ratchet's memory: the set of
+# catalogs on disk must EQUAL the set listed here (see run_all_mutation_catalogs.py
+# --validate, wired into pre-commit). Coverage can only grow -- adding a catalog
+# without listing it fails closed, and deleting a listed catalog fails closed.
+# Blank lines and '#' comments are ignored.
+
+email_html_sanitizer.json
+linux_distro_catalog.json
+mbox_header_parser.json
+mbox_transfer_decoder.json
+pst_block_decoder.json

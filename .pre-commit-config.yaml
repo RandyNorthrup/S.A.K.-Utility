@@ -76,6 +76,26 @@ repos:
         always_run: true
 
       # -------------------------------------------------------------------
+      # 0c. Mutation-catalog coverage ratchet (R5-G18-1) - fast integrity.
+      #     The per-catalog mutation harness proves a catalog's mutations are
+      #     all detected; this gate keeps the SET honest between full runs. It
+      #     asserts every catalog's find-string still occurs exactly once in the
+      #     current source (a refactor that moves the mutated text turns the
+      #     mutation into a silent no-op) and that the on-disk catalog set equals
+      #     MANIFEST.txt (a deleted catalog silently drops coverage; an added one
+      #     must be registered). Static only -- reads sources + JSON, builds
+      #     nothing. The slow build+mutate pass is on-demand:
+      #       python scripts/run_all_mutation_catalogs.py
+      # -------------------------------------------------------------------
+      - id: mutation-catalog-integrity
+        name: "Mutation-catalog coverage ratchet (integrity)"
+        description: "Every catalog find-string is unique + the catalog set matches MANIFEST.txt"
+        entry: python scripts/run_all_mutation_catalogs.py --validate
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # -------------------------------------------------------------------
       # 1. Secret/path scan - no key-shaped literals or developer paths
       # -------------------------------------------------------------------
       - id: secret-path-scan
