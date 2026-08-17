@@ -6,9 +6,14 @@
 # without listing it fails closed, and deleting a listed catalog fails closed.
 # Blank lines and '#' comments are ignored.
 
+apfs_compression.json
+apfs_crypto_keybag.json
+apfs_reader.json
 backup_file_codec.json
 decompressor_factory.json
 email_html_sanitizer.json
+ext_reader.json
+hfs_reader.json
 install_script_parser.json
 iso_analyzer.json
 linux_distro_catalog.json

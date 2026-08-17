@@ -1,0 +1,80 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_partition_manager_core",
+  "ctest_regex": "^test_partition_manager_core$",
+  "mutants": [
+    {
+      "id": "zero-block-guard-defeated",
+      "file": "src/core/partition_apfs_file_system_reader.cpp",
+      "find": "if (blockCount_ == 0) {",
+      "replace": "if (false) {",
+      "expect": "killed",
+      "why": "readInitialContainerBlock refuses a container that (after the device clamp) declares zero blocks -- the one input that leaves readBlock's bound nothing to check against. Defeating the guard lets that container proceed. apfsFileSystemReader_refusesAContainerDeclaringNoBlocks asserts listing.blockers contains \"declares no blocks\" (test line ~3154), which is never appended once the guard is dead."
+    },
+    {
+      "id": "object-checksum-verify-inverted",
+      "file": "src/core/partition_apfs_file_system_reader.cpp",
+      "find": "if (PartitionApfsWriter::verifyObjectChecksum(objectBytes)) {",
+      "replace": "if (!PartitionApfsWriter::verifyObjectChecksum(objectBytes)) {",
+      "expect": "killed",
+      "why": "validateObjectBlockChecksum is the only Fletcher-64 integrity gate on every object block (block 0 is checked here via readInitialContainerBlock). Inverting it accepts a corrupt block and rejects a valid one -- a fail-open on attacker-tampered metadata. apfsFileSystemReader_rejectsCorruptMetadataChecksum asserts blockers contains \"APFS object checksum failed at block 0\" on the corrupt fixture (test line ~6437) and asserts the re-stamped (valid) block does NOT report a checksum failure (line ~6448); the inversion breaks both."
+    },
+    {
+      "id": "container-incompat-supported-gate-inverted",
+      "file": "src/core/partition_apfs_file_system_reader.cpp",
+      "find": "if ((incompatible & ~kApfsSupportedContainerIncompat) != 0) {",
+      "replace": "if ((incompatible & ~kApfsSupportedContainerIncompat) == 0) {",
+      "expect": "killed",
+      "why": "validateContainerFeatures fail-closes on any container incompat bit outside the supported set. Flipping !=0 to ==0 accepts an unknown-incompat container and rejects every legitimate one (whose extra bits are zero). apfsWriter_streamedFileWriteMatchesInMemoryByteForByte QVERIFY2(readBack.ok) (test line ~8143) reads a freshly built valid container and now fails at container-feature validation."
+    },
+    {
+      "id": "volume-incompat-supported-gate-inverted",
+      "file": "src/core/partition_apfs_file_system_reader.cpp",
+      "find": "if ((volumeIncompatible & ~kApfsSupportedVolumeIncompat) != 0) {",
+      "replace": "if ((volumeIncompatible & ~kApfsSupportedVolumeIncompat) == 0) {",
+      "expect": "killed",
+      "why": "initializeVolumeState fail-closes on any volume incompat bit outside the supported set (symmetric with the container gate). apfsFileSystemReader_rejectsUnknownVolumeIncompatFeature sets DATALESS_SNAPS (unsupported) and asserts !rejected.ok with blockers containing \"unsupported incompatible\" (test lines ~6767-6768); flipping !=0 to ==0 no longer fires on the unknown bit, so the tampered volume is accepted."
+    },
+    {
+      "id": "omap-leaf-oid-match-inverted",
+      "file": "src/core/partition_apfs_file_system_reader.cpp",
+      "find": "if (keyOid == oid && keyXid <= xid && (!best.has_value() || keyXid > best->xid)) {",
+      "replace": "if (keyOid != oid && keyXid <= xid && (!best.has_value() || keyXid > best->xid)) {",
+      "expect": "killed",
+      "why": "bestObjectMapLeafValue resolves an object-map lookup by matching the requested OID; the container->volume and volume->root-tree mappings all flow through it. Requiring keyOid != oid returns the wrong mapping (or none), so the volume superblock / root tree cannot be located and mount fails. apfsWriter_streamedFileWriteMatchesInMemoryByteForByte QVERIFY2(readBack.ok) (test line ~8143) fails because no valid container can be mounted."
+    },
+    {
+      "id": "inode-dstream-size-field-type-inverted",
+      "file": "src/core/partition_apfs_file_system_reader.cpp",
+      "find": "if (type == kApfsInodeDstreamField && size >= kApfsDstreamMinBytes) {",
+      "replace": "if (type != kApfsInodeDstreamField && size >= kApfsDstreamMinBytes) {",
+      "expect": "killed",
+      "why": "inodeDstreamSize reads a regular file's logical size from its DSTREAM xfield (type==8); this size becomes inode->size and thus bytes_to_read. Requiring type != 8 skips the real dstream field, so a non-empty file resolves size 0 (or a wrong xfield's bytes). apfsWriter_streamedFileWriteMatchesInMemoryByteForByte QCOMPARE(readBack.data, payload) (test line ~8144) and the listing size_bytes checks (e.g. apfsWriter_multiChunkStreamedWriteSpansDataChunks line ~8348) fail."
+    },
+    {
+      "id": "extent-flags-guard-inverted",
+      "file": "src/core/partition_apfs_file_system_reader.cpp",
+      "find": "if (extent.flags != 0) {",
+      "replace": "if (extent.flags == 0) {",
+      "expect": "killed",
+      "why": "appendReadableExtent refuses extents carrying any unsupported flag bits (flags != 0). Inverting rejects every NORMAL extent (flags==0) with \"file extent flags are not supported\", so any real file read fails. apfsWriter_streamedFileWriteMatchesInMemoryByteForByte QVERIFY2(readBack.ok) (test line ~8143) fails."
+    },
+    {
+      "id": "extent-bounds-off-by-one",
+      "file": "src/core/partition_apfs_file_system_reader.cpp",
+      "find": "if (blockCount_ != 0 && (extent.physical_block >= blockCount_ ||",
+      "replace": "if (blockCount_ != 0 && (extent.physical_block > blockCount_ ||",
+      "expect": "equivalent",
+      "why": "Behaviorally EQUIVALENT under the current reader (defense-in-depth), so no test can kill it. The >= vs > flip differs on exactly one input, physical_block == blockCount_. At that point the sibling span-overflow clause `extentBlocks > blockCount_ - extent.physical_block` reduces to `extentBlocks > 0`, which is always true for a stored extent (parseFileExtentRecord only inserts extents whose length > 0, so extentBlocks >= 1) -- the extent is still rejected; and even if that clause were bypassed, readBlock independently refuses the read (`block >= blockCount_`). So the mutation cannot change any observable read outcome. apfsReader_rejectsFileExtentAtContainerBlockCountBoundary pins the fail-closed behavior at the exact boundary (patches a file's on-disk extent physical_block to blockCount_, re-stamps the leaf checksum, and asserts readFileFromImage fails with 'outside the container bounds'), guarding the guard against any future weakening."
+    },
+    {
+      "id": "encrypted-volume-credential-gate-inverted",
+      "file": "src/core/partition_apfs_file_system_reader.cpp",
+      "find": "if (credential_.isEmpty()) {",
+      "replace": "if (!credential_.isEmpty()) {",
+      "expect": "killed",
+      "why": "unlockEncryptedVolume fail-closes (\"a password or recovery key is required\") when a locked volume is opened with NO credential. Inverting sends a SUPPLIED credential down the fail-closed branch (the correct password is refused) and lets a MISSING credential fall through to key derivation. apfsReader_decryptsEncryptedVolumeWithCredential QVERIFY2(unlocked.ok) with the correct password (test line ~13505) fails."
+    }
+  ]
+}

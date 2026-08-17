@@ -1,0 +1,80 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_partition_manager_core",
+  "ctest_regex": "^test_partition_manager_core$",
+  "mutants": [
+    {
+      "id": "xts-tweak-mul-shift-doubled",
+      "file": "src/core/apfs_crypto.cpp",
+      "find": "out[i] = static_cast<char>(((b << 1) | carry) & 0xFF);",
+      "replace": "out[i] = static_cast<char>(((b << 2) | carry) & 0xFF);",
+      "expect": "killed",
+      "why": "gf128MulAlpha is XTS multiply-by-alpha (GF(2^128) left-shift-by-1); shifting by 2 yields the wrong per-block tweak for block 1 onward. apfsCrypto_matchesPublishedVectors (verifyApfsCryptoXtsVectors) pins IEEE-1619 Vector 1: QCOMPARE(vec1.toHex(), \"917cf6...922e\") -- the second 16-byte block (which uses the multiplied tweak) no longer matches."
+    },
+    {
+      "id": "xts-per-unit-tweak-not-advanced",
+      "file": "src/core/apfs_crypto.cpp",
+      "find": "const QByteArray r = xtsTransformUnit(key1, key2, firstDataUnit + u, unitData, encrypt);",
+      "replace": "const QByteArray r = xtsTransformUnit(key1, key2, firstDataUnit, unitData, encrypt);",
+      "expect": "killed",
+      "why": "each XTS data unit must use tweak base firstDataUnit + u; dropping +u makes every unit share unit 0's tweak, so identical plaintext units encrypt identically. verifyApfsCryptoXtsVectors asserts QVERIFY(ctx2.left(512) != ctx2.mid(512)) on twoUnits=ptx+ptx -- the two halves would now be equal."
+    },
+    {
+      "id": "xts-block-to-unit-scale-dropped",
+      "file": "src/core/apfs_crypto.cpp",
+      "find": "return xtsDecrypt(vek, blockAddr * kApfsCryptoUnitsPerBlock, ciphertextBlock);",
+      "replace": "return xtsDecrypt(vek, blockAddr, ciphertextBlock);",
+      "expect": "killed",
+      "why": "an APFS block maps to blockAddr*kApfsCryptoUnitsPerBlock (8) 512-byte crypto units; dropping the *8 makes xtsDecryptBlock use a different tweak base than xtsEncryptBlock, breaking the inverse. verifyApfsCryptoXtsVectors asserts QCOMPARE(xtsDecryptBlock(vek, 198, encBlock), block) where encBlock came from xtsEncryptBlock(vek, 198, block)."
+    },
+    {
+      "id": "keywrap-unwrap-round-count-short",
+      "file": "src/core/apfs_crypto.cpp",
+      "find": "for (int j = 5; j >= 0; --j) {",
+      "replace": "for (int j = 4; j >= 0; --j) {",
+      "expect": "killed",
+      "why": "RFC 3394 unwrap must run exactly 6 outer rounds (j=5..0) to invert the 6-round wrap; running 5 leaves the integrity register A != 0xA6, so aesKeyUnwrap returns nullopt. verifyApfsCryptoHashHmacKeywrapVectors asserts QVERIFY(unwrapped.has_value()) and QCOMPARE(*unwrapped, key) on the RFC 3394 4.6 vector; also kills apfsKeybag_reproducesHarvestedFileVaultBlobs' QVERIFY(kek.has_value())."
+    },
+    {
+      "id": "keywrap-integrity-guard-inverted",
+      "file": "src/core/apfs_crypto.cpp",
+      "find": "if (!integrityOk) {",
+      "replace": "if (integrityOk) {",
+      "expect": "killed",
+      "why": "the RFC 3394 integrity check must reject when the recovered A block is not all-0xA6 (fail closed on a wrong key); inverting the guard returns nullopt on a CORRECT unwrap and a garbage key on a wrong one -- a fail-open. verifyApfsCryptoHashHmacKeywrapVectors asserts QVERIFY(unwrapped.has_value()) on the correct-key vector, which now fails."
+    },
+    {
+      "id": "keybag-magic-accept-requires-both",
+      "file": "src/core/apfs_keybag.cpp",
+      "find": "if (magic != kApfsObjectTypeContainerKeybag && magic != kApfsObjectTypeVolumeKeybag) {",
+      "replace": "if (magic != kApfsObjectTypeContainerKeybag || magic != kApfsObjectTypeVolumeKeybag) {",
+      "expect": "killed",
+      "why": "a keybag block is valid if its magic is EITHER keybag type; the && guard rejects only blocks that are neither, while || rejects every block (magic can equal at most one type), so parseKeybagBlock always returns empty. apfsKeybag_reproducesHarvestedFileVaultBlobs (verifyApfsKeybagBlockTopology) asserts QCOMPARE(parsed.size(), 2) on the built container keybag."
+    },
+    {
+      "id": "keyblob-inner-sequence-tag-mismatch",
+      "file": "src/core/apfs_keybag.cpp",
+      "find": "if (f.tag == 0xA3) {",
+      "replace": "if (f.tag == 0xA2) {",
+      "expect": "killed",
+      "why": "the inner keyblob is the DER [0xA3] context field; matching 0xA2 instead never captures it, so keyblob stays empty, wrappedKey is never assigned, and parseKeyBlob returns false (wrappedKey.size() != 40). apfsKeybag_reproducesHarvestedFileVaultBlobs asserts QVERIFY(parseKeyBlob(parsed.at(1).keydata, &vp)) and QCOMPARE(vp.wrappedKey, wrappedVek)."
+    },
+    {
+      "id": "keybag-fit-guard-inverted",
+      "file": "src/core/apfs_keybag.cpp",
+      "find": "if (packedBytes > blockSize) {",
+      "replace": "if (packedBytes < blockSize) {",
+      "expect": "killed",
+      "why": "the guard must reject entries whose packed size EXCEEDS the block (else the entry writes overflow it); inverting to < both rejects a well-formed sub-block and accepts an oversized one. apfsKeybag_failsClosedOnMalformedEntry asserts QVERIFY(!buildKeybagBlock(good-entry...).isEmpty()) (now empty) and QVERIFY(buildKeybagBlock(8192-byte keydata...).isEmpty()) (now non-empty)."
+    },
+    {
+      "id": "xts-gf128-reduction-poly-wrong",
+      "file": "src/core/apfs_crypto.cpp",
+      "find": "out[0] = static_cast<char>(static_cast<unsigned char>(out[0]) ^ 0x87);",
+      "replace": "out[0] = static_cast<char>(static_cast<unsigned char>(out[0]) ^ 0x86);",
+      "expect": "killed",
+      "why": "0x87 is the IEEE Std 1619-2007 GF(2^128) reduction polynomial, XORed into the next XTS tweak only when an alpha-multiply carries out of byte 15. apfsCrypto_xtsGf128ReductionConstantIsExercised drives xtsEncrypt over a 512-byte data unit (32 blocks / 31 alpha-multiplies) whose tweak sequence carries, then QCOMPAREs the ciphertext against an INDEPENDENT reference computed from the FIPS-197-pinned aesEcbEncryptBlock primitive and the literal correct constant 0x87 (the reference is validated against published IEEE-1619 Vector 1). The test asserts a carry is actually consumed (usedReduction) and that ref(0x87) != ref(0x86), so the 0x86 mutant diverges at the first carrying block and the exact-bytes QCOMPARE(cipher, ref87) turns red. Not a symmetric round trip -- the expected bytes come from a reference built with the correct constant, independent of the source's gf128MulAlpha reduction."
+    }
+  ]
+}

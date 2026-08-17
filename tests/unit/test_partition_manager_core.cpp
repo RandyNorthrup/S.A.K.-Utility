@@ -1303,6 +1303,7 @@ private Q_SLOTS:
     void hfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
     void apfsFileSystemReader_rejectsCorruptMetadataChecksum();
     void apfsFileSystemReader_rejectsUnknownVolumeIncompatFeature();
+    void apfsReader_rejectsFileExtentAtContainerBlockCountBoundary();
     void apfsWriter_computesAndVerifiesObjectChecksums();
     void apfsWriter_computesMultiChunkContainerGeometry();
     void apfsWriter_geometryChunkCountDoesNotOverflowNearUint64Max();
@@ -1370,6 +1371,7 @@ private Q_SLOTS:
     void apfsWriter_shrinksContainerDroppingChunks();
     void apfsWriter_blocksSealedVolumeMutation();
     void apfsCrypto_matchesPublishedVectors();
+    void apfsCrypto_xtsGf128ReductionConstantIsExercised();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
     void apfsWriter_formatsUnlockableEncryptedVolume();
     void apfsWriter_rawFormatHonorsVolumePassword();
@@ -8144,6 +8146,134 @@ void PartitionManagerCoreTests::apfsWriter_streamedFileWriteMatchesInMemoryByteF
     QCOMPARE(readBack.data, payload);
 }
 
+namespace {
+
+// Formats a fresh image-only APFS container at `img`, commits a single small file
+// ("edge.bin") through the raw-write path, and asserts it reads back cleanly before
+// any tampering. The raw-device test predicate must already select `img`.
+void writeApfsExtentBoundaryImage(const QString& img, uint64_t bytes, const QByteArray& payload) {
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = img,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("Boundary"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+    const auto commit =
+        PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                 .target_container_bytes = bytes,
+                                                 .file_name = QStringLiteral("edge.bin"),
+                                                 .file_data = payload,
+                                                 .target_mutation_confirmed = true,
+                                                 .allow_raw_device_target = true,
+                                                 .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    // Baseline: the file reads back cleanly before tampering.
+    const auto before = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/edge.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(before.ok, qPrintable(before.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(before.data, payload);
+}
+
+// Effective container block count = min(nx_block_count, backing-device blocks) --
+// exactly what the reader clamps blockCount_ to. The first out-of-range physical
+// block index is this count itself.
+uint64_t apfsEffectiveContainerBlockCount(const QString& img, const QByteArray& image) {
+    const QByteArray nxsb = readApfsImageBlock(img, 0);
+    const uint64_t nxBlockCount = apfsLe64(nxsb, 0x28);  // nx_block_count
+    const uint64_t deviceBlocks = static_cast<uint64_t>(image.size()) / 4096ULL;
+    return std::min<uint64_t>(nxBlockCount, deviceBlocks);
+}
+
+// Locates the file-extent record's on-disk physical_block field. The fs-tree LEAF:
+// object subtype 0x0000000E (FSTREE) at 0x1C and btn_level 0 at 0x22; its records
+// are a variable-KV B-tree -- TOC at 0x38 (8-byte entries: key-offset at +0,
+// value-offset at +4), keys grow from keyAreaStart = 0x38 + table_length(0x2A),
+// values grow DOWN from valueAreaEnd = 4096 - (ROOT ? 40 : 0). A file-extent key has
+// type nibble (keyHeader >> 60) == 8; its 24-byte value holds physical_block at
+// offset +8 (kApfsFileExtentValuePhysicalBlockOffset). This mirrors the writer's own
+// extent parser (partition_apfs_writer.cpp collectDataExtents). Writes the absolute
+// image offset of the (last-seen) extent's physical_block to *paddrOffset and returns
+// how many file-extent records were found.
+int locateApfsSingleFileExtentPaddr(const QByteArray& image, qsizetype* paddrOffset) {
+    *paddrOffset = -1;
+    int extentRecords = 0;
+    for (qsizetype base = 0; base + 4096 <= image.size(); base += 4096) {
+        const QByteArray node = image.mid(base, 4096);
+        if (!PartitionApfsWriter::verifyObjectChecksum(node)) {
+            continue;
+        }
+        if (apfsLe32(node, 0x1C) != 0x00'00'00'0EU || apfsLe16(node, 0x22) != 0) {
+            continue;  // not a file-system-tree leaf
+        }
+        const bool isRoot = (apfsLe16(node, 0x20) & 0x0001U) != 0;
+        const int valueAreaEnd = 4096 - (isRoot ? 40 : 0);
+        const quint32 nkeys = apfsLe32(node, 0x24);
+        const int keyAreaStart = 0x38 + apfsLe16(node, 0x2A);
+        for (quint32 index = 0; index < nkeys; ++index) {
+            const int toc = 0x38 + (static_cast<int>(index) * 8);
+            const quint16 keyOffset = apfsLe16(node, toc);
+            const quint16 valueOffset = apfsLe16(node, toc + 4);
+            if ((apfsLe64(node, keyAreaStart + keyOffset) >> 60) != 8ULL) {
+                continue;  // not a FILE_EXTENT record
+            }
+            const int value = valueAreaEnd - valueOffset;
+            *paddrOffset = base + value + 8;  // physical_block field, absolute in image
+            ++extentRecords;
+        }
+    }
+    return extentRecords;
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::apfsReader_rejectsFileExtentAtContainerBlockCountBoundary() {
+    // R5-G14: appendExtentBytes bounds a file extent's physical_block against the
+    // container block count with `physical_block >= blockCount_`; valid block indices
+    // are 0..blockCount_-1, so blockCount_ itself is one past the last valid block.
+    // Pin the FAIL-CLOSED behavior at that exact boundary: an extent whose
+    // physical_block == blockCount_ must be rejected, never read one block past the end.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    const QString img = dir.filePath(QStringLiteral("extent-boundary.apfs"));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const QByteArray payload(2048, 'B');  // fits in a single 4096-byte block (one extent)
+    writeApfsExtentBoundaryImage(img, bytes, payload);
+
+    QByteArray image = readBytes(img);
+    const uint64_t blockCount = apfsEffectiveContainerBlockCount(img, image);
+    QVERIFY(blockCount > 0);
+
+    qsizetype paddrOffset = -1;
+    const int extentRecords = locateApfsSingleFileExtentPaddr(image, &paddrOffset);
+    QCOMPARE(extentRecords, 1);
+    QVERIFY(paddrOffset >= 0);
+    const qsizetype leafBase = (paddrOffset / 4096) * 4096;
+
+    // Repoint physical_block to EXACTLY the block count (the first out-of-range index)
+    // and re-stamp the leaf's object checksum, so the reader reaches the extent-bounds
+    // guard rather than a checksum failure.
+    QVERIFY(patchAndStampApfsBlock(&image,
+                                   {.block_offset = leafBase,
+                                    .field_offset = paddrOffset - leafBase,
+                                    .value = blockCount,
+                                    .field32 = false}));
+    QVERIFY(writeBytes(img, image));
+
+    // Fail closed: the extent starts at block == blockCount_, so `physical_block >=
+    // blockCount_` rejects it and no byte past the container end is read.
+    const auto after = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/edge.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY(!after.ok);
+    QVERIFY2(after.blockers.join(QStringLiteral("; "))
+                 .contains(QStringLiteral("outside the container bounds")),
+             qPrintable(after.blockers.join(QStringLiteral("; "))));
+}
+
 void PartitionManagerCoreTests::apfsWriter_streamedWriteFailsClosedOnShortPayloadSource() {
     // A payload source that ends before its declared stream size (the host file
     // shrank between size probe and stream) must fail the commit, not silently
@@ -13229,6 +13359,130 @@ void PartitionManagerCoreTests::apfsCrypto_matchesPublishedVectors() {
     // 3394 / IEEE 1619), with PBKDF2 cross-checked against this module's own HMAC.
     verifyApfsCryptoHashHmacKeywrapVectors();
     verifyApfsCryptoXtsVectors();
+}
+
+namespace {
+
+// Little-endian 16-byte encoding of `value` (upper 8 bytes zero) -- the XTS tweak
+// seed for a data unit, matching the source's le128.
+QByteArray xtsUnitTweakSeed(quint64 value) {
+    QByteArray out(16, '\0');
+    for (int i = 0; i < 8; ++i) {
+        out[i] = static_cast<char>((value >> (8 * i)) & 0xFF);
+    }
+    return out;
+}
+
+// GF(2^128) multiply-by-alpha (little-endian left-shift-by-1) with an EXPLICIT
+// reduction constant; reports whether the shift carried (reduction applied then).
+QByteArray xtsGf128Double(const QByteArray& t, unsigned char reduction, bool* carried) {
+    QByteArray out = t;
+    unsigned char carry = 0;
+    for (int i = 0; i < 16; ++i) {
+        const auto b = static_cast<unsigned char>(out[i]);
+        out[i] = static_cast<char>(((b << 1) | carry) & 0xFF);
+        carry = (b >> 7) & 1;
+    }
+    *carried = (carry != 0);
+    if (carry != 0) {
+        out[0] = static_cast<char>(static_cast<unsigned char>(out[0]) ^ reduction);
+    }
+    return out;
+}
+
+struct XtsUnitRefInput {
+    QByteArray key1;
+    QByteArray key2;
+    quint64 unit{0};
+    QByteArray pt;
+    unsigned char reduction{0};
+};
+
+// Independent AES-XTS-128 forward transform of one data unit (see xtsTransformUnit).
+// *usedReduction is set when a carry produces a tweak that a LATER block consumes --
+// i.e. the reduction constant actually influences the output of this unit.
+QByteArray xtsUnitRef(const XtsUnitRefInput& in, bool* usedReduction) {
+    using namespace sak::apfs_crypto;
+    QByteArray out(in.pt.size(), '\0');
+    QByteArray tj = aesEcbEncryptBlock(in.key2, xtsUnitTweakSeed(in.unit));  // tweak block 0
+    const int blocks = static_cast<int>(in.pt.size() / 16);
+    *usedReduction = false;
+    for (int j = 0; j < blocks; ++j) {
+        QByteArray masked(16, '\0');
+        for (int k = 0; k < 16; ++k) {
+            masked[k] = static_cast<char>(static_cast<unsigned char>(in.pt[(j * 16) + k]) ^
+                                          static_cast<unsigned char>(tj[k]));
+        }
+        const QByteArray enc = aesEcbEncryptBlock(in.key1, masked);
+        for (int k = 0; k < 16; ++k) {
+            out[(j * 16) + k] = static_cast<char>(static_cast<unsigned char>(enc[k]) ^
+                                                  static_cast<unsigned char>(tj[k]));
+        }
+        bool carried = false;
+        tj = xtsGf128Double(tj, in.reduction, &carried);
+        if (carried && (j + 1) < blocks) {
+            *usedReduction = true;  // the reduced tweak feeds block j+1
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::apfsCrypto_xtsGf128ReductionConstantIsExercised() {
+    // R5-G14: 0x87 is the IEEE Std 1619-2007 GF(2^128) reduction polynomial, XORed
+    // into the next XTS tweak ONLY when an alpha-multiply carries out of byte 15. The
+    // published Vector-1 known-answer (32-byte unit) never carries, and every other XTS
+    // assertion is an encrypt-then-decrypt round trip that is self-consistent under any
+    // fixed constant, so 0x87 was never pinned. This drives xtsEncrypt over a 512-byte
+    // data unit whose tweak sequence carries, and pins the ciphertext against an
+    // INDEPENDENT reference built only from the FIPS-197-pinned aesEcbEncryptBlock and
+    // the literal correct constant -- not a symmetric round trip.
+    using namespace sak::apfs_crypto;
+
+    // Machinery check: the reference reproduces published IEEE Std 1619-2007 Vector 1
+    // (zero key, unit 0, 32-byte all-zero plaintext) -- an authoritative external answer
+    // (this vector's single multiply does NOT carry).
+    bool v1Reduced = false;
+    const QByteArray v1 = xtsUnitRef({.key1 = QByteArray(16, '\0'),
+                                      .key2 = QByteArray(16, '\0'),
+                                      .unit = 0,
+                                      .pt = QByteArray(32, '\0'),
+                                      .reduction = 0x87},
+                                     &v1Reduced);
+    QCOMPARE(v1.toHex(),
+             QByteArray("917cf69ebd68b2ec9b9fe9a3eadda692cd43d2f59598ed858c02c2652fbf922e"));
+    QVERIFY(!v1Reduced);
+
+    // A 512-byte data unit is 32 blocks / 31 alpha-multiplies: its tweak sequence
+    // carries, so the reduction constant is applied.
+    QByteArray key1(16, '\0');
+    QByteArray key2(16, '\0');
+    for (int i = 0; i < 16; ++i) {
+        key1[i] = static_cast<char>(0x20 + i);
+        key2[i] = static_cast<char>(0x40 + i);
+    }
+    QByteArray pt(512, '\0');
+    for (int i = 0; i < pt.size(); ++i) {
+        pt[i] = static_cast<char>((i * 5 + 1) & 0xFF);
+    }
+    const quint64 unit = 0x01'02'03'04'05'06'07'08ULL;
+    bool used87 = false;
+    bool used86 = false;
+    const QByteArray ref87 = xtsUnitRef(
+        {.key1 = key1, .key2 = key2, .unit = unit, .pt = pt, .reduction = 0x87}, &used87);
+    const QByteArray ref86 = xtsUnitRef(
+        {.key1 = key1, .key2 = key2, .unit = unit, .pt = pt, .reduction = 0x86}, &used86);
+    // The reduction IS exercised: a carry produces a tweak a later block consumes.
+    QVERIFY2(used87, "chosen XTS data unit never carries -- reduction constant not exercised");
+    // ...and it is load-bearing: the wrong constant (0x86, the mutant) diverges here.
+    QVERIFY(ref87 != ref86);
+    // The source uses the correct IEEE-1619 constant 0x87, so xtsEncrypt matches the
+    // independent 0x87 reference EXACTLY; under the 0x86 mutant it would equal ref86.
+    const QByteArray xtsKey = key1 + key2;
+    const QByteArray cipher = xtsEncrypt(xtsKey, unit, pt, 512);
+    QCOMPARE(cipher, ref87);
+    QVERIFY(cipher != ref86);
 }
 
 namespace {

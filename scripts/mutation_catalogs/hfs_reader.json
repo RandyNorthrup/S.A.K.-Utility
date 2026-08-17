@@ -1,0 +1,73 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_partition_manager_core",
+  "ctest_regex": "^test_partition_manager_core$",
+  "_note": "TARGET-FILE CORRECTION: partition_hfs_file_system_reader.cpp (484 lines) is a thin dispatcher/exporter; ALL of the untrusted HFS+ decode the brief names (catalog B-tree, extents/overflow, decmpfs, fork-size, volume geometry) lives in the header it includes, include/sak/partition_hfs_internal.h (the HfsReader engine, 12069 lines -- this is the 'large file with similar lines'). The harness snapshots/greps/mutates each mutant's own \"file\" and rebuilds the target, which recompiles partition_hfs_file_system_reader.cpp AND partition_hfs_file_system_writer.cpp (both #include this header), so header mutations take effect. Every find below was verified grep -Fc == 1 in the header.",
+  "mutants": [
+    {
+      "id": "geometry-device-length-bound-off-by-one",
+      "file": "include/sak/partition_hfs_internal.h",
+      "find": "return volumeEnd > static_cast<uint64_t>(deviceLength);",
+      "replace": "return volumeEnd >= static_cast<uint64_t>(deviceLength);",
+      "expect": "killed",
+      "why": "volumeExceedsDeviceLength() must reject only volumes whose end runs PAST the device; a volume that exactly fills the device (volumeEnd == deviceLength) is legal. Relaxing > to >= rejects the exact-fit volume. hfsFileSystemReader_rejectsVolumeGeometryPastDeviceEnd loads the exact-fit 64-block-in-64-block fixture and asserts QVERIFY2(ok.ok, ...) (listDirectory on the exact fixture)."
+    },
+    {
+      "id": "wrapper-embedded-extent-bound-off-by-one",
+      "file": "include/sak/partition_hfs_internal.h",
+      "find": "return volumeEnd > extentEnd;",
+      "replace": "return volumeEnd >= extentEnd;",
+      "expect": "killed",
+      "why": "volumeExceedsEmbeddedExtent() bounds a WRAPPED (HFS-inside-HFS-wrapper) volume by its embedded extent, not the whole device; a volume exactly filling the extent is legal. Relaxing > to >= rejects the exact-fit wrapped volume. hfsFileSystemReader_rejectsWrappedVolumePastEmbeddedExtent loads the exact-fit 64-blocks-in-64-block-extent fixture and asserts it still loads (QVERIFY2(ok.ok) after the over-claim rejection block)."
+    },
+    {
+      "id": "decmpfs-inline-dispatch-misrouted-to-resource",
+      "file": "include/sak/partition_hfs_internal.h",
+      "find": "if (decmpfsTypeIsInline(header->compression_type)) {",
+      "replace": "if (decmpfsTypeIsResource(header->compression_type)) {",
+      "expect": "killed",
+      "why": "tryReadCompressedFile() must route an inline decmpfs type (3/7) to decodeCompressedInlineFile; misrouting the branch to the resource predicate sends inline types to 'not supported' and resource types (4/8) into the inline decoder. hfsFileSystemReader_readsDecmpfsCompressedFiles asserts the type-4 resource read QVERIFY2(resourceRead.ok) and QCOMPARE(resourceRead.data, resourceContent), plus the type-3 inline round-trip via verifyHfsCompressedReadBack -- both break."
+    },
+    {
+      "id": "catalog-name-lookup-case-fold-disabled",
+      "file": "include/sak/partition_hfs_internal.h",
+      "find": "QString::compare(record.name, name, Qt::CaseInsensitive) == 0",
+      "replace": "QString::compare(record.name, name, Qt::CaseSensitive) == 0",
+      "expect": "killed",
+      "why": "findChild()'s case-insensitive fallback (reached only on a non-binary HFS+ volume) resolves a mixed-case path component against the on-disk name. Forcing a case-sensitive compare makes the HFS+ case-insensitive lookup fail. hfsFileSystemReader_listsDirectoriesAndReadsFiles lists the lowercase path \"/docs\" and asserts QVERIFY2(docs.ok, ...) and QCOMPARE(docs.entries.size(), 1) for the on-disk \"Docs\" folder."
+    },
+    {
+      "id": "btree-record-offset-bound-guard-weakened",
+      "file": "include/sak/partition_hfs_internal.h",
+      "find": "if (offset < kBTreeNodeDescriptorBytes || offset >= nodeSize) {",
+      "replace": "if (offset < kBTreeNodeDescriptorBytes && offset >= nodeSize) {",
+      "expect": "killed",
+      "why": "recordOffsets() fail-closes on any B-tree record offset below the node descriptor or past the node end; changing || to && makes the two bounds mutually exclusive so no offset is ever rejected (fail-open). hfsFileSystemReader_checksCatalogConsistency corrupts a leaf record offset to 1 and asserts QVERIFY(!blocked.ok) and blockers contain \"record offset\"; with the guard weakened neither holds."
+    },
+    {
+      "id": "overflow-extent-record-acceptance-inverted",
+      "file": "include/sak/partition_hfs_internal.h",
+      "find": "if (record.has_value() && !record->extents.isEmpty()) {",
+      "replace": "if (record.has_value() && record->extents.isEmpty()) {",
+      "expect": "killed",
+      "why": "appendExtentsOverflowRecords() must keep parsed overflow-extent records that carry extents; inverting the emptiness test drops every real overflow record and keeps only empty ones, so the catalog/file forks that need overflow extents can no longer be read. hfsFileSystemReader_usesOverflowExtentsForCatalogAndFiles asserts QVERIFY2(root.ok, ...) and QCOMPARE(hello.data, expectedHello) (ending in the overflow tail), both of which require the overflow extents."
+    },
+    {
+      "id": "data-fork-logical-size-decoded-as-block-count",
+      "file": "include/sak/partition_hfs_internal.h",
+      "find": "record.data_size = record.data_fork.logical_size;",
+      "replace": "record.data_size = record.data_fork.total_blocks;",
+      "expect": "killed",
+      "why": "A catalog file's reported byte size is the fork logical_size, not its allocation-block count; substituting total_blocks reports blocks-as-bytes. hfsFileSystemReader_usesOverflowExtentsForCatalogAndFiles asserts QCOMPARE(root.entries.first().size_bytes, static_cast<uint64_t>(expectedHello.size())), which fails once size_bytes carries the block count instead of the byte length."
+    },
+    {
+      "id": "resource-fork-logical-size-decoded-as-block-count",
+      "file": "include/sak/partition_hfs_internal.h",
+      "find": "record.resource_size = record.resource_fork.logical_size;",
+      "replace": "record.resource_size = record.resource_fork.total_blocks;",
+      "expect": "killed",
+      "why": "A file's resource-fork byte size is the fork logical_size, not its block count; substituting total_blocks reports blocks-as-bytes. hfsFileSystemReader_usesOverflowExtentsForCatalogAndFiles asserts QCOMPARE(root.entries.first().resource_fork_size_bytes, static_cast<uint64_t>(expectedResource.size())), which fails once resource_fork_size_bytes carries the block count instead of the byte length."
+    }
+  ]
+}
