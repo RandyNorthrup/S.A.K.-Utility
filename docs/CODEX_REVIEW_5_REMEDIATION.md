@@ -18,7 +18,8 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-16: 569 [x] / 92 [~] / 0 [ ]. UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
+as of 2026-08-17: 571 [x] / 90 [~] / 0 [ ] (G18-1 mutation-testing COMPLETE and LEDGER-4
+committed-ledger done this window). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
 [x] fixed (real work done, e.g. P6-18 searchCancelled, G18-10 wait-misuse), [x] verified-done
@@ -26,8 +27,11 @@ re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolv
 (a genuine permanent tool/language/owner limit, e.g. G23-6 unsigned bundled exes). Several
 were found already-done but mislabeled (G14-1, G19-1..5). The remaining [~] are the infra
 programs now being worked slice by slice (e.g. G18-1/3/4 test-quality, relabelled from
-"deferred" to AUTHORIZED-IN-PROGRESS); "deferred-with-rationale" occurrences: 69 and
-falling.
+"deferred" to AUTHORIZED-IN-PROGRESS); "[deferred-with-rationale]:" disposition labels:
+60 and falling (grep-verified 2026-08-17; the prior "69" was an inexact hand count). The 4
+R5-LEDGER items were relabelled honestly 2026-08-17 -- LEDGER-1/2/3 are AUTHORIZED-IN-PROGRESS
+blocked on Randy's go to relaunch the budget-heavy Codex sweep, LEDGER-4's committed-ledger
+deliverable is verified-done.
 
 DONE this session:
 - All 201 open subsystem LOW findings (P1-P11) closed in 7 gated workflow-waves (Release
@@ -1870,7 +1874,7 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
 ### Status (August 5, 2026)
 
 - [~] R5-LEDGER-1 Run all 1098 per-file review units to completion
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: R5's Phase-2 per-file exhaustive sweep WAS executed as the review methodology; its findings became the P1-P11 subsystem items, now all closed/deferred. The ledger stands as the historical coverage record.
+  - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334
       units (246 tests, 75 src, 9 include, 4 scripts) cannot be run before then. This is
@@ -1884,11 +1888,11 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
       August 11. RELAUNCH IS A MANUAL STEP after the cap resets -- nothing is waiting to
       pick this up on its own, and 764/1098 is where it stands until someone starts it.
 - [~] R5-LEDGER-2 Verify every per-file finding against the local tree
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: Every per-file finding was verified against the local tree during the campaign (that verification produced the CONFIRMED/PARTIAL/FALSE-POS dispositions in the P1-P11 sections).
+  - AUTHORIZED-IN-PROGRESS (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]"): 99 of 723 briefs verified (13.7%) after wave 6; 624 briefs remain. The verified subset DID produce the CONFIRMED/PARTIAL/FALSE-POS dispositions in the P1-P11 sections, but the majority of briefs are unverified. Gated on LEDGER-1's remaining units + further verification passes (same Codex-account-budget constraint). NOT verified-done; NOT deferred.
       IN PROGRESS: 99 of 723 briefs verified (13.7%) after wave 6; 624 briefs remain.
       Wave 7 (64 more) is running.
 - [~] R5-LEDGER-3 Fix every confirmed per-file finding in gated waves
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: Every confirmed per-file finding was fixed in gated waves (the P1-P11 closure batches); tracked complete.
+  - AUTHORIZED-IN-PROGRESS (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]"): the confirmed findings from the VERIFIED subset were fixed in gated waves (the P1-P11 closure batches, all 225/225). But because LEDGER-2's verification is only 13.7% done, the confirmed-finding set is not final -- 624 briefs remain to verify, and any confirmed findings they surface still need fixing. NOT verified-done; NOT deferred. Gated behind LEDGER-1/2.
       IN PROGRESS: 1488 findings survive verification so far -- 5 CRITICAL, 102 HIGH,
       560 MEDIUM, 821 LOW. Wave 1 (browser) is committed as b2d3e96; wave 2 closed the two
       CRITICALs wave 6 surfaced outside the APFS writer (see "Fix wave 2" above).
@@ -1899,8 +1903,8 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
       callers has to assume every caller is hostile -- and it means the raw CRITICAL/HIGH
       labels on the remaining briefs overstate the real high-severity count by a wide margin.
       It does NOT shrink the MEDIUM/LOW tail, which is where most of the remaining work is.
-- [~] R5-LEDGER-4 Commit the coverage ledger so future campaigns measure coverage
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: The coverage ledger is committed in this doc; it stands as the measured-coverage record for future campaigns.
+- [x] R5-LEDGER-4 Commit the coverage ledger so future campaigns measure coverage
+  - verified-done (relabelled 2026-08-17 from "[deferred-with-rationale]" -- this item's literal deliverable IS complete): the coverage ledger (Phase-2 per-file structure, this section) is committed in-repo in this doc, so future campaigns measure coverage rather than assert it. Honest caveat: the ledger's RECORDED coverage is partial (764/1098 units run, 99/723 briefs verified) -- that ongoing measurement is LEDGER-1/2, not this item. The committed ledger artifact itself exists and is the correction of the R1-R4 "assert coverage" process failure.
       rather than assert it (this is the R1-R4 process failure being corrected)
 
 #### Verification method
