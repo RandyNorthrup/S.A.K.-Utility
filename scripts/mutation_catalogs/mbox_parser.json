@@ -1,0 +1,96 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_mbox_parser",
+  "ctest_regex": "^test_mbox_parser$",
+  "mutants": [
+    {
+      "id": "from-line-shape-drops-time-year-requirement",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "        QStringLiteral(R\"re(^From \\S+ .*\\d{1,2}:\\d{2}(:\\d{2})?.*\\d{4})re\"));",
+      "replace": "        QStringLiteral(R\"re(^From \\S+)re\"));",
+      "expect": "killed",
+      "why": "The tightened RFC 4155 shape (clock time + 4-digit year) is what keeps prose beginning 'From ' from splitting a message. Weakening it to '^From \\S+' makes the body line 'From now on we meet on Tuesdays.' match and be indexed as a second separator. fromPrefixedBodyLineIsNotASeparator asserts QCOMPARE(parser.messageCount(), 1)."
+    },
+    {
+      "id": "from-line-sender-offset-guard-inverted",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    if (!line.startsWith(\"From \") || line[kFromLineSenderOffset] == ' ') {",
+      "replace": "    if (!line.startsWith(\"From \") || line[kFromLineSenderOffset] != ' ') {",
+      "expect": "killed",
+      "why": "The guard rejects a malformed 'From  ' (double-space, empty sender). Inverting == to != rejects EVERY real 'From ' separator (whose sender's first char is not a space), so isFromLine returns false, open() calls it an invalid MBOX, and indexing finds zero messages. indexSingleMessage asserts QVERIFY(parser.isOpen()) and QCOMPARE(parser.messageCount(), 2)."
+    },
+    {
+      "id": "raw-message-end-offset-drops-next-index",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "        end_offset = m_message_offsets[message_index + 1];",
+      "replace": "        end_offset = m_message_offsets[message_index];",
+      "expect": "killed",
+      "why": "A message's raw slice runs from its own offset to the NEXT message's offset. Dropping the +1 makes end==start for every non-last message, so message_size<=0 -> read_error and message 0 is skipped, leaving only the last message. readMessagesSync asserts QCOMPARE(result->size(), 2) and result->at(0).subject == \"Hello World\"."
+    },
+    {
+      "id": "toplevel-multipart-branch-inverted",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    if (!content_type.startsWith(QLatin1String(\"multipart/\"), Qt::CaseInsensitive)) {",
+      "replace": "    if (!content_type.startsWith(QLatin1String(\"multipartX/\"), Qt::CaseInsensitive)) {",
+      "expect": "killed",
+      "why": "This branch enters single-part handling only when the message is NOT multipart/*. Corrupting the 'multipart/' literal to 'multipartX/' makes the check never recognize a real multipart message, so multipart/mixed wrongly enters the single-part path where is_non_text is true and the whole body is misfiled as one attachment instead of being split into parts. nestedMultipartRecoversBodyAndAttachment asserts detail->body_plain.contains(\"Hello plain body\")."
+    },
+    {
+      "id": "boundary-delimiter-marker-single-dash",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    const QByteArray delimiter = QByteArrayLiteral(\"--\") + boundary.toUtf8();",
+      "replace": "    const QByteArray delimiter = QByteArrayLiteral(\"-\") + boundary.toUtf8();",
+      "expect": "killed",
+      "why": "A MIME boundary delimiter line is '--<boundary>' (RFC 2046). Building it with a single dash ('-B') never prefix-matches the real '--B' lines, so isBoundaryDelimiterLine never fires and the body never splits into parts. multipartWithManyPartsSplitsCorrectly asserts QCOMPARE(detail->attachments.size(), 3)."
+    },
+    {
+      "id": "closing-boundary-rest-compare-inverted",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    return rest.isEmpty() || rest == QByteArrayLiteral(\"--\");",
+      "replace": "    return rest.isEmpty() || rest != QByteArrayLiteral(\"--\");",
+      "expect": "killed",
+      "why": "After stripping the boundary prefix, only an empty remainder (opening) or exactly '--' (closing) is a real delimiter line. Flipping == to != makes any prefix-sharing body line (rest != '--') count as a boundary AND breaks real closing lines (rest == '--' now yields false), so a shared-prefix line is consumed as a delimiter and vanishes from the body. boundaryPrefixLineNotTreatedAsBoundary asserts detail->body_plain.contains(\"--ABCDEF is not a boundary.\")."
+    },
+    {
+      "id": "open-vs-close-boundary-inverted",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "        in_part = !trimmed.trimmed().endsWith(QByteArrayLiteral(\"--\"));",
+      "replace": "        in_part = trimmed.trimmed().endsWith(QByteArrayLiteral(\"--\"));",
+      "expect": "killed",
+      "why": "An OPENING delimiter ('--B', no trailing '--') starts a part so in_part must become true; a CLOSING delimiter ('--B--') ends it. Dropping the ! sets in_part=false after every opening delimiter, so subsequent part content is never accumulated and all parts are lost. nestedMultipartRecoversBodyAndAttachment asserts detail->body_plain.contains(\"Hello plain body\")."
+    },
+    {
+      "id": "part-flush-guard-inverted",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "        if (in_part && !current.isEmpty()) {",
+      "replace": "        if (in_part && current.isEmpty()) {",
+      "expect": "killed",
+      "why": "At a boundary, a populated in-progress part must be emitted. Requiring current to be EMPTY instead means a non-empty part is never flushed nor reset, so every part merges into one buffer and only a single text part is produced -- zero attachments. multipartWithManyPartsSplitsCorrectly asserts QCOMPARE(detail->attachments.size(), 3)."
+    },
+    {
+      "id": "nested-multipart-recursion-disabled",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    if (part_ct.startsWith(QLatin1String(\"multipart/\"), Qt::CaseInsensitive)) {",
+      "replace": "    if (part_ct.startsWith(QLatin1String(\"multipartX/\"), Qt::CaseInsensitive)) {",
+      "expect": "killed",
+      "why": "A sub-part that is itself multipart/* must be recursed into. Breaking the literal ('multipartX/') so it never matches stops recursion, so the parts inside an inner multipart/related (the inline pic.png) are never enumerated. readAttachmentDataAlignsWithRecursiveEnumeration asserts QCOMPARE(detail->attachments.size(), 2) with attachments.at(0).long_filename == \"pic.png\"."
+    },
+    {
+      "id": "nested-nontext-attachment-decision-inverted",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    const bool is_non_text = !part_ct.startsWith(QLatin1String(\"text/\"), Qt::CaseInsensitive) &&",
+      "replace": "    const bool is_non_text = part_ct.startsWith(QLatin1String(\"text/\"), Qt::CaseInsensitive) &&",
+      "expect": "killed",
+      "why": "A leaf part is recovered as an attachment when it is non-text (or has an attachment disposition). Dropping the ! flips the decision so only text/* parts are 'non_text', so an image/png inline part with no attachment disposition is dropped instead of recovered. readAttachmentDataAlignsWithRecursiveEnumeration asserts detail->attachments.at(0).long_filename == \"pic.png\" (the image/png inline part) and attachments.size() == 2."
+    },
+    {
+      "id": "trailing-part-flush-guard-inverted",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    if (!current_part.isEmpty() && mime_parts.size() < kMaxMimeParts) {",
+      "replace": "    if (current_part.isEmpty() && mime_parts.size() < kMaxMimeParts) {",
+      "expect": "killed",
+      "why": "This trailing flush recovers the final part of a multipart body that has NO closing '--B--' delimiter (current_part still holds it). trailingPartRecoveredWhenClosingDelimiterMissing builds a multipart/mixed whose stream ends right after the final attachment part with the closing '--B--' omitted, so consumeMimeLine never flushed the last part and only this end-of-body flush recovers it; the test asserts QCOMPARE(detail->attachments.size(), 1) with long_filename 'tail.bin' (and readAttachmentData(0,0) yields its bytes). Inverting !current_part.isEmpty() to current_part.isEmpty() skips the flush, the truncated final part is dropped, attachments.size() becomes 0, and the assertion fails."
+    }
+  ]
+}

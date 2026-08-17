@@ -64,6 +64,9 @@ private Q_SLOTS:
     void fromPrefixedBodyLineIsNotASeparator();
     void multipartWithManyPartsSplitsCorrectly();
 
+    // -- Trailing-part flush on a delimiter-truncated multipart body -----
+    void trailingPartRecoveredWhenClosingDelimiterMissing();
+
 private:
     /// Create a temp file with valid MBOX content
     QTemporaryFile* createSampleMboxFile();
@@ -859,6 +862,46 @@ void TestMboxParser::multipartWithManyPartsSplitsCorrectly() {
     QVERIFY(detail.has_value());
     QCOMPARE(detail->attachments.size(), 3);
     QVERIFY(detail->body_plain.contains(QStringLiteral("body text")));
+    parser.close();
+}
+
+// A multipart/mixed body whose CLOSING "--B--" delimiter is missing: the stream ends right after
+// the final part's bytes (a truncated / attacker-supplied message). The first part is still flushed
+// by the SECOND part's opening "--B" delimiter, so it survives regardless. The final part, however,
+// is held only in splitMimeParts' running buffer and is recovered SOLELY by the end-of-body
+// trailing flush (`if (!current_part.isEmpty() && ...)`). Inverting that guard drops the un-flushed
+// final part.
+void TestMboxParser::trailingPartRecoveredWhenClosingDelimiterMissing() {
+    QByteArray c;
+    c += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    c += "Subject: truncated multipart\r\n";
+    c += "Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n";
+    c += "--B\r\nContent-Type: text/plain\r\n\r\nfirst body\r\n";
+    c += "--B\r\n";
+    c += "Content-Type: application/octet-stream\r\n";
+    c += "Content-Disposition: attachment; filename=\"tail.bin\"\r\n\r\n";
+    c += "tail-bytes\r\n";
+    // NOTE: deliberately NO closing "--B--" line -- the stream ends mid-body, after the final part.
+    QTemporaryFile f;
+    QVERIFY(f.open());
+    f.write(c);
+    f.close();
+
+    MboxParser parser;
+    parser.open(f.fileName());
+    QVERIFY(parser.isOpen());
+
+    auto detail = parser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    // The first part parsed normally, and the delimiter-truncated FINAL part was still recovered.
+    QVERIFY(detail->body_plain.contains(QStringLiteral("first body")));
+    QCOMPARE(detail->attachments.size(), 1);
+    QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("tail.bin"));
+
+    // The recovered part's bytes are reachable (index 0 must resolve to the trailing attachment).
+    auto bytes = parser.readAttachmentData(0, 0);
+    QVERIFY(bytes.has_value());
+    QVERIFY(bytes->contains("tail-bytes"));
     parser.close();
 }
 

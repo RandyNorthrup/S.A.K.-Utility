@@ -6,10 +6,14 @@
 # without listing it fails closed, and deleting a listed catalog fails closed.
 # Blank lines and '#' comments are ignored.
 
+backup_file_codec.json
+decompressor_factory.json
 email_html_sanitizer.json
 install_script_parser.json
+iso_analyzer.json
 linux_distro_catalog.json
 mbox_header_parser.json
+mbox_parser.json
 mbox_transfer_decoder.json
 native_messaging.json
 nuget_version_range.json

@@ -8,6 +8,7 @@
 #include "sak/error_codes.h"
 
 #include <QByteArray>
+#include <QDataStream>
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -35,6 +36,8 @@ private Q_SLOTS:
     void restoreWithoutPassword_failsOnEncryptedContainer();
     void tamperedPayload_failsAndLeavesNoOutput();
     void truncatedContainer_failsAndLeavesNoOutput();
+    void truncatedPlainCompressedPayload_failsAndLeavesNoOutput();
+    void plainCompressedDeclaredSizeMismatch_failsAndLeavesNoOutput();
     void restoreOfNonContainer_refused();
 
     void cancelDuringWrite_removesPartialFile();
@@ -352,6 +355,83 @@ void BackupFileCodecTests::truncatedContainer_failsAndLeavesNoOutput() {
     auto restored = sak::readBackupFile(storedPath(), restoredPath(), options.password);
     QVERIFY2(!restored.has_value(), "a truncated container must fail");
     QVERIFY(!QFile::exists(restoredPath()));
+}
+
+void BackupFileCodecTests::truncatedPlainCompressedPayload_failsAndLeavesNoOutput() {
+    // A PLAIN (unencrypted) but COMPRESSED container: no AEAD tag stands between the reader
+    // and the payload, so the codec's OWN completeness guard must reject a deflate stream
+    // that was cut short. Dropping ONLY the trailing 4-byte zlib Adler-32 check leaves every
+    // deflate block intact, so inflate still emits the whole payload (plain_bytes ==
+    // original_size, which the size guard therefore CANNOT catch) yet never reaches
+    // Z_STREAM_END. That is the exact state only the ended() guard can reject, so this slot
+    // kills the mutant that drops the '!' on the Z_STREAM_END check.
+    const QByteArray original = repetitive(64 * 1024);  // compresses to a multi-byte stream
+    writeSource(original);
+
+    sak::BackupCodecOptions options;
+    options.compress = true;  // plain + compressed (encrypt defaults false)
+    QVERIFY(!options.encrypt);
+
+    auto written = sak::writeBackupFile(sourcePath(), storedPath(), options);
+    QVERIFY(written.has_value());
+    QCOMPARE(sak::backupContainerKind(storedPath()), sak::BackupContainerKind::Plain);
+
+    // The last 4 bytes of a zlib stream are always its Adler-32 trailer; the deflate blocks
+    // precede it untouched, so this truncates the payload end without disturbing the header
+    // or the compressed data itself.
+    QFile stored(storedPath());
+    QVERIFY(stored.open(QIODevice::ReadWrite));
+    QVERIFY(stored.resize(stored.size() - 4));
+    stored.close();
+
+    auto restored = sak::readBackupFile(storedPath(), restoredPath(), QString());
+    QVERIFY2(!restored.has_value(),
+             "a compressed stream cut short of Z_STREAM_END must fail closed");
+    QCOMPARE(restored.error(), sak::error_code::invalid_format);
+    QVERIFY(!QFile::exists(restoredPath()));
+    QVERIFY(!QFile::exists(restoredPath() + QStringLiteral(".sakpart")));
+}
+
+void BackupFileCodecTests::plainCompressedDeclaredSizeMismatch_failsAndLeavesNoOutput() {
+    // The decoded-length guard is the codec's last line for a PLAIN container. A truncated
+    // deflate stream is caught earlier by the ended() guard, so a pure truncation can never
+    // reach this check; the size guard earns its keep when the intact stream reaches
+    // Z_STREAM_END but the (unauthenticated, because unencrypted) inner header lies about the
+    // original size. This slot kills the mutant that inverts plain_bytes != original_size.
+    const QByteArray original = repetitive(64 * 1024);
+    writeSource(original);
+
+    sak::BackupCodecOptions options;
+    options.compress = true;  // plain + compressed (encrypt defaults false)
+    QVERIFY(!options.encrypt);
+
+    auto written = sak::writeBackupFile(sourcePath(), storedPath(), options);
+    QVERIFY(written.has_value());
+    QCOMPARE(sak::backupContainerKind(storedPath()), sak::BackupContainerKind::Plain);
+
+    // Inner header layout: 8-byte magic, then flags(u32) reserved(u32) original_size(qint64,
+    // little endian). Overwrite the declared size at offset 16 with one more than the truth.
+    // The deflate stream is left intact, so it decompresses cleanly to the real size and
+    // reaches Z_STREAM_END -- only the size comparison can reject the mismatch.
+    QByteArray declared;
+    {
+        QDataStream stream(&declared, QIODevice::WriteOnly);
+        stream.setByteOrder(QDataStream::LittleEndian);
+        stream << static_cast<qint64>(original.size() + 1);
+    }
+    QVERIFY(declared.size() == 8);
+
+    QFile stored(storedPath());
+    QVERIFY(stored.open(QIODevice::ReadWrite));
+    QVERIFY(stored.seek(16));  // 8-byte magic + flags(4) + reserved(4)
+    QCOMPARE(stored.write(declared), qint64{8});
+    stored.close();
+
+    auto restored = sak::readBackupFile(storedPath(), restoredPath(), QString());
+    QVERIFY2(!restored.has_value(), "a header that lies about the payload size must fail closed");
+    QCOMPARE(restored.error(), sak::error_code::invalid_format);
+    QVERIFY(!QFile::exists(restoredPath()));
+    QVERIFY(!QFile::exists(restoredPath() + QStringLiteral(".sakpart")));
 }
 
 void BackupFileCodecTests::restoreOfNonContainer_refused() {

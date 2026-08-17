@@ -150,6 +150,9 @@ private Q_SLOTS:
     void analyzeRejectsATruncatedImage();
     void analyzeRejectsBytesThatAreNotIso9660();
     void analyzeStopsAtTheDescriptorSetTerminator();
+    void analyzeAcceptsImageExactlyAtMinimumSize();
+    void analyzeStopsScanAtFirstNonDescriptorSector();
+    void analyzeIgnoresShortReadOfLaterDescriptor();
 
     void realIsosClassifyByContent();
 
@@ -343,6 +346,81 @@ void IsoAnalyzerTests::analyzeStopsAtTheDescriptorSetTerminator() {
     const IsoInfo info = IsoAnalyzer::analyze(path);
     QCOMPARE(info.volume_label, QStringLiteral("SAK_TERM"));
     QVERIFY2(!info.is_bootable, "a boot record after the terminator is outside the descriptor set");
+}
+
+// The minimum-size guard rejects an image too small to hold the 16-sector system
+// area plus one full descriptor sector. The smallest LEGAL image is exactly that
+// size (kMinIsoSize) and must be ACCEPTED: a bound that slips from '<' to '<=' would
+// reject a valid minimal ISO and report nothing. The existing truncated/full-size
+// tests both sit away from the boundary, so only an at-boundary image pins it.
+void IsoAnalyzerTests::analyzeAcceptsImageExactlyAtMinimumSize() {
+    QVERIFY(m_dir.isValid());
+    QByteArray image = buildSyntheticIso({.volume_label = "SAK_MIN_ISO"});
+    // Exactly system area + one sector -- kMinIsoSize in the analyzer.
+    const int min_size = (kPvdSector + 1) * kSectorSize;
+    image.truncate(min_size);
+    QVERIFY(image.size() == min_size);
+    const QString path = writeImage("minsize.iso", image);
+    QVERIFY(!path.isEmpty());
+
+    const IsoInfo info = IsoAnalyzer::analyze(path);
+    QCOMPARE(info.volume_label, QStringLiteral("SAK_MIN_ISO"));
+    QCOMPARE(info.filesystem, QStringLiteral("ISO 9660"));
+}
+
+// Before decoding any field, the reader confirms the scanned sector carries the
+// "CD001" standard identifier; a sector without it ends the descriptor set and the
+// scan must stop fail-closed. If that 'return' became a 'continue', the reader would
+// walk past the bad sector and mis-decode a PVD from unrelated later data -- so LBA
+// 16 is blanked (no identifier) while a real, labelled PVD sits at LBA 17, and
+// analyze() must surface nothing.
+void IsoAnalyzerTests::analyzeStopsScanAtFirstNonDescriptorSector() {
+    QVERIFY(m_dir.isValid());
+    QByteArray image = buildSyntheticIso({.volume_label = "SNEAKY_PVD"});
+    const int lba16 = kPvdSector * kSectorSize;
+    const int lba17 = (kPvdSector + 1) * kSectorSize;
+    // Relocate the real PVD to LBA 17, then blank LBA 16. LBA 16 stays a full sector
+    // (no short read), so the reader reaches the identifier check and must stop here.
+    image.replace(lba17, kSectorSize, image.mid(lba16, kSectorSize));
+    image.replace(lba16, kSectorSize, QByteArray(kSectorSize, '\0'));
+    const QString path = writeImage("non-descriptor.iso", image);
+    QVERIFY(!path.isEmpty());
+
+    const IsoInfo info = IsoAnalyzer::analyze(path);
+    QVERIFY(info.volume_label.isEmpty());
+    QVERIFY(info.filesystem.isEmpty());
+    QVERIFY(!IsoAnalyzer::isWindowsInstallMedia(info));
+}
+
+// The per-descriptor short-read guard: a descriptor sector cut short (fewer than
+// kSectorSize bytes left in the file) must be rejected, never decoded from a
+// partially filled buffer. LBA 16 is a supplementary descriptor the reader skips;
+// LBA 17 is a PVD truncated mid-sector -- its first bytes (including the volume-label
+// field at offset 40) survive, so a reader that ignored the short read would surface
+// a bogus label. analyze() must report nothing from the short read.
+void IsoAnalyzerTests::analyzeIgnoresShortReadOfLaterDescriptor() {
+    QVERIFY(m_dir.isValid());
+    QByteArray image = buildSyntheticIso({.volume_label = "TRUNC_LATE"});
+    const int lba16 = kPvdSector * kSectorSize;
+    const int lba17 = (kPvdSector + 1) * kSectorSize;
+    // Relocate the real PVD to LBA 17.
+    image.replace(lba17, kSectorSize, image.mid(lba16, kSectorSize));
+    // LBA 16 becomes a Supplementary Volume Descriptor (type 2) so the reader skips
+    // it and advances to the PVD at LBA 17.
+    QByteArray supplementary(kSectorSize, '\0');
+    supplementary[0] = 2;
+    writePadded(supplementary, 1, "CD001", 5);
+    supplementary[6] = 1;
+    image.replace(lba16, kSectorSize, supplementary);
+    // Cut the PVD sector short: keep only its first 200 bytes.
+    image.truncate(lba17 + 200);
+    const QString path = writeImage("short-descriptor.iso", image);
+    QVERIFY(!path.isEmpty());
+
+    const IsoInfo info = IsoAnalyzer::analyze(path);
+    QVERIFY(info.volume_label.isEmpty());
+    QVERIFY(!info.is_bootable);
+    QVERIFY(!IsoAnalyzer::isWindowsInstallMedia(info));
 }
 
 // Live end-to-end check against real images: set SAK_TEST_ISO_DIR to a folder of

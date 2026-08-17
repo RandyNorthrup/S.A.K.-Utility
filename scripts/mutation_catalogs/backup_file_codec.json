@@ -1,0 +1,88 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_backup_file_codec",
+  "ctest_regex": "^test_backup_file_codec$",
+  "mutants": [
+    {
+      "id": "magic-plain-compare-inverted",
+      "file": "src/core/backup_file_codec.cpp",
+      "find": "if (magic == plainMagic()) {",
+      "replace": "if (magic != plainMagic()) {",
+      "expect": "killed",
+      "why": "the plain-container magic detection; inverting misclassifies a real SAKBFC1 container as None (and a non-container as Plain). containerKindReflectsHowItWasWritten asserts QCOMPARE(backupContainerKind(storedPath()), BackupContainerKind::Plain) after a compress-only write"
+    },
+    {
+      "id": "magic-encrypted-compare-inverted",
+      "file": "src/core/backup_file_codec.cpp",
+      "find": "if (magic == encryptedMagic()) {",
+      "replace": "if (magic != encryptedMagic()) {",
+      "expect": "killed",
+      "why": "the encrypted-container magic detection; inverting reports a real SAKBFE1 container as None so every encrypted restore is refused as a non-container. containerKindReflectsHowItWasWritten asserts QCOMPARE(backupContainerKind(storedPath()), BackupContainerKind::Encrypted); roundTrip encrypted rows also assert readBackupFile has_value()"
+    },
+    {
+      "id": "magic-read-length-short-by-one",
+      "file": "src/core/backup_file_codec.cpp",
+      "find": "const QByteArray magic = file.read(kMagicBytes);",
+      "replace": "const QByteArray magic = file.read(kMagicBytes - 1);",
+      "expect": "killed",
+      "why": "the 8-byte magic length decode; reading 7 bytes makes the read never equal the 8-byte plainMagic()/encryptedMagic() so every container reports None. containerKindReflectsHowItWasWritten asserts the container is Plain/Encrypted (gets None); roundTrip asserts readBackupFile has_value()"
+    },
+    {
+      "id": "reader-seek-past-magic-off-by-one",
+      "file": "src/core/backup_file_codec.cpp",
+      "find": "source.seek(kMagicBytes);",
+      "replace": "source.seek(kMagicBytes + 1);",
+      "expect": "killed",
+      "why": "misframes the body: seeking one byte too far drops the first plaintext/cipher-header byte so the inner header parse and the AEAD stream desync. roundTrip asserts readBackupFile has_value() and QCOMPARE(fileBytes(restoredPath()), original) for both plain and encrypted rows"
+    },
+    {
+      "id": "inner-header-compressed-flag-inverted",
+      "file": "src/core/backup_file_codec.cpp",
+      "find": "*compressed = (flags & compressedFlag()) != 0;",
+      "replace": "*compressed = (flags & compressedFlag()) == 0;",
+      "expect": "killed",
+      "why": "inverts the authenticated compressed-flag decode: a compressed payload is then not inflated (raw deflate bytes restored, size mismatch) and an uncompressed payload is fed to inflate (Z_DATA_ERROR). roundTrip asserts QCOMPARE(fileBytes(restoredPath()), original) across compress=0/1 rows"
+    },
+    {
+      "id": "inner-header-size-bound-rejects-empty",
+      "file": "src/core/backup_file_codec.cpp",
+      "find": "if (reserved != 0 || (flags & ~compressedFlag()) != 0 || size < 0) {",
+      "replace": "if (reserved != 0 || (flags & ~compressedFlag()) != 0 || size <= 0) {",
+      "expect": "killed",
+      "why": "the authenticated original-size field guard; tightening 'size < 0' to 'size <= 0' rejects a legitimate empty (0-byte) payload as a malformed header. roundTrip 'empty' rows (size 0) assert readBackupFile has_value()"
+    },
+    {
+      "id": "aead-tag-reservation-sign-flip",
+      "file": "src/core/backup_file_codec.cpp",
+      "find": "const qint64 body_end = ctx->source->size() - kEncryptionMacBytes;",
+      "replace": "const qint64 body_end = ctx->source->size() + kEncryptionMacBytes;",
+      "expect": "killed",
+      "why": "mis-frames the AEAD tag boundary: adding instead of subtracting the MAC length runs the body loop past EOF (the trailing tag is consumed as ciphertext / read returns 0 -> read_error) so the tag never reaches decryptor->finish(). roundTrip encrypted rows assert readBackupFile has_value(); tamperedPayload/truncatedContainer depend on this boundary being where the tag is verified"
+    },
+    {
+      "id": "verify-size-match-inverted",
+      "file": "src/core/backup_file_codec.cpp",
+      "find": "if (ctx.plain_bytes != ctx.original_size) {",
+      "replace": "if (ctx.plain_bytes == ctx.original_size) {",
+      "expect": "killed",
+      "why": "the decoded-length verification that catches a decode whose byte count does not match the authenticated/declared header; inverting rejects every correct restore whose length matches the header. roundTrip asserts readBackupFile has_value() and QCOMPARE(restored.value().plain_bytes, original.size()). plainCompressedDeclaredSizeMismatch_failsAndLeavesNoOutput covers the fail-open direction on a PLAIN (untagged) compressed container: the inner header's declared original_size is overwritten to size+1 while the deflate stream is left intact so it reaches Z_STREAM_END (the ended() guard, checked first, does NOT fire), leaving this size compare as the only guard that can reject it -- inverting to == accepts the mismatch and the restore wrongly succeeds"
+    },
+    {
+      "id": "verify-inflater-ended-guard-dropped",
+      "file": "src/core/backup_file_codec.cpp",
+      "find": "if (ctx.inflater && !ctx.inflater->ended()) {",
+      "replace": "if (ctx.inflater && ctx.inflater->ended()) {",
+      "expect": "killed",
+      "why": "the compressed-payload completeness guard (Z_STREAM_END reached); removing the negation rejects a correctly-terminated compressed stream. roundTrip compress=1 rows assert readBackupFile has_value(). truncatedPlainCompressedPayload_failsAndLeavesNoOutput covers the fail-open direction on a PLAIN (untagged) compressed container: only the trailing 4-byte zlib Adler-32 is cut, so every deflate block still decompresses (plain_bytes == original_size, so the size guard cannot catch it) but inflate never reaches Z_STREAM_END -- dropping the '!' accepts the truncated stream and the restore wrongly succeeds"
+    },
+    {
+      "id": "encrypted-empty-password-guard-inverted",
+      "file": "src/core/backup_file_codec.cpp",
+      "find": "if (password.isEmpty()) {",
+      "replace": "if (!password.isEmpty()) {",
+      "expect": "killed",
+      "why": "the fail-closed 'encrypted backup needs a password' guard; inverting refuses every real-password restore and lets an empty password fall through to a wrong-key decrypt. restoreWithoutPassword_failsOnEncryptedContainer asserts QCOMPARE(restored.error(), error_code::invalid_argument); roundTrip encrypted rows assert has_value()"
+    }
+  ]
+}

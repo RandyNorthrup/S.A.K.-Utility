@@ -42,6 +42,13 @@ private Q_SLOTS:
     void detectFormat_xzMagic();
     void detectFormat_noMagicNoExtension();
 
+    // Short-buffer magic guards: a buffer genuinely SHORTER than a signature must
+    // not be spoof-matched (kills magic-length reductions and min-bytes fail-open).
+    void detectFormat_gzipShortMagicRejected();
+    void detectFormat_bzip2ShortMagicRejected();
+    void detectFormat_xzShortMagicRejected();
+    void detectFormat_shortBufferNotSpoofedByZeroFill();
+
 private:
     QTemporaryDir m_tempDir;
 
@@ -219,6 +226,110 @@ void DecompressorFactoryTests::detectFormat_noMagicNoExtension() {
     writeFile("plain_data.bin", "Just some plain text data");
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("plain_data.bin"));
     QVERIFY(fmt.isEmpty() || fmt.toLower() == "unknown");
+}
+
+// ============================================================================
+// Short-buffer magic guards
+//
+// Every other magic test writes a 16-byte zero-filled buffer, so a shortened
+// magic compare -- or a relaxed "enough bytes were read" guard -- still spoof-
+// matches against the zero tail and goes undetected. These tests write buffers
+// GENUINELY SHORTER than the signature under test (no zero padding up to the
+// signature length) and pin the honest behaviour both ways: the short buffer is
+// NOT detected as that format, while the full-length signature still is.
+// ============================================================================
+
+void DecompressorFactoryTests::detectFormat_gzipShortMagicRejected() {
+    // Gzip magic is TWO bytes (1F 8B). A one-byte buffer holding only 0x1F must
+    // not be detected as gzip: the min-bytes guard skips the 2-byte signature and
+    // no zero-fill may complete it. Kills a gzip magic-length reduction 2 -> 1.
+    QByteArray shortBuf;  // exactly 1 byte, deliberately shorter than the signature
+    shortBuf.append(static_cast<char>(0x1F));
+    QCOMPARE(shortBuf.size(), 1);
+    writeFile("short_gz_1b.bin", shortBuf);
+    QVERIFY(sak::DecompressorFactory::detectFormat(filePath("short_gz_1b.bin")).isEmpty());
+    QVERIFY(!sak::DecompressorFactory::isCompressed(filePath("short_gz_1b.bin")));
+
+    // The full 1F 8B signature must still be detected as gzip.
+    QByteArray full;
+    full.append(static_cast<char>(0x1F));
+    full.append(static_cast<char>(0x8B));
+    full.append(QByteArray(14, '\0'));
+    writeFile("full_gz_magic.bin", full);
+    QCOMPARE(sak::DecompressorFactory::detectFormat(filePath("full_gz_magic.bin")).toLower(),
+             QString("gzip"));
+}
+
+void DecompressorFactoryTests::detectFormat_bzip2ShortMagicRejected() {
+    // BZip2 magic is THREE bytes ('BZh' = 42 5A 68). A two-byte buffer holding only
+    // 'BZ' must not be detected as bzip2. Kills a bzip2 magic-length reduction 3 -> 2.
+    QByteArray shortBuf;  // exactly 2 bytes, deliberately shorter than the signature
+    shortBuf.append('B').append('Z');
+    QCOMPARE(shortBuf.size(), 2);
+    writeFile("short_bz2_2b.bin", shortBuf);
+    QVERIFY(sak::DecompressorFactory::detectFormat(filePath("short_bz2_2b.bin")).isEmpty());
+    QVERIFY(!sak::DecompressorFactory::isCompressed(filePath("short_bz2_2b.bin")));
+
+    // The full 'BZh' signature must still be detected as bzip2.
+    QByteArray full;
+    full.append('B').append('Z').append('h');
+    full.append(QByteArray(13, '\0'));
+    writeFile("full_bz2_magic.bin", full);
+    QCOMPARE(sak::DecompressorFactory::detectFormat(filePath("full_bz2_magic.bin")).toLower(),
+             QString("bzip2"));
+}
+
+void DecompressorFactoryTests::detectFormat_xzShortMagicRejected() {
+    // XZ magic is SIX bytes (FD 37 7A 58 5A 00). A five-byte buffer holding only the
+    // first five (dropping the 0x00 terminator) must not be detected as xz. Kills an
+    // xz magic-length reduction 6 -> 5.
+    QByteArray shortBuf;  // exactly 5 bytes, deliberately shorter than the signature
+    shortBuf.append(static_cast<char>(0xFD));
+    shortBuf.append(static_cast<char>(0x37));
+    shortBuf.append(static_cast<char>(0x7A));
+    shortBuf.append(static_cast<char>(0x58));
+    shortBuf.append(static_cast<char>(0x5A));
+    QCOMPARE(shortBuf.size(), 5);
+    writeFile("short_xz_5b.bin", shortBuf);
+    QVERIFY(sak::DecompressorFactory::detectFormat(filePath("short_xz_5b.bin")).isEmpty());
+    QVERIFY(!sak::DecompressorFactory::isCompressed(filePath("short_xz_5b.bin")));
+
+    // The full FD 37 7A 58 5A 00 signature must still be detected as xz.
+    QByteArray full;
+    full.append(static_cast<char>(0xFD));
+    full.append(static_cast<char>(0x37));
+    full.append(static_cast<char>(0x7A));
+    full.append(static_cast<char>(0x58));
+    full.append(static_cast<char>(0x5A));
+    full.append(static_cast<char>(0x00));
+    full.append(QByteArray(10, '\0'));
+    writeFile("full_xz_magic.bin", full);
+    QCOMPARE(sak::DecompressorFactory::detectFormat(filePath("full_xz_magic.bin")).toLower(),
+             QString("xz"));
+}
+
+void DecompressorFactoryTests::detectFormat_shortBufferNotSpoofedByZeroFill() {
+    // The lzma/xz alternate signature 5D 00 00 has 0x00 in its non-leading bytes, so
+    // a one-byte buffer holding only 0x5D would be spoof-matched as "xz" if the
+    // min-bytes guard failed open and let the zero-fill probe tail complete the
+    // 3-byte compare. Real code skips it (signature length 3 > 1 byte read). Kills a
+    // fail-open weakening of the "entry.length > bytesRead" guard.
+    QByteArray shortBuf;  // exactly 1 byte, deliberately shorter than the signature
+    shortBuf.append(static_cast<char>(0x5D));
+    QCOMPARE(shortBuf.size(), 1);
+    writeFile("short_lzma_1b.bin", shortBuf);
+    QVERIFY(sak::DecompressorFactory::detectFormat(filePath("short_lzma_1b.bin")).isEmpty());
+    QVERIFY(!sak::DecompressorFactory::isCompressed(filePath("short_lzma_1b.bin")));
+
+    // The full 5D 00 00 signature must still be detected as xz.
+    QByteArray full;
+    full.append(static_cast<char>(0x5D));
+    full.append(static_cast<char>(0x00));
+    full.append(static_cast<char>(0x00));
+    full.append(QByteArray(13, '\0'));
+    writeFile("full_lzma_magic.bin", full);
+    QCOMPARE(sak::DecompressorFactory::detectFormat(filePath("full_lzma_magic.bin")).toLower(),
+             QString("xz"));
 }
 
 QTEST_GUILESS_MAIN(DecompressorFactoryTests)

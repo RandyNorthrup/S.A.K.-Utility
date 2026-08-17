@@ -1,0 +1,128 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_decompressor_factory",
+  "ctest_regex": "^test_decompressor_factory$",
+  "mutants": [
+    {
+      "id": "gzip-magic-first-byte-flip",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "{0x1F, 0x8B, 0, 0, 0, 0}",
+      "replace": "{0x1E, 0x8B, 0, 0, 0, 0}",
+      "expect": "killed",
+      "why": "gzip is identified by the first magic byte 0x1F; flipping it to 0x1E stops the gzip signature matching a real 1F 8B stream so detection returns empty. detectFormat_gzipMagic writes 1F 8B and asserts QCOMPARE(fmt.toLower(), QString(\"gzip\"))"
+    },
+    {
+      "id": "gzip-detection-routes-to-bzip2",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": ".length = 2, .format = \"gzip\"},",
+      "replace": ".length = 2, .format = \"bzip2\"},",
+      "expect": "killed",
+      "why": "the 1F 8B signature must route to the \"gzip\" format; relabelling that table row to \"bzip2\" mis-routes a genuine gzip stream. detectFormat_gzipMagic asserts QCOMPARE(fmt.toLower(), QString(\"gzip\")) which now yields \"bzip2\""
+    },
+    {
+      "id": "bzip2-magic-third-byte-flip",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "{0x42, 0x5A, 0x68, 0, 0, 0}",
+      "replace": "{0x42, 0x5A, 0x69, 0, 0, 0}",
+      "expect": "killed",
+      "why": "the bzip2 magic is 'BZh' = 42 5A 68; changing the third byte to 0x69 makes a real 'BZh' header fail to match so detection returns empty. detectFormat_bzip2Magic writes 'B','Z','h' and asserts QCOMPARE(fmt.toLower(), QString(\"bzip2\"))"
+    },
+    {
+      "id": "xz-magic-first-byte-flip",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}",
+      "replace": "{0xFC, 0x37, 0x7A, 0x58, 0x5A, 0x00}",
+      "expect": "killed",
+      "why": "xz begins with 0xFD 37 7A 58 5A 00; flipping the leading 0xFD to 0xFC breaks the 6-byte signature match so a real xz stream is unrecognised. detectFormat_xzMagic writes the exact 6 bytes and asserts QCOMPARE(fmt.toLower(), QString(\"xz\"))"
+    },
+    {
+      "id": "xz-magic-terminator-byte-flip",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "0x5A, 0x00}, .length = 6",
+      "replace": "0x5A, 0x01}, .length = 6",
+      "expect": "killed",
+      "why": "the sixth xz magic byte is the 0x00 terminator that distinguishes it from other 'XZ' leaders; requiring 0x01 there makes a genuine ...5A 00 header fail the full length-6 compare. detectFormat_xzMagic writes 0x00 as the sixth byte and asserts QCOMPARE(fmt.toLower(), QString(\"xz\"))"
+    },
+    {
+      "id": "min-bytes-guard-operator-inverted",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "if (entry.length > bytesRead) {",
+      "replace": "if (entry.length < bytesRead) {",
+      "expect": "killed",
+      "why": "the guard skips a signature only when it is LONGER than the bytes actually read; inverting > to < skips every signature shorter than the read length (all of them for a 16-byte probe) so no format is ever matched. detectFormat_xzMagic asserts QCOMPARE(fmt.toLower(), QString(\"xz\")) which now returns empty (detectFormat_gzipMagic/bzip2Magic likewise)"
+    },
+    {
+      "id": "magic-byte-compare-operator-inverted",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "if (magic[i] != entry.bytes[i]) {",
+      "replace": "if (magic[i] == entry.bytes[i]) {",
+      "expect": "killed",
+      "why": "the per-byte compare must clear the match on a MISMATCH; flipping != to == clears it on equality, so a real 1F 8B stream stops matching gzip and instead falls through to a spurious match (its zero tail matches the bzip2 row's non-prefix positions). detectFormat_gzipMagic asserts QCOMPARE(fmt.toLower(), QString(\"gzip\")) which no longer holds"
+    },
+    {
+      "id": "iscompressed-decision-inverted",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "return !detectFormat(filePath).isEmpty();",
+      "replace": "return detectFormat(filePath).isEmpty();",
+      "expect": "killed",
+      "why": "isCompressed must be true exactly when a format WAS detected; dropping the ! inverts it so a known compressed file reports not-compressed. isCompressed_gzFile asserts QVERIFY(isCompressed(\".gz\")) (and isCompressed_txtFile asserts QVERIFY(!isCompressed(\".txt\")))"
+    },
+    {
+      "id": "create-empty-format-guard-inverted",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "if (format.isEmpty()) {",
+      "replace": "if (!format.isEmpty()) {",
+      "expect": "killed",
+      "why": "create() must bail to nullptr only when the format is unknown (empty); inverting the test makes a KNOWN format take the unknown-format branch and return nullptr instead of a decompressor. create_gzReturnsDecompressor asserts QVERIFY(decomp != nullptr)"
+    },
+    {
+      "id": "create-gzip-routes-wrong-decompressor",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "return std::make_unique<GzipDecompressor>();",
+      "replace": "return std::make_unique<Bzip2Decompressor>();",
+      "expect": "killed",
+      "why": "the \"gzip\" branch must construct a GzipDecompressor; building a Bzip2Decompressor mis-routes the stream to the wrong inflater. create_gzReturnsDecompressor asserts QCOMPARE(decomp->formatName().toLower(), QString(\"gzip\")) which now yields \"bzip2\""
+    },
+    {
+      "id": "detectformat-extension-shortcircuit-inverted",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "if (!format.isEmpty()) {",
+      "replace": "if (format.isEmpty()) {",
+      "expect": "killed",
+      "why": "detectFormat returns the extension result when it is non-empty; inverting the guard discards a valid extension hit and falls through to magic sniffing, so a .gz file whose bytes are not a real gzip stream detects as empty. detectFormat_gzExtension writes non-magic \"dummy\" to test.gz and asserts QCOMPARE(fmt.toLower(), QString(\"gzip\"))"
+    },
+    {
+      "id": "gzip-magic-length-shortened-to-one-byte",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": ".length = 2,",
+      "replace": ".length = 1,",
+      "expect": "killed",
+      "why": "gzip's signature is TWO bytes (1F 8B); shortening the compare length to 1 makes any buffer whose first byte is 0x1F match gzip even without the 0x8B. The whole-tree tests could not catch this because they write 16-byte zero-filled buffers. detectFormat_gzipShortMagicRejected writes a genuinely 1-byte buffer {0x1F} (no padding): real code skips gzip via the min-bytes guard (length 2 > 1 byte read) and returns empty, so isCompressed()==false; the length=1 mutant instead matches and returns \"gzip\", failing the QVERIFY(fmt.isEmpty()) / QVERIFY(!isCompressed) asserts. The same test also pins the full {0x1F,0x8B,...} buffer still detects as gzip"
+    },
+    {
+      "id": "bzip2-magic-length-shortened-to-two-bytes",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": ".length = 3, .format = \"bzip2\"},",
+      "replace": ".length = 2, .format = \"bzip2\"},",
+      "expect": "killed",
+      "why": "bzip2's signature is THREE bytes ('BZh' = 42 5A 68); shortening the compare length to 2 makes a buffer of just 'BZ' match bzip2 without the 'h'. detectFormat_bzip2ShortMagicRejected writes a genuinely 2-byte buffer {0x42,0x5A} (no padding): real code skips bzip2 via the min-bytes guard (length 3 > 2 bytes read) and returns empty; the length=2 mutant matches and returns \"bzip2\", failing QVERIFY(fmt.isEmpty()) / QVERIFY(!isCompressed). The test also pins the full {0x42,0x5A,0x68,...} buffer still detects as bzip2"
+    },
+    {
+      "id": "xz-magic-length-shortened-to-five-bytes",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": ".length = 6,",
+      "replace": ".length = 5,",
+      "expect": "killed",
+      "why": "xz's signature is SIX bytes (FD 37 7A 58 5A 00); shortening the compare length to 5 drops the trailing 0x00 terminator so a buffer of only the first five bytes matches xz. detectFormat_xzShortMagicRejected writes a genuinely 5-byte buffer {0xFD,0x37,0x7A,0x58,0x5A} (no padding): real code skips xz via the min-bytes guard (length 6 > 5 bytes read) and returns empty; the length=5 mutant matches and returns \"xz\", failing QVERIFY(fmt.isEmpty()) / QVERIFY(!isCompressed). The test also pins the full {0xFD,0x37,0x7A,0x58,0x5A,0x00,...} buffer still detects as xz"
+    },
+    {
+      "id": "min-bytes-guard-relaxed-fail-open",
+      "file": "src/core/decompressor_factory.cpp",
+      "find": "(entry.length > bytesRead) {",
+      "replace": "(entry.length > bytesRead + kMagicHeaderProbeBytes) {",
+      "expect": "killed",
+      "why": "the guard skips a signature whenever it is longer than the bytes actually read, so the zero-filled probe tail can never complete a match on a short file. Adding kMagicHeaderProbeBytes (16) to the right-hand side makes the guard effectively never fire (max signature length is 6), the fail-OPEN direction: a too-short buffer now runs the full compare against the zero-fill tail. This survives every existing test (all write 16-byte buffers, for which the guard never fired anyway). detectFormat_shortBufferNotSpoofedByZeroFill writes a genuinely 1-byte buffer {0x5D} (the lzma/xz 5D 00 00 signature's first byte, whose remaining signature bytes are 0x00): real code skips it (length 3 > 1 byte read) and returns empty; the relaxed guard lets the zero-fill tail complete the 5D 00 00 match and returns \"xz\", failing QVERIFY(fmt.isEmpty()) / QVERIFY(!isCompressed). The test also pins the full {0x5D,0x00,0x00,...} buffer still detects as xz"
+    }
+  ]
+}
