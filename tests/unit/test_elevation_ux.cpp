@@ -92,10 +92,22 @@ private Q_SLOTS:
         QFrame* banner = sak::createElevationBanner(&parent);
         QVERIFY(banner != nullptr);
 
-        auto* layout = qobject_cast<QHBoxLayout*>(banner->layout());
+        auto* layout = banner->layout();
         QVERIFY(layout != nullptr);
-        // Should have icon label + text label = 2 items
-        QCOMPARE(layout->count(), 2);
+        // Contract: the banner visibly presents its warning ICON (a shield pixmap)
+        // beside the message. Assert an icon-bearing QLabel is laid out -- not the exact
+        // child-item count -- so adding a spacer or restructuring the layout stays green,
+        // while dropping the icon (the user-visible cue) goes red. The message text itself
+        // is pinned by testCreateElevationBannerTextContent.
+        bool has_icon = false;
+        for (int i = 0; i < layout->count(); ++i) {
+            auto* label = qobject_cast<QLabel*>(layout->itemAt(i)->widget());
+            if (label != nullptr && !label->pixmap().isNull()) {
+                has_icon = true;
+                break;
+            }
+        }
+        QVERIFY2(has_icon, "elevation banner must present its shield icon");
     }
 
     void testCreateElevationBannerTextContent() {
@@ -132,7 +144,7 @@ private Q_SLOTS:
         }
 
         QWidget parent;
-        QFrame* banner = sak::createElevationBanner(&parent);
+        const QFrame* banner = sak::createElevationBanner(&parent);
         QVERIFY(banner == nullptr);
     }
 
