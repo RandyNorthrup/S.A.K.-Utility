@@ -26,7 +26,7 @@ aggregate below is therefore pessimistic for src/core: these exes statically lin
 core files (via logger, error_codes, email_types) that this set does not exercise, and
 every such line counts against the total. The per-file table is the sharper signal.
 
-Measured 2026-08-12.
+Measured 2026-08-12. Exclusion inventory (R5-G14-16c) added 2026-08-17.
 
 ## Per subsystem (curated core set)
 
@@ -69,10 +69,82 @@ Measured 2026-08-12.
   messaging) are at 100%.** Extracting a parser into a pure seam and fuzzing it drives its
   lines fully, which is the coverage case for continuing the seam program.
 
+## Coverage exclusion inventory (R5-G14-16c)
+
+The headless unit suite runs with QT_QPA_PLATFORM=offscreen, no admin token, no real
+hardware, and no network peer. A large, security-critical slice of the tree therefore
+CANNOT execute under coverage by construction -- it is instead certified by live rigs,
+external elevated gates, real-kernel round-trips, or manual QA. Below is that exclusion
+set: the file, the specific area, why headless cannot reach it, and what certifies it
+instead. In every case the PURE logic beside the excluded code (validators, parsers,
+decision functions, script/string builders) IS unit-tested; only the hardware/OS/GUI
+boundary is excluded. This inventory is what makes "coverage over testable code" honest:
+these lines are out of the testable-headless universe on purpose, not skipped.
+
+### 1. Raw storage device I/O (real \\.\PhysicalDriveN handles)
+
+- `src/threading/flash_worker.cpp` **openDevice/queryDeviceSectorSize/queryDeviceCapacity** -- CreateFileW on \\.\PhysicalDriveN + IOCTL identity/geometry/length; unit tests hit PhysicalDrive99/999 which never open. Cert: flash_live_certifier, artifacts/flash-live-certification/disk3-flashworker-b4/report.txt, R1 cert b29506f.
+- `src/threading/flash_worker.cpp` **writeImage/writeChunk/finalizeWrite** -- sector-aligned NO_BUFFERING WriteFile to a real device (destructive). Cert: flash_live_certifier full-verify (64 MiB, source SHA-512 == device SHA-512).
+- `src/threading/flash_worker.cpp` **verifyFull/verifySample/compareDeviceBlock** -- NO_BUFFERING read-back + hash of on-disk bytes. Cert: flash_live_certifier B4-01/06/07.
+- `src/threading/flash_worker.cpp` **refuseIfTargetIsOsDisk/physicalDriveBacksWindows** -- OS-disk self-guard via IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS. Cert: flash_live_certifier system-disk refusal; manual.
+- `src/core/flash_coordinator.cpp` **physicalDriveOsDiskCheck / unmountVolumes offline path** -- authoritative boot-disk guard + persistent-OFFLINE dismount (needs admin + real disk). Cert: b29506f + partition-manager-certification VM-lab admin report.
+- `src/core/drive_unmounter.cpp` **preventAutoMount/ejectDrive/lockAndDismountVolume** -- IOCTL_DISK_SET_DISK_ATTRIBUTES OFFLINE + eject/lock/dismount on a real removable disk. Cert: flash-live-certification unmount stage; manual.
+- `src/core/partition_raw_device_io.cpp` **WindowsRawDevice (aligned read/write/seek/sync)** -- instantiates only for a real raw-device path; headless drives the QFile image branch. Cert: partition-manager strict VHD run + APFS physical-USB (apfs-a8-status). (The pure classifiers isWindowsRawDevicePath/canonicalRawDevicePath ARE unit-tested.)
+- `src/core/drive_scanner.cpp` **queryDriveInfo/physicalDriveBootProbe/enumeratePhysicalDriveNumbers** -- enumerates real \\.\PhysicalDriveN + per-disk IOCTLs; hardware-specific. Cert: manual (real-drive enumeration on Randy's PC).
+- `src/core/stress_test_worker.cpp` **runDiskStress/writeDiskStressFile** and `src/core/disk_benchmark_worker.cpp` **runSequential/RandomQd32 + createTestFile** -- NO_BUFFERING direct I/O throughput against real media (hardware-bound). Cert: manual live rig (validators validateDiskTarget/duration/block-size ARE unit-tested).
+- `src/core/partition_executor.cpp` **executeElevatedScript/executeScript** -- diskpart apply against a real disk through the elevated broker. Cert: partition-manager strict disposable-VHD (12/12 gates) + VM-lab admin report.
+
+### 2. Foreign-filesystem writes certified only by a real OS kernel round-trip
+
+- `src/core/partition_apfs_writer.cpp` **commitRaw* family + formatExistingContainerTarget (raw-device branch)** -- in-place COW commit / format to a real \\.\PhysicalDrive; mountability provable only by the macOS kernel. Cert: APFS A2/A7 in-place + physical-USB (apfs-a2-inplace-commit-status, apfs-a8-status); MacBook kernel rig 10.10.11.38. (setRawDeviceTargetPredicateForTesting drives the ORCHESTRATION headless; the device open/aligned-write/flush is excluded.)
+- `src/core/partition_apfs_writer.cpp` **FileVault ONEKEY + per-file-encrypted format** -- AES-XTS-encrypted keybag/fs-tree; correctness = kernel UNLOCKS+mounts (apfsck cannot read VEK-encrypted metadata). Cert: APFS A6 Apple-cert (apfs-a6-encryption-status).
+- `src/core/partition_apfs_writer.cpp` **commitRawSnapshotRevert (deferred revert_to_xid/sblock tag)** -- kernel performs the actual post-snapshot-divergence discard on next mount. Cert: APFS A3 REVERT Apple-cert.
+- `src/core/partition_apfs_writer.cpp` **commitRawResize (in-chunk grow)** -- consistency of the grown container proven only by kernel remount + fsck_apfs on media spanning new_size. Cert: APFS A7 + physical-USB raw grow bed2d29.
+- `src/core/partition_apfs_writer.cpp` **transparent-compression inserts (decmpfs zlib/lzfse/lzvn/lzbitmap, resource-fork algos 4/8/12/14)** -- fidelity = Apple's kernel decompressor returns the original (kernel md5). Cert: APFS A5 + resource-fork (apfs-a5-compression-status, apfs-resource-fork-status).
+- `src/core/partition_apfs_writer.cpp` **multi-chunk/CAB-tier + multi-volume format emission** -- validity proven by kernel auto-synth+mount + fsck_apfs on the shared-spaceman container. Cert: APFS A1/A4 + apple-tool-evidence/report.json (qemu macOS apfs.kext). (computeContainerGeometry IS unit-tested.)
+- `include/sak/partition_apfs_writer.h` **crash_replay/rollback_boundary/hardware_raw_media evidence fields** -- attest a real power-loss round-trip (write, hard-kill mid-commit, reboot, kernel recovery, fsck). Cert: APFS A8 crash-rollback pngs (the validator only checks the bit is present).
+- `src/core/partition_hfs_file_system_writer.cpp` **replayJournal / createHardlink/Symlink / replaceFileWithAllocationGrowth+decmpfs** -- BE journal replay, indirect-node hardlinks, extent-growth/compression proven by fsck_hfs + HFS+ kernel mount readback. Cert: HFS+ H1-H8 phys-USB Apple-cert (h2-hfs-btree-scope).
+
+### 3. Admin / OS-mutating ops (elevation; would damage the host)
+
+- `src/core/cleanup_worker.cpp` **removeService/removeScheduledTask/removeFirewallRule** (sc/schtasks/netsh delete) and **deleteRegistryKey/Value** (RegDeleteTreeW) -- irreversibly remove real host state; CATASTROPHIC-gated. Cert: parse/decision helpers unit-tested (test_leftover_scanner); execution manual/live (R3 WAVE F).
+- `src/core/ethernet_config_manager.cpp` **runNetsh/restoreSettings/setSourceDhcp/applyStaticIp** and `src/core/app_mutating_actions.cpp` **setAdapterDhcp/StaticIp/Dns** -- elevated netsh rewrites live adapter IPv4/DNS. Cert: isIpv4Literal + snapshot round-trip unit-tested; live apply is [[no-vm-networking-cert]], certed once on Randy's PC (R3 WAVE F).
+- `src/core/wifi_setup_script.cpp` **connectWifiWindows** and `src/actions/reset_network_action.cpp` **executeResetWinsock/IpStack/Firewall** -- netsh wlan connect / full stack teardown (needs a real AP / would sever connectivity). Cert: profile-XML builder + validators unit-tested; connect manual + [[no-vm-networking-cert]].
+- `src/core/restore_point_manager.cpp` **createRestorePoint** (elevated Checkpoint-Computer) and `src/actions/backup_bitlocker_keys_action.cpp` **executeExtractKeys** (Win32_EncryptableVolume WMI) -- need admin + live System Restore / a real BitLocker volume. Cert: parse helpers unit-tested; BitLocker external gate launch_partition_manager_bitlocker_mutation_external_gate_elevated.cmd.
+- `src/core/partition_executor.cpp` / `src/core/partition_script_builder.cpp` **executeElevatedScript / mbr2gpt convert emission** and `src/core/windows_usb_creator.cpp` **runDiskpartScript/cleanAndPartitionDisk** -- diskpart/mbr2gpt/bcdboot against a real boot/removable disk. Cert: script BUILDERS + safety validators unit-tested; external VM/USB gates (run_partition_manager_destructive_certification, mbr2gpt external gate).
+- `src/core/elevation_manager.cpp` **executeElevated/restartElevated** + `src/core/elevation_broker.cpp` **launchHelper/connectPipe/verifyServerImage** + `src/core/elevated_pipe_server.cpp` **createPipe/ConnectNamedPipe** -- ShellExecuteExW runas UAC + elevated-helper named-pipe handshake (needs interactive consent + a live elevated peer). Cert: isElevated/serializeArgs/error-message helpers unit-tested; round-trip via elevated external gates; manual.
+
+### 4. Crash / fault / exception handlers (need a real fault to fire)
+
+- `src/core/crash_reporter.cpp` **sakUnhandledExceptionFilter + MiniDumpWriteDump + re-entrancy guard + install (SetUnhandledExceptionFilter)** -- run only on a genuine unhandled SEH fault with live EXCEPTION_POINTERS; faulting in-process would abort the test runner. Cert: R5-G23-2; helpers crashFileStem/exceptionCodeName/formatSummary unit-tested (test_crash_reporter); filter body manual/soak.
+- `src/main.cpp` **top-level catch(...) safety net + font-warmup teardown join** -- fire only on a fatal escape to the entry frame / a real GUI-teardown font-DB race. Cert: manual; GUI-startup-truncation memory.
+- `src/threading/worker_base.cpp` **stopAndJoin forced terminate()+std::abort watchdog** -- runs only if a thread survives terminate()+5s join (cannot manufacture headless). Cert: cooperative stop certified by test_worker_base destructorStopsThread; abort is never-reached last resort.
+- `src/gui/main_window.cpp` **~MainWindow m_shutting_down teardown guard** -- suppresses a currentChanged-during-destruction use-after-free needing a real window-teardown race. Cert: commit 806d5c5 + 20-run Release shutdown soak 0/20 (manual).
+
+### 5. Live external clients and network peers
+
+- `src/core/connectivity_tester.cpp` **sendIcmpEcho/traceroute/probeHop**, `src/core/dns_diagnostic_tool.cpp` **performQuery**, `src/core/port_scanner.cpp` **scanPort/runTcpProbe**, `src/core/bandwidth_tester.cpp` **runIperfTest**, `src/core/network_share_browser.cpp` **enumerateShares/testReadWriteAccess** -- real ICMP/DNS/TCP/iperf3/SMB against a live peer; headless has none. Cert: manual (live on Randy's PC); the parse/mapping helpers (sanitizeConfig, answersEquivalent, getServiceName, iperf3 output parse) are unit-tested.
+- `src/core/linux_iso_downloader.cpp` / `src/core/uup_dump_api.cpp` / `src/core/uup_iso_builder.cpp` **startDownload / fetch* / aria2+UUPMediaConverter pipeline** -- real multi-GB HTTPS downloads + external process ISO assembly. Cert: manual; URL/redirect-safety + isSafeAria2FileEntry guards fuzzed (test_fuzz_uup_manifest_guard, test_linux_iso_downloader).
+- `src/core/wifi_analyzer.cpp` **WLAN scan (WlanScan/WlanGetAvailableNetworkList)** -- real radio scan of nearby APs (never on the VM per no-VM-networking). Cert: manual; frequencyToChannel/deriveBssSecurity/lookupVendor unit-tested.
+- `src/win32mcp/browser_control.cpp` / `win32_mcp_input.cpp` / `win32_mcp_desktop.cpp` / `native_messaging.cpp` **CDP pipe exchange / SendInput / UIA walk + capture / native-messaging relay** -- drive a real Chrome + real desktop session. Cert: Track B browser/desktop live-cert rig (VM 10.10.11.183, ext 0.3.11); framing/contract fuzzed (test_fuzz_mcp_framing, test_browser_contract).
+- `src/core/email_export_worker.cpp` **exported PST/EML/MBOX open-in-client fidelity** -- opening in real Outlook/Thunderbird is a human-observed live cert. Cert: R5-G23-11 (BLOCKED-ON-USER); writer byte-output unit-tested (test_email_export_worker, test_html_email_writer).
+
+### 6. GUI paths a headless offscreen session cannot drive
+
+- `src/gui/ai_assistant_panel.cpp` **runScreenshotTool (grabWindow(0))** and `src/gui/splash_screen.cpp` **showCentered/paintEvent** -- capture/composite the real desktop framebuffer; offscreen never exposes/composites. Cert: docs/AI_ASSISTANT_MANUAL_QA_RUNBOOK.md + ai-assistant-vm-smoke.
+- `src/gui/main_window.cpp` **Run-as-Admin -> restartElevated** -- ShellExecuteExW runas raises a secure-desktop UAC prompt. Cert: manual (R3 WAVE F elevation live-cert).
+- `src/gui/file_management_explorer_panel.cpp` **QDrag::exec startDrag + cross-process drop eventFilter** -- native blocking DnD modal / OS shell CF_HDROP delivery. Cert: manual; the mime-decision helpers (dropActionFor, mimeHasPasteableItems) ARE unit-tested.
+- `src/gui/image_flasher_panel.cpp` **QFileDialog::getOpenFileName** -- native OS file picker (no DontUseNativeDialog set). Cert: manual QA runbook.
+- clipboard interop (`network_diagnostic_panel.cpp`, `partition_manager_panel.cpp`, `advanced_uninstall_panel.cpp`, `ai_transcript_view.cpp` **clipboard()->setText**) -- real cross-app OS clipboard/CF_UNICODETEXT delivery. Cert: manual.
+- `src/gui/detachable_log_window.cpp` **moveEvent snap (frameGeometry)**, `src/gui/info_button.cpp` **availableGeometry clamp**, `src/gui/file_explorer_status_center_widget.cpp` **devicePixelRatioF HiDPI branch** -- depend on a real WM frame / real monitor bounds / DPR != 1. Cert: manual.
+
 ## Not yet done (tracked, not claimed)
 
-This is a baseline, not a target. R5-G14-16a/b (enforce 100% line AND branch coverage on
-all testable code) remain a multi-week program: it needs the full suite measured, the
-exclusion inventory built (R5-G14-16c: every excluded file/function named with a reason),
-and a gate wired (R5-G14-16d). Branch coverage is not reported here; OpenCppCoverage
-measures line coverage only, so branch enforcement needs an additional tool decision.
+Branch coverage (R5-G14-16b) is not reported here: OpenCppCoverage measures LINE coverage
+only, so branch enforcement needs an additional instrumentation lift (clang-cl + llvm-cov,
+both installed in the local LLVM 22.1.1). The measured line baseline above is over the
+CURATED CORE SET, not the full suite; raising specific reachable numbers is tracked as its
+own increments (e.g. R5-G14-5 adds page-trailer-valid PST store seeds so pst_parser.cpp
+executes its deep BTree/LTP layers). The dispositions of R5-G14-16a (enforce 100% line) and
+R5-G14-16d (wire a blocking gate) are recorded against those items in
+docs/CODEX_REVIEW_5_REMEDIATION.md.
