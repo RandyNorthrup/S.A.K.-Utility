@@ -11,6 +11,11 @@
 
 #include "sak/process_runner.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
+
 #include <algorithm>
 #include <chrono>
 
@@ -29,7 +34,7 @@ namespace sak {
 namespace {
 constexpr qsizetype kIpv4OctetCount = 4;
 constexpr int kMaxOctetValue = 255;
-// Bound on the ipconfig /displaydns child process so a wedged launch cannot hang the tool.
+// Bound on the Get-DnsClientCache child process so a wedged launch cannot hang the tool.
 constexpr int kDisplayDnsTimeoutMs = 10'000;
 }  // namespace
 
@@ -139,7 +144,7 @@ int countSuccessfulResults(const QVector<sak::DnsQueryResult>& results) {
         std::ranges::count_if(results, [](const sak::DnsQueryResult& r) { return r.success; }));
 }
 
-// Fail-closed failure text for 'ipconfig /displaydns', appending the child's stderr when present so
+// Fail-closed failure text for the DNS cache read, appending the child's stderr when present so
 // the real OS error reaches the user instead of an empty cache being reported.
 QString displayDnsFailureMessage(const sak::ProcessResult& result) {
     const QString detail = result.std_err.trimmed();
@@ -408,50 +413,77 @@ void DnsDiagnosticTool::compareServers(const QString& hostname,
 void DnsDiagnosticTool::inspectDnsCache() {
     m_cancelled.store(false);
 
-    // System32-qualified ipconfig, never the bare name: CreateProcess searches the current
-    // directory ahead of System32, so a planted ipconfig could feed this tool a fabricated
-    // DNS cache. Unresolvable -> surface the error (fail closed), never a PATH/CWD launch.
-    const QString ipconfig_exe = sak::system32Path(QStringLiteral("ipconfig.exe"));
-    if (ipconfig_exe.isEmpty()) {
-        Q_EMIT errorOccurred(QStringLiteral("Could not locate the System32 ipconfig.exe."));
+    // Read the cache through Get-DnsClientCache rather than parsing `ipconfig /displaydns` text:
+    // the cmdlet and its Name/Data fields are language-neutral, whereas ipconfig's "Record Name" /
+    // "A (Host) Record" labels are localized -- matching those English literals on a non-English
+    // Windows silently yielded an EMPTY cache view for a non-empty cache. -Type A,AAAA filters at
+    // the source and Select-Object emits only the two neutral fields.
+    //
+    // System32-qualified powershell, never the bare name: CreateProcess searches the current
+    // directory ahead of System32, so a planted powershell.exe could feed this tool a fabricated
+    // cache. Unresolvable -> surface the error (fail closed), never a PATH/CWD launch.
+    const QString powershell_exe = sak::systemPowerShellPath();
+    if (powershell_exe.isEmpty()) {
+        Q_EMIT errorOccurred(QStringLiteral("Could not locate the System32 powershell.exe."));
         return;
     }
 
-    const auto result = sak::runProcess(ipconfig_exe,
-                                        {QStringLiteral("/displaydns")},
-                                        kDisplayDnsTimeoutMs,
-                                        [this]() { return m_cancelled.load(); });
-    // Fail closed: a failed 'ipconfig /displaydns' must surface as an error, not an empty cache --
-    // emitting no results here would be indistinguishable from a genuinely empty resolver cache.
+    const auto result =
+        sak::runProcess(powershell_exe,
+                        {QStringLiteral("-NoProfile"),
+                         QStringLiteral("-NonInteractive"),
+                         QStringLiteral("-Command"),
+                         QStringLiteral("$ErrorActionPreference='Stop'; "
+                                        "Get-DnsClientCache -Type A,AAAA | "
+                                        "Select-Object Name,Data | ConvertTo-Json -Compress")},
+                        kDisplayDnsTimeoutMs,
+                        [this]() { return m_cancelled.load(); });
+    // Fail closed: a failed enumeration must surface as an error, not an empty cache -- emitting
+    // no results here would be indistinguishable from a genuinely empty resolver cache.
     if (!result.succeeded()) {
         Q_EMIT errorOccurred(displayDnsFailureMessage(result));
         return;
     }
 
-    const auto lines = result.std_out.split(QLatin1Char('\n'));
+    Q_EMIT dnsCacheResults(parseDnsClientCacheJson(result.std_out));
+}
 
+QVector<QPair<QString, QString>> DnsDiagnosticTool::parseDnsClientCacheJson(const QString& json) {
     QVector<QPair<QString, QString>> entries;
-    QString currentName;
 
-    for (const auto& line : lines) {
-        const auto trimmed = line.trimmed();
-
-        if (trimmed.startsWith(QStringLiteral("Record Name"))) {
-            const int colonPos = static_cast<int>(trimmed.indexOf(QLatin1Char(':')));
-            if (colonPos >= 0) {
-                currentName = trimmed.mid(colonPos + 1).trimmed();
-            }
-        } else if (trimmed.startsWith(QStringLiteral("A (Host) Record")) ||
-                   trimmed.startsWith(QStringLiteral("AAAA Record"))) {
-            const int colonPos = static_cast<int>(trimmed.indexOf(QLatin1Char(':')));
-            if (colonPos >= 0 && !currentName.isEmpty()) {
-                const auto value = trimmed.mid(colonPos + 1).trimmed();
-                entries.append({currentName, value});
-            }
-        }
+    const QJsonDocument doc = QJsonDocument::fromJson(json.trimmed().toUtf8());
+    QJsonArray records;
+    if (doc.isArray()) {
+        records = doc.array();
+    } else if (doc.isObject()) {
+        // ConvertTo-Json emits a bare object (not a one-element array) for a single record.
+        records.append(doc.object());
+    } else {
+        // Empty input / JSON null / unparseable: a genuinely empty A,AAAA cache. Any process
+        // failure was already surfaced via the exit code, so this is not an error path.
+        return entries;
     }
 
-    Q_EMIT dnsCacheResults(entries);
+    for (const QJsonValue& value : records) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject record = value.toObject();
+        const QString name = record.value(QStringLiteral("Name")).toString();
+        // Skip negative-cache / pending entries: a queried name whose Data is JSON null (no
+        // resolved address) or a nameless record carries no useful (name, address) pair.
+        const QJsonValue data = record.value(QStringLiteral("Data"));
+        if (name.isEmpty() || !data.isString()) {
+            continue;
+        }
+        const QString address = data.toString();
+        if (address.isEmpty()) {
+            continue;
+        }
+        entries.append({name, address});
+    }
+
+    return entries;
 }
 
 void DnsDiagnosticTool::flushDnsCache() {

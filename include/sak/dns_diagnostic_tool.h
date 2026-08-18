@@ -79,6 +79,16 @@ public:
     [[nodiscard]] static bool answersEquivalent(const QVector<QString>& a,
                                                 const QVector<QString>& b);
 
+    /// @brief Parse the JSON from
+    /// `Get-DnsClientCache -Type A,AAAA | Select-Object Name,Data | ConvertTo-Json` into
+    /// (record-name, address) pairs. The cmdlet and its Name/Data fields are language-neutral,
+    /// unlike the localized "Record Name" / "A (Host) Record" labels of `ipconfig /displaydns`
+    /// that this replaced, so the cache view is correct on non-English Windows. Entries with an
+    /// empty Name or a null/empty Data (negative-cache / pending records) are skipped. Accepts a
+    /// JSON array, a bare object (a single record), or empty input (an empty cache).
+    [[nodiscard]] static QVector<QPair<QString, QString>> parseDnsClientCacheJson(
+        const QString& json);
+
 Q_SIGNALS:
     void queryComplete(sak::DnsQueryResult result);
     void comparisonComplete(sak::DnsServerComparison comparison);

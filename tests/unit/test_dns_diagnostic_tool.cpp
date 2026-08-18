@@ -36,6 +36,13 @@ private Q_SLOTS:
     void isSupportedRecordType_acceptsKnownRejectsUnknown();
     void isNumericIpv4_acceptsValidRejectsNonNumeric();
     void answersEquivalent_orderInsensitive();
+
+    // -- parseDnsClientCacheJson (G23-4 locale-neutral cache view) --
+    void parseDnsCache_arrayOfRecords();
+    void parseDnsCache_singleBareObject();
+    void parseDnsCache_skipsNullDataAndEmptyName();
+    void parseDnsCache_emptyInputIsEmptyCache();
+    void parseDnsCache_ignoresMalformed();
 };
 
 // ===================================================================
@@ -172,6 +179,56 @@ void TestDnsDiagnosticTool::answersEquivalent_orderInsensitive() {
     QVERIFY(DnsDiagnosticTool::answersEquivalent(a, reordered));  // round-robin still agrees
     QVERIFY(!DnsDiagnosticTool::answersEquivalent(a, different));
     QVERIFY(!DnsDiagnosticTool::answersEquivalent(a, shorter));
+}
+
+// ===================================================================
+// parseDnsClientCacheJson -- the locale-neutral DNS cache view (G23-4)
+// ===================================================================
+
+void TestDnsDiagnosticTool::parseDnsCache_arrayOfRecords() {
+    const QString json = QStringLiteral(R"([{"Name":"a.example","Data":"1.2.3.4"},)"
+                                        R"({"Name":"b.example","Data":"5.6.7.8"}])");
+    const auto entries = DnsDiagnosticTool::parseDnsClientCacheJson(json);
+    QCOMPARE(entries.size(), qsizetype(2));
+    QCOMPARE(entries.at(0).first, QStringLiteral("a.example"));
+    QCOMPARE(entries.at(0).second, QStringLiteral("1.2.3.4"));
+    QCOMPARE(entries.at(1).first, QStringLiteral("b.example"));
+    QCOMPARE(entries.at(1).second, QStringLiteral("5.6.7.8"));
+}
+
+void TestDnsDiagnosticTool::parseDnsCache_singleBareObject() {
+    // ConvertTo-Json emits a bare object, not a one-element array, for a single record.
+    const auto entries = DnsDiagnosticTool::parseDnsClientCacheJson(
+        QStringLiteral(R"({"Name":"solo.example","Data":"9.9.9.9"})"));
+    QCOMPARE(entries.size(), qsizetype(1));
+    QCOMPARE(entries.at(0).first, QStringLiteral("solo.example"));
+    QCOMPARE(entries.at(0).second, QStringLiteral("9.9.9.9"));
+}
+
+void TestDnsDiagnosticTool::parseDnsCache_skipsNullDataAndEmptyName() {
+    // A real Get-DnsClientCache dump mixes resolved records with negative-cache / pending entries
+    // that carry a null Data or an empty Name; only the resolved (name, address) pair is useful.
+    const QString json = QStringLiteral(R"([{"Name":"good.example","Data":"1.1.1.1"},)"
+                                        R"({"Name":"","Data":null},)"
+                                        R"({"Name":"pending.example","Data":null}])");
+    const auto entries = DnsDiagnosticTool::parseDnsClientCacheJson(json);
+    QCOMPARE(entries.size(), qsizetype(1));
+    QCOMPARE(entries.at(0).first, QStringLiteral("good.example"));
+    QCOMPARE(entries.at(0).second, QStringLiteral("1.1.1.1"));
+}
+
+void TestDnsDiagnosticTool::parseDnsCache_emptyInputIsEmptyCache() {
+    // An empty A,AAAA cache serializes as empty output / JSON null / an empty array; each is an
+    // empty cache, NOT an error (the process exit code is the failure signal, checked separately).
+    QVERIFY(DnsDiagnosticTool::parseDnsClientCacheJson(QString()).isEmpty());
+    QVERIFY(DnsDiagnosticTool::parseDnsClientCacheJson(QStringLiteral("null")).isEmpty());
+    QVERIFY(DnsDiagnosticTool::parseDnsClientCacheJson(QStringLiteral("[]")).isEmpty());
+}
+
+void TestDnsDiagnosticTool::parseDnsCache_ignoresMalformed() {
+    QVERIFY(
+        DnsDiagnosticTool::parseDnsClientCacheJson(QStringLiteral("not json at all")).isEmpty());
+    QVERIFY(DnsDiagnosticTool::parseDnsClientCacheJson(QStringLiteral(R"({"Name":)")).isEmpty());
 }
 
 QTEST_MAIN(TestDnsDiagnosticTool)

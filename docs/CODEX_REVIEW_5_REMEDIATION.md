@@ -4396,6 +4396,17 @@ rather than as generic advice.
     "Configuration for interface" netsh header -- both should route through language-neutral cmdlets
     (Get-DnsClientCache / Get-NetIPConfiguration). G23-4 stays [~]: the hostile-env TEST MATRIX + seams, the
     two locale fixes, and the UI-residual polish remain.
+  - LOCALE FIX 1 of 2, 2026-08-18 (DnsDiagnosticTool::inspectDnsCache): replaced the `ipconfig /displaydns`
+    English-label parse ("Record Name" / "A (Host) Record") with `Get-DnsClientCache -Type A,AAAA |
+    Select-Object Name,Data | ConvertTo-Json`. The cmdlet, its parameters, and the Name/Data property names
+    are language-neutral, so the DNS-cache view is now correct on non-English Windows instead of silently
+    showing an empty cache for a populated one. The System32-qualified powershell, fail-closed-on-nonzero-exit,
+    and empty-cache-is-not-an-error invariants are preserved. Parsing was extracted into the pure static
+    DnsDiagnosticTool::parseDnsClientCacheJson (skips null-Data / empty-Name negative-cache entries; handles
+    the bare-object single-record form, an empty array, and empty/malformed input), unit-tested with 5 cases.
+    REMAINING locale fix (2 of 2): parseNetshEthernetOutput (user_profile_backup_wizard_pages.cpp:1444, the
+    netsh English "Configuration for interface" header) -> route through Get-NetIPConfiguration / the
+    MSFT_NetIPAddress WMI class, whose field names do not localize.
       paths are under MAX_PATH, administrator rights are available, the network works,
       and Windows is English. The last assumption already caused a defect: diskpart's
       success text is localized, which is why the recreate path had to be given a
