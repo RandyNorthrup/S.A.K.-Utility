@@ -19,6 +19,8 @@
 #include <functional>
 #include <optional>
 
+class QIODevice;
+
 namespace sak {
 
 enum class PartitionApfsWriteOperation {
@@ -763,6 +765,14 @@ struct PartitionApfsContainerGeometry {
     bool multi_cib{false};     ///< chunk_count > chunks_per_cib -> needs the CAB tier
 };
 
+/// @brief Target geometry a raw format write is bounded by: the block size and the container's
+///        total block count (0 == count unknown). Public mirror of the format writer's internal
+///        bounds so writeApfsFormatBlockForTesting can drive the write-confinement guard.
+struct ApfsFormatBlockGeometry {
+    quint32 blockSize = 0;
+    quint64 containerBlockCount = 0;
+};
+
 class PartitionApfsWriter {
 public:
     [[nodiscard]] static QString operationName(PartitionApfsWriteOperation operation);
@@ -849,6 +859,21 @@ public:
     ///        the fail-closed budget guard shared by the parser and the reclaim expander.
     [[nodiscard]] static bool freeQueueExpansionWithinBudgetForTesting(quint64 accumulated_blocks,
                                                                        quint64 run_length);
+    /// @brief Drives the format writer's per-block write guard headlessly for a property test:
+    ///        writes @p block at @p blockIndex into @p device, refusing (and mutating nothing)
+    ///        unless the block is exactly @p blockSize bytes and lands entirely inside the target
+    ///        container's [0, @p containerBlockCount * @p blockSize) byte range without the byte
+    ///        offset wrapping past 2^63. This is the "never write outside the validated target"
+    ///        guard on every raw-device format write (writeBlock); a QBuffer sized to the
+    ///        container makes an escaped write observable as the buffer growing past that size.
+    ///        Pure seam for the write-confinement bounds check. @p blockers gains the reason on
+    ///        refusal.
+    [[nodiscard]] static bool writeApfsFormatBlockForTesting(
+        QIODevice* device,
+        quint64 blockIndex,
+        const ApfsFormatBlockGeometry& geometry,
+        const QByteArray& block,
+        QStringList* blockers);
     /// @brief True when the in-place commit's subtree collector may descend into directory
     ///        @p directory_id at nesting @p depth. False once the depth cap is exceeded or
     ///        the id was already collected: a drec-level directory cycle in an untrusted

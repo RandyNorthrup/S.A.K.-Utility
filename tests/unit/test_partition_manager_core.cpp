@@ -36,6 +36,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRandomGenerator>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QtEndian>
@@ -47,6 +48,26 @@
 using namespace sak;
 
 namespace {
+
+// Boundary-steered block index for the format-write confinement property (G23-7): interior, the
+// two edges, the first index past the end, index 0, and a near-max index whose byte offset would
+// wrap. Keeping the switch out here holds the property test method itself under the CCN gate.
+quint64 steerFormatBlockIndex(QRandomGenerator& prng, quint64 containerBlockCount) {
+    switch (prng.bounded(6u)) {
+    case 0:
+        return prng.generate64() % containerBlockCount;  // interior
+    case 1:
+        return containerBlockCount - 1;                  // last valid
+    case 2:
+        return containerBlockCount;                      // first past the end
+    case 3:
+        return containerBlockCount + 1 + (prng.generate64() % 8);
+    case 4:
+        return 0;                                // container superblock slot
+    default:
+        return ~0ULL - (prng.generate64() % 4);  // near-max: offset must not wrap
+    }
+}
 
 // ext image layout (constants, helpers, extReaderFixture) lives in one home shared with the ext
 // fuzz harness; the byte pokers likewise. See tests/support/{ext_fixture,byte_writer}.h.
@@ -1460,6 +1481,7 @@ private Q_SLOTS:
     void scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource();
     void apfsWriter_freeQueueRunInBoundsRejectsOutOfRange();
     void apfsWriter_freeQueueExpansionBudgetFailsClosed();
+    void apfsWriter_formatBlockWriteNeverEscapesValidatedTarget();
     void apfsWriter_treeCollectorBoundsDirectoryDepthAndCycles();
     void exporter_realizedPathWithinRootRejectsEscape();
     void safetyValidator_blocksSplitBootOsDiskMutations();
@@ -17340,6 +17362,47 @@ void PartitionManagerCoreTests::apfsWriter_freeQueueExpansionBudgetFailsClosed()
     // No wrap: an accumulated total already past the budget can never admit another run.
     QVERIFY(!W::freeQueueExpansionWithinBudgetForTesting(~0ULL, 1));
     QVERIFY(!W::freeQueueExpansionWithinBudgetForTesting(~0ULL, 0));
+}
+
+void PartitionManagerCoreTests::apfsWriter_formatBlockWriteNeverEscapesValidatedTarget() {
+    // CODEX_REVIEW_5 G23-7 (destructive-op invariant, "never write outside the validated
+    // target"): the format writer's per-block guard (partition_apfs_writer.cpp writeBlock) accepts
+    // a write ONLY when the block is exactly blockSize bytes and lands entirely inside the target
+    // container's [0, containerBlockCount*blockSize) byte range; a rejected write mutates nothing.
+    // A QBuffer sized to exactly the container makes any escape observable as its backing array
+    // growing past the target size (QBuffer auto-extends on a seek past its end). Property-checked
+    // over boundary-steered inputs from a fixed seed, so any failure reproduces byte-for-byte.
+    QRandomGenerator prng(0x5A'11'B1'0Cu);  // fixed seed: deterministic, reproducible
+    constexpr quint32 kBlockSizes[] = {512u, 1024u, 2048u, 4096u};
+    for (int i = 0; i < 4000; ++i) {
+        const quint32 blockSize = kBlockSizes[prng.bounded(4u)];
+        const quint64 containerBlockCount = 1u + prng.bounded(64u);
+        const quint64 blockIndex = steerFormatBlockIndex(prng, containerBlockCount);
+        const bool wrongSize = prng.bounded(8u) == 0u;
+        const qint64 targetBytes = static_cast<qint64>(containerBlockCount) * blockSize;
+        const QByteArray sentinel(targetBytes, '\x5A');
+        QByteArray backing = sentinel;
+        QBuffer buffer(&backing);
+        QVERIFY(buffer.open(QIODevice::ReadWrite));
+        const QByteArray block(static_cast<qsizetype>(blockSize) + (wrongSize ? 1 : 0), '\xA5');
+        QStringList blockers;
+        const bool ok = PartitionApfsWriter::writeApfsFormatBlockForTesting(
+            &buffer, blockIndex, {blockSize, containerBlockCount}, block, &blockers);
+        buffer.close();
+        // Core invariant: the validated target NEVER grows -- no write escaped [0, targetBytes).
+        QVERIFY2(backing.size() == targetBytes, "APFS format block write escaped the target");
+        if (ok) {
+            QVERIFY(!wrongSize && blockIndex < containerBlockCount && blockers.isEmpty());
+            QByteArray expected = sentinel;
+            const qsizetype off = static_cast<qsizetype>(blockIndex) *
+                                  static_cast<qsizetype>(blockSize);
+            expected.replace(off, static_cast<qsizetype>(blockSize), block);
+            QCOMPARE(backing, expected);   // exactly its own block changed, nothing else
+        } else {
+            QCOMPARE(backing, sentinel);   // rejected: mutated nothing...
+            QVERIFY(!blockers.isEmpty());  // ...and recorded why
+        }
+    }
 }
 
 void PartitionManagerCoreTests::apfsWriter_treeCollectorBoundsDirectoryDepthAndCycles() {

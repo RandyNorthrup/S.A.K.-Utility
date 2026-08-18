@@ -20965,6 +20965,15 @@ bool PartitionApfsWriter::freeQueueExpansionWithinBudgetForTesting(quint64 accum
     return freeQueueRunFitsExpansionBudget(accumulated_blocks, run_length);
 }
 
+bool PartitionApfsWriter::writeApfsFormatBlockForTesting(QIODevice* device,
+                                                         quint64 blockIndex,
+                                                         const ApfsFormatBlockGeometry& geometry,
+                                                         const QByteArray& block,
+                                                         QStringList* blockers) {
+    return writeBlock(
+        device, blockIndex, {geometry.blockSize, geometry.containerBlockCount}, block, blockers);
+}
+
 bool PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(quint64 directory_id,
                                                                int depth,
                                                                QSet<quint64>* visited) {
