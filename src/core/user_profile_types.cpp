@@ -9,6 +9,8 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 
 #include <algorithm>
 
@@ -607,6 +609,69 @@ EthernetConfigInfo EthernetConfigInfo::fromJson(const QJsonObject& json) {
     info.dns_secondary = json["dns_secondary"].toString();
     info.selected = json["selected"].toBool(true);
     return info;
+}
+
+QString EthernetConfigInfo::prefixLengthToSubnetMask(int prefixLength) {
+    constexpr int kIpv4BitCount = 32;
+    constexpr int kBitsPerOctet = 8;
+    constexpr int kOctetCount = 4;
+    constexpr quint32 kOctetMask = 0xFFu;
+    if (prefixLength < 0 || prefixLength > kIpv4BitCount) {
+        return {};
+    }
+    // The top `prefixLength` bits set. Shifting a 32-bit value by 32 is undefined behaviour, so
+    // the all-zero (prefix 0) mask is produced explicitly rather than via ~0u << 32.
+    const quint32 mask = (prefixLength == 0) ? 0u : (~0u << (kIpv4BitCount - prefixLength));
+    QStringList octets;
+    octets.reserve(kOctetCount);
+    for (int i = kOctetCount - 1; i >= 0; --i) {
+        octets << QString::number((mask >> (i * kBitsPerOctet)) & kOctetMask);
+    }
+    return octets.join(QLatin1Char('.'));
+}
+
+QVector<EthernetConfigInfo> EthernetConfigInfo::parseNetIpConfigJson(const QString& json) {
+    QVector<EthernetConfigInfo> configs;
+
+    const QJsonDocument doc = QJsonDocument::fromJson(json.trimmed().toUtf8());
+    QJsonArray adapters;
+    if (doc.isArray()) {
+        adapters = doc.array();
+    } else if (doc.isObject()) {
+        // ConvertTo-Json emits a bare object, not a one-element array, for a single adapter.
+        adapters.append(doc.object());
+    } else {
+        return configs;  // empty / null / unparseable: no adapters captured
+    }
+
+    for (const QJsonValue& value : adapters) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject obj = value.toObject();
+        EthernetConfigInfo info;
+        info.adapter_name = obj["Name"].toString();
+        if (info.adapter_name.isEmpty()) {
+            continue;
+        }
+        info.dhcp_enabled = obj["Dhcp"].toString() == QLatin1String("Enabled");
+        info.ip_address = obj["IPv4"].toString();
+        const QJsonValue prefix = obj["Prefix"];
+        if (prefix.isDouble()) {
+            info.subnet_mask = prefixLengthToSubnetMask(prefix.toInt());
+        }
+        info.default_gateway = obj["Gateway"].toString();
+        const QJsonArray dns = obj["Dns"].toArray();
+        if (!dns.isEmpty()) {
+            info.dns_primary = dns.at(0).toString();
+        }
+        if (dns.size() > 1) {
+            info.dns_secondary = dns.at(1).toString();
+        }
+        configs.append(info);
+    }
+
+    return configs;
 }
 
 QJsonObject AppDataSourceInfo::toJson() const {

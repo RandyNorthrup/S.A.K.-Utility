@@ -205,6 +205,20 @@ struct EthernetConfigInfo {
 
     QJsonObject toJson() const;
     static EthernetConfigInfo fromJson(const QJsonObject& json);
+
+    /// @brief Convert an IPv4 CIDR prefix length (0..32) to a dotted-quad subnet mask
+    /// ("255.255.255.0" for 24). Restore feeds subnet_mask to `netsh set address`, which wants
+    /// the dotted-quad form, so the prefix from Get-NetIPConfiguration is converted here. Returns
+    /// an empty string for an out-of-range prefix.
+    static QString prefixLengthToSubnetMask(int prefixLength);
+
+    /// @brief Parse the backup wizard's Get-NetIPConfiguration JSON scan into per-adapter configs.
+    /// The cmdlet output (Name / Dhcp / IPv4 / Prefix / Gateway / Dns) is language-neutral, unlike
+    /// the localized `netsh interface ipv4 show config` text this replaced -- which silently
+    /// captured nothing on a non-English Windows -- so ethernet settings are backed up on any
+    /// locale. Adapters with no Name are skipped; a null Gateway or empty Dns yields empty fields.
+    /// Accepts a JSON array, a bare object (a single adapter), or empty input (no adapters).
+    [[nodiscard]] static QVector<EthernetConfigInfo> parseNetIpConfigJson(const QString& json);
 };
 
 /**

@@ -4407,6 +4407,22 @@ rather than as generic advice.
     REMAINING locale fix (2 of 2): parseNetshEthernetOutput (user_profile_backup_wizard_pages.cpp:1444, the
     netsh English "Configuration for interface" header) -> route through Get-NetIPConfiguration / the
     MSFT_NetIPAddress WMI class, whose field names do not localize.
+  - LOCALE FIX 2 of 2, 2026-08-18 (UserProfileBackupEthernetSettingsPage ethernet scan): the backup wizard
+    parsed `netsh interface ipv4 show config` by matching the English "Configuration for interface" /
+    "DHCP enabled: Yes" / "IP Address:" labels, so on a non-English Windows the ethernet-config CAPTURE
+    silently produced nothing and the profile backup lost every adapter -- worse than the DNS view, since
+    this feeds a restore. Replaced the netsh text scrape with a Get-NetIPConfiguration + Get-NetIPInterface
+    scan emitted as JSON (kEthernetConfigPowerShell), consumed by the new pure
+    EthernetConfigInfo::parseNetIpConfigJson. The RESTORE path is untouched: parseNetIpConfigJson yields the
+    exact same EthernetConfigInfo field formats as before -- notably a dotted-quad subnet_mask via the new
+    EthernetConfigInfo::prefixLengthToSubnetMask(CIDR) (restore feeds subnet_mask to `netsh set address`).
+    The System32-qualified powershell and fail-closed-on-nonzero-exit invariants are preserved; the 4
+    superseded netsh parse helpers were removed (unused-static functions are C4505-fatal under /WX). 7 unit
+    tests (test_user_profile_types) cover the prefix->mask table, out-of-range prefixes, field mapping,
+    null-gateway / empty-DNS, the nameless-adapter skip, and empty/malformed input; the real
+    Get-NetIPConfiguration JSON shape was recon'd on this machine before writing the parser. BOTH G23-4
+    locale gaps are now closed; G23-4 stays [~] only for the hostile-env TEST MATRIX + injection seams and
+    the two minor non-destructive UI residuals.
       paths are under MAX_PATH, administrator rights are available, the network works,
       and Windows is English. The last assumption already caused a defect: diskpart's
       success text is localized, which is why the recreate path had to be given a

@@ -1387,84 +1387,25 @@ static qint64 calculateSourceSize(const QString& path, const std::atomic_bool* c
     return size;
 }
 
-/// @brief Parse netsh "interface ipv4 show config" output
-static QString extractValueAfterColon(const QString& line) {
-    const int idx = static_cast<int>(line.indexOf(':'));
-    if (idx < 0) {
-        return {};
-    }
-    return line.mid(idx + 1).trimmed();
-}
-
-static void appendDnsServer(const QString& dns, EthernetConfigInfo& current) {
-    if (dns.isEmpty()) {
-        return;
-    }
-    if (current.dns_primary.isEmpty()) {
-        current.dns_primary = dns;
-    } else if (current.dns_secondary.isEmpty()) {
-        current.dns_secondary = dns;
-    }
-}
-
-static void parseNetshAdapterField(const QString& trimmed, EthernetConfigInfo& current) {
-    if (trimmed.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
-        current.dhcp_enabled = trimmed.contains("Yes", Qt::CaseInsensitive);
-        return;
-    }
-    if (trimmed.startsWith("IP Address:", Qt::CaseInsensitive)) {
-        current.ip_address = extractValueAfterColon(trimmed);
-        return;
-    }
-    if (trimmed.startsWith("Subnet Prefix:", Qt::CaseInsensitive) ||
-        trimmed.startsWith("SubnetMask:", Qt::CaseInsensitive)) {
-        current.subnet_mask = extractValueAfterColon(trimmed);
-        return;
-    }
-    if (trimmed.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
-        current.default_gateway = extractValueAfterColon(trimmed);
-        return;
-    }
-
-    const bool is_dns = trimmed.contains("DNS Server", Qt::CaseInsensitive) ||
-                        trimmed.startsWith("Statically Configured DNS", Qt::CaseInsensitive);
-    if (is_dns) {
-        appendDnsServer(extractValueAfterColon(trimmed), current);
-    }
-}
-
-static QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& output) {
-    QVector<EthernetConfigInfo> configs;
-    EthernetConfigInfo current;
-    bool in_adapter = false;
-
-    for (const QString& line : output.split('\n')) {
-        const QString trimmed = line.trimmed();
-
-        if (trimmed.startsWith("Configuration for interface")) {
-            if (in_adapter && !current.adapter_name.isEmpty()) {
-                configs.append(current);
-            }
-            current = EthernetConfigInfo();
-            const int first_quote = static_cast<int>(trimmed.indexOf('"'));
-            const int last_quote = static_cast<int>(trimmed.lastIndexOf('"'));
-            if (first_quote >= 0 && last_quote > first_quote) {
-                current.adapter_name = trimmed.mid(first_quote + 1, last_quote - first_quote - 1);
-            }
-            in_adapter = true;
-            continue;
-        }
-        if (!in_adapter) {
-            continue;
-        }
-
-        parseNetshAdapterField(trimmed, current);
-    }
-    if (in_adapter && !current.adapter_name.isEmpty()) {
-        configs.append(current);
-    }
-    return configs;
-}
+// PowerShell that reads each adapter's IPv4 config through Get-NetIPConfiguration +
+// Get-NetIPInterface and emits it as JSON. It replaces a parse of
+// `netsh interface ipv4 show config`, whose "Configuration for interface" / "DHCP enabled" /
+// "IP Address" labels are LOCALIZED -- so the text parse silently captured NOTHING on a
+// non-English Windows and the backup lost every adapter. The cmdlets, their
+// Name/Dhcp/IPv4/Prefix/Gateway/Dns fields, and the Enabled/Disabled DHCP enum are all
+// language-neutral. EthernetConfigInfo::parseNetIpConfigJson consumes the JSON (and converts the
+// CIDR Prefix to the dotted-quad subnet mask the restore path feeds to `netsh set address`).
+constexpr auto kEthernetConfigPowerShell =
+    "$ErrorActionPreference='Stop'; Get-NetIPConfiguration | ForEach-Object { "
+    "$a=$_.InterfaceAlias; "
+    "$d=(Get-NetIPInterface -InterfaceAlias $a -AddressFamily IPv4 "
+    "-ErrorAction SilentlyContinue).Dhcp; "
+    "[PSCustomObject]@{ Name=$a; Dhcp=\"$d\"; "
+    "IPv4=($_.IPv4Address.IPAddress | Select-Object -First 1); "
+    "Prefix=($_.IPv4Address.PrefixLength | Select-Object -First 1); "
+    "Gateway=($_.IPv4DefaultGateway.NextHop | Select-Object -First 1); "
+    "Dns=@($_.DNSServer | Where-Object {$_.AddressFamily -eq 2} | "
+    "ForEach-Object {$_.ServerAddresses}) } } | ConvertTo-Json -Depth 4";
 
 static const auto kCommonAppDataSources = std::to_array<AppDataSourceInfo>({
     // Browsers
@@ -2402,7 +2343,7 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
             return;
         }
 
-        auto configs = parseNetshEthernetOutput(output);
+        auto configs = EthernetConfigInfo::parseNetIpConfigJson(output);
         m_scanned = true;
         m_selectAllButton->setEnabled(true);
         m_selectNoneButton->setEnabled(true);
@@ -2414,26 +2355,26 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
     });
 
     watcher->setFuture(QtConcurrent::run([]() -> QPair<bool, QString> {
-        // System32-qualified netsh, never the bare name: CreateProcess searches the current
-        // directory ahead of System32, so a planted netsh could fabricate the adapter list
+        // System32-qualified powershell, never the bare name: CreateProcess searches the current
+        // directory ahead of System32, so a planted powershell could fabricate the adapter list
         // that a restore later applies. Unresolvable -> FAILED scan (fail closed).
-        const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
-        if (netsh_exe.isEmpty()) {
-            sak::logError("Cannot resolve the System32 netsh.exe path; ethernet scan aborted");
-            return {false, QStringLiteral("Cannot resolve the System32 netsh.exe path")};
+        const QString powershell_exe = sak::systemPowerShellPath();
+        if (powershell_exe.isEmpty()) {
+            sak::logError("Cannot resolve the System32 powershell.exe path; ethernet scan aborted");
+            return {false, QStringLiteral("Cannot resolve the System32 powershell.exe path")};
         }
-        const auto process = runProcess(netsh_exe,
-                                        {QStringLiteral("interface"),
-                                         QStringLiteral("ipv4"),
-                                         QStringLiteral("show"),
-                                         QStringLiteral("config")},
+        const auto process = runProcess(powershell_exe,
+                                        {QStringLiteral("-NoProfile"),
+                                         QStringLiteral("-NonInteractive"),
+                                         QStringLiteral("-Command"),
+                                         QString::fromLatin1(kEthernetConfigPowerShell)},
                                         sak::kTimeoutNetworkReadMs);
         if (process.timed_out) {
             sak::logError("Timed out scanning ethernet adapters for backup");
             return {false, QStringLiteral("Ethernet scan timed out")};
         }
         if (process.exit_code != 0) {
-            sak::logError("netsh failed for ethernet adapter scan: {}",
+            sak::logError("Get-NetIPConfiguration failed for ethernet adapter scan: {}",
                           process.std_err.toStdString());
             return {false, QStringLiteral("Failed to scan ethernet adapters")};
         }

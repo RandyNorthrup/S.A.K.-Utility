@@ -378,6 +378,67 @@ private Q_SLOTS:
         const BackupUserData ud = BackupUserData::fromJson(QJsonObject{});
         QVERIFY(ud.username.isEmpty());
     }
+
+    // --- EthernetConfigInfo language-neutral scan (G23-4) ---
+
+    void prefixLengthToSubnetMask_knownPrefixes() {
+        QCOMPARE(EthernetConfigInfo::prefixLengthToSubnetMask(24), QStringLiteral("255.255.255.0"));
+        QCOMPARE(EthernetConfigInfo::prefixLengthToSubnetMask(16), QStringLiteral("255.255.0.0"));
+        QCOMPARE(EthernetConfigInfo::prefixLengthToSubnetMask(8), QStringLiteral("255.0.0.0"));
+        QCOMPARE(EthernetConfigInfo::prefixLengthToSubnetMask(32),
+                 QStringLiteral("255.255.255.255"));
+        QCOMPARE(EthernetConfigInfo::prefixLengthToSubnetMask(0), QStringLiteral("0.0.0.0"));
+        QCOMPARE(EthernetConfigInfo::prefixLengthToSubnetMask(23), QStringLiteral("255.255.254.0"));
+    }
+
+    void prefixLengthToSubnetMask_outOfRangeIsEmpty() {
+        QVERIFY(EthernetConfigInfo::prefixLengthToSubnetMask(-1).isEmpty());
+        QVERIFY(EthernetConfigInfo::prefixLengthToSubnetMask(33).isEmpty());
+    }
+
+    void parseNetIpConfig_mapsAdapterFields() {
+        // Shape mirrors a real `Get-NetIPConfiguration ... | ConvertTo-Json` dump.
+        const QString json = QStringLiteral(
+            R"([{"Name":"Ethernet 2","Dhcp":"Enabled","IPv4":"10.0.0.5","Prefix":24,)"
+            R"("Gateway":"10.0.0.1","Dns":["10.0.0.1","8.8.8.8"]}])");
+        const auto configs = EthernetConfigInfo::parseNetIpConfigJson(json);
+        QCOMPARE(configs.size(), qsizetype(1));
+        const EthernetConfigInfo& c = configs.at(0);
+        QCOMPARE(c.adapter_name, QStringLiteral("Ethernet 2"));
+        QVERIFY(c.dhcp_enabled);
+        QCOMPARE(c.ip_address, QStringLiteral("10.0.0.5"));
+        QCOMPARE(c.subnet_mask, QStringLiteral("255.255.255.0"));  // CIDR 24 -> dotted quad
+        QCOMPARE(c.default_gateway, QStringLiteral("10.0.0.1"));
+        QCOMPARE(c.dns_primary, QStringLiteral("10.0.0.1"));
+        QCOMPARE(c.dns_secondary, QStringLiteral("8.8.8.8"));
+    }
+
+    void parseNetIpConfig_staticAdapterNullGatewayEmptyDns() {
+        // A statically-configured adapter with no gateway and no DNS: Dhcp Disabled, Gateway null,
+        // Dns []. The null/empty fields must map to empty strings, not crash.
+        const QString json = QStringLiteral(
+            R"({"Name":"Ethernet 3","Dhcp":"Disabled","IPv4":"192.168.56.1","Prefix":24,)"
+            R"("Gateway":null,"Dns":[]})");
+        const auto configs = EthernetConfigInfo::parseNetIpConfigJson(json);
+        QCOMPARE(configs.size(), qsizetype(1));
+        const EthernetConfigInfo& c = configs.at(0);
+        QVERIFY(!c.dhcp_enabled);
+        QCOMPARE(c.subnet_mask, QStringLiteral("255.255.255.0"));
+        QVERIFY(c.default_gateway.isEmpty());
+        QVERIFY(c.dns_primary.isEmpty());
+        QVERIFY(c.dns_secondary.isEmpty());
+    }
+
+    void parseNetIpConfig_skipsNamelessAndHandlesEmpty() {
+        // A record with no Name carries no restorable adapter and is skipped.
+        const auto skipped = EthernetConfigInfo::parseNetIpConfigJson(
+            QStringLiteral(R"([{"Name":"","Dhcp":"Enabled","IPv4":"1.2.3.4","Prefix":24}])"));
+        QVERIFY(skipped.isEmpty());
+        // Empty / null / malformed input is an empty adapter set, not a crash.
+        QVERIFY(EthernetConfigInfo::parseNetIpConfigJson(QString()).isEmpty());
+        QVERIFY(EthernetConfigInfo::parseNetIpConfigJson(QStringLiteral("null")).isEmpty());
+        QVERIFY(EthernetConfigInfo::parseNetIpConfigJson(QStringLiteral("not json")).isEmpty());
+    }
 };
 
 QTEST_MAIN(UserProfileTypesTests)
