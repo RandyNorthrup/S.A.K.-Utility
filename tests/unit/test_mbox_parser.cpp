@@ -33,6 +33,18 @@ static_assert(!std::is_invocable_v<decltype(&MboxParser::readAttachmentData),
 static_assert(
     !std::is_invocable_v<decltype(&MboxParser::readAttachmentData), MboxParser&, int, int>,
     "a bare int must not implicitly become a message or attachment index");
+// Mixed cases: a bare int must be refused even when the OTHER argument is correctly typed,
+// so a caller cannot type one index and slip a raw int in for the other.
+static_assert(!std::is_invocable_v<decltype(&MboxParser::readAttachmentData),
+                                   MboxParser&,
+                                   int,
+                                   sak::MboxAttachmentIndex>,
+              "a bare int must not stand in for the message index");
+static_assert(!std::is_invocable_v<decltype(&MboxParser::readAttachmentData),
+                                   MboxParser&,
+                                   sak::MboxMessageIndex,
+                                   int>,
+              "a bare int must not stand in for the attachment index");
 
 class TestMboxParser : public QObject {
     Q_OBJECT

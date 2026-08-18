@@ -72,6 +72,16 @@ static_assert(!std::is_invocable_v<decltype(&PartitionSafetyValidator::findDisk)
                                    const PartitionInventory&,
                                    PartitionNumber>,
               "findDisk must REJECT a PartitionNumber -- the silent swap this item closes");
+// Symmetric: the partition finder rejects a DiskNumber just as the disk finder rejects a
+// PartitionNumber, so neither direction of the swap can compile.
+static_assert(std::is_invocable_v<decltype(&PartitionSafetyValidator::findPartition),
+                                  const PartitionDiskInfo&,
+                                  PartitionNumber>,
+              "findPartition must accept a PartitionNumber");
+static_assert(!std::is_invocable_v<decltype(&PartitionSafetyValidator::findPartition),
+                                   const PartitionDiskInfo&,
+                                   DiskNumber>,
+              "findPartition must REJECT a DiskNumber -- the symmetric silent swap");
 
 namespace {
 

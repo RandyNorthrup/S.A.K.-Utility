@@ -4151,14 +4151,41 @@ behaviour is what catches defects; the percentage only proves nothing was skippe
     static_asserts prove -- via std::is_invocable -- that the swapped argument order does NOT
     compile and a bare int cannot stand in for either index; regress it and the file stops
     building. Full Release ctest 249/249.
-  - OPEN (remaining families/sites, follow-on slices): the disk/partition STRUCT FIELDS
-    themselves (PartitionInfoEx/PartitionDiskInfo/UnallocatedRegion/PartitionOperation
-    .disk_number / .partition_number, ~294 use sites incl. 28 JSON serialize/deserialize
-    boundaries -- an atomic all-or-nothing type change, deliberately a dedicated later slice)
-    are still plain uint32, so only the finder boundary is type-checked, not every construction;
-    the rest of the MBOX message-index API (readMessageDetail / readAllAttachments /
-    loadMessageDetail single-param) is still int; and the validated-vs-raw target family is
-    untouched. Each is its own gated slice.
+  - VERIFICATION 2026-08-18: an independent adversarial re-review (parallel read-only agents,
+    whole-tree) confirmed both slices CONFIRMED_COMPLETE -- every real findDisk/findPartition and
+    every MBOX readAttachmentData caller wraps the correct value kind, the look-alike but
+    unrelated functions (ApplyLayoutDiffWidget::findPartition; PstParser::readAttachmentData at
+    app_mutating_actions.cpp:1024, a PST NID not an mbox index) are correctly untouched, behaviour
+    is identical, and the compile-gate asserts are sound. Two OPTIONAL thoroughness asserts were
+    then folded in (always-do-optionals): the symmetric findPartition-rejects-DiskNumber case, and
+    the mixed (int, typed) / (typed, int) mbox cases -- all already fail to compile by
+    construction; regression 249/249.
+  - VALIDATED-VS-RAW TARGET = DESIGN-DECISION (not a typing slice): investigation found NO
+    confusable primitive pair. "Validated" vs "raw" is a PROVENANCE property of a single QString
+    device path (FlashTargetResolution/PartitionApplyResolution.device_path vs the raw
+    operation.payload["target_path"] / elevated-helper JSON device_path), spread across ~205
+    device-path sites in ~20 files and crossing the elevated-helper process/JSON boundary where a
+    C++ newtype cannot survive. The validated path and the raw derivations never travel together as
+    two same-typed adjacent parameters a caller could positionally swap (the shape the finder and
+    attachment slices had), so there is nothing to newtype. Safety is not affected: runApplyOperation
+    (app_mutating_actions.cpp:1921) re-derives the op from args AND re-validates that exact op via
+    PartitionSafetyValidator::validate before the worker executes it (only .description comes from the
+    resolution), so the executed op is always validated -- no bypass. A DRY resolve->execute
+    consolidation is possible but is a behavioural change on the raw-disk-write path needing its own
+    cert, tracked outside G14-19.
+  - OPEN (the one remaining strong-typing slice): the disk/partition STRUCT FIELDS themselves
+    (PartitionInfoEx/PartitionDiskInfo/UnallocatedRegion/PartitionTarget .disk_number /
+    .partition_number, decls at partition_manager_types.h:193/194/213/219/270/271). Converting them
+    to DiskNumber/PartitionNumber is ATOMIC (the explicit ctor + no implicit decay means flipping the
+    6 decls breaks every read/write/compare/(de)serialize at once) and large: 484 sites (15
+    construction -- the real in-memory silent-swap risk; 217 read; 49 compare; 17 JSON/QVariantMap
+    boundary; ~180 test fixtures). The concentrated hazard is those 17 wire sites, where the value
+    becomes an untyped int and the key->field wiring is hand-chosen (sharpest: panel row_data
+    serialize 9283/9285/9327 -> deserialize 11737/11738 -- swap the two keys and it STILL compiles),
+    so the strong type gives ZERO protection there; the existing test_ai JSON round-trip and test_core
+    dual-field QCOMPAREs are the ratchet that must catch a wire-key swap. A dedicated gated commit,
+    not a quick slice. The rest of the MBOX message-index API (readMessageDetail / readAllAttachments /
+    loadMessageDetail single-param) has no adjacent-swap risk and is left int by design.
       (message index vs row index, disk vs partition index, validated vs raw target)
 
 ### G15 - compiler and CI hardening
