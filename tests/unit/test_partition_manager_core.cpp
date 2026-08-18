@@ -69,6 +69,47 @@ quint64 steerFormatBlockIndex(QRandomGenerator& prng, quint64 containerBlockCoun
     }
 }
 
+// Boundary-steered block index for the repair-write confinement property (G23-7): interior of the
+// real device, the device edge, the first index past the real device, an index inside the HOSTILE
+// window [device, claim) that an over-claimed nx_block_count would try to widen into, index 0, and
+// well past everything. Kept out of the test method to hold it under the CCN gate.
+quint64 steerRepairBlockIndex(QRandomGenerator& prng, quint64 deviceBlocks, quint64 claimedBlocks) {
+    switch (prng.bounded(6u)) {
+    case 0:
+        return prng.generate64() % deviceBlocks;  // interior (valid on the real device)
+    case 1:
+        return deviceBlocks - 1;                  // last valid on the device
+    case 2:
+        return deviceBlocks;                      // first past the real device end
+    case 3:
+        return claimedBlocks > deviceBlocks       // HOSTILE over-claim window [device, claim)
+                   ? deviceBlocks + (prng.generate64() % (claimedBlocks - deviceBlocks))
+                   : deviceBlocks;
+    case 4:
+        return 0;  // container superblock slot
+    default:
+        return std::max(deviceBlocks, claimedBlocks) + 1 + (prng.generate64() % 8);
+    }
+}
+
+// Boundary-steered block index for the offset-overflow property (G23-7): small, the largest valid
+// offset (INT64_MAX/blockSize), just over it, just over the uint64/blockSize edge, and full-range
+// random. Kept out of the test method to hold it under the CCN gate.
+quint64 steerOffsetBlockIndex(QRandomGenerator& prng, quint64 capU, quint64 capI) {
+    switch (prng.bounded(5u)) {
+    case 0:
+        return prng.generate64() % 1024u;  // small
+    case 1:
+        return capI;                       // largest valid offset
+    case 2:
+        return capI + 1u;                  // just over the qint64 seek range -> refuse
+    case 3:
+        return capU + 1u;                  // over uint64/blockSize -> refuse before the multiply
+    default:
+        return prng.generate64();          // full-range random
+    }
+}
+
 // ext image layout (constants, helpers, extReaderFixture) lives in one home shared with the ext
 // fuzz harness; the byte pokers likewise. See tests/support/{ext_fixture,byte_writer}.h.
 using namespace sak::testfixtures;
@@ -1482,6 +1523,9 @@ private Q_SLOTS:
     void apfsWriter_freeQueueRunInBoundsRejectsOutOfRange();
     void apfsWriter_freeQueueExpansionBudgetFailsClosed();
     void apfsWriter_formatBlockWriteNeverEscapesValidatedTarget();
+    void apfsWriter_repairBlockWriteRespectsDeviceCapAndSuperblock();
+    void apfsWriter_writableBlockBoundIsDeviceAuthoritative();
+    void apfsWriter_blockByteOffsetFailsClosedOnOverflow();
     void apfsWriter_treeCollectorBoundsDirectoryDepthAndCycles();
     void exporter_realizedPathWithinRootRejectsEscape();
     void safetyValidator_blocksSplitBootOsDiskMutations();
@@ -17401,6 +17445,117 @@ void PartitionManagerCoreTests::apfsWriter_formatBlockWriteNeverEscapesValidated
         } else {
             QCOMPARE(backing, sentinel);   // rejected: mutated nothing...
             QVERIFY(!blockers.isEmpty());  // ...and recorded why
+        }
+    }
+}
+
+void PartitionManagerCoreTests::apfsWriter_repairBlockWriteRespectsDeviceCapAndSuperblock() {
+    // CODEX_REVIEW_5 G23-7 (destructive-op invariant): the commit-path repair write
+    // (partition_apfs_writer.cpp writeApfsRepairBlock) must (a) confine every write to the REAL
+    // device -- an over-claimed nx_block_count from a hostile/corrupt superblock can never widen
+    // the writable range past the device -- and (b) refuse to overwrite block 0 (the NXSB container
+    // superblock) with anything that is not a valid NXSB block. A QBuffer sized to the real device
+    // makes an escaped write observable as buffer growth. Boundary-steered, fixed-seed
+    // reproducible.
+    using W = sak::PartitionApfsWriter;
+    QRandomGenerator prng(0xD1'CE'0B'10u);
+    constexpr quint32 kBlockSizes[] = {512u, 1024u, 2048u, 4096u};
+    for (int i = 0; i < 4000; ++i) {
+        const quint32 blockSize = kBlockSizes[prng.bounded(4u)];
+        const quint64 deviceBlocks = 1u + prng.bounded(32u);
+        // Claimed count: often a HOSTILE over-claim (>> device), sometimes <= device, sometimes 0.
+        const quint64 claimedBlocks = prng.bounded(4u) == 0u   ? deviceBlocks + prng.bounded(4096u)
+                                      : prng.bounded(3u) == 0u ? 0u
+                                                               : 1u + prng.bounded(32u);
+        const quint64 blockIndex = steerRepairBlockIndex(prng, deviceBlocks, claimedBlocks);
+        const qint64 deviceBytes = static_cast<qint64>(deviceBlocks) * blockSize;
+        const QByteArray sentinel(deviceBytes, '\x11');
+        QByteArray backing = sentinel;
+        QBuffer buffer(&backing);
+        QVERIFY(buffer.open(QIODevice::ReadWrite));
+        QByteArray block(blockSize, '\x22');
+        const bool stampNxsb = prng.bounded(2u) == 0u;
+        if (stampNxsb) {  // valid NXSB magic (little-endian 0x4253584E) at object offset 0x20
+            block[0x20] = '\x4E';
+            block[0x21] = '\x58';
+            block[0x22] = '\x53';
+            block[0x23] = '\x42';
+        }
+        QStringList blockers;
+        const bool ok = W::writeApfsRepairBlockForTesting(
+            &buffer, {blockSize, claimedBlocks}, blockIndex, block, &blockers);
+        buffer.close();
+        QVERIFY2(backing.size() == deviceBytes, "repair write escaped the real device");
+        if (ok) {
+            QVERIFY(blockIndex < deviceBlocks);     // device is authoritative, not the claim
+            QVERIFY(blockIndex != 0 || stampNxsb);  // block 0 accepted only as a valid NXSB
+            QByteArray expected = sentinel;
+            const qsizetype off = static_cast<qsizetype>(blockIndex) *
+                                  static_cast<qsizetype>(blockSize);
+            expected.replace(off, static_cast<qsizetype>(blockSize), block);
+            QCOMPARE(backing, expected);
+        } else {
+            QCOMPARE(backing, sentinel);   // rejected: mutated nothing...
+            QVERIFY(!blockers.isEmpty());  // ...and recorded why
+        }
+    }
+}
+
+void PartitionManagerCoreTests::apfsWriter_writableBlockBoundIsDeviceAuthoritative() {
+    // G23-7: the writable-block bound is the REAL device size when known -- an over-claimed
+    // nx_block_count can never widen it -- and falls back to the claimed count only when the device
+    // size is unknown (a null image or a zero-size image).
+    using W = sak::PartitionApfsWriter;
+    QRandomGenerator prng(0xB0'11'1D'EDu);
+    constexpr quint32 kBlockSizes[] = {512u, 1024u, 2048u, 4096u};
+    for (int i = 0; i < 3000; ++i) {
+        const quint32 blockSize = kBlockSizes[prng.bounded(4u)];
+        const quint64 deviceBlocks = prng.bounded(64u);  // 0 -> models an unknown-size device
+        const quint64 claimedBlocks = prng.bounded(100'000u);
+        const qint64 deviceBytes = static_cast<qint64>(deviceBlocks) * blockSize;
+        QByteArray backing(deviceBytes, '\0');
+        QBuffer buffer(&backing);
+        QVERIFY(buffer.open(QIODevice::ReadWrite));
+        const quint64 bound = W::apfsWritableBlockBoundForTesting(&buffer,
+                                                                  {blockSize, claimedBlocks});
+        if (deviceBlocks != 0) {
+            QCOMPARE(bound,
+                     deviceBlocks);  // device authoritative, the (possibly larger) claim ignored
+        } else {
+            QCOMPARE(bound, claimedBlocks);  // unknown device -> logical fallback
+        }
+        // A null image is also an unknown device -> the claimed count.
+        QCOMPARE(W::apfsWritableBlockBoundForTesting(nullptr, {blockSize, claimedBlocks}),
+                 claimedBlocks);
+    }
+}
+
+void PartitionManagerCoreTests::apfsWriter_blockByteOffsetFailsClosedOnOverflow() {
+    // G23-7: the block byte-offset computation must fail closed (leaving *offset untouched) when
+    // blockIndex*blockSize overflows uint64 or exceeds the qint64 seek range, so a wrapped product
+    // can never seek/write to a wrong-but-valid offset and silently corrupt the container.
+    using W = sak::PartitionApfsWriter;
+    QRandomGenerator prng(0x0F'F5'E7'00u);
+    constexpr quint32 kBlockSizes[] = {0u, 512u, 1024u, 4096u};
+    constexpr qint64 kSentinel = -424'242;
+    constexpr quint64 kU64Max = ~0ULL;
+    constexpr quint64 kI64Max = 0x7F'FF'FF'FF'FF'FF'FF'FFULL;
+    for (int i = 0; i < 4000; ++i) {
+        const quint32 blockSize = kBlockSizes[prng.bounded(4u)];
+        const quint64 capU = blockSize != 0u ? kU64Max / blockSize : 0u;
+        const quint64 capI = blockSize != 0u ? kI64Max / blockSize : 0u;
+        const quint64 blockIndex = steerOffsetBlockIndex(prng, capU, capI);
+        qint64 offset = kSentinel;
+        const bool ok = W::apfsBlockByteOffsetForTesting(blockIndex, blockSize, &offset);
+        bool expectOk = false;
+        if (blockSize != 0u && blockIndex <= capU) {
+            expectOk = blockIndex * blockSize <= kI64Max;
+        }
+        QCOMPARE(ok, expectOk);
+        if (ok) {
+            QCOMPARE(offset, static_cast<qint64>(blockIndex * blockSize));
+        } else {
+            QCOMPARE(offset, kSentinel);  // untouched on failure
         }
     }
 }

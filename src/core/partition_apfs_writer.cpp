@@ -20974,6 +20974,26 @@ bool PartitionApfsWriter::writeApfsFormatBlockForTesting(QIODevice* device,
         device, blockIndex, {geometry.blockSize, geometry.containerBlockCount}, block, blockers);
 }
 
+bool PartitionApfsWriter::writeApfsRepairBlockForTesting(QIODevice* image,
+                                                         const ApfsFormatBlockGeometry& geometry,
+                                                         quint64 blockIndex,
+                                                         const QByteArray& block,
+                                                         QStringList* blockers) {
+    return writeApfsRepairBlock(
+        image, {geometry.blockSize, geometry.containerBlockCount}, blockIndex, block, blockers);
+}
+
+quint64 PartitionApfsWriter::apfsWritableBlockBoundForTesting(
+    QIODevice* image, const ApfsFormatBlockGeometry& geometry) {
+    return apfsWritableBlockBound(image, {geometry.blockSize, geometry.containerBlockCount});
+}
+
+bool PartitionApfsWriter::apfsBlockByteOffsetForTesting(quint64 blockIndex,
+                                                        quint32 blockSize,
+                                                        qint64* offset) {
+    return apfsBlockByteOffset(blockIndex, blockSize, offset);
+}
+
 bool PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(quint64 directory_id,
                                                                int depth,
                                                                QSet<quint64>* visited) {

@@ -874,6 +874,31 @@ public:
         const ApfsFormatBlockGeometry& geometry,
         const QByteArray& block,
         QStringList* blockers);
+    /// @brief Drives the commit-path repair-block write guard (writeApfsRepairBlock) headlessly.
+    ///        @p geometry.containerBlockCount is the CLAIMED nx_block_count. Fails closed (mutating
+    ///        nothing) when @p blockIndex is past the REAL device end -- the device size is
+    ///        authoritative, so an over-claimed count can never widen the range -- or when
+    ///        @p blockIndex is 0 and @p block is not a valid NXSB superblock. A QBuffer sized to
+    ///        the device makes an escaped write observable as buffer growth. Pure seam.
+    [[nodiscard]] static bool writeApfsRepairBlockForTesting(
+        QIODevice* image,
+        const ApfsFormatBlockGeometry& geometry,
+        quint64 blockIndex,
+        const QByteArray& block,
+        QStringList* blockers);
+    /// @brief The highest block index a commit may write (apfsWritableBlockBound). When @p image
+    /// has
+    ///        a known nonzero size that size is AUTHORITATIVE -- an over-claimed
+    ///        @p geometry.containerBlockCount can never widen it; only a null/zero-size @p image
+    ///        falls back to the claimed count. Pure seam.
+    [[nodiscard]] static quint64 apfsWritableBlockBoundForTesting(
+        QIODevice* image, const ApfsFormatBlockGeometry& geometry);
+    /// @brief Byte offset of block @p blockIndex at @p blockSize, failing closed (leaving @p offset
+    ///        untouched) when the product overflows uint64 or exceeds the qint64 seek range. Pure
+    ///        seam for the overflow-safe offset shared by every repair read/write.
+    [[nodiscard]] static bool apfsBlockByteOffsetForTesting(quint64 blockIndex,
+                                                            quint32 blockSize,
+                                                            qint64* offset);
     /// @brief True when the in-place commit's subtree collector may descend into directory
     ///        @p directory_id at nesting @p depth. False once the depth cap is exceeded or
     ///        the id was already collected: a drec-level directory cycle in an untrusted
