@@ -45,7 +45,13 @@ try {
 
     # rg exit 0 means "matches found"; anything else (1 = no match, 2 = scan error) means the
     # count below would be partial or empty, so the gate must not grade against it.
-    $accessorMatches = & rg --count-matches "setAccessible(Name|Description)?\s*\(|setAccessible\s*\(" src/gui include/sak
+    # Pin the native rg (R5-G21-4): an alias/function/script named rg could emit nothing and
+    # leave a stale 0 in $LASTEXITCODE, passing the gate without ever searching.
+    $rg = @(Get-Command rg -CommandType Application -ErrorAction SilentlyContinue)[0]
+    if (-not $rg) {
+        throw "Required tool missing: rg (native executable)"
+    }
+    $accessorMatches = & $rg.Source --count-matches "setAccessible(Name|Description)?\s*\(|setAccessible\s*\(" src/gui include/sak
     $rgExit = $LASTEXITCODE
     if ($rgExit -ne 0) {
         throw "Accessibility accessor scan failed: rg exited with ${rgExit}"

@@ -21,7 +21,13 @@ try {
     # --no-config / --no-ignore so a stray RIPGREP_CONFIG_PATH or ignore file cannot
     # suppress a match and turn a real violation into a false PASS. \s* tolerates
     # whitespace around :: so "QMessageBox :: warning" cannot slip through.
-    $hits = & rg -n --no-config --no-ignore "QMessageBox\s*::\s*(warning|critical|information|question)" src include
+    # Pin the native rg (R5-G21-4): an alias/function named rg could emit nothing and leave a
+    # stale exit code, passing the gate without searching.
+    $rg = @(Get-Command rg -CommandType Application -ErrorAction SilentlyContinue)[0]
+    if (-not $rg) {
+        throw "Required tool missing: rg (native executable)"
+    }
+    $hits = & $rg.Source -n --no-config --no-ignore "QMessageBox\s*::\s*(warning|critical|information|question)" src include
     $violations = @($hits | Where-Object {
             $_ -notmatch '^include[\\/]+sak[\\/]+message_box_helpers\.h:'
         })

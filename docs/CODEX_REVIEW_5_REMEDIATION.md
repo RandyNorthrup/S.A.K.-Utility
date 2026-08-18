@@ -18,11 +18,13 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-17: 623 [x] / 38 [~] / 1 [ ] (G18-1 mutation-testing COMPLETE and LEDGER-4
+as of 2026-08-17: 626 [x] / 35 [~] / 1 [ ] (G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
 this window -- 41 owner-decision / tool-limit items were verified against the live config and
-settled to [x], leaving 38 [~] = ~6 blocked-on-user + ~32 locally actionable; the single [ ] open
-item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
+settled to [x]; then the gate-audit batch closed R5-G21-1 (gate-pair contradiction), R5-G21-3
+(strictest-setting justification in-config) and R5-G21-4 (fail-closed-on-missing-tool audit,
+which fixed a real scan_secrets fail-open), leaving 35 [~] = ~6 blocked-on-user + ~29 locally
+actionable; the single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
 [x] fixed (real work done, e.g. P6-18 searchCancelled, G18-10 wait-misuse), [x] verified-done
@@ -4626,19 +4628,61 @@ Gates must be strict, must not contradict each other, and must run everywhere. A
 that only runs in pre-commit is bypassed by a direct push; a gate that fights another
 gate teaches people to disable both.
 
-- [~] R5-G21-1 Audit every gate pair for contradiction. The known risk is clang-format
-  - IN PROGRESS: gate-pair contradiction audit. The clang-format vs clang-tidy consistency case is resolved by configuration and the new gates run in both pre-commit and CI; the full every-gate-pair contradiction audit is still open.
+- [x] R5-G21-1 Audit every gate pair for contradiction. The known risk is clang-format
+  - DONE 2026-08-17: full gate-pair contradiction audit. The current tree passes every gate simultaneously (pre-commit + the local Release gate), direct evidence no two gates are in active mutual contradiction on the tree. The contradiction-RISK pairs and their config resolutions:
+      * clang-format (ColumnLimit 100) vs lizard length (<=70 PHYSICAL lines): orthogonal axes -- clang-format never REQUIRES exceeding 70 lines, so wrapping cannot force a lizard violation; a function that grows past 70 is resolved by extracting a helper, not by fighting the formatter.
+      * clang-format vs clang-tidy readability FIXES: resolved by config -- .clang-tidy sets FormatStyle: file, so every clang-tidy fix is re-formatted through the SAME .clang-format and can never propose a format-inconsistent edit.
+      * clang-tidy magic-number checks vs the project magic-number gate: resolved by config -- cppcoreguidelines-avoid-magic-numbers and readability-magic-numbers are DISABLED in favor of scripts/check_magic_numbers.py, whose on-disk-format/crypto allowlist the clang-tidy versions cannot express (both running would flag byte offsets the project gate intentionally exempts).
+      * clang-tidy readability-function-cognitive-complexity vs lizard CCN: resolved by config -- the cognitive-complexity check is disabled so lizard (CCN<=10) is the single, un-contradicted complexity gate.
+      * clang-tidy readability-convert-member-functions-to-static vs cppcheck functionStatic: resolved by config -- the clang-tidy version is disabled; cppcheck functionStatic is the single owner (active in production, tests-scoped suppression).
+    Every resolution is by CONFIGURATION, not per-site suppression, as the item requires. The per-exclusion rationale now lives in .clang-tidy itself (R5-G21-3).
       line breaking versus lizard function length versus clang-tidy readability rules,
       where satisfying one can violate another. Resolve by configuration, not by
       suppression
 - [~] R5-G21-2 Every gate runs in BOTH pre-commit and CI. CI currently has no clang-tidy,
-  - IN PROGRESS: every gate in both pre-commit and CI. The gates added this campaign run in both places; a full inventory confirming every existing gate runs in both is still open.
+  - IN PROGRESS (2026-08-17 audit): CI (build-release.yml) DOES run cppcheck (whole-tree), clang-tidy-naming, blocking-patterns, accessibility, ascii-only, all partition-manager matrix/claim gates, build-system-lint, error-message-uniqueness, doc-accuracy, third-party-licenses, qrc, secret-scan, a record-gate-tool-versions preflight, plus build+ctest (Release AND Debug/ASan). GAP -- gates that are PRE-COMMIT-ONLY and thus bypassable by a direct push: clang-format, lizard (C++ complexity), the four GUI gates (style-tokens / magic-numbers / stylesheet-literals / magic-numbers), logged-message-boxes, powershell-syntax, mutation-catalog-integrity, partition-fs-tool-manifest. Wiring these into CI is config-only, but green-VERIFYING them on a clean runner shares the paid-CI block in R5-G21-7 (owner cost decision), so it is its own batch: each will be proven clean whole-tree locally first, then added to the workflow, rather than shipping a possibly-red CI step here.
       no cppcheck, no dead-code and no sanitizer job
-- [~] R5-G21-3 Every gate set to its strictest defensible setting, with any relaxation
-  - IN PROGRESS: every gate at its strictest defensible setting with any relaxation justified in the config itself; not yet completed across all gates.
+- [x] R5-G21-3 Every gate set to its strictest defensible setting, with any relaxation
+  - DONE 2026-08-17: audited every gate's relaxations for an IN-CONFIG written justification.
+      * .clang-tidy: previously the 26 check exclusions carried only a blanket "tracked in the doc" comment. Each now carries a per-check justification in the config, grouped by reason (restore-pending bug class / superseded by a dedicated project gate / intrinsic to a raw-filesystem+Qt codebase / pure style). clang-tidy --verify-config passes, so the folded-scalar check-glob is intact.
+      * src/core/.clang-tidy: the one carve-out (readability-identifier-naming) already carried a full in-config rationale (unreliable rename fix at multi-thousand-line parser scale).
+      * cppcheck_suppressions.txt: every suppression already carries an inline justification, each scoped as tightly as possible (functionStatic / knownConditionTrueFalse are tests-ONLY, after a global silence was found hiding production findings).
+      * lizard: CCN<=10 / PARAM<=5 / length<=70 ARE the strict target, no relaxation; the JavaScript baseline is a shrink-only ratchet (justified in scripts/run_lizard.py), not an exclusion.
+      * .pre-commit-config.yaml: the two relaxations (check-added-large-files maxkb cap for intentional release bundles; the ascii-only vendored-dir excludes) each carry an inline justification.
+    Every relaxation now carries its justification in the config that sets it, not only in this tracking doc.
       carrying a written justification in the config itself
-- [~] R5-G21-4 Every gate fails closed on a missing tool, and the preflight proves the
-  - IN PROGRESS: every gate fails closed on a missing tool with a whole-toolchain preflight. Node is a required preflight entry; the full fail-closed audit across every gate is still open.
+- [x] R5-G21-4 Every gate fails closed on a missing tool, and the preflight proves the
+  - DONE 2026-08-17: audited every gate script for its missing-external-tool behavior.
+      RESULT: run_clang_format, run_cppcheck, run_lizard (lizard exe), run_clang_tidy /
+      clang_tidy_naming_gate (clang-tidy), check_blocking_patterns, check_accessibility_patterns
+      and check_logged_message_boxes (rg), and check_tool_preflight itself ALL fail closed
+      (throw / exit 1) when their tool is absent; the GUI/magic-number gates use no external
+      tool. The preflight (scripts/check_tool_preflight.ps1) fails closed on any missing
+      REQUIRED tool (rg, python, clang-format, cppcheck, cmake, git, node).
+      TWO FIXES from the audit:
+       * scan_secrets.ps1 was the one real FAIL-OPEN: run WITHOUT -SkipExternalTools with
+         gitleaks/trufflehog absent, it printed "not installed; skipped" and exited 0. Both
+         branches now fail closed (Write-Error + exit 1): a requested external scan whose tool
+         is absent is a gate that cannot run, not a pass. -SkipExternalTools stays the explicit
+         opt-out that pre-commit and CI use, so their behavior is unchanged. Verified locally:
+         -SkipExternalTools -> exit 0; without it (gitleaks absent) -> exit 1.
+       * check_tool_preflight.ps1 claimed node "runs ... the lizard JavaScript pass" -- FALSE
+         (lizard uses its own JS tokenizer; node's sole gate role is the browser-extension .mjs
+         unit tests under ctest). Comment corrected; node stays required.
+      HARDENING (R5-G21-4 uniformity): check_accessibility_patterns.ps1 and
+      check_logged_message_boxes.ps1 called bare `& rg` (fail-closed via Stop, but a shadowing
+      alias could be invoked); both now pin the native exe via
+      @(Get-Command rg -CommandType Application ...)[0], matching check_blocking_patterns.ps1.
+  - FOUND DURING THIS AUDIT (separate OPEN item, not a fail-open): check_accessibility_patterns.ps1
+    fails CLOSED with a FALSE red under Windows PowerShell 5.1 -- Start-Process -PassThru with
+    redirected stdout/stderr returns a process whose .ExitCode is null under 5.1 even after
+    WaitForExit plus a parameterless flush (a documented 5.1 cmdlet bug), so the
+    "$proc.ExitCode -ne 0" check throws "printed OK but exited with code unknown" on a SUCCESSFUL
+    audit (missing=0). It passes correctly under pwsh 7, the shell CI uses (build-release.yml
+    `shell: pwsh`) and the only path that runs this CI-only gate, so CI is unaffected. Real fix
+    (tracked, not quick): replace Start-Process -PassThru with a [System.Diagnostics.Process] +
+    ProcessStartInfo run (async stream drain to avoid the redirect deadlock) so ExitCode is
+    captured reliably under both shells. Confirmed pre-existing (fails identically on HEAD).
       whole toolchain is present before anything runs
 - [~] R5-G21-5 Every fixed defect has a regression test, so the specific bug cannot
   - IN PROGRESS: a regression test for every fixed defect. Fixes landed this campaign carry per-item non-vacuous notes; the full per-defect regression audit is still open.

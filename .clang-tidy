@@ -27,11 +27,66 @@ FormatStyle: file
 # Enabled families: bugprone, cert, clang-analyzer, concurrency, cppcoreguidelines,
 # google, hicpp, misc, modernize, performance, portability, readability.
 #
-# Each '-check' exclusion below is tracked in docs/CODEX_REVIEW_5_REMEDIATION.md (R5-G2)
-# and is to be re-enabled as its debt is paid. Two of them hide bug classes this review
-# found in the raw-filesystem parsers and are the highest priority to restore:
-#   bugprone-narrowing-conversions  (qsizetype/uint64 truncation)
-#   misc-no-recursion               (recursion with no depth or visited-set bound)
+# Each '-check' exclusion below carries its justification here in the config (R5-G21-3),
+# grouped by WHY it is off. All are tracked in docs/CODEX_REVIEW_5_REMEDIATION.md (R5-G2).
+#
+# RESTORE-PENDING BUG CLASSES (re-enable as their debt is paid; highest priority -- these
+# hid real defects in the raw-filesystem parsers):
+#   bugprone-narrowing-conversions   qsizetype/uint64 truncation.
+#   misc-no-recursion                recursion with no depth or visited-set bound.
+#
+# SUPERSEDED BY A DEDICATED PROJECT GATE (running the clang-tidy version too would
+# CONTRADICT that gate -- see R5-G21-1):
+#   cppcoreguidelines-avoid-magic-numbers / readability-magic-numbers
+#                                    scripts/check_magic_numbers.py owns magic numbers,
+#                                    with an on-disk-format/crypto allowlist these cannot express.
+#   readability-function-cognitive-complexity
+#                                    lizard (CCN<=10) is the single complexity gate; a second
+#                                    differently-tuned metric would fight it.
+#   readability-convert-member-functions-to-static
+#                                    cppcheck functionStatic already enforces this in production.
+#   misc-include-cleaner             include hygiene is owned by the standalone
+#                                    clang-include-cleaner pass (R5-G6-3); Qt umbrella headers
+#                                    make the in-tidy version noise.
+#
+# INTRINSIC TO A RAW-FILESYSTEM / Qt CODEBASE (the pattern is correct here by construction;
+# the check cannot tell it from a bug):
+#   cppcoreguidelines-pro-bounds-array-to-pointer-decay / -pro-bounds-constant-array-index /
+#   -pro-bounds-pointer-arithmetic / hicpp-no-array-decay
+#                                    on-disk-format parsers walk byte buffers with bounded
+#                                    pointer/array arithmetic; a gsl::span rewrite of certified
+#                                    parsers buys no correctness.
+#   cppcoreguidelines-pro-type-reinterpret-cast
+#                                    struct overlays over raw disk blocks require reinterpret_cast;
+#                                    bounds-checked at the call site.
+#   cppcoreguidelines-pro-type-union-access
+#                                    APFS/HFS on-disk variant records require union access.
+#   cppcoreguidelines-owning-memory  ownership is Qt parent/child + std smart pointers, which this
+#                                    check does not model; it fires on every new QWidget(parent).
+#   cppcoreguidelines-non-private-member-variables-in-classes /
+#   misc-non-private-member-variables-in-classes
+#                                    Qt widgets and POD on-disk structs legitimately expose
+#                                    public/protected members.
+#   cppcoreguidelines-avoid-non-const-global-variables
+#                                    Qt requires non-const globals (metatype registration,
+#                                    static singletons).
+#   hicpp-signed-bitwise             bitwise ops on signed on-disk fields (masks/flags) are safe
+#                                    and pervasive; the check cannot separate them from
+#                                    sign-extension bugs.
+#   cert-err58-cpp                   Qt static QString/QRegularExpression idioms trip the
+#                                    throwing-static-ctor rule with no real init-order risk here.
+#   bugprone-easily-swappable-parameters
+#                                    fires on nearly every (x,y)/(width,height)/(offset,size)
+#                                    pair; too noisy to be a defensible gate.
+#
+# PURE STYLE, NO CORRECTNESS VALUE (off to avoid churn against the established house style):
+#   modernize-use-trailing-return-type   house style uses leading return types.
+#   modernize-avoid-c-arrays             fixed-size C arrays back on-disk buffers/lookup tables.
+#   google-readability-todo              demands an owner on every TODO; single-owner repo.
+#   google-build-using-namespace         a few deliberate function-local using-namespace.
+#   readability-identifier-length        flags idiomatic short names (i, x, id).
+#   readability-else-after-return        style only.
+#   readability-uppercase-literal-suffix style only (1u vs 1U).
 Checks: >
   -*,
   bugprone-*,

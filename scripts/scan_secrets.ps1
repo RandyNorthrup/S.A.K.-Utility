@@ -117,7 +117,11 @@ if ($gitleaks) {
         exit $LASTEXITCODE
     }
 } else {
-    Write-Host "gitleaks not installed; skipped external gitleaks scan." -ForegroundColor Yellow
+    # Fail closed (R5-G21-4): the external scan was requested (no -SkipExternalTools), so a
+    # missing gitleaks is a gate that cannot run, not a pass. Install gitleaks, or pass
+    # -SkipExternalTools (as pre-commit and CI do) to run only the regex/path scan.
+    Write-Error "gitleaks is required for the external secret scan but was not found on PATH. Install gitleaks, or pass -SkipExternalTools to run only the regex/path scan."
+    exit 1
 }
 
 $trufflehog = Get-Command trufflehog -CommandType Application -ErrorAction SilentlyContinue
@@ -127,5 +131,8 @@ if ($trufflehog) {
         exit $LASTEXITCODE
     }
 } else {
-    Write-Host "trufflehog not installed; skipped external TruffleHog scan." -ForegroundColor Yellow
+    # Fail closed (R5-G21-4): same rule as gitleaks above -- a requested external scan whose
+    # tool is absent must fail loudly, never silently skip.
+    Write-Error "trufflehog is required for the external secret scan but was not found on PATH. Install trufflehog, or pass -SkipExternalTools to run only the regex/path scan."
+    exit 1
 }
