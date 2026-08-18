@@ -257,6 +257,60 @@ private Q_SLOTS:
         QCOMPARE(S::classifyPeek(true, 0), S::PipePoll::NoData);   // ok, nothing pending
         QCOMPARE(S::classifyPeek(true, 5), S::PipePoll::MessageReady);
     }
+
+    // ======================================================================
+    // R5-G10-9: the elevated helper's wire protocol must fail closed on a
+    // hostile body from the (Builtin-Users-admitted) non-elevated client. The
+    // prior parse tests covered malformed JSON, arrays, and empty payloads, but
+    // not a structurally-valid object that omits/blanks the per-type required
+    // fields -- the exact case where a missing "task" becomes a blank/default
+    // DESTRUCTIVE target downstream.
+    // ======================================================================
+
+    void testParseTaskRequestRejectsMissingOrBlankFields() {
+        using T = sak::PipeMessageType;
+        // An empty object omits both fields -> refused (would dispatch a nameless task).
+        QVERIFY(!sak::parsePayload(T::TaskRequest, "{}").valid);
+        // A blank task id is refused (jsonHasNonEmptyString), not treated as a task named "".
+        QVERIFY(!sak::parsePayload(T::TaskRequest, R"({"task":"","payload":{}})").valid);
+        // A named task with no object payload is refused.
+        QVERIFY(!sak::parsePayload(T::TaskRequest, R"({"task":"Check Disk Errors"})").valid);
+        // A payload with no task id is refused.
+        QVERIFY(!sak::parsePayload(T::TaskRequest, R"({"payload":{}})").valid);
+        // Non-vacuity anchor: the fully-formed request IS accepted, so the negatives
+        // above prove the schema gate, not a blanket reject.
+        QVERIFY(sak::parsePayload(T::TaskRequest, R"({"task":"Check Disk Errors","payload":{}})")
+                    .valid);
+        // A CancelRequest must likewise name a non-empty task.
+        QVERIFY(!sak::parsePayload(T::CancelRequest, "{}").valid);
+        QVERIFY(!sak::parsePayload(T::CancelRequest, R"({"task":""})").valid);
+        QVERIFY(sak::parsePayload(T::CancelRequest, R"({"task":"Reset Network"})").valid);
+    }
+
+    void testParseRejectsUnknownTypeAndPayloadlessTypeWithBody() {
+        using T = sak::PipeMessageType;
+        // A spoofed / out-of-range type byte from the untrusted client matches no
+        // switch case and must be refused, never silently mapped to a handler.
+        QVERIFY(!sak::parsePayload(static_cast<T>(0x99), R"({"task":"x","payload":{}})").valid);
+        QVERIFY(!sak::parsePayload(static_cast<T>(0x00), R"({"any":"body"})").valid);
+        // Shutdown/Ready carry no payload at all; an accompanying JSON body is malformed
+        // (only the empty-payload form, tested above, is valid for these).
+        QVERIFY(!sak::parsePayload(T::Shutdown, R"({"x":1})").valid);
+        QVERIFY(!sak::parsePayload(T::Ready, R"({"x":1})").valid);
+    }
+
+    void testFrameMessageRefusesOverCapPayload() {
+        using T = sak::PipeMessageType;
+        // Over the 4 MiB ceiling frameMessage returns {} -- a larger payload would
+        // narrow through uint32_t, truncate the framed length, and desync the stream.
+        const QByteArray over(static_cast<int>(sak::kPipeMaxPayload) + 1, 'a');
+        QVERIFY(sak::frameMessage(T::TaskResult, over).isEmpty());
+        // Non-vacuity: a payload at exactly the cap still frames (header + cap bytes),
+        // so the refusal is the size gate, not an always-empty result.
+        const QByteArray at_cap(static_cast<int>(sak::kPipeMaxPayload), 'a');
+        const QByteArray framed = sak::frameMessage(T::TaskResult, at_cap);
+        QCOMPARE(framed.size(), sak::kPipeHeaderSize + at_cap.size());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestElevatedPipeProtocol)
