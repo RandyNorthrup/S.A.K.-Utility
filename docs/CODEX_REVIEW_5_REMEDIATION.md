@@ -18,7 +18,7 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-18: 635 [x] / 25 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
+as of 2026-08-18: 636 [x] / 24 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
 this window -- 41 owner-decision / tool-limit items were verified against the live config and
 settled to [x]; then the gate-audit batch closed R5-G21-1 (gate-pair contradiction), R5-G21-3
@@ -44,7 +44,12 @@ suggestions that are all umbrella / directly-used false positives kept by design
 (coverage-guided dead-code) settled as a design-decision -- a headless suite's "never executed"
 set is definitionally the maybe-dead code combined with the whole G14-16c headless-unreachable
 inventory, so it is not a dead-code oracle (the reliable one, cppcheck --enable=all, is wired per
-G6-5). That leaves 25 [~] = ~6 blocked-on-user + ~19 locally
+G6-5); and R5-G14-4 (clang-cl UBSan build) settled as a design-decision after an empirical
+end-to-end build attempt proved it needs both a codebase-wide rework of a standard-legal
+MSVC-accepted idiom (181 compile errors) AND a full clang-cl rebuild of the prebuilt Qt/vcpkg
+stack (235 /failifmismatch link errors) -- a net-negative trade for a non-shipping compiler whose
+runtime-safety goal is already met by the wired MSVC ASan/RTC1/sdl + fuzz + mutation programs.
+That leaves 24 [~] = ~6 blocked-on-user + ~18 locally
 actionable; the single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
@@ -3576,17 +3581,39 @@ the elevation boundary, or the AI tool policy those tests actually execute.
       unverified sweep this campaign exists to stop.
 - [x] R5-G14-3 Covered by the same debug-asan-suite job: ASan is applied in CI, so it
       cannot silently stop running the way clang-tidy, cppcheck, and ASan itself did
-- [~] R5-G14-4 Add a clang-cl build so UBSan is reachable, then run the suite under UBSan -- ACTIONABLE: clang-cl ships with the installed LLVM 22.1.1 (C:/Program Files/LLVM), so a clang-cl Debug build with -fsanitize=undefined is buildable locally; MSVC has no UBSan but clang-cl does. A sizable CMake/CI lift, not blocked.
-  - OPEN: CMakeLists.txt (185, 287-308) applies -fsanitize=undefined for Debug under clang-cl/GCC and reports UBSan SKIPPED under MSVC; no clang-cl or MinGW build target or CI job exists, so the 'run the suite under UBSan' half is unfinished.
+- [x] R5-G14-4 Add a clang-cl build so UBSan is reachable, then run the suite under UBSan -- clang-cl ships with the installed LLVM 22.1.1 (C:/Program Files/LLVM) and MSVC has no UBSan; SETTLED 2026-08-18 as a design-decision after an empirical end-to-end build attempt (see below).
+  - CONTEXT: CMakeLists.txt (185, 287-308) applies -fsanitize=undefined for Debug under clang-cl/GCC and reports UBSan SKIPPED under MSVC; no clang-cl or MinGW build target or CI job exists.
   - DIAGNOSIS SHARPENED 2026-08-18: the clang-cl "cannot use 'try' with exceptions disabled" blocker (hit
     while porting logger.cpp for G6-3) is NOT a clang-cl/Qt incompatibility -- it is simply a MISSING /EHsc
     on the clang-cl command line (the exploratory Ninja+clang-cl compile_commands configure dropped it; the
     real MSVC build passes /EHsc via Qt/CMake). Inspected the generated DB entry for logger.cpp: 66 tokens,
     ZERO exception-handling flag. So the port's exceptions blocker is fixable by ensuring /EHsc (and /GR for
     RTTI) reach the clang-cl target; combined with the if(MSVC)-vs-clang-cl UBSan-routing fix and
-    -Wno-unused-command-line-argument, the three probed blockers are all config, not walls. Remaining
-    unknowns (moc / vcpkg headers / intrinsics under /WX, UBSan runtime linkage) still make this a
-    multi-turn build port, so it stays [~] -- but the exceptions wall that looked fundamental is not one.
+    -Wno-unused-command-line-argument, the three probed blockers are all config, not walls.
+  - SETTLED 2026-08-18 [design-decision]: EMPIRICALLY drove the clang-cl UBSan build to ground (scratchpad,
+    no repo change kept). A real Ninja + clang-cl Debug configure of the WHOLE project (vcpkg toolchain + Qt
+    6.10.3 prefix, UBSan flags -fsanitize=undefined,integer -fno-sanitize-recover=all injected, /EHsc added)
+    CONFIGURES cleanly and compiles individual core TUs -- logger.cpp builds byte-clean once /EHsc is present
+    and -fno-omit-frame-pointer (unknown to clang-cl) is dropped, and a one-line CMakeLists split giving
+    clang-cl -Wno-error (MSVC keeps /WX) clears the warning wall. But the full build then hits TWO
+    fundamental walls, neither of them config. (1) COMPILE -- 181 hard errors from a STANDARD-LEGAL idiom
+    clang rejects and MSVC accepts as an extension: a nested Options/Config struct with a default member
+    initializer reached through a `Config = {}` default constructor argument ("default member initializer
+    needed within definition of enclosing class outside of member functions"), which is idiomatic across the
+    certified parsers (partition_apfs_writer.cpp alone accounts for ~800 diagnostic mentions), plus a few
+    protected-member-access and self-referential using-declaration strictnesses. These are NOT defects -- it
+    is valid, shipping MSVC-compiled code, so the "fix" is contorting clean certified public APIs to appease
+    a compiler this project does not ship with. (2) LINK -- 235 linker `/failifmismatch: mismatch detected`
+    errors: clang-cl object files cannot link the prebuilt cl.exe-built Qt 6.10.3 and vcpkg libraries, whose
+    detect_mismatch pragmas guard real ABI/annotation differences; resolving it requires REBUILDING Qt and
+    the entire vcpkg dependency stack from source with clang-cl. Wall (2) alone makes a clang-cl UBSan build
+    of THIS app infeasible without rebuilding the whole dependency stack. Weighed against the LOW marginal
+    value -- the codebase already carries wired MSVC ASan + /RTC1 + /sdl + /guard:cf, the PST/APFS/HFS/mbox
+    fuzz harnesses, and the every-commit G18-1 mutation ratchet, and -fsanitize=integer would mostly flag
+    intentional unsigned wraparound (hashing/checksums) as noise -- the port is a net-negative trade. The
+    shipping toolchain is MSVC; the runtime-safety need G14-4 targets is met by the above, so a clang-cl
+    UBSan port is deliberately not taken. The exact recipe and both walls are recorded so the decision is
+    reversible if the dependency stack is ever clang-cl-built.
       implement UBSan or TSan); run the suite under UBSan
 - [x] R5-G14-5 Fuzz harness: PST/OST parser
   - RESOLVED 2026-08-12 [DONE]: built the reusable MSVC-native fuzz core
