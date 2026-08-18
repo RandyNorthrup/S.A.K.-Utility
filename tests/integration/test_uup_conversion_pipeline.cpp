@@ -225,7 +225,8 @@ void UupConversionPipelineTest::testConverterExitsOnEmptyUupDir() {
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     UupConversionPipelineTest tc;
-    // cppcheck-suppress unknownMacro
+    // cppcheck-suppress unknownMacro ; QTEST_SET_MAIN_SOURCE_PATH is a Qt test-driver macro
+    // cppcheck's preprocessor cannot resolve; the suppression is scoped to this one call.
     QTEST_SET_MAIN_SOURCE_PATH
     return QTest::qExec(&tc, argc, argv);
 }

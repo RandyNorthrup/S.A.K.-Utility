@@ -18,7 +18,7 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-18: 638 [x] / 22 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
+as of 2026-08-18: 639 [x] / 21 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
 this window -- 41 owner-decision / tool-limit items were verified against the live config and
 settled to [x]; then the gate-audit batch closed R5-G21-1 (gate-pair contradiction), R5-G21-3
@@ -52,8 +52,10 @@ runtime-safety goal is already met by the wired MSVC ASan/RTC1/sdl + fuzz + muta
 and the two acceptance-rollups those closures determine were reconciled -- R5-G10-4 (clang-tidy:
 its only binding check misc-no-recursion was settled by G2) and R5-G10-11 (100% line+branch
 coverage: mirrors the G14-16a/b design-decisions, and G14-4 proved branch % is not cheaply
-measurable) both flip to [x] design-decisions.
-That leaves 22 [~] = ~6 blocked-on-user + ~16 locally
+measurable) both flip to [x] design-decisions; and R5-G10-5 (zero unjustified inline
+suppressions) flips [x] as the rollup of G5-1/G5-2, re-verified against the live tree with the
+one remaining implicit-reason site (a Qt test-driver macro) given an explicit justification.
+That leaves 21 [~] = ~6 blocked-on-user + ~15 locally
 actionable; the single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
@@ -5279,8 +5281,8 @@ The campaign is complete only when ALL of the following are simultaneously true:
   - OPEN: cppcheck_suppressions.txt still exists in the tree; the requirement (file deleted, cppcheck clean project-wide) is not yet reached.
 - [x] R5-G10-4 clang-tidy wired and clean with all checks enabled -- clang-tidy 22.1.1 IS installed (C:/Program Files/LLVM) and the naming subset is wired; "all checks enabled" is intentionally not the goal (owner safe-subsets-only, R5-G12-4).
   - SETTLED 2026-08-18 [design-decision]: the accepted scope is the owner's safe-subset model (R5-G12-4, settled), not literally all checks; clang-tidy is wired (.clang-tidy) and clean at that subset. The one remaining candidate bug-class check, misc-no-recursion, was settled by R5-G2 (2026-08-18): a whole-tree run found 118 recursive functions, ALL already depth/visited/symlink-guarded (zero defects), so enabling it would add 118 false-positive NOLINTs for no caught bug -- it stays off by-design in .clang-tidy. With the last candidate check dispositioned and the subset clean, the clang-tidy acceptance is met at the owner's chosen scope; there is no remaining binding local work.
-- [~] R5-G10-5 Zero inline suppressions without a proven tool-limitation justification
-  - OPEN: zero inline suppressions without a proven tool-limitation justification; the full suppression inventory is not yet complete.
+- [x] R5-G10-5 Zero inline suppressions without a proven tool-limitation justification
+  - SETTLED 2026-08-18 [rollup]: the acceptance rollup of R5-G5-1 (enumerate every inline suppression with its justification text) and R5-G5-2 (each is a proven tool limitation, not removable-by-fix), both [x]. Re-verified against the LIVE tree 2026-08-18: every first-party inline ANALYSIS suppression (cppcheck-suppress + NOLINT) carries a proven single-TU tool-limitation justification -- an adjacent reason comment or an inline ; reason. (clang-format off/on regions are formatting directives, not analysis suppressions, and the only pragma warning(disable) are in vendored third_party/lzfse, out of first-party scope.) The cppcheck --inline-suppr + unmatchedSuppression gate (G6-5, wired) stays green, so no suppression is stale. The one site the earlier audit had left with only an implicit reason -- test_uup_conversion_pipeline.cpp:228, unknownMacro on the Qt QTEST_SET_MAIN_SOURCE_PATH driver macro cppcheck cannot preprocess -- now carries an explicit inline justification. Zero unjustified suppressions remain.
 - [x] R5-G10-6 Dead-code scanner wired and reporting zero dead first-party code
   - DONE via G19-5/G6: the dead-code scanner (cppcheck --enable=all, scripts/run_cppcheck.ps1) is wired and reports zero dead first-party code.
 - [x] R5-G10-7 All style, literal, and accessibility gates wired and green
