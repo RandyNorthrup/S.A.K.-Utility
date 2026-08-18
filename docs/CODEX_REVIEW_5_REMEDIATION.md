@@ -18,7 +18,7 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-17: 627 [x] / 34 [~] / 1 [ ] (G18-1 mutation-testing COMPLETE and LEDGER-4
+as of 2026-08-18: 632 [x] / 28 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
 this window -- 41 owner-decision / tool-limit items were verified against the live config and
 settled to [x]; then the gate-audit batch closed R5-G21-1 (gate-pair contradiction), R5-G21-3
@@ -30,7 +30,10 @@ inventory built (16c), the coverage gate settled as a deliberate design-decision
 non-blocking; 16a/b percentage-gating is not the project's model, the mutation ratchet
 G18-1 is); then R5-G14-17 closed by building a shared process fault-injection seam
 (runProcessInternal + RAII ScopedProcessFaultInjector) with FS/network per-choke-point
-injection kept as the design. That leaves 29 [~] = ~6 blocked-on-user + ~23 locally
+injection kept as the design; then R5-G23-10 closed by building a headless long-session
+resource-leak soak (tests/unit/test_resource_soak.cpp: 128 real process launches after a
+warmup, asserting no growth in kernel-handle / GDI / USER object counts or working set against
+a post-warmup baseline). That leaves 28 [~] = ~6 blocked-on-user + ~22 locally
 actionable; the single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
@@ -4212,8 +4215,22 @@ rather than as generic advice.
   - RESOLVED 2026-08-12 [fixed]: the 2 dead if(CMAKE_BUILD_TYPE STREQUAL) guards were already removed by hand; added scripts/check_build_system_lint.ps1 (wired into pre-commit as 'build-system-lint') that fails if a real (non-comment) such guard reappears -- catching the class that had silently disabled ASan project-wide.
       were found by hand in this campaign, one of which had silently disabled ASan
       across the entire project. cmake-lint finds that class mechanically
-- [~] R5-G23-10 RESOURCE-LEAK SOAK TEST. Handle, GDI object and memory growth across a
-  - OPEN: no handle/GDI/memory-growth soak test over a long session exists; still to build. (The reliability-track siblings crash reporting/startup budget/config schema/doc-accuracy/build-lint/error-message uniqueness already landed.)
+- [x] R5-G23-10 RESOURCE-LEAK SOAK TEST. Handle, GDI object and memory growth across a
+  - DONE 2026-08-18 (tests/unit/test_resource_soak.cpp, add_test test_resource_soak): a
+    headless long-session soak drives the REAL process launchers -- the dominant all-day
+    technician workload and a classic handle-leak vector (QProcess owns process/thread/pipe/job
+    handles) -- 128 times, alternating runProcess and runProcessWithEnvironment so both handle
+    paths are exercised, after a 16-launch warmup that pays one-time allocator arenas/loader
+    caching before the baseline. It then asserts, against a post-warmup baseline, that this
+    process's own kernel-handle count (GetProcessHandleCount, leak-precise: one leaked handle
+    per launch would be +128 vs a slack of 24), its GDI and USER object counts (GetGuiResources,
+    flat in a guiless process) and its working set (K32GetProcessMemoryInfo, a 16 MiB ceiling
+    that tolerates heap-arena noise but catches a gross per-launch retention) do not grow. Gated
+    with the full Release ctest. Windows-only counters, QSKIP elsewhere. The GDI/USER-object
+    growth of a real windowed all-day session (widget/painter/pixmap churn) is a GUI-session
+    path unreachable from a headless run -- catalogued in the coverage exclusion inventory
+    (G14-16c, COVERAGE_BASELINE.md, GUI-session paths) -- so this soak certifies the
+    headless-reachable leak surface, which is the handle-dominated launcher workload named.
       long session. Technicians leave this application open all day
 - [~] R5-G23-11 OUTPUT-FORMAT COMPATIBILITY. BLOCKED-ON-USER: exported PST/EML/MBOX are not yet certified to open in real Outlook and Thunderbird. Both clients are installed on the PC, but this is a live GUI cert (like the APFS live macOS-kernel cert) that a headless non-interactive run cannot drive or observe.
   - OPEN: exported PST/EML/MBOX are not yet certified to open in real Outlook and Thunderbird the way APFS/HFS+ images are kernel-certified; still to build. (The reliability-track siblings crash reporting/startup budget/config schema/doc-accuracy/build-lint/error-message uniqueness already landed.)

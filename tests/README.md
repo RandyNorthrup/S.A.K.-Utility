@@ -2,13 +2,13 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **248 registered CTest tests** across **240 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **249 registered CTest tests** across **241 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
 
 ## Structure
 
 ```
 tests/
-+-- unit/                                  # Unit tests (237 C++ files, including actions/)
++-- unit/                                  # Unit tests (238 C++ files, including actions/)
 |   +-- actions/                           # Quick action validation tests
 |   |   +-- test_action_factory.cpp
 |   |   +-- test_all_actions_metadata.cpp
@@ -84,6 +84,7 @@ tests/
 |   +-- test_quick_action_result_io.cpp
 |   +-- test_regex_pattern_library.cpp
 |   +-- test_registry_snapshot_engine.cpp
+|   +-- test_resource_soak.cpp
 |   +-- test_restore_point_manager.cpp    +-- test_script_rewriter.cpp|   +-- test_secure_memory.cpp
 |   +-- test_smart_disk_analyzer.cpp
 |   +-- test_smart_file_filter.cpp
@@ -163,6 +164,7 @@ cmake --build build --target run_integration_tests
 | test_file_scanner | `file_scanner` | Recursive scan, extension/size/date filters, cancellation |
 | test_file_hash | `file_hash` | MD5/SHA-256 hashing, large-file streaming, hash comparison |
 | test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes |
+| test_resource_soak | `process_runner` | Long-session handle/GDI/USER/memory-growth soak over the real launchers |
 | test_error_codes | `error_codes` | Error code enum values, category strings, display messages |
 | test_input_validator | `input_validator` | Path, IP, port, Chocolatey name, and URL validation |
 | test_worker_base | `worker_base` | Thread lifecycle, cancellation, progress signals |
@@ -441,6 +443,6 @@ QCOMPARE(spy.count(), 1);
 ---
 
 **Test Framework:** Qt Test
-**Registered Tests:** 248 (CTest)
-**Test Files:** 240 C++ test source files plus script-backed helper tests
+**Registered Tests:** 249 (CTest)
+**Test Files:** 241 C++ test source files plus script-backed helper tests
 **Platform:** Windows 10/11

@@ -1569,6 +1569,27 @@ add_test(NAME test_process_runner COMMAND test_process_runner
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_process_runner")
 
+# test_resource_soak - R5-G23-10 long-session handle/GDI/memory-growth soak
+add_executable(test_resource_soak
+    unit/test_resource_soak.cpp
+    ../src/core/process_runner.cpp
+    ../src/core/logger.cpp
+)
+set_target_properties(test_resource_soak PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_resource_soak PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_resource_soak PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_resource_soak COMMAND test_resource_soak
+         -o "${TEST_OUTPUT_DIR}/test_resource_soak.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_resource_soak")
+
 # test_smart_disk_analyzer - SmartReport parsing, health assessment
 add_executable(test_ai_token_usage_tracker
     unit/test_ai_token_usage_tracker.cpp
