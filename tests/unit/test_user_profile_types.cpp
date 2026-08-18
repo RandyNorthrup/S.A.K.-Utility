@@ -427,6 +427,15 @@ private Q_SLOTS:
         QVERIFY(c.default_gateway.isEmpty());
         QVERIFY(c.dns_primary.isEmpty());
         QVERIFY(c.dns_secondary.isEmpty());
+
+        // An absent gateway may render as an empty JSON object ({}) rather than null depending on
+        // how PowerShell serializes the (empty) NextHop selection; both must map to an empty
+        // string (QJsonValue::toString() is "" for a null AND for an object), never a crash.
+        const auto object_gateway = EthernetConfigInfo::parseNetIpConfigJson(
+            QStringLiteral(R"({"Name":"Ethernet 4","Dhcp":"Enabled","IPv4":"10.1.1.2","Prefix":16,)"
+                           R"("Gateway":{},"Dns":[]})"));
+        QCOMPARE(object_gateway.size(), qsizetype(1));
+        QVERIFY(object_gateway.at(0).default_gateway.isEmpty());
     }
 
     void parseNetIpConfig_skipsNamelessAndHandlesEmpty() {

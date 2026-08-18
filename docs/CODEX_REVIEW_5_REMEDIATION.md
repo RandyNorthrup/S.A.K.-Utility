@@ -4379,7 +4379,7 @@ rather than as generic advice.
     the non-C: dimension is now code-robust, and its CORE protection is now test-proven: the
     drive-agnostic leaf classifier was exposed as the pure static LeftoverScanner::isSharedContainerPath
     and unit-tested (test_leftover_scanner isSharedContainerPath_isDriveAgnostic) to confirm a shared OS
-    container on D:/E:/Z: -- e.g. D:\Windows\System32, Z:\ProgramData -- classifies Risky exactly like
+    container on C:/D:/Z: -- e.g. D:\Windows\System32, Z:\ProgramData -- classifies Risky exactly like
     C:'s, case-insensitively. The rest of the non-C: surface (env-derived scan roots, the
     windows_user_scanner fail-close) is code-robust; this stays [~] for the broader hostile-env test matrix.
   - PROGRESS 2026-08-18 (>260-char / MAX_PATH dimension audited): the code is broadly long-path-aware -- it
