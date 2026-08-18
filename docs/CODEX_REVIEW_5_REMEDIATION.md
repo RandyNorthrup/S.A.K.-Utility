@@ -3033,7 +3033,25 @@ produced results.
 - [x] R5-G6-2 clang-tidy misc-unused-* and unusedPrivateFunction (2 already reported)
   - RESOLVED 2026-08-12 [fixed]: cppcheck --enable=all (whole-tree, now a CI job via G7-2) reports no unusedPrivateFunction/unusedStructMember; the 2 historical clang-tidy reports are addressed. No reliably-detectable dead private members remain.
 - [~] R5-G6-3 clang-include-cleaner for dead includes (ships with the installed LLVM)
-  - OPEN [incomplete]: clang-include-cleaner dead-includes has not been run; it is a bounded IWYU pass over the reconstructed compile DB with its own false-positive class (a header pulled for a transitively-needed symbol). Remaining work, not yet started.
+  - PROGRESS 2026-08-18: clang-include-cleaner was RUN tree-wide over all 304 first-party src TUs
+    (against a clang-cl compile_commands.json emitted via a Ninja+clang-cl+vcpkg configure). It
+    reported 67 removal suggestions across 46 files, triaged as follows. (a) 41 are Win32/system
+    UMBRELLA headers (<windows.h>, <winsock2.h>, <iphlpapi.h>, <setupapi.h>, <cfgmgr32.h>,
+    <dbghelp.h>, ...): removal is UNSAFE -- the umbrella provides many transitively-used symbols and
+    the DB is clang-cl-based (clang-cl-dead != MSVC-dead), so removing them would break the MSVC
+    build; left in place (the tool's known false-positive class). (b) 10 first-party includes were
+    confirmed genuinely unused by grep (zero real symbol usage, not merely the tool's transitive
+    class) and REMOVED, gated on the full Release ctest 249/249: logger.h x3 (openai_responses_client,
+    email_search_worker, user_profile_backup_worker), ai_credential_store.h, partition_file_system_registry.h,
+    and layout_constants.h x5 (leftover_scanner + 3 file-explorer widgets + network_probe_worker). (c) 2
+    the tool flagged were KEPT because the file DIRECTLY uses their symbols (partition_executor.h: 2
+    PartitionExecutor uses in app_mutating_actions; error_codes.h: 3 error_code uses in
+    file_management_file_system) -- removing a directly-used symbol's header is wrong even if it
+    compiles transitively.
+  - OPEN: the ~14 standard-library removal candidates (<algorithm>/<array>/<limits>/<optional>/<utility>/
+    <vector>/<numeric>/<QtConcurrent>/<cstdlib>) each carry a transitive-STL-reliance risk (a parser may
+    use std::optional pulled in via another header, which MSVC may or may not provide the same way), so
+    each needs per-file MSVC build verification before removal -- a bounded follow-on batch.
 - [~] R5-G6-4 Coverage-guided dead-code detection: run the 208-test suite under coverage and
   - OPEN [incomplete]: coverage-guided dead-code detection is not yet produced; scripts/run_coverage.ps1 and the CI coverage job measure line coverage only, not first-party functions never executed by any test. Remaining work in the in-progress G14 coverage tier.
       report first-party functions never executed by any test

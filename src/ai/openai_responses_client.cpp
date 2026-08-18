@@ -3,9 +3,7 @@
 
 #include "sak/ai/openai_responses_client.h"
 
-#include "sak/ai/ai_credential_store.h"
 #include "sak/layout_constants.h"
-#include "sak/logger.h"
 #include "sak/version.h"
 
 #include <QJsonArray>

@@ -7,7 +7,6 @@
 
 #include "sak/leftover_scanner.h"
 
-#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 #include "sak/registry_snapshot_engine.h"
 #include "sak/windows_path_policy.h"

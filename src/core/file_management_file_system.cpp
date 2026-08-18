@@ -11,7 +11,6 @@
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
 #include "sak/partition_ext_file_system_reader.h"
-#include "sak/partition_file_system_registry.h"
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
 

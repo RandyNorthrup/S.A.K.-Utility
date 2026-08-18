@@ -5,7 +5,6 @@
 
 #include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
-#include "sak/logger.h"
 
 #include <QDateTime>
 #include <QDir>

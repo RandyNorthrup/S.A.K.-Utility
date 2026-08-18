@@ -4,7 +4,6 @@
 #include "sak/file_explorer_command_bar.h"
 
 #include "sak/file_explorer_icon_registry.h"
-#include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
 #include <QFrame>

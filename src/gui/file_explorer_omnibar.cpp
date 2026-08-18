@@ -6,7 +6,6 @@
 #include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_status_center_widget.h"
-#include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
 #include <QEvent>

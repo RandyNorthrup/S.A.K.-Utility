@@ -8,7 +8,6 @@
 
 #include "sak/email_constants.h"
 #include "sak/layout_constants.h"
-#include "sak/logger.h"
 #include "sak/mbox_parser.h"
 #include "sak/pst_parser.h"
 

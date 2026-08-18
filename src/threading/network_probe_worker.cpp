@@ -6,8 +6,6 @@
 
 #include "sak/network_probe_worker.h"
 
-#include "sak/layout_constants.h"
-
 #include <utility>
 
 namespace sak {
