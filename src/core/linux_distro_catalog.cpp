@@ -18,6 +18,7 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/network_constants.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -648,6 +649,9 @@ void LinuxDistroCatalog::checkLatestVersion(const QString& distroId) {
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Accept", "application/vnd.github+json");
     request.setRawHeader("User-Agent", "SAK-Utility/1.0");
+    // Bound the transfer so a stalled GitHub/proxy connection aborts and surfaces an error via
+    // onGitHubReleaseReply instead of hanging in "Checking for latest version..." forever.
+    request.setTransferTimeout(sak::kHttpMetadataTransferTimeoutMs);
 
     auto* reply = m_networkManager->get(request);
     reply->setProperty("distroId", distroId);

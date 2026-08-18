@@ -233,6 +233,9 @@ void LinuxISODownloader::startRollingFilenameDiscovery() {
     // written to removable media, so its transport must not be downgraded.
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
+    // Bound the transfer so a stalled peer aborts and surfaces an error via the finished
+    // handler instead of hanging (the oversize guard below only fires once bytes arrive).
+    request.setTransferTimeout(sak::kHttpMetadataTransferTimeoutMs);
 
     const quint64 generation = m_operationGeneration.load();
     auto* reply = nam->get(request);
@@ -877,6 +880,10 @@ void LinuxISODownloader::verifyChecksum() {
     // is refused outright instead of silently followed.
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
+    // Bound the transfer: if the peer connects then stalls without sending data, abort and
+    // surface an error via the finished handler's error() branch instead of hanging forever.
+    // The oversize guard below only fires once bytes actually arrive, so it cannot catch a stall.
+    request.setTransferTimeout(sak::kHttpMetadataTransferTimeoutMs);
 
     // Tag this fetch with the current operation generation so a reply that outlives a
     // cancel + restart is discarded instead of verifying the new download against the old

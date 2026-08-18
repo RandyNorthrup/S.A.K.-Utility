@@ -4373,6 +4373,29 @@ rather than as generic advice.
     into a bare MAX_PATH buffer -- QueryFullProcessImageNameW then fails and the name drops to a bare [PID];
     oversized it to MAX_PATH*2 to match the codebase's own module-path convention. Still no automated
     long-path test, so this stays [~].
+  - AUDIT 2026-08-18 (remaining 5 dimensions via a 5-agent read-only workflow) + no-network FIX: audited
+    UNC-cwd, no-admin, no-network, non-English locale, and missing bundled tools. no-admin is fail-closed
+    throughout (every admin-only API -- raw PhysicalDrive/volume opens, HKLM, restore points, ACL
+    take-ownership, SMART, UAC broker -- surfaces ACCESS_DENIED and aborts; enumeration failures are
+    distinguished from empty results; 0 gaps). missing-tools is thoroughly robust (system tools via
+    GetSystemDirectoryW/GetWindowsDirectoryW returning empty on failure with fail-closed callers; bundled
+    tools verified for existence + Authenticode/manifest before launch; runProcess returns exit -1 on launch
+    failure and callers gate on succeeded(); 0 correctness gaps). UNC-only cwd is handled for every
+    security-critical path (data roots, the tool-manifest root of trust, ACL targeting, recursive-delete
+    safety all refuse CWD-relative resolution); only 2 non-destructive UI residuals. FIXED the one coherent
+    fail-OPEN cluster (no-network): four direct QNetworkAccessManager metadata fetches --
+    LinuxISODownloader::verifyChecksum + startRollingFilenameDiscovery, LinuxDistroCatalog::checkLatestVersion
+    (GitHub), UupDumpApi::sendApiRequest -- set NO transfer timeout, so a peer that connects then stalls
+    without sending data leaves QNetworkReply::finished unfired and the operation hangs forever with no
+    surfaced error. Added request.setTransferTimeout(kHttpMetadataTransferTimeoutMs = 30s) at all four,
+    mirroring network_transfer_runner.cpp:72; on abort the EXISTING reply->error() branch (the same one the
+    oversize-abort guard already depends on) fails closed. LOGGED for a follow-on (localized OS-text parsing,
+    the diskpart-precedent class, fail-OPEN on non-English Windows): DnsDiagnosticTool::inspectDnsCache
+    (dns_diagnostic_tool.cpp:439) matches English "Record Name"/"A (Host) Record" in ipconfig /displaydns
+    output, and parseNetshEthernetOutput (user_profile_backup_wizard_pages.cpp:1444) matches the English
+    "Configuration for interface" netsh header -- both should route through language-neutral cmdlets
+    (Get-DnsClientCache / Get-NetIPConfiguration). G23-4 stays [~]: the hostile-env TEST MATRIX + seams, the
+    two locale fixes, and the UI-residual polish remain.
       paths are under MAX_PATH, administrator rights are available, the network works,
       and Windows is English. The last assumption already caused a defect: diskpart's
       success text is localized, which is why the recreate path had to be given a

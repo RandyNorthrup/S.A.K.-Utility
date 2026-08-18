@@ -17,6 +17,7 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/network_constants.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -655,6 +656,10 @@ QNetworkReply* UupDumpApi::sendApiRequest(const QString& endpoint,
     QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
     sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
     request.setSslConfiguration(sslConfig);
+
+    // Bound the transfer so a stalled api.uupdump.net / proxy connection aborts and surfaces an
+    // error via the on*Reply error() branch instead of hanging the wizard step forever.
+    request.setTransferTimeout(sak::kHttpMetadataTransferTimeoutMs);
 
     sak::logInfo(QString("API request: %1").arg(url.toString()).toStdString());
 
