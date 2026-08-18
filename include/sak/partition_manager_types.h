@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "sak/strong_index.h"
+
 #include <QDateTime>
 #include <QJsonObject>
 #include <QString>
@@ -17,6 +19,15 @@
 #include <optional>
 
 namespace sak {
+
+/// Strong index newtypes for the two partition-manager index spaces. A disk
+/// number and a partition number are both uint32 and were freely interchangeable
+/// at a call site; these tags make a swap a compile error (R5-G14-19). See
+/// PartitionSafetyValidator::findDisk / findPartition for the enforced boundary.
+struct DiskNumberTag {};
+struct PartitionNumberTag {};
+using DiskNumber = StrongIndex<DiskNumberTag, uint32_t>;
+using PartitionNumber = StrongIndex<PartitionNumberTag, uint32_t>;
 
 inline constexpr int kPartitionDefaultTaskTimeoutSeconds = 120;
 inline constexpr int kPartitionMediumTaskTimeoutSeconds = 600;

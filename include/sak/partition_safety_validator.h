@@ -23,9 +23,9 @@ public:
                                                             const PartitionOperation& operation);
 
     [[nodiscard]] static const PartitionDiskInfo* findDisk(const PartitionInventory& inventory,
-                                                           uint32_t disk_number);
+                                                           DiskNumber disk_number);
     [[nodiscard]] static const PartitionInfoEx* findPartition(const PartitionDiskInfo& disk,
-                                                              uint32_t partition_number);
+                                                              PartitionNumber partition_number);
     [[nodiscard]] static bool isSystemProtectedPartition(const PartitionInfoEx& partition);
 
 private:

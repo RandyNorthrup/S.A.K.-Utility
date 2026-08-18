@@ -22,6 +22,7 @@
 #include "sak/partition_operation_planner.h"
 #include "sak/partition_operation_queue.h"
 #include "sak/partition_raw_device_io.h"
+#include "sak/partition_safety_validator.h"
 #include "sak/partition_script_builder.h"
 #include "sak/storage_inventory_worker.h"
 
@@ -44,8 +45,33 @@
 
 #include <algorithm>
 #include <tuple>
+#include <type_traits>
 
 using namespace sak;
+
+// R5-G14-19: the strong-index guarantee is a COMPILE-TIME gate, not a runtime hope.
+// If any of these regress -- an implicit conversion is added, or the DiskNumber and
+// PartitionNumber tags collapse into one type -- THIS FILE STOPS COMPILING, which is
+// exactly what makes a disk-number/partition-number mix-up impossible to ship.
+static_assert(!std::is_convertible_v<uint32_t, DiskNumber>,
+              "a bare integer must not implicitly become a DiskNumber");
+static_assert(std::is_constructible_v<DiskNumber, uint32_t>,
+              "a DiskNumber must stay explicitly constructible from its integer");
+static_assert(!std::is_convertible_v<DiskNumber, uint32_t>,
+              "a DiskNumber must not implicitly decay back to a bare integer");
+static_assert(!std::is_convertible_v<DiskNumber, PartitionNumber>,
+              "a DiskNumber and a PartitionNumber must be unrelated types");
+static_assert(!std::is_constructible_v<DiskNumber, PartitionNumber>,
+              "a PartitionNumber must not construct a DiskNumber");
+// The safety-critical finder boundary itself rejects the wrong index space.
+static_assert(std::is_invocable_v<decltype(&PartitionSafetyValidator::findDisk),
+                                  const PartitionInventory&,
+                                  DiskNumber>,
+              "findDisk must accept a DiskNumber");
+static_assert(!std::is_invocable_v<decltype(&PartitionSafetyValidator::findDisk),
+                                   const PartitionInventory&,
+                                   PartitionNumber>,
+              "findDisk must REJECT a PartitionNumber -- the silent swap this item closes");
 
 namespace {
 
@@ -1311,6 +1337,8 @@ class PartitionManagerCoreTests : public QObject {
 
 private Q_SLOTS:
     void initTestCase();
+    void strongIndex_valueSemanticsRoundTrip();                       // R5-G14-19
+    void strongIndex_findersResolveByTypedIndexAndFailClosed();       // R5-G14-19
     void fileSystemDetector_detectsRawSignatures();
     void fileSystemDetector_apfsGeometryReconciledToPartitionSize();  // B11-01
     void fileSystemDetector_flagsMalformedMetadataSanityWarnings();
@@ -20247,6 +20275,40 @@ void PartitionManagerCoreTests::scriptBuilder_sizeMbArgDoesNotWrapToOneMegabyte(
     const auto exact = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ConvertDynamicDiskToBasic, target, exactPayload));
     QVERIFY(exact.script.contains(QStringLiteral("$sourceSizeMb = 100\n")));
+}
+
+// R5-G14-19: the strong index carries its value faithfully and compares by it, so a
+// mutation to value() or operator==/!= is caught at runtime (the static_asserts above
+// only prove the type SHAPE, not that the stored number is the right one).
+void PartitionManagerCoreTests::strongIndex_valueSemanticsRoundTrip() {
+    const DiskNumber a{7};
+    const DiskNumber b{7};
+    const DiskNumber c{8};
+    QCOMPARE(a.value(), 7u);
+    QVERIFY(a == b);
+    QVERIFY(a != c);
+    QVERIFY(!(a == c));
+    // A default-constructed index is a real zero index, not an absence sentinel.
+    QCOMPARE(DiskNumber{}.value(), 0u);
+}
+
+// R5-G14-19: the converted safety-critical finders resolve by the typed index and fail
+// closed (nullptr) on an absent one -- proving the uint32->strong-type conversion kept
+// the lookup semantics intact end to end.
+void PartitionManagerCoreTests::strongIndex_findersResolveByTypedIndexAndFailClosed() {
+    const PartitionInventory inventory = singleDataDiskInventory();
+    const PartitionDiskInfo* disk = PartitionSafetyValidator::findDisk(inventory, DiskNumber{2});
+    QVERIFY2(disk != nullptr, "disk 2 must be found by its DiskNumber");
+    QCOMPARE(disk->disk_number, 2u);
+    QVERIFY2(PartitionSafetyValidator::findDisk(inventory, DiskNumber{999}) == nullptr,
+             "an absent disk number must fail closed to nullptr");
+
+    const PartitionInfoEx* partition = PartitionSafetyValidator::findPartition(*disk,
+                                                                               PartitionNumber{1});
+    QVERIFY2(partition != nullptr, "partition 1 must be found by its PartitionNumber");
+    QCOMPARE(partition->partition_number, 1u);
+    QVERIFY2(PartitionSafetyValidator::findPartition(*disk, PartitionNumber{999}) == nullptr,
+             "an absent partition number must fail closed to nullptr");
 }
 
 QTEST_MAIN(PartitionManagerCoreTests)

@@ -1226,7 +1226,8 @@ bool isFatToNtfsConversion(const PartitionInfoEx& partition, PartitionOperationT
 bool mergeSourceIsAdjacentAfterTarget(const PartitionDiskInfo& disk,
                                       const PartitionInfoEx& target,
                                       uint32_t source_partition_number) {
-    const auto* source = PartitionSafetyValidator::findPartition(disk, source_partition_number);
+    const auto* source =
+        PartitionSafetyValidator::findPartition(disk, PartitionNumber{source_partition_number});
     return (source != nullptr) && source->offset_bytes == target.offset_bytes + target.size_bytes;
 }
 
@@ -1237,7 +1238,7 @@ const PartitionInfoEx* allocateDonorPartition(const PartitionDiskInfo& disk,
     }
     const auto sourcePartition =
         static_cast<uint32_t>(payloadUInt64(operation, QStringLiteral("source_partition_number")));
-    return PartitionSafetyValidator::findPartition(disk, sourcePartition);
+    return PartitionSafetyValidator::findPartition(disk, PartitionNumber{sourcePartition});
 }
 
 bool allocationDonorSizeMismatch(const PartitionInfoEx* donor,
@@ -1929,21 +1930,21 @@ void validatePartitionCompositeOperation(const PartitionDiskInfo& disk,
 }  // namespace
 
 const PartitionDiskInfo* PartitionSafetyValidator::findDisk(const PartitionInventory& inventory,
-                                                            uint32_t disk_number) {
-    auto it =
-        std::ranges::find_if(inventory.disks,
+                                                            DiskNumber disk_number) {
+    const uint32_t wanted = disk_number.value();
+    auto it = std::ranges::find_if(inventory.disks,
 
-                             [disk_number](const auto& d) { return d.disk_number == disk_number; });
+                                   [wanted](const auto& d) { return d.disk_number == wanted; });
     return it == inventory.disks.end() ? nullptr : &(*it);
 }
 
 const PartitionInfoEx* PartitionSafetyValidator::findPartition(const PartitionDiskInfo& disk,
-                                                               uint32_t partition_number) {
-    auto it = std::ranges::find_if(disk.partitions,
+                                                               PartitionNumber partition_number) {
+    const uint32_t wanted = partition_number.value();
+    auto it =
+        std::ranges::find_if(disk.partitions,
 
-                                   [partition_number](const auto& p) {
-                                       return p.partition_number == partition_number;
-                                   });
+                             [wanted](const auto& p) { return p.partition_number == wanted; });
     return it == disk.partitions.end() ? nullptr : &(*it);
 }
 
@@ -1955,7 +1956,7 @@ bool PartitionSafetyValidator::isSystemProtectedPartition(const PartitionInfoEx&
 PartitionValidationResult PartitionSafetyValidator::validate(const PartitionInventory& inventory,
                                                              const PartitionOperation& operation) {
     PartitionValidationResult result;
-    const PartitionDiskInfo* disk = findDisk(inventory, operation.target.disk_number);
+    const PartitionDiskInfo* disk = findDisk(inventory, DiskNumber{operation.target.disk_number});
     if (disk == nullptr) {
         result.blockers.append(QStringLiteral("Target disk was not found in current inventory"));
         return result;
@@ -1988,7 +1989,8 @@ PartitionValidationResult PartitionSafetyValidator::validate(const PartitionInve
         break;
     case PartitionTargetKind::Partition:
     case PartitionTargetKind::Volume: {
-        const PartitionInfoEx* partition = findPartition(*disk, operation.target.partition_number);
+        const PartitionInfoEx* partition =
+            findPartition(*disk, PartitionNumber{operation.target.partition_number});
         if (partition == nullptr) {
             result.blockers.append(QStringLiteral("Target partition was not found"));
             break;
@@ -2157,7 +2159,7 @@ void PartitionSafetyValidator::validatePayloadRawWriteTarget(const PartitionInve
         return;
     }
 
-    const PartitionDiskInfo* targetDisk = findDisk(inventory, *targetDiskNumber);
+    const PartitionDiskInfo* targetDisk = findDisk(inventory, DiskNumber{*targetDiskNumber});
     addBlockerIf(result,
                  payloadTargetDiskMustExist(operation) && targetDisk == nullptr,
                  QStringLiteral("Payload target disk was not found in current inventory"));
@@ -2212,7 +2214,7 @@ void PartitionSafetyValidator::validateRawVolumeAliasWriteTarget(
     // target (incl. the app's own canonical target) resolves by disk number.
     if (targetDisk == nullptr) {
         if (const auto diskNo = rawTargetDiskNumber(rawPath)) {
-            targetDisk = findDisk(inventory, *diskNo);
+            targetDisk = findDisk(inventory, DiskNumber{*diskNo});
         }
     }
     // A raw device target we cannot resolve to a known disk must fail closed rather than

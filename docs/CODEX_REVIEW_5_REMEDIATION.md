@@ -4128,7 +4128,25 @@ behaviour is what catches defects; the percentage only proves nothing was skippe
     strip; a non-intra-word caret (e.g. "format^ c:") is an intentionally-untouched case
     (it is still caught at the risky tier) and is out of scope for this invariant.
 - [~] R5-G14-19 Replace primitive IDs with strong types where a mix-up is silent
-  - OPEN: primitive IDs are not replaced with strong types -- MBOX message indices and PST row indices are still plain ints, so a message-index vs row-index (or disk vs partition, validated vs raw target) mix-up remains silent rather than a compile error.
+  - SLICE 1 DONE 2026-08-18: the reusable strong-index newtype infra
+    (include/sak/strong_index.h: a tag-typed StrongIndex<Tag, Underlying> with an EXPLICIT
+    integer ctor, named .value() access and NO implicit conversion in either direction, so two
+    aliases on different tags are unrelated types) landed and is applied to the disk-vs-partition
+    family's safety-critical boundary: DiskNumber / PartitionNumber (partition_manager_types.h)
+    now type PartitionSafetyValidator::findDisk / findPartition, and every one of the ~10 call
+    sites (6 in partition_safety_validator.cpp, 4 in partition_manager_panel.cpp) wraps its
+    uint32 at the call. The guarantee is enforced as a BUILD gate in test_partition_manager_core.cpp:
+    static_asserts prove a bare int cannot implicitly become an index, a DiskNumber cannot decay to
+    an int, DiskNumber and PartitionNumber are unrelated, and -- via std::is_invocable -- that
+    findDisk REJECTS a PartitionNumber (the exact silent swap this item names); if any of those
+    regress the file stops compiling. Two runtime slots pin value/equality semantics and the
+    converted finders' resolve-and-fail-closed behaviour. Full Release ctest 249/249.
+  - OPEN (remaining families, follow-on slices): the disk/partition STRUCT FIELDS themselves
+    (PartitionInfoEx/PartitionDiskInfo/UnallocatedRegion/PartitionOperation .disk_number /
+    .partition_number, ~294 use sites) are still plain uint32, so only the finder boundary is
+    type-checked so far, not every construction; and the other two named families are untouched
+    -- MBOX message-index vs attachment-index (MboxParser::readAttachmentData(int,int) and the
+    ~22 export/conversion call sites) and validated-vs-raw target. Each is its own gated slice.
       (message index vs row index, disk vs partition index, validated vs raw target)
 
 ### G15 - compiler and CI hardening

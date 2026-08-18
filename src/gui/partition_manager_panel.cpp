@@ -4446,7 +4446,7 @@ FreeSpaceAllocationChoice selectedFreeSpaceChoice(const FreeSpaceAllocationWidge
 const PartitionInfoEx* selectedFreeSpacePartition(const FreeSpaceAllocationWidgets& widgets,
                                                   const PartitionDiskInfo& disk) {
     return PartitionSafetyValidator::findPartition(
-        disk, selectedFreeSpaceChoice(widgets).partition_number);
+        disk, PartitionNumber{selectedFreeSpaceChoice(widgets).partition_number});
 }
 
 void updateFreeSpaceBackupControls(const BackupRestoreWidgets& backup, bool move_mode) {
@@ -11281,7 +11281,7 @@ constexpr qsizetype kDriveLetterColonLength = 2;
 [[nodiscard]] QString customRawDiskBlocker(const PartitionInventory& inventory,
                                            uint32_t disk_number,
                                            uint64_t source_size) {
-    const auto* disk = PartitionSafetyValidator::findDisk(inventory, disk_number);
+    const auto* disk = PartitionSafetyValidator::findDisk(inventory, DiskNumber{disk_number});
     if (disk == nullptr) {
         return {};
     }
@@ -11752,7 +11752,8 @@ const PartitionDiskInfo* PartitionManagerPanel::selectedDisk() const {
     if (!target) {
         return nullptr;
     }
-    return PartitionSafetyValidator::findDisk(m_controller->inventory(), target->disk_number);
+    return PartitionSafetyValidator::findDisk(m_controller->inventory(),
+                                              DiskNumber{target->disk_number});
 }
 
 const PartitionInfoEx* PartitionManagerPanel::selectedPartition() const {
@@ -11761,7 +11762,8 @@ const PartitionInfoEx* PartitionManagerPanel::selectedPartition() const {
     if (!target || (disk == nullptr) || target->partition_number == 0) {
         return nullptr;
     }
-    return PartitionSafetyValidator::findPartition(*disk, target->partition_number);
+    return PartitionSafetyValidator::findPartition(*disk,
+                                                   PartitionNumber{target->partition_number});
 }
 
 QString PartitionManagerPanel::flagsForPartition(const PartitionInfoEx& partition) {
