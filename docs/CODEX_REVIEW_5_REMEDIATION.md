@@ -4329,6 +4329,20 @@ rather than as generic advice.
 
 - [~] R5-G23-1 CONCURRENCY. BLOCKED (Windows platform limit): ThreadSanitizer is not available on any Windows toolchain -- MSVC has no TSan and clang-cl does not implement -fsanitize=thread on Windows -- so ENABLE_TSAN (CMakeLists.txt:186) fails closed and no CI job builds a TSan binary. A real TSan run would need a Linux clang build of the portable core; the deterministic-scheduler-seam alternative is local but a large harness.
   - OPEN: an ENABLE_TSAN CMake option exists (CMakeLists.txt:186) but builds only under clang-cl/GCC (MSVC fails closed); no clang-cl CI job makes TSan reachable and no deterministic scheduler seams exist, so nothing in CI detects a data race yet. (The items once bundled here have since landed separately: crash reporting G23-2, startup budget G23-3, config schema versioning G23-5, doc-accuracy G23-8, build-system lint G23-9, error-message uniqueness G23-12.)
+  - AUDIT 2026-08-18 (read-only manual review, in lieu of the unavailable TSan): a 4-agent
+    concurrency/lifecycle audit (worker dtor-join, QtConcurrent futures, cross-thread shared state,
+    dangling captures) found the threading hygiene SOUND across the worker/thread surface -- cancel/stop
+    flags are std::atomic, multi-field shared state is QMutex-guarded, result buffers publish before a
+    queued finished()/watcher signal (a real happens-before edge), and every worker joins its thread before
+    its own members are destroyed (the NetworkProbeWorker stopAndJoin pattern, applied uniformly). One
+    concrete consistency gap was found and FIXED: ~DuplicateFinderWorker -- and the same shape in
+    ~PartitionApplyWorker -- hand-rolled the join and IGNORED the post-terminate wait, so an unreaped thread
+    would fall through into a use-after-free of its members, the exact pattern NetworkProbeWorker was fixed
+    away from. Both now use the base fail-closed stopAndJoin() (which std::abort()s rather than returning
+    into a UAF); PartitionApplyWorker's adversarial-review accepted-residual is unchanged. This is manual
+    review, not automated detection -- G23-1 stays [~]: the CMake/CI TSan wiring is reachable only via a
+    Linux clang build of the portable core (the R5-G14-4 attempt proved clang-cl cannot even link this
+    app's prebuilt Qt/vcpkg stack), which remains the unbuilt work.
       ThreadSanitizer, so nothing in this program detects a data race, and this codebase
       is heavily threaded: worker objects, QThread, std::jthread, and cross-thread
       atomics. The history confirms the gap - the Files QThread crash and the shutdown

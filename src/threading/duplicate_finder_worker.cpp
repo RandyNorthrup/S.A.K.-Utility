@@ -47,13 +47,15 @@ DuplicateFinderWorker::~DuplicateFinderWorker() {
     // Join the worker thread HERE, while m_hash_stop / m_hasher / m_config are still alive.
     // ~WorkerBase would join only AFTER those members are destroyed, and a still-running
     // execute()/cancel-monitor reads m_hash_stop -> a use-after-free (see the class doc).
-    if (isRunning()) {
-        requestStop();
-        if (!wait(sak::kTimeoutThreadShutdownMs)) {
-            terminate();
-            wait(sak::kTimeoutThreadTerminateMs);
-        }
-    }
+    //
+    // stopAndJoin() is the base's bounded, FAIL-CLOSED join: requestStop -> wait -> terminate ->
+    // wait, and std::abort() if even the post-terminate wait fails. requestStop() is what the
+    // cancel-monitor forwards into m_hash_stop to unblock an in-flight calculateHash. Doing that
+    // sequence by hand and IGNORING the second wait -- as this dtor used to -- returns, when the
+    // post-terminate wait fails, into the very use-after-free the join exists to prevent: the
+    // members are destroyed the moment this body ends while the thread still runs. That is the
+    // exact bug the NetworkProbeWorker destructor was fixed for; use the same fail-closed join.
+    stopAndJoin();
 }
 
 auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code> {

@@ -37,12 +37,15 @@ PartitionApplyWorker::~PartitionApplyWorker() {
     // or strand a loader lock during an app exit that is already in progress. Bounding
     // teardown is judged better than an unbounded hang on an un-cancellable UAC prompt.
     if (isRunning()) {
-        requestStop();
         m_executor.cancel();
-        if (!wait(kTimeoutThreadShutdownMs)) {
-            terminate();
-            wait(kTimeoutThreadTerminateMs);
-        }
+        // stopAndJoin() is the base's bounded, FAIL-CLOSED join (requestStop -> wait -> terminate
+        // -> wait, and std::abort() if even the post-terminate wait fails). It replaces a
+        // hand-rolled sequence that IGNORED the final wait and fell through into member
+        // destruction -- a use-after-free of m_executor if the thread was not yet reaped. The
+        // accepted residual above is unchanged: it bounds WHEN terminate() may fire (no disk write
+        // has occurred in that window); this only makes an unreaped thread abort loudly instead of
+        // corrupting memory, matching the NetworkProbeWorker destructor.
+        stopAndJoin();
     }
 }
 
