@@ -11,6 +11,7 @@
 #pragma once
 
 #include "sak/email_types.h"
+#include "sak/strong_index.h"
 
 #include <QFile>
 #include <QMap>
@@ -26,7 +27,17 @@
 
 namespace sak {
 enum class error_code;
-}
+
+/// R5-G14-19: a message index and an attachment index are both plain ints, so
+/// readAttachmentData(message, attachment) could be called with the two arguments
+/// swapped and still compile -- silently returning the wrong bytes. These tags make
+/// that swap a hard compile error. Both keep a SIGNED underlying because a negative
+/// index is a legitimate "invalid" value the reads reject explicitly.
+struct MboxMessageIndexTag {};
+struct MboxAttachmentIndexTag {};
+using MboxMessageIndex = StrongIndex<MboxMessageIndexTag, int>;
+using MboxAttachmentIndex = StrongIndex<MboxAttachmentIndexTag, int>;
+}  // namespace sak
 
 /// One attachment with its decoded content, produced by MboxParser::readAllAttachments in a
 /// SINGLE recursive MIME pass. filename and data come from the same enumeration, so they always
@@ -88,7 +99,7 @@ public:
     /// readAllAttachments (so name[i] and bytes[i] always correspond, including inside nested
     /// multiparts).
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readAttachmentData(
-        int message_index, int attachment_index);
+        sak::MboxMessageIndex message_index, sak::MboxAttachmentIndex attachment_index);
 
     /// Read ALL attachments (name + decoded bytes) of a message in ONE recursive pass.
     /// Names and bytes are index-aligned by construction, and the raw message is read +

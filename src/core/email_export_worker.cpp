@@ -1439,7 +1439,8 @@ EmailExportWorker::AttachmentCollection EmailExportWorker::collectMboxAttachment
             continue;
         }
         const QString name = attachmentDisplayName(att, att_idx);
-        auto data = parser->readAttachmentData(message_index, att.index);
+        auto data = parser->readAttachmentData(sak::MboxMessageIndex{message_index},
+                                               sak::MboxAttachmentIndex{att.index});
         if (!data.has_value()) {
             result.errors.append(
                 QStringLiteral("Attachment '%1' in message %2 could not be read and was omitted")

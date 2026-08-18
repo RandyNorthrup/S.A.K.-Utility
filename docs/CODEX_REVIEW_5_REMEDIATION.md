@@ -4141,12 +4141,24 @@ behaviour is what catches defects; the percentage only proves nothing was skippe
     findDisk REJECTS a PartitionNumber (the exact silent swap this item names); if any of those
     regress the file stops compiling. Two runtime slots pin value/equality semantics and the
     converted finders' resolve-and-fail-closed behaviour. Full Release ctest 249/249.
-  - OPEN (remaining families, follow-on slices): the disk/partition STRUCT FIELDS themselves
-    (PartitionInfoEx/PartitionDiskInfo/UnallocatedRegion/PartitionOperation .disk_number /
-    .partition_number, ~294 use sites) are still plain uint32, so only the finder boundary is
-    type-checked so far, not every construction; and the other two named families are untouched
-    -- MBOX message-index vs attachment-index (MboxParser::readAttachmentData(int,int) and the
-    ~22 export/conversion call sites) and validated-vs-raw target. Each is its own gated slice.
+  - SLICE 2 DONE 2026-08-18: the MBOX message-index vs attachment-index family's canonical
+    silent-swap boundary. MboxParser::readAttachmentData(int message_index, int attachment_index)
+    -- two adjacent same-type ints that could be passed swapped and still compile, silently
+    returning the wrong attachment's bytes -- now takes MboxMessageIndex / MboxAttachmentIndex
+    (mbox_parser.h, both SIGNED-backed so the reads' explicit negative-index rejection is kept).
+    Both production callers (email_export_worker.cpp, email_inspector_controller.cpp) and the six
+    test call sites wrap at the call. The guarantee is a BUILD gate in test_mbox_parser.cpp:
+    static_asserts prove -- via std::is_invocable -- that the swapped argument order does NOT
+    compile and a bare int cannot stand in for either index; regress it and the file stops
+    building. Full Release ctest 249/249.
+  - OPEN (remaining families/sites, follow-on slices): the disk/partition STRUCT FIELDS
+    themselves (PartitionInfoEx/PartitionDiskInfo/UnallocatedRegion/PartitionOperation
+    .disk_number / .partition_number, ~294 use sites incl. 28 JSON serialize/deserialize
+    boundaries -- an atomic all-or-nothing type change, deliberately a dedicated later slice)
+    are still plain uint32, so only the finder boundary is type-checked, not every construction;
+    the rest of the MBOX message-index API (readMessageDetail / readAllAttachments /
+    loadMessageDetail single-param) is still int; and the validated-vs-raw target family is
+    untouched. Each is its own gated slice.
       (message index vs row index, disk vs partition index, validated vs raw target)
 
 ### G15 - compiler and CI hardening

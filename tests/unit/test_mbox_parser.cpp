@@ -14,6 +14,25 @@
 #include <QtTest/QtTest>
 
 #include <atomic>
+#include <type_traits>
+
+// R5-G14-19: the message-index / attachment-index guarantee is a COMPILE-TIME gate.
+// Swapping the two arguments, or passing a bare int for either, must not compile; if
+// that regresses this file stops building, which is what makes the silent swap
+// readAttachmentData(message, attachment) named by the finding impossible to ship.
+static_assert(std::is_invocable_v<decltype(&MboxParser::readAttachmentData),
+                                  MboxParser&,
+                                  sak::MboxMessageIndex,
+                                  sak::MboxAttachmentIndex>,
+              "readAttachmentData must accept (MboxMessageIndex, MboxAttachmentIndex)");
+static_assert(!std::is_invocable_v<decltype(&MboxParser::readAttachmentData),
+                                   MboxParser&,
+                                   sak::MboxAttachmentIndex,
+                                   sak::MboxMessageIndex>,
+              "swapped index types must be a compile error -- the silent swap this closes");
+static_assert(
+    !std::is_invocable_v<decltype(&MboxParser::readAttachmentData), MboxParser&, int, int>,
+    "a bare int must not implicitly become a message or attachment index");
 
 class TestMboxParser : public QObject {
     Q_OBJECT
@@ -428,15 +447,16 @@ void TestMboxParser::readAttachmentDataAlignsWithRecursiveEnumeration() {
     QCOMPARE(detail->attachments.at(1).long_filename, QStringLiteral("report.pdf"));
 
     // Bytes at each index must match the name at that index -- not the old top-level-only mapping.
-    auto bytes0 = parser.readAttachmentData(0, 0);
+    auto bytes0 = parser.readAttachmentData(sak::MboxMessageIndex{0}, sak::MboxAttachmentIndex{0});
     QVERIFY(bytes0.has_value());
     QCOMPARE(*bytes0, QByteArray("ABC"));
-    auto bytes1 = parser.readAttachmentData(0, 1);
+    auto bytes1 = parser.readAttachmentData(sak::MboxMessageIndex{0}, sak::MboxAttachmentIndex{1});
     QVERIFY(bytes1.has_value());
     QCOMPARE(*bytes1, QByteArray("DEF"));
 
     // Out-of-range index is rejected.
-    QVERIFY(!parser.readAttachmentData(0, 2).has_value());
+    QVERIFY(!parser.readAttachmentData(sak::MboxMessageIndex{0}, sak::MboxAttachmentIndex{2})
+                 .has_value());
     parser.close();
 }
 
@@ -488,7 +508,8 @@ void TestMboxParser::concurrentReadsDoNotRace() {
         const int idx = t % kMsgs;
         futures.append(
             QtConcurrent::run([&parser, idx, &mismatches, &expectedPayloads, &expectedSubjects]() {
-                const auto bytes = parser.readAttachmentData(idx, 0);
+                const auto bytes = parser.readAttachmentData(sak::MboxMessageIndex{idx},
+                                                             sak::MboxAttachmentIndex{0});
                 if (!bytes || *bytes != expectedPayloads[idx]) {
                     mismatches.fetch_add(1);
                     return;
@@ -807,7 +828,8 @@ void TestMboxParser::malformedBase64AttachmentFailsClosed() {
     parser.open(f.fileName());
     QVERIFY(parser.isOpen());
     QVERIFY(!parser.readMessageDetail(0).has_value());
-    QVERIFY(!parser.readAttachmentData(0, 0).has_value());
+    QVERIFY(!parser.readAttachmentData(sak::MboxMessageIndex{0}, sak::MboxAttachmentIndex{0})
+                 .has_value());
     QVERIFY(!parser.readAllAttachments(0).has_value());
     parser.close();
 }
@@ -899,7 +921,7 @@ void TestMboxParser::trailingPartRecoveredWhenClosingDelimiterMissing() {
     QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("tail.bin"));
 
     // The recovered part's bytes are reachable (index 0 must resolve to the trailing attachment).
-    auto bytes = parser.readAttachmentData(0, 0);
+    auto bytes = parser.readAttachmentData(sak::MboxMessageIndex{0}, sak::MboxAttachmentIndex{0});
     QVERIFY(bytes.has_value());
     QVERIFY(bytes->contains("tail-bytes"));
     parser.close();

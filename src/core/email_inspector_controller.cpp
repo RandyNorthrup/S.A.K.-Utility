@@ -282,7 +282,8 @@ void EmailInspectorController::loadAttachmentContent(uint64_t message_node_id,
     } else if (m_file_type == FileType::Mbox) {
         const int msg_idx = static_cast<int>(message_node_id);
         runTracked([this, msg_idx, attachment_index]() {
-            auto result = m_mbox_parser->readAttachmentData(msg_idx, attachment_index);
+            auto result = m_mbox_parser->readAttachmentData(
+                sak::MboxMessageIndex{msg_idx}, sak::MboxAttachmentIndex{attachment_index});
             if (result) {
                 auto detail = m_mbox_parser->readMessageDetail(msg_idx);
                 QString filename;

@@ -292,14 +292,14 @@ std::expected<sak::MboxMessageDetail, error_code> MboxParser::readMessageDetail(
     return detail;
 }
 
-std::expected<QByteArray, error_code> MboxParser::readAttachmentData(int message_index,
-                                                                     int attachment_index) {
+std::expected<QByteArray, error_code> MboxParser::readAttachmentData(
+    sak::MboxMessageIndex message_index, sak::MboxAttachmentIndex attachment_index) {
     const QMutexLocker locker(&m_file_mutex);
     // Clear a stale cancel so a prior abort does not block this extraction (B7-24).
     // readAllAttachments (called below) intentionally does NOT reset, so a cancel
     // that arrives during THIS call still interrupts it.
     m_cancelled.store(false, std::memory_order_relaxed);
-    if (attachment_index < 0) {
+    if (attachment_index.value() < 0) {
         return std::unexpected(error_code::invalid_argument);
     }
     // Route through readAllAttachments so an attachment index means the SAME thing here as in
@@ -307,14 +307,14 @@ std::expected<QByteArray, error_code> MboxParser::readAttachmentData(int message
     // The old bespoke extractor counted only TOP-LEVEL parts, so any nested multipart (e.g. an
     // inline image in multipart/related plus a top-level attachment) mis-paired names and bytes for
     // every caller. As a bonus this parses the message once, not twice.
-    const auto all = readAllAttachments(message_index);
+    const auto all = readAllAttachments(message_index.value());
     if (!all) {
         return std::unexpected(all.error());
     }
-    if (attachment_index >= all->size()) {
+    if (attachment_index.value() >= all->size()) {
         return std::unexpected(error_code::invalid_argument);
     }
-    return (*all)[attachment_index].data;
+    return (*all)[attachment_index.value()].data;
 }
 
 // ============================================================================
