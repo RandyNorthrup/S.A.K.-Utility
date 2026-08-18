@@ -33,7 +33,6 @@ FormatStyle: file
 # RESTORE-PENDING BUG CLASSES (re-enable as their debt is paid; highest priority -- these
 # hid real defects in the raw-filesystem parsers):
 #   bugprone-narrowing-conversions   qsizetype/uint64 truncation.
-#   misc-no-recursion                recursion with no depth or visited-set bound.
 #
 # SUPERSEDED BY A DEDICATED PROJECT GATE (running the clang-tidy version too would
 # CONTRADICT that gate -- see R5-G21-1):
@@ -78,6 +77,22 @@ FormatStyle: file
 #   bugprone-easily-swappable-parameters
 #                                    fires on nearly every (x,y)/(width,height)/(offset,size)
 #                                    pair; too noisy to be a defensible gate.
+#   misc-no-recursion                a whole-tree audit (2026-08-18, R5-G2) found 118 first-party
+#                                    functions in recursive call chains and EVERY one is already
+#                                    bounded/guarded: the raw-filesystem parsers (APFS/HFS/PST)
+#                                    cap depth AND carry a visited-set against a crafted on-disk
+#                                    cycle (kMaxBTreeDepth, kMaxFsTreeDepth, kMaxObjectMapDepth,
+#                                    seen_nodes/visited); the directory walkers skip symlinks and
+#                                    NTFS reparse points / junctions and cap depth (copyDirectory,
+#                                    treeSize, scanDirectoryRecursive, *NoReparse); the mbox MIME
+#                                    walk caps nesting (kMaxMimeDepth); the AI tool-dispatch and
+#                                    the in-memory folder-tree walks are bounded mutual recursion
+#                                    over finite structures. So the check yields 118 false
+#                                    positives and zero true positives here -- runaway recursion
+#                                    is prevented by the per-site guards, not this lint. Enabling
+#                                    it would need 118 permanent NOLINTs (and a NOLINT on every
+#                                    future recursive helper) against the minimal-suppressions
+#                                    policy, catching no current defect. Kept off by design.
 #
 # PURE STYLE, NO CORRECTNESS VALUE (off to avoid churn against the established house style):
 #   modernize-use-trailing-return-type   house style uses leading return types.

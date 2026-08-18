@@ -18,7 +18,7 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-18: 632 [x] / 28 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
+as of 2026-08-18: 633 [x] / 27 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
 this window -- 41 owner-decision / tool-limit items were verified against the live config and
 settled to [x]; then the gate-audit batch closed R5-G21-1 (gate-pair contradiction), R5-G21-3
@@ -33,7 +33,11 @@ G18-1 is); then R5-G14-17 closed by building a shared process fault-injection se
 injection kept as the design; then R5-G23-10 closed by building a headless long-session
 resource-leak soak (tests/unit/test_resource_soak.cpp: 128 real process launches after a
 warmup, asserting no growth in kernel-handle / GDI / USER object counts or working set against
-a post-warmup baseline). That leaves 28 [~] = ~6 blocked-on-user + ~22 locally
+a post-warmup baseline); then R5-G2 misc-no-recursion was settled by an audit-backed
+design-decision (a whole-tree misc-no-recursion run found 118 recursive functions, all already
+depth/visited/symlink-guarded -- zero defects; enabling would be 118 false-positive NOLINTs, so
+it stays off, reclassified in .clang-tidy from restore-pending to by-design; owner-approved).
+That leaves 27 [~] = ~6 blocked-on-user + ~21 locally
 actionable; the single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
@@ -2647,7 +2651,7 @@ misc-no-recursion (the recursion with no depth or visited-set bound).
 - [x] R5-G2 hicpp-signed-bitwise SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 58); pedantic hicpp rule dominated by benign flag/mask ops, not among the owner bug-class checks, and the parser integer class was covered by the narrowing/widening audits. Nothing pending.
 - [x] R5-G2 hicpp-no-array-decay SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 59); alias of the also-disabled pro-bounds-array-to-pointer-decay, noisy on ABI-correct C arrays. Owner-scoped, nothing pending.
 - [x] R5-G2 misc-non-private-member-variables-in-classes SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 61); encapsulation style rule conflicting with the codebase public-aggregate convention. Nothing pending.
-- [~] R5-G2 re-enable and fix: misc-no-recursion
+- [x] R5-G2 misc-no-recursion SETTLED by audit-backed design-decision (2026-08-18, owner-approved): the restore-pending "fix" is DONE and VERIFIED -- a whole-tree run of misc-no-recursion (clang-cl compile_commands.json emitted via scripts/generate_compile_commands.ps1 / an equivalent Ninja+clang-cl configure, then the check over all 304 first-party src TUs) surfaced 118 functions in recursive call chains, and a per-site audit confirmed EVERY one is already bounded and guarded. Categories: (1) raw-filesystem parsers over attacker-controlled on-disk bytes -- PST (kMaxBTreeDepth=20 + a QSet<uint64_t> visited-set rejecting a crafted page cycle), APFS reader/writer (kMaxObjectMapDepth/kMaxFsTreeDepth=16 + kMaxFsTreeNodes/Records caps + seen_nodes/visited_directories_), HFS (visited_directories_), ext (bounded extent-tree descent); (2) directory walkers over the live filesystem -- copyDirectory/treeSize/scanDirectoryRecursive/calculateDirectorySize/deleteDirectoryTreeDepthFirst/*NoReparse all skip symlinks and NTFS reparse points/junctions (the infinite-recursion vector) and/or cap depth + carry a visited-dir set; (3) the mbox MIME walk (kMaxMimeDepth=20, fails closed); (4) bounded mutual recursion over finite in-memory structures (the AI tool-dispatch state machine ~20 fns, email/file GUI folder-tree walks). ZERO unguarded recursions -> zero current defects: runaway recursion is prevented by the per-site guards, not this lint. Enabling the check therefore yields 118 false positives / 0 true positives and would require 118 permanent NOLINTs plus a NOLINT on every future recursive helper -- against the minimal-suppressions policy (R5-G10-5) and the safe-subsets stance (R5-G12-4), for no defect caught. Owner adjudicated (2026-08-18): keep it off, documented. Reclassified in .clang-tidy from RESTORE-PENDING to the INTRINSIC/by-design category with this justification (.clang-tidy comment above the folded Checks scalar; -misc-no-recursion stays in the scalar). Nothing pending.
 - [x] R5-G2 misc-include-cleaner SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 63); include-hygiene tooling overlapping the G6 dead-includes work, in the tier the owner scoped out. Nothing pending.
 - [x] R5-G2 modernize-use-trailing-return-type SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 65); a pure syntactic-preference modernization in the safe-subsets-only tier the owner scoped out. Nothing pending.
 - [x] R5-G2 modernize-avoid-c-arrays SETTLED by decision: safe subset already converted (522e275) and the check stays disabled (.clang-tidy line 66); the 187-finding remainder is ABI-correct Win32/on-disk/string-literal C arrays. Nothing pending.
