@@ -486,13 +486,16 @@ bool CleanupWorker::removeFilePermanent(const QString& path) {
 #endif
 }
 
-CleanupWorker::RecycleOutcome CleanupWorker::attemptRecycle(const QString& path,
-                                                            bool& recycleFallback) {
-    if (m_useRecycleBin) {
+CleanupWorker::RecycleOutcome CleanupWorker::decideRecycle(const QString& path,
+                                                           bool useRecycleBin,
+                                                           bool requireRecoverable,
+                                                           const RecycleProbes& probes,
+                                                           bool& recycleFallback) {
+    if (useRecycleBin) {
         // Recycle-only mode GUARANTEES recoverability: refuse when the volume has no Recycle Bin OR
         // the item is too large to fit it (the shell silently permanent-deletes in both cases),
         // leaving it in place for review instead.
-        if (m_requireRecoverable && !recoverableRecycleAllowed(path)) {
+        if (requireRecoverable && !probes.recoverableAllowed()) {
             sak::logWarning("Auto-clean leaves " + path.toStdString() +
                             " in place: no Recycle Bin on volume, or too large to guarantee "
                             "recoverable");
@@ -503,15 +506,15 @@ CleanupWorker::RecycleOutcome CleanupWorker::attemptRecycle(const QString& path,
         // paths). Re-verify by handle IMMEDIATELY before the shell call so an ancestor swapped into
         // a junction since deleteFile's gate is caught. A redirect here refuses OUTRIGHT -- it must
         // never fall through to a permanent delete of the swapped-in target.
-        if (!deleteTimeRedirectSafe(path)) {
+        if (!probes.redirectSafe()) {
             return RecycleOutcome::RefusedRedirected;
         }
-        if (sendPathToRecycleBin(path)) {
+        if (probes.doRecycle()) {
             return RecycleOutcome::Recycled;
         }
         // Recycle-only (automatic) mode: never fall through to permanent deletion -- report failed
         // and leave the item in place so an auto-deleted item is always recoverable.
-        if (m_requireRecoverable) {
+        if (requireRecoverable) {
             sak::logWarning("Recycle bin failed for " + path.toStdString() +
                             "; auto-clean leaves it in place (no permanent delete)");
             return RecycleOutcome::RefusedRecoverable;
@@ -525,12 +528,25 @@ CleanupWorker::RecycleOutcome CleanupWorker::attemptRecycle(const QString& path,
     }
     // Recoverable required but recycle disabled: refuse to permanently delete (defensive -- auto-
     // clean always pairs requireRecoverable with useRecycleBin, but never destroy from this mode).
-    if (m_requireRecoverable) {
+    if (requireRecoverable) {
         sak::logWarning("Recoverable-only cleanup with recycle disabled; leaving " +
                         path.toStdString() + " in place");
         return RecycleOutcome::RefusedRecoverable;
     }
     return RecycleOutcome::FallThrough;
+}
+
+CleanupWorker::RecycleOutcome CleanupWorker::attemptRecycle(const QString& path,
+                                                            bool& recycleFallback) {
+    // Bind the real filesystem probes lazily; decideRecycle invokes each only when its branch is
+    // reached, so the side-effect ordering is identical to the previous inline implementation.
+    return decideRecycle(path,
+                         m_useRecycleBin,
+                         m_requireRecoverable,
+                         RecycleProbes{[&] { return recoverableRecycleAllowed(path); },
+                                       [&] { return deleteTimeRedirectSafe(path); },
+                                       [&] { return sendPathToRecycleBin(path); }},
+                         recycleFallback);
 }
 
 bool CleanupWorker::deleteFile(const QString& path) {

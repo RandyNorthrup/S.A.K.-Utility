@@ -13,11 +13,24 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QRandomGenerator>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
 
 using namespace sak;
+
+namespace {
+// A random blob straddling empty / tiny / multi-KB so a truncated or partial write is visible.
+QByteArray randomBlob(QRandomGenerator& rng) {
+    const int size = static_cast<int>(rng.bounded(0u, 4096u));
+    QByteArray blob(size, Qt::Uninitialized);
+    for (int i = 0; i < size; ++i) {
+        blob[i] = static_cast<char>(rng.bounded(256u));
+    }
+    return blob;
+}
+}  // namespace
 
 class UserDataManagerTests : public QObject {
     Q_OBJECT
@@ -452,6 +465,73 @@ private Q_SLOTS:
         QVERIFY(UserDataManager::atomicReplaceFile(tmp2, target2));
         QVERIFY(QFileInfo::exists(target2));
         QVERIFY(!QFileInfo::exists(tmp2));
+    }
+
+    // --- R5-G23-7 destructive-operation invariants as PROPERTY TESTS:
+    //   invariant 4 (rollback / fail closed) + invariant 2 (source stays intact until the replace
+    //   is known-good). atomicReplaceFile must leave the target in exactly ONE of two states -- the
+    //   full original or the full new content -- and NEVER absent, truncated, or partial, whether
+    //   the replace succeeds or fails. Fuzz random contents across a 4-way
+    //   (target-pre-exists x induced-failure) matrix with a fixed seed. Induced failure = a MISSING
+    //   staged tmp, which makes the underlying atomic move (MoveFileExW on Windows) fail
+    //   deterministically; the guard must then drop the stage and leave the original untouched.
+    //   Non-vacuous (G18-4): a naive delete-then-rename would leave the target absent on the
+    //   failure rows (red), and returning true on a failed move would leave target != new (red).
+    void atomicReplaceFile_neverLeavesTargetPartialOrAbsent() {
+        QTemporaryDir work;
+        QVERIFY(work.isValid());
+        QRandomGenerator rng(0x5A'7C'0D'E5u);
+        constexpr int kIterations = 2000;
+        for (int i = 0; i < kIterations; ++i) {
+            const QString target = QDir(work.path()).filePath(QStringLiteral("t_%1.bin").arg(i));
+            const QString tmp = target + QStringLiteral(".new");
+            const bool targetPreExists = (rng.bounded(2u) == 0u);
+            const bool induceFailure = (rng.bounded(2u) == 0u);
+
+            QByteArray original;
+            if (targetPreExists) {
+                original = randomBlob(rng);
+                QFile t(target);
+                QVERIFY(t.open(QIODevice::WriteOnly));
+                QCOMPARE(t.write(original), static_cast<qint64>(original.size()));
+                t.close();
+            }
+            QByteArray staged;
+            if (!induceFailure) {
+                staged = randomBlob(rng);
+                QFile s(tmp);
+                QVERIFY(s.open(QIODevice::WriteOnly));
+                QCOMPARE(s.write(staged), static_cast<qint64>(staged.size()));
+                s.close();
+            }  // else: leave tmp absent so the atomic move fails deterministically.
+
+            const bool ok = UserDataManager::atomicReplaceFile(tmp, target);
+
+            // The stage is ALWAYS gone afterwards (success moves it; failure drops it).
+            QVERIFY2(!QFileInfo::exists(tmp),
+                     qPrintable(QStringLiteral("stage left behind at i=%1").arg(i)));
+            if (ok) {
+                QVERIFY2(!induceFailure,
+                         qPrintable(
+                             QStringLiteral("success returned on induced failure at i=%1").arg(i)));
+                QFile r(target);
+                QVERIFY(r.open(QIODevice::ReadOnly));
+                QCOMPARE(r.readAll(), staged);  // full NEW content, never partial
+            } else if (targetPreExists) {
+                // Fail closed: the FULL original survives, never truncated or half-new.
+                QFile r(target);
+                QVERIFY2(r.open(QIODevice::ReadOnly),
+                         qPrintable(
+                             QStringLiteral("original destroyed on failure at i=%1").arg(i)));
+                QCOMPARE(r.readAll(), original);
+            } else {
+                QVERIFY2(!QFileInfo::exists(target),
+                         qPrintable(
+                             QStringLiteral("partial target created on failure at i=%1").arg(i)));
+            }
+            QFile::remove(target);
+            QFile::remove(tmp);
+        }
     }
 
     // End-to-end: an arbitrary directory with no sidecar is left intact.

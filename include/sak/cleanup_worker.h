@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QVector>
 
+#include <functional>
 #include <type_traits>
 
 // Global-namespace unit-test class, befriended below so it can reach the pure static
@@ -130,6 +131,29 @@ private:
                              ///< (failed)
         FallThrough          ///< Proceed to permanent deletion
     };
+
+    /// Lazy I/O probes for the recycle decision. Each is invoked at most once and only if the
+    /// decision actually reaches its branch, so a probe that would touch the filesystem never runs
+    /// after an earlier refusal -- this is what keeps decideRecycle side-effect-ordered exactly
+    /// like the inline code it replaced.
+    struct RecycleProbes {
+        std::function<bool()> recoverableAllowed;  ///< volume has a Recycle Bin AND item fits it
+        std::function<bool()> redirectSafe;  ///< delete-time by-handle re-verify: not redirected
+        std::function<bool()> doRecycle;     ///< perform the shell recycle; true on success
+    };
+
+    /// @brief PURE decision core of attemptRecycle: given the two modes and the three lazy probes,
+    ///        pick the RecycleOutcome. The invariant it must uphold (R5-G23-7 "recycle means
+    ///        recycle"): when @p requireRecoverable is set the result is NEVER FallThrough -- a
+    ///        recycle failure leaves the item in place, never escalated to a permanent delete.
+    ///        Separated out so the full decision truth table can be exhaustively tested headless
+    ///        (TestCleanupWorker), which real SHFileOperation I/O cannot be.
+    [[nodiscard]] static RecycleOutcome decideRecycle(const QString& path,
+                                                      bool useRecycleBin,
+                                                      bool requireRecoverable,
+                                                      const RecycleProbes& probes,
+                                                      bool& recycleFallback);
+
     /// @brief Try the Recycle Bin (when enabled), honoring recoverable-only mode. Sets
     ///        @p recycleFallback when a recycle failure falls through to permanent deletion.
     [[nodiscard]] RecycleOutcome attemptRecycle(const QString& path, bool& recycleFallback);

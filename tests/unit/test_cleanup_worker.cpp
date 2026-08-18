@@ -34,6 +34,8 @@ private Q_SLOTS:
     void requireRecoverable_neverPermanentlyDeletes();
     // R5 p8_appaction-3: recycle mode implies recoverable-only unless opted out
     void recycleMode_defaultsToRecoverableOnly();
+    // R5-G23-7 invariant 3 "recycle means recycle" as an exhaustive property test
+    void decideRecycle_recoverableModeNeverPermanentlyDeletes();
 
     // Cancellation is not success (B10-30)
     void cancelledBeforeStart_emitsCancelledNotComplete();
@@ -231,6 +233,58 @@ void TestCleanupWorker::recycleMode_defaultsToRecoverableOnly() {
     // reviewed each item) can still opt out explicitly.
     recycling.setRequireRecoverable(false);
     QVERIFY(!recycling.requireRecoverable());
+}
+
+void TestCleanupWorker::decideRecycle_recoverableModeNeverPermanentlyDeletes() {
+    // R5-G23-7 invariant 3 "recycle means recycle" as a PROPERTY test: exhaustively drive the pure
+    // recycle decision over ALL 32 combinations of its five boolean inputs and assert the invariant
+    // on every one. The probes count their own calls so laziness (the shell recycle is attempted at
+    // most once and never after an earlier refusal) is asserted too -- that laziness is what makes
+    // the callback refactor behavior-identical to the inline code decideRecycle replaced.
+    // Non-vacuous (G18-4): removing either requireRecoverable guard before a FallThrough lets a
+    // recoverable-mode recycle failure escalate to permanent, turning the first assertion red.
+    using RO = CleanupWorker::RecycleOutcome;
+    for (int bits = 0; bits < 32; ++bits) {
+        const bool useRecycle = (bits & 1) != 0;
+        const bool requireRecov = (bits & 2) != 0;
+        const bool recoverAllowed = (bits & 4) != 0;
+        const bool redirectSafe = (bits & 8) != 0;
+        const bool recycleSucceeds = (bits & 16) != 0;
+        int recoverCalls = 0;
+        int redirectCalls = 0;
+        int doRecycleCalls = 0;
+        bool fallback = false;
+        CleanupWorker::RecycleProbes probes{[&] {
+                                                ++recoverCalls;
+                                                return recoverAllowed;
+                                            },
+                                            [&] {
+                                                ++redirectCalls;
+                                                return redirectSafe;
+                                            },
+                                            [&] {
+                                                ++doRecycleCalls;
+                                                return recycleSucceeds;
+                                            }};
+        const RO outcome = CleanupWorker::decideRecycle(
+            QStringLiteral("C:/probe/item.tmp"), useRecycle, requireRecov, probes, fallback);
+        const QByteArray tag = QStringLiteral("bits=%1").arg(bits).toUtf8();
+
+        if (requireRecov) {
+            QVERIFY2(outcome != RO::FallThrough, tag.constData());  // recoverable NEVER permanent
+            QVERIFY2(!fallback, tag.constData());
+        }
+        if (outcome == RO::Recycled) {
+            QVERIFY2(recycleSucceeds, tag.constData());  // Recycled claimed only on real success
+        }
+        if (outcome == RO::FallThrough) {
+            QVERIFY2(!requireRecov, tag.constData());    // permanent only when NOT recoverable-only
+        }
+        QVERIFY2(doRecycleCalls <= 1, tag.constData());  // shell recycle attempted at most once
+        if (!useRecycle) {
+            QVERIFY2(doRecycleCalls == 0, tag.constData());  // no recycle probe when disabled
+        }
+    }
 }
 
 void TestCleanupWorker::cancelledBeforeStart_emitsCancelledNotComplete() {

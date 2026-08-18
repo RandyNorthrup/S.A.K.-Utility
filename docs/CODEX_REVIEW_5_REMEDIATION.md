@@ -18,13 +18,15 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-17: 626 [x] / 35 [~] / 1 [ ] (G18-1 mutation-testing COMPLETE and LEDGER-4
+as of 2026-08-17: 627 [x] / 34 [~] / 1 [ ] (G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
 this window -- 41 owner-decision / tool-limit items were verified against the live config and
 settled to [x]; then the gate-audit batch closed R5-G21-1 (gate-pair contradiction), R5-G21-3
 (strictest-setting justification in-config) and R5-G21-4 (fail-closed-on-missing-tool audit,
-which fixed a real scan_secrets fail-open), leaving 35 [~] = ~6 blocked-on-user + ~29 locally
-actionable; the single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
+which fixed a real scan_secrets fail-open); then R5-G23-7 closed by property-testing all four
+destructive-operation invariants (write-confinement, source-intact, recycle-means-recycle,
+rollback/fail-closed). That leaves 34 [~] = ~6 blocked-on-user + ~28 locally actionable; the
+single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
 [x] fixed (real work done, e.g. P6-18 searchCancelled, G18-10 wait-misuse), [x] verified-done
@@ -4190,8 +4192,8 @@ rather than as generic advice.
       payloads. Pin every one to a hash, scan for known CVEs, and publish an SBOM.
       Highest-value item in this group: VERIFY THE AUTHENTICODE SIGNATURE OF EVERY
       BUNDLED EXECUTABLE BEFORE RUNNING IT, because several are run elevated
-- [~] R5-G23-7 DESTRUCTIVE-OPERATION INVARIANTS AS PROPERTY TESTS. This application
-  - IN PROGRESS: invariant 1 "NEVER WRITE OUTSIDE THE VALIDATED TARGET" is now property-tested on both raw-write paths (test_partition_manager_core.cpp, fixed-seed boundary-steered property tests over new ...ForTesting seams): slice 1 (commit 40f31570) the format writer per-block guard writeBlock -- a write is accepted only when it lands entirely inside [0, containerBlockCount*blockSize), proven via a QBuffer that would grow on any escape; slice 2 (commit 845868df) the commit/repair path -- writeApfsRepairBlock (device size is authoritative so a hostile over-claimed nx_block_count cannot widen the range + NXSB block-0 superblock is protected), apfsWritableBlockBound (device-authoritative), and apfsBlockByteOffset (overflow-safe, fails closed leaving *offset untouched). Remaining invariants, still to build: source stays intact until destination is verified; recycle means recycle; every destructive op has a rollback or explicitly acknowledges none. (The items once bundled with G23-7 have since landed: crash reporting, startup budget, config schema, doc-accuracy, build-lint, error-message uniqueness.)
+- [x] R5-G23-7 DESTRUCTIVE-OPERATION INVARIANTS AS PROPERTY TESTS. This application
+  - DONE 2026-08-17: all four destructive-operation invariants are now property-tested. Invariant 1 "NEVER WRITE OUTSIDE THE VALIDATED TARGET" is property-tested on both raw-write paths (test_partition_manager_core.cpp, fixed-seed boundary-steered property tests over new ...ForTesting seams): slice 1 (commit 40f31570) the format writer per-block guard writeBlock -- a write is accepted only when it lands entirely inside [0, containerBlockCount*blockSize), proven via a QBuffer that would grow on any escape; slice 2 (commit 845868df) the commit/repair path -- writeApfsRepairBlock (device size is authoritative so a hostile over-claimed nx_block_count cannot widen the range + NXSB block-0 superblock is protected), apfsWritableBlockBound (device-authoritative), and apfsBlockByteOffset (overflow-safe, fails closed leaving *offset untouched). Invariants 2 "SOURCE STAYS INTACT UNTIL THE REPLACE IS KNOWN-GOOD" and 4 "ROLLBACK / FAIL CLOSED" are covered together by fuzzing UserDataManager::atomicReplaceFile over a (target-pre-exists x induced-failure) matrix (test_user_data_manager.cpp atomicReplaceFile_neverLeavesTargetPartialOrAbsent, 2000 iters, fixed seed): the target is always left as EXACTLY the full original or the full new content -- never absent, truncated, or partial -- and the stage is always dropped; the induced failure (a missing staged tmp) makes the atomic MoveFileExW fail deterministically so the fail-closed branch is exercised. Invariant 3 "RECYCLE MEANS RECYCLE" -- the recycle decision core was extracted from CleanupWorker::attemptRecycle into a PURE decideRecycle (the three filesystem probes passed as LAZY callbacks so side-effect order is byte-identical to the inline code) and EXHAUSTIVELY tested over all 32 combinations of its five boolean inputs (test_cleanup_worker.cpp decideRecycle_recoverableModeNeverPermanentlyDeletes): recoverable-only mode is proven to NEVER return FallThrough (permanent delete), Recycled is claimed only on a real shell success, and probe laziness is asserted; the pre-existing example tests (requireRecoverable_neverPermanentlyDeletes, recycleMode_defaultsToRecoverableOnly) stay green, confirming the refactor is behavior-preserving. (The items once bundled with G23-7 have since landed: crash reporting, startup budget, config schema, doc-accuracy, build-lint, error-message uniqueness.)
       formats disks and deletes user profiles. State the invariants once and fuzz them:
       never write outside the validated target; the source stays intact until the
       destination is verified; recycle means recycle; and every destructive operation
