@@ -18,7 +18,7 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-18: 633 [x] / 27 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
+as of 2026-08-18: 634 [x] / 26 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
 this window -- 41 owner-decision / tool-limit items were verified against the live config and
 settled to [x]; then the gate-audit batch closed R5-G21-1 (gate-pair contradiction), R5-G21-3
@@ -36,8 +36,12 @@ warmup, asserting no growth in kernel-handle / GDI / USER object counts or worki
 a post-warmup baseline); then R5-G2 misc-no-recursion was settled by an audit-backed
 design-decision (a whole-tree misc-no-recursion run found 118 recursive functions, all already
 depth/visited/symlink-guarded -- zero defects; enabling would be 118 false-positive NOLINTs, so
-it stays off, reclassified in .clang-tidy from restore-pending to by-design; owner-approved).
-That leaves 27 [~] = ~6 blocked-on-user + ~21 locally
+it stays off, reclassified in .clang-tidy from restore-pending to by-design; owner-approved);
+then R5-G6-3 dead-include detection closed -- clang-include-cleaner was run tree-wide over the
+first-party TUs and 24 genuinely-dead includes were removed (10 first-party + 12 standard-library
++ 2 in logger.cpp, which clang-cl cannot compile so it was audited by hand), leaving 45 tool
+suggestions that are all umbrella / directly-used false positives kept by design.
+That leaves 26 [~] = ~6 blocked-on-user + ~20 locally
 actionable; the single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
@@ -3032,7 +3036,7 @@ produced results.
   - RESOLVED 2026-08-12 [fixed]: ran the whole-program cppcheck unusedFunction with a build-dir AND tests/ included (557 candidates), then EVIDENCE-VERIFIED the check is unusable as a dead-code oracle in this Qt/GUI codebase: sampled candidates are LIVE (aiComposerStyle is called in ai_assistant_panel.cpp:4555, activeLeaseCount in test_ai_tool_dispatcher.cpp:188) -- cppcheck cannot connect header-inline/GUI/moc/test callers. Per the skill ('public API unused internally is the point') bulk deletion would delete working code, so none was done.
 - [x] R5-G6-2 clang-tidy misc-unused-* and unusedPrivateFunction (2 already reported)
   - RESOLVED 2026-08-12 [fixed]: cppcheck --enable=all (whole-tree, now a CI job via G7-2) reports no unusedPrivateFunction/unusedStructMember; the 2 historical clang-tidy reports are addressed. No reliably-detectable dead private members remain.
-- [~] R5-G6-3 clang-include-cleaner for dead includes (ships with the installed LLVM)
+- [x] R5-G6-3 clang-include-cleaner for dead includes (ships with the installed LLVM)
   - PROGRESS 2026-08-18: clang-include-cleaner was RUN tree-wide over all 304 first-party src TUs
     (against a clang-cl compile_commands.json emitted via a Ninja+clang-cl+vcpkg configure). It
     reported 67 removal suggestions across 46 files, triaged as follows. (a) 41 are Win32/system
@@ -3059,9 +3063,18 @@ produced results.
     advanced_search_panel and file_explorer_properties_dialog both DIRECTLY call QtConcurrent::run, and
     the umbrella <QtConcurrent> is the header that provides it -- another directly-used-symbol false
     positive (same class as the error_codes.h/partition_executor.h keeps above), not dead.
-  - OPEN: one first-party TU errored out of the tree-wide scan (clang-include-cleaner timeout/parse) and
-    was never analyzed; naming and resolving it, plus the formal [x] settle of the umbrella-only residual,
-    is the remaining G6-3 work.
+  - SETTLED 2026-08-18 [x]: the one TU that failed the tree scan is src/core/logger.cpp -- clang-include-
+    cleaner cannot analyze it via the clang-cl DB because clang-cl rejects its exception code ("cannot use
+    'try' with exceptions disabled", the same clang-cl exceptions blocker G14-4 hits); it compiles fine
+    under the real MSVC build, so this is a toolchain limitation of the DB, not a code defect. Audited its
+    10 includes MANUALLY instead (grep for every symbol of each header): 8 are used (<algorithm> via
+    std::ranges::sort, <atomic>, <chrono>, <cstdint>, <cstdio>, <iostream> via std::cerr, <vector>) and 2
+    were genuinely dead -- <iomanip> and <sstream>, zero symbol use -- and REMOVED, gated 249/249. With
+    logger.cpp covered, all 304 first-party TUs are accounted for and every genuinely-dead include is gone
+    (24 removed total: 10 first-party + 12 std + 2 logger). The remaining 45 tool suggestions are ALL
+    verified false positives -- 41 Win32/system umbrella headers (clang-cl-dead != MSVC-dead) and 4
+    directly-used symbols (error_codes.h, partition_executor.h, <QtConcurrent> x2) -- kept BY DESIGN, not
+    open work. G6-3 done.
 - [~] R5-G6-4 Coverage-guided dead-code detection: run the 208-test suite under coverage and
   - OPEN [incomplete]: coverage-guided dead-code detection is not yet produced; scripts/run_coverage.ps1 and the CI coverage job measure line coverage only, not first-party functions never executed by any test. Remaining work in the in-progress G14 coverage tier.
       report first-party functions never executed by any test
