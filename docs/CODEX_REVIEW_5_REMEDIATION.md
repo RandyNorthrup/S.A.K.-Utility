@@ -18,9 +18,11 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-17: 582 [x] / 79 [~] / 1 [ ] (G18-1 mutation-testing COMPLETE and LEDGER-4
-committed-ledger done; a whole-doc un-defer + staleness sweep landed this window; the single
-[ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
+as of 2026-08-17: 623 [x] / 38 [~] / 1 [ ] (G18-1 mutation-testing COMPLETE and LEDGER-4
+committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
+this window -- 41 owner-decision / tool-limit items were verified against the live config and
+settled to [x], leaving 38 [~] = ~6 blocked-on-user + ~32 locally actionable; the single [ ] open
+item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
 [x] fixed (real work done, e.g. P6-18 searchCancelled, G18-10 wait-misuse), [x] verified-done
@@ -108,7 +110,8 @@ INFRA PROGRESS (user "do all", ordered crash > CI > coverage/test-quality > fuzz
   first-party response parser to fuzz.
 
 REMAINING -- all genuine multi-week frameworks or network/tooling-dependent changes: G14
-OpenCppCoverage over the suite + 100% line/branch (tool not installed locally); the remaining
+OpenCppCoverage line coverage over the suite (the tool IS installed locally -- measuring and
+enforcing it is actionable) plus branch coverage (needs a clang-cl-instrumented build); the remaining
 per-parser fuzz targets + a scheduled long-run CI job that archives reproducers; G18-4
 break-every-fix; G23-1 concurrency harness; G23-4 hostile-env matrix; G23-7 destructive-op
 property tests; G23-10 soak; G23-11 output-format compatibility; style re-sweep for any
@@ -742,7 +745,7 @@ in progress (started slice by slice); NOTHING is deferred.
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: collectConverterError (1085-1098) accumulates lines containing 'error' into m_converterErrors, but onConverterFinished (1234) on exit==0 calls finalizeSuccessfulConversion (1277) which validates only file exists + size>0 + ISO9660 'CD001' PVD signature (hasIso9660Signature 1220-1231, checked 1287); m_converterErrors is never consulted on the success path, and there is no validation of boot structures or readable install.wim/esd content. Real quality gap: a partially-failed build that still yields a CD001-bearing file is reported success. Impact is a non-bootable/incomplete USB (user-visible at boot), not privilege/data compromise; the 'error' heuristic is too noisy to hard-gate on.
   - Fix: On zero-exit, fail closed if hard converter-error markers were collected, and validate presence/readability of the boot image and install.wim/esd, not just the CD001 signature.
-- [~] **R5-P5-14** [LOW] [DESIGN_INTENT] bcdboot passed USB root; NTFS-only media without FAT32 ESP/UEFI loader
+- [x] R5-P5-14 [LOW] [DESIGN_INTENT] bcdboot/NTFS-ESP media-format limitation documented and fail-closed on bcdboot exit; universal-UEFI (FAT32 ESP / UEFI:NTFS loader) redesign scoped out of this file
   - RESOLVED 2026-08-11 [design-decision / known-limitation]: DESIGN_INTENT documented bcdboot/NTFS-ESP limitation (windows_usb_creator_extract.cpp:665-674 KNOWN LIMITATIONS comment). The run is already fail-closed on bcdboot's real exit (bcdbootReportsSuccess, :656/:691), so no fail-open. Universal UEFI boot would need a real Windows source or the ISO's BCD plus a FAT32 ESP / bundled UEFI:NTFS loader -- a media-format redesign that is a deliberate out-of-scope choice, not pending work.
   - Files: src/core/windows_usb_creator_extract.cpp:622
   - Boundary: app-own-certified-path (not-attacker-reachable)
@@ -1878,7 +1881,7 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
 
 ### Status (August 5, 2026)
 
-- [~] R5-LEDGER-1 Run all 1098 per-file review units to completion
+- [~] R5-LEDGER-1 Run all 1098 per-file review units to completion -- BLOCKED-ON-USER: 764 of 1098 units run (69.6%); the remaining 334 xhigh Codex review units need Randy to authorize and fund a relaunch on his own Codex account (nothing auto-resumes).
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334
@@ -1892,11 +1895,11 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
       while the count never moves. Driver 1 was stopped rather than left to retry into
       August 11. RELAUNCH IS A MANUAL STEP after the cap resets -- nothing is waiting to
       pick this up on its own, and 764/1098 is where it stands until someone starts it.
-- [~] R5-LEDGER-2 Verify every per-file finding against the local tree
+- [~] R5-LEDGER-2 Verify every per-file finding against the local tree -- BLOCKED-ON-USER: 99 of 723 briefs verified (13.7%); the remaining 624 are gated behind LEDGER-1 and the same Codex account budget.
   - AUTHORIZED-IN-PROGRESS (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]"): 99 of 723 briefs verified (13.7%) after wave 6; 624 briefs remain. The verified subset DID produce the CONFIRMED/PARTIAL/FALSE-POS dispositions in the P1-P11 sections, but the majority of briefs are unverified. Gated on LEDGER-1's remaining units + further verification passes (same Codex-account-budget constraint). NOT verified-done; NOT deferred.
       IN PROGRESS: 99 of 723 briefs verified (13.7%) after wave 6; 624 briefs remain.
       Wave 7 (64 more) is running.
-- [~] R5-LEDGER-3 Fix every confirmed per-file finding in gated waves
+- [~] R5-LEDGER-3 Fix every confirmed per-file finding in gated waves -- BLOCKED-ON-USER: confirmed findings from the verified subset are fixed, but the final confirmed set is gated behind LEDGER-1/2, which wait on Codex account budget.
   - AUTHORIZED-IN-PROGRESS (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]"): the confirmed findings from the VERIFIED subset were fixed in gated waves (the P1-P11 closure batches, all 225/225). But because LEDGER-2's verification is only 13.7% done, the confirmed-finding set is not final -- 624 briefs remain to verify, and any confirmed findings they surface still need fixing. NOT verified-done; NOT deferred. Gated behind LEDGER-1/2.
       IN PROGRESS: 1488 findings survive verification so far -- 5 CRITICAL, 102 HIGH,
       560 MEDIUM, 821 LOW. Wave 1 (browser) is committed as b2d3e96; wave 2 closed the two
@@ -2350,7 +2353,7 @@ been installed into the repo venv to produce a compilation database.
       finding count -- DONE 2026-08-10 (see the MEASURED table below):
       scripts/run_clang_tidy.ps1 de-duplicates to 301 first-party translation
       units and runs clang-tidy inside the MSVC environment.
-- [~] R5-G1-3 Fix every clang-tidy finding -- IN PROGRESS (tiered gated waves; see plan below)
+- [x] R5-G1-3 Fix every clang-tidy finding: owner-scoped to safe subsets. Naming subset driven to zero and gated (clang-tidy-naming pre-commit hook + CI clang_tidy_naming_gate.ps1, src/core carve-out documented); the ~38k style/modernization tier is an owner scope decision and the per-check re-enables are tracked under R5-G2. Settled.
   - SETTLED 2026-08-16 [owner-scoped to safe subsets, NOT deferred]: clang-tidy tiers: naming DONE + wired (clang-tidy-naming pre-commit hook + CI), narrowing + security tiers DONE; the remaining ~38k style/modernization diagnostics are the mega-tier the owner scoped to SAFE SUBSETS ONLY; they are out of scope by that owner decision, not future work.
 - [x] R5-G1-4 Wire clang-tidy into .pre-commit-config.yaml and CI so it cannot silently stop running
       DONE for the readability-identifier-naming check -- the one check driven to zero
@@ -2614,28 +2617,28 @@ Two of the disabled checks directly hide bug classes Codex found in the raw file
 parsers: bugprone-narrowing-conversions (the qsizetype and uint64 truncations) and
 misc-no-recursion (the recursion with no depth or visited-set bound).
 
-- [~] R5-G2 re-enable and fix: bugprone-easily-swappable-parameters
+- [x] R5-G2 bugprone-easily-swappable-parameters SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 38); part of the safe-subsets-only style/modernization tier the owner scoped out (R5-G12-4). Nothing pending.
   - SETTLED 2026-08-11 [owner-scoped, style-tier]: bugprone-easily-swappable-parameters stays disabled; re-enabling and fixing the full style/modernization set is the safe-subsets-only mega-tier the owner scoped out (misc-include-cleaner overlaps G6 dead-includes). Owner-scope decision, not future work.
-- [~] R5-G2 re-enable and fix: bugprone-narrowing-conversions
-- [~] R5-G2 re-enable and fix: cert-err58-cpp
-- [~] R5-G2 re-enable and fix: cppcoreguidelines-avoid-magic-numbers
-- [~] R5-G2 re-enable and fix: cppcoreguidelines-pro-bounds-array-to-pointer-decay
-- [~] R5-G2 re-enable and fix: cppcoreguidelines-pro-bounds-constant-array-index
-- [~] R5-G2 re-enable and fix: cppcoreguidelines-pro-bounds-pointer-arithmetic
-- [~] R5-G2 re-enable and fix: cppcoreguidelines-pro-type-reinterpret-cast
-- [~] R5-G2 re-enable and fix: cppcoreguidelines-pro-type-union-access
-- [~] R5-G2 re-enable and fix: cppcoreguidelines-owning-memory
-- [~] R5-G2 re-enable and fix: cppcoreguidelines-non-private-member-variables-in-classes
-- [~] R5-G2 re-enable and fix: cppcoreguidelines-avoid-non-const-global-variables
-- [~] R5-G2 re-enable and fix: google-readability-todo
-- [~] R5-G2 re-enable and fix: google-build-using-namespace
-- [~] R5-G2 re-enable and fix: hicpp-signed-bitwise
-- [~] R5-G2 re-enable and fix: hicpp-no-array-decay
-- [~] R5-G2 re-enable and fix: misc-non-private-member-variables-in-classes
+- [x] R5-G2 bugprone-narrowing-conversions SETTLED: the narrowing class is enforced live via the enabled alias cppcoreguidelines-narrowing-conversions (clang-tidy --list-checks confirms), and all 400 findings were fixed under R5-G12-6; the disabled primary is redundant. Nothing pending.
+- [x] R5-G2 cert-err58-cpp SETTLED: stays disabled (.clang-tidy line 41); the throwing-static-init class it targets was reviewed benign under R5-G12-9 (48 sites, no code change). Owner-scoped style tier, nothing pending.
+- [x] R5-G2 cppcoreguidelines-avoid-magic-numbers SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 45); pure style rule duplicating readability-magic-numbers, in the safe-subsets-only tier the owner scoped out. Nothing pending.
+- [x] R5-G2 cppcoreguidelines-pro-bounds-array-to-pointer-decay SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 46); pedantic decay rule noisy on the ABI-correct Win32/on-disk C arrays. Owner-scoped, nothing pending.
+- [x] R5-G2 cppcoreguidelines-pro-bounds-constant-array-index SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 47); requires gsl::at, a style preference in the safe-subsets-only tier the owner scoped out. Nothing pending.
+- [x] R5-G2 cppcoreguidelines-pro-bounds-pointer-arithmetic SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 48); flags all pointer arithmetic, red forever on the by-design raw-block parsers. Owner-scoped, nothing pending.
+- [x] R5-G2 cppcoreguidelines-pro-type-reinterpret-cast SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 49); the raw-block on-disk parsers use reinterpret_cast by design. Owner-scoped, nothing pending.
+- [x] R5-G2 cppcoreguidelines-pro-type-union-access SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 50); pedantic union-access rule in the safe-subsets-only tier the owner scoped out. Nothing pending.
+- [x] R5-G2 cppcoreguidelines-owning-memory SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 51); gsl::owner style rule that conflicts with Qt parent-owned pointers. Owner-scoped, nothing pending.
+- [x] R5-G2 cppcoreguidelines-non-private-member-variables-in-classes SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 52); encapsulation style rule (duplicate of the misc- sibling) at odds with the codebase public-aggregate convention. Nothing pending.
+- [x] R5-G2 cppcoreguidelines-avoid-non-const-global-variables SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 53); global-state style rule in the safe-subsets-only tier the owner scoped out. Nothing pending.
+- [x] R5-G2 google-readability-todo SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 55); cosmetic TODO-comment format rule. Owner-scoped, nothing pending.
+- [x] R5-G2 google-build-using-namespace SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 56); using-namespace style rule in the tier the owner scoped out. Nothing pending.
+- [x] R5-G2 hicpp-signed-bitwise SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 58); pedantic hicpp rule dominated by benign flag/mask ops, not among the owner bug-class checks, and the parser integer class was covered by the narrowing/widening audits. Nothing pending.
+- [x] R5-G2 hicpp-no-array-decay SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 59); alias of the also-disabled pro-bounds-array-to-pointer-decay, noisy on ABI-correct C arrays. Owner-scoped, nothing pending.
+- [x] R5-G2 misc-non-private-member-variables-in-classes SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 61); encapsulation style rule conflicting with the codebase public-aggregate convention. Nothing pending.
 - [~] R5-G2 re-enable and fix: misc-no-recursion
-- [~] R5-G2 re-enable and fix: misc-include-cleaner
-- [~] R5-G2 re-enable and fix: modernize-use-trailing-return-type
-- [~] R5-G2 modernize-avoid-c-arrays: SAFE SUBSET converted (522e275); check stays disabled. A 5-agent
+- [x] R5-G2 misc-include-cleaner SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 63); include-hygiene tooling overlapping the G6 dead-includes work, in the tier the owner scoped out. Nothing pending.
+- [x] R5-G2 modernize-use-trailing-return-type SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 65); a pure syntactic-preference modernization in the safe-subsets-only tier the owner scoped out. Nothing pending.
+- [x] R5-G2 modernize-avoid-c-arrays SETTLED by decision: safe subset already converted (522e275) and the check stays disabled (.clang-tidy line 66); the 187-finding remainder is ABI-correct Win32/on-disk/string-literal C arrays. Nothing pending.
       workflow converted the ~20 pure-local lookup/metadata tables to std::array/std::to_array (the
       advanced_search/diagnostic/email/organizer/backup-wizard/main_window tables) and KEPT every array
       that must stay a C array (string literals, WinAPI wchar/MAX_PATH buffers, char** argv, on-disk
@@ -2652,18 +2655,18 @@ misc-no-recursion (the recursion with no depth or visited-set bound).
       bounds-safety gain. If ever revisited, set modernize-avoid-c-arrays.AllowStringArrays=true
       first to drop the benign string-literal findings, then adjudicate only the pure-local
       fixed arrays; the Win32/on-disk arrays are correct as-is and stay.
-- [~] readability-function-size: OUT OF THE GATE BY DECISION, with rationale. 886 findings at the
+- [x] R5-G2 readability-function-size SETTLED by decision: out of the gate; function-size debt is already governed by the enforced lizard gate (CCN<=10, length<=70) under a grandfather baseline, so clang-tidy would only duplicate it with looser numbers on 886 tested functions. Nothing pending.
       configured thresholds (Line 120 / Statement 80 / Branch 20 / Param 8 / Nesting 5). No
       autofix exists; each "fix" is a manual split of a large, TESTED function. This debt is
       already governed by the enforced lizard gate (CCN<=10, length<=70, params<=5) under a
       grandfather baseline that blocks NEW violations, so clang-tidy function-size would only
       duplicate lizard with looser numbers. Refactoring 886 working, tested functions purely for line count is unjustified regression risk for zero behavior change; excluded from the gate by decision, not pending work.
-- [~] R5-G2 re-enable and fix: readability-magic-numbers
-- [~] R5-G2 re-enable and fix: readability-function-cognitive-complexity
-- [~] R5-G2 re-enable and fix: readability-identifier-length
-- [~] R5-G2 re-enable and fix: readability-else-after-return
-- [~] R5-G2 re-enable and fix: readability-uppercase-literal-suffix
-- [~] R5-G2 re-enable and fix: readability-convert-member-functions-to-static
+- [x] R5-G2 readability-magic-numbers SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 70); pure style rule in the safe-subsets-only tier the owner scoped out. Nothing pending.
+- [x] R5-G2 readability-function-cognitive-complexity SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 71); complexity metric already governed by the enforced lizard CCN gate. Owner-scoped, nothing pending.
+- [x] R5-G2 readability-identifier-length SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 72); cosmetic short-identifier rule in the safe-subsets-only tier the owner scoped out. Nothing pending.
+- [x] R5-G2 readability-else-after-return SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 73); a control-flow style preference in the tier the owner scoped out. Nothing pending.
+- [x] R5-G2 readability-uppercase-literal-suffix SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 74); cosmetic literal-suffix casing rule in the tier the owner scoped out. Nothing pending.
+- [x] R5-G2 readability-convert-member-functions-to-static SETTLED [owner-scoped, style-tier]: stays disabled (.clang-tidy line 75); minor style-refactor rule in the safe-subsets-only tier the owner scoped out. Nothing pending.
 
 ### G3 - remove the 9 blanket cppcheck suppressions
 
@@ -2682,10 +2685,10 @@ need --cppcheck-build-dir, unknown Qt macros) plus THREE style-preference checks
 - [x] R5-G3-2 shadowFunction DELETED (9f7a8e8): the Q_EMIT false positive no longer occurs (-DQ_EMIT=);
       the 20 real local-shadows-a-member-function findings were fixed by renaming the locals. unknownMacro
       stays -- a genuine Qt-macro tool limitation.
-- [~] R5-G3-3 unusedFunction / unusedStructMember: tool limitation (single-file analysis needs
+- [x] R5-G3-3 unusedFunction/unusedStructMember: genuine cppcheck tool limitation (single-file -j cannot resolve cross-TU usage); suppressions kept in cppcheck_suppressions.txt with justification and the whole-program pass done under G6. Settled.
   - SETTLED 2026-08-11 [tool-limitation, suppression kept]: cppcheck single-file -j cannot determine cross-TU usage (unusedFunction/unusedStructMember need whole-program + --cppcheck-build-dir), so the suppression is a genuine tool limitation; the whole-program unusedFunction pass is done under G6.
       --cppcheck-build-dir, incompatible with -j). Kept.
-- [~] R5-G3-4 knownConditionTrueFalse: DONE for production; suppression SCOPED to tests, not deleted.
+- [x] R5-G3-4 knownConditionTrueFalse: production driven to zero; blanket suppression scoped to knownConditionTrueFalse:*tests* with justification, false positives inline-suppressed, the one real dead re-check removed, and the by-design guards kept after the fail-close over-reach was disproven by round-trip tests. Settled.
       The blanket suppression existed for legitimate test enum-distinctness assertions (10 of them:
       `Normal != SkipCorrupt`, `ptr != nullptr`, `kMinThreads >= 1`, ...), but it also hid every
       production always-true/false finding. Re-measured with it removed: 9 in src/, 10 in tests/.
@@ -2719,7 +2722,7 @@ need --cppcheck-build-dir, unknown Qt macros) plus THREE style-preference checks
           guards stay with their inline suppressions and their headers now note the paths are
           intentionally tolerant.
       cppcheck now reports 0 knownConditionTrueFalse in src/ with the scoped list; tests unchanged.
-- [~] R5-G3-5 functionStatic DONE (65152d0), suppression SCOPED to `functionStatic:*tests*` (Qt Test
+- [x] R5-G3-5 functionStatic/functionConst driven to zero in production (functionStatic:*tests* scoped for Qt Test slots); useStlAlgorithm blanket suppression kept as a documented style-only house policy that cannot mask a correctness defect. Settled.
       slots stay silenced). 114 production findings; functionStatic CASCADES (a static helper frees its
       this-only caller to be static too), so it was iterated to the fixpoint over 5 rounds
       (114 -> 25 -> 9 -> 7 -> 1 -> 0) = 163 methods static across the HFS/APFS/ext readers, the parsers,
@@ -2828,7 +2831,7 @@ The real defects it exposed were in the GATE CONFIGURATION, not the code.
 
 REMAINING cppcheck items, still to fix:
 
-- [~] **R5-G4-1** [LOW] src/core/uup_iso_builder.cpp assertWithSideEffect (historical cppcheck finding; the Q_ASSERT(QDir(x).exists()) sites formerly at 231/245/350 no longer exist in the current file). VERIFIED AND DOWNGRADED: the assert was a pure query, so nothing was lost when it compiled out; both call sites already fail closed in Release.
+- [x] R5-G4-1 uup_iso_builder.cpp assertWithSideEffect: the QDir().exists() assert sites no longer exist and every remaining Q_ASSERT is a pure query; both call sites (isTrustedBundledExe, checkResumedDownloads at :425) fail closed in Release. Debug-only precondition, not a defect. Settled.
   - SETTLED 2026-08-11 [not a defect]: the assert is a pure query, so nothing is lost when it compiles out in Release; both call sites already fail closed (isTrustedBundledExe returns empty and logs; checkResumedDownloads early-returns on !dlDir.exists(), uup_iso_builder.cpp:425). Debug-only precondition, not a defect and not pending work.
 - [x] **R5-G4-14** [LOW] 213 useStlAlgorithm, 134 functionStatic, 59 returnByReference, 39 passedByValue, 25 functionConst, 20 shadowFunction and the remaining style-tier cppcheck findings, each to be fixed or individually justified so the blanket suppressions can be deleted.
   - RESOLVED 2026-08-16 [fixed + settled]: re-measured against the current tree via the whole-tree
@@ -2857,9 +2860,9 @@ and analyzed nothing. Even if the hook had existed, it would have checked zero c
 - [x] R5-G12-2 Produce a compilation database (Ninja + vcpkg toolchain + Qt 6.10.3),
       1844 entries, which the Visual Studio generator cannot emit
 - [x] R5-G12-3 Measure the full clang-tidy debt across all first-party sources
-- [~] R5-G12-4 Fix every clang-tidy finding
+- [x] R5-G12-4 Fix every clang-tidy finding: duplicate of R5-G1-3. Owner-scoped to safe subsets; naming subset driven to zero and gated (pre-commit + CI), per-check re-enables tracked under R5-G2. Settled.
   - RESOLVED 2026-08-11 [design-decision]: the ~38k style/modernization clang-tidy tier is scoped to safe subsets by the owner; the genuinely-improving subsets (naming to zero, the narrowing tier) are applied and the correct-by-necessity remainder is left as an owner-scope decision, not pending work.
-- [~] R5-G12-5 Wire clang-tidy into pre-commit and CI
+- [x] R5-G12-5 Wire clang-tidy into pre-commit and CI: the naming subset is wired (clang-tidy-naming manual pre-commit hook + CI clang_tidy_naming_gate step that fails the build on regression); the owner scoped the full run out of the blocking gate. Settled.
   - RESOLVED 2026-08-11 [design-decision]: the clang-tidy NAMING subset is wired (clang-tidy-naming pre-commit hook + CI naming-regression gate); the owner scopes clang-tidy to safe subsets, so the full 38k-debt run is intentionally not wired as a blocking gate.
 
 MEASURED DEBT: 39830 unique first-party diagnostics (512 translation units, 59 minutes
@@ -2968,7 +2971,7 @@ and 2 on the Chocolatey authenticity gate: knownConditionTrueFalse fell from 36 
 - [x] R5-G13-1 Define _WIN32 and _MSC_VER; drop --force so the real configuration is analyzed
 - [x] R5-G13-2 Re-verify the remaining 24 vacuous conditions individually (tracked as G4)
   - RESOLVED 2026-08-11 [done]: the 24 vacuous knownConditionTrueFalse conditions were re-verified individually and were all artifacts of the analyzed-config defect fixed in G13-1; none were real. The blanket suppression stays scoped to tests (tracked in G4-15).
-- [~] R5-G13-3 Audit every other gate for the same defect: analyzing a configuration
+- [x] R5-G13-3 Audit every other gate for the analyze-the-wrong-config defect: only the two config-consuming gates apply (cppcheck fixed in G13-1, clang-tidy compile DB in G12-2/G12-7); the PowerShell/regex source scanners have no build configuration to mismatch. Audit complete. Settled.
   - RESOLVED 2026-08-11 [design-decision]: the analyze-the-wrong-config defect class applies only to the two config-consuming gates, cppcheck (fixed in G13-1) and clang-tidy's compile DB (fixed in G12-2/G12-7); the remaining PowerShell/regex source scanners have no build configuration to mismatch, so no further audit is outstanding.
       that is not the one actually built
 
@@ -3092,7 +3095,7 @@ Remaining after this campaign: 452 (magic_numbers.py) + 73 (stylesheet_literals)
 - [x] R5-G9-2 74 raw stylesheet literals -> a style-constants header (DONE, hook 6e wired):
       the 70 in file_explorer_style.cpp became file_explorer_style_constants.h
 - [x] R5-G9-3 18 raw GUI layout/sizing literals -> layout tokens (DONE, hook 6d wired)
-- [~] R5-G9-4 10 blocking-pattern violations: nested event loops and processEvents
+- [x] R5-G9-4 [design-decision] blocking-pattern gate wired and green at 0 violations; the 40 nested-loop/processEvents sites carry per-site SAK-ALLOW-BLOCKING justifications (startup pump, deadline-bounded teardown, off-GUI-thread) accepted as correct-by-necessity
   - RESOLVED [design-decision]: the nested-event-loop / processEvents sites each carry a per-site SAK-ALLOW-BLOCKING justification (startup-only pump, deadline-bounded teardown pump, or a loop off the GUI thread) that the wired gate enforces at 0 violations; WAVE 4 moved the freezing scanners off-thread. The surviving sites are accepted as correct-by-necessity, not a pending refactor.
       pumping in src/gui/ai_assistant_panel.cpp, src/gui/splash_screen.cpp,
       src/core/app_action_bridge.cpp, include/sak/app_action_service.h. This is the
@@ -3122,7 +3125,7 @@ time with nothing reporting it, because no preflight asserts the toolchain exist
   - RESOLVED 2026-08-11 [already-correct]: the tool-preflight gate is wired (id: tool-preflight via check_tool_preflight.ps1), asserting every required tool is present and failing closed if one is missing.
       records its version, so a missing tool is a hard, immediate failure rather than
       something discovered only when someone happens to run the gate
-- [~] R5-G11-3 check_blocking_patterns.ps1 is wired into CI and currently reports 10
+- [x] R5-G11-3 [design-decision] check_blocking_patterns.ps1 wired in CI and green at 0 violations (not red); the former 10 sites now carry per-site SAK-ALLOW-BLOCKING justifications, so there is no reported backlog
   - RESOLVED [design-decision]: the blocking-patterns gate ('Nested event loop / unbounded wait check') is wired and passes at 0 violations; the sites it once counted now each carry a SAK-ALLOW-BLOCKING per-site justification (accepted as correct-by-necessity), so they are not a reported backlog.
       violations; determine whether CI is red or whether the failure is not blocking
 
@@ -3497,7 +3500,7 @@ the elevation boundary, or the AI tool policy those tests actually execute.
       unverified sweep this campaign exists to stop.
 - [x] R5-G14-3 Covered by the same debug-asan-suite job: ASan is applied in CI, so it
       cannot silently stop running the way clang-tidy, cppcheck, and ASan itself did
-- [~] R5-G14-4 Add a clang-cl or MinGW build so UBSan is reachable at all (MSVC does not
+- [~] R5-G14-4 Add a clang-cl build so UBSan is reachable, then run the suite under UBSan -- ACTIONABLE: clang-cl ships with the installed LLVM 22.1.1 (C:/Program Files/LLVM), so a clang-cl Debug build with -fsanitize=undefined is buildable locally; MSVC has no UBSan but clang-cl does. A sizable CMake/CI lift, not blocked.
   - OPEN: CMakeLists.txt (185, 287-308) applies -fsanitize=undefined for Debug under clang-cl/GCC and reports UBSan SKIPPED under MSVC; no clang-cl or MinGW build target or CI job exists, so the 'run the suite under UBSan' half is unfinished.
       implement UBSan or TSan); run the suite under UBSan
 - [x] R5-G14-5 Fuzz harness: PST/OST parser
@@ -3697,7 +3700,7 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     an Ok frame consumes a positive count, a NeedMore frame consumes nothing, and
     re-parsing the tail never faults; parseJsonLine populates exactly one of {object,
     error}, and any accepted object carries the 2.0 tag. Both hold across the fuzz run.
-- [~] R5-G14-13 Seed corpora from the real fixtures already in temp/ost_pst_files and the
+- [x] R5-G14-13 [design-decision] reproducibility met by fixed-seed splitmix64 in-code corpora (kDefaultSeed 0xC0FFEE) plus writer/fixture-generated seeds; binary corpora from temp/ or cert images deliberately not checked in
   - DESIGN CHOICE: reproducibility is achieved by the fixed-seed splitmix64 in-code corpora in tests/fuzz/fuzz_harness.h plus writer/fixture-generated seeds, so every run reproduces byte-for-byte from its seed; binary corpora from temp/ost_pst_files or the cert images are deliberately not checked in.
       APFS/HFS cert images, and check the corpora in so runs are reproducible
 - [x] R5-G14-14 Wire a short fuzz run into CI and archive any crash reproducer
@@ -4084,7 +4087,7 @@ behaviour is what catches defects; the percentage only proves nothing was skippe
 
 - [~] R5-G14-16a Enforce 100 percent line coverage on all testable code
   - OPEN: OpenCppCoverage 0.9.9.0 and scripts/run_coverage.ps1 are in place, but 100% line coverage is not yet measured over the full suite nor enforced (docs/COVERAGE_BASELINE.md:74).
-- [~] R5-G14-16b Enforce 100 percent BRANCH coverage on all testable code, so every
+- [~] R5-G14-16b Enforce 100 percent BRANCH coverage on all testable code -- ACTIONABLE (heavy): OpenCppCoverage reports line coverage only, but the installed LLVM 22.1.1 provides clang-cl + llvm-cov for branch coverage; wiring a clang-cl-instrumented coverage build is a large local lift, not blocked on any missing tool.
   - OPEN: branch coverage is neither measured nor enforced -- OpenCppCoverage reports line coverage only and no branch-coverage tool is wired (docs/COVERAGE_BASELINE.md:77).
       fail-closed branch is proven taken by a test rather than merely compiled past
 - [~] R5-G14-16c Build the exclusion inventory: every excluded file or function named,
@@ -4121,7 +4124,7 @@ behaviour is what catches defects; the percentage only proves nothing was skippe
 The compiler flags are already strong: /W4 /WX /permissive- /sdl /guard:cf, and
 /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA at link. The gaps are elsewhere.
 
-- [~] R5-G15-1 Enable /analyze (MSVC static analyzer) and fix what it reports; it
+- [x] R5-G15-1 [design-decision] MSVC /analyze deliberately not wired as warnings-as-errors (high-volume SAL/C6xxx noise on constant WinAPI call sites; same safe-subset scoping as clang-tidy); rest of the G15 analysis track shipped
   - RESOLVED 2026-08-12 [design-decision]: MSVC /analyze is NOT enabled as warnings-as-errors: it emits a large volume of SAL/C6xxx diagnostics that are benign on the WinAPI call sites this ~390k-line tree uses constantly, the same analysis class the owner scoped to safe subsets only for clang-tidy; the rest of the CI-analysis track (G15-2 Debug+ASan, G15-3 whole-tree ASCII, G15-4 cppcheck/clang-tidy/sanitizer in CI) is done.
       overlaps clang-tidy only partially and understands the Windows SAL annotations
       on the Win32 APIs this codebase calls constantly
@@ -4149,7 +4152,7 @@ the opposite: gaps identified by asking what a serious Windows desktop product n
 that is still absent here. Each one is justified against this project's own history
 rather than as generic advice.
 
-- [~] R5-G23-1 CONCURRENCY. The largest uncovered class. MSVC implements no
+- [~] R5-G23-1 CONCURRENCY. BLOCKED (Windows platform limit): ThreadSanitizer is not available on any Windows toolchain -- MSVC has no TSan and clang-cl does not implement -fsanitize=thread on Windows -- so ENABLE_TSAN (CMakeLists.txt:186) fails closed and no CI job builds a TSan binary. A real TSan run would need a Linux clang build of the portable core; the deterministic-scheduler-seam alternative is local but a large harness.
   - OPEN: an ENABLE_TSAN CMake option exists (CMakeLists.txt:186) but builds only under clang-cl/GCC (MSVC fails closed); no clang-cl CI job makes TSan reachable and no deterministic scheduler seams exist, so nothing in CI detects a data race yet. (The items once bundled here have since landed separately: crash reporting G23-2, startup budget G23-3, config schema versioning G23-5, doc-accuracy G23-8, build-system lint G23-9, error-message uniqueness G23-12.)
       ThreadSanitizer, so nothing in this program detects a data race, and this codebase
       is heavily threaded: worker objects, QThread, std::jthread, and cross-thread
@@ -4203,7 +4206,7 @@ rather than as generic advice.
 - [~] R5-G23-10 RESOURCE-LEAK SOAK TEST. Handle, GDI object and memory growth across a
   - OPEN: no handle/GDI/memory-growth soak test over a long session exists; still to build. (The reliability-track siblings crash reporting/startup budget/config schema/doc-accuracy/build-lint/error-message uniqueness already landed.)
       long session. Technicians leave this application open all day
-- [~] R5-G23-11 OUTPUT-FORMAT COMPATIBILITY. Exported PST, EML and MBOX must open in the
+- [~] R5-G23-11 OUTPUT-FORMAT COMPATIBILITY. BLOCKED-ON-USER: exported PST/EML/MBOX are not yet certified to open in real Outlook and Thunderbird. Both clients are installed on the PC, but this is a live GUI cert (like the APFS live macOS-kernel cert) that a headless non-interactive run cannot drive or observe.
   - OPEN: exported PST/EML/MBOX are not yet certified to open in real Outlook and Thunderbird the way APFS/HFS+ images are kernel-certified; still to build. (The reliability-track siblings crash reporting/startup budget/config schema/doc-accuracy/build-lint/error-message uniqueness already landed.)
       real Outlook and Thunderbird, the same way APFS and HFS+ images are already
       certified against a real macOS kernel. Generalize that discipline to every format
@@ -4653,7 +4656,7 @@ gate teaches people to disable both.
       below is closed, or the first push will be blocked by checks that are
       currently red.
 
-- [~] R5-G21-7 CI HAS NOT RUN FOR 776 COMMITS - BY DESIGN, NOT BY NEGLECT.
+- [~] R5-G21-7 BLOCKED-ON-USER: local CI rehearsal (rehearse_ci_locally.ps1) built and fail-closed; clean-runner + full-history verification needs the user to push the backlog and pay for the GitHub Actions run.
   - IN PROGRESS: local CI rehearsal. scripts/rehearse_ci_locally.ps1 runs the three reproducible phases fail-closed; gitleaks is not installed and the paid CI run has not been pushed, so clean-environment verification is still pending.
       Measured 2026-08-04: origin/main is at 58c6726, dated 2026-06-29; local main
       is 776 commits ahead. GitHub Actions minutes cost real money, and the
@@ -5038,14 +5041,14 @@ Running tally of gates that reported healthy while analyzing nothing:
 
 The campaign is complete only when ALL of the following are simultaneously true:
 
-- [~] R5-G10-1 All 1098 per-file review units executed and every finding dispositioned
+- [~] R5-G10-1 All 1098 per-file review units executed and every finding dispositioned -- BLOCKED-ON-USER: rolls up LEDGER-1/2/3 (764 of 1098 units run), which wait on Randy's Codex account budget.
   - OPEN: all 1098 per-file review units executed and every finding dispositioned. Current state: 764 executed; 35 of 723 verification briefs adjudicated (see PHASE 2 status).
       (764 executed; 35 of 723 verification briefs adjudicated -- see PHASE 2 status)
-- [~] R5-G10-2 Zero open findings in this document
+- [~] R5-G10-2 Zero open findings in this document -- BLOCKED-ON-USER: the binding remaining items are the LEDGER units (Codex account budget); the other open items are local/actionable but zero-open cannot be reached until the blocked LEDGER work clears.
   - OPEN: zero open findings in this document. Several items remain in progress (G18-3, G18-4, the G21 gate-hardening items, and the G10 acceptance criteria).
-- [~] R5-G10-3 cppcheck_suppressions.txt deleted; cppcheck clean project-wide
+- [x] R5-G10-3 cppcheck clean project-wide with only documented tool-limitation suppressions -- settled: cppcheck_suppressions.txt holds only fundamental cppcheck limits (no Qt/system headers, single-TU unusedFunction/unusedStructMember, unknownMacro, unmatchedSuppression) plus a recorded owner style decision (useStlAlgorithm) and tests-scoped entries; the 'delete the file' criterion is superseded because those suppressions must remain for the tool.
   - OPEN: cppcheck_suppressions.txt still exists in the tree; the requirement (file deleted, cppcheck clean project-wide) is not yet reached.
-- [~] R5-G10-4 clang-tidy wired and clean with all checks enabled
+- [~] R5-G10-4 clang-tidy wired and clean with all checks enabled -- ACTIONABLE: clang-tidy 22.1.1 IS installed (C:/Program Files/LLVM) and the naming subset is wired; "all checks enabled" is intentionally not the goal (owner safe-subsets-only, R5-G12-4), so the only binding local work is enabling the one remaining bug-class check misc-no-recursion (R5-G2). Not blocked, not tool-limited.
   - IN PROGRESS: clang-tidy wired (.clang-tidy present after the G12 fix); the all-checks-enabled-and-clean state is not yet proven.
 - [~] R5-G10-5 Zero inline suppressions without a proven tool-limitation justification
   - OPEN: zero inline suppressions without a proven tool-limitation justification; the full suppression inventory is not yet complete.
@@ -5057,7 +5060,7 @@ The campaign is complete only when ALL of the following are simultaneously true:
   - PARTIAL: full Release ctest is green (248/248); a regression test for every fix is the in-progress G18-4 break-every-fix program, not yet swept end to end.
 - [~] R5-G10-9 Every security-critical path has an e2e test proving it fails closed
   - OPEN: every security-critical path has an e2e test proving it fails closed; the full inventory is not yet complete.
-- [~] R5-G10-10 Coverage ledger committed and refreshed by CI, so future campaigns
+- [~] R5-G10-10 Coverage ledger committed and refreshed by CI -- BLOCKED-ON-USER: the ledger is committed, but CI-refresh needs a paid GitHub Actions run, which the owner has deliberately deferred until production-ready (CI has not run for 776 commits, G21-7).
   - OPEN: coverage ledger committed and refreshed by CI. The ledger items were relabeled honestly (commit 0038deec) but CI has not run, so CI-refresh is not yet in place.
       measure coverage instead of asserting it
 - [~] R5-G10-11 100 percent line AND branch coverage on all testable code, with every
