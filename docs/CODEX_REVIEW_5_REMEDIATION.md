@@ -4363,6 +4363,16 @@ rather than as generic advice.
     across all seven dimensions (non-C: drive, >260-char paths, UNC-only cwd, no-admin, no-network,
     non-English locale, missing bundled tools) plus the injection seams it needs (fake system drive / locale);
     the non-C: dimension is now code-robust but still unproven by an automated test, so this stays [~].
+  - PROGRESS 2026-08-18 (>260-char / MAX_PATH dimension audited): the code is broadly long-path-aware -- it
+    handles \\?\ and \\?\UNC\ extended-length prefixes (app_mutating_actions.cpp:3891-3894,
+    cleanup_worker.cpp:98-101, the APFS/HFS writer CLIs), oversizes module/image-path buffers past MAX_PATH
+    (browser_bridge_pipe.cpp:35, browser_extension_installer.cpp:34), and uses fixed MAX_PATH buffers only
+    for API outputs contractually bounded below it (GetWindowsDirectoryW, FindFirstVolumeW, volume labels),
+    each with a len >= MAX_PATH fail-closed check. The one inconsistency was
+    ActiveConnectionsMonitor::getProcessPath, which read a process image path (which CAN exceed MAX_PATH)
+    into a bare MAX_PATH buffer -- QueryFullProcessImageNameW then fails and the name drops to a bare [PID];
+    oversized it to MAX_PATH*2 to match the codebase's own module-path convention. Still no automated
+    long-path test, so this stays [~].
       paths are under MAX_PATH, administrator rights are available, the network works,
       and Windows is English. The last assumption already caused a defect: diskpart's
       success text is localized, which is why the recreate path had to be given a

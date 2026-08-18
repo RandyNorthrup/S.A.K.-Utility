@@ -294,8 +294,15 @@ QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid) {
         return {};
     }
 
-    wchar_t path[MAX_PATH] = {};
-    DWORD pathLen = MAX_PATH;
+    // A process image path can exceed MAX_PATH on a long-path-enabled system;
+    // QueryFullProcessImageNameW then fails with ERROR_INSUFFICIENT_BUFFER rather than
+    // truncating, which would drop the name to a bare [PID] in the monitor. Oversize the
+    // buffer to twice MAX_PATH, matching the module-path handling in browser_bridge_pipe, so a
+    // long path resolves. A genuine failure (access denied, process exited) still leaves the
+    // name empty, which the caller renders fail-closed as [PID N].
+    constexpr DWORD kProcessPathBufferChars = MAX_PATH * 2;
+    wchar_t path[kProcessPathBufferChars] = {};
+    DWORD pathLen = kProcessPathBufferChars;
     QString result;
 
     if (QueryFullProcessImageNameW(process, 0, path, &pathLen) != 0) {
