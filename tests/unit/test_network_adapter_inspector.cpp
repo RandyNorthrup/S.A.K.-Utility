@@ -40,7 +40,10 @@ private Q_SLOTS:
 
 void TestNetworkAdapterInspector::construction_default() {
     NetworkAdapterInspector inspector;
-    QVERIFY(!inspector.objectName().isNull() || inspector.objectName().isNull());
+    // A default-constructed inspector must not spuriously self-name (the ctor is
+    // ": QObject(parent) {}" -- no setObjectName), so objectName() is empty. The prior
+    // assertion here was "!isNull() || isNull()", a tautology that could never fail.
+    QVERIFY(inspector.objectName().isEmpty());
     QVERIFY(inspector.parent() == nullptr);
 }
 
