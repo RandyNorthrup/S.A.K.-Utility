@@ -8,6 +8,7 @@
 #include <QStringList>
 
 #include <functional>
+#include <optional>
 
 namespace sak {
 
@@ -87,6 +88,38 @@ struct ProcessStreamingRequest {
                                           bool bypass_policy = true,
                                           const CancelCheck& should_cancel = {});
 [[nodiscard]] ProcessResult runProcessStreaming(const ProcessStreamingRequest& request);
+
+/// @brief Test-only fault-injection seam for the process launchers (R5-G14-17).
+///
+/// When an injector is installed, EVERY process launch -- runProcess,
+/// runProcessWithEnvironment, runPowerShell and runProcessStreaming all funnel through one
+/// internal runner -- consults it FIRST. If the injector returns a ProcessResult, that result
+/// is returned WITHOUT launching any process: the exact mid-operation failure (a non-zero
+/// exit, a timeout, a crash-exit, truncated output) a test needs a caller's failure path to
+/// actually execute. Returning nullopt lets the real launch proceed (pass-through). The
+/// default is no injector, so production pays a single null check and behaves identically;
+/// production code never installs one. Install through ScopedProcessFaultInjector so an armed
+/// injector can never leak out of a test into the next.
+using ProcessFaultInjector =
+    std::function<std::optional<ProcessResult>(const QString& program, const QStringList& args)>;
+
+/// @brief Install (or, with a null injector, clear) the process fault injector. Test-only.
+void setProcessFaultInjectorForTesting(ProcessFaultInjector injector);
+
+/// @brief RAII installer: arms @p injector for its lifetime and restores the previous state
+///        (normally none) on destruction, so a test cannot leave the launchers armed.
+class ScopedProcessFaultInjector {
+public:
+    explicit ScopedProcessFaultInjector(ProcessFaultInjector injector);
+    ~ScopedProcessFaultInjector();
+    ScopedProcessFaultInjector(const ScopedProcessFaultInjector&) = delete;
+    ScopedProcessFaultInjector& operator=(const ScopedProcessFaultInjector&) = delete;
+    ScopedProcessFaultInjector(ScopedProcessFaultInjector&&) = delete;
+    ScopedProcessFaultInjector& operator=(ScopedProcessFaultInjector&&) = delete;
+
+private:
+    ProcessFaultInjector m_previous;
+};
 
 /// @brief Resolve a System32-relative executable to its absolute path so a trusted
 ///        system tool cannot be hijacked by a PATH/CWD-planted binary of the same

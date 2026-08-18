@@ -10,6 +10,9 @@
 #include <QFile>
 #include <QProcess>
 
+#include <optional>
+#include <utility>
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -17,6 +20,11 @@
 namespace sak {
 
 namespace {
+
+// Test-only process fault injector (R5-G14-17). Null in production -- never installed -- so
+// the launchers pay only a single predicate check and behave identically. Armed by a test via
+// ScopedProcessFaultInjector to substitute a chosen ProcessResult for a real launch.
+ProcessFaultInjector g_process_fault_injector;
 
 // Hard per-stream ceiling on retained output. A runaway child (e.g. a script
 // that prints gigabytes) previously grew std_out/std_err without bound until the
@@ -142,6 +150,17 @@ bool stopForCancelOrTimeout(const ProcessRunRequest& request,
 }
 
 ProcessResult runProcessInternal(const ProcessRunRequest& request) {
+    // Test-only fault injection (R5-G14-17): an armed injector fully substitutes for the
+    // launch so a caller's mid-operation failure path runs without a real child. Null in
+    // production (never installed), so this is a single predicate check. A nullopt return
+    // means "no fault this time" -- fall through to the real launch (pass-through).
+    if (g_process_fault_injector) {
+        if (std::optional<ProcessResult> injected = g_process_fault_injector(request.program,
+                                                                             request.args)) {
+            return *injected;
+        }
+    }
+
     ProcessResult result;
     result.exit_code = -1;
 
@@ -334,6 +353,19 @@ ProcessResult runProcessStreaming(const ProcessStreamingRequest& request) {
                                .on_output = request.on_output,
                                .on_started = request.on_started,
                                .on_terminate = request.on_terminate});
+}
+
+void setProcessFaultInjectorForTesting(ProcessFaultInjector injector) {
+    g_process_fault_injector = std::move(injector);
+}
+
+ScopedProcessFaultInjector::ScopedProcessFaultInjector(ProcessFaultInjector injector)
+    : m_previous(std::move(g_process_fault_injector)) {
+    g_process_fault_injector = std::move(injector);
+}
+
+ScopedProcessFaultInjector::~ScopedProcessFaultInjector() {
+    g_process_fault_injector = std::move(m_previous);
 }
 
 }  // namespace sak

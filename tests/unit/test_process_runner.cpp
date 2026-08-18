@@ -12,6 +12,8 @@
 #include <QRegularExpression>
 #include <QtTest/QtTest>
 
+#include <optional>
+
 class ProcessRunnerTests : public QObject {
     Q_OBJECT
 
@@ -42,6 +44,10 @@ private Q_SLOTS:
 
     // R5-P7-22: the shared PowerShell resolver every privileged caller must use
     void systemPowerShellPath_resolvesAbsoluteInterpreter();
+
+    // R5-G14-17: shared process fault-injection seam
+    void processFaultInjector_substitutesResultForEveryLauncher();
+    void processFaultInjector_scopeRestoresRealLaunch();
 };
 
 // ============================================================================
@@ -302,6 +308,74 @@ void ProcessRunnerTests::systemPowerShellPath_resolvesAbsoluteInterpreter() {
     // It agrees with the generic System32 resolver used for netsh/reg/cmd/msiexec.
     QCOMPARE(ps, sak::system32Path(QStringLiteral("WindowsPowerShell/v1.0/powershell.exe")));
 #endif
+}
+
+// ============================================================================
+// R5-G14-17 process fault-injection seam
+// ============================================================================
+
+// The shared seam substitutes a chosen ProcessResult for the real launch through the ONE
+// internal runner every launcher funnels through, so a caller's mid-operation failure path
+// (non-zero exit, crash-exit, timeout) runs headless without a real child. Verified on
+// runProcess AND runPowerShell (which reaches the same runner via runProcess), proving the
+// seam covers every entry point, not just one.
+void ProcessRunnerTests::processFaultInjector_substitutesResultForEveryLauncher() {
+    int calls = 0;
+    QString lastProgram;
+    sak::ScopedProcessFaultInjector guard(
+        [&](const QString& program, const QStringList&) -> std::optional<sak::ProcessResult> {
+            ++calls;
+            lastProgram = program;
+            sak::ProcessResult injected;
+            injected.exit_code = 7;
+            injected.exit_status = 1;  // crash-exit
+            injected.std_err = QStringLiteral("INJECTED-FAILURE");
+            return injected;
+        });
+
+    // A command that would REALLY succeed (exit 0) instead returns the injected failure --
+    // proving no real process ran.
+    const auto direct = sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000);
+    QCOMPARE(direct.exit_code, 7);
+    QCOMPARE(direct.exit_status, 1);
+    QVERIFY(direct.std_err.contains("INJECTED-FAILURE"));
+    QVERIFY(!direct.succeeded());
+
+    // runPowerShell funnels through runProcess -> the same internal runner, so it is injected too.
+    const auto shell = sak::runPowerShell("Write-Output 'would-succeed'", 10'000);
+    QCOMPARE(shell.exit_code, 7);
+    QVERIFY(shell.std_err.contains("INJECTED-FAILURE"));
+
+    QCOMPARE(calls, 2);
+    QVERIFY2(lastProgram.contains("powershell", Qt::CaseInsensitive), qPrintable(lastProgram));
+}
+
+// The injector must not leak and must be a controllable OVERLAY, not a permanent break of
+// process execution. After the scoped guard ends, a REAL launch runs again; and an installed
+// injector that returns nullopt lets the real launch through (pass-through). This is the
+// non-vacuous half: without the disarm/pass-through paths these real launches would not run.
+void ProcessRunnerTests::processFaultInjector_scopeRestoresRealLaunch() {
+    {
+        sak::ScopedProcessFaultInjector guard(
+            [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+                sak::ProcessResult injected;
+                injected.exit_code = 99;
+                return injected;
+            });
+        QCOMPARE(sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000).exit_code, 99);
+    }
+    // Guard destroyed -> real launch restored.
+    const auto real = sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000);
+    QCOMPARE(real.exit_code, 0);
+    QVERIFY(real.succeeded());
+
+    // An armed injector that returns nullopt must let the real launch through.
+    sak::ScopedProcessFaultInjector passthrough(
+        [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+            return std::nullopt;
+        });
+    const auto passed = sak::runProcess("cmd.exe", {"/C", "exit /b 5"}, 10'000);
+    QCOMPARE(passed.exit_code, 5);
 }
 
 QTEST_GUILESS_MAIN(ProcessRunnerTests)

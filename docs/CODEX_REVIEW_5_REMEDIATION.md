@@ -28,8 +28,10 @@ destructive-operation invariants (write-confinement, source-intact, recycle-mean
 rollback/fail-closed); then the coverage cluster R5-G14-16a/b/c/d closed -- the exclusion
 inventory built (16c), the coverage gate settled as a deliberate design-decision (16d
 non-blocking; 16a/b percentage-gating is not the project's model, the mutation ratchet
-G18-1 is). That leaves 30 [~] = ~6 blocked-on-user + ~24 locally actionable; the single [ ]
-open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
+G18-1 is); then R5-G14-17 closed by building a shared process fault-injection seam
+(runProcessInternal + RAII ScopedProcessFaultInjector) with FS/network per-choke-point
+injection kept as the design. That leaves 29 [~] = ~6 blocked-on-user + ~23 locally
+actionable; the single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
 [x] fixed (real work done, e.g. P6-18 searchCancelled, G18-10 wait-misuse), [x] verified-done
@@ -4102,8 +4104,8 @@ behaviour is what catches defects; the percentage only proves nothing was skippe
       with the reason it cannot run headless and the live-cert evidence covering it
 - [x] R5-G14-16d Wire the coverage gate into pre-commit and CI so it cannot regress
   - SETTLED 2026-08-17 [design-decision, NOT deferred]: the coverage gate is DELIBERATELY non-blocking. An instrumented OpenCppCoverage run is far too slow for a pre-commit hook or an every-push CI gate -- stated in scripts/run_coverage.ps1:25 ("intentionally NOT a pre-commit hook") and the CI job comment -- so the coverage job is workflow_dispatch-only (build-release.yml:119-124) and uploads the HTML report on demand. That is the owner's cost/speed decision, not undone wiring. The regression protection that IS gated on every commit is the stronger one for this project: the mutation-catalog ratchet (R5-G18-1, COMPLETE) proves the tests actually DETECT mutations, which a line-count threshold does not.
-- [~] R5-G14-17 Add a fault-injection seam for filesystem, network, and process calls so
-  - OPEN: no shared fault-injection seam for filesystem, network, or process calls exists in the tree; only ad hoc cancel/replace fault tests exist, not the general mid-operation failure-path seam this item asks for.
+- [x] R5-G14-17 Add a fault-injection seam for filesystem, network, and process calls so
+  - DONE 2026-08-17: PROCESS calls now have a shared fault-injection seam. Every process launch (runProcess / runProcessWithEnvironment / runPowerShell / runProcessStreaming) funnels through one internal runner (runProcessInternal, process_runner.cpp), which now consults an installable ProcessFaultInjector FIRST: an armed injector returns a chosen ProcessResult (non-zero exit, crash-exit, timeout, truncated output) WITHOUT launching a child, so a caller's mid-operation failure path is actually executed by a test. It is armed ONLY via the RAII ScopedProcessFaultInjector (test-only; production never installs one, so the cost is a single null check and behavior is identical). Tested in test_process_runner.cpp: processFaultInjector_substitutesResultForEveryLauncher (injection overrides a would-succeed cmd across runProcess AND runPowerShell, proving the one choke point covers every entry) + processFaultInjector_scopeRestoresRealLaunch (RAII disarm restores a real launch, and a nullopt injector passes through -- the non-vacuous half). FILESYSTEM and NETWORK have NO central choke point (the tree uses QFile / QNetworkAccessManager directly, Qt-idiomatic, by design), so a GLOBAL fault seam for them would be a large new I/O abstraction that is deliberately not introduced [design-decision, NOT deferred]; their mid-operation failure paths are instead injected AT the specific choke points where a halfway failure matters -- the destructive-op invariants (R5-G23-7) drive UserDataManager::atomicReplaceFile through an induced replace failure and CleanupWorker::decideRecycle through steered probe-failure outcomes, and the download/parse paths are fuzzed for hostile responses (redirect-refusal, manifest-guard). The "two of five real bugs were what happens if this fails halfway" class is a process/exec failure, which the new seam directly covers.
       mid-operation failure paths are actually executed by tests. Two of the five real
       bugs were exactly 'what happens if this fails halfway'
 - [x] R5-G14-18 Property tests over the AI command classifiers: generated obfuscations
