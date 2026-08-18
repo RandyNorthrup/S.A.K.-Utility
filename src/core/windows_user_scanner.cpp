@@ -288,9 +288,15 @@ QString WindowsUserScanner::getProfilePath(const QString& username) {
     // Standard location only as a SECONDARY, when the authoritative lookup yielded nothing
     // (or off Windows). Still gated by existence so a nonexistent guess is reported as
     // "not found" rather than returned.
-    QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
+    // No 'C:' fallback: an unset SystemDrive means the standard location cannot be resolved,
+    // so report "not found" rather than guess a drive letter. The guess is not merely
+    // redundant -- on a machine whose system drive is not C: but which happens to have a
+    // C:\Users\Username, guessing C: would return a path that is NOT this user's profile. This
+    // matches UserProfileRestoreWorker::resolveCreateNewUser, which refuses the same guess,
+    // and the no-guessed-default rule already applied to the authoritative lookup above.
+    const QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
     if (systemDrive.isEmpty()) {
-        systemDrive = "C:";
+        return {};
     }
     const QString standardPath = systemDrive + "\\Users\\" + username;
     if (QDir(standardPath).exists()) {

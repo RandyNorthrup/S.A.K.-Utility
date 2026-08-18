@@ -4347,6 +4347,22 @@ rather than as generic advice.
       budgets as CI assertions
 - [~] R5-G23-4 HOSTILE ENVIRONMENT MATRIX. The code assumes C: is the system drive,
   - OPEN: no test exercises non-C: system drive, paths over 260 chars, UNC-only working dir, no-admin, no-network, non-English locale, or missing bundled tools; still to build. (The reliability-track siblings crash reporting/startup budget/config schema/doc-accuracy/build-lint/error-message uniqueness already landed separately.)
+  - PROGRESS 2026-08-18 (non-C: system-drive dimension audited): the "assumes C: is the system drive"
+    premise is largely FALSE in the code. The risky scan roots derive from the environment
+    (%SystemRoot%/%ProgramFiles%/%ProgramData%/%APPDATA%/... in leftover_scanner.cpp:225-234), and
+    LeftoverScanner protection is drive-agnostic BY DESIGN: classifyRisk -> isSharedContainerPath matches the
+    shared-container LEAF name (windows/system32/programdata/...) case-insensitively on ANY drive
+    (leftover_scanner.cpp:515-519, 1367), so D:\Windows\System32 is classified Risky exactly like C:'s; the
+    kProtectedPaths hardcoded-C: entries are a documented belt-and-suspenders secondary, not the sole guard.
+    Other sites already derive the drive (app_mutating_actions.cpp:1353 qEnvironmentVariable("SystemDrive");
+    user_profile_restore_worker.cpp:604 explicitly refuses a C: fallback). FIXED the one remaining hardcoded-C:
+    guess: WindowsUserScanner::getProfilePath fell back to "C:" when %SystemDrive% was unset, which on a
+    non-C: machine that happens to have a C:\Users\Username would return a path that is NOT this user's profile
+    -- now fails closed (returns not-found), matching the sibling precedent and the no-guessed-default rule
+    already applied to the authoritative lookup above it. REMAINING G23-4 work = the hostile-env TEST MATRIX
+    across all seven dimensions (non-C: drive, >260-char paths, UNC-only cwd, no-admin, no-network,
+    non-English locale, missing bundled tools) plus the injection seams it needs (fake system drive / locale);
+    the non-C: dimension is now code-robust but still unproven by an automated test, so this stays [~].
       paths are under MAX_PATH, administrator rights are available, the network works,
       and Windows is English. The last assumption already caused a defect: diskpart's
       success text is localized, which is why the recreate path had to be given a
