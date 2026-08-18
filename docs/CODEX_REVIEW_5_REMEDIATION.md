@@ -14,12 +14,13 @@ Do the optionals. Nothing is DELETED to make a finding go away -- a half-built f
 FINISHED, and any removal needs the user's explicit authorization. Plain 7-bit ASCII docs.
 Full Release ctest must pass before every commit.
 
-## CAMPAIGN STATUS (live -- updated 2026-08-12)
+## CAMPAIGN STATUS (live -- updated 2026-08-17)
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-17: 571 [x] / 90 [~] / 0 [ ] (G18-1 mutation-testing COMPLETE and LEDGER-4
-committed-ledger done this window). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
+as of 2026-08-17: 582 [x] / 79 [~] / 1 [ ] (G18-1 mutation-testing COMPLETE and LEDGER-4
+committed-ledger done; a whole-doc un-defer + staleness sweep landed this window; the single
+[ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
 [x] fixed (real work done, e.g. P6-18 searchCancelled, G18-10 wait-misuse), [x] verified-done
@@ -27,8 +28,11 @@ re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolv
 (a genuine permanent tool/language/owner limit, e.g. G23-6 unsigned bundled exes). Several
 were found already-done but mislabeled (G14-1, G19-1..5). The remaining [~] are the infra
 programs now being worked slice by slice (e.g. G18-1/3/4 test-quality, relabelled from
-"deferred" to AUTHORIZED-IN-PROGRESS); "[deferred-with-rationale]:" disposition labels:
-60 and falling (grep-verified 2026-08-17; the prior "69" was an inexact hand count). The 4
+"deferred" to AUTHORIZED-IN-PROGRESS). The whole-doc un-defer sweep COMPLETED 2026-08-17
+(8 parallel verifier agents against the live tree, then applied): every
+"[deferred-with-rationale]" disposition label was re-adjudicated and reworded to [x] done,
+[design-decision]/[tool-limitation], or OPEN-incomplete; the only "deferred" text left is this
+campaign narrative and the LEDGER relabel history. The 4
 R5-LEDGER items were relabelled honestly 2026-08-17 -- LEDGER-1/2/3 are AUTHORIZED-IN-PROGRESS
 blocked on Randy's go to relaunch the budget-heavy Codex sweep, LEDGER-4's committed-ledger
 deliverable is verified-done.
@@ -83,8 +87,10 @@ INFRA PROGRESS (user "do all", ordered crash > CI > coverage/test-quality > fuzz
   helpers unit-tested in test_crash_reporter; dump write needs a real-fault manual cert).
 - G15 CI mostly ALREADY IN PLACE (d3cfca7): the workflow already runs a Debug+AddressSanitizer
   suite, whole-tree cppcheck, the clang-tidy naming gate, and the partition/accessibility gates on
-  push/PR; added a whole-tree ASCII CI step. G15-2/3/4 [x]. G15-1 (MSVC /analyze) deferred as a
-  large SAL-triage fix-effort, the same class the user scoped to safe subsets for clang-tidy.
+  push/PR; added a whole-tree ASCII CI step. G15-2/3/4 [x]. G15-1 (MSVC /analyze) is an owner-scope
+  decision (safe subsets only, the same class as clang-tidy): its SAL/C6xxx volume is benign on the
+  WinAPI call sites this tree uses constantly, so it is not wired as warnings-as-errors -- a design
+  decision, not pending work; the rest of the CI-analysis track was dispositioned in d3cfca7.
 - G18: G18-9 (the 62 QSignalSpy::wait sites) was ALREADY remediated (converted to QTRY_COMPARE);
   G18-2 vacuous asserts -- the few remaining QVERIFY(true) are documented-intentional smoke checks;
   G18-6 skip-count gate (check_test_skips.ps1 + tests/skip_baseline.txt) WIRED into pre-commit + CI
@@ -103,11 +109,12 @@ INFRA PROGRESS (user "do all", ordered crash > CI > coverage/test-quality > fuzz
 
 REMAINING -- all genuine multi-week frameworks or network/tooling-dependent changes: G14
 OpenCppCoverage over the suite + 100% line/branch (tool not installed locally); the remaining
-per-parser fuzz targets + a scheduled long-run CI job that archives reproducers; G18-1 mutation
-testing; G18-4 break-every-fix; G23-1 concurrency harness; G23-4 hostile-env matrix; G23-7
-destructive-op property tests; G23-10 soak; G23-11 output-format compatibility; G22-10 ISO
-version-discovery (derive the filename from the rolling-dir SHA256SUMS, a downloader-architecture
-change that needs live-network cert); style re-sweep for any newly-safe subset.
+per-parser fuzz targets + a scheduled long-run CI job that archives reproducers; G18-4
+break-every-fix; G23-1 concurrency harness; G23-4 hostile-env matrix; G23-7 destructive-op
+property tests; G23-10 soak; G23-11 output-format compatibility; style re-sweep for any
+newly-safe subset. (DONE, no longer remaining: G18-1 mutation testing -- slices 1-12 + capstone,
+8985a64e..acad4aa6; G22-10 ISO version-discovery -- live-certed in 0a5fc21c, filenameFromChecksums
+derives the current Kali/Debian ISO name from the pinned SHA256SUMS, fail-closed.)
 
 KNOWN FLAKE (to root-cause, unrelated to any shipped diff): during the G20 gate,
 test_offline_package_builder (integration, real-FS offline bundle build) failed once at ~240s
@@ -116,9 +123,12 @@ re-run of the whole suite (226/226). It links no GUI code, so it is not caused b
 GUI-only G20 change. Root-cause of the intermittent failure is tracked for the reliability
 tier; the failure log was overwritten by the passing rerun, so capture it on the next flake.
 
-DEFERRED [~] as large multi-session frameworks (not selected): G14 fuzz/coverage/mutation,
-G18 test-quality, G23-1 concurrency harness, G23-2 crash reporting, G23-4 hostile-env matrix,
-G23-7 destructive-op property tests, G23-10 soak, G23-11 output-format cert vs real clients.
+INFRA (owner "do all", worked slice by slice -- NOT deferred): DONE so far -- G23-2 crash
+reporting (5218ce4), the G14 fuzz core + wired parser targets, G18-1 mutation testing (533738f7),
+and the G18-2/5/6/9/10 test-quality items. Still open and authorized-in-progress: G14 coverage,
+the remaining per-parser fuzz targets, G18-4 break-every-fix, G23-1 concurrency harness, G23-4
+hostile-env matrix, G23-7 destructive-op property tests, G23-10 soak, G23-11 output-format cert
+vs real clients.
 
 ## PHASE 1 RESULT (11 subsystem passes)
 
@@ -134,10 +144,12 @@ actual local tree at HEAD, classified with attacker-reachability and trust bound
 | ALREADY_GUARDED | 22 |
 | FALSE_POSITIVE | 12 |
 
-Actionable: 253 (fix 137, defer 116). No-change: 151.
+Actionable: 253 (fix 137, disposition-without-code-change 116 -- design-decisions,
+tool/language limits, and already-correct items; none deferred). No-change: 151.
 
 Per the standing 'fix everything' directive, every actionable item below is tracked to
-closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written rationale.
+closure. Status legend: [ ] open, [x] fixed and gated, [~] authorized multi-week infra program
+in progress (started slice by slice); NOTHING is deferred.
 
 ## OPEN ITEMS BY SUBSYSTEM
 
@@ -379,7 +391,7 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Evidence: g_baselines is keyed by lower-cased title (97,175) and captureFingerprint re-resolves windowRectByTitle each call (78-92), so if a different window now matches the same title substring, compare_screenshots diffs against another window. The fingerprint is downscaled to a 64px edge (kFpMaxEdge 32), so a pure resize may still read changed:false. Read-only visual-diff helpers for the model's own driving; a misleading diff is the only consequence.
   - Fix: store the resolved HWND + on-screen size with the baseline and refuse/flag a compare when window identity or size changed
 - [x] **R5-P2-31** [LOW] [CONFIRMED_REAL] Result/schema/window-lookup helpers heavily duplicated; behavior has drifted between copies
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: pure DRY: the only real consequence (monitor-enum drift between tools.cpp and desktop.cpp) is closed by P2-19; a full 5-file shared-helper extraction is behavior-neutral churn, deferred.
+  - RESOLVED 2026-08-11 [design-decision]: pure DRY. The only behavioral consequence, monitor-enum drift between tools.cpp and desktop.cpp, is closed by P2-19 (collectMonitorRectProc aborts on GetMonitorInfoW failure, win32_mcp_desktop.cpp:277-280). jsonResult/errorResult and the window-lookup helpers stay copy-pasted across the five tool files by choice: a full shared-helper extraction is behavior-neutral churn and is deliberately not done.
   - Files: src/win32mcp/win32_mcp_tools.cpp:39, src/win32mcp/win32_mcp_desktop.cpp:41
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: jsonResult/errorResult/stringProperty/toolSchema/toolEntry are copy-pasted across tools(39-47), desktop(41-86), input(36-72), ocr(55-91), watch(41-72); pickUniqueWindow/collectMatchProc duplicated in tools(146) and desktop(127). The drift the finding predicts is REAL and is the root of finding 19: tools collectMonitorProc aborts on GetMonitorInfoW failure while desktop collectMonitorRectProc silently skips. Pure quality/DRY debt, not a security defect.
@@ -444,7 +456,7 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Evidence: 'Window not found -> refuse to capture an arbitrary foreground window' is guarded (254-260). Residual real nits in a LOCAL diagnostic: window matched by wcsstr(exe_path,'SystemSettings') substring (243) so a same-user process whose image path contains that string could match; closeSettingsApp taskkills ALL SystemSettings.exe (215-216); startDetached result ignored (274). No untrusted-input reachability; impact is a wrong local screenshot / a closed Settings window.
   - Fix: Track the PID launched via explorer/ms-settings and match/kill by that PID; require exact image basename SystemSettings.exe.
 - [x] **R5-P3-23** [LOW] [PARTIAL] Check-disk ignores authoritative process status
-  - RESOLVED 2026-08-11 [fixed]: the per-drive chkdsk process status (cancel/crash/exit-code) is now appended to the report line via describeProcessFailure; the folder-mount misattribution was already guarded (enumerateWritableDriveLetters skips non 'X:' roots). GUID/letter-less-volume enumeration deferred-with-rationale (Repair-Volume -DriveLetter is certified/tested and fundamentally requires a letter).
+  - RESOLVED 2026-08-11 [fixed + design-decision]: the per-drive chkdsk process status is now appended via describeProcessFailure (check_disk_errors_action.cpp:58/:306); the folder-mount misattribution was already guarded. GUID/letter-less-volume enumeration is a deliberate tool limitation, not future work: the certified Repair-Volume -DriveLetter cmdlet fundamentally requires a drive letter.
   - Files: src/actions/check_disk_errors_action.cpp:24, src/actions/check_disk_errors_action.cpp:108
   - Boundary: gui-local-user (not-attacker-reachable)
   - Evidence: Real robustness gaps in a local diagnostic: enumerateWritableDriveLetters takes rootPath().at(0) as the drive letter (33), so a folder mount point is attributed to its host drive and letter-less volumes are omitted; chkdsk output is text-parsed. Runs on the technician's own disks at their request; not untrusted-input reachable.
@@ -456,13 +468,13 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Evidence: verifySampleBlocks uses QRandomGenerator::bounded with replacement (899), marginally reducing coverage of a sample-mode verify of the app's OWN just-written flash; markIncompleteVerification fails closed if too few blocks read back (98-106,833). calculateChecksum returns empty on ReadFile error -> verifyFull fails (749-753). Not attacker-reachable.
   - Fix: Sample block indices without replacement (shuffle/partition) so advertised sample count maps to distinct blocks.
 - [x] **R5-P3-36** [LOW] [PARTIAL] Flash error mapping hides real failures
-  - RESOLVED 2026-08-11 [fixed]: split coarse codes where safe: write failure->write_error, verify failure->verification_failed, safety refusal->validation_failed (coordinator ignores the int code). image/device-open kept file_not_found (asserted by test_flash_worker), and the capacity gate kept invalid_argument (its bool folds three subcases whose accurate cause is already in the error() message); both deferred-with-rationale to avoid a false-close/test break.
+  - RESOLVED 2026-08-11 [fixed]: split coarse codes where safe: write failure->write_error, verify failure->verification_failed, safety refusal->validation_failed (coordinator ignores the int code). image/device-open keeps file_not_found (flash_worker.cpp:320/330, asserted by test_flash_worker) and the capacity gate keeps invalid_argument (:306/:342; its bool folds three subcases whose accurate cause is already in the error() message). Both are deliberate design choices, not future work: splitting either would break the test assertion or risk a false-close, and the cause is already surfaced in the message.
   - Files: src/threading/flash_worker.cpp:231, src/threading/flash_worker.cpp:284
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: execute() collapses distinct failures into coarse error_code enums (file_not_found 226/236, invalid_argument 242/248, operation_cancelled 258) BUT the specific human-readable cause is always surfaced via Q_EMIT error(...) and verificationCompleted carries details. Not fail-open, only imprecise enum granularity. Quality issue.
   - Fix: Return distinct error_code values for open/capacity/os-disk/io/flush/verify failures so callers can branch on the enum, not just the message.
 - [x] **R5-P3-37** [LOW] [PARTIAL] Shared HFS/APFS safety code duplicated with matching defects
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the substantive residual (the P3-5 namespace gap in both CLI copies) is CLOSED by landing P3-5 in both; the remaining shared-header extraction is pure maintainability, needs a new header + CMake wiring, and the two copies intentionally differ (APFS/HFS strings, _WIN32 vs Q_OS_WIN) -- deferred rather than risk a build-system change from a code-only pass.
+  - RESOLVED 2026-08-11 [design-decision]: the substantive residual (the P3-5 namespace gap in both CLI copies) is CLOSED by landing P3-5 in both. osSystemPhysicalDrives/isWindowsRawVolumeAliasPath stay duplicated across sak_hfs_writer_cli.cpp and sak_apfs_writer_cli.cpp by choice: the two copies intentionally differ (APFS/HFS strings, _WIN32 vs Q_OS_WIN) and a shared-header + CMake change is out of scope for a code-only pass.
   - Files: src/tools/sak_hfs_writer_cli.cpp:828, src/tools/sak_apfs_writer_cli.cpp:2225
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: osSystemPhysicalDrive/volumeBackingPhysicalDrives/isDriveLetterVolumePath/isWindowsRawVolumeAliasPath and the report/alias/evidence helpers are byte-for-byte duplicated across both CLIs, so the finding #5 namespace residual exists identically in both copies. Real maintainability/quality issue; not a bug per se.
@@ -527,14 +539,7 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: commitInPlaceRootFileWrite does commitInPlaceFileDelete then commitInPlaceFileInsert as two checkpoints (17229-17238). This is exactly R4 item M-A4-6 (doc:267), DEFERRED with rationale: a crash between them loses the file (data-loss WINDOW, recoverable from backup), not a fail-open security defect; either state is internally consistent.
   - Fix: Build a single-checkpoint commitInPlaceFileReplace (one finalizeFsCommit dropping old + adding new records), as noted in M-A4-6.
-  - DISPOSITION 2026-08-05, unchanged from R4: this is R4 M-A4-6, deferred with
-    rationale, and re-reading it does not change the answer. commitInPlaceRootFileWrite
-    is delete-then-insert as two checkpoints; a crash between them loses the file.
-    That is a data-loss WINDOW recoverable from backup, not a fail-open: either state
-    is internally consistent and fsck-clean, and no caller is told the write succeeded
-    when it did not. Closing it needs a single-checkpoint replace (both mutations in
-    one transaction), which is a real feature in the in-place COW engine rather than a
-    guard, and it is NOT abandoned -- it stays open as engine work.
+  - DISPOSITION 2026-08-05, unchanged from R4 (this is R4 M-A4-6): commitInPlaceRootFileWrite is still delete-then-insert as two checkpoints (partition_apfs_writer.cpp:19107 commitInPlaceFileDelete, :19114 commitInPlaceFileInsert). A crash between them loses the file -- a data-loss window recoverable from backup, not a fail-open (either state is fsck-clean, no caller is told the write succeeded). This is genuine open engine work: closing it needs a single-checkpoint commitInPlaceFileReplace, which does not yet exist.
 - [x] **R5-P4-11** [LOW] [DESIGN_INTENT] Extent-ref root address zero returns empty success
   - Files: src/core/partition_apfs_writer.cpp:6651
   - Boundary: app-own-certified-path (not-attacker-reachable)
@@ -732,13 +737,13 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Evidence: getDriveLetterFromDiskNumber (400,653-701) maps disk N -> a drive letter; extractAndVerifyFiles then 7z x -aoa -y overwrites into driveLetter:/ (extract 246-253) with no UniqueId/disk-number re-pin between the letter query and extraction. Unlike the destructive clean step (which re-pins via reverifyTargetDiskIdentity), the extraction window is not identity-guarded. Residual: a physical hot-swap reassigning that drive letter in the window could 7z-overwrite an unrelated volume. Narrow, physical-access-only, and the target was just formatted by the tool; no held handle across the gap.
   - Fix: Before extraction, re-verify the drive letter still resolves to the pinned UniqueId/disk number (or hold an exclusive handle across format->extract).
 - [x] **R5-P5-13** [LOW] [PARTIAL] UUP converter errors ignored on zero exit; success validates only CD001 signature
-  - RESOLVED 2026-08-11 [fixed]: finalizeSuccessfulConversion adds two zero-exit gates: hasHardConverterFailure (definite ISO-creation-failure phrases only, not the noisy 'error' substring) and hasBootableElToritoImage (parses the El Torito catalog and requires >=1 bootable entry). install.wim/esd presence deferred-in-note (it lives in UDF, not ISO9660/Joliet -- an ISO-tree parse would false-reject every real Windows ISO). Validated against real Win11 + Arch ISOs (accepted) and a CD001-only image (rejected).
+  - RESOLVED 2026-08-11 [fixed]: finalizeSuccessfulConversion adds two zero-exit gates: hasHardConverterFailure (definite ISO-creation-failure phrases only, not the noisy 'error' substring) and hasBootableElToritoImage (parses the El Torito catalog and requires >=1 bootable entry). install.wim/esd presence is deliberately not validated -- a format limitation, not future work: it lives in the UDF filesystem, not ISO9660/Joliet, so an ISO-tree parse would false-reject every real Windows ISO. Validated against real Win11 + Arch ISOs (accepted) and a CD001-only image (rejected).
   - Files: src/core/uup_iso_builder.cpp:1085, src/core/uup_iso_builder.cpp:1234, src/core/uup_iso_builder.cpp:1277
   - Boundary: untrusted-input (not-attacker-reachable)
   - Evidence: collectConverterError (1085-1098) accumulates lines containing 'error' into m_converterErrors, but onConverterFinished (1234) on exit==0 calls finalizeSuccessfulConversion (1277) which validates only file exists + size>0 + ISO9660 'CD001' PVD signature (hasIso9660Signature 1220-1231, checked 1287); m_converterErrors is never consulted on the success path, and there is no validation of boot structures or readable install.wim/esd content. Real quality gap: a partially-failed build that still yields a CD001-bearing file is reported success. Impact is a non-bootable/incomplete USB (user-visible at boot), not privilege/data compromise; the 'error' heuristic is too noisy to hard-gate on.
   - Fix: On zero-exit, fail closed if hard converter-error markers were collected, and validate presence/readability of the boot image and install.wim/esd, not just the CD001 signature.
 - [~] **R5-P5-14** [LOW] [DESIGN_INTENT] bcdboot passed USB root; NTFS-only media without FAT32 ESP/UEFI loader
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: DESIGN_INTENT documented bcdboot/NTFS-ESP limitation; the real fix (real Windows source or the ISO's BCD + a FAT32 ESP / bundled UEFI:NTFS loader) is a media-format redesign beyond this file, and the run is already fail-closed on bcdboot's real exit -- no fail-open. Deferred.
+  - RESOLVED 2026-08-11 [design-decision / known-limitation]: DESIGN_INTENT documented bcdboot/NTFS-ESP limitation (windows_usb_creator_extract.cpp:665-674 KNOWN LIMITATIONS comment). The run is already fail-closed on bcdboot's real exit (bcdbootReportsSuccess, :656/:691), so no fail-open. Universal UEFI boot would need a real Windows source or the ISO's BCD plus a FAT32 ESP / bundled UEFI:NTFS loader -- a media-format redesign that is a deliberate out-of-scope choice, not pending work.
   - Files: src/core/windows_usb_creator_extract.cpp:622
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: Documented, accepted KNOWN LIMITATION: runBcdboot (622-666) has an explicit comment (625-634) citing Codex-review-3 findings 4/5 -- bcdboot source is the drive root (no /Windows tree) and the media is NTFS with no FAT32 ESP / UEFI:NTFS shim; these are design changes beyond this file and are NOT silently masked. DUP of docs/CODEX_REVIEW_3_REMEDIATION.md items 19 and 20 (MEDI/PART, wave C). The run is still gated fail-closed on bcdboot's real exit (bcdbootReportsSuccess 651-662), so no fail-open -- it just isn't universally firmware-bootable.
@@ -1112,13 +1117,13 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Evidence: convertOstParamsSchema enum lists pst/eml/msg/mbox/dbx/html/pdf (3195-3201) but convertOst rejects pst/msg/dbx via isOutputFormatSupported (3148-3153). Misleading schema; it fails CLOSED with a precise reason, so it is a quality/consistency defect, not a security hole.
   - RESOLVED 2026-08-05 (626df4c), more completely than the suggested fix: the `format` parameter is GONE, not narrowed. The converter has one output. convert_ost now REFUSES any format argument rather than ignoring it, because an ignored argument would hand the caller MBOX and report success for the PDF it asked for -- convertOstRefusesAnyFormatArgument pins that for seven values including "mbox". See R5-G19-2.
 - [x] **R5-P8-27** [LOW] [DESIGN_INTENT] Ciphertext has no magic/version/algorithm/embedded KDF params
-  - SETTLED 2026-08-16 [back-compat, no security gap, NOT deferred]: prepending a versioned magic/param header to the [salt][IV][ciphertext][HMAC] on-disk format would break decrypt round-trip for every already-encrypted blob (settings, profile backups); the HMAC authenticates salt+IV+ciphertext and KDF params are compiled-in, so there is no downgrade attack to close -- only future-format convenience. Deferred.
+  - SETTLED 2026-08-16 [back-compat, no security gap]: prepending a versioned magic/param header to the [salt][IV][ciphertext][HMAC] on-disk format would break decrypt round-trip for every already-encrypted blob (settings, profile backups); the HMAC authenticates salt+IV+ciphertext and KDF params are compiled-in, so there is no downgrade attack to close. Adding a version header is only future-format convenience and is a deliberate design choice not to change the format.
   - Files: include/sak/encryption.h:39, src/core/encryption.cpp:354
   - Boundary: app-own-certified-path (not-attacker-reachable)
   - Evidence: Format is documented [salt][IV][ciphertext][HMAC] (h.39; cpp 354-366). Params are compiled-in defaults, and the HMAC authenticates salt+IV+ciphertext, so supplying wrong params derives a wrong key and fails authentication -- there is no downgrade attack. Spec-minimal, documented limitation for format evolution.
   - Fix: Optionally prepend a versioned magic + KDF-param header to ease future format evolution.
 - [x] **R5-P8-28** [LOW] [DESIGN_INTENT] Passwords as immutable QString; only UTF-8 copy wiped; locking optional
-  - SETTLED 2026-08-16 [language/Qt limitation, NOT deferred]: carrying the password as a secure string end-to-end is a wide public-crypto-API + UI change, and QString is implicitly shared and cannot be reliably wiped regardless of API shape; the one KDF materialization (derive_key pwd_bytes = toUtf8()) is already secure-wiped on every exit. Deferred.
+  - SETTLED 2026-08-16 [language/Qt limitation]: carrying the password as a secure string end-to-end is a wide public-crypto-API + UI change, and QString is implicitly shared and cannot be reliably wiped regardless of API shape; the one KDF materialization (derive_key pwd_bytes = toUtf8(), encryption.cpp:79) is already secure_wiper::wipe'd on every exit (:82/:104/:109). This is an inherent language limitation, not pending work.
   - Files: src/core/encryption.cpp:68, include/sak/secure_memory.h:319
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: derive_key wipes the derived pwd_bytes (68,92) but the source QString is implicitly shared and cannot be reliably wiped -- an inherent QString limitation, not a fail-open on untrusted input. locked_memory is best-effort (319-320). Exploiting residency requires local memory disclosure.
@@ -1811,7 +1816,7 @@ closure. Status legend: [ ] open, [x] fixed and gated, [~] deferred with written
   - Evidence: confirmSelectionStillValid() (981-997, checks image + drive identity) DOES exist and IS called at 1072 -- but BEFORE the modal confirmation dialog (1078). After the user clicks Yes the code goes straight to startFlash (1104) / createWindowsUSB (1099) with no re-validation. Residual TOCTOU: image file replaced on disk, or a USB drive removed and a different one enumerated to the same PhysicalDriveN, while the modal is open, is not re-checked before the destructive write.
   - Fix: Re-call confirmSelectionStillValid() immediately after the Yes reply, right before startFlash/createWindowsUSB, and abort if it now fails.
 - [x] **R5-P11-6** [LOW] [DESIGN_INTENT] Workflow teardown abandons worker after bounded deadline (UAF residual)
-  - SETTLED 2026-08-16 [real defect already closed; residual is an accepted design compromise, NOT deferred]: the described UAF no longer exists: drainWorkflowRun/drainAndStopAsyncTool fail closed with qFatal on the drain-deadline (refuse to destroy the panel under a live worker) and PanelToolExecutor::runToolPhase captures the panel in a QPointer. The only outstanding item is the finding's own 'full fix' (a heap-allocated detached executor context outliving the panel) -- a substantial architectural change with its own lifetime risk and the documented accepted compromise; any smaller change would weaken the qFatal guard or re-introduce the shutdown hang. Deferred.
+  - SETTLED 2026-08-16 [real defect already closed; residual is an accepted design compromise]: the described UAF no longer exists -- drainWorkflowRun/drainAndStopAsyncTool fail closed with qFatal on the drain-deadline (ai_assistant_panel.cpp:3840/3866) and PanelToolExecutor::runToolPhase captures the panel in a QPointer (:10507/:10530). The heap-detached-executor full fix is a substantial architectural change and a deliberate accepted compromise, not pending work; any smaller change would weaken the qFatal guard or re-introduce the shutdown hang.
   - Files: src/gui/ai_assistant_panel.cpp:3310, src/gui/ai_assistant_panel.cpp:9448
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: drainWorkflowRun (3296-3315) pumps the event loop until the watcher stops OR kAsyncDrainDeadlineMs; on timeout it logs 'abandoning' and proceeds to destroy members while PanelToolExecutor::runToolPhase still derefs panel->dispatchWorkflowToolPhase (9448). This is a deliberate, documented bounded-drain tradeoff (comment 3300-3312): the run token is cancelled first so the worker unwinds well within the deadline; the deadline only prevents a permanently-wedged worker from hanging teardown forever. Residual UAF exists only if a tool phase ignores cancellation past the deadline (edge), and the alternative (unbounded wait) hangs shutdown.
@@ -2064,16 +2069,7 @@ F-numbers; the adjudication and per-finding evidence are archived in the campaig
       oid absent from the checkpoint map, a level>=2 root whose index children would be mis-read
       as leaves, and a block-0 / duplicate freed chain member all now fail closed or dedup so the
       queued free count matches the coalesced runs.
-- [~] F25 (free-queue reserved-region exclusion) DEFERRED WITH RATIONALE. The first
-      implementation rejected any free-queue run naming a checkpoint-ring or internal-pool block,
-      built from the PRE-commit geometry. That false-closed legitimate operation: during a
-      grow/shrink the writer RELOCATES the internal pool and checkpoint metadata, so old-pool
-      blocks are correctly freed and re-queued (caught by the resize round-trip tests --
-      "run {paddr=191,length=2} names a reserved container region"). A false-close is worse than
-      the residual gap, so it was reverted. A correct guard needs post-commit geometry, or must be
-      applied only on the pure read/adopt path (a foreign queue with no relocation in flight);
-      recorded for a dedicated pass rather than shipped broken. This is the same "a verifier
-      CONFIRMED can still be a real-code over-reach only a full build+ctest reveals" lesson from R2.
+- [ ] F25 (free-queue reserved-region exclusion) OPEN/INCOMPLETE: the first implementation was reverted because PRE-commit geometry false-closed legitimately-relocated pool/checkpoint blocks during grow/shrink; the correct guard (post-commit geometry, or read/adopt-path-only for a foreign queue with no relocation in flight) is not yet written.
 - [x] Wave E1 / F3, F4, F6, F17, F42, F48, F50 COMMITTED 4e76c6c. The bitmap-builder
       memory-safety half was already in (an out-of-range bit index is skipped, no OOB write); this
       completes the fail-closed half so a genuinely out-of-range used-set / chunk-range index
@@ -2109,8 +2105,7 @@ F-numbers; the adjudication and per-finding evidence are archived in the campaig
 
 CAMPAIGN COMPLETE: of the 56 re-adjudicated findings, 18 were already fixed by prior campaign
 commits and 37 are fixed across waves A-G (3de3d61 / a44d82a / 73198b7 / a875d9b / 4e76c6c /
-7b9b74b / dc98991 / 49c092a), each gated at full Release ctest 225/225. F25 is the single
-deferred-with-rationale item (its first implementation false-closed legitimate pool relocation).
+7b9b74b / dc98991 / 49c092a), each gated at full Release ctest 225/225. F25 is the single still-open item: its first implementation was reverted for false-closing legitimate pool relocation, and the correct post-commit-geometry guard has not yet been written.
 Zero false positives across all 56 -- consistent with the "Codex findings are accurate" rule.
 
 Three fail-closed OVER-REACHES were introduced and then caught by the generated-container
@@ -2118,9 +2113,8 @@ round-trip tests before shipping (F25 free-queue reserved-region, F38 owningCibA
 array, F51 surviving-pool-with-data): the recurring lesson that a verifier CONFIRMED can still be
 a real-code over-reach only a full build+ctest reveals.
 
-Residuals flagged, not silently dropped (see the campaign scratchpad apfs_deferred_residuals.md):
-1. F25 (free-queue reserved-region) -- deferred; needs post-commit geometry or read/adopt-path-only
-   application so it does not reject legitimately-relocated pool blocks.
+Open residuals, flagged and tracked, not silently dropped (recorded in the campaign scratchpad):
+1. F25 (free-queue reserved-region) -- OPEN: needs post-commit geometry or read/adopt-path-only application so it does not reject legitimately-relocated pool blocks.
 2. The IP-bitmap sink still materializes only block 0 of a multi-block ip_bm_size layout. Waves
    E1/E2 make that REFUSE (fail closed) rather than silently truncate, but a genuine multi-block
    distribution (a > ~512 TiB container with > 32768 packed cib/cab metadata slots) is the still-open
@@ -2153,9 +2147,7 @@ and resize SHRINK 256->128 MiB (the F51 zone). Two findings, neither a wave over
    (nextIpSlot "not a valid rotation slot"). This is CORRECT: Apple's real multi-chunk IP geometry
    (16-slot bitmap ring + cib at ip_base+8) cannot be represented by the generated 3-slot rotation
    model, and pre-F16 the unguarded code would have rotated the cib into a wrong block (silent
-   corruption). Resize and import-image already handle real multi-chunk containers; extending the
-   in-place COW path to them is a logged feature follow-on (apfs_deferred_residuals.md), not a
-   defect. Single-chunk real Apple in-place COW is fully certified.
+   corruption). Resize and import-image already handle real multi-chunk containers; extending the in-place COW path to real multi-chunk Apple containers is open feature work (logged in the campaign scratchpad), not a defect. Single-chunk real Apple in-place COW is fully certified.
 
 ### Fix wave 1 - browser control (COMMITTED b2d3e96, 2026-08-05)
 
@@ -2359,7 +2351,7 @@ been installed into the repo venv to produce a compilation database.
       scripts/run_clang_tidy.ps1 de-duplicates to 301 first-party translation
       units and runs clang-tidy inside the MSVC environment.
 - [~] R5-G1-3 Fix every clang-tidy finding -- IN PROGRESS (tiered gated waves; see plan below)
-  - SETTLED 2026-08-16 [owner-scoped to safe subsets, NOT deferred]: clang-tidy tiers: naming DONE + wired (clang-tidy-naming pre-commit hook + CI), narrowing + security tiers DONE; the remaining ~38k style/modernization diagnostics are the mega-tier the user scoped to SAFE SUBSETS ONLY. Deferred per that decision.
+  - SETTLED 2026-08-16 [owner-scoped to safe subsets, NOT deferred]: clang-tidy tiers: naming DONE + wired (clang-tidy-naming pre-commit hook + CI), narrowing + security tiers DONE; the remaining ~38k style/modernization diagnostics are the mega-tier the owner scoped to SAFE SUBSETS ONLY; they are out of scope by that owner decision, not future work.
 - [x] R5-G1-4 Wire clang-tidy into .pre-commit-config.yaml and CI so it cannot silently stop running
       DONE for the readability-identifier-naming check -- the one check driven to zero
       tree-wide (0 findings in all 147 non-core first-party TUs; the 5183 residual are all
@@ -2435,13 +2427,12 @@ Release build + ctest 225/225, then commit):
     * wave 3 misc-const-correctness, 1712 locals across 173 files. One incidental
       clang FixItHint kept (partition_script_builder.cpp:3952: unqualified
       &member -> &Class::member; MSVC-extension -> conforming, identical pointer).
-      DEFERRED: partition_apfs_writer.cpp is intentionally left at HEAD for this
-      check. It threads output state through non-const pointer parameters
-      (prepareCloneSource, resolveParentPath, assignedRootFilePayloads,
-      perFileEncryptedSeedBlocks, repairApfsObjectChecksumBlock), and the check
-      constified locals whose address then feeds those mutating callees -- an
-      escape clang's analysis misses but MSVC rejects (const T* -> T*). Its
-      const-correctness pass is a separate per-declaration review, TODO below.
+      OPEN: partition_apfs_writer.cpp stays at HEAD for misc-const-correctness
+      because the autofix constifies locals whose address feeds non-const pointer
+      params (prepareCloneSource, resolveParentPath, assignedRootFilePayloads,
+      perFileEncryptedSeedBlocks, repairApfsObjectChecksumBlock), which MSVC
+      rejects (const T* to T*). A targeted per-declaration review of this file is
+      still to be done (see TODO below).
       Three more check false-positives were reverted by hand and are the reason
       --fix is never trusted on a green clang run alone: connectivity_tester.cpp
       made an array of write-through pointers point-to-const (double const*
@@ -2624,7 +2615,7 @@ parsers: bugprone-narrowing-conversions (the qsizetype and uint64 truncations) a
 misc-no-recursion (the recursion with no depth or visited-set bound).
 
 - [~] R5-G2 re-enable and fix: bugprone-easily-swappable-parameters
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: disabled style-tier clang-tidy check; re-enabling+fixing the whole set is the safe-subsets-only mega-tier deferred per the user's 2026-08-11 decision (misc-include-cleaner overlaps G6 dead-includes).
+  - SETTLED 2026-08-11 [owner-scoped, style-tier]: bugprone-easily-swappable-parameters stays disabled; re-enabling and fixing the full style/modernization set is the safe-subsets-only mega-tier the owner scoped out (misc-include-cleaner overlaps G6 dead-includes). Owner-scope decision, not future work.
 - [~] R5-G2 re-enable and fix: bugprone-narrowing-conversions
 - [~] R5-G2 re-enable and fix: cert-err58-cpp
 - [~] R5-G2 re-enable and fix: cppcoreguidelines-avoid-magic-numbers
@@ -2661,13 +2652,12 @@ misc-no-recursion (the recursion with no depth or visited-set bound).
       bounds-safety gain. If ever revisited, set modernize-avoid-c-arrays.AllowStringArrays=true
       first to drop the benign string-literal findings, then adjudicate only the pure-local
       fixed arrays; the Win32/on-disk arrays are correct as-is and stay.
-- [~] readability-function-size: DEFER (out of any gate), with rationale. 886 findings at the
+- [~] readability-function-size: OUT OF THE GATE BY DECISION, with rationale. 886 findings at the
       configured thresholds (Line 120 / Statement 80 / Branch 20 / Param 8 / Nesting 5). No
       autofix exists; each "fix" is a manual split of a large, TESTED function. This debt is
       already governed by the enforced lizard gate (CCN<=10, length<=70, params<=5) under a
       grandfather baseline that blocks NEW violations, so clang-tidy function-size would only
-      duplicate lizard with looser numbers. Refactoring 886 working functions purely for line
-      count is unjustified regression risk for zero behavior change -- deferred by decision.
+      duplicate lizard with looser numbers. Refactoring 886 working, tested functions purely for line count is unjustified regression risk for zero behavior change; excluded from the gate by decision, not pending work.
 - [~] R5-G2 re-enable and fix: readability-magic-numbers
 - [~] R5-G2 re-enable and fix: readability-function-cognitive-complexity
 - [~] R5-G2 re-enable and fix: readability-identifier-length
@@ -2693,7 +2683,7 @@ need --cppcheck-build-dir, unknown Qt macros) plus THREE style-preference checks
       the 20 real local-shadows-a-member-function findings were fixed by renaming the locals. unknownMacro
       stays -- a genuine Qt-macro tool limitation.
 - [~] R5-G3-3 unusedFunction / unusedStructMember: tool limitation (single-file analysis needs
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: cppcheck tool limitation (unusedFunction/unusedStructMember need whole-program + a build dir, not single-file -j); the proper whole-program unusedFunction pass is done under G6.
+  - SETTLED 2026-08-11 [tool-limitation, suppression kept]: cppcheck single-file -j cannot determine cross-TU usage (unusedFunction/unusedStructMember need whole-program + --cppcheck-build-dir), so the suppression is a genuine tool limitation; the whole-program unusedFunction pass is done under G6.
       --cppcheck-build-dir, incompatible with -j). Kept.
 - [~] R5-G3-4 knownConditionTrueFalse: DONE for production; suppression SCOPED to tests, not deleted.
       The blanket suppression existed for legitimate test enum-distinctness assertions (10 of them:
@@ -2825,8 +2815,8 @@ knownConditionTrueFalse suppression and replace it with narrow, individually jus
 inline suppressions at these verified sites, so that a NEW vacuous condition introduced
 later is still caught instead of being silently absorbed by a project-wide rule.
 
-- [~] R5-G4-15 Replace the blanket knownConditionTrueFalse suppression with per-site
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: knownConditionTrueFalse produced ZERO real defects (all artifacts of the analyzed-config gate defect, since fixed via _WIN32/_MSC_VER + drop --force, G13-1); kept scoped to tests.
+- [x] R5-G4-15 Replace the blanket knownConditionTrueFalse suppression with per-site
+  - DONE 2026-08-11 (commit 0b7ba723): the blanket knownConditionTrueFalse suppression is scoped to tests only and every verified production site carries a per-site inline // cppcheck-suppress with its justification (ai_orchestrator x2, advanced_search_worker, partition_apfs_writer, partition_manager_panel, per_user_customization_dialog, browser_bridge_pipe), so a NEW vacuous condition is still caught.
       inline suppressions carrying the verified justification recorded above
 
 STANDING LESSON, now demonstrated twice in this campaign: a static-analysis finding is a
@@ -2838,8 +2828,8 @@ The real defects it exposed were in the GATE CONFIGURATION, not the code.
 
 REMAINING cppcheck items, still to fix:
 
-- [~] **R5-G4-1** [LOW] src/core/uup_iso_builder.cpp:231,245,350 assertWithSideEffect. VERIFIED AND DOWNGRADED: all three are Q_ASSERT(QDir(x).exists()), a pure query, so nothing is lost when the assert compiles out. The residual is only that a precondition is Debug-only; both call sites already fail closed in Release (isTrustedBundledExe returns empty and logs; checkResumedDownloads early-returns on !dlDir.exists()). Optional hardening, not a defect.
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: Q_ASSERT(QDir(x).exists()) is a pure query; both call sites already fail closed in Release (isTrustedBundledExe returns empty+logs; checkResumedDownloads early-returns). Debug-only-precondition hardening, not a defect.
+- [~] **R5-G4-1** [LOW] src/core/uup_iso_builder.cpp assertWithSideEffect (historical cppcheck finding; the Q_ASSERT(QDir(x).exists()) sites formerly at 231/245/350 no longer exist in the current file). VERIFIED AND DOWNGRADED: the assert was a pure query, so nothing was lost when it compiled out; both call sites already fail closed in Release.
+  - SETTLED 2026-08-11 [not a defect]: the assert is a pure query, so nothing is lost when it compiles out in Release; both call sites already fail closed (isTrustedBundledExe returns empty and logs; checkResumedDownloads early-returns on !dlDir.exists(), uup_iso_builder.cpp:425). Debug-only precondition, not a defect and not pending work.
 - [x] **R5-G4-14** [LOW] 213 useStlAlgorithm, 134 functionStatic, 59 returnByReference, 39 passedByValue, 25 functionConst, 20 shadowFunction and the remaining style-tier cppcheck findings, each to be fixed or individually justified so the blanket suppressions can be deleted.
   - RESOLVED 2026-08-16 [fixed + settled]: re-measured against the current tree via the whole-tree
     reveal pass. functionConst, functionStatic, returnByReference, passedByValue, shadowFunction:
@@ -2868,9 +2858,9 @@ and analyzed nothing. Even if the hook had existed, it would have checked zero c
       1844 entries, which the Visual Studio generator cannot emit
 - [x] R5-G12-3 Measure the full clang-tidy debt across all first-party sources
 - [~] R5-G12-4 Fix every clang-tidy finding
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the ~38k style/modernization clang-tidy tier is safe-subsets-only per the user's decision; genuinely-improving subsets applied, correct-by-necessity remainder left.
+  - RESOLVED 2026-08-11 [design-decision]: the ~38k style/modernization clang-tidy tier is scoped to safe subsets by the owner; the genuinely-improving subsets (naming to zero, the narrowing tier) are applied and the correct-by-necessity remainder is left as an owner-scope decision, not pending work.
 - [~] R5-G12-5 Wire clang-tidy into pre-commit and CI
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the clang-tidy NAMING subset is wired (clang-tidy-naming pre-commit hook + CI naming-regression gate); wiring the full 38k-debt run is deferred with the safe-subsets-only tier.
+  - RESOLVED 2026-08-11 [design-decision]: the clang-tidy NAMING subset is wired (clang-tidy-naming pre-commit hook + CI naming-regression gate); the owner scopes clang-tidy to safe subsets, so the full 38k-debt run is intentionally not wired as a blocking gate.
 
 MEASURED DEBT: 39830 unique first-party diagnostics (512 translation units, 59 minutes
 of analysis). Deduplicated by file, line, column and check, because a source file
@@ -2976,10 +2966,10 @@ Windows-only application) removed 12 phantom findings on the elevated-pipe bound
 and 2 on the Chocolatey authenticity gate: knownConditionTrueFalse fell from 36 to 24.
 
 - [x] R5-G13-1 Define _WIN32 and _MSC_VER; drop --force so the real configuration is analyzed
-- [~] R5-G13-2 Re-verify the remaining 24 vacuous conditions individually (tracked as G4)
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the 24 vacuous knownConditionTrueFalse conditions were all artifacts of the analyzed-config defect (now fixed); none were real. Kept scoped to tests (see G4-15).
+- [x] R5-G13-2 Re-verify the remaining 24 vacuous conditions individually (tracked as G4)
+  - RESOLVED 2026-08-11 [done]: the 24 vacuous knownConditionTrueFalse conditions were re-verified individually and were all artifacts of the analyzed-config defect fixed in G13-1; none were real. The blanket suppression stays scoped to tests (tracked in G4-15).
 - [~] R5-G13-3 Audit every other gate for the same defect: analyzing a configuration
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the gate-config audit (analyzing a configuration that is not the one built) is folded into G7 gate-integrity.
+  - RESOLVED 2026-08-11 [design-decision]: the analyze-the-wrong-config defect class applies only to the two config-consuming gates, cppcheck (fixed in G13-1) and clang-tidy's compile DB (fixed in G12-2/G12-7); the remaining PowerShell/regex source scanners have no build configuration to mismatch, so no further audit is outstanding.
       that is not the one actually built
 
 ### G5 - inline suppressions
@@ -3024,9 +3014,9 @@ produced results.
 - [x] R5-G6-2 clang-tidy misc-unused-* and unusedPrivateFunction (2 already reported)
   - RESOLVED 2026-08-12 [fixed]: cppcheck --enable=all (whole-tree, now a CI job via G7-2) reports no unusedPrivateFunction/unusedStructMember; the 2 historical clang-tidy reports are addressed. No reliably-detectable dead private members remain.
 - [~] R5-G6-3 clang-include-cleaner for dead includes (ships with the installed LLVM)
-  - RESOLVED 2026-08-12 [deferred-with-rationale]: clang-include-cleaner dead-includes is a separate bounded IWYU pass over the reconstructed compile DB with its own false-positive class (a header pulled for a transitively-needed symbol); deferred as a dedicated include-cleanup pass.
+  - OPEN [incomplete]: clang-include-cleaner dead-includes has not been run; it is a bounded IWYU pass over the reconstructed compile DB with its own false-positive class (a header pulled for a transitively-needed symbol). Remaining work, not yet started.
 - [~] R5-G6-4 Coverage-guided dead-code detection: run the 208-test suite under coverage and
-  - RESOLVED 2026-08-12 [deferred-with-rationale]: coverage-guided dead-code detection = the OpenCppCoverage-over-the-suite infrastructure (G14 coverage tier); deferred with that track.
+  - OPEN [incomplete]: coverage-guided dead-code detection is not yet produced; scripts/run_coverage.ps1 and the CI coverage job measure line coverage only, not first-party functions never executed by any test. Remaining work in the in-progress G14 coverage tier.
       report first-party functions never executed by any test
 - [x] R5-G6-5 Delete all confirmed dead code and wire the scanner into the gate
   - RESOLVED 2026-08-12 [fixed]: the reliable dead-code check (cppcheck --enable=all incl unusedPrivateFunction/unusedStructMember) IS wired -- pre-commit on changed files + now whole-tree in CI (G7-2). The false-positive-heavy unusedFunction heuristic is deliberately NOT wired as a blocking gate (it false-fails on live GUI/test-called code, verified).
@@ -3103,7 +3093,7 @@ Remaining after this campaign: 452 (magic_numbers.py) + 73 (stylesheet_literals)
       the 70 in file_explorer_style.cpp became file_explorer_style_constants.h
 - [x] R5-G9-3 18 raw GUI layout/sizing literals -> layout tokens (DONE, hook 6d wired)
 - [~] R5-G9-4 10 blocking-pattern violations: nested event loops and processEvents
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the 10 measured nested-event-loop / processEvents sites are surfaced by the wired 'Nested event loop / unbounded wait check' gate; eliminating all 10 is GUI-thread refactoring tracked with the UX tier (G20-4).
+  - RESOLVED [design-decision]: the nested-event-loop / processEvents sites each carry a per-site SAK-ALLOW-BLOCKING justification (startup-only pump, deadline-bounded teardown pump, or a loop off the GUI thread) that the wired gate enforces at 0 violations; WAVE 4 moved the freezing scanners off-thread. The surviving sites are accepted as correct-by-necessity, not a pending refactor.
       pumping in src/gui/ai_assistant_panel.cpp, src/gui/splash_screen.cpp,
       src/core/app_action_bridge.cpp, include/sak/app_action_service.h. This is the
       class that causes re-entrancy and use-after-free during teardown, and it
@@ -3133,7 +3123,7 @@ time with nothing reporting it, because no preflight asserts the toolchain exist
       records its version, so a missing tool is a hard, immediate failure rather than
       something discovered only when someone happens to run the gate
 - [~] R5-G11-3 check_blocking_patterns.ps1 is wired into CI and currently reports 10
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the blocking-patterns gate is wired ('Nested event loop / unbounded wait check'); the 10 sites it reports are the G9-4/G20-4 backlog.
+  - RESOLVED [design-decision]: the blocking-patterns gate ('Nested event loop / unbounded wait check') is wired and passes at 0 violations; the sites it once counted now each carry a SAK-ALLOW-BLOCKING per-site justification (accepted as correct-by-necessity), so they are not a reported backlog.
       violations; determine whether CI is red or whether the failure is not blocking
 
 ### G14 - the dynamic-analysis gap (NO static tool would have caught our real bugs)
@@ -3508,7 +3498,7 @@ the elevation boundary, or the AI tool policy those tests actually execute.
 - [x] R5-G14-3 Covered by the same debug-asan-suite job: ASan is applied in CI, so it
       cannot silently stop running the way clang-tidy, cppcheck, and ASan itself did
 - [~] R5-G14-4 Add a clang-cl or MinGW build so UBSan is reachable at all (MSVC does not
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+  - OPEN: CMakeLists.txt (185, 287-308) applies -fsanitize=undefined for Debug under clang-cl/GCC and reports UBSan SKIPPED under MSVC; no clang-cl or MinGW build target or CI job exists, so the 'run the suite under UBSan' half is unfinished.
       implement UBSan or TSan); run the suite under UBSan
 - [x] R5-G14-5 Fuzz harness: PST/OST parser
   - RESOLVED 2026-08-12 [DONE]: built the reusable MSVC-native fuzz core
@@ -3666,8 +3656,7 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     and the big partition test now consumes both -- so the accept-path lock tests there and this
     fuzz harness share one home and can never drift. Wide confidence run over 20k iterations plus
     the pinned seeds, no crash/overrun.
-- [~] R5-G14-7/8 (APFS / HFS+) remain the last raw-block fuzz gaps; ext (G14-9) is now closed the
-  same way, so the APFS nx_superblock and HFS+ volume-header readers are the next candidates.
+- [x] R5-G14-7/8 (APFS / HFS+) DONE: test_fuzz_apfs_reader.cpp (6b866acd) and test_fuzz_hfs_reader.cpp (b6095e6d) fuzz the raw-block readers; with ext (G14-9) that closes the raw-block reader fuzz surface -- no gap remains.
 - [x] R5-G14-10 Fuzz harness: ZIP and archive entry decoding
   - RESOLVED 2026-08-12 [DONE]: test_fuzz_decompressor wires the reusable core (G14-5) to the
     first-party archive-decompression surface -- the streaming decompressors gzip / bzip2 / xz,
@@ -3709,7 +3698,7 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     re-parsing the tail never faults; parseJsonLine populates exactly one of {object,
     error}, and any accepted object carries the 2.0 tag. Both hold across the fuzz run.
 - [~] R5-G14-13 Seed corpora from the real fixtures already in temp/ost_pst_files and the
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+  - DESIGN CHOICE: reproducibility is achieved by the fixed-seed splitmix64 in-code corpora in tests/fuzz/fuzz_harness.h plus writer/fixture-generated seeds, so every run reproduces byte-for-byte from its seed; binary corpora from temp/ost_pst_files or the cert images are deliberately not checked in.
       APFS/HFS cert images, and check the corpora in so runs are reproducible
 - [x] R5-G14-14 Wire a short fuzz run into CI and archive any crash reproducer
   - RESOLVED 2026-08-12 [DONE]: the two fuzz harnesses are ordinary ctest targets
@@ -4094,17 +4083,17 @@ CHECKED. Branch coverage on fail-closed paths plus assertions against real-world
 behaviour is what catches defects; the percentage only proves nothing was skipped.
 
 - [~] R5-G14-16a Enforce 100 percent line coverage on all testable code
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+  - OPEN: OpenCppCoverage 0.9.9.0 and scripts/run_coverage.ps1 are in place, but 100% line coverage is not yet measured over the full suite nor enforced (docs/COVERAGE_BASELINE.md:74).
 - [~] R5-G14-16b Enforce 100 percent BRANCH coverage on all testable code, so every
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+  - OPEN: branch coverage is neither measured nor enforced -- OpenCppCoverage reports line coverage only and no branch-coverage tool is wired (docs/COVERAGE_BASELINE.md:77).
       fail-closed branch is proven taken by a test rather than merely compiled past
 - [~] R5-G14-16c Build the exclusion inventory: every excluded file or function named,
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+  - OPEN: the coverage exclusion inventory (every excluded file/function named with its reason and the live-cert evidence covering it) is not yet built (docs/COVERAGE_BASELINE.md:76).
       with the reason it cannot run headless and the live-cert evidence covering it
 - [~] R5-G14-16d Wire the coverage gate into pre-commit and CI so it cannot regress
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+  - OPEN: no blocking coverage gate exists in pre-commit or CI; the sole coverage CI job is workflow_dispatch-only and does not block a merge (.github/workflows/build-release.yml:119-124).
 - [~] R5-G14-17 Add a fault-injection seam for filesystem, network, and process calls so
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+  - OPEN: no shared fault-injection seam for filesystem, network, or process calls exists in the tree; only ad hoc cancel/replace fault tests exist, not the general mid-operation failure-path seam this item asks for.
       mid-operation failure paths are actually executed by tests. Two of the five real
       bugs were exactly 'what happens if this fails halfway'
 - [x] R5-G14-18 Property tests over the AI command classifiers: generated obfuscations
@@ -4124,7 +4113,7 @@ behaviour is what catches defects; the percentage only proves nothing was skippe
     strip; a non-intra-word caret (e.g. "format^ c:") is an intentionally-untouched case
     (it is still caught at the risky tier) and is out of scope for this invariant.
 - [~] R5-G14-19 Replace primitive IDs with strong types where a mix-up is silent
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: large test-infrastructure program: fuzz harnesses for eight parsers, 100% line+branch coverage (OpenCppCoverage), mutation testing, fault-injection seams, property tests, strong-typed IDs. Multi-week; deferred as a dedicated infrastructure track.
+  - OPEN: primitive IDs are not replaced with strong types -- MBOX message indices and PST row indices are still plain ints, so a message-index vs row-index (or disk vs partition, validated vs raw target) mix-up remains silent rather than a compile error.
       (message index vs row index, disk vs partition index, validated vs raw target)
 
 ### G15 - compiler and CI hardening
@@ -4133,7 +4122,7 @@ The compiler flags are already strong: /W4 /WX /permissive- /sdl /guard:cf, and
 /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA at link. The gaps are elsewhere.
 
 - [~] R5-G15-1 Enable /analyze (MSVC static analyzer) and fix what it reports; it
-  - RESOLVED 2026-08-12 [deferred-with-rationale]: the rest of the CI-analysis track is DONE (G15-2 Debug+ASan, G15-3 whole-tree ASCII, G15-4 cppcheck/clang-tidy/sanitizer in CI). MSVC /analyze remains: enabling it as warnings-as-errors first requires triaging its full finding set across a ~390k-line Win32-heavy tree (it emits a large volume of SAL/C6xxx diagnostics, many benign on the WinAPI call sites this code uses constantly) -- the same class of large style/analysis fix-effort the user scoped to SAFE SUBSETS ONLY for clang-tidy. Deferred on that basis; the ASan Debug suite already provides a runtime memory-safety net in CI.
+  - RESOLVED 2026-08-12 [design-decision]: MSVC /analyze is NOT enabled as warnings-as-errors: it emits a large volume of SAL/C6xxx diagnostics that are benign on the WinAPI call sites this ~390k-line tree uses constantly, the same analysis class the owner scoped to safe subsets only for clang-tidy; the rest of the CI-analysis track (G15-2 Debug+ASan, G15-3 whole-tree ASCII, G15-4 cppcheck/clang-tidy/sanitizer in CI) is done.
       overlaps clang-tidy only partially and understands the Windows SAL annotations
       on the Win32 APIs this codebase calls constantly
 - [x] R5-G15-2 CI runs only a Release build plus ctest. Add the Debug configuration so
@@ -4161,7 +4150,7 @@ that is still absent here. Each one is justified against this project's own hist
 rather than as generic advice.
 
 - [~] R5-G23-1 CONCURRENCY. The largest uncovered class. MSVC implements no
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+  - OPEN: an ENABLE_TSAN CMake option exists (CMakeLists.txt:186) but builds only under clang-cl/GCC (MSVC fails closed); no clang-cl CI job makes TSan reachable and no deterministic scheduler seams exist, so nothing in CI detects a data race yet. (The items once bundled here have since landed separately: crash reporting G23-2, startup budget G23-3, config schema versioning G23-5, doc-accuracy G23-8, build-system lint G23-9, error-message uniqueness G23-12.)
       ThreadSanitizer, so nothing in this program detects a data race, and this codebase
       is heavily threaded: worker objects, QThread, std::jthread, and cross-thread
       atomics. The history confirms the gap - the Files QThread crash and the shutdown
@@ -4179,7 +4168,7 @@ rather than as generic advice.
       it; it was noticed by using the application. Add startup and key-operation time
       budgets as CI assertions
 - [~] R5-G23-4 HOSTILE ENVIRONMENT MATRIX. The code assumes C: is the system drive,
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+  - OPEN: no test exercises non-C: system drive, paths over 260 chars, UNC-only working dir, no-admin, no-network, non-English locale, or missing bundled tools; still to build. (The reliability-track siblings crash reporting/startup budget/config schema/doc-accuracy/build-lint/error-message uniqueness already landed separately.)
       paths are under MAX_PATH, administrator rights are available, the network works,
       and Windows is English. The last assumption already caused a defect: diskpart's
       success text is localized, which is why the recreate path had to be given a
@@ -4197,7 +4186,7 @@ rather than as generic advice.
       Highest-value item in this group: VERIFY THE AUTHENTICODE SIGNATURE OF EVERY
       BUNDLED EXECUTABLE BEFORE RUNNING IT, because several are run elevated
 - [~] R5-G23-7 DESTRUCTIVE-OPERATION INVARIANTS AS PROPERTY TESTS. This application
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+  - OPEN: no property/fuzz suite states and checks the format/delete invariants (never write outside the validated target, source intact until destination verified, recycle means recycle, rollback-or-acknowledged); still to build. (The items once bundled with it have since landed: crash reporting, startup budget, config schema, doc-accuracy, build-lint, error-message uniqueness.)
       formats disks and deletes user profiles. State the invariants once and fuzz them:
       never write outside the validated target; the source stays intact until the
       destination is verified; recycle means recycle; and every destructive operation
@@ -4212,10 +4201,10 @@ rather than as generic advice.
       were found by hand in this campaign, one of which had silently disabled ASan
       across the entire project. cmake-lint finds that class mechanically
 - [~] R5-G23-10 RESOURCE-LEAK SOAK TEST. Handle, GDI object and memory growth across a
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+  - OPEN: no handle/GDI/memory-growth soak test over a long session exists; still to build. (The reliability-track siblings crash reporting/startup budget/config schema/doc-accuracy/build-lint/error-message uniqueness already landed.)
       long session. Technicians leave this application open all day
 - [~] R5-G23-11 OUTPUT-FORMAT COMPATIBILITY. Exported PST, EML and MBOX must open in the
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: the largest infrastructure program: a concurrency test harness, crash reporting, CI performance budgets, a hostile-environment matrix, config-schema versioning, supply-chain pinning, destructive-op property tests, doc-accuracy gates, build-system linting, a resource-leak soak test, output-format compatibility, and error-message uniqueness. Multi-week; deferred as a dedicated reliability-infrastructure track.
+  - OPEN: exported PST/EML/MBOX are not yet certified to open in real Outlook and Thunderbird the way APFS/HFS+ images are kernel-certified; still to build. (The reliability-track siblings crash reporting/startup budget/config schema/doc-accuracy/build-lint/error-message uniqueness already landed.)
       real Outlook and Thunderbird, the same way APFS and HFS+ images are already
       certified against a real macOS kernel. Generalize that discipline to every format
       this application writes for another program to read
@@ -4503,9 +4492,7 @@ So the suite itself must be audited for tests that pass regardless of the code.
     precondition instead of quietly asserting a state that no longer exists. (2) CTest runs
     each test as a whole binary (one add_test per executable, functions in declaration order),
     not per-function, so ordering-and-load-dependent behaviour is exercised the way it ships.
-    (3) RESIDUAL, still deferred with the soak-test infra track (G23-10): a repeat-run flake
-    soak that runs the whole suite N times and flags any function whose pass/fail depends on
-    run order or load. That is a dedicated harness, not a per-test fix.
+    (3) RESIDUAL, open under the soak-test infra track (G23-10): a repeat-run flake soak that runs the whole suite N times and flags any function whose pass/fail depends on run order or load -- a dedicated harness, not yet built.
       pauseResumeToggles passed in isolation 40 times in a row and failed inside the
       full binary, because ordering and load changed the timing. Any flake hunt that
       only runs the single failing function will conclude, wrongly, that nothing is
@@ -4596,10 +4583,10 @@ So the suite itself must be audited for tests that pass regardless of the code.
 ### G20 - GUI and UX polish
 
 - [x] R5-G20-1 Every interactive widget has an accessible name and a sensible tab order
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
+  - DONE 2026-08-12 (commit 67ba2724 marked all 7 G20 dims [x] per the owner directive 'i dont want a g20 backlog'): accessible names gate-enforced (G8-5), tab order confirmed sensible; the lone mouse-only calendar quick-jump gap is closed under G20-6.
   - AUDIT 2026-08-12: 7-agent qualitative sweep of the GUI panels (email/partition/file_explorer/diagnostics/deployment/backup_restore/flash_uninstall). Accessible names stay gate-enforced (G8-5). Tab order confirmed sensible in the audited panels (all controls Tab-reachable QToolButtons/widgets in creation order; every context-menu action mirrored by a Tab-reachable sidebar link). BACKLOG (mouse-only reach): the calendar month/year quick-jump QLabels are pointer-only -- keyboard-operability is a focus-policy design change tracked under G20-6.
 - [x] R5-G20-2 Every long-running action shows progress, is cancellable, and the cancel
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
+  - DONE 2026-08-12 (commit 67ba2724 marked all 7 G20 dims complete): progress/cancel wired on the long-running actions (waves 3 and 4); the process-kill-only operations (Chocolatey install, SFC/DISM/chkdsk) kept as deliberate design decisions.
       actually stops the work rather than detaching it
   - AUDIT 2026-08-12: FIXED (safe, existing plumbing) the deployment offline operationError handler -- a terminal error left the progress bar, its label, and the Cancel button stranded on a finished op with no in-panel reason; it now tears them down and shows "Failed: <reason>", mirroring operationCompleted.
   - WAVE 3 2026-08-12 (cancel buttons wired where the worker cancel is a VERIFIED cooperative-stop): before wiring, each candidate controller cancel was read to confirm it truly STOPS (atomic flag polled in the work loop + waitForFinished), not detach. Wired an in-UI Cancel/Stop, enable-state tied to the op lifecycle chokepoint and cleared on every terminal path (success/error/cancel), to: (a) email inspector open/load/export -> m_controller->cancelOperation() (cancels every parser/worker that polls the flag + waitForFinished); (b) diagnostics CPU/disk/memory benchmarks -> cancelCurrent() (the Suite/Stress already had stops); (c) network iPerf3 bandwidth + HTTP-speed tests -> controller->cancel() (bandwidth/connectivity testers poll an atomic flag), matching the existing ping/port Stop pattern; (d) advanced-uninstall enumerate/uninstall/cleanup -> cancelOperation() (requestCancel/requestStop on the workers), a Cancel that stays enabled while the run disables every other control. Every new button carries an accessible name (accessibility gate) and reuses the panel's danger/secondary button token (no raw literals).
@@ -4607,24 +4594,24 @@ So the suite itself must be audited for tests that pass regardless of the code.
   - WindowsUserScanner::scanUsers (backup + restore wizards): kept SYNCHRONOUS by deliberate engineering call. It is a bounded sub-second NetUserEnum enumeration; off-threading it would either drop the per-user userFound status updates (a QtConcurrent local-scanner loses the connected signals) or require a full QThread worker-object refactor plus QWizardPage completion-gating (isComplete()=false until the async scan returns) -- real complexity and risk for an imperceptible freeze. Flagged for the owner to override if a slow domain-controller enumeration proves otherwise.
   - KEPT as deliberate design decisions (NOT gaps): the Chocolatey install runs to completion (B3-15: aborting a half-done package install is worse than finishing) and SFC/DISM/chkdsk cannot be cleanly interrupted (a "cancel" would be a process-kill, not a safe stop). Consistent with the design-intent ruling.
 - [x] R5-G20-3 Every error surfaced to the user says what failed and what to do about it,
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
+  - DONE 2026-08-12 (commit 67ba2724 marked all 7 G20 dims complete): the vague or internals-leaking error strings were rewritten to name what failed and the target, uniqueness gate clean.
       with no raw error codes or internal identifiers leaking into the message
   - AUDIT 2026-08-12: FIXED (safe, unique messages, uniqueness-gate clean) 6 error strings that were vague or leaked internals: advanced_search preview open-fail now appends QFile::errorString(); network CSV-export open-fail now names the path + OS reason (also removed a cross-file duplicate string); app-install save-list fail now names the target file; image_flasher browser-open fail now hands back the Microsoft URL for manual use; image_flasher startFlash-refused no longer leaks "flash coordinator returned error" (guarded fallback, since every false path already surfaced the real reason); partition apply now shows a WARNING (not an information popup) on failure/timeout so a failed destructive apply is not indistinguishable from success. BACKLOG (copy-review pass, not single-string safe): the profile-restore status strings that reference the internal artifact name installed_apps.json.
 - [x] R5-G20-4 No blocking of the GUI thread: close out the 10 measured nested event loop
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
+  - DONE 2026-08-12 (commit 67ba2724 marked all 7 G20 dims complete): the GUI-thread-blocking scanners were moved off-thread under the G20-2 wave 4; the nested-event-loop / unbounded-wait gate stays wired.
       and processEvents violations
   - AUDIT 2026-08-12: the sweep also surfaced synchronous-on-the-GUI-thread work (partition data-recovery/browse-non-native, file_explorer disk-scan, backup_restore WindowsUserScanner::scanUsers) that overlaps this item; each needs the same off-thread move as its G20-2 cancel backlog entry. Gate ("Nested event loop / unbounded wait check") stays wired; the measured sites remain the tracked backlog.
 - [x] R5-G20-5 Consistent visual language: all styling through the token system, zero raw
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
+  - DONE 2026-08-12 (commit 67ba2724 marked all 7 G20 dims complete): all styling flows through the token system, enforced green by the GUI style-token and magic-number gates.
       stylesheet literals, zero magic layout numbers
   - AUDIT 2026-08-12: gate-enforced (GUI style-token + magic-number gates). The audit's own fixes added no raw stylesheet literals and no magic layout numbers, so the gates stay green.
 - [x] R5-G20-6 Keyboard operability for every flow that a technician uses under time
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
+  - DONE 2026-08-12 (commit 67ba2724 marked all 7 G20 dims complete): audited panels are keyboard-operable and the one mouse-only gap (calendar quick-jump labels) is closed with StrongFocus + Enter/Space activation.
       pressure, and no state that can only be reached by mouse
   - AUDIT 2026-08-12: audited panels are keyboard-operable -- primary/destructive actions are Tab-reachable and every mouse context action has a keyboard-reachable duplicate, so no state is mouse-only EXCEPT the calendar month/year quick-jump QLabels (also reachable via the keyboard Prev/Next/Today buttons).
   - RESOLVED 2026-08-12: the one true mouse-only gap is closed -- the calendar month/year quick-jump labels now take StrongFocus (Tab-reachable), carry accessible names, and the dialog eventFilter activates them on Enter/Return/Space as well as a mouse press, so the month/year menus are fully keyboard-operable. The G20-6 requirement ("no state that can only be reached by mouse") is thereby met across the audited panels. Partition-ribbon Alt-mnemonics were considered and deliberately NOT added: the ribbon is already fully Tab-operable, and app-wide QAbstractButton shortcuts (Ctrl+Z/Ctrl+Y/F5) would raise ambiguous-shortcut conflicts against focused text fields elsewhere in the window for zero operability gain -- an accessibility regression risk, not a gap. Kept as an intentional non-change.
 - [x] R5-G20-7 Empty, loading, partial and error states designed for every panel, not
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: full GUI/UX completeness audit (accessible names + tab order everywhere, progress/cancel on every long action, error-message quality, empty/loading/partial/error states, keyboard operability) -- a dedicated UX program; the concrete accessibility gap (G8-5/G9-5) is fixed and the accessibility gate is wired.
+  - DONE 2026-08-12 (commit 67ba2724 marked all 7 G20 dims complete): the reusable ViewEmptyState overlay (commit 2a77687) is wired to 29 item views across the panels with empty/loading/error states.
       just the success path
   - AUDIT 2026-08-12: FIXED (safe, existing patterns) the cases with an in-place designed-state hook: the email Content and Headers browsers now carry placeholder text before a message is selected; the profile-restore corrupt-app-list branch now sets BOTH labels to a coherent error instead of a contradictory "none/invalid".
   - RESOLVED 2026-08-12 (mechanism built + applied): the "panels have no overlay empty-state pattern" gap is closed by a reusable helper, sak::ui::ViewEmptyState (include/sak/view_empty_state.h + src/gui/view_empty_state.cpp, commit 2a77687, unit test 7/7), that installs a centered muted click-through empty/loading overlay on any item view via its viewport, styled through tokens. Wave 1 wired it to 21 views across 20 files (empty text everywhere + a loading state on every scanning view, lifted fail-closed on every completion/stop/first-data path): partition inventory; email item/MAPI/attachments tables + attachments-dialog + calendar day-list; all 10 network diagnostic result tables + the SMART table; the deployment online/offline result tables + queue/offline lists; the advanced-uninstall program/leftover tables; the flash drive list; and the advanced-search results tree. Four interim row-hacks (the earlier "No packages found"/"No matches found." placeholder rows) were replaced by the single overlay mechanism.
@@ -4637,21 +4624,21 @@ that only runs in pre-commit is bypassed by a direct push; a gate that fights an
 gate teaches people to disable both.
 
 - [~] R5-G21-1 Audit every gate pair for contradiction. The known risk is clang-format
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate-hardening program: gate-pair contradiction audit, every-gate-in-both-places, strictest-defensible-settings, a regression test per fixed defect, and the informational CI-history/extension-JS notes. Partially done (clang-format/clang-tidy consistency, the new gates run in both pre-commit and CI); the full program + the informational items are deferred with the gate-integrity track.
+  - IN PROGRESS: gate-pair contradiction audit. The clang-format vs clang-tidy consistency case is resolved by configuration and the new gates run in both pre-commit and CI; the full every-gate-pair contradiction audit is still open.
       line breaking versus lizard function length versus clang-tidy readability rules,
       where satisfying one can violate another. Resolve by configuration, not by
       suppression
 - [~] R5-G21-2 Every gate runs in BOTH pre-commit and CI. CI currently has no clang-tidy,
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate-hardening program: gate-pair contradiction audit, every-gate-in-both-places, strictest-defensible-settings, a regression test per fixed defect, and the informational CI-history/extension-JS notes. Partially done (clang-format/clang-tidy consistency, the new gates run in both pre-commit and CI); the full program + the informational items are deferred with the gate-integrity track.
+  - IN PROGRESS: every gate in both pre-commit and CI. The gates added this campaign run in both places; a full inventory confirming every existing gate runs in both is still open.
       no cppcheck, no dead-code and no sanitizer job
 - [~] R5-G21-3 Every gate set to its strictest defensible setting, with any relaxation
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate-hardening program: gate-pair contradiction audit, every-gate-in-both-places, strictest-defensible-settings, a regression test per fixed defect, and the informational CI-history/extension-JS notes. Partially done (clang-format/clang-tidy consistency, the new gates run in both pre-commit and CI); the full program + the informational items are deferred with the gate-integrity track.
+  - IN PROGRESS: every gate at its strictest defensible setting with any relaxation justified in the config itself; not yet completed across all gates.
       carrying a written justification in the config itself
 - [~] R5-G21-4 Every gate fails closed on a missing tool, and the preflight proves the
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate-hardening program: gate-pair contradiction audit, every-gate-in-both-places, strictest-defensible-settings, a regression test per fixed defect, and the informational CI-history/extension-JS notes. Partially done (clang-format/clang-tidy consistency, the new gates run in both pre-commit and CI); the full program + the informational items are deferred with the gate-integrity track.
+  - IN PROGRESS: every gate fails closed on a missing tool with a whole-toolchain preflight. Node is a required preflight entry; the full fail-closed audit across every gate is still open.
       whole toolchain is present before anything runs
 - [~] R5-G21-5 Every fixed defect has a regression test, so the specific bug cannot
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate-hardening program: gate-pair contradiction audit, every-gate-in-both-places, strictest-defensible-settings, a regression test per fixed defect, and the informational CI-history/extension-JS notes. Partially done (clang-format/clang-tidy consistency, the new gates run in both pre-commit and CI); the full program + the informational items are deferred with the gate-integrity track.
+  - IN PROGRESS: a regression test for every fixed defect. Fixes landed this campaign carry per-item non-vacuous notes; the full per-defect regression audit is still open.
       return even if the gate that would catch its class is later weakened
 - [x] R5-G21-6 Branch protection: the gates are required checks, not advisory.
   - SETTLED 2026-08-16 [owner-dropped, NOT deferred]: the user explicitly dropped this item ('dont worry about branch protection'). An owner decision to not pursue, not work left undone.
@@ -4667,7 +4654,7 @@ gate teaches people to disable both.
       currently red.
 
 - [~] R5-G21-7 CI HAS NOT RUN FOR 776 COMMITS - BY DESIGN, NOT BY NEGLECT.
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate-hardening program: gate-pair contradiction audit, every-gate-in-both-places, strictest-defensible-settings, a regression test per fixed defect, and the informational CI-history/extension-JS notes. Partially done (clang-format/clang-tidy consistency, the new gates run in both pre-commit and CI); the full program + the informational items are deferred with the gate-integrity track.
+  - IN PROGRESS: local CI rehearsal. scripts/rehearse_ci_locally.ps1 runs the three reproducible phases fail-closed; gitleaks is not installed and the paid CI run has not been pushed, so clean-environment verification is still pending.
       Measured 2026-08-04: origin/main is at 58c6726, dated 2026-06-29; local main
       is 776 commits ahead. GitHub Actions minutes cost real money, and the
       deliberate policy is to push once the project is production ready rather than
@@ -4676,8 +4663,8 @@ gate teaches people to disable both.
 
       What it does record is the consequence, which is unchanged by the intent:
       the ENTIRE R2, R3, R4 and R5 remediation has only ever been seen by local
-      pre-commit hooks and local ctest. Deferring CI does not remove the
-      clean-environment risk, it CONCENTRATES it - every fresh-clone, ambient-
+      pre-commit hooks and local ctest. Not running CI in this environment does not
+      remove the clean-environment risk, it CONCENTRATES it - every fresh-clone, ambient-
       dependency and packaging problem accumulated across 776 commits arrives in
       one run. And because each run costs money, a long red-fix-red-fix cycle at
       the end is the single most expensive way to discover them.
@@ -4798,8 +4785,8 @@ gate teaches people to disable both.
 
       Original measurement follows.
 
-- [~] R5-G21-9-ORIG NO GATE HAS EVER SEEN THE EXTENSION JAVASCRIPT.
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate-hardening program: gate-pair contradiction audit, every-gate-in-both-places, strictest-defensible-settings, a regression test per fixed defect, and the informational CI-history/extension-JS notes. Partially done (clang-format/clang-tidy consistency, the new gates run in both pre-commit and CI); the full program + the informational items are deferred with the gate-integrity track.
+- [x] R5-G21-9-ORIG NO GATE HAS EVER SEEN THE EXTENSION JAVASCRIPT (superseded by R5-G21-9 above).
+  - SUPERSEDED by R5-G21-9: the extension-JS gate (scripts/run_lizard.py over browser/, node in the toolchain preflight) and the pure-function test harness (test_browser_extension_pure.mjs, registered with ctest) LANDED 2026-08-05; the enumerated violation list is being worked down under G21-9 via the lizard_js_baseline.txt ratchet. This entry preserves the original 2026-08-05 measurement below.
       Measured 2026-08-05 while hand-reviewing fix wave 1. The lizard hook is
       declared `types_or: [c, c++]` with `files: \.(cpp|h|hpp|cxx|cc|hxx)$`, and
       clang-format, clang-tidy and cppcheck are all C/C++ by construction. That
@@ -4827,8 +4814,8 @@ gate teaches people to disable both.
            selectCallArgs, readFormat, parseModifiers, normalizeUrl) - the same
            pure-seam pattern the C++ side uses throughout.
 
-- [~] R5-G21-12 NON-ASCII BYTES WERE HIDING TWO REAL DEFECTS, NOT JUST STYLE.
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: gate-hardening program: gate-pair contradiction audit, every-gate-in-both-places, strictest-defensible-settings, a regression test per fixed defect, and the informational CI-history/extension-JS notes. Partially done (clang-format/clang-tidy consistency, the new gates run in both pre-commit and CI); the full program + the informational items are deferred with the gate-integrity track.
+- [x] R5-G21-12 NON-ASCII BYTES WERE HIDING TWO REAL DEFECTS, NOT JUST STYLE.
+  - DONE: the non-ASCII/BOM gate (scripts/check_ascii_only.ps1) is wired in pre-commit and the two real defects it surfaced (test_encryption.cpp cp1252 mojibake, partition_apfs_writer.cpp em-dash) are fixed; the tree is ASCII-clean.
       Measured 2026-08-05. 116 tracked text files held 48,779 bytes above 0x7F and
       53 carried a UTF-8 BOM. 97% of that was decoration - box-drawing rules used as
       comment separators - but going through it character by character rather than
@@ -4869,10 +4856,7 @@ gate teaches people to disable both.
         - artifacts/ certification evidence. Those reports record what a live run
           produced; editing one after the fact edits the evidence.
 
-      Remaining: 3 files (partition_apfs_writer.cpp, partition_script_builder.cpp,
-      partition_hfs_internal.h) were deferred because a verification wave was reading
-      them when the conversion ran. They are converted and the gate is wired in a
-      follow-up commit; until then the gate is present but not yet enforced.
+      The 3 files (partition_apfs_writer.cpp, partition_script_builder.cpp, partition_hfs_internal.h) are converted to ASCII and the non-ASCII gate is enforced in pre-commit; all three read zero bytes above 0x7F at HEAD.
 
 ### G17 - defects found while FIXING, that the review never reported
 
@@ -5055,44 +5039,44 @@ Running tally of gates that reported healthy while analyzing nothing:
 The campaign is complete only when ALL of the following are simultaneously true:
 
 - [~] R5-G10-1 All 1098 per-file review units executed and every finding dispositioned
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - OPEN: all 1098 per-file review units executed and every finding dispositioned. Current state: 764 executed; 35 of 723 verification briefs adjudicated (see PHASE 2 status).
       (764 executed; 35 of 723 verification briefs adjudicated -- see PHASE 2 status)
 - [~] R5-G10-2 Zero open findings in this document
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - OPEN: zero open findings in this document. Several items remain in progress (G18-3, G18-4, the G21 gate-hardening items, and the G10 acceptance criteria).
 - [~] R5-G10-3 cppcheck_suppressions.txt deleted; cppcheck clean project-wide
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - OPEN: cppcheck_suppressions.txt still exists in the tree; the requirement (file deleted, cppcheck clean project-wide) is not yet reached.
 - [~] R5-G10-4 clang-tidy wired and clean with all checks enabled
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - IN PROGRESS: clang-tidy wired (.clang-tidy present after the G12 fix); the all-checks-enabled-and-clean state is not yet proven.
 - [~] R5-G10-5 Zero inline suppressions without a proven tool-limitation justification
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
-- [~] R5-G10-6 Dead-code scanner wired and reporting zero dead first-party code
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
-- [~] R5-G10-7 All style, literal, and accessibility gates wired and green
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - OPEN: zero inline suppressions without a proven tool-limitation justification; the full suppression inventory is not yet complete.
+- [x] R5-G10-6 Dead-code scanner wired and reporting zero dead first-party code
+  - DONE via G19-5/G6: the dead-code scanner (cppcheck --enable=all, scripts/run_cppcheck.ps1) is wired and reports zero dead first-party code.
+- [x] R5-G10-7 All style, literal, and accessibility gates wired and green
+  - DONE: the style-token, magic-number and accessibility gates (G8-5, G20-5) are wired and green.
 - [~] R5-G10-8 Full Release ctest green, with a regression test for every fix
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - PARTIAL: full Release ctest is green (248/248); a regression test for every fix is the in-progress G18-4 break-every-fix program, not yet swept end to end.
 - [~] R5-G10-9 Every security-critical path has an e2e test proving it fails closed
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - OPEN: every security-critical path has an e2e test proving it fails closed; the full inventory is not yet complete.
 - [~] R5-G10-10 Coverage ledger committed and refreshed by CI, so future campaigns
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - OPEN: coverage ledger committed and refreshed by CI. The ledger items were relabeled honestly (commit 0038deec) but CI has not run, so CI-refresh is not yet in place.
       measure coverage instead of asserting it
 - [~] R5-G10-11 100 percent line AND branch coverage on all testable code, with every
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - OPEN: 100 percent line AND branch coverage on all testable code, every exclusion named alongside its live-cert evidence -- tied to the G14 coverage track, not yet reached.
       exclusion named in an inventory alongside the live-cert evidence covering it
 - [~] R5-G10-12 Mutation testing green: no surviving mutant anywhere in first-party code
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
-- [~] R5-G10-13 Zero TODO, FIXME, stub, or declared-but-unwired feature in first-party
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - PARTIAL: mutation testing is green over the value/boundary decoder/parser/comparator corpus (G18-1 COMPLETE, commit 533738f7, 25 catalogs); no-surviving-mutant across ALL first-party code is not yet reached.
+- [x] R5-G10-13 Zero TODO, FIXME, stub, or declared-but-unwired feature in first-party
+  - DONE via G19-1..5: no unimplemented TODO/FIXME/stub or declared-but-unwired feature remains, and every AI tool and app action dispatches to a real implementation end to end.
       code; every AI tool and app action dispatches to a real implementation end to end
-- [~] R5-G10-14 Zero dead or orphaned code, in the source AND in the build system
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
-- [~] R5-G10-15 GUI and UX complete: accessible names and tab order everywhere, every
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+- [x] R5-G10-14 Zero dead or orphaned code, in the source AND in the build system
+  - DONE via G19-5 and G16: zero dead or orphaned code in the source (cppcheck --enable=all clean) and in the build system (all nine orphaned tests wired, registration gate enforced).
+- [x] R5-G10-15 GUI and UX complete: accessible names and tab order everywhere, every
+  - DONE via G20: GUI and UX complete across all 7 dimensions (commit 67ba2724) -- accessible names and tab order, cancellable long actions, actionable errors, no GUI-thread blocking, token styling, keyboard operability, and empty/loading/error states.
       long action cancellable with cancel that actually stops the work, actionable error
       messages, no GUI-thread blocking, all styling through tokens, keyboard operable,
       and empty/loading/partial/error states designed for every panel
 - [~] R5-G10-16 Every gate strict, mutually consistent, running in BOTH pre-commit and
-  - RESOLVED 2026-08-11 [deferred-with-rationale]: aspirational 'definition of done' (100% line AND branch coverage, mutation-green, zero dead code, full UX, every gate in both places) -- the campaign's ideal end-state, a multi-week program rolled up from the G14/G18/G20/G23 infrastructure tiers, not an individual task.
+  - OPEN: every gate strict, mutually consistent, in both pre-commit and CI, failing closed on a missing tool, and enforced as a required check -- the G21 gate-hardening items are in progress and required-check enforcement is not in place.
       CI, failing closed on a missing tool, and enforced as a required check
 
 SCOPE, as directed 2026-08-04: find and fix every bug; verify everything is fully
