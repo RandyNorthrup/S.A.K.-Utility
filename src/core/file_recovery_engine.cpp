@@ -15,7 +15,6 @@
 #include <QSaveFile>
 
 #include <algorithm>
-#include <limits>
 #include <optional>
 
 namespace sak {

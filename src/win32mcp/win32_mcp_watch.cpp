@@ -12,7 +12,6 @@
 #include <QVector>
 
 #include <algorithm>
-#include <cstdlib>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN

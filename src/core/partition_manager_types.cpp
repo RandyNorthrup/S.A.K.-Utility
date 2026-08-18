@@ -8,8 +8,6 @@
 
 #include <QUuid>
 
-#include <array>
-
 namespace sak {
 
 namespace {

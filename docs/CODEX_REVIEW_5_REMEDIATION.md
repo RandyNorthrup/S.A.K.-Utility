@@ -3048,10 +3048,20 @@ produced results.
     PartitionExecutor uses in app_mutating_actions; error_codes.h: 3 error_code uses in
     file_management_file_system) -- removing a directly-used symbol's header is wrong even if it
     compiles transitively.
-  - OPEN: the ~14 standard-library removal candidates (<algorithm>/<array>/<limits>/<optional>/<utility>/
-    <vector>/<numeric>/<QtConcurrent>/<cstdlib>) each carry a transitive-STL-reliance risk (a parser may
-    use std::optional pulled in via another header, which MSVC may or may not provide the same way), so
-    each needs per-file MSVC build verification before removal -- a bounded follow-on batch.
+  - PROGRESS 2026-08-18 (std follow-on): the 14 standard-library removal candidates were triaged the
+    same way -- each file grepped for ANY symbol of the candidate header before removal, then MSVC-gated.
+    12 were confirmed genuinely unused (grep found zero symbol usage, agreeing with the tool) and REMOVED,
+    gated on the full Release ctest 249/249: <algorithm> x3 (app_mutating_actions, email_export_worker,
+    win32_mcp_capture), <array> x2 (app_mutating_actions, partition_manager_types), <limits> x2
+    (file_recovery_engine, partition_hfs_file_system_reader), <optional> + <utility>
+    (partition_hfs_file_system_reader), <vector> (registry_snapshot_engine), <numeric>
+    (windows_iso_downloader), <cstdlib> (win32_mcp_watch). The other 2 were KEPT: <QtConcurrent> in
+    advanced_search_panel and file_explorer_properties_dialog both DIRECTLY call QtConcurrent::run, and
+    the umbrella <QtConcurrent> is the header that provides it -- another directly-used-symbol false
+    positive (same class as the error_codes.h/partition_executor.h keeps above), not dead.
+  - OPEN: one first-party TU errored out of the tree-wide scan (clang-include-cleaner timeout/parse) and
+    was never analyzed; naming and resolving it, plus the formal [x] settle of the umbrella-only residual,
+    is the remaining G6-3 work.
 - [~] R5-G6-4 Coverage-guided dead-code detection: run the 208-test suite under coverage and
   - OPEN [incomplete]: coverage-guided dead-code detection is not yet produced; scripts/run_coverage.ps1 and the CI coverage job measure line coverage only, not first-party functions never executed by any test. Remaining work in the in-progress G14 coverage tier.
       report first-party functions never executed by any test

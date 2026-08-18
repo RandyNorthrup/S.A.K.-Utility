@@ -16,7 +16,6 @@
 #include "sak/logger.h"
 
 #include <limits>
-#include <numeric>
 
 constexpr int kGbDisplayPrecision = 2;
 

@@ -21,9 +21,6 @@
 
 #include <algorithm>
 #include <functional>
-#include <limits>
-#include <optional>
-#include <utility>
 
 namespace sak {
 

@@ -7,7 +7,6 @@
 
 #include <QVector>
 
-#include <algorithm>
 #include <utility>
 
 #ifndef WIN32_LEAN_AND_MEAN

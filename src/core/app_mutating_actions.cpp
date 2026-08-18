@@ -61,8 +61,6 @@
 #include <QString>
 #include <QStringList>
 
-#include <algorithm>
-#include <array>
 #include <cmath>
 #include <expected>
 #include <functional>

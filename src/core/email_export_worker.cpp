@@ -23,7 +23,6 @@
 #include <QSet>
 #include <QTextStream>
 
-#include <algorithm>
 #include <functional>
 #include <memory>
 

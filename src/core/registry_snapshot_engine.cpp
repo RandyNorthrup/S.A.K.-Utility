@@ -6,10 +6,6 @@
 
 #include "sak/registry_snapshot_engine.h"
 
-#ifdef Q_OS_WIN
-#include <vector>
-#endif
-
 namespace sak {
 
 namespace {
