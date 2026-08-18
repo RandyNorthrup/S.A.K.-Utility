@@ -18,7 +18,7 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-18: 634 [x] / 26 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
+as of 2026-08-18: 635 [x] / 25 [~] / 1 [ ] (reconciled to the live marker counts) (G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
 this window -- 41 owner-decision / tool-limit items were verified against the live config and
 settled to [x]; then the gate-audit batch closed R5-G21-1 (gate-pair contradiction), R5-G21-3
@@ -40,8 +40,11 @@ it stays off, reclassified in .clang-tidy from restore-pending to by-design; own
 then R5-G6-3 dead-include detection closed -- clang-include-cleaner was run tree-wide over the
 first-party TUs and 24 genuinely-dead includes were removed (10 first-party + 12 standard-library
 + 2 in logger.cpp, which clang-cl cannot compile so it was audited by hand), leaving 45 tool
-suggestions that are all umbrella / directly-used false positives kept by design.
-That leaves 26 [~] = ~6 blocked-on-user + ~20 locally
+suggestions that are all umbrella / directly-used false positives kept by design; and R5-G6-4
+(coverage-guided dead-code) settled as a design-decision -- a headless suite's "never executed"
+set is definitionally the maybe-dead code combined with the whole G14-16c headless-unreachable
+inventory, so it is not a dead-code oracle (the reliable one, cppcheck --enable=all, is wired per
+G6-5). That leaves 25 [~] = ~6 blocked-on-user + ~19 locally
 actionable; the single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
@@ -3075,8 +3078,24 @@ produced results.
     verified false positives -- 41 Win32/system umbrella headers (clang-cl-dead != MSVC-dead) and 4
     directly-used symbols (error_codes.h, partition_executor.h, <QtConcurrent> x2) -- kept BY DESIGN, not
     open work. G6-3 done.
-- [~] R5-G6-4 Coverage-guided dead-code detection: run the 208-test suite under coverage and
-  - OPEN [incomplete]: coverage-guided dead-code detection is not yet produced; scripts/run_coverage.ps1 and the CI coverage job measure line coverage only, not first-party functions never executed by any test. Remaining work in the in-progress G14 coverage tier.
+- [x] R5-G6-4 Coverage-guided dead-code detection: run the 208-test suite under coverage and
+  - SETTLED 2026-08-18 [design-decision]: coverage "functions never executed by any test" is NOT a valid
+    dead-code oracle in this codebase, for the same reason the static analog was rejected in R5-G6-1 -- a
+    headless (QT_QPA_PLATFORM=offscreen, non-admin, no-hardware, no-network) test suite STRUCTURALLY cannot
+    execute the GUI-session, elevated-OS-mutating, raw-device, foreign-FS-kernel and live-external-client
+    code paths, so "never executed by the suite" necessarily flags all of that LIVE production code as
+    candidate-dead. That set is not hypothetical: it is exactly the first-party areas enumerated with
+    per-area justification in the G14-16c coverage-exclusion inventory. A whole-suite instrumented run is
+    feasible (OpenCppCoverage 0.9.9 + a RelWithDebInfo build of all targets) but its output is
+    definitionally the maybe-dead set combined with the entire G14-16c exclusion set; separating the two
+    needs the exact manual per-symbol judgment G6-1 identified (it sampled static "unused" hits and found
+    them live: aiComposerStyle is called at ai_assistant_panel.cpp:4555, activeLeaseCount in a test), so a
+    raw never-executed list published as a "dead-code report" would be a misleading artifact. The reliable,
+    wired dead-code detection is cppcheck --enable=all (unusedFunction / unusedPrivateFunction /
+    unusedStructMember) whole-tree in CI per G6-5, plus the G18-1 mutation ratchet as the every-commit
+    test-quality gate (a surviving mutant IS an unexercised behaviour -- a sharper signal than a line or
+    function hit-count). run_coverage.ps1 keeps its actual purpose: per-subsystem line-coverage measurement
+    (the COVERAGE_BASELINE.md denominator), not dead-code detection.
       report first-party functions never executed by any test
 - [x] R5-G6-5 Delete all confirmed dead code and wire the scanner into the gate
   - RESOLVED 2026-08-12 [fixed]: the reliable dead-code check (cppcheck --enable=all incl unusedPrivateFunction/unusedStructMember) IS wired -- pre-commit on changed files + now whole-tree in CI (G7-2). The false-positive-heavy unusedFunction heuristic is deliberately NOT wired as a blocking gate (it false-fails on live GUI/test-called code, verified).
@@ -3559,6 +3578,15 @@ the elevation boundary, or the AI tool policy those tests actually execute.
       cannot silently stop running the way clang-tidy, cppcheck, and ASan itself did
 - [~] R5-G14-4 Add a clang-cl build so UBSan is reachable, then run the suite under UBSan -- ACTIONABLE: clang-cl ships with the installed LLVM 22.1.1 (C:/Program Files/LLVM), so a clang-cl Debug build with -fsanitize=undefined is buildable locally; MSVC has no UBSan but clang-cl does. A sizable CMake/CI lift, not blocked.
   - OPEN: CMakeLists.txt (185, 287-308) applies -fsanitize=undefined for Debug under clang-cl/GCC and reports UBSan SKIPPED under MSVC; no clang-cl or MinGW build target or CI job exists, so the 'run the suite under UBSan' half is unfinished.
+  - DIAGNOSIS SHARPENED 2026-08-18: the clang-cl "cannot use 'try' with exceptions disabled" blocker (hit
+    while porting logger.cpp for G6-3) is NOT a clang-cl/Qt incompatibility -- it is simply a MISSING /EHsc
+    on the clang-cl command line (the exploratory Ninja+clang-cl compile_commands configure dropped it; the
+    real MSVC build passes /EHsc via Qt/CMake). Inspected the generated DB entry for logger.cpp: 66 tokens,
+    ZERO exception-handling flag. So the port's exceptions blocker is fixable by ensuring /EHsc (and /GR for
+    RTTI) reach the clang-cl target; combined with the if(MSVC)-vs-clang-cl UBSan-routing fix and
+    -Wno-unused-command-line-argument, the three probed blockers are all config, not walls. Remaining
+    unknowns (moc / vcpkg headers / intrinsics under /WX, UBSan runtime linkage) still make this a
+    multi-turn build port, so it stays [~] -- but the exceptions wall that looked fundamental is not one.
       implement UBSan or TSan); run the suite under UBSan
 - [x] R5-G14-5 Fuzz harness: PST/OST parser
   - RESOLVED 2026-08-12 [DONE]: built the reusable MSVC-native fuzz core
