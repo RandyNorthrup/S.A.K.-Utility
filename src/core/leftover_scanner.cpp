@@ -115,13 +115,6 @@ const QSet<QString> kSharedRootNames = {
     "windowsapps",
 };
 
-bool isSharedContainerPath(const QString& path) {
-    if (path.isEmpty()) {
-        return false;
-    }
-    return kSharedRootNames.contains(QDir(path).dirName().toLower());
-}
-
 /// A leftover is pre-selected only when it may actually be deleted AND is classified Safe:
 /// a report-only item (one whose path could not be tied to the program) is never checked.
 bool leftoverPreSelected(const LeftoverItem& item) {
@@ -1360,6 +1353,13 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyTypeRisk(LeftoverItem::Type typ
     }
 
     return LeftoverItem::RiskLevel::Review;
+}
+
+bool LeftoverScanner::isSharedContainerPath(const QString& path) {
+    if (path.isEmpty()) {
+        return false;
+    }
+    return kSharedRootNames.contains(QDir(path).dirName().toLower());
 }
 
 LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(const QString& path,

@@ -110,6 +110,9 @@ private Q_SLOTS:
     void scan_installLocationTiedToProgram_isDeletable();
     void scan_installLocationNotTiedToProgram_isReportOnly();
     void scan_installLocationUnpinnable_yieldsNoCandidate();
+
+    // -- R5-G23-4: shared-container protection is drive-agnostic (non-C: system drive) --
+    void isSharedContainerPath_isDriveAgnostic();
 };
 
 // -- Helper ------------------------------------------------------------------
@@ -874,6 +877,25 @@ void LeftoverScannerTests::scan_installLocationUnpinnable_yieldsNoCandidate() {
         const auto results = scanner.scan(stop);
         QVERIFY2(installLocationItem(results, location).path.isEmpty(), qPrintable(location));
     }
+}
+
+void LeftoverScannerTests::isSharedContainerPath_isDriveAgnostic() {
+    // kProtectedPaths hard-codes C:, but this leaf check is the DRIVE-AGNOSTIC guard that keeps a
+    // shared OS/vendor container Risky on ANY drive -- the safety property the leftover cleaner
+    // relies on for a machine whose system drive is not C:.
+    for (const QString& drive :
+         {QStringLiteral("C:/"), QStringLiteral("D:/"), QStringLiteral("Z:/")}) {
+        QVERIFY(LeftoverScanner::isSharedContainerPath(drive + QStringLiteral("Windows/System32")));
+        QVERIFY(LeftoverScanner::isSharedContainerPath(drive + QStringLiteral("ProgramData")));
+        QVERIFY(
+            LeftoverScanner::isSharedContainerPath(drive + QStringLiteral("Program Files (x86)")));
+    }
+    // Case-insensitive on both the drive letter and the leaf.
+    QVERIFY(LeftoverScanner::isSharedContainerPath(QStringLiteral("d:\\windows\\SYSTEM32")));
+    // A single product's own directory (any drive) is NOT a shared container.
+    QVERIFY(
+        !LeftoverScanner::isSharedContainerPath(QStringLiteral("D:/Users/Bob/AppData/Local/Acme")));
+    QVERIFY(!LeftoverScanner::isSharedContainerPath(QString()));
 }
 
 QTEST_GUILESS_MAIN(LeftoverScannerTests)

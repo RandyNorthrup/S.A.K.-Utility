@@ -105,6 +105,14 @@ public:
     ///        refuses them.
     [[nodiscard]] static QStringList criticalInstallRoots();
 
+    /// @brief True when @p path's LEAF directory name is a shared OS/vendor container
+    /// (windows / system32 / programdata / program files / ...), matched case-insensitively on
+    /// ANY drive. This is the DRIVE-AGNOSTIC half of the risk classifier: kProtectedPaths
+    /// hard-codes C:, but this leaf match keeps a non-C: system directory (e.g.
+    /// D:\Windows\System32) classified Risky just like C:'s, so the leftover cleaner is safe on a
+    /// machine whose system drive is not C:.
+    [[nodiscard]] static bool isSharedContainerPath(const QString& path);
+
 private:
     /// @brief Outcome of screening the registry-supplied InstallLocation.
     struct ScreenedInstallLocation {

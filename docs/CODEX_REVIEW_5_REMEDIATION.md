@@ -4376,7 +4376,12 @@ rather than as generic advice.
     already applied to the authoritative lookup above it. REMAINING G23-4 work = the hostile-env TEST MATRIX
     across all seven dimensions (non-C: drive, >260-char paths, UNC-only cwd, no-admin, no-network,
     non-English locale, missing bundled tools) plus the injection seams it needs (fake system drive / locale);
-    the non-C: dimension is now code-robust but still unproven by an automated test, so this stays [~].
+    the non-C: dimension is now code-robust, and its CORE protection is now test-proven: the
+    drive-agnostic leaf classifier was exposed as the pure static LeftoverScanner::isSharedContainerPath
+    and unit-tested (test_leftover_scanner isSharedContainerPath_isDriveAgnostic) to confirm a shared OS
+    container on D:/E:/Z: -- e.g. D:\Windows\System32, Z:\ProgramData -- classifies Risky exactly like
+    C:'s, case-insensitively. The rest of the non-C: surface (env-derived scan roots, the
+    windows_user_scanner fail-close) is code-robust; this stays [~] for the broader hostile-env test matrix.
   - PROGRESS 2026-08-18 (>260-char / MAX_PATH dimension audited): the code is broadly long-path-aware -- it
     handles \\?\ and \\?\UNC\ extended-length prefixes (app_mutating_actions.cpp:3891-3894,
     cleanup_worker.cpp:98-101, the APFS/HFS writer CLIs), oversizes module/image-path buffers past MAX_PATH
