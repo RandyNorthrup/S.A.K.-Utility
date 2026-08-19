@@ -134,16 +134,29 @@ QString checkpointFailureReason(const sak::ProcessResult& result) {
 
 }  // namespace
 
-bool RestorePointManager::createRestorePoint(const QString& description) {
-    // Public entry point: reject an empty description at runtime rather than assert it. An
-    // empty -Description is not a checkpoint Windows will label usefully, and the caller gets
-    // the same honest failure in both build configurations.
+QString RestorePointManager::restorePointPreflightRefusal(const QString& description,
+                                                          bool elevated) {
+    // Reject an empty description at runtime rather than assert it: an empty -Description is not a
+    // checkpoint Windows will label usefully, and the caller gets the same honest failure in both
+    // build configurations.
     if (description.isEmpty()) {
-        Q_EMIT restorePointFailed("A restore point description is required.");
-        return false;
+        return QStringLiteral("A restore point description is required.");
     }
-    if (!isElevated()) {
-        Q_EMIT restorePointFailed("Creating restore points requires administrator privileges.");
+    // Creating a restore point is an elevated operation; a non-elevated process must be refused
+    // here rather than attempting it and failing deep inside the elevated step.
+    if (!elevated) {
+        return QStringLiteral("Creating restore points requires administrator privileges.");
+    }
+    return {};
+}
+
+bool RestorePointManager::createRestorePoint(const QString& description) {
+    // The empty-description and administrator-privileges preflight is extracted into the pure,
+    // side-effect-free restorePointPreflightRefusal so it is unit-testable without invoking the
+    // real elevated work; here it runs against the live elevation state.
+    const QString refusal = restorePointPreflightRefusal(description, isElevated());
+    if (!refusal.isEmpty()) {
+        Q_EMIT restorePointFailed(refusal);
         return false;
     }
 

@@ -50,6 +50,17 @@ public:
     /// @return true if created successfully
     [[nodiscard]] bool createRestorePoint(const QString& description);
 
+    /// @brief The operator-facing reason createRestorePoint refuses BEFORE it does any elevated
+    /// work, or an empty string to proceed. Pure and side-effect-free -- elevation is passed in,
+    /// not read here -- so the fail-closed preflight (an empty description, and the
+    /// administrator-privileges requirement: creating a restore point is an elevated operation and
+    /// a non-elevated call must be refused, never attempted) is unit-testable without invoking the
+    /// real restore-point creation behind it. createRestorePoint calls this with the live
+    /// isElevated(), so passing elevated=false here is the same refusal a non-elevated process
+    /// gets.
+    [[nodiscard]] static QString restorePointPreflightRefusal(const QString& description,
+                                                              bool elevated);
+
     /// @brief Get list of existing restore points
     [[nodiscard]] QVector<QPair<QDateTime, QString>> listRestorePoints() const;
 

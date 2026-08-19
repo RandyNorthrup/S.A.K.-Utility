@@ -19,6 +19,7 @@ private Q_SLOTS:
     void isElevated_returnsBool();
     void isSystemRestoreEnabled_returnsBool();
     void restoreEnabledFromProbe_failsClosed();
+    void createRestorePointPreflight_failsClosedWithoutAdmin();  // R5-G23-4 no-admin
     void listRestorePoints_doesNotCrash();
 };
 
@@ -61,6 +62,28 @@ void TestRestorePointManager::restoreEnabledFromProbe_failsClosed() {
     // Unexpected/garbage output on a successful probe -> not enabled.
     QVERIFY(!RestorePointManager::restoreEnabledFromProbe(true, QStringLiteral("VSS Running")));
     QVERIFY(!RestorePointManager::restoreEnabledFromProbe(true, QString()));
+}
+
+// R5-G23-4 (no-admin hostile-env dimension): creating a restore point is an elevated operation.
+// A non-elevated process must be REFUSED at the preflight, before any elevated work is attempted.
+// The elevation gate reads the live token inside createRestorePoint, which a unit test cannot
+// force; the pure restorePointPreflightRefusal takes elevation as a parameter so the fail-closed
+// refusal is deterministic and testable without spoofing the process token or running the real
+// (side-effecting) restore-point creation.
+void TestRestorePointManager::createRestorePointPreflight_failsClosedWithoutAdmin() {
+    using RPM = RestorePointManager;
+    // Not elevated, valid description -> the administrator-privileges refusal (the no-admin guard).
+    QCOMPARE(RPM::restorePointPreflightRefusal(QStringLiteral("Before update"), false),
+             QStringLiteral("Creating restore points requires administrator privileges."));
+    // Empty description is refused first, whether or not elevated (order preserved).
+    QCOMPARE(RPM::restorePointPreflightRefusal(QString(), true),
+             QStringLiteral("A restore point description is required."));
+    QCOMPARE(RPM::restorePointPreflightRefusal(QString(), false),
+             QStringLiteral("A restore point description is required."));
+    // Elevated AND a valid description -> proceed (empty refusal). This is the ONLY input pair that
+    // lets the real elevated work run, so a mutation that dropped the elevation guard would make
+    // the (valid, false) case above return empty and turn this test red.
+    QVERIFY(RPM::restorePointPreflightRefusal(QStringLiteral("Before update"), true).isEmpty());
 }
 
 void TestRestorePointManager::listRestorePoints_doesNotCrash() {
