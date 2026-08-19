@@ -11,6 +11,8 @@ class AiPackageToolPlannerTests : public QObject {
 private Q_SLOTS:
     void normalizesInstallPlan();
     void rejectsInjectionPackageId();
+    void rejectsOptionInjectedSearchQuery();  // R5-G10-9
+    void rejectsNonStringVersion();           // R5-G10-9
     void rejectsUnknownOperation();
     void clampsTimeout();
 };
@@ -49,6 +51,47 @@ void AiPackageToolPlannerTests::rejectsInjectionPackageId() {
     QVERIFY(plan.error_message.contains(QStringLiteral("Invalid package identifier")));
     // The dangerous input is NOT rewritten into a usable substitute token.
     QVERIFY(plan.package_id.isEmpty());
+}
+
+void AiPackageToolPlannerTests::rejectsOptionInjectedSearchQuery() {
+    // A search query beginning with '-' would be parsed by Chocolatey as an OPTION
+    // (e.g. --source=https://attacker) rather than a search term -- model-supplied argument
+    // injection. It must FAIL CLOSED, not be forwarded to the package manager.
+    const sak::ai::AiPackageToolPlan plan = sak::ai::AiPackageToolPlanner::buildPlan(QJsonObject{
+        {QStringLiteral("operation"), QStringLiteral("search")},
+        {QStringLiteral("query"), QStringLiteral("--source=https://attacker.example/feed")}});
+    QVERIFY(!plan.ok());
+    QVERIFY(plan.error_message.contains(QStringLiteral("Invalid search query")));
+
+    // Non-vacuity: an ordinary search term is accepted, so the guard is the leading '-',
+    // not a blanket rejection of every search.
+    const sak::ai::AiPackageToolPlan ok = sak::ai::AiPackageToolPlanner::buildPlan(
+        QJsonObject{{QStringLiteral("operation"), QStringLiteral("search")},
+                    {QStringLiteral("query"), QStringLiteral("firefox")}});
+    QVERIFY(ok.ok());
+    QVERIFY(ok.query_operation);
+    QCOMPARE(ok.query, QStringLiteral("firefox"));
+}
+
+void AiPackageToolPlannerTests::rejectsNonStringVersion() {
+    // A version field that is PRESENT but not a JSON string must be rejected rather than
+    // silently collapsing to "" (== install "latest"), which could install an unintended
+    // build. Only an absent/null version legitimately means "latest".
+    const sak::ai::AiPackageToolPlan numberVersion = sak::ai::AiPackageToolPlanner::buildPlan(
+        QJsonObject{{QStringLiteral("operation"), QStringLiteral("install")},
+                    {QStringLiteral("package_id"), QStringLiteral("firefox")},
+                    {QStringLiteral("version"), 99'999}});
+    QVERIFY(!numberVersion.ok());
+    QVERIFY(numberVersion.error_message.contains(QStringLiteral("Invalid version")));
+
+    // Non-vacuity: an ABSENT version is allowed and means latest (empty), so the reject is
+    // specific to a present non-string value, not "install always needs a version".
+    const sak::ai::AiPackageToolPlan latest = sak::ai::AiPackageToolPlanner::buildPlan(
+        QJsonObject{{QStringLiteral("operation"), QStringLiteral("install")},
+                    {QStringLiteral("package_id"), QStringLiteral("firefox")}});
+    QVERIFY(latest.ok());
+    QVERIFY(latest.version.isEmpty());
+    QVERIFY(latest.change_operation);
 }
 
 void AiPackageToolPlannerTests::rejectsUnknownOperation() {

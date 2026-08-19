@@ -19,6 +19,7 @@ private Q_SLOTS:
     void marksRiskyCommandAndPolicyDenial();
     void carriesPidMutationGuardBlock();
     void carriesChecksumBypassBlock();
+    void rejectsNonCanonicalToolName();  // R5-G10-9
 };
 
 void AiCommandToolPlannerTests::buildsPowerShellPlanWithPolicy() {
@@ -162,6 +163,28 @@ void AiCommandToolPlannerTests::carriesChecksumBypassBlock() {
     QVERIFY(plan.guard_approval_reason.isEmpty());
     QVERIFY(plan.policy_decision.allowed);
     QVERIFY(plan.policy_decision.requires_exclusive_lease);
+}
+
+void AiCommandToolPlannerTests::rejectsNonCanonicalToolName() {
+    // The command tools are a CLOSED set of EXACT names. The router matches names case- and
+    // whitespace-insensitively, so a case-variant like "Run_PowerShell" is routed here as a
+    // command tool; buildPlan must refuse the non-canonical spelling (default-denied) rather
+    // than fall through to the run_process branch and launch a model-supplied executable.
+    QJsonObject args;
+    args[QStringLiteral("command")] = QStringLiteral("Get-Date");
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("Run_PowerShell"),
+                                                               args,
+                                                               sak::ai::AiToolPolicy::ReadOnlyPc);
+    QVERIFY(plan.guard_block_error.contains(QStringLiteral("Unsupported command tool")));
+    QVERIFY(!plan.policy_decision.allowed);  // policy_decision stays default-denied
+    QVERIFY(plan.risky_change);
+
+    // Non-vacuity: the exact canonical name IS accepted (no guard block), so the refusal is
+    // the non-canonical spelling, not a rejection of the command itself.
+    const auto ok = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("run_powershell"),
+                                                             args,
+                                                             sak::ai::AiToolPolicy::ReadOnlyPc);
+    QVERIFY(ok.guard_block_error.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(AiCommandToolPlannerTests)
