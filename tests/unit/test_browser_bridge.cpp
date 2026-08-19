@@ -105,6 +105,8 @@ private slots:
     void onReply_okFalseSnapshotDoesNotInstallRefIndex();
     void screenshotReply_malformedBase64IsError();
     void reconcileDomEpoch_malformedEpochMarksRefsStale();
+    void screenshotReply_hostileMimeTypeCoercedToPng();
+    void genericReply_oversizeTextIsRejected();
 };
 
 void BrowserBridgeTests::beginCommand_refusedWhenNotConnected() {
@@ -443,6 +445,61 @@ void BrowserBridgeTests::screenshotReply_oversizeBase64IsRejected() {
     QVERIFY(in.is_error);
     QVERIFY(in.image_base64.isEmpty());
     QVERIFY(in.error.contains(QStringLiteral("too large")));
+}
+
+void BrowserBridgeTests::screenshotReply_hostileMimeTypeCoercedToPng() {
+    // R5-G10-9: the extension-supplied mimeType is untrusted (a page-influenced reply could
+    // carry "text/html" or a script type). sanitizedImageMime must coerce anything that is not
+    // one of the image types WE emit down to image/png, so the returned image block can never be
+    // turned into an arbitrary content type. The image itself still rides the dedicated channel.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto shot = session.beginCommand(QStringLiteral("browser_screenshot"), {});
+    const QString png = pngHeaderBase64(10, 10);
+    const QJsonObject hostile{{QStringLiteral("data"), png},
+                              {QStringLiteral("mimeType"), QStringLiteral("text/html")}};
+    const auto in = session.onReply(resultFrame(
+        shot.frame.value(QStringLiteral("id")).toString(), QStringLiteral("screenshot"), hostile));
+    QVERIFY(in.matched);
+    QVERIFY(!in.is_error);
+    QCOMPARE(in.image_base64, png);
+    QCOMPARE(in.image_mime, QStringLiteral("image/png"));  // coerced, not "text/html"
+
+    // Non-vacuity: an image type we DO emit is preserved, so this is a targeted coercion of the
+    // disallowed set, not a blanket rewrite-everything-to-png.
+    const auto shot2 = session.beginCommand(QStringLiteral("browser_screenshot"), {});
+    const QJsonObject webp{{QStringLiteral("data"), png},
+                           {QStringLiteral("mimeType"), QStringLiteral("image/webp")}};
+    const auto in2 = session.onReply(resultFrame(
+        shot2.frame.value(QStringLiteral("id")).toString(), QStringLiteral("screenshot"), webp));
+    QVERIFY(!in2.is_error);
+    QCOMPARE(in2.image_mime, QStringLiteral("image/webp"));
+}
+
+void BrowserBridgeTests::genericReply_oversizeTextIsRejected() {
+    // R5-G10-9: a generic (non-image/PDF) reply is echoed verbatim into the model context. A
+    // hostile/pathological page can inflate it up to the 64 MiB decoder limit, so the 8 MiB text
+    // cap must refuse an oversized reply with an honest error rather than flood the transport.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto out = session.beginCommand(QStringLiteral("browser_reload"), {});
+    const QString flood(8 * 1024 * 1024 + 1, QLatin1Char('A'));
+    const QJsonObject huge{{QStringLiteral("content"), flood}};
+    const auto in = session.onReply(resultFrame(
+        out.frame.value(QStringLiteral("id")).toString(), QStringLiteral("reload"), huge));
+    QVERIFY(in.matched);
+    QVERIFY(in.is_error);
+    QVERIFY(in.text.isEmpty());
+    QVERIFY(in.error.contains(QStringLiteral("too large")));
+
+    // Non-vacuity: a small generic reply passes through to the text channel, so the cap is a
+    // size gate rather than an always-error.
+    const auto out2 = session.beginCommand(QStringLiteral("browser_reload"), {});
+    const QJsonObject small{{QStringLiteral("content"), QStringLiteral("hi")}};
+    const auto in2 = session.onReply(resultFrame(
+        out2.frame.value(QStringLiteral("id")).toString(), QStringLiteral("reload"), small));
+    QVERIFY(!in2.is_error);
+    QVERIFY(in2.text.contains(QStringLiteral("hi")));
 }
 
 void BrowserBridgeTests::onReply_resultWithOkFalseIsError() {
