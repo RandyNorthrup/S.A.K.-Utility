@@ -82,6 +82,16 @@ private Q_SLOTS:
     void isValidUtf8_invalid();
     void isValidUtf8_rejectsSurrogatesAndOverlong();
 
+    // R5-G10-9: traversal / injection fail-closed paths
+    void containsTraversal_urlEncoded();
+    void containsSuspicious_windowsDeviceNames();
+    void containsSuspicious_adsColonStream();
+    void containsSuspicious_trailingDotOrSpace();
+    void containsSuspicious_newlineAndCarriageReturn();
+    void validatePath_emptyRejected();
+    void validateNumeric_nanRejected();
+    void safeCast_nonFiniteAndOutOfRangeFloatRejected();
+
 private:
     QTemporaryDir m_tempDir;
     std::filesystem::path m_basePath;
@@ -478,6 +488,109 @@ void InputValidatorTests::isValidUtf8_rejectsSurrogatesAndOverlong() {
     // Legitimate multibyte sequences must still validate (no over-rejection).
     QVERIFY(sak::input_validator::isValidUtf8("\xE2\x82\xAC"));      // euro sign U+20AC
     QVERIFY(sak::input_validator::isValidUtf8("\xF0\x9F\x98\x80"));  // emoji U+1F600
+}
+
+// ============================================================================
+// R5-G10-9: traversal / injection fail-closed paths
+//
+// These guards defend the path/argument trust boundary. Each test feeds the hostile
+// token the guard exists to stop and asserts the refusal, with a non-vacuity control
+// (a benign near-miss that must NOT be flagged), so a weakened guard turns the test red
+// rather than passing vacuously.
+// ============================================================================
+
+void InputValidatorTests::containsTraversal_urlEncoded() {
+    // A caller that percent-decodes the path AFTER this check would be traversal-bypassed,
+    // so the encoded and double-encoded ".." forms must be flagged here too.
+    QVERIFY(sak::input_validator::containsTraversalSequences(
+        std::filesystem::path("uploads/%2e%2e/%2e%2e/etc/passwd")));
+    QVERIFY(sak::input_validator::containsTraversalSequences(
+        std::filesystem::path("uploads/%252e%252e/secret")));
+    // Non-vacuity: an ordinary percent sequence that is not encoded traversal is not flagged.
+    QVERIFY(!sak::input_validator::containsTraversalSequences(
+        std::filesystem::path("uploads/100%25done/file.txt")));
+}
+
+void InputValidatorTests::containsSuspicious_windowsDeviceNames() {
+    // A reserved device name aliases a hardware device rather than a file; writing "CON" or
+    // "LPT1" can hang or redirect I/O. The component-anchored regex flags them on any platform.
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("CON")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("NUL")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("COM1")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("LPT1")));
+    // Non-vacuity: an ordinary name that merely begins with those letters is not a device name.
+    QVERIFY(
+        !sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("console.txt")));
+}
+
+void InputValidatorTests::containsSuspicious_adsColonStream() {
+    // Any colon other than the drive-letter separator opens an NTFS Alternate Data Stream, which
+    // resolves to a different on-disk object and can smuggle a write past an exact-name check.
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("data:stream")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(
+        std::filesystem::path("report.txt::$DATA")));
+    // Non-vacuity: a legitimate drive-letter colon is not an ADS stream.
+    QVERIFY(!sak::input_validator::containsSuspiciousPatterns(
+        std::filesystem::path("C:/reports/report.txt")));
+}
+
+void InputValidatorTests::containsSuspicious_trailingDotOrSpace() {
+    // Windows silently strips a trailing '.' or ' ' from a component, so "secret.txt." resolves
+    // to "secret.txt" and slips past an exact-name/extension check.
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("secret.txt.")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("secret.txt ")));
+    // Non-vacuity: an interior dot (the real extension separator) is not a trailing dot.
+    QVERIFY(!sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("secret.txt")));
+}
+
+void InputValidatorTests::containsSuspicious_newlineAndCarriageReturn() {
+    // A newline or carriage return in a path is an injection vector (log forging, command
+    // splitting downstream); it is refused on any platform.
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("a\nb")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("a\rb")));
+    // Non-vacuity: an ordinary underscore-joined name is not flagged.
+    QVERIFY(!sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("a_b")));
+}
+
+void InputValidatorTests::validatePath_emptyRejected() {
+    // A blank target must never pass validation, where a later step could resolve it to the
+    // current working directory.
+    sak::path_validation_config cfg;
+    cfg.must_exist = false;
+    const auto empty = sak::input_validator::validatePath(std::filesystem::path(), cfg);
+    QVERIFY(!empty.is_valid);
+    QCOMPARE(empty.error, sak::error_code::invalid_path);
+    // Non-vacuity: a non-empty path with the same config still validates, so the reject is the
+    // empty-path gate, not a config that rejects everything.
+    const auto present = sak::input_validator::validatePath(m_basePath / "future_file.txt", cfg);
+    QVERIFY(present.is_valid);
+}
+
+void InputValidatorTests::validateNumeric_nanRejected() {
+    // A NaN compares false against both bounds, so a naive range test would pass it as valid.
+    // It must fail closed instead.
+    sak::numeric_validation_config<double> cfg;
+    cfg.min_value = 0.0;
+    cfg.max_value = 100.0;
+    const auto nan_result =
+        sak::input_validator::validateNumeric(std::numeric_limits<double>::quiet_NaN(), cfg);
+    QVERIFY(!nan_result.is_valid);
+    // Non-vacuity: a finite in-range double still validates.
+    QVERIFY(sak::input_validator::validateNumeric(50.0, cfg).is_valid);
+}
+
+void InputValidatorTests::safeCast_nonFiniteAndOutOfRangeFloatRejected() {
+    // Converting a non-finite or out-of-range floating value to an integral target is undefined
+    // behaviour; safeCast must refuse it rather than perform the UB cast.
+    QVERIFY(
+        !sak::input_validator::safeCast<int>(std::numeric_limits<double>::quiet_NaN()).has_value());
+    QVERIFY(
+        !sak::input_validator::safeCast<int>(std::numeric_limits<double>::infinity()).has_value());
+    QVERIFY(!sak::input_validator::safeCast<int>(1e300).has_value());
+    // Non-vacuity: a finite in-range float truncates and converts.
+    const auto ok = sak::input_validator::safeCast<int>(42.0);
+    QVERIFY(ok.has_value());
+    QCOMPARE(ok.value(), 42);
 }
 
 QTEST_GUILESS_MAIN(InputValidatorTests)
