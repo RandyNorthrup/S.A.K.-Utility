@@ -16,6 +16,10 @@
 #include <system_error>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace sak {
 
 namespace {
@@ -88,15 +92,30 @@ OpenDirResult openDirectory(const std::filesystem::path& dir_path,
     return OpenDirResult::failed;
 }
 
-/// @brief True when entry is a real subdirectory to descend into. Symlinked and
-///        junction directories are NOT followed (matches the previous
-///        recursive_directory_iterator with no follow_directory_symlink), which
-///        also keeps the walk free of symlink cycles.
+/// @brief True when entry is a real subdirectory to descend into. Symlinked, junction,
+///        and any other reparse-point directories are NOT followed, which keeps the walk
+///        inside the intended subtree and free of cycles (a junction pointing at an
+///        ancestor would otherwise make this stack-based walk recurse without bound).
+/// @note is_symlink() alone is NOT sufficient on Windows: a directory JUNCTION (a
+///       mount-point reparse point) reports is_symlink()==false there, so it would be
+///       descended -- escaping the subtree and, for a junction aimed at an ancestor,
+///       looping forever. Refuse to descend ANY directory carrying the reparse-point
+///       attribute so both symlinks and junctions are excluded.
 bool shouldRecurse(const std::filesystem::directory_entry& entry) {
     std::error_code ec;
     if (entry.is_symlink(ec) || ec) {
         return false;
     }
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(entry.path().c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        // A reparse point (junction/mount point) is not a plain subdirectory to descend.
+        // (On a failed attribute query fall through to is_directory(): a genuinely
+        // unreadable real directory is then failed closed by pushDirectory(), whereas
+        // skipping it here would silently under-count.)
+        return false;
+    }
+#endif
     return entry.is_directory(ec) && !ec;
 }
 

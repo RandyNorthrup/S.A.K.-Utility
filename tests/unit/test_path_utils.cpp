@@ -7,7 +7,9 @@
 #include "sak/error_codes.h"
 #include "sak/path_utils.h"
 
+#include <QDir>
 #include <QFile>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -41,7 +43,8 @@ private Q_SLOTS:
     void matchesPattern_multiplePatterns();
 
     // getDirectorySizeAndCount
-    void dirSizeAndCount_saturatesOnOverflow();  // R5-G10-9
+    void dirSizeAndCount_saturatesOnOverflow();    // R5-G10-9
+    void dirSizeAndCount_doesNotFollowJunction();  // R5-G10-9
     void dirSizeAndCount_normalDir();
     void dirSizeAndCount_emptyDir();
     void dirSizeAndCount_nonExistentDir();
@@ -256,6 +259,54 @@ void PathUtilsTests::dirSizeAndCount_saturatesOnOverflow() {
 
     // Extreme overflow: kMax + kMax would wrap to kMax-1; it must clamp to kMax.
     QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(kMax, kMax), kMax);
+}
+
+void PathUtilsTests::dirSizeAndCount_doesNotFollowJunction() {
+    // A directory junction planted INSIDE the scanned tree must NOT be followed: the
+    // recursive size walk uses is_symlink to skip reparse-point directories, so a junction
+    // pointing OUTSIDE the tree cannot inflate the count or let the walk escape the intended
+    // subtree (and cannot form a symlink cycle). A junction is used because mklink /J needs
+    // no privilege, unlike a directory symlink (SeCreateSymbolicLink).
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = dir.filePath(QStringLiteral("scanRoot"));
+    const QString realSub = root + QStringLiteral("/realsub");
+    const QString outside = dir.filePath(QStringLiteral("outsideTarget"));
+    QVERIFY(QDir().mkpath(realSub));
+    QVERIFY(QDir().mkpath(outside));
+
+    const auto writeFile = [](const QString& path, const QByteArray& bytes) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write(bytes) == bytes.size();
+    };
+    // Two real files inside the tree: 5 + 7 = 12 bytes across 2 files.
+    QVERIFY(writeFile(root + QStringLiteral("/top.txt"), QByteArray("Hello")));
+    QVERIFY(writeFile(realSub + QStringLiteral("/deep.txt"), QByteArray("World!!")));
+    // A large file behind the junction target that must NOT be counted.
+    QVERIFY(writeFile(outside + QStringLiteral("/huge.bin"), QByteArray(100, 'x')));
+
+    // Plant scanRoot/junc -> outsideTarget (no privilege required).
+    const QString junc = root + QStringLiteral("/junc");
+    QProcess mklink;
+    mklink.start(QStringLiteral("cmd"),
+                 {QStringLiteral("/c"),
+                  QStringLiteral("mklink"),
+                  QStringLiteral("/J"),
+                  QDir::toNativeSeparators(junc),
+                  QDir::toNativeSeparators(outside)});
+    QVERIFY(mklink.waitForFinished(10'000));
+    QCOMPARE(mklink.exitCode(), 0);
+    QVERIFY(std::filesystem::exists(std::filesystem::path(junc.toStdWString())));
+
+    const auto result =
+        sak::path_utils::getDirectorySizeAndCount(std::filesystem::path(root.toStdWString()));
+    QVERIFY(result.has_value());
+    // Only the 2 real files (12 bytes) are counted; the junction's 100-byte target is not
+    // followed. Were the junction followed, this would be 3 files / 112 bytes. The count of
+    // 2 also proves the walk DID descend the real subdirectory (realsub/deep.txt), so the
+    // junction's exclusion is the symlink guard -- not a walk that never recurses at all.
+    QCOMPARE(result.value().file_count, std::uintmax_t{2});
+    QCOMPARE(result.value().total_bytes, std::uintmax_t{12});
 }
 
 void PathUtilsTests::dirSizeAndCount_normalDir() {
