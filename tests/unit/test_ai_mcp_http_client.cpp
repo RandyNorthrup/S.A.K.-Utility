@@ -18,6 +18,7 @@ private Q_SLOTS:
     void rejectsSseWithoutJsonRpcData();
     void skipsSseNotificationsBeforeResponse();
     void rejectsPlainObjectWithoutJsonRpcFields();
+    void rejectsResponseWithMismatchedId();
     void rejectsInsecureRemoteEndpoint();
 };
 
@@ -129,6 +130,34 @@ void AiMcpHttpClientTests::rejectsPlainObjectWithoutJsonRpcFields() {
 
     QVERIFY(message.isEmpty());
     QVERIFY(!error.isEmpty());
+}
+
+void AiMcpHttpClientTests::rejectsResponseWithMismatchedId() {
+    // JSON-RPC correlation: callTool() sends exactly one request (id 1) and must accept
+    // ONLY a response that echoes that id. A response bearing a different id -- or a
+    // missing/non-numeric one -- is a stray, out-of-band, or transport-crafted message and
+    // must be refused rather than accepted as the tool result (which would let an injected
+    // frame stand in for the real answer).
+    using Client = sak::ai::AiMcpHttpClient;
+
+    // Non-vacuity control: the real request id (1) DOES correlate.
+    QVERIFY(Client::responseIdMatchesRequestForTesting(
+        QJsonObject{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                    {QStringLiteral("id"), 1},
+                    {QStringLiteral("result"), QJsonObject{}}}));
+
+    // A different numeric id -> not our answer.
+    QVERIFY(!Client::responseIdMatchesRequestForTesting(
+        QJsonObject{{QStringLiteral("id"), 2}, {QStringLiteral("result"), QJsonObject{}}}));
+
+    // A missing id -> toInt(-1) defaults to -1, which is not the request id.
+    QVERIFY(!Client::responseIdMatchesRequestForTesting(
+        QJsonObject{{QStringLiteral("result"), QJsonObject{}}}));
+
+    // A non-numeric (string) id -> not a JSON number, so toInt(-1) yields -1 and it is
+    // refused; the correlation cannot be spoofed with the request id spelled as a string.
+    QVERIFY(!Client::responseIdMatchesRequestForTesting(QJsonObject{
+        {QStringLiteral("id"), QStringLiteral("1")}, {QStringLiteral("result"), QJsonObject{}}}));
 }
 
 void AiMcpHttpClientTests::rejectsInsecureRemoteEndpoint() {

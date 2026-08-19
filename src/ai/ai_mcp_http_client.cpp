@@ -442,6 +442,14 @@ bool explainJsonRpcError(const QJsonObject& message, QString* error_message) {
     return true;
 }
 
+// Correlate a JSON-RPC response id against our single outstanding request id. A response
+// whose id does not echo the request -- or is non-numeric, defaulting to -1 -- is not our
+// answer (a stray or transport-crafted out-of-band message) and must be rejected rather
+// than accepted as the tool result.
+bool responseIdMatchesRequest(const QJsonObject& message) {
+    return message.value(QStringLiteral("id")).toInt(-1) == kJsonRpcRequestId;
+}
+
 }  // namespace
 
 QJsonObject AiMcpHttpClient::callTool(const QUrl& endpoint,
@@ -479,7 +487,7 @@ QJsonObject AiMcpHttpClient::callTool(const QUrl& endpoint,
     // (JSON-RPC 2.0). A mismatched -- or non-numeric -- id means this is not our answer, so fail
     // closed rather than accept an out-of-band message (or a stray one crafted by the transport)
     // as the tool result. Error responses also echo the request id, so correlate before that.
-    if (message.value(QStringLiteral("id")).toInt(-1) != kJsonRpcRequestId) {
+    if (!responseIdMatchesRequest(message)) {
         if (error_message != nullptr) {
             *error_message = QStringLiteral("MCP response id did not match the request");
         }
@@ -502,6 +510,10 @@ QJsonObject AiMcpHttpClient::extractJsonRpcMessageForTesting(const QByteArray& r
 QJsonObject AiMcpHttpClient::toolCallPayloadForTesting(const QString& tool_name,
                                                        const QJsonObject& arguments) {
     return toolCallPayload(tool_name, arguments);
+}
+
+bool AiMcpHttpClient::responseIdMatchesRequestForTesting(const QJsonObject& message) {
+    return responseIdMatchesRequest(message);
 }
 
 }  // namespace sak::ai
