@@ -1474,6 +1474,8 @@ private Q_SLOTS:
     void apfsCrypto_xtsGf128ReductionConstantIsExercised();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
     void apfsWriter_formatsUnlockableEncryptedVolume();
+    void apfsKeybag_parseKeyBlobRefusesMalformedDer();        // R5-G10-9
+    void apfsKeybag_parseKeybagBlockRefusesMalformedBlock();  // R5-G10-9
     void apfsWriter_rawFormatHonorsVolumePassword();
     void apfsReader_decryptsEncryptedVolumeWithCredential();
     void apfsWriter_perFileKeyEncryptsFileData();
@@ -13715,6 +13717,89 @@ void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
              "format encrypted volume");
 
     verifyApfsImageUnlockableWithPassword(img, password);
+}
+
+void PartitionManagerCoreTests::apfsKeybag_parseKeyBlobRefusesMalformedDer() {
+    using namespace sak::apfs_keybag;
+    // parseKeyBlob() consumes an attacker-authored FileVault key-blob (a keybag payload on a
+    // foreign APFS image). A crafted DER length header must FAIL CLOSED and, critically, must
+    // NOT drive the out-of-bounds negative-index read the length guards were added to fix.
+    KeyBlobParams out;
+
+    // Long-form length declaring 8 length bytes (0x88) but the blob ends immediately: the
+    // length bytes run off the buffer. Refused with no OOB read.
+    QByteArray runsOff;
+    runsOff.append('\x30').append('\x88');
+    QVERIFY(!parseKeyBlob(runsOff, &out));
+
+    // Long-form length declaring ~2^64 content bytes the 2-byte blob does not hold.
+    QByteArray hugeLen;
+    hugeLen.append('\x30').append('\x88').append(QByteArray(8, '\xFF'));
+    QVERIFY(!parseKeyBlob(hugeLen, &out));
+
+    // Over-wide length header (0x89 => 9 length bytes, n>8) and the indefinite form (0x80,
+    // n==0) are both rejected.
+    QByteArray tooWide;
+    tooWide.append('\x30').append('\x89').append(QByteArray(9, '\xFF'));
+    QVERIFY(!parseKeyBlob(tooWide, &out));
+    QByteArray indefinite;
+    indefinite.append('\x30').append('\x80');
+    QVERIFY(!parseKeyBlob(indefinite, &out));
+
+    // Non-vacuity: a WELL-FORMED VEK blob parses successfully and recovers its 40-byte
+    // wrapped key -- so the refusals above are the DER length guards (a fail-closed +
+    // crash-safety regression), not a parser that rejects everything.
+    KeyBlobParams p;
+    p.uuid = QByteArray(16, '\x11');
+    p.wrappedKey = QByteArray(40, '\x22');
+    p.flags8 = QByteArray(8, '\0');
+    p.outerSalt = QByteArray(16, '\x33');
+    const QByteArray validVek = buildVekBlob(p);
+    KeyBlobParams parsed;
+    QVERIFY(parseKeyBlob(validVek, &parsed));
+    QCOMPARE(parsed.wrappedKey, p.wrappedKey);
+    QCOMPARE(parsed.uuid, p.uuid);
+}
+
+void PartitionManagerCoreTests::apfsKeybag_parseKeybagBlockRefusesMalformedBlock() {
+    using namespace sak::apfs_keybag;
+    // parseKeybagBlock() consumes an (XTS-decrypted) keybag block from a foreign APFS image.
+    // A block that is undersized or carries the wrong object magic must yield an EMPTY entry
+    // list -- an attacker-framed block must not drive the FileVault unlock chain.
+
+    // A well-formed container keybag with one VEK entry (used for both the isolated
+    // magic-corruption negative and the non-vacuity positive).
+    KeyBlobParams p;
+    p.uuid = QByteArray(16, '\x11');
+    p.wrappedKey = QByteArray(40, '\x22');
+    p.flags8 = QByteArray(8, '\0');
+    p.outerSalt = QByteArray(16, '\x33');
+    QList<KeybagEntry> entries;
+    entries.append({p.uuid, kKbTagVolumeKey, buildVekBlob(p)});
+    const QByteArray validBlock =
+        buildKeybagBlock(kApfsObjectTypeContainerKeybag, 0, 1, entries, 4096);
+
+    // Undersized block -> empty.
+    QVERIFY(parseKeybagBlock(QByteArray(8, '\0')).isEmpty());
+
+    // Full-size but all-zero (wrong 'keys'/'recs' object magic at 0x18) -> empty.
+    QVERIFY(parseKeybagBlock(QByteArray(4096, '\0')).isEmpty());
+
+    // A block valid in every way EXCEPT the object magic (version + entry intact) -> empty.
+    // This ISOLATES the magic guard: with it removed the version-2 block would parse its
+    // entry, so this case turns red under a neutered magic check.
+    QByteArray corruptedMagic = validBlock;
+    corruptedMagic[0x18] = '\0';
+    corruptedMagic[0x19] = '\0';
+    corruptedMagic[0x1a] = '\0';
+    corruptedMagic[0x1b] = '\0';
+    QVERIFY(parseKeybagBlock(corruptedMagic).isEmpty());
+
+    // Non-vacuity: the untouched valid block round-trips to its one entry -- so the refusals
+    // above are the magic/size guards, not an always-empty parse.
+    const QList<KeybagEntry> back = parseKeybagBlock(validBlock);
+    QCOMPARE(back.size(), 1);
+    QCOMPARE(back.at(0).tag, static_cast<uint16_t>(kKbTagVolumeKey));
 }
 
 namespace {
