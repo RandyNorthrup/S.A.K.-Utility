@@ -4777,7 +4777,7 @@ private Q_SLOTS:
                                                 bool is_boot,
                                                 bool is_read_only) {
         PartitionDiskInfo disk;
-        disk.disk_number = number;
+        disk.disk_number = DiskNumber{number};
         disk.model = QStringLiteral("Test Disk");
         disk.bus_type = QStringLiteral("USB");
         disk.size_bytes = 8'000'000'000ULL;
@@ -6685,7 +6685,7 @@ private Q_SLOTS:
               qUtf8Printable(inventory.layout_hash),
               static_cast<long long>(inventory.warnings.size()));
         for (const PartitionDiskInfo& disk : inventory.disks) {
-            const int number = static_cast<int>(disk.disk_number);
+            const int number = static_cast<int>(disk.disk_number.value());
             const FlashTargetResolution flash = resolveFlashTarget(inventory, number);
             const PartitionApplyResolution apply =
                 resolvePartitionApplyTarget(inventory, number, inventory.layout_hash);
@@ -6783,7 +6783,7 @@ private Q_SLOTS:
 
         PartitionTarget pt;
         pt.kind = PartitionTargetKind::Disk;
-        pt.disk_number = static_cast<uint32_t>(disk_number);
+        pt.disk_number = DiskNumber{static_cast<uint32_t>(disk_number)};
         const PartitionOperation op = PartitionOperationPlanner::makeOperation(
             PartitionOperationType::InitializeDisk, pt, QJsonObject{});
 

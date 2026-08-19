@@ -107,9 +107,9 @@ PartitionVolumeInfo parseVolume(const QJsonObject& object) {
 
 PartitionInfoEx parsePartition(uint32_t disk_number, const QJsonObject& object) {
     PartitionInfoEx partition;
-    partition.disk_number = disk_number;
-    partition.partition_number =
-        static_cast<uint32_t>(object.value(QStringLiteral("PartitionNumber")).toInt());
+    partition.disk_number = DiskNumber{disk_number};
+    partition.partition_number = PartitionNumber{
+        static_cast<uint32_t>(object.value(QStringLiteral("PartitionNumber")).toInt())};
     partition.partition_guid = object.value(QStringLiteral("Guid")).toString();
     partition.type_name = object.value(QStringLiteral("Type")).toString();
     partition.gpt_type = object.value(QStringLiteral("GptType")).toString();
@@ -158,7 +158,7 @@ QString buildLayoutHash(const PartitionInventory& inventory) {
         // forces a refresh + re-validation (which then applies the OS-disk block)
         // rather than dispatching a destructive op against a now-bootable disk.
         hash.addData(QStringLiteral("%1|%2|%3|%4|%5|%6\n")
-                         .arg(disk.disk_number)
+                         .arg(disk.disk_number.value())
                          .arg(disk.serial_number, disk.partition_style)
                          .arg(disk.size_bytes)
                          .arg(disk.is_system ? 1 : 0)
@@ -166,7 +166,7 @@ QString buildLayoutHash(const PartitionInventory& inventory) {
                          .toUtf8());
         for (const auto& partition : disk.partitions) {
             hash.addData(QStringLiteral("%1|%2|%3|%4|%5|%6\n")
-                             .arg(partition.partition_number)
+                             .arg(partition.partition_number.value())
                              .arg(partition.partition_guid)
                              .arg(partition.offset_bytes)
                              .arg(partition.size_bytes)
@@ -215,12 +215,12 @@ QJsonObject elevatedProbePayload(const PartitionDiskInfo& disk, const PartitionI
 }
 
 QString partitionDevicePath(const PartitionDiskInfo& disk, const PartitionInfoEx& partition) {
-    if (partition.partition_number == 0) {
+    if (partition.partition_number.value() == 0) {
         return {};
     }
     return QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
-        .arg(disk.disk_number)
-        .arg(partition.partition_number);
+        .arg(disk.disk_number.value())
+        .arg(partition.partition_number.value());
 }
 
 QString elevationErrorText(error_code code) {
@@ -292,8 +292,8 @@ void appendRawProbeWarning(PartitionInventory* inventory,
     inventory->warnings.append(
         QStringLiteral("Raw file-system probe failed for disk %1 partition %2: %3; "
                        "elevated retry: %4")
-            .arg(disk.disk_number)
-            .arg(partition.partition_number)
+            .arg(disk.disk_number.value())
+            .arg(partition.partition_number.value())
             .arg(normalizedProbeError(localError, QStringLiteral("local read did not return data")))
             .arg(normalizedProbeError(elevatedError, QStringLiteral("not available"))));
 }
@@ -440,8 +440,9 @@ void applyRawFileSystemDetection(PartitionInventory* inventory, bool allow_eleva
 
 PartitionDiskInfo parseDisk(const QJsonObject& object) {
     PartitionDiskInfo disk;
-    disk.disk_number = static_cast<uint32_t>(object.value(QStringLiteral("Number")).toInt());
-    disk.device_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(disk.disk_number);
+    disk.disk_number =
+        DiskNumber{static_cast<uint32_t>(object.value(QStringLiteral("Number")).toInt())};
+    disk.device_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(disk.disk_number.value());
     disk.model = object.value(QStringLiteral("FriendlyName")).toString();
     disk.serial_number = object.value(QStringLiteral("SerialNumber")).toString();
     disk.bus_type = object.value(QStringLiteral("BusType")).toString();
@@ -483,7 +484,7 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
     const auto parts = object.value(QStringLiteral("Partitions")).toArray();
     for (const auto& entry : parts) {
         if (entry.isObject()) {
-            disk.partitions.append(parsePartition(disk.disk_number, entry.toObject()));
+            disk.partitions.append(parsePartition(disk.disk_number.value(), entry.toObject()));
         }
     }
     if (disk.partition_enumeration_failed) {
@@ -507,7 +508,7 @@ void appendPartitionEnumerationWarnings(PartitionInventory* inventory) {
         inventory->warnings.append(
             QStringLiteral("Partition enumeration failed for disk %1 (%2): %3; the layout of "
                            "this disk is unknown and is NOT reported as unallocated")
-                .arg(disk.disk_number)
+                .arg(disk.disk_number.value())
                 .arg(disk.device_path, reason));
     }
 }

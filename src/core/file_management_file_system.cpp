@@ -895,14 +895,15 @@ QVector<FileManagementTarget> FileManagementFileSystemBridge::targetsFromInvento
                     : QString();
             FileManagementTarget target;
             target.id = QStringLiteral("disk:%1:partition:%2")
-                            .arg(disk.disk_number)
-                            .arg(partition.partition_number);
+                            .arg(disk.disk_number.value())
+                            .arg(partition.partition_number.value());
             target.label = QStringLiteral("Disk %1 Partition %2 - %3")
-                               .arg(disk.disk_number)
-                               .arg(partition.partition_number)
+                               .arg(disk.disk_number.value())
+                               .arg(partition.partition_number.value())
                                .arg(displayFileSystem(fs));
             target.root_path = mountedPath.isEmpty()
-                                   ? partitionAlias(disk.disk_number, partition.partition_number)
+                                   ? partitionAlias(disk.disk_number.value(),
+                                                    partition.partition_number.value())
                                    : mountedPath;
             target.file_system = fs;
             target.source = partition.volume ? partition.volume->file_system_source

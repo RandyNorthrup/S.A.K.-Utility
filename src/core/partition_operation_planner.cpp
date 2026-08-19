@@ -162,15 +162,15 @@ OperationRisk riskForType(PartitionOperationType type) {
 QString targetSummary(const PartitionTarget& target) {
     switch (target.kind) {
     case PartitionTargetKind::Disk:
-        return QStringLiteral("Disk %1").arg(target.disk_number);
+        return QStringLiteral("Disk %1").arg(target.disk_number.value());
     case PartitionTargetKind::Partition:
     case PartitionTargetKind::Volume:
         return QStringLiteral("Disk %1 Partition %2")
-            .arg(target.disk_number)
-            .arg(target.partition_number);
+            .arg(target.disk_number.value())
+            .arg(target.partition_number.value());
     case PartitionTargetKind::Unallocated:
         return QStringLiteral("Disk %1 unallocated region at %2")
-            .arg(target.disk_number)
+            .arg(target.disk_number.value())
             .arg(formatPartitionBytes(target.offset_bytes));
     }
     return QStringLiteral("Unknown target");

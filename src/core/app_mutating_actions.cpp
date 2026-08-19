@@ -4139,7 +4139,7 @@ FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, in
     }
     const PartitionDiskInfo* target = nullptr;
     for (const PartitionDiskInfo& disk : inventory.disks) {
-        if (static_cast<int>(disk.disk_number) == disk_number) {
+        if (static_cast<int>(disk.disk_number.value()) == disk_number) {
             target = &disk;
             break;
         }
@@ -4240,7 +4240,7 @@ PartitionApplyResolution resolvePartitionApplyTarget(const PartitionInventory& i
     }
     const PartitionDiskInfo* target = nullptr;
     for (const PartitionDiskInfo& disk : inventory.disks) {
-        if (static_cast<int>(disk.disk_number) == disk_number) {
+        if (static_cast<int>(disk.disk_number.value()) == disk_number) {
             target = &disk;
             break;
         }

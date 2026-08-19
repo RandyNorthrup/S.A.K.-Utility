@@ -29,7 +29,7 @@ QString diskRows(const PartitionInventory& inventory) {
         rows += QStringLiteral(
                     "<tr><td>Disk %1</td><td>%2</td><td>%3</td><td>%4</td>"
                     "<td>%5</td><td>%6</td></tr>")
-                    .arg(disk.disk_number)
+                    .arg(disk.disk_number.value())
                     .arg(escapeHtml(disk.model))
                     .arg(escapeHtml(disk.partition_style))
                     .arg(formatPartitionBytes(disk.size_bytes))
@@ -112,7 +112,7 @@ QJsonObject PartitionReportGenerator::diskToJson(const PartitionDiskInfo& disk) 
     QJsonArray partitions;
     for (const auto& partition : disk.partitions) {
         QJsonObject p;
-        p[QStringLiteral("number")] = static_cast<int>(partition.partition_number);
+        p[QStringLiteral("number")] = static_cast<int>(partition.partition_number.value());
         p[QStringLiteral("guid")] = partition.partition_guid;
         p[QStringLiteral("type")] = partition.type_name;
         p[QStringLiteral("offset_bytes")] = QString::number(partition.offset_bytes);
@@ -125,7 +125,7 @@ QJsonObject PartitionReportGenerator::diskToJson(const PartitionDiskInfo& disk) 
     }
 
     QJsonObject object;
-    object[QStringLiteral("disk_number")] = static_cast<int>(disk.disk_number);
+    object[QStringLiteral("disk_number")] = static_cast<int>(disk.disk_number.value());
     object[QStringLiteral("model")] = disk.model;
     object[QStringLiteral("serial_number")] = disk.serial_number;
     object[QStringLiteral("partition_style")] = disk.partition_style;

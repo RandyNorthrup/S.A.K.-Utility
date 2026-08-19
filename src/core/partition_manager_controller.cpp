@@ -102,7 +102,7 @@ QString PartitionManagerController::inventoryStatusMessage(const PartitionInvent
     QStringList failed;
     for (const auto& disk : inventory.disks) {
         if (disk.partition_enumeration_failed) {
-            failed.append(QString::number(disk.disk_number));
+            failed.append(QString::number(disk.disk_number.value()));
         }
     }
     if (failed.isEmpty()) {

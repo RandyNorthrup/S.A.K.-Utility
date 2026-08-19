@@ -802,24 +802,24 @@ QString runtimeFilesystemManifestPath() {
 
 QString nonNativeFilesystemTargetPath(const std::optional<PartitionTarget>& target,
                                       const PartitionInfoEx* partition) {
-    if (!target || (partition == nullptr) || partition->partition_number == 0) {
+    if (!target || (partition == nullptr) || partition->partition_number.value() == 0) {
         return {};
     }
     if (!target->drive_letter.trimmed().isEmpty()) {
         return QStringLiteral("\\\\.\\%1:").arg(target->drive_letter.left(1).toUpper());
     }
     return QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
-        .arg(partition->disk_number)
-        .arg(partition->partition_number);
+        .arg(partition->disk_number.value())
+        .arg(partition->partition_number.value());
 }
 
 QString nonNativeFilesystemWriteTargetPath(const PartitionInfoEx* partition) {
-    if ((partition == nullptr) || partition->partition_number == 0) {
+    if ((partition == nullptr) || partition->partition_number.value() == 0) {
         return {};
     }
     return QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
-        .arg(partition->disk_number)
-        .arg(partition->partition_number);
+        .arg(partition->disk_number.value())
+        .arg(partition->partition_number.value());
 }
 
 NonNativeFilesystemCheckState nonNativeFilesystemCheckState(
@@ -1140,7 +1140,7 @@ QString tableKindForTarget(const PartitionTarget& target) {
 
 bool rowTargetBaseMatches(const QVariantMap& row_data, const PartitionTarget& target) {
     return row_data.value(QStringLiteral("kind")).toString() == tableKindForTarget(target) &&
-           row_data.value(QStringLiteral("disk")).toUInt() == target.disk_number;
+           row_data.value(QStringLiteral("disk")).toUInt() == target.disk_number.value();
 }
 
 bool rowTargetDetailsMatch(const QVariantMap& row_data, const PartitionTarget& target) {
@@ -1152,7 +1152,7 @@ bool rowTargetDetailsMatch(const QVariantMap& row_data, const PartitionTarget& t
                    target.offset_bytes &&
                row_data.value(QStringLiteral("size")).toString().toULongLong() == target.size_bytes;
     }
-    return row_data.value(QStringLiteral("partition")).toUInt() == target.partition_number;
+    return row_data.value(QStringLiteral("partition")).toUInt() == target.partition_number.value();
 }
 
 bool rowMatchesTarget(const QVariantMap& row_data, const PartitionTarget& target) {
@@ -2145,7 +2145,7 @@ private:
                           kApplyDiffPreviewTitleWidth,
                           kApplyDiffPreviewRowHeight,
                           Qt::AlignVCenter,
-                          tr("Disk %1").arg(disk.disk_number));
+                          tr("Disk %1").arg(disk.disk_number.value()));
         drawTrack(painter,
                   QRect(rect.left() + kApplyDiffPreviewTitleWidth,
                         rect.top(),
@@ -2170,14 +2170,15 @@ private:
             const QString label = partition.volume && !partition.volume->drive_letter.isEmpty()
                                       ? tr("%1:").arg(partition.volume->drive_letter)
                                       : segmentPartitionLabel(partition);
-            segments.append({.label = label,
-                             .offset = partition.offset_bytes,
-                             .bytes = partition.size_bytes,
-                             .color = segmentPartitionColor(partition),
-                             .used_percent = segmentUsedPercent(partition),
-                             .partition_number = static_cast<int>(partition.partition_number),
-                             .unallocated = false,
-                             .changed = false});
+            segments.append(
+                {.label = label,
+                 .offset = partition.offset_bytes,
+                 .bytes = partition.size_bytes,
+                 .color = segmentPartitionColor(partition),
+                 .used_percent = segmentUsedPercent(partition),
+                 .partition_number = static_cast<int>(partition.partition_number.value()),
+                 .unallocated = false,
+                 .changed = false});
         }
         for (const auto& region : disk.unallocated_regions) {
             segments.append({.label = tr("Free"),
@@ -2254,7 +2255,7 @@ private:
         }
         if (operation.type == PartitionOperationType::Delete) {
             markPartition(segments,
-                          operation.target.partition_number,
+                          operation.target.partition_number.value(),
                           tr("Delete"),
                           segmentUnallocatedColor(),
                           true);
@@ -2285,7 +2286,7 @@ private:
             return;
         }
         markPartition(segments,
-                      operation.target.partition_number,
+                      operation.target.partition_number.value(),
                       toDisplayString(operation.type),
                       QColor(QString::fromLatin1(ui::kColorWarning)),
                       false);
@@ -2336,7 +2337,8 @@ private:
         for (qsizetype i = 0; i < segments->size(); ++i) {
             auto segment = segments->at(i);
             if (segment.unallocated ||
-                segment.partition_number != static_cast<int>(operation.target.partition_number)) {
+                segment.partition_number !=
+                    static_cast<int>(operation.target.partition_number.value())) {
                 continue;
             }
             const uint64_t previous_size = segment.bytes;
@@ -2378,7 +2380,8 @@ private:
         bool found = false;
         for (auto& segment : *segments) {
             if (segment.unallocated ||
-                segment.partition_number != static_cast<int>(operation.target.partition_number)) {
+                segment.partition_number !=
+                    static_cast<int>(operation.target.partition_number.value())) {
                 continue;
             }
             old_offset = segment.offset;
@@ -2432,7 +2435,8 @@ private:
             if (segment.unallocated) {
                 continue;
             }
-            if (segment.partition_number == static_cast<int>(operation.target.partition_number)) {
+            if (segment.partition_number ==
+                static_cast<int>(operation.target.partition_number.value())) {
                 segment.bytes = saturatingAdd(segment.bytes, amount);
                 segment.label = tr("Allocated");
                 segment.changed = true;
@@ -2453,7 +2457,8 @@ private:
         for (qsizetype i = 0; i < segments->size(); ++i) {
             auto segment = segments->at(i);
             if (segment.unallocated ||
-                segment.partition_number != static_cast<int>(operation.target.partition_number) ||
+                segment.partition_number !=
+                    static_cast<int>(operation.target.partition_number.value()) ||
                 first_size == 0 || first_size >= segment.bytes) {
                 continue;
             }
@@ -2524,7 +2529,8 @@ private:
         const auto* source = findPartition(disk, static_cast<uint32_t>(source_number));
         for (auto& segment : *segments) {
             if (!segment.unallocated &&
-                segment.partition_number == static_cast<int>(operation.target.partition_number) &&
+                segment.partition_number ==
+                    static_cast<int>(operation.target.partition_number.value()) &&
                 source != nullptr) {
                 segment.bytes += source->size_bytes;
                 segment.label = tr("Merged");
@@ -2671,7 +2677,7 @@ private:
         const auto it = std::ranges::find_if(disk.partitions,
 
                                              [partition_number](const auto& partition) {
-                                                 return partition.partition_number ==
+                                                 return partition.partition_number.value() ==
                                                         partition_number;
                                              });
         return it == disk.partitions.cend() ? nullptr : &(*it);
@@ -4367,22 +4373,22 @@ QString freeSpaceChoiceLabel(const PartitionInfoEx& partition, bool move_partiti
     if (partition.volume && !partition.volume->drive_letter.isEmpty()) {
         return QObject::tr("%1 Partition %2 (%3:)")
             .arg(action)
-            .arg(partition.partition_number)
+            .arg(partition.partition_number.value())
             .arg(partition.volume->drive_letter.left(1).toUpper());
     }
-    return QObject::tr("%1 Partition %2").arg(action).arg(partition.partition_number);
+    return QObject::tr("%1 Partition %2").arg(action).arg(partition.partition_number.value());
 }
 
 QVector<FreeSpaceAllocationChoice> freeSpaceAllocationChoices(const PartitionInfoEx* previous,
                                                               const PartitionInfoEx* next) {
     QVector<FreeSpaceAllocationChoice> choices;
     if (previous != nullptr) {
-        choices.append({.partition_number = previous->partition_number,
+        choices.append({.partition_number = previous->partition_number.value(),
                         .label = freeSpaceChoiceLabel(*previous, false),
                         .move_partition_start = false});
     }
     if (next != nullptr) {
-        choices.append({.partition_number = next->partition_number,
+        choices.append({.partition_number = next->partition_number.value(),
                         .label = freeSpaceChoiceLabel(*next, true),
                         .move_partition_start = true});
     }
@@ -4497,10 +4503,10 @@ void updateFreeSpaceAllocationPreview(PartitionOperationDialog& dialog,
     dialog.setPreviewText(
         move_mode ? QObject::tr("Back up partition %1, recreate it %2 earlier and %3 larger, "
                                 "restore files, and verify hashes.")
-                        .arg(partition->partition_number)
+                        .arg(partition->partition_number.value())
                         .arg(formatPartitionBytes(amount_bytes), formatPartitionBytes(amount_bytes))
                   : QObject::tr("Extend partition %1 by %2 into selected adjacent free space.")
-                        .arg(partition->partition_number)
+                        .arg(partition->partition_number.value())
                         .arg(formatPartitionBytes(amount_bytes)));
 }
 
@@ -4629,8 +4635,8 @@ void updateAllocateFreeSpacePreview(PartitionOperationDialog& dialog,
     widgets.donor_status->setText(
         QObject::tr("Disk %1 Partition %2 (%3:) can donate up to %4 while retaining existing "
                     "data plus reserve.")
-            .arg(donor.disk_number)
-            .arg(donor.partition_number)
+            .arg(donor.disk_number.value())
+            .arg(donor.partition_number.value())
             .arg(donor_letter, formatPartitionBytes(widgets.max_allocate_bytes)));
     {
         const QSignalBlocker handle_blocker(widgets.amount_handle);
@@ -4679,7 +4685,8 @@ void connectAllocateFreeSpaceControls(PartitionOperationDialog& dialog,
 QJsonObject allocateFreeSpacePayload(const AllocateFreeSpaceWidgets& widgets,
                                      const PartitionInfoEx& donor) {
     QJsonObject payload;
-    payload[QStringLiteral("source_partition_number")] = QString::number(donor.partition_number);
+    payload[QStringLiteral("source_partition_number")] =
+        QString::number(donor.partition_number.value());
     payload[QStringLiteral("source_size_bytes")] = QString::number(donor.size_bytes);
     payload[QStringLiteral("bytes_to_allocate")] = QString::number(selectedAllocateBytes(widgets));
     if (donor.volume) {
@@ -5271,13 +5278,13 @@ QComboBox* createResizeDonorSelector(QWidget* parent,
         }
         const QString label = partition.volume && !partition.volume->drive_letter.isEmpty()
                                   ? QObject::tr("Partition %1 (%2:, %3)")
-                                        .arg(partition.partition_number)
+                                        .arg(partition.partition_number.value())
                                         .arg(partition.volume->drive_letter,
                                              formatPartitionBytes(partition.size_bytes))
                                   : QObject::tr("Partition %1 (%2)")
-                                        .arg(partition.partition_number)
+                                        .arg(partition.partition_number.value())
                                         .arg(formatPartitionBytes(partition.size_bytes));
-        combo->addItem(label, QString::number(partition.partition_number));
+        combo->addItem(label, QString::number(partition.partition_number.value()));
     }
     return combo;
 }
@@ -5650,7 +5657,7 @@ QString partitionFlagsText(const PartitionInfoEx& partition) {
 }
 
 void appendDiskProperties(QVector<PropertyRow>* rows, const PartitionDiskInfo& disk) {
-    addProperty(rows, QObject::tr("Disk number"), QString::number(disk.disk_number));
+    addProperty(rows, QObject::tr("Disk number"), QString::number(disk.disk_number.value()));
     addProperty(rows, QObject::tr("Model"), disk.model);
     addProperty(rows, QObject::tr("Serial number"), disk.serial_number);
     addProperty(rows, QObject::tr("Device path"), disk.device_path);
@@ -5683,7 +5690,9 @@ void appendSmartProperties(QVector<PropertyRow>* rows, const PartitionDiskInfo& 
 }
 
 void appendPartitionProperties(QVector<PropertyRow>* rows, const PartitionInfoEx& partition) {
-    addProperty(rows, QObject::tr("Partition number"), QString::number(partition.partition_number));
+    addProperty(rows,
+                QObject::tr("Partition number"),
+                QString::number(partition.partition_number.value()));
     addProperty(rows, QObject::tr("Partition GUID"), partition.partition_guid);
     addProperty(rows, QObject::tr("Type name"), partition.type_name);
     addProperty(rows, QObject::tr("GPT/MBR type"), partition.gpt_type);
@@ -5757,9 +5766,11 @@ void appendFilesystemInspectionRows(QVector<PropertyRow>* rows,
     const auto& volume = partition.volume.value();
     addProperty(rows,
                 QObject::tr("Disk"),
-                (disk != nullptr) ? QString::number(disk->disk_number)
-                                  : QString::number(partition.disk_number));
-    addProperty(rows, QObject::tr("Partition"), QString::number(partition.partition_number));
+                (disk != nullptr) ? QString::number(disk->disk_number.value())
+                                  : QString::number(partition.disk_number.value()));
+    addProperty(rows,
+                QObject::tr("Partition"),
+                QString::number(partition.partition_number.value()));
     addProperty(rows, QObject::tr("Raw target path"), raw_target_path);
     addProperty(rows, QObject::tr("File system"), volume.file_system);
     const QString source =
@@ -5784,7 +5795,7 @@ void appendFilesystemInspectionRows(QVector<PropertyRow>* rows,
 
 void appendUnallocatedProperties(QVector<PropertyRow>* rows, const PartitionTarget& target) {
     addProperty(rows, QObject::tr("Region type"), QObject::tr("Unallocated space"));
-    addProperty(rows, QObject::tr("Disk number"), QString::number(target.disk_number));
+    addProperty(rows, QObject::tr("Disk number"), QString::number(target.disk_number.value()));
     addProperty(rows, QObject::tr("Offset"), target.offset_bytes);
     addProperty(rows, QObject::tr("Size"), target.size_bytes);
 }
@@ -6802,13 +6813,13 @@ QVector<PropertyRow> bitLockerRows(const PartitionDiskInfo* disk,
     addProperty(&rows,
                 QObject::tr("Target"),
                 (partition != nullptr) ? QObject::tr("Disk %1 Partition %2")
-                                             .arg(partition->disk_number)
-                                             .arg(partition->partition_number)
+                                             .arg(partition->disk_number.value())
+                                             .arg(partition->partition_number.value())
                                        : QObject::tr("No partition selected"));
     addProperty(&rows,
                 QObject::tr("Disk"),
                 (disk != nullptr)
-                    ? QObject::tr("Disk %1 %2").arg(disk->disk_number).arg(disk->model)
+                    ? QObject::tr("Disk %1 %2").arg(disk->disk_number.value()).arg(disk->model)
                     : QString());
     addProperty(&rows, QObject::tr("Mount point"), bitLockerMountPoint(volume));
     addProperty(&rows, QObject::tr("Protection"), bitLockerProtectionText(volume));
@@ -6965,8 +6976,8 @@ QVector<PropertyRow> optimizeRows(const PartitionDiskInfo* disk, const Partition
     addProperty(&rows,
                 QObject::tr("Target"),
                 (partition != nullptr) ? QObject::tr("Disk %1 Partition %2")
-                                             .arg(partition->disk_number)
-                                             .arg(partition->partition_number)
+                                             .arg(partition->disk_number.value())
+                                             .arg(partition->partition_number.value())
                                        : QObject::tr("No partition selected"));
     addProperty(&rows, QObject::tr("Mount point"), optimizeMountPoint(volume));
     addProperty(&rows, QObject::tr("Media type"), (disk != nullptr) ? disk->media_type : QString());
@@ -7078,7 +7089,7 @@ bool canQueueSsdSecureErase(const PartitionDiskInfo* disk) {
 
 QStringList secureEraseChecklist(const PartitionDiskInfo* disk) {
     const QString disk_text = (disk != nullptr) ? QObject::tr("Disk %1, model %2, serial %3")
-                                                      .arg(disk->disk_number)
+                                                      .arg(disk->disk_number.value())
                                                       .arg(propertyValue(disk->model))
                                                       .arg(propertyValue(disk->serial_number))
                                                 : QObject::tr("No disk selected");
@@ -7096,7 +7107,7 @@ QVector<PropertyRow> secureEraseRows(const PartitionDiskInfo* disk) {
     QVector<PropertyRow> rows;
     addProperty(&rows,
                 QObject::tr("Target disk"),
-                (disk != nullptr) ? QString::number(disk->disk_number) : QString());
+                (disk != nullptr) ? QString::number(disk->disk_number.value()) : QString());
     addProperty(&rows, QObject::tr("Model"), (disk != nullptr) ? disk->model : QString());
     addProperty(&rows,
                 QObject::tr("Serial number"),
@@ -7547,7 +7558,7 @@ QString targetIdentityText(const std::optional<PartitionTarget>& target,
     }
     if (target->kind == PartitionTargetKind::Unallocated) {
         return QStringLiteral("Disk %1 unallocated space\nOffset: %2\nSize: %3")
-            .arg(target->disk_number)
+            .arg(target->disk_number.value())
             .arg(formatPartitionBytes(target->offset_bytes),
                  formatPartitionBytes(target->size_bytes));
     }
@@ -7558,16 +7569,16 @@ QString targetIdentityText(const std::optional<PartitionTarget>& target,
         const QString fs = partition->volume ? partition->volume->file_system
                                              : QStringLiteral("(no file system)");
         return QStringLiteral("Disk %1 Partition %2\n%3 %4\nSize: %5")
-            .arg(partition->disk_number)
-            .arg(partition->partition_number)
+            .arg(partition->disk_number.value())
+            .arg(partition->partition_number.value())
             .arg(letter, fs, formatPartitionBytes(partition->size_bytes));
     }
     if (disk != nullptr) {
         return QStringLiteral("Disk %1\n%2\nStyle: %3\nSize: %4")
-            .arg(disk->disk_number)
+            .arg(disk->disk_number.value())
             .arg(disk->model, disk->partition_style, formatPartitionBytes(disk->size_bytes));
     }
-    return QStringLiteral("Disk %1").arg(target->disk_number);
+    return QStringLiteral("Disk %1").arg(target->disk_number.value());
 }
 
 QString applyReviewText(const QVector<PartitionOperation>& operations,
@@ -7697,7 +7708,7 @@ QString physicalDrivePath(uint32_t disk_number) {
 
 const PartitionDiskInfo* findWizardDisk(const PartitionInventory& inventory, uint32_t source_disk) {
     for (const auto& disk : inventory.disks) {
-        if (disk.disk_number == source_disk) {
+        if (disk.disk_number.value() == source_disk) {
             return &disk;
         }
     }
@@ -7722,13 +7733,13 @@ QComboBox* addTargetDiskSelector(QFormLayout* form,
     auto* combo = new QComboBox(parent);
     combo->setAccessibleName(QStringLiteral("Target disk"));
     for (const auto& disk : inventory.disks) {
-        if (disk.disk_number == source_disk) {
+        if (disk.disk_number.value() == source_disk) {
             continue;
         }
         combo->addItem(QStringLiteral("Disk %1 - %2 - %3")
-                           .arg(disk.disk_number)
+                           .arg(disk.disk_number.value())
                            .arg(disk.model, formatPartitionBytes(disk.size_bytes)),
-                       physicalDrivePath(disk.disk_number));
+                       physicalDrivePath(disk.disk_number.value()));
         combo->setItemData(combo->count() - 1,
                            QVariant::fromValue<qulonglong>(disk.size_bytes),
                            kWizardDiskSizeRole);
@@ -7914,12 +7925,12 @@ uint64_t selectedPartitionRegionSize(const PartitionCopyWizardWidgets& widgets) 
 
 void addPartitionRegionChoice(QComboBox* combo, const UnallocatedRegion& region) {
     combo->addItem(QStringLiteral("Disk %1 unallocated - %2 at %3")
-                       .arg(region.disk_number)
+                       .arg(region.disk_number.value())
                        .arg(formatPartitionBytes(region.size_bytes),
                             formatPartitionBytes(region.offset_bytes)));
     const int index = combo->count() - 1;
     combo->setItemData(index,
-                       QVariant::fromValue<qulonglong>(region.disk_number),
+                       QVariant::fromValue<qulonglong>(region.disk_number.value()),
                        kWizardRegionDiskRole);
     combo->setItemData(index,
                        QVariant::fromValue<qulonglong>(region.offset_bytes),
@@ -9128,8 +9139,8 @@ QWidget* PartitionManagerPanel::createPartitionSegment(
     const QString label = tr("%1 %2").arg(partitionLabel(partition),
                                           formatPartitionBytes(partition.size_bytes));
     const QString tooltip = tr("Disk %1 partition %2, %3, %4")
-                                .arg(disk.disk_number)
-                                .arg(partition.partition_number)
+                                .arg(disk.disk_number.value())
+                                .arg(partition.partition_number.value())
                                 .arg(partition.volume ? partition.volume->file_system
                                                       : partition.type_name,
                                      formatPartitionBytes(partition.size_bytes));
@@ -9155,7 +9166,7 @@ QWidget* PartitionManagerPanel::createUnallocatedSegment(
     segment_target.size_bytes = region.size_bytes;
     auto* segment = new PartitionSegmentWidget(
         {.text = tr("Unallocated %1").arg(formatPartitionBytes(region.size_bytes)),
-         .tooltip = tr("Disk %1 unallocated space").arg(region.disk_number),
+         .tooltip = tr("Disk %1 unallocated space").arg(region.disk_number.value()),
          .color_role = QStringLiteral("Unallocated"),
          .color = unallocatedColor(),
          .used_percent = 0,
@@ -9174,11 +9185,11 @@ QWidget* PartitionManagerPanel::createDiskTile(const PartitionDiskInfo& disk) {
     target.disk_number = disk.disk_number;
     target.size_bytes = disk.size_bytes;
     DiskTileSpec spec;
-    spec.name = tr("Disk %1").arg(disk.disk_number);
+    spec.name = tr("Disk %1").arg(disk.disk_number.value());
     spec.detail = tr("%1\n%2").arg(disk.partition_style, formatPartitionBytes(disk.size_bytes));
     spec.icon = QIcon(kIconDisk);
     spec.accessible = tr("Disk %1, %2, %3")
-                          .arg(disk.disk_number)
+                          .arg(disk.disk_number.value())
                           .arg(disk.partition_style, formatPartitionBytes(disk.size_bytes));
     spec.color = partitionColorForRole(color_role);
     spec.selected = targetMatchesDisk(selected, disk);
@@ -9252,8 +9263,10 @@ void PartitionManagerPanel::addDiskRow(const PartitionDiskInfo& disk) {
     const int row = m_table->rowCount();
     m_table->insertRow(row);
     const QVariantMap row_data{{QStringLiteral("kind"), rowKindName(TableRowKind::Disk)},
-                               {QStringLiteral("disk"), static_cast<int>(disk.disk_number)}};
-    auto* target = new QTableWidgetItem(QIcon(kIconDisk), tr("Disk %1").arg(disk.disk_number));
+                               {QStringLiteral("disk"),
+                                static_cast<int>(disk.disk_number.value())}};
+    auto* target = new QTableWidgetItem(QIcon(kIconDisk),
+                                        tr("Disk %1").arg(disk.disk_number.value()));
     auto font = target->font();
     font.setBold(true);
     target->setFont(font);
@@ -9262,7 +9275,7 @@ void PartitionManagerPanel::addDiskRow(const PartitionDiskInfo& disk) {
     // whole tooltip first, then wrap it once so the tooltip renders it literally.
     QString tooltip =
         tr("Disk %1, %2, %3, %4")
-            .arg(disk.disk_number)
+            .arg(disk.disk_number.value())
             .arg(disk.partition_style, formatPartitionBytes(disk.size_bytes), disk.health_status);
     const QStringList status_parts = diskStatusParts(disk);
     if (!status_parts.isEmpty()) {
@@ -9280,9 +9293,9 @@ void PartitionManagerPanel::addPartitionRow(const PartitionDiskInfo& disk,
     const int row = m_table->rowCount();
     m_table->insertRow(row);
     QVariantMap row_data{{QStringLiteral("kind"), rowKindName(TableRowKind::Partition)},
-                         {QStringLiteral("disk"), static_cast<int>(disk.disk_number)},
+                         {QStringLiteral("disk"), static_cast<int>(disk.disk_number.value())},
                          {QStringLiteral("partition"),
-                          static_cast<int>(partition.partition_number)},
+                          static_cast<int>(partition.partition_number.value())},
                          {QStringLiteral("offset"), QString::number(partition.offset_bytes)},
                          {QStringLiteral("size"), QString::number(partition.size_bytes)}};
     if (partition.volume) {
@@ -9324,7 +9337,8 @@ void PartitionManagerPanel::addUnallocatedRow(const UnallocatedRegion& region) {
     const int row = m_table->rowCount();
     m_table->insertRow(row);
     const QVariantMap row_data{{QStringLiteral("kind"), rowKindName(TableRowKind::Unallocated)},
-                               {QStringLiteral("disk"), static_cast<int>(region.disk_number)},
+                               {QStringLiteral("disk"),
+                                static_cast<int>(region.disk_number.value())},
                                {QStringLiteral("offset"), QString::number(region.offset_bytes)},
                                {QStringLiteral("size"), QString::number(region.size_bytes)}};
     auto* target = new QTableWidgetItem(tr("  Unallocated"));
@@ -9409,7 +9423,7 @@ void PartitionManagerPanel::updateDetails() {
     QString text;
     if (const auto* disk = selectedDisk()) {
         text += tr("Disk %1\nModel: %2\nStyle: %3\nSize: %4\nHealth: %5\n\n")
-                    .arg(disk->disk_number)
+                    .arg(disk->disk_number.value())
                     .arg(disk->model, disk->partition_style)
                     .arg(formatPartitionBytes(disk->size_bytes), disk->health_status);
         if (disk->is_system) {
@@ -9423,7 +9437,7 @@ void PartitionManagerPanel::updateDetails() {
     }
     if (const auto* partition = selectedPartition()) {
         text += tr("\nPartition %1\nType: %2\nSize: %3\nFlags: %4\n")
-                    .arg(partition->partition_number)
+                    .arg(partition->partition_number.value())
                     .arg(partition->type_name)
                     .arg(formatPartitionBytes(partition->size_bytes),
                          flagsForPartition(*partition));
@@ -9487,18 +9501,18 @@ void PartitionManagerPanel::onShowProperties() {
     QVector<PropertyRow> rows;
     appendDiskProperties(&rows, *disk);
     appendSmartProperties(&rows, *disk);
-    QString title = tr("Disk %1 Properties").arg(disk->disk_number);
+    QString title = tr("Disk %1 Properties").arg(disk->disk_number.value());
     if (target->kind == PartitionTargetKind::Partition ||
         target->kind == PartitionTargetKind::Volume) {
         if (const auto* partition = selectedPartition()) {
             appendPartitionProperties(&rows, *partition);
             title = tr("Disk %1 Partition %2 Properties")
-                        .arg(disk->disk_number)
-                        .arg(partition->partition_number);
+                        .arg(disk->disk_number.value())
+                        .arg(partition->partition_number.value());
         }
     } else if (target->kind == PartitionTargetKind::Unallocated) {
         appendUnallocatedProperties(&rows, *target);
-        title = tr("Disk %1 Unallocated Space Properties").arg(disk->disk_number);
+        title = tr("Disk %1 Unallocated Space Properties").arg(disk->disk_number.value());
     }
     showPropertiesDialog(this, title, rows);
 }
@@ -10558,7 +10572,7 @@ void PartitionManagerPanel::onSsdSecureErase() {
         Q_EMIT statusMessage(tr("Select an SSD/NVMe disk first"), sak::kTimerStatusDefaultMs);
         return;
     }
-    const QString expected = QStringLiteral("ERASE DISK %1").arg(disk->disk_number);
+    const QString expected = QStringLiteral("ERASE DISK %1").arg(disk->disk_number.value());
     bool ok = false;
     const QString typed = QInputDialog::getText(this,
                                                 tr("SSD Secure Erase"),
@@ -10608,7 +10622,7 @@ void PartitionManagerPanel::onDeleteAllPartitions() {
         tr("Delete All Partitions"),
         tr("Queue deletion of every partition on Disk %1? This is destructive and still requires "
            "Apply before execution.")
-            .arg(target->disk_number),
+            .arg(target->disk_number.value()),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
     if (result == QMessageBox::Yes) {
@@ -10827,7 +10841,7 @@ void PartitionManagerPanel::onConvertPrimaryLogical() {
             tr("Back up %1:, clear disk %2, recreate as %3, restore files, verify hashes.")
                 .arg(partition->volume ? partition->volume->drive_letter.left(1).toUpper()
                                        : QStringLiteral("?"))
-                .arg(disk->disk_number)
+                .arg(disk->disk_number.value())
                 .arg(target_layout));
     };
     connect(widgets.backup_directory, &QLineEdit::textChanged, &dialog, update_preview);
@@ -10952,7 +10966,7 @@ void PartitionManagerPanel::onConvertDynamicDiskToBasic() {
     }
     const PartitionTarget disk_target{.kind = PartitionTargetKind::Disk,
                                       .disk_number = disk.disk_number,
-                                      .partition_number = 0,
+                                      .partition_number = PartitionNumber{0},
                                       .partition_guid = {},
                                       .volume_guid = {},
                                       .drive_letter = {},
@@ -10980,7 +10994,7 @@ void PartitionManagerPanel::onConvertDynamicDiskToBasic() {
         dialog.setPreviewText(
             tr("Back up %1:, convert disk %2 to basic, restore files, verify hashes.")
                 .arg(source_partition->volume->drive_letter.left(1).toUpper())
-                .arg(disk.disk_number));
+                .arg(disk.disk_number.value()));
     };
     connect(widgets.backup_directory, &QLineEdit::textChanged, &dialog, update_preview);
     connect(widgets.confirmation, &QCheckBox::toggled, &dialog, update_preview);
@@ -11034,7 +11048,7 @@ void PartitionManagerPanel::onQuickPartition() {
 
     PartitionOperationDialog dialog(
         tr("Quick Partition"),
-        tr("Disk %1 - %2").arg(disk.disk_number).arg(formatPartitionBytes(disk.size_bytes)),
+        tr("Disk %1 - %2").arg(disk.disk_number.value()).arg(formatPartitionBytes(disk.size_bytes)),
         tr("Queues a full-disk layout. Review Pending Operations before Apply."),
         this);
     const auto widgets = addQuickPartitionControls(dialog, disk);
@@ -11223,13 +11237,13 @@ void PartitionManagerPanel::onCloneDisk() {
                            .title = tr("Copy Disk Wizard"),
                            .source_identity = targetIdentityText(selected, selectedDisk(), nullptr),
                            .inventory = &m_controller->inventory(),
-                           .source_disk = selected->disk_number,
+                           .source_disk = selected->disk_number.value(),
                            .os_migration = false});
     if (!result) {
         return;
     }
     QJsonObject payload;
-    payload[QStringLiteral("source_path")] = physicalDrivePath(selected->disk_number);
+    payload[QStringLiteral("source_path")] = physicalDrivePath(selected->disk_number.value());
     payload[QStringLiteral("target_path")] = result->target_path;
     payload[QStringLiteral("layout_mode")] = result->layout_mode;
     payload[QStringLiteral("verify_mode")] = result->verify_mode;
@@ -11383,7 +11397,7 @@ void PartitionManagerPanel::onCreateImage() {
 
     QString source_path;
     if (selected->kind == PartitionTargetKind::Disk) {
-        source_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(selected->disk_number);
+        source_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(selected->disk_number.value());
     } else if (!selected->drive_letter.isEmpty()) {
         source_path = QStringLiteral("\\\\.\\%1:").arg(selected->drive_letter.left(1).toUpper());
     } else {
@@ -11421,7 +11435,7 @@ namespace {
         for (const auto& partition : disk.partitions) {
             if (partition.volume &&
                 partition.volume->drive_letter.compare(letter, Qt::CaseInsensitive) == 0) {
-                return disk.disk_number == disk_number;
+                return disk.disk_number.value() == disk_number;
             }
         }
     }
@@ -11453,13 +11467,13 @@ void PartitionManagerPanel::onRestoreImage() {
                           tr("Select a readable, non-empty disk image file."));
         return;
     }
-    if (imageResidesOnDisk(m_controller->inventory(), path, selected->disk_number)) {
+    if (imageResidesOnDisk(m_controller->inventory(), path, selected->disk_number.value())) {
         showWarningLogged(
             this,
             tr("Restore Image"),
             tr("The image file resides on target Disk %1. Restoring would offline the disk "
                "that holds the image and fail. Choose an image stored on a different disk.")
-                .arg(selected->disk_number));
+                .arg(selected->disk_number.value()));
         return;
     }
     const auto image_size = static_cast<uint64_t>(image_info.size());
@@ -11474,7 +11488,7 @@ void PartitionManagerPanel::onRestoreImage() {
                           tr("Restore Image"),
                           tr("Image size (%1) is larger than target Disk %2 (%3).")
                               .arg(formatPartitionBytes(image_size))
-                              .arg(selected->disk_number)
+                              .arg(selected->disk_number.value())
                               .arg(formatPartitionBytes(selected->size_bytes)));
         return;
     }
@@ -11485,7 +11499,7 @@ void PartitionManagerPanel::onRestoreImage() {
         tr("Queue restore of %1 to Disk %2? This overwrites the target disk and still requires "
            "Apply before execution.\n\nImage: %3\nTarget: %4")
             .arg(QDir::toNativeSeparators(path))
-            .arg(selected->disk_number)
+            .arg(selected->disk_number.value())
             .arg(formatPartitionBytes(image_size))
             .arg(formatPartitionBytes(selected->size_bytes)),
         QMessageBox::Yes | QMessageBox::No,
@@ -11497,7 +11511,7 @@ void PartitionManagerPanel::onRestoreImage() {
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = path;
     payload[QStringLiteral("target_path")] =
-        QStringLiteral("\\\\.\\PhysicalDrive%1").arg(selected->disk_number);
+        QStringLiteral("\\\\.\\PhysicalDrive%1").arg(selected->disk_number.value());
     payload[QStringLiteral("source_size_bytes")] = QString::number(image_size);
     payload[QStringLiteral("target_size_bytes")] = QString::number(selected->size_bytes);
     payload[QStringLiteral("target_wipe_confirmed")] = true;
@@ -11591,13 +11605,13 @@ void PartitionManagerPanel::onMigrateOs() {
                            .title = tr("Migrate OS to SSD/HDD Wizard"),
                            .source_identity = targetIdentityText(selected, selectedDisk(), nullptr),
                            .inventory = &m_controller->inventory(),
-                           .source_disk = selected->disk_number,
+                           .source_disk = selected->disk_number.value(),
                            .os_migration = true});
     if (!result) {
         return;
     }
     QJsonObject payload;
-    payload[QStringLiteral("source_path")] = physicalDrivePath(selected->disk_number);
+    payload[QStringLiteral("source_path")] = physicalDrivePath(selected->disk_number.value());
     payload[QStringLiteral("target_path")] = result->target_path;
     payload[QStringLiteral("layout_mode")] = result->layout_mode;
     payload[QStringLiteral("verify_mode")] = result->verify_mode;
@@ -11734,9 +11748,10 @@ std::optional<PartitionTarget> PartitionManagerPanel::selectedTarget() const {
     const auto row_data = row_item->data(Qt::UserRole).toMap();
     PartitionTarget target;
     const QString kind = row_data.value(QStringLiteral("kind")).toString();
-    target.disk_number = static_cast<uint32_t>(row_data.value(QStringLiteral("disk")).toInt());
+    target.disk_number =
+        DiskNumber{static_cast<uint32_t>(row_data.value(QStringLiteral("disk")).toInt())};
     target.partition_number =
-        static_cast<uint32_t>(row_data.value(QStringLiteral("partition")).toInt());
+        PartitionNumber{static_cast<uint32_t>(row_data.value(QStringLiteral("partition")).toInt())};
     target.offset_bytes = row_data.value(QStringLiteral("offset")).toString().toULongLong();
     target.size_bytes = row_data.value(QStringLiteral("size")).toString().toULongLong();
     target.drive_letter = row_data.value(QStringLiteral("letter")).toString();
@@ -11752,18 +11767,16 @@ const PartitionDiskInfo* PartitionManagerPanel::selectedDisk() const {
     if (!target) {
         return nullptr;
     }
-    return PartitionSafetyValidator::findDisk(m_controller->inventory(),
-                                              DiskNumber{target->disk_number});
+    return PartitionSafetyValidator::findDisk(m_controller->inventory(), target->disk_number);
 }
 
 const PartitionInfoEx* PartitionManagerPanel::selectedPartition() const {
     const auto target = selectedTarget();
     const auto* disk = selectedDisk();
-    if (!target || (disk == nullptr) || target->partition_number == 0) {
+    if (!target || (disk == nullptr) || target->partition_number.value() == 0) {
         return nullptr;
     }
-    return PartitionSafetyValidator::findPartition(*disk,
-                                                   PartitionNumber{target->partition_number});
+    return PartitionSafetyValidator::findPartition(*disk, target->partition_number);
 }
 
 QString PartitionManagerPanel::flagsForPartition(const PartitionInfoEx& partition) {
@@ -11824,7 +11837,7 @@ QString PartitionManagerPanel::partitionLabel(const PartitionInfoEx& partition) 
     if (partition.is_efi || partition.is_msr || partition.is_recovery) {
         return tr("*:");
     }
-    return tr("Partition %1").arg(partition.partition_number);
+    return tr("Partition %1").arg(partition.partition_number.value());
 }
 
 QColor PartitionManagerPanel::partitionColor(const PartitionDiskInfo& disk,

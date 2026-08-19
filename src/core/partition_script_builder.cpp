@@ -137,8 +137,8 @@ QString requirePartitionIdentity(const PartitionTarget& target) {
         QStringLiteral(
             "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
             "if ([uint64]$p.Size -ne [uint64]%3) { throw 'Partition identity mismatch' }\n")
-            .arg(target.disk_number)
-            .arg(target.partition_number)
+            .arg(target.disk_number.value())
+            .arg(target.partition_number.value())
             .arg(uintArg(target.size_bytes));
     if (target.offset_bytes != 0) {
         script += QStringLiteral(
@@ -329,12 +329,12 @@ QString linuxSwapFormatBodyScript(const QString& targetPathExpression,
 }
 
 QString rawPartitionTargetPath(const PartitionOperation& operation) {
-    if (operation.target.partition_number == 0) {
+    if (operation.target.partition_number.value() == 0) {
         return {};
     }
     const QString expected = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
-                                 .arg(operation.target.disk_number)
-                                 .arg(operation.target.partition_number);
+                                 .arg(operation.target.disk_number.value())
+                                 .arg(operation.target.partition_number.value());
     QString payloadPath = payloadString(operation, QStringLiteral("target_path")).trimmed();
     payloadPath.replace('/', '\\');
     if (payloadPath.compare(expected, Qt::CaseInsensitive) != 0) {
@@ -344,7 +344,7 @@ QString rawPartitionTargetPath(const PartitionOperation& operation) {
 }
 
 QString rawPartitionTargetPathBlocker(const PartitionOperation& operation) {
-    if (operation.target.partition_number == 0 || operation.target.size_bytes == 0) {
+    if (operation.target.partition_number.value() == 0 || operation.target.size_bytes == 0) {
         return QStringLiteral("Filesystem tool operation requires a partition identity");
     }
     if (payloadString(operation, QStringLiteral("target_path")).trimmed().isEmpty()) {
@@ -359,7 +359,7 @@ QString rawPartitionTargetPathBlocker(const PartitionOperation& operation) {
 PartitionScript buildLinuxSwapFormatScript(const PartitionOperation& operation, QString label) {
     const QString targetPath = rawPartitionTargetPath(operation);
     const uint64_t pageSize = linuxSwapPageSize(operation);
-    if (operation.target.partition_number == 0 || operation.target.size_bytes == 0) {
+    if (operation.target.partition_number.value() == 0 || operation.target.size_bytes == 0) {
         return invalidPartitionScript(
             QStringLiteral("Linux swap format requires a partition identity"));
     }
@@ -386,8 +386,8 @@ PartitionScript buildLinuxSwapFormatScript(const PartitionOperation& operation, 
 
     PartitionScript out;
     out.preview = QStringLiteral("Format Disk %1 Partition %2 as Linux swap")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number);
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  linuxSwapFormatBodyScript(PartitionScriptBuilder::quotePowerShell(targetPath),
                                            QStringLiteral("[uint64]$p.Size"),
@@ -512,8 +512,8 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
     const QString targetPath = rawPartitionTargetPath(operation);
     PartitionScript out;
     out.preview = QStringLiteral("Format Disk %1 Partition %2 as %3 APFS with S.A.K. APFS writer")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number)
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value())
                       .arg(encryption.credentials.isEmpty()
                                ? QStringLiteral("plaintext")
                                : QStringLiteral("FileVault-encrypted"));
@@ -559,8 +559,8 @@ PartitionScript buildApfsRawRepairScript(const PartitionOperation& operation,
     out.preview =
         QStringLiteral(
             "Repair Disk %1 Partition %2 %3 generated metadata checksums with S.A.K. APFS writer")
-            .arg(operation.target.disk_number)
-            .arg(operation.target.partition_number)
+            .arg(operation.target.disk_number.value())
+            .arg(operation.target.partition_number.value())
             .arg(fileSystem.toUpper());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
@@ -2661,8 +2661,8 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
                                                uint64_t targetSize) {
     PartitionScript out;
     out.preview = QStringLiteral("Resize Disk %1 Partition %2 to %3")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number)
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value())
                       .arg(formatPartitionBytes(targetSize));
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
@@ -2670,8 +2670,8 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
                      "if ([uint64]%3 -lt [uint64]$s.SizeMin -or [uint64]%3 -gt [uint64]$s.SizeMax) "
                      "{ throw 'Target size outside supported range' }\n"
                      "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size %3\n")
-                     .arg(operation.target.disk_number)
-                     .arg(operation.target.partition_number)
+                     .arg(operation.target.disk_number.value())
+                     .arg(operation.target.partition_number.value())
                      .arg(uintArg(targetSize));
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
     return out;
@@ -2687,8 +2687,8 @@ static QString growExtResizePreToolScript(const PartitionOperation& operation,
                "if ([uint64]$p.Size -ne $targetSizeBytes) { throw 'Partition resize did not reach "
                "target size' }\n")
         .arg(uintArg(targetSize))
-        .arg(operation.target.disk_number)
-        .arg(operation.target.partition_number);
+        .arg(operation.target.disk_number.value())
+        .arg(operation.target.partition_number.value());
 }
 
 static ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionOperation& operation,
@@ -2699,8 +2699,8 @@ static ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionO
     request.operation_name = PartitionFileSystemToolRunner::resizeOperation();
     request.preview =
         QStringLiteral("Grow Disk %1 Partition %2 %3 file system with bundled resize2fs")
-            .arg(operation.target.disk_number)
-            .arg(operation.target.partition_number)
+            .arg(operation.target.disk_number.value())
+            .arg(operation.target.partition_number.value())
             .arg(fs.toLower());
     request.accepted_exit_codes = {QStringLiteral("0")};
     request.pre_tool_script = growExtResizePreToolScript(operation, targetSize);
@@ -2727,8 +2727,8 @@ static QString extShrinkPartitionScript(const PartitionOperation& operation) {
                "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
                "if ([uint64]$p.Size -ne $targetSizeBytes) { throw 'Partition shrink did not "
                "reach target size' }\n")
-        .arg(operation.target.disk_number)
-        .arg(operation.target.partition_number);
+        .arg(operation.target.disk_number.value())
+        .arg(operation.target.partition_number.value());
 }
 
 static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& operation,
@@ -2763,8 +2763,8 @@ static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& oper
     PartitionScript out;
     out.preview =
         QStringLiteral("Shrink Disk %1 Partition %2 %3 file system with bundled resize2fs")
-            .arg(operation.target.disk_number)
-            .arg(operation.target.partition_number)
+            .arg(operation.target.disk_number.value())
+            .arg(operation.target.partition_number.value())
             .arg(fs.toLower());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  filesystemToolFunctionScript() + extShrinkPreToolScript(targetSize) +
@@ -2911,7 +2911,7 @@ static QString allocateSetupScript(const PartitionOperation& operation,
                "$backupPath = Join-Path $backupRootFull ('sak-allocate-backup-{0}' -f "
                "[guid]::NewGuid().ToString('N'))\n"
                "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n")
-        .arg(operation.target.disk_number)
+        .arg(operation.target.disk_number.value())
         .arg(payload.source_partition)
         .arg(uintArg(payload.source_size))
         .arg(PartitionScriptBuilder::quotePowerShell(payload.source_letter),
@@ -2948,9 +2948,9 @@ static QString allocateExecutionScript(const PartitionOperation& operation,
                "Repair-Volume -DriveLetter $sourceDrive -Scan\n"
                "Get-Partition -DiskNumber %1 | Sort-Object Offset | Format-Table "
                "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n")
-        .arg(operation.target.disk_number)
+        .arg(operation.target.disk_number.value())
         .arg(payload.source_partition)
-        .arg(operation.target.partition_number);
+        .arg(operation.target.partition_number.value());
 }
 
 struct ClusterSizePayload {
@@ -3620,7 +3620,7 @@ static QString newPartitionCommandScript(const PartitionOperation& operation,
                                          const CreateScriptSpec& spec,
                                          const QString& driveArg) {
     return QStringLiteral("$p = New-Partition -DiskNumber %1 -Size %2%3%4%5\n")
-        .arg(operation.target.disk_number)
+        .arg(operation.target.disk_number.value())
         .arg(uintArg(spec.size))
         .arg(driveArg, partitionTypeArg(operation), createOffsetArg(operation));
 }
@@ -3636,7 +3636,7 @@ static QString refreshCreatedPartitionAndRawTargetScript(const PartitionOperatio
                "$rawTargetPath = ('\\\\?\\GLOBALROOT\\Device\\Harddisk{0}\\Partition{1}' -f "
                "$p.DiskNumber, $p.PartitionNumber)\n"
                "Write-Output ('Created raw partition target: {0}' -f $rawTargetPath)\n")
-        .arg(operation.target.disk_number)
+        .arg(operation.target.disk_number.value())
         .arg(uintArg(spec.size));
 }
 
@@ -3655,7 +3655,7 @@ static PartitionScript buildCreateLinuxSwapScript(const PartitionOperation& oper
     PartitionScript out;
     out.preview = QStringLiteral("Create %1 Linux swap partition on Disk %2")
                       .arg(formatPartitionBytes(spec.size),
-                           QString::number(operation.target.disk_number));
+                           QString::number(operation.target.disk_number.value()));
     out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
                  refreshCreatedPartitionAndRawTargetScript(operation, spec) +
                  linuxSwapFormatBodyScript(QStringLiteral("$rawTargetPath"),
@@ -3675,7 +3675,7 @@ static PartitionScript buildCreateApfsScript(const PartitionOperation& operation
     PartitionScript out;
     out.preview = QStringLiteral("Create %1 APFS partition on Disk %2 with S.A.K. APFS writer")
                       .arg(formatPartitionBytes(spec.size),
-                           QString::number(operation.target.disk_number));
+                           QString::number(operation.target.disk_number.value()));
     out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
                  refreshCreatedPartitionAndRawTargetScript(operation, spec) +
                  dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
@@ -3701,7 +3701,7 @@ static PartitionScript buildCreateExtScript(const PartitionOperation& operation,
     out.preview = QStringLiteral("Create %1 %2 partition on Disk %3 with bundled %4")
                       .arg(formatPartitionBytes(spec.size),
                            spec.file_system,
-                           QString::number(operation.target.disk_number),
+                           QString::number(operation.target.disk_number.value()),
                            command.tool_id);
     out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
                  refreshCreatedPartitionAndRawTargetScript(operation, spec) +
@@ -3738,7 +3738,7 @@ static PartitionScript buildCreateStagedHfsScript(
     out.preview = QStringLiteral("Create %1 %2 partition on Disk %3 with sparse-staged %4")
                       .arg(formatPartitionBytes(spec.size),
                            spec.file_system,
-                           QString::number(operation.target.disk_number),
+                           QString::number(operation.target.disk_number.value()),
                            command.tool_id);
     const QStringList formatArgs = command.arguments;
     out.script =
@@ -4014,7 +4014,7 @@ PartitionScript PartitionScriptBuilder::buildCreateScript(
     out.preview = QStringLiteral("Create %1 %2 partition on Disk %3")
                       .arg(formatPartitionBytes(spec.size),
                            spec.file_system,
-                           QString::number(operation.target.disk_number));
+                           QString::number(operation.target.disk_number.value()));
     out.script = commonHeader(out.preview) +
                  newPartitionCommandScript(operation, spec, QStringLiteral(" ") + driveArg) +
                  QStringLiteral(
@@ -4032,14 +4032,14 @@ PartitionScript PartitionScriptBuilder::buildDeleteScript(
     const PartitionOperation& operation) const {
     PartitionScript out;
     out.preview = QStringLiteral("Delete Disk %1 Partition %2")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number);
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "Remove-Partition -DiskNumber %1 -PartitionNumber %2 "
                      "-Confirm:$false\n")
-                     .arg(operation.target.disk_number)
-                     .arg(operation.target.partition_number);
+                     .arg(operation.target.disk_number.value())
+                     .arg(operation.target.partition_number.value());
     return out;
 }
 
@@ -4068,8 +4068,8 @@ PartitionScript PartitionScriptBuilder::buildFormatScript(
         ExternalFileSystemToolScriptRequest request;
         request.operation_name = PartitionFileSystemToolRunner::formatOperation();
         request.preview = QStringLiteral("Format Disk %1 Partition %2 as %3 with bundled %4")
-                              .arg(operation.target.disk_number)
-                              .arg(operation.target.partition_number)
+                              .arg(operation.target.disk_number.value())
+                              .arg(operation.target.partition_number.value())
                               .arg(fs.toLower(), command.tool_id);
         request.accepted_exit_codes = {QStringLiteral("0")};
         request.command = command;
@@ -4080,7 +4080,7 @@ PartitionScript PartitionScriptBuilder::buildFormatScript(
                                 : QString();
     const uint64_t allocationUnit = payloadUInt64(operation,
                                                   QStringLiteral("allocation_unit_bytes"));
-    if (operation.target.partition_number == 0 || operation.target.size_bytes == 0) {
+    if (operation.target.partition_number.value() == 0 || operation.target.size_bytes == 0) {
         return invalidScript(QStringLiteral("Format requires a partition identity"));
     }
     if (!isSupportedFileSystem(fs)) {
@@ -4092,8 +4092,8 @@ PartitionScript PartitionScriptBuilder::buildFormatScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Format Disk %1 Partition %2 as %3")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number)
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value())
                       .arg(fs.toUpper());
     out.script =
         commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
@@ -4114,15 +4114,15 @@ PartitionScript PartitionScriptBuilder::buildSetDriveLetterScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Set Disk %1 Partition %2 drive letter to %3:")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number)
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value())
                       .arg(letter.toUpper());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "Set-Partition -DiskNumber %1 -PartitionNumber %2 "
                      "-NewDriveLetter %3\n")
-                     .arg(operation.target.disk_number)
-                     .arg(operation.target.partition_number)
+                     .arg(operation.target.disk_number.value())
+                     .arg(operation.target.partition_number.value())
                      .arg(letter.toUpper());
     return out;
 }
@@ -4137,8 +4137,8 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionLabelScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Set Disk %1 Partition %2 label to %3")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number)
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value())
                       .arg(label.isEmpty() ? QStringLiteral("(blank)") : label);
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral("Set-Volume -DriveLetter %1 -NewFileSystemLabel %2\n")
@@ -4167,8 +4167,8 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
         request.operation_name = PartitionFileSystemToolRunner::repairOperation();
         request.preview =
             QStringLiteral("Repair Disk %1 Partition %2 %3 file system with bundled %4")
-                .arg(operation.target.disk_number)
-                .arg(operation.target.partition_number)
+                .arg(operation.target.disk_number.value())
+                .arg(operation.target.partition_number.value())
                 .arg(fs.toLower(), command.tool_id);
         request.accepted_exit_codes = command.tool_id == QStringLiteral("e2fsck")
                                           ? QStringList{QStringLiteral("0"), QStringLiteral("1")}
@@ -4210,8 +4210,8 @@ PartitionScript PartitionScriptBuilder::buildApfsRootFileMutationScript(
                       .arg(apfsRootFileMutationVerb(operation.type),
                            targetNoun,
                            apfsRootFileMutationDisplayName(input),
-                           QString::number(operation.target.disk_number),
-                           QString::number(operation.target.partition_number));
+                           QString::number(operation.target.disk_number.value()),
+                           QString::number(operation.target.partition_number.value()));
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
                  QStringLiteral(
@@ -4244,8 +4244,8 @@ PartitionScript PartitionScriptBuilder::buildApfsSnapshotScript(
     out.preview = QStringLiteral("%1 APFS snapshot %2 on Disk %3 Partition %4")
                       .arg(apfsSnapshotVerb(operation.type),
                            snapshotName,
-                           QString::number(operation.target.disk_number),
-                           QString::number(operation.target.partition_number));
+                           QString::number(operation.target.disk_number.value()),
+                           QString::number(operation.target.partition_number.value()));
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
                  QStringLiteral(
@@ -4286,8 +4286,8 @@ PartitionScript PartitionScriptBuilder::buildApfsCloneHardlinkResizeScript(
     PartitionScript out;
     out.preview = QStringLiteral("%1 on Disk %2 Partition %3 with S.A.K. APFS writer")
                       .arg(apfsA7Verb(operation.type),
-                           QString::number(operation.target.disk_number),
-                           QString::number(operation.target.partition_number));
+                           QString::number(operation.target.disk_number.value()),
+                           QString::number(operation.target.partition_number.value()));
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
                  QStringLiteral(
@@ -4324,8 +4324,8 @@ PartitionScript PartitionScriptBuilder::buildHfsFileMutationScript(
     PartitionScript out;
     out.preview = QStringLiteral("%1 HFS+ staged file mutation on Disk %2 Partition %3")
                       .arg(hfsFileMutationVerb(operation.type),
-                           QString::number(operation.target.disk_number),
-                           QString::number(operation.target.partition_number));
+                           QString::number(operation.target.disk_number.value()),
+                           QString::number(operation.target.partition_number.value()));
     out.script =
         commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
         hfsStagedFunctionsScript() + hfsWriterCliFunctionScript() +
@@ -4369,7 +4369,7 @@ PartitionScript PartitionScriptBuilder::buildHfsFileMutationScript(
 
 PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
     const PartitionOperation& operation, const ExternalFileSystemToolScriptRequest& request) {
-    if (operation.target.partition_number == 0 || operation.target.size_bytes == 0) {
+    if (operation.target.partition_number.value() == 0 || operation.target.size_bytes == 0) {
         return invalidScript(
             QStringLiteral("Filesystem tool operation requires a partition identity"));
     }
@@ -4427,7 +4427,7 @@ PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
     PartitionScript out;
     if (operation.target.kind == PartitionTargetKind::Disk) {
         out.preview = QStringLiteral("Run read-only surface and health test for Disk %1")
-                          .arg(operation.target.disk_number);
+                          .arg(operation.target.disk_number.value());
         out.script =
             commonHeader(out.preview) +
             QStringLiteral(
@@ -4442,7 +4442,7 @@ PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
                 "  Write-Output \"Scanning volume $($_.DriveLetter):\"\n"
                 "  Repair-Volume -DriveLetter $_.DriveLetter -Scan -Verbose\n"
                 "}\n")
-                .arg(operation.target.disk_number);
+                .arg(operation.target.disk_number.value());
         out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
         return out;
     }
@@ -4473,7 +4473,7 @@ PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
     PartitionScript out;
     out.preview = QStringLiteral("%1 partition recovery scan on Disk %2")
                       .arg(fullScan ? QStringLiteral("Full") : QStringLiteral("Quick"))
-                      .arg(operation.target.disk_number);
+                      .arg(operation.target.disk_number.value());
     out.script =
         commonHeader(out.preview) +
         QStringLiteral(
@@ -4495,7 +4495,7 @@ PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
             "    }\n"
             "  }\n"
             "} finally { $stream.Dispose() }\n")
-            .arg(operation.target.disk_number)
+            .arg(operation.target.disk_number.value())
             .arg(fullScan ? QStringLiteral("$true") : QStringLiteral("$false"));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
@@ -4518,7 +4518,7 @@ PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
                                 : QStringLiteral("-MbrType %1").arg(quotePowerShell(typeId));
     PartitionScript out;
     out.preview = QStringLiteral("Restore recovered partition on Disk %1 at %2")
-                      .arg(operation.target.disk_number)
+                      .arg(operation.target.disk_number.value())
                       .arg(formatPartitionBytes(offset));
     out.script = commonHeader(out.preview) +
                  QStringLiteral(
@@ -4533,7 +4533,7 @@ PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
                      "[uint64]($p.Offset + $p.Size); if ($start -lt $pEnd -and $end -gt "
                      "$pStart) { throw 'Candidate overlaps existing partition' } }\n"
                      "New-Partition -DiskNumber %1 -Offset %2 -Size %3 %4\n")
-                     .arg(operation.target.disk_number)
+                     .arg(operation.target.disk_number.value())
                      .arg(uintArg(offset), uintArg(size), typeArg);
     out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
     return out;
@@ -4545,21 +4545,21 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionHiddenScript(
     PartitionScript out;
     out.preview = QStringLiteral("%1 Disk %2 Partition %3")
                       .arg(hidden ? QStringLiteral("Hide") : QStringLiteral("Unhide"))
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number);
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "Set-Partition -DiskNumber %1 -PartitionNumber %2 "
                      "-IsHidden $%3 -NoDefaultDriveLetter $%3\n")
-                     .arg(operation.target.disk_number)
-                     .arg(operation.target.partition_number)
+                     .arg(operation.target.disk_number.value())
+                     .arg(operation.target.partition_number.value())
                      .arg(hidden ? QStringLiteral("true") : QStringLiteral("false"));
     if (hidden && isValidDriveLetter(operation.target.drive_letter.left(1))) {
         out.script += QStringLiteral(
                           "Remove-PartitionAccessPath -DiskNumber %1 -PartitionNumber %2 "
                           "-AccessPath %3 -ErrorAction SilentlyContinue\n")
-                          .arg(operation.target.disk_number)
-                          .arg(operation.target.partition_number)
+                          .arg(operation.target.disk_number.value())
+                          .arg(operation.target.partition_number.value())
                           .arg(quotePowerShell(operation.target.drive_letter.left(1).toUpper() +
                                                QStringLiteral(":\\")));
     }
@@ -4571,13 +4571,13 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionActiveScript(
     const bool active = payloadBool(operation, QStringLiteral("active"));
     PartitionScript out;
     out.preview = QStringLiteral("Set Disk %1 Partition %2 active flag to %3")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number)
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value())
                       .arg(active ? QStringLiteral("active") : QStringLiteral("inactive"));
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral("Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsActive $%3\n")
-                     .arg(operation.target.disk_number)
-                     .arg(operation.target.partition_number)
+                     .arg(operation.target.disk_number.value())
+                     .arg(operation.target.partition_number.value())
                      .arg(active ? QStringLiteral("true") : QStringLiteral("false"));
     return out;
 }
@@ -4591,8 +4591,8 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionTypeIdScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Change Disk %1 Partition %2 type ID to %3")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number)
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value())
                       .arg(typeId);
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
@@ -4603,9 +4603,9 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionTypeIdScript(
                      "} elseif ($d.PartitionStyle -eq 'MBR') {\n"
                      "  Set-Partition -DiskNumber %1 -PartitionNumber %3 -MbrType $typeId\n"
                      "} else { throw 'Partition type ID requires MBR or GPT disk' }\n")
-                     .arg(operation.target.disk_number)
+                     .arg(operation.target.disk_number.value())
                      .arg(quotePowerShell(typeId))
-                     .arg(operation.target.partition_number);
+                     .arg(operation.target.partition_number.value());
     return out;
 }
 
@@ -4620,14 +4620,15 @@ PartitionScript PartitionScriptBuilder::buildInitializeDiskScript(
     }
 
     PartitionScript out;
-    out.preview =
-        QStringLiteral("Initialize Disk %1 as %2").arg(operation.target.disk_number).arg(style);
+    out.preview = QStringLiteral("Initialize Disk %1 as %2")
+                      .arg(operation.target.disk_number.value())
+                      .arg(style);
     out.script = commonHeader(out.preview) +
                  QStringLiteral(
                      "Set-Disk -Number %1 -IsOffline $false -ErrorAction Stop\n"
                      "Set-Disk -Number %1 -IsReadOnly $false -ErrorAction Stop\n"
                      "Initialize-Disk -Number %1 -PartitionStyle %2\n")
-                     .arg(operation.target.disk_number)
+                     .arg(operation.target.disk_number.value())
                      .arg(style);
     out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
     return out;
@@ -4636,8 +4637,8 @@ PartitionScript PartitionScriptBuilder::buildInitializeDiskScript(
 PartitionScript PartitionScriptBuilder::buildDeleteAllPartitionsScript(
     const PartitionOperation& operation) const {
     PartitionScript out;
-    out.preview =
-        QStringLiteral("Delete all partitions on Disk %1").arg(operation.target.disk_number);
+    out.preview = QStringLiteral("Delete all partitions on Disk %1")
+                      .arg(operation.target.disk_number.value());
     out.script = commonHeader(out.preview) +
                  QStringLiteral(
                      "$parts = Get-Partition -DiskNumber %1 -ErrorAction Stop | "
@@ -4646,7 +4647,7 @@ PartitionScript PartitionScriptBuilder::buildDeleteAllPartitionsScript(
                      "  Remove-Partition -DiskNumber %1 -PartitionNumber $part.PartitionNumber "
                      "-Confirm:$false\n"
                      "}\n")
-                     .arg(operation.target.disk_number);
+                     .arg(operation.target.disk_number.value());
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -4692,9 +4693,9 @@ PartitionScript PartitionScriptBuilder::buildAllocateFreeSpaceScript(
     PartitionScript out;
     out.preview = QStringLiteral("Allocate %1 from Disk %2 Partition %3 to Partition %4")
                       .arg(formatPartitionBytes(payload.bytes_to_allocate))
-                      .arg(operation.target.disk_number)
+                      .arg(operation.target.disk_number.value())
                       .arg(payload.source_partition)
-                      .arg(operation.target.partition_number);
+                      .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  sakVolumeGuidFunctionScript() +
                  allocateSetupScript(operation, payload, targetSize, donorRemainingBytes) +
@@ -4714,8 +4715,9 @@ PartitionScript PartitionScriptBuilder::buildConvertStyleScript(
         return invalidScript(QStringLiteral("Convert requires target_style of GPT or MBR"));
     }
     PartitionScript out;
-    out.preview =
-        QStringLiteral("Convert Disk %1 to %2").arg(operation.target.disk_number).arg(target_style);
+    out.preview = QStringLiteral("Convert Disk %1 to %2")
+                      .arg(operation.target.disk_number.value())
+                      .arg(target_style);
     if (payloadString(operation, QStringLiteral("mode")) == QStringLiteral("mbr2gpt")) {
         out.script = commonHeader(out.preview) +
                      QStringLiteral(
@@ -4723,7 +4725,7 @@ PartitionScript PartitionScriptBuilder::buildConvertStyleScript(
                          "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
                          "mbr2gpt.exe /convert /disk:%1 /allowFullOS\n"
                          "exit $LASTEXITCODE\n")
-                         .arg(operation.target.disk_number);
+                         .arg(operation.target.disk_number.value());
     } else {
         out.script = commonHeader(out.preview) +
                      QStringLiteral(
@@ -4744,7 +4746,7 @@ PartitionScript PartitionScriptBuilder::buildConvertStyleScript(
                          "  Clear-Disk -Number %1 -RemoveData -Confirm:$false\n"
                          "}\n"
                          "Initialize-Disk -Number %1 -PartitionStyle %2\n")
-                         .arg(operation.target.disk_number)
+                         .arg(operation.target.disk_number.value())
                          .arg(target_style);
     }
     out.timeout_seconds = kPartitionConversionTaskTimeoutSeconds;
@@ -4792,9 +4794,9 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Merge Disk %1 Partition %2 into Partition %3")
-                      .arg(operation.target.disk_number)
+                      .arg(operation.target.disk_number.value())
                       .arg(source_partition)
-                      .arg(operation.target.partition_number);
+                      .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "$target = $p\n"
@@ -4832,10 +4834,10 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
                      "$supported = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %4\n"
                      "Resize-Partition -DiskNumber %1 -PartitionNumber %4 -Size "
                      "$supported.SizeMax\n")
-                     .arg(operation.target.disk_number)
+                     .arg(operation.target.disk_number.value())
                      .arg(source_partition)
                      .arg(quotePowerShell(folder))
-                     .arg(operation.target.partition_number);
+                     .arg(operation.target.partition_number.value());
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -4858,15 +4860,15 @@ PartitionScript PartitionScriptBuilder::buildSplitScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Split Disk %1 Partition %2")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number);
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral(
                      "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size %3\n"
                      "$new = New-Partition -DiskNumber %1 -UseMaximumSize -AssignDriveLetter\n"
                      "Format-Volume -Partition $new -FileSystem %4 -Confirm:$false\n")
-                     .arg(operation.target.disk_number)
-                     .arg(operation.target.partition_number)
+                     .arg(operation.target.disk_number.value())
+                     .arg(operation.target.partition_number.value())
                      .arg(uintArg(first_size), fs.toUpper());
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
     return out;
@@ -4922,11 +4924,12 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
     if (operation.type == PartitionOperationType::CreateImage) {
         out.script += createImageDestinationGuardScript(
             spec.target,
-            operation.target.disk_number,
+            operation.target.disk_number.value(),
             payloadBool(operation, QStringLiteral("overwrite_confirmed")));
     }
     if (operation.type == PartitionOperationType::RestoreImage) {
-        out.script += restoreImageSourceGuardScript(spec.source, operation.target.disk_number);
+        out.script += restoreImageSourceGuardScript(spec.source,
+                                                    operation.target.disk_number.value());
     }
     out.script += cloneTransferScript(spec);
     if (operation.type == PartitionOperationType::MigrateOs) {
@@ -5097,7 +5100,7 @@ PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation
         return out;
     }
     if (operation.type == PartitionOperationType::WipeDisk) {
-        out.preview = QStringLiteral("Wipe Disk %1").arg(operation.target.disk_number);
+        out.preview = QStringLiteral("Wipe Disk %1").arg(operation.target.disk_number.value());
         const QString ssdPrelude =
             payloadBool(operation, QStringLiteral("ssd_secure_erase"))
                 ? QStringLiteral(
@@ -5107,7 +5110,7 @@ PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation
                       "})\n"
                       "foreach ($volume in $trimVolumes) { Optimize-Volume -DriveLetter "
                       "$volume.DriveLetter -ReTrim -Verbose -ErrorAction SilentlyContinue }\n")
-                      .arg(operation.target.disk_number)
+                      .arg(operation.target.disk_number.value())
                 : QString();
         out.script = commonHeader(out.preview) + ssdPrelude +
                      QStringLiteral(
@@ -5119,13 +5122,13 @@ PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation
                          "Remove-Partition -DiskNumber %1 -PartitionNumber "
                          "$p.PartitionNumber -Confirm:$false\n"
                          "Clear-Disk -Number %1 -RemoveData -RemoveOEM -Confirm:$false\n")
-                         .arg(operation.target.disk_number);
+                         .arg(operation.target.disk_number.value());
         out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
         return out;
     }
     out.preview = QStringLiteral("Full format Disk %1 Partition %2")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number);
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  QStringLiteral("$p | Format-Volume -FileSystem NTFS -Full -Confirm:$false\n");
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
@@ -5142,8 +5145,8 @@ PartitionScript PartitionScriptBuilder::buildMovePartitionScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Move Disk %1 Partition %2")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number);
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  backupRestoreHelpersScript() +
                  QStringLiteral(
@@ -5177,8 +5180,8 @@ PartitionScript PartitionScriptBuilder::buildMovePartitionScript(
                           quotePowerShell(payload.label),
                           uintArg(payload.target_offset),
                           uintArg(payload.target_size),
-                          QString::number(operation.target.disk_number),
-                          QString::number(operation.target.partition_number));
+                          QString::number(operation.target.disk_number.value()),
+                          QString::number(operation.target.partition_number.value()));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -5195,8 +5198,8 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
                                                        : QStringLiteral("$false");
     PartitionScript out;
     out.preview = QStringLiteral("Convert Disk %1 Partition %2 to %3")
-                      .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number)
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value())
                       .arg(payload.make_logical ? QStringLiteral("logical")
                                                 : QStringLiteral("primary"));
     out.script =
@@ -5240,7 +5243,7 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
                  quotePowerShell(payload.file_system),
                  quotePowerShell(payload.label),
                  logicalBranch,
-                 QString::number(operation.target.disk_number));
+                 QString::number(operation.target.disk_number.value()));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -5339,8 +5342,8 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
     }
 
     PartitionScript out;
-    out.preview =
-        QStringLiteral("Convert Dynamic Disk %1 to Basic").arg(operation.target.disk_number);
+    out.preview = QStringLiteral("Convert Dynamic Disk %1 to Basic")
+                      .arg(operation.target.disk_number.value());
     out.script =
         commonHeader(out.preview) + backupRestoreHelpersScript() + diskPartRunnerScript() +
         QStringLiteral(
@@ -5376,7 +5379,7 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
                  sizeMbArg(sourceSize),
                  quotePowerShell(fs),
                  quotePowerShell(label),
-                 QString::number(operation.target.disk_number));
+                 QString::number(operation.target.disk_number.value()));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }

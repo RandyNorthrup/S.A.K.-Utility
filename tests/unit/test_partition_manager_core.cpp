@@ -82,6 +82,33 @@ static_assert(!std::is_invocable_v<decltype(&PartitionSafetyValidator::findParti
                                    const PartitionDiskInfo&,
                                    DiskNumber>,
               "findPartition must REJECT a DiskNumber -- the symmetric silent swap");
+// R5-G14-19 (struct-field slice): the disk/partition identity FIELDS themselves carry the
+// strong index type, not a bare integer. This is the durable half of the guarantee: the
+// finder boundary above rejects a swapped ARGUMENT, and these reject a swapped or raw-int
+// FIELD write -- the in-memory construction/assignment hazard this slice closes -- so a
+// mix-up cannot survive anywhere the data is built, not only where it is looked up.
+static_assert(std::is_same_v<decltype(PartitionInfoEx::disk_number), DiskNumber>,
+              "PartitionInfoEx::disk_number must be a DiskNumber");
+static_assert(std::is_same_v<decltype(PartitionInfoEx::partition_number), PartitionNumber>,
+              "PartitionInfoEx::partition_number must be a PartitionNumber");
+static_assert(std::is_same_v<decltype(PartitionTarget::disk_number), DiskNumber>,
+              "PartitionTarget::disk_number must be a DiskNumber");
+static_assert(std::is_same_v<decltype(PartitionTarget::partition_number), PartitionNumber>,
+              "PartitionTarget::partition_number must be a PartitionNumber");
+static_assert(std::is_same_v<decltype(PartitionDiskInfo::disk_number), DiskNumber>,
+              "PartitionDiskInfo::disk_number must be a DiskNumber");
+static_assert(std::is_same_v<decltype(UnallocatedRegion::disk_number), DiskNumber>,
+              "UnallocatedRegion::disk_number must be a DiskNumber");
+// A raw integer cannot be written into an identity field (the explicit ctor blocks it)...
+static_assert(!std::is_assignable_v<decltype(PartitionTarget::disk_number)&, uint32_t>,
+              "a raw integer must not assign into a disk-number field");
+static_assert(!std::is_assignable_v<decltype(PartitionTarget::partition_number)&, uint32_t>,
+              "a raw integer must not assign into a partition-number field");
+// ...and neither can the OTHER index space: the silent in-memory swap is a hard error.
+static_assert(!std::is_assignable_v<decltype(PartitionTarget::disk_number)&, PartitionNumber>,
+              "a PartitionNumber must not assign into a disk-number field (the silent swap)");
+static_assert(!std::is_assignable_v<decltype(PartitionTarget::partition_number)&, DiskNumber>,
+              "a DiskNumber must not assign into a partition-number field (the silent swap)");
 
 namespace {
 
@@ -2622,8 +2649,8 @@ void verifyUnsupportedRepairBlocked() {
 PartitionTarget extToolPartitionTarget() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 2;
-    target.partition_number = 1;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
     target.size_bytes = 1024ULL * 1024ULL * 1024ULL;
     return target;
 }
@@ -2904,7 +2931,7 @@ void appendDisposableTargetDisk(PartitionInventory* inventory,
                                 uint32_t diskNumber = 1,
                                 uint64_t sizeBytes = 107'374'182'400ULL) {
     PartitionDiskInfo disk;
-    disk.disk_number = diskNumber;
+    disk.disk_number = DiskNumber{diskNumber};
     disk.device_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(diskNumber);
     disk.model = QStringLiteral("Disposable Target Disk");
     disk.bus_type = QStringLiteral("SATA");
@@ -2913,7 +2940,8 @@ void appendDisposableTargetDisk(PartitionInventory* inventory,
     disk.health_status = QStringLiteral("Healthy");
     disk.operational_status = QStringLiteral("Online");
     disk.size_bytes = sizeBytes;
-    disk.unallocated_regions.append({diskNumber, 1'048'576ULL, sizeBytes - 1'048'576ULL});
+    disk.unallocated_regions.append(
+        {DiskNumber{diskNumber}, 1'048'576ULL, sizeBytes - 1'048'576ULL});
     inventory->disks.append(disk);
 }
 
@@ -2941,7 +2969,7 @@ void appendAdjacentDonorPartition(PartitionInventory* inventory) {
 
     PartitionInfoEx donor;
     donor.disk_number = disk.disk_number;
-    donor.partition_number = 3;
+    donor.partition_number = PartitionNumber{3};
     donor.type_name = QStringLiteral("Basic");
     donor.offset_bytes = target.offset_bytes + target.size_bytes;
     donor.size_bytes = donorVolume.total_bytes;
@@ -2952,7 +2980,7 @@ void appendAdjacentDonorPartition(PartitionInventory* inventory) {
 PartitionInventory singleDataDiskInventory(bool dynamicDisk = false) {
     PartitionInventory inventory;
     PartitionDiskInfo disk;
-    disk.disk_number = 2;
+    disk.disk_number = DiskNumber{2};
     disk.device_path = QStringLiteral("\\\\.\\PhysicalDrive2");
     disk.model = QStringLiteral("Disposable Data Disk");
     disk.bus_type = QStringLiteral("SATA");
@@ -2973,7 +3001,7 @@ PartitionInventory singleDataDiskInventory(bool dynamicDisk = false) {
 
     PartitionInfoEx partition;
     partition.disk_number = disk.disk_number;
-    partition.partition_number = 1;
+    partition.partition_number = PartitionNumber{1};
     partition.type_name = dynamicDisk ? QStringLiteral("Simple") : QStringLiteral("Basic");
     partition.offset_bytes = 1024ULL * 1024ULL;
     partition.size_bytes = volume.total_bytes;
@@ -16326,7 +16354,7 @@ void PartitionManagerCoreTests::fileSystemToolRunner_resolvesApprovedToolPath() 
 void PartitionManagerCoreTests::inventoryParser_parsesDiskAndPartition() {
     const auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
     QCOMPARE(inventory.disks.size(), 1);
-    QCOMPARE(inventory.disks.first().disk_number, 0u);
+    QCOMPARE(inventory.disks.first().disk_number.value(), 0u);
     QCOMPARE(inventory.disks.first().partitions.size(), 2);
     QVERIFY(inventory.disks.first().partitions.first().is_efi);
     QVERIFY(inventory.disks.first().partitions.first().volume.has_value());
@@ -16370,7 +16398,7 @@ void PartitionManagerCoreTests::inventoryParser_keepsRawBasicDiskInitializable()
     const auto inventory = StorageInventoryWorker::parseInventoryJson(rawBasicDiskFixtureJson());
     QCOMPARE(inventory.disks.size(), 1);
     const auto& disk = inventory.disks.first();
-    QCOMPARE(disk.disk_number, 2u);
+    QCOMPARE(disk.disk_number.value(), 2u);
     QCOMPARE(disk.partition_style, QStringLiteral("RAW"));
     QVERIFY2(!disk.is_dynamic, "RAW partition style is not a dynamic-disk signal.");
     QCOMPARE(disk.partitions.size(), 0);
@@ -16479,8 +16507,8 @@ void PartitionManagerCoreTests::safetyValidator_blocksSystemPartitionDelete() {
     const auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 0;
-    target.partition_number = 2;
+    target.disk_number = DiskNumber{0};
+    target.partition_number = PartitionNumber{2};
     target.size_bytes = inventory.disks.first().partitions.at(1).size_bytes;
     auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::Delete,
                                                               target);
@@ -16503,7 +16531,7 @@ void PartitionManagerCoreTests::safetyValidator_refusesAbsentTargetDisk() {
     PartitionOperation op;
     op.type = PartitionOperationType::CheckFileSystem;
     op.target.kind = PartitionTargetKind::Disk;
-    op.target.disk_number = 5;
+    op.target.disk_number = DiskNumber{5};
     const auto result = PartitionSafetyValidator::validate(inventory, op);
     QVERIFY(!result.allowed());
     QVERIFY2(result.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("was not found")),
@@ -16511,7 +16539,7 @@ void PartitionManagerCoreTests::safetyValidator_refusesAbsentTargetDisk() {
 
     // Non-vacuity: with the disk actually present, the "was not found" blocker does not fire.
     PartitionDiskInfo disk;
-    disk.disk_number = 5;
+    disk.disk_number = DiskNumber{5};
     inventory.disks.append(disk);
     const auto present = PartitionSafetyValidator::validate(inventory, op);
     QVERIFY(!present.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("was not found")));
@@ -16523,13 +16551,13 @@ void PartitionManagerCoreTests::safetyValidator_refusesForgedTargetKind() {
     // used so the scope-mismatch guard does not short-circuit before the kind switch.
     PartitionInventory inventory;
     PartitionDiskInfo disk;
-    disk.disk_number = 1;
+    disk.disk_number = DiskNumber{1};
     inventory.disks.append(disk);
 
     PartitionOperation op;
     op.type = PartitionOperationType::CheckFileSystem;
     op.target.kind = static_cast<PartitionTargetKind>(99);  // forged / corrupted
-    op.target.disk_number = 1;
+    op.target.disk_number = DiskNumber{1};
     const auto result = PartitionSafetyValidator::validate(inventory, op);
     QVERIFY(!result.allowed());
     QVERIFY2(result.blockers.join(QStringLiteral(" "))
@@ -16542,14 +16570,14 @@ void PartitionManagerCoreTests::safetyValidator_refusesReadOnlyTargetDisk() {
     // a read-only disk must be refused.
     PartitionInventory readOnly;
     PartitionDiskInfo roDisk;
-    roDisk.disk_number = 1;
+    roDisk.disk_number = DiskNumber{1};
     roDisk.is_read_only = true;
     readOnly.disks.append(roDisk);
 
     PartitionOperation op;
     op.type = PartitionOperationType::CheckFileSystem;
     op.target.kind = PartitionTargetKind::Disk;
-    op.target.disk_number = 1;
+    op.target.disk_number = DiskNumber{1};
     const auto blockedResult = PartitionSafetyValidator::validate(readOnly, op);
     QVERIFY2(blockedResult.blockers.join(QStringLiteral(" "))
                  .contains(QStringLiteral("Target disk is read-only")),
@@ -16559,7 +16587,7 @@ void PartitionManagerCoreTests::safetyValidator_refusesReadOnlyTargetDisk() {
     // blocker, so the reject is the read-only state, not a blanket refusal of every disk.
     PartitionInventory writable;
     PartitionDiskInfo rwDisk;
-    rwDisk.disk_number = 1;
+    rwDisk.disk_number = DiskNumber{1};
     rwDisk.is_read_only = false;
     writable.disks.append(rwDisk);
     const auto okResult = PartitionSafetyValidator::validate(writable, op);
@@ -16570,7 +16598,7 @@ void PartitionManagerCoreTests::safetyValidator_refusesReadOnlyTargetDisk() {
 void PartitionManagerCoreTests::scriptBuilder_createRespectsWizardPayload() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Unallocated;
-    target.disk_number = 5;
+    target.disk_number = DiskNumber{5};
     target.offset_bytes = 1'048'576;
     target.size_bytes = 64 * 1024 * 1024;
     QJsonObject payload;
@@ -16608,7 +16636,7 @@ void verifyNonNativeCreateScriptVariants(const PartitionScriptBuilder* builder,
 void PartitionManagerCoreTests::scriptBuilder_buildsNonNativeCreateFormatScripts() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Unallocated;
-    target.disk_number = 2;
+    target.disk_number = DiskNumber{2};
     target.offset_bytes = 1'048'576;
     target.size_bytes = 256ULL * 1024ULL * 1024ULL;
 
@@ -16690,7 +16718,7 @@ void verifyNonNativeCreateScriptVariants(const PartitionScriptBuilder* builder,
 void PartitionManagerCoreTests::scriptBuilder_rejectsInvalidCreatePartitionType() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Unallocated;
-    target.disk_number = 5;
+    target.disk_number = DiskNumber{5};
     target.size_bytes = 64 * 1024 * 1024;
     QJsonObject payload;
     payload[QStringLiteral("size_bytes")] = QStringLiteral("33554432");
@@ -16708,8 +16736,8 @@ void PartitionManagerCoreTests::scriptBuilder_rejectsInvalidCreatePartitionType(
 void PartitionManagerCoreTests::scriptBuilder_rejectsUnsupportedAllocationUnit() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 1;
-    target.partition_number = 3;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{3};
     target.size_bytes = 10 * 1024 * 1024;
     QJsonObject payload;
     payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
@@ -16727,8 +16755,8 @@ void PartitionManagerCoreTests::scriptBuilder_rejectsUnsupportedAllocationUnit()
 void PartitionManagerCoreTests::scriptBuilder_rejectsNativeFormatForNonWindowsFilesystem() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 1;
-    target.partition_number = 3;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{3};
     target.size_bytes = 10 * 1024 * 1024;
     QJsonObject payload;
     payload[QStringLiteral("file_system")] = QStringLiteral("ext4");
@@ -17271,8 +17299,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsHfsFileMutationScripts() {
 void PartitionManagerCoreTests::scriptBuilder_buildsLinuxSwapFormatScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 2;
-    target.partition_number = 1;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
     target.size_bytes = 256ULL * 1024ULL * 1024ULL;
     const QString rawTarget = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition1");
 
@@ -17307,8 +17335,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsLinuxSwapFormatScript() {
 void PartitionManagerCoreTests::scriptBuilder_buildsResizeScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 1;
-    target.partition_number = 3;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{3};
     target.size_bytes = 10 * 1024 * 1024;
     QJsonObject payload;
     payload[QStringLiteral("target_size_bytes")] = QStringLiteral("20971520");
@@ -17325,8 +17353,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsResizeScript() {
 void PartitionManagerCoreTests::scriptBuilder_buildsMergeScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 2;
-    target.partition_number = 1;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
     target.size_bytes = 50 * 1024 * 1024;
     QJsonObject payload;
     payload[QStringLiteral("source_partition_number")] = QStringLiteral("2");
@@ -17348,8 +17376,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsMergeScript() {
 void PartitionManagerCoreTests::scriptBuilder_formatsByPartitionIdentity() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 1;
-    target.partition_number = 3;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{3};
     target.size_bytes = 10 * 1024 * 1024;
     QJsonObject payload;
     payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
@@ -17371,8 +17399,8 @@ void PartitionManagerCoreTests::scriptBuilder_formatsByPartitionIdentity() {
 void PartitionManagerCoreTests::scriptBuilder_setsPartitionLabelByMountedDriveLetter() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 1;
-    target.partition_number = 3;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{3};
     target.size_bytes = 10 * 1024 * 1024;
     target.drive_letter = QStringLiteral("E");
     QJsonObject payload;
@@ -17390,8 +17418,8 @@ void PartitionManagerCoreTests::scriptBuilder_setsPartitionLabelByMountedDriveLe
 void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
     PartitionTarget partitionTarget;
     partitionTarget.kind = PartitionTargetKind::Partition;
-    partitionTarget.disk_number = 1;
-    partitionTarget.partition_number = 3;
+    partitionTarget.disk_number = DiskNumber{1};
+    partitionTarget.partition_number = PartitionNumber{3};
     partitionTarget.size_bytes = 10 * 1024 * 1024;
     partitionTarget.drive_letter = QStringLiteral("E");
 
@@ -17427,7 +17455,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
 
     PartitionTarget diskTarget;
     diskTarget.kind = PartitionTargetKind::Disk;
-    diskTarget.disk_number = 7;
+    diskTarget.disk_number = DiskNumber{7};
     auto init = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::InitializeDisk,
         diskTarget,
@@ -17457,7 +17485,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
 void PartitionManagerCoreTests::scriptBuilder_buildsRecoveredPartitionRestoreScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 4;
+    target.disk_number = DiskNumber{4};
     QJsonObject payload;
     payload[QStringLiteral("offset_bytes")] = QStringLiteral("1048576000");
     payload[QStringLiteral("size_bytes")] = QStringLiteral("209715200");
@@ -17478,7 +17506,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsRecoveredPartitionRestoreScr
 void PartitionManagerCoreTests::scriptBuilder_buildsCloneVerificationScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 3;
+    target.disk_number = DiskNumber{3};
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("C:\\images\\source.img");
     payload[QStringLiteral("target_path")] = QStringLiteral("C:\\images\\target.img");
@@ -17511,8 +17539,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsCloneVerificationScript() {
 void PartitionManagerCoreTests::scriptBuilder_buildsOffsetPartitionCloneScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 0;
-    target.partition_number = 2;
+    target.disk_number = DiskNumber{0};
+    target.partition_number = PartitionNumber{2};
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\C:");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive2");
@@ -17540,7 +17568,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsOffsetPartitionCloneScript()
 void PartitionManagerCoreTests::scriptBuilder_buildsOsMigrationBootValidationScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive2");
@@ -17596,7 +17624,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeParityOperations() {
 void PartitionManagerCoreTests::scriptBuilder_buildsClearLevelDiskWipeScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 4;
+    target.disk_number = DiskNumber{4};
     auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::WipeDisk,
                                                               target);
 
@@ -17621,8 +17649,8 @@ void PartitionManagerCoreTests::scriptBuilder_mergeRejectsTraversalTargetFolder(
     // volume root, so a '..' or path separator would let the merged data escape it.
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 1;
-    target.partition_number = 2;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{2};
     QJsonObject payload;
     payload[QStringLiteral("source_partition_number")] = 3;
 
@@ -17645,7 +17673,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeSystemStyleConversio
     inventory.disks.first().partition_style = QStringLiteral("MBR");
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     QJsonObject payload;
     payload[QStringLiteral("target_style")] = QStringLiteral("GPT");
     auto operation = PartitionOperationPlanner::makeOperation(
@@ -17660,7 +17688,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeSystemStyleConversio
 void PartitionManagerCoreTests::scriptBuilder_buildsEmptyDataDiskStyleConversionScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 4;
+    target.disk_number = DiskNumber{4};
     QJsonObject payload;
     payload[QStringLiteral("target_style")] = QStringLiteral("MBR");
     auto operation = PartitionOperationPlanner::makeOperation(
@@ -17685,8 +17713,8 @@ void PartitionManagerCoreTests::scriptBuilder_rejectsEnumArgumentCommandInjectio
     // -FileSystem). A crafted value must be rejected, never injected unquoted.
     PartitionTarget split_target;
     split_target.kind = PartitionTargetKind::Partition;
-    split_target.disk_number = 2;
-    split_target.partition_number = 1;
+    split_target.disk_number = DiskNumber{2};
+    split_target.partition_number = PartitionNumber{1};
     split_target.size_bytes = 100 * 1024 * 1024;
     QJsonObject split_payload;
     split_payload[QStringLiteral("first_size_bytes")] = QStringLiteral("52428800");
@@ -17707,7 +17735,7 @@ void PartitionManagerCoreTests::scriptBuilder_rejectsEnumArgumentCommandInjectio
     // (Initialize-Disk -PartitionStyle). Only GPT/MBR are accepted.
     PartitionTarget conv_target;
     conv_target.kind = PartitionTargetKind::Disk;
-    conv_target.disk_number = 4;
+    conv_target.disk_number = DiskNumber{4};
     QJsonObject conv_payload;
     conv_payload[QStringLiteral("target_style")] = QStringLiteral("GPT; calc.exe");
     auto conv_bad = builder.buildScript(PartitionOperationPlanner::makeOperation(
@@ -17728,7 +17756,7 @@ void PartitionManagerCoreTests::scriptBuilder_stripsControlCharsFromDiskPartLabe
     PartitionScriptBuilder builder;
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 3;
+    target.disk_number = DiskNumber{3};
     QJsonObject payload;
     payload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857600");
     payload[QStringLiteral("drive_letter")] = QStringLiteral("E");
@@ -17755,7 +17783,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksWipeOfBootNotSystemDisk() 
 
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 1;
+    target.disk_number = DiskNumber{1};
     QJsonObject payload;
     payload[QStringLiteral("target_wipe_confirmed")] = true;
     auto op =
@@ -17786,8 +17814,8 @@ void PartitionManagerCoreTests::safetyValidator_blocksDiskScopedWipeWithPartitio
 
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;  // wrong scope for a whole-disk wipe
-    target.disk_number = 1;
-    target.partition_number = 1;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{1};
     QJsonObject payload;
     payload[QStringLiteral("target_wipe_confirmed")] = true;
     auto op =
@@ -17812,7 +17840,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksOsDiskDataPartitionMutatio
 
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     target.partition_number = partition.partition_number;
     QJsonObject payload;
     payload[QStringLiteral("target_wipe_confirmed")] = true;
@@ -17831,7 +17859,7 @@ void PartitionManagerCoreTests::scriptBuilder_createImageRefusesExistingWithoutO
     // existing destination unless overwrite_confirmed was passed.
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     target.size_bytes = 107'374'182'400ULL;
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
@@ -17856,7 +17884,7 @@ void PartitionManagerCoreTests::scriptBuilder_restoreImageGuardsUncAndOnTargetDi
     // a UNC/network source and a source volume that resolves onto the target disk.
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 2;
+    target.disk_number = DiskNumber{2};
     target.size_bytes = 107'374'182'400ULL;
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("D:\\images\\disk.img");
@@ -18160,7 +18188,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksSplitBootOsDiskMutations()
     PartitionOperationPlanner planner;
     PartitionTarget createTarget;
     createTarget.kind = PartitionTargetKind::Unallocated;
-    createTarget.disk_number = 0;
+    createTarget.disk_number = DiskNumber{0};
     createTarget.size_bytes = inventory.disks.first().size_bytes;
     QJsonObject createPayload;
     createPayload[QStringLiteral("size_bytes")] = QStringLiteral("1048576");
@@ -18175,7 +18203,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksSplitBootOsDiskMutations()
     // proceed past the source-disk gate; the ESP-only is_system disk is no longer required.
     PartitionTarget migrateTarget;
     migrateTarget.kind = PartitionTargetKind::Disk;
-    migrateTarget.disk_number = 0;
+    migrateTarget.disk_number = DiskNumber{0};
     QJsonObject migratePayload;
     migratePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     migratePayload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
@@ -18203,8 +18231,8 @@ void PartitionManagerCoreTests::safetyValidator_blocksClonePartitionWithoutTarge
     appendDisposableTargetDisk(&inventory, 1);
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 0;
-    target.partition_number = 1;
+    target.disk_number = DiskNumber{0};
+    target.partition_number = PartitionNumber{1};
     QJsonObject payload;
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
     payload[QStringLiteral("target_disk_number")] = 1;
@@ -18305,7 +18333,7 @@ void PartitionManagerCoreTests::scriptBuilder_createImageEmitsDestinationGuard()
     PartitionScriptBuilder builder;
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
@@ -18318,7 +18346,7 @@ void PartitionManagerCoreTests::scriptBuilder_createImageEmitsDestinationGuard()
 
     PartitionTarget cloneTarget;
     cloneTarget.kind = PartitionTargetKind::Disk;
-    cloneTarget.disk_number = 0;
+    cloneTarget.disk_number = DiskNumber{0};
     QJsonObject clonePayload;
     clonePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     clonePayload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
@@ -18335,7 +18363,7 @@ void PartitionManagerCoreTests::scriptBuilder_vssFallbackFailsClosedForVssCapabl
     PartitionScriptBuilder builder;
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 3;
+    target.disk_number = DiskNumber{3};
     QJsonObject payload;
     payload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857600");
     payload[QStringLiteral("drive_letter")] = QStringLiteral("E");
@@ -18364,7 +18392,7 @@ void PartitionManagerCoreTests::scriptBuilder_waveCDriveLetterAndSizeFailClosed(
     PartitionScriptBuilder builder;
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 3;
+    target.disk_number = DiskNumber{3};
     QJsonObject payload;
     payload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857601");
     payload[QStringLiteral("drive_letter")] = QStringLiteral("E");
@@ -18385,7 +18413,7 @@ void PartitionManagerCoreTests::scriptBuilder_waveCBackupAndCloneDurabilityFailC
     // backup against the source before the source is destroyed.
     PartitionTarget diskTarget;
     diskTarget.kind = PartitionTargetKind::Disk;
-    diskTarget.disk_number = 3;
+    diskTarget.disk_number = DiskNumber{3};
     QJsonObject backupPayload;
     backupPayload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857600");
     backupPayload[QStringLiteral("drive_letter")] = QStringLiteral("E");
@@ -18404,7 +18432,7 @@ void PartitionManagerCoreTests::scriptBuilder_waveCBackupAndCloneDurabilityFailC
     // (Flush($true)/FlushFileBuffers), not the non-durable Flush().
     PartitionTarget imageTarget;
     imageTarget.kind = PartitionTargetKind::Disk;
-    imageTarget.disk_number = 0;
+    imageTarget.disk_number = DiskNumber{0};
     QJsonObject imagePayload;
     imagePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     imagePayload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
@@ -18421,8 +18449,8 @@ void PartitionManagerCoreTests::scriptBuilder_waveCIdentityDismountImageGuardFai
     // partition pass.
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 1;
-    target.partition_number = 3;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{3};
     target.size_bytes = 10 * 1024 * 1024;
     target.offset_bytes = 1'048'576;
     target.partition_guid = QStringLiteral("{11112222-3333-4444-5555-666677778888}");
@@ -18454,7 +18482,7 @@ void PartitionManagerCoreTests::scriptBuilder_waveCIdentityDismountImageGuardFai
     // source disk with -ErrorAction Stop.
     PartitionTarget imageTarget;
     imageTarget.kind = PartitionTargetKind::Disk;
-    imageTarget.disk_number = 0;
+    imageTarget.disk_number = DiskNumber{0};
     QJsonObject imagePayload;
     imagePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     imagePayload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
@@ -18491,7 +18519,7 @@ void PartitionManagerCoreTests::safetyValidator_requiresCloneOverwriteConfirmati
     appendDisposableTargetDisk(&inventory);
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
@@ -18525,7 +18553,7 @@ void PartitionManagerCoreTests::
     const auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     target.size_bytes = inventory.disks.first().size_bytes;
 
     QJsonObject payload;
@@ -18586,7 +18614,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksCreateImageVolumeGuidAlias
 
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     target.size_bytes = inventory.disks.first().size_bytes;
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
@@ -18609,7 +18637,7 @@ void PartitionManagerCoreTests::
     inventory.disks.first().is_boot = false;
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     target.size_bytes = inventory.disks.first().size_bytes;
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("D:\\images\\disk0.img");
@@ -18660,7 +18688,7 @@ void PartitionManagerCoreTests::safetyValidator_requiresRecoveredPartitionRestor
     inventory.disks.first().is_boot = false;
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     QJsonObject payload;
     payload[QStringLiteral("offset_bytes")] = QStringLiteral("85899345920");
     payload[QStringLiteral("size_bytes")] = QStringLiteral("104857600");
@@ -18685,7 +18713,7 @@ void PartitionManagerCoreTests::safetyValidator_requiresPartitionRegionCloneConf
     const auto& partition = inventory.disks.first().partitions.at(1);
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     target.partition_number = partition.partition_number;
     target.size_bytes = partition.size_bytes;
     target.drive_letter = partition.volume->drive_letter;
@@ -18724,7 +18752,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafePayloadTargetDisk() 
 
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
@@ -18750,7 +18778,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksRawVolumeAliasTargetDisk()
 
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 1;
+    target.disk_number = DiskNumber{1};
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\C:");
@@ -18772,7 +18800,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksTooSmallCloneTarget() {
     appendDisposableTargetDisk(&inventory, 1, 1'048'576ULL);
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
@@ -18796,7 +18824,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksTooSmallPartitionRegionClo
     const auto& partition = inventory.disks.first().partitions.at(1);
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     target.partition_number = partition.partition_number;
     target.size_bytes = partition.size_bytes;
     target.drive_letter = partition.volume->drive_letter;
@@ -18828,8 +18856,8 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsupportedFileSystemConve
 
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 0;
-    target.partition_number = 2;
+    target.disk_number = DiskNumber{0};
+    target.partition_number = PartitionNumber{2};
     target.size_bytes = partition.size_bytes;
     target.drive_letter = partition.volume->drive_letter;
     auto operation =
@@ -19651,7 +19679,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksDynamicUnallocatedCreate()
 void PartitionManagerCoreTests::scriptBuilder_buildsMbr2GptScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     QJsonObject payload;
     payload[QStringLiteral("target_style")] = QStringLiteral("GPT");
     payload[QStringLiteral("mode")] = QStringLiteral("mbr2gpt");
@@ -19668,8 +19696,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsMbr2GptScript() {
 void PartitionManagerCoreTests::scriptBuilder_buildsAllocateFreeSpaceScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 2;
-    target.partition_number = 1;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
     target.size_bytes = 512ULL * 1024ULL * 1024ULL;
     target.drive_letter = QStringLiteral("T");
 
@@ -19734,7 +19762,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeAllocateFreeSpacePay
 
     QJsonObject validPayload;
     validPayload[QStringLiteral("source_partition_number")] =
-        QString::number(donor.partition_number);
+        QString::number(donor.partition_number.value());
     validPayload[QStringLiteral("source_size_bytes")] = QString::number(donor.size_bytes);
     validPayload[QStringLiteral("bytes_to_allocate")] = QStringLiteral("134217728");
     validPayload[QStringLiteral("source_drive_letter")] = donor.volume->drive_letter;
@@ -19779,8 +19807,8 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeAllocateFreeSpacePay
 void PartitionManagerCoreTests::scriptBuilder_buildsOfflineMoveAndMetadataScripts() {
     PartitionTarget partitionTarget;
     partitionTarget.kind = PartitionTargetKind::Partition;
-    partitionTarget.disk_number = 2;
-    partitionTarget.partition_number = 1;
+    partitionTarget.disk_number = DiskNumber{2};
+    partitionTarget.partition_number = PartitionNumber{1};
     partitionTarget.size_bytes = 1024ULL * 1024ULL * 1024ULL;
     partitionTarget.drive_letter = QStringLiteral("T");
 
@@ -19835,7 +19863,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsOfflineMoveAndMetadataScript
 
     PartitionTarget diskTarget;
     diskTarget.kind = PartitionTargetKind::Disk;
-    diskTarget.disk_number = 2;
+    diskTarget.disk_number = DiskNumber{2};
     diskTarget.size_bytes = 4ULL * 1024ULL * 1024ULL * 1024ULL;
     QJsonObject dynamicPayload = primaryPayload;
     const auto dynamicScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
@@ -19935,7 +19963,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeOfflineRebuildOperat
 
     auto multiPartitionInventory = inventory;
     PartitionInfoEx extra = multiPartitionInventory.disks.first().partitions.first();
-    extra.partition_number = 2;
+    extra.partition_number = PartitionNumber{2};
     extra.offset_bytes = extra.offset_bytes + extra.size_bytes;
     extra.volume->drive_letter = QStringLiteral("U");
     multiPartitionInventory.disks.first().partitions.append(extra);
@@ -19954,8 +19982,8 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeOfflineRebuildOperat
 void PartitionManagerCoreTests::scriptBuilder_buildsChangeClusterSizeScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 2;
-    target.partition_number = 1;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
     target.size_bytes = 128 * 1024 * 1024;
     target.drive_letter = QStringLiteral("T");
 
@@ -19995,8 +20023,8 @@ void PartitionManagerCoreTests::scriptBuilder_rejectsPayloadDriveLetterOffValida
     // approved another one. A payload letter may restate the target, never redirect.
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 2;
-    target.partition_number = 1;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
     target.size_bytes = 128 * 1024 * 1024;
     target.drive_letter = QStringLiteral("T");
 
@@ -20078,8 +20106,8 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeClusterSizePayloads(
 void PartitionManagerCoreTests::scriptBuilder_buildsBitLockerMutationScripts() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 2;
-    target.partition_number = 1;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
     target.drive_letter = QStringLiteral("D");
 
     QJsonObject unlockPayload;
@@ -20118,8 +20146,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsBitLockerMutationScripts() {
 void PartitionManagerCoreTests::scriptBuilder_buildsDirectDefragScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 2;
-    target.partition_number = 1;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
     target.drive_letter = QStringLiteral("T");
 
     PartitionScriptBuilder builder;
@@ -20141,8 +20169,8 @@ void PartitionManagerCoreTests::safetyValidator_allowsHddDefragOnlyOnReportedHdd
     makeFixtureDataPartitionMutable(&inventory);
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 0;
-    target.partition_number = 2;
+    target.disk_number = DiskNumber{0};
+    target.partition_number = PartitionNumber{2};
     target.size_bytes = inventory.disks.first().partitions.at(1).size_bytes;
     target.drive_letter = QStringLiteral("C");
 
@@ -20169,7 +20197,7 @@ void PartitionManagerCoreTests::safetyValidator_allowsHddDefragOnlyOnReportedHdd
 void PartitionManagerCoreTests::scriptBuilder_buildsBiosBootRepairScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     QJsonObject payload;
     payload[QStringLiteral("windows_path")] = QStringLiteral("D:\\Windows");
     payload[QStringLiteral("esp_letter")] = QStringLiteral("S");
@@ -20430,7 +20458,7 @@ PartitionOperation partitionRegionCloneOperation(PartitionInventory* inventory) 
     const auto& partition = inventory->disks.first().partitions.at(1);
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     target.partition_number = partition.partition_number;
     target.size_bytes = partition.size_bytes;
     target.drive_letter = partition.volume->drive_letter;
@@ -20623,7 +20651,7 @@ void PartitionManagerCoreTests::scriptBuilder_emitsCanonicalRawTargetForExtended
     // the device with FileMode::Create file semantics. The target is normalized before emission.
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = DiskNumber{0};
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\?\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\?\\PhysicalDrive2");
@@ -20661,8 +20689,8 @@ void PartitionManagerCoreTests::scriptBuilder_clonePartitionRegionFailsClosed() 
     // source size or a zero target offset on a physical-disk target must not produce a script.
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
-    target.disk_number = 0;
-    target.partition_number = 2;
+    target.disk_number = DiskNumber{0};
+    target.partition_number = PartitionNumber{2};
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\C:");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive2");
@@ -20699,7 +20727,7 @@ void PartitionManagerCoreTests::scriptBuilder_diskPartRunnerProvesSuccessBeyondE
     PartitionScriptBuilder builder;
     PartitionTarget diskTarget;
     diskTarget.kind = PartitionTargetKind::Disk;
-    diskTarget.disk_number = 3;
+    diskTarget.disk_number = DiskNumber{3};
     QJsonObject payload;
     payload[QStringLiteral("source_size_bytes")] = QStringLiteral("104857600");
     payload[QStringLiteral("drive_letter")] = QStringLiteral("E");
@@ -20721,8 +20749,8 @@ void PartitionManagerCoreTests::scriptBuilder_diskPartRunnerProvesSuccessBeyondE
 
     PartitionTarget partitionTarget;
     partitionTarget.kind = PartitionTargetKind::Partition;
-    partitionTarget.disk_number = 2;
-    partitionTarget.partition_number = 1;
+    partitionTarget.disk_number = DiskNumber{2};
+    partitionTarget.partition_number = PartitionNumber{1};
     partitionTarget.drive_letter = QStringLiteral("T");
     QJsonObject primaryPayload;
     primaryPayload[QStringLiteral("target_layout")] = QStringLiteral("logical");
@@ -20745,7 +20773,7 @@ void PartitionManagerCoreTests::scriptBuilder_sizeMbArgDoesNotWrapToOneMegabyte(
     PartitionScriptBuilder builder;
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
-    target.disk_number = 3;
+    target.disk_number = DiskNumber{3};
     QJsonObject payload;
     payload[QStringLiteral("source_size_bytes")] = QStringLiteral("18446744073709551615");
     payload[QStringLiteral("drive_letter")] = QStringLiteral("E");
@@ -20788,14 +20816,14 @@ void PartitionManagerCoreTests::strongIndex_findersResolveByTypedIndexAndFailClo
     const PartitionInventory inventory = singleDataDiskInventory();
     const PartitionDiskInfo* disk = PartitionSafetyValidator::findDisk(inventory, DiskNumber{2});
     QVERIFY2(disk != nullptr, "disk 2 must be found by its DiskNumber");
-    QCOMPARE(disk->disk_number, 2u);
+    QCOMPARE(disk->disk_number.value(), 2u);
     QVERIFY2(PartitionSafetyValidator::findDisk(inventory, DiskNumber{999}) == nullptr,
              "an absent disk number must fail closed to nullptr");
 
     const PartitionInfoEx* partition = PartitionSafetyValidator::findPartition(*disk,
                                                                                PartitionNumber{1});
     QVERIFY2(partition != nullptr, "partition 1 must be found by its PartitionNumber");
-    QCOMPARE(partition->partition_number, 1u);
+    QCOMPARE(partition->partition_number.value(), 1u);
     QVERIFY2(PartitionSafetyValidator::findPartition(*disk, PartitionNumber{999}) == nullptr,
              "an absent partition number must fail closed to nullptr");
 }

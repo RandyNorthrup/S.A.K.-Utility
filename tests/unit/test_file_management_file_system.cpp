@@ -1133,10 +1133,10 @@ private Q_SLOTS:
     void inventoryPartitionBuildsRawAlias() {
         sak::PartitionInventory inventory;
         sak::PartitionDiskInfo disk;
-        disk.disk_number = 4;
+        disk.disk_number = sak::DiskNumber{4};
         sak::PartitionInfoEx partition;
-        partition.disk_number = 4;
-        partition.partition_number = 2;
+        partition.disk_number = sak::DiskNumber{4};
+        partition.partition_number = sak::PartitionNumber{2};
         sak::PartitionVolumeInfo volume;
         volume.file_system = QStringLiteral("HFS+");
         partition.volume = volume;
@@ -1260,10 +1260,10 @@ private Q_SLOTS:
         const auto build = [&](bool read_only) {
             sak::PartitionInventory inv;
             sak::PartitionDiskInfo disk;
-            disk.disk_number = 7;
+            disk.disk_number = sak::DiskNumber{7};
             sak::PartitionInfoEx part;
-            part.disk_number = 7;
-            part.partition_number = 1;
+            part.disk_number = sak::DiskNumber{7};
+            part.partition_number = sak::PartitionNumber{1};
             part.size_bytes = size;
             part.is_read_only = read_only;
             sak::PartitionVolumeInfo vol;

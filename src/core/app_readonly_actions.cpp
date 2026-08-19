@@ -341,7 +341,8 @@ QJsonObject serializeVolume(const PartitionVolumeInfo& volume) {
 }
 
 QJsonObject serializePartition(const PartitionInfoEx& part) {
-    QJsonObject obj{{QStringLiteral("partition_number"), static_cast<int>(part.partition_number)},
+    QJsonObject obj{{QStringLiteral("partition_number"),
+                     static_cast<int>(part.partition_number.value())},
                     {QStringLiteral("type_name"), part.type_name},
                     {QStringLiteral("size_bytes"), static_cast<double>(part.size_bytes)},
                     {QStringLiteral("is_system"), part.is_system},
@@ -359,7 +360,7 @@ QJsonObject serializeDisk(const PartitionDiskInfo& disk) {
     for (const PartitionInfoEx& part : disk.partitions) {
         partitions.append(serializePartition(part));
     }
-    return QJsonObject{{QStringLiteral("disk_number"), static_cast<int>(disk.disk_number)},
+    return QJsonObject{{QStringLiteral("disk_number"), static_cast<int>(disk.disk_number.value())},
                        {QStringLiteral("model"), disk.model},
                        {QStringLiteral("bus_type"), disk.bus_type},
                        {QStringLiteral("media_type"), disk.media_type},

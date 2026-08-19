@@ -440,14 +440,14 @@ sak::PartitionInventory applyReviewInventoryFixture() {
     volume.free_bytes = 64 * kTestMegabyteBytes;
 
     sak::PartitionInfoEx partition;
-    partition.disk_number = 0;
-    partition.partition_number = 1;
+    partition.disk_number = sak::DiskNumber{0};
+    partition.partition_number = sak::PartitionNumber{1};
     partition.type_name = QStringLiteral("Basic");
     partition.size_bytes = volume.total_bytes;
     partition.volume = volume;
 
     sak::PartitionDiskInfo disk;
-    disk.disk_number = 0;
+    disk.disk_number = sak::DiskNumber{0};
     disk.partition_style = QStringLiteral("GPT");
     disk.health_status = QStringLiteral("Healthy");
     disk.operational_status = QStringLiteral("Online");
@@ -477,7 +477,7 @@ sak::PartitionInventory allocateFreeSpaceInventoryFixture() {
 
     sak::PartitionInfoEx donor;
     donor.disk_number = disk.disk_number;
-    donor.partition_number = 2;
+    donor.partition_number = sak::PartitionNumber{2};
     donor.type_name = QStringLiteral("Basic");
     donor.offset_bytes = target.offset_bytes + target.size_bytes;
     donor.size_bytes = donorVolume.total_bytes;
@@ -496,15 +496,15 @@ sak::PartitionInventory metadataRebuildInventoryFixture(bool dynamicDisk = false
     volume.health_status = QStringLiteral("Healthy");
 
     sak::PartitionInfoEx partition;
-    partition.disk_number = 0;
-    partition.partition_number = 1;
+    partition.disk_number = sak::DiskNumber{0};
+    partition.partition_number = sak::PartitionNumber{1};
     partition.type_name = dynamicDisk ? QStringLiteral("Simple Volume") : QStringLiteral("Basic");
     partition.offset_bytes = kTestMegabyteBytes;
     partition.size_bytes = volume.total_bytes;
     partition.volume = volume;
 
     sak::PartitionDiskInfo disk;
-    disk.disk_number = 0;
+    disk.disk_number = sak::DiskNumber{0};
     disk.partition_style = dynamicDisk ? QStringLiteral("Dynamic") : QStringLiteral("MBR");
     disk.is_dynamic = dynamicDisk;
     disk.health_status = QStringLiteral("Healthy");
@@ -521,7 +521,7 @@ sak::PartitionInventory metadataRebuildInventoryFixture(bool dynamicDisk = false
 
 sak::PartitionInventory unallocatedAllocateInventoryFixture() {
     sak::PartitionDiskInfo disk;
-    disk.disk_number = 0;
+    disk.disk_number = sak::DiskNumber{0};
     disk.partition_style = QStringLiteral("MBR");
     disk.health_status = QStringLiteral("Healthy");
     disk.operational_status = QStringLiteral("Online");
@@ -537,7 +537,7 @@ sak::PartitionInventory unallocatedAllocateInventoryFixture() {
 
     sak::PartitionInfoEx first;
     first.disk_number = disk.disk_number;
-    first.partition_number = 1;
+    first.partition_number = sak::PartitionNumber{1};
     first.type_name = QStringLiteral("Basic");
     first.offset_bytes = kTestMegabyteBytes;
     first.size_bytes = firstVolume.total_bytes;
@@ -557,7 +557,7 @@ sak::PartitionInventory unallocatedAllocateInventoryFixture() {
 
     sak::PartitionInfoEx second;
     second.disk_number = disk.disk_number;
-    second.partition_number = 2;
+    second.partition_number = sak::PartitionNumber{2};
     second.type_name = QStringLiteral("Basic");
     second.offset_bytes = disk.unallocated_regions.first().offset_bytes +
                           disk.unallocated_regions.first().size_bytes;
@@ -582,8 +582,8 @@ sak::PartitionInfoEx rolePartition(uint32_t number,
     volume.free_bytes = 48 * kTestMegabyteBytes;
 
     sak::PartitionInfoEx partition;
-    partition.disk_number = 0;
-    partition.partition_number = number;
+    partition.disk_number = sak::DiskNumber{0};
+    partition.partition_number = sak::PartitionNumber{number};
     partition.type_name = typeName;
     partition.offset_bytes = offsetBytes;
     partition.size_bytes = volume.total_bytes;
@@ -593,7 +593,7 @@ sak::PartitionInfoEx rolePartition(uint32_t number,
 
 sak::PartitionInventory allColorRolesInventoryFixture() {
     sak::PartitionDiskInfo basicDisk;
-    basicDisk.disk_number = 0;
+    basicDisk.disk_number = sak::DiskNumber{0};
     basicDisk.partition_style = QStringLiteral("MBR");
     basicDisk.health_status = QStringLiteral("Healthy");
     basicDisk.operational_status = QStringLiteral("Online");
@@ -602,10 +602,11 @@ sak::PartitionInventory allColorRolesInventoryFixture() {
         rolePartition(1, QStringLiteral("Basic"), QStringLiteral("P"), 1 * kTestMegabyteBytes));
     basicDisk.partitions.append(
         rolePartition(2, QStringLiteral("Logical"), QStringLiteral("L"), 128 * kTestMegabyteBytes));
-    basicDisk.unallocated_regions.append({0, 256 * kTestMegabyteBytes, 64 * kTestMegabyteBytes});
+    basicDisk.unallocated_regions.append(
+        {sak::DiskNumber{0}, 256 * kTestMegabyteBytes, 64 * kTestMegabyteBytes});
 
     sak::PartitionDiskInfo dynamicDisk;
-    dynamicDisk.disk_number = 1;
+    dynamicDisk.disk_number = sak::DiskNumber{1};
     dynamicDisk.partition_style = QStringLiteral("Dynamic");
     dynamicDisk.is_dynamic = true;
     dynamicDisk.health_status = QStringLiteral("Healthy");
@@ -1878,7 +1879,7 @@ void PartitionManagerPanelTests::redoButtonEnablesOnlyAfterUndo() {
 
     sak::PartitionTarget target;
     target.kind = sak::PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = sak::DiskNumber{0};
     panel.queueTestOperationForReview(sak::PartitionOperationType::OptimizeSsd, target);
     QApplication::processEvents();
     QVERIFY(undo->isEnabled());
@@ -1935,7 +1936,7 @@ void PartitionManagerPanelTests::finalApplyReviewContainsLayoutDiff() {
     panel.setTestInventoryForReview(applyReviewInventoryFixture());
     sak::PartitionTarget target;
     target.kind = sak::PartitionTargetKind::Disk;
-    target.disk_number = 0;
+    target.disk_number = sak::DiskNumber{0};
     panel.queueTestOperationForReview(sak::PartitionOperationType::SurfaceTest, target);
 
     bool inspected = false;
@@ -2636,7 +2637,8 @@ void PartitionManagerPanelTests::inventoryStateIsHonestAboutFailedPartitionEnume
 
     const QString message = sak::PartitionManagerController::inventoryStatusMessage(degraded);
     QVERIFY2(message.contains(QStringLiteral("INCOMPLETE")), qPrintable(message));
-    const QString failedDisk = QStringLiteral("disk(s) %1").arg(degraded.disks[0].disk_number);
+    const QString failedDisk =
+        QStringLiteral("disk(s) %1").arg(degraded.disks[0].disk_number.value());
     QVERIFY2(message.contains(failedDisk), qPrintable(message));
     QVERIFY2(!message.contains(QStringLiteral("inventory ready")), qPrintable(message));
 }

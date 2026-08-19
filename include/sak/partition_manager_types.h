@@ -190,8 +190,8 @@ struct PartitionVolumeInfo {
 };
 
 struct PartitionInfoEx {
-    uint32_t disk_number{0};
-    uint32_t partition_number{0};
+    DiskNumber disk_number{};
+    PartitionNumber partition_number{};
     QString partition_guid;
     QString type_name;
     QString gpt_type;
@@ -210,13 +210,13 @@ struct PartitionInfoEx {
 };
 
 struct UnallocatedRegion {
-    uint32_t disk_number{0};
+    DiskNumber disk_number{};
     uint64_t offset_bytes{0};
     uint64_t size_bytes{0};
 };
 
 struct PartitionDiskInfo {
-    uint32_t disk_number{0};
+    DiskNumber disk_number{};
     QString device_path;
     QString model;
     QString serial_number;
@@ -267,8 +267,8 @@ struct PartitionInventory {
 
 struct PartitionTarget {
     PartitionTargetKind kind{PartitionTargetKind::Disk};
-    uint32_t disk_number{0};
-    uint32_t partition_number{0};
+    DiskNumber disk_number{};
+    PartitionNumber partition_number{};
     QString partition_guid;
     QString volume_guid;
     QString drive_letter;

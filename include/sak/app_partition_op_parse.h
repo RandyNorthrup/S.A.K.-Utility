@@ -115,9 +115,9 @@ struct ParsedPartitionOp {
                                                             PartitionTargetKind kind) {
     PartitionTarget target;
     target.kind = kind;
-    target.disk_number = disk_number;
-    target.partition_number =
-        static_cast<uint32_t>(args.value(QStringLiteral("partition_number")).toInt(0));
+    target.disk_number = DiskNumber{disk_number};
+    target.partition_number = PartitionNumber{
+        static_cast<uint32_t>(args.value(QStringLiteral("partition_number")).toInt(0))};
     target.offset_bytes = safeByteCount(args.value(QStringLiteral("offset_bytes")).toDouble(0.0));
     target.size_bytes = safeByteCount(args.value(QStringLiteral("size_bytes")).toDouble(0.0));
     return target;

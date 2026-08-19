@@ -4233,7 +4233,7 @@ behaviour is what catches defects; the percentage only proves nothing was skippe
     the run. NOTE: confined to the intra-word escape shape the classifier is designed to
     strip; a non-intra-word caret (e.g. "format^ c:") is an intentionally-untouched case
     (it is still caught at the risky tier) and is out of scope for this invariant.
-- [~] R5-G14-19 Replace primitive IDs with strong types where a mix-up is silent
+- [x] R5-G14-19 Replace primitive IDs with strong types where a mix-up is silent
   - SLICE 1 DONE 2026-08-18: the reusable strong-index newtype infra
     (include/sak/strong_index.h: a tag-typed StrongIndex<Tag, Underlying> with an EXPLICIT
     integer ctor, named .value() access and NO implicit conversion in either direction, so two
@@ -4279,19 +4279,28 @@ behaviour is what catches defects; the percentage only proves nothing was skippe
     resolution), so the executed op is always validated -- no bypass. A DRY resolve->execute
     consolidation is possible but is a behavioural change on the raw-disk-write path needing its own
     cert, tracked outside G14-19.
-  - OPEN (the one remaining strong-typing slice): the disk/partition STRUCT FIELDS themselves
-    (PartitionInfoEx/PartitionDiskInfo/UnallocatedRegion/PartitionTarget .disk_number /
-    .partition_number, decls at partition_manager_types.h:193/194/213/219/270/271). Converting them
-    to DiskNumber/PartitionNumber is ATOMIC (the explicit ctor + no implicit decay means flipping the
-    6 decls breaks every read/write/compare/(de)serialize at once) and large: 484 sites (15
-    construction -- the real in-memory silent-swap risk; 217 read; 49 compare; 17 JSON/QVariantMap
-    boundary; ~180 test fixtures). The concentrated hazard is those 17 wire sites, where the value
-    becomes an untyped int and the key->field wiring is hand-chosen (sharpest: panel row_data
-    serialize 9283/9285/9327 -> deserialize 11737/11738 -- swap the two keys and it STILL compiles),
-    so the strong type gives ZERO protection there; the existing test_ai JSON round-trip and test_core
-    dual-field QCOMPAREs are the ratchet that must catch a wire-key swap. A dedicated gated commit,
-    not a quick slice. The rest of the MBOX message-index API (readMessageDetail / readAllAttachments /
-    loadMessageDetail single-param) has no adjacent-swap risk and is left int by design.
+  - SLICE 3 DONE 2026-08-19 (the last remaining strong-typing slice): the disk/partition STRUCT
+    FIELDS themselves are now the strong index types, so G14-19 is COMPLETE. partition_manager_types.h
+    flips all six decls -- PartitionInfoEx / PartitionDiskInfo / UnallocatedRegion / PartitionTarget
+    .disk_number to DiskNumber and .partition_number to PartitionNumber. Because the newtype has an
+    EXPLICIT ctor and NO implicit decay, that one change turned every read/write/compare/(de)serialize
+    into a hard compile error until each was made intent-explicit, so the COMPILER itself enumerated
+    and gated the whole conversion -- ~440 field-access sites across 17 files (11 production + 6 test)
+    now either wrap at a construction / JSON-read boundary (DiskNumber{n}, PartitionNumber{n}) or unwrap
+    at an int-context read (.value()); the safety-critical PartitionSafetyValidator::findDisk/findPartition
+    were simplified to compare strong-to-strong. The IN-MEMORY silent-swap this slice targets -- a
+    construction or assignment that puts a partition number in a disk-number field, or a raw int in
+    either -- is now a compile error AT THE FIELD, proven by new static_asserts in
+    test_partition_manager_core.cpp (is_same on each field's declared type; !is_assignable of uint32_t
+    and of the OTHER index space into each identity field). Those asserts were mutation-proved
+    non-vacuous: flipping the cross-swap assert's polarity (!is_assignable -> is_assignable of a
+    DiskNumber into a partition_number field) fails the build with C2338, and reverting relinks green.
+    The 17 JSON/QVariant WIRE sites are unchanged in risk exactly as previously analyzed: the value
+    legitimately becomes an int at the process/JSON boundary, so the strong type gives no protection
+    there and the existing test_ai JSON round-trip / test_core dual-field QCOMPARE tests remain the
+    ratchet for a wire-key swap. No behavioural change (a strong index formats and compares identically
+    to its integer). Full Release ctest 249/249. This closes the last open item in G14, so the whole
+    G14 dynamic-analysis section is now [x] end to end.
       (message index vs row index, disk vs partition index, validated vs raw target)
 
 ### G15 - compiler and CI hardening
