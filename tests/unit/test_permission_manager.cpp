@@ -40,6 +40,11 @@ private Q_SLOTS:
     // SDDL round-trip must not silently drop the primary group
     void setSddl_appliesGroup();
 
+    // R5-G10-9: SDDL apply must fail closed on a dangerous/malformed descriptor
+    void setSddl_refusesPresentNullDacl();
+    void setSddl_refusesSacl();
+    void setSddl_refusesEmbeddedNul();
+
     // isRunningAsAdmin
     void isRunningAsAdmin_returnsBoolean();
 
@@ -292,6 +297,99 @@ void PermissionManagerTests::setSddl_appliesGroup() {
     QVERIFY(!out.isEmpty());
     QVERIFY2(out.contains(QStringLiteral("G:%1").arg(ownerSid)),
              qPrintable(QStringLiteral("primary group was not applied on restore: %1").arg(out)));
+#else
+    QVERIFY(true);
+#endif
+}
+
+namespace {
+#ifdef Q_OS_WIN
+// Create a fresh, test-owned file and return its path (own file per test, so an SDDL apply in one
+// test cannot perturb another -- see G18-8).
+QString makeOwnedSddlFile(const QTemporaryDir& dir, const QString& name) {
+    const QString f = dir.filePath(name);
+    QFile file(f);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return QString();
+    }
+    file.write("x");
+    file.close();
+    return f;
+}
+#endif
+}  // namespace
+
+// R5-G10-9: a present-but-NULL DACL in an SDDL grants Everyone full control.
+// setSecurityDescriptorSddl must refuse it (collectParsedDacl rejects a present NULL DACL) rather
+// than apply it. The refusal is a parse-time check that runs before any file write, so no elevation
+// is required.
+void PermissionManagerTests::setSddl_refusesPresentNullDacl() {
+#ifdef Q_OS_WIN
+    sak::PermissionManager mgr;
+    const QString f = makeOwnedSddlFile(m_tempDir, QStringLiteral("sddl_nulldacl.txt"));
+
+    QVERIFY(!mgr.setSecurityDescriptorSddl(f, QStringLiteral("D:NO_ACCESS_CONTROL")));
+    QVERIFY2(mgr.getLastError().contains(QStringLiteral("neither an owner nor a valid DACL")),
+             qPrintable(mgr.getLastError()));
+
+    // Non-vacuity: a well-formed DACL granting the current owner full access IS accepted, so the
+    // rejection is specific to the NULL DACL, not a blanket refusal of every SDDL.
+    const QString ownerSid = mgr.getOwner(f);
+    QVERIFY(!ownerSid.isEmpty());
+    QVERIFY2(mgr.setSecurityDescriptorSddl(f, QStringLiteral("D:(A;;FA;;;%1)").arg(ownerSid)),
+             qPrintable(mgr.getLastError()));
+#else
+    QVERIFY(true);
+#endif
+}
+
+// R5-G10-9: this apply path handles only owner/group/DACL, so an SDDL carrying a SACL (an audit or
+// mandatory-integrity label) must be refused rather than silently dropped while the rest is
+// applied.
+void PermissionManagerTests::setSddl_refusesSacl() {
+#ifdef Q_OS_WIN
+    sak::PermissionManager mgr;
+    const QString f = makeOwnedSddlFile(m_tempDir, QStringLiteral("sddl_sacl.txt"));
+    const QString ownerSid = mgr.getOwner(f);
+    QVERIFY(!ownerSid.isEmpty());
+
+    // A low-integrity mandatory-label SACL alongside a valid DACL.
+    const QString withSacl = QStringLiteral("D:(A;;FA;;;%1)S:(ML;;NW;;;LW)").arg(ownerSid);
+    QVERIFY(!mgr.setSecurityDescriptorSddl(f, withSacl));
+    QVERIFY2(mgr.getLastError().contains(QStringLiteral("SACL")), qPrintable(mgr.getLastError()));
+
+    // Non-vacuity: the SAME descriptor WITHOUT the S: field applies, so the refusal is the SACL,
+    // not the DACL alongside it.
+    QVERIFY2(mgr.setSecurityDescriptorSddl(f, QStringLiteral("D:(A;;FA;;;%1)").arg(ownerSid)),
+             qPrintable(mgr.getLastError()));
+#else
+    QVERIFY(true);
+#endif
+}
+
+// R5-G10-9: Win32 truncates a string at the first NUL, so an embedded NUL in the path or the SDDL
+// would apply a security change to a DIFFERENT (prefix) target than the validated/displayed string.
+// It must be refused before the parse.
+void PermissionManagerTests::setSddl_refusesEmbeddedNul() {
+#ifdef Q_OS_WIN
+    sak::PermissionManager mgr;
+    const QString f = makeOwnedSddlFile(m_tempDir, QStringLiteral("sddl_nul.txt"));
+    const QString ownerSid = mgr.getOwner(f);
+    QVERIFY(!ownerSid.isEmpty());
+    const QString validSddl = QStringLiteral("D:(A;;FA;;;%1)").arg(ownerSid);
+
+    const QString pathWithNul = f + QChar(u'\0') + QStringLiteral("ignored");
+    QVERIFY(!mgr.setSecurityDescriptorSddl(pathWithNul, validSddl));
+    QVERIFY2(mgr.getLastError().contains(QStringLiteral("embedded NUL")),
+             qPrintable(mgr.getLastError()));
+
+    const QString sddlWithNul = validSddl + QChar(u'\0') + QStringLiteral("S:(ML;;NW;;;LW)");
+    QVERIFY(!mgr.setSecurityDescriptorSddl(f, sddlWithNul));
+    QVERIFY2(mgr.getLastError().contains(QStringLiteral("embedded NUL")),
+             qPrintable(mgr.getLastError()));
+
+    // Non-vacuity: the clean path + clean SDDL applies.
+    QVERIFY2(mgr.setSecurityDescriptorSddl(f, validSddl), qPrintable(mgr.getLastError()));
 #else
     QVERIFY(true);
 #endif
