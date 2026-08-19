@@ -139,8 +139,21 @@ void TestFirewallRuleAuditor::findRules_afterEnumeration() {
     FirewallRuleAuditor auditor;
     auditor.enumerateRules();
 
+    // findRulesByName is a case-insensitive substring filter over the enumerated rules. Exercise
+    // the filter contract instead of `size() >= 0` (a tautology):
+    //  - an empty filter matches every rule (contains("") is always true) -> the full set;
+    //  - a name filter is a subset and every returned rule's name really contains the filter;
+    //  - an impossible filter returns nothing, which -- given a live host has firewall rules --
+    //    proves the argument is actually applied (a filter that ignored it would return the whole
+    //    non-empty set here).
+    const auto all_rules = auditor.findRulesByName(QString());
     const auto name_results = auditor.findRulesByName(QStringLiteral("Core Networking"));
-    QVERIFY(name_results.size() >= 0);
+    QVERIFY(name_results.size() <= all_rules.size());
+    for (const auto& rule : name_results) {
+        QVERIFY2(rule.name.contains(QStringLiteral("Core Networking"), Qt::CaseInsensitive),
+                 qPrintable(rule.name));
+    }
+    QVERIFY(auditor.findRulesByName(QStringLiteral("ZZZ_NoSuchRule_9999___")).isEmpty());
 }
 
 void TestFirewallRuleAuditor::portsOverlap_unknownExpressionOverlapsConservatively() {
