@@ -846,7 +846,12 @@ private Q_SLOTS:
 
         verifyNamedIconDescriptors();
         verifyAllDescriptorIconsRenderVisiblePixels();
-        QVERIFY(sak::FileExplorerIconRegistry::descriptors().size() >= mappedCommands.size());
+        // The bundled icon registry is a fixed compile-time set: 8 file-action + 5 view-layout +
+        // 5 view-layout-28 + 8 panel/status + 21 fluent glyphs = 47 descriptors. The old
+        // `>= mappedCommands.size()` compared it to the unrelated 16-entry command map, so dropping
+        // a whole descriptor group (e.g. the 21 fluent glyphs, leaving 26) stayed green. Pin the
+        // exact count so any added/removed descriptor group is caught.
+        QCOMPARE(sak::FileExplorerIconRegistry::descriptors().size(), static_cast<qsizetype>(47));
     }
 
     void layoutPickerExposesFunctionalViewModesWithoutMilestoneText() {

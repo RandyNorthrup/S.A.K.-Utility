@@ -1218,17 +1218,22 @@ void TestPstParser::loadAsyncApiEmitsDetailPropertiesAndAttachment() {
     QCOMPARE(detail_nid, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
 
     bool got_props = false;
-    int prop_count = 0;
+    QVector<sak::MapiProperty> captured_props;
     QObject::connect(&msg_parser,
                      &PstParser::itemPropertiesLoaded,
                      &msg_parser,
                      [&](uint64_t, const QVector<sak::MapiProperty>& props) {
                          got_props = true;
-                         prop_count = static_cast<int>(props.size());
+                         captured_props = props;
                      });
     msg_parser.loadItemProperties(sak::pst_fixture::kMessageNid);
     QVERIFY2(got_props, "loadItemProperties must emit itemPropertiesLoaded");
-    QVERIFY(prop_count >= 1);
+    // The messaging fixture's message PC carries EXACTLY one record -- the Subject "FUZZ"
+    // (buildMessagePcBlock). `>= 1` would stay green if the async path dropped the Subject and
+    // emitted one junk property, or over-emitted. Pin the exact set the sync-path siblings lock.
+    QCOMPARE(captured_props.size(), 1);
+    QCOMPARE(captured_props.first().tag_id, static_cast<uint16_t>(sak::email::kPropIdSubject));
+    QCOMPARE(captured_props.first().display_value, QStringLiteral("FUZZ"));
 
     // The attachment store's message has one sub-node attachment; loadAttachmentContent must
     // deliver its decoded payload.

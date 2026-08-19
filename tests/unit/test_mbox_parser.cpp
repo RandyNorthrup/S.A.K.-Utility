@@ -118,7 +118,12 @@ void TestMboxParser::openNonExistentFile() {
     MboxParser parser;
     QSignalSpy error_spy(&parser, &MboxParser::errorOccurred);
     parser.open(QStringLiteral("C:/nonexistent_mbox_xyz.mbox"));
-    QVERIFY(error_spy.count() > 0);
+    // open() on a failing os-open emits EXACTLY one errorOccurred and returns; `> 0` would stay
+    // green under a duplicate/repeated emission. Pin the count and the reason, matching the
+    // openEmptyFile sibling's QCOMPARE(count, 1) + message-content convention.
+    QCOMPARE(error_spy.count(), 1);
+    QVERIFY2(error_spy.first().at(0).toString().contains(QStringLiteral("Cannot open MBOX file")),
+             qPrintable(error_spy.first().at(0).toString()));
     QVERIFY(!parser.isOpen());
 }
 
