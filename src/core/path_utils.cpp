@@ -31,6 +31,16 @@ std::string normalize_for_compare(std::string value) {
     return value;
 }
 
+/// @brief Saturating unsigned add of a file size onto a running byte total: clamps to
+///        UINTMAX instead of wrapping. file_size() reports the LOGICAL size, so a handful
+///        of attacker-created sparse files can each claim exabytes; a wrapped total would
+///        under-report the space a set needs and let an oversized one be judged to fit
+///        (fail open). Clamping keeps a downstream capacity check failing closed.
+std::uintmax_t saturatingAddSize(std::uintmax_t total, std::uintmax_t size) {
+    constexpr auto kUintMax = std::numeric_limits<std::uintmax_t>::max();
+    return (total > kUintMax - size) ? kUintMax : total + size;
+}
+
 /// @brief Accumulate size information for a single directory entry
 /// @return false only when a regular file's size cannot be read -- an unreadable real file must
 ///         fail the whole scan closed rather than be silently skipped, because an under-counted
@@ -45,16 +55,9 @@ bool accumulateFileEntry(const std::filesystem::directory_entry& entry,
     if (ec) {
         return false;
     }
-    // Saturate instead of wrapping. entry.file_size() reports the LOGICAL size, so a handful of
-    // attacker-created sparse files can each claim exabytes; a wrapped total_bytes would under-
-    // report the space a set needs and let an oversized one be judged to fit. Clamping to the max
-    // keeps a downstream capacity check failing closed.
+    // Saturate instead of wrapping (see saturatingAddSize).
+    info.total_bytes = saturatingAddSize(info.total_bytes, size);
     constexpr auto kUintMax = std::numeric_limits<std::uintmax_t>::max();
-    if (info.total_bytes > kUintMax - size) {
-        info.total_bytes = kUintMax;
-    } else {
-        info.total_bytes += size;
-    }
     if (info.file_count < kUintMax) {
         ++info.file_count;
     }
@@ -297,6 +300,10 @@ auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
     }
 
     return info;
+}
+
+std::uintmax_t path_utils::saturatingAddSizeForTesting(std::uintmax_t total, std::uintmax_t size) {
+    return saturatingAddSize(total, size);
 }
 
 auto path_utils::getAvailableSpace(const std::filesystem::path& path)

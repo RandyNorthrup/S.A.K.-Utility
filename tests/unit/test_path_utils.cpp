@@ -11,7 +11,9 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <cstdint>
 #include <filesystem>
+#include <limits>
 
 class PathUtilsTests : public QObject {
     Q_OBJECT
@@ -39,6 +41,7 @@ private Q_SLOTS:
     void matchesPattern_multiplePatterns();
 
     // getDirectorySizeAndCount
+    void dirSizeAndCount_saturatesOnOverflow();  // R5-G10-9
     void dirSizeAndCount_normalDir();
     void dirSizeAndCount_emptyDir();
     void dirSizeAndCount_nonExistentDir();
@@ -230,6 +233,30 @@ void PathUtilsTests::matchesPattern_multiplePatterns() {
 // ============================================================================
 // getDirectorySizeAndCount Tests
 // ============================================================================
+
+void PathUtilsTests::dirSizeAndCount_saturatesOnOverflow() {
+    // The recursive size walk accumulates entry.file_size(), which is the LOGICAL size:
+    // a few attacker-created sparse files can each claim exabytes. If the running total
+    // WRAPPED past UINTMAX it would report a small number, under-reporting the space a set
+    // needs and letting an oversized set be judged to fit (fail open). The accumulate must
+    // saturate at UINTMAX instead.
+    constexpr auto kMax = std::numeric_limits<std::uintmax_t>::max();
+
+    // Non-vacuity: a below-cap sum is exact (the guard is the overflow clamp, not a
+    // constant, and not an always-saturate).
+    QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(5, 7), std::uintmax_t{12});
+    QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(1000, 2000), std::uintmax_t{3000});
+
+    // Exact boundary: total + size == UINTMAX does not overflow and is returned as-is.
+    QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(kMax - 10, 10), kMax);
+
+    // Overflow by one: an unguarded add would WRAP to 0; the guard clamps to UINTMAX. The
+    // "== kMax" (never 0) is what proves it saturated rather than wrapped.
+    QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(kMax - 10, 11), kMax);
+
+    // Extreme overflow: kMax + kMax would wrap to kMax-1; it must clamp to kMax.
+    QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(kMax, kMax), kMax);
+}
 
 void PathUtilsTests::dirSizeAndCount_normalDir() {
     auto result = sak::path_utils::getDirectorySizeAndCount(m_basePath);

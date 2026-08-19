@@ -69,6 +69,14 @@ public:
     [[nodiscard]] static auto getAvailableSpace(const std::filesystem::path& path)
         -> std::expected<std::uintmax_t, error_code>;
 
+    /// @brief Test seam for the saturating byte-accumulate guard in the recursive size
+    ///        walk: total + size clamped to UINTMAX, never wrapping. file_size() reports
+    ///        the LOGICAL size, so attacker-created sparse files can each claim exabytes; a
+    ///        wrapped total would under-report and let an oversized set be judged to fit
+    ///        (fail open), so the accumulate clamps to keep a capacity check failing closed.
+    [[nodiscard]] static std::uintmax_t saturatingAddSizeForTesting(std::uintmax_t total,
+                                                                    std::uintmax_t size);
+
 private:
     /// @brief Normalize a path (resolve .., ., remove redundant separators)
     /// @param path Path to normalize
