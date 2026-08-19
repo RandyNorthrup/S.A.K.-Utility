@@ -163,8 +163,13 @@ void PathUtilsTests::isSafePath_absolutePathDifferentDrive() {
 }
 
 // R5-G10-9: containment has no meaning without both operands, and this answer gates
-// path-traversal decisions, so an empty path or base must fail closed with invalid_path
-// rather than return a guessed bool that a caller would read as "safe".
+// path-traversal decisions, so an empty path or base must fail closed with invalid_path rather
+// than return a guessed bool that a caller would read as "safe". This locks the observable
+// fail-closed CONTRACT, which is enforced in depth -- by isSafePath's explicit empty-operand guard
+// AND, redundantly, by normalize() rejecting the non-absolute weakly_canonical("") -- so it is a
+// contract regression test (it catches a refactor that made empty inputs pass), not an isolation
+// of one specific guard. (makeRelative_emptyInputsRejected below IS guard-specific: relative("","")
+// yields "." which its guard alone rejects.)
 void PathUtilsTests::isSafePath_emptyInputsRejected() {
     const auto emptyPath = sak::path_utils::isSafePath(std::filesystem::path(), m_basePath);
     QVERIFY(!emptyPath.has_value());
@@ -175,8 +180,8 @@ void PathUtilsTests::isSafePath_emptyInputsRejected() {
     QVERIFY(!emptyBase.has_value());
     QCOMPARE(emptyBase.error(), sak::error_code::invalid_path);
 
-    // Non-vacuity: a real subpath under a real base still yields an answer, so the reject
-    // is the empty-operand gate, not a function that errors on everything.
+    // Non-vacuity: a real subpath under a real base still yields an answer, so the empty-input
+    // reject is the contract, not a function that errors on everything.
     QVERIFY(
         sak::path_utils::isSafePath(m_basePath / "subdir" / "file2.log", m_basePath).has_value());
 }

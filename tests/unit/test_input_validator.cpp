@@ -554,16 +554,22 @@ void InputValidatorTests::containsSuspicious_newlineAndCarriageReturn() {
 
 void InputValidatorTests::validatePath_emptyRejected() {
     // A blank target must never pass validation, where a later step could resolve it to the
-    // current working directory.
+    // current working directory. allow_relative_paths is set TRUE so the dedicated empty-path gate
+    // in validatePath is what rejects the empty path -- otherwise the relative-path check (an empty
+    // path is_relative()) would also reject it with the SAME invalid_path code and mask a removed
+    // empty gate. The specific "Path is empty" message pins it to that gate.
     sak::path_validation_config cfg;
     cfg.must_exist = false;
+    cfg.allow_relative_paths = true;
     const auto empty = sak::input_validator::validatePath(std::filesystem::path(), cfg);
     QVERIFY(!empty.is_valid);
     QCOMPARE(empty.error, sak::error_code::invalid_path);
-    // Non-vacuity: a non-empty path with the same config still validates, so the reject is the
-    // empty-path gate, not a config that rejects everything.
+    QVERIFY2(QString::fromStdString(empty.error_message).contains(QStringLiteral("empty")),
+             qPrintable(QString::fromStdString(empty.error_message)));
+    // Non-vacuity: a non-empty (absolute) path with the same config still validates, so the reject
+    // is the empty-path gate, not a config that rejects everything.
     const auto present = sak::input_validator::validatePath(m_basePath / "future_file.txt", cfg);
-    QVERIFY(present.is_valid);
+    QVERIFY2(present.is_valid, qPrintable(QString::fromStdString(present.error_message)));
 }
 
 void InputValidatorTests::validateNumeric_nanRejected() {
