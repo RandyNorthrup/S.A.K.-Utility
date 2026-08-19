@@ -5231,8 +5231,9 @@ gate teaches people to disable both.
         1. DONE. scripts/run_lizard.py now runs JavaScript at the repo's own thresholds
            (CCN <= 10, PARAM <= 5, length <= 70) against browser/, and node is a REQUIRED
            entry in the toolchain preflight so the gate cannot silently stop running.
-        2. IN PROGRESS. 24 violations at the start, 21 now. dispatchCommand (41 CCN, the
-           worst), axNodeToCapture (33) and selectCallArgs (13) are closed. The rest are held by
+        2. IN PROGRESS. 24 violations at the start, 18 now. dispatchCommand (41 CCN, the
+           worst), axNodeToCapture (33), selectCallArgs (13), printPageOptions (13),
+           buildBoundsMap (13) and buildNodes (15) are closed. The rest are held by
            scripts/lizard_js_baseline.txt, which is a RATCHET rather than an exclusion: a
            violation not in the list fails, a listed function that gets worse fails, and a
            listed function that no longer violates fails until its row is deleted. That last
@@ -5252,6 +5253,18 @@ gate teaches people to disable both.
            Release ctest 249/249. Only node-TESTED functions are refactored; the untested
            chrome-interacting handlers stay put until a stub-driven test covers them (no
            behaviour-blind refactor of the certified artifact).
+           Three more pure functions closed 2026-08-19 the same way (test-first, refactor,
+           lizard row deleted, crx re-packed + re-signed, version lockstep): printPageOptions
+           (CCN 13 -> 7, extracted printNumber; ext 0.3.16), buildBoundsMap (13 -> 9, extracted
+           addNodeBounds) and buildNodes (15 -> 3, extracted axRootsOf/pushChildren/walkAxTree;
+           ext 0.3.17). The node suite grew 24 -> 31. 21 -> 18 violations. The REMAINING 18 are
+           NOT pure: they either call chrome/CDP directly (handle* commands, viewportState,
+           collectMediaNodes, occlusionAt, applyDeviceMetrics -- the chrome stub returns a self-
+           proxy, enough to CALL them but not to assert their decisions) or are page-injected
+           functions serialized into the tab (selectOptionFn, mediaFn -- they run against a real
+           DOM, not the worker). Closing those needs a heavier harness (CDP result stubs that
+           return realistic payloads, or a jsdom-style DOM) before any refactor -- a distinct
+           next investment, not a behaviour-blind swap.
         3. DONE. tests/unit/test_browser_extension_pure.mjs, 24 tests, registered with ctest.
 
       The harness loads background.js AS SHIPPED under a stubbed chrome rather than splitting
