@@ -167,6 +167,15 @@ QString makeAppDataScanRoot(const QString& parent) {
     return root;
 }
 
+/// Create a scan-root directory whose name contains "Program Files" so a match beneath it is
+/// classified Safe by the "program files" substring rule. Used with a ProgramFiles env override at
+/// Moderate/Advanced level. Returns the created root path.
+QString makeProgramFilesScanRoot(const QString& parent) {
+    const QString root = QDir(parent).filePath(QStringLiteral("Program Files Test"));
+    QDir().mkpath(root);
+    return root;
+}
+
 /// Locate a scanned leftover by its on-disk path (native separators), or nullptr if absent.
 const LeftoverItem* findByPath(const QVector<LeftoverItem>& items, const QString& nativePath) {
     for (const auto& item : items) {
@@ -311,9 +320,20 @@ void LeftoverScannerTests::scan_cancellationStopsScan() {
 }
 
 void LeftoverScannerTests::scan_progressCallbackInvoked() {
-    ProgramInfo prog = makeTestProgram("Notepad");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
-    LeftoverScanner scanner(prog, ScanLevel::Moderate);
+    // A uniquely-named match guarantees exactly one found item, so the per-item progress callback
+    // fires a deterministic number of times. The old body guarded the assertion behind
+    // `if (!results.isEmpty())`, so it never ran when the real system produced no "Notepad" match.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("CallbackAppZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("CallbackAppZZ")));
+
+    ProgramInfo prog = makeTestProgram("CallbackAppZZ");
+    LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
     int callbackCount = 0;
@@ -321,23 +341,36 @@ void LeftoverScannerTests::scan_progressCallbackInvoked() {
         ++callbackCount;
     };
 
-    auto results = scanner.scan(stop, callback);
+    const auto results = scanner.scan(stop, callback);
 
-    // If any items were found, callback should have been invoked
-    if (!results.isEmpty()) {
-        QVERIFY(callbackCount > 0);
-        QCOMPARE(callbackCount, results.size());
-    }
+    QVERIFY2(findByPath(results, folderPath) != nullptr, "injected match not found");
+    QVERIFY(callbackCount > 0);
+    // The unique name matches nothing on the real host, so raw callbacks equal the deduped result.
+    QCOMPARE(callbackCount, results.size());
 }
 
 void LeftoverScannerTests::scan_preSelectsSafeItems() {
-    // Create a program name that might match something on the system
-    ProgramInfo prog = makeTestProgram("Notepad");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
-    LeftoverScanner scanner(prog, ScanLevel::Moderate);
+    // A Safe, deletable match is pre-selected; anything not Safe is not. Inject a guaranteed Safe
+    // match and assert its selection directly, plus the general invariant over every result. The
+    // old body ran a loop that was empty whenever the host had no "Notepad" leftover.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("PreselectAppZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("PreselectAppZZ")));
+
+    ProgramInfo prog = makeTestProgram("PreselectAppZZ");
+    LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr, qPrintable(QStringLiteral("not found: %1").arg(folderPath)));
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+    QVERIFY(found->selected);
 
     for (const auto& item : results) {
         if (item.risk == LeftoverItem::RiskLevel::Safe) {
@@ -500,20 +533,27 @@ void LeftoverScannerTests::scan_safeInAppData() {
 }
 
 void LeftoverScannerTests::scan_safeInProgramFiles() {
-    ProgramInfo prog = makeTestProgram("Notepad");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // A matched folder whose path is under a Program Files location classifies Safe. ProgramFiles
+    // is only scanned at Moderate/Advanced, so override it and scan at Moderate. The old loop was
+    // vacuous whenever the host had no matching Program Files leftover.
+    const QString root = makeProgramFilesScanRoot(tempDir.path());
+    const ScopedEnv programFiles("ProgramFiles", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("ProgFilesSafeZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("ProgFilesSafeZZ")));
+
+    ProgramInfo prog = makeTestProgram("ProgFilesSafeZZ");
     LeftoverScanner scanner(prog, ScanLevel::Moderate);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
-
-    for (const auto& item : results) {
-        if (item.path.toLower().contains("program files")) {
-            if (item.type == LeftoverItem::Type::File || item.type == LeftoverItem::Type::Folder) {
-                QCOMPARE(item.risk, LeftoverItem::RiskLevel::Safe);
-            }
-        }
-    }
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr, qPrintable(QStringLiteral("not found: %1").arg(folderPath)));
+    QVERIFY(found->path.toLower().contains("program files"));
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
 }
 
 void LeftoverScannerTests::scan_registryKeySafe() {
