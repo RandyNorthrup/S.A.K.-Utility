@@ -17,6 +17,7 @@ class TestEmailAttachmentSaver : public QObject {
 
 private Q_SLOTS:
     void sanitizeStripsInvalidChars();
+    void sanitizeStripsPathSeparators();  // R5-G10-9
     void saveToPathWritesExactBytes();
     void saveToDirectoryDeduplicates();
     void saveToDirectoryDoesNotTruncateWhenExhausted();
@@ -33,6 +34,26 @@ void TestEmailAttachmentSaver::sanitizeStripsInvalidChars() {
              QStringLiteral("a_b_c_d.txt"));
     QCOMPARE(sak::sanitizeAttachmentFilename(QString()), QStringLiteral("attachment"));
     QCOMPARE(sak::sanitizeAttachmentFilename(QStringLiteral("name...")), QStringLiteral("name"));
+}
+
+void TestEmailAttachmentSaver::sanitizeStripsPathSeparators() {
+    // An attacker-authored attachment filename with path separators / traversal must not be
+    // able to escape the target directory when saved: both '/' and '\' are replaced with '_'
+    // so the sanitized name is a single path COMPONENT that QDir::filePath cannot walk out of.
+    QCOMPARE(sak::sanitizeAttachmentFilename(QStringLiteral("../../secret.txt")),
+             QStringLiteral(".._.._secret.txt"));
+    QCOMPARE(sak::sanitizeAttachmentFilename(QStringLiteral("..\\..\\Windows\\System32\\evil.dll")),
+             QStringLiteral(".._.._Windows_System32_evil.dll"));
+
+    // Whatever the input, the result carries no separator, so it cannot traverse.
+    const QString mixed = sak::sanitizeAttachmentFilename(QStringLiteral("a/b\\c"));
+    QVERIFY(!mixed.contains(QLatin1Char('/')));
+    QVERIFY(!mixed.contains(QLatin1Char('\\')));
+
+    // Non-vacuity: an ordinary filename with no separators is preserved unchanged, so the
+    // replacement targets separators specifically rather than mangling every name.
+    QCOMPARE(sak::sanitizeAttachmentFilename(QStringLiteral("report.pdf")),
+             QStringLiteral("report.pdf"));
 }
 
 void TestEmailAttachmentSaver::saveToPathWritesExactBytes() {
