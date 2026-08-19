@@ -28,6 +28,7 @@ private Q_SLOTS:
     void isSafePath_caseInsensitiveOnWindows();
     void isSafePath_outsideBase();
     void isSafePath_absolutePathDifferentDrive();
+    void isSafePath_emptyInputsRejected();  // R5-G10-9
 
     // matchesPattern
     void matchesPattern_starWildcard();
@@ -50,6 +51,7 @@ private Q_SLOTS:
     // makeRelative
     void makeRelative_validSubpath();
     void makeRelative_sameDir();
+    void makeRelative_emptyInputsRejected();  // R5-G10-9
 
 private:
     QTemporaryDir m_tempDir;
@@ -158,6 +160,25 @@ void PathUtilsTests::isSafePath_absolutePathDifferentDrive() {
 #else
     QSKIP("Drive letter test is Windows-only");
 #endif
+}
+
+// R5-G10-9: containment has no meaning without both operands, and this answer gates
+// path-traversal decisions, so an empty path or base must fail closed with invalid_path
+// rather than return a guessed bool that a caller would read as "safe".
+void PathUtilsTests::isSafePath_emptyInputsRejected() {
+    const auto emptyPath = sak::path_utils::isSafePath(std::filesystem::path(), m_basePath);
+    QVERIFY(!emptyPath.has_value());
+    QCOMPARE(emptyPath.error(), sak::error_code::invalid_path);
+
+    const auto emptyBase = sak::path_utils::isSafePath(m_basePath / "subdir",
+                                                       std::filesystem::path());
+    QVERIFY(!emptyBase.has_value());
+    QCOMPARE(emptyBase.error(), sak::error_code::invalid_path);
+
+    // Non-vacuity: a real subpath under a real base still yields an answer, so the reject
+    // is the empty-operand gate, not a function that errors on everything.
+    QVERIFY(
+        sak::path_utils::isSafePath(m_basePath / "subdir" / "file2.log", m_basePath).has_value());
 }
 
 // ============================================================================
@@ -269,6 +290,22 @@ void PathUtilsTests::makeRelative_sameDir() {
     auto result = sak::path_utils::makeRelative(m_basePath / "file1.txt", m_basePath);
     QVERIFY(result.has_value());
     QCOMPARE(result.value(), std::filesystem::path("file1.txt"));
+}
+
+// R5-G10-9: std::filesystem::relative("", "") yields "." (the caller's working directory), so
+// makeRelative must reject an empty path or base rather than hand back that CWD-resolving ".".
+void PathUtilsTests::makeRelative_emptyInputsRejected() {
+    QVERIFY(!sak::path_utils::makeRelative(std::filesystem::path(), m_basePath).has_value());
+    QVERIFY(!sak::path_utils::makeRelative(m_basePath / "file1.txt", std::filesystem::path())
+                 .has_value());
+    const auto bothEmpty = sak::path_utils::makeRelative(std::filesystem::path(),
+                                                         std::filesystem::path());
+    QVERIFY(!bothEmpty.has_value());  // must not be the "." that relative("","") would yield
+    QCOMPARE(bothEmpty.error(), sak::error_code::invalid_path);
+
+    // Non-vacuity: a real subpath under a real base still makes a relative path.
+    QVERIFY(
+        sak::path_utils::makeRelative(m_basePath / "subdir" / "file2.log", m_basePath).has_value());
 }
 
 QTEST_GUILESS_MAIN(PathUtilsTests)
