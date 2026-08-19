@@ -111,6 +111,33 @@ HANDLE connectAndHandshake(const QString& name, const QString& token) {
     return handle;
 }
 
+// Result of a single handshake attempt with a caller-supplied hello frame. Unlike
+// connectAndHandshake this does NOT require a welcome -- it reports exactly what the
+// server did, so a test can assert a REFUSAL (no welcome, or an explicit error frame).
+struct HandshakeAttempt {
+    bool connected{false};  // the pipe opened
+    bool got_frame{false};  // the server sent a frame back before dropping
+    QJsonObject reply;      // that frame (empty if the server dropped silently)
+};
+
+HandshakeAttempt attemptHandshake(const QString& name, const QJsonObject& hello) {
+    HandshakeAttempt out;
+    const HANDLE handle = clientConnect(name);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return out;
+    }
+    out.connected = true;
+    if (clientWrite(handle, hello)) {
+        QJsonObject frame;
+        if (clientRead(handle, &frame)) {
+            out.got_frame = true;
+            out.reply = frame;
+        }
+    }
+    CloseHandle(handle);
+    return out;
+}
+
 BrowserBridgePipeServer::Options testOptions(const QString& rendezvous, DWORD timeout_ms) {
     BrowserBridgePipeServer::Options options;
     options.require_chrome_ancestor = false;  // the test client is not a Chrome child
@@ -126,6 +153,8 @@ class BrowserBridgePipeTests : public QObject {
 
 private slots:
     void send_beforeAnyClientReturnsNotConnected();
+    void handshake_refusesForgedTokenAndUnknownType();
+    void handshake_refusesProtocolMismatch();
     void handshake_thenCommandReplyRoundTrips();
     void silentPeer_deadlineResetsConnection();
     void reconnect_secondClientServedWithNewGeneration();
@@ -144,6 +173,109 @@ void BrowserBridgePipeTests::send_beforeAnyClientReturnsNotConnected() {
                     {QStringLiteral("id"), QStringLiteral("b-1")}});
     QVERIFY(!exchange.ok);
     QVERIFY(exchange.error.contains(QStringLiteral("not connected")));
+    server.stop();
+}
+
+void BrowserBridgePipeTests::handshake_refusesForgedTokenAndUnknownType() {
+    QTemporaryDir dir;
+    BrowserBridgePipeServer server(testOptions(dir.filePath(QStringLiteral("r.json")), 30'000));
+    QString error;
+    QVERIFY2(server.start(&error), qPrintable(error));
+    const QString name = server.pipeName();
+    const QString real_token = server.token();
+
+    // (1) Forged token: the token is the shared secret authorizing the pipe peer. A hello
+    //     carrying the wrong token (a foreign process that connected to the pipe and
+    //     guessed) is dropped with no welcome, and the server never admits the peer.
+    HandshakeAttempt forged;
+    std::thread forged_client([&] {
+        forged = attemptHandshake(name,
+                                  QJsonObject{{QStringLiteral("type"), QStringLiteral("hello")},
+                                              {QStringLiteral("token"),
+                                               real_token + QStringLiteral("_forged")},
+                                              {QStringLiteral("protocol"), 1}});
+    });
+    forged_client.join();
+    QVERIFY(forged.connected);  // pipe opened -- the refusal is the token gate, not connect
+    QVERIFY(forged.reply.value(QStringLiteral("type")).toString() != QLatin1String("welcome"));
+    QVERIFY(!server.clientConnected());
+
+    // (2) Unknown first-frame type WITH the correct token: the handshake must open with a
+    //     "hello"; anything else ("attach" here) is refused even though the token is right.
+    HandshakeAttempt bad_type;
+    std::thread type_client([&] {
+        bad_type = attemptHandshake(name,
+                                    QJsonObject{{QStringLiteral("type"), QStringLiteral("attach")},
+                                                {QStringLiteral("token"), real_token},
+                                                {QStringLiteral("protocol"), 1}});
+    });
+    type_client.join();
+    QVERIFY(bad_type.reply.value(QStringLiteral("type")).toString() != QLatin1String("welcome"));
+    QVERIFY(!server.clientConnected());
+
+    // Non-vacuity control: the SAME harness, with a correct hello (right type + token +
+    // protocol), completes the handshake and the server admits the peer and serves a
+    // command -- so the refusals above are the hello/token gates, not a server that
+    // welcomes nobody. The re-armed accept loop (proven elsewhere) accepts this connection.
+    std::atomic<bool> good_ok{false};
+    std::thread good_client([&] {
+        const HANDLE handle = connectAndHandshake(name, real_token);
+        if (handle == INVALID_HANDLE_VALUE) {
+            return;
+        }
+        QJsonObject command;
+        if (clientRead(handle, &command)) {
+            clientWrite(handle,
+                        QJsonObject{{QStringLiteral("type"), QStringLiteral("result")},
+                                    {QStringLiteral("id"), command.value(QStringLiteral("id"))},
+                                    {QStringLiteral("payload"), QJsonObject{}}});
+            FlushFileBuffers(handle);
+            good_ok = true;
+        }
+        CloseHandle(handle);
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(server.clientConnected(), 5000);
+    const auto served = server.sendCommandAwaitReply(
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("command")},
+                    {QStringLiteral("id"), QStringLiteral("ok-1")},
+                    {QStringLiteral("cmd"), QStringLiteral("snapshot")}});
+    QVERIFY2(served.ok, qPrintable(served.error));
+    good_client.join();
+    QVERIFY(good_ok.load());
+    server.stop();
+}
+
+void BrowserBridgePipeTests::handshake_refusesProtocolMismatch() {
+    QTemporaryDir dir;
+    BrowserBridgePipeServer server(testOptions(dir.filePath(QStringLiteral("r.json")), 30'000));
+    QString error;
+    QVERIFY2(server.start(&error), qPrintable(error));
+    const QString name = server.pipeName();
+    const QString real_token = server.token();
+
+    // A hello with the right type and token but a mismatched protocol version is refused:
+    // no welcome, and the server never admits the peer. The server makes a best-effort
+    // "protocol_mismatch" diagnostic write before it drops, but its immediate
+    // DisconnectNamedPipe can discard that frame before the client reads it (a named pipe
+    // drops unread data on disconnect), so the RELIABLE contract asserted here is the
+    // refusal itself; if the diagnostic frame does survive the race it must be the error,
+    // never a welcome. This stays specific to the protocol gate: were that gate removed,
+    // the mismatched hello would be welcomed and the "!= welcome" checks would go red.
+    HandshakeAttempt mism;
+    std::thread client([&] {
+        mism = attemptHandshake(name,
+                                QJsonObject{{QStringLiteral("type"), QStringLiteral("hello")},
+                                            {QStringLiteral("token"), real_token},
+                                            {QStringLiteral("protocol"), 999}});
+    });
+    client.join();
+    QVERIFY(mism.reply.value(QStringLiteral("type")).toString() != QLatin1String("welcome"));
+    if (mism.got_frame) {
+        QCOMPARE(mism.reply.value(QStringLiteral("type")).toString(), QStringLiteral("error"));
+        QCOMPARE(mism.reply.value(QStringLiteral("error")).toString(),
+                 QStringLiteral("protocol_mismatch"));
+    }
+    QVERIFY(!server.clientConnected());
     server.stop();
 }
 
