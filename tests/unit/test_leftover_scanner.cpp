@@ -132,6 +132,51 @@ ProgramInfo makeTestProgram(const QString& name,
     return prog;
 }
 
+/// RAII override of an environment variable, restored (or unset) on destruction. scanKnownPaths()
+/// reads APPDATA/LOCALAPPDATA/ProgramData at Safe level via qEnvironmentVariable, so pointing one
+/// at a controlled tree makes the scanner actually walk it -- turning the "runs without error"
+/// smoke tests into real find-and-classify assertions.
+class ScopedEnv {
+public:
+    ScopedEnv(const char* name, const QString& value)
+        : m_name(name), m_had(qEnvironmentVariableIsSet(name)), m_saved(qgetenv(name)) {
+        qputenv(name, value.toUtf8());
+    }
+    ~ScopedEnv() {
+        if (m_had) {
+            qputenv(m_name, m_saved);
+        } else {
+            qunsetenv(m_name);
+        }
+    }
+    ScopedEnv(const ScopedEnv&) = delete;
+    ScopedEnv& operator=(const ScopedEnv&) = delete;
+
+private:
+    const char* m_name;
+    bool m_had;
+    QByteArray m_saved;
+};
+
+/// Create a scan-root directory whose name contains "AppData" so an exact-name match found beneath
+/// it classifies Safe (classifyFileRisk keys on the "appdata" substring), independent of where the
+/// host's real temp folder lives. Returns the created root path.
+QString makeAppDataScanRoot(const QString& parent) {
+    const QString root = QDir(parent).filePath(QStringLiteral("AppDataLocal"));
+    QDir().mkpath(root);
+    return root;
+}
+
+/// Locate a scanned leftover by its on-disk path (native separators), or nullptr if absent.
+const LeftoverItem* findByPath(const QVector<LeftoverItem>& items, const QString& nativePath) {
+    for (const auto& item : items) {
+        if (item.path == nativePath) {
+            return &item;
+        }
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 // -- Construction ------------------------------------------------------------
@@ -167,42 +212,59 @@ void LeftoverScannerTests::scan_findsMatchingFolder() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
-    // Create a folder matching the program name
-    QDir dir(tempDir.path());
-    QVERIFY(dir.mkdir("SuperEditor"));
+    // Point the Safe-level scan root at a controlled tree and place an exactly-named folder in it.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("SuperEditor")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("SuperEditor")));
 
     ProgramInfo prog = makeTestProgram("SuperEditor");
-    prog.installLocation = tempDir.path() + "/SuperEditor";
-
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
+    const auto results = scanner.scan(stop);
 
-    // The scanner scans standard system directories (Program Files, AppData, etc.)
-    // not our temp dir -- so we just verify it runs without error
-    QVERIFY(results.size() >= 0);
+    // The exactly-named folder under the scanned root must be found, typed a Folder, classified
+    // Safe (AppData location) and therefore pre-selected. `size() >= 0` proved nothing.
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr,
+             qPrintable(QStringLiteral("scanner did not find %1").arg(folderPath)));
+    QCOMPARE(found->type, LeftoverItem::Type::Folder);
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+    QVERIFY(found->deletable);
+    QVERIFY(found->selected);
 }
 
 void LeftoverScannerTests::scan_findsMatchingFile() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
-    // Create a file matching the program name
-    QFile file(tempDir.path() + "/SuperEditor.lnk");
+    // Point the Safe-level scan root at a controlled tree and place an exactly-named file in it.
+    // A plain extension (not ".lnk") is used deliberately: Qt resolves ".lnk" as a Windows
+    // shortcut, so a bogus one is not listed as a regular file. The scanner matches on the base
+    // name anyway.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QFile file(QDir(root).filePath(QStringLiteral("SuperEditor.dat")));
     QVERIFY(file.open(QIODevice::WriteOnly));
-    file.write("shortcut data");
+    file.write("leftover data");
     file.close();
+    const QString filePath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("SuperEditor.dat")));
 
     ProgramInfo prog = makeTestProgram("SuperEditor");
-
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
+    const auto results = scanner.scan(stop);
 
-    // Scanner scans standard dirs, not temp dir -- no crash is the test
-    QVERIFY(results.size() >= 0);
+    // The exactly-named file (matched on its base name, extension stripped) must be found and typed
+    // a File. `size() >= 0` could not catch a regression that stopped scanning standard files.
+    const LeftoverItem* found = findByPath(results, filePath);
+    QVERIFY2(found != nullptr, qPrintable(QStringLiteral("scanner did not find %1").arg(filePath)));
+    QCOMPARE(found->type, LeftoverItem::Type::File);
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
 }
 
 void LeftoverScannerTests::scan_ignoresNonMatchingFolder() {
@@ -289,32 +351,53 @@ void LeftoverScannerTests::scan_preSelectsSafeItems() {
 // -- Pattern Matching --------------------------------------------------------
 
 void LeftoverScannerTests::scan_matchesProgramNameExact() {
-    // Use a program name that DOES exist in common system directories
-    // The "VLC" or "Notepad" test verifies exact matching behavior
-    ProgramInfo prog = makeTestProgram("VLC media player");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // A uniquely-named folder placed under the scanned root exactly matches the program's display
+    // name (matchesProgramExact) and is returned. The old body only scanned real system dirs and
+    // asserted `size() >= 0`, never exercising the match it claims to test.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("ExactMatchAppZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("ExactMatchAppZZ")));
+
+    ProgramInfo prog = makeTestProgram("ExactMatchAppZZ");
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    // This validates that the scanner runs without error
-    auto results = scanner.scan(stop);
-    QVERIFY(results.size() >= 0);
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr,
+             qPrintable(QStringLiteral("exact match not found: %1").arg(folderPath)));
+    QCOMPARE(found->type, LeftoverItem::Type::Folder);
 }
 
 void LeftoverScannerTests::scan_matchesProgramNameCaseInsensitive() {
-    // Scanner should do case-insensitive matching
-    ProgramInfo prog1 = makeTestProgram("TESTAPPUPPER");
-    ProgramInfo prog2 = makeTestProgram("testappupper");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // The on-disk folder and the two program names differ only in case; matching is
+    // case-insensitive, so both scanners must find the same folder under the injected root.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("CaseTestAppZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("CaseTestAppZZ")));
+
+    ProgramInfo prog1 = makeTestProgram("CASETESTAPPZZ");
+    ProgramInfo prog2 = makeTestProgram("casetestappzz");
     LeftoverScanner scanner1(prog1, ScanLevel::Safe);
     LeftoverScanner scanner2(prog2, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results1 = scanner1.scan(stop);
-    auto results2 = scanner2.scan(stop);
+    const auto results1 = scanner1.scan(stop);
+    const auto results2 = scanner2.scan(stop);
 
-    // Both should find the same results (case-insensitive matching)
     QCOMPARE(results1.size(), results2.size());
+    QVERIFY2(findByPath(results1, folderPath) != nullptr, "upper-case program did not match");
+    QVERIFY2(findByPath(results2, folderPath) != nullptr, "lower-case program did not match");
 }
 
 void LeftoverScannerTests::scan_matchesConcatenatedName() {
