@@ -401,64 +401,102 @@ void LeftoverScannerTests::scan_matchesProgramNameCaseInsensitive() {
 }
 
 void LeftoverScannerTests::scan_matchesConcatenatedName() {
-    // "VLC Media Player" should also match "vlcmediaplayer" (concatenated)
-    ProgramInfo prog = makeTestProgram("Test App XYZ");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // A multi-word display name exactly matches a folder of the same (spaced) name. The
+    // whitespace-stripped "concatenated" form drives only the loose strict/service match (not the
+    // exact file/folder match), so the folder is named with the spaces. The old body scanned real
+    // dirs and asserted `size() >= 0`, testing nothing.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("Test App XYZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Test App XYZ")));
+
+    ProgramInfo prog = makeTestProgram("Test App XYZ");
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    // Validates no crash, pattern building with concatenation
-    auto results = scanner.scan(stop);
-    QVERIFY(results.size() >= 0);
+    const auto results = scanner.scan(stop);
+    QVERIFY2(findByPath(results, folderPath) != nullptr,
+             qPrintable(QStringLiteral("multi-word name not matched: %1").arg(folderPath)));
 }
 
 void LeftoverScannerTests::scan_skipsCommonWords() {
-    // Common words like "the", "media", "player" should be excluded
-    // to reduce false positives. A program named only with common words
-    // should have fewer matches than expected.
-    ProgramInfo prog = makeTestProgram("The Free Player");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // Exact matching keys on the FULL program name, never a bare common sub-word: a folder named
+    // only "Player" must NOT match program "The Free Player", while the full-name folder does. The
+    // old body asserted `size() >= 0` and could not distinguish the two.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("The Free Player")));
+    QVERIFY(QDir(root).mkdir(QStringLiteral("Player")));
+    const QString fullPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("The Free Player")));
+    const QString commonWordPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Player")));
+
+    ProgramInfo prog = makeTestProgram("The Free Player");
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
-    // "the", "free", "player" are all excluded words, so the full name
-    // "the free player" and concatenated "thefreeplayer" will be the patterns.
-    // With only the full name pattern, false positives are reduced.
-    QVERIFY(results.size() >= 0);
+    const auto results = scanner.scan(stop);
+    QVERIFY2(findByPath(results, fullPath) != nullptr, "full program name should match");
+    QVERIFY2(findByPath(results, commonWordPath) == nullptr,
+             "a bare common sub-word must not match");
 }
 
 void LeftoverScannerTests::scan_matchesInstallDirName() {
-    ProgramInfo prog = makeTestProgram("MySpecialApp");
-    prog.installLocation = "C:\\Program Files\\SpecialAppDir";
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // The install-directory leaf name seeds the exact-name set (extractInstallDirNames), so a
+    // folder named after the install dir is matched even when it differs from the display name.
+    // Planted under the scanned root; the fake install path itself does not exist, so the
+    // install-location phase adds nothing to confuse the result.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("SpecialAppDirZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("SpecialAppDirZZ")));
+
+    ProgramInfo prog = makeTestProgram("MySpecialApp");
+    prog.installLocation = "C:\\Program Files\\SpecialAppDirZZ";
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    // The scanner should also create patterns from the install dir name
-    auto results = scanner.scan(stop);
-    QVERIFY(results.size() >= 0);
+    const auto results = scanner.scan(stop);
+    QVERIFY2(findByPath(results, folderPath) != nullptr,
+             qPrintable(QStringLiteral("install-dir-name match not found: %1").arg(folderPath)));
 }
 
 // -- Risk Classification -----------------------------------------------------
 
 void LeftoverScannerTests::scan_safeInAppData() {
-    // Items found in AppData directories should be classified as Safe
-    ProgramInfo prog = makeTestProgram("Notepad");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
-    LeftoverScanner scanner(prog, ScanLevel::Moderate);
+    // A matched folder whose path is under an AppData location classifies Safe (classifyFileRisk).
+    // The old loop was vacuous whenever the real system had no "Notepad" AppData leftover; inject a
+    // guaranteed match and assert the classification directly.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("AppDataSafeZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("AppDataSafeZZ")));
+
+    ProgramInfo prog = makeTestProgram("AppDataSafeZZ");
+    LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
-
-    for (const auto& item : results) {
-        if (item.path.toLower().contains("appdata")) {
-            // File/folder items in AppData matching program name should be Safe
-            if (item.type == LeftoverItem::Type::File || item.type == LeftoverItem::Type::Folder) {
-                QCOMPARE(item.risk, LeftoverItem::RiskLevel::Safe);
-            }
-        }
-    }
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr, qPrintable(QStringLiteral("not found: %1").arg(folderPath)));
+    QVERIFY(found->path.toLower().contains("appdata"));
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
 }
 
 void LeftoverScannerTests::scan_safeInProgramFiles() {
