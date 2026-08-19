@@ -69,6 +69,7 @@ private Q_SLOTS:
     void readMessagesSync();
     void readMessageDetailSync();
     void nestedMultipartRecoversBodyAndAttachment();
+    void deepNestedMultipartFailsClosed();  // R5-G10-9
     void readAttachmentDataAlignsWithRecursiveEnumeration();
 
     // -- Concurrency (B7-02) ---------------------------------------------
@@ -414,6 +415,57 @@ void TestMboxParser::nestedMultipartRecoversBodyAndAttachment() {
 // "DEF" }. readMessageDetail enumerates recursively -> [pic.png, report.pdf]. The old
 // readAttachmentData counted only top-level parts, so index 0 wrongly returned the PDF and index 1
 // ran off the end.
+void TestMboxParser::deepNestedMultipartFailsClosed() {
+    // The MIME walk caps multipart nesting at 20 levels. A crafted message nesting deeper
+    // than any real mail must FAIL CLOSED (readMessageDetail returns no value) rather than
+    // hand back a truncated partial parse as success -- and the bounded recursion also stops
+    // a deeply-nested structure from exhausting the stack.
+    const auto buildNested = [](int levels) {
+        QByteArray c = "From s@e.com Mon Jan  1 00:00:00 2024\r\n";
+        c += "Subject: nested\r\n";
+        c += "Content-Type: multipart/mixed; boundary=\"L0\"\r\n\r\n";
+        for (int i = 0; i < levels; ++i) {
+            c += "--L" + QByteArray::number(i) + "\r\n";
+            if (i + 1 < levels) {
+                c += "Content-Type: multipart/mixed; boundary=\"L" + QByteArray::number(i + 1) +
+                     "\"\r\n\r\n";
+            } else {
+                c += "Content-Type: text/plain\r\n\r\ndeep body\r\n";
+            }
+        }
+        for (int i = levels - 1; i >= 0; --i) {
+            c += "--L" + QByteArray::number(i) + "--\r\n";
+        }
+        return c;
+    };
+
+    // 25 levels is past the 20-level cap -> fail closed on every content accessor.
+    QTemporaryFile deep;
+    QVERIFY(deep.open());
+    deep.write(buildNested(25));
+    deep.close();
+    MboxParser deepParser;
+    deepParser.open(deep.fileName());
+    QVERIFY(deepParser.isOpen());
+    QVERIFY(!deepParser.readMessageDetail(0).has_value());
+    deepParser.close();
+
+    // Non-vacuity: an equally-nested structure that stays UNDER the cap (10 levels) parses
+    // successfully and recovers the innermost body -- so the refusal above is the depth cap,
+    // not "any nesting fails".
+    QTemporaryFile shallow;
+    QVERIFY(shallow.open());
+    shallow.write(buildNested(10));
+    shallow.close();
+    MboxParser shallowParser;
+    shallowParser.open(shallow.fileName());
+    QVERIFY(shallowParser.isOpen());
+    const auto detail = shallowParser.readMessageDetail(0);
+    QVERIFY(detail.has_value());
+    QVERIFY(detail->body_plain.contains(QStringLiteral("deep body")));
+    shallowParser.close();
+}
+
 void TestMboxParser::readAttachmentDataAlignsWithRecursiveEnumeration() {
     QByteArray content =
         "From sender@example.com Mon Jan  1 00:00:00 2024\r\n"
