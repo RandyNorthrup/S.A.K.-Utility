@@ -140,6 +140,29 @@ private Q_SLOTS:
     void jsonRpcLineResultIsUnambiguous() {
         runFuzz("parseJsonLine", jsonRpcCorpus(), jsonRpcInvariant);
     }
+
+    // R5-G10-9: the fuzz corpus tops out at a few dozen bytes and mutants grow by at most a
+    // few bytes per round, so the pre-parse size ceiling (kMaxJsonRpcMessageBytes, the guard
+    // that stops a hostile MCP server from flooding QJsonDocument::fromJson with one giant line)
+    // is never reached by fuzzing. Drive it directly.
+    void jsonRpcLineRefusesOverCeiling() {
+        QString error;
+        // One byte over the 16 MiB ceiling of pure 'a' bytes: rejected for SIZE before any DOM
+        // is allocated. The "ceiling" reason (not the "Invalid ... JSON" parse reason) proves
+        // the size branch fired first -- if the guard were removed, fromJson would run on the
+        // garbage and the reason would be a parse error instead, failing this assertion.
+        const QByteArray over(sak::ai::mcp::kMaxJsonRpcMessageBytes + 1, 'a');
+        const QJsonObject rejected = sak::ai::mcp::parseJsonLine(over, &error);
+        QVERIFY(rejected.isEmpty());
+        QVERIFY2(error.contains(QStringLiteral("ceiling")), error.toUtf8().constData());
+
+        // Non-vacuity: a well-formed line under the ceiling still parses to a JSON-RPC object.
+        const QByteArray ok("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n");
+        const QJsonObject parsed = sak::ai::mcp::parseJsonLine(ok, &error);
+        QVERIFY(!parsed.isEmpty());
+        QVERIFY(error.isEmpty());
+        QCOMPARE(parsed.value(QStringLiteral("jsonrpc")).toString(), QStringLiteral("2.0"));
+    }
 };
 
 QTEST_APPLESS_MAIN(McpFramingFuzzTests)
