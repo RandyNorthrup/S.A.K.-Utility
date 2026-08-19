@@ -5,6 +5,7 @@
 
 #include "sak/ai/ai_app_action_planner.h"
 #include "sak/ai/ai_credential_store.h"
+#include "sak/ai/ai_provider_gateway_authorization.h"
 #include "sak/ai/ai_win32_gui_runner.h"
 
 #include <QJsonDocument>
@@ -105,49 +106,10 @@ QJsonObject normalizedGatewayArgs(QJsonObject args, QString* error_message) {
     return args;
 }
 
-// Browser input injection (click/type/press-key/scroll) drives the user's logged-in
-// browser. It demands an explicit human confirmation in EVERY non-chat access mode --
-// including Unattended, where other win32 automation would otherwise auto-run or merely
-// offer a restore point -- so an autonomous or injected model cannot silently act as the
-// user. The prompt is the app's trusted UI; nothing the page or model controls can
-// satisfy this gate. Returns empty on approval, a tool error on refusal / misconfig.
-QJsonObject requireInputConfirmation(const AiProviderGateway::Win32McpCallPlan& plan,
-                                     const AiProviderGatewayToolCallbacks& callbacks) {
-    if (!callbacks.confirm) {
-        return toolError(QStringLiteral("Win32 MCP confirmation callback is not configured"));
-    }
-    if (!callbacks.confirm(QStringLiteral("Browser input action"), plan.preview, /*risky=*/true)) {
-        return toolError(QStringLiteral("User declined the browser input action"));
-    }
-    return {};
-}
-
-QJsonObject authorizeWin32McpCall(const AiProviderGateway::Win32McpCallPlan& plan,
-                                  AiProviderGatewayToolAccess access,
-                                  const AiProviderGatewayToolCallbacks& callbacks) {
-    if (plan.requires_confirmation) {
-        return requireInputConfirmation(plan, callbacks);
-    }
-    if (assisted(access) && !plan.read_only) {
-        if (!callbacks.confirm) {
-            return toolError(QStringLiteral("Win32 MCP confirmation callback is not configured"));
-        }
-        if (!callbacks.confirm(
-                QStringLiteral("Win32 MCP automation"), plan.preview, plan.high_risk)) {
-            return toolError(QStringLiteral("User declined Win32 MCP automation"));
-        }
-    }
-    if (unattended(access) && plan.high_risk) {
-        if (!callbacks.offer_restore_point) {
-            return toolError(QStringLiteral("Win32 MCP restore-point callback is not configured"));
-        }
-        if (!callbacks.offer_restore_point(plan.preview, true)) {
-            return toolError(
-                QStringLiteral("Restore point handling cancelled Win32 MCP high-risk automation"));
-        }
-    }
-    return {};
-}
+// authorizeWin32McpCall (the win32 MCP authorization gate) and its requireInputConfirmation helper
+// were extracted to ai_provider_gateway_authorization.{h,cpp} so the full authorization matrix is
+// unit-testable without linking this TU's AI execution subsystem dependencies. This runner keeps
+// calling authorizeWin32McpCall exactly as before.
 
 QJsonObject runWin32McpCall(const QJsonObject& args,
                             const AiProviderGateway* gateway,

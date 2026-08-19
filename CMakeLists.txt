@@ -962,6 +962,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_paths.cpp
         src/ai/ai_prompt_assembler.cpp
         src/ai/ai_provider_gateway.cpp
+        src/ai/ai_provider_gateway_authorization.cpp
         src/ai/ai_provider_gateway_tool_runner.cpp
         src/ai/ai_provider_registry.cpp
         src/ai/ai_win32_gui_runner.cpp

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/ai/ai_provider_gateway.h"
+#include "sak/ai/ai_provider_gateway_authorization.h"
 
 #include <QDir>
 #include <QFile>
@@ -49,6 +50,9 @@ private Q_SLOTS:
     void checkAvailabilityRejectsUnsupportedAppAction();
     void checkAvailabilityAcceptsReadOnlyWin32Tool();
     void mutatingToolsAreNeverReadOnly();
+    void authorizeWin32Mcp_browserInputRequiresConfirmEveryMode();
+    void authorizeWin32Mcp_assistedMutatingRequiresConfirm();
+    void authorizeWin32Mcp_unattendedHighRiskRequiresRestorePoint();
 };
 
 // The registry loads the embedded resource by default and honors an on-disk providers.json only
@@ -651,6 +655,149 @@ void AiProviderGatewayTests::checkAvailabilityAcceptsReadOnlyWin32Tool() {
     QVERIFY(result.value(QStringLiteral("success")).toBool(false));
     QCOMPARE(result.value(QStringLiteral("provider_id")).toString(), QStringLiteral("win32_mcp"));
     QVERIFY(result.value(QStringLiteral("read_only_tool")).toBool(false));
+}
+
+// ============================================================================
+// Win32 MCP authorization matrix (authorizeWin32McpCall, extracted to
+// ai_provider_gateway_authorization.{h,cpp}). This is the SOLE gate on the plan's
+// authorization flags -- callWin32Mcp does not re-derive them -- so each mode/flag
+// combination is proven to demand its human step and to fail closed when the
+// required callback is absent or declines. The AiProviderGatewayToolRunner routes
+// every win32_mcp_call through exactly this function.
+// ============================================================================
+
+void AiProviderGatewayTests::authorizeWin32Mcp_browserInputRequiresConfirmEveryMode() {
+    using Access = sak::ai::AiProviderGatewayToolAccess;
+    sak::ai::AiProviderGateway::Win32McpCallPlan plan;
+    plan.requires_confirmation = true;  // browser input injection (click/type/press-key/scroll)
+    plan.read_only = false;
+    plan.preview = QStringLiteral("click at (10,10)");
+
+    // No confirm callback configured -> fail closed in BOTH non-chat modes.
+    const sak::ai::AiProviderGatewayToolCallbacks noConfirm;
+    for (const Access access : {Access::AssistedFullAccess, Access::UnattendedFullAccess}) {
+        const QJsonObject result = sak::ai::authorizeWin32McpCall(plan, access, noConfirm);
+        QVERIFY2(!result.isEmpty(), "browser input with no confirm callback must fail closed");
+        QCOMPARE(result.value(QStringLiteral("success")).toBool(true), false);
+        QVERIFY(result.value(QStringLiteral("error_message"))
+                    .toString()
+                    .contains(QStringLiteral("confirmation callback")));
+    }
+
+    // Confirm declines -> refused in BOTH modes. Unattended must NOT bypass the browser-input
+    // confirm the way it lets ordinary win32 automation auto-run.
+    int confirmCalls = 0;
+    sak::ai::AiProviderGatewayToolCallbacks declines;
+    declines.confirm = [&](const QString&, const QString&, bool) {
+        ++confirmCalls;
+        return false;
+    };
+    for (const Access access : {Access::AssistedFullAccess, Access::UnattendedFullAccess}) {
+        const QJsonObject result = sak::ai::authorizeWin32McpCall(plan, access, declines);
+        QVERIFY(!result.isEmpty());
+        QVERIFY(result.value(QStringLiteral("error_message"))
+                    .toString()
+                    .contains(QStringLiteral("declined the browser input")));
+    }
+    QCOMPARE(confirmCalls, 2);  // the confirm gate was actually consulted in each mode
+
+    // Non-vacuity control: an accepted confirm authorizes the call (empty result) in both modes.
+    sak::ai::AiProviderGatewayToolCallbacks accepts;
+    accepts.confirm = [](const QString&, const QString&, bool) {
+        return true;
+    };
+    for (const Access access : {Access::AssistedFullAccess, Access::UnattendedFullAccess}) {
+        QVERIFY2(sak::ai::authorizeWin32McpCall(plan, access, accepts).isEmpty(),
+                 "an accepted browser-input confirm must authorize the call");
+    }
+}
+
+void AiProviderGatewayTests::authorizeWin32Mcp_assistedMutatingRequiresConfirm() {
+    using Access = sak::ai::AiProviderGatewayToolAccess;
+    sak::ai::AiProviderGateway::Win32McpCallPlan plan;
+    plan.requires_confirmation = false;
+    plan.read_only = false;  // mutating
+    plan.high_risk = false;
+    plan.preview = QStringLiteral("set_zoom 150%");
+
+    // Assisted + mutating: a confirm is mandatory. No callback -> fail closed.
+    const sak::ai::AiProviderGatewayToolCallbacks noConfirm;
+    const QJsonObject noCb =
+        sak::ai::authorizeWin32McpCall(plan, Access::AssistedFullAccess, noConfirm);
+    QVERIFY(!noCb.isEmpty());
+    QVERIFY(noCb.value(QStringLiteral("error_message"))
+                .toString()
+                .contains(QStringLiteral("confirmation callback")));
+
+    // Confirm declines -> refused.
+    sak::ai::AiProviderGatewayToolCallbacks declines;
+    declines.confirm = [](const QString&, const QString&, bool) {
+        return false;
+    };
+    const QJsonObject declined =
+        sak::ai::authorizeWin32McpCall(plan, Access::AssistedFullAccess, declines);
+    QVERIFY(!declined.isEmpty());
+    QVERIFY(declined.value(QStringLiteral("error_message"))
+                .toString()
+                .contains(QStringLiteral("declined Win32 MCP automation")));
+
+    // Confirm accepts -> authorized.
+    sak::ai::AiProviderGatewayToolCallbacks accepts;
+    accepts.confirm = [](const QString&, const QString&, bool) {
+        return true;
+    };
+    QVERIFY(sak::ai::authorizeWin32McpCall(plan, Access::AssistedFullAccess, accepts).isEmpty());
+
+    // Guard-scope control: a READ-ONLY tool in Assisted needs NO confirm -- authorized even with an
+    // empty callbacks struct. Proves the confirm gate is scoped to mutating calls, not all calls.
+    sak::ai::AiProviderGateway::Win32McpCallPlan readOnly = plan;
+    readOnly.read_only = true;
+    QVERIFY2(sak::ai::authorizeWin32McpCall(readOnly, Access::AssistedFullAccess, {}).isEmpty(),
+             "a read-only assisted call must not require confirmation");
+}
+
+void AiProviderGatewayTests::authorizeWin32Mcp_unattendedHighRiskRequiresRestorePoint() {
+    using Access = sak::ai::AiProviderGatewayToolAccess;
+    sak::ai::AiProviderGateway::Win32McpCallPlan plan;
+    plan.requires_confirmation = false;
+    plan.read_only = false;
+    plan.high_risk = true;
+    plan.preview = QStringLiteral("uninstall app");
+
+    // Unattended + high risk: an offered restore point is mandatory. No callback -> fail closed.
+    const sak::ai::AiProviderGatewayToolCallbacks noRp;
+    const QJsonObject noCb =
+        sak::ai::authorizeWin32McpCall(plan, Access::UnattendedFullAccess, noRp);
+    QVERIFY(!noCb.isEmpty());
+    QVERIFY(noCb.value(QStringLiteral("error_message"))
+                .toString()
+                .contains(QStringLiteral("restore-point callback")));
+
+    // Restore point cancelled -> refused.
+    sak::ai::AiProviderGatewayToolCallbacks cancels;
+    cancels.offer_restore_point = [](const QString&, bool) {
+        return false;
+    };
+    const QJsonObject cancelled =
+        sak::ai::authorizeWin32McpCall(plan, Access::UnattendedFullAccess, cancels);
+    QVERIFY(!cancelled.isEmpty());
+    QVERIFY(cancelled.value(QStringLiteral("error_message"))
+                .toString()
+                .contains(QStringLiteral("Restore point handling cancelled")));
+
+    // Restore point accepted -> authorized (no human confirm is required in unattended).
+    sak::ai::AiProviderGatewayToolCallbacks accepts;
+    accepts.offer_restore_point = [](const QString&, bool) {
+        return true;
+    };
+    QVERIFY(sak::ai::authorizeWin32McpCall(plan, Access::UnattendedFullAccess, accepts).isEmpty());
+
+    // Risk-scope control: a NON-high-risk mutating tool auto-runs in Unattended -- authorized even
+    // with empty callbacks. Proves the restore-point gate is scoped to high-risk calls.
+    sak::ai::AiProviderGateway::Win32McpCallPlan lowRisk = plan;
+    lowRisk.high_risk = false;
+    QVERIFY2(sak::ai::authorizeWin32McpCall(lowRisk, Access::UnattendedFullAccess, {}).isEmpty(),
+             "a non-high-risk unattended call must not require a restore point");
 }
 
 QTEST_GUILESS_MAIN(AiProviderGatewayTests)

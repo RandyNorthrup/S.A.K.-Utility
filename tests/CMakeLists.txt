@@ -2700,12 +2700,14 @@ message(STATUS "Added unit test: test_fuzz_mbox_container")
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway.cpp
+    ../src/ai/ai_provider_gateway_authorization.cpp
     ../src/ai/ai_provider_registry.cpp
     ../src/ai/ai_mcp_http_client.cpp
     ../src/ai/ai_mcp_session_pool.cpp
     ../src/ai/ai_mcp_stdio_client.cpp
     ../src/ai/ai_mcp_stdio_session.cpp
     ../include/sak/ai/ai_provider_gateway.h
+    ../include/sak/ai/ai_provider_gateway_authorization.h
     ../include/sak/ai/ai_provider_registry.h
     ../include/sak/ai/ai_mcp_http_client.h
     ../include/sak/ai/ai_mcp_session_pool.h
