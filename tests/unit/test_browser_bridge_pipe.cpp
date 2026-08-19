@@ -155,6 +155,7 @@ private slots:
     void send_beforeAnyClientReturnsNotConnected();
     void handshake_refusesForgedTokenAndUnknownType();
     void handshake_refusesProtocolMismatch();
+    void ancestorChain_boundsDepthAndMatchesImage();
     void handshake_thenCommandReplyRoundTrips();
     void silentPeer_deadlineResetsConnection();
     void reconnect_secondClientServedWithNewGeneration();
@@ -277,6 +278,47 @@ void BrowserBridgePipeTests::handshake_refusesProtocolMismatch() {
     }
     QVERIFY(!server.clientConnected());
     server.stop();
+}
+
+void BrowserBridgePipeTests::ancestorChain_boundsDepthAndMatchesImage() {
+    using Server = BrowserBridgePipeServer;
+    // In production the pipe optionally binds the peer to a Chrome-launched process
+    // (require_chrome_ancestor) by walking the process tree for chrome.exe within a depth
+    // cap. Model a tree: leaf 100 -> 90 -> 80 -> 70(chrome.exe) -> 0(root), so chrome is
+    // three ancestors above the leaf. Images are stored LOWERCASED (as the live walk does).
+    const QHash<DWORD, DWORD> parent{{100, 90}, {90, 80}, {80, 70}, {70, 0}};
+    const QHash<DWORD, QString> image{{100, QStringLiteral("tab.exe")},
+                                      {90, QStringLiteral("renderer.exe")},
+                                      {80, QStringLiteral("gpu.exe")},
+                                      {70, QStringLiteral("chrome.exe")}};
+
+    // Authorized: a generous depth budget reaches the chrome ancestor.
+    QVERIFY(Server::ancestorChainContainsImageForTesting(
+        100, parent, image, QStringLiteral("chrome.exe"), 12));
+
+    // Depth cap (the security bound): a budget too small to reach chrome must NOT authorize.
+    // The walk inspects one ancestor per iteration, so a budget of 2 sees only the two
+    // nearest ancestors (renderer, gpu) and stops before chrome -> refused. This is what
+    // stops a peer with a very distant, coincidental chrome.exe ancestor from being bound.
+    QVERIFY(!Server::ancestorChainContainsImageForTesting(
+        100, parent, image, QStringLiteral("chrome.exe"), 2));
+
+    // No chrome anywhere in the chain -> refused (a non-Chrome-launched peer).
+    const QHash<DWORD, QString> noChrome{{100, QStringLiteral("tab.exe")},
+                                         {90, QStringLiteral("renderer.exe")},
+                                         {80, QStringLiteral("gpu.exe")},
+                                         {70, QStringLiteral("explorer.exe")}};
+    QVERIFY(!Server::ancestorChainContainsImageForTesting(
+        100, parent, noChrome, QStringLiteral("chrome.exe"), 12));
+
+    // A CYCLE in the parent map (100 -> 90 -> 100) must terminate under the depth bound
+    // rather than loop forever, and with no chrome ancestor it fails closed. A stale/reused
+    // Toolhelp parent pid can produce exactly such a cycle.
+    const QHash<DWORD, DWORD> cyclic{{100, 90}, {90, 100}};
+    const QHash<DWORD, QString> cyclicImage{{100, QStringLiteral("tab.exe")},
+                                            {90, QStringLiteral("renderer.exe")}};
+    QVERIFY(!Server::ancestorChainContainsImageForTesting(
+        100, cyclic, cyclicImage, QStringLiteral("chrome.exe"), 12));
 }
 
 void BrowserBridgePipeTests::handshake_thenCommandReplyRoundTrips() {

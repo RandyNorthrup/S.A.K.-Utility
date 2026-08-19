@@ -199,6 +199,31 @@ QString clientImagePath(DWORD pid) {
                        : QString();
 }
 
+// Pure ancestor-chain check: from `pid`, climb up to max_depth ancestors via the
+// child->parent map and return true iff one's lowercased image equals
+// target_basename_lower. The max_depth bound makes this terminate even on a cyclic or
+// malformed parent map (Toolhelp parent pids can be stale/reused). Separated from the
+// live snapshot below so the authorization decision is unit-testable with a hand-built
+// process tree.
+bool ancestorChainContainsImage(DWORD pid,
+                                const QHash<DWORD, DWORD>& parent,
+                                const QHash<DWORD, QString>& image,
+                                const QString& target_basename_lower,
+                                int max_depth) {
+    DWORD current = pid;
+    for (int depth = 0; depth < max_depth && current != 0; ++depth) {
+        const auto it = parent.constFind(current);
+        if (it == parent.constEnd()) {
+            break;
+        }
+        if (image.value(it.value()) == target_basename_lower) {
+            return true;
+        }
+        current = it.value();
+    }
+    return false;
+}
+
 // Best-effort walk up the process tree looking for an ancestor image (e.g.
 // chrome.exe). Toolhelp parent pids can be stale/reused, so this is defense in depth,
 // not a hard boundary.
@@ -219,21 +244,19 @@ bool hasAncestorImage(DWORD pid, const QString& target_basename_lower, int max_d
     }
     CloseHandle(snapshot);
 
-    DWORD current = pid;
-    for (int depth = 0; depth < max_depth && current != 0; ++depth) {
-        const auto it = parent.constFind(current);
-        if (it == parent.constEnd()) {
-            break;
-        }
-        if (image.value(it.value()) == target_basename_lower) {
-            return true;
-        }
-        current = it.value();
-    }
-    return false;
+    return ancestorChainContainsImage(pid, parent, image, target_basename_lower, max_depth);
 }
 
 }  // namespace
+
+bool BrowserBridgePipeServer::ancestorChainContainsImageForTesting(
+    DWORD pid,
+    const QHash<DWORD, DWORD>& parent,
+    const QHash<DWORD, QString>& image,
+    const QString& target_basename_lower,
+    int max_depth) {
+    return ancestorChainContainsImage(pid, parent, image, target_basename_lower, max_depth);
+}
 
 BrowserBridgePipeServer::BrowserBridgePipeServer(Options options) : options_(std::move(options)) {
     rendezvous_path_ = options_.rendezvous_path.isEmpty() ? browserBridgeRendezvousPath()

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <QHash>
 #include <QJsonObject>
 #include <QString>
 
@@ -87,6 +88,19 @@ public:
 
     [[nodiscard]] QString pipeName() const { return pipe_name_; }
     [[nodiscard]] QString token() const { return token_; }
+
+    /// @brief Pure ancestor-chain check extracted from the live Toolhelp walk behind
+    ///        require_chrome_ancestor: from @p pid, climb up to @p max_depth ancestors via
+    ///        @p parent (child->parent) and return true iff one's lowercased image (from
+    ///        @p image) equals @p target_basename_lower. Bounded by max_depth so even a
+    ///        cyclic/malformed parent map terminates. Test seam for the Chrome-launched
+    ///        peer bind (defense in depth over the handshake token).
+    [[nodiscard]] static bool ancestorChainContainsImageForTesting(
+        DWORD pid,
+        const QHash<DWORD, DWORD>& parent,
+        const QHash<DWORD, QString>& image,
+        const QString& target_basename_lower,
+        int max_depth);
 
 private:
     // Create the named pipe + shutdown event and publish the rendezvous record. Sets pipe_,
