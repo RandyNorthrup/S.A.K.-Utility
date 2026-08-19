@@ -5136,13 +5136,27 @@ gate teaches people to disable both.
         1. DONE. scripts/run_lizard.py now runs JavaScript at the repo's own thresholds
            (CCN <= 10, PARAM <= 5, length <= 70) against browser/, and node is a REQUIRED
            entry in the toolchain preflight so the gate cannot silently stop running.
-        2. IN PROGRESS. 24 violations at the start, 22 now. dispatchCommand (41 CCN, the
-           worst) and axNodeToCapture (33) are closed. The rest are held by
+        2. IN PROGRESS. 24 violations at the start, 21 now. dispatchCommand (41 CCN, the
+           worst), axNodeToCapture (33) and selectCallArgs (13) are closed. The rest are held by
            scripts/lizard_js_baseline.txt, which is a RATCHET rather than an exclusion: a
            violation not in the list fails, a listed function that gets worse fails, and a
            listed function that no longer violates fails until its row is deleted. That last
            rule is the point -- a baseline nobody must prune is an exclusion list with extra
            steps. All three directions were proven to fail before the gate was wired.
+           selectCallArgs (2026-08-19, ext 0.3.15): the four criterion booleans plus the
+           parallel-ternary return became a table-driven SELECT_CRITERIA (one {present, row} row
+           per criterion) and a flat "exactly one matches" check -- CCN 13 -> 3, behaviour identical
+           (the 7 node-harness assertions over the SHIPPED bytes stay green; the "reject a
+           contradictory call, no precedence" contract is preserved because exactly-one is still
+           validated before any row is returned). The refactor was verified end to end through the
+           full G21-9 flow: node suite 24/24, lizard JS gate green with the baseline row deleted,
+           the crx re-packed + re-signed with the pinned id ofodhfbipljnhenjjjpbdaglkjdphoec, and
+           the manifest version + kBrowserExtensionVersion bumped in lockstep (the installer's
+           pinnedIdentityMatchesManifest test cross-checks them, so a version bump that missed the
+           C++ constant fails the gate -- it caught exactly that here before the commit). Full
+           Release ctest 249/249. Only node-TESTED functions are refactored; the untested
+           chrome-interacting handlers stay put until a stub-driven test covers them (no
+           behaviour-blind refactor of the certified artifact).
         3. DONE. tests/unit/test_browser_extension_pure.mjs, 24 tests, registered with ctest.
 
       The harness loads background.js AS SHIPPED under a stubbed chrome rather than splitting

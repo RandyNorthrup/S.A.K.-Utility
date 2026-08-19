@@ -1929,25 +1929,29 @@ const selectOptionFn = function (mode, value, label, index, values) {
 // Exactly one criterion, as the tool documents. Picking one by precedence would silently
 // resolve a contradictory call (value:"a" with index:3) to whichever branch happens to win, and
 // act on an option the caller did not unambiguously name.
+// One row per criterion: present() tests whether the caller named it, row() is the CDP
+// argument tuple when it is the chosen one. Table-driven so selectCallArgs stays a flat
+// "exactly one must match" check instead of a chain of parallel ternaries (CCN gate).
+const SELECT_CRITERIA = [
+  { present: (a) => typeof a.value === "string" && a.value.length > 0,
+    row: (a) => ["value", a.value, "", -1, []] },
+  { present: (a) => typeof a.label === "string" && a.label.length > 0,
+    row: (a) => ["label", "", a.label, -1, []] },
+  { present: (a) => Number.isInteger(a.index),
+    row: (a) => ["index", "", "", a.index, []] },
+  { present: (a) => Array.isArray(a.values) && a.values.length > 0,
+    row: (a) => ["values", "", "", -1, a.values.map(String)] },
+];
+
 function selectCallArgs(args) {
-  const hasValue = typeof args.value === "string" && args.value.length > 0;
-  const hasLabel = typeof args.label === "string" && args.label.length > 0;
-  const hasIndex = Number.isInteger(args.index);
-  const hasValues = Array.isArray(args.values) && args.values.length > 0;
-  const criteria = [hasValue, hasLabel, hasIndex, hasValues].filter(Boolean).length;
-  if (criteria === 0) {
+  const matched = SELECT_CRITERIA.filter((c) => c.present(args));
+  if (matched.length === 0) {
     throw new Error("browser_select needs one of value, label, index, or values.");
   }
-  if (criteria > 1) {
+  if (matched.length > 1) {
     throw new Error("browser_select takes exactly one of value, label, index, or values.");
   }
-  return [
-    hasValues ? "values" : hasValue ? "value" : hasLabel ? "label" : "index",
-    hasValue ? args.value : "",
-    hasLabel ? args.label : "",
-    hasIndex ? args.index : -1,
-    hasValues ? args.values.map(String) : [],
-  ];
+  return matched[0].row(args);
 }
 
 // Select an <option> in a <select> by value, visible label, or index. The matching runs

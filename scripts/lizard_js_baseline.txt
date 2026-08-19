@@ -35,6 +35,5 @@ mediaFn@browser/extension/background.js              | 17 | 2 | 27
 occlusionAt@browser/extension/background.js          | 18 | 4 | 36
 onHostMessage@browser/extension/background.js        | 15 | 1 | 62
 printPageOptions@browser/extension/background.js     | 13 | 1 | 22
-selectCallArgs@browser/extension/background.js       | 13 | 1 | 20
 selectOptionFn@browser/extension/background.js       | 26 | 5 | 56
 viewportState@browser/extension/background.js        | 15 | 1 | 21
