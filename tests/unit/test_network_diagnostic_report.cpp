@@ -257,8 +257,11 @@ void NetworkDiagnosticReportTests::html_section_bandwidthResults() {
     gen.setBandwidthData(bw);
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("500")) || html.contains(QStringLiteral("500.5")));
-    QVERIFY(html.contains(QStringLiteral("100")) || html.contains(QStringLiteral("100.2")));
+    // Pin the exact fixed-precision rendering (kReportMetricPrecision = 2). The prior
+    // `contains("500") || contains("500.5")` was satisfied by any substring and could
+    // not catch a precision or unit-formatting regression.
+    QVERIFY(html.contains(QStringLiteral("500.50")));
+    QVERIFY(html.contains(QStringLiteral("100.20")));
 }
 
 void NetworkDiagnosticReportTests::html_section_wifiAnalysis() {

@@ -320,7 +320,12 @@ void AiSubagentRunnerTests::emptyFailedModelStatusContinuesDegraded() {
     // A contentless "failed" subagent must be reported honestly as Degraded, not
     // laundered into Complete. It still continues (non-fatal) with a risk recorded.
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Degraded);
-    QVERIFY(!result.summary.isEmpty());
+    // Pin the honest degradation summary. `!isEmpty()` could not tell the auditable
+    // "recording this phase as degraded" message apart from any laundered success text.
+    QCOMPARE(result.summary,
+             QStringLiteral("Subagent returned a failed status without explanation or content; "
+                            "recording this phase as degraded and continuing with available prior "
+                            "workflow evidence."));
     QVERIFY(result.risks.join(QStringLiteral("\n")).contains(QStringLiteral("failed status")));
     QVERIFY(client.last_request.context.contains(
         QStringLiteral("Output schema label: drive_evidence")));

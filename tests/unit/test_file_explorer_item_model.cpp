@@ -729,7 +729,10 @@ private Q_SLOTS:
                                 Qt::AscendingOrder);
 
         const QVector<int> headers = group_proxy.headerRows();
-        QVERIFY(!headers.isEmpty());
+        // Three files with distinct leading letters (a/b/c) group into exactly three
+        // single-letter sections. `!isEmpty()` guarded the .first() deref but would not
+        // catch a grouping regression that merged or dropped sections.
+        QCOMPARE(headers.size(), 3);
         const int header_row = headers.first();
         const QString section = group_proxy.index(header_row, 0).data().toString();
         QVERIFY(!section.isEmpty());

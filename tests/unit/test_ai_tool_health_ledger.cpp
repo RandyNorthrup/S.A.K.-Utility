@@ -123,7 +123,12 @@ void AiToolHealthLedgerTests::concurrentRecordAndReadIsThreadSafe() {
     // Concurrent readers on the calling thread while the pool writes.
     for (int i = 0; i < kIterations * 4; ++i) {
         const QJsonObject snap = ledger.snapshot();
-        QVERIFY(snap.value(QStringLiteral("record_count")).toInt() >= 0);
+        // record_count == records.size(): it grows monotonically toward the distinct
+        // tool count and must never exceed it. A torn/garbage read or a duplicate-key
+        // bug under the race would break the [0, kToolCount] bound; `>= 0` (always true
+        // for a count) could not.
+        const int record_count = snap.value(QStringLiteral("record_count")).toInt(-1);
+        QVERIFY(record_count >= 0 && record_count <= kToolCount);
         (void)ledger.check(QStringLiteral("tool_%1").arg(i % kToolCount));
         (void)ledger.size();
     }
