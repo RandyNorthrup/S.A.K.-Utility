@@ -44,7 +44,8 @@ private slots:
     void rendezvous_roundTripsAllFields();
     void rendezvous_readMissingFileFails();
     void rendezvous_invalidAppPidFailsClosed();
-    void rendezvous_overCapFileFailsClosed();  // R5-G10-9
+    void rendezvous_overCapFileFailsClosed();    // R5-G10-9
+    void rendezvous_malformedJsonFailsClosed();  // R5-G10-9
     void security_daclIsCurrentUserOnlyWithMediumLabel();
 };
 
@@ -140,6 +141,30 @@ void BrowserBridgeSecurityTests::rendezvous_overCapFileFailsClosed() {
     QString error;
     QVERIFY(!readRendezvousRecord(path, &out, &error));
     QVERIFY2(error.contains(QStringLiteral("too large")), qPrintable(error));
+}
+
+void BrowserBridgeSecurityTests::rendezvous_malformedJsonFailsClosed() {
+    // A size-legal (<= 64 KiB) but malformed record body must fail closed at the parse guard,
+    // BEFORE pipe_name/token/app_pid (which steer where the relay connects and what token it
+    // presents) are trusted. Covers both a JSON parse error and a valid-but-non-object document.
+    // The existing tests stop earlier: missing-file at open, over-cap at the size check (before the
+    // parse), and invalid-app_pid on a well-formed object.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    RendezvousRecord out;
+    for (const QByteArray& body :
+         {QByteArray("{\"pipe_name\":"),       // truncated write: parse error
+          QByteArray("[1,2,3]"),               // valid JSON, but not object
+          QByteArray("\"just-a-string\"")}) {  // valid JSON, but not object
+        const QString path = dir.filePath(QStringLiteral("malformed.json"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write(body);
+        file.close();
+        QString error;
+        QVERIFY2(!readRendezvousRecord(path, &out, &error), body.constData());
+        QVERIFY2(error.contains(QStringLiteral("Malformed rendezvous record")), qPrintable(error));
+    }
 }
 
 void BrowserBridgeSecurityTests::security_daclIsCurrentUserOnlyWithMediumLabel() {

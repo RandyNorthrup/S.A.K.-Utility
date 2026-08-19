@@ -1511,7 +1511,9 @@ private Q_SLOTS:
     void apfsLzbitmap_decodeRejectsMalformedChunkHeader();
     void apfsLzbitmap_decodeLoopGuardsFailClosed();
     void apfsResourceFork_parseRejectsMalformedBlob();
+    void apfsResourceFork_parseRejectsBadLayoutGeometry();
     void apfsBlockOffs_parseRejectsNonMonotonicTable();
+    void apfsBlockOffs_parseRejectsUndersizedTable();
     void apfsLzbitmapResourceForkLayoutMatchesApfsck();
     void apfsLzbitmapInlineAlgoDecodes();
     void apfsWriter_lzbitmapCompressedFileRoundTrips();
@@ -15683,6 +15685,40 @@ void PartitionManagerCoreTests::apfsResourceFork_parseRejectsMalformedBlob() {
              "a block entry pointing past the blob must fail closed");
 }
 
+void PartitionManagerCoreTests::apfsResourceFork_parseRejectsBadLayoutGeometry() {
+    // Further apfsParseResourceForkLayout guards on an untrusted 'cmpf' blob (companion to
+    // apfsResourceFork_parseRejectsMalformedBlob): a blob shorter than the fixed header, and a
+    // block count that is zero or whose table cannot fit the declared data area -- the num bound is
+    // the sole check keeping the block-entry table read (apfsDecodeResourceForkBlocksWith)
+    // in-bounds.
+    QByteArray payload;
+    while (payload.size() < 2000) {
+        payload.append(QByteArrayLiteral("resource fork layout-geometry negative vector. "));
+    }
+    const QByteArray valid = sak::apfsBuildResourceForkBlob(payload, sak::kApfsCompressZlibRsrc);
+    QVERIFY(!valid.isEmpty());
+    const auto expected = static_cast<uint64_t>(payload.size());
+
+    // A blob shorter than the fixed header (data_offset + prefix) is refused.
+    QVERIFY2(!sak::apfsParseResourceForkBlob(
+                  QByteArray(0x80, '\0'), sak::kApfsCompressZlibRsrc, expected)
+                  .has_value(),
+             "a blob shorter than the fixed resource-fork header must fail closed");
+
+    // The little-endian block count (num) sits at data_offs + 4. num == 0 and a num so large its
+    // table cannot fit the data area both fail closed (either would OOB-read the block table).
+    const auto layout = sak::apfsParseResourceForkLayout(valid);
+    QVERIFY(layout.has_value());
+    const qsizetype numOff = static_cast<qsizetype>(layout->data_offs) + 4;
+    for (const quint32 badNum : {quint32{0}, quint32{0x10'00'00'00}}) {
+        QByteArray poked = valid;
+        qToLittleEndian<quint32>(badNum, poked.data() + numOff);
+        QVERIFY2(!sak::apfsParseResourceForkBlob(poked, sak::kApfsCompressZlibRsrc, expected)
+                      .has_value(),
+                 badNum == 0 ? "num == 0 must fail closed" : "an oversized num must fail closed");
+    }
+}
+
 void PartitionManagerCoreTests::apfsBlockOffs_parseRejectsNonMonotonicTable() {
     // The block_offs[] container (LZBITMAP/LZVN/LZFSE resource fork) from an untrusted image. Its
     // sole per-pair structural guard (apfs_lzbitmap.h:173) rejects a non-monotonic or past-the-blob
@@ -15702,6 +15738,31 @@ void PartitionManagerCoreTests::apfsBlockOffs_parseRejectsNonMonotonicTable() {
     QVERIFY2(!sak::apfsParseLzbitmapResourceFork(badTable, static_cast<uint64_t>(payload.size()))
                   .has_value(),
              "a non-monotonic block_offs table must fail closed");
+}
+
+void PartitionManagerCoreTests::apfsBlockOffs_parseRejectsUndersizedTable() {
+    // Further apfsParseBlockOffsResourceFork bounds (companion to the non-monotonic test): a blob
+    // shorter than the (blockCount+1)*4 offset table it must read, and a final sentinel offset past
+    // the blob -- the checks that keep the offset-table read in-bounds (an OOB read otherwise).
+    QByteArray payload(sak::kApfsLzbitmapBlockSize + 4096, 'Z');  // 2 blocks -> 3 le32 offsets
+    const QByteArray valid = sak::apfsBuildLzbitmapResourceFork(payload);
+    QVERIFY(!valid.isEmpty());
+    const int blockCount = static_cast<int>((payload.size() + sak::kApfsLzbitmapBlockSize - 1) /
+                                            sak::kApfsLzbitmapBlockSize);
+
+    // A huge declared uncompressedSize implies a far larger offset table than the small blob holds.
+    const uint64_t hugeSize = static_cast<uint64_t>(256) * 1024 * 1024;  // blockCount ~ 0x1000
+    QVERIFY2(!sak::apfsParseLzbitmapResourceFork(valid, hugeSize).has_value(),
+             "a blob shorter than its declared offset table must fail closed");
+
+    // The final sentinel offset (offsets[blockCount], the last le32) pointing past the blob is
+    // refused before any block is decoded.
+    QByteArray badSentinel = valid;
+    qToLittleEndian<quint32>(static_cast<quint32>(valid.size() + 1000),
+                             badSentinel.data() + blockCount * 4);
+    QVERIFY2(!sak::apfsParseLzbitmapResourceFork(badSentinel, static_cast<uint64_t>(payload.size()))
+                  .has_value(),
+             "a sentinel offset past the blob must fail closed");
 }
 
 void PartitionManagerCoreTests::apfsLzbitmapInlineAlgoDecodes() {
