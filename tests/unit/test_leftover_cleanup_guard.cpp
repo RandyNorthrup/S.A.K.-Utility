@@ -51,6 +51,7 @@ private Q_SLOTS:
     // -- Firewall rules --
     void firewallRefusesAllWildcard();
     void firewallAllowsNamedRule();
+    void firewallRefusesDoubleQuoteBypass();  // R5-G10-9
 
     // -- Files / folders --
     void fileRefusesSystemAndRoots();
@@ -60,6 +61,8 @@ private Q_SLOTS:
     void fileRefusesBootAndCriticalTree();
     void fileAllowsSpecificLeftoverSubfolder();
     void fileRefusesUncAndRelative();
+    void fileRefusesWildcardAndControlChar();       // R5-G10-9
+    void fileRefusesCredentialCriticalDataFiles();  // R5-G10-9
 
     // -- Delete-time ancestor-junction-swap re-verification --
     void handleRedirectAllowsExactMatch();
@@ -354,6 +357,55 @@ void TestLeftoverCleanupGuard::handleRedirectRefusesSwapAndProtected() {
     // blind.
     QVERIFY(blocked(cleanupHandleRedirectRefusal(
         QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\x"), QString())));
+}
+
+// ============================================================================
+// R5-G10-9: three fail-closed screens the existing suite had left unproven.
+// ============================================================================
+
+// netsh strips a surrounding double-quote group, so a quoted name="all" (or any quote/token
+// injection) would bypass the bare-token "all" check and delete EVERY firewall rule. The existing
+// firewall test covers the bare "all" and a control char, but never a double quote.
+void TestLeftoverCleanupGuard::firewallRefusesDoubleQuoteBypass() {
+    QVERIFY(blocked(firewallRuleDeletionRefusal(QStringLiteral("\"all\""))));
+    QVERIFY(blocked(firewallRuleDeletionRefusal(QStringLiteral("rule\" name=all profile=any"))));
+    QVERIFY(blocked(firewallRuleDeletionRefusal(QStringLiteral("has\"quote"))));
+    // Non-vacuity: a legitimate rule name with spaces and parentheses is still allowed.
+    QVERIFY(!blocked(firewallRuleDeletionRefusal(QStringLiteral("Acme App (TCP-In)"))));
+}
+
+// A '*'/'?' wildcard or a control/NUL char in a delete path is refused before any path
+// resolution: a NUL makes Win32 truncate the target at that byte (so the executed deletion
+// target differs from the validated/displayed string), and '*'/'?' are wildcards illegal in
+// real Windows filenames.
+void TestLeftoverCleanupGuard::fileRefusesWildcardAndControlChar() {
+    QVERIFY(blocked(
+        filePathDeletionRefusal(QStringLiteral("C:\\Users\\Username\\AppData\\Local\\Acme\\*"))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\temp\\file?.log"))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\temp\\a\x01."))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\temp\\a") + QChar(u'\0') +
+                                            QStringLiteral("b.txt"))));  // embedded NUL
+    // Non-vacuity: the same leftover folder without the wildcard/control char is deletable.
+    QVERIFY(!blocked(filePathDeletionRefusal(
+        QStringLiteral("C:\\Users\\Username\\AppData\\Local\\Acme\\cache.tmp"))));
+}
+
+// The per-user registry hives (NTUSER.DAT / UsrClass.dat and their logs) and the machine crypto
+// key store live UNDER a shared user/machine root yet are never recoverable application leftovers:
+// deleting any of them breaks login, DPAPI/credentials, or per-user COM. Refused as the exact file
+// or subtree, on any drive.
+void TestLeftoverCleanupGuard::fileRefusesCredentialCriticalDataFiles() {
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Users\\Username\\ntuser.dat"))));
+    QVERIFY(
+        blocked(filePathDeletionRefusal(QStringLiteral("C:\\Users\\Username\\ntuser.dat.LOG1"))));
+    QVERIFY(blocked(filePathDeletionRefusal(
+        QStringLiteral("C:\\Users\\Username\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat"))));
+    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\ProgramData\\Microsoft\\Crypto"))));
+    QVERIFY(blocked(filePathDeletionRefusal(
+        QStringLiteral("C:\\ProgramData\\Microsoft\\Crypto\\RSA\\MachineKeys"))));
+    // Non-vacuity: an ordinary app leftover under the same AppData tree is still deletable.
+    QVERIFY(!blocked(filePathDeletionRefusal(
+        QStringLiteral("C:\\Users\\Username\\AppData\\Local\\AcmeCorp\\cache.dat"))));
 }
 
 QTEST_MAIN(TestLeftoverCleanupGuard)
