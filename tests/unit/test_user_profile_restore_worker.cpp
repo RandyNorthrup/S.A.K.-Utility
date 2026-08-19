@@ -1196,9 +1196,12 @@ void UserProfileRestoreWorkerTests::overwriteRestoreLeavesNoTempArtifacts() {
     QVERIFY(result.open(QIODevice::ReadOnly));
     QCOMPARE(result.readAll().size(), 5000);
 
-    // No swap temporaries left behind.
-    QVERIFY(!QFile::exists(destBase + "data.txt.sakold.tmp"));
-    QVERIFY(!QFile::exists(destBase + "data.txt.sakrestore.tmp"));
+    // No swap temporaries left behind. The real staging/rename temp is
+    // "data.txt.sak-<tag>-<random-hex>.tmp" (makeRestoreTempPath), so the two fixed names the
+    // code never produces asserted nothing; scan for any surviving match of the real pattern.
+    const QStringList swapLeftovers =
+        QDir(destBase).entryList({QStringLiteral("data.txt.sak-*.tmp")}, QDir::Files);
+    QVERIFY2(swapLeftovers.isEmpty(), qPrintable(swapLeftovers.join(QLatin1Char(','))));
 
     // The pre-overwrite original was preserved to a recovery copy (holds "tiny").
     QFile recovery(destBase + "data.txt.sakbak");

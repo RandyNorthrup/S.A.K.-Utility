@@ -4780,6 +4780,37 @@ So the suite itself must be audited for tests that pass regardless of the code.
 - [~] R5-G18-4 Every test must fail without its fix. For each regression test in this
   - AUTHORIZED PROGRAM, IN PROGRESS (relabelled 2026-08-16, NOT deferred): break-every-fix validation -- for each regression test, revert its fix locally and observe the failure. Worked slice by slice; fixes landed this campaign carry per-item non-vacuous notes (e.g. the G18-4 discipline cited in G22-10 / filenameFromChecksums). The full-campaign sweep is multi-week and proceeds incrementally. The G18-1 decoder/parser/comparator corpus is now proven under this discipline END-TO-END: the 2026-08-17 full-aggregate EXECUTED run (see the G18-1 EXECUTED-CAPSTONE bullet) reverts all 261 non-equivalent fix-sites in turn and confirms each covering test fails, from a clean committed tree -- 268 mutants, 261 killed, 7 declared-equivalent survive their own regression test, 0 unexpected holes.
   - PROGRESS 2026-08-18: swept tests/unit for VACUOUS (can-never-fail) assertions -- the strongest break-every-fix violation, since a tautology stays green against ANY code and thus can never be broken by reverting a fix. Found and fixed the one instance: test_network_adapter_inspector.cpp construction_default asserted QVERIFY(!inspector.objectName().isNull() || inspector.objectName().isNull()) -- literally "A || !A", always true. The ctor is ": QObject(parent) {}" (no setObjectName, verified at src/core/network_adapter_inspector.cpp:268), so the honest observable is an empty objectName; now asserts QVERIFY(inspector.objectName().isEmpty()), non-vacuous by construction (a ctor that self-named turns it red). Tree grep for the same A||!A / isNull()||!isNull() shape found NO other instance -- the remaining "||" sites are distinct-condition checks (elevation pixmap guard, fuzz JSON isUndefined||isNull, windows_user_scanner isEmpty||!exists fail-closed), not tautologies. G18-4 stays [~] for the full multi-week break-every-fix sweep.
+  - PROGRESS 2026-08-19 (commit pending, gated 249/249): a bounded weak-assertion sweep -- an
+    8-agent finder Workflow over the largest business-logic test files (per-file finder for
+    VACUOUS/WEAK assertions that stay green against a broken fix, each nominee adversarially
+    verified against the real production code) surfaced 14 nominees, 11 CONFIRMED_WEAK after
+    verification. All 11 STRENGTHENED (each exact value hand-verified against the production it
+    tests before pinning, so the suite still passes on correct code; being exact, each now fails on
+    the specific regression the verifier named):
+      * test_user_profile_restore_worker overwriteRestoreLeavesNoTempArtifacts: TWO fully VACUOUS
+        asserts -- QFile::exists("data.txt.sakold.tmp"/"data.txt.sakrestore.tmp"), names the code
+        NEVER produces (makeRestoreTempPath emits "<dest>.sak-<tag>-<random-hex>.tmp"), so a leaked
+        swap temp could never be caught. Replaced with a QDir glob scan for the real pattern
+        "data.txt.sak-*.tmp".
+      * test_advanced_search_worker textSearch_contextLines: context_before/after size `<= 1`
+        (0 passes too) -> exact QCOMPARE size==1 + content; networkReadTimeoutMs `> 0` +
+        self-referential compare -> exact ceiling QCOMPARE(clamped, 300000) so a silent bump of
+        kMaxNetworkTimeoutSec fails.
+      * test_ai_orchestrator: recovery reason `!isEmpty()` -> contains "Underlying failure:" + the
+        cause "HTTP 500" (catches dropping reasonWithCause's append); cancel error `contains("cancel")`
+        (the generic "Phase cancelled" fallback also contains it) -> contains the SPECIFIC token
+        reason "test_cancelled".
+      * test_file_explorer_types: write blocker `!isEmpty()` -> exact per-target reason
+        QCOMPARE(write.blocker, target.blockers.join("; ")) (writeBlocker echoes target.blockers,
+        so a generic-reason regression is caught).
+      * test_email_profile_manager registryBackupFileName: reserved-char case only checked
+        !contains('/') (the input "x:y*z?" has no '/') -> exact QCOMPARE ".../registry_x_y_z_.reg",
+        pinning ':'/'*'/'?' each map to '_' so re-admitting ':' as safe fails.
+      * test_user_data_manager: calculateSize `>= 300` -> exact ==300 (catches double-count /
+        cluster-size over-count); commonDataLocations `!empty()` -> size==4 + the four exact
+        patterns (catches dropping the BitLocker sentinel). The sweep's 3 FALSE_POSITIVEs (real
+        contracts) were correctly spared by the adversarial verify phase. G18-4 stays [~] for the
+        rest of the multi-week sweep.
       campaign, prove it by reverting the fix locally and observing the failure
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.

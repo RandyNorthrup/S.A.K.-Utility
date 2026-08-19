@@ -513,6 +513,11 @@ void TestEmailProfileManager::registryBackupFileName_sanitizesTraversal() {
         QVERIFY(name.startsWith(QStringLiteral("registry_")));
         QVERIFY(name.endsWith(QStringLiteral(".reg")));
     }
+    // Pin the exact reserved-char mapping. The loop's slash/backslash checks could not catch a
+    // regression that re-admits ':' (or '*' / '?') as a safe char -- none of those add a '/' -- so
+    // assert each maps to '_' outright: "x:y*z?" -> "registry_x_y_z_.reg".
+    QCOMPARE(EmailProfileManager::registryBackupFileName(QStringLiteral("x:y*z?")),
+             QStringLiteral("registry_x_y_z_.reg"));
     // A name that would collapse to nothing / "." / ".." falls back to a fixed placeholder.
     QCOMPARE(EmailProfileManager::registryBackupFileName(QStringLiteral("..")),
              QStringLiteral("registry_profile.reg"));

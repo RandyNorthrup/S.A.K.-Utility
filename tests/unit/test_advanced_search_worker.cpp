@@ -672,8 +672,14 @@ void AdvancedSearchWorkerTests::textSearch_contextLines() {
 
     auto matches = runWorker(config);
     QCOMPARE(matches.size(), 1);
-    QVERIFY(matches[0].context_before.size() <= 1);
-    QVERIFY(matches[0].context_after.size() <= 1);
+    // Exact pins, not <= 1: the match is at line index 1, so with context_lines=1 the before/after
+    // windows are each EXACTLY one known line. `<= 1` was satisfied by 0 too, so a regression that
+    // emptied either context loop shipped green; pin size AND content so a dead or wrong-line loop
+    // fails here.
+    QCOMPARE(matches[0].context_before.size(), 1);
+    QCOMPARE(matches[0].context_before.first(), QStringLiteral("Hello World"));
+    QCOMPARE(matches[0].context_after.size(), 1);
+    QCOMPARE(matches[0].context_after.first(), QStringLiteral("Hello again on line 3"));
 }
 
 void AdvancedSearchWorkerTests::textSearch_lineNumbers() {
@@ -1848,9 +1854,12 @@ void AdvancedSearchWorkerTests::networkReadTimeoutMs_clampsConfiguredSeconds() {
     QCOMPARE(AdvancedSearchWorker::networkReadTimeoutMs(std::numeric_limits<int>::min()),
              kDefaultMs);
 
-    // A huge configured value is clamped so seconds * 1000 cannot overflow int.
+    // A huge configured value is clamped so seconds * 1000 cannot overflow int. Pin the ABSOLUTE
+    // ceiling (kMaxNetworkTimeoutSec 300 * 1000 ms = 300000): `> 0` plus a self-referential compare
+    // could not catch a silent bump of the max (e.g. 300 -> 3000) that decuples the per-read
+    // timeout; the exact value does.
     const int clamped = AdvancedSearchWorker::networkReadTimeoutMs(std::numeric_limits<int>::max());
-    QVERIFY(clamped > 0);
+    QCOMPARE(clamped, 300'000);
     QCOMPARE(clamped, AdvancedSearchWorker::networkReadTimeoutMs(1'000'000));
 }
 

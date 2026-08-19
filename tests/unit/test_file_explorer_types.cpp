@@ -317,7 +317,10 @@ private Q_SLOTS:
             const auto write = sak::FileExplorerCommandRegistry::state(
                 sak::FileExplorerCommandId::WriteFile, context);
             QVERIFY(!write.enabled);
-            QVERIFY2(!write.blocker.isEmpty(), qPrintable(target.file_system));
+            // Pin the SPECIFIC per-target write reason: writeBlocker echoes target.blockers, so a
+            // regression that returned the generic "Selected target does not allow file writes."
+            // for every blocked target would still be non-empty and slip past `!isEmpty()`.
+            QCOMPARE(write.blocker, target.blockers.join(QStringLiteral("; ")));
         }
     }
 

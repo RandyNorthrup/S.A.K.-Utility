@@ -362,7 +362,12 @@ void AiOrchestratorTests::stopsOnPhaseFailureWhenConfigured() {
     const auto recovery =
         result.phases.first().metadata.value(QStringLiteral("recovery_decision")).toObject();
     QCOMPARE(recovery.value(QStringLiteral("action")).toString(), QStringLiteral("abort"));
-    QVERIFY(!recovery.value(QStringLiteral("reason")).toString().isEmpty());
+    const QString reason = recovery.value(QStringLiteral("reason")).toString();
+    // Not just non-empty: the recovery reason must carry the underlying cause. reasonWithCause
+    // appends "Underlying failure: <error>" (the phase error here is exactly "HTTP 500"), so a
+    // regression that stops appending the cause -- or emits an empty/generic reason -- fails here.
+    QVERIFY2(reason.contains(QStringLiteral("Underlying failure:")), qPrintable(reason));
+    QVERIFY2(reason.contains(QStringLiteral("HTTP 500")), qPrintable(reason));
 }
 
 void AiOrchestratorTests::cancelsRunWhenRootTokenCancelled() {
@@ -383,7 +388,12 @@ void AiOrchestratorTests::cancelsRunWhenRootTokenCancelled() {
     const auto result = orchestrator.run(workflow, QStringLiteral("run7"), root);
 
     QCOMPARE(result.status, sak::ai::AiRunStatus::Cancelled);
-    QVERIFY(result.error_message.contains(QStringLiteral("cancel")));
+    // Not just contains("cancel"): the generic "Phase cancelled" fallback also contains "cancel".
+    // Pin the SPECIFIC token reason ("test_cancelled", set by FakeModelClient::invoke ->
+    // token.cancel), so a regression that drops the subagent's error_message and falls back to the
+    // generic phrase fails here.
+    QVERIFY2(result.error_message.contains(QStringLiteral("test_cancelled")),
+             qPrintable(result.error_message));
 }
 
 void AiOrchestratorTests::overseerHandlerInvoked() {

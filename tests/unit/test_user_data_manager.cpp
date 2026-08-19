@@ -39,7 +39,18 @@ private Q_SLOTS:
     void commonDataLocationsNotEmpty() {
         UserDataManager mgr;
         auto locations = mgr.getCommonDataLocations();
-        QVERIFY(!locations.empty());
+        // Pin the exact contractual set (4 entries). `!empty()` could not catch a refactor that
+        // dropped the BitLocker Recovery Keys sentinel (the entry the backup wizard handles
+        // specially) -- it would leave 3 and still be non-empty.
+        QCOMPARE(locations.size(), static_cast<size_t>(4));
+        QStringList patterns;
+        for (const auto& loc : locations) {
+            patterns << loc.pattern;
+        }
+        QVERIFY(patterns.contains(QStringLiteral("Google Chrome")));
+        QVERIFY(patterns.contains(QStringLiteral("Mozilla Firefox")));
+        QVERIFY(patterns.contains(QStringLiteral("Visual Studio Code")));
+        QVERIFY(patterns.contains(QStringLiteral("BitLocker Recovery Keys")));
     }
 
     void commonDataLocationsHaveDescriptions() {
@@ -134,8 +145,10 @@ private Q_SLOTS:
         QStringList paths = {tmpDir.path()};
         qint64 size = mgr.calculateSize(paths);
 
-        // Should be at least 300 bytes
-        QVERIFY(size >= 300);
+        // Exactly 100 + 200 logical bytes. `>= 300` could not catch an over-count regression:
+        // a double-visited file (~600), summing on-disk cluster allocation (~8192), or a spurious
+        // directory/entry all satisfy `>= 300` while breaking the logical-byte contract.
+        QCOMPARE(size, static_cast<qint64>(300));
     }
 
     void listBackupsOnEmptyDir() {
