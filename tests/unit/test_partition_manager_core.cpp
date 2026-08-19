@@ -1475,6 +1475,7 @@ private Q_SLOTS:
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
     void apfsWriter_formatsUnlockableEncryptedVolume();
     void apfsKeybag_parseKeyBlobRefusesMalformedDer();        // R5-G10-9
+    void apfsKeybag_parseKeyBlobCoercesOverWideIterations();  // R5-G10-9
     void apfsKeybag_parseKeybagBlockRefusesMalformedBlock();  // R5-G10-9
     void apfsWriter_rawFormatHonorsVolumePassword();
     void apfsReader_decryptsEncryptedVolumeWithCredential();
@@ -13764,6 +13765,41 @@ void PartitionManagerCoreTests::apfsKeybag_parseKeyBlobRefusesMalformedDer() {
     QVERIFY(parseKeyBlob(validVek, &parsed));
     QCOMPARE(parsed.wrappedKey, p.wrappedKey);
     QCOMPARE(parsed.uuid, p.uuid);
+}
+
+void PartitionManagerCoreTests::apfsKeybag_parseKeyBlobCoercesOverWideIterations() {
+    using namespace sak::apfs_keybag;
+    // The KEK inner [0x84] iterations field is an attacker-authored DER INTEGER on a foreign
+    // FileVault image. assignKeyBlobField coerces a >8-byte-ENCODED value to UINT64_MAX rather than
+    // letting derBigEndianU64 silently truncate it to its low 8 bytes, so a wrapped/oversized count
+    // fails the downstream PBKDF2 iteration ceiling closed instead of deriving against an
+    // attacker-chosen number. The existing malformed-DER test covers only the top-level length
+    // guards, which reject before ever reaching an inner field.
+    KeyBlobParams base;
+    base.uuid = QByteArray(16, '\x11');
+    base.wrappedKey = QByteArray(40, '\x22');
+    base.flags8 = QByteArray(8, '\0');
+    base.outerSalt = QByteArray(16, '\x33');
+    base.salt = QByteArray(16, '\x44');
+
+    // iterations with bit 63 set DER-encodes to 9 bytes (an INTEGER gets a 0x00 sign prefix when
+    // its top bit is set), so the parsed [0x84] value is over-wide and must coerce to UINT64_MAX.
+    KeyBlobParams over = base;
+    over.iterations = 0x80'00'00'00'00'00'00'00ull;
+    const QByteArray overBlob = buildKekBlob(over);
+    QVERIFY(!overBlob.isEmpty());
+    KeyBlobParams parsedOver;
+    QVERIFY2(parseKeyBlob(overBlob, &parsedOver), "a well-formed KEK blob must still parse");
+    QCOMPARE(parsedOver.iterations, std::numeric_limits<uint64_t>::max());
+
+    // Non-vacuity control: a normal iteration count (DER-encodes to <= 8 bytes) round-trips
+    // exactly, so the coercion above is scoped to over-wide encodings, not applied to every count.
+    KeyBlobParams normal = base;
+    normal.iterations = 100'000;
+    const QByteArray normalBlob = buildKekBlob(normal);
+    KeyBlobParams parsedNormal;
+    QVERIFY(parseKeyBlob(normalBlob, &parsedNormal));
+    QCOMPARE(parsedNormal.iterations, static_cast<uint64_t>(100'000));
 }
 
 void PartitionManagerCoreTests::apfsKeybag_parseKeybagBlockRefusesMalformedBlock() {

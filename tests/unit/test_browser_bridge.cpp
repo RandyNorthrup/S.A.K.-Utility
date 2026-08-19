@@ -107,6 +107,7 @@ private slots:
     void reconcileDomEpoch_malformedEpochMarksRefsStale();
     void reconcileDomEpoch_omittedEpochAfterBaselineMarksRefsStale();  // R5-G10-9
     void printReply_nonPdfDataIsRefused();                             // R5-G10-9
+    void printReply_oversizePayloadIsRefused();                        // R5-G10-9
     void screenshotReply_hostileMimeTypeCoercedToPng();
     void genericReply_oversizeTextIsRejected();
 };
@@ -615,6 +616,28 @@ void BrowserBridgeTests::printReply_nonPdfDataIsRefused() {
     QVERIFY(emptyIn.is_error);
     QVERIFY(emptyIn.error.contains(QStringLiteral("empty PDF")));
     QVERIFY(!emptyIn.error.contains(QStringLiteral("not a valid PDF")));
+}
+
+void BrowserBridgeTests::printReply_oversizePayloadIsRefused() {
+    // The print oversize cap (browser_bridge.cpp:355, kMaxPdfBase64 = 24 MiB) fires BEFORE the
+    // base64 decode and the %PDF- magic check, so a pathological / page-influenced print payload
+    // cannot force a huge decode + disk write. This is the print sibling of the already-tested
+    // screenshot (16 MiB) and generic-reply (8 MiB) oversize caps.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto print = session.beginCommand(QStringLiteral("browser_print"), {});
+    // One byte over the 24 MiB base64 cap. The size check trips before any decode, so the content
+    // need not be valid base64.
+    const QString oversize(24 * 1024 * 1024 + 1, QLatin1Char('A'));
+    const auto in = session.onReply(resultFrame(print.frame.value(QStringLiteral("id")).toString(),
+                                                QStringLiteral("print"),
+                                                QJsonObject{{QStringLiteral("data"), oversize}}));
+    QVERIFY(in.matched);
+    QVERIFY(in.is_error);
+    QVERIFY2(in.error.contains(QStringLiteral("too large")), qPrintable(in.error));
+    // Guard-isolation: the oversize error is DISTINCT from the magic-check message, so this is the
+    // size cap firing, not the %PDF- guard.
+    QVERIFY(!in.error.contains(QStringLiteral("not a valid PDF")));
 }
 
 void BrowserBridgeTests::reconcileDomEpoch_malformedEpochMarksRefsStale() {
