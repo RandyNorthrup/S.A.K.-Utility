@@ -53,6 +53,9 @@ private Q_SLOTS:
     void authorizeWin32Mcp_browserInputRequiresConfirmEveryMode();
     void authorizeWin32Mcp_assistedMutatingRequiresConfirm();
     void authorizeWin32Mcp_unattendedHighRiskRequiresRestorePoint();
+    void win32McpEnvironment_refusesProtectedAndNonStringVars();  // R5-G10-9
+    void docsQuery_refusesNonHttpsEndpoint();                     // R5-G10-9
+    void planWin32McpCall_refusesMalformedEnvelope();             // R5-G10-9
 };
 
 // The registry loads the embedded resource by default and honors an on-disk providers.json only
@@ -798,6 +801,119 @@ void AiProviderGatewayTests::authorizeWin32Mcp_unattendedHighRiskRequiresRestore
     lowRisk.high_risk = false;
     QVERIFY2(sak::ai::authorizeWin32McpCall(lowRisk, Access::UnattendedFullAccess, {}).isEmpty(),
              "a non-high-risk unattended call must not require a restore point");
+}
+
+// ============================================================================
+// R5-G10-9 re-sweep fills: fail-closed negatives for the AI-layer trust boundaries
+// on a disk-overridable providers.json manifest and a model-supplied win32 call
+// envelope. Each drives the real hostile input at the real guard and carries a
+// non-vacuity / guard-isolation control.
+// ============================================================================
+
+void AiProviderGatewayTests::win32McpEnvironment_refusesProtectedAndNonStringVars() {
+    // A providers.json manifest must not set a PROTECTED child env var: it redirects where the
+    // (possibly elevated) MCP child resolves code (PATH / Qt plugin paths) or which user dirs it
+    // reads/writes. mergeManifestEnvironment fails closed -- the returned env never reaches the
+    // success block that sets WIN32_MCP_RESULT_ENVELOPE, and the error names the offending var.
+    for (const QString& name : {QStringLiteral("PATH"),
+                                QStringLiteral("QT_PLUGIN_PATH"),
+                                QStringLiteral("LD_PRELOAD"),
+                                QStringLiteral("COMSPEC")}) {
+        const QJsonObject provider{
+            {QStringLiteral("environment"), QJsonObject{{name, QStringLiteral("C:/attacker")}}}};
+        QString error;
+        const QProcessEnvironment env = sak::ai::AiProviderGateway::win32McpEnvironment(
+            QStringLiteral("read_only"), provider, &error);
+        QVERIFY2(error.contains(QStringLiteral("may not set MCP child environment")),
+                 qPrintable(name + QStringLiteral(": ") + error));
+        QVERIFY2(!env.contains(QStringLiteral("WIN32_MCP_RESULT_ENVELOPE")),
+                 "a refused manifest env must fail closed before the success markers are set");
+    }
+
+    // A non-string value is refused too, rather than partially applied with a coerced value.
+    QString nsError;
+    const QJsonObject nonString{
+        {QStringLiteral("environment"), QJsonObject{{QStringLiteral("CUSTOM"), 123}}}};
+    const QProcessEnvironment nsEnv = sak::ai::AiProviderGateway::win32McpEnvironment(
+        QStringLiteral("read_only"), nonString, &nsError);
+    QVERIFY(nsError.contains(QStringLiteral("environment value is not a string")));
+    QVERIFY(!nsEnv.contains(QStringLiteral("WIN32_MCP_RESULT_ENVELOPE")));
+
+    // Non-vacuity control: a benign string var is accepted and the success markers ARE set, so the
+    // rejections above are scoped to protected/non-string vars, not to every manifest environment.
+    QString okError = QStringLiteral("preset");
+    const QJsonObject benign{{QStringLiteral("environment"),
+                              QJsonObject{{QStringLiteral("CUSTOM"), QStringLiteral("v")}}}};
+    const QProcessEnvironment okEnv = sak::ai::AiProviderGateway::win32McpEnvironment(
+        QStringLiteral("read_only"), benign, &okError);
+    QVERIFY(okError.isEmpty());
+    QCOMPARE(okEnv.value(QStringLiteral("CUSTOM")), QStringLiteral("v"));
+    QVERIFY(okEnv.contains(QStringLiteral("WIN32_MCP_RESULT_ENVELOPE")));
+}
+
+void AiProviderGatewayTests::docsQuery_refusesNonHttpsEndpoint() {
+    // A providers.json docs provider endpoint is untrusted disk-overridable text. An http-transport
+    // provider whose endpoint is not an absolute https URL must be refused so the model's docs
+    // query is never POSTed to an attacker host or over cleartext.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString providers_path =
+        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
+    const QJsonObject provider{{QStringLiteral("id"), QStringLiteral("microsoft_docs")},
+                               {QStringLiteral("transport"), QStringLiteral("http")},
+                               {QStringLiteral("endpoint"),
+                                QStringLiteral("http://attacker.example/mcp")}};  // non-TLS
+    QVERIFY(
+        writeFile(providers_path,
+                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
+                      .toJson(QJsonDocument::Compact)));
+
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    QString error;
+    const QJsonObject result = gateway.docsQuery(
+        QJsonObject{{QStringLiteral("provider_id"), QStringLiteral("microsoft_docs")},
+                    {QStringLiteral("query"), QStringLiteral("ui automation")}},
+        &error);
+    QVERIFY(result.isEmpty());
+    QVERIFY2(error.contains(QStringLiteral("not an absolute https URL")), qPrintable(error));
+}
+
+void AiProviderGatewayTests::planWin32McpCall_refusesMalformedEnvelope() {
+    // Qt would silently coerce a non-object tool_arguments to {} and run the tool on server
+    // defaults (active tab/window) instead of the model's explicit, constrained arguments; a
+    // non-integer timeout_ms would silently become the default. planWin32McpCall fails closed on
+    // both. The envelope guard runs before any provider lookup, so no registry fixture is needed.
+    const sak::ai::AiProviderGateway gateway;
+
+    QString argsError;
+    [[maybe_unused]] const auto argsPlan = gateway.planWin32McpCall(
+        QJsonObject{{QStringLiteral("arguments"),
+                     QJsonObject{{QStringLiteral("tool_name"), QStringLiteral("browser_click")},
+                                 {QStringLiteral("tool_arguments"), QStringLiteral("e5")}}}},
+        &argsError);
+    QVERIFY2(argsError.contains(QStringLiteral("tool_arguments must be an object")),
+             qPrintable(argsError));
+
+    QString timeoutError;
+    [[maybe_unused]] const auto timeoutPlan = gateway.planWin32McpCall(
+        QJsonObject{{QStringLiteral("arguments"),
+                     QJsonObject{{QStringLiteral("tool_name"), QStringLiteral("browser_snapshot")},
+                                 {QStringLiteral("timeout_ms"), QStringLiteral("soon")}}}},
+        &timeoutError);
+    QVERIFY2(timeoutError.contains(QStringLiteral("timeout_ms must be an integer")),
+             qPrintable(timeoutError));
+
+    // Guard-isolation control: a well-formed envelope does NOT yield either envelope error (any
+    // later error would be a registry matter, not the envelope guard), so the guards are scoped to
+    // the malformed shapes rather than firing on every call.
+    QString okError;
+    [[maybe_unused]] const auto okPlan =
+        gateway.planWin32McpCall(QJsonObject{{QStringLiteral("arguments"),
+                                              QJsonObject{{QStringLiteral("tool_name"),
+                                                           QStringLiteral("browser_snapshot")}}}},
+                                 &okError);
+    QVERIFY(!okError.contains(QStringLiteral("must be an object")));
+    QVERIFY(!okError.contains(QStringLiteral("must be an integer")));
 }
 
 QTEST_GUILESS_MAIN(AiProviderGatewayTests)
