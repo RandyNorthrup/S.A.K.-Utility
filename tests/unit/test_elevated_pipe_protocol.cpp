@@ -14,6 +14,8 @@
 
 #include <QTest>
 
+#include <array>
+
 class TestElevatedPipeProtocol : public QObject {
     Q_OBJECT
 
@@ -310,6 +312,56 @@ private Q_SLOTS:
         const QByteArray at_cap(static_cast<int>(sak::kPipeMaxPayload), 'a');
         const QByteArray framed = sak::frameMessage(T::TaskResult, at_cap);
         QCOMPARE(framed.size(), sak::kPipeHeaderSize + at_cap.size());
+    }
+
+    void testDecodeFrameHeaderRejectsOversizedDeclaredLength() {
+        using S = sak::ElevatedPipeServer;
+
+        // Build a 5-byte frame header the way the wire encodes it: 4-byte little-endian
+        // length prefix + 1 type byte. This prefix is fully attacker-controlled -- it
+        // arrives off the untrusted pipe BEFORE any payload -- so an oversized declared
+        // length must be refused so readMessage() fails closed BEFORE resizing a buffer
+        // and reading that many bytes.
+        auto headerFor = [](uint32_t len, sak::PipeMessageType type) {
+            std::array<char, sak::kPipeHeaderSize> h{};
+            h[sak::kPipeFrameLengthByte0] = static_cast<char>(len & sak::kPipeFrameByteMask);
+            h[sak::kPipeFrameLengthByte1] =
+                static_cast<char>((len >> sak::kPipeFrameByteShift1) & sak::kPipeFrameByteMask);
+            h[sak::kPipeFrameLengthByte2] =
+                static_cast<char>((len >> sak::kPipeFrameByteShift2) & sak::kPipeFrameByteMask);
+            h[sak::kPipeFrameLengthByte3] =
+                static_cast<char>((len >> sak::kPipeFrameByteShift3) & sak::kPipeFrameByteMask);
+            h[sak::kPipeFrameTypeByte] = static_cast<char>(type);
+            return h;
+        };
+
+        // One byte over the 4 MiB ceiling -> refused, and the length decodes exactly.
+        const auto over = headerFor(sak::kPipeMaxPayload + 1, sak::PipeMessageType::TaskRequest);
+        const auto over_decoded = S::decodeFrameHeader(over.data());
+        QVERIFY(!over_decoded.length_within_cap);
+        QCOMPARE(over_decoded.payload_len, sak::kPipeMaxPayload + 1);
+
+        // Max uint32 (all length bytes 0xFF) -> refused, and still decodes exactly:
+        // proves the top-byte <<24 shift is well defined, not sign-extended garbage that
+        // could wrap back under the cap.
+        const auto maxlen = headerFor(0xFF'FF'FF'FFu, sak::PipeMessageType::TaskResult);
+        const auto max_decoded = S::decodeFrameHeader(maxlen.data());
+        QVERIFY(!max_decoded.length_within_cap);
+        QCOMPARE(max_decoded.payload_len, 0xFF'FF'FF'FFu);
+
+        // Non-vacuity control: a length exactly AT the cap is accepted, and both the
+        // length and the type round-trip -- so the refusals above are the ceiling gate,
+        // not an always-false result.
+        const auto at_cap = headerFor(sak::kPipeMaxPayload, sak::PipeMessageType::TaskRequest);
+        const auto at_decoded = S::decodeFrameHeader(at_cap.data());
+        QVERIFY(at_decoded.length_within_cap);
+        QCOMPARE(at_decoded.payload_len, sak::kPipeMaxPayload);
+        QCOMPARE(static_cast<uint8_t>(at_decoded.type),
+                 static_cast<uint8_t>(sak::PipeMessageType::TaskRequest));
+
+        // A small, ordinary length is accepted too (the common case).
+        const auto small = headerFor(16U, sak::PipeMessageType::ProgressUpdate);
+        QVERIFY(S::decodeFrameHeader(small.data()).length_within_cap);
     }
 };
 

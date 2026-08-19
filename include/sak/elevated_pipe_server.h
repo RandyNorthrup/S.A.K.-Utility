@@ -119,6 +119,41 @@ public:
                QString::compare(expectedImagePath, clientImagePath, Qt::CaseInsensitive) == 0;
     }
 
+    /// @brief Decoded 5-byte frame header: the little-endian payload length and type
+    ///        byte, plus whether the declared length is within the protocol ceiling.
+    struct DecodedFrameHeader {
+        uint32_t payload_len{0};
+        PipeMessageType type{};
+        bool length_within_cap{false};
+    };
+
+    /// @brief Pure decode of the 5-byte frame header ([4-byte little-endian length]
+    ///        [1-byte type]); the exact inverse of frameMessage()'s encode.
+    /// @param header pointer to at least kPipeHeaderSize readable bytes.
+    /// @note The 4-byte length prefix is fully attacker-controlled -- it arrives off the
+    ///       untrusted pipe BEFORE any payload. length_within_cap is false when the
+    ///       declared length exceeds kPipeMaxPayload, so readMessage() fails closed
+    ///       BEFORE it resizes a buffer and reads an attacker-declared oversized payload.
+    ///       Decoding each byte through uint32_t keeps the top-byte (<<24) shift well
+    ///       defined; a signed-int shift of a 0x80..0xFF byte would be UB. Pure + static
+    ///       (inline) for unit testing without a live pipe, matching classifyPeek() and
+    ///       clientPidMatchesParent() in this class.
+    [[nodiscard]] static DecodedFrameHeader decodeFrameHeader(const char* header) {
+        const uint32_t payload_len =
+            static_cast<uint32_t>(static_cast<uint8_t>(header[kPipeFrameLengthByte0])) |
+            (static_cast<uint32_t>(static_cast<uint8_t>(header[kPipeFrameLengthByte1]))
+             << kPipeFrameByteShift1) |
+            (static_cast<uint32_t>(static_cast<uint8_t>(header[kPipeFrameLengthByte2]))
+             << kPipeFrameByteShift2) |
+            (static_cast<uint32_t>(static_cast<uint8_t>(header[kPipeFrameLengthByte3]))
+             << kPipeFrameByteShift3);
+        return DecodedFrameHeader{
+            payload_len,
+            static_cast<PipeMessageType>(static_cast<uint8_t>(header[kPipeFrameTypeByte])),
+            payload_len <= kPipeMaxPayload,
+        };
+    }
+
 private:
     /// @brief Send raw bytes
     [[nodiscard]] bool sendRaw(const QByteArray& data);

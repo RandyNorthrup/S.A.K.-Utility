@@ -243,17 +243,13 @@ auto ElevatedPipeServer::readMessage() -> std::expected<PipeMessage, sak::error_
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
 
-    const uint32_t payload_len =
-        static_cast<uint8_t>(header[kPipeFrameLengthByte0]) |
-        (static_cast<uint8_t>(header[kPipeFrameLengthByte1]) << kPipeFrameByteShift1) |
-        (static_cast<uint8_t>(header[kPipeFrameLengthByte2]) << kPipeFrameByteShift2) |
-        (static_cast<uint8_t>(header[kPipeFrameLengthByte3]) << kPipeFrameByteShift3);
-    auto type = static_cast<PipeMessageType>(static_cast<uint8_t>(header[kPipeFrameTypeByte]));
-
-    if (payload_len > kPipeMaxPayload) {
-        sak::logError("ElevatedPipeServer: message too large: {}", payload_len);
+    const DecodedFrameHeader decoded = decodeFrameHeader(header);
+    if (!decoded.length_within_cap) {
+        sak::logError("ElevatedPipeServer: message too large: {}", decoded.payload_len);
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
+    const uint32_t payload_len = decoded.payload_len;
+    const auto type = decoded.type;
 
     QByteArray payload;
     if (payload_len > 0) {
