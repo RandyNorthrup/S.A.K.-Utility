@@ -105,6 +105,8 @@ private slots:
     void onReply_okFalseSnapshotDoesNotInstallRefIndex();
     void screenshotReply_malformedBase64IsError();
     void reconcileDomEpoch_malformedEpochMarksRefsStale();
+    void reconcileDomEpoch_omittedEpochAfterBaselineMarksRefsStale();  // R5-G10-9
+    void printReply_nonPdfDataIsRefused();                             // R5-G10-9
     void screenshotReply_hostileMimeTypeCoercedToPng();
     void genericReply_oversizeTextIsRejected();
 };
@@ -548,6 +550,71 @@ void BrowserBridgeTests::screenshotReply_malformedBase64IsError() {
     QVERIFY(in.is_error);
     QVERIFY(in.image_base64.isEmpty());
     QVERIFY(in.error.contains(QStringLiteral("malformed")));
+}
+
+void BrowserBridgeTests::reconcileDomEpoch_omittedEpochAfterBaselineMarksRefsStale() {
+    // Once a snapshot has established a domEpoch baseline, a later reply that OMITS the domEpoch
+    // field entirely is treated as an attempt to hide a navigation (a relayed, page-influenced
+    // frame stripping the field to keep stale refs live): refs must be invalidated so act-by-ref is
+    // refused until a fresh snapshot re-baselines the DOM. The existing epoch tests always send a
+    // later reply that STILL carries domEpoch, so the have_dom_epoch_ downgrade branch was never
+    // driven.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+
+    // Snapshot at DOM epoch 1 -> ref_index installed, baseline epoch 1, not stale.
+    const auto snap = session.beginCommand(QStringLiteral("browser_snapshot"), {});
+    (void)session.onReply(resultFrameEpoch(snap.frame.value(QStringLiteral("id")).toString(),
+                                           QStringLiteral("snapshot"),
+                                           snapshotPayload(4242, QStringLiteral("Sign in")),
+                                           1));
+    QVERIFY(!session.refIndexStale());
+
+    // A later NON-snapshot reply that OMITS domEpoch (resultFrame, not resultFrameEpoch): the
+    // baseline exists, so dropping the field must invalidate refs.
+    const auto shot = session.beginCommand(QStringLiteral("browser_screenshot"), {});
+    (void)session.onReply(resultFrame(shot.frame.value(QStringLiteral("id")).toString(),
+                                      QStringLiteral("screenshot"),
+                                      screenshotPayload(pngHeaderBase64(10, 10))));
+    QVERIFY2(session.refIndexStale(),
+             "a reply that drops domEpoch after a baseline exists must invalidate refs");
+
+    // A ref-based action is now refused until a fresh snapshot re-baselines the DOM.
+    const auto click =
+        session.beginCommand(QStringLiteral("browser_click"),
+                             QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")}});
+    QVERIFY(!click.ok);
+}
+
+void BrowserBridgeTests::printReply_nonPdfDataIsRefused() {
+    // A browser_print reply's payload.data is untrusted, page-influenced base64 that the bridge
+    // writes to the user's output folder as a .pdf. A payload that decodes to something that is not
+    // a "%PDF-" document (e.g. an executable or HTML) must be refused BEFORE any filesystem write,
+    // never saved under a .pdf name. No existing test drove a print reply at all.
+    BrowserBridgeSession session;
+    session.onHostConnected();
+    const auto print = session.beginCommand(QStringLiteral("browser_print"), {});
+    const QByteArray notPdf = QByteArray("MZ\x90\x00 this is a PE header, not a pdf").toBase64();
+    const auto in = session.onReply(
+        resultFrame(print.frame.value(QStringLiteral("id")).toString(),
+                    QStringLiteral("print"),
+                    QJsonObject{{QStringLiteral("data"), QString::fromLatin1(notPdf)}}));
+    QVERIFY(in.matched);
+    QVERIFY(in.is_error);
+    QVERIFY2(in.error.contains(QStringLiteral("not a valid PDF")), qPrintable(in.error));
+
+    // Guard-isolation control: an EMPTY payload yields the DIFFERENT "empty PDF" error, so the
+    // %PDF- magic guard is scoped to non-empty non-PDF content rather than firing on every reply.
+    // (A real %PDF- payload is deliberately not asserted here -- accepting it writes a file to the
+    // user's output folder, an unwanted unit-test side effect.)
+    const auto empty = session.beginCommand(QStringLiteral("browser_print"), {});
+    const auto emptyIn =
+        session.onReply(resultFrame(empty.frame.value(QStringLiteral("id")).toString(),
+                                    QStringLiteral("print"),
+                                    QJsonObject{{QStringLiteral("data"), QString()}}));
+    QVERIFY(emptyIn.is_error);
+    QVERIFY(emptyIn.error.contains(QStringLiteral("empty PDF")));
+    QVERIFY(!emptyIn.error.contains(QStringLiteral("not a valid PDF")));
 }
 
 void BrowserBridgeTests::reconcileDomEpoch_malformedEpochMarksRefsStale() {

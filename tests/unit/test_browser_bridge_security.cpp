@@ -44,6 +44,7 @@ private slots:
     void rendezvous_roundTripsAllFields();
     void rendezvous_readMissingFileFails();
     void rendezvous_invalidAppPidFailsClosed();
+    void rendezvous_overCapFileFailsClosed();  // R5-G10-9
     void security_daclIsCurrentUserOnlyWithMediumLabel();
 };
 
@@ -118,6 +119,27 @@ void BrowserBridgeSecurityTests::rendezvous_invalidAppPidFailsClosed() {
     QString error;
     QVERIFY(!readRendezvousRecord(path, &out, &error));
     QVERIFY(error.contains(QStringLiteral("app_pid")));
+}
+
+void BrowserBridgeSecurityTests::rendezvous_overCapFileFailsClosed() {
+    // The on-disk rendezvous record is untrusted: a hostile same-user process can rewrite it.
+    // readRendezvousRecord bounds the read at 64 KiB and refuses an over-cap file BEFORE the JSON
+    // parse, so a multi-megabyte record cannot force an unbounded allocation. The existing tests
+    // cover a missing file and an out-of-range app_pid, never an over-cap file.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("oversized.json"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    // 65 KiB > the 64 KiB cap. The size check fires before any parse, so the content need not be
+    // valid JSON.
+    file.write(QByteArray(65 * 1024, 'x'));
+    file.close();
+
+    RendezvousRecord out;
+    QString error;
+    QVERIFY(!readRendezvousRecord(path, &out, &error));
+    QVERIFY2(error.contains(QStringLiteral("too large")), qPrintable(error));
 }
 
 void BrowserBridgeSecurityTests::security_daclIsCurrentUserOnlyWithMediumLabel() {
