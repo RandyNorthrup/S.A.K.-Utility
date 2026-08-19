@@ -109,7 +109,14 @@ void TestWindowsUserScanner::getDefaultFolderSelections_currentUser() {
 void TestWindowsUserScanner::getDefaultFolderSelections_invalidPath() {
     const auto selections = WindowsUserScanner::getDefaultFolderSelections(
         QStringLiteral("C:\\Invalid_Profile_Path_12345"));
-    QVERIFY(selections.size() >= 0);
+    // The fixed 9-entry folder catalog is returned unconditionally; for a path that exists for no
+    // folder, every entry must size to zero. `size() >= 0` was a tautology (a container length is
+    // never negative); pin the catalog count and the all-zero sizing an invalid path must yield, so
+    // a regression that sized the wrong path or dropped the existence guard fails here.
+    QCOMPARE(selections.size(), 9);
+    for (const auto& sel : selections) {
+        QVERIFY2(sel.size_bytes == 0 && sel.file_count == 0, qPrintable(sel.display_name));
+    }
 }
 
 QTEST_MAIN(TestWindowsUserScanner)

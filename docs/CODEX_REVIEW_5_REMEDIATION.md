@@ -4811,6 +4811,37 @@ So the suite itself must be audited for tests that pass regardless of the code.
         patterns (catches dropping the BitLocker sentinel). The sweep's 3 FALSE_POSITIVEs (real
         contracts) were correctly spared by the adversarial verify phase. G18-4 stays [~] for the
         rest of the multi-week sweep.
+  - PROGRESS 2026-08-19 batch 2 (commit pending, gated 249/249): a second finder+verify sweep over 8
+    more large test files surfaced 55 CONFIRMED_WEAK -- but heavily DUPLICATED and with a WORKFLOW
+    LESSON: the finder agents WANDERED OFF their assigned file (e.g. the finder told to read
+    test_pst_parser.cpp reported assertions that actually live in test_leftover_scanner.cpp), so the
+    per-nominee `file` field is unreliable; the adversarial VERIFIERS caught every misattribution and
+    re-verified against the real file, so substance held but the raw list needed a ground-truth grep
+    to dedupe. Ground truth (grep of the real tree): the vacuous `QVERIFY(x.size() >= 0)` /
+    self-referential tautology class lives in test_leftover_scanner (8x), test_firewall_rule_auditor,
+    test_regex_pattern_library, test_windows_user_scanner, plus scattered `>= 0`/`!isEmpty()`/loose
+    `contains`/`<=` bounds in ~10 other files. FIXED this commit the 3 that are RELIABLE simple swaps
+    (a container length is never negative, so `size() >= 0` asserts nothing): test_leftover_scanner
+    scan_ignoresNonMatchingFolder (184->wait, L218) and scan_emptyPublisher_noPublisherPatterns (L469)
+    -> QVERIFY(results.isEmpty()) (a uniquely-named program at Safe level exactly-matches no real
+    dir/file and runs no registry/system phase, so the result is reliably empty on any host --
+    mirroring the scan_emptyProgram_noResults sibling); and test_windows_user_scanner
+    getDefaultFolderSelections_invalidPath -> QCOMPARE(size,9) + all-zero sizing (the 9-entry catalog
+    is appended unconditionally; an invalid path sizes every entry to 0). ENUMERATED BACKLOG (real
+    G18-4 work, NOT a quick swap -- deliberately not rushed at depth to avoid a wrong pin or a flaky
+    fixture): (a) the leftover-scanner POSITIVE scan tests (scan_findsMatchingFolder/File,
+    scan_matchesProgramNameExact/ConcatenatedName/InstallDirName, scan_skipsCommonWords,
+    scan_matchesProgramNameCaseInsensitive, scan_progressCallbackInvoked, scan_safeInAppData/InProgramFiles,
+    scan_registryKeySafe, scan_safeLevelSkipsRegistry) assert `size() >= 0` because the scanner scans
+    the LIVE host dirs, never the test's temp fixture -- so they need an ENV-INJECTION fixture (the
+    criticalInstallRoots_derivesNonCSystemDrive qputenv seam) pointing a scanned Safe-level root
+    (LOCALAPPDATA/APPDATA/ProgramData) at a controlled tree before the assertion means anything;
+    (b) an exact-value tail in ~10 files (test_ai_subagent_runner summary wording, test_file_explorer_item_model
+    header pin, test_network_diagnostic_report bandwidth values, test_browser_contract renderSnapshot
+    ==4000 / catalog exact, test_file_management_file_system blocker pins, test_chocolatey_manager
+    default-timeout, test_ai_tool_health_ledger concurrency invariants, test_ai_assistant_panel_tool_dispatch
+    candidate_count, test_regex_pattern_library invalid-reject observation). Each needs its exact value
+    verified against production before pinning. G18-4 stays [~] on that enumerated backlog.
       campaign, prove it by reverting the fix locally and observing the failure
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.

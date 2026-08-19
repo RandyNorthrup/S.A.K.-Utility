@@ -213,9 +213,11 @@ void LeftoverScannerTests::scan_ignoresNonMatchingFolder() {
 
     auto results = scanner.scan(stop);
 
-    // With a unique enough name, no real leftovers should be found
-    // on a system that never had this app installed
-    QVERIFY(results.size() >= 0);  // No crash, results should be minimal
+    // A uniquely-named program at Safe level exactly-matches no real dir/file
+    // (matchesProgramExact), records no install location, and runs no registry/system phase, so the
+    // result is reliably empty on ANY machine. `size() >= 0` was a tautology (a container length is
+    // never negative) that could not catch an over-match regression returning spurious leftovers.
+    QVERIFY(results.isEmpty());
 }
 
 void LeftoverScannerTests::scan_safeLevelSkipsRegistry() {
@@ -464,9 +466,12 @@ void LeftoverScannerTests::scan_emptyPublisher_noPublisherPatterns() {
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    // Should not crash and should work based on name patterns only
+    // Should not crash and should work based on name patterns only. With an empty publisher (no
+    // publisher-derived patterns) and a unique name at Safe level, nothing matches, so the result
+    // is reliably empty -- mirroring the scan_emptyProgram_noResults sibling. `size() >= 0` was a
+    // tautology; isEmpty() catches an empty-publisher regression that produced a match-all pattern.
     auto results = scanner.scan(stop);
-    QVERIFY(results.size() >= 0);
+    QVERIFY(results.isEmpty());
 }
 
 // -- Service leftover builder (SCM seam) --------------------------------------
