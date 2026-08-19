@@ -4,6 +4,7 @@
 /// @file test_chocolatey_manager.cpp
 /// @brief Unit tests for ChocolateyManager
 
+#include "sak/action_constants.h"
 #include "sak/chocolatey_manager.h"
 
 #include <QtTest/QtTest>
@@ -103,8 +104,10 @@ void TestChocolateyManager::parseSearchResults_invalidInput() {
 
 void TestChocolateyManager::timeout_defaultAndSet() {
     ChocolateyManager manager;
+    // Pin the documented default (kChocoTimeoutDefaultSec = 300). `>= 0` was a near-tautology that
+    // could not catch a regression that changed or zeroed the default choco execution timeout.
     const int original_timeout = manager.getDefaultTimeout();
-    QVERIFY(original_timeout >= 0);
+    QCOMPARE(original_timeout, sak::kChocoTimeoutDefaultSec);
 
     manager.setDefaultTimeout(60);
     QCOMPARE(manager.getDefaultTimeout(), 60);

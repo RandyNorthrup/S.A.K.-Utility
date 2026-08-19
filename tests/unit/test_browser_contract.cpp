@@ -173,8 +173,10 @@ void BrowserContractTests::renderSnapshot_capsNodeCountAndFlagsTruncation() {
         nodes.append(node(i + 1, QStringLiteral("button"), QStringLiteral("b%1").arg(i), true));
     }
     const SnapshotView view = renderSnapshot(QJsonObject{{QStringLiteral("nodes"), nodes}});
-    QVERIFY(view.element_count <= 4000);
-    QVERIFY(view.ref_index.size() <= 4000);
+    // 4100 input nodes are capped at kMaxNodes (4000), so the outputs are EXACTLY 4000, not merely
+    // "<= 4000" (which 0 or an under-cap regression would also satisfy). Pin the exact cap.
+    QCOMPARE(view.element_count, 4000);
+    QCOMPARE(view.ref_index.size(), qsizetype(4000));
     QVERIFY(view.outline.contains(QStringLiteral("more elements omitted")));
 }
 
