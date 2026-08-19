@@ -21,6 +21,7 @@ private Q_SLOTS:
     void getCurrentUsername_nonEmpty();
     void getProfilePath_currentUser();
     void getProfilePath_nonExistentUser();
+    void getProfilePath_emptyUsernameFailsClosed();  // R5-G23-4 fail-closed guard
     void estimateProfileSize_invalidPath();
     void getDefaultFolderSelections_currentUser();
     void getDefaultFolderSelections_invalidPath();
@@ -71,6 +72,20 @@ void TestWindowsUserScanner::getProfilePath_nonExistentUser() {
         WindowsUserScanner::getProfilePath(QStringLiteral("NonExistentUser_XYZ_12345"));
     // Should return empty or non-existent path
     QVERIFY(profile_path.isEmpty() || !QDir(profile_path).exists());
+}
+
+void TestWindowsUserScanner::getProfilePath_emptyUsernameFailsClosed() {
+    // R5-G23-4: an empty username must FAIL CLOSED (return an empty path). Without the guard,
+    // the standard-location path "<SystemDrive>\Users\<name>" collapses to the profiles ROOT
+    // ("<SystemDrive>\Users\") -- which exists -- so an empty name would resolve to the parent
+    // of EVERY user's profile and be reported as a real, existing profile. The guard returns {}
+    // before that. Deterministic and platform-independent (the empty-name check runs before any
+    // registry/SystemDrive lookup); non-vacuous by construction -- if the guard were removed the
+    // call would return a non-empty, existing directory here, turning this assertion red.
+    const QString profile_path = WindowsUserScanner::getProfilePath(QString());
+    QVERIFY2(profile_path.isEmpty(),
+             qPrintable(QStringLiteral("empty username must not resolve to a profile, got: %1")
+                            .arg(profile_path)));
 }
 
 void TestWindowsUserScanner::estimateProfileSize_invalidPath() {

@@ -4451,6 +4451,20 @@ rather than as generic advice.
     Get-NetIPConfiguration JSON shape was recon'd on this machine before writing the parser. BOTH G23-4
     locale gaps are now closed; G23-4 stays [~] only for the hostile-env TEST MATRIX + injection seams and
     the two minor non-destructive UI residuals.
+  - NON-C: FAIL-CLOSE TEST 2026-08-19 (commit pending, gated 249/249): test-proved the
+    WindowsUserScanner::getProfilePath empty-username fail-closed guard fixed as part of the non-C:
+    dimension audit (the guard returns {} for an empty name so it cannot resolve to the profiles-root
+    parent "<SystemDrive>\\Users\\" -- which exists -- and report the parent of EVERY user's profile as
+    a real profile). The existing suite covered the current user and a bogus name, never the empty name,
+    so this documented guard was untested. Added test_windows_user_scanner getProfilePath_emptyUsernameFailsClosed
+    (deterministic, platform-independent: the empty check runs before any registry/SystemDrive lookup).
+    Mutation-proved non-vacuous: making the guard return a non-empty sentinel for an empty name turns the
+    test RED (BUILD EXIT 0, TEST EXIT 1), reverting relinks green. NOTE the SIBLING unset-%SystemDrive%
+    fail-close branch is deliberately NOT unit-tested here: it cannot be cleanly isolated without an
+    injection seam (for a real user the authoritative SID->ProfileImagePath registry lookup wins before
+    the SystemDrive branch is reached; for a bogus user the existence gate returns {} whether or not a
+    'C:' drive is guessed, so the branch's outcome is indistinguishable) -- that is exactly the
+    seam-gated hostile-env matrix work this item still tracks. G23-4 stays [~] for that broader matrix.
       paths are under MAX_PATH, administrator rights are available, the network works,
       and Windows is English. The last assumption already caused a defect: diskpart's
       success text is localized, which is why the recreate path had to be given a
