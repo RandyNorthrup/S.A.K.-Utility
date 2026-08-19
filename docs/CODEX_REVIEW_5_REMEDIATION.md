@@ -4842,6 +4842,39 @@ So the suite itself must be audited for tests that pass regardless of the code.
     default-timeout, test_ai_tool_health_ledger concurrency invariants, test_ai_assistant_panel_tool_dispatch
     candidate_count, test_regex_pattern_library invalid-reject observation). Each needs its exact value
     verified against production before pinning. G18-4 stays [~] on that enumerated backlog.
+  - PROGRESS 2026-08-19 batch 3 (commits 5a6b8241, cede54bd, e942c349, 26562e14, 4f60b2dd, eb420852;
+    gated 249/249 each): the ENTIRE enumerated backlog above is now CLOSED.
+      * (b) exact-value tail (2 commits, 10 assertions), each value verified against production:
+        test_ai_subagent_runner degraded summary -> exact QCOMPARE of the honest
+        treatContentlessFailureAsDegraded message; test_network_diagnostic_report bandwidth ->
+        "500.50"/"100.20" (kReportMetricPrecision=2); test_ai_tool_health_ledger record_count ->
+        [0, kToolCount] bound (== records.size()); test_file_explorer_item_model group headers ->
+        size()==3 (three distinct leading letters); test_regex_pattern_library invalidRegexRejected ->
+        rewrote a DOUBLE tautology (`size()>=0` inside `if(isValid())` that never ran) into a control
+        (both inputs invalid PCRE) + size()==0; test_browser_contract catalog -> size()==40 (the fixed
+        unconditional browserToolCatalog set); test_ai_assistant_panel_tool_dispatch scan_recoverable ->
+        candidate_count==1 / candidates.size()==1 (single embedded JPEG); test_file_management_file_system
+        three blocker pins -> exact "File exceeds read limit: 100 bytes" / the non-native-organizer
+        string / "Target is read-only; the write was refused."
+      * (a) leftover-scanner POSITIVE scan tests (3 commits, 11 tests): built an ENV-INJECTION seam in
+        the test (ScopedEnv RAII over an env var + makeAppDataScanRoot/makeProgramFilesScanRoot whose
+        names carry the "appdata"/"program files" substring so a match classifies Safe + findByPath).
+        scanKnownPaths reads LOCALAPPDATA/APPDATA/ProgramData (Safe) and ProgramFiles (Moderate) via
+        qEnvironmentVariable, so pointing one at a controlled tree makes the scanner actually walk it.
+        All 11 (findsMatchingFolder/File, matchesProgramNameExact/CaseInsensitive/ConcatenatedName/
+        InstallDirName, skipsCommonWords, safeInAppData/InProgramFiles, progressCallbackInvoked,
+        preSelectsSafeItems) now plant a fixture and assert the real find + type + Safe + selected.
+        Mutation-proved via pointing the LOCALAPPDATA scan-append at a bogus var (clean build, EXIT 0):
+        the folder/file finds go red. GOTCHA banked: Qt resolves ".lnk" as a Windows shortcut so a
+        bogus one is not listed as a regular file -- the file test uses ".dat". DESIGN-DECISION residue
+        (NOT incomplete): scan_registryKeySafe / scan_safeLevelSkipsRegistry / firewall enumeration
+        depend on a live registry / SCM with no env-injection seam, so they stay classification-only.
+      * test_firewall_rule_auditor findRules_afterEnumeration -> the findRulesByName filter CONTRACT
+        (empty filter = full set; a name filter is a subset whose every result really contains it; an
+        impossible filter returns nothing, which given a live host has rules proves the argument is
+        applied), riding the same real enumeration the sibling tests already depend on.
+    G18-4 remains [~] on the broader multi-week tree sweep (the deep tail of loose >=/<=/!isEmpty/
+    substring bounds in other files), but the summary's named enumerated backlog is fully retired.
       campaign, prove it by reverting the fix locally and observing the failure
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.
