@@ -1506,6 +1506,8 @@ private Q_SLOTS:
     void apfsWriter_resourceForkLzfseCompressedFileRoundTrips();
     void apfsLzbitmapCodecRoundTrips();
     void apfsLzbitmapDecodesAppleReferenceStream();
+    void apfsLzbitmap_decodeRejectsMalformedStream();
+    void apfsLzbitmap_decodeRejectsMalformedChunkHeader();
     void apfsLzbitmapResourceForkLayoutMatchesApfsck();
     void apfsLzbitmapInlineAlgoDecodes();
     void apfsWriter_lzbitmapCompressedFileRoundTrips();
@@ -15448,6 +15450,102 @@ void PartitionManagerCoreTests::apfsLzbitmapDecodesAppleReferenceStream() {
     const auto decoded = sak::apfsLzbitmapDecodeBlock(apple, payload.size());
     QVERIFY2(decoded.has_value(), "Apple-encoded LZBITMAP stream must decode");
     QCOMPARE(*decoded, payload);
+}
+
+// Build a valid, compressible LZBITMAP (ZBM) stream for the malformed-stream negatives below and
+// return its decompressed length in @expected. Asserts it is a real 0x5A stream (not a 0xFF stored
+// block) and, as a non-vacuity control, that it decodes back byte-exact through the production
+// wrapper -- so every nullopt in the tests is caused by the specific corruption, not an always-fail
+// decoder. A 4 KiB repetitive payload always compresses to a single COMPRESSED chunk.
+[[nodiscard]] static QByteArray buildValidLzbitmapStream(int& expected) {
+    QByteArray payload;
+    while (payload.size() < 4096) {
+        payload.append(QByteArrayLiteral("lzbitmap malformed-stream negative vector 0123. "));
+    }
+    expected = static_cast<int>(payload.size());
+    const QByteArray valid = sak::apfsLzbitmapEncodeBlock(payload);
+    [&] {
+        QVERIFY2(
+            !valid.isEmpty() && static_cast<uint8_t>(valid.at(0)) == sak::zbm::kMagic[0],
+            "control payload must encode to a real ZBM (0x5A magic) stream, not a stored block");
+        const auto control = sak::apfsLzbitmapDecodeBlock(valid, expected);
+        QVERIFY2(control.has_value() && *control == payload,
+                 "valid control stream must decode back");
+    }();
+    return valid;
+}
+
+void PartitionManagerCoreTests::apfsLzbitmap_decodeRejectsMalformedStream() {
+    // Fail-closed negatives for the LZBITMAP whole-buffer decoder's MAGIC and TRUNCATION guards. It
+    // runs on an UNTRUSTED read path: decoding a foreign APFS image's com.apple.decmpfs algo 13/14
+    // file content (partition_apfs_file_system_reader.cpp:1038 inline, :1112 resource fork). Every
+    // other lzbitmap test is a positive round-trip or Apple-reference decode; these isolate each
+    // stream-format guard by corrupting ONE field of an otherwise-valid ZBM stream and asserting
+    // the production wrapper apfsLzbitmapDecodeBlock refuses it (never a partial or garbage
+    // decode).
+    int expected = 0;
+    const QByteArray valid = buildValidLzbitmapStream(expected);
+
+    // (A) Codec-level magic guard (byte 0 wrong). The wrapper dispatches on 0x5A, so this guard is
+    // only reachable by calling the codec directly -- close it here.
+    QByteArray badMagic0 = valid;
+    reinterpret_cast<uint8_t*>(badMagic0.data())[0] = 0x00;
+    std::vector<uint8_t> out;
+    QVERIFY2(!sak::zbm::zbmDecompress(reinterpret_cast<const uint8_t*>(badMagic0.constData()),
+                                      static_cast<size_t>(badMagic0.size()),
+                                      static_cast<size_t>(expected),
+                                      out),
+             "zbmDecompress must reject a stream whose magic byte 0 is wrong");
+
+    // (B) Magic guard, wrapper-routed: keep byte 0 == 0x5A so the wrapper routes into the codec,
+    // but corrupt magic byte 1 -- the memcmp inside zbmCheckMagic must still reject it.
+    QByteArray badMagic1 = valid;
+    reinterpret_cast<uint8_t*>(badMagic1.data())[1] = 0x00;
+    QVERIFY2(!sak::apfsLzbitmapDecodeBlock(badMagic1, expected).has_value(),
+             "a stream with a corrupted magic body must fail closed");
+
+    // (G) Truncated below the chunk header (only magic + 2 bytes present).
+    QVERIFY2(
+        !sak::apfsLzbitmapDecodeBlock(valid.left(sak::zbm::kMagicSize + 2), expected).has_value(),
+        "a stream truncated below a chunk header must fail closed");
+}
+
+void PartitionManagerCoreTests::apfsLzbitmap_decodeRejectsMalformedChunkHeader() {
+    // Fail-closed negatives for the LZBITMAP decoder's CHUNK-HEADER field guards (companion to
+    // apfsLzbitmap_decodeRejectsMalformedStream). Same untrusted read path; each case corrupts one
+    // le24 header field of a valid ZBM stream and asserts apfsLzbitmapDecodeBlock refuses it.
+    int expected = 0;
+    const QByteArray valid = buildValidLzbitmapStream(expected);
+    auto mutate = [&](auto corrupt) {
+        QByteArray s = valid;
+        corrupt(reinterpret_cast<uint8_t*>(s.data()));
+        return sak::apfsLzbitmapDecodeBlock(s, expected);
+    };
+
+    // (C) Chunk len declares more bytes than the stream holds (s.len > s.src_left).
+    QVERIFY2(!mutate([](uint8_t* p) { sak::zbm::writeU24(p, 4, 0xFF'FF'FFu); }).has_value(),
+             "a chunk whose declared length exceeds the stream must fail closed");
+
+    // (D) Chunk len below the 6-byte header minimum (s.len < kChunkHeaderSize).
+    QVERIFY2(!mutate([](uint8_t* p) { sak::zbm::writeU24(p, 4, 5); }).has_value(),
+             "a chunk shorter than its own header must fail closed");
+
+    // (E) decmp_len over the 32 KiB per-chunk cap (s.decmp_len > kMaxDecmpChunkSize). Refused by
+    // the cap and, defence in depth, by the output-size bound -- either way the contract holds.
+    QVERIFY2(!mutate([](uint8_t* p) {
+                  sak::zbm::writeU24(p, 7, sak::zbm::kMaxDecmpChunkSize + 1);
+              }).has_value(),
+             "a chunk claiming more than 32 KiB decompressed must fail closed");
+
+    // (F) Compressed-chunk metadata offset out of range (off1 >= s.len). Needs the control's first
+    // chunk to be compressed (len != decmp_len + 6), which a 4 KiB repetitive payload always is.
+    const auto* vp = reinterpret_cast<const uint8_t*>(valid.constData());
+    const uint32_t len0 = sak::zbm::readU24(vp, 4);
+    const uint32_t dec0 = sak::zbm::readU24(vp, 7);
+    QVERIFY2(len0 != dec0 + static_cast<uint32_t>(sak::zbm::kChunkHeaderSize),
+             "control's first chunk must be a compressed chunk for the metadata-offset case");
+    QVERIFY2(!mutate([len0](uint8_t* p) { sak::zbm::writeU24(p, 10, len0); }).has_value(),
+             "a compressed chunk with an out-of-range metadata offset must fail closed");
 }
 
 void PartitionManagerCoreTests::apfsLzbitmapInlineAlgoDecodes() {
