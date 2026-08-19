@@ -6,6 +6,7 @@
 
 #include "sak/decompressor_factory.h"
 #include "sak/streaming_decompressor.h"
+#include "sak/xz_decompressor.h"
 
 #include <QFile>
 #include <QTemporaryDir>
@@ -57,6 +58,10 @@ private Q_SLOTS:
     // A normal xz stream still decodes under the bounded decoder memory limit.
     void realXzStreamDecodesUnderMemLimit();
 
+    // A crafted header whose declared dictionary exceeds the 512 MiB decoder memory
+    // ceiling must fail closed (LZMA_MEMLIMIT_ERROR), never allocate gigabytes.
+    void xzOversizedDictionaryHeaderFailsClosed();
+
     // Concatenated members (pigz multi-member gzip, cat'd xz) decode in full,
     // and trailing garbage after a member fails closed.
     void concatenatedGzipMembersDecodeFully();
@@ -71,6 +76,7 @@ private:
     static QByteArray gzipCompress(const QByteArray& input);
     static QByteArray xzCompress(const QByteArray& input);
     static QByteArray bzip2Compress(const QByteArray& input);
+    static QByteArray lzmaAloneHeader(quint32 dictSize);
     static qint64 readFully(sak::StreamingDecompressor& decomp);
 };
 
@@ -436,6 +442,51 @@ void StreamingDecompressorTests::realXzStreamDecodesUnderMemLimit() {
     QVERIFY(decomp != nullptr);
     QVERIFY(decomp->open(filePath("real.xz")));
     QCOMPARE(readFully(*decomp), static_cast<qint64>(payload.size()));
+}
+
+// Build a legacy .lzma-alone header: a properties byte (0x5D == lc=3,lp=0,pb=2, the
+// standard preset), a little-endian uint32 dictionary size, and a little-endian uint64
+// uncompressed size (all-0xFF == unknown/streaming). The alone format carries the
+// dictionary size as a raw uint32, so it is the only way to hand-craft a header that
+// declares an oversized dictionary -- no liblzma encoder will emit one.
+QByteArray StreamingDecompressorTests::lzmaAloneHeader(quint32 dictSize) {
+    QByteArray h;
+    h.append(static_cast<char>(0x5D));
+    for (int i = 0; i < 4; ++i) {
+        h.append(static_cast<char>((dictSize >> (i * 8)) & 0xFF));
+    }
+    h.append(QByteArray(8, static_cast<char>(0xFF)));
+    return h;
+}
+
+void StreamingDecompressorTests::xzOversizedDictionaryHeaderFailsClosed() {
+    // B8-11 negative, the companion to realXzStreamDecodesUnderMemLimit: a crafted header whose
+    // declared dictionary exceeds the 512 MiB decoder memory ceiling must fail closed with
+    // LZMA_MEMLIMIT_ERROR, never allocate ~gigabytes from a tiny file. Driven straight through
+    // XzDecompressor (lzma_auto_decoder detects the .lzma-alone format) so factory routing on the
+    // file extension does not matter. open() only initialises the decoder -- it never reads the
+    // payload -- so it succeeds; the memory ceiling is enforced when lzma_code parses the header.
+    const QString memlimitError = QString("Decompression error: lzma error code %1")
+                                      .arg(static_cast<int>(LZMA_MEMLIMIT_ERROR));
+
+    // 768 MiB is a legal LZMA dictionary (xz allows up to ~1.5 GiB) but is over the 512 MiB cap.
+    writeFile("oversized_dict.lzma", lzmaAloneHeader(768u * 1024 * 1024) + QByteArray(64, '\0'));
+    sak::XzDecompressor over;
+    QVERIFY(over.open(filePath("oversized_dict.lzma")));
+    QCOMPARE(readFully(over), static_cast<qint64>(-1));  // fail closed, no gigabyte allocation
+    QVERIFY(!over.atEnd());
+    QCOMPARE(over.lastError(),
+             memlimitError);  // rejected for MEMORY specifically, isolating the cap
+
+    // Guard-isolation control: the SAME crafted-alone shape with a sub-cap (1 MiB) dictionary is
+    // NOT rejected for memory -- it fails later on the garbage LZMA payload with a different lzma
+    // error. The only difference from the case above is the dictionary-size field, so the memlimit
+    // rejection is caused by the 512 MiB cap, not by the stream being malformed in general.
+    writeFile("undercap_dict.lzma", lzmaAloneHeader(1u * 1024 * 1024) + QByteArray(64, '\0'));
+    sak::XzDecompressor under;
+    QVERIFY(under.open(filePath("undercap_dict.lzma")));
+    QCOMPARE(readFully(under), static_cast<qint64>(-1));  // still garbage -> fails closed
+    QVERIFY(under.lastError() != memlimitError);          // but NOT for memory
 }
 
 void StreamingDecompressorTests::concatenatedGzipMembersDecodeFully() {
