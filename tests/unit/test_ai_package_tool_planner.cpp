@@ -11,6 +11,7 @@ class AiPackageToolPlannerTests : public QObject {
 private Q_SLOTS:
     void normalizesInstallPlan();
     void rejectsInjectionPackageId();
+    void rejectsLeadingDashPackageId();       // R5-G10-9
     void rejectsOptionInjectedSearchQuery();  // R5-G10-9
     void rejectsNonStringVersion();           // R5-G10-9
     void rejectsUnknownOperation();
@@ -51,6 +52,30 @@ void AiPackageToolPlannerTests::rejectsInjectionPackageId() {
     QVERIFY(plan.error_message.contains(QStringLiteral("Invalid package identifier")));
     // The dangerous input is NOT rewritten into a usable substitute token.
     QVERIFY(plan.package_id.isEmpty());
+}
+
+void AiPackageToolPlannerTests::rejectsLeadingDashPackageId() {
+    // '-' is an ALLOWED package character (isAllowedPackageChar), so an id built only of allowed
+    // chars but with a LEADING dash -- e.g. "-y" or "--force" -- passes the all-of char check and
+    // is caught ONLY by the startsWith('-') branch. Chocolatey would otherwise parse it as an
+    // OPTION rather than a package name (argument injection). This must use a
+    // dash-with-only-allowed-chars id: an id carrying a disallowed char (like
+    // "--source=https://...") would be caught by the char-check branch instead (that is
+    // rejectsInjectionPackageId's path), so it would NOT isolate this guard.
+    const sak::ai::AiPackageToolPlan injected = sak::ai::AiPackageToolPlanner::buildPlan(
+        QJsonObject{{QStringLiteral("operation"), QStringLiteral("install")},
+                    {QStringLiteral("package_id"), QStringLiteral("-y")}});
+    QVERIFY(!injected.ok());
+    QVERIFY(injected.error_message.contains(QStringLiteral("Invalid package identifier")));
+    QVERIFY(injected.package_id.isEmpty());  // never forwarded to choco as an option
+
+    // Guard-isolation control: an INTERIOR dash (firefox-esr) is a valid package name, proving the
+    // guard is scoped to a LEADING dash rather than rejecting every dash.
+    const sak::ai::AiPackageToolPlan ok = sak::ai::AiPackageToolPlanner::buildPlan(
+        QJsonObject{{QStringLiteral("operation"), QStringLiteral("install")},
+                    {QStringLiteral("package_id"), QStringLiteral("firefox-esr")}});
+    QVERIFY(ok.ok());
+    QCOMPARE(ok.package_id, QStringLiteral("firefox-esr"));
 }
 
 void AiPackageToolPlannerTests::rejectsOptionInjectedSearchQuery() {

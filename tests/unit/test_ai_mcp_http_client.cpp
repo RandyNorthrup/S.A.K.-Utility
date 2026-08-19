@@ -16,6 +16,7 @@ private Q_SLOTS:
     void parsesSseJsonRpcMessage();
     void parsesPlainJsonRpcMessage();
     void rejectsSseWithoutJsonRpcData();
+    void rejectsSseSplitAcrossEvents();  // R5-G10-9
     void skipsSseNotificationsBeforeResponse();
     void rejectsPlainObjectWithoutJsonRpcFields();
     void rejectsResponseWithMismatchedId();
@@ -61,6 +62,35 @@ void AiMcpHttpClientTests::parsesSseJsonRpcMessage() {
                  .value(QStringLiteral("text"))
                  .toString(),
              QStringLiteral("ok"));
+}
+
+void AiMcpHttpClientTests::rejectsSseSplitAcrossEvents() {
+    // A hostile MCP server could try to smuggle a fabricated JSON-RPC result by splitting one
+    // object across TWO SSE events, each fragment invalid alone but valid if glued. flushSseEvent
+    // isolates each event (stores the unparsed data by assignment, and clears the buffer per
+    // event), so the fragments are never concatenated -- the scanner must return {} with an error,
+    // not reassemble.
+    const QByteArray split =
+        "data: {\"jsonrpc\":\"2.0\",\"id\":1,\n"
+        "\n"
+        "data: \"result\":{\"content\":[]}}\n"
+        "\n";
+    QString error;
+    const QJsonObject message = sak::ai::AiMcpHttpClient::extractJsonRpcMessageForTesting(split,
+                                                                                          &error);
+    QVERIFY2(message.isEmpty(), "two SSE fragments must not be reassembled into a JSON-RPC object");
+    QVERIFY(!error.isEmpty());
+
+    // Guard-isolation control: the SAME object delivered in ONE event parses fine, so the rejection
+    // is caused by the split, not by an always-failing scanner.
+    const QByteArray whole =
+        "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n"
+        "\n";
+    QString okError;
+    const QJsonObject ok = sak::ai::AiMcpHttpClient::extractJsonRpcMessageForTesting(whole,
+                                                                                     &okError);
+    QVERIFY(okError.isEmpty());
+    QCOMPARE(ok.value(QStringLiteral("id")).toInt(), 1);
 }
 
 void AiMcpHttpClientTests::skipsSseNotificationsBeforeResponse() {

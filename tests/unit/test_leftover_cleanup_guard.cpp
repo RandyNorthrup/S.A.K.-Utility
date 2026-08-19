@@ -42,6 +42,7 @@ private Q_SLOTS:
 
     // -- Services --
     void serviceRefusesCriticalAndMalformed();
+    void serviceRefusesBootStartDriverNames();  // R5-G10-9
     void serviceAllowsVendorService();
 
     // -- Scheduled tasks --
@@ -196,6 +197,23 @@ void TestLeftoverCleanupGuard::serviceRefusesCriticalAndMalformed() {
     QVERIFY(blocked(serviceDeletionRefusal(QStringLiteral("bad\\name"))));
     QVERIFY(blocked(serviceDeletionRefusal(QStringLiteral("wild*card"))));
     QVERIFY(blocked(serviceDeletionRefusal(QStringLiteral("has=equals"))));
+}
+
+void TestLeftoverCleanupGuard::serviceRefusesBootStartDriverNames() {
+    // cleanupCriticalServices() unions the named-service table AND the boot-start DRIVER table, so
+    // serviceDeletionRefusal must refuse `sc delete <driver>` for a boot driver too -- deleting any
+    // of these unboots the machine. serviceRefusesCriticalAndMalformed only drives named SERVICES
+    // (RpcSs, windefend, ...), so dropping the driver-table union term would leave it green while
+    // `sc delete ntfs` became permitted. Pin a representative set of boot-start driver services.
+    for (const QString& driver : {QStringLiteral("ntfs"),
+                                  QStringLiteral("acpi"),
+                                  QStringLiteral("fltmgr"),
+                                  QStringLiteral("ksecdd"),
+                                  QStringLiteral("storport"),
+                                  QStringLiteral("refs"),
+                                  QStringLiteral("NTFS")}) {  // case-insensitive
+        QVERIFY2(blocked(serviceDeletionRefusal(driver)), qPrintable(driver));
+    }
 }
 
 void TestLeftoverCleanupGuard::serviceAllowsVendorService() {

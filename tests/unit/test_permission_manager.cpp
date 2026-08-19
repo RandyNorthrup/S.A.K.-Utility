@@ -36,6 +36,7 @@ private Q_SLOTS:
     // Reparse-point (junction/symlink) redirect hardening
     void stripPermissions_refusesReparsePoint();
     void stripPermissions_refusesAncestorJunction();
+    void stripPermissions_refusesHardLink();  // R5-G10-9
 
     // SDDL round-trip must not silently drop the primary group
     void setSddl_appliesGroup();
@@ -238,6 +239,51 @@ void PermissionManagerTests::stripPermissions_refusesReparsePoint() {
 // REPARSE_POINT only guards the FINAL component, so the kernel still traverses an
 // intermediate junction. Opening base\file.txt THROUGH a junction that replaces an
 // ancestor dir must be caught by verifying the handle's resolved path.
+void PermissionManagerTests::stripPermissions_refusesHardLink() {
+#ifdef Q_OS_WIN
+    // A file with more than one hard link name is the SAME underlying object under two names. An
+    // elevated ACL/owner change on one name would silently re-permission the shared object the
+    // other name also points at, so the no-follow open refuses a target whose nNumberOfLinks > 1 --
+    // the hard-link sibling of the reparse-point and ancestor-junction guards.
+    sak::PermissionManager mgr;
+    const QString shared = m_tempDir.filePath("hardlink_shared.txt");
+    QFile f(shared);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("shared");
+    f.close();
+    const QString link = m_tempDir.filePath("hardlink_alias.txt");
+
+    QProcess proc;
+    proc.start(
+        "cmd",
+        {"/c", "mklink", "/H", QDir::toNativeSeparators(link), QDir::toNativeSeparators(shared)});
+    QVERIFY(proc.waitForFinished(10'000));
+    if (proc.exitCode() != 0) {
+        QSKIP("Could not create a hard link (non-NTFS or policy)");
+    }
+
+    const auto result = mgr.tryStripPermissions(link);
+    QVERIFY2(!result.has_value(), "strip must refuse a file with multiple hard links");
+    QVERIFY2(mgr.getLastError().contains("hard link", Qt::CaseInsensitive),
+             qPrintable(mgr.getLastError()));
+
+    // Guard-isolation control: a plain single-link file in the same dir must NOT be refused for the
+    // hard-link reason (it may succeed, or fail for another reason, but never the multi-link
+    // guard).
+    const QString solo = m_tempDir.filePath("hardlink_solo.txt");
+    QFile s(solo);
+    QVERIFY(s.open(QIODevice::WriteOnly));
+    s.write("solo");
+    s.close();
+    const auto soloResult = mgr.tryStripPermissions(solo);
+    if (!soloResult.has_value()) {
+        QVERIFY(!mgr.getLastError().contains("hard link", Qt::CaseInsensitive));
+    }
+#else
+    QVERIFY(true);
+#endif
+}
+
 void PermissionManagerTests::stripPermissions_refusesAncestorJunction() {
 #ifdef Q_OS_WIN
     sak::PermissionManager mgr;
