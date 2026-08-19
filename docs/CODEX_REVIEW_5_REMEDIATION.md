@@ -4478,6 +4478,28 @@ rather than as generic advice.
     non-vacuous: dropping addEnv("SystemRoot") from criticalInstallRoots turns the new test RED (BUILD EXIT
     0, TEST EXIT 1), reverting relinks green. G23-4 stays [~] for the remaining matrix dimensions
     (>260-char paths, UNC-only cwd, no-admin, missing bundled tools) and their seams.
+  - REMAINING-DIMENSIONS TRIAGE 2026-08-19 (no new code; sharpens WHY G23-4 stays [~] per no-deferrals):
+    surveyed each remaining dimension for a clean, safe, autonomously-completable unit test. RESULT: the
+    cheap wins are done (non-C: leaf+root, missing-system-tools via CleanupWorker::systemToolPath already
+    tested empty/UNC/relative/traversal, no-network transfer timeouts, both locale parsers). What remains is
+    NOT more micro-tests -- each needs an owner-level decision, so it is a design-decision-pending-owner, not
+    unbuilt effort:
+      * no-admin: the elevation decision is ElevationManager::isElevated() (reads the process token), called
+        inline throughout. A meaningful no-admin fail-closed test needs EITHER a real non-elevated process OR
+        a test override of isElevated(). An override is a SPOOFABLE elevation primitive on a security-critical
+        check -- exactly the fail-open surface the whole campaign forbids -- so adding one is a security-posture
+        decision for the owner, NOT an autonomous change. The inline checks are branches in stateful workers
+        (user_profile_backup_worker, permission_manager ctor), so there is no isolated policy decision to
+        extract purely either.
+      * missing bundled tools (as opposed to system tools): BundledToolsManager::toolPath composes a bundled
+        path; its fail-closed-on-absent behaviour is exercised by the live launch guards, not a pure seam.
+      * >260-char paths: the real gaps are Win32 API output-buffer sizes (the one code gap, getProcessPath, is
+        already oversized); pure string logic is length-agnostic, so a unit test proves nothing new.
+      * UNC-only cwd: security paths already refuse CWD-relative (tested via the installLocationSyntax refusal
+        of relative/UNC forms); only 2 non-destructive UI residuals remain.
+    So G23-4 stays [~] on an OWNER-DECISION remainder (chiefly: is a test-only elevation override acceptable on
+    a security-critical check?), not on cheap coverage still owed. This mirrors the prior G23-4 audits: the code
+    is robust, the flip waits on the seam-gated matrix, and the binding seam (no-admin) is an owner call.
       paths are under MAX_PATH, administrator rights are available, the network works,
       and Windows is English. The last assumption already caused a defect: diskpart's
       success text is localized, which is why the recreate path had to be given a
