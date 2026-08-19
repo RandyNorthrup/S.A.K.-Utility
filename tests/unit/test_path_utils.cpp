@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <system_error>
 
 class PathUtilsTests : public QObject {
     Q_OBJECT
@@ -43,8 +44,9 @@ private Q_SLOTS:
     void matchesPattern_multiplePatterns();
 
     // getDirectorySizeAndCount
-    void dirSizeAndCount_saturatesOnOverflow();    // R5-G10-9
-    void dirSizeAndCount_doesNotFollowJunction();  // R5-G10-9
+    void dirSizeAndCount_saturatesOnOverflow();                  // R5-G10-9
+    void dirSizeAndCount_doesNotFollowJunction();                // R5-G10-9
+    void dirSizeWalk_permissionDeniedSkipsAndFlagsIncomplete();  // R5-G10-9
     void dirSizeAndCount_normalDir();
     void dirSizeAndCount_emptyDir();
     void dirSizeAndCount_nonExistentDir();
@@ -307,6 +309,37 @@ void PathUtilsTests::dirSizeAndCount_doesNotFollowJunction() {
     // junction's exclusion is the symlink guard -- not a walk that never recurses at all.
     QCOMPARE(result.value().file_count, std::uintmax_t{2});
     QCOMPARE(result.value().total_bytes, std::uintmax_t{12});
+}
+
+void PathUtilsTests::dirSizeWalk_permissionDeniedSkipsAndFlagsIncomplete() {
+    // A permission-denied subtree during a recursive size walk must be SKIPPED (the scan
+    // continues) and FLAGGED (complete=false, one skipped dir) so a caller gating a capacity
+    // decision treats the under-reported size as "unknown", never "fits" -- while any OTHER
+    // enumeration error fails the WHOLE scan closed rather than being silently flagged-and-skipped.
+    // A directory that denies enumeration is not a deterministic Windows fixture (a self-DENY ACL
+    // is bypassable by an elevated runner and breaks QTemporaryDir cleanup), so drive the REAL
+    // classify + record chain the walk uses via the seam with an injected error_code.
+    using Step = sak::path_utils::DirectoryOpenStepForTesting;
+
+    // permission_denied -> a non-fatal skip that flags the result partial.
+    const Step denied = sak::path_utils::applyDirectoryOpenErrorForTesting(
+        std::make_error_code(std::errc::permission_denied));
+    QVERIFY2(denied.continued, "a permission-denied subtree must not abort the whole scan");
+    QVERIFY2(!denied.complete_after, "a skipped subtree must flag the size result incomplete");
+    QCOMPARE(denied.skipped_dirs_after, static_cast<std::uintmax_t>(1));
+
+    // Guard-isolation control: any OTHER enumeration error must fail the whole scan closed and must
+    // NOT be recorded as a flagged-partial skip -- proving the skip-and-flag path is scoped to
+    // permission_denied, not applied to every open error.
+    for (const std::errc other :
+         {std::errc::io_error, std::errc::too_many_files_open, std::errc::not_a_directory}) {
+        const Step failed =
+            sak::path_utils::applyDirectoryOpenErrorForTesting(std::make_error_code(other));
+        QVERIFY2(!failed.continued, "a genuine read error must fail the scan closed");
+        QVERIFY2(failed.complete_after,
+                 "a fail-closed error must not be recorded as a flagged-partial skip");
+        QCOMPARE(failed.skipped_dirs_after, static_cast<std::uintmax_t>(0));
+    }
 }
 
 void PathUtilsTests::dirSizeAndCount_normalDir() {

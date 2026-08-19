@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace sak {
@@ -76,6 +77,31 @@ public:
     ///        (fail open), so the accumulate clamps to keep a capacity check failing closed.
     [[nodiscard]] static std::uintmax_t saturatingAddSizeForTesting(std::uintmax_t total,
                                                                     std::uintmax_t size);
+
+    /// @brief Observable outcome of the recursive size walk's directory-open step, for the
+    ///        permission-denied test seam below.
+    struct DirectoryOpenStepForTesting {
+        /// @brief False means the whole scan fails closed (a genuine read error); true means
+        ///        the walk continues (an opened directory or a permission-denied skip).
+        bool continued{false};
+        /// @brief DirectorySizeInfo::complete after the step -- false when a skipped subtree
+        ///        flagged the result partial.
+        bool complete_after{true};
+        /// @brief DirectorySizeInfo::skipped_dirs after the step.
+        std::uintmax_t skipped_dirs_after{0};
+    };
+
+    /// @brief Test seam for the permission-denied subtree handling in the recursive size walk.
+    ///        A directory that denies enumeration is not a deterministic unit fixture on Windows
+    ///        (a self-DENY ACL is bypassable by an elevated runner and breaks temp-dir cleanup),
+    ///        so this runs the REAL classify + record chain the walk uses on the std::error_code
+    ///        that constructing a directory_iterator on such a directory yields: a
+    ///        permission_denied error is a NON-FATAL skip that flags the result incomplete
+    ///        (continued=true, complete_after=false, one skipped dir), while any OTHER error fails
+    ///        the whole scan closed (continued=false). This proves the flag-setting chain, not
+    ///        just the error classification.
+    [[nodiscard]] static DirectoryOpenStepForTesting applyDirectoryOpenErrorForTesting(
+        const std::error_code& ec);
 
 private:
     /// @brief Normalize a path (resolve .., ., remove redundant separators)

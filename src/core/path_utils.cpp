@@ -75,6 +75,19 @@ enum class OpenDirResult {
     failed
 };
 
+/// @brief Classify the error_code that constructing a directory_iterator yields: no error
+///        opens, a permission-denied error is a non-fatal skip (a scan must not crash on a
+///        system tree), and any other error is a genuine read error that fails the scan closed.
+OpenDirResult classifyOpenDir(const std::error_code& ec) {
+    if (!ec) {
+        return OpenDirResult::opened;
+    }
+    if (ec == std::errc::permission_denied) {
+        return OpenDirResult::skipped_denied;
+    }
+    return OpenDirResult::failed;
+}
+
 /// @brief Open dir_path for iteration, distinguishing a permission-denied skip
 ///        (kept non-fatal so a scan does not crash on a system tree) from a
 ///        genuine read error (which must fail the whole scan closed).
@@ -82,14 +95,32 @@ OpenDirResult openDirectory(const std::filesystem::path& dir_path,
                             std::filesystem::directory_iterator& out) {
     std::error_code ec;
     std::filesystem::directory_iterator it(dir_path, ec);
-    if (!ec) {
+    const OpenDirResult result = classifyOpenDir(ec);
+    if (result == OpenDirResult::opened) {
         out = std::move(it);
-        return OpenDirResult::opened;
     }
-    if (ec == std::errc::permission_denied) {
-        return OpenDirResult::skipped_denied;
+    return result;
+}
+
+/// @brief Apply an open outcome to the walk state. A permission-denied skip is non-fatal but
+///        records info.complete=false (so the caller can tell the size under-reports); an opened
+///        directory is pushed for descent; a genuine read error returns false (fail closed).
+bool recordOpenOutcome(OpenDirResult result,
+                       std::filesystem::directory_iterator child,
+                       std::vector<std::filesystem::directory_iterator>& stack,
+                       path_utils::DirectorySizeInfo& info) {
+    switch (result) {
+    case OpenDirResult::opened:
+        stack.push_back(std::move(child));
+        return true;
+    case OpenDirResult::skipped_denied:
+        info.complete = false;
+        ++info.skipped_dirs;
+        return true;
+    case OpenDirResult::failed:
+        return false;
     }
-    return OpenDirResult::failed;
+    return false;  // unreachable: all enum cases return above
 }
 
 /// @brief True when entry is a real subdirectory to descend into. Symlinked, junction,
@@ -126,18 +157,8 @@ bool pushDirectory(const std::filesystem::path& child_path,
                    std::vector<std::filesystem::directory_iterator>& stack,
                    path_utils::DirectorySizeInfo& info) {
     std::filesystem::directory_iterator child;
-    switch (openDirectory(child_path, child)) {
-    case OpenDirResult::opened:
-        stack.push_back(std::move(child));
-        return true;
-    case OpenDirResult::skipped_denied:
-        info.complete = false;
-        ++info.skipped_dirs;
-        return true;
-    case OpenDirResult::failed:
-        return false;
-    }
-    return false;  // unreachable: all enum cases return above
+    const OpenDirResult result = openDirectory(child_path, child);
+    return recordOpenOutcome(result, std::move(child), stack, info);
 }
 
 /// @brief Size a directory tree with an explicit stack of directory_iterators.
@@ -323,6 +344,19 @@ auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
 
 std::uintmax_t path_utils::saturatingAddSizeForTesting(std::uintmax_t total, std::uintmax_t size) {
     return saturatingAddSize(total, size);
+}
+
+path_utils::DirectoryOpenStepForTesting path_utils::applyDirectoryOpenErrorForTesting(
+    const std::error_code& ec) {
+    // Run the REAL classify + record chain the size walk uses, on an injected open error, so the
+    // permission-denied skip-and-flag and the genuine-error fail-closed mappings are both proven
+    // without an OS-produced denial (not a deterministic fixture on Windows). A non-empty ec never
+    // classifies as opened, so the (unused) child iterator is never pushed.
+    DirectorySizeInfo info;
+    std::vector<std::filesystem::directory_iterator> stack;
+    std::filesystem::directory_iterator child;
+    const bool continued = recordOpenOutcome(classifyOpenDir(ec), std::move(child), stack, info);
+    return DirectoryOpenStepForTesting{continued, info.complete, info.skipped_dirs};
 }
 
 auto path_utils::getAvailableSpace(const std::filesystem::path& path)
