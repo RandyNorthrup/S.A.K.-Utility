@@ -107,6 +107,7 @@ private Q_SLOTS:
     void installLocationSyntax_acceptsQualifiedProductDirectory();
     void installLocationOwnership_provesOnlyRealProductDirectories();
     void criticalInstallRoots_coverSystemAndProfileRoots();
+    void criticalInstallRoots_derivesNonCSystemDrive();  // R5-G23-4 non-C: drive via env injection
     void scan_installLocationTiedToProgram_isDeletable();
     void scan_installLocationNotTiedToProgram_isReportOnly();
     void scan_installLocationUnpinnable_yieldsNoCandidate();
@@ -804,6 +805,44 @@ void LeftoverScannerTests::criticalInstallRoots_coverSystemAndProfileRoots() {
     QVERIFY(profiles.cdUp());
     QVERIFY2(covers(QDir::toNativeSeparators(profiles.absolutePath())),
              qPrintable(roots.join(QLatin1Char(';'))));
+#endif
+}
+
+void LeftoverScannerTests::criticalInstallRoots_derivesNonCSystemDrive() {
+#ifndef Q_OS_WIN
+    QSKIP("The critical-root set is derived from the Windows environment");
+#else
+    // R5-G23-4 (non-C: system drive): criticalInstallRoots derives every OS/shared root from the
+    // environment, so a machine whose system drive is Z: (not C:) is protected exactly like a C:
+    // machine. The live-env test above only proves derivation on THIS host, whose drive IS C:, so
+    // it cannot catch a guard that silently hard-codes "C:". This injects a fake non-C: SystemRoot
+    // and ProgramData and confirms the derived critical-root set follows the drive to Z:. Env is
+    // process-global, so save and restore -- and restore BEFORE asserting so a failed assertion
+    // cannot leave the suite's environment dirty for later tests.
+    const QByteArray savedSystemRoot = qgetenv("SystemRoot");
+    const QByteArray savedProgramData = qgetenv("ProgramData");
+    qputenv("SystemRoot", "Z:\\Windows");
+    qputenv("ProgramData", "Z:\\ProgramData");
+    const QStringList roots = LeftoverScanner::criticalInstallRoots();
+    const auto restore = [](const char* name, const QByteArray& saved) {
+        if (saved.isEmpty()) {
+            qunsetenv(name);
+        } else {
+            qputenv(name, saved);
+        }
+    };
+    restore("SystemRoot", savedSystemRoot);
+    restore("ProgramData", savedProgramData);
+
+    const auto covers = [&roots](const QString& expected) {
+        return std::any_of(roots.cbegin(), roots.cend(), [&expected](const QString& root) {
+            return root.compare(expected, Qt::CaseInsensitive) == 0;
+        });
+    };
+    // Non-vacuous: a guard that hard-coded C: instead of reading the environment would omit these,
+    // turning the assertion red.
+    QVERIFY2(covers(QStringLiteral("Z:\\Windows")), qPrintable(roots.join(QLatin1Char(';'))));
+    QVERIFY2(covers(QStringLiteral("Z:\\ProgramData")), qPrintable(roots.join(QLatin1Char(';'))));
 #endif
 }
 

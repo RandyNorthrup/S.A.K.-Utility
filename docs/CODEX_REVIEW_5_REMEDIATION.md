@@ -4465,6 +4465,19 @@ rather than as generic advice.
     the SystemDrive branch is reached; for a bogus user the existence gate returns {} whether or not a
     'C:' drive is guessed, so the branch's outcome is indistinguishable) -- that is exactly the
     seam-gated hostile-env matrix work this item still tracks. G23-4 stays [~] for that broader matrix.
+  - NON-C: ROOT-DERIVATION TEST 2026-08-19 (commit pending, gated 249/249): closed the one real gap in
+    the non-C: dimension's leftover-scanner coverage. criticalInstallRoots_coverSystemAndProfileRoots
+    proves the critical-root set is env-derived, but it reads the LIVE host environment -- whose system
+    drive IS C: -- so it cannot catch a guard that silently hard-codes "C:". Added
+    criticalInstallRoots_derivesNonCSystemDrive, the first use of the ENV-INJECTION seam the hostile-env
+    matrix needs: it qputenv's a fake non-C: SystemRoot=Z:\Windows / ProgramData=Z:\ProgramData
+    (save+restore, restore BEFORE asserting so a failure cannot leave the suite env dirty), calls
+    LeftoverScanner::criticalInstallRoots(), and confirms the derived set follows the drive to Z:. This
+    completes the non-C: leftover-scanner surface: the leaf classifier (isSharedContainerPath_isDriveAgnostic,
+    C:/D:/Z:) AND now the root DERIVATION (Z: via injection) are both drive-agnostic-proven. Mutation-proved
+    non-vacuous: dropping addEnv("SystemRoot") from criticalInstallRoots turns the new test RED (BUILD EXIT
+    0, TEST EXIT 1), reverting relinks green. G23-4 stays [~] for the remaining matrix dimensions
+    (>260-char paths, UNC-only cwd, no-admin, missing bundled tools) and their seams.
       paths are under MAX_PATH, administrator rights are available, the network works,
       and Windows is English. The last assumption already caused a defect: diskpart's
       success text is localized, which is why the recreate path had to be given a
