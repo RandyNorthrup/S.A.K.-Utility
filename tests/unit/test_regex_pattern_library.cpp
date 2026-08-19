@@ -294,25 +294,19 @@ void RegexPatternLibraryTests::addCustomPattern_builtinKeyConflictRejected() {
 void RegexPatternLibraryTests::addCustomPattern_invalidRegexRejected() {
     sak::RegexPatternLibrary lib(nullptr);
 
-    // Unmatched parenthesis is invalid regex
-    lib.addCustomPattern("bad_regex", "Bad", R"((unclosed)");
+    // Both are invalid PCRE: "(unclosed" has an unclosed group and "[invalid" an
+    // unterminated character class. Confirm the invalidity is real (control) before
+    // asserting the effect, so the test cannot pass because the inputs were accidentally
+    // valid.
+    QVERIFY(!QRegularExpression(QStringLiteral("(unclosed")).isValid());
+    QVERIFY(!QRegularExpression(QStringLiteral("[invalid")).isValid());
 
-    // Pattern should be rejected (invalid regex)
-    // Note: R"((unclosed)" has mismatched parens -- let's use a clearly invalid one
-    lib.addCustomPattern("bad2", "Bad2", "[invalid");
-
-    // The actually invalid one should be rejected
-    // First one: "(unclosed" -- actually this IS invalid because opening paren has no close
-    // But let's verify:
-    QRegularExpression testRe(R"((unclosed)");
-    if (testRe.isValid()) {
-        // If the regex library considers it valid, adjust expectations
-        QVERIFY(lib.customPatterns().size() >= 0);  // May or may not be added
-    }
-
-    // "[invalid" is definitely invalid
-    QRegularExpression testRe2("[invalid");
-    QVERIFY(!testRe2.isValid());
+    // addCustomPattern rejects an invalid regex (its isValid() gate), so neither reaches
+    // the custom set. The prior body checked `size() >= 0` inside a branch that never ran
+    // -- a double tautology; pin that NOTHING was added.
+    lib.addCustomPattern("bad_regex", "Bad", QStringLiteral("(unclosed"));
+    lib.addCustomPattern("bad2", "Bad2", QStringLiteral("[invalid"));
+    QCOMPARE(lib.customPatterns().size(), 0);
 }
 
 void RegexPatternLibraryTests::addCustomPattern_emitsSignal() {

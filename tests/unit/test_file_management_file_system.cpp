@@ -111,10 +111,13 @@ private Q_SLOTS:
 
         const auto target = sak::FileManagementFileSystemBridge::localTarget(temp.path());
 
-        // Over the cap: must be rejected, not silently truncated to the limit.
+        // Over the cap: must be rejected, not silently truncated to the limit. The 100-byte
+        // file over a 10-byte cap yields the exact over-limit blocker naming the real size;
+        // `!isEmpty()` could not tell that apart from an unrelated open/read error.
         const auto capped = sak::FileManagementFileSystemBridge::readFile(target, filePath, 10);
         QVERIFY(!capped.ok);
-        QVERIFY(!capped.blockers.isEmpty());
+        QCOMPARE(capped.blockers,
+                 QStringList{QStringLiteral("File exceeds read limit: 100 bytes")});
 
         // Within the cap: full content is returned.
         const auto full = sak::FileManagementFileSystemBridge::readFile(target, filePath, 1024);
@@ -247,7 +250,11 @@ private Q_SLOTS:
         QVERIFY(target.can_duplicate_scan);
         QVERIFY(target.can_advanced_search);
         QVERIFY(!target.can_organize);
-        QVERIFY(!target.blockers.isEmpty());
+        // can_organize == false always records the exact non-native-organizer blocker;
+        // pin that specific message rather than merely "some blocker exists".
+        QVERIFY(target.blockers.contains(QStringLiteral(
+            "Generic organizer moves are blocked for raw/non-native targets; use certified "
+            "Partition Manager file actions for supported writes")));
     }
 
     void rawDevicePathClassificationIsCaseInsensitive() {
@@ -1334,7 +1341,10 @@ private Q_SLOTS:
         const auto result =
             B::writeFile(locked, QStringLiteral("/x.txt"), QByteArrayLiteral("data"));
         QVERIFY(!result.ok);
-        QVERIFY(!result.blockers.isEmpty());
+        // A read-only target refuses the write with exactly this blocker (mutationCapabilityBlock);
+        // `!isEmpty()` would pass on any refusal reason, including a wrong one.
+        QCOMPARE(result.blockers,
+                 QStringList{QStringLiteral("Target is read-only; the write was refused.")});
     }
 
     // B8-05: a raw-target "Replace" whose destination has no exact (case-correct)

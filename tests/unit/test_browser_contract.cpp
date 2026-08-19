@@ -311,7 +311,11 @@ void BrowserContractTests::renderSnapshot_refsValueBearingNonInteractable() {
 
 void BrowserContractTests::catalog_advertisesDomFirstToolsWithStrictSchemas() {
     const QJsonArray tools = browserToolCatalog();
-    QVERIFY(tools.size() >= 15);
+    // Pin the full advertised catalog size. browserToolCatalog() appends a fixed set
+    // unconditionally (nav/action/pointer/form/tab/wait/inspection/window/infra/print/
+    // permission/storage/cookies/download/http-auth/advanced-input), 40 tools in all.
+    // `>= 15` could not catch a tool silently dropped from or duplicated into the catalog.
+    QCOMPARE(tools.size(), 40);
 
     QStringList names;
     for (const QJsonValue& value : tools) {

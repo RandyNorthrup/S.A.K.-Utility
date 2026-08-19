@@ -1199,9 +1199,12 @@ private Q_SLOTS:
         QVERIFY(data.value(QStringLiteral("source_read_only")).toBool());
         // The whole small image is read, so coverage is complete (honest scan_complete flag).
         QVERIFY(data.value(QStringLiteral("scan_complete")).toBool());
-        QVERIFY(data.value(QStringLiteral("candidate_count")).toInt() >= 1);
+        // The blob embeds exactly one JPEG (single SOI..EOI), so the carver yields exactly
+        // one candidate. `>= 1` / `!isEmpty()` would also pass if junk carved spuriously or
+        // the count double-reported; pin the exact one.
+        QCOMPARE(data.value(QStringLiteral("candidate_count")).toInt(), 1);
         const QJsonArray candidates = data.value(QStringLiteral("candidates")).toArray();
-        QVERIFY(!candidates.isEmpty());
+        QCOMPARE(candidates.size(), 1);
         const QJsonObject first = candidates.at(0).toObject();
         QCOMPARE(first.value(QStringLiteral("extension")).toString(), QStringLiteral("jpg"));
         // Metadata only: never a recovered-content field.
