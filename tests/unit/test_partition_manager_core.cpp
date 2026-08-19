@@ -1527,6 +1527,9 @@ private Q_SLOTS:
     void safetyValidator_refusesEveryOperationOnUnreadableDiskLayout();
     void inventoryScript_handlesRawDisksWithoutAbort();
     void safetyValidator_blocksSystemPartitionDelete();
+    void safetyValidator_refusesAbsentTargetDisk();    // R5-G10-9
+    void safetyValidator_refusesForgedTargetKind();    // R5-G10-9
+    void safetyValidator_refusesReadOnlyTargetDisk();  // R5-G10-9
     void scriptBuilder_createRespectsWizardPayload();
     void scriptBuilder_buildsNonNativeCreateFormatScripts();
     void scriptBuilder_rejectsInvalidCreatePartitionType();
@@ -16086,6 +16089,82 @@ void PartitionManagerCoreTests::safetyValidator_blocksSystemPartitionDelete() {
     const auto preview = planner.previewOperation(inventory, operation);
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("protected")));
+}
+
+// R5-G10-9: PartitionSafetyValidator::validate is the fail-closed gate a queued destructive
+// disk/partition operation must clear. The existing tests cover an unreadable layout and a
+// protected system partition; these prove three more refusals that guard against destroying the
+// wrong target. Each drives validate() directly with a hand-built inventory.
+
+void PartitionManagerCoreTests::safetyValidator_refusesAbsentTargetDisk() {
+    // A forged/stale target naming a disk not in the current inventory must fail closed --
+    // validate() must never certify an operation against a disk it never saw.
+    PartitionInventory inventory;  // no disks
+    PartitionOperation op;
+    op.type = PartitionOperationType::CheckFileSystem;
+    op.target.kind = PartitionTargetKind::Disk;
+    op.target.disk_number = 5;
+    const auto result = PartitionSafetyValidator::validate(inventory, op);
+    QVERIFY(!result.allowed());
+    QVERIFY2(result.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("was not found")),
+             qPrintable(result.blockers.join(QStringLiteral("; "))));
+
+    // Non-vacuity: with the disk actually present, the "was not found" blocker does not fire.
+    PartitionDiskInfo disk;
+    disk.disk_number = 5;
+    inventory.disks.append(disk);
+    const auto present = PartitionSafetyValidator::validate(inventory, op);
+    QVERIFY(!present.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("was not found")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_refusesForgedTargetKind() {
+    // An out-of-range / corrupted target.kind must hit the switch default and fail closed, never
+    // fall through with only warnings and leave the operation allowed. A non-destructive type is
+    // used so the scope-mismatch guard does not short-circuit before the kind switch.
+    PartitionInventory inventory;
+    PartitionDiskInfo disk;
+    disk.disk_number = 1;
+    inventory.disks.append(disk);
+
+    PartitionOperation op;
+    op.type = PartitionOperationType::CheckFileSystem;
+    op.target.kind = static_cast<PartitionTargetKind>(99);  // forged / corrupted
+    op.target.disk_number = 1;
+    const auto result = PartitionSafetyValidator::validate(inventory, op);
+    QVERIFY(!result.allowed());
+    QVERIFY2(result.blockers.join(QStringLiteral(" "))
+                 .contains(QStringLiteral("Unknown partition target kind")),
+             qPrintable(result.blockers.join(QStringLiteral("; "))));
+}
+
+void PartitionManagerCoreTests::safetyValidator_refusesReadOnlyTargetDisk() {
+    // The OS marked the disk non-writable, so a raw write would fail or corrupt; any operation on
+    // a read-only disk must be refused.
+    PartitionInventory readOnly;
+    PartitionDiskInfo roDisk;
+    roDisk.disk_number = 1;
+    roDisk.is_read_only = true;
+    readOnly.disks.append(roDisk);
+
+    PartitionOperation op;
+    op.type = PartitionOperationType::CheckFileSystem;
+    op.target.kind = PartitionTargetKind::Disk;
+    op.target.disk_number = 1;
+    const auto blockedResult = PartitionSafetyValidator::validate(readOnly, op);
+    QVERIFY2(blockedResult.blockers.join(QStringLiteral(" "))
+                 .contains(QStringLiteral("Target disk is read-only")),
+             qPrintable(blockedResult.blockers.join(QStringLiteral("; "))));
+
+    // Non-vacuity: the same operation on a writable disk gets no "Target disk is read-only"
+    // blocker, so the reject is the read-only state, not a blanket refusal of every disk.
+    PartitionInventory writable;
+    PartitionDiskInfo rwDisk;
+    rwDisk.disk_number = 1;
+    rwDisk.is_read_only = false;
+    writable.disks.append(rwDisk);
+    const auto okResult = PartitionSafetyValidator::validate(writable, op);
+    QVERIFY(!okResult.blockers.join(QStringLiteral(" "))
+                 .contains(QStringLiteral("Target disk is read-only")));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_createRespectsWizardPayload() {
