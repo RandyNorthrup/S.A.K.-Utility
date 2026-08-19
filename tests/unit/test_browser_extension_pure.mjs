@@ -57,6 +57,7 @@ const EXPORTED = [
   "transientReadError", "isEditableRole", "axValue", "MAX_OMITTED_FRAMES",
   "COMMAND_TABLE", "dispatchCommand", "axNodeToCapture", "indexProps",
   "AX_VALUE_MAX_CHARS", "printPageOptions", "buildBoundsMap",
+  "buildNodes", "MAX_CAPTURE_NODES",
 ];
 
 function loadWorker() {
@@ -505,4 +506,60 @@ test("buildBoundsMap drops a node whose backend id is undefined", () => {
   const map = w.buildBoundsMap(snapshot);
   assert.equal(map.size, 1);
   assert.deepEqual(crossRealm(map.get(42)), { x: 0, y: 0, width: 1, height: 1 });
+});
+
+// A named node always survives axNodeToCapture (only unnamed structural filler is dropped), so a
+// button with a name and an id makes every fixture node emit and isolates buildNodes' walk order.
+function walkNode(id, name, childIds) {
+  return axNode("button", name, [], { nodeId: id, childIds });
+}
+
+test("buildNodes walks the AX tree in pre-order with correct depth", () => {
+  const axTree = {
+    nodes: [
+      walkNode("root", "R", ["a", "b"]),
+      walkNode("a", "A", ["a1"]),
+      walkNode("b", "B", []),
+      walkNode("a1", "A1", []),
+    ],
+  };
+  const { nodes, truncated } = w.buildNodes(axTree, new Map());
+  // Depth-first, document order: the whole of a's subtree comes before sibling b.
+  assert.deepEqual(crossRealm(nodes.map((n) => [n.name, n.depth])),
+                   [["R", 0], ["A", 1], ["A1", 2], ["B", 1]]);
+  assert.equal(truncated, false);
+});
+
+test("buildNodes emits a shared descendant once and never loops", () => {
+  // "shared" is a child of both x and y (a DAG); the seen-set must emit it once and the walk must
+  // terminate. An empty tree and a missing tree yield an empty, non-truncated result.
+  const axTree = {
+    nodes: [
+      walkNode("root", "R", ["x", "y"]),
+      walkNode("x", "X", ["shared"]),
+      walkNode("y", "Y", ["shared"]),
+      walkNode("shared", "S", []),
+    ],
+  };
+  const { nodes } = w.buildNodes(axTree, new Map());
+  assert.equal(nodes.filter((n) => n.name === "S").length, 1);
+  assert.deepEqual(crossRealm(nodes.map((n) => n.name)), ["R", "X", "S", "Y"]);
+  assert.deepEqual(crossRealm(w.buildNodes({ nodes: [] }, new Map())),
+                   { nodes: [], truncated: false });
+  assert.deepEqual(crossRealm(w.buildNodes(null, new Map())), { nodes: [], truncated: false });
+});
+
+test("buildNodes caps the emitted set at MAX_CAPTURE_NODES and reports truncation", () => {
+  // A wide tree past the cap: the output stops at MAX_CAPTURE_NODES and truncated flags the drop,
+  // so the caller never presents a partial outline as the whole page.
+  const childIds = [];
+  const nodesArr = [walkNode("root", "R", childIds)];
+  for (let i = 0; i < w.MAX_CAPTURE_NODES + 200; i++) {
+    const id = "c" + i;
+    childIds.push(id);
+    nodesArr.push(walkNode(id, "N" + i, []));
+  }
+  const { nodes, truncated } = w.buildNodes({ nodes: nodesArr }, new Map());
+  assert.equal(nodes.length, w.MAX_CAPTURE_NODES);
+  assert.equal(truncated, true);
 });

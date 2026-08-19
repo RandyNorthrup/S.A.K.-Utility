@@ -972,31 +972,41 @@ function axNodeToCapture(node, depth, boundsByBackend) {
 
 // Walk the AX tree in document (pre-order) order, tracking depth, emitting the capture
 // nodes the C++ renderSnapshot consumes.
-function buildNodes(axTree, boundsByBackend) {
-  const axNodes = (axTree && axTree.nodes) || [];
-  const byId = new Map(axNodes.map((n) => [n.nodeId, n]));
+// The roots of the AX tree are the nodes no other node lists as a child.
+function axRootsOf(axNodes) {
   const childOf = new Set();
   for (const n of axNodes) {
     for (const c of n.childIds || []) {
       childOf.add(c);
     }
   }
-  const roots = axNodes.filter((n) => !childOf.has(n.nodeId));
+  return axNodes.filter((n) => !childOf.has(n.nodeId));
+}
+
+// Push a node's resolvable children onto the DFS stack. pop() is LIFO, so children go on in REVERSE
+// to come off in document order -- the same reason the roots are seeded in reverse. Pushed forward,
+// the LAST child is walked first and its subtree can spend the whole node budget, truncating an
+// earlier sibling out of the outline while `truncated` gives no hint which part is missing.
+function pushChildren(stack, node, byId, depth) {
+  const kids = (node.childIds || []).map((cid) => byId.get(cid)).filter(Boolean);
+  for (let i = kids.length - 1; i >= 0; i--) {
+    stack.push({ node: kids[i], depth: depth + 1 });
+  }
+}
+
+// Depth-first walk of the seeded roots, emitting capture records in document order. The emitted cap
+// (MAX_CAPTURE_NODES) does not bound the WALK on its own -- axNodeToCapture drops unnamed structural
+// filler, so a tree of a million <div>s is traversed in full while `out` stays tiny, a
+// page-controlled way to hold the single command channel busy past the transport deadline. The
+// visit cap bounds that; either bound biting leaves the stack non-empty, reporting the outline as
+// partial rather than whole.
+function walkAxTree(roots, byId, boundsByBackend) {
   const out = [];
   const seen = new Set();
-  // pop() is LIFO, so the roots go on in REVERSE to come off in document order -- the same reason
-  // the child push below counts down. Pushed forward, the LAST root is walked first, and its
-  // subtree can spend the whole node budget and truncate the MAIN document out of the outline
-  // while `truncated` gives no hint that the missing part is the page itself.
   const stack = [];
   for (let i = roots.length - 1; i >= 0; i--) {
     stack.push({ node: roots[i], depth: 0 });
   }
-  // The emitted-record cap does not bound the WALK: axNodeToCapture drops unnamed structural
-  // filler, so a tree of a million <div>s is traversed in full while `out` stays tiny -- a
-  // page-controlled way to hold the single command channel busy past the transport deadline.
-  // Bound the visits too; either bound biting leaves the stack non-empty, which reports the
-  // outline as partial rather than whole.
   let visited = 0;
   const maxVisits = 20 * MAX_CAPTURE_NODES;
   while (stack.length && out.length < MAX_CAPTURE_NODES && visited < maxVisits) {
@@ -1010,14 +1020,17 @@ function buildNodes(axTree, boundsByBackend) {
     if (rec) {
       out.push(rec);
     }
-    const kids = (node.childIds || []).map((cid) => byId.get(cid)).filter(Boolean);
-    for (let i = kids.length - 1; i >= 0; i--) {
-      stack.push({ node: kids[i], depth: depth + 1 });
-    }
+    pushChildren(stack, node, byId, depth);
   }
-  // A non-empty stack means we hit the node cap and dropped the rest of the tree; the
-  // caller must tell the model the outline is partial rather than present it as whole.
+  // A non-empty stack means we hit a cap and dropped the rest of the tree; the caller must tell the
+  // model the outline is partial rather than present it as whole.
   return { nodes: out, truncated: stack.length > 0 };
+}
+
+function buildNodes(axTree, boundsByBackend) {
+  const axNodes = (axTree && axTree.nodes) || [];
+  const byId = new Map(axNodes.map((n) => [n.nodeId, n]));
+  return walkAxTree(axRootsOf(axNodes), byId, boundsByBackend);
 }
 
 // Count every frame in the tree Chrome reports for the tab.
