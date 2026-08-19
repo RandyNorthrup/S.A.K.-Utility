@@ -56,7 +56,7 @@ const EXPORTED = [
   "scrollAmountPx", "selectCallArgs", "originsMatch", "defaultDialogAccept",
   "transientReadError", "isEditableRole", "axValue", "MAX_OMITTED_FRAMES",
   "COMMAND_TABLE", "dispatchCommand", "axNodeToCapture", "indexProps",
-  "AX_VALUE_MAX_CHARS",
+  "AX_VALUE_MAX_CHARS", "printPageOptions", "buildBoundsMap",
 ];
 
 function loadWorker() {
@@ -432,4 +432,77 @@ test("small pure helpers behave at their edges", () => {
   const err = w.transientReadError("try again");
   assert.equal(err.transient, true);
   assert.equal(err.message, "try again");
+});
+
+test("printPageOptions maps only recognized fields and pins the safe defaults", () => {
+  // An empty request prints with the fixed transfer mode and backgrounds on; nothing else leaks.
+  assert.deepEqual(crossRealm(w.printPageOptions({})),
+                   { transferMode: "ReturnAsBase64", printBackground: true });
+  // print_background is on unless EXACTLY false (a missing/true/truthy value stays on).
+  assert.equal(w.printPageOptions({ print_background: false }).printBackground, false);
+  assert.equal(w.printPageOptions({ print_background: true }).printBackground, true);
+  assert.equal(w.printPageOptions({ print_background: "no" }).printBackground, true);
+  // landscape is copied only when it is a real boolean.
+  assert.equal(w.printPageOptions({ landscape: true }).landscape, true);
+  assert.equal("landscape" in w.printPageOptions({ landscape: "yes" }), false);
+});
+
+test("printPageOptions enforces the scale and paper-size bounds", () => {
+  assert.equal(w.printPageOptions({ scale: 1.5 }).scale, 1.5);
+  assert.equal(w.printPageOptions({ scale: 0.1 }).scale, 0.1);  // inclusive lower bound
+  assert.equal(w.printPageOptions({ scale: 2 }).scale, 2);      // inclusive upper bound
+  assert.equal("scale" in w.printPageOptions({ scale: null }), false);
+  for (const bad of [0.05, 2.5, "abc", NaN, Infinity]) {
+    assert.throws(() => w.printPageOptions({ scale: bad }), /scale must be between 0.1 and 2/);
+  }
+  // Paper dimensions must be a finite positive number of inches.
+  const opts = w.printPageOptions({ paper_width: 8.5, paper_height: 11 });
+  assert.equal(opts.paperWidth, 8.5);
+  assert.equal(opts.paperHeight, 11);
+  assert.equal("paperWidth" in w.printPageOptions({ paper_width: null }), false);
+  for (const bad of [0, -1, "x", NaN]) {
+    assert.throws(() => w.printPageOptions({ paper_width: bad }),
+                  /paper_width must be a positive number of inches/);
+  }
+});
+
+test("buildBoundsMap rounds each node's layout box and skips unusable entries", () => {
+  const snapshot = {
+    documents: [
+      {
+        nodes: { backendNodeId: [100, 200, 300] },
+        layout: {
+          nodeIndex: [0, 1, 2],
+          bounds: [[1.4, 2.6, 3.5, 4.5], [10, 20, 30, 40], null],
+        },
+      },
+      null,                              // a null document is skipped
+      { nodes: { backendNodeId: [9] } },  // no layout -> skipped
+    ],
+  };
+  const map = w.buildBoundsMap(snapshot);
+  // 100 and 200 carve out; 300's bounds were null, so it is dropped, not defaulted to zeros.
+  assert.equal(map.size, 2);
+  assert.deepEqual(crossRealm(map.get(100)), { x: 1, y: 3, width: 4, height: 5 });
+  assert.deepEqual(crossRealm(map.get(200)), { x: 10, y: 20, width: 30, height: 40 });
+  assert.equal(map.get(300), undefined);
+  // A missing/empty snapshot yields an empty map, never a throw.
+  assert.equal(w.buildBoundsMap(null).size, 0);
+  assert.equal(w.buildBoundsMap({}).size, 0);
+});
+
+test("buildBoundsMap drops a node whose backend id is undefined", () => {
+  // nodeIndex points past the backendNodeId array: the entry has no stable id, so it must be
+  // dropped rather than keyed on undefined.
+  const snapshot = {
+    documents: [
+      {
+        nodes: { backendNodeId: [42] },
+        layout: { nodeIndex: [0, 7], bounds: [[0, 0, 1, 1], [5, 5, 5, 5]] },
+      },
+    ],
+  };
+  const map = w.buildBoundsMap(snapshot);
+  assert.equal(map.size, 1);
+  assert.deepEqual(crossRealm(map.get(42)), { x: 0, y: 0, width: 1, height: 1 });
 });

@@ -832,6 +832,25 @@ function indexProps(properties) {
 // iframes at [1..]); getFullAXTree stitches those same-process subframes into one tree,
 // so their nodes need geometry too. Merge EVERY document -- backendNodeId is unique
 // tab-wide, so a single map keyed by it has no cross-document collisions.
+// Insert the rounded layout box of every node in one document into `map`, keyed by backend node id.
+// Split out of buildBoundsMap so the per-document guards and the per-node loop stay individually
+// under the complexity limit; behavior is identical to the previous single nested loop.
+function addNodeBounds(map, backendIds, nodeIndex, bounds) {
+  for (let i = 0; i < nodeIndex.length; i++) {
+    const backend = backendIds[nodeIndex[i]];
+    const b = bounds[i];
+    if (backend === undefined || !b) {
+      continue;
+    }
+    map.set(backend, {
+      x: Math.round(b[0]),
+      y: Math.round(b[1]),
+      width: Math.round(b[2]),
+      height: Math.round(b[3]),
+    });
+  }
+}
+
 function buildBoundsMap(snapshot) {
   const map = new Map();
   const documents = (snapshot && snapshot.documents) || [];
@@ -839,23 +858,8 @@ function buildBoundsMap(snapshot) {
     if (!doc || !doc.nodes || !doc.layout) {
       continue;
     }
-    const backendIds = doc.nodes.backendNodeId || [];
     const layout = doc.layout;
-    const nodeIndex = layout.nodeIndex || [];
-    const bounds = layout.bounds || [];
-    for (let i = 0; i < nodeIndex.length; i++) {
-      const backend = backendIds[nodeIndex[i]];
-      const b = bounds[i];
-      if (backend === undefined || !b) {
-        continue;
-      }
-      map.set(backend, {
-        x: Math.round(b[0]),
-        y: Math.round(b[1]),
-        width: Math.round(b[2]),
-        height: Math.round(b[3]),
-      });
-    }
+    addNodeBounds(map, doc.nodes.backendNodeId || [], layout.nodeIndex || [], layout.bounds || []);
   }
   return map;
 }
@@ -3223,25 +3227,27 @@ async function handleEmulate(tabId, args) {
 // A print option that is out of range is a request this layer cannot honor -- and it is the only
 // layer that range-checks, since the C++ contract only type-checks. Dropping one renders the PDF
 // at Chrome's default instead, which is a different document than the one that was asked for.
+// Parse a numeric print option, throwing `err` unless it is finite and passes `isValid`. Pulling
+// the finite/range check out keeps printPageOptions itself under the complexity limit.
+function printNumber(value, isValid, err) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || !isValid(n)) { throw new Error(err); }
+  return n;
+}
+
 function printPageOptions(args) {
   const opts = { transferMode: "ReturnAsBase64" };
   if (typeof args.landscape === "boolean") { opts.landscape = args.landscape; }
-  opts.printBackground = args.print_background === false ? false : true;
+  opts.printBackground = args.print_background !== false;
   if (args.scale !== undefined && args.scale !== null) {
-    const scale = Number(args.scale);
-    if (!Number.isFinite(scale) || scale < 0.1 || scale > 2) {
-      throw new Error("browser_print scale must be between 0.1 and 2.");
-    }
-    opts.scale = scale;
+    opts.scale = printNumber(args.scale, (n) => n >= 0.1 && n <= 2,
+                             "browser_print scale must be between 0.1 and 2.");
   }
   const paper = [["paper_width", "paperWidth"], ["paper_height", "paperHeight"]];
   for (const [argName, optName] of paper) {
     if (args[argName] === undefined || args[argName] === null) { continue; }
-    const inches = Number(args[argName]);
-    if (!Number.isFinite(inches) || inches <= 0) {
-      throw new Error("browser_print " + argName + " must be a positive number of inches.");
-    }
-    opts[optName] = inches;
+    opts[optName] = printNumber(args[argName], (n) => n > 0,
+                                "browser_print " + argName + " must be a positive number of inches.");
   }
   return opts;
 }

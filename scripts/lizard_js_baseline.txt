@@ -18,7 +18,6 @@
 # Format:  function@path | ccn | params | length
 String@browser/extension/background.js               | 15 | 1 | 26
 applyDeviceMetrics@browser/extension/background.js   | 14 | 3 | 24
-buildBoundsMap@browser/extension/background.js       | 13 | 1 | 25
 buildNodes@browser/extension/background.js           | 15 | 2 | 47
 collectMediaNodes@browser/extension/background.js    | 18 | 2 | 35
 ensureAttached@browser/extension/background.js       | 11 | 1 | 32
@@ -34,6 +33,5 @@ handleWindow@browser/extension/background.js         | 23 | 1 | 44
 mediaFn@browser/extension/background.js              | 17 | 2 | 27
 occlusionAt@browser/extension/background.js          | 18 | 4 | 36
 onHostMessage@browser/extension/background.js        | 15 | 1 | 62
-printPageOptions@browser/extension/background.js     | 13 | 1 | 22
 selectOptionFn@browser/extension/background.js       | 26 | 5 | 56
 viewportState@browser/extension/background.js        | 15 | 1 | 21
