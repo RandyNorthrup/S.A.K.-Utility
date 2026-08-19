@@ -1508,6 +1508,9 @@ private Q_SLOTS:
     void apfsLzbitmapDecodesAppleReferenceStream();
     void apfsLzbitmap_decodeRejectsMalformedStream();
     void apfsLzbitmap_decodeRejectsMalformedChunkHeader();
+    void apfsLzbitmap_decodeLoopGuardsFailClosed();
+    void apfsResourceFork_parseRejectsMalformedBlob();
+    void apfsBlockOffs_parseRejectsNonMonotonicTable();
     void apfsLzbitmapResourceForkLayoutMatchesApfsck();
     void apfsLzbitmapInlineAlgoDecodes();
     void apfsWriter_lzbitmapCompressedFileRoundTrips();
@@ -15546,6 +15549,123 @@ void PartitionManagerCoreTests::apfsLzbitmap_decodeRejectsMalformedChunkHeader()
              "control's first chunk must be a compressed chunk for the metadata-offset case");
     QVERIFY2(!mutate([len0](uint8_t* p) { sak::zbm::writeU24(p, 10, len0); }).has_value(),
              "a compressed chunk with an out-of-range metadata offset must fail closed");
+}
+
+void PartitionManagerCoreTests::apfsLzbitmap_decodeLoopGuardsFailClosed() {
+    // The zbm decode LOOP carries two memory-safety guards the header-field negatives never reach
+    // (a malformed header is rejected before the loop runs). Both protect the untrusted decode path
+    // (a foreign APFS image's decmpfs algo 13/14 content). Drive zbmApplyBitmap directly -- it and
+    // DecodeState/Bitmap are public in sak::zbm, which the header negatives already reach into.
+    std::vector<uint8_t> dest(64, 0);
+    std::vector<uint8_t> src(16, 0xAB);
+
+    // (1) Back-reference underflow (apfs_lzbitmap_codec.h:193): a back-ref selector (bitmap bit 0
+    // clear) at output offset 0 would read dest[0 - period]. out_pos < period -> fail closed.
+    sak::zbm::DecodeState under{};
+    under.dest = dest.data();
+    under.dest_size = dest.size();
+    under.decmp_len = 8;
+    under.period = 8;  // out_pos and written default to 0
+    QVERIFY2(!sak::zbm::zbmApplyBitmap(under, sak::zbm::Bitmap{0x00, 0}),
+             "a back-reference at output offset 0 (out_pos < period) must fail closed");
+
+    // Control: once out_pos >= period the same selector is a valid copy of dest[out_pos - period].
+    sak::zbm::DecodeState okBack{};
+    okBack.dest = dest.data();
+    okBack.dest_size = dest.size();
+    okBack.out_pos = 8;
+    okBack.written = 8;
+    okBack.decmp_len = 16;
+    okBack.period = 8;
+    QVERIFY2(sak::zbm::zbmApplyBitmap(okBack, sak::zbm::Bitmap{0x00, 0}),
+             "a back-reference with out_pos >= period is a valid copy, not the underflow case");
+
+    // (2) Literal-source overrun (apfs_lzbitmap_codec.h:187): a fresh-literal selector (bitmap bit
+    // set) once the data cursor has reached chunk_end would read a neighbouring chunk. data >=
+    // chunk_end -> fail closed.
+    sak::zbm::DecodeState over{};
+    over.src = src.data();
+    over.src_size = src.size();
+    over.dest = dest.data();
+    over.dest_size = dest.size();
+    over.decmp_len = 8;
+    over.period = 8;
+    over.data = 10;
+    over.chunk_end = 10;  // data cursor already at the chunk end
+    QVERIFY2(!sak::zbm::zbmApplyBitmap(over, sak::zbm::Bitmap{0xFF, 0}),
+             "a fresh literal once data == chunk_end must fail closed, not overrun the chunk");
+
+    // Control: with data < chunk_end the same literal selector copies src[data] and succeeds.
+    sak::zbm::DecodeState okLit{};
+    okLit.src = src.data();
+    okLit.src_size = src.size();
+    okLit.dest = dest.data();
+    okLit.dest_size = dest.size();
+    okLit.decmp_len = 8;
+    okLit.period = 8;
+    okLit.data = 0;
+    okLit.chunk_end = 16;
+    QVERIFY2(sak::zbm::zbmApplyBitmap(okLit, sak::zbm::Bitmap{0xFF, 0}),
+             "a fresh literal with data < chunk_end is a valid emit");
+}
+
+void PartitionManagerCoreTests::apfsResourceFork_parseRejectsMalformedBlob() {
+    // Untrusted foreign-image ZLIB_RSRC 'cmpf' blob. Two structural guards fail closed on a blob
+    // that clears the fixed-size checks but declares out-of-range geometry. Non-vacuity: the
+    // unpoked blob parses back byte-exact.
+    QByteArray payload;
+    while (payload.size() < 2000) {
+        payload.append(QByteArrayLiteral("resource fork malformed-blob negative vector. "));
+    }
+    const QByteArray valid = sak::apfsBuildResourceForkBlob(payload, sak::kApfsCompressZlibRsrc);
+    QVERIFY(!valid.isEmpty());
+    const auto control = sak::apfsParseResourceForkBlob(valid,
+                                                        sak::kApfsCompressZlibRsrc,
+                                                        static_cast<uint64_t>(payload.size()));
+    QVERIFY2(control.has_value() && *control == payload, "valid control blob must parse back");
+
+    // (1) Header geometry (apfs_resource_fork.h:220): data_size at blob[8..11] (big-endian) set so
+    // data_offs + data_size exceeds the blob -> apfsParseResourceForkLayout returns nullopt.
+    QByteArray badHeader = valid;
+    qToBigEndian<quint32>(0xFF'FF'FF'FFu, badHeader.data() + 8);
+    QVERIFY2(!sak::apfsParseResourceForkBlob(
+                  badHeader, sak::kApfsCompressZlibRsrc, static_cast<uint64_t>(payload.size()))
+                  .has_value(),
+             "an oversized data_size (data_offs + data_size > blob) must fail closed");
+
+    // (2) Block-entry bounds (apfs_resource_fork.h:249): header left valid, but block[0]'s
+    // little-endian size (at data_offs + prefix + 4) set so chunkStart + size exceeds the blob.
+    const auto layout = sak::apfsParseResourceForkLayout(valid);
+    QVERIFY(layout.has_value());
+    QByteArray badBlock = valid;
+    const qsizetype block0SizeOff = static_cast<qsizetype>(layout->data_offs) +
+                                    sak::kApfsResourceForkDataPrefixBytes + 4;
+    qToLittleEndian<quint32>(0xFF'FF'FF'FFu, badBlock.data() + block0SizeOff);
+    QVERIFY2(!sak::apfsParseResourceForkBlob(
+                  badBlock, sak::kApfsCompressZlibRsrc, static_cast<uint64_t>(payload.size()))
+                  .has_value(),
+             "a block entry pointing past the blob must fail closed");
+}
+
+void PartitionManagerCoreTests::apfsBlockOffs_parseRejectsNonMonotonicTable() {
+    // The block_offs[] container (LZBITMAP/LZVN/LZFSE resource fork) from an untrusted image. Its
+    // sole per-pair structural guard (apfs_lzbitmap.h:173) rejects a non-monotonic or past-the-blob
+    // offset. Non-vacuity: the unpoked multi-block table parses back byte-exact.
+    QByteArray payload(sak::kApfsLzbitmapBlockSize + 4096, 'Z');  // 2 blocks -> 3 le32 offsets
+    const QByteArray valid = sak::apfsBuildLzbitmapResourceFork(payload);
+    QVERIFY(!valid.isEmpty());
+    const auto control = sak::apfsParseLzbitmapResourceFork(valid,
+                                                            static_cast<uint64_t>(payload.size()));
+    QVERIFY2(control.has_value() && *control == payload, "valid control table must parse back");
+
+    // offsets[0] is the table size; set offsets[1] (blob[4..7], little-endian) equal to it so the
+    // first block is non-monotonic (next <= coffs) -> apfsBlockOffsBlockAt returns nullopt.
+    const quint32 offset0 = qFromLittleEndian<quint32>(valid.constData());
+    QByteArray badTable = valid;
+    qToLittleEndian<quint32>(offset0, badTable.data() + 4);
+    QVERIFY2(!sak::apfsParseLzbitmapResourceFork(badTable, static_cast<uint64_t>(payload.size()))
+                  .has_value(),
+             "a non-monotonic block_offs table must fail closed");
 }
 
 void PartitionManagerCoreTests::apfsLzbitmapInlineAlgoDecodes() {
