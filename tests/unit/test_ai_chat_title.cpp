@@ -37,10 +37,9 @@ void AiChatTitleTests::titleRedactsSecretsPathsAndUrls() {
                               QStringLiteral("\\Users\\Username\\secret.txt");
     const QString title = sak::ai::chatTitleFromFirstPrompt(
         QStringLiteral("Review %1 from %2 and https://example.com/token").arg(fake_key, fake_path));
-    QVERIFY(!title.contains(QStringLiteral("sk") + QStringLiteral("-proj"), Qt::CaseInsensitive));
-    QVERIFY(!title.contains(QStringLiteral("C:"), Qt::CaseInsensitive));
-    QVERIFY(!title.contains(QStringLiteral("example.com"), Qt::CaseInsensitive));
-    QVERIFY(title.size() <= sak::ai::kGeneratedChatTitleMaxChars);
+    // Redaction is deterministic: the key/path/URL each map to a dropped token, leaving exactly
+    // "Review Website". The exact pin subsumes the three negative-contains checks and the bound.
+    QCOMPARE(title, QStringLiteral("Review Website"));
 }
 
 void AiChatTitleTests::defaultTitleDetectionPreservesManualNames() {

@@ -81,7 +81,10 @@ void AiWorkflowStoreTests::parseValidWorkflow() {
     QCOMPARE(workflow.phases.size(), 1);
     QCOMPARE(workflow.phases.first().arguments.value(QStringLiteral("command")).toString(),
              QStringLiteral("Write-Output test"));
-    QVERIFY(workflow.promptSummary().contains(QStringLiteral("Workflow: Sample Workflow")));
+    QCOMPARE(workflow.promptSummary(),
+             QStringLiteral("Workflow: Sample Workflow\nPurpose: Test workflow\nTask: Do the test "
+                            "workflow.\nPhases:\n- plan: overseer\n  Plan the work.\n  Done when: "
+                            "Plan complete.\nAcceptance criteria:\n- Workflow parses."));
 }
 
 void AiWorkflowStoreTests::rejectInvalidWorkflow() {
@@ -103,7 +106,7 @@ void AiWorkflowStoreTests::loadBuiltInWorkflows() {
     QVERIFY2(store.loadBuiltIn(&errors), qPrintable(errors.join(QStringLiteral("; "))));
 
     const auto workflows = store.workflows();
-    QVERIFY(workflows.size() >= 10);
+    QCOMPARE(workflows.size(), 25);  // resources/ai.qrc bundles exactly 25 built-in workflows
     QVERIFY(store.workflowById(QStringLiteral("download_offline_installer")) != nullptr);
     QVERIFY(store.workflowById(QStringLiteral("windows_update_repair")) != nullptr);
     QVERIFY(store.workflowById(QStringLiteral("malware_virus_removal")) != nullptr);
@@ -113,7 +116,8 @@ void AiWorkflowStoreTests::loadBuiltInWorkflows() {
     QVERIFY(store.roles().contains(QStringLiteral("Security Technician")));
     QVERIFY(store.roles().contains(QStringLiteral("System Cleanup Technician")));
     QVERIFY(store.roles().contains(QStringLiteral("Diagnostic Technician")));
-    QVERIFY(!store.workflowsForRole(QStringLiteral("Windows Repair Technician")).isEmpty());
+    // Exactly six built-in workflows carry the "Windows Repair Technician" role.
+    QCOMPARE(store.workflowsForRole(QStringLiteral("Windows Repair Technician")).size(), 6);
 }
 
 void AiWorkflowStoreTests::userDirectoryOverridesBuiltInWorkflow() {

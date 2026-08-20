@@ -63,7 +63,7 @@ void BackupDestinationGuardTests::trimsSurroundingWhitespaceOnAcceptedPath() {
 void BackupDestinationGuardTests::rejectsEmptyText() {
     const BackupDestinationCheck check = screen(QString());
     QVERIFY(!check.accepted);
-    QVERIFY(!check.refusal.isEmpty());
+    QCOMPARE(check.refusal, QObject::tr("Please select a backup destination folder."));
 }
 
 void BackupDestinationGuardTests::rejectsWhitespaceOnlyText() {

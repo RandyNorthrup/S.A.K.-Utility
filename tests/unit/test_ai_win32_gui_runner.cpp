@@ -87,8 +87,8 @@ void AiWin32GuiRunnerTests::stopsAtFirstNonOptionalToolError() {
 
     QVERIFY(!result.value(QStringLiteral("success")).toBool());
     QCOMPARE(calls, 2);  // stopped after the failing step; third never ran
-    QVERIFY(
-        result.value(QStringLiteral("error")).toString().contains(QStringLiteral("click_text")));
+    QCOMPARE(result.value(QStringLiteral("error")).toString(),
+             QStringLiteral("Step 1 (click_text) failed"));
 }
 
 void AiWin32GuiRunnerTests::continuesPastOptionalToolError() {
@@ -120,7 +120,10 @@ void AiWin32GuiRunnerTests::rejectsHighRiskStep() {
     });
 
     QVERIFY(!result.value(QStringLiteral("success")).toBool());
-    QVERIFY(result.value(QStringLiteral("error")).toString().contains(QStringLiteral("high-risk")));
+    QCOMPARE(result.value(QStringLiteral("error")).toString(),
+             QStringLiteral(
+                 "Step 1 (kill_process) uses a high-risk tool, which a win32_gui recipe may not "
+                 "call"));
 }
 
 void AiWin32GuiRunnerTests::rejectsDisallowedMiddleTierStep() {
@@ -141,7 +144,9 @@ void AiWin32GuiRunnerTests::rejectsDisallowedMiddleTierStep() {
 
     QVERIFY(!result.value(QStringLiteral("success")).toBool());
     QCOMPARE(calls, 2);  // stopped after the disallowed step; third never ran
-    QVERIFY(result.value(QStringLiteral("error")).toString().contains(QStringLiteral("permitted")));
+    QCOMPARE(result.value(QStringLiteral("error")).toString(),
+             QStringLiteral("Step 1 (clipboard_write) uses a tool that is not permitted in a "
+                            "win32_gui recipe (only read-only and input-tier desktop tools are)"));
 }
 
 void AiWin32GuiRunnerTests::failsWhenAStepCannotBePlanned() {
@@ -152,7 +157,9 @@ void AiWin32GuiRunnerTests::failsWhenAStepCannotBePlanned() {
     });
 
     QVERIFY(!result.value(QStringLiteral("success")).toBool());
-    QVERIFY(result.value(QStringLiteral("error")).toString().contains(QStringLiteral("planned")));
+    QCOMPARE(result.value(QStringLiteral("error")).toString(),
+             QStringLiteral("Step 0 (not_a_real_tool) could not be planned: tool 'not_a_real_tool' "
+                            "is not in bundled provider manifest"));
 }
 
 void AiWin32GuiRunnerTests::waitExpectationFailureFlags() {
@@ -161,22 +168,28 @@ void AiWin32GuiRunnerTests::waitExpectationFailureFlags() {
     QVERIFY(!win32WaitExpectationFailure(QJsonObject{{QStringLiteral("found"), true}}).has_value());
     QVERIFY(!win32WaitExpectationFailure(QJsonObject{{QStringLiteral("text"), QStringLiteral("x")}})
                  .has_value());  // non-flag payload ignored
-    QVERIFY(win32WaitExpectationFailure(QJsonObject{{QStringLiteral("found"), false}}).has_value());
-    QVERIFY(
-        win32WaitExpectationFailure(QJsonObject{{QStringLiteral("satisfied"), false}}).has_value());
+    QCOMPARE(win32WaitExpectationFailure(QJsonObject{{QStringLiteral("found"), false}})
+                 .value_or(QString()),
+             QStringLiteral("awaited text did not appear before the timeout"));
+    QCOMPARE(win32WaitExpectationFailure(QJsonObject{{QStringLiteral("satisfied"), false}})
+                 .value_or(QString()),
+             QStringLiteral("awaited window state was not reached before the timeout"));
     const auto idle = win32WaitExpectationFailure(QJsonObject{{QStringLiteral("idle"), false}});
     QVERIFY(idle.has_value());
-    QVERIFY(idle->contains(QStringLiteral("settle")));
+    QCOMPARE(*idle, QStringLiteral("window did not settle before the timeout"));
     // A non-bool flag value is MALFORMED and must fail closed (previously treated as satisfied).
-    QVERIFY(
-        win32WaitExpectationFailure(QJsonObject{{QStringLiteral("found"), QStringLiteral("no")}})
-            .has_value());
+    QCOMPARE(win32WaitExpectationFailure(
+                 QJsonObject{{QStringLiteral("found"), QStringLiteral("no")}})
+                 .value_or(QString()),
+             QStringLiteral("awaited text did not appear (result flag was malformed)"));
 }
 
 void AiWin32GuiRunnerTests::waitStepRequiresSatisfiedFlag() {
     // require_satisfied=true (the step IS a wait_for_* tool): a truncated/empty result_text
     // parses to {} and must fail closed instead of silently passing.
-    QVERIFY(win32WaitExpectationFailure(QJsonObject{}, /*require_satisfied=*/true).has_value());
+    QCOMPARE(
+        win32WaitExpectationFailure(QJsonObject{}, /*require_satisfied=*/true).value_or(QString()),
+        QStringLiteral("wait step produced no verifiable found/satisfied/idle result"));
     // A present-and-true flag satisfies the requirement.
     QVERIFY(!win32WaitExpectationFailure(QJsonObject{{QStringLiteral("found"), true}},
                                          /*require_satisfied=*/true)

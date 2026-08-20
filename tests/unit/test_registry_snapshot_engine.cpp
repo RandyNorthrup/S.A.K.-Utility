@@ -45,7 +45,11 @@ void RegistrySnapshotEngineTests::staticAsserts_moveConstructible() {
 void RegistrySnapshotEngineTests::captureSnapshot_returnsNonEmpty() {
     // On a Windows system, the snapshot should contain entries
     auto snapshot = RegistrySnapshotEngine::captureSnapshot();
-    QVERIFY(!snapshot.isEmpty());
+    // The three universal, world-readable roots are inserted on every Windows box, so pin them
+    // rather than a bare non-empty check (which a single stray key would satisfy).
+    QVERIFY(snapshot.contains(QStringLiteral("HKLM\\SOFTWARE")));
+    QVERIFY(snapshot.contains(QStringLiteral("HKLM\\SYSTEM\\CurrentControlSet\\Services")));
+    QVERIFY(snapshot.contains(QStringLiteral("HKCU\\Software")));
 }
 
 void RegistrySnapshotEngineTests::captureSnapshot_idempotent() {
@@ -75,14 +79,20 @@ void RegistrySnapshotEngineTests::captureSnapshot_reliableFlagSet() {
     auto snapshot = RegistrySnapshotEngine::captureSnapshot(&reliable);
     QVERIFY(!snapshot.isEmpty());
     if (reliable) {
-        QVERIFY(snapshot.size() > 1);
+        // A reliable capture opened every root, so the three universal roots are present.
+        QVERIFY(snapshot.contains(QStringLiteral("HKLM\\SOFTWARE")));
+        QVERIFY(snapshot.contains(QStringLiteral("HKLM\\SYSTEM\\CurrentControlSet\\Services")));
+        QVERIFY(snapshot.contains(QStringLiteral("HKCU\\Software")));
     }
 }
 
 void RegistrySnapshotEngineTests::captureSnapshot_nullReliableParam_ok() {
     // Passing nullptr (the default) must not crash and must still capture.
     auto snapshot = RegistrySnapshotEngine::captureSnapshot(nullptr);
-    QVERIFY(!snapshot.isEmpty());
+    // nullptr only skips the *reliable write-back; the same three roots are still captured.
+    QVERIFY(snapshot.contains(QStringLiteral("HKLM\\SOFTWARE")));
+    QVERIFY(snapshot.contains(QStringLiteral("HKLM\\SYSTEM\\CurrentControlSet\\Services")));
+    QVERIFY(snapshot.contains(QStringLiteral("HKCU\\Software")));
 }
 
 QTEST_GUILESS_MAIN(RegistrySnapshotEngineTests)
