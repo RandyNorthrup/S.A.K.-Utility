@@ -118,10 +118,9 @@ void TestUupIsoBuilder::missingFiles_absentOrTruncated_reported() {
 
     const QStringList missing = UupIsoBuilder::missingFiles({present, truncated, absent},
                                                             dir.path());
-    QCOMPARE(missing.size(), 2);
-    QVERIFY(missing.contains("short.wim"));
-    QVERIFY(missing.contains("gone.esd"));
-    QVERIFY(!missing.contains("ok.esd"));
+    // missingFiles preserves input order, appending only absent/truncated entries; the exact
+    // ordered list subsumes the size, both members, and the ok.esd (present) exclusion.
+    QCOMPARE(missing, QStringList({"short.wim", "gone.esd"}));
 }
 
 // ============================================================================

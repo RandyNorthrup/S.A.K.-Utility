@@ -229,7 +229,7 @@ void TestProgramEnumerator::enumerateAll_cancelledBeforeStart() {
     QCOMPARE(failed_spy.count(), 1);
     const auto args = failed_spy.takeFirst();
     QCOMPARE(args.at(0).toInt(), 42);  // generation echoed
-    QVERIFY(args.at(1).toString().contains("cancelled"));
+    QCOMPARE(args.at(1).toString(), QStringLiteral("Enumeration cancelled."));
 }
 
 QTEST_MAIN(TestProgramEnumerator)

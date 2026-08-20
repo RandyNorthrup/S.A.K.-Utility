@@ -142,7 +142,7 @@ private Q_SLOTS:
 
         QVERIFY(result.has_value());
         QVERIFY(!result->success);
-        QVERIFY(result->error_message.contains("unexpected error"));
+        QCOMPARE(result->error_message, QStringLiteral("unexpected error"));
     }
 
     // ======================================================================

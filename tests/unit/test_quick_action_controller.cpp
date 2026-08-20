@@ -111,13 +111,16 @@ void TestQuickActionController::testNoDuplicateRegistration() {
     Q_ASSERT(m_ctrl);
     m_ctrl->registerAction(std::make_unique<ControllerStubAction>("Dup"));
 
-    // Registering a second action with same name
-    // should still allow it (controller uses name as key)
+    // A second action with a duplicate name is REJECTED (fail closed): registerAction stores
+    // nothing and returns an empty id, so the first "Dup" survives and stays routable. This avoids
+    // the listing/routing split where getAction resolves the newest but getAllActions lists both.
     auto action2 = std::make_unique<ControllerStubAction>("Dup");
     const QString name2 = m_ctrl->registerAction(std::move(action2));
 
-    // Behavior: the latest registration should be accessible
+    QCOMPARE(name2, QString());
+    QCOMPARE(static_cast<int>(m_ctrl->getAllActions().size()), 1);
     QVERIFY(m_ctrl->getAction("Dup") != nullptr);
+    QCOMPARE(m_ctrl->getAction("Dup")->name(), QStringLiteral("Dup"));
 }
 
 // ============================================================================
