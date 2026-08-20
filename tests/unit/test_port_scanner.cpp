@@ -58,53 +58,43 @@ void TestPortScanner::construction_nonCopyable() {
 
 void TestPortScanner::serviceName_http() {
     const auto name = PortScanner::getServiceName(80);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("HTTP", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("HTTP"));
 }
 
 void TestPortScanner::serviceName_https() {
     const auto name = PortScanner::getServiceName(443);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("HTTPS", Qt::CaseInsensitive) ||
-            name.contains("HTTP", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("HTTPS"));
 }
 
 void TestPortScanner::serviceName_ssh() {
     const auto name = PortScanner::getServiceName(22);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("SSH", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("SSH"));
 }
 
 void TestPortScanner::serviceName_ftp() {
     const auto name = PortScanner::getServiceName(21);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("FTP", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("FTP Control"));
 }
 
 void TestPortScanner::serviceName_dns() {
     const auto name = PortScanner::getServiceName(53);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("DNS", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("DNS"));
 }
 
 void TestPortScanner::serviceName_smb() {
     const auto name = PortScanner::getServiceName(445);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("SMB", Qt::CaseInsensitive) ||
-            name.contains("Microsoft", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("SMB"));
 }
 
 void TestPortScanner::serviceName_rdp() {
     const auto name = PortScanner::getServiceName(3389);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("RDP", Qt::CaseInsensitive) ||
-            name.contains("Remote", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("RDP"));
 }
 
 void TestPortScanner::serviceName_unknownPort() {
     const auto name = PortScanner::getServiceName(59'999);
-    // Unknown port should return empty or "Unknown"
-    QVERIFY(name.isEmpty() || name.contains("Unknown", Qt::CaseInsensitive));
+    // A port absent from the service database returns an empty name (no "Unknown" fallback).
+    QVERIFY(name.isEmpty());
 }
 
 // ===================================================================
@@ -114,7 +104,7 @@ void TestPortScanner::serviceName_unknownPort() {
 void TestPortScanner::presets_nonEmpty() {
     const auto presets = PortScanner::getPresets();
     QVERIFY(!presets.isEmpty());
-    QVERIFY(presets.size() >= 1);
+    QCOMPARE(presets.size(), static_cast<qsizetype>(7));  // kPortPresets has exactly 7 entries
 }
 
 void TestPortScanner::presets_haveValidPorts() {
@@ -144,8 +134,8 @@ void TestPortScanner::scanConfig_defaults() {
     QVERIFY(config.ports.isEmpty());
     QCOMPARE(config.portRangeStart, static_cast<uint16_t>(0));
     QCOMPARE(config.portRangeEnd, static_cast<uint16_t>(0));
-    QVERIFY(config.timeoutMs > 0);
-    QVERIFY(config.maxConcurrent > 0);
+    QCOMPARE(config.timeoutMs, netdiag::kDefaultPortScanTimeoutMs);
+    QCOMPARE(config.maxConcurrent, netdiag::kDefaultMaxConcurrent);
     QCOMPARE(config.grabBanners, true);
 }
 

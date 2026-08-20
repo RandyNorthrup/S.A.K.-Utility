@@ -29,7 +29,10 @@ private Q_SLOTS:
 
 void TestNetworkDiagnosticController::construction_default() {
     NetworkDiagnosticController controller;
-    QVERIFY(dynamic_cast<QObject*>(&controller) != nullptr);
+    // The vacuous upcast can never be null; pin the moc metaobject name instead, proving
+    // Q_OBJECT is present and correctly namespaced (a missing macro would break its signals).
+    QCOMPARE(QByteArray(controller.metaObject()->className()),
+             QByteArrayLiteral("sak::NetworkDiagnosticController"));
 }
 
 void TestNetworkDiagnosticController::construction_nonCopyable() {

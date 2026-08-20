@@ -77,8 +77,8 @@ void TestStressTestWorker::config_defaults() {
     QCOMPARE(config.stress_memory, true);
     QCOMPARE(config.stress_disk, false);
     QCOMPARE(config.stress_gpu, false);
-    QVERIFY(config.duration_minutes > 0);
-    QVERIFY(config.thermal_limit_celsius > 0);
+    QCOMPARE(config.duration_minutes, kStressTestDefaultDurationMinutes);
+    QCOMPARE(config.thermal_limit_celsius, kStressTestDefaultThermalLimitCelsius);
 }
 
 void TestStressTestWorker::config_setConfig() {
@@ -281,11 +281,17 @@ void TestStressTestWorker::execute_invalidMemoryPercent_failsClosed() {
 
     config.memory_usage_percent = -5.0;
     worker.setConfig(config);
-    QVERIFY(!worker.runExecute().has_value());
+    const auto neg_result = worker.runExecute();
+    QVERIFY(!neg_result.has_value());
+    QCOMPARE(static_cast<int>(neg_result.error()),
+             static_cast<int>(sak::error_code::invalid_argument));
 
     config.memory_usage_percent = 150.0;
     worker.setConfig(config);
-    QVERIFY(!worker.runExecute().has_value());
+    const auto over_result = worker.runExecute();
+    QVERIFY(!over_result.has_value());
+    QCOMPARE(static_cast<int>(over_result.error()),
+             static_cast<int>(sak::error_code::invalid_argument));
 }
 
 QTEST_MAIN(TestStressTestWorker)
