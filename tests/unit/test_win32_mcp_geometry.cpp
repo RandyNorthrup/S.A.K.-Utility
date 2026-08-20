@@ -52,14 +52,18 @@ void Win32McpGeometryTests::scaledSizeFloorsThinEdgeToOne() {
 }
 
 void Win32McpGeometryTests::validateRejectsEmptyAndOversize() {
-    QVERIFY(!validateCaptureRect(0, 100).isEmpty());       // empty
-    QVERIFY(!validateCaptureRect(100, -1).isEmpty());      // negative
-    QVERIFY(!validateCaptureRect(16'385, 100).isEmpty());  // over the edge cap
-    QVERIFY(validateCaptureRect(1920, 1080).isEmpty());    // ok
+    // Pin the exact rejection reason, not just that some rejection fired: empty and too-large
+    // are the two distinct branches this test exists to tell apart.
+    QCOMPARE(validateCaptureRect(0, 100), QStringLiteral("The capture region is empty."));
+    QCOMPARE(validateCaptureRect(100, -1), QStringLiteral("The capture region is empty."));
+    QCOMPARE(validateCaptureRect(16'385, 100),
+             QStringLiteral("The capture region is too large; target a single window."));
+    QVERIFY(validateCaptureRect(1920, 1080).isEmpty());  // ok
     // B13-01: a maximal square within the per-edge cap (16384x16384 ~ 1 GiB) must be rejected by
     // the total-area cap, while a large-but-reasonable region (8192x4096 = 32 MP) stays allowed.
-    QVERIFY(!validateCaptureRect(16'384, 16'384).isEmpty());  // ~256 MP -> ~1 GiB, rejected
-    QVERIFY(validateCaptureRect(8192, 4096).isEmpty());       // 32 MP, allowed
+    QCOMPARE(validateCaptureRect(16'384, 16'384),        // ~256 MP -> ~1 GiB, area-cap rejected
+             QStringLiteral("The capture region is too large; target a single window."));
+    QVERIFY(validateCaptureRect(8192, 4096).isEmpty());  // 32 MP, allowed
 }
 
 void Win32McpGeometryTests::inverseScaleGuardsNonPositive() {
