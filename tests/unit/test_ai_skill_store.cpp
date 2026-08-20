@@ -39,8 +39,10 @@ private Q_SLOTS:
         QCOMPARE(skill.description, QStringLiteral("Map product names to package IDs."));
         QCOMPARE(skill.triggers.size(), 2);
         QCOMPARE(skill.triggers.first(), QStringLiteral("choosing a package"));
-        QVERIFY(skill.body.contains(QStringLiteral("Prefer exact vendor IDs")));
-        QVERIFY(!skill.body.contains(QStringLiteral("description:")));  // front-matter stripped
+        // The body is everything after the closing delimiter, trimmed: the exact QCOMPARE
+        // subsumes both the content spot-check and the front-matter-stripped negative check.
+        QCOMPARE(skill.body,
+                 QStringLiteral("# Package Selection Skill\n\n- Prefer exact vendor IDs."));
     }
 
     // A legacy file with no front-matter still loads: id from the file name, title
@@ -139,7 +141,8 @@ private Q_SLOTS:
             Skill::fromMarkdown(QByteArray("---\nid: nope\ndescription: never.\n# Heading\nbody\n"),
                                 QStringLiteral("/x/legacy-file.md"));
         QCOMPARE(skill.id, QStringLiteral("legacy-file"));
-        QVERIFY(skill.body.contains(QStringLiteral("id: nope")));
+        // Unterminated front-matter -> the whole (trimmed) input becomes the body verbatim.
+        QCOMPARE(skill.body, QStringLiteral("---\nid: nope\ndescription: never.\n# Heading\nbody"));
         QVERIFY(skill.isValid());
     }
 
@@ -149,7 +152,7 @@ private Q_SLOTS:
         SkillStore store;
         QVERIFY(store.loadBuiltIn());
         const int builtin_count = store.size();
-        QVERIFY(builtin_count >= 8);
+        QCOMPARE(builtin_count, 8);  // resources/ai.qrc registers exactly 8 built-in skills
 
         QTemporaryDir temp;
         QVERIFY(temp.isValid());
@@ -173,7 +176,7 @@ private Q_SLOTS:
         SkillStore store;
         QStringList errors;
         QVERIFY2(store.loadBuiltIn(&errors), qPrintable(errors.join(QStringLiteral("; "))));
-        QVERIFY(store.size() >= 8);
+        QCOMPARE(store.size(), 8);  // exactly the 8 qrc-registered built-in skills
         QVERIFY(store.skillById(QStringLiteral("package-selection")) != nullptr);
         QVERIFY(store.skillById(QStringLiteral("malware-removal-triage")) != nullptr);
         for (const auto& skill : store.skills()) {

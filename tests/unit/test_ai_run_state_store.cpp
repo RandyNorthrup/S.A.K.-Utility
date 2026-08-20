@@ -21,7 +21,7 @@ void AiRunStateStoreTests::emptySessionDirectoryReportsError() {
     sak::ai::AiRunStateStore store;
     QString error;
     QVERIFY(!store.saveSnapshot({}, &error));
-    QVERIFY(!error.isEmpty());
+    QCOMPARE(error, QStringLiteral("Run-state store has no session directory"));
     QVERIFY(store.runStatePath().isEmpty());
 }
 
