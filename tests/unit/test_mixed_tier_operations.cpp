@@ -300,7 +300,7 @@ private Q_SLOTS:
         auto result = dispatcher.dispatch("TakeOwnership", QJsonObject{}, no_progress, no_cancel);
         QVERIFY(result.has_value());
         QVERIFY(!result->success);
-        QVERIFY(result->error_message.contains("Missing"));
+        QCOMPARE(result->error_message, QStringLiteral("Missing path or user_sid in payload"));
     }
 
     void testBackupFileHandlerRejectsEmptyPayload() {

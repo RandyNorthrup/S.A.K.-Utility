@@ -351,7 +351,7 @@ void TestUserProfileBackupWorker::testCancelWhenNotRunning() {
         worker.cancel();
         QVERIFY(!worker.isRunning());
         QCOMPARE(logSpy.count(), 1);
-        QVERIFY(logSpy.first().at(0).toString().contains(QStringLiteral("Canceling backup")));
+        QCOMPARE(logSpy.first().at(0).toString(), QStringLiteral("Canceling backup..."));
     }
 
     // ...and the cancel flag it set must not poison the NEXT run: startBackup clears it,

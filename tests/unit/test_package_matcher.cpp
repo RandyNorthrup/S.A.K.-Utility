@@ -59,8 +59,8 @@ sak::AppScanner::AppInfo PackageMatcherTests::makeAppInfo(const QString& name) c
 
 void PackageMatcherTests::constructor_initializesCommonMappings() {
     sak::PackageMatcher matcher;
-    // Should have some built-in mappings
-    QVERIFY(matcher.getMappingCount() > 0);
+    // initializeCommonMappings seeds an exact table of 42 distinct app->package keys.
+    QCOMPARE(matcher.getMappingCount(), 42);
 }
 
 // ============================================================================
@@ -154,7 +154,8 @@ void PackageMatcherTests::findMatch_exactMapping() {
 
     QVERIFY(result.has_value());
     QCOMPARE(result->choco_package, QString("my-test-app"));
-    QVERIFY(result->confidence > 0.9);
+    // Direct exact-mapping hit returns confidence 1.0 (not the 0.95 case-insensitive path).
+    QCOMPARE(result->confidence, 1.0);
 }
 
 void PackageMatcherTests::findMatch_noResult() {
@@ -231,7 +232,7 @@ void PackageMatcherTests::matchConfig_defaults() {
     QVERIFY(cfg.use_exact_mappings);
     QVERIFY(cfg.use_fuzzy_matching);
     QVERIFY(cfg.use_choco_search);
-    QVERIFY(cfg.min_confidence >= 0.0 && cfg.min_confidence <= 1.0);
+    QCOMPARE(cfg.min_confidence, sak::kPackageMatcherDefaultMinConfidence);
 }
 
 void PackageMatcherTests::matchConfig_exactOnly() {

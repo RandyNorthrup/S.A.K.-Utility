@@ -140,12 +140,13 @@ void AppActionServiceTests::runQuickActionSync_reportsUnknownAction() {
     QuickActionController controller;
     const AppActionResult result = runQuickActionSync(&controller, QStringLiteral("nope"));
     QVERIFY(!result.success);
-    QVERIFY(result.message.contains(QStringLiteral("Unknown action")));
+    QCOMPARE(result.message, QStringLiteral("Unknown action: nope"));
 }
 
 void AppActionServiceTests::runQuickActionSync_nullControllerFailsCleanly() {
     const AppActionResult result = runQuickActionSync(nullptr, QStringLiteral("x"));
     QVERIFY(!result.success);
+    QCOMPARE(result.message, QStringLiteral("No action controller"));
 }
 
 void AppActionServiceTests::runQuickActionSync_timesOutWhenActionStalls() {
@@ -158,7 +159,7 @@ void AppActionServiceTests::runQuickActionSync_timesOutWhenActionStalls() {
     const AppActionResult result =
         runQuickActionSync(&controller, QStringLiteral("Slow Probe"), 60);
     QVERIFY(!result.success);
-    QVERIFY(result.message.contains(QStringLiteral("timed out")));
+    QCOMPARE(result.message, QStringLiteral("Action timed out after 60 ms"));
 
     // Drain: release the worker and let it finish before the controller tears down,
     // so the still-running execute() cannot outlive its action.
@@ -237,7 +238,7 @@ void AppActionServiceTests::asyncInvocation_timesOut() {
     });
     const AppActionResult result = inv.run([]() {});
     QVERIFY(!result.success);
-    QVERIFY(result.message.contains(QStringLiteral("timed out")));
+    QCOMPARE(result.message, QStringLiteral("Action timed out after 30 ms"));
 }
 
 void AppActionServiceTests::asyncInvocation_firstWins() {
