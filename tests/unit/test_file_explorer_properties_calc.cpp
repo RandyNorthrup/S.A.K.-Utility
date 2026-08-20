@@ -153,8 +153,8 @@ void PropertiesCalcTests::hashValueLabeling() {
     constexpr quint64 cap = 512ULL * 1024 * 1024;
     QCOMPARE(formatHashValue(QStringLiteral("deadbeef"), false, cap), QStringLiteral("deadbeef"));
     const QString marked = formatHashValue(QStringLiteral("deadbeef"), true, cap);
-    QVERIFY(marked.startsWith(QStringLiteral("deadbeef")));
-    QVERIFY(marked.contains(QStringLiteral("512 MB")));
+    // cap/kBytesPerMebibyte = 512, so the whole annotated value is deterministic.
+    QCOMPARE(marked, QStringLiteral("deadbeef (hash of first 512 MB only)"));
 }
 
 QTEST_MAIN(PropertiesCalcTests)

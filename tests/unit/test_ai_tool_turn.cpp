@@ -105,7 +105,7 @@ void AiToolTurnTests::restoreRejectsInvalidSchema() {
     sak::ai::AiToolTurn turn;
     QString error;
     QVERIFY(!turn.restore(snapshot, &error));
-    QVERIFY(error.contains(QStringLiteral("schema")));
+    QCOMPARE(error, QStringLiteral("Unsupported pending tool turn schema"));
     QVERIFY(!turn.active());
 }
 
@@ -122,7 +122,8 @@ void AiToolTurnTests::restoreRejectsTooManyOutputs() {
     sak::ai::AiToolTurn turn;
     QString error;
     QVERIFY(!turn.restore(snapshot, &error));
-    QVERIFY(error.contains(QStringLiteral("too many")));
+    // "too many" is non-unique across four fail-closed messages; pin the exact one.
+    QCOMPARE(error, QStringLiteral("Pending tool turn snapshot has too many completed outputs"));
     QVERIFY(!turn.active());
 }
 
@@ -134,7 +135,9 @@ void AiToolTurnTests::appendRejectsMismatchedCallId() {
     const auto result =
         turn.appendOutput(makeOutput(QStringLiteral("call_other"), QStringLiteral("{}")));
     QVERIFY(!result.ok);
-    QVERIFY(result.error_message.contains(QStringLiteral("mismatch")));
+    QCOMPARE(result.error_message,
+             QStringLiteral(
+                 "Tool output call id mismatch: expected call_expected, got call_other"));
     QCOMPARE(turn.callIndex(), 0);
     QCOMPARE(turn.completedOutputCount(), 0);
 }
@@ -148,7 +151,7 @@ void AiToolTurnTests::beginRejectsDuplicateCallIds() {
                         {makeCall(QStringLiteral("dup"), QStringLiteral("take_screenshot")),
                          makeCall(QStringLiteral("dup"), QStringLiteral("download_file"))},
                         &error));
-    QVERIFY(error.contains(QStringLiteral("Duplicate")));
+    QCOMPARE(error, QStringLiteral("Duplicate function call id dup in batch"));
     QVERIFY(!turn.active());
 }
 
@@ -163,7 +166,8 @@ void AiToolTurnTests::beginRejectsMalformedArguments() {
     sak::ai::AiToolTurn turn;
     QString error;
     QVERIFY(!turn.begin(QStringLiteral("resp"), {bad}, &error));
-    QVERIFY(error.contains(QStringLiteral("malformed")));
+    // The errorString() tail is Qt-version-variant; pin the deterministic prefix (with the c1 id).
+    QVERIFY(error.startsWith(QStringLiteral("Function call c1 has malformed arguments_json:")));
     QVERIFY(!turn.active());
 }
 

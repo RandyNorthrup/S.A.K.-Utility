@@ -49,72 +49,64 @@ void TestFormatUtils::formatBytes_bytes() {
 void TestFormatUtils::formatBytes_kilobytes() {
     // 1 KB = 1024 bytes
     const QString result_1kb = sak::formatBytes(qint64(1024));
-    QVERIFY(result_1kb.contains("KB"));
-    QVERIFY(result_1kb.startsWith("1.0"));
+    QCOMPARE(result_1kb, QStringLiteral("1.0 KB"));
 
     // 1.5 KB
     const QString result_1_5kb = sak::formatBytes(qint64(1536));
-    QVERIFY(result_1_5kb.contains("KB"));
-    QVERIFY(result_1_5kb.startsWith("1.5"));
+    QCOMPARE(result_1_5kb, QStringLiteral("1.5 KB"));
 }
 
 void TestFormatUtils::formatBytes_megabytes() {
     // 1 MB = 1048576 bytes
     const QString result_1mb = sak::formatBytes(qint64(1'048'576));
-    QVERIFY(result_1mb.contains("MB"));
-    QVERIFY(result_1mb.startsWith("1.0"));
+    QCOMPARE(result_1mb, QStringLiteral("1.0 MB"));
 
     // 500 MB
     const QString result_500mb = sak::formatBytes(qint64(524'288'000));
-    QVERIFY(result_500mb.contains("MB"));
-    QVERIFY(result_500mb.startsWith("500.0"));
+    QCOMPARE(result_500mb, QStringLiteral("500.0 MB"));
 }
 
 void TestFormatUtils::formatBytes_gigabytes() {
     // 1 GB = 1073741824 bytes
     const QString result_1gb = sak::formatBytes(qint64(1'073'741'824));
-    QVERIFY(result_1gb.contains("GB"));
-    QVERIFY(result_1gb.startsWith("1.00"));
+    QCOMPARE(result_1gb, QStringLiteral("1.00 GB"));
 
     // 2.5 GB
     const qint64 two_point_five_gb = 2'684'354'560LL;
     const QString result_2_5gb = sak::formatBytes(two_point_five_gb);
-    QVERIFY(result_2_5gb.contains("GB"));
-    QVERIFY(result_2_5gb.startsWith("2.50"));
+    QCOMPARE(result_2_5gb, QStringLiteral("2.50 GB"));
 }
 
 void TestFormatUtils::formatBytes_terabytes() {
     // 1 TB = 1099511627776 bytes
     const qint64 one_tb = 1'099'511'627'776LL;
     const QString result_1tb = sak::formatBytes(one_tb);
-    QVERIFY(result_1tb.contains("TB"));
-    QVERIFY(result_1tb.startsWith("1.00"));
+    QCOMPARE(result_1tb, QStringLiteral("1.00 TB"));
 
     // 3 TB
     const qint64 three_tb = 3'298'534'883'328LL;
     const QString result_3tb = sak::formatBytes(three_tb);
-    QVERIFY(result_3tb.contains("TB"));
-    QVERIFY(result_3tb.startsWith("3.00"));
+    QCOMPARE(result_3tb, QStringLiteral("3.00 TB"));
 }
 
 void TestFormatUtils::formatBytes_exactBoundaries() {
     // Just below KB boundary
-    QVERIFY(sak::formatBytes(qint64(1023)).contains("bytes"));
+    QCOMPARE(sak::formatBytes(qint64(1023)), QStringLiteral("1023 bytes"));
 
     // Exactly KB boundary
-    QVERIFY(sak::formatBytes(qint64(1024)).contains("KB"));
+    QCOMPARE(sak::formatBytes(qint64(1024)), QStringLiteral("1.0 KB"));
 
     // Just below MB boundary
-    QVERIFY(sak::formatBytes(qint64(1'048'575)).contains("KB"));
+    QCOMPARE(sak::formatBytes(qint64(1'048'575)), QStringLiteral("1024.0 KB"));
 
     // Exactly MB boundary
-    QVERIFY(sak::formatBytes(qint64(1'048'576)).contains("MB"));
+    QCOMPARE(sak::formatBytes(qint64(1'048'576)), QStringLiteral("1.0 MB"));
 
     // Just below GB boundary
-    QVERIFY(sak::formatBytes(qint64(1'073'741'823)).contains("MB"));
+    QCOMPARE(sak::formatBytes(qint64(1'073'741'823)), QStringLiteral("1024.0 MB"));
 
     // Exactly GB boundary
-    QVERIFY(sak::formatBytes(qint64(1'073'741'824)).contains("GB"));
+    QCOMPARE(sak::formatBytes(qint64(1'073'741'824)), QStringLiteral("1.00 GB"));
 }
 
 // ============================================================================
@@ -125,8 +117,7 @@ void TestFormatUtils::formatBytes_unsignedOverload() {
     // Should delegate to qint64 version
     const uint64_t value = 1'048'576;
     const QString result = sak::formatBytes(value);
-    QVERIFY(result.contains("MB"));
-    QVERIFY(result.startsWith("1.0"));
+    QCOMPARE(result, QStringLiteral("1.0 MB"));
 }
 
 QTEST_MAIN(TestFormatUtils)
