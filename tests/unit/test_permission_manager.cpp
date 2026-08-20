@@ -309,10 +309,13 @@ void PermissionManagerTests::stripPermissions_refusesAncestorJunction() {
     const auto result = mgr.tryStripPermissions(link + "\\file.txt");
     QVERIFY2(!result.has_value(), "must refuse a path redirected through an ancestor junction");
     const QString err = mgr.getLastError();
-    QVERIFY2(err.contains("redirect", Qt::CaseInsensitive) ||
-                 err.contains("junction", Qt::CaseInsensitive) ||
-                 err.contains("reparse", Qt::CaseInsensitive),
-             qPrintable(err));
+    // Pin the ancestor-junction (kPathRedirected) refusal exactly. The old OR also accepted
+    // "junction"/"reparse", which belong to the DIFFERENT kReparseRefused message -- so a
+    // regression that collapsed the ancestor-redirect guard into the reparse guard would have
+    // stayed green. "redirected ... ancestor" is unique to this branch.
+    QCOMPARE(err,
+             QStringLiteral(
+                 "Refused: path resolves through a redirected junction/symlink ancestor"));
 #else
     QVERIFY(true);
 #endif

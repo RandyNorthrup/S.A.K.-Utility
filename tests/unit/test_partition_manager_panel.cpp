@@ -724,10 +724,15 @@ void verifyRawHfsContextMenu(sak::PartitionManagerPanel* panel) {
     QVERIFY(actions.contains(QStringLiteral("Browse Non-Windows File System")));
     QVERIFY(actions.contains(QStringLiteral("Check Non-Windows File System")));
     const auto actionStates = contextMenuActionStates(segment);
-    QCOMPARE(actionStates.value(QStringLiteral("Resize/Move Partition")), false);
-    QCOMPARE(actionStates.value(QStringLiteral("Check File System")), false);
-    QCOMPARE(actionStates.value(QStringLiteral("Change Cluster Size")), false);
-    QCOMPARE(actionStates.value(QStringLiteral("Change Label")), false);
+    // These native actions must be PRESENT and disabled for a raw HFS+ partition. The default is
+    // `true` so a MISSING key (the action dropped from the menu entirely) fails: QHash::value()
+    // with no default returns a default-constructed false, which would make a removed action pass
+    // this `== false` check just like a present-and-disabled one.
+    QCOMPARE(actionStates.value(QStringLiteral("Resize/Move Partition"), true), false);
+    QCOMPARE(actionStates.value(QStringLiteral("Check File System"), true), false);
+    QCOMPARE(actionStates.value(QStringLiteral("Change Cluster Size"), true), false);
+    QCOMPARE(actionStates.value(QStringLiteral("Change Label"), true), false);
+    // These already expect `true`, so a removed action (default false) would fail them anyway.
     QCOMPARE(actionStates.value(QStringLiteral("Browse Non-Windows File System")), true);
     QCOMPARE(actionStates.value(QStringLiteral("Check Non-Windows File System")), true);
 }
@@ -1732,7 +1737,10 @@ void PartitionManagerPanelTests::diskMapHighlightsOnlySelectedPartition() {
 
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
-    QVERIFY2(table->rowCount() >= 2, "Fixture should create disk and partition rows");
+    // The fixture is exactly one disk with one partition and no unallocated regions, which
+    // rebuildTable maps 1:1 to a disk row + a partition row = 2. `>= 2` would miss a spurious
+    // extra/phantom row.
+    QCOMPARE(table->rowCount(), 2);
     table->selectRow(1);
     QApplication::processEvents();
     flushDeferredDeletes();
@@ -2367,7 +2375,10 @@ void PartitionManagerPanelTests::changeClusterSizeQueuesVerifiedReformatOperatio
         auto* cluster = findAccessibleWidget<QComboBox>(dialog,
                                                         QStringLiteral("Target cluster size"));
         QVERIFY(cluster != nullptr);
-        QVERIFY(cluster->currentData().toULongLong() != 0);
+        // addClusterSizeControls pins the default selection to 4 KB (kAllocationUnit4KbBytes) via
+        // setAllocationUnitBytes; `!= 0` only rejected the "Default" sentinel and would pass a
+        // wrong-but-nonzero cluster size.
+        QCOMPARE(cluster->currentData().toULongLong(), static_cast<qulonglong>(4 * 1024));
 
         auto* backup = findAccessibleWidget<QLineEdit>(dialog,
                                                        QStringLiteral("Cluster backup directory"));

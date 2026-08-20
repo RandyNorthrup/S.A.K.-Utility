@@ -373,59 +373,77 @@ void AiToolPolicyTests::packageMutationRequiresExplicitIntent_data() {
     QTest::addColumn<QString>("operation");
     QTest::addColumn<QString>("user_message");
     QTest::addColumn<bool>("allowed");
+    QTest::addColumn<QString>("expected_reason");
 
-    QTest::newRow("install-empty") << QStringLiteral("install") << QString() << false;
+    // The two deterministic refusal messages (evaluateToolPolicy). A blocked row must carry the
+    // RIGHT one: only a scan-disguised request gets the scan message; every other block gets the
+    // missing-explicit-intent message. Allowed rows have no reason to pin.
+    const QString kScan = QStringLiteral(
+        "Package install/upgrade/uninstall blocked because the user asked to scan, not install");
+    const QString kIntent = QStringLiteral(
+        "Package install/upgrade/uninstall blocked because the user did not explicitly request "
+        "package mutation");
+
+    QTest::newRow("install-empty") << QStringLiteral("install") << QString() << false << kIntent;
     QTest::newRow("install-scan") << QStringLiteral("install")
-                                  << QStringLiteral("run a malware scan") << false;
+                                  << QStringLiteral("run a malware scan") << false << kScan;
     QTest::newRow("install-download-only")
-        << QStringLiteral("install") << QStringLiteral("download firefox") << false;
+        << QStringLiteral("install") << QStringLiteral("download firefox") << false << kIntent;
     QTest::newRow("install-explicit")
-        << QStringLiteral("install") << QStringLiteral("install firefox") << true;
+        << QStringLiteral("install") << QStringLiteral("install firefox") << true << QString();
     QTest::newRow("upgrade-explicit")
-        << QStringLiteral("upgrade") << QStringLiteral("upgrade firefox") << true;
+        << QStringLiteral("upgrade") << QStringLiteral("upgrade firefox") << true << QString();
     QTest::newRow("uninstall-explicit")
-        << QStringLiteral("uninstall") << QStringLiteral("uninstall firefox") << true;
+        << QStringLiteral("uninstall") << QStringLiteral("uninstall firefox") << true << QString();
     // A bare substring is NOT consent: a question about the topic must not authorize a
     // mutation, but a directed/imperative request (or an affirmative) must.
     QTest::newRow("install-question")
-        << QStringLiteral("install") << QStringLiteral("how do I install firefox?") << false;
+        << QStringLiteral("install") << QStringLiteral("how do I install firefox?") << false
+        << kIntent;
     QTest::newRow("install-question-bestway")
         << QStringLiteral("install") << QStringLiteral("what is the best way to install git")
-        << false;
+        << false << kIntent;
     QTest::newRow("install-directed")
-        << QStringLiteral("install") << QStringLiteral("can you install firefox for me") << true;
+        << QStringLiteral("install") << QStringLiteral("can you install firefox for me") << true
+        << QString();
     QTest::newRow("install-affirmative")
-        << QStringLiteral("install") << QStringLiteral("yes, install it") << true;
+        << QStringLiteral("install") << QStringLiteral("yes, install it") << true << QString();
     // CODEX_REVIEW_4 H7: the action verb must be a whole word -- "installed" in a
     // listing question must not authorize an install via the "install" substring.
     QTest::newRow("install-substring-in-installed")
-        << QStringLiteral("install") << QStringLiteral("can you list installed apps?") << false;
+        << QStringLiteral("install") << QStringLiteral("can you list installed apps?") << false
+        << kIntent;
     QTest::newRow("uninstall-question")
-        << QStringLiteral("uninstall") << QStringLiteral("how do I uninstall this app?") << false;
+        << QStringLiteral("uninstall") << QStringLiteral("how do I uninstall this app?") << false
+        << kIntent;
     QTest::newRow("uninstall-please")
-        << QStringLiteral("uninstall") << QStringLiteral("please remove chrome") << true;
+        << QStringLiteral("uninstall") << QStringLiteral("please remove chrome") << true
+        << QString();
     // A directed request marker ("can you") combined with an explanatory/how-to framing is a
     // QUESTION about the action, not consent to perform it -- must NOT authorize the mutation.
     QTest::newRow("uninstall-explain-howto")
         << QStringLiteral("uninstall") << QStringLiteral("can you explain how to uninstall Foo?")
-        << false;
+        << false << kIntent;
     QTest::newRow("install-what-happens")
         << QStringLiteral("install")
-        << QStringLiteral("can you tell me what happens if you install this?") << false;
+        << QStringLiteral("can you tell me what happens if you install this?") << false << kIntent;
     // Negated intent must not be read as authorization (P08-05).
     QTest::newRow("install-negated-do-not")
         << QStringLiteral("install") << QStringLiteral("do not install Foo; only search for it")
-        << false;
+        << false << kIntent;
     QTest::newRow("install-negated-dont")
-        << QStringLiteral("install") << QStringLiteral("don't install anything") << false;
+        << QStringLiteral("install") << QStringLiteral("don't install anything") << false
+        << kIntent;
     QTest::newRow("install-negated-instead")
-        << QStringLiteral("install") << QStringLiteral("search for it instead of install") << false;
+        << QStringLiteral("install") << QStringLiteral("search for it instead of install") << false
+        << kIntent;
 }
 
 void AiToolPolicyTests::packageMutationRequiresExplicitIntent() {
     QFETCH(QString, operation);
     QFETCH(QString, user_message);
     QFETCH(bool, allowed);
+    QFETCH(QString, expected_reason);
 
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("sak_package_manager");
@@ -436,8 +454,10 @@ void AiToolPolicyTests::packageMutationRequiresExplicitIntent() {
                                                       request);
     QCOMPARE(decision.allowed, allowed);
     if (!allowed) {
-        QVERIFY(decision.reason.contains(QStringLiteral("explicitly request")) ||
-                decision.reason.contains(QStringLiteral("scan")));
+        // Pin the EXACT refusal category. The old `contains("explicitly request") || contains
+        // ("scan")` accepted either message for any blocked row, so a scan-vs-intent mislabel
+        // (or losing the scan-specific refusal) stayed green.
+        QCOMPARE(decision.reason, expected_reason);
     }
 }
 
