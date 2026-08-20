@@ -304,16 +304,22 @@ void AdvancedSearchControllerTests::history_clearHistory() {
 // -- Preferences -------------------------------------------------------------
 
 void AdvancedSearchControllerTests::preferences_defaultValues() {
+    // Reset the persisted keys so the controller reads the compiled-in defaults rather than
+    // whatever a prior session left in the ConfigManager singleton -- without this, the two exact
+    // defaults below are not deterministic in a unit run, which is why they were only loosely
+    // bounded before.
+    auto& cfg = sak::ConfigManager::instance();
+    cfg.remove(QStringLiteral("advsearch/max_results"));
+    cfg.remove(QStringLiteral("advsearch/context_lines"));
+
     AdvancedSearchController ctrl;
     const auto prefs = ctrl.preferences();
 
-    // Default values from code or ConfigManager
-    QVERIFY(prefs.max_results >= 0);
+    QCOMPARE(prefs.max_results, 0);  // default: 0 == unlimited
     QVERIFY(prefs.max_preview_file_size_mb >= 1);
     QVERIFY(prefs.max_search_file_size_mb >= 1);
     QVERIFY(prefs.max_cache_size >= 1);
-    QVERIFY(prefs.context_lines >= 0);
-    QVERIFY(prefs.context_lines <= 10);
+    QCOMPARE(prefs.context_lines, 2);  // kDefaultContextLines
 }
 
 void AdvancedSearchControllerTests::preferences_setAndGet() {
