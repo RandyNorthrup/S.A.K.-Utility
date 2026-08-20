@@ -57,6 +57,10 @@ void TestChocolateyManager::construction_notInitialized() {
     config.package_name = "test-package";
     const auto result = manager.installPackage(config);
     QVERIFY(!result.success);
+    // Pin the not-initialized branch specifically: a valid package_name would otherwise fall
+    // through to the authenticity gate (also failing), so !success alone cannot tell which fired.
+    QCOMPARE(result.error_message, QStringLiteral("ChocolateyManager not initialized"));
+    QCOMPARE(result.exit_code, -1);
 }
 
 void TestChocolateyManager::result_defaults() {
@@ -116,7 +120,7 @@ void TestChocolateyManager::timeout_defaultAndSet() {
 void TestChocolateyManager::autoConfirm_defaultAndSet() {
     ChocolateyManager manager;
     const bool original_confirm = manager.getAutoConfirm();
-    Q_UNUSED(original_confirm);
+    QVERIFY(original_confirm);  // constructor default is m_auto_confirm(true)
 
     manager.setAutoConfirm(false);
     QVERIFY(!manager.getAutoConfirm());
@@ -170,9 +174,9 @@ void TestChocolateyManager::isTrustedChocoSigner_wholeWordOnly() {
 void TestChocolateyManager::approvedInstallSource_pinnedUnlessUnofficial() {
     // Official install pins the approved community feed.
     const QString official = ChocolateyManager::approvedInstallSource(false);
-    QVERIFY(!official.isEmpty());
-    QVERIFY(official.startsWith(QStringLiteral("https://")));
-    QVERIFY(official.contains(QStringLiteral("chocolatey.org")));
+    // Pin the exact approved feed: a lookalike like https://community.chocolatey.org.evil.com/
+    // passes all three loose checks -- exactly the supply-chain redirect this guard blocks.
+    QCOMPARE(official, QStringLiteral("https://community.chocolatey.org/api/v2/"));
     // Opting into unofficial sources means no pin (caller accepts configured feeds).
     QVERIFY(ChocolateyManager::approvedInstallSource(true).isEmpty());
 }
@@ -228,7 +232,7 @@ void TestChocolateyManager::searchPackage_negativeMaxResultsFailsClosed() {
     // (page-size-less) search. Checked before the initialized gate.
     const auto result = manager.searchPackage(QStringLiteral("git"), -1);
     QVERIFY(!result.success);
-    QVERIFY(result.error_message.contains(QStringLiteral("negative")));
+    QCOMPARE(result.error_message, QStringLiteral("max_results must not be negative"));
 }
 
 QTEST_MAIN(TestChocolateyManager)

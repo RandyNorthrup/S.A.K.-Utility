@@ -57,19 +57,30 @@ void CrashReporterTests::summaryContainsAllFields() {
     const std::string summary =
         sak::CrashReporter::formatSummary(0xC0'00'00'05, addr, 4321, 99, "2026-08-12T17:05:09");
     const QString text = QString::fromStdString(summary);
-    QVERIFY(text.contains(QStringLiteral("2026-08-12T17:05:09")));
-    QVERIFY(text.contains(QStringLiteral("process id: 4321")));
-    QVERIFY(text.contains(QStringLiteral("thread id: 99")));
-    QVERIFY(text.contains(QStringLiteral("0xC0000005")));
-    QVERIFY(text.contains(QStringLiteral("ACCESS_VIOLATION")));
-    QVERIFY(text.contains(QStringLiteral("DEADBEEF")));
+    // The whole summary is deterministic; pin it byte-exact (subsumes the six field probes and
+    // catches a dropped header, a reordered field, or a lost 0x-prefix / zero-padding).
+    QCOMPARE(text,
+             QStringLiteral("SAK-Utility crash report\r\n"
+                            "time: 2026-08-12T17:05:09\r\n"
+                            "process id: 4321\r\n"
+                            "thread id: 99\r\n"
+                            "exception code: 0xC0000005 (ACCESS_VIOLATION)\r\n"
+                            "fault address: 0x00000000DEADBEEF\r\n"));
 }
 
 void CrashReporterTests::summaryUsesCrlfLineEndings() {
     // Written verbatim to a .txt on Windows, so use CRLF for Notepad readability.
     const std::string summary =
         sak::CrashReporter::formatSummary(0, nullptr, 1, 1, "2026-01-01T00:00:00");
-    QVERIFY(summary.find("\r\n") != std::string::npos);
+    // Byte-exact pin still proves CRLF at every line boundary, and additionally pins the
+    // zero-code UNKNOWN name and the 16-wide null fault address.
+    QCOMPARE(QString::fromStdString(summary),
+             QStringLiteral("SAK-Utility crash report\r\n"
+                            "time: 2026-01-01T00:00:00\r\n"
+                            "process id: 1\r\n"
+                            "thread id: 1\r\n"
+                            "exception code: 0x00000000 (UNKNOWN)\r\n"
+                            "fault address: 0x0000000000000000\r\n"));
 }
 
 QTEST_APPLESS_MAIN(CrashReporterTests)
