@@ -51,7 +51,7 @@ private Q_SLOTS:
         QVERIFY(content.contains("To: jane@example.com"));
         QVERIFY(content.contains("Subject: Test Subject"));
         QVERIFY(content.contains("Hello, this is a test email."));
-        QVERIFY(content.contains("Content-Type: text/plain"));
+        QVERIFY(content.contains("Content-Type: text/plain; charset=utf-8"));
     }
 
     // ====================================================================
@@ -81,9 +81,9 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray content = file.readAll();
 
-        QVERIFY(content.contains("multipart/alternative"));
-        QVERIFY(content.contains("text/plain"));
-        QVERIFY(content.contains("text/html"));
+        QVERIFY(content.contains("Content-Type: multipart/alternative; boundary=\""));
+        QVERIFY(content.contains("Content-Type: text/plain; charset=utf-8"));
+        QVERIFY(content.contains("Content-Type: text/html; charset=utf-8"));
         QVERIFY(content.contains("<b>Bold test</b>"));
     }
 
@@ -114,8 +114,9 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray content = file.readAll();
 
-        QVERIFY(content.contains("multipart/mixed"));
-        QVERIFY(content.contains("document.pdf"));
+        QVERIFY(content.contains("Content-Type: multipart/mixed; boundary=\""));
+        QVERIFY(content.contains("name=\"document.pdf\""));
+        QVERIFY(content.contains("filename=\"document.pdf\""));
         QVERIFY(content.contains("Content-Transfer-Encoding: base64"));
     }
 
@@ -143,7 +144,7 @@ private Q_SLOTS:
         // File should be in the subfolder
         QString expected_dir = temp_dir.path() + "/Inbox/Projects";
         QVERIFY(QDir(expected_dir).exists());
-        QVERIFY(result.value().startsWith(expected_dir));
+        QCOMPARE(result.value(), expected_dir + "/Subfolder Test.eml");
     }
 
     // ====================================================================
@@ -168,7 +169,7 @@ private Q_SLOTS:
         QVERIFY(result.has_value());
 
         QFileInfo fi(result.value());
-        QVERIFY(fi.fileName().startsWith("2025-03-15_"));
+        QCOMPARE(fi.fileName(), QStringLiteral("2025-03-15_143000_Dated Message.eml"));
     }
 
     // ====================================================================
@@ -193,10 +194,9 @@ private Q_SLOTS:
         QVERIFY(result.has_value());
 
         QFileInfo fi(result.value());
-        // Should not contain < > or "
-        QVERIFY(!fi.fileName().contains('<'));
-        QVERIFY(!fi.fileName().contains('>'));
-        QVERIFY(!fi.fileName().contains('"'));
+        // <, >, ':' and '"' each map to '_' via the invalid-char regex; pin the whole
+        // filename so dropping any single char from that class (e.g. ':') is caught.
+        QCOMPARE(fi.fileName(), QStringLiteral("Re_ Invoice _2025_ for _Project_.eml"));
     }
 
     // ====================================================================
@@ -221,7 +221,7 @@ private Q_SLOTS:
         QVERIFY(result.has_value());
 
         QFileInfo fi(result.value());
-        QVERIFY(fi.fileName().contains("no_subject"));
+        QCOMPARE(fi.fileName(), QStringLiteral("no_subject.eml"));
     }
 
     // ====================================================================
@@ -249,8 +249,9 @@ private Q_SLOTS:
         auto result2 = writer.writeMessage(item, no_attachments, QString());
         QVERIFY(result2.has_value());
 
-        // The two files should have different paths
-        QVERIFY(result1.value() != result2.value());
+        // The collision resolver keeps the first name and suffixes the second "_(1)".
+        QCOMPARE(QFileInfo(result1.value()).fileName(), QStringLiteral("Same Subject.eml"));
+        QCOMPARE(QFileInfo(result2.value()).fileName(), QStringLiteral("Same Subject_(1).eml"));
 
         // Both files should exist
         QVERIFY(QFile::exists(result1.value()));
@@ -288,7 +289,7 @@ private Q_SLOTS:
         // The CRLF is collapsed, so no forged Bcc header line appears in the
         // header block; the subject text stays on the Subject line.
         QVERIFY(!content.contains("\nBcc: attacker@evil.com"));
-        QVERIFY(content.contains("Subject: Hello"));
+        QVERIFY(content.contains("Subject: Hello  Bcc: attacker@evil.com"));
         QVERIFY(content.contains("attacker@evil.com"));  // present, but folded into Subject
     }
 
@@ -338,7 +339,7 @@ private Q_SLOTS:
 
         auto result = writer.writeMessage(item, no_attachments, QString());
         QVERIFY(result.has_value());
-        QVERIFY(writer.totalBytesWritten() > 0);
+        QCOMPARE(writer.totalBytesWritten(), QFileInfo(result.value()).size());
     }
 
     // A generated _(n) collision name must itself be checked for existence so a
@@ -398,7 +399,7 @@ private Q_SLOTS:
         QFile file(result.value());
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QByteArray content = file.readAll();
-        QVERIFY(content.contains("Subject: =?UTF-8?B?"));
+        QVERIFY(content.contains("Subject: =?UTF-8?B?UmVjaG51bmcgw7xiZXIg4oKsNTA=?="));
         QVERIFY(
             !content.contains(QByteArray("\xC3\xBC"
                                          "ber")));  // no raw 8-bit in header

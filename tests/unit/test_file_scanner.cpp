@@ -87,7 +87,7 @@ void FileScannerTests::initTestCase() {
 
     writeFile("file1.txt", "hello");                     // 5 bytes
     writeFile("file2.cpp", "int main() {}");             // 13 bytes
-    writeFile("dir_a/data.json", R"({"key":"val"})");    // 14 bytes
+    writeFile("dir_a/data.json", R"({"key":"val"})");    // 13 bytes
     writeFile("dir_a/readme.md", "# Title");             // 7 bytes
     writeFile("dir_b/image.png", QByteArray(100, 'P'));  // 100 bytes
     writeFile("dir_b/nested/deep.log", "log entry");     // 9 bytes
@@ -104,8 +104,10 @@ void FileScannerTests::scan_normalDirectory() {
     auto result = scanner.scan(m_rootPath, opts);
     QVERIFY(result.has_value());
     QCOMPARE(result.value().files_found, std::size_t{6});
-    QVERIFY(result.value().directories_found >= std::size_t{3});
-    QVERIFY(result.value().total_size > 0);
+    // Tree has exactly four subdirs (dir_a, dir_b, dir_c, dir_b/nested); root is not counted.
+    QCOMPARE(result.value().directories_found, std::size_t{4});
+    // Exact byte sum of the six fixtures: 5 + 13 + 13 + 7 + 100 + 9 (raw writes, no CRLF xlate).
+    QCOMPARE(result.value().total_size, std::uintmax_t{147});
 }
 
 void FileScannerTests::scan_emptyDirectory() {
@@ -201,8 +203,8 @@ void FileScannerTests::fileSizeFilter_minMax() {
 
     auto result = scanner.scan(m_rootPath, opts);
     QVERIFY(result.has_value());
-    // Files 10-50 bytes: file2.cpp(13), dir_a/data.json(14)
-    QVERIFY(result.value().files_found >= std::size_t{2});
+    // Files 10-50 bytes: file2.cpp(13), dir_a/data.json(13); 5/7/9 below min, 100 above max.
+    QCOMPARE(result.value().files_found, std::size_t{2});
 }
 
 void FileScannerTests::maxDepth_limitsRecursion() {
@@ -295,8 +297,10 @@ void FileScannerTests::callback_falseStopsScan() {
     };
 
     auto result = scanner.scan(m_rootPath, opts);
-    // Scan should have stopped early
-    QVERIFY(filesProcessed <= 3);
+    // The callback returns false on its 3rd call (filesProcessed==3), which the scanner turns
+    // into operation_cancelled and stops; the root holds >= 3 emittable entries, so exactly 3
+    // callbacks fire. <= 3 also passed if the false-return were ignored; == 3 pins the abort.
+    QCOMPARE(filesProcessed, 3);
 }
 
 // ============================================================================
@@ -313,7 +317,9 @@ void FileScannerTests::progress_callbackInvoked() {
 
     auto result = scanner.scan(m_rootPath, opts);
     QVERIFY(result.has_value());
-    QVERIFY(progressCalls > 0);
+    // progress_callback fires once per regular file, unthrottled, size-gating aside; all six
+    // fixtures emit -> exactly 6. > 0 passed on a single stray fire.
+    QCOMPARE(progressCalls, 6);
 }
 
 void FileScannerTests::symlink_notFollowedWhenDisabled() {
@@ -351,6 +357,9 @@ void FileScannerTests::symlink_notFollowedWhenDisabled() {
     following.follow_symlinks = true;
     auto followed = following_scanner.scan(root, following);
     QVERIFY(followed.has_value());
+    // The cycle guard refuses to re-descend the loop symlink (canonical(root) already visited),
+    // so p.txt is counted exactly once -- a terminate-but-double-count bug would fail this.
+    QCOMPARE(followed.value().files_found, std::size_t{1});
 }
 
 void FileScannerTests::junction_notFollowedByDefault() {

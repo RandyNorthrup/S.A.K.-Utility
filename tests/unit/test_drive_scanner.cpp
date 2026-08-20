@@ -247,13 +247,14 @@ void DriveScannerTests::mergeDriveList_partialUnionsNeverDrops() {
 
     // Non-authoritative: cached drives are kept, the newly-seen one is added.
     const auto merged = DriveScanner::mergeDriveList(current, scanned, /*enumeration_ok=*/false);
+    // mergeDriveList copies current (order preserved) then appends each scanned drive not
+    // already present, so the union is the fixed ordered list [Drive0, Drive1, Drive2]. The old
+    // any_of pair never asserted Drive1 -- the cached drive this test's name promises is never
+    // dropped -- so a [Drive0, Drive0, Drive2] regression that dropped Drive1 passed. Pin order.
     QCOMPARE(merged.size(), 3);
-    QVERIFY(std::any_of(merged.begin(), merged.end(), [](const sak::DriveInfo& d) {
-        return d.devicePath == QStringLiteral("\\\\.\\PhysicalDrive0");
-    }));
-    QVERIFY(std::any_of(merged.begin(), merged.end(), [](const sak::DriveInfo& d) {
-        return d.devicePath == QStringLiteral("\\\\.\\PhysicalDrive2");
-    }));
+    QCOMPARE(merged.at(0).devicePath, QStringLiteral("\\\\.\\PhysicalDrive0"));
+    QCOMPARE(merged.at(1).devicePath, QStringLiteral("\\\\.\\PhysicalDrive1"));
+    QCOMPARE(merged.at(2).devicePath, QStringLiteral("\\\\.\\PhysicalDrive2"));
 }
 
 void DriveScannerTests::mergeDriveList_authoritativeReplaces() {
@@ -292,7 +293,7 @@ void DriveScannerTests::descriptorString_stopsAtBufferEndWhenUnterminated() {
 
     // bytes_returned=32, offset=8 -> at most 24 chars read, never past the returned region.
     const QString out = DriveScanner::descriptorString(buffer.data(), 64, 32, 8);
-    QCOMPARE(out.size(), 24);
+    QCOMPARE(out, QString(24, QLatin1Char('A')));
 }
 
 void DriveScannerTests::descriptorString_absentFieldIsEmpty() {

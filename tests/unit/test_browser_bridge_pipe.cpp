@@ -173,7 +173,7 @@ void BrowserBridgePipeTests::send_beforeAnyClientReturnsNotConnected() {
         QJsonObject{{QStringLiteral("type"), QStringLiteral("command")},
                     {QStringLiteral("id"), QStringLiteral("b-1")}});
     QVERIFY(!exchange.ok);
-    QVERIFY(exchange.error.contains(QStringLiteral("not connected")));
+    QCOMPARE(exchange.error, QStringLiteral("Browser not connected."));
     server.stop();
 }
 
@@ -198,7 +198,8 @@ void BrowserBridgePipeTests::handshake_refusesForgedTokenAndUnknownType() {
     });
     forged_client.join();
     QVERIFY(forged.connected);  // pipe opened -- the refusal is the token gate, not connect
-    QVERIFY(forged.reply.value(QStringLiteral("type")).toString() != QLatin1String("welcome"));
+    // Token gate drops the peer before any frame; !got_frame pins that (!= welcome was vacuous).
+    QVERIFY(!forged.got_frame);
     QVERIFY(!server.clientConnected());
 
     // (2) Unknown first-frame type WITH the correct token: the handshake must open with a
@@ -211,7 +212,7 @@ void BrowserBridgePipeTests::handshake_refusesForgedTokenAndUnknownType() {
                                                 {QStringLiteral("protocol"), 1}});
     });
     type_client.join();
-    QVERIFY(bad_type.reply.value(QStringLiteral("type")).toString() != QLatin1String("welcome"));
+    QVERIFY(!bad_type.got_frame);  // wrong first-frame type is dropped before any welcome frame
     QVERIFY(!server.clientConnected());
 
     // Non-vacuity control: the SAME harness, with a correct hello (right type + token +
@@ -394,7 +395,8 @@ void BrowserBridgePipeTests::silentPeer_deadlineResetsConnection() {
                     {QStringLiteral("id"), QStringLiteral("b-1")},
                     {QStringLiteral("cmd"), QStringLiteral("snapshot")}});
     QVERIFY(!exchange.ok);
-    QVERIFY(exchange.error.contains(QStringLiteral("reset")));
+    QCOMPARE(exchange.error,
+             QStringLiteral("browser did not reply within 300 ms (connection reset)"));
     QTRY_VERIFY_WITH_TIMEOUT(!server.clientConnected(), 5000);  // connection torn down
 
     client.join();
@@ -425,6 +427,7 @@ void BrowserBridgePipeTests::reconnect_secondClientServedWithNewGeneration() {
                     {QStringLiteral("id"), QStringLiteral("b-1")},
                     {QStringLiteral("cmd"), QStringLiteral("snapshot")}});
     QVERIFY(!reset.ok);
+    QCOMPARE(reset.error, QStringLiteral("browser did not reply within 500 ms (connection reset)"));
     client_a.join();
     QTRY_VERIFY_WITH_TIMEOUT(!server.clientConnected(), 5000);  // the accept loop re-armed
 
@@ -477,7 +480,7 @@ void BrowserBridgePipeTests::doubleStop_isSafe() {
         QJsonObject{{QStringLiteral("type"), QStringLiteral("command")},
                     {QStringLiteral("id"), QStringLiteral("b-1")}});
     QVERIFY(!exchange.ok);
-    QVERIFY(exchange.error.contains(QStringLiteral("not connected")));
+    QCOMPARE(exchange.error, QStringLiteral("Browser not connected."));
 }
 
 void BrowserBridgePipeTests::restartAfterStopWorksAndDoubleStartRefused() {
@@ -493,7 +496,7 @@ void BrowserBridgePipeTests::restartAfterStopWorksAndDoubleStartRefused() {
     // A second start while running is refused (not a crash).
     QString busy;
     QVERIFY(!server.start(&busy));
-    QVERIFY(busy.contains(QStringLiteral("already running")));
+    QCOMPARE(busy, QStringLiteral("Bridge pipe server is already running"));
 
     server.stop();
     QVERIFY(!QFile::exists(rendezvous));  // cycle 1 really tore down
@@ -510,6 +513,7 @@ void BrowserBridgePipeTests::restartAfterStopWorksAndDoubleStartRefused() {
         QJsonObject{{QStringLiteral("type"), QStringLiteral("command")},
                     {QStringLiteral("id"), QStringLiteral("b-1")}});
     QVERIFY(!exchange.ok);
+    QCOMPARE(exchange.error, QStringLiteral("Browser not connected."));
 }
 
 QTEST_MAIN(BrowserBridgePipeTests)
