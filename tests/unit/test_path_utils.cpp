@@ -411,9 +411,11 @@ void PathUtilsTests::makeRelative_sameDir() {
 // R5-G10-9: std::filesystem::relative("", "") yields "." (the caller's working directory), so
 // makeRelative must reject an empty path or base rather than hand back that CWD-resolving ".".
 void PathUtilsTests::makeRelative_emptyInputsRejected() {
-    QVERIFY(!sak::path_utils::makeRelative(std::filesystem::path(), m_basePath).has_value());
-    QVERIFY(!sak::path_utils::makeRelative(m_basePath / "file1.txt", std::filesystem::path())
-                 .has_value());
+    QCOMPARE(sak::path_utils::makeRelative(std::filesystem::path(), m_basePath).error(),
+             sak::error_code::invalid_path);
+    QCOMPARE(
+        sak::path_utils::makeRelative(m_basePath / "file1.txt", std::filesystem::path()).error(),
+        sak::error_code::invalid_path);
     const auto bothEmpty = sak::path_utils::makeRelative(std::filesystem::path(),
                                                          std::filesystem::path());
     QVERIFY(!bothEmpty.has_value());  // must not be the "." that relative("","") would yield

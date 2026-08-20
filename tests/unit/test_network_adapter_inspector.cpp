@@ -65,44 +65,38 @@ void TestNetworkAdapterInspector::formatLinkSpeed_zero() {
 void TestNetworkAdapterInspector::formatLinkSpeed_bitsPerSecond() {
     const auto result = NetworkAdapterInspector::formatLinkSpeed(500);
     QVERIFY(!result.isEmpty());
-    // Should show bps or Kbps range
-    QVERIFY(result.contains("bps", Qt::CaseInsensitive) ||
-            result.contains("Kbps", Qt::CaseInsensitive));
+    // 500 bps -> 0.5 Kbps, rendered at 'f' precision 0 (rounds to 1).
+    QCOMPARE(result, QStringLiteral("1 Kbps"));
 }
 
 void TestNetworkAdapterInspector::formatLinkSpeed_kilobits() {
     const auto result = NetworkAdapterInspector::formatLinkSpeed(56'000);
     QVERIFY(!result.isEmpty());
-    QVERIFY(result.contains("Kbps", Qt::CaseInsensitive) ||
-            result.contains("56", Qt::CaseInsensitive));
+    QCOMPARE(result, QStringLiteral("56 Kbps"));
 }
 
 void TestNetworkAdapterInspector::formatLinkSpeed_megabits() {
     const auto result = NetworkAdapterInspector::formatLinkSpeed(10'000'000);
     QVERIFY(!result.isEmpty());
-    QVERIFY(result.contains("Mbps", Qt::CaseInsensitive) ||
-            result.contains("10", Qt::CaseInsensitive));
+    QCOMPARE(result, QStringLiteral("10 Mbps"));
 }
 
 void TestNetworkAdapterInspector::formatLinkSpeed_hundredMegabit() {
     const auto result = NetworkAdapterInspector::formatLinkSpeed(100'000'000);
     QVERIFY(!result.isEmpty());
-    QVERIFY(result.contains("100") || result.contains("Mbps", Qt::CaseInsensitive));
+    QCOMPARE(result, QStringLiteral("100 Mbps"));
 }
 
 void TestNetworkAdapterInspector::formatLinkSpeed_gigabit() {
     const auto result = NetworkAdapterInspector::formatLinkSpeed(1'000'000'000);
     QVERIFY(!result.isEmpty());
-    QVERIFY(result.contains("Gbps", Qt::CaseInsensitive) ||
-            result.contains("1000", Qt::CaseInsensitive) ||
-            result.contains("1 ", Qt::CaseInsensitive));
+    QCOMPARE(result, QStringLiteral("1 Gbps"));
 }
 
 void TestNetworkAdapterInspector::formatLinkSpeed_tenGigabit() {
     const auto result = NetworkAdapterInspector::formatLinkSpeed(10'000'000'000ULL);
     QVERIFY(!result.isEmpty());
-    QVERIFY(result.contains("Gbps", Qt::CaseInsensitive) ||
-            result.contains("10", Qt::CaseInsensitive));
+    QCOMPARE(result, QStringLiteral("10 Gbps"));
 }
 
 // ===================================================================
@@ -113,10 +107,8 @@ void TestNetworkAdapterInspector::formatMacAddress_standard() {
     const unsigned char mac[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
     const auto result = NetworkAdapterInspector::formatMacAddress(mac, 6);
     QVERIFY(!result.isEmpty());
-    // Should contain hex digits separated by colons or dashes
-    QVERIFY(result.contains("AA", Qt::CaseInsensitive) ||
-            result.contains("aa", Qt::CaseInsensitive));
-    QVERIFY(result.length() >= 17);  // "AA:BB:CC:DD:EE:FF" or "AA-BB-CC-DD-EE-FF"
+    // Uppercase %02X hex, colon-separated (C-locale, platform-independent).
+    QCOMPARE(result, QStringLiteral("AA:BB:CC:DD:EE:FF"));
 }
 
 void TestNetworkAdapterInspector::formatMacAddress_allZeros() {

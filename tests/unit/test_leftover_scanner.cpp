@@ -344,7 +344,7 @@ void LeftoverScannerTests::scan_progressCallbackInvoked() {
     const auto results = scanner.scan(stop, callback);
 
     QVERIFY2(findByPath(results, folderPath) != nullptr, "injected match not found");
-    QVERIFY(callbackCount > 0);
+    QCOMPARE(callbackCount, 1);  // the unique synthetic name matches exactly one injected folder
     // The unique name matches nothing on the real host, so raw callbacks equal the deduped result.
     QCOMPARE(callbackCount, results.size());
 }
@@ -664,7 +664,7 @@ void LeftoverScannerTests::buildServiceItems_matchesNameOrDisplay() {
     }
     // path is the service KEY name (what an uninstall would target), not the display string.
     QCOMPARE(items.at(0).path, QStringLiteral("AcmeSync"));
-    QVERIFY(items.at(0).description.contains(QStringLiteral("Acme Sync Service")));
+    QCOMPARE(items.at(0).description, QStringLiteral("Windows service: Acme Sync Service"));
     QCOMPARE(items.at(1).path, QStringLiteral("svc-acme-helper"));
     QCOMPARE(items.at(2).path, QStringLiteral("keynamemiss"));
 }
@@ -698,8 +698,9 @@ void LeftoverScannerTests::buildServiceItems_localeIndependentFields() {
     const QVector<LeftoverItem> items = sak::buildServiceLeftoverItems(services, matches, stop);
     QCOMPARE(items.size(), 1);
     QCOMPARE(items.at(0).path, QStringLiteral("AcmeSvc"));
-    QVERIFY(items.at(0).description.contains(
-        QString::fromUtf8("\xE3\x82\xB5\xE3\x83\xBC\xE3\x83\x93\xE3\x82\xB9")));
+    QCOMPARE(items.at(0).description,
+             QStringLiteral("Windows service: ") +
+                 QString::fromUtf8("\xE3\x82\xB5\xE3\x83\xBC\xE3\x83\x93\xE3\x82\xB9"));
 }
 
 // -- Firewall parse reliability ----------------------------------------------
@@ -1065,8 +1066,9 @@ void LeftoverScannerTests::scan_installLocationNotTiedToProgram_isReportOnly() {
     QVERIFY2(!item.deletable, "an unprovable install location must carry no deletion authority");
     QVERIFY(!item.selected);
     QCOMPARE(item.risk, LeftoverItem::RiskLevel::Risky);
-    QVERIFY2(item.description.contains(QStringLiteral("not deletable")),
-             qPrintable(item.description));
+    QCOMPARE(item.description,
+             QStringLiteral("Registered install directory -- REVIEW ONLY, not deletable because "
+                            "it cannot be tied to this program by name"));
 }
 
 void LeftoverScannerTests::scan_installLocationUnpinnable_yieldsNoCandidate() {
