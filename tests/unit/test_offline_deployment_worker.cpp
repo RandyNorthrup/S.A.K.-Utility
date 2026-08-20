@@ -352,9 +352,11 @@ void TestOfflineDeploymentWorker::installContextForMode_bundleLocalListFeed() {
 
     const auto list = OfflineDeploymentWorker::installContextForMode(
         PayloadMode::List, QStringLiteral("C:/bundle/packages"));
-    QVERIFY(list.source.startsWith(QStringLiteral("http")));  // the Chocolatey feed
-    QVERIFY(!list.ignore_dependencies);                       // choco resolves from the feed
-    QVERIFY(!list.verify_local);                              // nothing local to verify
+    // The List-mode feed is the fixed constant offline::kNuGetBaseUrl; `startsWith("http")` would
+    // pass for any endpoint, missing a swapped/truncated feed URL.
+    QCOMPARE(list.source, QStringLiteral("https://community.chocolatey.org/api/v2/"));
+    QVERIFY(!list.ignore_dependencies);  // choco resolves from the feed
+    QVERIFY(!list.verify_local);         // nothing local to verify
 }
 
 void TestOfflineDeploymentWorker::topologicalInstallOrder_reportsCyclicMembers() {

@@ -274,10 +274,18 @@ void BackupFileCodecTests::compressionLevelOutOfRange_refused() {
     sak::BackupCodecOptions options;
     options.compress = true;
     options.compression_level = 0;  // "store" is expressed by turning compression off
-    QVERIFY(!sak::writeBackupFile(sourcePath(), storedPath(), options).has_value());
+    // Pin the refusal's error code: validateWriteOptions rejects an out-of-range level (1..9) with
+    // invalid_argument BEFORE any I/O. `!has_value()` alone would stay green even for level 10,
+    // whose write is refused downstream by zlib (corrupted_data) if the range guard is deleted --
+    // so only the exact code proves the compression-level guard is the one firing.
+    const auto tooLow = sak::writeBackupFile(sourcePath(), storedPath(), options);
+    QVERIFY(!tooLow.has_value());
+    QCOMPARE(tooLow.error(), sak::error_code::invalid_argument);
 
     options.compression_level = 10;
-    QVERIFY(!sak::writeBackupFile(sourcePath(), storedPath(), options).has_value());
+    const auto tooHigh = sak::writeBackupFile(sourcePath(), storedPath(), options);
+    QVERIFY(!tooHigh.has_value());
+    QCOMPARE(tooHigh.error(), sak::error_code::invalid_argument);
 }
 
 // ============================================================================

@@ -292,9 +292,10 @@ void InputValidatorTests::sanitizeString_preservesUnicode() {
 void InputValidatorTests::sanitizeString_stripUnicode() {
     std::string input = "Hello \xC3\xA9 World";
     std::string sanitized = sak::input_validator::sanitizeString(input, false);
-    // Non-ASCII bytes should be removed when allow_unicode=false
-    // The exact behavior depends on implementation
-    QVERIFY(!sanitized.empty());
+    // The two-byte UTF-8 'e-acute' is dropped and the surrounding spaces survive, giving a
+    // deterministic "Hello  World" (two spaces). `!empty()` would pass even if the strip were a
+    // no-op that returned the input unchanged.
+    QCOMPARE(sanitized, std::string("Hello  World"));
 }
 
 // ============================================================================
