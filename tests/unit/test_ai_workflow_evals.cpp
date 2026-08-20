@@ -602,7 +602,8 @@ void AiWorkflowEvalsTests::seededWorkflowRolesAreSpecificAndDiverse() {
         }
     }
 
-    QVERIFY2(roles.size() >= 10,
+    // Exactly 15 distinct workflow roles; `>= 10` would miss a role collapsing into another.
+    QVERIFY2(roles.size() == 15,
              qPrintable(
                  QStringLiteral("Workflow roles collapsed to %1 role(s)").arg(roles.size())));
     QVERIFY2(generic_pc_roles <= 1,

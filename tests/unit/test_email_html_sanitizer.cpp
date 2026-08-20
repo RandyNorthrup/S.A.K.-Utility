@@ -133,7 +133,9 @@ void EmailHtmlSanitizerTests::ordinaryFormattingSurvives() {
     QVERIFY(clean.contains(QStringLiteral("<i>summary</i>")));
     QVERIFY(clean.contains(QStringLiteral("<ul>")));
     QVERIFY(clean.contains(QStringLiteral("<li>Item one</li>")));
-    QVERIFY(clean.contains(QStringLiteral("<table")));
+    // The sanitizer must preserve the table AND its border attribute; `contains("<table")` would
+    // pass even if a broadened attribute strip removed border="1".
+    QVERIFY(clean.contains(QStringLiteral("<table border=\"1\">")));
     QVERIFY(clean.contains(QStringLiteral("<td>North</td>")));
     QVERIFY(clean.contains(QStringLiteral("color:#0a5")));
     QVERIFY(clean.contains(QStringLiteral("Quarterly Update")));

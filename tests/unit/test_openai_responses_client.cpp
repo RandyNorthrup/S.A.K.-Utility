@@ -396,7 +396,13 @@ void OpenAIResponsesClientTests::parseResponseObject_extractsFunctionCall() {
     QCOMPARE(result.function_calls.size(), 1);
     QCOMPARE(result.function_calls[0].call_id, QStringLiteral("call_123"));
     QCOMPARE(result.function_calls[0].name, QStringLiteral("run_powershell"));
-    QVERIFY(result.function_calls[0].arguments_json.contains(QStringLiteral("Get-PhysicalDisk")));
+    // arguments_json is a verbatim passthrough of the response's "arguments" string; pin it
+    // exactly. `contains("Get-PhysicalDisk")` would survive dropping timeout_seconds/requires_admin
+    // or an escaping corruption.
+    QCOMPARE(
+        result.function_calls[0].arguments_json,
+        QStringLiteral(
+            "{\"command\":\"Get-PhysicalDisk\",\"timeout_seconds\":30,\"requires_admin\":false}"));
 }
 
 void OpenAIResponsesClientTests::parseResponseObject_incompleteStatusReportsError() {
@@ -423,8 +429,12 @@ void OpenAIResponsesClientTests::parseResponseObject_incompleteStatusReportsErro
     QVERIFY(error.contains(QStringLiteral("incomplete")));
     QVERIFY(error.contains(QStringLiteral("max_output_tokens")));
     // Fail closed: an incomplete response must surface no usable assistant output that
-    // a caller could mistake for a complete answer.
+    // a caller could mistake for a complete answer. output_text is empty for ANY implementation
+    // here (the sole output item is a function_call, never routed to output_text), so the
+    // load-bearing check is that the TRUNCATED tool call did not leak into function_calls -- that
+    // is what the fail-closed `return {}` guard actually protects.
     QVERIFY(result.output_text.isEmpty());
+    QVERIFY(result.function_calls.isEmpty());
 }
 
 void OpenAIResponsesClientTests::parseResponseObject_failedStatusReportsError() {
@@ -713,9 +723,20 @@ void OpenAIResponsesClientTests::buildPayload_functionToolsUseStrictSchemas() {
         const QJsonObject parameters = tool.value(QStringLiteral("parameters")).toObject();
         QCOMPARE(parameters.value(QStringLiteral("type")).toString(), QStringLiteral("object"));
         QCOMPARE(parameters.value(QStringLiteral("additionalProperties")).toBool(true), false);
-        QVERIFY(!parameters.value(QStringLiteral("required")).toArray().isEmpty());
+        // OpenAI strict mode requires `required` to enumerate EVERY property key (a key present in
+        // properties but absent from required is a 400). `!isEmpty()` would pass even if a required
+        // key were dropped -- the exact regression this strict-schema test exists to catch.
+        const QStringList property_keys =
+            parameters.value(QStringLiteral("properties")).toObject().keys();
+        const QJsonArray required = parameters.value(QStringLiteral("required")).toArray();
+        QCOMPARE(required.size(), property_keys.size());
+        for (const QString& key : property_keys) {
+            QVERIFY2(required.contains(QJsonValue(key)),
+                     qPrintable(QStringLiteral("strict schema missing required key: ") + key));
+        }
     }
-    QVERIFY(function_tool_count >= 8);
+    // Every local function tool is emitted; `>= 8` would miss a dropped tool.
+    QCOMPARE(function_tool_count, 13);
 }
 
 void OpenAIResponsesClientTests::buildPayload_providerGatewayArgumentsAreStrictSchemaSafe() {

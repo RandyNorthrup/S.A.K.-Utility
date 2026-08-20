@@ -56,7 +56,12 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
 
         QByteArray content = file.readAll();
-        QVERIFY(content.contains("<!DOCTYPE html>") || content.contains("<html"));
+        // Pin the exact deterministic document open (kEnterpriseReportDocumentOpen). The `||`
+        // passed for any doc carrying either token; this catches a broken/reordered head or wrong
+        // title.
+        QVERIFY(
+            content.startsWith("<!DOCTYPE html><html><head><meta charset='utf-8'><title>S.A.K. "
+                               "Utility - Conversion Report</title><style>"));
         QVERIFY(content.contains("archive1.ost"));
         QVERIFY(content.contains("archive2.pst"));
     }
@@ -149,7 +154,9 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray content = file.readAll();
         QVERIFY(content.contains("bad.ost"));
-        QVERIFY(content.contains("Corrupted") || content.contains("fail"));
+        // The failed entry's error text must reach the report; pin the exact message rather than
+        // the loose "Corrupted" || "fail" (which "Corrupted file header" trivially satisfies).
+        QVERIFY(content.contains("Corrupted file header"));
     }
 
     // ====================================================================
