@@ -53,25 +53,28 @@ void TestWifiSetupScript::connectRefusesEmptySsid() {
         sak::connectWifiWindows(QString(), QStringLiteral("pw"), QStringLiteral("wpa2"), false);
     QVERIFY(!r.profile_added);
     QVERIFY(!r.connect_issued);
-    QVERIFY(!r.error.isEmpty());
+    QCOMPARE(r.error,
+             QStringLiteral("SSID is empty or contains a double quote / control character"));
 }
 
 void TestWifiSetupScript::connectRefusesUnsafeSsid() {
     const auto quoted = sak::connectWifiWindows(
         QStringLiteral("Net\"work"), QStringLiteral("pw"), QStringLiteral("wpa2"), false);
     QVERIFY(!quoted.profile_added);
-    QVERIFY(!quoted.error.isEmpty());
+    QCOMPARE(quoted.error,
+             QStringLiteral("SSID is empty or contains a double quote / control character"));
     const auto ctrl = sak::connectWifiWindows(
         QStringLiteral("Net\nwork"), QStringLiteral("pw"), QStringLiteral("wpa2"), false);
     QVERIFY(!ctrl.profile_added);
-    QVERIFY(!ctrl.error.isEmpty());
+    QCOMPARE(ctrl.error,
+             QStringLiteral("SSID is empty or contains a double quote / control character"));
 }
 
 void TestWifiSetupScript::connectRefusesOverlongSsid() {
     const auto r = sak::connectWifiWindows(
         QString(200, QLatin1Char('a')), QStringLiteral("pw"), QStringLiteral("wpa2"), false);
     QVERIFY(!r.profile_added);
-    QVERIFY(!r.error.isEmpty());
+    QCOMPARE(r.error, QStringLiteral("SSID exceeds the 32-byte WLAN limit"));
 }
 
 void TestWifiSetupScript::usesUniqueTempFileAndWipesOnBothPaths() {
@@ -157,7 +160,8 @@ void TestWifiSetupScript::connectRefusesEnterpriseSecurity() {
         QStringLiteral("CorpNet"), QStringLiteral("pw"), QStringLiteral("WPA2-Enterprise"), false);
     QVERIFY(!r.profile_added);
     QVERIFY(!r.connect_issued);
-    QVERIFY(!r.error.isEmpty());
+    QCOMPARE(r.error,
+             QStringLiteral("Enterprise/802.1X WiFi security is not supported by this connector"));
 }
 
 void TestWifiSetupScript::buildsWpaScriptWithProfileAndConnect() {

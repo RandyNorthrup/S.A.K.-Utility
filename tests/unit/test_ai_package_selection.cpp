@@ -79,9 +79,12 @@ void AiPackageSelectionTests::asksHumanForAmbiguousMatches() {
     QVERIFY(!result.success);
     QVERIFY(result.ambiguous);
     QVERIFY(result.requires_human);
-    QVERIFY(result.error_message.contains(QStringLiteral("Ambiguous package match")));
-    QVERIFY(result.question_for_human.contains(QStringLiteral("googlechrome")));
-    QVERIFY(result.question_for_human.contains(QStringLiteral("chromium")));
+    QCOMPARE(result.error_message,
+             QStringLiteral("Ambiguous package match for 'chrome'. Choose an exact package_id."));
+    QCOMPARE(result.question_for_human,
+             QStringLiteral("Ambiguous package match for 'chrome'. Choose an exact package_id. "
+                            "Candidates: googlechrome v1.0; chromium v1.0; chrome-remote-desktop "
+                            "v1.0"));
 }
 
 void AiPackageSelectionTests::reportsNoCandidatesWithoutGuessing() {
@@ -91,7 +94,8 @@ void AiPackageSelectionTests::reportsNoCandidatesWithoutGuessing() {
     QVERIFY(!result.success);
     QVERIFY(!result.ambiguous);
     QVERIFY(!result.requires_human);
-    QVERIFY(result.error_message.contains(QStringLiteral("no candidates")));
+    QCOMPARE(result.error_message,
+             QStringLiteral("Package search returned no candidates for 'definitely-not-real'"));
     QVERIFY(result.selected.package_id.isEmpty());
 }
 
@@ -120,7 +124,9 @@ void AiPackageSelectionTests::dropsCandidateWithDisallowedIdCharacters() {
 
     QVERIFY(!result.success);
     QVERIFY(result.selected.package_id.isEmpty());  // NOT rewritten to a valid "firefox"
-    QVERIFY(result.error_message.contains(QStringLiteral("no candidates")));
+    QCOMPARE(result.error_message,
+             QStringLiteral("Package search returned no candidates for 'firefox' (1 malformed "
+                            "search result(s) rejected)"));
 }
 
 QTEST_GUILESS_MAIN(AiPackageSelectionTests)
