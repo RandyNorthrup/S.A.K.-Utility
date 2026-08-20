@@ -67,44 +67,36 @@ void TestDnsDiagnosticTool::construction_nonCopyable() {
 void TestDnsDiagnosticTool::wellKnown_nonEmpty() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
     QVERIFY(!servers.isEmpty());
-    QVERIFY(servers.size() >= 3);
+    QCOMPARE(servers.size(), qsizetype(9));
 }
 
 void TestDnsDiagnosticTool::wellKnown_containsGoogle() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
-    bool found_google = false;
-    for (const auto& pair : servers) {
-        if (pair.second.contains("8.8.8.8") || pair.first.contains("Google", Qt::CaseInsensitive)) {
-            found_google = true;
-            break;
-        }
-    }
-    QVERIFY(found_google);
+    // Google DNS is the fixed entry at index 1; pin both name and IP (the either-or scan passed
+    // on a single field, masking a wrong-IP or wrong-name regression).
+    QCOMPARE(servers.at(1), qMakePair(QStringLiteral("Google DNS"), QStringLiteral("8.8.8.8")));
 }
 
 void TestDnsDiagnosticTool::wellKnown_containsCloudflare() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
-    bool found_cf = false;
-    for (const auto& pair : servers) {
-        if (pair.second.contains("1.1.1.1") ||
-            pair.first.contains("Cloudflare", Qt::CaseInsensitive)) {
-            found_cf = true;
-            break;
-        }
-    }
-    QVERIFY(found_cf);
+    QCOMPARE(servers.at(3), qMakePair(QStringLiteral("Cloudflare"), QStringLiteral("1.1.1.1")));
 }
 
 void TestDnsDiagnosticTool::wellKnown_pairsHaveNameAndIp() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
-    for (const auto& pair : servers) {
-        QVERIFY2(!pair.first.isEmpty(), "DNS server name must not be empty");
-        // "System Default" intentionally has empty IP
-        if (pair.first == QStringLiteral("System Default")) {
-            continue;
-        }
-        QVERIFY2(!pair.second.isEmpty(), "DNS server IP must not be empty");
-    }
+    // The whole list is a fixed literal; pin it exactly (subsumes name-non-empty, IP-non-empty,
+    // and the empty-System-Default checks).
+    const QVector<QPair<QString, QString>> expected = {
+        {QStringLiteral("System Default"), QStringLiteral("")},
+        {QStringLiteral("Google DNS"), QStringLiteral("8.8.8.8")},
+        {QStringLiteral("Google DNS (Secondary)"), QStringLiteral("8.8.4.4")},
+        {QStringLiteral("Cloudflare"), QStringLiteral("1.1.1.1")},
+        {QStringLiteral("Cloudflare (Secondary)"), QStringLiteral("1.0.0.1")},
+        {QStringLiteral("Quad9"), QStringLiteral("9.9.9.9")},
+        {QStringLiteral("Quad9 (Secondary)"), QStringLiteral("149.112.112.112")},
+        {QStringLiteral("OpenDNS"), QStringLiteral("208.67.222.222")},
+        {QStringLiteral("OpenDNS (Secondary)"), QStringLiteral("208.67.220.220")}};
+    QCOMPARE(servers, expected);
 }
 
 // ===================================================================
@@ -114,7 +106,7 @@ void TestDnsDiagnosticTool::wellKnown_pairsHaveNameAndIp() {
 void TestDnsDiagnosticTool::recordTypes_nonEmpty() {
     const auto types = DnsDiagnosticTool::supportedRecordTypes();
     QVERIFY(!types.isEmpty());
-    QVERIFY(types.size() >= 4);
+    QCOMPARE(types.size(), qsizetype(9));
 }
 
 void TestDnsDiagnosticTool::recordTypes_containsA() {

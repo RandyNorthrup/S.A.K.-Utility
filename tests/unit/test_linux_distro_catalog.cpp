@@ -69,7 +69,8 @@ void TestLinuxDistroCatalog::initTestCase() {
 void TestLinuxDistroCatalog::testCatalogNonEmpty() {
     const auto all = m_catalog->allDistros();
     QVERIFY2(!all.isEmpty(), "Catalog should contain distros");
-    QVERIFY2(all.size() >= 5, "Catalog should have at least 5 distros");
+    QCOMPARE(all.size(),
+             12);  // fixed catalog: 6 general + 1 kali + 1 systemrescue + 3 disk + ventoy
 }
 
 void TestLinuxDistroCatalog::testAllDistrosHaveIds() {
@@ -113,16 +114,19 @@ void TestLinuxDistroCatalog::testNoDuplicateIds() {
 void TestLinuxDistroCatalog::testCategoryNames() {
     const auto names = LinuxDistroCatalog::categoryNames();
     QCOMPARE(names.size(), 5);
-    QVERIFY(names.contains(LinuxDistroCatalog::Category::GeneralPurpose));
-    QVERIFY(names.contains(LinuxDistroCatalog::Category::Security));
-    QVERIFY(names.contains(LinuxDistroCatalog::Category::SystemRecovery));
-    QVERIFY(names.contains(LinuxDistroCatalog::Category::DiskTools));
-    QVERIFY(names.contains(LinuxDistroCatalog::Category::Utilities));
+    QCOMPARE(names.value(LinuxDistroCatalog::Category::GeneralPurpose),
+             QStringLiteral("General Purpose"));
+    QCOMPARE(names.value(LinuxDistroCatalog::Category::Security),
+             QStringLiteral("Security && Pen-Testing"));
+    QCOMPARE(names.value(LinuxDistroCatalog::Category::SystemRecovery),
+             QStringLiteral("System Recovery"));
+    QCOMPARE(names.value(LinuxDistroCatalog::Category::DiskTools), QStringLiteral("Disk Tools"));
+    QCOMPARE(names.value(LinuxDistroCatalog::Category::Utilities), QStringLiteral("Utilities"));
 }
 
 void TestLinuxDistroCatalog::testDistrosByCategory() {
     auto general = m_catalog->distrosByCategory(LinuxDistroCatalog::Category::GeneralPurpose);
-    QVERIFY(!general.isEmpty());
+    QCOMPARE(general.size(), 6);
 
     // All returned distros should be in the right category
     for (const auto& d : general) {
@@ -139,11 +143,14 @@ void TestLinuxDistroCatalog::testAllCategoriesPresent() {
         LinuxDistroCatalog::Category::DiskTools,
         LinuxDistroCatalog::Category::Utilities,
     };
+    const QMap<LinuxDistroCatalog::Category, qsizetype> expectedCounts = {
+        {LinuxDistroCatalog::Category::GeneralPurpose, 6},
+        {LinuxDistroCatalog::Category::Security, 1},
+        {LinuxDistroCatalog::Category::SystemRecovery, 1},
+        {LinuxDistroCatalog::Category::DiskTools, 3},
+        {LinuxDistroCatalog::Category::Utilities, 1}};
     for (auto cat : cats) {
-        auto distros = m_catalog->distrosByCategory(cat);
-        QVERIFY2(!distros.isEmpty(),
-                 qPrintable("Category " + QString::number(static_cast<int>(cat)) +
-                            " has no distros"));
+        QCOMPARE(m_catalog->distrosByCategory(cat).size(), expectedCounts.value(cat));
     }
 }
 
@@ -156,7 +163,7 @@ void TestLinuxDistroCatalog::testDistroByIdFound() {
     auto ubuntu = m_catalog->distroById("ubuntu-desktop");
     QVERIFY2(!ubuntu.id.isEmpty(), "ubuntu-desktop not found in catalog");
     QCOMPARE(ubuntu.id, "ubuntu-desktop");
-    QVERIFY(ubuntu.name.contains("Ubuntu"));
+    QCOMPARE(ubuntu.name, QStringLiteral("Ubuntu Desktop"));
 }
 
 void TestLinuxDistroCatalog::testDistroByIdNotFound() {
@@ -176,7 +183,9 @@ void TestLinuxDistroCatalog::testResolveDownloadUrl() {
 
     const QString url = m_catalog->resolveDownloadUrl(ubuntu);
     QVERIFY(!url.isEmpty());
-    QVERIFY(url.contains(ubuntu.version));
+    QCOMPARE(url,
+             QStringLiteral("https://releases.ubuntu.com/resolute/ubuntu-") + ubuntu.version +
+                 QStringLiteral("-desktop-amd64.iso"));
     QVERIFY(!url.contains("{version}"));
 }
 
@@ -371,8 +380,8 @@ void TestLinuxDistroCatalog::testRollingDistrosCarryPattern() {
     const auto debian = m_catalog->distroById("debian-live-gnome");
     QVERIFY(!kali.id.isEmpty());
     QVERIFY(!debian.id.isEmpty());
-    QVERIFY(!kali.rollingFilenamePattern.isEmpty());
-    QVERIFY(!debian.rollingFilenamePattern.isEmpty());
+    QCOMPARE(kali.rollingFilenamePattern, kaliPattern());
+    QCOMPARE(debian.rollingFilenamePattern, debianPattern());
 
     const auto ubuntu = m_catalog->distroById("ubuntu-desktop");
     if (!ubuntu.id.isEmpty()) {

@@ -224,9 +224,9 @@ private Q_SLOTS:
     void testProtocolConstants() {
         QCOMPARE(sak::kPipeHeaderSize, 5);
         QCOMPARE(sak::kPipeMaxPayload, 4u * 1024u * 1024u);
-        QVERIFY(sak::kHelperTimeoutMs > 0);
-        QVERIFY(sak::kPipeConnectTimeoutMs > 0);
-        QVERIFY(sak::kPipeIoTimeoutMs > 0);
+        QCOMPARE(sak::kHelperTimeoutMs, 300'000);  // 5 min inactivity timeout
+        QCOMPARE(sak::kPipeConnectTimeoutMs, 10'000);
+        QCOMPARE(sak::kPipeIoTimeoutMs, 30'000);
     }
 
     // ======================================================================

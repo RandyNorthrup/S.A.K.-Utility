@@ -34,7 +34,7 @@ private slots:
 void NativeMessagingTests::encode_prefixesLittleEndianLength() {
     const QByteArray frame =
         encodeFrame(QJsonObject{{QStringLiteral("type"), QStringLiteral("x")}});
-    QVERIFY(frame.size() > 4);
+    QCOMPARE(frame.size(), 16);  // 4-byte length prefix + 12-byte compact JSON {"type":"x"}
     const quint32 length =
         qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(frame.constData()));
     QCOMPARE(static_cast<int>(length), frame.size() - 4);
@@ -64,7 +64,7 @@ void NativeMessagingTests::parse_zeroLengthIsError() {
     QByteArray frame(4, '\0');  // length prefix of 0
     const NativeFrame parsed = parseFrame(frame);
     QCOMPARE(parsed.status, NativeFrame::Status::Error);
-    QVERIFY(parsed.error.contains(QStringLiteral("zero")));
+    QCOMPARE(parsed.error, QStringLiteral("Native message length is zero"));
 }
 
 void NativeMessagingTests::parse_oversizedLengthIsError() {
@@ -74,7 +74,8 @@ void NativeMessagingTests::parse_oversizedLengthIsError() {
     frame.append(reinterpret_cast<const char*>(&tooBig), 4);
     const NativeFrame parsed = parseFrame(frame);
     QCOMPARE(parsed.status, NativeFrame::Status::Error);
-    QVERIFY(parsed.error.contains(QStringLiteral("cap")));
+    QCOMPARE(parsed.error,
+             QStringLiteral("Native message length 67108865 exceeds the 67108864-byte cap"));
 }
 
 void NativeMessagingTests::parse_exactlyCapSizedLengthIsAccepted() {
@@ -106,7 +107,8 @@ void NativeMessagingTests::parse_nonObjectBodyIsError() {
     frame.append(body);
     const NativeFrame parsed = parseFrame(frame);
     QCOMPARE(parsed.status, NativeFrame::Status::Error);
-    QVERIFY(parsed.error.contains(QStringLiteral("object")));
+    // The errorString() tail is Qt-version-variant; pin the deterministic prefix.
+    QVERIFY(parsed.error.startsWith(QStringLiteral("Native message is not a JSON object: ")));
 }
 
 void NativeMessagingTests::parse_multipleFramesConsumedIndividually() {
@@ -145,9 +147,8 @@ void NativeMessagingTests::handle_unknownTypeReturnsError() {
                             QStringLiteral("sak-win32-mcp"),
                             QStringLiteral("1.0.0"));
     QCOMPARE(reply.value(QStringLiteral("type")).toString(), QStringLiteral("error"));
-    QVERIFY(reply.value(QStringLiteral("error"))
-                .toString()
-                .contains(QStringLiteral("launch_missiles")));
+    QCOMPARE(reply.value(QStringLiteral("error")).toString(),
+             QStringLiteral("Unsupported message type: 'launch_missiles'"));
     QCOMPARE(reply.value(QStringLiteral("id")).toInt(), 9);  // id echoed even on error
 }
 
