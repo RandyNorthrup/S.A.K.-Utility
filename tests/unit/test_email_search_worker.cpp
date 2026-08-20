@@ -228,7 +228,7 @@ void TestEmailSearchWorker::searchWithNullPstParserFailsClosed() {
     worker.search(nullptr, criteria);
 
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY(error_spy.first().at(0).toString().contains(QStringLiteral("No PST/OST file open")));
+    QCOMPARE(error_spy.first().at(0).toString(), QStringLiteral("No PST/OST file open for search"));
     QCOMPARE(done_spy.count(), 1);
     QCOMPARE(done_spy.first().at(0).toInt(), 0);
 }
@@ -244,7 +244,7 @@ void TestEmailSearchWorker::searchWithNullMboxParserFailsClosed() {
     worker.searchMbox(nullptr, criteria);
 
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY(error_spy.first().at(0).toString().contains(QStringLiteral("No MBOX file open")));
+    QCOMPARE(error_spy.first().at(0).toString(), QStringLiteral("No MBOX file open for search"));
     QCOMPARE(done_spy.count(), 1);
     QCOMPARE(done_spy.first().at(0).toInt(), 0);
 }

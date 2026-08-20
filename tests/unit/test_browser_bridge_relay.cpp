@@ -124,8 +124,10 @@ void BrowserBridgeRelayTests::relayConnect_rejectsForeignServerPid() {
     int protocol = 0;
     const HANDLE pipe = relayConnect(path, &token, &protocol, &error);
     QCOMPARE(pipe, INVALID_HANDLE_VALUE);
-    QVERIFY(error.contains(QStringLiteral("not the S.A.K")) ||
-            error.contains(QStringLiteral("gone")));
+    // pid 999999 -> the single pidIsOwnImage-false message, which contains BOTH substrings, so
+    // the || distinguished nothing. Pin the exact deterministic message.
+    QCOMPARE(error,
+             QStringLiteral("Bridge server pid 999999 is not the S.A.K. binary (or is gone)."));
 }
 
 void BrowserBridgeRelayTests::relayHandshake_rejectsBadToken() {
@@ -141,6 +143,7 @@ void BrowserBridgeRelayTests::relayHandshake_rejectsBadToken() {
     QVERIFY(pipe != INVALID_HANDLE_VALUE);
     // The server drops a wrong-token handshake, so the relay's welcome read fails.
     QVERIFY(!relayHandshake(pipe, QStringLiteral("wrong-token"), protocol, &error));
+    QCOMPARE(error, QStringLiteral("Bridge server closed before welcoming the relay."));
     CloseHandle(pipe);
     server.stop();
 }
@@ -232,7 +235,8 @@ void BrowserBridgeRelayTests::relay_forwardsCancelToAPollingExtensionWhenTheServ
 
     // The server gave up on the exchange...
     QVERIFY(!exchange.ok);
-    QVERIFY(exchange.error.contains(QStringLiteral("did not reply")));
+    QCOMPARE(exchange.error,
+             QStringLiteral("browser did not reply within 400 ms (connection reset)"));
     // ...and the extension was TOLD, rather than being left polling until its own ceiling.
     // Without the cancel this count is 0 and the reader never releases, so the join above
     // would hang -- the assertion and the test's ability to finish are the same thing.
@@ -255,7 +259,9 @@ void BrowserBridgeRelayTests::control_notConnectedReportsError() {
     // No relay has connected: every browser tool call is a clean, model-readable error.
     const ToolResult result = control.invoke(QStringLiteral("browser_snapshot"), {});
     QVERIFY(result.is_error);
-    QVERIFY(result.text.contains(QStringLiteral("not connected")));
+    QCOMPARE(result.text,
+             QStringLiteral("Browser not connected: the S.A.K. browser-control extension is "
+                            "not attached."));
     control.stop();
 }
 
@@ -299,8 +305,9 @@ void BrowserBridgeRelayTests::control_snapshotRoundTripsThroughRelay() {
     QTRY_VERIFY_WITH_TIMEOUT(control.clientConnected(), 5000);
     const ToolResult result = control.invoke(QStringLiteral("browser_snapshot"), {});
     QVERIFY2(!result.is_error, qPrintable(result.text));
-    QVERIFY(result.text.contains(QStringLiteral("https://example.test/")));
-    QVERIFY(result.text.contains(QStringLiteral("Sign in")));
+    QCOMPARE(result.text,
+             QStringLiteral("url: https://example.test/\ntitle: Example\nelements: 1\n"
+                            "  - button \"Sign in\" [ref=e1]\n"));
 
     running = false;
     control.stop();  // tears down the pipe; the relay's next pipe read fails and it exits

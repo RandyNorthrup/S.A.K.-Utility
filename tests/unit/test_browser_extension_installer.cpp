@@ -16,6 +16,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
+#include <QUrl>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -198,13 +199,17 @@ private slots:
         const auto values = enumReg(forcelistKey());
         QCOMPARE(values.size(), 1);
         const QString data = values.first();
-        QVERIFY(data.startsWith(QString::fromLatin1(kBrowserExtensionId) + ";"));
-        QVERIFY(data.contains("file:///"));
-        QVERIFY(data.contains("browser_ext_update.xml"));
+        QCOMPARE(data,
+                 QString::fromLatin1(kBrowserExtensionId) + QStringLiteral(";") +
+                     QUrl::fromLocalFile(
+                         QDir(dir.path()).filePath(QStringLiteral("browser_ext_update.xml")))
+                         .toString(QUrl::FullyEncoded));
 
         // Native host default value -> the host manifest path.
         const QString hostManifest = readReg(hostKey(), QString());
-        QVERIFY(hostManifest.endsWith(QString::fromLatin1(kNativeHostName) + ".json"));
+        QCOMPARE(hostManifest,
+                 QDir(dir.path())
+                     .filePath(QString::fromLatin1(kNativeHostName) + QStringLiteral(".json")));
 
         // update.xml carries the CRX codebase + version.
         QFile ux(QDir(dir.path()).filePath("browser_ext_update.xml"));
@@ -212,7 +217,9 @@ private slots:
         const QString xml = QString::fromUtf8(ux.readAll());
         QVERIFY(xml.contains(QString::fromLatin1(kBrowserExtensionId)));
         QVERIFY(xml.contains(QString::fromLatin1(kBrowserExtensionVersion)));
-        QVERIFY(xml.contains("codebase='file:///"));
+        QVERIFY(xml.contains(QStringLiteral("codebase='") +
+                             QUrl::fromLocalFile(crx).toString(QUrl::FullyEncoded) +
+                             QStringLiteral("'")));
 
         // Host manifest allows exactly our extension origin.
         QFile hm(hostManifest);
@@ -233,6 +240,7 @@ private slots:
 
         const ExtensionInstallResult r = inst.install();
         QVERIFY(!r.ok);
+        QCOMPARE(r.summary, QStringLiteral("Extension package missing"));
         // No policy entry written when the package is missing.
         QVERIFY(enumReg(forcelistKey()).isEmpty());
         QCOMPARE(inst.stateString(), QStringLiteral("not_installed"));
@@ -252,6 +260,7 @@ private slots:
         QVERIFY(!inst.crxPresent());
         const ExtensionInstallResult r = inst.install();
         QVERIFY(!r.ok);
+        QCOMPARE(r.summary, QStringLiteral("Extension package missing"));
         QVERIFY(enumReg(forcelistKey()).isEmpty());
     }
 
@@ -270,13 +279,11 @@ private slots:
         QCOMPARE(values.size(), 2);
         QCOMPARE(values.value("1"),
                  QStringLiteral("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;https://clients2.google.com/x"));
-        bool ours = false;
-        for (const auto& d : values) {
-            if (d.startsWith(QString::fromLatin1(kBrowserExtensionId) + ";")) {
-                ours = true;
-            }
-        }
-        QVERIFY(ours);
+        QCOMPARE(values.value(QStringLiteral("2")),
+                 QString::fromLatin1(kBrowserExtensionId) + QStringLiteral(";") +
+                     QUrl::fromLocalFile(
+                         QDir(dir.path()).filePath(QStringLiteral("browser_ext_update.xml")))
+                         .toString(QUrl::FullyEncoded));
     }
 
     void installIsIdempotent() {
@@ -322,7 +329,9 @@ private slots:
         seedReg(hostKey() + QStringLiteral("\\pinned"), QString(), QStringLiteral("x"));
         const ExtensionInstallResult r = inst.uninstall();
         QVERIFY(!r.ok);
-        QVERIFY(r.summary.contains(QStringLiteral("incomplete")));
+        QCOMPARE(r.summary,
+                 QStringLiteral("Browser extension uninstall incomplete: the force-install "
+                                "policy or native host could not be fully removed"));
     }
 
     void statePartialWhenOnlyHostPresent() {

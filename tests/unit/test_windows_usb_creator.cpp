@@ -266,14 +266,10 @@ void WindowsUSBCreatorTests::diskValidationFiresBeforeIsoCheck() {
 void WindowsUSBCreatorTests::sanitizeVolumeLabel_stripsPowerShellMetacharacters() {
     const QString injected = QStringLiteral("W'; Start-Process calc.exe; '");
     const QString clean = sak::sanitizeVolumeLabel(injected);
-    QVERIFY(!clean.contains('\''));
-    QVERIFY(!clean.contains(';'));
-    QVERIFY(!clean.contains('('));
-    QVERIFY(!clean.contains(')'));
-    // Only allowlisted characters remain.
-    for (const QChar c : clean) {
-        QVERIFY(c.isLetterOrNumber() || QStringLiteral(" _-.").contains(c));
-    }
+    // Exact deterministic output: the four metacharacters ' ; ; ' are dropped, the allowlisted
+    // chars (letters/digits/space/'-'/'.') survive, and trimmed() removes the trailing space.
+    // The old per-char loop mirrored production's OWN allowlist predicate, so it was vacuous.
+    QCOMPARE(clean, QStringLiteral("W Start-Process calc.exe"));
 }
 
 void WindowsUSBCreatorTests::sanitizeVolumeLabel_keepsLegitimateLabel() {

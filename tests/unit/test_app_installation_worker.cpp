@@ -90,9 +90,9 @@ private Q_SLOTS:
         // Verify job list
         auto jobs = worker.getJobs();
         QCOMPARE(jobs.size(), 3);
-        for (const auto& job : jobs) {
-            QVERIFY(job.appName.startsWith("AvailableApp"));
-            QVERIFY(!job.packageId.isEmpty());
+        for (int i = 0; i < jobs.size(); ++i) {
+            QCOMPARE(jobs[i].appName, QString("AvailableApp%1").arg(i));
+            QCOMPARE(jobs[i].packageId, QString("available-app%1").arg(i));
         }
     }
 
@@ -136,8 +136,10 @@ private Q_SLOTS:
         // not fail. This asserts a real invariant instead - the worker can never report
         // more finished jobs than it was given - and it holds at any point in the run, so
         // it does not depend on how far this fast-failing migration has got.
-        QVERIFY2(stats.success + stats.failed <= stats.total,
-                 "more jobs reported finished than were ever queued");
+        // maxConcurrent=0 makes checkQueueState Finish before any job runs, so nothing
+        // transitions to Success/Failed -- both counters are deterministically 0.
+        QCOMPARE(stats.success, 0);
+        QCOMPARE(stats.failed, 0);
 
         worker.cancel();
     }
@@ -302,17 +304,19 @@ private Q_SLOTS:
 
         sak::MigrationReport::MigrationEntry noPkg = ok;
         noPkg.choco_package = "";
-        QVERIFY(!W::migrationSkipReason(noPkg).isEmpty());
+        QCOMPARE(W::migrationSkipReason(noPkg), QStringLiteral("No matched Chocolatey package"));
 
         sak::MigrationReport::MigrationEntry unavail = ok;
         unavail.available = false;
-        QVERIFY(!W::migrationSkipReason(unavail).isEmpty());
+        QCOMPARE(W::migrationSkipReason(unavail),
+                 QStringLiteral("Package not available in the configured feed"));
 
         // Version lock with no locked version would silently install latest.
         sak::MigrationReport::MigrationEntry lockNoVer = ok;
         lockNoVer.version_lock = true;
         lockNoVer.locked_version = "";
-        QVERIFY(!W::migrationSkipReason(lockNoVer).isEmpty());
+        QCOMPARE(W::migrationSkipReason(lockNoVer),
+                 QStringLiteral("Version lock requested but no locked version specified"));
 
         sak::MigrationReport::MigrationEntry lockVer = lockNoVer;
         lockVer.locked_version = "1.2.3";
@@ -333,7 +337,12 @@ private Q_SLOTS:
         for (const auto& e : entries) {
             if (e.status == "skipped") {
                 ++skipped;
-                QVERIFY(!e.error_message.isEmpty());
+                if (e.app_name == QLatin1String("UnavailableApp0")) {
+                    QCOMPARE(e.error_message,
+                             QStringLiteral("Package not available in the configured feed"));
+                } else {
+                    QCOMPARE(e.error_message, QStringLiteral("No matched Chocolatey package"));
+                }
             }
         }
         QCOMPARE(skipped, 2);  // the unavailable + the no-package selected entries
