@@ -389,8 +389,7 @@ void AiConversationStoreTests::memoryFile_trimPreservesStructuredSections() {
     QVERIFY(text.contains(QStringLiteral("Build the offline installer bundle")));
     QVERIFY(text.contains(QStringLiteral("## Open Questions")));
     QVERIFY(text.contains(QStringLiteral("Confirm destination drive")));
-    QVERIFY(text.contains(QStringLiteral("older resolved history compacted by SAK")) ||
-            text.contains(QStringLiteral("older section content compacted by SAK")));
+    QVERIFY(text.contains(QStringLiteral("[older section content compacted by SAK]")));
     QVERIFY(text.contains(QStringLiteral("Latest preserved finding")));
     QVERIFY(QFileInfo(file.fileName()).size() <= 256 * 1024);
 }
@@ -412,7 +411,9 @@ void AiConversationStoreTests::searchSessions_findsTranscriptAndCommandIndex() {
 
     const auto results = store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
-    QVERIFY(results.size() >= 2);
+    // Exactly two hits: the transcript line and the command index entry. `>= 2` would miss a
+    // duplicate/spurious extra hit.
+    QCOMPARE(results.size(), 2);
     QFile index_file(store.currentSessionInfo().path + QStringLiteral("/search_index.jsonl"));
     QVERIFY(index_file.open(QIODevice::ReadOnly | QIODevice::Text));
     const QJsonObject index_line =

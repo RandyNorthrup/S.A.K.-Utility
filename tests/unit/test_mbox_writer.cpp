@@ -49,7 +49,9 @@ private Q_SLOTS:
         QVERIFY(result.has_value());
 
         writer.finalize();
-        QVERIFY(writer.totalBytesWritten() > 0);
+        // The message and its date are fixed, so the serialized size is deterministic. `> 0` would
+        // survive a truncated write or a dropped header/body.
+        QCOMPARE(writer.totalBytesWritten(), static_cast<qint64>(273));
     }
 
     // ====================================================================
@@ -80,7 +82,10 @@ private Q_SLOTS:
         QFile file(dir.filePath(mbox_files.first()));
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray content = file.readAll();
-        QVERIFY(content.startsWith("From "));
+        // The From_ separator is deterministic for the fixed sender + UTC date. `startsWith("From
+        // ")` would pass for any From_ line; pin the exact envelope (address + asctime).
+        const QByteArray first_line = content.left(content.indexOf('\n'));
+        QCOMPARE(first_line, QByteArray("From me@test.com Wed Jan 01 12:00:00 2025"));
     }
 
     // ====================================================================
@@ -106,7 +111,11 @@ private Q_SLOTS:
         std::ignore = writer.writeMessage(item, no_attachments, QStringLiteral("Sent"));
 
         writer.finalize();
-        QVERIFY(writer.totalBytesWritten() > 0);
+        // Per-folder mode writes one file per named folder; assert the two expected files exist
+        // rather than merely that some bytes were written.
+        QDir dir(temp_dir.path());
+        QCOMPARE(dir.entryList({QStringLiteral("*.mbox")}, QDir::Files, QDir::Name),
+                 (QStringList{QStringLiteral("Inbox.mbox"), QStringLiteral("Sent.mbox")}));
     }
 
     // ====================================================================
@@ -131,7 +140,12 @@ private Q_SLOTS:
         }
 
         writer.finalize();
-        QVERIFY(writer.totalBytesWritten() > 0);
+        // Five messages from the same sender -> exactly five From_ separator lines in the single
+        // mailbox. `> 0` could not tell five messages from one.
+        QFile file(temp_dir.path() + QStringLiteral("/mailbox.mbox"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+        QCOMPARE(content.count("From test@test.com "), 5);
     }
 
     // ====================================================================
@@ -219,7 +233,10 @@ private Q_SLOTS:
         QFile file(dir.filePath(files.first()));
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray content = file.readAll();
-        QVERIFY(content.contains(">From ") || content.contains("From "));
+        // The body line "From sender at some point" must be escaped to ">From ...". The old OR was
+        // vacuous: the mbox always contains "From " (its own separator line), so it passed with or
+        // without escaping. Pin the exact escaped body line.
+        QVERIFY(content.contains("\n>From sender at some point\n"));
     }
 
     // ====================================================================
@@ -343,7 +360,10 @@ private Q_SLOTS:
         // Identical input (same node_id 0, same timestamp) once produced identical boundaries; the
         // randomized generator must now differ, and the boundary must not appear in the body.
         QVERIFY(ma.captured(1) != mb.captured(1));
-        QVERIFY(!a.contains(ma.captured(1) + QStringLiteral("hello")));
+        // The boundary appears exactly three times: the Content-Type declaration plus the opening
+        // and closing delimiters. The old `!contains(boundary + "hello")` was near-vacuous (a
+        // random boundary essentially never precedes body text) and pinned no structure.
+        QCOMPARE(a.count(ma.captured(1)), 3);
     }
 
     // ====================================================================

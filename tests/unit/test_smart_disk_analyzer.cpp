@@ -333,9 +333,9 @@ void SmartDiskAnalyzerTests::assess_malformedJson_isUnknownNotHealthy() {
     sak::SmartDiskAnalyzer analyzer;
     const QByteArray garbage = "{ this is not valid json ";
     const sak::SmartReport report = analyzer.parseAndAssessForTesting(garbage, 0);
-    // The old bug: a parse failure came back Healthy. It must be Unknown.
+    // The old bug: a parse failure came back Healthy. It must be Unknown. The exact-value QCOMPARE
+    // above fully pins this; the previous `!= Healthy` line was redundant (Unknown implies it).
     QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
-    QVERIFY(report.overall_health != sak::SmartHealthStatus::Healthy);
 }
 
 void SmartDiskAnalyzerTests::assess_emptyJsonObject_isUnknownNotHealthy() {
@@ -354,12 +354,10 @@ void SmartDiskAnalyzerTests::assess_unknownReport_recommendationsSayUnknown() {
         QVERIFY2(!rec.contains("health is good", Qt::CaseInsensitive),
                  "an indeterminate drive must not be reported as healthy");
     }
-    // Must say, somewhere, that it could not be determined.
-    const bool says_unknown =
-        std::any_of(report.warnings.begin(), report.warnings.end(), [](const QString& w) {
-            return w.contains("could not be determined", Qt::CaseInsensitive);
-        });
-    QVERIFY(says_unknown);
+    // Must carry the exact indeterminate-health warning (pins the specific message, not just that
+    // some warning mentions "could not be determined").
+    QVERIFY(report.warnings.contains(
+        QStringLiteral("SMART health could not be determined for this drive")));
 }
 
 void SmartDiskAnalyzerTests::assess_validSataPassed_isHealthy() {

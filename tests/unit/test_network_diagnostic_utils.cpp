@@ -217,9 +217,14 @@ void NetworkDiagnosticUtilsTests::wifi_lookupVendor_empty() {
 }
 
 void NetworkDiagnosticUtilsTests::wifi_lookupVendor_caseInsensitive() {
-    // Both upper and lower should produce the same result
-    const auto upper = WiFiAnalyzer::lookupVendor(QStringLiteral("AA:BB:CC:DD:EE:FF"));
-    const auto lower = WiFiAnalyzer::lookupVendor(QStringLiteral("aa:bb:cc:dd:ee:ff"));
+    // Use a SEEDED OUI (AC:DE:48 -> Apple). "AA:BB:CC" is not in the fallback DB, so both lookups
+    // returned empty and the case-fold under test (lookupVendor's .toUpper()) was never exercised
+    // -- dropping it would still have passed. The lowercase form only resolves because of that
+    // fold.
+    const auto upper = WiFiAnalyzer::lookupVendor(QStringLiteral("AC:DE:48:00:11:22"));
+    const auto lower = WiFiAnalyzer::lookupVendor(QStringLiteral("ac:de:48:00:11:22"));
+    QCOMPARE(upper, QStringLiteral("Apple"));
+    QCOMPARE(lower, QStringLiteral("Apple"));
     QCOMPARE(upper, lower);
 }
 
@@ -369,8 +374,9 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_interferenceNonNegative() {
 
 void NetworkDiagnosticUtilsTests::port_presets_notEmpty() {
     const auto presets = PortScanner::getPresets();
-    QVERIFY(!presets.isEmpty());
-    QVERIFY(presets.size() >= 5);  // At least we expect several presets
+    // Fixed catalog: Common Services, Web Servers, Database, File Sharing, Email, Remote Access,
+    // Top 100 = 7. `>= 5` would miss a dropped preset.
+    QCOMPARE(presets.size(), 7);
 }
 
 void NetworkDiagnosticUtilsTests::port_presets_haveNames() {
@@ -413,7 +419,7 @@ void NetworkDiagnosticUtilsTests::port_presets_top100HasExpectedPorts() {
     for (const auto& p : presets) {
         if (p.name.contains(QStringLiteral("Top 100"), Qt::CaseInsensitive)) {
             found = true;
-            QVERIFY(p.ports.size() >= 90);  // Roughly 100 ports
+            QCOMPARE(p.ports.size(), 98);  // the fixed "Top 100" list holds 98 ports
             QVERIFY(p.ports.contains(80));
             QVERIFY(p.ports.contains(443));
             QVERIFY(p.ports.contains(22));
@@ -430,38 +436,36 @@ void NetworkDiagnosticUtilsTests::port_presets_top100HasExpectedPorts() {
 
 void NetworkDiagnosticUtilsTests::port_serviceName_http() {
     const auto name = PortScanner::getServiceName(80);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains(QStringLiteral("HTTP"), Qt::CaseInsensitive));
+    // Exact: contains("HTTP") also matches HTTPS / HTTP Proxy / HTTP Alt, so an off-by-one onto an
+    // HTTP* neighbor would stay green.
+    QCOMPARE(name, QStringLiteral("HTTP"));
 }
 
 void NetworkDiagnosticUtilsTests::port_serviceName_https() {
     const auto name = PortScanner::getServiceName(443);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains(QStringLiteral("HTTPS"), Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("HTTPS"));
 }
 
 void NetworkDiagnosticUtilsTests::port_serviceName_ssh() {
     const auto name = PortScanner::getServiceName(22);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains(QStringLiteral("SSH"), Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("SSH"));
 }
 
 void NetworkDiagnosticUtilsTests::port_serviceName_ftp() {
     const auto name = PortScanner::getServiceName(21);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains(QStringLiteral("FTP"), Qt::CaseInsensitive));
+    // Exact: contains("FTP") also matches port 20's "FTP Data", so a 20/21 swap would stay green.
+    QCOMPARE(name, QStringLiteral("FTP Control"));
 }
 
 void NetworkDiagnosticUtilsTests::port_serviceName_dns() {
     const auto name = PortScanner::getServiceName(53);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains(QStringLiteral("DNS"), Qt::CaseInsensitive));
+    // Exact: contains("DNS") also matches port 5353's "mDNS".
+    QCOMPARE(name, QStringLiteral("DNS"));
 }
 
 void NetworkDiagnosticUtilsTests::port_serviceName_rdp() {
     const auto name = PortScanner::getServiceName(3389);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains(QStringLiteral("RDP"), Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("RDP"));
 }
 
 void NetworkDiagnosticUtilsTests::port_serviceName_unknown() {
@@ -476,8 +480,8 @@ void NetworkDiagnosticUtilsTests::port_serviceName_unknown() {
 
 void NetworkDiagnosticUtilsTests::dns_servers_notEmpty() {
     const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
-    QVERIFY(!servers.isEmpty());
-    QVERIFY(servers.size() >= 5);
+    // Fixed list: System Default + Google(x2) + Cloudflare(x2) + Quad9(x2) + OpenDNS(x2) = 9.
+    QCOMPARE(servers.size(), 9);
 }
 
 void NetworkDiagnosticUtilsTests::dns_servers_haveNames() {
@@ -519,8 +523,8 @@ void NetworkDiagnosticUtilsTests::dns_servers_includeSystemDefault() {
     for (const auto& s : servers) {
         if (s.second.isEmpty()) {
             found = true;
-            QVERIFY(s.first.contains(QStringLiteral("Default"), Qt::CaseInsensitive) ||
-                    s.first.contains(QStringLiteral("System"), Qt::CaseInsensitive));
+            // The empty-address entry is exactly "System Default".
+            QCOMPARE(s.first, QStringLiteral("System Default"));
             break;
         }
     }

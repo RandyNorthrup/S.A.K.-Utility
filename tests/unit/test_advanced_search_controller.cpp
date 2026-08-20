@@ -107,7 +107,9 @@ void AdvancedSearchControllerTests::startSearch_changesState() {
 
     // State should change to Searching
     QCOMPARE(ctrl.currentState(), AdvancedSearchController::State::Searching);
-    QVERIFY(stateSpy.count() >= 1);
+    // Exactly one transition so far (Idle -> Searching); the state above proves the search has not
+    // yet finished, so `>= 1` can be tightened to the exact count.
+    QCOMPARE(stateSpy.count(), 1);
 
     // Wait for completion by polling the count, not with spy.wait(). The worker emits
     // finished() from its own thread and the controller re-emits searchFinished on the main
@@ -145,8 +147,10 @@ void AdvancedSearchControllerTests::startSearch_emitsSignals() {
     // Check totals
     const int totalMatches = finishedSpy[0][0].toInt();
     const int totalFiles = finishedSpy[0][1].toInt();
-    QVERIFY(totalMatches >= 1);
-    QVERIFY(totalFiles >= 1);
+    // The fixture is "Hello World\nSearch target\nAnother line\n" and the pattern is "Hello", which
+    // matches exactly one line in the one searched file.
+    QCOMPARE(totalMatches, 1);
+    QCOMPARE(totalFiles, 1);
 }
 
 void AdvancedSearchControllerTests::cancelSearch_changesState() {
@@ -272,7 +276,8 @@ void AdvancedSearchControllerTests::history_maxSize() {
         ctrl.addToHistory(QString("search_%1").arg(i));
     }
 
-    QVERIFY(ctrl.searchHistory().size() <= 50);
+    // 60 added, capped at the 50-entry maximum. `<= 50` would miss a cap that failed to evict.
+    QCOMPARE(ctrl.searchHistory().size(), 50);
     // Most recent should be first
     QCOMPARE(ctrl.searchHistory().first(), "search_59");
 }
@@ -340,7 +345,7 @@ void AdvancedSearchControllerTests::preferences_clampedValues() {
     newPrefs.max_preview_file_size_mb = 999;
     newPrefs.max_search_file_size_mb = 999;
     newPrefs.max_cache_size = 999;
-    newPrefs.context_lines = 10;
+    newPrefs.context_lines = 999;  // above the ceiling, so the clamp is actually exercised
 
     ctrl.setPreferences(newPrefs);
 
@@ -348,10 +353,12 @@ void AdvancedSearchControllerTests::preferences_clampedValues() {
     ctrl.loadPreferences();
     const auto prefs = ctrl.preferences();
 
-    QVERIFY(prefs.max_preview_file_size_mb <= 500);
-    QVERIFY(prefs.max_search_file_size_mb <= 1000);
-    QVERIFY(prefs.max_cache_size <= 1000);
-    QVERIFY(prefs.context_lines <= 10);
+    // 999 preview clamps to the 500 ceiling; 999 search/cache are within their 1000 ceiling so they
+    // survive unchanged. `<=` would pass even if the clamp silently zeroed or mis-applied.
+    QCOMPARE(prefs.max_preview_file_size_mb, 500);
+    QCOMPARE(prefs.max_search_file_size_mb, 999);
+    QCOMPARE(prefs.max_cache_size, 999);
+    QCOMPARE(prefs.context_lines, 10);  // 999 clamps to the kMaximumContextLines ceiling
 }
 
 // -- Worker Double-Start -----------------------------------------------------
