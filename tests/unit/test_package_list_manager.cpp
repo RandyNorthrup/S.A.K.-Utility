@@ -69,32 +69,32 @@ void TestPackageListManager::presetNames_returnsAllFive() {
 void TestPackageListManager::preset_officePc_hasPackages() {
     sak::PackageListManager manager;
     auto list = manager.preset("Office PC");
-    QVERIFY(!list.entries.isEmpty());
-    QVERIFY(!list.name.isEmpty());
+    QCOMPARE(list.entries.size(), 10);
+    QCOMPARE(list.name, QString("Office PC"));
 }
 
 void TestPackageListManager::preset_developer_hasPackages() {
     sak::PackageListManager manager;
     auto list = manager.preset("Developer Workstation");
-    QVERIFY(!list.entries.isEmpty());
+    QCOMPARE(list.entries.size(), 12);
 }
 
 void TestPackageListManager::preset_kiosk_hasPackages() {
     sak::PackageListManager manager;
     auto list = manager.preset("Kiosk / POS");
-    QVERIFY(!list.entries.isEmpty());
+    QCOMPARE(list.entries.size(), 4);
 }
 
 void TestPackageListManager::preset_security_hasPackages() {
     sak::PackageListManager manager;
     auto list = manager.preset("Security / IT Admin");
-    QVERIFY(!list.entries.isEmpty());
+    QCOMPARE(list.entries.size(), 10);
 }
 
 void TestPackageListManager::preset_education_hasPackages() {
     sak::PackageListManager manager;
     auto list = manager.preset("Education Lab");
-    QVERIFY(!list.entries.isEmpty());
+    QCOMPARE(list.entries.size(), 8);
 }
 
 void TestPackageListManager::preset_unknown_returnsEmpty() {

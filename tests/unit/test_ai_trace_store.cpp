@@ -175,8 +175,9 @@ void AiTraceStoreTests::activityEvent_roundTripsContractFields() {
     QCOMPARE(loaded.agent_id, QStringLiteral("package_agent"));
     QCOMPARE(loaded.tool_name, QStringLiteral("sak_package_manager"));
     QCOMPARE(loaded.token_usage.total_tokens, 42);
-    QCOMPARE(loaded.artifact_refs.size(), 1);
-    QCOMPARE(loaded.evidence_refs.size(), 1);
+    QCOMPARE(loaded.artifact_refs,
+             (QStringList{QStringLiteral("artifacts/My Chat/logs/install.txt")}));
+    QCOMPARE(loaded.evidence_refs, (QStringList{QStringLiteral("trace:span_123")}));
 }
 
 void AiTraceStoreTests::appendReplayEvent_writesCompactReplayJsonl() {

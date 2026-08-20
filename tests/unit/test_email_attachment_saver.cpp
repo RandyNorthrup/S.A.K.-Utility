@@ -47,8 +47,7 @@ void TestEmailAttachmentSaver::sanitizeStripsPathSeparators() {
 
     // Whatever the input, the result carries no separator, so it cannot traverse.
     const QString mixed = sak::sanitizeAttachmentFilename(QStringLiteral("a/b\\c"));
-    QVERIFY(!mixed.contains(QLatin1Char('/')));
-    QVERIFY(!mixed.contains(QLatin1Char('\\')));
+    QCOMPARE(mixed, QStringLiteral("a_b_c"));  // both separators -> '_', exact contract output
 
     // Non-vacuity: an ordinary filename with no separators is preserved unchanged, so the
     // replacement targets separators specifically rather than mangling every name.
@@ -85,7 +84,7 @@ void TestEmailAttachmentSaver::saveToDirectoryDeduplicates() {
     // A second save of the same name must NOT overwrite the first.
     const auto next = sak::saveAttachmentToDirectory(dir.path(), QStringLiteral("a.txt"), second);
     QVERIFY(next.success);
-    QVERIFY(next.saved_path != first.saved_path);
+    QCOMPARE(next.saved_path, dir.path() + QStringLiteral("/a_1.txt"));
 
     QFile untouched(first.saved_path);
     QVERIFY(untouched.open(QIODevice::ReadOnly));

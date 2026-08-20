@@ -128,9 +128,8 @@ void AiToolDispatcherTests::emptyHandlerResultIsStructuredFailure() {
     QVERIFY(outcome.policy_decision.allowed);
     QVERIFY(!outcome.result.value(QStringLiteral("success")).toBool(true));
     QCOMPARE(outcome.result.value(QStringLiteral("tool_name")).toString(), request.tool_name);
-    QVERIFY(outcome.result.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("returned no data")));
+    QCOMPARE(outcome.result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Tool handler returned no data"));
 }
 
 void AiToolDispatcherTests::exclusiveLeaseBlocksConcurrentMutating() {
