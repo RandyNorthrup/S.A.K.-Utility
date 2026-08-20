@@ -4887,6 +4887,28 @@ So the suite itself must be audited for tests that pass regardless of the code.
     values). Security-sensitive fixes: permission-manager redirect-vs-reparse message attribution, ai-tool-policy
     scan-vs-intent per-row refusal, elevation per-tier counts (UAC classification), encryption fail-closed
     contracts. Tree sweep continues on the remaining unit-test files.
+  - PROGRESS 2026-08-19 tree sweeps b7..b13 + held-back close (commits 970d74b2, ddc1771b, c26a19cd,
+    a29159e6, a4c50fc0, 1860a1ac, 39dfeaf2, ea1edfa7; gated 249/249 each): seven more finder+verify
+    Workflows plus the close of the two b12 held-back script_rewriter items. Cumulative: TEN sweeps
+    (b4..b13), ~50 files touched, 157 weak assertions pinned (117 through b12 + 2 script_rewriter
+    close + 38 in b13), each re-verified against production and confirmed by a targeted per-target
+    ctest run before the full gate. b13's 38 pins covered
+    ai_provider_gateway (13 exact error-string QCOMPAREs, incl. six ai_provider_gateway_authorization
+    fixed-literal decline/misconfig messages + the win32 plan preview), network_diagnostic_types (2
+    Severity ordinal pins), advanced_uninstall_controller (9 signal-spy count()>=1 -> ==1),
+    streaming_decompressor (4 lastError exact/prefix/suffix), nuget_dependency_resolver (10
+    errors().size()==1 + exact first() message). CORRECTION to the b4/b5/b6 line above: the three files
+    it logged "clean" (ai_provider_gateway, advanced_uninstall_controller, streaming_decompressor) were
+    RE-SWEPT in b13 and yielded 26 weak assertions -- an earlier "clean" verdict is NOT durable, because
+    new tests land after it (the whole R5-G10-9 fail-closed block on the gateway, the reject-when-busy
+    tests on the controller) and a deeper finder framing digs further; re-sweeping nominally-clean files
+    that grew via later campaigns is warranted. b13's adversarial verify also correctly SPARED 7
+    over-reach nominees: the network_diagnostic enum-distinctness checks whose ordinal is NOT serialized
+    (PortScanResult::State, BandwidthTestResult::TestMode, ConnectionInfo::Protocol, FirewallRule
+    Direction/Action/Protocol, NetworkShareInfo::ShareType are only ever compared by named enumerator in
+    production, never static_cast<int> serialized) -- pinning those ordinals would break a legit reorder
+    with no behavioural consequence; only FirewallConflict/FirewallGap::Severity, which ARE serialized
+    via fwSeverityToString(static_cast<int>), were pinned. G18-4 stays [~] on the thinning deep tree tail.
       campaign, prove it by reverting the fix locally and observing the failure
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.
