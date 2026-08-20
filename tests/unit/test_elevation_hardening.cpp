@@ -357,12 +357,12 @@ void TestElevationHardening::tier2_permissionTakeOwnershipIsElevated() {
 // ============================================================================
 
 void TestElevationHardening::gate_enumContainsAllThreeResults() {
-    auto already = sak::ElevationGateResult::AlreadyElevated;
-    auto restart = sak::ElevationGateResult::RestartRequested;
-    auto declined = sak::ElevationGateResult::Declined;
-    QVERIFY(already != restart);
-    QVERIFY(restart != declined);
-    QVERIFY(already != declined);
+    // Distinctness is guaranteed by the language for sequential enumerators, so `!=` checks can
+    // never fail. Pin the underlying values instead: inserting or reordering a result changes these
+    // and turns this red.
+    QCOMPARE(static_cast<uint8_t>(sak::ElevationGateResult::AlreadyElevated), uint8_t{0});
+    QCOMPARE(static_cast<uint8_t>(sak::ElevationGateResult::RestartRequested), uint8_t{1});
+    QCOMPARE(static_cast<uint8_t>(sak::ElevationGateResult::Declined), uint8_t{2});
 }
 
 void TestElevationHardening::gate_alreadyElevatedSkipsDialog() {
@@ -421,9 +421,8 @@ void TestElevationHardening::featureTable_noStandardFeatureHasReason() {
 }
 
 void TestElevationHardening::featureTable_countMatchesExpected() {
-    constexpr size_t kMinExpectedFeatures = 40;
-    const bool has_enough = sak::kFeatureCount >= kMinExpectedFeatures;
-    QVERIFY(has_enough);
+    // Pin the exact table size; `>= 40` let a dropped feature entry pass.
+    QCOMPARE(sak::kFeatureCount, static_cast<size_t>(46));
 
     size_t standard_count = 0;
     size_t elevated_count = 0;
@@ -441,9 +440,12 @@ void TestElevationHardening::featureTable_countMatchesExpected() {
             break;
         }
     }
-    QVERIFY2(standard_count > 0, "Must have Standard features");
-    QVERIFY2(elevated_count > 0, "Must have Elevated features");
-    QVERIFY2(mixed_count > 0, "Must have Mixed features");
+    // Pin the exact per-tier distribution. `> 0` only caught a whole tier vanishing; a mis-tiering
+    // that moved features between tiers (security-relevant -- the tier governs UAC behavior) slid
+    // past both `> 0` and the sum invariant below, which is unchanged by moving an entry.
+    QCOMPARE(standard_count, static_cast<size_t>(22));
+    QCOMPARE(elevated_count, static_cast<size_t>(21));
+    QCOMPARE(mixed_count, static_cast<size_t>(3));
     QCOMPARE(standard_count + elevated_count + mixed_count, sak::kFeatureCount);
 }
 
@@ -495,37 +497,42 @@ void TestElevationHardening::dispatcher_multipleRegistrationsAllAllowed() {
 
 void TestElevationHardening::errorCodes_elevationRequiredExists() {
     auto code = sak::error_code::elevation_required;
-    QVERIFY(!std::string(sak::to_string(code)).empty());
+    // `!empty()` is vacuous: to_string() returns the non-empty "Undefined error" fallback for an
+    // unmapped code, so a deleted/wrong mapping stays green. Pin the exact message.
+    QCOMPARE(std::string(sak::to_string(code)), std::string("Elevation required"));
 }
 
 void TestElevationHardening::errorCodes_elevationFailedExists() {
     auto code = sak::error_code::elevation_failed;
-    QVERIFY(!std::string(sak::to_string(code)).empty());
+    QCOMPARE(std::string(sak::to_string(code)), std::string("Elevation failed"));
 }
 
 void TestElevationHardening::errorCodes_elevationDeniedExists() {
     auto code = sak::error_code::elevation_denied;
-    QVERIFY(!std::string(sak::to_string(code)).empty());
+    QCOMPARE(std::string(sak::to_string(code)), std::string("User cancelled elevation request"));
 }
 
 void TestElevationHardening::errorCodes_elevationTimeoutExists() {
     auto code = sak::error_code::elevation_timeout;
-    QVERIFY(!std::string(sak::to_string(code)).empty());
+    QCOMPARE(std::string(sak::to_string(code)),
+             std::string("Elevated helper did not respond in time"));
 }
 
 void TestElevationHardening::errorCodes_helperConnectionFailedExists() {
     auto code = sak::error_code::helper_connection_failed;
-    QVERIFY(!std::string(sak::to_string(code)).empty());
+    QCOMPARE(std::string(sak::to_string(code)),
+             std::string("Could not connect to elevated helper"));
 }
 
 void TestElevationHardening::errorCodes_helperCrashedExists() {
     auto code = sak::error_code::helper_crashed;
-    QVERIFY(!std::string(sak::to_string(code)).empty());
+    QCOMPARE(std::string(sak::to_string(code)), std::string("Elevated helper exited unexpectedly"));
 }
 
 void TestElevationHardening::errorCodes_taskNotAllowedExists() {
     auto code = sak::error_code::task_not_allowed;
-    QVERIFY(!std::string(sak::to_string(code)).empty());
+    QCOMPARE(std::string(sak::to_string(code)),
+             std::string("Task not in elevated helper allowlist"));
 }
 
 // ============================================================================

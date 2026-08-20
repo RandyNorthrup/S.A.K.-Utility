@@ -110,7 +110,10 @@ void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
                                  .toObject()
                                  .value(QStringLiteral("tools"))
                                  .toArray();
-    QVERIFY(tools.size() >= 5);
+    // The catalog is fixed for this config (null browser, non-read-only policy): 11 base + 9
+    // desktop + 8 ocr + 5 watch + 5 input = 38. `>= 5` was ~8x below the truth and never failed
+    // independently of the name checks below; the exact count also catches a duplicate/extra tool.
+    QCOMPARE(tools.size(), 38);
 
     QStringList names;
     for (const auto& value : tools) {
@@ -384,7 +387,14 @@ void Win32McpServerTests::invokeTool_pixelColorReadsAShape() {
         const int channel = payload.value(key).toInt(-1);
         QVERIFY(channel >= 0 && channel <= 255);
     }
-    QVERIFY(payload.value(QStringLiteral("hex")).toString().startsWith(QLatin1Char('#')));
+    // Derive the exact expected hex from the reported channels using production's own packing
+    // (#RRGGBB, zero-padded). `startsWith('#')` was near-vacuous -- the '#' is a literal in the
+    // format string, so a channel swap or wrong digit count would still start with '#'.
+    const int packed = (payload.value(QStringLiteral("r")).toInt() << 16) |
+                       (payload.value(QStringLiteral("g")).toInt() << 8) |
+                       payload.value(QStringLiteral("b")).toInt();
+    QCOMPARE(payload.value(QStringLiteral("hex")).toString(),
+             QStringLiteral("#%1").arg(packed, 6, 16, QLatin1Char('0')));
 }
 
 void Win32McpServerTests::invokeTool_watchToolsValidateArgs() {
@@ -519,7 +529,10 @@ void Win32McpServerTests::toolCallResult_imageBecomesImageBlockPlusSummary() {
     // Text summary follows so a text-only client still learns what happened.
     const QJsonObject text = content.at(1).toObject();
     QCOMPARE(text.value(QStringLiteral("type")).toString(), QStringLiteral("text"));
-    QVERIFY(text.value(QStringLiteral("text")).toString().contains(QStringLiteral("screenshot")));
+    // toolCallResult passes result.text through verbatim; pin it exactly (the sibling text-only
+    // test already does). `contains("screenshot")` would survive a truncated or reordered summary.
+    QCOMPARE(text.value(QStringLiteral("text")).toString(),
+             QStringLiteral("Captured a 800x600 PNG screenshot of the active tab."));
 }
 
 void Win32McpServerTests::readOnlyProfileFiltersCatalogAndRefusesMutatingCall() {

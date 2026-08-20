@@ -141,6 +141,14 @@ public:
     void setVerificationEnabled(bool enabled);
 
     /**
+     * @brief Whether post-write verification is enabled (mirrors setVerificationEnabled).
+     *
+     * Read-only accessor so the setter's effect is observable to a test; the flag is only ever
+     * touched from the owning thread before the flash starts, so no synchronization is needed.
+     */
+    bool verificationEnabled() const { return m_verificationEnabled; }
+
+    /**
      * @brief Set validation mode
      * @param mode Validation mode (Full, Sample, or Skip)
      */

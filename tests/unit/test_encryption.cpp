@@ -135,7 +135,11 @@ void EncryptionTests::roundTrip_basicString() {
     auto encrypted = sak::encryptData(original, password);
     QVERIFY2(encrypted.has_value(), "encryptData should succeed");
     QVERIFY(encrypted.value() != original);
-    QVERIFY(!encrypted.value().isEmpty());
+    // Exact wire size: 32 salt + 16 IV + 32 PKCS7-padded ciphertext (29-byte plaintext -> next
+    // 16-multiple) + 32 HMAC tag = 112. `!isEmpty()` would survive a dropped salt/IV header or tag.
+    QCOMPARE(encrypted.value().size(),
+             qsizetype(sak::kEncryptionSaltBytes + sak::kAesBlockBytes + 32 +
+                       sak::kEncryptionMacBytes));
 
     auto decrypted = sak::decryptData(encrypted.value(), password);
     QVERIFY2(decrypted.has_value(), "decryptData should succeed");
@@ -186,7 +190,11 @@ void EncryptionTests::roundTrip_largeData() {
 
     auto encrypted = sak::encryptData(original, password);
     QVERIFY(encrypted.has_value());
-    QVERIFY(encrypted.value().size() > original.size());  // Ciphertext includes salt + IV + padding
+    // 1 MB is an exact block multiple, so PKCS7 adds one full 16-byte padding block. Fixed 96-byte
+    // overhead = 32 salt + 16 IV + 16 padding + 32 tag. `>` would survive a dropped tag or salt.
+    QCOMPARE(encrypted.value().size(),
+             original.size() + qsizetype(sak::kEncryptionSaltBytes + sak::kAesBlockBytes +
+                                         sak::kAesBlockBytes + sak::kEncryptionMacBytes));
 
     auto decrypted = sak::decryptData(encrypted.value(), password);
     QVERIFY(decrypted.has_value());
@@ -221,12 +229,12 @@ void EncryptionTests::wrongPassword_failsDecrypt() {
     QVERIFY(encrypted.has_value());
 
     auto decrypted = sak::decryptData(encrypted.value(), wrongPassword);
-    // Wrong password should fail -- either returns error or garbage data
-    // BCrypt may return decrypt_failed or the padding check fails
-    if (decrypted.has_value()) {
-        // If it doesn't error, at least the data should differ
-        QVERIFY(decrypted.value() != original);
-    }
+    // decryptData is encrypt-then-MAC with a password-derived MAC key, so a wrong password ALWAYS
+    // fails the constant-time tag compare and fails closed. The old `if (has_value())` branch was
+    // dead, so it never actually asserted the fail-closed contract (a fail-open regression that
+    // returned garbage plaintext would have passed). Pin it, matching the tampered-IV/tag siblings.
+    QVERIFY(!decrypted.has_value());
+    QCOMPARE(decrypted.error(), sak::error_code::decrypt_failed);
 }
 
 void EncryptionTests::emptyPassword_rejected() {
@@ -264,10 +272,11 @@ void EncryptionTests::corruptedCiphertext_failsDecrypt() {
     }
 
     auto decrypted = sak::decryptData(corrupted, password);
-    // Should either fail or return different data
-    if (decrypted.has_value()) {
-        QVERIFY(decrypted.value() != original);
-    }
+    // Byte 50 lands in the authenticated ciphertext body (salt 32 + IV 16 = 48), which the HMAC
+    // covers, so decrypt fails closed. The old `if (has_value())` branch was dead and never
+    // asserted the contract; pin it like the tampered-IV/tag siblings.
+    QVERIFY(!decrypted.has_value());
+    QCOMPARE(decrypted.error(), sak::error_code::decrypt_failed);
 }
 
 void EncryptionTests::tamperedIV_failsDecrypt() {
@@ -401,7 +410,12 @@ void EncryptionTests::stream_roundTrip() {
     bool ok = false;
     const QByteArray wire = streamEncrypt(original, password, chunk_size, &ok);
     QVERIFY2(ok, "streaming encryption should succeed");
-    QVERIFY(wire.size() > original.size());  // header + padding + tag
+    // Exact framed size: 48-byte header (32 salt + 16 IV) + PKCS7-padded ciphertext (CBC always
+    // emits a full extra block) + 32-byte tag. `>` would survive a dropped tag or short padding.
+    const qsizetype padded = ((original.size() / sak::kAesBlockBytes) + 1) * sak::kAesBlockBytes;
+    QCOMPARE(wire.size(),
+             qsizetype(sak::kEncryptionSaltBytes + sak::kAesBlockBytes) + padded +
+                 sak::kEncryptionMacBytes);
 
     const QByteArray recovered = streamDecrypt(wire, password, chunk_size, &ok);
     QVERIFY2(ok, "streaming decryption should authenticate and succeed");

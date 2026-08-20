@@ -265,9 +265,12 @@ void FlashWorkerTests::constructorDefaultSpeed() {
 void FlashWorkerTests::setVerificationEnabledToggle() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("X"));
+    // The default is already true, so observe the intermediate false first: pinning only the final
+    // true would pass even if the setter were a no-op. QVERIFY(true) asserted nothing.
     worker.setVerificationEnabled(false);
+    QCOMPARE(worker.verificationEnabled(), false);
     worker.setVerificationEnabled(true);
-    QVERIFY(true);
+    QCOMPARE(worker.verificationEnabled(), true);
 }
 
 void FlashWorkerTests::setBufferSizeCustom() {
