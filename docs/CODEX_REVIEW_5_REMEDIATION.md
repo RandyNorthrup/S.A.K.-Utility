@@ -4875,6 +4875,18 @@ So the suite itself must be audited for tests that pass regardless of the code.
         applied), riding the same real enumeration the sibling tests already depend on.
     G18-4 remains [~] on the broader multi-week tree sweep (the deep tail of loose >=/<=/!isEmpty/
     substring bounds in other files), but the summary's named enumerated backlog is fully retired.
+  - PROGRESS 2026-08-19 tree sweeps b4/b5/b6 (commits 2817a436, 269869c2, 9f2b6c57; gated 249/249 each):
+    ran three finder+verify Workflows over 15 previously-unswept unit-test files, fixing 34 CONFIRMED_WEAK
+    assertions (b4=3, b5=10, b6=21); 4 files came back clean (ai_provider_gateway, advanced_uninstall_controller,
+    streaming_decompressor, nuget_dependency_resolver). Every pin was re-verified against production before
+    landing. New weak-classes catalogued this pass: QHash::value(key)==false is a HIDDEN vacuity (a missing
+    key yields default false -> use value(key, /*default=*/true)); !to_string(code).empty() is vacuous (a
+    non-empty "Undefined error" fallback masks a deleted mapping -> pin the exact message); an
+    `if(result.has_value())` content check on an always-fail-closed op is DEAD code that never runs (pin
+    !has_value()+the error instead); enum `!=` distinctness is a language guarantee (pin the underlying
+    values). Security-sensitive fixes: permission-manager redirect-vs-reparse message attribution, ai-tool-policy
+    scan-vs-intent per-row refusal, elevation per-tier counts (UAC classification), encryption fail-closed
+    contracts. Tree sweep continues on the remaining unit-test files.
       campaign, prove it by reverting the fix locally and observing the failure
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.
