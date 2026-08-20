@@ -90,7 +90,8 @@ void AiMcpStdioSessionTests::openFailsCleanlyForMissingCommand() {
 
     QString error;
     QVERIFY(!session.open(config, &error));
-    QVERIFY(!error.isEmpty());
+    // Fail closed with the exact missing-command message (the command is a known, absent path).
+    QCOMPARE(error, QStringLiteral("MCP stdio command missing: %1").arg(config.command));
     QVERIFY(!session.isOpen());
     // A second open attempt (which internally closes the first) must also be clean.
     QVERIFY(!session.open(config, &error));

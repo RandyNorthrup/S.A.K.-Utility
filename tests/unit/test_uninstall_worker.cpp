@@ -30,7 +30,10 @@ void TestUninstallWorker::construction_default() {
     ProgramInfo program;
     program.displayName = QStringLiteral("Test Program");
     UninstallWorker worker(program, UninstallWorker::Mode::Standard, ScanLevel::Safe, false);
-    QVERIFY(dynamic_cast<QObject*>(&worker) != nullptr);
+    // The dynamic_cast to a compile-time base could never be null. Pin the real post-construction
+    // invariant: a freshly built, un-started worker is idle and not stop-requested.
+    QVERIFY(!worker.isExecuting());
+    QVERIFY(!worker.stopRequested());
 }
 
 void TestUninstallWorker::construction_nonCopyable() {

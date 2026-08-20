@@ -69,7 +69,8 @@ void AiMcpSessionPoolTests::emptyCommandRejected() {
     request.tool_name = QStringLiteral("list_windows");
     QString error;
     QVERIFY(pool.callTool(request, &error).isEmpty());
-    QVERIFY(!error.isEmpty());
+    // Fail closed with the exact empty-command message.
+    QCOMPARE(error, QStringLiteral("MCP stdio command is empty"));
     QCOMPARE(pool.openSessionCount(), 0);  // nothing was cached
 }
 
@@ -126,9 +127,14 @@ void AiMcpSessionPoolTests::liveWin32McpReuseAndIsolation_optIn() {
     }
     QCOMPARE(pool.openSessionCount(), 1);
 
-    // Discovery over the same pooled session.
+    // Discovery over the same pooled session must advertise the win32 catalog's own tools, not just
+    // "some non-empty list" -- pin a known base tool.
     const auto tools = pool.listTools(request, &error);
-    QVERIFY2(!tools.isEmpty(), qPrintable(error));
+    const bool has_list_windows =
+        std::any_of(tools.cbegin(), tools.cend(), [](const sak::ai::AiMcpToolDescriptor& t) {
+            return t.name == QLatin1String("list_windows");
+        });
+    QVERIFY2(has_list_windows, qPrintable(error));
     QCOMPARE(pool.openSessionCount(), 1);
 
     // A different launch environment must NOT reuse the read-only process.

@@ -165,18 +165,19 @@ void AdvancedUninstallTypesTests::leftoverItem_defaultConstruction() {
 }
 
 void AdvancedUninstallTypesTests::leftoverItem_typeEnum() {
-    // Verify all type values are distinct
-    QSet<int> values;
-    values.insert(static_cast<int>(sak::LeftoverItem::Type::File));
-    values.insert(static_cast<int>(sak::LeftoverItem::Type::Folder));
-    values.insert(static_cast<int>(sak::LeftoverItem::Type::RegistryKey));
-    values.insert(static_cast<int>(sak::LeftoverItem::Type::RegistryValue));
-    values.insert(static_cast<int>(sak::LeftoverItem::Type::Service));
-    values.insert(static_cast<int>(sak::LeftoverItem::Type::ScheduledTask));
-    values.insert(static_cast<int>(sak::LeftoverItem::Type::FirewallRule));
-    values.insert(static_cast<int>(sak::LeftoverItem::Type::StartupEntry));
-    values.insert(static_cast<int>(sak::LeftoverItem::Type::ShellExtension));
-    QCOMPARE(values.size(), 9);
+    // Pin each enumerator's ordinal. The old distinct-count check (size == 9) passed under any
+    // reordering, but these ordinals are stamped onto persisted leftover items, so a reorder is a
+    // data-compat break the count check could not catch.
+    using T = sak::LeftoverItem::Type;
+    QCOMPARE(static_cast<int>(T::File), 0);
+    QCOMPARE(static_cast<int>(T::Folder), 1);
+    QCOMPARE(static_cast<int>(T::RegistryKey), 2);
+    QCOMPARE(static_cast<int>(T::RegistryValue), 3);
+    QCOMPARE(static_cast<int>(T::Service), 4);
+    QCOMPARE(static_cast<int>(T::ScheduledTask), 5);
+    QCOMPARE(static_cast<int>(T::FirewallRule), 6);
+    QCOMPARE(static_cast<int>(T::StartupEntry), 7);
+    QCOMPARE(static_cast<int>(T::ShellExtension), 8);
 }
 
 void AdvancedUninstallTypesTests::leftoverItem_riskEnum() {
@@ -290,13 +291,13 @@ void AdvancedUninstallTypesTests::queueItem_defaultConstruction() {
 }
 
 void AdvancedUninstallTypesTests::queueItem_statusEnum() {
-    QSet<int> values;
-    values.insert(static_cast<int>(sak::UninstallQueueItem::Status::Queued));
-    values.insert(static_cast<int>(sak::UninstallQueueItem::Status::InProgress));
-    values.insert(static_cast<int>(sak::UninstallQueueItem::Status::Completed));
-    values.insert(static_cast<int>(sak::UninstallQueueItem::Status::Failed));
-    values.insert(static_cast<int>(sak::UninstallQueueItem::Status::Cancelled));
-    QCOMPARE(values.size(), 5);
+    // Pin each ordinal; the distinct-count check passed under any reordering.
+    using S = sak::UninstallQueueItem::Status;
+    QCOMPARE(static_cast<int>(S::Queued), 0);
+    QCOMPARE(static_cast<int>(S::InProgress), 1);
+    QCOMPARE(static_cast<int>(S::Completed), 2);
+    QCOMPARE(static_cast<int>(S::Failed), 3);
+    QCOMPARE(static_cast<int>(S::Cancelled), 4);
 }
 
 void AdvancedUninstallTypesTests::queueItem_valueSemantics() {

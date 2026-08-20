@@ -52,7 +52,9 @@ private Q_SLOTS:
 void TestCleanupWorker::construction_emptyItems() {
     QVector<LeftoverItem> empty_items;
     CleanupWorker worker(empty_items, false);
-    QVERIFY(dynamic_cast<QObject*>(&worker) != nullptr);
+    // The dynamic_cast to a compile-time base was a tautology; pin the observable construction
+    // state: useRecycleBin=false means recoverable-only is OFF.
+    QCOMPARE(worker.requireRecoverable(), false);
 }
 
 void TestCleanupWorker::construction_nonCopyable() {
@@ -63,7 +65,9 @@ void TestCleanupWorker::construction_nonCopyable() {
 void TestCleanupWorker::construction_isWorkerBase() {
     QVector<LeftoverItem> empty_items;
     CleanupWorker worker(empty_items);
-    QVERIFY(dynamic_cast<WorkerBase*>(&worker) != nullptr);
+    // Single-arg ctor defaults useRecycleBin=false -> recoverable-only OFF. The cast was a
+    // tautology.
+    QCOMPARE(worker.requireRecoverable(), false);
 }
 
 void TestCleanupWorker::construction_withRecycleBin() {
@@ -74,7 +78,8 @@ void TestCleanupWorker::construction_withRecycleBin() {
     items.append(item);
 
     CleanupWorker worker(items, true);
-    QVERIFY(dynamic_cast<WorkerBase*>(&worker) != nullptr);
+    // useRecycleBin=true turns recoverable-only ON; the cast asserted nothing about that path.
+    QVERIFY(worker.requireRecoverable());
 }
 
 void TestCleanupWorker::leftoverItem_type_values() {
@@ -332,7 +337,8 @@ void TestCleanupWorker::systemToolPath_absoluteUnderSystemRootOrFailClosed() {
     QVERIFY(!sc.isEmpty());
     QVERIFY(sc.endsWith(QStringLiteral("System32/sc.exe")));
     QVERIFY(QDir::isAbsolutePath(sc));
-    QVERIFY(sc.contains(QLatin1Char('/')));  // rooted, not a bare name
+    QCOMPARE(sc,
+             QStringLiteral("C:/Windows/System32/sc.exe"));  // exact rooted path, not a bare name
 
     const QString netsh = CleanupWorker::systemToolPath(QStringLiteral("C:/Windows"),
                                                         QStringLiteral("netsh.exe"));
