@@ -48,7 +48,10 @@ void FileExplorerArchiveServiceTests::compressToZip_refusesExistingOutputWithout
     const auto result = FileExplorerArchiveService::compressToZip(out, {src});
 
     QVERIFY2(!result.ok, "must refuse to write over an existing output");
-    QVERIFY(!result.blockers.isEmpty());
+    QCOMPARE(result.blockers.size(), 1);
+    QCOMPARE(result.blockers.first(),
+             QStringLiteral("Could not create archive %1 (it already exists or is not writable).")
+                 .arg(out));
 
     // The pre-existing file must be byte-for-byte untouched (not clobbered, not
     // removed by the failure cleanup).
@@ -93,7 +96,10 @@ void FileExplorerArchiveServiceTests::compressToZip_missingSourceFailsClosed() {
     const auto result = FileExplorerArchiveService::compressToZip(out, {present, missing});
 
     QVERIFY2(!result.ok, "a missing requested source must fail the compress");
-    QVERIFY(!result.blockers.isEmpty());
+    QCOMPARE(result.blockers.size(), 1);
+    QCOMPARE(
+        result.blockers.first(),
+        QStringLiteral("Source %1 no longer exists; the archive was not written.").arg(missing));
     QVERIFY2(!QFile::exists(out), "the partial archive must be removed, not left behind");
 }
 
@@ -154,7 +160,10 @@ void FileExplorerArchiveServiceTests::extractZip_refusesAnEntryWhoseDeclaredSize
     const auto extracted = FileExplorerArchiveService::extractZip(zip, outdir);
 
     QVERIFY2(!extracted.ok, "an entry that decodes to fewer bytes than it declares must fail");
-    QVERIFY(!extracted.blockers.isEmpty());
+    QCOMPARE(extracted.blockers.size(), 1);
+    QCOMPARE(extracted.blockers.first(),
+             QStringLiteral("Extraction of entry data.txt produced 13 bytes, not the declared 4096 "
+                            "(truncated or corrupt)."));
     // The truncated payload must not be left on disk claiming to be the extracted file.
     QVERIFY2(!QFile::exists(QDir(outdir).filePath(QStringLiteral("data.txt"))),
              "the short entry must not be written");

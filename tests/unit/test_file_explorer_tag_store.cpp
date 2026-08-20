@@ -89,7 +89,8 @@ private Q_SLOTS:
                                            QStringLiteral("t1"),
                                            QStringLiteral("/a"),
                                            QStringList{QStringLiteral("keep")});
-        QVERIFY(!sak::FileExplorerTagStore::allTags(settings, group).isEmpty());
+        QCOMPARE(sak::FileExplorerTagStore::allTags(settings, group),
+                 QStringList{QStringLiteral("keep")});
 
         sak::FileExplorerTagStore::setTags(
             settings, group, QStringLiteral("t1"), QStringLiteral("/a"), QStringList{});
