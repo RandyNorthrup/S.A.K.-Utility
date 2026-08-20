@@ -35,7 +35,11 @@ private Q_SLOTS:
                                              QStringLiteral("system_change"),
                                              true);
         QVERIFY(!blocked.granted);
-        QVERIFY(!blocked.reason.isEmpty());
+        // Exactly one lease is active (first, agent "overseer"), so the blocked reason names it
+        // verbatim. Pin the wording, the blocking lease id, and the holder id.
+        QCOMPARE(blocked.reason,
+                 QStringLiteral("Active mutating lease '%1' held by 'overseer' blocks new lease")
+                     .arg(first.lease.lease_id));
 
         manager.release(first.lease.lease_id);
         QCOMPARE(manager.activeLeaseCount(), 0);

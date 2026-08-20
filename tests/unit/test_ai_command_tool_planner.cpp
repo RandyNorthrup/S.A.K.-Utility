@@ -83,8 +83,13 @@ void AiCommandToolPlannerTests::rejectsRelativeProcessProgram() {
                                                                args,
                                                                sak::ai::AiToolPolicy::ReadOnlyPc);
 
-    QVERIFY(!plan.request.validation_error.isEmpty());
-    QVERIFY(plan.guard_block_error.contains(QStringLiteral("relative")));
+    // The refusal echoes the sanitized offending path -- the security-relevant part an injection
+    // or regression would corrupt -- and guard_block_error is copied verbatim from it.
+    const QString kRelativeError = QStringLiteral(
+        "program must be an absolute path or a bare executable name, not a "
+        "working-directory-relative path: sub/planted.exe");
+    QCOMPARE(plan.request.validation_error, kRelativeError);
+    QCOMPARE(plan.guard_block_error, kRelativeError);
     QVERIFY(!plan.policy_decision.allowed);
 }
 
@@ -98,8 +103,13 @@ void AiCommandToolPlannerTests::rejectsUnresolvableProcessProgram() {
                                                                args,
                                                                sak::ai::AiToolPolicy::ReadOnlyPc);
 
-    QVERIFY(!plan.request.validation_error.isEmpty());
-    QVERIFY(plan.guard_block_error.contains(QStringLiteral("Cannot resolve")));
+    // The refusal echoes the sanitized bare name it could not resolve; guard_block_error is the
+    // same string. Pin both so a dropped/garbled echo cannot pass unnoticed.
+    const QString kResolveError = QStringLiteral(
+        "Cannot resolve program 'definitely-not-a-real-sak-test-binary.exe' to an absolute "
+        "path; refusing to launch a bare name");
+    QCOMPARE(plan.request.validation_error, kResolveError);
+    QCOMPARE(plan.guard_block_error, kResolveError);
     QVERIFY(!plan.policy_decision.allowed);
 }
 
@@ -114,16 +124,13 @@ void AiCommandToolPlannerTests::processPreviewQuotesAmbiguousArgs() {
                                                                args,
                                                                sak::ai::AiToolPolicy::ReadOnlyPc);
 
-    // A program path containing a space is quoted as a single token (its backslash
-    // path separators are preserved verbatim, not doubled).
-    QVERIFY(plan.preview.contains(QStringLiteral("\"C:\\Program Files\\app.exe\"")));
-    // An argument with a space is quoted so it cannot split into two arguments.
-    QVERIFY(plan.preview.contains(QStringLiteral("\"hello world\"")));
-    // A plain argument is left unquoted.
-    QVERIFY(plan.preview.contains(QStringLiteral(" plain ")));
-    // A control character (tab) is rendered visibly, never emitted raw.
-    QVERIFY(!plan.preview.contains(QLatin1Char('\t')));
-    QVERIFY(plan.preview.contains(QStringLiteral("\"tab\\there\"")));
+    // The whole preview is deterministic: the space-bearing absolute program path and the
+    // space-bearing arg are each quoted as one token, the plain arg is left bare, and the
+    // embedded tab is escaped visibly (never emitted raw). Pin the exact rendered command -- the
+    // security-relevant text the human approves -- which subsumes the per-token quoting, ordering,
+    // and no-raw-tab checks in a single assertion.
+    QCOMPARE(plan.preview,
+             QStringLiteral("\"C:\\Program Files\\app.exe\" \"hello world\" plain \"tab\\there\""));
 }
 
 void AiCommandToolPlannerTests::marksRiskyCommandAndPolicyDenial() {
@@ -175,7 +182,8 @@ void AiCommandToolPlannerTests::rejectsNonCanonicalToolName() {
     const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("Run_PowerShell"),
                                                                args,
                                                                sak::ai::AiToolPolicy::ReadOnlyPc);
-    QVERIFY(plan.guard_block_error.contains(QStringLiteral("Unsupported command tool")));
+    // The refusal echoes the sanitized non-canonical spelling that was rejected.
+    QCOMPARE(plan.guard_block_error, QStringLiteral("Unsupported command tool: Run_PowerShell"));
     QVERIFY(!plan.policy_decision.allowed);  // policy_decision stays default-denied
     QVERIFY(plan.risky_change);
 

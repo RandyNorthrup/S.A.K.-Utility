@@ -33,7 +33,10 @@ private Q_SLOTS:
 
 void TestActiveConnectionsMonitor::construction_default() {
     ActiveConnectionsMonitor monitor;
-    QVERIFY(dynamic_cast<QObject*>(&monitor) != nullptr);
+    // The vacuous upcast can never be null; pin the moc metaobject name instead, which proves
+    // Q_OBJECT is present and correctly namespaced (a missing macro would break its signals).
+    QCOMPARE(QByteArray(monitor.metaObject()->className()),
+             QByteArrayLiteral("sak::ActiveConnectionsMonitor"));
 }
 
 void TestActiveConnectionsMonitor::construction_nonCopyable() {
