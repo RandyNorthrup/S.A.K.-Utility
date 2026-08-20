@@ -118,22 +118,19 @@ void AdvancedSearchTypesTests::searchConfig_defaultValues() {
 void AdvancedSearchTypesTests::searchConfig_defaultExcludes() {
     sak::SearchConfig config;
 
-    // Default exclusion patterns should be non-empty
-    QVERIFY(!config.exclude_patterns.isEmpty());
-
-    // Should contain common exclusion patterns
-    bool hasGit = false;
-    bool hasNodeModules = false;
-    for (const auto& pattern : config.exclude_patterns) {
-        if (pattern.contains("git")) {
-            hasGit = true;
-        }
-        if (pattern.contains("node_modules")) {
-            hasNodeModules = true;
-        }
-    }
-    QVERIFY2(hasGit, "Default excludes should contain .git");
-    QVERIFY2(hasNodeModules, "Default excludes should contain node_modules");
+    // The default exclusion patterns are a fixed compile-time list; pin the exact ordered set
+    // (subsumes the old non-empty + substring-loop checks, and catches a dropped/reordered or
+    // mutated pattern -- e.g. \.git -> .git).
+    QCOMPARE(config.exclude_patterns,
+             (QStringList{R"(\.git)",
+                          R"(\.svn)",
+                          R"(__pycache__)",
+                          R"(node_modules)",
+                          R"(\.pyc$)",
+                          R"(\.exe$)",
+                          R"(\.dll$)",
+                          R"(\.so$)",
+                          R"(\.bin$)"}));
 }
 
 void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
