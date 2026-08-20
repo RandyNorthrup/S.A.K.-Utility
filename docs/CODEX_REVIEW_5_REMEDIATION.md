@@ -4909,6 +4909,21 @@ So the suite itself must be audited for tests that pass regardless of the code.
     production, never static_cast<int> serialized) -- pinning those ordinals would break a legit reorder
     with no behavioural consequence; only FirewallConflict/FirewallGap::Severity, which ARE serialized
     via fwSeverityToString(static_cast<int>), were pinned. G18-4 stays [~] on the thinning deep tree tail.
+  - PROGRESS 2026-08-19 tree sweeps b14..b20 (commits fc958a4f, b8389349, 44f5b110, df1bc913, 3bdb6bbc,
+    f69044a8, 6cdd222b; gated 249/249 each): seven more finder+verify Workflows. Cumulative: SEVENTEEN
+    sweeps (b4..b20), ~78 files touched, 306 weak assertions pinned; iso_analyzer, duplicate_finder,
+    and nuget_version_range came back clean. Notable classes added this run: independently-verified
+    MD5/SHA256 digest pins (b15 file_hash, cross-checked with md5sum/hashlib); a full byte-exact CSP
+    attribute value and the RFC2047 base64 encoded-word (b15 html/eml); the SECURITY credential-redaction
+    exact post-redaction output traced through redactSecrets (b17 ai_execution_broker); QUrl::fromLocalFile
+    (...).toString(FullyEncoded) URL reconstructions and a full rendered browser-snapshot string
+    (b19 extension-installer / bridge-relay); a mirror-vacuity kill where a per-char test loop asserted
+    production's OWN allowlist predicate (b19 windows_usb_creator). Every exact/byte/count pin was
+    re-verified against production and confirmed by a targeted per-target ctest run (0 red across all
+    seven batches). The adversarial-verify phase continues to spare genuine over-reaches (enum ordinals
+    that are not serialized) and order-coupled counts (a dirs-only count that depends on an earlier
+    QtTest slot was deliberately left loose as a G18-5 anti-pattern). G18-4 stays [~] on the thinning
+    tail (~125 unit-test files, mostly fuzz harnesses and smaller files, still un-swept).
       campaign, prove it by reverting the fix locally and observing the failure
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.
