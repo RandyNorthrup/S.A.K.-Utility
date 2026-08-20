@@ -171,11 +171,13 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     auto result = rewriter.rewrite(parsed, filenames);
 
     QVERIFY(!result.success);
-    QVERIFY(!result.error_message.isEmpty());
+    // Fail closed: the rejected result names the un-internalized download URL and
+    // carries NO script content -- never a half-rewritten script reported as done.
+    QCOMPARE(result.error_message,
+             QStringLiteral("Declared download URL(s) with no internalized local file: "
+                            "https://example.com/real.exe"));
     QVERIFY(result.replacements.isEmpty());
-    // The live download URL must remain in the (rejected) content, never silently
-    // reported as internalized.
-    QVERIFY(!result.script_content.contains(QStringLiteral("$toolsDir")));
+    QVERIFY(result.script_content.isEmpty());
 }
 
 // ============================================================================
@@ -334,13 +336,18 @@ void TestScriptRewriter::rewriteToFile_invalidPath_failsGracefully() {
     sak::InstallScriptParser parser;
     auto parsed = parser.parse("# empty");
 
+    // A non-empty map with a resource-free script makes rewrite() itself succeed,
+    // so failure can ONLY come from the un-writable output path below -- otherwise
+    // rewrite() bails on the empty map and the invalid-path branch is never reached.
     QHash<QString, QString> filenames;
+    filenames["https://example.com/x.exe"] = "x.exe";
 
     sak::ScriptRewriter rewriter;
     auto result = rewriter.rewriteToFile(parsed, filenames, "Z:\\nonexistent\\path\\script.ps1");
 
     QVERIFY(!result.success);
-    QVERIFY(!result.error_message.isEmpty());
+    QCOMPARE(result.error_message,
+             QStringLiteral("Cannot write to: Z:\\nonexistent\\path\\script.ps1"));
 }
 
 QTEST_GUILESS_MAIN(TestScriptRewriter)
