@@ -90,8 +90,16 @@ void SmartFileFilterTests::initTestCase() {
 void SmartFileFilterTests::defaultConstruction() {
     sak::SmartFileFilter filter;
     const auto& rules = filter.getRules();
-    // Default rules should be initialized
-    QVERIFY(!rules.dangerous_files.isEmpty());
+    // Default rules = the fixed 7-entry mandatory-dangerous list, in order. A truncation or
+    // a dropped hive file (a security regression) must fail, not just pass !isEmpty().
+    QCOMPARE(rules.dangerous_files,
+             (QStringList{"NTUSER.DAT",
+                          "NTUSER.DAT.LOG1",
+                          "NTUSER.DAT.LOG2",
+                          "ntuser.ini",
+                          "UsrClass.dat",
+                          "UsrClass.dat.LOG1",
+                          "UsrClass.dat.LOG2"}));
 }
 
 void SmartFileFilterTests::constructionWithRules() {
@@ -344,7 +352,7 @@ void SmartFileFilterTests::exclusionReason_dangerous() {
     sak::SmartFileFilter filter;
     QFileInfo fileInfo(m_tempDir.filePath("NTUSER.DAT"));
     QString reason = filter.getExclusionReason(fileInfo);
-    QVERIFY(!reason.isEmpty());
+    QCOMPARE(reason, QString("Dangerous system file: NTUSER.DAT (would corrupt profile)"));
 }
 
 void SmartFileFilterTests::exclusionReason_normal() {
@@ -357,9 +365,9 @@ void SmartFileFilterTests::exclusionReason_normal() {
     sak::SmartFileFilter filter(rules);
     QFileInfo fileInfo(m_tempDir.filePath("normal.txt"));
     QString reason = filter.getExclusionReason(fileInfo);
-    // getExclusionReason always returns a non-empty string (fallback reason)
-    // It's designed to explain exclusions, not to determine if a file is excluded
-    QVERIFY(!reason.isEmpty());
+    // Nothing matches (no dangerous/size/pattern/cache branch), so it falls through to the
+    // fixed fallback reason -- pin it so a mistakenly-taken branch is caught.
+    QCOMPARE(reason, QString("Excluded by filter rules"));
 }
 
 // ============================================================================

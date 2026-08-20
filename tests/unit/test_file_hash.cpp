@@ -146,13 +146,9 @@ void FileHashTests::md5_knownContent() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto result = hasher.calculateHash(m_knownFile);
     QVERIFY2(result.has_value(), "MD5 hash calculation should succeed");
-    // MD5 of "Hello, World!\n" is well-known
-    // Verify it's a valid 32-char hex string
-    QCOMPARE(result.value().length(), std::size_t{32});
-    // Verify all hex characters
-    for (char c : result.value()) {
-        QVERIFY(std::isxdigit(static_cast<unsigned char>(c)));
-    }
+    // MD5 of "Hello, World!\n" (matches the emptyFile sibling's exact-digest pin).
+    QCOMPARE(QString::fromStdString(result.value()).toLower(),
+             QString("bea8252ff4e80f41719ea13cdf007273"));
 }
 
 void FileHashTests::md5_emptyFile() {
@@ -168,7 +164,9 @@ void FileHashTests::md5_binaryFile() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto result = hasher.calculateHash(m_binaryFile);
     QVERIFY(result.has_value());
-    QCOMPARE(result.value().length(), std::size_t{32});
+    // MD5 of the deterministic 256-byte file (every byte 0x00..0xFF).
+    QCOMPARE(QString::fromStdString(result.value()).toLower(),
+             QString("e2c865db4162bed963bfaa9ef6ac18f0"));
 }
 
 // ============================================================================
@@ -179,8 +177,9 @@ void FileHashTests::sha256_knownContent() {
     sak::file_hasher hasher(sak::hash_algorithm::sha256);
     auto result = hasher.calculateHash(m_knownFile);
     QVERIFY(result.has_value());
-    // SHA-256 produces 64-char hex string
-    QCOMPARE(result.value().length(), std::size_t{64});
+    // SHA-256 of "Hello, World!\n".
+    QCOMPARE(QString::fromStdString(result.value()).toLower(),
+             QString("c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31"));
 }
 
 void FileHashTests::sha256_emptyFile() {
@@ -201,7 +200,9 @@ void FileHashTests::md5_inMemory() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
     auto result = hasher.calculateHash(std::span<const std::byte>(data, 2));
     QVERIFY(result.has_value());
-    QCOMPARE(result.value().length(), std::size_t{32});
+    // MD5 of "Hi".
+    QCOMPARE(QString::fromStdString(result.value()).toLower(),
+             QString("c1a5298f939e87e8f962a5edfc206918"));
 }
 
 void FileHashTests::sha256_inMemory() {
@@ -209,7 +210,9 @@ void FileHashTests::sha256_inMemory() {
     sak::file_hasher hasher(sak::hash_algorithm::sha256);
     auto result = hasher.calculateHash(std::span<const std::byte>(data, 2));
     QVERIFY(result.has_value());
-    QCOMPARE(result.value().length(), std::size_t{64});
+    // SHA-256 of "Hi".
+    QCOMPARE(QString::fromStdString(result.value()).toLower(),
+             QString("3639efcd08abb273b1619e82e78c29a7df02c1051b1820e99fc395dcaa3326b8"));
 }
 
 void FileHashTests::inMemory_emptySpan() {
@@ -289,6 +292,8 @@ void FileHashTests::hashDirectory() {
     sak::file_hasher hasher;
     auto result = hasher.calculateHash(m_tempDir.path().toStdWString());
     QVERIFY(!result.has_value());
+    // A directory is not a regular file -> invalid_path (mirrors the file_not_found sibling).
+    QCOMPARE(result.error(), sak::error_code::invalid_path);
 }
 
 // ============================================================================
@@ -312,7 +317,8 @@ void FileHashTests::progressCallback_invoked() {
         bigPath.toStdWString(),
         [&callbackCount](std::size_t /*processed*/, std::size_t /*total*/) { ++callbackCount; });
     QVERIFY(result.has_value());
-    QVERIFY(callbackCount > 0);
+    // 102400 bytes / 8192 chunk = 12 full reads + one 4096 read = 13 non-empty reads.
+    QCOMPARE(callbackCount, 13);
 }
 
 // ============================================================================
@@ -348,13 +354,15 @@ void FileHashTests::cancellation_stopsHashing() {
 void FileHashTests::md5File_convenience() {
     auto result = sak::md5File(m_knownFile);
     QVERIFY(result.has_value());
-    QCOMPARE(result.value().length(), std::size_t{32});
+    QCOMPARE(QString::fromStdString(result.value()).toLower(),
+             QString("bea8252ff4e80f41719ea13cdf007273"));
 }
 
 void FileHashTests::sha256File_convenience() {
     auto result = sak::sha256File(m_knownFile);
     QVERIFY(result.has_value());
-    QCOMPARE(result.value().length(), std::size_t{64});
+    QCOMPARE(QString::fromStdString(result.value()).toLower(),
+             QString("c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31"));
 }
 
 void FileHashTests::hash_nonAsciiPath() {

@@ -50,7 +50,8 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
 
         QByteArray content = file.readAll();
-        QVERIFY(content.contains("<!DOCTYPE html>") || content.contains("<html"));
+        QVERIFY(content.contains("<!DOCTYPE html>"));
+        QVERIFY(content.contains("<html lang=\"en\">"));
         QVERIFY(content.contains("HTML Test"));
         QVERIFY(content.contains("alice@example.com"));
     }
@@ -79,7 +80,7 @@ private Q_SLOTS:
         QFile file(result.value());
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray content = file.readAll();
-        QVERIFY(content.contains("<b>bold</b>"));
+        QVERIFY(content.contains("<p>This is <b>bold</b> and <i>italic</i>.</p>"));
     }
 
     // ====================================================================
@@ -187,7 +188,7 @@ private Q_SLOTS:
         QVERIFY(result.has_value());
 
         QFileInfo fi(result.value());
-        QVERIFY(fi.fileName().startsWith("2025-07-20_"));
+        QCOMPARE(fi.fileName(), QStringLiteral("2025-07-20_Dated HTML.html"));
     }
 
     // Regression: colliding subjects must never overwrite an already-written message. Order crafted
@@ -372,8 +373,12 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QByteArray content = file.readAll();
 
-        QVERIFY(content.contains("Content-Security-Policy"));
-        QVERIFY(content.contains("default-src 'none'"));
+        // Pin the full CSP value: a weakening (http/https in img-src, dropped base-uri/
+        // form-action, relaxed style-src) must fail, not slip past a header-name-only check.
+        QVERIFY(
+            content.contains("content=\"default-src 'none'; img-src data:; "
+                             "style-src 'unsafe-inline'; font-src data:; base-uri 'none'; "
+                             "form-action 'none'\""));
         QVERIFY(!content.toLower().contains("<script"));
         QVERIFY(!content.toLower().contains("onerror"));
         QVERIFY(content.contains("<p>Body</p>"));  // real body still rendered

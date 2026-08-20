@@ -256,7 +256,8 @@ void TestMigrationReport::testGetMatchRatePartial() {
     m_report.addEntry(makeEntry("U1", "", 0.0, "none"));
 
     const double rate = m_report.getMatchRate();
-    QVERIFY(rate > 0.49 && rate < 0.51);  // ~50%
+    // One matched (non-empty choco_package) + one unmatched = 1/2 = exactly 0.5.
+    QCOMPARE(rate, 0.5);
 }
 
 // ============================================================================
@@ -325,9 +326,9 @@ void TestMigrationReport::testHtmlEscapesMarkup() {
     QVERIFY(f.open(QIODevice::ReadOnly));
     const QString html = QString::fromUtf8(f.readAll());
     QVERIFY(!html.contains("<script>alert(1)</script>"));
-    QVERIFY(html.contains("&lt;script&gt;"));
+    QVERIFY(html.contains("<td>&lt;script&gt;alert(1)&lt;/script&gt;</td>"));
     QVERIFY(!html.contains("<img src=x onerror"));
-    QVERIFY(html.contains("&lt;img src=x"));
+    QVERIFY(html.contains("<td>&lt;img src=x onerror=alert(2)&gt;</td>"));
 }
 
 // P06-39: CSV export must neutralize spreadsheet formula injection by prefixing
@@ -344,7 +345,7 @@ void TestMigrationReport::testCsvNeutralizesFormula() {
     QFile f(path);
     QVERIFY(f.open(QIODevice::ReadOnly));
     const QString csv = QString::fromUtf8(f.readAll());
-    QVERIFY(csv.contains("\"'=HYPERLINK"));
+    QVERIFY(csv.contains("\"'=HYPERLINK(\"\"http://x\"\",\"\"y\"\")\""));
     QVERIFY(csv.contains("\"'@cmd\""));
     QVERIFY(!csv.contains(",=HYPERLINK"));
 }
