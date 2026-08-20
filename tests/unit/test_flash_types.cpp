@@ -41,7 +41,7 @@ private Q_SLOTS:
         FlashProgress p{};
         p.totalBytes = 3;
         p.bytesWritten = 1;
-        QVERIFY(qAbs(p.getOverallProgress() - 33.333333) < 0.001);
+        QCOMPARE(p.getOverallProgress(), (1.0 / 3.0) * kPercentMaxF);
     }
 
     void progressLargeValues() {

@@ -53,7 +53,9 @@ private Q_SLOTS:
 
 void Win32McpFingerprintTests::fingerprintOfValidBufferIsGridSized() {
     const QByteArray fp = fingerprint(solidBgra(40, 30, 128), 40, 30);
-    QCOMPARE(fp.size(), qsizetype(kCells));
+    // Every pixel is B=G=R=128, so each of the kCells grid cells is gray 128; pin the full content
+    // (subsumes the size check) so a broken sampler (wrong channel / never-run fill) is caught.
+    QCOMPARE(fp, QByteArray(kCells, static_cast<char>(128)));
 }
 
 void Win32McpFingerprintTests::identicalFingerprintsDiffZero() {

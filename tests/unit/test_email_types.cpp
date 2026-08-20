@@ -213,21 +213,21 @@ void TestEmailTypes::pstMagicConstant() {
 }
 
 void TestEmailTypes::parserLimitsPositive() {
-    QVERIFY(sak::email::kMaxFolderDepth > 0);
-    QVERIFY(sak::email::kMaxItemsPerLoad > 0);
-    QVERIFY(sak::email::kMaxSearchResults > 0);
-    QVERIFY(sak::email::kMaxAttachmentSize > 0);
-    QVERIFY(sak::email::kMaxFileSize > 0);
-    QVERIFY(sak::email::kMaxExportBatchSize > 0);
-    QVERIFY(sak::email::kMaxFilenameLength > 0);
+    QCOMPARE(sak::email::kMaxFolderDepth, 50);
+    QCOMPARE(sak::email::kMaxItemsPerLoad, 500);
+    QCOMPARE(sak::email::kMaxSearchResults, 10'000);
+    QCOMPARE(sak::email::kMaxAttachmentSize, static_cast<int64_t>(524'288'000));
+    QCOMPARE(sak::email::kMaxFileSize, static_cast<int64_t>(53'687'091'200));
+    QCOMPARE(sak::email::kMaxExportBatchSize, 50'000);
+    QCOMPARE(sak::email::kMaxFilenameLength, 200);
 }
 
 void TestEmailTypes::uiConstantsReasonable() {
-    QVERIFY(sak::email::kFolderTreeMinWidth > 0);
-    QVERIFY(sak::email::kFolderTreeDefaultWidth >= sak::email::kFolderTreeMinWidth);
-    QVERIFY(sak::email::kItemListMinHeight > 0);
-    QVERIFY(sak::email::kDetailPanelMinHeight > 0);
-    QVERIFY(sak::email::kSearchDebounceMs > 0);
+    QCOMPARE(sak::email::kFolderTreeMinWidth, 200);
+    QCOMPARE(sak::email::kFolderTreeDefaultWidth, 280);
+    QCOMPARE(sak::email::kItemListMinHeight, 150);
+    QCOMPARE(sak::email::kDetailPanelMinHeight, 200);
+    QCOMPARE(sak::email::kSearchDebounceMs, 300);
 }
 
 QTEST_MAIN(TestEmailTypes)

@@ -73,10 +73,10 @@ private Q_SLOTS:
     }
 
     void testConfigThreadBounds() {
-        QVERIFY(sak::ost::kMinThreads >= 1);
-        QVERIFY(sak::ost::kMaxThreads <= 16);
-        QVERIFY(sak::ost::kDefaultThreads >= sak::ost::kMinThreads);
-        QVERIFY(sak::ost::kDefaultThreads <= sak::ost::kMaxThreads);
+        QCOMPARE(sak::ost::kMinThreads, 1);
+        QCOMPARE(sak::ost::kMaxThreads, 8);
+        // Exact default subsumes the old >= kMinThreads / <= kMaxThreads relational bounds.
+        QCOMPARE(sak::ost::kDefaultThreads, 2);
     }
 
     // ====================================================================
