@@ -175,11 +175,14 @@ void WindowsISODownloaderTests::testCancel() {
  * Test channel display names are non-empty.
  */
 void WindowsISODownloaderTests::testChannelDisplayNames() {
-    for (auto ch : UupDumpApi::allChannels()) {
-        QString name = UupDumpApi::channelToDisplayName(ch);
-        QVERIFY2(!name.isEmpty(),
-                 qPrintable(QString("Empty name for channel %1").arg(static_cast<int>(ch))));
-    }
+    using RC = UupDumpApi::ReleaseChannel;
+    // Each channel maps to its exact display name; the old `!isEmpty()` loop caught no wrong label.
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Retail), QStringLiteral("Public Release"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::ReleasePreview),
+             QStringLiteral("Release Preview"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Beta), QStringLiteral("Beta Channel"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Dev), QStringLiteral("Dev Channel"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Canary), QStringLiteral("Canary Channel"));
 }
 
 /**

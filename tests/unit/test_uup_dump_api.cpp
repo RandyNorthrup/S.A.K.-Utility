@@ -81,34 +81,39 @@ void TestUupDumpApi::construction_nonCopyable() {
 
 void TestUupDumpApi::channelToRing_retail() {
     const auto ring = UupDumpApi::channelToRing(UupDumpApi::ReleaseChannel::Retail);
-    QVERIFY(!ring.isEmpty());
+    // The ring string is the load-bearing API parameter; `!isEmpty()` would pass a wrong mapping.
+    QCOMPARE(ring, QStringLiteral("Retail"));
 }
 
 void TestUupDumpApi::channelToRing_releasePreview() {
     const auto ring = UupDumpApi::channelToRing(UupDumpApi::ReleaseChannel::ReleasePreview);
-    QVERIFY(!ring.isEmpty());
+    QCOMPARE(ring, QStringLiteral("ReleasePreview"));
 }
 
 void TestUupDumpApi::channelToRing_beta() {
     const auto ring = UupDumpApi::channelToRing(UupDumpApi::ReleaseChannel::Beta);
-    QVERIFY(!ring.isEmpty());
+    QCOMPARE(ring, QStringLiteral("Beta"));
 }
 
 void TestUupDumpApi::channelToRing_dev() {
     const auto ring = UupDumpApi::channelToRing(UupDumpApi::ReleaseChannel::Dev);
-    QVERIFY(!ring.isEmpty());
+    QCOMPARE(ring, QStringLiteral("Dev"));
 }
 
 void TestUupDumpApi::channelToRing_canary() {
     const auto ring = UupDumpApi::channelToRing(UupDumpApi::ReleaseChannel::Canary);
-    QVERIFY(!ring.isEmpty());
+    QCOMPARE(ring, QStringLiteral("Canary"));
 }
 
 void TestUupDumpApi::channelToRing_allNonEmpty() {
-    for (const auto channel : UupDumpApi::allChannels()) {
-        const auto ring = UupDumpApi::channelToRing(channel);
-        QVERIFY2(!ring.isEmpty(), qPrintable(QString("channelToRing returned empty for channel")));
-    }
+    using RC = UupDumpApi::ReleaseChannel;
+    // Every channel maps to its exact ring string; `!isEmpty()` in the old loop caught no wrong
+    // mapping.
+    QCOMPARE(UupDumpApi::channelToRing(RC::Retail), QStringLiteral("Retail"));
+    QCOMPARE(UupDumpApi::channelToRing(RC::ReleasePreview), QStringLiteral("ReleasePreview"));
+    QCOMPARE(UupDumpApi::channelToRing(RC::Beta), QStringLiteral("Beta"));
+    QCOMPARE(UupDumpApi::channelToRing(RC::Dev), QStringLiteral("Dev"));
+    QCOMPARE(UupDumpApi::channelToRing(RC::Canary), QStringLiteral("Canary"));
 }
 
 // ===================================================================
@@ -117,23 +122,24 @@ void TestUupDumpApi::channelToRing_allNonEmpty() {
 
 void TestUupDumpApi::channelToDisplayName_retail() {
     const auto name = UupDumpApi::channelToDisplayName(UupDumpApi::ReleaseChannel::Retail);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("Retail", Qt::CaseInsensitive) ||
-            name.contains("Stable", Qt::CaseInsensitive) ||
-            name.contains("Release", Qt::CaseInsensitive));
+    // Exact: the three-way substring OR passed for any of "Retail"/"Stable"/"Release".
+    QCOMPARE(name, QStringLiteral("Public Release"));
 }
 
 void TestUupDumpApi::channelToDisplayName_dev() {
     const auto name = UupDumpApi::channelToDisplayName(UupDumpApi::ReleaseChannel::Dev);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("Dev", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("Dev Channel"));
 }
 
 void TestUupDumpApi::channelToDisplayName_allNonEmpty() {
-    for (const auto channel : UupDumpApi::allChannels()) {
-        const auto name = UupDumpApi::channelToDisplayName(channel);
-        QVERIFY2(!name.isEmpty(), "channelToDisplayName returned empty for a channel");
-    }
+    using RC = UupDumpApi::ReleaseChannel;
+    // Every channel maps to its exact display name.
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Retail), QStringLiteral("Public Release"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::ReleasePreview),
+             QStringLiteral("Release Preview"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Beta), QStringLiteral("Beta Channel"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Dev), QStringLiteral("Dev Channel"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Canary), QStringLiteral("Canary Channel"));
 }
 
 // ===================================================================
@@ -142,8 +148,8 @@ void TestUupDumpApi::channelToDisplayName_allNonEmpty() {
 
 void TestUupDumpApi::allChannels_nonEmpty() {
     const auto channels = UupDumpApi::allChannels();
-    QVERIFY(!channels.isEmpty());
-    QVERIFY(channels.size() >= 5);
+    // Exactly the five Windows Update rings.
+    QCOMPARE(channels.size(), qsizetype(5));
 }
 
 void TestUupDumpApi::allChannels_containsRetail() {

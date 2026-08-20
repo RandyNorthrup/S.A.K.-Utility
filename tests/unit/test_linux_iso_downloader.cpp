@@ -151,7 +151,9 @@ void LinuxISODownloaderTests::cleanupTestCase() {
 void LinuxISODownloaderTests::testCatalogPopulated() {
     auto all = m_catalog->allDistros();
     // Should have at least 8 distributions
-    QVERIFY2(all.size() >= 8, qPrintable(QString("Expected >= 8 distros, got %1").arg(all.size())));
+    // The catalog is a fixed 12 (6 general + 1 security + 1 recovery + 3 disk tools + 1 utility);
+    // `>= 8` left four slots of slack, so silently dropping entries would pass.
+    QVERIFY2(all.size() == 12, qPrintable(QString("Expected 12 distros, got %1").arg(all.size())));
 }
 
 void LinuxISODownloaderTests::testAllDistrosHaveRequiredFields() {
@@ -239,7 +241,8 @@ void LinuxISODownloaderTests::testDistroByIdNotFound() {
 
 void LinuxISODownloaderTests::testDistrosByCategory() {
     auto general = m_catalog->distrosByCategory(LinuxDistroCatalog::Category::GeneralPurpose);
-    QVERIFY(general.size() >= 2);  // Ubuntu Desktop + Server + Mint
+    // Six general-purpose distros: ubuntu-desktop, ubuntu-server, linuxmint, fedora, debian, arch.
+    QCOMPARE(general.size(), 6);
 
     bool foundUbuntu = false;
     for (const auto& d : general) {
