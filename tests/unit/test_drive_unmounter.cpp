@@ -21,7 +21,8 @@ private Q_SLOTS:
 
 void TestDriveUnmounter::construction_default() {
     DriveUnmounter unmounter;
-    QVERIFY(dynamic_cast<QObject*>(&unmounter) != nullptr);
+    // The vacuous upcast can never be null; pin the moc metaobject name instead (proves Q_OBJECT).
+    QCOMPARE(QString(unmounter.metaObject()->className()), QStringLiteral("DriveUnmounter"));
 }
 
 void TestDriveUnmounter::lastError_emptyInitially() {
@@ -67,7 +68,7 @@ void TestDriveUnmounter::ejectDrive_rejectsNegativeDriveNumber() {
     // user as an unexplained eject failure.
     DriveUnmounter unmounter;
     QVERIFY(!unmounter.ejectDrive(-1));
-    QVERIFY(!unmounter.lastError().isEmpty());
+    QCOMPARE(unmounter.lastError(), QStringLiteral("Refusing to eject invalid drive number -1"));
 }
 
 QTEST_MAIN(TestDriveUnmounter)

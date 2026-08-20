@@ -224,7 +224,7 @@ QString NetworkDiagnosticReportGenerator::buildPingSection() const {
     html += QStringLiteral(
                 "<div class=\"stat-box\">"
                 "Sent: %1 | Received: %2 | Lost: %3 "
-                "(<span class=\"%4\">%5%%</span>)<br>"
+                "(<span class=\"%4\">%5%</span>)<br>"
                 "Min: %6 ms | Max: %7 ms | Avg: %8 ms | Jitter: %9 ms"
                 "</div>\n")
                 .arg(m_pingResult.sent)
@@ -371,7 +371,7 @@ QString NetworkDiagnosticReportGenerator::buildBandwidthSection() const {
                 "<div class=\"stat-box\">"
                 "Mode: %1 | Target: %2<br>"
                 "Download: <b>%3 Mbps</b> | Upload: <b>%4 Mbps</b><br>"
-                "Jitter: %5 ms | Packet Loss: %6%%"
+                "Jitter: %5 ms | Packet Loss: %6%"
                 "</div>\n")
                 .arg(modeStr, m_bandwidthResult.target.toHtmlEscaped())
                 .arg(m_bandwidthResult.downloadMbps, 0, 'f', kReportMetricPrecision)
@@ -401,7 +401,7 @@ QString NetworkDiagnosticReportGenerator::buildWiFiSection() const {
         html +=
             QStringLiteral(
                 "<tr><td>%1%2</td><td>%3</td>"
-                "<td class=\"%4\">%5 dBm (%6%%)</td>"
+                "<td class=\"%4\">%5 dBm (%6%)</td>"
                 "<td>%7</td><td>%8</td><td>%9</td><td>%10</td></tr>\n")
                 .arg(net.ssid.toHtmlEscaped(), connected, net.bssid.toHtmlEscaped(), signalClass)
                 .arg(net.rssiDbm)

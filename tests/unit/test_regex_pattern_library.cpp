@@ -183,8 +183,9 @@ void RegexPatternLibraryTests::combinedPattern_singleActive() {
 
     const QString combined = lib.combinedPattern();
     QVERIFY(!combined.isEmpty());
-    // Should be wrapped in non-capturing group
-    QVERIFY(combined.startsWith("(?:"));
+    // The single active builtin, wrapped as (?:%1); pin the whole deterministic pattern.
+    // (Escaped string, not R"(...)", so lizard tokenizes past the {2,} braces correctly.)
+    QCOMPARE(combined, QStringLiteral("(?:\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b)"));
 
     // The combined pattern should be a valid regex
     QRegularExpression regex(combined);
@@ -198,7 +199,10 @@ void RegexPatternLibraryTests::combinedPattern_multipleActive() {
 
     const QString combined = lib.combinedPattern();
     QVERIFY(!combined.isEmpty());
-    QVERIFY(combined.contains('|'));  // Combined with alternation
+    // Both builtins in declaration order (emails then urls), each wrapped, joined by one '|'.
+    QCOMPARE(combined,
+             QStringLiteral("(?:\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b)|"
+                            "(?:https?://[^\\s]+)"));
 
     QRegularExpression regex(combined);
     QVERIFY(regex.isValid());
@@ -416,7 +420,7 @@ void RegexPatternLibraryTests::customPattern_inCombinedPattern() {
     const QString combined = lib.combinedPattern();
 
     QVERIFY(!combined.isEmpty());
-    QVERIFY(combined.contains("custom_match"));
+    QCOMPARE(combined, QStringLiteral("(?:custom_match)"));
 
     QRegularExpression regex(combined);
     QVERIFY(regex.isValid());

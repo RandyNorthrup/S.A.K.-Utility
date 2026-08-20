@@ -44,7 +44,7 @@ private Q_SLOTS:
         // there is no overflow branch to test: INT_MAX GB is a quarter of int64's
         // range. If this ever stops holding, the conversion needs a guard again.
         const int64_t widest = largeDriveThresholdBytes(std::numeric_limits<int>::max());
-        QVERIFY(widest > 0);
+        QCOMPARE(widest, 2'305'843'008'139'952'128LL);  // INT_MAX * 2^30 bytes, exact (no overflow)
         QCOMPARE(widest / kBytesPerGB, static_cast<int64_t>(std::numeric_limits<int>::max()));
     }
 

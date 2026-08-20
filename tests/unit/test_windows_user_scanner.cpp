@@ -51,7 +51,7 @@ void TestWindowsUserScanner::sumFolderFileSizes_sumsRealFiles() {
 
 void TestWindowsUserScanner::construction_default() {
     WindowsUserScanner scanner;
-    QVERIFY(dynamic_cast<QObject*>(&scanner) != nullptr);
+    QVERIFY(scanner.parent() == nullptr);  // default ctor forwards a null parent
 }
 
 void TestWindowsUserScanner::getCurrentUsername_nonEmpty() {
@@ -70,8 +70,9 @@ void TestWindowsUserScanner::getProfilePath_currentUser() {
 void TestWindowsUserScanner::getProfilePath_nonExistentUser() {
     const QString profile_path =
         WindowsUserScanner::getProfilePath(QStringLiteral("NonExistentUser_XYZ_12345"));
-    // Should return empty or non-existent path
-    QVERIFY(profile_path.isEmpty() || !QDir(profile_path).exists());
+    // Production never yields a non-empty non-existent path (both non-empty returns are
+    // existence-gated), so a bogus account resolves to exactly the empty string.
+    QVERIFY(profile_path.isEmpty());
 }
 
 void TestWindowsUserScanner::getProfilePath_emptyUsernameFailsClosed() {
@@ -101,9 +102,9 @@ void TestWindowsUserScanner::getDefaultFolderSelections_currentUser() {
         QSKIP("Could not resolve current user profile path");
     }
     const auto selections = WindowsUserScanner::getDefaultFolderSelections(profile_path);
-    // Should have at least Documents, Desktop, etc.
-    QVERIFY(!selections.isEmpty());
-    QVERIFY(selections.size() >= 2);
+    // getDefaultFolderSelections appends 9 catalog folders unconditionally (existence only gates
+    // the size/count fields, not the append).
+    QCOMPARE(selections.size(), 9);
 }
 
 void TestWindowsUserScanner::getDefaultFolderSelections_invalidPath() {

@@ -127,8 +127,8 @@ void NetworkDiagnosticReportTests::html_emptyReport_containsStructure() {
 void NetworkDiagnosticReportTests::html_emptyReport_containsDoctype() {
     NetworkDiagnosticReportGenerator gen;
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("<!DOCTYPE"), Qt::CaseInsensitive) ||
-            html.contains(QStringLiteral("<html"), Qt::CaseInsensitive));
+    // The || fallback couldn't fail (DOCTYPE and <html come from the same constant); pin DOCTYPE.
+    QVERIFY(html.contains(QStringLiteral("<!DOCTYPE html>"), Qt::CaseInsensitive));
 }
 
 // ============================================================================
@@ -194,6 +194,10 @@ void NetworkDiagnosticReportTests::html_section_pingResults() {
 
     const auto html = gen.toHtml();
     QVERIFY(html.contains(QStringLiteral("google.com")));
+    // The stat-box numbers/labels/precision were unverified; pin them.
+    QVERIFY(html.contains(QStringLiteral("Sent: 10 | Received: 10 | Lost: 0")));
+    QVERIFY(html.contains(
+        QStringLiteral("Min: 10.0 ms | Max: 25.0 ms | Avg: 15.5 ms | Jitter: 0.00 ms")));
 }
 
 void NetworkDiagnosticReportTests::html_section_dnsResults() {
@@ -277,6 +281,9 @@ void NetworkDiagnosticReportTests::html_section_wifiAnalysis() {
 
     const auto html = gen.toHtml();
     QVERIFY(html.contains(QStringLiteral("TestNetwork")));
+    // Pin the signal-class threshold (-55 -> "warning") and the dBm/band formatting.
+    QVERIFY(html.contains(QStringLiteral("<td class=\"warning\">-55 dBm (0%)</td>")));
+    QVERIFY(html.contains(QStringLiteral("<td>2.4 GHz</td>")));
 }
 
 void NetworkDiagnosticReportTests::html_section_firewallAudit() {
@@ -314,8 +321,8 @@ void NetworkDiagnosticReportTests::html_section_connectionMonitor() {
     gen.setConnectionData({conn});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("ESTABLISHED")) ||
-            html.contains(QStringLiteral("chrome.exe")));
+    // The || let a dropped field pass; pin the adjacent state/process cells.
+    QVERIFY(html.contains(QStringLiteral("<td>ESTABLISHED</td><td>chrome.exe</td>")));
 }
 
 void NetworkDiagnosticReportTests::html_adapterFields_htmlEscaped() {
