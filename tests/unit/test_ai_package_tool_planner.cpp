@@ -49,7 +49,8 @@ void AiPackageToolPlannerTests::rejectsInjectionPackageId() {
     const sak::ai::AiPackageToolPlan plan = sak::ai::AiPackageToolPlanner::buildPlan(args);
 
     QVERIFY(!plan.ok());
-    QVERIFY(plan.error_message.contains(QStringLiteral("Invalid package identifier")));
+    QCOMPARE(plan.error_message,
+             QStringLiteral("Invalid package identifier: superantispyware; rm -rf"));
     // The dangerous input is NOT rewritten into a usable substitute token.
     QVERIFY(plan.package_id.isEmpty());
 }
@@ -66,7 +67,7 @@ void AiPackageToolPlannerTests::rejectsLeadingDashPackageId() {
         QJsonObject{{QStringLiteral("operation"), QStringLiteral("install")},
                     {QStringLiteral("package_id"), QStringLiteral("-y")}});
     QVERIFY(!injected.ok());
-    QVERIFY(injected.error_message.contains(QStringLiteral("Invalid package identifier")));
+    QCOMPARE(injected.error_message, QStringLiteral("Invalid package identifier: -y"));
     QVERIFY(injected.package_id.isEmpty());  // never forwarded to choco as an option
 
     // Guard-isolation control: an INTERIOR dash (firefox-esr) is a valid package name, proving the
@@ -86,7 +87,8 @@ void AiPackageToolPlannerTests::rejectsOptionInjectedSearchQuery() {
         {QStringLiteral("operation"), QStringLiteral("search")},
         {QStringLiteral("query"), QStringLiteral("--source=https://attacker.example/feed")}});
     QVERIFY(!plan.ok());
-    QVERIFY(plan.error_message.contains(QStringLiteral("Invalid search query")));
+    QCOMPARE(plan.error_message,
+             QStringLiteral("Invalid search query: --source=https://attacker.example/feed"));
 
     // Non-vacuity: an ordinary search term is accepted, so the guard is the leading '-',
     // not a blanket rejection of every search.
@@ -107,7 +109,7 @@ void AiPackageToolPlannerTests::rejectsNonStringVersion() {
                     {QStringLiteral("package_id"), QStringLiteral("firefox")},
                     {QStringLiteral("version"), 99'999}});
     QVERIFY(!numberVersion.ok());
-    QVERIFY(numberVersion.error_message.contains(QStringLiteral("Invalid version")));
+    QCOMPARE(numberVersion.error_message, QStringLiteral("Invalid version: expected a string"));
 
     // Non-vacuity: an ABSENT version is allowed and means latest (empty), so the reject is
     // specific to a present non-string value, not "install always needs a version".
@@ -124,7 +126,7 @@ void AiPackageToolPlannerTests::rejectsUnknownOperation() {
         QJsonObject{{QStringLiteral("operation"), QStringLiteral("scan")}});
 
     QVERIFY(!plan.ok());
-    QVERIFY(plan.error_message.contains(QStringLiteral("Unsupported")));
+    QCOMPARE(plan.error_message, QStringLiteral("Unsupported package manager operation: scan"));
 }
 
 void AiPackageToolPlannerTests::clampsTimeout() {

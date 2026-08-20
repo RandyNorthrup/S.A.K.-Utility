@@ -2747,8 +2747,8 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QCOMPARE(data.value(QStringLiteral("items_exported")).toInt(), 2);
-        // The gate was traversed, not skipped.
-        QVERIFY(countTitles(titles, QStringLiteral("Create Restore Point")) >= 1);
+        // The gate was traversed exactly once, not skipped and not re-offered (modal-storm).
+        QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 1);
         // Two message files actually written to disk.
         const QStringList eml = QDir(out_dir).entryList(QStringList{QStringLiteral("*.eml")},
                                                         QDir::Files);
@@ -3782,7 +3782,8 @@ private Q_SLOTS:
                                      {QStringLiteral("output_path"), zip_path}});
         QVERIFY(compressed.value(QStringLiteral("success")).toBool());
         QVERIFY(QFileInfo::exists(zip_path));
-        QVERIFY(countTitles(titles, QStringLiteral("Create Restore Point")) >= 1);
+        // Exactly one restore-point offer has fired here (before the extract dispatch runs).
+        QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 1);
 
         const QJsonObject extracted =
             runArchiveOp(panel,
@@ -4209,7 +4210,7 @@ private Q_SLOTS:
         QCOMPARE(data.value(QStringLiteral("sized_count")).toInt(), 1);
         QCOMPARE(data.value(QStringLiteral("total_size_bytes")).toDouble(),
                  static_cast<double>(payload.size()));
-        QVERIFY(data.value(QStringLiteral("file_count")).toDouble() >= 1.0);
+        QCOMPARE(data.value(QStringLiteral("file_count")).toDouble(), 1.0);
         QVERIFY(data.value(QStringLiteral("scan_complete")).toBool());
         bool listed = false;
         for (const auto& value : data.value(QStringLiteral("paths")).toArray()) {
@@ -4371,7 +4372,7 @@ private Q_SLOTS:
                      .value(QStringLiteral("files_moved"))
                      .toInt(),
                  2);
-        QVERIFY(countTitles(titles, QStringLiteral("Create Restore Point")) >= 1);
+        QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 1);
         QVERIFY(QFile::exists(dir.filePath(QStringLiteral("Docs/report.txt"))));
         QVERIFY(QFile::exists(dir.filePath(QStringLiteral("Images/photo.jpg"))));
         QVERIFY(QFile::exists(dir.filePath(QStringLiteral("misc.zzz"))));     // uncategorized stays
@@ -4751,7 +4752,7 @@ private Q_SLOTS:
         QVERIFY(blocked.has_value());
         QCOMPARE(blocked->value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("user_declined"));
-        QVERIFY(countTitles(titles, QStringLiteral("Approve AI Command")) >= 1);
+        QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 1);
     }
 
     // W2c(4): the catastrophic flag is surfaced in the catalog so the model can see it.

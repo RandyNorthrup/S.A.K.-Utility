@@ -78,7 +78,16 @@ void AiTranscriptViewTests::longMessageCanExpand() {
     const QString long_text = QString(2200, QLatin1Char('x'));
 
     QVERIFY(view.appendMessage(QStringLiteral("Tool Result"), long_text));
-    QVERIFY(hasLabelContaining(view, QStringLiteral("...[truncated]")));
+    // Pin the exact collapsed body, not just presence of the marker: the boundary is
+    // kCollapsedChars=1800 (ai_transcript_view.cpp:319), so the body label is the first
+    // 1800 'x' plus the truncation marker. A regressed boundary would still emit the marker.
+    const auto labels = view.findChildren<QLabel*>();
+    const auto body_it = std::find_if(labels.begin(), labels.end(), [](const QLabel* l) {
+        return l != nullptr && l->text().endsWith(QStringLiteral("...[truncated]"));
+    });
+    QVERIFY(body_it != labels.end());
+    QCOMPARE((*body_it)->text(),
+             QString(1800, QLatin1Char('x')) + QStringLiteral("\n...[truncated]"));
 
     auto* expand = buttonWithText(view, QStringLiteral("Expand full result"));
     QVERIFY(expand != nullptr);

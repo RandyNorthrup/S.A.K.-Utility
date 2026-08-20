@@ -79,7 +79,9 @@ void AiMcpHttpClientTests::rejectsSseSplitAcrossEvents() {
     const QJsonObject message = sak::ai::AiMcpHttpClient::extractJsonRpcMessageForTesting(split,
                                                                                           &error);
     QVERIFY2(message.isEmpty(), "two SSE fragments must not be reassembled into a JSON-RPC object");
-    QVERIFY(!error.isEmpty());
+    // The last unparsed event fragment drives the parse-error path (distinct from the
+    // "did not contain JSON-RPC data" path); the errorString() tail is Qt-version-brittle.
+    QVERIFY(error.contains(QStringLiteral("Invalid MCP JSON response")));
 
     // Guard-isolation control: the SAME object delivered in ONE event parses fine, so the rejection
     // is caused by the split, not by an always-failing scanner.
@@ -159,7 +161,7 @@ void AiMcpHttpClientTests::rejectsPlainObjectWithoutJsonRpcFields() {
                                                                                           &error);
 
     QVERIFY(message.isEmpty());
-    QVERIFY(!error.isEmpty());
+    QCOMPARE(error, QStringLiteral("MCP response is not a JSON-RPC response"));
 }
 
 void AiMcpHttpClientTests::rejectsResponseWithMismatchedId() {
@@ -202,7 +204,9 @@ void AiMcpHttpClientTests::rejectsInsecureRemoteEndpoint() {
                                            &error);
 
     QVERIFY(message.isEmpty());
-    QVERIFY(error.contains(QStringLiteral("https")));
+    QCOMPARE(error,
+             QStringLiteral(
+                 "MCP endpoint must use https (or http on loopback): http://docs.example.com/mcp"));
 }
 
 QTEST_GUILESS_MAIN(AiMcpHttpClientTests)
