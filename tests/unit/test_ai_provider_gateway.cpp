@@ -161,8 +161,9 @@ void AiProviderGatewayTests::docsQueryRejectsToolMissingFromProviderManifest() {
         &error);
 
     QVERIFY(result.isEmpty());
-    QVERIFY(error.contains(QStringLiteral("not in bundled provider manifest")));
-    QVERIFY(error.contains(QStringLiteral("query-docs")));
+    QCOMPARE(error,
+             QStringLiteral("MCP provider tool is not in bundled provider manifest: "
+                            "context7/query-docs"));
 }
 
 void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
@@ -568,7 +569,7 @@ void AiProviderGatewayTests::planWin32McpCallBuildsReadOnlyPlan() {
     QCOMPARE(plan.timeout_ms, 1500);
     QVERIFY(plan.read_only);
     QVERIFY(!plan.high_risk);
-    QVERIFY(plan.preview.contains(QStringLiteral("list_windows")));
+    QCOMPARE(plan.preview, QStringLiteral("Win32 MCP list_windows {\"filter\":\"SAK\"}"));
 }
 
 void AiProviderGatewayTests::planWin32McpCallClampsTimeout() {
@@ -682,9 +683,8 @@ void AiProviderGatewayTests::authorizeWin32Mcp_browserInputRequiresConfirmEveryM
         const QJsonObject result = sak::ai::authorizeWin32McpCall(plan, access, noConfirm);
         QVERIFY2(!result.isEmpty(), "browser input with no confirm callback must fail closed");
         QCOMPARE(result.value(QStringLiteral("success")).toBool(true), false);
-        QVERIFY(result.value(QStringLiteral("error_message"))
-                    .toString()
-                    .contains(QStringLiteral("confirmation callback")));
+        QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("Win32 MCP confirmation callback is not configured"));
     }
 
     // Confirm declines -> refused in BOTH modes. Unattended must NOT bypass the browser-input
@@ -698,9 +698,8 @@ void AiProviderGatewayTests::authorizeWin32Mcp_browserInputRequiresConfirmEveryM
     for (const Access access : {Access::AssistedFullAccess, Access::UnattendedFullAccess}) {
         const QJsonObject result = sak::ai::authorizeWin32McpCall(plan, access, declines);
         QVERIFY(!result.isEmpty());
-        QVERIFY(result.value(QStringLiteral("error_message"))
-                    .toString()
-                    .contains(QStringLiteral("declined the browser input")));
+        QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("User declined the browser input action"));
     }
     QCOMPARE(confirmCalls, 2);  // the confirm gate was actually consulted in each mode
 
@@ -728,9 +727,8 @@ void AiProviderGatewayTests::authorizeWin32Mcp_assistedMutatingRequiresConfirm()
     const QJsonObject noCb =
         sak::ai::authorizeWin32McpCall(plan, Access::AssistedFullAccess, noConfirm);
     QVERIFY(!noCb.isEmpty());
-    QVERIFY(noCb.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("confirmation callback")));
+    QCOMPARE(noCb.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Win32 MCP confirmation callback is not configured"));
 
     // Confirm declines -> refused.
     sak::ai::AiProviderGatewayToolCallbacks declines;
@@ -740,9 +738,8 @@ void AiProviderGatewayTests::authorizeWin32Mcp_assistedMutatingRequiresConfirm()
     const QJsonObject declined =
         sak::ai::authorizeWin32McpCall(plan, Access::AssistedFullAccess, declines);
     QVERIFY(!declined.isEmpty());
-    QVERIFY(declined.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("declined Win32 MCP automation")));
+    QCOMPARE(declined.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("User declined Win32 MCP automation"));
 
     // Confirm accepts -> authorized.
     sak::ai::AiProviderGatewayToolCallbacks accepts;
@@ -772,9 +769,8 @@ void AiProviderGatewayTests::authorizeWin32Mcp_unattendedHighRiskRequiresRestore
     const QJsonObject noCb =
         sak::ai::authorizeWin32McpCall(plan, Access::UnattendedFullAccess, noRp);
     QVERIFY(!noCb.isEmpty());
-    QVERIFY(noCb.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("restore-point callback")));
+    QCOMPARE(noCb.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Win32 MCP restore-point callback is not configured"));
 
     // Restore point cancelled -> refused.
     sak::ai::AiProviderGatewayToolCallbacks cancels;
@@ -784,9 +780,8 @@ void AiProviderGatewayTests::authorizeWin32Mcp_unattendedHighRiskRequiresRestore
     const QJsonObject cancelled =
         sak::ai::authorizeWin32McpCall(plan, Access::UnattendedFullAccess, cancels);
     QVERIFY(!cancelled.isEmpty());
-    QVERIFY(cancelled.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("Restore point handling cancelled")));
+    QCOMPARE(cancelled.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Restore point handling cancelled Win32 MCP high-risk automation"));
 
     // Restore point accepted -> authorized (no human confirm is required in unattended).
     sak::ai::AiProviderGatewayToolCallbacks accepts;
@@ -824,8 +819,9 @@ void AiProviderGatewayTests::win32McpEnvironment_refusesProtectedAndNonStringVar
         QString error;
         const QProcessEnvironment env = sak::ai::AiProviderGateway::win32McpEnvironment(
             QStringLiteral("read_only"), provider, &error);
-        QVERIFY2(error.contains(QStringLiteral("may not set MCP child environment")),
-                 qPrintable(name + QStringLiteral(": ") + error));
+        QCOMPARE(error,
+                 QStringLiteral("Provider manifest may not set MCP child environment variable: %1")
+                     .arg(name));
         QVERIFY2(!env.contains(QStringLiteral("WIN32_MCP_RESULT_ENVELOPE")),
                  "a refused manifest env must fail closed before the success markers are set");
     }
@@ -836,7 +832,8 @@ void AiProviderGatewayTests::win32McpEnvironment_refusesProtectedAndNonStringVar
         {QStringLiteral("environment"), QJsonObject{{QStringLiteral("CUSTOM"), 123}}}};
     const QProcessEnvironment nsEnv = sak::ai::AiProviderGateway::win32McpEnvironment(
         QStringLiteral("read_only"), nonString, &nsError);
-    QVERIFY(nsError.contains(QStringLiteral("environment value is not a string")));
+    QCOMPARE(nsError,
+             QStringLiteral("Provider manifest environment value is not a string: CUSTOM"));
     QVERIFY(!nsEnv.contains(QStringLiteral("WIN32_MCP_RESULT_ENVELOPE")));
 
     // Non-vacuity control: a benign string var is accepted and the success markers ARE set, so the
@@ -875,7 +872,9 @@ void AiProviderGatewayTests::docsQuery_refusesNonHttpsEndpoint() {
                     {QStringLiteral("query"), QStringLiteral("ui automation")}},
         &error);
     QVERIFY(result.isEmpty());
-    QVERIFY2(error.contains(QStringLiteral("not an absolute https URL")), qPrintable(error));
+    QCOMPARE(error,
+             QStringLiteral("docs_query provider endpoint is not an absolute https URL: "
+                            "microsoft_docs"));
 }
 
 void AiProviderGatewayTests::planWin32McpCall_refusesMalformedEnvelope() {
@@ -891,8 +890,8 @@ void AiProviderGatewayTests::planWin32McpCall_refusesMalformedEnvelope() {
                      QJsonObject{{QStringLiteral("tool_name"), QStringLiteral("browser_click")},
                                  {QStringLiteral("tool_arguments"), QStringLiteral("e5")}}}},
         &argsError);
-    QVERIFY2(argsError.contains(QStringLiteral("tool_arguments must be an object")),
-             qPrintable(argsError));
+    QCOMPARE(argsError,
+             QStringLiteral("win32_mcp_call arguments.tool_arguments must be an object"));
 
     QString timeoutError;
     [[maybe_unused]] const auto timeoutPlan = gateway.planWin32McpCall(
@@ -900,8 +899,8 @@ void AiProviderGatewayTests::planWin32McpCall_refusesMalformedEnvelope() {
                      QJsonObject{{QStringLiteral("tool_name"), QStringLiteral("browser_snapshot")},
                                  {QStringLiteral("timeout_ms"), QStringLiteral("soon")}}}},
         &timeoutError);
-    QVERIFY2(timeoutError.contains(QStringLiteral("timeout_ms must be an integer")),
-             qPrintable(timeoutError));
+    QCOMPARE(timeoutError,
+             QStringLiteral("win32_mcp_call arguments.timeout_ms must be an integer"));
 
     // Guard-isolation control: a well-formed envelope does NOT yield either envelope error (any
     // later error would be a registry matter, not the envelope guard), so the guards are scoped to

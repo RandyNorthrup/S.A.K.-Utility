@@ -181,7 +181,9 @@ void TestNuGetDependencyResolver::pinnedRootMissingVersionErrors() {
     const auto resolved = drive(r, feed);
 
     QVERIFY(resolved.isEmpty());
-    QVERIFY(!r.errors().isEmpty());
+    QCOMPARE(r.errors().size(), 1);
+    QCOMPARE(r.errors().first(),
+             QStringLiteral("No available version of a satisfies range '[9.9.9]'"));
 }
 
 void TestNuGetDependencyResolver::unsatisfiableRangeSurfacesError() {
@@ -195,7 +197,9 @@ void TestNuGetDependencyResolver::unsatisfiableRangeSurfacesError() {
 
     QCOMPARE(versionOf(resolved, "a"), QStringLiteral("1.0.0"));
     QVERIFY(versionOf(resolved, "c").isEmpty());  // unsatisfiable -> not resolved
-    QVERIFY(!r.errors().isEmpty());
+    QCOMPARE(r.errors().size(), 1);
+    QCOMPARE(r.errors().first(),
+             QStringLiteral("No available version of c satisfies range '[5.0,)'"));
 }
 
 void TestNuGetDependencyResolver::fetchFailureSurfacesErrorButContinues() {
@@ -211,7 +215,8 @@ void TestNuGetDependencyResolver::fetchFailureSurfacesErrorButContinues() {
     QCOMPARE(versionOf(resolved, "a"), QStringLiteral("1.0.0"));
     QCOMPARE(versionOf(resolved, "c"), QStringLiteral("1.0.0"));
     QVERIFY(versionOf(resolved, "b").isEmpty());
-    QVERIFY(!r.errors().isEmpty());
+    QCOMPARE(r.errors().size(), 1);
+    QCOMPARE(r.errors().first(), QStringLiteral("Failed to fetch dependency feed for b"));
 }
 
 void TestNuGetDependencyResolver::depthCapDropsDeepDeps() {
@@ -229,7 +234,9 @@ void TestNuGetDependencyResolver::depthCapDropsDeepDeps() {
     QCOMPARE(versionOf(resolved, "l0"), QStringLiteral("1.0.0"));  // depth 0
     QCOMPARE(versionOf(resolved, "l1"), QStringLiteral("1.0.0"));  // depth 1
     QVERIFY(versionOf(resolved, "l2").isEmpty());                  // depth 2 dropped
-    QVERIFY(!r.errors().isEmpty());
+    QCOMPARE(r.errors().size(), 1);
+    QCOMPARE(r.errors().first(),
+             QStringLiteral("Dependency depth cap (2) reached; deeper deps dropped"));
 }
 
 void TestNuGetDependencyResolver::twoInstancesDoNotShareState() {
@@ -280,7 +287,9 @@ void TestNuGetDependencyResolver::conflictingDiamondSurfacesError() {
     const auto resolved = drive(r, feed);
 
     QVERIFY(versionOf(resolved, "d").isEmpty());  // no version satisfies both edges
-    QVERIFY(!r.errors().isEmpty());               // the conflict is surfaced
+    QCOMPARE(r.errors().size(), 1);               // the conflict is surfaced
+    QCOMPARE(r.errors().first(),
+             QStringLiteral("No available version of d satisfies range '[1.0.0]'"));
 }
 
 void TestNuGetDependencyResolver::compatibleDiamondPicksVersionSatisfyingBoth() {
@@ -315,7 +324,10 @@ void TestNuGetDependencyResolver::lateConstraintFlaggedByValidation() {
     const auto resolved = drive(r, feed);
 
     QCOMPARE(versionOf(resolved, "d"), QStringLiteral("1.0.0"));  // kept (over-include-safe)
-    QVERIFY(!r.errors().isEmpty());                               // but the conflict is surfaced
+    QCOMPARE(r.errors().size(), 1);                               // but the conflict is surfaced
+    QCOMPARE(r.errors().first(),
+             QStringLiteral("Version conflict: selected d 1.0.0 does not satisfy a required "
+                            "range '[2.0.0]' declared by another package"));
 }
 
 void TestNuGetDependencyResolver::lateConstraintReselectsResolvableDiamond() {
@@ -349,7 +361,9 @@ void TestNuGetDependencyResolver::feedResponseForWrongIdIsIgnored() {
     // Answer for "b" while "a" is pending: must NOT resolve "a" to b's versions.
     r.provideFeed(QStringLiteral("b"), {fv("9.9.9")});
     QVERIFY(r.resolved().isEmpty());
-    QVERIFY(!r.errors().isEmpty());
+    QCOMPARE(r.errors().size(), 1);
+    QCOMPARE(r.errors().first(),
+             QStringLiteral("Ignored feed response for 'b': no pending fetch has that id"));
     QCOMPARE(r.nextFetchId(), QStringLiteral("a"));  // "a" is still pending
 
     // The correct response now resolves "a" to its own version.
@@ -390,9 +404,9 @@ void TestNuGetDependencyResolver::resolvedPackageCarriesDirectDependencyIds() {
             a_deps = p.dependencies;
         }
     }
-    QCOMPARE(a_deps.size(), 2);
-    QVERIFY(a_deps.contains(QStringLiteral("b")));
-    QVERIFY(a_deps.contains(QStringLiteral("c")));
+    // dependencies preserve feed-declaration order (a plain QVector append, not QHash
+    // iteration), so pin the exact ordered list, not just set membership.
+    QCOMPARE(a_deps, QStringList({QStringLiteral("b"), QStringLiteral("c")}));
 }
 
 void TestNuGetDependencyResolver::parseDependencies_preservesRangesAndSkipsFrameworkMarkers() {
@@ -458,7 +472,10 @@ void TestNuGetDependencyResolver::duplicateRootDifferentVersionWarns() {
 
     QCOMPARE(countOf(resolved, "a"), 1);
     QCOMPARE(versionOf(resolved, "a"), QStringLiteral("1.0.0"));
-    QVERIFY(!r.errors().isEmpty());
+    QCOMPARE(r.errors().size(), 1);
+    QCOMPARE(r.errors().first(),
+             QStringLiteral("Package a requested at multiple versions; keeping the first and "
+                            "ignoring the additional pin 2.0.0"));
 }
 
 QTEST_APPLESS_MAIN(TestNuGetDependencyResolver)

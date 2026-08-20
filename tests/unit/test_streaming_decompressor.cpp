@@ -173,7 +173,9 @@ void StreamingDecompressorTests::open_nonExistentFile() {
     // recorded, never half-open with an initialised stream and no file behind it.
     QVERIFY(!decomp->open(filePath("nonexistent_file.gz")));
     QVERIFY(!decomp->isOpen());
-    QVERIFY(!decomp->lastError().isEmpty());
+    // The "Failed to open file: " prefix is a fixed production literal; only the
+    // QFile::errorString() tail is OS/locale variable, so pin the prefix.
+    QVERIFY(decomp->lastError().startsWith(QStringLiteral("Failed to open file: ")));
 }
 
 // ============================================================================
@@ -189,7 +191,7 @@ void StreamingDecompressorTests::read_beforeOpen() {
     char buffer[64];
     const qint64 bytesRead = decomp->read(buffer, sizeof(buffer));
     QCOMPARE(bytesRead, static_cast<qint64>(-1));
-    QVERIFY(!decomp->lastError().isEmpty());
+    QCOMPARE(decomp->lastError(), QStringLiteral("Decompressor not open"));
 }
 
 // ============================================================================
@@ -401,7 +403,9 @@ void StreamingDecompressorTests::truncatedBzip2_reportsError() {
     QVERIFY(decomp->open(filePath("truncated.bz2")));
     QCOMPARE(readFully(*decomp), static_cast<qint64>(-1));
     QVERIFY(!decomp->atEnd());
-    QVERIFY(!decomp->lastError().isEmpty());
+    QCOMPARE(decomp->lastError(),
+             QStringLiteral("Compressed stream is truncated: the input ended before the decoder "
+                            "reached end-of-stream"));
 }
 
 // Encode @p input as a real .xz stream (default preset -> 8 MiB dictionary).
@@ -554,7 +558,10 @@ void StreamingDecompressorTests::trailingGarbageAfterMemberFailsClosed() {
     // The trailing bytes are not a member, so the stream never reaches a legitimate
     // end: reporting atEnd() here would mean the garbage had been accepted as one.
     QVERIFY(!decomp->atEnd());
-    QVERIFY(!decomp->lastError().isEmpty());
+    // The zlib message text is library-provided, but the numeric code is pinnable:
+    // re-entering the decoder on the non-member trailing bytes fails the gzip header
+    // check -> Z_DATA_ERROR (the compile-time constant -3), formatted as the "(%2)" tail.
+    QVERIFY(decomp->lastError().endsWith(QStringLiteral("(-3)")));
 }
 
 QTEST_GUILESS_MAIN(StreamingDecompressorTests)

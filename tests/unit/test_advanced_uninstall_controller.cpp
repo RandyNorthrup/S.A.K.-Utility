@@ -464,7 +464,7 @@ void AdvancedUninstallControllerTests::uninstallProgram_rejectsWhenBusy() {
     ctrl.uninstallProgram(prog, ScanLevel::Moderate, false, false);
 
     // Should have emitted a rejection status message
-    QVERIFY(statusSpy.count() >= 1);
+    QCOMPARE(statusSpy.count(), 1);
 
     // Still in Enumerating state, not Uninstalling
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
@@ -485,7 +485,7 @@ void AdvancedUninstallControllerTests::forceUninstall_rejectsWhenBusy() {
     prog.displayName = "TestApp";
     ctrl.forceUninstall(prog, ScanLevel::Moderate, false);
 
-    QVERIFY(statusSpy.count() >= 1);
+    QCOMPARE(statusSpy.count(), 1);
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
 
     ctrl.cancelOperation();
@@ -503,7 +503,7 @@ void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsWhenBusy() {
     prog.registryKeyPath = "HKLM\\SOFTWARE\\Test";
     ctrl.removeRegistryEntry(prog);
 
-    QVERIFY(statusSpy.count() >= 1);
+    QCOMPARE(statusSpy.count(), 1);
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
 
     ctrl.cancelOperation();
@@ -518,7 +518,7 @@ void AdvancedUninstallControllerTests::startBatch_rejectsEmptyQueue() {
     ctrl.startBatchUninstall(false);
 
     // Should have emitted "Batch queue is empty" status
-    QVERIFY(statusSpy.count() >= 1);
+    QCOMPARE(statusSpy.count(), 1);
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
@@ -553,7 +553,7 @@ void AdvancedUninstallControllerTests::uninstallProgram_rejectsEmptyName() {
     // displayName left empty
     ctrl.uninstallProgram(prog, ScanLevel::Moderate, false, false);
 
-    QVERIFY(statusSpy.count() >= 1);
+    QCOMPARE(statusSpy.count(), 1);
     // Should remain idle
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
@@ -566,7 +566,7 @@ void AdvancedUninstallControllerTests::forceUninstall_rejectsEmptyName() {
     ProgramInfo prog;
     ctrl.forceUninstall(prog, ScanLevel::Moderate, false);
 
-    QVERIFY(statusSpy.count() >= 1);
+    QCOMPARE(statusSpy.count(), 1);
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
@@ -580,7 +580,7 @@ void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsEmptyKeyPath()
     // registryKeyPath left empty
     ctrl.removeRegistryEntry(prog);
 
-    QVERIFY(statusSpy.count() >= 1);
+    QCOMPARE(statusSpy.count(), 1);
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
@@ -597,7 +597,7 @@ void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsNonHiveRooted(
     prog.registryKeyPath = QStringLiteral("SOFTWARE\\Acme");  // no HKxx\\ root
     ctrl.removeRegistryEntry(prog);
 
-    QVERIFY(statusSpy.count() >= 1);
+    QCOMPARE(statusSpy.count(), 1);
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
@@ -645,7 +645,7 @@ void AdvancedUninstallControllerTests::stateChanged_emitsSignal() {
     ctrl.refreshPrograms();
 
     // Should have transitioned to Enumerating
-    QVERIFY(stateSpy.count() >= 1);
+    QCOMPARE(stateSpy.count(), 1);
     auto newState = stateSpy[0][0].value<AdvancedUninstallController::State>();
     QCOMPARE(newState, AdvancedUninstallController::State::Enumerating);
 

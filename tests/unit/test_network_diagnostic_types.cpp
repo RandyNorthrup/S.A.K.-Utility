@@ -667,8 +667,13 @@ void NetworkDiagnosticTypesTests::firewallConflict_defaultConstruction() {
 }
 
 void NetworkDiagnosticTypesTests::firewallConflict_severityEnum() {
-    QVERIFY(FirewallConflict::Severity::Critical != FirewallConflict::Severity::Warning);
-    QVERIFY(FirewallConflict::Severity::Warning != FirewallConflict::Severity::Info);
+    // Severity is serialized by ordinal via fwSeverityToString(static_cast<int>): Info=0,
+    // Warning=1, Critical=2. A reorder would silently emit the wrong severity while a
+    // distinctness-only check (compiler-guaranteed for enum class) stayed green, so pin the
+    // ordinals.
+    QCOMPARE(static_cast<int>(FirewallConflict::Severity::Info), 0);
+    QCOMPARE(static_cast<int>(FirewallConflict::Severity::Warning), 1);
+    QCOMPARE(static_cast<int>(FirewallConflict::Severity::Critical), 2);
 }
 
 void NetworkDiagnosticTypesTests::firewallGap_defaultConstruction() {
@@ -680,7 +685,9 @@ void NetworkDiagnosticTypesTests::firewallGap_defaultConstruction() {
 }
 
 void NetworkDiagnosticTypesTests::firewallGap_severityEnum() {
-    QVERIFY(FirewallGap::Severity::Warning != FirewallGap::Severity::Info);
+    // Serialized by ordinal via fwSeverityToString(static_cast<int>): Info=0, Warning=1.
+    QCOMPARE(static_cast<int>(FirewallGap::Severity::Info), 0);
+    QCOMPARE(static_cast<int>(FirewallGap::Severity::Warning), 1);
 }
 
 // ============================================================================
