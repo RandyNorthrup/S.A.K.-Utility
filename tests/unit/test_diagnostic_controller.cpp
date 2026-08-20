@@ -35,23 +35,19 @@ void DiagnosticControllerTests::initialState() {
 }
 
 void DiagnosticControllerTests::suiteStateEnum() {
-    // Verify all suite states are distinct values
-    QVERIFY(DiagnosticController::SuiteState::Idle !=
-            DiagnosticController::SuiteState::HardwareScan);
-    QVERIFY(DiagnosticController::SuiteState::HardwareScan !=
-            DiagnosticController::SuiteState::SmartAnalysis);
-    QVERIFY(DiagnosticController::SuiteState::SmartAnalysis !=
-            DiagnosticController::SuiteState::CpuBenchmark);
-    QVERIFY(DiagnosticController::SuiteState::CpuBenchmark !=
-            DiagnosticController::SuiteState::DiskBenchmark);
-    QVERIFY(DiagnosticController::SuiteState::DiskBenchmark !=
-            DiagnosticController::SuiteState::MemoryBenchmark);
-    QVERIFY(DiagnosticController::SuiteState::MemoryBenchmark !=
-            DiagnosticController::SuiteState::StressTest);
-    QVERIFY(DiagnosticController::SuiteState::StressTest !=
-            DiagnosticController::SuiteState::ReportGeneration);
-    QVERIFY(DiagnosticController::SuiteState::ReportGeneration !=
-            DiagnosticController::SuiteState::Complete);
+    // The ordinal is indexed in production: onSuiteStateChanged does static_cast<int>(state) into
+    // kStateToStep (std::array<int,9>), so a reorder silently maps each state to the wrong step.
+    // Pin the exact ordinals, not just adjacent-pair distinctness (a language guarantee).
+    using S = DiagnosticController::SuiteState;
+    QCOMPARE(static_cast<int>(S::Idle), 0);
+    QCOMPARE(static_cast<int>(S::HardwareScan), 1);
+    QCOMPARE(static_cast<int>(S::SmartAnalysis), 2);
+    QCOMPARE(static_cast<int>(S::CpuBenchmark), 3);
+    QCOMPARE(static_cast<int>(S::DiskBenchmark), 4);
+    QCOMPARE(static_cast<int>(S::MemoryBenchmark), 5);
+    QCOMPARE(static_cast<int>(S::StressTest), 6);
+    QCOMPARE(static_cast<int>(S::ReportGeneration), 7);
+    QCOMPARE(static_cast<int>(S::Complete), 8);
 }
 
 void DiagnosticControllerTests::cancelCurrentResetsState() {
@@ -61,7 +57,7 @@ void DiagnosticControllerTests::cancelCurrentResetsState() {
     // Cancel when idle should still emit Idle state
     controller.cancelCurrent();
 
-    QVERIFY(state_spy.count() >= 1);
+    QCOMPARE(state_spy.count(), 1);  // one synchronous emit; no worker running to fire more
     const auto last_state = state_spy.last()[0].value<DiagnosticController::SuiteState>();
     QCOMPARE(last_state, DiagnosticController::SuiteState::Idle);
     QCOMPARE(controller.currentState(), DiagnosticController::SuiteState::Idle);
@@ -149,9 +145,10 @@ void DiagnosticControllerTests::uniqueReportBaseName_neverCollides() {
     const QDateTime when = QDateTime::fromString("2026-07-30T12:00:00.500", Qt::ISODateWithMs);
     const QString a = DiagnosticController::uniqueReportBaseName("C:/out", when, 0);
     const QString b = DiagnosticController::uniqueReportBaseName("C:/out", when, 1);
-    QVERIFY(a != b);                             // same instant, different counter -> distinct
-    QVERIFY(a.startsWith("C:/out/SAK_Diagnostic_"));
-    QVERIFY(a.contains("20260730_120000_500"));  // millisecond resolution present
+    // Both names are byte-deterministic (dir + local-time yyyyMMdd_HHmmss_zzz + counter); the exact
+    // pins prove distinctness AND the format/millisecond/counter placement the loose checks missed.
+    QCOMPARE(a, QStringLiteral("C:/out/SAK_Diagnostic_20260730_120000_500_0"));
+    QCOMPARE(b, QStringLiteral("C:/out/SAK_Diagnostic_20260730_120000_500_1"));
 }
 
 QTEST_MAIN(DiagnosticControllerTests)

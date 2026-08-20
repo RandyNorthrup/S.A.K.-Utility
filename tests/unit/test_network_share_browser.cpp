@@ -93,7 +93,7 @@ void TestNetworkShareBrowser::discoverShares_emptyHostReportsFailureNotCompletio
     QCOMPARE(failed.count(), 1);
     QCOMPARE(errors.count(), 1);
     QVERIFY(failed.at(0).at(0).value<QVector<NetworkShareInfo>>().isEmpty());
-    QVERIFY(!failed.at(0).at(1).toString().isEmpty());
+    QCOMPARE(failed.at(0).at(1).toString(), QStringLiteral("Hostname cannot be empty"));
 }
 
 void TestNetworkShareBrowser::emitDiscoveryOutcome_partialNeverReportsComplete() {
@@ -113,7 +113,9 @@ void TestNetworkShareBrowser::emitDiscoveryOutcome_partialNeverReportsComplete()
     QCOMPARE(complete.count(), 0);
     QCOMPARE(failed.count(), 1);
     QCOMPARE(failed.at(0).at(0).value<QVector<NetworkShareInfo>>().size(), 1);
-    QVERIFY(failed.at(0).at(1).toString().contains(QStringLiteral("SERVER01")));
+    QCOMPARE(failed.at(0).at(1).toString(),
+             QStringLiteral("Share discovery on SERVER01 did not complete; the partial list is "
+                            "not a complete enumeration"));
 
     browser.emitDiscoveryOutcome(shares, /*ok=*/true, QStringLiteral("SERVER01"));
     QCOMPARE(failed.count(), 1);  // unchanged: no second failure
@@ -133,7 +135,9 @@ void TestNetworkShareBrowser::emitDiscoveryOutcome_cancelNamesTheCancel() {
 
     QCOMPARE(complete.count(), 0);
     QCOMPARE(failed.count(), 1);
-    QVERIFY(failed.at(0).at(1).toString().contains(QStringLiteral("cancelled")));
+    QCOMPARE(failed.at(0).at(1).toString(),
+             QStringLiteral("Share discovery on SERVER01 was cancelled; the partial list is not "
+                            "a complete enumeration"));
 }
 
 QTEST_MAIN(TestNetworkShareBrowser)

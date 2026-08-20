@@ -30,8 +30,10 @@ void WifiManagerPanelTests::normalSsidProducesScript() {
     QVERIFY(!script.isEmpty());
     // netsh is invoked by its absolute System32 path (anti-hijack), so match the
     // command + args rather than a bare "netsh" token.
-    QVERIFY(script.contains(QStringLiteral("netsh.exe\" wlan add profile")));
-    QVERIFY(script.contains(QStringLiteral("wlan connect name=\"MyNetwork\"")));
+    QVERIFY(
+        script.contains(QStringLiteral("\"%SystemRoot%\\System32\\netsh.exe\" wlan add profile")));
+    QVERIFY(script.contains(
+        QStringLiteral("\"%SystemRoot%\\System32\\netsh.exe\" wlan connect name=\"MyNetwork\"")));
 }
 
 // P-W10 (SSID injection): '%' must be doubled so it is not expanded as an
