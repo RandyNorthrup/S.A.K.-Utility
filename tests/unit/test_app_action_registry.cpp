@@ -68,7 +68,7 @@ void AppActionRegistryTests::registerRejectsEmptyId() {
         readOnlyDescriptor(QStringLiteral("   ")),
         [](const QJsonObject&) { return AppActionResult{}; },
         &error));
-    QVERIFY(!error.isEmpty());
+    QCOMPARE(error, QStringLiteral("App action id is empty"));
     QCOMPARE(registry.count(), 0);
 }
 
@@ -77,7 +77,7 @@ void AppActionRegistryTests::registerRejectsNullInvoke() {
     QString error;
     QVERIFY(!registry.registerAction(
         readOnlyDescriptor(QStringLiteral("diag.scan")), sak::AppActionInvoke{}, &error));
-    QVERIFY(!error.isEmpty());
+    QCOMPARE(error, QStringLiteral("App action 'diag.scan' has no invoke handler"));
     QCOMPARE(registry.count(), 0);
 }
 
@@ -90,7 +90,7 @@ void AppActionRegistryTests::registerRejectsDuplicateId() {
     QString error;
     QVERIFY(
         !registry.registerAction(readOnlyDescriptor(QStringLiteral("diag.scan")), thunk, &error));
-    QVERIFY(error.contains(QStringLiteral("already registered")));
+    QCOMPARE(error, QStringLiteral("App action 'diag.scan' is already registered"));
     QCOMPARE(registry.count(), 1);
 }
 
@@ -99,7 +99,7 @@ void AppActionRegistryTests::invokeUnknownId_returnsFailureAndError() {
     QString error;
     const AppActionResult result = registry.invoke(QStringLiteral("nope.missing"), {}, &error);
     QVERIFY(!result.success);
-    QVERIFY(error.contains(QStringLiteral("Unknown app action")));
+    QCOMPARE(error, QStringLiteral("Unknown app action: nope.missing"));
 }
 
 void AppActionRegistryTests::listAndCatalog_areSortedAndCarryRiskFlags() {

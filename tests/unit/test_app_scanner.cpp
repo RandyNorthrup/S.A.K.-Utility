@@ -123,7 +123,9 @@ void TestAppScanner::composePowerShellPath_absoluteUnderSystemRoot() {
 
     const QString path = AppScanner::composePowerShellPath(QStringLiteral("C:\\Windows"));
     QVERIFY(!path.isEmpty());
-    QVERIFY(path.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe")));
+    // Pin the full normalized path: !isEmpty and isAbsolutePath both pass on an un-normalized
+    // "C:\Windows/System32/..." too, so they miss a dropped cleanPath -- the function's whole job.
+    QCOMPARE(path, QStringLiteral("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"));
     // Must be an absolute, rooted path -- not a bare executable name.
     QVERIFY(QDir::isAbsolutePath(path));
 }
