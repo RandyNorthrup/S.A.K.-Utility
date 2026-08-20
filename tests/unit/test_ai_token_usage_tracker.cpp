@@ -58,8 +58,20 @@ void AiTokenUsageTrackerTests::reset_clearsUsage() {
     tracker.addTurn({10, 1, 5, 2, 15});
     tracker.reset();
 
-    QVERIFY(tracker.lastTurn().isEmpty());
-    QVERIFY(tracker.sessionTotal().isEmpty());
+    // isEmpty() only checks total_tokens == 0; reset() assigns {} which zeroes ALL five fields.
+    // Pin each so a partial reset (clearing only total) cannot pass.
+    const auto last = tracker.lastTurn();
+    QCOMPARE(last.input_tokens, qint64{0});
+    QCOMPARE(last.cached_input_tokens, qint64{0});
+    QCOMPARE(last.output_tokens, qint64{0});
+    QCOMPARE(last.reasoning_tokens, qint64{0});
+    QCOMPARE(last.total_tokens, qint64{0});
+    const auto session = tracker.sessionTotal();
+    QCOMPARE(session.input_tokens, qint64{0});
+    QCOMPARE(session.cached_input_tokens, qint64{0});
+    QCOMPARE(session.output_tokens, qint64{0});
+    QCOMPARE(session.reasoning_tokens, qint64{0});
+    QCOMPARE(session.total_tokens, qint64{0});
 }
 
 void AiTokenUsageTrackerTests::fromJson_clampsOutOfRangeAndNegative() {

@@ -88,8 +88,9 @@ void AiToolLoopDetectorTests::loopingSummaryDescribesWorstOffender() {
     detector.observe(QStringLiteral("sak_session_search"), QStringLiteral("{\"query\":\"x\"}"));
     detector.observe(QStringLiteral("sak_session_search"), QStringLiteral("{\"query\":\"x\"}"));
     const QString summary = detector.loopingSummary();
-    QVERIFY(summary.contains(QStringLiteral("sak_session_search")));
-    QVERIFY(summary.contains(QStringLiteral("x2")));
+    // loopingSummary() is byte-deterministic: "%1(%2) x%3" with the worst tool, its (untruncated)
+    // args, and the repeat count. Pin the whole rendered string.
+    QCOMPARE(summary, QStringLiteral("sak_session_search({\"query\":\"x\"}) x2"));
 }
 
 QTEST_GUILESS_MAIN(AiToolLoopDetectorTests)

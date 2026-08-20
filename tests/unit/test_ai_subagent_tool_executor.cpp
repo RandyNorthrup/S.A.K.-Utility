@@ -107,8 +107,8 @@ void AiSubagentToolExecutorTests::deniesToolNotInAllowlist() {
     // Fail closed: never dispatched, error names the tool.
     QCOMPARE(recorder.calls, 0);
     const QJsonObject parsed = parseOutput(output);
-    QVERIFY(
-        parsed.value(QStringLiteral("error")).toString().contains(QStringLiteral("not permitted")));
+    QCOMPARE(parsed.value(QStringLiteral("error")).toString(),
+             QStringLiteral("Tool 'run_powershell' is not permitted for subagents"));
     QCOMPARE(parsed.value(QStringLiteral("tool")).toString(), QStringLiteral("run_powershell"));
 }
 
@@ -125,10 +125,8 @@ void AiSubagentToolExecutorTests::deniesWhenCancelled() {
                                                  token);
 
     QCOMPARE(recorder.calls, 0);
-    QVERIFY(parseOutput(output)
-                .value(QStringLiteral("error"))
-                .toString()
-                .contains(QStringLiteral("Cancelled")));
+    QCOMPARE(parseOutput(output).value(QStringLiteral("error")).toString(),
+             QStringLiteral("Cancelled before tool dispatch"));
 }
 
 void AiSubagentToolExecutorTests::failsClosedOnInvalidArguments() {
@@ -142,10 +140,12 @@ void AiSubagentToolExecutorTests::failsClosedOnInvalidArguments() {
         sak::ai::CancellationToken::createRoot(QStringLiteral("r")));
 
     QCOMPARE(recorder.calls, 0);
+    // The %1 tail is QJsonParseError::errorString() (Qt-version-dependent), so pin only the
+    // deterministic prefix -- but anchored with startsWith, including the "JSON:" token.
     QVERIFY(parseOutput(output)
                 .value(QStringLiteral("error"))
                 .toString()
-                .contains(QStringLiteral("Invalid tool arguments")));
+                .startsWith(QStringLiteral("Invalid tool arguments JSON: ")));
 }
 
 void AiSubagentToolExecutorTests::emptyArgumentsDispatchWithEmptyObject() {
@@ -172,10 +172,8 @@ void AiSubagentToolExecutorTests::missingDispatchCallbackFailsClosed() {
         makeCall(QStringLiteral("sak_package_manager"), QStringLiteral("{}")),
         sak::ai::CancellationToken::createRoot(QStringLiteral("r")));
 
-    QVERIFY(parseOutput(output)
-                .value(QStringLiteral("error"))
-                .toString()
-                .contains(QStringLiteral("dispatcher")));
+    QCOMPARE(parseOutput(output).value(QStringLiteral("error")).toString(),
+             QStringLiteral("No subagent tool dispatcher configured"));
 }
 
 QTEST_GUILESS_MAIN(AiSubagentToolExecutorTests)

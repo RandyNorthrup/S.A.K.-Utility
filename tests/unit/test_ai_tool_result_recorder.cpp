@@ -49,10 +49,11 @@ private Q_SLOTS:
 
 void AiToolResultRecorderTests::summaryRedactsAndIncludesStatus() {
     const QString summary = sak::ai::toolResultChatSummary(commandResult(), redactTestSecret);
-    QVERIFY(summary.contains(QStringLiteral("Command: Get-Thing [REDACTED]")));
-    QVERIFY(summary.contains(QStringLiteral("Exit code: 0")));
-    QVERIFY(summary.contains(QStringLiteral("Output: done [REDACTED]")));
-    QVERIFY(!summary.contains(QStringLiteral("SECRET")));
+    // The three appenders (command, status, stdout) run in fixed order and join with "\n";
+    // the exact QCOMPARE pins order, the full line set, and redaction in one assertion.
+    QCOMPARE(summary,
+             QStringLiteral(
+                 "Command: Get-Thing [REDACTED]\nExit code: 0\nOutput: done [REDACTED]"));
 }
 
 void AiToolResultRecorderTests::recordWritesCommandAndTranscript() {
@@ -74,7 +75,9 @@ void AiToolResultRecorderTests::recordWritesCommandAndTranscript() {
     QVERIFY(result.command_recorded);
     QVERIFY(result.transcript_recorded);
     QVERIFY(result.wroteStore());
-    QVERIFY(!result.transcript_text.contains(QStringLiteral("SECRET")));
+    QCOMPARE(result.transcript_text,
+             QStringLiteral(
+                 "Command: Get-Thing [REDACTED]\nExit code: 0\nOutput: done [REDACTED]"));
 
     const QString session_path = store.currentSessionInfo().path;
     const QJsonObject command =
@@ -84,9 +87,11 @@ void AiToolResultRecorderTests::recordWritesCommandAndTranscript() {
 
     const auto lines = store.loadTranscriptLines(store.currentSessionId(), &error);
     QCOMPARE(lines.size(), 1);
-    QVERIFY(lines.first().contains(QStringLiteral("TOOL RESULT")));
-    QVERIFY(lines.first().contains(QStringLiteral("Get-Thing [REDACTED]")));
-    QVERIFY(!lines.first().contains(QStringLiteral("SECRET")));
+    // transcriptDisplayLine renders "\n[HEADING]\ntext" with no timestamp; role "Tool Result"
+    // -> "TOOL RESULT" and {source:unit} carries no citations, so pin the whole rendered line.
+    QCOMPARE(lines.first(),
+             QStringLiteral("\n[TOOL RESULT]\nCommand: Get-Thing [REDACTED]\nExit code: 0\nOutput: "
+                            "done [REDACTED]"));
 }
 
 void AiToolResultRecorderTests::recordFailsLoudWithoutActiveSession() {
@@ -103,8 +108,11 @@ void AiToolResultRecorderTests::recordFailsLoudWithoutActiveSession() {
     QVERIFY(!result.command_recorded);
     QVERIFY(!result.transcript_recorded);
     QCOMPARE(result.errors.size(), 2);
-    QVERIFY(
-        result.errors.join(QStringLiteral("\n")).contains(QStringLiteral("No active AI session")));
+    // Both the command and transcript appends hit appendJsonLine's "No active AI session" and are
+    // wrapped with their distinct prefixes; pin the exact two-element list and its order.
+    QCOMPARE(result.errors,
+             (QStringList{QStringLiteral("Command record failed: No active AI session"),
+                          QStringLiteral("Transcript log failed: No active AI session")}));
 }
 
 QTEST_GUILESS_MAIN(AiToolResultRecorderTests)

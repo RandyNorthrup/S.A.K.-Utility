@@ -56,7 +56,13 @@ void AiToolHealthLedgerTests::repeatedFailuresSuppressTemporarily() {
     const auto availability = ledger.check(QStringLiteral("provider"), now.addMSecs(500));
     QVERIFY(!availability.available);
     QCOMPARE(availability.failure_class, QStringLiteral("health_backoff"));
-    QVERIFY(availability.reason.contains(QStringLiteral("provider")));
+    // "Tool/provider" already contains "provider", so the old check was vacuous. Pin the actual
+    // %1 key substitution (startsWith) and the count + error tail (endsWith); only the %2 ISO
+    // disabled-until instant in the middle is wall-clock-derived and left unpinned.
+    QVERIFY(availability.reason.startsWith(
+        QStringLiteral("Tool/provider 'provider' is temporarily disabled until ")));
+    QVERIFY(
+        availability.reason.endsWith(QStringLiteral(" after 2 consecutive failure(s): missing")));
 }
 
 void AiToolHealthLedgerTests::persistsFreshRecordsAndPrunesExpired() {
@@ -137,7 +143,10 @@ void AiToolHealthLedgerTests::concurrentRecordAndReadIsThreadSafe() {
     QCOMPARE(ledger.size(), kToolCount);
     for (int tool = 0; tool < kToolCount; ++tool) {
         const auto record = ledger.record(QStringLiteral("tool_%1").arg(tool));
-        QCOMPARE(record.success_count + record.failure_count, kIterations);
+        // Even i -> recordSuccess, odd i -> recordFailure over [0, kIterations): exactly half
+        // each. Pinning only the sum would miss a success/failure swap (sum stays kIterations).
+        QCOMPARE(record.success_count, kIterations / 2);
+        QCOMPARE(record.failure_count, kIterations / 2);
     }
 }
 
