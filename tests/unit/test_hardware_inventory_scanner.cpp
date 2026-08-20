@@ -45,7 +45,9 @@ private Q_SLOTS:
 
 void TestHardwareInventoryScanner::construction_default() {
     HardwareInventoryScanner scanner;
-    QVERIFY(dynamic_cast<QObject*>(&scanner) != nullptr);
+    // The dynamic_cast upcast was compile-time-guaranteed (vacuous); pin a real constructed-state
+    // fact instead: the default ctor forwards a null parent to QObject.
+    QCOMPARE(scanner.parent(), static_cast<QObject*>(nullptr));
 }
 
 void TestHardwareInventoryScanner::construction_nonCopyable() {
@@ -77,10 +79,13 @@ void TestHardwareInventoryScanner::cpuInfo_fieldAssignment() {
     info.l3_cache_kb = 32'768;
 
     QCOMPARE(info.name, QStringLiteral("Test CPU"));
+    QCOMPARE(info.manufacturer, QStringLiteral("TestCorp"));
     QCOMPARE(info.cores, 8u);
     QCOMPARE(info.threads, 16u);
     QCOMPARE(info.base_clock_mhz, 3600u);
     QCOMPARE(info.max_clock_mhz, 5000u);
+    QCOMPARE(info.l2_cache_kb, 4096u);
+    QCOMPARE(info.l3_cache_kb, 32'768u);
 }
 
 void TestHardwareInventoryScanner::memorySummary_defaults() {

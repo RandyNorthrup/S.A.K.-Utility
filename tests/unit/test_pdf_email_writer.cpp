@@ -50,7 +50,7 @@ private Q_SLOTS:
         // PDF files start with %PDF
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray header = file.read(5);
-        QVERIFY(header.startsWith("%PDF"));
+        QCOMPARE(header, QByteArrayLiteral("%PDF-"));  // full 5-byte magic, not just "%PDF"
     }
 
     // ====================================================================
@@ -125,7 +125,7 @@ private Q_SLOTS:
         QVERIFY(result.has_value());
 
         QFileInfo fi(result.value());
-        QVERIFY(fi.fileName().startsWith("2025-04-10_"));
+        QCOMPARE(fi.fileName(), QStringLiteral("2025-04-10_000000_Dated PDF.pdf"));
     }
 
     // ====================================================================
@@ -218,7 +218,7 @@ private Q_SLOTS:
         QFile file(result.value());
         QVERIFY(file.open(QIODevice::ReadOnly));
         QVERIFY(file.size() > 0);
-        QVERIFY(file.read(5).startsWith("%PDF"));
+        QCOMPARE(file.read(5), QByteArrayLiteral("%PDF-"));
     }
 
     // The success check must require a structurally-complete PDF (magic + %%EOF

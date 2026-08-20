@@ -263,9 +263,8 @@ void AiProviderRegistryTests::stdioCommandOutsideAppDirIsUnavailable() {
     const QJsonObject win32 = providerById(statuses.value(QStringLiteral("providers")).toArray(),
                                            QStringLiteral("win32_mcp"));
     QVERIFY(!win32.value(QStringLiteral("available")).toBool(true));
-    QVERIFY(win32.value(QStringLiteral("missing_reason"))
-                .toString()
-                .contains(QStringLiteral("within the application directory")));
+    QCOMPARE(win32.value(QStringLiteral("missing_reason")).toString(),
+             QStringLiteral("Bundled MCP command must resolve within the application directory"));
 }
 
 QTEST_GUILESS_MAIN(AiProviderRegistryTests)

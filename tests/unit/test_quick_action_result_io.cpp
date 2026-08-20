@@ -217,7 +217,9 @@ void TestQuickActionResultIO::readMissingFileReturnsFalse() {
     QuickAction::ActionStatus status;
     QString error;
     QVERIFY(!readExecutionResultFile("C:/nonexistent/path.json", &result, &status, &error));
-    QVERIFY(!error.isEmpty());
+    // The fixed prefix identifies the open-fail branch (other branches use distinct prefixes);
+    // only the .arg(errorString()) suffix is OS/locale-variant.
+    QVERIFY(error.startsWith(QStringLiteral("Failed to read result file: ")));
 }
 
 void TestQuickActionResultIO::readInvalidJsonReturnsFalse() {
@@ -234,7 +236,7 @@ void TestQuickActionResultIO::readInvalidJsonReturnsFalse() {
     QuickAction::ActionStatus status;
     QString error;
     QVERIFY(!readExecutionResultFile(path, &result, &status, &error));
-    QVERIFY(!error.isEmpty());
+    QVERIFY(error.startsWith(QStringLiteral("Invalid result file JSON: ")));
 }
 
 void TestQuickActionResultIO::readEmptyFileReturnsFalse() {
@@ -250,6 +252,8 @@ void TestQuickActionResultIO::readEmptyFileReturnsFalse() {
     QuickAction::ActionStatus status;
     QString error;
     QVERIFY(!readExecutionResultFile(path, &result, &status, &error));
+    // An empty file parses to a null JSON document -> the invalid-JSON branch.
+    QVERIFY(error.startsWith(QStringLiteral("Invalid result file JSON: ")));
 }
 
 void TestQuickActionResultIO::writeToInvalidPathReturnsFalse() {
@@ -259,7 +263,7 @@ void TestQuickActionResultIO::writeToInvalidPathReturnsFalse() {
     QString error;
     QVERIFY(!writeExecutionResultFile(
         "Z:/nonexistent/dir/file.json", result, QuickAction::ActionStatus::Success, &error));
-    QVERIFY(!error.isEmpty());
+    QVERIFY(error.startsWith(QStringLiteral("Failed to write result file: ")));
 }
 
 QTEST_MAIN(TestQuickActionResultIO)
