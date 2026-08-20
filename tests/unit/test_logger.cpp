@@ -115,7 +115,7 @@ int LoggerTests::countOccurrences(const std::string& haystack, const std::string
 // ============================================================================
 
 void LoggerTests::initialize_validDir() {
-    auto& log = sak::logger::instance();
+    const auto& log = sak::logger::instance();
     QVERIFY(log.isInitialized());
 
     // The flag alone proves nothing: a successful initialize() must also have
@@ -264,10 +264,12 @@ void LoggerTests::flush_writesData() {
 // ============================================================================
 
 void LoggerTests::getLogFile_afterInit() {
-    auto& log = sak::logger::instance();
+    const auto& log = sak::logger::instance();
     auto logFile = log.getLogFile();
-    QVERIFY(!logFile.empty());
-    QVERIFY(logFile.filename().string().find("test_logger") != std::string::npos);
+    // Pin the deterministic name shape rather than a mere non-empty / substring check: the log file
+    // is "test_logger_<...>.log".
+    QVERIFY(logFile.filename().string().starts_with("test_logger_"));
+    QCOMPARE(logFile.extension().string(), std::string(".log"));
 }
 
 // ============================================================================
@@ -343,12 +345,15 @@ void LoggerTests::ensureLogDirectory_leavesNoProbeFile() {
                               std::istreambuf_iterator<char>());
     QCOMPARE(content, std::string("keep me"));
 
-    // No probe file was left behind, and no fixed ".test_write" name is used.
-    QVERIFY(!std::filesystem::exists(dir / ".test_write"));
+    // The directory now contains EXACTLY the victim file: the probe created a uniquely-named file
+    // and cleaned it up, leaving no ".test_write" and no ".sak_log_probe_*" behind. The old check
+    // for a fixed ".test_write" name was vacuous -- the code never creates that name.
+    std::vector<std::string> survivors;
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-        const std::string name = entry.path().filename().string();
-        QVERIFY2(name.rfind(".sak_log_probe_", 0) != 0, "probe file must be cleaned up");
+        survivors.push_back(entry.path().filename().string());
     }
+    QCOMPARE(survivors.size(), static_cast<size_t>(1));
+    QCOMPARE(survivors.front(), std::string("important.txt"));
 }
 
 // ============================================================================

@@ -63,8 +63,8 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     auto result = rewriter.rewrite(parsed, filenames);
 
     QVERIFY(result.success);
-    QVERIFY(result.script_content.contains("$toolsDir"));
-    QVERIFY(result.script_content.contains("setup.exe"));
+    // Pin the exact internalized form, not just that "$toolsDir"/"setup.exe" appear somewhere.
+    QVERIFY(result.script_content.contains(QStringLiteral("(Join-Path $toolsDir 'setup.exe')")));
     QVERIFY(!result.script_content.contains("https://example.com/setup.exe"));
 }
 
@@ -108,8 +108,9 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     auto result = rewriter.rewrite(parsed, filenames);
 
     QVERIFY(result.success);
-    QVERIFY(result.script_content.contains("x86.exe"));
-    QVERIFY(result.script_content.contains("x64.exe"));
+    // Pin the exact internalized Join-Path form for each URL slot.
+    QVERIFY(result.script_content.contains(QStringLiteral("(Join-Path $toolsDir 'x86.exe')")));
+    QVERIFY(result.script_content.contains(QStringLiteral("(Join-Path $toolsDir 'x64.exe')")));
 }
 
 // ============================================================================
@@ -199,7 +200,8 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     QVERIFY(result.success);
     QCOMPARE(result.replacements.size(), 1);
     QCOMPARE(result.replacements.first().original_url, QString("https://example.com/tracked.exe"));
-    QVERIFY(result.replacements.first().local_path.contains("tracked.exe"));
+    QCOMPARE(result.replacements.first().local_path,
+             QString("(Join-Path $toolsDir 'tracked.exe')"));
 }
 
 // ============================================================================

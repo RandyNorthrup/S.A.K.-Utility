@@ -61,7 +61,9 @@ void AiAppActionPlannerTests::buildsSupportedPowerShellActionPlan() {
     QCOMPARE(plan.request.timeout_seconds, 7200);
     QCOMPARE(plan.evidence.size(), 2);
     QVERIFY(plan.risky);
-    QVERIFY(plan.preview.contains(QStringLiteral("quick_scan")));
+    QCOMPARE(plan.preview,
+             QStringLiteral(
+                 "Run Sample App action 'quick_scan': Start-MpScan -ScanType QuickScan"));
     QVERIFY(plan.guard_block_error.isEmpty());
 }
 
@@ -168,7 +170,8 @@ void AiAppActionPlannerTests::buildsWin32GuiActionPlan() {
     QCOMPARE(plan.steps.size(), 2);
     QVERIFY(plan.risky);  // GUI input injection is always at least input-tier
     QVERIFY(plan.request.command.isEmpty());
-    QVERIFY(plan.preview.contains(QStringLiteral("quick_scan")));
+    QCOMPARE(plan.preview,
+             QStringLiteral("Drive Sample App GUI action 'quick_scan' (2 desktop-control steps)"));
     QVERIFY(plan.error_message.isEmpty());
 }
 

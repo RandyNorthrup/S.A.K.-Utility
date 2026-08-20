@@ -188,7 +188,7 @@ void WorkerBaseTests::exceptionSafety_unknownException() {
     QCOMPARE(failed_spy.count(), 1);
     const auto args = failed_spy.first();
     QCOMPARE(args[0].toInt(), static_cast<int>(sak::error_code::internal_error));
-    QVERIFY(args[1].toString().contains("unknown"));
+    QCOMPARE(args[1].toString(), QStringLiteral("Unhandled unknown exception"));
 }
 
 void WorkerBaseTests::cancellation() {

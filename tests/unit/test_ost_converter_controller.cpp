@@ -46,7 +46,7 @@ private Q_SLOTS:
         ctrl.addFile(path);
 
         QCOMPARE(ctrl.queue().size(), 1);
-        QVERIFY(spy.count() >= 1);
+        QCOMPARE(spy.count(), 1);  // one add -> exactly one fileAdded (not >= 1, which hides a dup)
     }
 
     void testAddMultipleFiles() {
@@ -150,7 +150,7 @@ private Q_SLOTS:
 
         const auto& jobs = ctrl.queue();
         QCOMPARE(jobs.size(), 1);
-        QVERIFY(jobs[0].source_path.endsWith("email.ost"));
+        QCOMPARE(jobs[0].source_path, path);  // stored verbatim; endsWith only pinned the suffix
         QCOMPARE(jobs[0].status, sak::OstConversionJob::Status::Queued);
     }
 
@@ -186,7 +186,8 @@ private Q_SLOTS:
         QSignalSpy spy(&ctrl, &sak::OstConverterController::fileAdded);
 
         ctrl.addFile(path);
-        QVERIFY(spy.count() >= 1);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 0);  // first append -> index 0
     }
 
     void testFileRemovedSignalOnRemove() {
@@ -200,7 +201,8 @@ private Q_SLOTS:
         QSignalSpy spy(&ctrl, &sak::OstConverterController::fileRemoved);
         ctrl.removeFile(0);
 
-        QVERIFY(spy.count() >= 1);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 0);  // removed index 0
     }
 
     void testQueueClearedSignalOnClear() {
@@ -216,7 +218,7 @@ private Q_SLOTS:
         QSignalSpy spy(&ctrl, &sak::OstConverterController::queueCleared);
         ctrl.clearQueue();
 
-        QVERIFY(spy.count() >= 1);
+        QCOMPARE(spy.count(), 1);
     }
 
     // ====================================================================
@@ -257,8 +259,7 @@ private Q_SLOTS:
         ctrl.cancelAll();
 
         QVERIFY(!ctrl.isRunning());
-        QVERIFY2(complete_spy.count() >= 1,
-                 "cancelAll must finalize the batch (completion signal)");
+        QCOMPARE(complete_spy.count(), 1);  // cancelAll finalizes the batch exactly once
         // ctrl destructs at end of scope -> cancelAll() again on no active workers: must not abort.
     }
 
@@ -337,9 +338,7 @@ private Q_SLOTS:
         // worker thread's completion signal, so the emission can be recorded before the main
         // thread reaches this line, and wait() only reports emissions that arrive after it is
         // entered -- it would sit out the full 15s waiting for a second one.
-        QTRY_VERIFY2_WITH_TIMEOUT(complete_spy.count() >= 1,
-                                  "batch wedged: allConversionsComplete never fired",
-                                  kBatchWaitMs);
+        QTRY_COMPARE_WITH_TIMEOUT(complete_spy.count(), 1, kBatchWaitMs);
         QVERIFY(!ctrl.isRunning());
     }
 
