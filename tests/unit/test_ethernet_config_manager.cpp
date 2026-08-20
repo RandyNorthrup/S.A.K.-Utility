@@ -125,8 +125,8 @@ void TestEthernetConfigManager::snapshot_toJson_allFields() {
     snapshot.dhcpEnabled = true;
 
     const QJsonObject json = snapshot.toJson();
-    QVERIFY(!json.isEmpty());
-    QVERIFY(json.contains("adapterName") || json.contains("adapter_name"));
+    QCOMPARE(json.size(), 10);              // toJson unconditionally emits exactly 10 keys
+    QVERIFY(json.contains("adapterName"));  // the "adapter_name" alt was a dead disjunct
 }
 
 void TestEthernetConfigManager::snapshot_fromJson_emptyObject() {
@@ -139,8 +139,9 @@ void TestEthernetConfigManager::snapshot_fromJson_missingFields() {
     QJsonObject partial;
     partial["adapterName"] = "Test";
     const auto snapshot = EthernetConfigSnapshot::fromJson(partial);
-    // Should handle gracefully -- either invalid or partial data
-    QVERIFY(snapshot.adapterName == "Test" || snapshot.adapterName.isEmpty());
+    // fromJson assigns adapterName unconditionally from a present string key; the isEmpty
+    // disjunct was unreachable and would mask a broken assignment.
+    QCOMPARE(snapshot.adapterName, QStringLiteral("Test"));
 }
 
 void TestEthernetConfigManager::snapshot_toJson_dhcpEnabled() {
@@ -177,8 +178,8 @@ void TestEthernetConfigManager::snapshot_toJson_multipleDns() {
 
     const QJsonObject json = snapshot.toJson();
     const auto restored = EthernetConfigSnapshot::fromJson(json);
-    QCOMPARE(restored.ipv4DnsServers.size(), 3);
-    QVERIFY(restored.ipv4DnsServers.contains("1.1.1.1"));
+    // The JSON array round-trip preserves order, so pin the full ordered list.
+    QCOMPARE(restored.ipv4DnsServers, (QStringList{"1.1.1.1", "1.0.0.1", "8.8.8.8"}));
 }
 
 void TestEthernetConfigManager::saveToFile_atomicRoundTrip() {

@@ -47,7 +47,7 @@ private Q_SLOTS:
 
 void TestBandwidthTester::construction_default() {
     BandwidthTester tester;
-    QVERIFY(dynamic_cast<QObject*>(&tester) != nullptr);
+    static_assert(std::is_base_of_v<QObject, BandwidthTester>);  // was a vacuous runtime upcast
     QVERIFY(!tester.isServerRunning());
 }
 
@@ -132,8 +132,7 @@ void TestBandwidthTester::bandwidthTestResult_defaults() {
 
 void TestBandwidthTester::firewallRuleName_containsPortAndToken() {
     const QString name = BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("abc123"));
-    QVERIFY(name.contains(QStringLiteral("5201")));
-    QVERIFY(name.contains(QStringLiteral("abc123")));
+    QCOMPARE(name, QStringLiteral("SAK_Utility_iPerf3_5201_abc123"));
     // Same inputs -> stable name (so create and remove match).
     QCOMPARE(name, BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("abc123")));
 }
@@ -151,8 +150,8 @@ void TestBandwidthTester::firewallRuleName_noShellMetacharacters() {
     // whitespace regardless.
     const QString name = BandwidthTester::composeFirewallRuleName(
         5201, QStringLiteral("0123456789abcdef0123456789abcdef"));
-    QVERIFY(!name.contains(QLatin1Char('"')));
-    QVERIFY(!name.contains(QLatin1Char(' ')));
+    // Exact composed name subsumes (and exceeds) the no-quote/no-space checks.
+    QCOMPARE(name, QStringLiteral("SAK_Utility_iPerf3_5201_0123456789abcdef0123456789abcdef"));
 }
 
 // ===================================================================
@@ -190,11 +189,10 @@ void TestBandwidthTester::netshPath_absoluteUnderSystemRoot() {
     // The privileged firewall calls must resolve netsh under System32, never a bare
     // "netsh" that a PATH/CWD-planted binary could hijack.
     const QString path = BandwidthTester::composeNetshPath(QStringLiteral("C:/Windows"));
-    QVERIFY(path.endsWith(QStringLiteral("System32/netsh.exe")));
-    QVERIFY(path.contains(QStringLiteral("C:/Windows")));
+    QCOMPARE(path, QStringLiteral("C:/Windows/System32/netsh.exe"));
     // Backslash-style root resolves to the same cleaned path.
     const QString back = BandwidthTester::composeNetshPath(QStringLiteral("C:\\Windows"));
-    QVERIFY(back.endsWith(QStringLiteral("System32/netsh.exe")));
+    QCOMPARE(back, QStringLiteral("C:/Windows/System32/netsh.exe"));
 }
 
 void TestBandwidthTester::netshPath_emptyRootFailsClosed() {
@@ -220,8 +218,7 @@ void TestBandwidthTester::networkTransfer_rejectsZeroTimeoutBeforeAnyRequest() {
     const NetworkTransferResult result = runNetworkTransfer(request);
     QVERIFY(!result.success);
     QVERIFY(!result.timed_out);
-    QVERIFY2(result.error_message.contains(QStringLiteral("timeout_ms")),
-             qPrintable(result.error_message));
+    QCOMPARE(result.error_message, QStringLiteral("Invalid timeout_ms: must be positive"));
     QCOMPARE(result.elapsed_ms, 0LL);
     QCOMPARE(result.bytes_received, 0LL);
     QVERIFY(result.body.isEmpty());
@@ -234,8 +231,7 @@ void TestBandwidthTester::networkTransfer_rejectsNegativeTimeout() {
 
     const NetworkTransferResult result = runNetworkTransfer(request);
     QVERIFY(!result.success);
-    QVERIFY2(result.error_message.contains(QStringLiteral("timeout_ms")),
-             qPrintable(result.error_message));
+    QCOMPARE(result.error_message, QStringLiteral("Invalid timeout_ms: must be positive"));
     QCOMPARE(result.elapsed_ms, 0LL);
 }
 

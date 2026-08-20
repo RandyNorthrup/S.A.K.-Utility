@@ -160,7 +160,8 @@ void TestFlashCoordinator::testStartFlashEmptyDrives() {
 
     bool result = m_coord->startFlash("C:/test.iso", QStringList{});
     QVERIFY(!result);
-    QVERIFY(spy.count() >= 1);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.first().first().toString(), QStringLiteral("No target drives specified"));
 }
 
 // A 0-byte image must be refused BEFORE any drive work: it would write nothing yet
@@ -177,14 +178,9 @@ void TestFlashCoordinator::testStartFlashRejectsZeroLengthImage() {
                                             QStringList{QStringLiteral("\\\\.\\PhysicalDrive99")});
 
     QVERIFY(!result);
-    bool sawEmpty = false;
-    for (const QList<QVariant>& args : spy) {
-        if (!args.isEmpty() &&
-            args.first().toString().contains(QStringLiteral("empty"), Qt::CaseInsensitive)) {
-            sawEmpty = true;
-        }
-    }
-    QVERIFY2(sawEmpty, "expected an empty-image flashError for a 0-byte image");
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.first().first().toString(),
+             QStringLiteral("Image file is empty (0 bytes); nothing to flash"));
     QCOMPARE(m_coord->state(), sak::FlashState::Failed);
 }
 
@@ -202,14 +198,10 @@ void TestFlashCoordinator::testStartFlashRejectsDuplicateTargets() {
     const bool result = m_coord->startFlash(img.fileName(), QStringList{drive, drive});
 
     QVERIFY(!result);
-    bool sawDuplicate = false;
-    for (const QList<QVariant>& args : spy) {
-        if (!args.isEmpty() &&
-            args.first().toString().contains(QStringLiteral("Duplicate"), Qt::CaseInsensitive)) {
-            sawDuplicate = true;
-        }
-    }
-    QVERIFY2(sawDuplicate, "expected a Duplicate target device flashError");
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(spy.at(0).first().toString(),
+             QStringLiteral("Duplicate target device: \\\\.\\PhysicalDrive99"));
+    QCOMPARE(spy.at(1).first().toString(), QStringLiteral("Target validation failed"));
 }
 
 void TestFlashCoordinator::testFirstDuplicateTargetSeam() {
@@ -225,9 +217,11 @@ void TestFlashCoordinator::testFirstDuplicateTargetSeam() {
              QStringLiteral("\\\\.\\PhysicalDrive3"));
 
     // Case- and whitespace-insensitive: the same disk written two ways is still a dup.
-    QVERIFY(!FlashCoordinator::firstDuplicateTarget({QStringLiteral("\\\\.\\PhysicalDrive4"),
-                                                     QStringLiteral("  \\\\.\\PHYSICALDRIVE4 ")})
-                 .isEmpty());
+    // The dedup KEY is normalized (trim+lower) but the RETURN is the caller's verbatim string,
+    // which is surfaced into the user-facing flashError -- pin that verbatim contract.
+    QCOMPARE(FlashCoordinator::firstDuplicateTarget({QStringLiteral("\\\\.\\PhysicalDrive4"),
+                                                     QStringLiteral("  \\\\.\\PHYSICALDRIVE4 ")}),
+             QStringLiteral("  \\\\.\\PHYSICALDRIVE4 "));
 }
 
 void TestFlashCoordinator::testParsePhysicalDriveNumberSeam() {

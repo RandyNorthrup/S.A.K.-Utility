@@ -195,7 +195,10 @@ void AiWorkflowPowerShellToolRunnerTests::templateSingleQuoteSafetyGatesRawPlace
     QString error;
     QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
         QStringLiteral("Write-Output ${user_message}"), &error));
-    QVERIFY(!error.isEmpty());
+    QCOMPARE(error,
+             QStringLiteral("PowerShell workflow command places placeholder '${user_message}' "
+                            "outside a single-quoted literal, so its value would be injected "
+                            "unescaped"));
     // Unsafe: placeholder after the single-quoted span has closed.
     QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
         QStringLiteral("$a='x'; Invoke-Expression ${user_message}")));
@@ -212,7 +215,10 @@ void AiWorkflowPowerShellToolRunnerTests::templateSingleQuoteScannerLexesQuoting
     QString error;
     QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(QStringLiteral("$x=\"'\"; ${user_message}"),
                                                         &error));
-    QVERIFY(!error.isEmpty());
+    QCOMPARE(error,
+             QStringLiteral("PowerShell workflow command places placeholder '${user_message}' "
+                            "outside a single-quoted literal, so its value would be injected "
+                            "unescaped"));
     // Same shape with the quote-carrying string reached through an escaped quote.
     QVERIFY(!powerShellCommandTemplateIsSingleQuoteSafe(
         QStringLiteral("Write-Output \"it`'s\"; ${user_message}")));
