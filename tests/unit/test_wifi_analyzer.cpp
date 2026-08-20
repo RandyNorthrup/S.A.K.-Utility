@@ -120,13 +120,13 @@ void TestWiFiAnalyzer::freqToChannel_5ghz_channel165() {
 void TestWiFiAnalyzer::freqToBand_2_4ghz() {
     const auto band = WiFiAnalyzer::frequencyToBand(2'437'000);
     QVERIFY(!band.isEmpty());
-    QVERIFY(band.contains("2.4", Qt::CaseInsensitive));
+    QCOMPARE(band, QStringLiteral("2.4 GHz"));
 }
 
 void TestWiFiAnalyzer::freqToBand_5ghz() {
     const auto band = WiFiAnalyzer::frequencyToBand(5'180'000);
     QVERIFY(!band.isEmpty());
-    QVERIFY(band.contains("5", Qt::CaseInsensitive));
+    QCOMPARE(band, QStringLiteral("5 GHz"));
 }
 
 // ===================================================================
@@ -149,13 +149,14 @@ void TestWiFiAnalyzer::channelUtil_singleNetwork() {
     networks.append(network);
 
     const auto result = WiFiAnalyzer::calculateChannelUtilization(networks);
-    QVERIFY(!result.isEmpty());
+    // All networks on channel 6 with empty band collapse to one "|6" key.
+    QCOMPARE(result.size(), 1);
 
     bool found_channel_6 = false;
     for (const auto& utilization : result) {
         if (utilization.channelNumber == 6) {
             found_channel_6 = true;
-            QVERIFY(utilization.networkCount >= 1);
+            QCOMPARE(utilization.networkCount, 1);
         }
     }
     QVERIFY(found_channel_6);
@@ -173,11 +174,12 @@ void TestWiFiAnalyzer::channelUtil_multipleNetworks() {
     }
 
     const auto result = WiFiAnalyzer::calculateChannelUtilization(networks);
-    QVERIFY(!result.isEmpty());
+    // All 5 networks share channel 6 + empty band -> one merged "|6" entry.
+    QCOMPARE(result.size(), 1);
 
     for (const auto& utilization : result) {
         if (utilization.channelNumber == 6) {
-            QVERIFY(utilization.networkCount >= 5);
+            QCOMPARE(utilization.networkCount, 5);
             break;
         }
     }

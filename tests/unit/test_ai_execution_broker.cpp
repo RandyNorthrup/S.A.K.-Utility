@@ -114,7 +114,8 @@ void AiExecutionBrokerTests::runPowerShell_rejectsElevatedWithoutRunner() {
     QVERIFY(waitForFinish(finished_spy));
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(!result.started);
-    QVERIFY(result.error_message.contains(QStringLiteral("Elevated")));
+    QCOMPARE(result.error_message,
+             QStringLiteral("Elevated AI command execution is not connected"));
 }
 
 void AiExecutionBrokerTests::runPowerShell_usesElevatedRunnerWhenRequested() {
@@ -142,7 +143,7 @@ void AiExecutionBrokerTests::runPowerShell_usesElevatedRunnerWhenRequested() {
     QVERIFY(result.started);
     QVERIFY(result.elevated);
     QCOMPARE(result.exit_code, 0);
-    QVERIFY(result.stdout_text.contains(QStringLiteral("admin")));
+    QCOMPARE(result.stdout_text, QStringLiteral("Write-Output 'admin'"));
 }
 
 void AiExecutionBrokerTests::runPowerShell_cancelsRunningProcess() {
@@ -197,7 +198,8 @@ void AiExecutionBrokerTests::runPowerShell_rejectsConcurrentStarts() {
             saw_first_cancelled = result.started && result.cancelled;
         } else if (id == QStringLiteral("cmd_second")) {
             saw_second_rejected = !result.started &&
-                                  result.error_message.contains(QStringLiteral("already running"));
+                                  result.error_message ==
+                                      QStringLiteral("Broker is already running a command");
         }
     }
 
@@ -268,7 +270,9 @@ void AiExecutionBrokerTests::startCmd_rejectsElevation() {
 
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(!result.started);
-    QVERIFY(result.error_message.contains(QStringLiteral("Elevated")));
+    QCOMPARE(result.error_message,
+             QStringLiteral("Elevated cmd.exe launch is not supported; use run_powershell "
+                            "for admin tasks."));
 }
 
 void AiExecutionBrokerTests::startProcess_launchesProgramDirectly() {
@@ -317,7 +321,7 @@ void AiExecutionBrokerTests::startProcess_rejectsEmptyProgram() {
 
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(!result.started);
-    QVERIFY(result.error_message.contains(QStringLiteral("Program path is empty")));
+    QCOMPARE(result.error_message, QStringLiteral("Program path is empty"));
 }
 
 void AiExecutionBrokerTests::processRequestFromJson_parsesArguments() {
@@ -356,9 +360,11 @@ void AiExecutionBrokerTests::toJson_redactsSecretsInStdoutAndStderr() {
     QVERIFY(!stdout_field.contains(openai_redaction_sample));
     QVERIFY(!stdout_field.contains(github_redaction_sample));
     QVERIFY(!stderr_field.contains(password_redaction_sample));
-    QVERIFY(stdout_field.contains(QStringLiteral("[redacted")) ||
-            stdout_field.contains(QStringLiteral("sk-...[redacted]")));
-    QVERIFY(stderr_field.contains(QStringLiteral("[redacted]")));
+    // Exact post-redaction output: the sk- token is collapsed by the assignment-secret rule
+    // (token=[redacted]) and the ghp_ token by the github rule; the earlier "sk-...[redacted]"
+    // disjunct was dead. Pins the whole redacted format, not just presence of a marker.
+    QCOMPARE(stdout_field, QStringLiteral("token=[redacted] [redacted-github-token]"));
+    QCOMPARE(stderr_field, QStringLiteral("password=[redacted] on stderr"));
 }
 
 void AiExecutionBrokerTests::runPowerShell_truncationKeepsTerminalError() {

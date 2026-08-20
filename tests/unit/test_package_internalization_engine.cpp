@@ -192,6 +192,7 @@ void TestPackageInternalizationEngine::parsePackageHashFromOData_extractsHashFor
     // A version absent from the feed yields an empty (fail-closed) pair.
     const auto missing = PackageInternalizationEngine::parsePackageHashFromOData(doc, "9.9.9");
     QVERIFY(missing.first.isEmpty());
+    QVERIFY(missing.second.isEmpty());  // the whole pair is empty (fail closed), not just the hash
 }
 
 void TestPackageInternalizationEngine::

@@ -128,7 +128,10 @@ void TestOfflinePackageSearch::chocoManager_construction_notInitialized() {
 void TestOfflinePackageSearch::chocoManager_searchPackage_emptyQuery_fails() {
     sak::ChocolateyManager manager;
     auto result = manager.searchPackage("", 10);
-    QVERIFY(!result.success);
+    // Pin the empty-query branch specifically (the leading-'-' and negative-limit branches
+    // also fail with exit_code -1, so !success alone does not prove which fired).
+    QCOMPARE(result.error_message, QString("Search query is empty"));
+    QCOMPARE(result.exit_code, -1);
 }
 
 void TestOfflinePackageSearch::chocoManager_parseSearchResults_multipleVersions() {
@@ -320,14 +323,15 @@ void TestOfflinePackageSearch::searchResult_selectionClearsOnNewSearch() {
 // ============================================================================
 
 void TestOfflinePackageSearch::constants_searchDefaults_reasonable() {
-    QVERIFY(sak::offline::kSearchResultsDefault > 0);
+    QCOMPARE(sak::offline::kSearchResultsDefault, 30);
     QVERIFY(sak::offline::kSearchResultsDefault <= sak::offline::kSearchMaxResults);
-    QVERIFY(sak::offline::kSearchMaxResults <= 100);
+    QCOMPARE(sak::offline::kSearchMaxResults, 50);
 }
 
 void TestOfflinePackageSearch::constants_nugetUrl_notEmpty() {
-    QVERIFY(QString(sak::offline::kNuGetBaseUrl).startsWith("https://"));
-    QVERIFY(!QString(sak::offline::kNuGetSearchPath).isEmpty());
+    QCOMPARE(QString(sak::offline::kNuGetBaseUrl),
+             QString("https://community.chocolatey.org/api/v2/"));
+    QCOMPARE(QString(sak::offline::kNuGetSearchPath), QString("Search()"));
 }
 
 // ============================================================================

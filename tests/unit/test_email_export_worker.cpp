@@ -337,7 +337,7 @@ void TestEmailExportWorker::mboxExportWithAttachmentSucceeds() {
     QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
     worker.exportMboxItems(&parser, config);
 
-    QVERIFY(complete_spy.count() > 0);
+    QCOMPARE(complete_spy.count(), 1);
     const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
     QCOMPARE(result.items_exported, 1);
     QCOMPARE(result.items_failed, 0);  // readable attachment -> not a partial export
@@ -438,10 +438,12 @@ void TestEmailExportWorker::mboxRejectsNonMessageFormat() {
     QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
     worker.exportMboxItems(&parser, config);
 
-    QVERIFY(complete_spy.count() > 0);
+    QCOMPARE(complete_spy.count(), 1);
     const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
     QCOMPARE(result.items_exported, 0);
-    QVERIFY(!result.errors.isEmpty());  // the unsupported-format error is surfaced
+    QCOMPARE(result.errors.size(), 1);
+    QVERIFY(result.errors.first().contains(
+        QStringLiteral("MBOX export supports only per-message formats")));
     // No stray .eml was written from a coerced format.
     QVERIFY(QDir(out_dir.path()).entryList({QStringLiteral("*.eml")}, QDir::Files).isEmpty());
     parser.close();
