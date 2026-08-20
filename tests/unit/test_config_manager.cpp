@@ -83,10 +83,9 @@ void ConfigManagerTests::instance_returnsSameObject() {
 void ConfigManagerTests::configPath_isPortableAppLocal() {
     const QString appDir = QDir::cleanPath(QCoreApplication::applicationDirPath());
     const QString configPath = QDir::cleanPath(sak::app_paths::configFilePath());
-    QVERIFY2(configPath.startsWith(appDir + QLatin1Char('/')),
-             qPrintable(QStringLiteral("Config path is not app-local: %1").arg(configPath)));
-    QVERIFY2(configPath.endsWith(QStringLiteral("/data/config/Utility.ini")),
-             qPrintable(QStringLiteral("Unexpected config path: %1").arg(configPath)));
+    // Portable branch: the whole path is fixed (appDir/data/config/Utility.ini). The old
+    // startsWith+endsWith pair left the middle segment unconstrained.
+    QCOMPARE(configPath, QDir::cleanPath(appDir + QStringLiteral("/data/config/Utility.ini")));
 }
 
 // ============================================================================
@@ -138,10 +137,10 @@ void ConfigManagerTests::resetToDefaults_restoresValues() {
     // Reset
     mgr.resetToDefaults();
 
-    // Should be back to default (typically 4 or similar)
+    // resetToDefaults restores the exact kDefaultBackupThreadCount (mirrors the reclamp
+    // sibling's QCOMPARE at getBackupThreadCount()==4).
     int defaultCount = mgr.getBackupThreadCount();
-    QVERIFY(defaultCount != 99);
-    QVERIFY(defaultCount > 0);
+    QCOMPARE(defaultCount, 4);
 }
 
 // ============================================================================
@@ -269,7 +268,9 @@ void ConfigManagerTests::typedGetters_reclampOutOfRangeStoredValues() {
     QCOMPARE(mgr.getImageFlasherValidationMode(), QString("full"));
 
     mgr.setValue("image_flasher/buffer_size", 0);
-    QVERIFY(mgr.getImageFlasherBufferSize() > 0);
+    // A non-positive buffer reclamps to the default kBufferAlignment (4096); literal because
+    // config_manager.h does not include network_constants.h.
+    QCOMPARE(mgr.getImageFlasherBufferSize(), 4096);
 
     mgr.setValue("image_flasher/large_drive_threshold", -10);
     QCOMPARE(mgr.getImageFlasherLargeDriveThreshold(), 128);
@@ -308,8 +309,10 @@ void ConfigManagerTests::sync_reportsHealthy() {
 // empty (no error to report); real errors carry a non-empty message.
 void ConfigManagerTests::describeSettingsStatus_mapsErrors() {
     QVERIFY(sak::ConfigManager::describeSettingsStatus(QSettings::NoError).isEmpty());
-    QVERIFY(!sak::ConfigManager::describeSettingsStatus(QSettings::AccessError).isEmpty());
-    QVERIFY(!sak::ConfigManager::describeSettingsStatus(QSettings::FormatError).isEmpty());
+    QCOMPARE(sak::ConfigManager::describeSettingsStatus(QSettings::AccessError),
+             QStringLiteral("settings access error (permission denied or file locked)"));
+    QCOMPARE(sak::ConfigManager::describeSettingsStatus(QSettings::FormatError),
+             QStringLiteral("settings format error (config file is corrupt)"));
 }
 
 QTEST_GUILESS_MAIN(ConfigManagerTests)

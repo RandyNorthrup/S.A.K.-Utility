@@ -93,8 +93,19 @@ private Q_SLOTS:
     void smartFilterDefaults() {
         SmartFilter filter;
         filter.initializeDefaults();
-        // Should have populated exclude patterns
-        QVERIFY(!filter.exclude_patterns.isEmpty());
+        // initializeDefaults seeds the exact 11-pattern list; a truncation must fail.
+        QCOMPARE(filter.exclude_patterns,
+                 (QStringList{".*\\.tmp$",
+                              ".*\\.temp$",
+                              ".*\\.cache$",
+                              ".*\\.lock$",
+                              ".*\\.lck$",
+                              ".*~$",
+                              ".*\\.crdownload$",
+                              ".*\\.part$",
+                              "desktop\\.ini$",
+                              "thumbs\\.db$",
+                              "\\.DS_Store$"}));
     }
 
     void smartFilterSerialize() {
@@ -104,7 +115,8 @@ private Q_SLOTS:
         QJsonObject json = filter.toJson();
         SmartFilter restored = SmartFilter::fromJson(json);
 
-        QCOMPARE(restored.exclude_patterns.size(), filter.exclude_patterns.size());
+        // Round-trip must preserve content AND order, not merely the count.
+        QCOMPARE(restored.exclude_patterns, filter.exclude_patterns);
     }
 
     // --- BackupManifest ---
@@ -329,8 +341,34 @@ private Q_SLOTS:
             QVERIFY2(f.dangerous_files.contains(mandatory, Qt::CaseInsensitive),
                      qPrintable("missing mandatory exclusion: " + mandatory));
         }
-        QVERIFY(!f.exclude_patterns.isEmpty());
-        QVERIFY(!f.exclude_folders.isEmpty());
+        // fromJson({}) leaves the seeded defaults intact: pin both exact lists.
+        QCOMPARE(f.exclude_patterns,
+                 (QStringList{".*\\.tmp$",
+                              ".*\\.temp$",
+                              ".*\\.cache$",
+                              ".*\\.lock$",
+                              ".*\\.lck$",
+                              ".*~$",
+                              ".*\\.crdownload$",
+                              ".*\\.part$",
+                              "desktop\\.ini$",
+                              "thumbs\\.db$",
+                              "\\.DS_Store$"}));
+        QCOMPARE(f.exclude_folders,
+                 (QStringList{"Temp",
+                              "temp",
+                              "$RECYCLE.BIN",
+                              "Cache",
+                              "GPUCache",
+                              "Code Cache",
+                              "Service Worker",
+                              "Session Storage",
+                              "WebCache",
+                              "node_modules",
+                              ".git",
+                              ".svn",
+                              "__pycache__",
+                              "Packages"}));
     }
 
     void filterEmptyDangerousArrayStillMandatory() {

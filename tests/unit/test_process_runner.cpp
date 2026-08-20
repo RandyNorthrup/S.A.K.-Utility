@@ -60,7 +60,7 @@ void ProcessRunnerTests::runProcess_echoCommand() {
     QCOMPARE(result.exit_code, 0);
     QVERIFY(!result.timed_out);
     QVERIFY(!result.cancelled);
-    QVERIFY(result.std_out.trimmed().contains("Hello World"));
+    QCOMPARE(result.std_out.trimmed(), QStringLiteral("Hello World"));
 }
 
 void ProcessRunnerTests::runProcess_exitCode() {
@@ -73,8 +73,8 @@ void ProcessRunnerTests::runProcess_exitCode() {
 void ProcessRunnerTests::runProcess_stderrCapture() {
     auto result = sak::runProcess("cmd.exe", {"/C", "echo error message 1>&2"}, 10'000);
 
-    // stderr should contain the error message
-    QVERIFY(result.std_err.contains("error message"));
+    // cmd writes only the echoed text to stderr; trimmed() strips the trailing space/CRLF.
+    QCOMPARE(result.std_err.trimmed(), QStringLiteral("error message"));
 }
 
 void ProcessRunnerTests::runProcess_nonExistentProgram() {
@@ -83,7 +83,10 @@ void ProcessRunnerTests::runProcess_nonExistentProgram() {
     // After BUG-13 fix: waitForStarted() detects launch failure immediately.
     // exit_code should be -1 and std_err should contain an error message.
     QCOMPARE(result.exit_code, -1);
-    QVERIFY(!result.std_err.isEmpty());
+    // Launch failure always begins with this fixed, locale-independent prefix (only the
+    // trailing QProcess errorString() varies).
+    QVERIFY2(result.std_err.startsWith(QStringLiteral("Failed to start process:")),
+             qPrintable(result.std_err));
 }
 
 void ProcessRunnerTests::runProcess_timeout() {
@@ -187,7 +190,7 @@ void ProcessRunnerTests::runPowerShell_simpleScript() {
 
     QCOMPARE(result.exit_code, 0);
     QVERIFY(!result.timed_out);
-    QVERIFY(result.std_out.contains("PowerShell Test"));
+    QCOMPARE(result.std_out.trimmed(), QStringLiteral("PowerShell Test"));
 }
 
 void ProcessRunnerTests::runPowerShell_withNoProfile() {
@@ -338,16 +341,17 @@ void ProcessRunnerTests::processFaultInjector_substitutesResultForEveryLauncher(
     const auto direct = sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000);
     QCOMPARE(direct.exit_code, 7);
     QCOMPARE(direct.exit_status, 1);
-    QVERIFY(direct.std_err.contains("INJECTED-FAILURE"));
+    QCOMPARE(direct.std_err, QStringLiteral("INJECTED-FAILURE"));
     QVERIFY(!direct.succeeded());
 
     // runPowerShell funnels through runProcess -> the same internal runner, so it is injected too.
     const auto shell = sak::runPowerShell("Write-Output 'would-succeed'", 10'000);
     QCOMPARE(shell.exit_code, 7);
-    QVERIFY(shell.std_err.contains("INJECTED-FAILURE"));
+    QCOMPARE(shell.std_err, QStringLiteral("INJECTED-FAILURE"));
 
     QCOMPARE(calls, 2);
-    QVERIFY2(lastProgram.contains("powershell", Qt::CaseInsensitive), qPrintable(lastProgram));
+    QVERIFY2(lastProgram.endsWith(QStringLiteral("powershell.exe"), Qt::CaseInsensitive),
+             qPrintable(lastProgram));
 }
 
 // The injector must not leak and must be a controllable OVERLAY, not a permanent break of

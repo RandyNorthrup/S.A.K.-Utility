@@ -75,7 +75,7 @@ Install-ChocolateyPackage -PackageName $packageName `
     -SilentArgs '/S'
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/setup.exe"));
 }
 
@@ -89,7 +89,7 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     -SilentArgs '/S'
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/setup-x86.exe"));
     QCOMPARE(result.resources.first().url_64bit, QString("https://example.com/setup-x64.exe"));
 }
@@ -104,7 +104,7 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     -ChecksumType 'sha256'
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().checksum, QString("abc123def456"));
     QCOMPARE(result.resources.first().checksum_type, QString("sha256"));
 }
@@ -122,7 +122,7 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     -Checksum64 'bbb64' -ChecksumType64 'sha512'
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().checksum_64bit, QString("bbb64"));
     QCOMPARE(result.resources.first().checksum_type_64bit, QString("sha512"));
 }
@@ -150,7 +150,7 @@ Install-ChocolateyZipPackage -PackageName 'testpkg' `
     -UnzipLocation "$(Split-Path -parent $MyInvocation.MyCommand.Definition)"
 )ps1";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/archive.zip"));
 }
 
@@ -166,7 +166,7 @@ Get-ChocolateyWebFile -PackageName 'testpkg' `
     -Url 'https://example.com/binary.exe'
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/binary.exe"));
 }
 
@@ -190,7 +190,7 @@ Install-ChocolateyPackage @packageArgs
 )";
     auto result = parser.parse(script);
     QVERIFY(result.uses_splatting);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/setup.exe"));
     QCOMPARE(result.resources.first().url_64bit, QString("https://example.com/setup-x64.exe"));
 }
@@ -221,7 +221,7 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     -Url $downloadUrl
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/resolved.exe"));
 }
 
@@ -258,7 +258,9 @@ Get-ChocolateyWebFile -PackageName 'pkg1' `
     -Url 'https://example.com/extra.dll'
 )";
     auto result = parser.parse(script);
-    QVERIFY(result.resources.size() >= 2);
+    QCOMPARE(result.resources.size(), 2);
+    QCOMPARE(result.resources[0].url, QString("https://example.com/installer1.exe"));
+    QCOMPARE(result.resources[1].url, QString("https://example.com/extra.dll"));
 }
 
 // ============================================================================
@@ -281,7 +283,7 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
 
     sak::InstallScriptParser parser;
     auto result = parser.parseFile(file_path);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/fromfile.exe"));
 }
 
@@ -289,7 +291,8 @@ void TestInstallScriptParser::parseFile_nonexistentFile_returnsWarning() {
     sak::InstallScriptParser parser;
     auto result = parser.parseFile("C:/nonexistent/path/script.ps1");
     QVERIFY(result.resources.isEmpty());
-    QVERIFY(!result.warnings.isEmpty());
+    QCOMPARE(result.warnings.size(), 1);
+    QCOMPARE(result.warnings.first(), QString("Cannot open file: C:/nonexistent/path/script.ps1"));
 }
 
 // ============================================================================

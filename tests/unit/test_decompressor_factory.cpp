@@ -102,7 +102,8 @@ void DecompressorFactoryTests::detectFormat_tarGzExtension() {
 void DecompressorFactoryTests::detectFormat_unknownExtension() {
     writeFile("file.txt", "plain text");
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("file.txt"));
-    QVERIFY(fmt.isEmpty() || fmt.toLower() == "unknown");
+    QVERIFY(
+        fmt.isEmpty());  // production returns "" for an unknown format; "unknown" is never returned
 }
 
 void DecompressorFactoryTests::detectFormat_caseInsensitive() {
@@ -225,7 +226,8 @@ void DecompressorFactoryTests::detectFormat_xzMagic() {
 void DecompressorFactoryTests::detectFormat_noMagicNoExtension() {
     writeFile("plain_data.bin", "Just some plain text data");
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("plain_data.bin"));
-    QVERIFY(fmt.isEmpty() || fmt.toLower() == "unknown");
+    QVERIFY(
+        fmt.isEmpty());  // production returns "" for an unknown format; "unknown" is never returned
 }
 
 // ============================================================================
