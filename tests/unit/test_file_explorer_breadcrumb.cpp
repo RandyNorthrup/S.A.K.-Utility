@@ -30,8 +30,10 @@ void FileExplorerBreadcrumbTests::uncPathKeepsBackslashTargets() {
     QCOMPARE(segments.at(1).label, QStringLiteral("dir"));
     QCOMPARE(segments.at(1).target_path, QStringLiteral("\\\\srv\\share\\dir"));
     QCOMPARE(segments.at(2).target_path, QStringLiteral("\\\\srv\\share\\dir\\sub"));
-    // The buggy single-slash reconstruction must never appear.
-    QVERIFY(!segments.at(2).target_path.startsWith(QStringLiteral("/")));
+    // The deepest UNC tail segment's label is the bare final component. The full
+    // target_path pinned just above already starts with '\\' (never '/'), subsuming the
+    // old anti-single-slash guard, so pin the previously-unchecked label instead.
+    QCOMPARE(segments.at(2).label, QStringLiteral("sub"));
 }
 
 // Forward-slash UNC (//srv/share) is treated the same as backslash UNC.
