@@ -25,7 +25,10 @@ private Q_SLOTS:
 
 void TestRestorePointManager::construction_default() {
     RestorePointManager manager;
-    QVERIFY(dynamic_cast<QObject*>(&manager) != nullptr);
+    // The upcast to QObject* is compile-time non-null (RestorePointManager : public QObject),
+    // so it verifies nothing; pin the moc name to prove Q_OBJECT is present and namespaced.
+    QCOMPARE(QByteArray(manager.metaObject()->className()),
+             QByteArrayLiteral("sak::RestorePointManager"));
 }
 
 void TestRestorePointManager::construction_nonCopyable() {
