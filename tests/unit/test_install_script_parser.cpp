@@ -123,6 +123,9 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
 )";
     auto result = parser.parse(script);
     QCOMPARE(result.resources.size(), 1);
+    QCOMPARE(result.resources.first().url, QString("https://example.com/setup-x86.exe"));
+    QCOMPARE(result.resources.first().url_64bit, QString("https://example.com/setup-x64.exe"));
+    QCOMPARE(result.resources.first().checksum, QString("aaa32"));
     QCOMPARE(result.resources.first().checksum_64bit, QString("bbb64"));
     QCOMPARE(result.resources.first().checksum_type_64bit, QString("sha512"));
 }
@@ -152,6 +155,7 @@ Install-ChocolateyZipPackage -PackageName 'testpkg' `
     auto result = parser.parse(script);
     QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/archive.zip"));
+    QCOMPARE(result.package_type, QString("zip"));
 }
 
 // ============================================================================
@@ -193,6 +197,10 @@ Install-ChocolateyPackage @packageArgs
     QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/setup.exe"));
     QCOMPARE(result.resources.first().url_64bit, QString("https://example.com/setup-x64.exe"));
+    QCOMPARE(result.resources.first().checksum, QString("aabbccdd"));
+    QCOMPARE(result.resources.first().checksum_type, QString("sha256"));
+    QCOMPARE(result.silent_args, QString("/VERYSILENT /NORESTART"));
+    QCOMPARE(result.package_type, QString("exe"));
 }
 
 void TestInstallScriptParser::parse_splatting_detectsFlag() {
@@ -233,6 +241,8 @@ void TestInstallScriptParser::parse_emptyScript_returnsEmpty() {
     sak::InstallScriptParser parser;
     auto result = parser.parse(QString());
     QVERIFY(result.resources.isEmpty());
+    QCOMPARE(result.warnings.size(), 1);
+    QCOMPARE(result.warnings.first(), QString("Empty script content"));
 }
 
 void TestInstallScriptParser::parse_noDownloads_returnsEmpty() {
@@ -244,6 +254,8 @@ $path = Get-Location
 )";
     auto result = parser.parse(script);
     QVERIFY(result.resources.isEmpty());
+    QCOMPARE(result.warnings.size(), 1);
+    QCOMPARE(result.warnings.first(), QString("No download URLs found in script"));
 }
 
 void TestInstallScriptParser::parse_multipleResources_allExtracted() {
@@ -260,7 +272,9 @@ Get-ChocolateyWebFile -PackageName 'pkg1' `
     auto result = parser.parse(script);
     QCOMPARE(result.resources.size(), 2);
     QCOMPARE(result.resources[0].url, QString("https://example.com/installer1.exe"));
+    QCOMPARE(result.resources[0].source_function, QString("Install-ChocolateyPackage"));
     QCOMPARE(result.resources[1].url, QString("https://example.com/extra.dll"));
+    QCOMPARE(result.resources[1].source_function, QString("Get-ChocolateyWebFile"));
 }
 
 // ============================================================================

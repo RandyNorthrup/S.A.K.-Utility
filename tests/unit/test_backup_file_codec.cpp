@@ -194,6 +194,7 @@ void BackupFileCodecTests::compressionActuallyShrinksCompressibleData() {
 
     auto written = sak::writeBackupFile(sourcePath(), storedPath(), options);
     QVERIFY(written.has_value());
+    QCOMPARE(written.value().plain_bytes, static_cast<qint64>(1 << 20));  // the 1 MiB source
     QVERIFY2(written.value().stored_bytes * 100 < written.value().plain_bytes,
              "1 MiB of a single repeated byte must compress by more than 100x");
 }
@@ -213,6 +214,7 @@ void BackupFileCodecTests::encryptedBytesDoNotContainPlaintext() {
 
     auto written = sak::writeBackupFile(sourcePath(), storedPath(), options);
     QVERIFY(written.has_value());
+    QCOMPARE(written.value().plain_bytes, qint64{3300});  // 100 x 33-byte marker
 
     const QByteArray stored = fileBytes(storedPath());
     QVERIFY(!stored.isEmpty());
@@ -344,6 +346,7 @@ void BackupFileCodecTests::tamperedPayload_failsAndLeavesNoOutput() {
 
     auto restored = sak::readBackupFile(storedPath(), restoredPath(), options.password);
     QVERIFY2(!restored.has_value(), "an edited container must fail authentication");
+    QCOMPARE(restored.error(), sak::error_code::decrypt_failed);
     QVERIFY2(!QFile::exists(restoredPath()), "no plaintext may survive a failed restore");
 }
 
@@ -362,6 +365,7 @@ void BackupFileCodecTests::truncatedContainer_failsAndLeavesNoOutput() {
 
     auto restored = sak::readBackupFile(storedPath(), restoredPath(), options.password);
     QVERIFY2(!restored.has_value(), "a truncated container must fail");
+    QCOMPARE(restored.error(), sak::error_code::decrypt_failed);
     QVERIFY(!QFile::exists(restoredPath()));
 }
 

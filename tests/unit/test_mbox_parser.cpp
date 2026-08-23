@@ -5,6 +5,7 @@
 /// @brief Unit tests for MBOX file parser
 
 #include "sak/email_constants.h"
+#include "sak/error_codes.h"
 #include "sak/mbox_parser.h"
 
 #include <QFuture>
@@ -122,8 +123,8 @@ void TestMboxParser::openNonExistentFile() {
     // green under a duplicate/repeated emission. Pin the count and the reason, matching the
     // openEmptyFile sibling's QCOMPARE(count, 1) + message-content convention.
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY2(error_spy.first().at(0).toString().contains(QStringLiteral("Cannot open MBOX file")),
-             qPrintable(error_spy.first().at(0).toString()));
+    QCOMPARE(error_spy.first().at(0).toString(),
+             QStringLiteral("Cannot open MBOX file: C:/nonexistent_mbox_xyz.mbox"));
     QVERIFY(!parser.isOpen());
 }
 
@@ -140,7 +141,8 @@ void TestMboxParser::openEmptyFile() {
     // reason and leaves the parser shut instead of accepting an "empty mailbox".
     QVERIFY(!parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY2(error_spy.first().at(0).toString().contains(QStringLiteral("Not a valid MBOX file")),
+    QVERIFY2(error_spy.first().at(0).toString().startsWith(
+                 QStringLiteral("Not a valid MBOX file (missing 'From ' header): ")),
              qPrintable(error_spy.first().at(0).toString()));
     QCOMPARE(parser.messageCount(), 0);
 }
@@ -452,7 +454,9 @@ void TestMboxParser::deepNestedMultipartFailsClosed() {
     MboxParser deepParser;
     deepParser.open(deep.fileName());
     QVERIFY(deepParser.isOpen());
-    QVERIFY(!deepParser.readMessageDetail(0).has_value());
+    const auto deepResult = deepParser.readMessageDetail(0);
+    QVERIFY(!deepResult.has_value());
+    QCOMPARE(deepResult.error(), sak::error_code::mbox_message_parse_error);  // depth-cap refusal
     deepParser.close();
 
     // Non-vacuity: an equally-nested structure that stays UNDER the cap (10 levels) parses
@@ -634,6 +638,9 @@ void TestMboxParser::fromLineDetectsValidSeparator() {
     rejecting_parser.open(invalid_first_line.fileName());
     QVERIFY(!rejecting_parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
+    QVERIFY2(error_spy.first().at(0).toString().startsWith(
+                 QStringLiteral("Not a valid MBOX file (missing 'From ' header): ")),
+             qPrintable(error_spy.first().at(0).toString()));
     QCOMPARE(rejecting_parser.messageCount(), 0);
 }
 
@@ -650,9 +657,8 @@ void TestMboxParser::loadMessagesWhenClosed() {
     // messagesLoaded, so a view never renders an empty list as a successful load.
     parser.loadMessages(0, 10);
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY2(error_spy.first().at(0).toString().startsWith(
-                 QStringLiteral("Failed to load messages")),
-             qPrintable(error_spy.first().at(0).toString()));
+    QCOMPARE(error_spy.first().at(0).toString(),
+             QStringLiteral("Failed to load messages: Invalid operation"));
     QCOMPARE(loaded_spy.count(), 0);
 }
 
@@ -671,9 +677,8 @@ void TestMboxParser::loadDetailOutOfRange() {
     // reported and no (stale or empty) detail is emitted.
     parser.loadMessageDetail(99'999);
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY2(error_spy.first().at(0).toString().startsWith(
-                 QStringLiteral("Failed to load message detail")),
-             qPrintable(error_spy.first().at(0).toString()));
+    QCOMPARE(error_spy.first().at(0).toString(),
+             QStringLiteral("Failed to load message detail: Invalid argument"));
     QCOMPARE(detail_spy.count(), 0);
 
     parser.close();
@@ -896,10 +901,22 @@ void TestMboxParser::malformedBase64AttachmentFailsClosed() {
     MboxParser parser;
     parser.open(f.fileName());
     QVERIFY(parser.isOpen());
-    QVERIFY(!parser.readMessageDetail(0).has_value());
-    QVERIFY(!parser.readAttachmentData(sak::MboxMessageIndex{0}, sak::MboxAttachmentIndex{0})
-                 .has_value());
-    QVERIFY(!parser.readAllAttachments(0).has_value());
+    {
+        const auto d = parser.readMessageDetail(0);
+        QVERIFY(!d.has_value());
+        QCOMPARE(d.error(), sak::error_code::mbox_message_parse_error);
+    }
+    {
+        const auto a = parser.readAttachmentData(sak::MboxMessageIndex{0},
+                                                 sak::MboxAttachmentIndex{0});
+        QVERIFY(!a.has_value());
+        QCOMPARE(a.error(), sak::error_code::mbox_message_parse_error);
+    }
+    {
+        const auto all = parser.readAllAttachments(0);
+        QVERIFY(!all.has_value());
+        QCOMPARE(all.error(), sak::error_code::mbox_message_parse_error);
+    }
     parser.close();
 }
 
@@ -952,6 +969,9 @@ void TestMboxParser::multipartWithManyPartsSplitsCorrectly() {
     auto detail = parser.readMessageDetail(0);
     QVERIFY(detail.has_value());
     QCOMPARE(detail->attachments.size(), 3);
+    QCOMPARE(detail->attachments.at(0).long_filename, QStringLiteral("f0.bin"));
+    QCOMPARE(detail->attachments.at(1).long_filename, QStringLiteral("f1.bin"));
+    QCOMPARE(detail->attachments.at(2).long_filename, QStringLiteral("f2.bin"));
     QVERIFY(detail->body_plain.contains(QStringLiteral("body text")));
     parser.close();
 }

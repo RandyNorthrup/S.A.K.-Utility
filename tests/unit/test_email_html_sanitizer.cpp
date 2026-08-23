@@ -101,7 +101,9 @@ void EmailHtmlSanitizerTests::scriptSchemeUrisAreNeutralized() {
     QVERIFY(!containsCi(clean, "vbscript:"));
     // Neutralized, not deleted: the anchor text stays readable as evidence.
     QVERIFY(clean.contains(QStringLiteral("Click here")));
-    QVERIFY(clean.contains(QStringLiteral("blocked:")));
+    // Neutralized keeps the whole anchor intact with the scheme rewritten to blocked:.
+    QVERIFY(clean.contains(QStringLiteral("<a href=\"blocked:evil()\">Click here</a>")));
+    QVERIFY(clean.contains(QStringLiteral("<a href=\"blocked:evil()\">Or here</a>")));
 }
 
 void EmailHtmlSanitizerTests::cssExpressionAndResourceUrlsAreNeutralized() {
@@ -109,21 +111,21 @@ void EmailHtmlSanitizerTests::cssExpressionAndResourceUrlsAreNeutralized() {
     QVERIFY(!containsCi(clean, "expression("));
     QVERIFY(!containsCi(clean, "bg.png"));
     QVERIFY(!containsCi(clean, "url("));
+    QVERIFY(clean.contains(
+        QStringLiteral("<style>body { background: none; width: blocked(alert(1)); }</style>")));
 
     // A data: url() is self-contained and must survive, or inline images break.
     const QString inline_css = QStringLiteral(
         "<div style=\"background: url(data:image/gif;base64,R0lGOD); color: red;\">x</div>");
     const QString kept = sanitizeEmailBodyHtml(inline_css);
-    QVERIFY(kept.contains(QStringLiteral("url(data:image/gif;base64,R0lGOD)")));
-    QVERIFY(kept.contains(QStringLiteral("color: red")));
+    QCOMPARE(kept, inline_css);  // a self-contained data: url() survives verbatim
 
     // file:// and relative url() are local-disclosure vectors, not formatting.
-    QVERIFY(!containsCi(sanitizeEmailBodyHtml(
-                            QStringLiteral("<p style=\"background:url(file:///C:/x.png)\">p</p>")),
-                        "file://"));
-    QVERIFY(
-        !containsCi(sanitizeEmailBodyHtml(QStringLiteral("<style>@import url(evil.css);</style>")),
-                    "evil.css"));
+    QCOMPARE(sanitizeEmailBodyHtml(
+                 QStringLiteral("<p style=\"background:url(file:///C:/x.png)\">p</p>")),
+             QStringLiteral("<p style=\"background:none\">p</p>"));
+    QCOMPARE(sanitizeEmailBodyHtml(QStringLiteral("<style>@import url(evil.css);</style>")),
+             QStringLiteral("<style>@import none;</style>"));
 }
 
 void EmailHtmlSanitizerTests::ordinaryFormattingSurvives() {
