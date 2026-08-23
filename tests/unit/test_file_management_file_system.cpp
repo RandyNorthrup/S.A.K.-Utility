@@ -269,7 +269,8 @@ private Q_SLOTS:
             QStringLiteral("\\\\?\\globalroot\\device\\harddisk4\\partition2"),
             QStringLiteral("APFS"),
             size);
-        QCOMPARE(lower.kind, upper.kind);
+        QCOMPARE(upper.kind, sak::FileManagementTargetKind::Partition);
+        QCOMPARE(lower.kind, sak::FileManagementTargetKind::Partition);  // not misread as ImageFile
         QCOMPARE(lower.can_write_files, upper.can_write_files);
         QVERIFY(lower.can_write_files);
     }
@@ -431,7 +432,9 @@ private Q_SLOTS:
         const auto result = sak::FileManagementFileSystemBridge::copyFileToHost(
             target, dir.filePath(QStringLiteral("nope.bin")), destPath, 1024);
         QVERIFY(!result.ok);
-        QVERIFY(!result.blockers.isEmpty());
+        QCOMPARE(result.blockers,
+                 QStringList{QStringLiteral("Could not open source %1.")
+                                 .arg(dir.filePath(QStringLiteral("nope.bin")))});
         // The destination is not left behind on failure.
         QVERIFY(!QFile::exists(destPath));
     }
@@ -597,8 +600,9 @@ private Q_SLOTS:
             src.filePath(QStringLiteral("top.txt")),
             QDir(destination.path()).filePath(QStringLiteral("bad")));
         QVERIFY(!notDir.ok);
-        QVERIFY2(notDir.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("directory")),
-                 qPrintable(notDir.blockers.join(QStringLiteral(" "))));
+        QCOMPARE(notDir.blockers,
+                 QStringList{QStringLiteral("Source is not a readable directory: %1")
+                                 .arg(src.filePath(QStringLiteral("top.txt")))});
     }
 
     void importDropsEntriesPastDepthBoundWithSignal() {
@@ -627,7 +631,7 @@ private Q_SLOTS:
             QDir(source.path()).filePath(QStringLiteral("root")),
             QDir(destination.path()).filePath(QStringLiteral("moved-root")));
         QVERIFY(imported.ok);
-        QVERIFY(imported.entries_skipped > 0);
+        QCOMPARE(imported.entries_skipped, 1);  // the depth-33 subtree is dropped as one skip
         // ok alone overclaims: complete must report the dropped entries so a caller
         // cannot mistake this partial import for a whole one (B8-19).
         QVERIFY(!imported.complete);
@@ -810,9 +814,7 @@ private Q_SLOTS:
         QCOMPARE(listing.entries.at(0).name, QStringLiteral("a.txt"));
         QCOMPARE(listing.entries.at(1).name, QStringLiteral("b.txt"));
         QCOMPARE(listing.entries.at(2).name, QStringLiteral("c.txt"));
-        QVERIFY(!listing.warnings.isEmpty());
-        QVERIFY2(listing.warnings.join(QChar(' ')).contains(QStringLiteral("truncated")),
-                 qPrintable(listing.warnings.join(QChar(' '))));
+        QCOMPARE(listing.warnings, QStringList{QStringLiteral("Listing truncated to 3 entries")});
     }
 
     void deleteDirectoryTreeRemovesNestedLocalTree() {
@@ -865,7 +867,8 @@ private Q_SLOTS:
         const auto unverified = sak::FileManagementFileSystemBridge::removeExistingEntry(
             raw, QStringLiteral("/dest/a.txt"), 100);
         QVERIFY(!unverified.ok);
-        QVERIFY(!unverified.blockers.isEmpty());
+        QCOMPARE(unverified.blockers,
+                 QStringList{QStringLiteral("Target is read-only; the write was refused.")});
     }
 
     // Read a raw file back through the bridge for byte comparison. Takes
@@ -1181,7 +1184,9 @@ private Q_SLOTS:
         const auto target = B::localTarget(temp.path());
         const auto result = B::deleteDirectory(target, QString());
         QVERIFY(!result.ok);
-        QVERIFY(!result.blockers.isEmpty());
+        QCOMPARE(result.blockers,
+                 QStringList{QStringLiteral(
+                     "Refusing to recursively delete an empty path or filesystem root: ")});
         QVERIFY(QDir(nested).exists());  // nothing was deleted
 
         // A real nested delete still succeeds.

@@ -66,7 +66,7 @@ void ElevationTierTests::tierToString_mixed() {
 // ============================================================================
 
 void ElevationTierTests::featureTable_isNotEmpty() {
-    QVERIFY(sak::kFeatureCount > 0);
+    QCOMPARE(sak::kFeatureCount, size_t(46));  // static_assert already guards > 0; pin table size
 }
 
 void ElevationTierTests::featureTable_noDuplicateIds() {

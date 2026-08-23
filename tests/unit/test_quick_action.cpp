@@ -113,27 +113,40 @@ private Q_SLOTS:
     void formatLogBoxBasic() {
         QStringList lines = {"Line 1", "Line 2"};
         QString result = StubAction::formatLogBox("TITLE", lines);
-        QVERIFY(result.contains("TITLE"));
-        QVERIFY(result.contains("Line 1"));
-        QVERIFY(result.contains("Line 2"));
+        // Pin the exact box: fields are leftJustified(65), so pad counts are 65 minus token length.
+        const QString border =
+            QStringLiteral("+================================================================+\n");
+        QCOMPARE(result,
+                 border + QStringLiteral("| TITLE") + QString(60, ' ') + QStringLiteral("|\n") +
+                     border + QStringLiteral("| Line 1") + QString(59, ' ') +
+                     QStringLiteral("|\n") + QStringLiteral("| Line 2") + QString(59, ' ') +
+                     QStringLiteral("|\n") + border);
     }
 
     void formatLogBoxWithDuration() {
         QStringList lines = {"Result: OK"};
         QString result = StubAction::formatLogBox("TEST", lines, 1500);
-        QVERIFY(result.contains("TEST"));
-        QVERIFY(result.contains("Result: OK"));
-        // 1500 ms is rendered as a seconds footer with two decimals. The old
-        // three-way disjunction matched "1.5" inside any nearby number.
-        QVERIFY(result.contains(QStringLiteral("Completed in: 1.50 seconds")));
+        // 1500 ms -> "1.50 seconds"; the footer is intentionally not box-aligned (46-space pad).
+        const QString border =
+            QStringLiteral("+================================================================+\n");
+        QCOMPARE(result,
+                 border + QStringLiteral("| TEST") + QString(61, ' ') + QStringLiteral("|\n") +
+                     border + QStringLiteral("| Result: OK") + QString(55, ' ') +
+                     QStringLiteral("|\n") + border +
+                     QStringLiteral("| Completed in: 1.50 seconds") + QString(46, ' ') +
+                     QStringLiteral("|\n") + border);
     }
 
     void formatLogBoxEmptyLines() {
         QStringList lines;
         QString result = StubAction::formatLogBox("EMPTY", lines);
-        QVERIFY(result.contains("EMPTY"));
-        // No duration was supplied, so no footer may be invented for it.
-        QVERIFY(!result.contains(QStringLiteral("Completed in")));
+        // No content lines and no duration -> a 3-border box; pins EMPTY and footer absence at
+        // once.
+        const QString border =
+            QStringLiteral("+================================================================+\n");
+        QCOMPARE(result,
+                 border + QStringLiteral("| EMPTY") + QString(60, ' ') + QStringLiteral("|\n") +
+                     border + border);
     }
 
     // --- Base class state management ---

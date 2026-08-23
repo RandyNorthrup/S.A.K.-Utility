@@ -72,7 +72,7 @@ void Win32McpDialogChoiceTests::collectButtonsFiltersToEnabledOnScreenButtons() 
 void Win32McpDialogChoiceTests::emptySetRefuses() {
     QString why;
     QCOMPARE(chooseDialogButton({}, QString(), why), -1);
-    QVERIFY(!why.isEmpty());
+    QCOMPARE(why, QStringLiteral("The window has no enabled button to invoke."));
 }
 
 void Win32McpDialogChoiceTests::singleAffirmativeChosen() {
@@ -117,9 +117,10 @@ void Win32McpDialogChoiceTests::refusesWhenNoAffirmativeAndListsCaptions() {
         QString(),
         why);
     QCOMPARE(idx, -1);
-    QVERIFY(why.contains(QStringLiteral("Abort")));
-    QVERIFY(why.contains(QStringLiteral("Retry")));
-    QVERIFY(why.contains(QStringLiteral("Ignore")));
+    QCOMPARE(why,
+             QStringLiteral(
+                 "No affirmative button found; pass 'button' to pick one of: Abort, Retry, "
+                 "Ignore"));
 }
 
 void Win32McpDialogChoiceTests::refusesMultipleNamelessButtons() {
@@ -128,7 +129,9 @@ void Win32McpDialogChoiceTests::refusesMultipleNamelessButtons() {
     QString why;
     const int idx = chooseDialogButton(buttons({QString(), QString()}), QString(), why);
     QCOMPARE(idx, -1);
-    QVERIFY(why.contains(QStringLiteral("(unnamed)")));
+    QCOMPARE(why,
+             QStringLiteral("No affirmative button found; pass 'button' to pick one of: (unnamed), "
+                            "(unnamed)"));
 }
 
 void Win32McpDialogChoiceTests::explicitButtonMatchesSubstringCaseInsensitive() {
@@ -156,7 +159,7 @@ void Win32McpDialogChoiceTests::explicitButtonNoMatchRefuses() {
     const int idx =
         chooseDialogButton(buttons({QStringLiteral("OK")}), QStringLiteral("Retry"), why);
     QCOMPARE(idx, -1);
-    QVERIFY(why.contains(QStringLiteral("Retry")));
+    QCOMPARE(why, QStringLiteral("No enabled button matches 'Retry'."));
 }
 
 void Win32McpDialogChoiceTests::affirmativeRankingPrefersEarlierCaption() {
@@ -175,7 +178,10 @@ void Win32McpDialogChoiceTests::destructiveCaptionRejectedDespiteAffirmativeWord
     const int idx = chooseDialogButton(
         buttons({QStringLiteral("Yes, delete all"), QStringLiteral("Cancel")}), QString(), why);
     QCOMPARE(idx, -1);
-    QVERIFY(why.contains(QStringLiteral("Yes, delete all")));
+    QCOMPARE(
+        why,
+        QStringLiteral(
+            "No affirmative button found; pass 'button' to pick one of: Yes, delete all, Cancel"));
 }
 
 void Win32McpDialogChoiceTests::exactAffirmativeChosenOverDestructiveSibling() {
