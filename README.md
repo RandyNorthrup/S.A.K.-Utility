@@ -893,3 +893,4 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 - [Issues](https://github.com/RandyNorthrup/S.A.K.-Utility/issues)
 - [Discussions](https://github.com/RandyNorthrup/S.A.K.-Utility/discussions)
 - [Releases](https://github.com/RandyNorthrup/S.A.K.-Utility/releases)
+- [Buy me a coffee](https://www.paypal.com/donate/?hosted_button_id=Q9VC7B42R7K82) - support development via PayPal
