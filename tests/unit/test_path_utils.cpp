@@ -309,6 +309,11 @@ void PathUtilsTests::dirSizeAndCount_doesNotFollowJunction() {
     // junction's exclusion is the symlink guard -- not a walk that never recurses at all.
     QCOMPARE(result.value().file_count, std::uintmax_t{2});
     QCOMPARE(result.value().total_bytes, std::uintmax_t{12});
+    // The junction is refused inside shouldRecurse before any open, so no skip is flagged: the
+    // capacity-gate flags stay complete/0 (a regression routing it through skip-and-flag would
+    // flip these while leaving the counts, and the bare count check would still pass).
+    QVERIFY(result.value().complete);
+    QCOMPARE(result.value().skipped_dirs, std::uintmax_t{0});
 }
 
 void PathUtilsTests::dirSizeWalk_permissionDeniedSkipsAndFlagsIncomplete() {
@@ -348,6 +353,8 @@ void PathUtilsTests::dirSizeAndCount_normalDir() {
     // We created 3 files: "Hello"(5), "World!!"(7), "DeepData123"(11) = 23 bytes
     QCOMPARE(result.value().file_count, std::uintmax_t{3});
     QCOMPARE(result.value().total_bytes, std::uintmax_t{23});
+    QVERIFY(result.value().complete);  // a clean runner-owned walk keeps the trust-this-number flag
+    QCOMPARE(result.value().skipped_dirs, std::uintmax_t{0});
 }
 
 void PathUtilsTests::dirSizeAndCount_emptyDir() {
@@ -357,6 +364,8 @@ void PathUtilsTests::dirSizeAndCount_emptyDir() {
     QVERIFY(result.has_value());
     QCOMPARE(result.value().file_count, std::uintmax_t{0});
     QCOMPARE(result.value().total_bytes, std::uintmax_t{0});
+    QVERIFY(result.value().complete);  // empty dir: one clean open, no skip
+    QCOMPARE(result.value().skipped_dirs, std::uintmax_t{0});
 }
 
 void PathUtilsTests::dirSizeAndCount_nonExistentDir() {

@@ -154,6 +154,9 @@ void PackageMatcherTests::findMatch_exactMapping() {
 
     QVERIFY(result.has_value());
     QCOMPARE(result->choco_package, QString("my-test-app"));
+    QCOMPARE(result->match_type, QString("exact"));
+    QCOMPARE(result->matched_name, QString("My Test"));
+    QVERIFY(result->available);
     // Direct exact-mapping hit returns confidence 1.0 (not the 0.95 case-insensitive path).
     QCOMPARE(result->confidence, 1.0);
 }
@@ -200,6 +203,7 @@ void PackageMatcherTests::fuzzyMatch_similarityAtThresholdMatches() {
 
     QVERIFY(result.has_value());  // kills the ">=" -> ">" boundary tighten
     QCOMPARE(result->choco_package, QString("axyd"));
+    QCOMPARE(result->matched_name, QString("axyd"));
     QCOMPARE(result->match_type, QString("fuzzy"));
     QVERIFY(qFuzzyCompare(result->confidence, 0.6));
 }
@@ -220,6 +224,8 @@ void PackageMatcherTests::fuzzyMatch_bestSelectTieKeepsFirst() {
     QVERIFY(result.has_value());
     // Real comparator keeps "abcde" (first); the "<" mutant would pick "abcdz".
     QCOMPARE(result->choco_package, QString("abcde"));
+    QCOMPARE(result->match_type, QString("fuzzy"));
+    QCOMPARE(result->matched_name, QString("abcde"));
     QVERIFY(qFuzzyCompare(result->confidence, 0.85));
 }
 

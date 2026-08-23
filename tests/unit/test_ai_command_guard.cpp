@@ -91,6 +91,11 @@ void AiCommandGuardTests::safeReadOnlyCommandPasses() {
     const sak::ai::AiCommandGuardResult result = sak::ai::evaluateCommandGuard(request,
                                                                                request.command);
 
+    // isEmpty() alone is also satisfied by a default (un-run) result; pin the derived contract so
+    // a guard that returned an un-evaluated default would fail.
+    QVERIFY(result.evaluated);
+    QVERIFY(result.allowed());
+    QVERIFY(!result.requiresApproval());
     QVERIFY(result.block_error.isEmpty());
     QVERIFY(result.approval_reason.isEmpty());
 }
