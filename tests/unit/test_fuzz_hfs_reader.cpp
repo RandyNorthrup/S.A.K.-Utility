@@ -161,7 +161,11 @@ private Q_SLOTS:
             const QByteArray banner = failureBanner(outcome);
             QVERIFY2(false, banner.constData());
         }
-        QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
+        // Exact count on the all-pass path (any failure QVERIFY2(false)-returns above): run()
+        // increments iterations_run once per seed plus once per mutation iteration. The old >=
+        // bound would still pass if the mutation loop ran ZERO iterations.
+        QCOMPARE(outcome.iterations_run,
+                 static_cast<int>(corpus.size()) + sak::fuzz::iterationsFromEnv());
     }
 
     // The shared accept-path fixture must actually open, or the fuzz above would never reach the
@@ -176,7 +180,21 @@ private Q_SLOTS:
                                                                                     QString(),
                                                                                     kListEntryCap);
         QVERIFY2(root.ok, qPrintable(root.blockers.join(QStringLiteral("; "))));
-        QVERIFY(!root.entries.isEmpty());
+        // The fixture catalog holds exactly two root children (parent CNID 2): the folder Docs
+        // (id 16) and the file hello.txt (id 17, "hello from hfs\n" = 15 bytes); note.txt lives
+        // under Docs (parent 16) and must not appear at root. !isEmpty() would still pass if a
+        // regression dropped hello.txt, mis-ordered the pair, flipped a type flag, or reported a
+        // wrong size -- pin the whole listing.
+        QCOMPARE(root.entries.size(), static_cast<qsizetype>(2));
+        QCOMPARE(root.entries[0].name, QStringLiteral("Docs"));
+        QVERIFY(root.entries[0].directory);
+        QVERIFY(!root.entries[0].regular_file);
+        QCOMPARE(root.entries[0].catalog_id, static_cast<uint32_t>(16));
+        QCOMPARE(root.entries[1].name, QStringLiteral("hello.txt"));
+        QVERIFY(root.entries[1].regular_file);
+        QVERIFY(!root.entries[1].directory);
+        QCOMPARE(root.entries[1].catalog_id, static_cast<uint32_t>(17));
+        QCOMPARE(root.entries[1].size_bytes, static_cast<uint64_t>(15));
     }
 };
 

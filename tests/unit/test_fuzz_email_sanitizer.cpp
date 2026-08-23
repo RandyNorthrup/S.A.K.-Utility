@@ -106,7 +106,8 @@ private Q_SLOTS:
         // The seed pass alone runs corpus.size() checks; the mutation pass adds the
         // configured iterations. Guard the count so a harness that silently ran zero
         // inputs cannot masquerade as a pass.
-        QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
+        QCOMPARE(outcome.iterations_run,
+                 static_cast<int>(corpus.size()) + sak::fuzz::iterationsFromEnv());
     }
 };
 

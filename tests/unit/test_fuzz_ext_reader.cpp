@@ -178,7 +178,10 @@ private Q_SLOTS:
             const auto root = sak::PartitionExtFileSystemReader::listDirectoryFromImage(
                 path, QString(), kListEntryCap);
             QVERIFY2(root.ok, qPrintable(root.blockers.join(QStringLiteral("; "))));
-            QVERIFY(!root.entries.isEmpty());
+            // The fixture root block holds 5 records; production drops '.' and '..', leaving
+            // exactly 3 (hello.txt, docs, hello-link) for both the direct and extent-mapped
+            // variants. !isEmpty() would still pass if a regression collapsed the listing.
+            QCOMPARE(root.entries.size(), static_cast<qsizetype>(3));
         }
     }
 };
