@@ -171,6 +171,7 @@ void SmartDiskAnalyzerTests::parseOutput_validNvmeJson() {
     QCOMPARE(nvme.power_on_hours, uint64_t{5000});
     QCOMPARE(nvme.unsafe_shutdowns, uint32_t{4});
     QCOMPARE(nvme.media_errors, uint32_t{0});
+    QCOMPARE(nvme.error_log_entries, uint32_t{0});  // num_err_log_entries, the last unpinned field
     QCOMPARE(static_cast<int>(nvme.temperature), 42);
     QCOMPARE(static_cast<int>(nvme.available_spare), 100);
     QCOMPARE(static_cast<int>(nvme.available_spare_threshold), 10);
@@ -354,6 +355,11 @@ void SmartDiskAnalyzerTests::assess_unknownReport_recommendationsSayUnknown() {
         QVERIFY2(!rec.contains("health is good", Qt::CaseInsensitive),
                  "an indeterminate drive must not be reported as healthy");
     }
+    // ...and DOES carry the exact unavailable-data recommendation (the Unknown branch appends
+    // exactly this one), so the negative loop is not vacuously satisfied by an empty list.
+    QVERIFY(report.recommendations.contains(
+        QStringLiteral("SMART data was unavailable or unreadable -- verify the drive connection "
+                       "and re-run with administrator privileges")));
     // Must carry the exact indeterminate-health warning (pins the specific message, not just that
     // some warning mentions "could not be determined").
     QVERIFY(report.warnings.contains(

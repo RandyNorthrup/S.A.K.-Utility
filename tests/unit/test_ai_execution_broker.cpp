@@ -114,6 +114,7 @@ void AiExecutionBrokerTests::runPowerShell_rejectsElevatedWithoutRunner() {
     QVERIFY(waitForFinish(finished_spy));
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(!result.started);
+    QVERIFY(result.elevated);  // the no-runner elevated branch still marks the result elevated
     QCOMPARE(result.error_message,
              QStringLiteral("Elevated AI command execution is not connected"));
 }
@@ -163,6 +164,7 @@ void AiExecutionBrokerTests::runPowerShell_cancelsRunningProcess() {
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(result.started);
     QVERIFY(result.cancelled);
+    QCOMPARE(result.error_message, QStringLiteral("Command cancelled"));
     QVERIFY(!result.timed_out);
     QVERIFY(!broker.isRunning());
 }
@@ -195,7 +197,8 @@ void AiExecutionBrokerTests::runPowerShell_rejectsConcurrentStarts() {
         const QString id = call.at(0).toString();
         const auto result = call.at(1).value<sak::ai::AiCommandResult>();
         if (id == QStringLiteral("cmd_first")) {
-            saw_first_cancelled = result.started && result.cancelled;
+            saw_first_cancelled = result.started && result.cancelled &&
+                                  result.error_message == QStringLiteral("Command cancelled");
         } else if (id == QStringLiteral("cmd_second")) {
             saw_second_rejected = !result.started &&
                                   result.error_message ==
@@ -238,6 +241,7 @@ void AiExecutionBrokerTests::elevatedCancel_isInvokedWhenCancelCalledDuringEleva
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(result.elevated);
     QVERIFY(result.cancelled);
+    QCOMPARE(result.error_message, QStringLiteral("Cancelled by user"));
 }
 
 void AiExecutionBrokerTests::startCmd_capturesStdoutFromCmd() {
@@ -384,6 +388,7 @@ void AiExecutionBrokerTests::runPowerShell_truncationKeepsTerminalError() {
 
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(result.started);
+    QVERIFY(result.output_truncated);  // the dedicated flag, not just the appended marker text
     QVERIFY(result.stdout_text.contains(QStringLiteral("truncated")));
     QVERIFY(result.stdout_text.contains(QStringLiteral("TERMINAL-ERR-ZZZ")));
 }
