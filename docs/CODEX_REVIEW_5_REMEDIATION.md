@@ -4924,6 +4924,29 @@ So the suite itself must be audited for tests that pass regardless of the code.
     that are not serialized) and order-coupled counts (a dirs-only count that depends on an earlier
     QtTest slot was deliberately left loose as a G18-5 anti-pattern). G18-4 stays [~] on the thinning
     tail (~125 unit-test files, mostly fuzz harnesses and smaller files, still un-swept).
+  - PROGRESS 2026-08-23 tree sweeps b21..b58 -- FULL-COVERAGE FIRST PASS COMPLETE. Continued the
+    finder+adversarial-verify Workflow loop to the end of the tree. Every .cpp under tests/ has now
+    been through the sweep at least once: all 229 tests/unit files, all 3 tests/integration files
+    (b57: offline_package_builder manifest_version presence-check -> exact "1.0" == kManifestVersion),
+    and all 4 tests/certification live-cert drivers (b58: no nominees -- their comparisons are runtime
+    hardware outcomes, not deterministic values). 53 gated pin-commits total across the whole campaign
+    (each full Release ctest 249/249). This session (b44..b58): 43 assertions pinned over 13 gated
+    commits, plus a reverted erroneous creds/ .gitignore entry. Highest-value tail finds: error_codes
+    allCodesHaveNames converted from a near-vacuous !empty()/!=fallback loop into a parallel
+    {code, expected} table pinning all 73 codes' exact messages (a typo or cross-mapped message now
+    goes red); and the fuzz-harness template defect QVERIFY(iterations_run >= corpus.size()) present in
+    EVERY fuzz slot -- a bound the seed-validation pass alone satisfies, so it STILL PASSES if the
+    2000-iteration mutation loop ran zero times -- pinned to the exact corpus.size() +
+    iterationsFromEnv() across ~13 slots (several fixed on the spot though not nominated). The vacuous
+    QObject/WorkerBase upcast (QVERIFY(qobject_cast/dynamic_cast != nullptr) on a stack object, always
+    non-null) was resolved wherever found via static_assert(is_base_of) + an exact moc className() pin
+    (cpu/disk/memory benchmark workers, connectivity_tester, restore_point_manager); where the
+    adversarial verifier called it FALSE_POSITIVE for "no runtime value to pin" it was overridden --
+    the moc className IS the deterministic value and catches a missing Q_OBJECT / wrong namespace the
+    static_assert cannot. G18-4 stays [~] NOT [x]: full-coverage is a first pass, not a proof that zero
+    weak assertions remain -- a deeper re-sweep keeps yielding per-branch siblings (as b13's re-sweep
+    of nominally-"clean" files showed, and as the G18-1 mutation tail shows), and the break-every-fix
+    half of the item is proven end-to-end only for the G18-1 decoder/parser/comparator corpus so far.
       campaign, prove it by reverting the fix locally and observing the failure
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.
