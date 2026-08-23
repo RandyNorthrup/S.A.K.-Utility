@@ -250,6 +250,8 @@ cpp_logs_old/
 
 # Temporary files
 temp/
+# Local credentials (VM/cert secrets) -- never track
+creds/
 *.tmp
 *.temp
 *.bak

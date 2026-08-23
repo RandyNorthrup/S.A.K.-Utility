@@ -41,10 +41,9 @@ void UiTextSafetyTests::wrapperMarksTheStringAsRichText() {
     // The wrapper -- not the value -- has to be what makes Qt choose the rich-text branch;
     // otherwise an escaped "AT&T" would be shown as the literal "AT&amp;T" on a plain sink.
     const QString wrapped = asLiteralRichText(QStringLiteral("AT&T"));
-    QVERIFY(wrapped.startsWith(QLatin1String("<html>")));
-    QVERIFY(wrapped.endsWith(QLatin1String("</html>")));
-    // Whitespace must survive, so a padded log line or an indented path is not reflowed.
-    QVERIFY(wrapped.contains(QLatin1String("pre-wrap")));
+    // Pin the full wrapped output (prologue + pre-wrap style + escaped payload + epilogue).
+    QCOMPARE(wrapped,
+             QStringLiteral("<html><span style='white-space: pre-wrap;'>AT&amp;T</span></html>"));
 }
 
 void UiTextSafetyTests::boldTagIsNeutralized() {
@@ -59,22 +58,18 @@ void UiTextSafetyTests::boldTagIsNeutralized() {
 void UiTextSafetyTests::imageTagCannotFetchAResource() {
     // The concrete impact in the finding: Qt's rich text loads <img src=...>, local or remote.
     const QString body = payload(QStringLiteral("<img src='http://attacker.example/x.png'>"));
-    QVERIFY(!body.contains(QLatin1String("<img")));
-    QVERIFY(!body.contains(QLatin1Char('<')));
-    QVERIFY(!body.contains(QLatin1Char('>')));
+    QCOMPARE(body, QStringLiteral("&lt;img src='http://attacker.example/x.png'&gt;"));
 }
 
 void UiTextSafetyTests::anchorCannotBecomeALink() {
     const QString body = payload(QStringLiteral("<a href=\"file:///C:/Windows\">click</a>"));
-    QVERIFY(!body.contains(QLatin1Char('<')));
-    QVERIFY(!body.contains(QLatin1Char('>')));
-    QVERIFY(body.contains(QLatin1String("&quot;")));
+    QCOMPARE(body, QStringLiteral("&lt;a href=&quot;file:///C:/Windows&quot;&gt;click&lt;/a&gt;"));
 }
 
 void UiTextSafetyTests::ampersandAndQuoteAreEscaped() {
     const QString body = payload(QStringLiteral("Ben & Jerry's \"best\""));
-    QVERIFY(body.contains(QLatin1String("&amp;")));
-    QVERIFY(body.contains(QLatin1String("&quot;")));
+    // ' is deliberately left unescaped (Qt's toHtmlEscaped) -- the load-bearing distinction.
+    QCOMPARE(body, QStringLiteral("Ben &amp; Jerry's &quot;best&quot;"));
 }
 
 void UiTextSafetyTests::entityInInputIsNotDecoded() {
@@ -87,8 +82,7 @@ void UiTextSafetyTests::newlinesBecomeLineBreaks() {
     // Tooltips concatenate a label and a path with "\n"; a raw newline would collapse in rich
     // text, so it is turned into an explicit break.
     const QString body = payload(QStringLiteral("File: a.txt\nC:\\Users\\Username\\a.txt"));
-    QVERIFY(body.contains(QLatin1String("<br/>")));
-    QVERIFY(!body.contains(QLatin1Char('\n')));
+    QCOMPARE(body, QStringLiteral("File: a.txt<br/>C:\\Users\\Username\\a.txt"));
 }
 
 void UiTextSafetyTests::plainTextIsUnchangedApartFromTheWrapper() {
@@ -101,15 +95,21 @@ void UiTextSafetyTests::emptyInputStaysEmpty() {
     QVERIFY(asLiteralRichText(QString()).isEmpty());
     QVERIFY(asLiteralRichText(QStringLiteral("")).isEmpty());
     // A whitespace-only value is still real text and keeps its wrapper.
-    QVERIFY(!asLiteralRichText(QStringLiteral(" ")).isEmpty());
+    QCOMPARE(asLiteralRichText(QStringLiteral(" ")),
+             QStringLiteral("<html><span style='white-space: pre-wrap;'> </span></html>"));
 }
 
 void UiTextSafetyTests::repeatedWrappingNeverUnescapes() {
     // Wrapping an already-wrapped string must not resurrect the markup it neutralized.
     const QString once = asLiteralRichText(QStringLiteral("<script>x</script>"));
     const QString twice = asLiteralRichText(once);
-    QVERIFY(!twice.contains(QLatin1String("<script")));
-    QVERIFY(!twice.contains(QLatin1String("</script")));
+    // Re-wrapping re-escapes the already-escaped entities (& -> &amp;), never unescaping.
+    QCOMPARE(twice,
+             QStringLiteral("<html><span style='white-space: pre-wrap;'>"
+                            "&lt;html&gt;&lt;span style='white-space: pre-wrap;'&gt;"
+                            "&amp;lt;script&amp;gt;x&amp;lt;/script&amp;gt;"
+                            "&lt;/span&gt;&lt;/html&gt;"
+                            "</span></html>"));
 }
 
 QTEST_GUILESS_MAIN(UiTextSafetyTests)

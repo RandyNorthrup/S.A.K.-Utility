@@ -20,9 +20,8 @@ void AiOfflineDownloaderToolRunnerTests::rejectsMissingOperation() {
     const QJsonObject result = sak::ai::AiOfflineDownloaderToolRunner::run(QJsonObject{}, {});
 
     QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
-    QVERIFY(result.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("requires operation")));
+    QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Offline downloader requires operation"));
 }
 
 void AiOfflineDownloaderToolRunnerTests::failsFastWhenCallbackMissing() {
@@ -30,9 +29,8 @@ void AiOfflineDownloaderToolRunnerTests::failsFastWhenCallbackMissing() {
         QJsonObject{{QStringLiteral("operation"), QStringLiteral("presets")}}, {});
 
     QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
-    QVERIFY(result.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("callback is not configured")));
+    QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Offline downloader presets callback is not configured"));
 }
 
 void AiOfflineDownloaderToolRunnerTests::routesSearch() {
@@ -66,9 +64,8 @@ void AiOfflineDownloaderToolRunnerTests::blocksRunWhenWorkerBusy() {
         QJsonObject{{QStringLiteral("operation"), QStringLiteral("direct_download")}}, callbacks);
 
     QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
-    QVERIFY(result.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("already running")));
+    QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("An offline deployment operation is already running"));
 }
 
 void AiOfflineDownloaderToolRunnerTests::routesSupportedRunOperation() {

@@ -47,7 +47,7 @@ void AiWorkflowClarifierTests::flagsGenericAppValue() {
     const auto result = sak::ai::AiWorkflowClarifier::analyze(workflowWithAppInput(),
                                                               QStringLiteral("install the app"),
                                                               inputs);
-    QVERIFY(result.needsClarification());
+    QCOMPARE(result.questions.size(), 1);  // exactly one ambiguous-input question, not >=1
     QCOMPARE(result.questions.first().reason, QStringLiteral("app/package value is ambiguous"));
 }
 

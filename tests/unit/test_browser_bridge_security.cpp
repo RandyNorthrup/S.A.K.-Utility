@@ -100,7 +100,8 @@ void BrowserBridgeSecurityTests::rendezvous_readMissingFileFails() {
     RendezvousRecord out;
     QString error;
     QVERIFY(!readRendezvousRecord(QStringLiteral("Z:/nope/does_not_exist.json"), &out, &error));
-    QVERIFY(!error.isEmpty());
+    // Pin the file-open guard specifically (the errorString() tail is OS/locale-variant).
+    QVERIFY(error.startsWith(QStringLiteral("Cannot open Z:/nope/does_not_exist.json: ")));
 }
 
 void BrowserBridgeSecurityTests::rendezvous_invalidAppPidFailsClosed() {
@@ -119,7 +120,7 @@ void BrowserBridgeSecurityTests::rendezvous_invalidAppPidFailsClosed() {
     RendezvousRecord out;
     QString error;
     QVERIFY(!readRendezvousRecord(path, &out, &error));
-    QVERIFY(error.contains(QStringLiteral("app_pid")));
+    QCOMPARE(error, QStringLiteral("Rendezvous record has an invalid app_pid."));
 }
 
 void BrowserBridgeSecurityTests::rendezvous_overCapFileFailsClosed() {
@@ -140,7 +141,7 @@ void BrowserBridgeSecurityTests::rendezvous_overCapFileFailsClosed() {
     RendezvousRecord out;
     QString error;
     QVERIFY(!readRendezvousRecord(path, &out, &error));
-    QVERIFY2(error.contains(QStringLiteral("too large")), qPrintable(error));
+    QCOMPARE(error, QStringLiteral("Rendezvous record is too large."));
 }
 
 void BrowserBridgeSecurityTests::rendezvous_malformedJsonFailsClosed() {
