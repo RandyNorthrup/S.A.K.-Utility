@@ -158,17 +158,24 @@ private Q_SLOTS:
             const QByteArray banner = failureBanner(outcome);
             QVERIFY2(false, banner.constData());
         }
-        QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
+        // Exact count on the all-pass path (any failure QVERIFY2(false)-returns above): run()
+        // increments iterations_run once per seed plus once per mutation iteration. The old >=
+        // bound would still pass if the mutation loop ran ZERO iterations.
+        QCOMPARE(outcome.iterations_run,
+                 static_cast<int>(corpus.size()) + sak::fuzz::iterationsFromEnv());
     }
 
-    // Pin the anchors the fuzz oracle is built around: the healthy seed is assessable and not
-    // Unknown, a data-less payload is Unknown, and a FAILED payload is Critical.
+    // Pin the anchors the fuzz oracle is built around: the healthy seed is assessable and
+    // classifies as Healthy, a data-less payload is Unknown, and a FAILED payload is Critical.
     void knownDocumentsClassifyAsExpected() {
         sak::SmartDiskAnalyzer analyzer;
 
         const sak::SmartReport healthy = analyzer.parseAndAssessForTesting(healthySataSeed(), 0);
         QVERIFY(sak::SmartDiskAnalyzer::reportHasAssessableData(healthy));
-        QVERIFY(healthy.overall_health != sak::SmartHealthStatus::Unknown);
+        // The healthy seed resolves deterministically to Healthy (no failing attr, no threshold
+        // breach); != Unknown alone would still pass if a threshold regression downgraded it to
+        // Warning or Critical.
+        QCOMPARE(healthy.overall_health, sak::SmartHealthStatus::Healthy);
 
         const sak::SmartReport empty = analyzer.parseAndAssessForTesting(QByteArrayLiteral("{}"),
                                                                          0);
