@@ -236,7 +236,10 @@ private Q_SLOTS:
         QVERIFY(detail.has_value());
         QCOMPARE(detail->subject, QStringLiteral("hello"));
         QCOMPARE(detail->attachments.size(), 1);
-        QVERIFY(!detail->body_plain.isEmpty());
+        // Message 0's first MIME part is text/plain "body text\r\n" with no transfer-encoding
+        // and no charset, so it passes through verbatim. !isEmpty() would still pass if the
+        // MIME walk decoded the wrong part, dropped the CRLF, or leaked headers into the body.
+        QCOMPARE(detail->body_plain, QStringLiteral("body text\r\n"));
     }
 };
 

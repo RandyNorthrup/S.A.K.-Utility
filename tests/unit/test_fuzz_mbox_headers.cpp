@@ -90,7 +90,11 @@ private Q_SLOTS:
             const QByteArray banner = failureBanner(outcome);
             QVERIFY2(false, banner.constData());
         }
-        QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
+        // Exact count on the all-pass path (any failure QVERIFY2(false)-returns above): run()
+        // increments iterations_run once per seed plus once per mutation iteration. The old >=
+        // bound would still pass if the mutation loop ran ZERO iterations.
+        QCOMPARE(outcome.iterations_run,
+                 static_cast<int>(corpus.size()) + sak::fuzz::iterationsFromEnv());
     }
 
     // Exact-value coverage. The property fuzz above only asserts that every emitted name is
