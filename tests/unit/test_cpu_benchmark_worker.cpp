@@ -8,6 +8,8 @@
 
 #include <QtTest/QtTest>
 
+#include <type_traits>
+
 using namespace sak;
 
 class TestCpuBenchmarkWorker : public QObject {
@@ -28,9 +30,14 @@ void TestCpuBenchmarkWorker::construction_default() {
 }
 
 void TestCpuBenchmarkWorker::construction_isWorkerBase() {
+    // IS-A is a compile-time fact; the qobject_cast upcast on a stack object can never be
+    // null. Assert the inheritance where it can fail (compile time) and pin the moc name,
+    // which proves Q_OBJECT is present and correctly namespaced.
+    static_assert(std::is_base_of_v<WorkerBase, CpuBenchmarkWorker>,
+                  "CpuBenchmarkWorker must inherit WorkerBase.");
     CpuBenchmarkWorker worker;
-    auto* base = qobject_cast<WorkerBase*>(&worker);
-    QVERIFY(base != nullptr);
+    QCOMPARE(QByteArray(worker.metaObject()->className()),
+             QByteArrayLiteral("sak::CpuBenchmarkWorker"));
 }
 
 void TestCpuBenchmarkWorker::result_initialDefaults() {

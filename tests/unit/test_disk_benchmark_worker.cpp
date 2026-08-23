@@ -8,6 +8,8 @@
 
 #include <QtTest/QtTest>
 
+#include <type_traits>
+
 using namespace sak;
 
 namespace {
@@ -55,15 +57,22 @@ void TestDiskBenchmarkWorker::construction_default() {
 }
 
 void TestDiskBenchmarkWorker::construction_isWorkerBase() {
+    // IS-A is a compile-time fact; the qobject_cast upcast on a stack object can never be
+    // null. Assert the inheritance where it can fail (compile time) and pin the moc name,
+    // which proves Q_OBJECT is present and correctly namespaced.
+    static_assert(std::is_base_of_v<WorkerBase, DiskBenchmarkWorker>,
+                  "DiskBenchmarkWorker must inherit WorkerBase.");
     DiskBenchmarkWorker worker;
-    auto* base = qobject_cast<WorkerBase*>(&worker);
-    QVERIFY(base != nullptr);
+    QCOMPARE(QByteArray(worker.metaObject()->className()),
+             QByteArrayLiteral("sak::DiskBenchmarkWorker"));
 }
 
 void TestDiskBenchmarkWorker::config_defaults() {
     DiskBenchmarkConfig config;
     QCOMPARE(config.test_file_size_mb, static_cast<uint64_t>(1024));
-    QVERIFY(config.sequential_block_size_kb > 0);
+    // Default is the compile-time constant kDiskBenchmarkSequentialBlockSizeKb == 1024;
+    // > 0 still passes if it silently regressed to any other positive value.
+    QCOMPARE(config.sequential_block_size_kb, 1024);
 }
 
 void TestDiskBenchmarkWorker::config_setConfig() {
@@ -123,16 +132,12 @@ void TestDiskBenchmarkWorker::uniqueBenchmarkFileName_isUniqueAndWellFormed() {
     const QString b = DiskBenchmarkWorker::makeUniqueBenchmarkFileName(1234, 1000, 1);
     const QString c = DiskBenchmarkWorker::makeUniqueBenchmarkFileName(1234, 2000, 0);
 
-    // A different counter (or timestamp) yields a different name -> no collision.
-    QVERIFY(a != b);
-    QVERIFY(a != c);
-    // Well-formed: keeps the benchmark prefix and the .tmp suffix, and embeds all
-    // three discriminators.
-    QVERIFY(a.startsWith("sak_disk_benchmark_"));
-    QVERIFY(a.endsWith(".tmp"));
-    QVERIFY(a.contains("1234"));
-    QVERIFY(b.contains("1000"));
-    QVERIFY(c.contains("2000"));
+    // The format is "sak_disk_benchmark_<pid>_<msecs>_<counter>.tmp" (C-locale arg, no
+    // grouping/padding), so each output is fully deterministic. Pinning the exact strings
+    // subsumes uniqueness (a != b != c), the prefix/suffix, and every discriminator.
+    QCOMPARE(a, QStringLiteral("sak_disk_benchmark_1234_1000_0.tmp"));
+    QCOMPARE(b, QStringLiteral("sak_disk_benchmark_1234_1000_1.tmp"));
+    QCOMPARE(c, QStringLiteral("sak_disk_benchmark_1234_2000_0.tmp"));
 }
 
 // Codex-2 disk:564: test_file_size_mb of 0 (or anything below the minimum) would

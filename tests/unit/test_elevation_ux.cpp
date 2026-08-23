@@ -124,7 +124,11 @@ private Q_SLOTS:
         QVERIFY(layout->count() >= 2);
         auto* text_label = qobject_cast<QLabel*>(layout->itemAt(1)->widget());
         QVERIFY(text_label != nullptr);
-        QVERIFY(text_label->text().contains("administrator"));
+        // No QTranslator is installed, so tr() returns the source string verbatim -- pin the
+        // whole sentence; contains("administrator") passes on any string mentioning the word.
+        QCOMPARE(text_label->text(),
+                 QStringLiteral("Some operations on this tab require administrator privileges. You "
+                                "will be prompted when needed."));
     }
 
     void testCreateElevationBannerParentship() {
@@ -155,14 +159,13 @@ private Q_SLOTS:
     void testInfoPanelColorDefined() {
         // Verify the info panel color token has a valid hex color format
         QString color = QLatin1String(sak::ui::kColorBgInfoPanel);
-        QVERIFY(color.startsWith('#'));
-        QCOMPARE(color.length(), 7);  // #RRGGBB
+        // Pin the exact token; length==7 alone passes for any '#RRGGBB' (e.g. "#000000").
+        QCOMPARE(color, QStringLiteral("#e0f2fe"));  // sky-100
     }
 
     void testPrimaryColorDefined() {
         QString color = QLatin1String(sak::ui::kColorPrimary);
-        QVERIFY(color.startsWith('#'));
-        QCOMPARE(color.length(), 7);
+        QCOMPARE(color, QStringLiteral("#3b82f6"));  // blue-500
     }
 
     void testSharedIconResourceConstantsLoad() {
