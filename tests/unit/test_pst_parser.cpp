@@ -831,15 +831,18 @@ void TestPstParser::reusableMessagingFixtureListsMessageViaContentsTable() {
     const auto items = parser.readFolderItems(sak::email::kNidRootFolder, 0, 10);
     QVERIFY2(items.has_value(), "readFolderItems must succeed on the contents table");
     QCOMPARE(items->size(), 1);
+    QCOMPARE(items->first().node_id, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
 
     const auto detail = parser.readItemDetail(sak::pst_fixture::kMessageNid);
     QVERIFY2(detail.has_value(), "readItemDetail must read the message PC");
     QCOMPARE(detail->node_id, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
+    QCOMPARE(detail->subject, QStringLiteral("FUZZ"));
 
     // The populated PC path: the Subject record's HNID must resolve to the heap-stored UTF-16
     // string, proving parsePropertyRecords -> resolveHnid -> formatUnicodeValue on real bytes.
     const auto props = parser.readItemProperties(sak::pst_fixture::kMessageNid);
     QVERIFY2(props.has_value(), "readItemProperties must read the message PC");
+    QCOMPARE(props->size(), 1);
     bool found_subject = false;
     for (const auto& prop : *props) {
         if (prop.tag_id == sak::email::kPropIdSubject) {
@@ -872,6 +875,7 @@ void TestPstParser::messagePropertyExposesHumanReadableName() {
 
     const auto props = parser.readItemProperties(sak::pst_fixture::kMessageNid);
     QVERIFY2(props.has_value(), "readItemProperties must read the message PC");
+    QCOMPARE(props->size(), 1);
     bool found_subject = false;
     for (const auto& prop : *props) {
         if (prop.tag_id == sak::email::kPropIdSubject) {
@@ -976,6 +980,7 @@ void TestPstParser::hnidCellTcFixtureResolvesHeapValue() {
     QVERIFY2(items.has_value(), "readFolderItems must succeed on the two-column contents table");
     QCOMPARE(items->size(), 1);
     QCOMPARE(items->first().subject, QStringLiteral("HI"));
+    QCOMPARE(items->first().node_id, static_cast<uint64_t>(sak::pst_fixture::kMessageNid));
 }
 
 void TestPstParser::messageStoreDisplayNameIsRead() {
@@ -999,6 +1004,7 @@ void TestPstParser::messageStoreDisplayNameIsRead() {
     QCOMPARE(opened_spy.count(), 1);
     const auto info = opened_spy.first().at(0).value<sak::PstFileInfo>();
     QCOMPARE(info.display_name, QStringLiteral("STORE"));
+    QCOMPARE(info.total_folders, 1);
 }
 
 void TestPstParser::htmlOnlyMessageDerivesPlainText() {
@@ -1021,6 +1027,7 @@ void TestPstParser::htmlOnlyMessageDerivesPlainText() {
     const auto detail = parser.readItemDetail(sak::pst_fixture::kMessageNid);
     QVERIFY2(detail.has_value(), "readItemDetail must read the HTML-only message");
     QCOMPARE(detail->body_plain, QStringLiteral("hi"));
+    QCOMPARE(detail->body_html, QStringLiteral("<b>hi</b>"));
 }
 
 void TestPstParser::reusableAttachmentFixtureExposesSubnodeAttachment() {
@@ -1083,6 +1090,7 @@ void TestPstParser::reusableXblockFixtureReassemblesMultiBlockData() {
     // one Heap-on-Node PC.
     const auto props = parser.readItemProperties(sak::pst_fixture::kMessageNid);
     QVERIFY2(props.has_value(), "readItemProperties must reassemble the XBLOCK data tree");
+    QCOMPARE(props->size(), 1);
     bool found_subject = false;
     for (const auto& prop : *props) {
         if (prop.tag_id == sak::email::kPropIdSubject) {
@@ -1142,6 +1150,7 @@ void TestPstParser::reusableXxblockFixtureReassemblesTwoLevelDataTree() {
     const auto props = parser.readItemProperties(sak::pst_fixture::kMessageNid);
     QVERIFY2(props.has_value(),
              "readItemProperties must reassemble the XXBLOCK two-level data tree");
+    QCOMPARE(props->size(), 1);
     bool found_subject = false;
     for (const auto& prop : *props) {
         if (prop.tag_id == sak::email::kPropIdSubject) {

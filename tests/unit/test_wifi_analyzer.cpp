@@ -157,6 +157,7 @@ void TestWiFiAnalyzer::channelUtil_singleNetwork() {
         if (utilization.channelNumber == 6) {
             found_channel_6 = true;
             QCOMPARE(utilization.networkCount, 1);
+            QCOMPARE(utilization.ssids, QVector<QString>{QStringLiteral("TestNetwork")});
         }
     }
     QVERIFY(found_channel_6);
@@ -177,12 +178,17 @@ void TestWiFiAnalyzer::channelUtil_multipleNetworks() {
     // All 5 networks share channel 6 + empty band -> one merged "|6" entry.
     QCOMPARE(result.size(), 1);
 
-    for (const auto& utilization : result) {
-        if (utilization.channelNumber == 6) {
-            QCOMPARE(utilization.networkCount, 5);
-            break;
-        }
-    }
+    // result.size()==1 is pinned above, so the single merged entry is fully deterministic. The
+    // old `if channelNumber==6` guard could skip the count check vacuously if the channel were
+    // wrong; assert unconditionally and pin the ssids in input order.
+    QCOMPARE(result.first().channelNumber, 6);
+    QCOMPARE(result.first().networkCount, 5);
+    QCOMPARE(result.first().ssids,
+             (QVector<QString>{QStringLiteral("Network0"),
+                               QStringLiteral("Network1"),
+                               QStringLiteral("Network2"),
+                               QStringLiteral("Network3"),
+                               QStringLiteral("Network4")}));
 }
 
 // ===================================================================
@@ -201,6 +207,8 @@ void TestWiFiAnalyzer::bssSecurity_wepPrivacyNoIe() {
     // Privacy bit set but no RSN/WPA IE => legacy WEP.
     const auto sec = WiFiAnalyzer::deriveBssSecurity(true, nullptr, 0);
     QCOMPARE(sec.authentication, QStringLiteral("WEP"));
+    QCOMPARE(sec.encryption,
+             QStringLiteral("WEP"));  // only test hitting the privacy-bit WEP branch
     QVERIFY(sec.isSecure);
 }
 
@@ -209,6 +217,8 @@ void TestWiFiAnalyzer::bssSecurity_wpa1VendorIe() {
     const unsigned char ie[] = {221, 4, 0x00, 0x50, 0xF2, 0x01};
     const auto sec = WiFiAnalyzer::deriveBssSecurity(true, ie, sizeof(ie));
     QCOMPARE(sec.authentication, QStringLiteral("WPA"));
+    QCOMPARE(sec.encryption,
+             QStringLiteral("TKIP"));  // only test hitting the WPA1 vendor-IE branch
     QVERIFY(sec.isSecure);
 }
 

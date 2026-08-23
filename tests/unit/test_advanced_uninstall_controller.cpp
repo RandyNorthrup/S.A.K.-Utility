@@ -178,9 +178,10 @@ void AdvancedUninstallControllerTests::nonSafeLeftovers_keepsReviewAndRisky() {
 
     const QVector<sak::LeftoverItem> rest = AdvancedUninstallController::nonSafeLeftovers(items);
     QCOMPARE(rest.size(), 2);  // the Review + Risky items, never the Safe one
-    for (const sak::LeftoverItem& item : rest) {
-        QVERIFY(item.risk != sak::LeftoverItem::RiskLevel::Safe);
-    }
+    // nonSafeLeftovers preserves input order; pin the exact levels (the != Safe loop passed even
+    // if both were the same level or a wrong non-Safe one).
+    QCOMPARE(rest[0].risk, sak::LeftoverItem::RiskLevel::Review);
+    QCOMPARE(rest[1].risk, sak::LeftoverItem::RiskLevel::Risky);
     // safeLeftovers + nonSafeLeftovers partition the input (1 + 2 == 3).
     QCOMPARE(AdvancedUninstallController::safeLeftovers(items).size() + rest.size(), items.size());
 }
@@ -344,6 +345,8 @@ void AdvancedUninstallControllerTests::addToQueue_emptyNameRejected() {
 
     // Status message should have been emitted
     QCOMPARE(statusSpy.count(), 1);
+    QCOMPARE(statusSpy[0][0].toString(),
+             QStringLiteral("Cannot add to queue: program name is empty."));
 }
 
 void AdvancedUninstallControllerTests::removeFromQueue_valid() {
@@ -465,6 +468,8 @@ void AdvancedUninstallControllerTests::uninstallProgram_rejectsWhenBusy() {
 
     // Should have emitted a rejection status message
     QCOMPARE(statusSpy.count(), 1);
+    QCOMPARE(statusSpy[0][0].toString(),
+             QStringLiteral("Another operation is already in progress."));
 
     // Still in Enumerating state, not Uninstalling
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
@@ -486,6 +491,8 @@ void AdvancedUninstallControllerTests::forceUninstall_rejectsWhenBusy() {
     ctrl.forceUninstall(prog, ScanLevel::Moderate, false);
 
     QCOMPARE(statusSpy.count(), 1);
+    QCOMPARE(statusSpy[0][0].toString(),
+             QStringLiteral("Another operation is already in progress."));
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
 
     ctrl.cancelOperation();
@@ -504,6 +511,8 @@ void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsWhenBusy() {
     ctrl.removeRegistryEntry(prog);
 
     QCOMPARE(statusSpy.count(), 1);
+    QCOMPARE(statusSpy[0][0].toString(),
+             QStringLiteral("Another operation is already in progress."));
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
 
     ctrl.cancelOperation();
@@ -519,6 +528,7 @@ void AdvancedUninstallControllerTests::startBatch_rejectsEmptyQueue() {
 
     // Should have emitted "Batch queue is empty" status
     QCOMPARE(statusSpy.count(), 1);
+    QCOMPARE(statusSpy[0][0].toString(), QStringLiteral("Batch queue is empty."));
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
@@ -554,6 +564,8 @@ void AdvancedUninstallControllerTests::uninstallProgram_rejectsEmptyName() {
     ctrl.uninstallProgram(prog, ScanLevel::Moderate, false, false);
 
     QCOMPARE(statusSpy.count(), 1);
+    QCOMPARE(statusSpy[0][0].toString(),
+             QStringLiteral("Cannot uninstall: program name is empty."));
     // Should remain idle
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
@@ -567,6 +579,8 @@ void AdvancedUninstallControllerTests::forceUninstall_rejectsEmptyName() {
     ctrl.forceUninstall(prog, ScanLevel::Moderate, false);
 
     QCOMPARE(statusSpy.count(), 1);
+    QCOMPARE(statusSpy[0][0].toString(),
+             QStringLiteral("Cannot uninstall: program name is empty."));
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
@@ -581,6 +595,7 @@ void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsEmptyKeyPath()
     ctrl.removeRegistryEntry(prog);
 
     QCOMPARE(statusSpy.count(), 1);
+    QCOMPARE(statusSpy[0][0].toString(), QStringLiteral("Cannot remove: no registry key path."));
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
@@ -598,6 +613,8 @@ void AdvancedUninstallControllerTests::removeRegistryEntry_rejectsNonHiveRooted(
     ctrl.removeRegistryEntry(prog);
 
     QCOMPARE(statusSpy.count(), 1);
+    QCOMPARE(statusSpy[0][0].toString(),
+             QStringLiteral("Cannot remove: registry key path is not hive-rooted."));
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
@@ -770,6 +787,10 @@ void AdvancedUninstallControllerTests::silentMsiCommand_namesMsiexecByAbsoluteSy
     // hardened launch path accepts our own generated MSI command.
     const int end_quote = cmd.indexOf(QLatin1Char('"'), 1);
     QVERIFY(end_quote > 1);
+    // The whole tail after the requalified quoted path is deterministic; the loose contains()
+    // above would pass even if the switches were reordered or an extra argument were injected.
+    QCOMPARE(cmd.mid(end_quote + 1),
+             QStringLiteral(" /x {12345678-90AB-CDEF-1234-567890ABCDEF} /qn /norestart"));
     QVERIFY(sak::UninstallWorker::uninstallProgramPathTrusted(cmd.mid(1, end_quote - 1)));
 #endif
 }

@@ -497,7 +497,9 @@ void AiProviderGatewayTests::win32McpResultExtractsTextAndRiskFlags() {
     QVERIFY(!result.value(QStringLiteral("high_risk_tool")).toBool(true));
     QCOMPARE(result.value(QStringLiteral("result_text")).toString(),
              QStringLiteral("Window A\nWindow B"));
-    QVERIFY(result.contains(QStringLiteral("mcp_result")));
+    // mcp_result must echo the MCP message's own result object, not merely be present.
+    QCOMPARE(result.value(QStringLiteral("mcp_result")).toObject(),
+             mcp_message.value(QStringLiteral("result")).toObject());
     // A successful result must not be flagged as a tool error.
     QVERIFY(!result.value(QStringLiteral("mcp_is_error")).toBool(true));
 }
@@ -569,6 +571,7 @@ void AiProviderGatewayTests::planWin32McpCallBuildsReadOnlyPlan() {
     QCOMPARE(plan.timeout_ms, 1500);
     QVERIFY(plan.read_only);
     QVERIFY(!plan.high_risk);
+    QVERIFY(!plan.requires_confirmation);
     QCOMPARE(plan.preview, QStringLiteral("Win32 MCP list_windows {\"filter\":\"SAK\"}"));
 }
 
@@ -629,6 +632,8 @@ void AiProviderGatewayTests::checkAvailabilityRejectsUnsupportedAppAction() {
     QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
     QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
              QStringLiteral("app_action_unsupported"));
+    QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("App action is not supported by bundled manifest"));
 }
 
 void AiProviderGatewayTests::checkAvailabilityAcceptsReadOnlyWin32Tool() {
@@ -659,6 +664,9 @@ void AiProviderGatewayTests::checkAvailabilityAcceptsReadOnlyWin32Tool() {
     QVERIFY(result.value(QStringLiteral("success")).toBool(false));
     QCOMPARE(result.value(QStringLiteral("provider_id")).toString(), QStringLiteral("win32_mcp"));
     QVERIFY(result.value(QStringLiteral("read_only_tool")).toBool(false));
+    QCOMPARE(result.value(QStringLiteral("provider_tool")).toString(),
+             QStringLiteral("list_windows"));
+    QVERIFY(!result.value(QStringLiteral("high_risk_tool")).toBool(true));
 }
 
 // ============================================================================

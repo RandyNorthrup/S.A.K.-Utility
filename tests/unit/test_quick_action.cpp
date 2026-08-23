@@ -162,6 +162,7 @@ private Q_SLOTS:
         QCOMPARE(action.status(), QuickAction::ActionStatus::Ready);
         QVERIFY(action.lastScanResult().applicable);
         QCOMPARE(action.lastScanResult().bytes_affected, qint64(1024));
+        QCOMPARE(action.lastScanResult().summary, QStringLiteral("test"));
     }
 
     void executeUpdatesStatus() {
@@ -169,6 +170,7 @@ private Q_SLOTS:
         action.execute();
         QCOMPARE(action.status(), QuickAction::ActionStatus::Success);
         QVERIFY(action.lastExecutionResult().success);
+        QCOMPARE(action.lastExecutionResult().message, QStringLiteral("done"));
     }
 
     void cancelSetsFlag() {
@@ -197,6 +199,7 @@ private Q_SLOTS:
         QCOMPARE(action.status(), QuickAction::ActionStatus::Success);
         QCOMPARE(action.lastExecutionResult().message, QStringLiteral("completed"));
         QCOMPARE(action.lastExecutionResult().bytes_processed, qint64(4096));
+        QVERIFY(action.lastExecutionResult().success);
     }
 
     void updateStatusEmitsSignal() {
@@ -204,6 +207,8 @@ private Q_SLOTS:
         QSignalSpy spy(&action, &QuickAction::statusChanged);
         action.updateStatus(QuickAction::ActionStatus::Running);
         QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).value<QuickAction::ActionStatus>(),
+                 QuickAction::ActionStatus::Running);
     }
 };
 
