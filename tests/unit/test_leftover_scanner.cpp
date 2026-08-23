@@ -274,6 +274,7 @@ void LeftoverScannerTests::scan_findsMatchingFile() {
     QVERIFY2(found != nullptr, qPrintable(QStringLiteral("scanner did not find %1").arg(filePath)));
     QCOMPARE(found->type, LeftoverItem::Type::File);
     QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+    QCOMPARE(found->sizeBytes, qint64{13});  // the fixture file's byte length, previously unpinned
 }
 
 void LeftoverScannerTests::scan_ignoresNonMatchingFolder() {
@@ -666,7 +667,9 @@ void LeftoverScannerTests::buildServiceItems_matchesNameOrDisplay() {
     QCOMPARE(items.at(0).path, QStringLiteral("AcmeSync"));
     QCOMPARE(items.at(0).description, QStringLiteral("Windows service: Acme Sync Service"));
     QCOMPARE(items.at(1).path, QStringLiteral("svc-acme-helper"));
+    QCOMPARE(items.at(1).description, QStringLiteral("Windows service: Unrelated Display"));
     QCOMPARE(items.at(2).path, QStringLiteral("keynamemiss"));
+    QCOMPARE(items.at(2).description, QStringLiteral("Windows service: Acme Background Agent"));
 }
 
 void LeftoverScannerTests::buildServiceItems_stopRequestedInterrupts() {
@@ -852,11 +855,14 @@ void LeftoverScannerTests::installLocationSyntax_refusesUnpinnableShapes() {
         return !LeftoverScanner::installLocationSyntaxRefusal(value, roots).isEmpty();
     };
 
-    // Nothing recorded, or whitespace only.
-    QVERIFY(refused(QString()));
+    // Nothing recorded, or whitespace only. Pin the exact reason for the empty case.
+    QCOMPARE(LeftoverScanner::installLocationSyntaxRefusal(QString(), roots),
+             QStringLiteral("no install location is recorded"));
     QVERIFY(refused(QStringLiteral("   ")));
-    // Bare and relative forms name no fixed directory at all.
-    QVERIFY(refused(QStringLiteral("MyApp")));
+    // Bare and relative forms name no fixed directory at all; pin the exact reason.
+    QCOMPARE(LeftoverScanner::installLocationSyntaxRefusal(QStringLiteral("MyApp"), roots),
+             QStringLiteral("it is not a literal local directory path (relative, UNC, traversal, "
+                            "unexpanded variable or a whole volume)"));
     QVERIFY(refused(QStringLiteral("tools\\MyApp")));
     QVERIFY(refused(QStringLiteral(".\\MyApp")));
     // Drive-relative resolves against that drive's CURRENT directory.
@@ -882,8 +888,10 @@ void LeftoverScannerTests::installLocationSyntax_refusesCriticalRoots() {
         return !LeftoverScanner::installLocationSyntaxRefusal(value, roots).isEmpty();
     };
 
-    // The OS, shared-program and profile roots themselves, however they are spelled.
-    QVERIFY(refused(QStringLiteral("C:\\Windows")));
+    // The OS, shared-program and profile roots themselves, however they are spelled. Pin the
+    // reason.
+    QCOMPARE(LeftoverScanner::installLocationSyntaxRefusal(QStringLiteral("C:\\Windows"), roots),
+             QStringLiteral("it is a system, shared or user-profile root directory"));
     QVERIFY(refused(QStringLiteral("c:\\windows")));
     QVERIFY(refused(QStringLiteral("C:/Windows")));
     QVERIFY(refused(QStringLiteral("C:\\Windows\\")));
@@ -1044,6 +1052,8 @@ void LeftoverScannerTests::scan_installLocationTiedToProgram_isDeletable() {
     QVERIFY2(!item.path.isEmpty(), "the install directory must still be reported");
     QVERIFY(item.deletable);
     QCOMPARE(item.risk, LeftoverItem::RiskLevel::Safe);
+    QCOMPARE(item.type, LeftoverItem::Type::Folder);
+    QCOMPARE(item.description, QStringLiteral("Program install directory still exists"));
     QVERIFY(item.selected);
 }
 

@@ -88,9 +88,9 @@ void WindowsISODownloaderTests::cleanup() {
  */
 void WindowsISODownloaderTests::testAvailableArchitectures() {
     auto archs = WindowsISODownloader::availableArchitectures();
-    QCOMPARE(archs.size(), 2);
-    QVERIFY(archs.contains("amd64"));
-    QVERIFY(archs.contains("arm64"));
+    // Exact ordered list; size()==2 + order-independent contains() accepted a reordered
+    // {arm64,amd64}.
+    QCOMPARE(archs, QStringList({"amd64", "arm64"}));
 }
 
 /**
@@ -99,14 +99,14 @@ void WindowsISODownloaderTests::testAvailableArchitectures() {
  */
 void WindowsISODownloaderTests::testAvailableChannels() {
     auto channels = WindowsISODownloader::availableChannels();
-    QCOMPARE(channels.size(), 5);
-    // Which five, not just how many: dropping Canary while duplicating Dev keeps the count at
-    // 5 and silently changes what the wizard can offer, which the bare size check accepted.
-    QVERIFY(channels.contains(UupDumpApi::ReleaseChannel::Retail));
-    QVERIFY(channels.contains(UupDumpApi::ReleaseChannel::ReleasePreview));
-    QVERIFY(channels.contains(UupDumpApi::ReleaseChannel::Beta));
-    QVERIFY(channels.contains(UupDumpApi::ReleaseChannel::Dev));
-    QVERIFY(channels.contains(UupDumpApi::ReleaseChannel::Canary));
+    // The exact ordered ring list; the set-only contains() checks accepted any permutation, but the
+    // production order maps directly to the wizard dropdown display order.
+    QCOMPARE(channels,
+             QList<UupDumpApi::ReleaseChannel>({UupDumpApi::ReleaseChannel::Retail,
+                                                UupDumpApi::ReleaseChannel::ReleasePreview,
+                                                UupDumpApi::ReleaseChannel::Beta,
+                                                UupDumpApi::ReleaseChannel::Dev,
+                                                UupDumpApi::ReleaseChannel::Canary}));
 }
 
 /**

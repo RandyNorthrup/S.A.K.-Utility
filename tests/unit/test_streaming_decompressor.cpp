@@ -322,7 +322,9 @@ void StreamingDecompressorTests::truncatedGzip_reportsError() {
     // on whether zlib or the truncation check catches it first).
     QCOMPARE(readFully(*decomp), static_cast<qint64>(-1));
     QVERIFY(!decomp->atEnd());
-    QVERIFY(!decomp->lastError().isEmpty());
+    // gzip mid-stream truncation -> inflate() reports Z_BUF_ERROR (-5); pin the code, mirroring
+    // the Z_DATA_ERROR (-3) case elsewhere in this file. !isEmpty() also accepts unrelated errors.
+    QVERIFY(decomp->lastError().endsWith(QStringLiteral("(-5)")));
 }
 
 // Encode @p input as a real .bz2 stream with the same libbz2 the decompressor decodes

@@ -84,6 +84,9 @@ void TestActiveConnectionsMonitor::connectionInfo_defaults() {
     QVERIFY(info.state.isEmpty());
     QCOMPARE(info.processId, 0u);
     QVERIFY(info.processName.isEmpty());
+    QVERIFY(info.processPath.isEmpty());
+    QVERIFY(info.remoteHostname.isEmpty());
+    QVERIFY(info.serviceName.isEmpty());
 }
 
 void TestActiveConnectionsMonitor::currentConnections_emptyInitially() {
@@ -149,12 +152,17 @@ void TestActiveConnectionsMonitor::startStop_lifecycle() {
     QTRY_VERIFY_WITH_TIMEOUT(updated_spy.count() >= 1, 3000);
 
     const auto connections = monitor.getCurrentConnections();
-    const bool foundKnownListener =
-        std::ranges::any_of(connections, [knownPort](const ConnectionInfo& c) {
-            return c.protocol == ConnectionInfo::Protocol::TCP && c.localPort == knownPort;
-        });
-    QVERIFY2(foundKnownListener,
+    const auto it = std::ranges::find_if(connections, [knownPort](const ConnectionInfo& c) {
+        return c.protocol == ConnectionInfo::Protocol::TCP && c.localPort == knownPort;
+    });
+    QVERIFY2(it != connections.end(),
              "Enumeration must surface this process's own loopback TCP listener");
+    // Every remaining field of our own loopback listener row is deterministic.
+    QCOMPARE(it->state, QStringLiteral("LISTEN"));
+    QCOMPARE(it->localAddress, QStringLiteral("127.0.0.1"));
+    QCOMPARE(it->remoteAddress, QStringLiteral("0.0.0.0"));
+    QCOMPARE(it->remotePort, static_cast<uint16_t>(0));
+    QCOMPARE(it->processId, static_cast<uint32_t>(QCoreApplication::applicationPid()));
 
     monitor.stopMonitoring();
 
