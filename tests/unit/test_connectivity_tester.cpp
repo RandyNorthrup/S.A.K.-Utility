@@ -38,7 +38,10 @@ private Q_SLOTS:
 
 void TestConnectivityTester::construction_default() {
     ConnectivityTester tester;
-    QVERIFY(dynamic_cast<QObject*>(&tester) != nullptr);
+    // The upcast to QObject* is compile-time non-null (ConnectivityTester : public QObject),
+    // so it verifies nothing; pin the moc name to prove Q_OBJECT is present and namespaced.
+    QCOMPARE(QByteArray(tester.metaObject()->className()),
+             QByteArrayLiteral("sak::ConnectivityTester"));
 }
 
 void TestConnectivityTester::construction_nonCopyable() {
