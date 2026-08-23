@@ -164,7 +164,10 @@ void BrowserBridgeSecurityTests::rendezvous_malformedJsonFailsClosed() {
         file.close();
         QString error;
         QVERIFY2(!readRendezvousRecord(path, &out, &error), body.constData());
-        QVERIFY2(error.contains(QStringLiteral("Malformed rendezvous record")), qPrintable(error));
+        // The code-controlled prefix incl. the ": " separator is deterministic (the tail is Qt's
+        // locale-variant QJsonParseError text); anchor at the start so dropping ": " is caught.
+        QVERIFY2(error.startsWith(QStringLiteral("Malformed rendezvous record: ")),
+                 qPrintable(error));
     }
 }
 
@@ -175,14 +178,20 @@ void BrowserBridgeSecurityTests::security_daclIsCurrentUserOnlyWithMediumLabel()
     QVERIFY2(buildBridgePipeSecurity(&attributes, &descriptor, &error), qPrintable(error));
     QVERIFY(descriptor != nullptr);
     QCOMPARE(attributes.bInheritHandle, FALSE);
+    // nLength is set to sizeof(SECURITY_ATTRIBUTES); dropping that assignment leaves the zero-init
+    // value and survives the rest of the test (CreateNamedPipe does not validate it).
+    QCOMPARE(attributes.nLength, static_cast<DWORD>(sizeof(SECURITY_ATTRIBUTES)));
 
     const QString sid = currentUserSidString(&error);
     const QString sddl = descriptorToSddl(descriptor);
     QVERIFY(!sddl.isEmpty());
     QVERIFY(sddl.contains(QStringLiteral("D:P")));  // DACL is protected
-    QVERIFY(sddl.contains(sid));                    // current user is granted
-    QVERIFY(sddl.contains(QStringLiteral("NR")));   // NO_READ_UP mandatory-label bit
-    QVERIFY(sddl.contains(QStringLiteral("NW")));   // NO_WRITE_UP mandatory-label bit
+    // The fixed SYSTEM ACE (SY/GA are OS-invariant abbreviations); dropping it survives every
+    // other check here, so pin its presence explicitly.
+    QVERIFY(sddl.contains(QStringLiteral("(A;;GA;;;SY)")));  // SYSTEM full-access ACE present
+    QVERIFY(sddl.contains(sid));                             // current user is granted
+    QVERIFY(sddl.contains(QStringLiteral("NR")));            // NO_READ_UP mandatory-label bit
+    QVERIFY(sddl.contains(QStringLiteral("NW")));            // NO_WRITE_UP mandatory-label bit
     // No BUILTIN\Users, Everyone, or Authenticated Users (well-knowns render as SDDL
     // abbreviations BU / WD / AU, not raw SIDs).
     QVERIFY(!sddl.contains(QStringLiteral(";BU)")));

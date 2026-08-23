@@ -41,7 +41,14 @@ private Q_SLOTS:
             sak::FileManagementFileSystemBridge::listDirectory(target, temp.path(), 100);
         QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
         QCOMPARE(listing.entries.size(), 1);
+        // note.txt is a 19-byte ("hello target bridge") regular file; pin the full
+        // deterministic entry, not just its name (path/times are environment-derived).
         QCOMPARE(listing.entries.first().name, QStringLiteral("note.txt"));
+        QCOMPARE(listing.entries.first().size_bytes, static_cast<uint64_t>(19));
+        QCOMPARE(listing.entries.first().type, QStringLiteral("File"));
+        QVERIFY(!listing.entries.first().directory);
+        QVERIFY(listing.entries.first().regular_file);
+        QVERIFY(!listing.entries.first().symlink);
 
         const auto read = sak::FileManagementFileSystemBridge::readFile(
             target, listing.entries.first().path, 1024);
@@ -122,7 +129,8 @@ private Q_SLOTS:
         // Within the cap: full content is returned.
         const auto full = sak::FileManagementFileSystemBridge::readFile(target, filePath, 1024);
         QVERIFY(full.ok);
-        QCOMPARE(full.data.size(), 100);
+        // Pin the whole content; size()==100 alone would pass on 100 corrupt/zero bytes.
+        QCOMPARE(full.data, QByteArray(100, 'x'));
     }
 
     void writeFileLocalAtomicRoundTrip() {
@@ -141,6 +149,9 @@ private Q_SLOTS:
         const auto write2 =
             sak::FileManagementFileSystemBridge::writeFile(target, filePath, second);
         QVERIFY2(write2.ok, qPrintable(write2.blockers.join(QStringLiteral("; "))));
+        // writeFile only returns ok after verifying written == data.size(), so the reported
+        // count is deterministic; write1's count is pinned above, so pin write2's too.
+        QCOMPARE(write2.bytes_written, static_cast<uint64_t>(second.size()));
 
         const auto read = sak::FileManagementFileSystemBridge::readFile(target, filePath, 1024);
         QVERIFY(read.ok);
@@ -307,7 +318,12 @@ private Q_SLOTS:
             32ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL);
         QVERIFY(oversized.can_browse);
         QVERIFY(!oversized.can_write_files);
-        QVERIFY(oversized.blockers.join(' ').contains(QStringLiteral("24 TiB")));
+        // Pin the exact certified-range blocker; contains("24 TiB") would pass on any text
+        // mentioning that figure. (The list also holds the organizer blocker, so use membership.)
+        QVERIFY(oversized.blockers.contains(
+            QStringLiteral("APFS writes are certified for containers of %1; this container is "
+                           "outside that range")
+                .arg(sak::apfsCapacityRangeText())));
     }
 
     void apfsNestedDirectoryDeletePassesParentPath() {
@@ -343,15 +359,22 @@ private Q_SLOTS:
             sak::FileManagementFileSystemBridge::renderPreview(QByteArrayLiteral("partial"), true);
         QVERIFY(!truncatedText.is_binary);
         QVERIFY(truncatedText.truncated);
+        // The non-truncated case above pins text/shown_bytes; pin them here too (both
+        // deterministic: "partial" is not binary, so it decodes verbatim, 7 bytes shown).
+        QCOMPARE(truncatedText.text, QStringLiteral("partial"));
+        QCOMPARE(truncatedText.shown_bytes, static_cast<uint64_t>(7));
 
         // A NUL byte forces the hex+ASCII dump path; the dump carries the offset column,
         // the hex for the leading byte, and the printable ASCII gutter.
         QByteArray binary("AB\x00\x01Z", 5);
         const auto dump = sak::FileManagementFileSystemBridge::renderPreview(binary, false);
         QVERIFY(dump.is_binary);
-        QVERIFY2(dump.text.contains(QStringLiteral("00000000")), qPrintable(dump.text));
-        QVERIFY2(dump.text.contains(QStringLiteral("41 42")), qPrintable(dump.text));
-        QVERIFY2(dump.text.contains(QStringLiteral("|AB..Z|")), qPrintable(dump.text));
+        // The whole single-row dump is deterministic: 8-digit offset, 5 hex bytes then 11 empty
+        // columns (33 spaces), then the ASCII gutter (NUL and 0x01 render as '.'). Three disjoint
+        // contains() left the middle bytes (00 01 5A) and the spacing unpinned.
+        QCOMPARE(dump.text,
+                 QStringLiteral("00000000  41 42 00 01 5a ") + QString(33, QLatin1Char(' ')) +
+                     QStringLiteral(" |AB..Z|"));
     }
 
     void renderPreviewHexDumpCapsLargeBinary() {
@@ -479,9 +502,17 @@ private Q_SLOTS:
         const auto arbitraryApfs = Bridge::manualTarget(QStringLiteral("C:/fixtures/apfs.img"),
                                                         QStringLiteral("APFS"));
         QVERIFY(!arbitraryApfs.can_write_files);
-        const QString apfsNote = Bridge::safetyNotes(arbitraryApfs).join(QStringLiteral(" "));
-        QVERIFY2(apfsNote.contains(QStringLiteral("known container size")), qPrintable(apfsNote));
-        QVERIFY2(apfsNote.contains(sak::apfsCapacityRangeText()), qPrintable(apfsNote));
+        // safetyNotes appends exactly one element per branch; pin the whole read-only APFS note
+        // (two contains() left the read-only-because and Fusion/Tier2 clauses unchecked).
+        QCOMPARE(
+            Bridge::safetyNotes(arbitraryApfs),
+            QStringList{
+                QStringLiteral(
+                    "APFS writes need a known container size within the certified engine range "
+                    "(%1); this target is read-only because its size is unknown or out of range. "
+                    "Fusion/Tier2 sets and unprovided-credential encrypted volumes also stay "
+                    "read-only.")
+                    .arg(sak::apfsCapacityRangeText())});
 
         // A write-capable APFS slice states the certified-engine path and that both
         // S.A.K.-generated and real Apple-created (foreign) containers are supported.
@@ -490,19 +521,23 @@ private Q_SLOTS:
                                  QStringLiteral("APFS"),
                                  128ULL * 1024ULL * 1024ULL);
         QVERIFY(writableApfs.can_write_files);
-        const QString writableNote = Bridge::safetyNotes(writableApfs).join(QStringLiteral(" "));
-        QVERIFY2(writableNote.contains(QStringLiteral("COW engine")), qPrintable(writableNote));
-        QVERIFY2(writableNote.contains(QStringLiteral("foreign")), qPrintable(writableNote));
+        QCOMPARE(Bridge::safetyNotes(writableApfs),
+                 QStringList{QStringLiteral(
+                     "APFS writes commit through the Apple-certified in-place COW engine; "
+                     "S.A.K.-generated and real Apple-created (foreign) containers are both "
+                     "supported. Operations the engine has not certified for this container "
+                     "(snapshot-frozen deletes/renames, Fusion/Tier2 sets, locked encrypted "
+                     "volumes) fail closed with exact blockers.")});
 
         // XFS/Btrfs and ext each get their own specific note.
-        QVERIFY(Bridge::safetyNotes(
-                    Bridge::manualTarget(QStringLiteral("C:/x.img"), QStringLiteral("XFS")))
-                    .join(QStringLiteral(" "))
-                    .contains(QStringLiteral("metadata-only")));
-        QVERIFY(Bridge::safetyNotes(
-                    Bridge::manualTarget(QStringLiteral("C:/e.img"), QStringLiteral("ext4")))
-                    .join(QStringLiteral(" "))
-                    .contains(QStringLiteral("read-only browse/read/copy-out")));
+        QCOMPARE(Bridge::safetyNotes(
+                     Bridge::manualTarget(QStringLiteral("C:/x.img"), QStringLiteral("XFS"))),
+                 QStringList{QStringLiteral("XFS/Btrfs targets are metadata-only in this build; no "
+                                            "browse/read/write reader ships yet.")});
+        QCOMPARE(Bridge::safetyNotes(
+                     Bridge::manualTarget(QStringLiteral("C:/e.img"), QStringLiteral("ext4"))),
+                 QStringList{QStringLiteral("ext2/ext3/ext4 targets are read-only "
+                                            "browse/read/copy-out; no write path ships.")});
     }
 
     void exportDirectoryToHostRecursesLocalTree() {
@@ -788,6 +823,10 @@ private Q_SLOTS:
         }
         QVERIFY2(names.contains(QStringLiteral("visible.txt")), qPrintable(names.join(QChar(','))));
         QVERIFY2(names.contains(hiddenName), qPrintable(names.join(QChar(','))));
+        // The fresh temp dir holds exactly the two created files (visible.txt + the hidden one);
+        // Hidden|System are in the listing filters, so the count is deterministically 2 and a
+        // spurious extra entry (which contains() would miss) is caught.
+        QCOMPARE(listing.entries.size(), qsizetype(2));
 #ifdef Q_OS_WIN
         // The hidden attribute rides through on the entry so the view can filter it.
         QVERIFY(hidden_flag);
@@ -1135,9 +1174,11 @@ private Q_SLOTS:
             QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk63\\Partition9"),
             QStringLiteral("APFS"));
         QVERIFY(!unknown.can_write_files);
-        QVERIFY2(unknown.blockers.join(QStringLiteral(" "))
-                     .contains(QStringLiteral("known container size")),
-                 qPrintable(unknown.blockers.join(QStringLiteral(" "))));
+        // Pin the exact size-unknown blocker (distinct from the out-of-range one); the substring
+        // "known container size" is shared with the safetyNotes text, so contains() is looser.
+        QVERIFY(unknown.blockers.contains(QStringLiteral(
+            "APFS writes need a known container size to range-gate the certified engine; rescan "
+            "disks or re-add the target with its size")));
     }
 
     void inventoryPartitionBuildsRawAlias() {

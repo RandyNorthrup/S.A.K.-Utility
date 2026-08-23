@@ -201,6 +201,11 @@ void Win32McpDialogChoiceTests::substringAffirmativeNoLongerMatches() {
     const int idx = chooseDialogButton(
         buttons({QStringLiteral("Yesterday"), QStringLiteral("Retry")}), QString(), why);
     QCOMPARE(idx, -1);
+    // The -1 sentinel is shared by six refuse branches; pin the exact reason so this proves the
+    // no-affirmative branch fired (sibling refusal tests already pin their why).
+    QCOMPARE(why,
+             QStringLiteral(
+                 "No affirmative button found; pass 'button' to pick one of: Yesterday, Retry"));
 }
 
 void Win32McpDialogChoiceTests::negativeCaptionRejectedDespiteAffirmativeWord() {
@@ -216,6 +221,11 @@ void Win32McpDialogChoiceTests::negativeCaptionRejectedDespiteAffirmativeWord() 
     const int refused = chooseDialogButton(
         buttons({QStringLiteral("Yes, cancel"), QStringLiteral("Back")}), QString(), why2);
     QCOMPARE(refused, -1);
+    // Pin the exact reason (the caption "Yes, cancel" carries its own comma, so the ", "-joined
+    // list reads "Yes, cancel, Back" -- a value only the correct branch and assembly produce).
+    QCOMPARE(why2,
+             QStringLiteral(
+                 "No affirmative button found; pass 'button' to pick one of: Yes, cancel, Back"));
 }
 
 QTEST_GUILESS_MAIN(Win32McpDialogChoiceTests)
