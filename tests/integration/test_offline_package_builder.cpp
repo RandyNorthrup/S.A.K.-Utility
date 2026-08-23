@@ -148,7 +148,9 @@ void TestOfflinePackageBuilder::verifyManifest(const sak::BatchStats& final_stat
 
     QJsonObject manifest_obj = manifest_doc.object();
     QVERIFY(manifest_obj.contains("packages"));
-    QVERIFY(manifest_obj.contains("manifest_version"));
+    // manifest_version is the compile-time constant kManifestVersion; contains() would still
+    // pass if it were bumped, corrupted, or written empty.
+    QCOMPARE(manifest_obj["manifest_version"].toString(), QStringLiteral("1.0"));
     QVERIFY(manifest_obj["packages"].isArray());
     QCOMPARE(manifest_obj["packages"].toArray().size(), final_stats.completed);
 }
