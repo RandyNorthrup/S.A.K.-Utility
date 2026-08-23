@@ -144,7 +144,12 @@ private Q_SLOTS:
             const QByteArray banner = failureBanner(outcome);
             QVERIFY2(false, banner.constData());
         }
-        QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
+        // On the all-pass path (guaranteed here: any failure QVERIFY2(false)-returns above),
+        // run() increments iterations_run once per seed (checkSeeds) plus once per mutation
+        // iteration, so the exact count is corpus.size() + the iteration budget. The old >=
+        // bound would still pass if the mutation loop ran ZERO iterations.
+        QCOMPARE(outcome.iterations_run,
+                 static_cast<int>(corpus.size()) + sak::fuzz::iterationsFromEnv());
     }
 
     // The seed container must actually round-trip, or the fuzz above would never reach the decode
@@ -158,7 +163,11 @@ private Q_SLOTS:
 
         const QString container = out.filePath(QStringLiteral("seed.bak"));
         const QString dest = out.filePath(QStringLiteral("roundtrip.out"));
-        QVERIFY(sak::readBackupFile(container, dest, kSeedPassword).has_value());
+        const auto result = sak::readBackupFile(container, dest, kSeedPassword);
+        QVERIFY(result.has_value());
+        // The decode must restore the full original payload (256 lines x 55 bytes); a bare
+        // has_value() would still pass if it restored a different-length payload.
+        QCOMPARE(result->plain_bytes, qint64(14'080));
         QVERIFY(QFile::exists(dest));
     }
 };

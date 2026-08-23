@@ -210,7 +210,12 @@ private Q_SLOTS:
             const QByteArray banner = failureBanner(outcome);
             QVERIFY2(false, banner.constData());
         }
-        QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
+        // On the all-pass path (guaranteed here: any failure QVERIFY2(false)-returns above),
+        // run() increments iterations_run once per seed (checkSeeds) plus once per mutation
+        // iteration, so the exact count is corpus.size() + the iteration budget. The old >=
+        // bound would still pass if the mutation loop ran ZERO iterations.
+        QCOMPARE(outcome.iterations_run,
+                 static_cast<int>(corpus.size()) + sak::fuzz::iterationsFromEnv());
     }
 
     // The writer-generated container must actually open and list its root file, or the fuzz above
@@ -224,12 +229,13 @@ private Q_SLOTS:
         const auto root = sak::PartitionApfsFileSystemReader::listDirectoryFromImage(
             workPath, QStringLiteral("/"), kListEntryCap);
         QVERIFY2(root.ok, qPrintable(root.blockers.join(QStringLiteral("; "))));
-        QStringList names;
-        for (const auto& entry : root.entries) {
-            names << entry.name;
-        }
-        QVERIFY2(names.contains(QStringLiteral("root.txt")),
-                 qPrintable(names.join(QStringLiteral(","))));
+        // Exactly one file was committed (root.txt, "root me" = 7 bytes), so pin the whole
+        // listing. A membership-only contains() would still pass on a duplicate root.txt or an
+        // inflated listing -- the count-inflation corruption this accept-path lock-in guards.
+        QCOMPARE(root.entries.size(), 1);
+        QCOMPARE(root.entries.first().name, QStringLiteral("root.txt"));
+        QVERIFY(root.entries.first().regular_file);
+        QCOMPARE(root.entries.first().size_bytes, static_cast<uint64_t>(7));
     }
 };
 
