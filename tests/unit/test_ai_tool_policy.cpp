@@ -118,66 +118,89 @@ void AiToolPolicyTests::readOnlyPolicyBlocksNativeMutators() {
         request.command_preview = preview;
         const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc,
                                                           request);
-        QVERIFY2(!decision.risky_change, qPrintable(preview));
+        // allowed==true is the stronger claim: a regression that blocked the command while
+        // leaving risky_change false would still pass the old !risky_change check.
+        QVERIFY2(decision.allowed, qPrintable(preview));
     }
 }
 
 void AiToolPolicyTests::readOnlyShellRequiresDiagnosticAllowlist_data() {
     QTest::addColumn<QString>("command");
     QTest::addColumn<bool>("allowed");
+    // The block reason discriminates the two distinct guards: a row that reaches the WRONG guard
+    // still compares allowed==false, so only the reason catches a mis-routed refusal.
+    QTest::addColumn<QString>("expected_reason");
+
+    const QString kAllowed = QStringLiteral("Read-only diagnostic shell command allowed");
+    const QString kRisky = QStringLiteral("Read-only PC policy blocked mutating command");
+    const QString kNotAllowlisted = QStringLiteral(
+        "Read-only PC policy allows only known read-only diagnostic shell commands (ping, "
+        "ipconfig, systeminfo, tasklist, netstat, whoami, Get-*/Test-* reads, ...); this command "
+        "is not on the read-only allowlist");
 
     // Genuine read-only diagnostics stay allowed under the read-only lease.
-    QTest::newRow("ipconfig") << QStringLiteral("ipconfig /all") << true;
-    QTest::newRow("systeminfo") << QStringLiteral("systeminfo") << true;
-    QTest::newRow("tasklist") << QStringLiteral("tasklist") << true;
-    QTest::newRow("get-process") << QStringLiteral("Get-Process") << true;
-    QTest::newRow("get-pipe-sort") << QStringLiteral("Get-Process | Sort-Object CPU") << true;
-    QTest::newRow("test-netconnection") << QStringLiteral("Test-NetConnection 8.8.8.8") << true;
-    QTest::newRow("ipconfig-stream-merge") << QStringLiteral("ipconfig /all 2>&1") << true;
+    QTest::newRow("ipconfig") << QStringLiteral("ipconfig /all") << true << kAllowed;
+    QTest::newRow("systeminfo") << QStringLiteral("systeminfo") << true << kAllowed;
+    QTest::newRow("tasklist") << QStringLiteral("tasklist") << true << kAllowed;
+    QTest::newRow("get-process") << QStringLiteral("Get-Process") << true << kAllowed;
+    QTest::newRow("get-pipe-sort")
+        << QStringLiteral("Get-Process | Sort-Object CPU") << true << kAllowed;
+    QTest::newRow("test-netconnection")
+        << QStringLiteral("Test-NetConnection 8.8.8.8") << true << kAllowed;
+    QTest::newRow("ipconfig-stream-merge")
+        << QStringLiteral("ipconfig /all 2>&1") << true << kAllowed;
 
     // Fail-open bypasses the old mutation blacklist let through: a .NET file write,
     // a WMI method call, foreign interpreters, code compilation, and the call
     // operator invoking an arbitrary binary. The allowlist must refuse all of them.
     QTest::newRow("dotnet-writealltext")
-        << QStringLiteral("[IO.File]::WriteAllText('C:\\x.txt','y')") << false;
+        << QStringLiteral("[IO.File]::WriteAllText('C:\\x.txt','y')") << false << kRisky;
     QTest::newRow("wmi-invoke-method")
-        << QStringLiteral("Get-WmiObject Win32_Process | Invoke-WmiMethod -Name Create") << false;
-    QTest::newRow("python-c") << QStringLiteral("python -c \"import os\"") << false;
-    QTest::newRow("node-e") << QStringLiteral("node -e \"1\"") << false;
-    QTest::newRow("add-type") << QStringLiteral("Add-Type -TypeDefinition 'class X{}'") << false;
-    QTest::newRow("call-operator-exe") << QStringLiteral("& 'C:\\tool.exe'") << false;
-    QTest::newRow("chained-native-mutator") << QStringLiteral("ipconfig & del C:\\x") << false;
+        << QStringLiteral("Get-WmiObject Win32_Process | Invoke-WmiMethod -Name Create") << false
+        << kNotAllowlisted;
+    QTest::newRow("python-c") << QStringLiteral("python -c \"import os\"") << false
+                              << kNotAllowlisted;
+    QTest::newRow("node-e") << QStringLiteral("node -e \"1\"") << false << kNotAllowlisted;
+    QTest::newRow("add-type") << QStringLiteral("Add-Type -TypeDefinition 'class X{}'") << false
+                              << kNotAllowlisted;
+    QTest::newRow("call-operator-exe") << QStringLiteral("& 'C:\\tool.exe'") << false << kRisky;
+    QTest::newRow("chained-native-mutator")
+        << QStringLiteral("ipconfig & del C:\\x") << false << kRisky;
     QTest::newRow("method-invocation")
-        << QStringLiteral("(Get-WmiObject Win32_Service -Filter \"name='w'\").Delete()") << false;
+        << QStringLiteral("(Get-WmiObject Win32_Service -Filter \"name='w'\").Delete()") << false
+        << kRisky;
     // Call-operator + Get-Command indirection with string-concatenation obfuscation:
     // 'For'+'mat-Volume' assembles a catastrophic verb the substring regexes never see, and
     // the leading "&" call operator resolves+invokes it. The allowlist must refuse it.
     QTest::newRow("call-op-getcommand-concat")
-        << QStringLiteral("& (Get-Command ('For'+'mat-Volume')) -DriveLetter X -Force") << false;
+        << QStringLiteral("& (Get-Command ('For'+'mat-Volume')) -DriveLetter X -Force") << false
+        << kRisky;
     QTest::newRow("start-process-concat")
-        << QStringLiteral("Start-Process ('form'+'at.com') D:") << false;
-    QTest::newRow("whoami") << QStringLiteral("whoami /all") << true;
-    QTest::newRow("netstat") << QStringLiteral("netstat -ano") << true;
+        << QStringLiteral("Start-Process ('form'+'at.com') D:") << false << kRisky;
+    QTest::newRow("whoami") << QStringLiteral("whoami /all") << true << kAllowed;
+    QTest::newRow("netstat") << QStringLiteral("netstat -ano") << true << kAllowed;
 
     // CODEX_REVIEW_4 C2: a parenthesized sub-expression is evaluated by PowerShell
     // BEFORE the read-only-looking lead, so a nested mutator must forfeit the
     // allowlist. A nested READ (Get-Process).Count stays allowed.
     QTest::newRow("nested-mutator-write-output")
-        << QStringLiteral("Write-Output (Restart-Computer -Force)") << false;
+        << QStringLiteral("Write-Output (Restart-Computer -Force)") << false << kRisky;
     QTest::newRow("nested-mutator-stop-process")
-        << QStringLiteral("Write-Output (Stop-Process -Name notepad)") << false;
-    QTest::newRow("nested-read-count") << QStringLiteral("(Get-Process).Count") << true;
+        << QStringLiteral("Write-Output (Stop-Process -Name notepad)") << false << kRisky;
+    QTest::newRow("nested-read-count") << QStringLiteral("(Get-Process).Count") << true << kAllowed;
 }
 
 void AiToolPolicyTests::readOnlyShellRequiresDiagnosticAllowlist() {
     QFETCH(QString, command);
     QFETCH(bool, allowed);
+    QFETCH(QString, expected_reason);
 
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("run_powershell");
     request.command_preview = command;
     const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
     QCOMPARE(decision.allowed, allowed);
+    QCOMPARE(decision.reason, expected_reason);
 }
 
 void AiToolPolicyTests::readOnlyPolicyAllowsProviderGatewayStatus() {
@@ -301,6 +324,11 @@ void AiToolPolicyTests::appActionRunGatedByEffectivePolicyAndTakesLease() {
                               sak::ai::AiToolPolicy::PackageToolsOnly}) {
         const auto decision = sak::ai::evaluateToolPolicy(policy, request);
         QVERIFY2(!decision.allowed, qPrintable(sak::ai::toolPolicyToString(policy)));
+        QVERIFY2(decision.risky_change, qPrintable(sak::ai::toolPolicyToString(policy)));
+        QVERIFY2(decision.requires_lease, qPrintable(sak::ai::toolPolicyToString(policy)));
+        QCOMPARE(decision.reason,
+                 QStringLiteral("App action run blocked: the effective tool policy does not "
+                                "permit system mutation"));
     }
 
     auto lease = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease, request);
@@ -362,7 +390,9 @@ void AiToolPolicyTests::packageMutationBlockedWhenUserAskedForScan() {
     QVERIFY(!decision.allowed);
     QVERIFY(decision.risky_change);
     QVERIFY(decision.requires_lease);
-    QVERIFY(decision.reason.contains(QStringLiteral("scan"), Qt::CaseInsensitive));
+    QCOMPARE(decision.reason,
+             QStringLiteral("Package install/upgrade/uninstall blocked because the user asked to "
+                            "scan, not install"));
 
     request.user_message = QStringLiteral("install SUPERAntiSpyware then run a scan");
     decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::PackageToolsOnly, request);

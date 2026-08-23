@@ -71,18 +71,21 @@ private Q_SLOTS:
 };
 
 void TestLeftoverCleanupGuard::registryKeyRefusesHiveRootAndBadHive() {
-    QVERIFY(blocked(registryKeyDeletionRefusal(QString())));                 // empty
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\"))));  // hive root
+    QCOMPARE(registryKeyDeletionRefusal(QString()),
+             QStringLiteral("empty registry key path"));                          // empty
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral("HKLM\\")),
+             QStringLiteral("refusing to delete an entire registry hive root"));  // hive root
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKCU\\"))));
     // A hive spelling CleanupWorker does not support is refused (it would otherwise fail silently).
-    QVERIFY(blocked(
-        registryKeyDeletionRefusal(QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\Vendor"))));
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\Vendor")),
+             QStringLiteral("registry key must start with HKLM\\, HKCU\\ or HKCR\\"));
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKU\\.DEFAULT\\Foo"))));
 }
 
 void TestLeftoverCleanupGuard::registryKeyRefusesOsCriticalSubtree() {
-    QVERIFY(blocked(registryKeyDeletionRefusal(
-        QStringLiteral("HKLM\\SYSTEM\\CurrentControlSet\\Services\\RpcSs"))));
+    QCOMPARE(registryKeyDeletionRefusal(
+                 QStringLiteral("HKLM\\SYSTEM\\CurrentControlSet\\Services\\RpcSs")),
+             QStringLiteral("refusing to delete a protected system registry subtree (system)"));
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SAM\\SAM"))));
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SECURITY"))));
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\BCD00000000\\Objects"))));
@@ -116,7 +119,8 @@ void TestLeftoverCleanupGuard::registryKeyAllowsSpecificVendorKey() {
 
 void TestLeftoverCleanupGuard::registryKeyRefusesControlChar() {
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\Acme\nEvil"))));
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\Acme*"))));
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\Acme*")),
+             QStringLiteral("registry key path contains a control or wildcard character"));
 }
 
 void TestLeftoverCleanupGuard::registryKeyRefusesSeparatorTricks() {
@@ -128,7 +132,10 @@ void TestLeftoverCleanupGuard::registryKeyRefusesSeparatorTricks() {
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SYSTEM\\"))));
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\/SYSTEM"))));
     // A shared root reached via a doubled separator is still the exact shared root.
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\\\"))));
+    QCOMPARE(
+        registryKeyDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\\\")),
+        QStringLiteral(
+            "refusing to delete a shared registry root key; delete a specific subkey instead"));
 }
 
 void TestLeftoverCleanupGuard::registryKeyRefusesBrickCriticalDescendants() {
@@ -140,12 +147,18 @@ void TestLeftoverCleanupGuard::registryKeyRefusesBrickCriticalDescendants() {
     QVERIFY(blocked(registryKeyDeletionRefusal(
         QStringLiteral("HKLM\\SOFTWARE\\Classes\\exefile\\shell\\open\\command"))));
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\lnkfile\\shell\\open"))));
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral(
-        "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\S-1-5-21-1-2-3"))));
+    QCOMPARE(
+        registryKeyDeletionRefusal(QStringLiteral(
+            "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\S-1-5-21-1-2-3")),
+        QStringLiteral("refusing to delete a protected system registry subtree "
+                       "(software\\microsoft\\windows nt\\currentversion\\profilelist)"));
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral(
         "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SvcHost\\netsvcs"))));
     // File-extension class registrations: the exact key unregisters the whole association.
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\.exe"))));
+    QCOMPARE(
+        registryKeyDeletionRefusal(QStringLiteral("HKCR\\.exe")),
+        QStringLiteral(
+            "refusing to delete a shared registry root key; delete a specific subkey instead"));
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\.lnk"))));
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\Classes\\.exe"))));
     // A NON-launch descendant of a file class (e.g. context-menu-handler / icon subkeys) stays a
@@ -170,12 +183,14 @@ void TestLeftoverCleanupGuard::registrySubkeyHiveRootDetection() {
 
 void TestLeftoverCleanupGuard::registryValueRefusesEmptyNameAndSubtree() {
     // Empty value name is refused (also guards CleanupWorker's Q_ASSERT(!valueName.isEmpty())).
-    QVERIFY(
-        blocked(registryValueDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\Acme"), QString())));
-    QVERIFY(blocked(registryValueDeletionRefusal(QString(), QStringLiteral("Val"))));
+    QCOMPARE(registryValueDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\Acme"), QString()),
+             QStringLiteral("empty registry value name"));
+    QCOMPARE(registryValueDeletionRefusal(QString(), QStringLiteral("Val")),
+             QStringLiteral("empty registry key path"));
     // A value under an OS-critical subtree is still refused.
-    QVERIFY(blocked(registryValueDeletionRefusal(
-        QStringLiteral("HKLM\\SYSTEM\\CurrentControlSet\\Control"), QStringLiteral("Foo"))));
+    QCOMPARE(registryValueDeletionRefusal(
+                 QStringLiteral("HKLM\\SYSTEM\\CurrentControlSet\\Control"), QStringLiteral("Foo")),
+             QStringLiteral("refusing to modify a protected system registry subtree (system)"));
 }
 
 void TestLeftoverCleanupGuard::registryValueAllowsRunValue() {
@@ -189,13 +204,16 @@ void TestLeftoverCleanupGuard::registryValueAllowsRunValue() {
 }
 
 void TestLeftoverCleanupGuard::serviceRefusesCriticalAndMalformed() {
-    QVERIFY(blocked(serviceDeletionRefusal(QStringLiteral("RpcSs"))));
+    QCOMPARE(serviceDeletionRefusal(QStringLiteral("RpcSs")),
+             QStringLiteral("refusing to delete a critical Windows service (RpcSs)"));
     QVERIFY(blocked(serviceDeletionRefusal(QStringLiteral("windefend"))));  // case-insensitive
     QVERIFY(blocked(serviceDeletionRefusal(QStringLiteral("Dnscache"))));
     QVERIFY(blocked(serviceDeletionRefusal(QStringLiteral("Schedule"))));
     QVERIFY(blocked(serviceDeletionRefusal(QString())));
-    QVERIFY(blocked(serviceDeletionRefusal(QStringLiteral("bad\\name"))));
-    QVERIFY(blocked(serviceDeletionRefusal(QStringLiteral("wild*card"))));
+    QCOMPARE(serviceDeletionRefusal(QStringLiteral("bad\\name")),
+             QStringLiteral("service name contains an invalid character"));
+    QCOMPARE(serviceDeletionRefusal(QStringLiteral("wild*card")),
+             QStringLiteral("service name contains a control or wildcard character"));
     QVERIFY(blocked(serviceDeletionRefusal(QStringLiteral("has=equals"))));
 }
 
@@ -212,7 +230,8 @@ void TestLeftoverCleanupGuard::serviceRefusesBootStartDriverNames() {
                                   QStringLiteral("storport"),
                                   QStringLiteral("refs"),
                                   QStringLiteral("NTFS")}) {  // case-insensitive
-        QVERIFY2(blocked(serviceDeletionRefusal(driver)), qPrintable(driver));
+        QCOMPARE(serviceDeletionRefusal(driver),
+                 QStringLiteral("refusing to delete a critical Windows service (%1)").arg(driver));
     }
 }
 
@@ -222,13 +241,16 @@ void TestLeftoverCleanupGuard::serviceAllowsVendorService() {
 }
 
 void TestLeftoverCleanupGuard::scheduledTaskRefusesMicrosoftTree() {
-    QVERIFY(blocked(scheduledTaskDeletionRefusal(
-        QStringLiteral("\\Microsoft\\Windows\\Defrag\\ScheduledDefrag"))));
+    QCOMPARE(scheduledTaskDeletionRefusal(
+                 QStringLiteral("\\Microsoft\\Windows\\Defrag\\ScheduledDefrag")),
+             QStringLiteral("refusing to delete a Windows/Microsoft scheduled task"));
     QVERIFY(blocked(scheduledTaskDeletionRefusal(
         QStringLiteral("Microsoft\\Windows\\UpdateOrchestrator\\Reboot"))));  // no leading slash
-    QVERIFY(blocked(scheduledTaskDeletionRefusal(QString())));
-    QVERIFY(blocked(scheduledTaskDeletionRefusal(QStringLiteral("\\"))));     // root
-    QVERIFY(blocked(scheduledTaskDeletionRefusal(QStringLiteral("has*wild"))));
+    QCOMPARE(scheduledTaskDeletionRefusal(QString()), QStringLiteral("empty scheduled-task name"));
+    QCOMPARE(scheduledTaskDeletionRefusal(QStringLiteral("\\")),
+             QStringLiteral("refusing to delete the scheduled-task root"));  // root
+    QCOMPARE(scheduledTaskDeletionRefusal(QStringLiteral("has*wild")),
+             QStringLiteral("scheduled-task name contains a control or wildcard character"));
 }
 
 void TestLeftoverCleanupGuard::scheduledTaskAllowsVendorTask() {
@@ -237,10 +259,13 @@ void TestLeftoverCleanupGuard::scheduledTaskAllowsVendorTask() {
 }
 
 void TestLeftoverCleanupGuard::firewallRefusesAllWildcard() {
-    QVERIFY(blocked(firewallRuleDeletionRefusal(QStringLiteral("all"))));
+    QCOMPARE(firewallRuleDeletionRefusal(QStringLiteral("all")),
+             QStringLiteral(
+                 "refusing firewall wildcard name=all (deletes ALL rules); name a specific rule"));
     QVERIFY(blocked(firewallRuleDeletionRefusal(QStringLiteral("ALL"))));
-    QVERIFY(blocked(firewallRuleDeletionRefusal(QString())));
-    QVERIFY(blocked(firewallRuleDeletionRefusal(QStringLiteral("bad\nrule"))));
+    QCOMPARE(firewallRuleDeletionRefusal(QString()), QStringLiteral("empty firewall rule name"));
+    QCOMPARE(firewallRuleDeletionRefusal(QStringLiteral("bad\nrule")),
+             QStringLiteral("firewall rule name contains a control character"));
 }
 
 void TestLeftoverCleanupGuard::firewallAllowsNamedRule() {
@@ -252,9 +277,14 @@ void TestLeftoverCleanupGuard::firewallAllowsNamedRule() {
 void TestLeftoverCleanupGuard::fileRefusesSystemAndRoots() {
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Windows\\System32\\drivers"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Windows"))));
-    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\"))));
-    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("D:"))));
-    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Program Files"))));
+    QCOMPARE(filePathDeletionRefusal(QStringLiteral("C:\\")),
+             QStringLiteral("refusing a drive root"));
+    QCOMPARE(filePathDeletionRefusal(QStringLiteral("D:")),
+             QStringLiteral("path must be an absolute drive-letter path"));
+    QCOMPARE(
+        filePathDeletionRefusal(QStringLiteral("C:\\Program Files")),
+        QStringLiteral(
+            "refusing a shared system/user root directory; delete a specific subfolder instead"));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Program Files (x86)"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\ProgramData"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Users"))));
@@ -275,7 +305,9 @@ void TestLeftoverCleanupGuard::fileRefusesTrailingDotSpaceEvasion() {
 void TestLeftoverCleanupGuard::fileRefusesShortNameEvasion() {
     // An 8.3 short name resolves (via Win32) to a protected long-name root that the guard cannot
     // expand lexically, so any short-name component is refused fail-closed.
-    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\PROGRA~1"))));
+    QCOMPARE(filePathDeletionRefusal(QStringLiteral("C:\\PROGRA~1")),
+             QStringLiteral(
+                 "path contains an 8.3 short-name component; supply the full long path"));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\PROGRA~2"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\PROGRA~1\\AcmeCorp"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Vendor\\ACMEAP~1\\data"))));
@@ -310,7 +342,8 @@ void TestLeftoverCleanupGuard::fileRefusesUserShellFolderRoots() {
 void TestLeftoverCleanupGuard::fileRefusesBootAndCriticalTree() {
     // Boot / system-critical roots are refused for the whole subtree (no subfolder is ever a
     // legitimate leftover), unlike shared roots which block only the exact path.
-    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\bootmgr"))));
+    QCOMPARE(filePathDeletionRefusal(QStringLiteral("C:\\bootmgr")),
+             QStringLiteral("refusing a boot/system-critical path"));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Boot"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Boot\\BCD"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Recovery"))));
@@ -362,19 +395,24 @@ void TestLeftoverCleanupGuard::handleRedirectRefusesSwapAndProtected() {
                                      QStringLiteral("C:\\Windows\\System32\\data.bin"))));
     // Ancestor junction redirects to a DIFFERENT but benign location the human never confirmed:
     // still refused (the real target must equal the validated target).
-    QVERIFY(blocked(cleanupHandleRedirectRefusal(
-        QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\stale.dll"),
-        QStringLiteral("C:\\Users\\Username\\Documents\\important\\stale.dll"))));
+    QCOMPARE(cleanupHandleRedirectRefusal(
+                 QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\stale.dll"),
+                 QStringLiteral("C:\\Users\\Username\\Documents\\important\\stale.dll")),
+             QStringLiteral("delete target was redirected from the validated path (possible "
+                            "junction/symlink swap)"));
     // Redirected onto a drive root or a UNC target -> refused.
-    QVERIFY(blocked(cleanupHandleRedirectRefusal(QStringLiteral("C:\\Program Files\\AcmeCorp\\App"),
-                                                 QStringLiteral("C:\\"))));
+    QCOMPARE(cleanupHandleRedirectRefusal(QStringLiteral("C:\\Program Files\\AcmeCorp\\App"),
+                                          QStringLiteral("C:\\")),
+             QStringLiteral(
+                 "delete target resolved to a protected location (refusing a drive root)"));
     QVERIFY(
         blocked(cleanupHandleRedirectRefusal(QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\x"),
                                              QStringLiteral("\\\\attacker\\share\\x"))));
     // Handle could not be resolved (GetFinalPathNameByHandleW failed) -> refused, never delete
     // blind.
-    QVERIFY(blocked(cleanupHandleRedirectRefusal(
-        QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\x"), QString())));
+    QCOMPARE(cleanupHandleRedirectRefusal(QStringLiteral("C:\\Program Files\\AcmeCorp\\App\\x"),
+                                          QString()),
+             QStringLiteral("could not resolve the real deletion target"));
 }
 
 // ============================================================================
@@ -385,7 +423,8 @@ void TestLeftoverCleanupGuard::handleRedirectRefusesSwapAndProtected() {
 // injection) would bypass the bare-token "all" check and delete EVERY firewall rule. The existing
 // firewall test covers the bare "all" and a control char, but never a double quote.
 void TestLeftoverCleanupGuard::firewallRefusesDoubleQuoteBypass() {
-    QVERIFY(blocked(firewallRuleDeletionRefusal(QStringLiteral("\"all\""))));
+    QCOMPARE(firewallRuleDeletionRefusal(QStringLiteral("\"all\"")),
+             QStringLiteral("firewall rule name contains a double-quote character"));
     QVERIFY(blocked(firewallRuleDeletionRefusal(QStringLiteral("rule\" name=all profile=any"))));
     QVERIFY(blocked(firewallRuleDeletionRefusal(QStringLiteral("has\"quote"))));
     // Non-vacuity: a legitimate rule name with spaces and parentheses is still allowed.
@@ -413,7 +452,10 @@ void TestLeftoverCleanupGuard::fileRefusesWildcardAndControlChar() {
 // deleting any of them breaks login, DPAPI/credentials, or per-user COM. Refused as the exact file
 // or subtree, on any drive.
 void TestLeftoverCleanupGuard::fileRefusesCredentialCriticalDataFiles() {
-    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Users\\Username\\ntuser.dat"))));
+    QCOMPARE(
+        filePathDeletionRefusal(QStringLiteral("C:\\Users\\Username\\ntuser.dat")),
+        QStringLiteral(
+            "refusing a login/credential-critical file (registry hive or machine crypto keys)"));
     QVERIFY(
         blocked(filePathDeletionRefusal(QStringLiteral("C:\\Users\\Username\\ntuser.dat.LOG1"))));
     QVERIFY(blocked(filePathDeletionRefusal(

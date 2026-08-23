@@ -72,7 +72,7 @@ void BackupDestinationGuardTests::rejectsWhitespaceOnlyText() {
     for (const QString& blank :
          {QStringLiteral("   "), QStringLiteral("\t"), QStringLiteral(" \t \n ")}) {
         const BackupDestinationCheck check = screen(blank);
-        QVERIFY2(!check.accepted, qPrintable(QStringLiteral("accepted blank: [%1]").arg(blank)));
+        QCOMPARE(check.refusal, QObject::tr("Please select a backup destination folder."));
         QVERIFY(check.path.isEmpty());
     }
 }
@@ -85,32 +85,55 @@ void BackupDestinationGuardTests::rejectsRelativePath() {
                                     QStringLiteral("..\\Backups"),
                                     QStringLiteral("Backups\\Profiles")}) {
         const BackupDestinationCheck check = screen(relative);
-        QVERIFY2(!check.accepted,
-                 qPrintable(QStringLiteral("accepted relative: [%1]").arg(relative)));
+        QCOMPARE(check.refusal,
+                 QObject::tr("The backup destination must be a full path (for example "
+                             "D:\\Backups\\Profiles), not a relative one."));
     }
 }
 
 void BackupDestinationGuardTests::rejectsDriveRelativePath() {
     // "C:Backups" is drive-relative on Windows, not absolute.
-    QVERIFY(!screen(QStringLiteral("C:Backups")).accepted);
+    QCOMPARE(screen(QStringLiteral("C:Backups")).refusal,
+             QObject::tr("The backup destination must be a full path (for example "
+                         "D:\\Backups\\Profiles), not a relative one."));
 }
 
 void BackupDestinationGuardTests::rejectsDestinationEqualToASource() {
-    QVERIFY(!screen(QStringLiteral("C:\\Users\\Username")).accepted);
-    QVERIFY(!screen(QStringLiteral("C:\\Users\\Public")).accepted);
+    QCOMPARE(screen(QStringLiteral("C:\\Users\\Username")).refusal,
+             QObject::tr("The backup destination writes into the profile being backed up (%1). "
+                         "Choose a folder outside every selected profile, ideally on another "
+                         "drive.")
+                 .arg(QStringLiteral("C:\\Users\\Username")));
+    QCOMPARE(screen(QStringLiteral("C:\\Users\\Public")).refusal,
+             QObject::tr("The backup destination writes into the profile being backed up (%1). "
+                         "Choose a folder outside every selected profile, ideally on another "
+                         "drive.")
+                 .arg(QStringLiteral("C:\\Users\\Public")));
 }
 
 void BackupDestinationGuardTests::rejectsDestinationInsideASource() {
     // The copy walks the source while the backup grows inside it: the run recurses into its own
     // output and never terminates.
-    QVERIFY(!screen(QStringLiteral("C:\\Users\\Username\\Desktop\\Backup")).accepted);
-    QVERIFY(!screen(QStringLiteral("C:\\Users\\Public\\Documents")).accepted);
+    QCOMPARE(screen(QStringLiteral("C:\\Users\\Username\\Desktop\\Backup")).refusal,
+             QObject::tr("The backup destination writes into the profile being backed up (%1). "
+                         "Choose a folder outside every selected profile, ideally on another "
+                         "drive.")
+                 .arg(QStringLiteral("C:\\Users\\Username")));
+    QCOMPARE(screen(QStringLiteral("C:\\Users\\Public\\Documents")).refusal,
+             QObject::tr("The backup destination writes into the profile being backed up (%1). "
+                         "Choose a folder outside every selected profile, ideally on another "
+                         "drive.")
+                 .arg(QStringLiteral("C:\\Users\\Public")));
 }
 
 void BackupDestinationGuardTests::rejectsDestinationWhoseUserSubfolderIsASource() {
     // Destination "C:\Users" is not itself inside a profile, but the worker writes
     // "C:\Users\Username" -- straight into the profile it is copying.
-    QVERIFY(!screen(QStringLiteral("C:\\Users")).accepted);
+    QCOMPARE(screen(QStringLiteral("C:\\Users")).refusal,
+             QObject::tr("The backup destination writes into the profile being backed up (%1). "
+                         "Choose a folder outside every selected profile, ideally on another "
+                         "drive.")
+                 .arg(QStringLiteral("C:\\Users\\Username")));
 }
 
 void BackupDestinationGuardTests::allowsAncestorThatDoesNotCollideWithAUserSubfolder() {
@@ -120,7 +143,11 @@ void BackupDestinationGuardTests::allowsAncestorThatDoesNotCollideWithAUserSubfo
 }
 
 void BackupDestinationGuardTests::separatorAndCaseTricksDoNotEvadeOverlap() {
-    QVERIFY(!screen(QStringLiteral("c:/users/username")).accepted);
+    QCOMPARE(screen(QStringLiteral("c:/users/username")).refusal,
+             QObject::tr("The backup destination writes into the profile being backed up (%1). "
+                         "Choose a folder outside every selected profile, ideally on another "
+                         "drive.")
+                 .arg(QStringLiteral("C:\\Users\\Username")));
     QVERIFY(!screen(QStringLiteral("C:\\Users\\Username\\")).accepted);
     QVERIFY(!screen(QStringLiteral("C:\\Users\\Username\\Documents\\..")).accepted);
     QVERIFY(!screen(QStringLiteral("C:\\Users\\Username\\.")).accepted);

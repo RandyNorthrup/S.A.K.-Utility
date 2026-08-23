@@ -37,6 +37,8 @@ void AiCommandToolPlannerTests::buildsPowerShellPlanWithPolicy() {
     QCOMPARE(plan.request.command, QStringLiteral("Get-Date"));
     QCOMPARE(plan.request.max_output_bytes, 4096);
     QVERIFY(plan.policy_decision.allowed);
+    QCOMPARE(plan.policy_decision.reason,
+             QStringLiteral("Read-only diagnostic shell command allowed"));
     QVERIFY(!plan.risky_change);
     QVERIFY(plan.guard_block_error.isEmpty());
 }
@@ -70,6 +72,11 @@ void AiCommandToolPlannerTests::buildsProcessPlanWithProgramPreview() {
     // refuses it even after the program resolves cleanly. The plan is still built (request +
     // preview populated) for display.
     QVERIFY(!plan.policy_decision.allowed);
+    QCOMPARE(plan.policy_decision.reason,
+             QStringLiteral("Read-only PC policy allows only known read-only diagnostic shell "
+                            "commands (ping, ipconfig, systeminfo, tasklist, netstat, whoami, "
+                            "Get-*/Test-* reads, ...); this command is not on the read-only "
+                            "allowlist"));
 #endif
 }
 
@@ -143,6 +150,8 @@ void AiCommandToolPlannerTests::marksRiskyCommandAndPolicyDenial() {
 
     QVERIFY(plan.risky_change);
     QVERIFY(!plan.policy_decision.allowed);
+    QCOMPARE(plan.policy_decision.reason,
+             QStringLiteral("Read-only PC policy blocked mutating command"));
     QVERIFY(plan.policy_decision.risky_change);
 }
 
@@ -155,7 +164,10 @@ void AiCommandToolPlannerTests::carriesPidMutationGuardBlock() {
                                                                args,
                                                                sak::ai::AiToolPolicy::ReadOnlyPc);
 
-    QVERIFY(plan.guard_block_error.contains(QStringLiteral("$PID mutation")));
+    QCOMPARE(plan.guard_block_error,
+             QStringLiteral("Blocked PowerShell $PID mutation. $PID is a read-only automatic "
+                            "variable; use a different variable such as $processId or "
+                            "$windowProcessId."));
 }
 
 void AiCommandToolPlannerTests::carriesChecksumBypassBlock() {
@@ -166,9 +178,14 @@ void AiCommandToolPlannerTests::carriesChecksumBypassBlock() {
     const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
         QStringLiteral("run_powershell"), args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
 
-    QVERIFY(plan.guard_block_error.contains(QStringLiteral("checksum bypass")));
+    QCOMPARE(plan.guard_block_error,
+             QStringLiteral("Blocked package checksum bypass. Do not pass --ignore-checksums, "
+                            "substitute checksums, or run cached installers after a package "
+                            "checksum mismatch."));
     QVERIFY(plan.guard_approval_reason.isEmpty());
     QVERIFY(plan.policy_decision.allowed);
+    QCOMPARE(plan.policy_decision.reason,
+             QStringLiteral("Known local tool allowed with exclusive mutation policy"));
     QVERIFY(plan.policy_decision.requires_exclusive_lease);
 }
 
@@ -184,6 +201,8 @@ void AiCommandToolPlannerTests::rejectsNonCanonicalToolName() {
                                                                sak::ai::AiToolPolicy::ReadOnlyPc);
     // The refusal echoes the sanitized non-canonical spelling that was rejected.
     QCOMPARE(plan.guard_block_error, QStringLiteral("Unsupported command tool: Run_PowerShell"));
+    QCOMPARE(plan.request.validation_error,
+             QStringLiteral("Unsupported command tool: Run_PowerShell"));
     QVERIFY(!plan.policy_decision.allowed);  // policy_decision stays default-denied
     QVERIFY(plan.risky_change);
 
