@@ -39,6 +39,8 @@ void AiWorkflowClarifierTests::flagsMissingRequiredInput() {
     QVERIFY(result.needsClarification());
     QCOMPARE(result.questions.size(), 1);
     QCOMPARE(result.questions.first().input_id, QStringLiteral("app_name"));
+    QCOMPARE(result.questions.first().reason, QStringLiteral("required input is missing"));
+    QCOMPARE(result.questions.first().question, QStringLiteral("What should I use for App name?"));
 }
 
 void AiWorkflowClarifierTests::flagsGenericAppValue() {
@@ -49,6 +51,8 @@ void AiWorkflowClarifierTests::flagsGenericAppValue() {
                                                               inputs);
     QCOMPARE(result.questions.size(), 1);  // exactly one ambiguous-input question, not >=1
     QCOMPARE(result.questions.first().reason, QStringLiteral("app/package value is ambiguous"));
+    QCOMPARE(result.questions.first().question,
+             QStringLiteral("Which exact app, package, or product should I use for App name?"));
 }
 
 void AiWorkflowClarifierTests::acceptsSpecificAppValue() {

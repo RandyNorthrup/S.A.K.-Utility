@@ -230,6 +230,7 @@ void IsoAnalyzerTests::analyzeReadsPrimaryVolumeDescriptorFields() {
     QCOMPARE(info.application, QStringLiteral("SAK APPLICATION"));
     QCOMPARE(info.filesystem, QStringLiteral("ISO 9660"));
     QCOMPARE(info.volume_size, static_cast<uint64_t>(kSyntheticSectors) * kSectorSize);
+    QCOMPARE(info.creation_date, QStringLiteral("2026-01-02 03:04:05"));  // parsed from the PVD
     QVERIFY(!info.is_bootable);  // no El Torito boot record in this image
 }
 
@@ -246,6 +247,8 @@ void IsoAnalyzerTests::analyzeClassifiesSyntheticWindowsMediaFromLabel() {
 
     const IsoInfo info = IsoAnalyzer::analyze(path);
     QCOMPARE(info.os_family, QStringLiteral("Windows"));
+    QCOMPARE(info.architecture, QStringLiteral("x64"));  // from the X64 label token
+    QCOMPARE(info.os_name, QStringLiteral("Windows"));   // no 11/10/server token -> default
     QVERIFY(IsoAnalyzer::isWindowsInstallMedia(info));
 }
 
@@ -262,6 +265,9 @@ void IsoAnalyzerTests::analyzeClassifiesSyntheticLinuxMediaAsNotWindows() {
     const IsoInfo info = IsoAnalyzer::analyze(path);
     QCOMPARE(info.os_family, QStringLiteral("Linux"));
     QCOMPARE(info.distro_name, QStringLiteral("Ubuntu"));
+    QCOMPARE(info.distro_version, QStringLiteral("24.04.1"));  // regex over the label
+    QCOMPARE(info.os_name, QStringLiteral("Ubuntu 24.04.1"));  // name + version composite
+    QCOMPARE(info.architecture, QStringLiteral("x64"));        // amd64 label token -> x64
     QVERIFY(!IsoAnalyzer::isWindowsInstallMedia(info));
 }
 

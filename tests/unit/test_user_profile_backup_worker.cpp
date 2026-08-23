@@ -52,6 +52,7 @@ private:
     struct BackupOutcome {
         std::atomic<bool> done{false};
         bool success{false};
+        QString message;
     };
     // What a helper-driven backup reported. `completed` is kept separate from `success`
     // so a run that never emits backupComplete fails its test instead of defaulting into
@@ -59,6 +60,7 @@ private:
     struct BackupRun {
         bool completed{false};
         bool success{false};
+        QString message;
     };
     // Run a one-user backup on @p worker to completion. The worker is caller-owned so a
     // test can put it in a specific state (e.g. a stale cancel) before the run.
@@ -105,8 +107,9 @@ TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackupWit
         &worker,
         &UserProfileBackupWorker::backupComplete,
         &worker,
-        [&outcome](bool ok, const QString&, const BackupManifest&) {
+        [&outcome](bool ok, const QString& msg, const BackupManifest&) {
             outcome.success = ok;
+            outcome.message = msg;
             outcome.done.store(true);
         },
         Qt::DirectConnection);
@@ -125,7 +128,7 @@ TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackupWit
         worker.cancel();
         worker.wait();
     }
-    return {outcome.done.load(), outcome.success};
+    return {outcome.done.load(), outcome.success, outcome.message};
 }
 
 void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
@@ -146,6 +149,11 @@ void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
         runBackup(worker, srcDir.path(), folder, destParent.filePath(QStringLiteral("dest")));
     QVERIFY2(run.completed, "backup never emitted backupComplete");
     QVERIFY(!run.success);
+    // The worker still prefixes "Backup complete!" on a failed run; Errors: 1 is the only signal a
+    // bare !run.success misses.
+    QCOMPARE(run.message,
+             QStringLiteral("Backup complete!\nFiles copied: 0\nFiles skipped: 0\nSkipped "
+                            "(elevation required): 0\nErrors: 1\nTotal size: 0.0 MB"));
 }
 
 void TestUserProfileBackupWorker::backupExistingFolderReportsSuccess() {
@@ -318,6 +326,7 @@ void TestUserProfileBackupWorker::encryptionWithoutPasswordRefusesToStart() {
         runBackupWith(worker, srcDir.path(), documentsSelection(), destPath, options);
     QVERIFY2(run.completed, "the refusal must still report a terminal outcome");
     QVERIFY2(!run.success, "encryption without a password must not report success");
+    QCOMPARE(run.message, QStringLiteral("Encryption requires a password"));
 
     // Fail closed: nothing may have been written, least of all a plaintext copy.
     QVERIFY2(!QFile::exists(destPath + QStringLiteral("/tester/Documents/secret.txt")),
