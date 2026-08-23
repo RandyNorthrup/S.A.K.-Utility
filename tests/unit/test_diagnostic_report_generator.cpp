@@ -127,7 +127,7 @@ void DiagnosticReportGeneratorTests::generatesCsvReport() {
     const auto content = file.readAll();
     // The CSV opens with the fixed header then the first sample data row (content is a QByteArray).
     QVERIFY(content.startsWith("Section,Property,Value\n"));
-    QVERIFY(content.contains("CPU,Name,Intel Core i7-13700K"));
+    QVERIFY(content.contains("CPU,Name,Intel Core i7-13700K\n"));  // pin the full row incl. EOL
 }
 
 void DiagnosticReportGeneratorTests::emptyDataGeneratesValidReports() {
@@ -190,7 +190,8 @@ void DiagnosticReportGeneratorTests::jsonContainsStructuredData() {
     QVERIFY(root.contains("recommendations"));
     QVERIFY(!root.contains("technician"));
     QVERIFY(!root.contains("report"));
-    QVERIFY(root["metadata"].toObject().contains("technician"));
+    QCOMPARE(root["metadata"].toObject().value("technician").toString(),
+             QStringLiteral("Test Tech"));
 }
 
 void DiagnosticReportGeneratorTests::csvContainsHeaders() {

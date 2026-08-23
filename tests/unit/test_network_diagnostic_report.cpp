@@ -139,21 +139,22 @@ void NetworkDiagnosticReportTests::html_metadata_technicianName() {
     NetworkDiagnosticReportGenerator gen;
     gen.setTechnicianName(QStringLiteral("John Doe"));
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("John Doe")));
+    QVERIFY(html.contains(QStringLiteral("<p><b>Technician:</b> John Doe</p>")));
 }
 
 void NetworkDiagnosticReportTests::html_metadata_ticketNumber() {
     NetworkDiagnosticReportGenerator gen;
     gen.setTicketNumber(QStringLiteral("TICKET-12345"));
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("TICKET-12345")));
+    QVERIFY(html.contains(QStringLiteral("<p><b>Ticket:</b> TICKET-12345</p>")));
 }
 
 void NetworkDiagnosticReportTests::html_metadata_notes() {
     NetworkDiagnosticReportGenerator gen;
     gen.setNotes(QStringLiteral("Customer reports intermittent connectivity"));
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("intermittent connectivity")));
+    QVERIFY(html.contains(
+        QStringLiteral("<p><b>Notes:</b> Customer reports intermittent connectivity</p>")));
 }
 
 // ============================================================================
@@ -172,9 +173,11 @@ void NetworkDiagnosticReportTests::html_section_adapterConfig() {
     gen.setAdapterData({adapter});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("Ethernet 1")));
-    QVERIFY(html.contains(QStringLiteral("AA:BB:CC:DD:EE:FF")));
-    QVERIFY(html.contains(QStringLiteral("192.168.1.100")));
+    // Pin the whole adapter row (name/status/IP/MAC in order); disjoint contains() would pass
+    // even if the columns were shuffled or the wrong adapter's cells interleaved.
+    QVERIFY(html.contains(QStringLiteral(
+        "<tr><td>Ethernet 1</td><td></td><td><span class=\"success\">Connected</span></td>"
+        "<td>192.168.1.100</td><td>AA:BB:CC:DD:EE:FF</td><td>--</td></tr>")));
 }
 
 void NetworkDiagnosticReportTests::html_section_pingResults() {
@@ -195,7 +198,8 @@ void NetworkDiagnosticReportTests::html_section_pingResults() {
     const auto html = gen.toHtml();
     QVERIFY(html.contains(QStringLiteral("google.com")));
     // The stat-box numbers/labels/precision were unverified; pin them.
-    QVERIFY(html.contains(QStringLiteral("Sent: 10 | Received: 10 | Lost: 0")));
+    QVERIFY(html.contains(
+        QStringLiteral("Sent: 10 | Received: 10 | Lost: 0 (<span class=\"success\">0.0%</span>)")));
     QVERIFY(html.contains(
         QStringLiteral("Min: 10.0 ms | Max: 25.0 ms | Avg: 15.5 ms | Jitter: 0.00 ms")));
 }
@@ -214,8 +218,10 @@ void NetworkDiagnosticReportTests::html_section_dnsResults() {
     gen.setDnsData({dns});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("example.com")));
-    QVERIFY(html.contains(QStringLiteral("93.184.216.34")));
+    // Pin the query header (name/type/server/status/time) and the resolved answer as a list item.
+    QVERIFY(html.contains(QStringLiteral(
+        "<h3>example.com (A) via 8.8.8.8 -- <span class=\"success\">OK</span> (25.0 ms)</h3>")));
+    QVERIFY(html.contains(QStringLiteral("<li>93.184.216.34</li>")));
 }
 
 void NetworkDiagnosticReportTests::html_dnsRecordType_htmlEscaped() {
@@ -247,8 +253,11 @@ void NetworkDiagnosticReportTests::html_section_portScanResults() {
     gen.setPortScanData({port});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("443")));
-    QVERIFY(html.contains(QStringLiteral("HTTPS")));
+    // Pin the whole port row and the summary counts; "443" alone would pass on any figure 443.
+    QVERIFY(html.contains(
+        QStringLiteral("<tr><td>443</td><td class=\"success\">Open</td><td>HTTPS</td><td>0.0 "
+                       "ms</td><td></td></tr>")));
+    QVERIFY(html.contains(QStringLiteral("Open: 1 | Closed: 0 | Filtered: 0 | Errors: 0")));
 }
 
 void NetworkDiagnosticReportTests::html_section_bandwidthResults() {
@@ -303,7 +312,8 @@ void NetworkDiagnosticReportTests::html_section_firewallAudit() {
     const auto html = gen.toHtml();
     // Firewall section shows summary counts, not individual rule names
     QVERIFY(html.contains(QStringLiteral("Firewall Audit")));
-    QVERIFY(html.contains(QStringLiteral("Total Rules: 1")));
+    QVERIFY(html.contains(
+        QStringLiteral("Total Rules: 1 | Inbound: 1 | Outbound: 0 | Block Rules: 1")));
 }
 
 void NetworkDiagnosticReportTests::html_section_connectionMonitor() {
@@ -321,8 +331,9 @@ void NetworkDiagnosticReportTests::html_section_connectionMonitor() {
     gen.setConnectionData({conn});
 
     const auto html = gen.toHtml();
-    // The || let a dropped field pass; pin the adjacent state/process cells.
+    // The || let a dropped field pass; pin the adjacent state/process cells and the summary counts.
     QVERIFY(html.contains(QStringLiteral("<td>ESTABLISHED</td><td>chrome.exe</td>")));
+    QVERIFY(html.contains(QStringLiteral("Total: 1 | TCP: 1 | UDP: 0 | Established: 1")));
 }
 
 void NetworkDiagnosticReportTests::html_adapterFields_htmlEscaped() {
@@ -382,7 +393,11 @@ void NetworkDiagnosticReportTests::html_section_networkShares() {
     gen.setShareData({share});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("SharedFolder")));
+    // Pin the whole share row (UNC/type/read/write/remark in order); "SharedFolder" alone would
+    // pass even if the read/write access cells were swapped.
+    QVERIFY(html.contains(QStringLiteral(
+        "<tr><td>\\\\SERVER\\SharedFolder$</td><td>Disk</td><td class=\"success\">[x]</td>"
+        "<td class=\"error\">[ ]</td><td>Test share</td></tr>")));
 }
 
 void NetworkDiagnosticReportTests::html_sectionExclusion_onlyIncluded() {
@@ -473,7 +488,14 @@ void NetworkDiagnosticReportTests::json_portScanData_serialized() {
     gen.setPortScanData({port});
 
     const auto json = gen.toJson();
-    QVERIFY(json.contains(QStringLiteral("8080")));
+    // Parse and pin the port record instead of a bare substring (which would pass on any 8080).
+    const auto arr =
+        QJsonDocument::fromJson(json.toUtf8()).object().value(QStringLiteral("portScan")).toArray();
+    QCOMPARE(arr.size(), 1);
+    const auto obj = arr.at(0).toObject();
+    QCOMPARE(obj.value(QStringLiteral("port")).toInt(), 8080);
+    QCOMPARE(obj.value(QStringLiteral("state")).toString(), QStringLiteral("open"));
+    QCOMPARE(obj.value(QStringLiteral("service")).toString(), QStringLiteral("HTTP-Alt"));
 }
 
 void NetworkDiagnosticReportTests::json_wifiData_serialized() {
@@ -499,8 +521,14 @@ void NetworkDiagnosticReportTests::json_firewallData_serialized() {
     gen.setFirewallData({rule}, {}, {});
 
     const auto json = gen.toJson();
-    // JSON firewall section contains summary counts
-    QVERIFY(json.contains(QStringLiteral("totalRules")));
+    // Parse and pin the firewall summary counts instead of a bare key-presence substring.
+    const auto fw = QJsonDocument::fromJson(json.toUtf8())
+                        .object()
+                        .value(QStringLiteral("firewall"))
+                        .toObject();
+    QCOMPARE(fw.value(QStringLiteral("totalRules")).toInt(), 1);
+    QCOMPARE(fw.value(QStringLiteral("conflicts")).toInt(), 0);
+    QCOMPARE(fw.value(QStringLiteral("gaps")).toInt(), 0);
 }
 
 void NetworkDiagnosticReportTests::json_shareData_serialized() {

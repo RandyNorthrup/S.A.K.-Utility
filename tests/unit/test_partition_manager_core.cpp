@@ -5812,7 +5812,7 @@ void verifyHfsEmptyFileCreateAndRename(const QString& imagePath,
         imagePath, QStringLiteral("/created.txt"), options);
     QVERIFY2(created.ok, qPrintable(created.blockers.join(QStringLiteral("; "))));
     QCOMPARE(created.file_system, QStringLiteral("HFS+"));
-    QVERIFY(created.catalog_id >= 19U);
+    QCOMPARE(created.catalog_id, 19U);  // fixture max CNID 18, next_catalog_id header unset -> 19
     QCOMPARE(created.bytes_written, 0ULL);
     QVERIFY(created.chunks_written >= 4);
     QVERIFY(!created.before_sha256.isEmpty());
@@ -8625,7 +8625,9 @@ void PartitionManagerCoreTests::apfsWriter_multiChunkStreamedWriteSpansDataChunk
     const auto readBack =
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big.bin"), 1 << 20);
     QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(readBack.data, chunk.left(readBack.data.size()));
+    // The read cap (1<<20) is smaller than big.bin, so a passing read is exactly the whole
+    // 1<<20 chunk; .left(readBack.data.size()) self-sizes the expected and only masks a short read.
+    QCOMPARE(readBack.data, chunk);
 }
 
 namespace {
@@ -8741,7 +8743,7 @@ void PartitionManagerCoreTests::apfsWriter_fileCommitSucceedsAfterMultiChunkSpil
     const auto readBig =
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big.bin"), 1 << 20);
     QVERIFY2(readBig.ok, qPrintable(readBig.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(readBig.data, spillFixtureChunk().left(readBig.data.size()));
+    QCOMPARE(readBig.data, spillFixtureChunk());
     const auto readSmall = PartitionApfsFileSystemReader::readFileFromImage(
         img, QStringLiteral("/small.bin"), 1 << 20);
     QVERIFY2(readSmall.ok, qPrintable(readSmall.blockers.join(QStringLiteral("; "))));
@@ -8781,7 +8783,7 @@ void PartitionManagerCoreTests::apfsWriter_backToBackFullSpillsSucceed() {
     const auto readBack =
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big2.bin"), 1 << 20);
     QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(readBack.data, spillFixtureChunk().left(readBack.data.size()));
+    QCOMPARE(readBack.data, spillFixtureChunk());
 }
 
 void PartitionManagerCoreTests::apfsWriter_repeatedSpillCowsChunkBitmap() {
@@ -8823,11 +8825,11 @@ void PartitionManagerCoreTests::apfsWriter_repeatedSpillCowsChunkBitmap() {
     const auto read1 =
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big1.bin"), 1 << 20);
     QVERIFY2(read1.ok, qPrintable(read1.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(read1.data, spillFixtureChunk().left(read1.data.size()));
+    QCOMPARE(read1.data, spillFixtureChunk());
     const auto read2 =
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big2.bin"), 1 << 20);
     QVERIFY2(read2.ok, qPrintable(read2.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(read2.data, spillFixtureChunk().left(read2.data.size()));
+    QCOMPARE(read2.data, spillFixtureChunk());
     // (b) Chunk 2's bitmap slot moved (COW, not in-place): commit-2's live cib points chunk 2
     // at a DIFFERENT internal-pool block than commit-1 did.
     const quint64 chunk2AddrAfter2 = PartitionApfsWriter::readGeneratedChunkBitmapAddr(img, 2);
@@ -8898,7 +8900,7 @@ void PartitionManagerCoreTests::apfsWriter_gapSpillMarksExactBitmap() {
     const auto readBig =
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big1.bin"), 1 << 20);
     QVERIFY2(readBig.ok, qPrintable(readBig.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(readBig.data, spillFixtureChunk().left(readBig.data.size()));
+    QCOMPARE(readBig.data, spillFixtureChunk());
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiCibSpillsAcrossCib0Chunks() {
@@ -8933,7 +8935,7 @@ void PartitionManagerCoreTests::apfsWriter_multiCibSpillsAcrossCib0Chunks() {
     const auto read1 =
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big1.bin"), 1 << 20);
     QVERIFY2(read1.ok, qPrintable(read1.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(read1.data, spillFixtureChunk().left(read1.data.size()));
+    QCOMPARE(read1.data, spillFixtureChunk());
     writeSpillPayload(p2, p2Bytes);
     QVERIFY2(commitSpillFile(img, bytes, QStringLiteral("big2.bin"), p2, p2Bytes).ok,
              "commit 2: a second multi-CIB spill must be sustained");
@@ -8944,7 +8946,7 @@ void PartitionManagerCoreTests::apfsWriter_multiCibSpillsAcrossCib0Chunks() {
     const auto read2 =
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big2.bin"), 1 << 20);
     QVERIFY2(read2.ok, qPrintable(read2.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(read2.data, spillFixtureChunk().left(read2.data.size()));
+    QCOMPARE(read2.data, spillFixtureChunk());
 }
 
 namespace {
@@ -9024,7 +9026,7 @@ void commitAndReadSpillPrefix(const QString& img,
     const auto read =
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/") + name, 1 << 20);
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(read.data, spillFixtureChunk().left(read.data.size()));
+    QCOMPARE(read.data, spillFixtureChunk());
 }
 
 // Delete root file `name` from the raw spill container `img` (sized `bytes`).
@@ -20283,7 +20285,7 @@ void PartitionManagerCoreTests::fileRecoveryEngine_scansAndRestoresOfflineImage(
     QStringList extensions;
     for (const auto& candidate : scan.candidates) {
         extensions.append(candidate.extension);
-        QVERIFY(candidate.size_bytes > 0);
+        QCOMPARE(candidate.size_bytes, candidate.extension == "pdf" ? 50ULL : 22ULL);
         QVERIFY(!candidate.sha256.isEmpty());
     }
     QVERIFY(extensions.contains(QStringLiteral("pdf")));
