@@ -5024,6 +5024,59 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 FIRST-pass sweep b73 (gated 249/249): 43 weak assertions pinned across the
+    five largest NEVER-SWEPT unit-test files (browser_bridge 11, duplicate_finder_worker 9,
+    secure_memory 9, nuget_version_range 8, config_schema_versioning 6), from a finder sweep that
+    returned 44 nominees of which the adversarial verifier confirmed 43 and rejected 1. The
+    verifier also CORRECTED two finder claims rather than passing them through: it proved one
+    named mutant inert (the browser reconnect case already cleared the stale flag via an earlier
+    reply, so a different mutant carries the verdict) and disproved a second (a clear-then-reseed
+    config mutant would restore a default value the existing assertion already pins).
+    THREE ASSERT-NOTHING / VACUOUS CONSTRUCTS. (i) test_nuget_version_range's v() fixture helper
+    guarded its optional with Q_ASSERT, which compiles to nothing under QT_NO_DEBUG -- the
+    configuration the gate builds -- so `return *parsed` dereferenced an empty optional on any
+    parse regression, and EVERY fixture in the file flows through it; now a qFatal with the
+    offending string. (ii) lockedMemory_lockUnlock read exactly one value and discarded it via
+    Q_UNUSED, making it a pure no-crash test; it now pins the null-pointer and zero-length
+    refusals of lockMemory/unlockMemory on separate arms (so neither guard can satisfy the other)
+    plus locked_memory reporting unlocked for a region it never locked, which is what stops its
+    destructor calling VirtualUnlock on memory it does not own. (iii) secureRandom_fillsBuffer
+    failed only if the ENTIRE 32-byte buffer was still zero, so a generator that filled a prefix
+    passed; it now requires every index to change across 64 redraws and pins the other direction
+    too (a 16-byte request must not touch bytes 16..31).
+    SECURITY-RELEVANT sizeof(T) COVERAGE: secure_buffer::clear() wipes m_size * sizeof(T) bytes
+    and is also the destructor body, but every existing test used secure_buffer<unsigned char>, so
+    the factor was never exercised. Mutation-proved: drop it and an int buffer keeps 0x7F7F7F7F in
+    three quarters of its freed memory while the old test stays green. The same hole existed in
+    secureCompare (byte count = size() * sizeof(T), all three span tests used unsigned char, so
+    two different 8-int buffers would compare EQUAL), and secure_allocator::allocate's only
+    rejection -- the n * sizeof(T) overflow guard -- had no coverage at all. Also pinned: both
+    move operations' SOURCE halves (a moved-from buffer that keeps its size hands out a span over
+    nullptr) and the move-assignment self-assignment guard, whose absence destroys a live buffer.
+    The other classes: browser_bridge's model-facing text was checked by substring throughout --
+    the snapshot text (dropping the url/title/element-count header still contains the node line),
+    the generic reply channel (returning only payload["content"] drops a browser_read's truncation
+    marker and origin), the "too large" error (TWO independent caps emit it, so deleting the whole
+    screenshot branch passes), and four distinct production strings containing "snapshot"; plus
+    retireOutstanding's second effect (invalidating refs after a timed-out click may have mutated
+    the DOM) which no assertion in the repo covered, and an {ok:false} payload with no error text,
+    where losing the fallback surfaces a blank unexplained failure to the model.
+    duplicate_finder_worker's counts all derive from the hash BUCKET, not from group.file_paths,
+    so a group listing ONE path twice reports the identical count and wasted bytes -- yet acting
+    on it deletes the only copy; three tests now pin the group with its SHA-256 digest
+    (independently recomputed with hashlib, not taken on trust), both distinct member paths, and
+    filesUnhashed. Two more gained controls that make an existing refusal falsifiable: the
+    minimum-file-size test could not distinguish "filtered by threshold" from "collected nothing"
+    (execute emits the identical zero pair for an empty scan), and the depth-bound refusal shares
+    its error code with a failed directory listing.
+    config_schema_versioning's "no data loss" was probed only on keys the build defaults itself,
+    so an allowlist prune on migrate destroyed every unrecognized key with all four assertions
+    green; every case now seeds an unrecognized key and pins the exact post-reconcile key set, and
+    the FromFuture branch -- where writing is most dangerous -- gained the byte-identity check its
+    sibling already had. resetToDefaults asserted only the version stamp and health, both of which
+    survive deleting the re-seed step entirely, leaving every other case in the file leaning on an
+    empty store; and isHealthy's deliberately one-sided bound gained a positive control, without
+    which tightening it to == passes the whole file while refusing every legacy store.
   - PROGRESS 2026-08-24 second-pass re-sweep b72f (gated 249/249): 21 residual weak assertions
     pinned in tests/unit/test_leftover_scanner.cpp, closing the b72 worklist. Three slots asserted
     NOTHING: construction_safe/moderate/advanced each built a scanner and discarded it via

@@ -13,6 +13,7 @@
 #include <QFile>
 #include <QSettings>
 #include <QString>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 #include <QVariant>
@@ -83,6 +84,10 @@ void ConfigSchemaVersioningTests::reconcile_currentVersion_isByteIdenticalNoWrit
         QSettings seed(path, QSettings::IniFormat);
         seed.setValue(schemaKey(), ConfigManager::kCurrentSchemaVersion);
         seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
+        // A key outside this build's recognized set. Without one, "no write" is
+        // unfalsifiable: a Current branch that prunes unrecognized keys has nothing to
+        // prune here, never dirties the store, and leaves the file byte-identical.
+        seed.setValue(QStringLiteral("future/unknown_feature"), kFutureFeatureProbe);
         seed.sync();
     }
     const QByteArray before = readAllBytes(path);
@@ -94,7 +99,15 @@ void ConfigSchemaVersioningTests::reconcile_currentVersion_isByteIdenticalNoWrit
 
     QCOMPARE(static_cast<int>(state), static_cast<int>(ConfigManager::SchemaVersionState::Current));
     QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
+    QCOMPARE(store.value(QStringLiteral("future/unknown_feature")).toInt(), kFutureFeatureProbe);
     QCOMPARE(store.value(schemaKey()).toInt(), ConfigManager::kCurrentSchemaVersion);
+    // Exact key set: an at-current store is neither tidied nor added to.
+    QStringList keys_after = store.allKeys();
+    keys_after.sort();
+    const QStringList expected_keys{QStringLiteral("backup/thread_count"),
+                                    QStringLiteral("future/unknown_feature"),
+                                    schemaKey()};
+    QCOMPARE(keys_after, expected_keys);
     QCOMPARE(readAllBytes(path), before);
 }
 
@@ -112,6 +125,10 @@ void ConfigSchemaVersioningTests::reconcile_olderVersion_migratesAndPreservesVal
         seed.setValue(schemaKey(), ConfigManager::kCurrentSchemaVersion - 1);
         seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
         seed.setValue(QStringLiteral("duplicate/keep_strategy"), QStringLiteral("newest"));
+        // Both keys above are ones this build writes itself, so "no data loss" was only ever
+        // probed against the allowlist. A migrate step that drops unrecognized keys -- the
+        // exact line a future author edits when chaining a field migration in -- ships green.
+        seed.setValue(QStringLiteral("future/unknown_feature"), kFutureFeatureProbe);
         seed.sync();
     }
 
@@ -124,6 +141,15 @@ void ConfigSchemaVersioningTests::reconcile_olderVersion_migratesAndPreservesVal
     QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
     QCOMPARE(store.value(QStringLiteral("duplicate/keep_strategy")).toString(),
              QStringLiteral("newest"));
+    QCOMPARE(store.value(QStringLiteral("future/unknown_feature")).toInt(), kFutureFeatureProbe);
+    // Stamping the version is the migration's ONLY write: nothing dropped, nothing invented.
+    QStringList keys_after = store.allKeys();
+    keys_after.sort();
+    const QStringList expected_keys{QStringLiteral("backup/thread_count"),
+                                    QStringLiteral("duplicate/keep_strategy"),
+                                    QStringLiteral("future/unknown_feature"),
+                                    schemaKey()};
+    QCOMPARE(keys_after, expected_keys);
 }
 
 // A store predating schema versioning has no version key at all. It is treated
@@ -136,6 +162,10 @@ void ConfigSchemaVersioningTests::reconcile_legacyNoVersionKey_migratesAndPreser
     {
         QSettings seed(path, QSettings::IniFormat);
         seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
+        // A pre-versioning store is the one MOST likely to carry keys this build has never
+        // heard of, so it is the worst case for an allowlist prune -- and the only seeded key
+        // above is one the build defaults itself.
+        seed.setValue(QStringLiteral("future/unknown_feature"), kFutureFeatureProbe);
         seed.sync();
         QVERIFY(!seed.contains(schemaKey()));
     }
@@ -147,6 +177,14 @@ void ConfigSchemaVersioningTests::reconcile_legacyNoVersionKey_migratesAndPreser
              static_cast<int>(ConfigManager::SchemaVersionState::Migrated));
     QCOMPARE(store.value(schemaKey()).toInt(), ConfigManager::kCurrentSchemaVersion);
     QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
+    QCOMPARE(store.value(QStringLiteral("future/unknown_feature")).toInt(), kFutureFeatureProbe);
+    // Adding the version key is the migration's ONLY write.
+    QStringList keys_after = store.allKeys();
+    keys_after.sort();
+    const QStringList expected_keys{QStringLiteral("backup/thread_count"),
+                                    QStringLiteral("future/unknown_feature"),
+                                    schemaKey()};
+    QCOMPARE(keys_after, expected_keys);
 }
 
 // Newer-version read (a rollback opened a config a newer build wrote): the
@@ -164,9 +202,16 @@ void ConfigSchemaVersioningTests::reconcile_newerVersion_preservesUnknownKeysAnd
         seed.setValue(QStringLiteral("future/unknown_feature"), kFutureFeatureProbe);
         seed.sync();
     }
+    // "FromFuture takes no write at all" is only falsifiable against the bytes on disk. The
+    // prune direction was covered; the ADDITIVE direction was wide open -- stamping a
+    // breadcrumb key here dirties and rewrites a config a NEWER build owns and this build has
+    // just admitted it does not understand.
+    const QByteArray before = readAllBytes(path);
+    QVERIFY(!before.isEmpty());
 
     QSettings store(path, QSettings::IniFormat);
     const auto state = ConfigManager::reconcileSchemaVersion(store);
+    store.sync();
 
     QCOMPARE(static_cast<int>(state),
              static_cast<int>(ConfigManager::SchemaVersionState::FromFuture));
@@ -175,6 +220,13 @@ void ConfigSchemaVersioningTests::reconcile_newerVersion_preservesUnknownKeysAnd
     // Known and unknown keys both preserved.
     QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
     QCOMPARE(store.value(QStringLiteral("future/unknown_feature")).toInt(), kFutureFeatureProbe);
+    QStringList keys_after = store.allKeys();
+    keys_after.sort();
+    const QStringList expected_keys{QStringLiteral("backup/thread_count"),
+                                    QStringLiteral("future/unknown_feature"),
+                                    schemaKey()};
+    QCOMPARE(keys_after, expected_keys);
+    QCOMPARE(readAllBytes(path), before);
 }
 
 // ============================================================================
@@ -188,6 +240,21 @@ void ConfigSchemaVersioningTests::singleton_freshStore_isCurrentVersionAndHealth
 
     QCOMPARE(mgr.storedSchemaVersion(), ConfigManager::kCurrentSchemaVersion);
     QVERIFY(mgr.isHealthy());
+    // resetToDefaults() is clear -> reconcile -> initializeDefaults. Delete the last step and
+    // BOTH assertions above still pass against a completely EMPTY store (reconcile stamped the
+    // version, and isHealthy only checks status plus the version bound) -- and every other case
+    // in this file leans on cleanup()'s resetToDefaults() to hand back a well-formed store, so
+    // the whole file would stay green. Read with no getter-side default so a dropped key cannot
+    // be masked by the getter's own fallback.
+    QCOMPARE(mgr.getValue(QStringLiteral("backup/thread_count")).toInt(), 4);
+    QCOMPARE(mgr.getValue(QStringLiteral("duplicate/keep_strategy")).toString(),
+             QStringLiteral("oldest"));
+    QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/validation_mode")).toString(),
+             QStringLiteral("full"));
+    QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/max_concurrent_writes")).toInt(), 1);
+    QCOMPARE(mgr.getValue(QStringLiteral("ui/restore_window_geometry")).toBool(), true);
+    // The retired key must not come back.
+    QVERIFY(!mgr.contains(QStringLiteral("image_flasher/show_system_drive_warning")));
 }
 
 // Same-version write/read round-trip: a value persists and the schema version is
@@ -215,6 +282,17 @@ void ConfigSchemaVersioningTests::singleton_newerVersion_isUnhealthyAndDataPrese
 
     QVERIFY(!mgr.isHealthy());
     QCOMPARE(mgr.storedSchemaVersion(), kFutureSchemaVersion);
+    QCOMPARE(mgr.getValue(QStringLiteral("test/precious")).toInt(), kPreciseProbe);
+
+    // Positive control. isHealthy() refuses through TWO independent guards -- a QSettings
+    // status error OR a newer-than-current schema -- so !isHealthy() alone does not prove which
+    // fired. The bound is deliberately ONE-SIDED (<=), so an older stamp must read healthy
+    // again on the very same store. Without this leg, tightening the bound to == passes every
+    // case in the file while a fail-closed health flag refuses every legacy/pre-versioning
+    // store -- exactly the stores the header says must be accepted and migrated forward.
+    mgr.setValue(schemaKey(), ConfigManager::kNoSchemaVersion);
+    QCOMPARE(mgr.storedSchemaVersion(), ConfigManager::kNoSchemaVersion);
+    QVERIFY(mgr.isHealthy());
     QCOMPARE(mgr.getValue(QStringLiteral("test/precious")).toInt(), kPreciseProbe);
 }
 

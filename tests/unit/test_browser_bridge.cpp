@@ -118,7 +118,12 @@ void BrowserBridgeTests::beginCommand_refusedWhenNotConnected() {
                                           QJsonObject{{QStringLiteral("url"),
                                                        QStringLiteral("https://example.com/")}});
     QVERIFY(!out.ok);
-    QVERIFY(out.error.contains(QStringLiteral("not connected")));
+    // This string is the ONLY diagnostic the model and the operator ever see for this failure.
+    // "Browser not connected." also contains the fragment but loses the actionable half -- that
+    // the missing piece is the S.A.K. EXTENSION, not a restart of Chrome.
+    QCOMPARE(out.error,
+             QStringLiteral(
+                 "Browser not connected: the S.A.K. browser-control extension is not attached."));
     QVERIFY(!session.hasOutstanding());
 }
 
@@ -143,7 +148,11 @@ void BrowserBridgeTests::beginCommand_refusesSecondWhileOutstanding() {
     QVERIFY(session.beginCommand(QStringLiteral("browser_snapshot"), {}).ok);
     const auto second = session.beginCommand(QStringLiteral("browser_reload"), {});
     QVERIFY(!second.ok);
-    QVERIFY(second.error.contains(QStringLiteral("already in progress")));
+    QCOMPARE(second.error, QStringLiteral("A browser action is already in progress."));
+    // The refusal must not disturb the op it refused. Move the busy check AFTER the id mint and
+    // the call still refuses, but outstanding_id_ is already clobbered with "b-2" -- the
+    // in-flight b-1's reply then fails the id match and is silently dropped, hanging the op.
+    QCOMPARE(session.outstandingId(), QStringLiteral("b-1"));
 }
 
 void BrowserBridgeTests::onReply_nonMatchingIdIsDroppedKeepingOutstanding() {
@@ -163,6 +172,11 @@ void BrowserBridgeTests::onReply_lateReplyAfterTimeoutIsDropped() {
     (void)session.beginCommand(QStringLiteral("browser_reload"), {});  // b-1
     session.retireOutstanding();                                       // timeout fired
     QVERIFY(!session.hasOutstanding());
+    // retireOutstanding has a SECOND effect asserted nowhere in the repo: a timed-out click or
+    // navigation may already have mutated the DOM before we gave up waiting, so every ref from
+    // the last snapshot is invalidated. Without this, a bridge that kept resolving refs against
+    // a changed DOM -- acting by ref on the wrong node -- passes.
+    QVERIFY(session.refIndexStale());
     // A late reply for the retired b-1 must not match.
     const auto late = session.onReply(
         resultFrame(QStringLiteral("b-1"), QStringLiteral("reload"), QJsonObject{}));
@@ -181,8 +195,11 @@ void BrowserBridgeTests::snapshot_populatesRefIndexAndClickResolvesBackendNodeId
                                     snapshotPayload(4242, QStringLiteral("Sign in"))));
     QVERIFY(snapReply.matched);
     QVERIFY(!snapReply.is_error);
-    QVERIFY(snapReply.text.contains(QStringLiteral("[ref=e1]")));
-    QVERIFY(snapReply.text.contains(QStringLiteral("Sign in")));
+    // The whole model-facing text: returning just the node body drops the url/title/element-count
+    // header that tells the model which page it is looking at, and both fragments still match.
+    QCOMPARE(snapReply.text,
+             QStringLiteral("url: https://example.com/\ntitle: Example\nelements: 1\n"
+                            "- button \"Sign in\" [ref=e1]\n"));
     QVERIFY(session.refIndex().contains(QStringLiteral("e1")));
 
     // Now a click by that ref resolves to the stored backendNodeId.
@@ -255,8 +272,12 @@ void BrowserBridgeTests::hostReconnect_clearsRefIndexSoStaleRefFails() {
         session.beginCommand(QStringLiteral("browser_click"),
                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")}});
     QVERIFY(!click.ok);
-    QVERIFY(
-        click.error.contains(QStringLiteral("snapshot")));  // "call browser_snapshot to refresh"
+    // The refusal must be the UNKNOWN-REF path (the reconnect CLEARED the index), not the
+    // stale-snapshot gate: four distinct production messages contain the word "snapshot", and
+    // dropping the .arg(ref) interpolation -- so a browser_drag can no longer say WHICH of its
+    // two endpoints was unknown -- also passes the fragment.
+    QCOMPARE(click.error,
+             QStringLiteral("Unknown element ref 'e1'; call browser_snapshot to refresh"));
 }
 
 void BrowserBridgeTests::onDetached_refusesRefActionButAllowsSnapshot() {
@@ -315,7 +336,10 @@ void BrowserBridgeTests::onReply_unexpectedTypeIsError() {
                                     {QStringLiteral("id"), out.frame.value(QStringLiteral("id"))}});
     QVERIFY(in.matched);
     QVERIFY(in.is_error);
-    QVERIFY(in.error.contains(QStringLiteral("Unexpected reply type")));
+    // Interpolating the wrong field (the sent cmd, say) MISREPORTS which frame type arrived,
+    // actively misleading an operator debugging a relay that leaks handshake frames into the
+    // reply channel; dropping the name entirely passes the fragment too.
+    QCOMPARE(in.error, QStringLiteral("Unexpected reply type 'welcome'."));
 }
 
 void BrowserBridgeTests::reply_forgedSnapshotCmdCannotInstallRefIndex() {
@@ -352,7 +376,12 @@ void BrowserBridgeTests::detachDuringSnapshot_replyDoesNotInstallRefIndex() {
     QVERIFY(in.matched);
     QVERIFY(session.refIndex().isEmpty());  // dead-DOM snapshot not trusted
     QVERIFY(session.refIndexStale());
-    QVERIFY(in.text.contains(QStringLiteral("changed")));
+    // "changed" does not even separate this from the stale-gate message, which also contains it.
+    // A notice without the recovery instruction leaves the model told its snapshot was discarded
+    // but not that it must call browser_snapshot again.
+    QCOMPARE(in.text,
+             QStringLiteral("The page changed while the snapshot was being taken; call "
+                            "browser_snapshot again."));
 }
 
 void BrowserBridgeTests::navigationInvalidatesRefsFromPriorSnapshot() {
@@ -399,7 +428,10 @@ void BrowserBridgeTests::screenshotReply_populatesImageChannelWithDimsFromPngHea
     QCOMPARE(in.image_base64, png);
     QCOMPARE(in.image_mime, QStringLiteral("image/png"));
     // Dimensions are read from the PNG's own IHDR, so they are the true device pixels.
-    QVERIFY(in.text.contains(QStringLiteral("1280x720")));
+    // The image rides image_base64, so this prose line is all the model reads in the text
+    // channel; degrading it to a bare "1280x720" token still passes the fragment. The
+    // no-dimensions sibling is already exact-pinned, so this was the asymmetric half.
+    QCOMPARE(in.text, QStringLiteral("Captured a 1280x720 PNG screenshot of the active tab."));
     QVERIFY(!in.text.contains(png));  // the base64 is never dumped into text
 }
 
@@ -447,7 +479,14 @@ void BrowserBridgeTests::screenshotReply_oversizeBase64IsRejected() {
     QVERIFY(in.matched);
     QVERIFY(in.is_error);
     QVERIFY(in.image_base64.isEmpty());
-    QVERIFY(in.error.contains(QStringLiteral("too large")));
+    // TWO independent caps say "too large": this 16 MiB screenshot cap and the 8 MiB generic
+    // reply cap. Delete the screenshot dispatch entirely and this payload trips the generic cap
+    // instead -- is_error set, image_base64 empty, "too large" present -- while the whole
+    // screenshot branch (empty check, size cap, strict base64 decode, MIME sanitize, IHDR
+    // summary) is dead. Same guard-isolation convention as the print cap below.
+    QCOMPARE(in.error,
+             QStringLiteral("The screenshot is too large to return; capture the viewport instead "
+                            "of the full page."));
 }
 
 void BrowserBridgeTests::screenshotReply_hostileMimeTypeCoercedToPng() {
@@ -502,7 +541,11 @@ void BrowserBridgeTests::genericReply_oversizeTextIsRejected() {
     const auto in2 = session.onReply(resultFrame(
         out2.frame.value(QStringLiteral("id")).toString(), QStringLiteral("reload"), small));
     QVERIFY(!in2.is_error);
-    QVERIFY(in2.text.contains(QStringLiteral("hi")));
+    // The generic channel returns the compact JSON of the whole payload. Returning only
+    // payload["content"] silently drops every other field -- a browser_read losing its
+    // truncation marker and origin -- and echoing the whole untrusted FRAME (type/id/cmd) into
+    // model context passes too; both satisfy contains("hi").
+    QCOMPARE(in2.text, QStringLiteral("{\"content\":\"hi\"}"));
 }
 
 void BrowserBridgeTests::onReply_resultWithOkFalseIsError() {
@@ -534,6 +577,10 @@ void BrowserBridgeTests::onReply_okFalseSnapshotDoesNotInstallRefIndex() {
         snap.frame.value(QStringLiteral("id")).toString(), QStringLiteral("snapshot"), failed));
     QVERIFY(in.matched);
     QVERIFY(in.is_error);
+    // This payload carries NEITHER "error" nor "message", so it is the only case in the file
+    // driving the generic fallback. Without the fallback the error is EMPTY: a failure surfaced
+    // to the model with no reason at all, while is_error stays true.
+    QCOMPARE(in.error, QStringLiteral("Browser command reported failure."));
     QVERIFY(session.refIndex().isEmpty());
 }
 

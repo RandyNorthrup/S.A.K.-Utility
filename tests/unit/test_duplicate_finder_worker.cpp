@@ -77,6 +77,26 @@ private Q_SLOTS:
         QCOMPARE(wastedSpace, static_cast<qint64>(content.size()));
         // A clean scan hashed every file: nothing dropped (no false-positive count).
         QCOMPARE(worker.filesUnhashed(), 0);
+        // Pin the GROUP, not just the summary counters. total_duplicates and wasted_space
+        // are derived from the hash BUCKET, not from group.file_paths, so a group that
+        // listed ONE path twice reports the identical count and bytes -- yet acting on it
+        // deletes the only copy. The digest pins SHA-256 (an MD5 downgrade groups the same
+        // pair); it was verified independently with hashlib, not taken on trust.
+        QCOMPARE(static_cast<int>(worker.duplicateGroups().size()), 1);
+        const DuplicateFinderWorker::DuplicateGroup& group = worker.duplicateGroups().front();
+        QCOMPARE(group.hash,
+                 QStringLiteral(
+                     "960f4c69e63b1e5c85b014e76e178941b81c61e61f1c6fb5da2dd7063b9b8173"));
+        QCOMPARE(group.file_size, static_cast<qint64>(content.size()));
+        QCOMPARE(group.wasted_space, static_cast<qint64>(content.size()));
+        QCOMPARE(group.file_paths.size(), 2);
+        const QString path_a = QDir(tmpDir.path()).filePath(QStringLiteral("file_a.txt"));
+        const QString path_b = QDir(tmpDir.path()).filePath(QStringLiteral("file_b.txt"));
+        const QString first_path = QDir::cleanPath(group.file_paths.at(0));
+        const QString second_path = QDir::cleanPath(group.file_paths.at(1));
+        QVERIFY(first_path != second_path);
+        QVERIFY((first_path == path_a && second_path == path_b) ||
+                (first_path == path_b && second_path == path_a));
     }
 
     // B6-21: a file that cannot be hashed (here: exclusively locked) must be
@@ -116,6 +136,28 @@ private Q_SLOTS:
 
         // The locked file could not be hashed -> surfaced, not hidden.
         QCOMPARE(worker.filesUnhashed(), 1);
+
+        // ...and it is a COUNT, not a "something failed" boolean. An implementation that
+        // surfaced the parallel job's existing error flag as this number still reports 1 for
+        // two failures -- and the action layer prints it to the caller verbatim.
+        createFile(tmpDir.path(), "locked2.bin", "second locked payload");
+        const QString lockedPath2 = QDir(tmpDir.path()).filePath("locked2.bin");
+        const std::wstring wpath2 = lockedPath2.toStdWString();
+        HANDLE handle2 = CreateFileW(wpath2.c_str(),
+                                     GENERIC_READ,
+                                     0,  // dwShareMode = 0 -> exclusive
+                                     nullptr,
+                                     OPEN_EXISTING,
+                                     FILE_ATTRIBUTE_NORMAL,
+                                     nullptr);
+        QVERIFY(handle2 != INVALID_HANDLE_VALUE);
+        const auto release2 = qScopeGuard([handle2]() { CloseHandle(handle2); });
+
+        DuplicateFinderWorker worker2(config);
+        QSignalSpy spy2(&worker2, &DuplicateFinderWorker::finished);
+        worker2.start();
+        QTRY_COMPARE_WITH_TIMEOUT(spy2.count(), 1, 10'000);
+        QCOMPARE(worker2.filesUnhashed(), 2);
     }
 
     void noDuplicatesWhenAllUnique() {
@@ -142,6 +184,11 @@ private Q_SLOTS:
         QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
 
         QCOMPARE(duplicateCount, 0);
+        // Zero because all three files WERE hashed and compared, not because the comparison set
+        // collapsed: a hasher that failed on every file reports zero too (failures are dropped
+        // from the set and every single-member bucket is then skipped).
+        QCOMPARE(worker.filesUnhashed(), 0);
+        QVERIFY(worker.duplicateGroups().empty());
     }
 
     void respectsMinimumFileSize() {
@@ -168,6 +215,24 @@ private Q_SLOTS:
         QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
 
         QCOMPARE(duplicateCount, 0);
+        QCOMPARE(worker.filesUnhashed(), 0);
+        QVERIFY(worker.duplicateGroups().empty());
+        // Control: the SAME fixture with the threshold at exactly the file size DOES find the
+        // pair. Without it, a walk that collected nothing at all satisfies the count-0 assertion
+        // above -- execute() emits the identical (0, 0) for "No files found to scan" -- and this
+        // test never exercises the minimum_file_size comparison it is named for. It also pins
+        // the boundary as inclusive (production drops sizes strictly BELOW).
+        DuplicateFinderWorker::Config at_threshold = config;
+        at_threshold.minimum_file_size = static_cast<qint64>(small.size());
+        DuplicateFinderWorker threshold_worker(at_threshold);
+        int thresholdCount = -1;
+        connect(&threshold_worker,
+                &DuplicateFinderWorker::resultsReady,
+                [&](const QString&, int count, qint64) { thresholdCount = count; });
+        QSignalSpy thresholdSpy(&threshold_worker, &DuplicateFinderWorker::finished);
+        threshold_worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(thresholdSpy.count(), 1, 10'000);
+        QCOMPARE(thresholdCount, 1);
     }
 
     void recursiveScanFindsInSubdirs() {
@@ -195,12 +260,39 @@ private Q_SLOTS:
         QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
 
         QCOMPARE(duplicateCount, 1);
+        // Pin the GROUP, not just the summary counters. total_duplicates and wasted_space
+        // are derived from the hash BUCKET, not from group.file_paths, so a group that
+        // listed ONE path twice reports the identical count and bytes -- yet acting on it
+        // deletes the only copy. The digest pins SHA-256 (an MD5 downgrade groups the same
+        // pair); it was verified independently with hashlib, not taken on trust.
+        QCOMPARE(static_cast<int>(worker.duplicateGroups().size()), 1);
+        const DuplicateFinderWorker::DuplicateGroup& group = worker.duplicateGroups().front();
+        QCOMPARE(group.hash,
+                 QStringLiteral(
+                     "2f5874acd27a5f560374988c673837a5665828585068bcfc7dc06bdec47eee38"));
+        QCOMPARE(group.file_size, static_cast<qint64>(content.size()));
+        QCOMPARE(group.wasted_space, static_cast<qint64>(content.size()));
+        QCOMPARE(group.file_paths.size(), 2);
+        const QString root_file = QDir(tmpDir.path()).filePath(QStringLiteral("root.txt"));
+        const QDir sub_dir(QDir(tmpDir.path()).filePath(QStringLiteral("sub")));
+        const QString sub_file = sub_dir.filePath(QStringLiteral("sub.txt"));
+        const QString first_path = QDir::cleanPath(group.file_paths.at(0));
+        const QString second_path = QDir::cleanPath(group.file_paths.at(1));
+        QVERIFY((first_path == root_file && second_path == sub_file) ||
+                (first_path == sub_file && second_path == root_file));
+        QCOMPARE(worker.filesUnhashed(), 0);
     }
 
     void cancellationFlag() {
         DuplicateFinderWorker::Config config;
         config.scanDirectories << "C:\\nonexistent";
         DuplicateFinderWorker worker(config);
+        // Negative control first: a fresh, never-started worker is NOT cancelled and NOT
+        // executing. Without it the assertion below is one-sided -- a stopRequested() that
+        // simply returns true satisfies it, and requestStop() is never proven to be what
+        // flipped the flag.
+        QVERIFY(!worker.stopRequested());
+        QVERIFY(!worker.isExecuting());
         worker.requestStop();
         QVERIFY(worker.stopRequested());
     }
@@ -213,6 +305,12 @@ private Q_SLOTS:
         using W = DuplicateFinderWorker;
         // A normal walk is inside every budget.
         QVERIFY(W::virtualWalkWithinBounds(0, 0, 0));
+        // The cap VALUES are the security property, and every assertion in this test is phrased
+        // in terms of the constants themselves -- widening one keeps them ALL true (including
+        // the one-past-the-bound refusals) while the untrusted-image walk stops being bounded.
+        QCOMPARE(W::kVirtualWalkMaxDepth, 32);
+        QCOMPARE(W::kVirtualWalkMaxDirectories, 100'000);
+        QCOMPARE(W::kVirtualWalkMaxFiles, static_cast<qsizetype>(500'000));
         QVERIFY(W::virtualWalkWithinBounds(W::kVirtualWalkMaxDepth,
                                            W::kVirtualWalkMaxDirectories - 1,
                                            W::kVirtualWalkMaxFiles - 1));
@@ -279,6 +377,24 @@ private Q_SLOTS:
         QTRY_COMPARE_WITH_TIMEOUT(failedSpy.count(), 1, 30'000);
         QCOMPARE(failedSpy.takeFirst().at(0).toInt(),
                  static_cast<int>(sak::error_code::scan_failed));
+
+        // Control: the same target walked to EXACTLY the depth bound is ACCEPTED. scan_failed is
+        // ALSO what a failed listDirectory returns, so without this the refusal above is
+        // satisfied by any listing breakage while the depth guard itself is dead.
+        const QString at_bound_root = QDir(tmpDir.path()).filePath(QStringLiteral("atbound"));
+        QString at_bound_chain = at_bound_root;
+        for (int i = 0; i < DuplicateFinderWorker::kVirtualWalkMaxDepth; ++i) {
+            at_bound_chain = QDir(at_bound_chain).filePath(QStringLiteral("d"));
+        }
+        QVERIFY(QDir().mkpath(at_bound_chain));
+        DuplicateFinderWorker::Config at_bound = makeVirtualConfig(tmpDir.path());
+        at_bound.virtual_directories = {at_bound_root};
+        DuplicateFinderWorker at_bound_worker(at_bound);
+        QSignalSpy atBoundFailed(&at_bound_worker, &WorkerBase::failed);
+        QSignalSpy atBoundFinished(&at_bound_worker, &DuplicateFinderWorker::finished);
+        at_bound_worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(atBoundFinished.count(), 1, 30'000);
+        QCOMPARE(atBoundFailed.count(), 0);
     }
 
     // Control: the bound does not break a normal (shallow) image scan.
@@ -304,6 +420,26 @@ private Q_SLOTS:
         worker.start();
         QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 30'000);
         QCOMPARE(duplicateCount, 1);
+        // Pin the group the IMAGE walk actually built: both distinct virtual paths, the shared
+        // size, and the SHA-256 digest (verified independently with hashlib). total_duplicates
+        // comes from the hash bucket, so the count alone survives a group that repeated one
+        // path, and it survives a weaker digest at the bridge hashing site.
+        QCOMPARE(static_cast<int>(worker.duplicateGroups().size()), 1);
+        const DuplicateFinderWorker::DuplicateGroup& group = worker.duplicateGroups().front();
+        QCOMPARE(group.hash,
+                 QStringLiteral(
+                     "df3146742e72a39d165976c55afe0aa554b22cb0033386b503f64022c7d1e37a"));
+        QCOMPARE(group.file_size, static_cast<qint64>(content.size()));
+        QCOMPARE(group.wasted_space, static_cast<qint64>(content.size()));
+        QCOMPARE(group.file_paths.size(), 2);
+        const QString path_a = QDir(root).filePath(QStringLiteral("a.bin"));
+        const QString path_b =
+            QDir(QDir(root).filePath(QStringLiteral("sub"))).filePath(QStringLiteral("b.bin"));
+        const QString first_path = QDir::cleanPath(group.file_paths.at(0));
+        const QString second_path = QDir::cleanPath(group.file_paths.at(1));
+        QVERIFY((first_path == path_a && second_path == path_b) ||
+                (first_path == path_b && second_path == path_a));
+        QCOMPARE(worker.filesUnhashed(), 0);
     }
 };
 

@@ -15,7 +15,12 @@ using sak::NuGetVersionRange;
 namespace {
 NuGetVersion v(const char* s) {
     const auto parsed = NuGetVersion::parse(QString::fromLatin1(s));
-    Q_ASSERT(parsed.has_value());
+    // Q_ASSERT compiles to nothing under QT_NO_DEBUG, which is the configuration the gate
+    // builds -- so this guard evaluated nothing and `return *parsed` dereferenced an empty
+    // optional. Every fixture in this file flows through here.
+    if (!parsed.has_value()) {
+        qFatal("NuGetVersion::parse rejected the fixture version: %s", s);
+    }
     return *parsed;
 }
 }  // namespace
@@ -63,8 +68,13 @@ void TestNuGetVersionRange::parse_acceptsReleaseAndPrerelease() {
     QVERIFY(b->isPrerelease());
     QCOMPARE(b->original(), QStringLiteral("1.2.3-beta.1"));
 
-    // NuGet 4-part release.
-    QVERIFY(NuGetVersion::parse(QStringLiteral("4.8.0.1")).has_value());
+    // NuGet 4-part release. A truncating parse still has_value(), so the revision has to be
+    // shown to participate in precedence; a fifth component is rejected outright.
+    const auto quad = NuGetVersion::parse(QStringLiteral("4.8.0.1"));
+    QVERIFY(quad.has_value());
+    QVERIFY(*quad > v("4.8.0"));
+    QVERIFY(*quad < v("4.8.0.2"));
+    QVERIFY(!NuGetVersion::parse(QStringLiteral("4.8.0.1.2")).has_value());
 }
 
 void TestNuGetVersionRange::parse_rejectsEmptyAndNonNumericRelease() {
@@ -74,12 +84,23 @@ void TestNuGetVersionRange::parse_rejectsEmptyAndNonNumericRelease() {
     QVERIFY(!NuGetVersion::parse(QStringLiteral("1.x.3")).has_value());
     QVERIFY(!NuGetVersion::parse(QStringLiteral("1..3")).has_value());
     QVERIFY(!NuGetVersion::parse(QStringLiteral("-beta")).has_value());
+    // Only the empty and non-numeric halves of the refusal were exercised. A release component
+    // wider than int32 is a malformed feed token, not a version -- and the boundary below it
+    // must still parse.
+    QVERIFY(!NuGetVersion::parse(QStringLiteral("1.0.2147483648")).has_value());
+    QVERIFY(NuGetVersion::parse(QStringLiteral("1.0.2147483647")).has_value());
 }
 
 void TestNuGetVersionRange::parse_ignoresBuildMetadata() {
     // Build metadata does not affect precedence.
     QCOMPARE(v("1.0.0+build5").compare(v("1.0.0")), 0);
     QCOMPARE(v("1.0.0+a").compare(v("1.0.0+b")), 0);
+    // Metadata is ignored for precedence but must still be WELL FORMED: an empty or
+    // non-identifier metadata run is a malformed version, not a plain release. Deleting the
+    // validation and keeping only the strip passes both comparisons above.
+    QVERIFY(!NuGetVersion::parse(QStringLiteral("1.0.0+")).has_value());
+    QVERIFY(!NuGetVersion::parse(QStringLiteral("1.0.0+a..b")).has_value());
+    QVERIFY(!NuGetVersion::parse(QStringLiteral("1.0.0+a+b")).has_value());
 }
 
 void TestNuGetVersionRange::compare_ordersReleaseNumericallyWithZeroPadding() {
@@ -185,7 +206,18 @@ void TestNuGetVersionRange::range_malformedRejectsAll() {
     // A NON-EMPTY string that does not parse is fail-closed: it is NOT permissive
     // and satisfies NOTHING (a garbled constraint must never match everything and
     // silently pull in an arbitrary version).
-    for (const char* s : {"not-a-range", "[bad", "(1.0", "[]", "(1.0)", "[1.0,x)", "1.0.x"}) {
+    // "[1.0,2.0x" isolates the close-char guard (the existing "[bad"/"(1.0" are still refused
+    // downstream without it, so it was never actually tested), and "[x,2.0)" isolates the LOWER
+    // half of the interval bound check -- only the upper half was.
+    for (const char* s : {"not-a-range",
+                          "[bad",
+                          "(1.0",
+                          "[]",
+                          "(1.0)",
+                          "[1.0,x)",
+                          "1.0.x",
+                          "[1.0,2.0x",
+                          "[x,2.0)"}) {
         const auto r = NuGetVersionRange::parse(QString::fromLatin1(s));
         QVERIFY2(!r.isValid(), QByteArray("expected invalid for: ").append(s).constData());
         QVERIFY(!r.isAny());
@@ -199,7 +231,10 @@ void TestNuGetVersionRange::parse_rejectsEmptyPrereleaseIdentifiers() {
     // SemVer forbids an empty prerelease identifier; a malformed separator must
     // fail the parse rather than be silently swallowed (SkipEmptyParts would hide
     // "alpha..1", ".beta", "rc." and misorder the version).
-    for (const char* s : {"1.0.0-", "1.0.0-.beta", "1.0.0-alpha..1", "1.0.0-rc."}) {
+    // The refusal is a two-part predicate -- empty identifier OR a byte outside [0-9A-Za-z-] --
+    // and only the empty half was probed, though the production comment names these two.
+    for (const char* s :
+         {"1.0.0-", "1.0.0-.beta", "1.0.0-alpha..1", "1.0.0-rc.", "1.0.0-alpha_1", "1.0.0-al?ha"}) {
         QVERIFY2(!NuGetVersion::parse(QString::fromLatin1(s)).has_value(),
                  QByteArray("expected parse failure for: ").append(s).constData());
     }
@@ -210,6 +245,11 @@ void TestNuGetVersionRange::parse_rejectsEmptyPrereleaseIdentifiers() {
 void TestNuGetVersionRange::range_invalidVersionNeverSatisfies() {
     NuGetVersion invalid;  // default-constructed, not valid
     QVERIFY(!invalid.isValid());
+    // The invalid version must sort strictly BELOW a parsed "0" rather than zero-padding into
+    // equality with it. satisfies() alone cannot see this -- its own isValid guard fires first.
+    QVERIFY(invalid < v("0"));
+    QVERIFY(v("0") > invalid);
+    QVERIFY(!(invalid == v("0")));
     QVERIFY(!NuGetVersionRange::parse(QStringLiteral("[1.0,)")).satisfies(invalid));
     QVERIFY(!NuGetVersionRange::parse(QString()).satisfies(invalid));  // even a permissive range
 }
@@ -230,13 +270,21 @@ void TestNuGetVersionRange::select_noneQualifyReturnsNullopt() {
 }
 
 void TestNuGetVersionRange::select_prefersStableOverPrereleaseAtEqualPrecedence() {
-    // 2.0.0 (stable) and 2.0.0-rc both "present"; stable wins.
+    // 2.0.0 (stable) and 2.0.0-rc both "present"; stable wins. The lower bound must itself be a
+    // PRERELEASE, or prereleases are excluded from the candidate set before the preference is
+    // ever consulted -- under the old stable "[1.0,)" bound the rc was merely filtered out, so
+    // this test never exercised the tie-break it is named for. Both input orders, so the answer
+    // cannot come from iteration order.
     const QVector<NuGetVersion> avail{v("2.0.0-rc.1"), v("2.0.0"), v("1.9.0")};
-    const auto r = NuGetVersionRange::parse(QStringLiteral("[1.0,)"));
+    const auto r = NuGetVersionRange::parse(QStringLiteral("[1.0.0-alpha,)"));
     const auto best = r.selectHighestSatisfying(avail);
     QVERIFY(best.has_value());
     QCOMPARE(best->original(), QStringLiteral("2.0.0"));
     QVERIFY(!best->isPrerelease());
+    const QVector<NuGetVersion> reversed{v("1.9.0"), v("2.0.0"), v("2.0.0-rc.1")};
+    const auto best_reversed = r.selectHighestSatisfying(reversed);
+    QVERIFY(best_reversed.has_value());
+    QCOMPARE(best_reversed->original(), QStringLiteral("2.0.0"));
 }
 
 void TestNuGetVersionRange::select_excludesPrereleaseUnlessRangeTargetsIt() {
