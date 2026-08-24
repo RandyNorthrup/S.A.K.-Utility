@@ -5024,6 +5024,50 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 FIRST-pass sweep b77 (gated 249/249): 30 weak assertions pinned across
+    five never-swept files (ai_prompt_assembler 18, user_profile_restore_selection 5,
+    ai_human_gate_store 4, thermal_monitor 2 + 1 new slot, resource_soak 1).
+    ai_prompt_assembler is the AI safety prompt, and every one of its guardrail assertions was a
+    LABEL or a short fragment: "Scan workflow", "checksum mismatch", "Tool health", "Prompt
+    injection defense", "Ambiguous mutation rule", "Destructive boundary", "Orchestration:",
+    "Headless first", "sak_app_action", "catastrophic actions". The label survives any rewrite of
+    the rule TEXT beneath it, so the entire safety content of each rule was unobserved -- a
+    guardrail could be gutted to its heading and the suite stayed green. All eighteen now compare
+    the WHOLE emitted line against the exact production literal, matched via split('\\n').contains
+    so a rule that merged into a neighbouring paragraph also fails. Four gained behavioural arms
+    that no assertion covered: the skill catalog must appear ONLY when local execution is enabled
+    (it instructs the model to load bodies through a tool that is otherwise absent); the memory
+    and steering bodies must follow their untrusted-data preamble and attribution header on the
+    NEXT line rather than merely appearing somewhere; the chat branch must return BEFORE the
+    access-mode paragraphs, or the prompt would both forbid and instruct local tool use; and a
+    contradictory selection (both mode flags set) must fail closed to the confirm-first text.
+    user_profile_restore_selection: production writes ONLY folder.selected in place, so the row
+    set and its identities are part of the contract -- a rebuild-from-choices applier satisfied
+    the flags alone. The strongest find is the per-user scoping test, which asserted that Bob's
+    identically-named folder was "untouched" -- but untouched EQUALS Bob's initial value, so it
+    could not tell a real (username, relative_path) key from an applier that never visits any
+    user past users[0]. It now addresses the same relative path to Bob and requires his copy to
+    clear while Alice's stays cleared.
+    ai_human_gate_store: eight fields are populated and three were inspected, so a round trip
+    that dropped workflow_id / phase_id / kind / name / question passed; the log-exists check was
+    mirror-vacuous (writer and check shared one accessor, so the file could have landed
+    anywhere); and the forged-record test could pass through three different guards, only one of
+    which it is named for -- the forged record must remain in the append-only log verbatim, or
+    the test passes because the audit history was silently truncated instead.
+    thermal_monitor: the runaway-poll bound passed VACUOUSLY if the re-arm was dropped
+    (window_cycles == 0 satisfies <= 12), and every clamp assertion was written relative to the
+    floor SYMBOL, so changing its magnitude kept them all true while the anti-busy-spin guarantee
+    moved. DISCIPLINE NOTE: the verifier's third pin -- a bare QVERIFY(isRunning()) immediately
+    after stop(), to prove start() polls immediately rather than merely arming the timer -- is a
+    genuine gap but a genuine RACE, depending on a pool thread still running with no retry. It
+    was replaced with a deterministic slot that proves the same contract without the race: with a
+    30s interval a reading can only arrive quickly if start() polled at once, and an arm-only
+    start() leaves the counter at zero for the full interval. Stress-run 5x plus 3x green.
+    resource_soak: the environment-carrying launcher is reached by exactly ONE test in the repo,
+    and it passed the system environment unchanged -- so a launcher that dropped its environment
+    argument collapsed onto the plain runProcess, left that launch path unsoaked, and every real
+    caller silently lost its custom environment. The soak now carries a marker the child must
+    observe.
   - PROGRESS 2026-08-24 FIRST-pass sweep b76 (gated 249/249): 29 weak assertions pinned across
     five never-swept files (win32_mcp_text_match 10, win32_mcp_input_plan 9, win32_mcp_key_chord
     4, diagnostic_types 3, keep_awake 3) -- the largest single-batch yield of the never-swept

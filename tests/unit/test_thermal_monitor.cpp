@@ -16,6 +16,7 @@ class ThermalMonitorTests : public QObject {
 private Q_SLOTS:
     void initialState();
     void startStop();
+    void startFiresInitialPollImmediately();
     void pollOnceReadingsAreWellFormed();
     void singleShotTimerBehavior();
     void clampPollInterval_flooring();
@@ -53,6 +54,27 @@ void ThermalMonitorTests::startStop() {
     QTest::qWait(250);     // let any queued watcher callout be delivered
     QVERIFY(!monitor.isRunning());
     QCOMPARE(updates, 0);  // the result of a poll that outlived stop() is dropped
+}
+
+// start() fires the initial poll IMMEDIATELY rather than merely arming the timer. The
+// stop-during-poll test above depends on that -- it needs an in-flight poll for stop() to race,
+// or the m_active guard it is named for is never exercised -- but it cannot prove it: a start()
+// that only armed the timer satisfies its isRunning() check just as well.
+//
+// Proved here without racing the poll: with a 30s interval, a reading can only arrive quickly if
+// start() polled at once. If it merely armed the timer, nothing can arrive for 30 seconds.
+void ThermalMonitorTests::startFiresInitialPollImmediately() {
+    int cycles = 0;
+    ThermalMonitor monitor;
+    QObject::connect(&monitor,
+                     &ThermalMonitor::readingsUpdated,
+                     &monitor,
+                     [&cycles](const QVector<sak::ThermalReading>&) { ++cycles; });
+
+    monitor.start(30'000);
+    QTRY_VERIFY_WITH_TIMEOUT(cycles >= 1, 20'000);
+    monitor.stop();
+    QTRY_VERIFY_WITH_TIMEOUT(!monitor.isRunning(), 30'000);
 }
 
 void ThermalMonitorTests::pollOnceReadingsAreWellFormed() {
@@ -93,6 +115,12 @@ void ThermalMonitorTests::singleShotTimerBehavior() {
     // any machine. Bounded by the sensor-query timeout, so it always arrives.
     QTRY_VERIFY_WITH_TIMEOUT(cycles >= 1, 30'000);
 
+    // A completed cycle must leave the monitor ARMED for the next one: onPollComplete re-arms
+    // the single-shot timer in the same slot invocation that emitted the readings. Drop that
+    // re-arm and the monitor emits exactly one reading set and goes silent -- and the runaway
+    // bound below then passes VACUOUSLY with window_cycles == 0.
+    QTRY_VERIFY_WITH_TIMEOUT(monitor.isRunning(), 5000);
+
     const int cycles_before_window = cycles;
     QTest::qWait(3000);
     monitor.stop();
@@ -109,6 +137,9 @@ void ThermalMonitorTests::singleShotTimerBehavior() {
 // B5 tail: a non-positive poll interval must never arm the timer (0 busy-spins,
 // negative is invalid). start() clamps through clampPollIntervalMs.
 void ThermalMonitorTests::clampPollInterval_flooring() {
+    // Every assertion below is written RELATIVE to the symbol, so changing the floor's
+    // magnitude keeps them all true while the anti-busy-spin guarantee moves. Pin the value.
+    QCOMPARE(sak::kMinThermalPollIntervalMs, 250);
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(1000), 1000);
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(sak::kMinThermalPollIntervalMs),
              sak::kMinThermalPollIntervalMs);

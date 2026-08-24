@@ -57,9 +57,16 @@ void RestoreSelectionTests::uncheckingAFolderClearsOnlyThatFolder() {
         {QStringLiteral("Bob"), QStringLiteral("Pictures"), true}};
     applyFolderRestoreSelections(m, choices);
 
+    // Production writes ONLY `folder.selected` in place, so the row set and its identities are
+    // part of the contract: a rebuild-from-choices applier would satisfy the flags alone.
+    QCOMPARE(m.users[0].backed_up_folders.size(), 3);  // no row added, dropped or reordered
+    QCOMPARE(m.users[0].backed_up_folders[0].relative_path, QStringLiteral("Documents"));
+    QCOMPARE(m.users[0].backed_up_folders[0].display_name, QStringLiteral("Documents"));
     QCOMPARE(m.users[0].backed_up_folders[0].selected, true);   // Documents
     QCOMPARE(m.users[0].backed_up_folders[1].selected, false);  // Desktop (unchecked)
     QCOMPARE(m.users[0].backed_up_folders[2].selected, true);   // Downloads
+    QCOMPARE(m.users[1].backed_up_folders.size(), 1);           // no ghost row invented for Bob
+    QCOMPARE(m.users[1].backed_up_folders[0].relative_path, QStringLiteral("Pictures"));
     QCOMPARE(m.users[1].backed_up_folders[0].selected, true);   // Bob/Pictures
 }
 
@@ -72,6 +79,9 @@ void RestoreSelectionTests::unmatchedFolderKeepsExistingSelection() {
         {QStringLiteral("Alice"), QStringLiteral("Documents"), true}};
     applyFolderRestoreSelections(m, choices);
 
+    // fail-safe: an unmatched folder is never dropped, so the row count is the contract here
+    QCOMPARE(m.users[0].backed_up_folders.size(), 3);
+    QCOMPARE(m.users[0].backed_up_folders[0].relative_path, QStringLiteral("Documents"));
     QCOMPARE(m.users[0].backed_up_folders[0].selected, true);   // matched -> true
     QCOMPARE(m.users[0].backed_up_folders[1].selected, false);  // unmatched -> preserved
     QCOMPARE(m.users[0].backed_up_folders[2].selected, true);   // unmatched -> preserved default
@@ -88,6 +98,16 @@ void RestoreSelectionTests::selectionIsScopedPerUser() {
 
     QCOMPARE(m.users[0].backed_up_folders[0].selected, false);  // Alice/Documents cleared
     QCOMPARE(m.users[1].backed_up_folders[1].selected, true);   // Bob/Documents untouched
+    // "Untouched" equals Bob's INITIAL value, so this alone cannot tell a real
+    // (username, relative_path) key from an applier that never visits any user past users[0].
+    // Address the SAME relative path to Bob: his copy must clear while Alice's stays cleared
+    // and Bob's other folder is unaffected.
+    const QVector<FolderRestoreChoice> bobChoices = {
+        {QStringLiteral("Bob"), QStringLiteral("Documents"), false}};
+    applyFolderRestoreSelections(m, bobChoices);
+    QCOMPARE(m.users[1].backed_up_folders[1].selected, false);  // Bob/Documents now cleared
+    QCOMPARE(m.users[1].backed_up_folders[0].selected, true);   // Bob/Pictures unaffected
+    QCOMPARE(m.users[0].backed_up_folders[0].selected, false);  // Alice/Documents stays cleared
 }
 
 void RestoreSelectionTests::selectedFolderCountReflectsChoices() {
@@ -99,6 +119,15 @@ void RestoreSelectionTests::selectedFolderCountReflectsChoices() {
 
     QCOMPARE(selectedFolderCount(m, QStringLiteral("Alice")), 1);  // only Documents left
     QCOMPARE(selectedFolderCount(m, QStringLiteral("Bob")), 1);
+    // A count of 1 does not say WHICH row kept the flag: pin identity + flag per row so a
+    // positional (row-order) matcher cannot pass by clearing Documents and leaving Downloads.
+    QCOMPARE(m.users[0].backed_up_folders.size(), 3);
+    QCOMPARE(m.users[0].backed_up_folders[0].relative_path, QStringLiteral("Documents"));
+    QCOMPARE(m.users[0].backed_up_folders[0].selected, true);   // unmatched -> kept
+    QCOMPARE(m.users[0].backed_up_folders[1].relative_path, QStringLiteral("Desktop"));
+    QCOMPARE(m.users[0].backed_up_folders[1].selected, false);  // unchecked
+    QCOMPARE(m.users[0].backed_up_folders[2].relative_path, QStringLiteral("Downloads"));
+    QCOMPARE(m.users[0].backed_up_folders[2].selected, false);  // unchecked
 }
 
 void RestoreSelectionTests::absentUserCountsZero() {

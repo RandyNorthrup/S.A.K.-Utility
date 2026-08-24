@@ -63,9 +63,18 @@ void doOneLaunch(int index) {
         const auto result = sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000);
         QVERIFY(result.succeeded());
     } else {
+        // Prove the environment argument actually REACHES the child: the marker is the only
+        // thing separating this branch from the plain launcher, so a runProcessWithEnvironment
+        // that dropped its environment would collapse onto runProcess and leave the
+        // env-carrying launch path unsoaked. This is the only test in the repo that reaches it.
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("SAK_SOAK_MARKER"), QStringLiteral("42"));
         const auto result = sak::runProcessWithEnvironment(
-            "cmd.exe", {"/C", "exit /b 0"}, 10'000, QProcessEnvironment::systemEnvironment());
-        QVERIFY(result.succeeded());
+            "cmd.exe", {"/C", "if not %SAK_SOAK_MARKER%==42 exit /b 3"}, 10'000, env);
+        QVERIFY(!result.timed_out);
+        QVERIFY(!result.cancelled);
+        QCOMPARE(result.exit_status, 0);
+        QCOMPARE(result.exit_code, 0);
     }
 }
 #endif
