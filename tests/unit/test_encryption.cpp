@@ -243,6 +243,15 @@ void EncryptionTests::emptyPassword_rejected() {
     auto result = sak::encryptData(data, QString());
     QVERIFY(!result.has_value());
     QCOMPARE(result.error(), sak::error_code::invalid_argument);
+
+    // The reader carries its OWN empty-password guard and nothing reached it. Feed a well-formed
+    // image so no size/format guard can refuse first, i.e. so the empty password is the ONLY
+    // reason left for the refusal.
+    auto encrypted = sak::encryptData(data, "pw_for_empty_password_decrypt");
+    QVERIFY(encrypted.has_value());
+    auto decrypted = sak::decryptData(encrypted.value(), QString());
+    QVERIFY(!decrypted.has_value());
+    QCOMPARE(decrypted.error(), sak::error_code::invalid_argument);
 }
 
 void EncryptionTests::truncatedCiphertext_failsDecrypt() {
@@ -256,6 +265,18 @@ void EncryptionTests::truncatedCiphertext_failsDecrypt() {
     QByteArray truncated = encrypted.value().left(10);
     auto decrypted = sak::decryptData(truncated, password);
     QVERIFY(!decrypted.has_value());
+    // Refusing is not enough - it must refuse as a FORMAT problem. decryptData has three distinct
+    // refusers (bad password/params, too small, failed authentication) all reported through
+    // !has_value(), so pin the one this test is named for.
+    QCOMPARE(decrypted.error(), sak::error_code::invalid_format);
+
+    // One byte under the [salt][IV][tag] floor is still a format refusal: a floor that dropped the
+    // trailing-tag term would slice a tag out of a too-small buffer and report decrypt_failed.
+    const qsizetype floor_size = qsizetype(sak::kEncryptionSaltBytes) + sak::kAesBlockBytes +
+                                 sak::kEncryptionMacBytes;
+    auto one_short = sak::decryptData(encrypted.value().left(floor_size - 1), password);
+    QVERIFY(!one_short.has_value());
+    QCOMPARE(one_short.error(), sak::error_code::invalid_format);
 }
 
 void EncryptionTests::corruptedCiphertext_failsDecrypt() {
@@ -338,19 +359,55 @@ void EncryptionTests::invalidParams_rejected() {
         const auto enc = sak::encryptData(data, password, p);
         QVERIFY(!enc.has_value());
         QCOMPARE(enc.error(), sak::error_code::invalid_argument);
+        // All four entry points run the SAME validator and only the writer was ever checked, so a
+        // regression that drops the call from the reader or from either stream end would hide
+        // behind that one assertion.
+        const auto dec = sak::decryptData(data, password, p);
+        QVERIFY(!dec.has_value());
+        QCOMPARE(dec.error(), sak::error_code::invalid_argument);
+        const auto senc = sak::StreamEncryptor::create(password, p);
+        QVERIFY(!senc.has_value());
+        QCOMPARE(senc.error(), sak::error_code::invalid_argument);
+        const auto sdec = sak::StreamDecryptor::create(
+            password, QByteArray(sak::StreamDecryptor::headerSize(p), 0), p);
+        QVERIFY(!sdec.has_value());
+        QCOMPARE(sdec.error(), sak::error_code::invalid_argument);
     };
     sak::EncryptionParams badKey;
-    badKey.key_size = 20;  // not 16/24/32
+    badKey.key_size = 20;  // not an AES key length at all
     expectRejected(badKey);
+    // 20 is refused by ANY "is this an AES size?" predicate, so it never reaches the guard this
+    // API actually states: AES-256 ONLY. 16 and 24 are perfectly valid AES key lengths and must
+    // still be refused, otherwise a silent downgrade to AES-128/192 would go untested.
+    sak::EncryptionParams aes128Downgrade;
+    aes128Downgrade.key_size = 16;
+    expectRejected(aes128Downgrade);
+    sak::EncryptionParams aes192Downgrade;
+    aes192Downgrade.key_size = 24;
+    expectRejected(aes192Downgrade);
     sak::EncryptionParams badIv;
     badIv.iv_size = 8;  // not one AES block
     expectRejected(badIv);
     sak::EncryptionParams badSalt;
-    badSalt.salt_size = 4;  // too small
+    badSalt.salt_size = 4;  // below the 8-byte collision-resistance floor
     expectRejected(badSalt);
+    // The salt bound is two-sided: the ceiling exists so a hostile params blob cannot drive a
+    // multi-gigabyte salt allocation, and nothing exercised that arm.
+    sak::EncryptionParams hugeSalt;
+    hugeSalt.salt_size = 1'000'000;  // far above the salt ceiling
+    expectRejected(hugeSalt);
     sak::EncryptionParams badIter;
     badIter.iterations = 0;  // non-positive
     expectRejected(badIter);
+    // 0 is only the degenerate arm: a positive-but-absurd work factor must be rejected too, or a
+    // regression to a bare `iterations > 0` check would leave PBKDF2 with a single round.
+    sak::EncryptionParams weakIter;
+    weakIter.iterations = 1;
+    expectRejected(weakIter);
+    // ...and the ceiling arm, which exists so an attacker-chosen count cannot pin the CPU.
+    sak::EncryptionParams hugeIter;
+    hugeIter.iterations = 200'000'000;
+    expectRejected(hugeIter);
 }
 
 void EncryptionTests::differentPasswords_produceDifferentCiphertext() {
@@ -358,6 +415,20 @@ void EncryptionTests::differentPasswords_produceDifferentCiphertext() {
 
     auto enc1 = sak::encryptData(original, "password_one");
     auto enc2 = sak::encryptData(original, "password_two");
+
+    QVERIFY(enc1.has_value());
+    QVERIFY(enc2.has_value());
+    QVERIFY(enc1.value() != enc2.value());
+    // `!=` proves nothing about the PASSWORD: a fresh random salt/IV makes ANY two images differ
+    // even for one password (sameInput_producesDifferentCiphertext rests on exactly that), so the
+    // assertion is trivially true for this fixture. These two passwords share their first nine
+    // bytes, so cross-decryption is what actually pins the key to the WHOLE password.
+    auto crossed = sak::decryptData(enc1.value(), "password_two");
+    QVERIFY2(!crossed.has_value(), "a different password must not open this image");
+    QCOMPARE(crossed.error(), sak::error_code::decrypt_failed);
+    auto own = sak::decryptData(enc1.value(), "password_one");
+    QVERIFY(own.has_value());
+    QCOMPARE(own.value(), original);
 
     QVERIFY(enc1.has_value());
     QVERIFY(enc2.has_value());
@@ -372,6 +443,20 @@ void EncryptionTests::sameInput_producesDifferentCiphertext() {
 
     auto enc1 = sak::encryptData(original, password);
     auto enc2 = sak::encryptData(original, password);
+
+    QVERIFY(enc1.has_value());
+    QVERIFY(enc2.has_value());
+    QVERIFY(enc1.value() != enc2.value());
+    // `!=` over the whole image is satisfied by EITHER header field alone: freezing the IV while
+    // the salt stays random (or the reverse) still makes the two images differ. Both are drawn
+    // fresh per call, so pin them separately - a collision here is a 2^-128 event, not a flake.
+    QCOMPARE(enc1.value().size(), enc2.value().size());
+    QVERIFY2(enc1.value().left(sak::kEncryptionSaltBytes) !=
+                 enc2.value().left(sak::kEncryptionSaltBytes),
+             "each encryption must draw a fresh random salt");
+    QVERIFY2(enc1.value().mid(sak::kEncryptionSaltBytes, sak::kAesBlockBytes) !=
+                 enc2.value().mid(sak::kEncryptionSaltBytes, sak::kAesBlockBytes),
+             "each encryption must draw a fresh random IV");
 
     QVERIFY(enc1.has_value());
     QVERIFY(enc2.has_value());
@@ -484,6 +569,22 @@ void EncryptionTests::stream_wrongPassword_failsAtFinish() {
     const QByteArray recovered = streamDecrypt(wire, "wrong_password", 256, &ok);
     QVERIFY2(!ok, "a wrong password must fail authentication");
     QVERIFY(recovered.isEmpty());
+
+    // A single `ok` flag cannot say WHICH step refused: streamDecrypt() reports its own size
+    // check, create(), update() and finish() through the same bool, and recovered.isEmpty() only
+    // restates that helper's `return {}` -- it asserts the test helper, not production. Drive the
+    // reader by hand so the refusal is pinned to the tag compare in finish().
+    const int header_size = sak::StreamDecryptor::headerSize();
+    auto dec = sak::StreamDecryptor::create("wrong_password", wire.left(header_size));
+    QVERIFY2(dec.has_value(), "create() cannot detect a wrong password and must start");
+    const qsizetype body_end = wire.size() - sak::kEncryptionMacBytes;
+    auto body = dec.value()->update(wire.mid(header_size, body_end - header_size));
+    QVERIFY2(body.has_value(), "update() returns UNAUTHENTICATED plaintext, wrong key or not");
+    QVERIFY2(!body.value().isEmpty(),
+             "update() must stream plaintext out rather than buffer the whole body");
+    auto tail = dec.value()->finish(wire.mid(body_end));
+    QVERIFY2(!tail.has_value(), "a wrong password must fail authentication at finish()");
+    QCOMPARE(tail.error(), sak::error_code::decrypt_failed);
 }
 
 void EncryptionTests::stream_tamperedCiphertext_failsAtFinish() {
@@ -548,6 +649,14 @@ void EncryptionTests::stream_badHeaderSize_rejected() {
     auto dec = sak::StreamDecryptor::create("pw", short_header);
     QVERIFY(!dec.has_value());
     QCOMPARE(dec.error(), sak::error_code::invalid_format);
+
+    // The guard is an exact-size test, not a floor: an over-long header must be refused too, or a
+    // `<` regression would silently accept trailing bytes and start a stream whose salt/IV framing
+    // no longer matches what the writer produced.
+    const QByteArray long_header(sak::StreamDecryptor::headerSize() + 1, 0);
+    auto too_long = sak::StreamDecryptor::create("pw", long_header);
+    QVERIFY(!too_long.has_value());
+    QCOMPARE(too_long.error(), sak::error_code::invalid_format);
 }
 
 void EncryptionTests::stream_updateAfterFinish_rejected() {
@@ -562,6 +671,10 @@ void EncryptionTests::stream_updateAfterFinish_rejected() {
 
     auto twice = enc.value()->finish();
     QVERIFY2(!twice.has_value(), "finish() twice must be refused");
+    // ...and refused by the finished-state guard, the same way the update() arm above is, not by
+    // BCrypt happening to fail on an already-finalized HMAC (which reports crypto_error while the
+    // one-shot state machine is gone).
+    QCOMPARE(twice.error(), sak::error_code::invalid_argument);
 }
 
 QTEST_GUILESS_MAIN(EncryptionTests)

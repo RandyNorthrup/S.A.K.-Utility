@@ -177,6 +177,12 @@ void BrowserBridgePipeTests::send_beforeAnyClientReturnsNotConnected() {
     server.stop();
 }
 
+namespace {
+void verifyGoodHandshakeIsAdmittedExactlyOnce(BrowserBridgePipeServer& server,
+                                              const QString& name,
+                                              const QString& real_token);
+}  // namespace
+
 void BrowserBridgePipeTests::handshake_refusesForgedTokenAndUnknownType() {
     QTemporaryDir dir;
     BrowserBridgePipeServer server(testOptions(dir.filePath(QStringLiteral("r.json")), 30'000));
@@ -212,13 +218,27 @@ void BrowserBridgePipeTests::handshake_refusesForgedTokenAndUnknownType() {
                                                 {QStringLiteral("protocol"), 1}});
     });
     type_client.join();
+    // Reached the server at all -- the forged case above pins this and the type case was silent on
+    // it. An attempt that never got a pipe (an accept loop slow to re-arm after the first refusal,
+    // past the client's retry budget) leaves got_frame false, so this case would pass while the
+    // first-frame TYPE gate it is named for never ran.
+    QVERIFY(bad_type.connected);
     QVERIFY(!bad_type.got_frame);  // wrong first-frame type is dropped before any welcome frame
     QVERIFY(!server.clientConnected());
 
-    // Non-vacuity control: the SAME harness, with a correct hello (right type + token +
-    // protocol), completes the handshake and the server admits the peer and serves a
-    // command -- so the refusals above are the hello/token gates, not a server that
-    // welcomes nobody. The re-armed accept loop (proven elsewhere) accepts this connection.
+    verifyGoodHandshakeIsAdmittedExactlyOnce(server, name, real_token);
+    server.stop();
+}
+
+namespace {
+
+// Non-vacuity control for the two refusals above: the SAME harness, with a correct hello (right
+// type + token + protocol), completes the handshake and the server admits the peer and serves a
+// command -- so the refusals are the hello/token gates, not a server that welcomes nobody. The
+// re-armed accept loop (proven elsewhere) accepts this connection.
+void verifyGoodHandshakeIsAdmittedExactlyOnce(BrowserBridgePipeServer& server,
+                                              const QString& name,
+                                              const QString& real_token) {
     std::atomic<bool> good_ok{false};
     std::thread good_client([&] {
         const HANDLE handle = connectAndHandshake(name, real_token);
@@ -242,10 +262,17 @@ void BrowserBridgePipeTests::handshake_refusesForgedTokenAndUnknownType() {
                     {QStringLiteral("id"), QStringLiteral("ok-1")},
                     {QStringLiteral("cmd"), QStringLiteral("snapshot")}});
     QVERIFY2(served.ok, qPrintable(served.error));
+    // Exactly ONE connection was ever ADMITTED. The generation counts verified peers (it is what
+    // browser_control's syncSessionToConnection watches to fire onHostConnected), so the two
+    // refused handshakes above must not have advanced it: after them plus this one good peer it
+    // is 1, not 3. clientConnected() is only an instantaneous sample and cannot see a peer that
+    // was counted and then dropped.
+    QCOMPARE(server.connectionGeneration(), quint64{1});
     good_client.join();
     QVERIFY(good_ok.load());
-    server.stop();
 }
+
+}  // namespace
 
 void BrowserBridgePipeTests::handshake_refusesProtocolMismatch() {
     QTemporaryDir dir;
@@ -271,6 +298,11 @@ void BrowserBridgePipeTests::handshake_refusesProtocolMismatch() {
                                             {QStringLiteral("protocol"), 999}});
     });
     client.join();
+    // The attempt actually REACHED the protocol gate. Every other assertion here is satisfied by a
+    // client that never connected at all (empty reply != welcome, got_frame false so the if()
+    // never fires, clientConnected() false because nobody arrived); the sibling forged-token case
+    // pins connect explicitly and this one did not.
+    QVERIFY(mism.connected);
     QVERIFY(mism.reply.value(QStringLiteral("type")).toString() != QLatin1String("welcome"));
     if (mism.got_frame) {
         QCOMPARE(mism.reply.value(QStringLiteral("type")).toString(), QStringLiteral("error"));
@@ -278,6 +310,10 @@ void BrowserBridgePipeTests::handshake_refusesProtocolMismatch() {
                  QStringLiteral("protocol_mismatch"));
     }
     QVERIFY(!server.clientConnected());
+    // Never ADMITTED either: the generation counts verified peers, so a hello refused at the
+    // protocol gate must leave it at zero. clientConnected() is an instantaneous sample that a
+    // peer counted and then dropped would slip past.
+    QCOMPARE(server.connectionGeneration(), quint64{0});
     server.stop();
 }
 
@@ -303,6 +339,12 @@ void BrowserBridgePipeTests::ancestorChain_boundsDepthAndMatchesImage() {
     // stops a peer with a very distant, coincidental chrome.exe ancestor from being bound.
     QVERIFY(!Server::ancestorChainContainsImageForTesting(
         100, parent, image, QStringLiteral("chrome.exe"), 2));
+    // Pin the cap EXACTLY, not just "2 is too few / 12 is plenty": chrome is the third ancestor,
+    // so 3 is the smallest budget that authorizes. Without this pair (3 -> true, 2 -> false) a
+    // walk one ancestor stingier than documented passes both existing cases, and production's
+    // kChromeAncestorMaxDepth = 12 would silently mean 11.
+    QVERIFY(Server::ancestorChainContainsImageForTesting(
+        100, parent, image, QStringLiteral("chrome.exe"), 3));
 
     // No chrome anywhere in the chain -> refused (a non-Chrome-launched peer).
     const QHash<DWORD, QString> noChrome{{100, QStringLiteral("tab.exe")},
@@ -494,15 +536,29 @@ void BrowserBridgePipeTests::restartAfterStopWorksAndDoubleStartRefused() {
     QVERIFY2(server.start(&error), qPrintable(error));
 
     // A second start while running is refused (not a crash).
+    const QString cycle1_pipe = server.pipeName();
+    const QString cycle1_token = server.token();
     QString busy;
     QVERIFY(!server.start(&busy));
     QCOMPARE(busy, QStringLiteral("Bridge pipe server is already running"));
+    // The refusal must also be INERT: a start() that ran createPipeResources BEFORE testing
+    // running_ returns this exact message, so the message alone proves nothing about the live
+    // cycle -- it would have drawn a new pipe-name nonce and token, overwritten pipe_ out from
+    // under the I/O thread, and rotated the credential a connected relay already holds.
+    QCOMPARE(server.pipeName(), cycle1_pipe);
+    QCOMPARE(server.token(), cycle1_token);
+    QVERIFY(QFile::exists(rendezvous));
 
     server.stop();
     QVERIFY(!QFile::exists(rendezvous));  // cycle 1 really tore down
     // A fresh cycle starts and tears down cleanly (the once_flag would have blocked this stop()).
     QVERIFY2(server.start(&error), qPrintable(error));
     QVERIFY(QFile::exists(rendezvous));  // cycle 2 re-published the record
+    // ...and re-published it with a FRESH identity. Existence alone passes a cycle that reuses
+    // cycle 1's pipe name and token, leaving a stopped session's 128-bit credential valid for the
+    // new one and making the anti-squat nonce predictable from the old record.
+    QVERIFY(server.pipeName() != cycle1_pipe);
+    QVERIFY(server.token() != cycle1_token);
     server.stop();
     // The SECOND stop is the whole point: under the retired std::once_flag it silently did
     // nothing, leaving cycle 2's pipe handle, I/O thread and rendezvous record alive. The

@@ -162,6 +162,13 @@ void BrowserBridgeTests::onReply_nonMatchingIdIsDroppedKeepingOutstanding() {
     const auto in = session.onReply(
         resultFrame(QStringLiteral("b-999"), QStringLiteral("reload"), QJsonObject{}));
     QVERIFY(!in.matched);
+    // A dropped frame must be a TOTAL drop: nothing handed back and no state mutated. Hoisting the
+    // frame handling above the id guard (browser_bridge.cpp:397-399) still returns matched==false,
+    // but "reload" is a navigation cmd, so the stray frame would have invalidated a live snapshot's
+    // refs and leaked "{}" into the result.
+    QVERIFY(in.text.isEmpty());
+    QVERIFY(!in.is_error);
+    QVERIFY(!session.refIndexStale());
     QVERIFY(session.hasOutstanding());  // still waiting for b-1
     QCOMPARE(session.outstandingId(), QStringLiteral("b-1"));
 }
@@ -294,7 +301,13 @@ void BrowserBridgeTests::onDetached_refusesRefActionButAllowsSnapshot() {
         session.beginCommand(QStringLiteral("browser_click"),
                              QJsonObject{{QStringLiteral("ref"), QStringLiteral("e1")}});
     QVERIFY(!click.ok);
-    QVERIFY(click.error.contains(QStringLiteral("page changed")));
+    // Canonical exact pin for the stale-snapshot refusal (browser_bridge.cpp:203-204). The
+    // fragment "page changed" survives losing the second sentence, which is the half that tells
+    // the model what to DO about it -- without "call browser_snapshot again" the agent has no
+    // recovery instruction and simply retries the same refused click.
+    QCOMPARE(click.error,
+             QStringLiteral("The page changed since the last snapshot; call browser_snapshot "
+                            "again before acting on an element."));
 
     // A fresh snapshot is still allowed and clears the stale flag.
     const auto snap = session.beginCommand(QStringLiteral("browser_snapshot"), {});
@@ -463,7 +476,9 @@ void BrowserBridgeTests::screenshotReply_emptyDataIsHonestError() {
     QVERIFY(in.matched);
     QVERIFY(in.is_error);
     QVERIFY(in.image_base64.isEmpty());
-    QVERIFY(in.error.contains(QStringLiteral("empty")));
+    // "empty" also matches the empty-PDF refusal and any future empty-payload message, so the
+    // fragment cannot tell the screenshot branch (browser_bridge.cpp:319) from its siblings.
+    QCOMPARE(in.error, QStringLiteral("The browser returned an empty screenshot."));
 }
 
 void BrowserBridgeTests::screenshotReply_oversizeBase64IsRejected() {
@@ -532,7 +547,11 @@ void BrowserBridgeTests::genericReply_oversizeTextIsRejected() {
     QVERIFY(in.matched);
     QVERIFY(in.is_error);
     QVERIFY(in.text.isEmpty());
-    QVERIFY(in.error.contains(QStringLiteral("too large")));
+    // "too large" is shared by three independent production caps -- the generic reply cap
+    // (browser_bridge.cpp:271), the screenshot cap (:325) and the PDF cap (:358) -- so the
+    // fragment passes even if this reply were refused by the wrong one.
+    QCOMPARE(in.error,
+             QStringLiteral("The browser reply is too large to return; narrow the request."));
 
     // Non-vacuity: a small generic reply passes through to the text channel, so the cap is a
     // size gate rather than an always-error.
@@ -597,7 +616,9 @@ void BrowserBridgeTests::screenshotReply_malformedBase64IsError() {
     QVERIFY(in.matched);
     QVERIFY(in.is_error);
     QVERIFY(in.image_base64.isEmpty());
-    QVERIFY(in.error.contains(QStringLiteral("malformed")));
+    // The base64 decode is the LAST screenshot guard (browser_bridge.cpp:336); pinning the whole
+    // message proves the frame reached it rather than being refused earlier as empty or oversized.
+    QCOMPARE(in.error, QStringLiteral("The browser returned a malformed screenshot payload."));
 }
 
 void BrowserBridgeTests::reconcileDomEpoch_omittedEpochAfterBaselineMarksRefsStale() {
@@ -681,7 +702,9 @@ void BrowserBridgeTests::printReply_oversizePayloadIsRefused() {
                                                 QJsonObject{{QStringLiteral("data"), oversize}}));
     QVERIFY(in.matched);
     QVERIFY(in.is_error);
-    QVERIFY2(in.error.contains(QStringLiteral("too large")), qPrintable(in.error));
+    // Same three-way "too large" ambiguity as the reply cap above: pin the PDF cap's own message
+    // (browser_bridge.cpp:358), including the page_ranges remedy the caller needs to act on.
+    QCOMPARE(in.error, QStringLiteral("The PDF is too large to save; narrow it with page_ranges."));
     // Guard-isolation: the oversize error is DISTINCT from the magic-check message, so this is the
     // size cap firing, not the %PDF- guard.
     QVERIFY(!in.error.contains(QStringLiteral("not a valid PDF")));
@@ -707,6 +730,22 @@ void BrowserBridgeTests::reconcileDomEpoch_malformedEpochMarksRefsStale() {
     frame.insert(QStringLiteral("domEpoch"), 1e18);  // beyond the exact-integer double range
     (void)session.onReply(frame);
     QVERIFY(session.refIndexStale());
+
+    // Guard isolation: with the malformed-epoch check (browser_bridge.cpp:296-299) DELETED the
+    // assertion above STILL passes -- 1e18 casts to a quint64 that differs from the baseline 1, so
+    // the epoch-differs branch marks the refs stale anyway. Drive the one arm only the malformed
+    // check can reach: a malformed epoch on a SNAPSHOT reply, which without the check RE-BASELINES
+    // dom_epoch_ off the garbage value and leaves the refs LIVE.
+    const auto snap2 = session.beginCommand(QStringLiteral("browser_snapshot"), {});
+    QVERIFY(snap2.ok);
+    QJsonObject snapFrame = resultFrame(snap2.frame.value(QStringLiteral("id")).toString(),
+                                        QStringLiteral("snapshot"),
+                                        snapshotPayload(4242, QStringLiteral("Sign in")));
+    snapFrame.insert(QStringLiteral("domEpoch"), 1e18);
+    const auto snapIn = session.onReply(snapFrame);
+    QVERIFY(snapIn.matched);
+    QVERIFY2(session.refIndexStale(),
+             "a snapshot whose domEpoch is malformed must not re-baseline the DOM generation");
 }
 
 QTEST_MAIN(BrowserBridgeTests)

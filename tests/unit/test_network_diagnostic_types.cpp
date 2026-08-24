@@ -546,6 +546,18 @@ void NetworkDiagnosticTypesTests::wifiNetworkInfo_defaultConstruction() {
     QVERIFY(info.authentication.isEmpty());
     QVERIFY(info.apVendor.isEmpty());
     QVERIFY(!info.isConnected);
+    QVERIFY(info.encryption.isEmpty());
+    QVERIFY(info.bssType.isEmpty());
+    // Fail-closed security default: WiFiAnalyzer::getCurrentConnection() returns a
+    // default-constructed info when nothing is connected (wifi_analyzer.cpp:716-723), and the
+    // field is emitted as "secure" by serializeWifiNetwork (app_readonly_actions.cpp:3554), so a
+    // flipped default would report an absent connection as secure.
+    QVERIFY(!info.isSecure);
+    // channelWidthMHz is the ONLY non-zero default in this struct and NOTHING in src/ ever
+    // assigns it, so this default IS the value serializeWifiNetwork ships as "channel_width_mhz"
+    // (app_readonly_actions.cpp:3551) for every scanned AP. Pin the literal, not
+    // kDefaultWifiChannelWidthMHz (a mirror of the initializer under test).
+    QCOMPARE(info.channelWidthMHz, 20);
 }
 
 void NetworkDiagnosticTypesTests::wifiNetworkInfo_valueSemantics() {
@@ -621,6 +633,14 @@ void NetworkDiagnosticTypesTests::firewallRule_defaultConstruction() {
     QVERIFY(rule.localAddresses.isEmpty());
     QVERIFY(rule.remoteAddresses.isEmpty());
     QVERIFY(rule.applicationPath.isEmpty());
+    QVERIFY(rule.serviceName.isEmpty());
+    QVERIFY(rule.grouping.isEmpty());
+    // complete == true is the B9-10 security-posture flag (network_diagnostic_types.h:420-424):
+    // the auditor only ever WRITES complete = false (13 sites, firewall_rule_auditor.cpp:131-271)
+    // and counts !complete at :672-678 to emit "N firewall rule(s) could not be fully read".
+    // A flipped default fires that warning for every rule of every audit and erases the
+    // fully-read/defaulted distinction; nothing else in the suite pins it.
+    QVERIFY(rule.complete);
 }
 
 void NetworkDiagnosticTypesTests::firewallRule_directionEnum() {

@@ -5024,6 +5024,59 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b81 (gated 249/249): 44 weak assertions pinned across the
+    six LARGEST already-swept files (vulnerability_scanner 13, encryption 10, ai_workflow_evals 7,
+    browser_bridge 7, browser_bridge_pipe 5, network_diagnostic_types 2). This is the first
+    second-pass batch: every one of these files had been swept once already, so the yield of 44
+    confirmed-weak assertions says the first pass thinned the surface without clearing it.
+    MUTATION-PROVED, both killed on the NEW pin and production reverted clean afterwards:
+    (a) deleting "condition": "verify_download_succeeded" from technician_tool_assisted_task.json
+    turns run.condition red -- that condition is the SOLE barrier between a failed SHA-256 check
+    and executing a freshly downloaded third-party binary, because a failed verify_download is
+    classified continue-degraded (ai_recovery_policy.cpp:196-199) and does not abort the run;
+    (b) dropping valid_encryption_params from decryptData (encryption.cpp:577) turns the new
+    decrypt arm red with error 860 instead of 106.
+    THE SAME VALIDATOR GUARDS FOUR ENTRY POINTS AND ONLY THE WRITER WAS EVER CHECKED: encryption's
+    invalidParams_rejected drove encryptData alone, so a regression that dropped the call from
+    decryptData, StreamEncryptor::create or StreamDecryptor::create shipped green. The lambda now
+    drives all four, and the params matrix was widened from two of the validator's SIX conditions
+    to all six -- including the AES-128/192 arms (16 and 24 are perfectly valid AES key lengths,
+    so a silent downgrade from the stated AES-256-ONLY contract was untested), the salt CEILING,
+    and both the weak (1) and huge (200M) iteration arms.
+    ai_workflow_evals: the storage-reliability eval was VACUOUS -- every assertion sat inside an
+    `if (command.contains("get-storagereliabilitycounter"))` that nothing forced to fire, so
+    renaming the counter query in the workflows silently emptied the test. It now pins the ordered
+    catalog of phases it actually checked. Two more: the technician workflow's pairwise index
+    checks named six of ten phases and left approval_gate -- the human/restore-point gate between
+    verification and execution -- entirely unpinned (deleting it still satisfied the risky-workflow
+    shape check, because run_tool's own prompt contains the word "approval"); and the abort-path
+    test asserted error_message.contains("report"), which also passes when the phase id and the
+    message are swapped into "Phase  failed: report".
+    browser_bridge: "too large" is shared by THREE independent production caps (generic reply
+    :271, screenshot :325, PDF :358), so the fragment passed even if a reply were refused by the
+    wrong one; "empty" and "malformed" were similarly ambiguous across sibling guards. And the
+    malformed-epoch guard could be DELETED with its own test still green, because 1e18 casts to a
+    quint64 that differs from the baseline anyway -- the test now drives the one arm only that
+    guard reaches (a malformed epoch on a SNAPSHOT reply, which without the check re-baselines
+    dom_epoch_ off the garbage value and leaves the refs LIVE).
+    browser_bridge_pipe: two refusal tests never proved the attempt REACHED the gate they are
+    named for -- an attempt that never got a pipe satisfies every assertion in them -- and neither
+    checked that a refused hello leaves connectionGeneration() unadvanced (clientConnected() is an
+    instantaneous sample that cannot see a peer counted and then dropped). The double-start
+    refusal pinned only the message, which a start() that ran createPipeResources BEFORE testing
+    running_ also returns, having already rotated the token a connected relay still holds.
+  - FINDING N7 2026-08-24 (GATE INTEGRITY, pre-existing, NOT introduced by b81): the exhaustive
+    cppcheck pre-commit gate SILENTLY ANALYZES NOTHING on most Qt test files. cppcheck cannot
+    parse Qt's `slots` / `Q_SLOTS` macro, reports unknownMacro as a CRITICAL error and abandons
+    the entire translation unit; the suppressions list silences the message but does NOT restore
+    the analysis, so the hook prints "PASSED: cppcheck analysis clean" and exits 0 over a file it
+    never checked. Measured: files carrying the macro report "Active checkers: 4/186", files
+    without it report 183/186. Confirmed pre-existing by running the same command against the
+    HEAD copies of the four affected b81 files -- all four report 4/186 unmodified. FIX AVAILABLE
+    AND VERIFIED: adding --library=qt to scripts/run_cppcheck.ps1 restores test_browser_bridge.cpp
+    from 4/186 to 174/186 with zero findings on that file. NOT applied in b81 because enabling
+    real analysis across tests/unit surfaces ~446 previously-invisible findings, which is its own
+    gated campaign rather than a rider on a test-assertion commit. OPEN.
   - PROGRESS 2026-08-24 FIRST-pass sweep b80 (gated 249/249): 13 weak assertions pinned across the
     last six never-swept files (follow_scroll_controller 4, ai_model_catalog 2, deadline_canceller
     2, email_view_ids 2, ai_mcp_stdio_client 2, splash_screen 1). THIS CLOSES THE NEVER-SWEPT
