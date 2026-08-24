@@ -5024,6 +5024,52 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b84 (gated 249/249): 59 weak assertions pinned across six
+    more already-swept files (drive_scanner 15, ost_converter_controller 15, eml_writer 11,
+    cleanup_worker 7, email_export_worker 6, iso_analyzer 5). Highest single-batch yield of the
+    campaign, on files that had all been swept once already.
+    A TEST THAT NEVER POPULATED THE THING IT QUERIED: getDriveInfo_nonExistentDrive called
+    refresh() -- which only posts a QtConcurrent future -- and then looked up a device path
+    WITHOUT spinning the event loop, so the cache was still EMPTY and the lookup missed trivially.
+    `return m_drives.isEmpty() ? DriveInfo{} : m_drives.first();` -- which hands PhysicalDrive0
+    back for ANY query against a populated cache -- passed it. The test now waits for the scan to
+    land, pins the miss as a DEFAULT-constructed record field by field, and proves a cached path
+    still HITS so the miss came from the lookup rather than from an unpopulated cache.
+    THE OOB CLAMP'S HOSTILE HALF WAS NEVER EXERCISED. descriptorString applies
+    `std::min(bytes_returned, buffer_size)`, and all four existing cases passed bytes_returned=32
+    against buffer_size=64 -- so `limit = bytes_returned` (dropping the buffer_size half, i.e. the
+    entire point of the B6-24 guard) satisfied every one of them. getDriveName feeds
+    driver-supplied offsets and a driver-supplied length into a 1024-byte STACK buffer, so an
+    over-reporting driver reads past it. Both the offset check and the READ-LENGTH bound are now
+    driven with bytes_returned=4096 against buffer_size=64, using a deliberately larger backing
+    allocation so a regression fails on a wrong VALUE rather than by stepping off the buffer.
+    driveInfoChanged compares NINE fields and only three were pinned, so dropping any of the other
+    six conjuncts left an in-place property change silently unreported (no drivesUpdated, stale
+    panels); all nine now count as a change on their own. hasBootManagerIndicators is a
+    three-arm OR and only the bootmgr arm was covered -- a split-boot UEFI ESP carrying
+    bootmgfw.efi and no bootmgr would probe DiskProbe::No and become a legal FLASH TARGET.
+    eml_writer went from membership checks to byte-exact MIME: the plain message is pinned whole
+    around its Date line (header ORDER, CRLF terminators, the blank separator and the 8bit label
+    are all load-bearing and none is observable through contains()), and both multipart cases now
+    extract the declared boundary and prove the PARTS use it, in RFC 2046 order, with the closing
+    delimiter terminating the entity. Also covered: the RFC 2047 'B'-encoded display name with a
+    RAW addr-spec (encodedDisplayName's non-ASCII arm was otherwise dead), the full invalid-char
+    class for filenames, the "_(2)" collision skip, and which of the TWO guards returning
+    path_traversal_attempt actually fired.
+    ost_converter_controller: the duplicate-add test asserted only that the queue still held one
+    entry -- equally true of addFile's not-a-file refusal, and of a dup branch that silently
+    returns -- so the status line a re-added file actually produces is pinned now. removeFile
+    covered only the high arm of its bounds guard, leaving `index < 0` free to reach
+    QVector::removeAt(-1). The empty-queue start refusal reported through !isRunning() alone,
+    which is just as true of a start that announced conversionStarted before refusing (the panel
+    switches to converting state and never switches back) or one that "finalized" a bogus 0/0
+    batch. And the two recovery-reliability checks are independent ifs, not an if/else: with BOTH
+    scans truncated the user must be told about both.
+    cleanup_worker: the anti-hijack test asserted endsWith(exe), which ANY absolute path ending in
+    the tool's name satisfies -- including QDir::currentPath() + "/netsh.exe", i.e. exactly the CWD
+    hijack it exists to refuse; it now requires the System32 directory component. Two per-type
+    denylist screens had NO positive control, so any non-empty refusal from any screen satisfied
+    them.
   - PROGRESS 2026-08-24 SECOND-pass sweep b83 (gated 249/249): 48 weak assertions pinned across six
     more already-swept files (leftover_cleanup_guard 11, file_scanner 11, offline_deployment_worker
     10, permission_manager 6, nuget_dependency_resolver 5, advanced_uninstall_types 5).

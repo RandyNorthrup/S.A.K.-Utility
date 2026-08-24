@@ -47,6 +47,33 @@ private Q_SLOTS:
     // Defense-in-depth: worker re-screens each item against the cleanup denylist (Codex-3)
     void deniedTargets_refusedWithoutDeletion();
     void itemCleanupRefusal_screensEachType();
+
+private:
+    // One row of the exhaustive recycle-decision property test. Nested inside the test class
+    // because RecycleOutcome is private to CleanupWorker and only this class is its friend.
+    struct RecycleDecisionRow {
+        bool useRecycle;
+        bool requireRecov;
+        bool recoverAllowed;
+        bool redirectSafe;
+        bool recycleSucceeds;
+        CleanupWorker::RecycleOutcome outcome;
+        bool fallback;
+        int recoverCalls;
+        int redirectCalls;
+        int doRecycleCalls;
+        QByteArray tag;
+    };
+    // Which of the three probes decideRecycle is expected to have run for this row, and whether
+    // the run escalated a failed recycle to a permanent delete.
+    struct RecycleProbes {
+        bool recover = false;
+        bool redirect = false;
+        bool recycle = false;
+        bool escalated = false;
+    };
+    static RecycleProbes recycleProbesFor(const RecycleDecisionRow& row);
+    static void verifyRecycleDecisionRow(const RecycleDecisionRow& row);
 };
 
 void TestCleanupWorker::construction_emptyItems() {
@@ -240,6 +267,43 @@ void TestCleanupWorker::recycleMode_defaultsToRecoverableOnly() {
     QVERIFY(!recycling.requireRecoverable());
 }
 
+// Every assertion in the caller used to be ONE-WAY (an implication behind an if), so a
+// decideRecycle that simply refused EVERYTHING -- never Recycled, never FallThrough -- satisfied
+// all of them, and recoverCalls/redirectCalls were counted but never read. This pins the EXACT
+// outcome, the escalation flag and every probe count.
+TestCleanupWorker::RecycleProbes TestCleanupWorker::recycleProbesFor(
+    const RecycleDecisionRow& row) {
+    RecycleProbes p;
+    p.recover = row.useRecycle && row.requireRecov;
+    p.redirect = row.useRecycle && (!row.requireRecov || row.recoverAllowed);
+    p.recycle = p.redirect && row.redirectSafe;
+    p.escalated = p.recycle && !row.recycleSucceeds && !row.requireRecov;
+    return p;
+}
+
+void TestCleanupWorker::verifyRecycleDecisionRow(const RecycleDecisionRow& row) {
+    using RO = CleanupWorker::RecycleOutcome;
+    const RecycleProbes p = recycleProbesFor(row);
+    RO expected = RO::FallThrough;
+    if (p.recycle && row.recycleSucceeds) {
+        expected = RO::Recycled;
+    } else if (p.redirect && !row.redirectSafe) {
+        expected = RO::RefusedRedirected;  // the redirect refusal, NOT the recoverable one
+    } else if (row.requireRecov) {
+        expected = RO::RefusedRecoverable;
+    }
+    QVERIFY2(row.outcome == expected, row.tag.constData());
+    // recycleFallback is the ONLY thing that surfaces a recycle -> permanent escalation through
+    // recycleFallbackItems; nothing anywhere asserted it is ever SET.
+    QVERIFY2(row.fallback == p.escalated, row.tag.constData());
+    const int recoverExpected = p.recover ? 1 : 0;
+    const int redirectExpected = p.redirect ? 1 : 0;
+    const int recycleExpected = p.recycle ? 1 : 0;
+    QVERIFY2(row.recoverCalls == recoverExpected, row.tag.constData());
+    QVERIFY2(row.redirectCalls == redirectExpected, row.tag.constData());
+    QVERIFY2(row.doRecycleCalls == recycleExpected, row.tag.constData());
+}
+
 void TestCleanupWorker::decideRecycle_recoverableModeNeverPermanentlyDeletes() {
     // R5-G23-7 invariant 3 "recycle means recycle" as a PROPERTY test: exhaustively drive the pure
     // recycle decision over ALL 32 combinations of its five boolean inputs and assert the invariant
@@ -279,6 +343,17 @@ void TestCleanupWorker::decideRecycle_recoverableModeNeverPermanentlyDeletes() {
             QVERIFY2(outcome != RO::FallThrough, tag.constData());  // recoverable NEVER permanent
             QVERIFY2(!fallback, tag.constData());
         }
+        verifyRecycleDecisionRow({useRecycle,
+                                  requireRecov,
+                                  recoverAllowed,
+                                  redirectSafe,
+                                  recycleSucceeds,
+                                  outcome,
+                                  fallback,
+                                  recoverCalls,
+                                  redirectCalls,
+                                  doRecycleCalls,
+                                  tag});
         if (outcome == RO::Recycled) {
             QVERIFY2(recycleSucceeds, tag.constData());  // Recycled claimed only on real success
         }
@@ -382,7 +457,12 @@ void TestCleanupWorker::systemTools_resolveThroughTheOsNotTheEnvironment() {
         QVERIFY2(!resolved.isEmpty(), "the OS-derived system directory must still resolve");
         QVERIFY2(!resolved.contains(QStringLiteral("attacker"), Qt::CaseInsensitive),
                  "the poisoned environment variable must not reach the resolved tool path");
-        QVERIFY(resolved.endsWith(exe));
+        // endsWith(exe) alone is satisfied by ANY absolute path ending in the tool's name --
+        // including QDir::currentPath() + "/netsh.exe", i.e. exactly the CWD hijack this test
+        // exists to refuse. Require the System32 directory component; case-insensitive because
+        // the OS returns its system directory in whatever case it stores it.
+        QVERIFY2(resolved.endsWith(QStringLiteral("/System32/") + exe, Qt::CaseInsensitive),
+                 "the destructive tools must resolve under the real System32 directory");
         QVERIFY(QDir::isAbsolutePath(resolved));
     }
 
@@ -420,10 +500,14 @@ void TestCleanupWorker::deniedTargets_refusedWithoutDeletion() {
     const auto args = completeSpy.takeFirst();
     QCOMPARE(args.at(0).toInt(), 0);  // zero succeeded -- both refused by the guard
     QCOMPARE(args.at(1).toInt(), 2);  // both failed
+    // Pin WHICH item each report belongs to, and in what order: a loop over sig.at(1) alone stays
+    // green if the worker reports the same item twice, swaps the two, or emits a rewritten path.
+    // The path argument is what the panel shows beside each failure.
     QCOMPARE(itemSpy.count(), 2);
-    for (const auto& sig : itemSpy) {
-        QVERIFY(!sig.at(1).toBool());  // each reported not-cleaned
-    }
+    QCOMPARE(itemSpy.at(0).at(0).toString(), QStringLiteral("RpcSs"));
+    QCOMPARE(itemSpy.at(0).at(1).toBool(), false);
+    QCOMPARE(itemSpy.at(1).at(0).toString(), QStringLiteral("C:\\Windows"));
+    QCOMPARE(itemSpy.at(1).at(1).toBool(), false);
 }
 
 void TestCleanupWorker::itemCleanupRefusal_screensEachType() {
@@ -438,15 +522,50 @@ void TestCleanupWorker::itemCleanupRefusal_screensEachType() {
     };
     QVERIFY(!refusal(LeftoverItem::Type::RegistryKey, QStringLiteral("HKLM\\SYSTEM")).isEmpty());
     QVERIFY(!refusal(LeftoverItem::Type::Service, QStringLiteral("DcomLaunch")).isEmpty());
-    QVERIFY(!refusal(LeftoverItem::Type::ScheduledTask, QStringLiteral("\\Microsoft\\Windows\\Foo"))
-                 .isEmpty());
+    // ScheduledTask had no positive control, so ANY non-empty refusal satisfied it -- including
+    // one produced by a completely different screen. Pin the reason and the allow case.
+    QCOMPARE(refusal(LeftoverItem::Type::ScheduledTask,
+                     QStringLiteral("\\Microsoft\\Windows\\Foo")),
+             QStringLiteral("refusing to delete a Windows/Microsoft scheduled task"));
+    QVERIFY(refusal(LeftoverItem::Type::ScheduledTask, QStringLiteral("AcmeUpdateTask")).isEmpty());
     QVERIFY(!refusal(LeftoverItem::Type::FirewallRule, QStringLiteral("all")).isEmpty());
-    QVERIFY(!refusal(LeftoverItem::Type::ShellExtension, QStringLiteral("HKCR\\CLSID")).isEmpty());
+    // ShellExtension had NO positive control either, so any non-empty refusal from any screen
+    // satisfied this -- e.g. splitting it onto registryValueDeletionRefusal yields "empty registry
+    // value name" here and ships green, while a shell_extension item that DOES carry a
+    // registry_value_name then reaches the VALUE screen, which has no shared-root check:
+    // RegDeleteTreeW over the whole HKCR\CLSID tree. Pin the registry-KEY screen's own reason, and
+    // allow a specific vendor CLSID subkey.
+    QCOMPARE(refusal(LeftoverItem::Type::ShellExtension, QStringLiteral("HKCR\\CLSID")),
+             QStringLiteral("refusing to delete a shared registry root key; delete a specific "
+                            "subkey instead"));
+    QVERIFY(refusal(LeftoverItem::Type::ShellExtension,
+                    QStringLiteral("HKCR\\CLSID\\{11111111-2222-3333-4444-555555555555}"))
+                .isEmpty());
     // A specific vendor leftover of each kind is allowed (empty refusal).
     QVERIFY(refusal(LeftoverItem::Type::RegistryKey, QStringLiteral("HKLM\\SOFTWARE\\Acme\\App"))
                 .isEmpty());
     QVERIFY(refusal(LeftoverItem::Type::Service, QStringLiteral("AcmeUpdater")).isEmpty());
     QVERIFY(refusal(LeftoverItem::Type::FirewallRule, QStringLiteral("Acme App Rule")).isEmpty());
+    // RegistryValue and StartupEntry were absent from a catalog that claims to cover every
+    // leftover type, and StartupEntry is a TWO-ARM dispatch (registry value when named, else the
+    // on-disk file) whose arms nothing reached -- so `case StartupEntry: return {};` ships green.
+    // Pin both arms by their exact reason: with the arms inverted the value case would report the
+    // file screen's message and the file case the value screen's "empty registry value name".
+    QCOMPARE(refusal(LeftoverItem::Type::RegistryValue,
+                     QStringLiteral("HKLM\\SYSTEM"),
+                     QStringLiteral("Start")),
+             QStringLiteral("refusing to modify a protected system registry subtree (system)"));
+    QVERIFY(refusal(LeftoverItem::Type::RegistryValue,
+                    QStringLiteral("HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                    QStringLiteral("AcmeUpdater"))
+                .isEmpty());
+    QCOMPARE(refusal(LeftoverItem::Type::StartupEntry,
+                     QStringLiteral("HKLM\\SYSTEM"),
+                     QStringLiteral("Run")),
+             QStringLiteral("refusing to modify a protected system registry subtree (system)"));
+    QCOMPARE(refusal(LeftoverItem::Type::StartupEntry,
+                     QStringLiteral("\\\\server\\share\\Acme\\run.exe")),
+             QStringLiteral("path must be an absolute drive-letter path"));
 }
 
 QTEST_MAIN(TestCleanupWorker)

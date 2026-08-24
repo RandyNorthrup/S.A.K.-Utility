@@ -63,6 +63,7 @@ void TestEmailExportWorker::configDefaults() {
     QVERIFY(config.output_path.isEmpty());
     QVERIFY(config.item_ids.isEmpty());
     QCOMPARE(config.folder_id, static_cast<uint64_t>(0));
+    QVERIFY(config.folder_ids.isEmpty());
     QVERIFY(!config.has_folder);
     QVERIFY(!config.recurse_subfolders);
     QVERIFY(config.csv_columns.isEmpty());
@@ -295,9 +296,10 @@ void TestEmailExportWorker::allExportFormatValuesAreDistinct() {
 // whole mailbox must record no read-failure -- items_exported=1, items_failed=0.
 // Exercises the refactored collectMboxIndices / collectMboxAttachmentData /
 // exportOneMboxItem wiring (B7-25, B7-27).
-void TestEmailExportWorker::mboxExportWithAttachmentSucceeds() {
-    QTemporaryFile mbox;
-    QVERIFY(mbox.open());
+namespace {
+
+// One MBOX message carrying a base64 attachment ("Hello Attach") in a multipart/mixed body.
+QByteArray attachmentMboxFixture() {
     QByteArray content;
     content += "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
     content += "From: A <a@example.com>\r\n";
@@ -318,7 +320,28 @@ void TestEmailExportWorker::mboxExportWithAttachmentSucceeds() {
     content += "\r\n";
     content += "SGVsbG8gQXR0YWNo\r\n";  // "Hello Attach"
     content += "--BOUND--\r\n";
-    mbox.write(content);
+    return content;
+}
+
+// One plain-text MBOX message whose Subject is the value the include-headers switch must hide.
+QByteArray plainHeaderMboxFixture() {
+    QByteArray content;
+    content += "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "To: B <b@example.com>\r\n";
+    content += "Subject: SecretSubjectLine\r\n";
+    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
+    content += "\r\n";
+    content += "Plain body content.\r\n";
+    return content;
+}
+
+}  // namespace
+
+void TestEmailExportWorker::mboxExportWithAttachmentSucceeds() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    mbox.write(attachmentMboxFixture());
     mbox.close();
 
     MboxParser parser;
@@ -334,17 +357,43 @@ void TestEmailExportWorker::mboxExportWithAttachmentSucceeds() {
     config.output_path = out_dir.path();  // item_ids empty -> page the whole mailbox
 
     EmailExportWorker worker;
+    QSignalSpy started_spy(&worker, &EmailExportWorker::exportStarted);
     QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
     worker.exportMboxItems(&parser, config);
+
+    // The total handed to the caller's progress UI is the RESOLVED index count from
+    // paging the mailbox, not the (empty) requested id list. Nothing else in this file
+    // asserts exportStarted at all.
+    QCOMPARE(started_spy.count(), 1);
+    QCOMPARE(started_spy.first().first().toInt(), 1);
 
     QCOMPARE(complete_spy.count(), 1);
     const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
     QCOMPARE(result.items_exported, 1);
     QCOMPARE(result.items_failed, 0);  // readable attachment -> not a partial export
+    QVERIFY(result.errors.isEmpty());
+    QCOMPARE(result.export_path, out_dir.path());
+    // The result's format label carries the MBOX provenance; a bare "EML" (or an empty
+    // name from a kExportFormatNames table that lost its Eml row) is a different value.
+    QCOMPARE(result.export_format, QStringLiteral("EML (from MBOX)"));
 
     // One .eml file was written.
     const QStringList eml = QDir(out_dir.path()).entryList({QStringLiteral("*.eml")}, QDir::Files);
     QCOMPARE(eml.size(), 1);
+
+    // ...and the attachment BYTES actually reached that file. With an empty attachment
+    // vector (the pre-B7 behaviour) EmlWriter takes the simple text/plain branch and
+    // every assertion above -- exported=1, failed=0, one .eml -- still passes.
+    QFile written(out_dir.path() + QLatin1Char('/') + eml.first());
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    const QByteArray eml_bytes = written.readAll();
+    written.close();
+    QVERIFY(eml_bytes.contains("Content-Type: multipart/mixed; boundary=\"----=_SAK_Part_"));
+    QVERIFY(eml_bytes.contains("Content-Type: application/octet-stream; name=\"data.bin\"\r\n"));
+    QVERIFY(eml_bytes.contains(
+        "Content-Disposition: attachment; filename=\"data.bin\"\r\n\r\nSGVsbG8gQXR0YWNo\r\n"));
+    // total_bytes is the writer's own byte counter; cross-check it against the file.
+    QCOMPARE(result.total_bytes, static_cast<qint64>(eml_bytes.size()));
     parser.close();
 }
 
@@ -355,15 +404,7 @@ void TestEmailExportWorker::mboxExportWithAttachmentSucceeds() {
 void TestEmailExportWorker::emlExportRespectsIncludeHeaders() {
     QTemporaryFile mbox;
     QVERIFY(mbox.open());
-    QByteArray content;
-    content += "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
-    content += "From: A <a@example.com>\r\n";
-    content += "To: B <b@example.com>\r\n";
-    content += "Subject: SecretSubjectLine\r\n";
-    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
-    content += "\r\n";
-    content += "Plain body content.\r\n";
-    mbox.write(content);
+    mbox.write(plainHeaderMboxFixture());
     mbox.close();
 
     MboxParser parser;
@@ -396,6 +437,13 @@ void TestEmailExportWorker::emlExportRespectsIncludeHeaders() {
     QVERIFY(!off_eml.isEmpty());
     QVERIFY(!off_eml.contains("Subject: SecretSubjectLine"));
     QVERIFY(!off_eml.contains("From: "));
+    // From/Subject are 2 of the 8 fields clearEmlHeaderFields must clear, and
+    // appendStandardHeaders runs before the first MIME byte -- so a body-only .eml must
+    // begin AT the MIME block. Forgetting display_to (or date, or message_id) leaks a
+    // recipient/timestamp while both checks above stay green.
+    QVERIFY(off_eml.startsWith("MIME-Version: 1.0\r\n"));
+    QVERIFY(!off_eml.contains("b@example.com"));  // To: recipient must not leak
+    QVERIFY(!off_eml.contains("a@example.com"));  // From: addr-spec must not leak
     QVERIFY(off_eml.contains("Plain body content."));
 
     // Headers included (default).
@@ -409,7 +457,10 @@ void TestEmailExportWorker::emlExportRespectsIncludeHeaders() {
     on_worker.exportMboxItems(&parser, on_config);
     const QByteArray on_eml = read_single_eml(on_dir.path());
     QVERIFY(!on_eml.isEmpty());
-    QVERIFY(on_eml.contains("Subject: SecretSubjectLine"));
+    QVERIFY(on_eml.contains("Subject: SecretSubjectLine\r\n"));
+    // The recipient header must survive the include-headers path too: nothing else pins
+    // display_to, so losing the worker's msg.to -> display_to mapping is invisible today.
+    QVERIFY(on_eml.contains("To: B <b@example.com>\r\n"));
 
     parser.close();
 }

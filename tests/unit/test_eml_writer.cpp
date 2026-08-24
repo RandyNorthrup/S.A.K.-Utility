@@ -47,11 +47,24 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
 
         QByteArray content = file.readAll();
-        QVERIFY(content.contains("From: John Doe <john@example.com>"));
-        QVERIFY(content.contains("To: jane@example.com"));
-        QVERIFY(content.contains("Subject: Test Subject"));
-        QVERIFY(content.contains("Hello, this is a test email."));
-        QVERIFY(content.contains("Content-Type: text/plain; charset=utf-8"));
+        // The whole message is deterministic apart from the RFC 2822 Date value, so pin it
+        // byte-for-byte around that single line. Header ORDER, the CRLF terminators, the blank
+        // header/body separator and the 8bit label are all load-bearing and none of them is
+        // observable through contains().
+        const qsizetype date_at = content.indexOf("\r\nDate: ");
+        QVERIFY(date_at > 0);
+        const qsizetype date_end = content.indexOf("\r\n", date_at + 2);
+        QVERIFY(date_end > date_at);
+        QCOMPARE(content.left(date_at + 2),
+                 QByteArray("From: John Doe <john@example.com>\r\n"
+                            "To: jane@example.com\r\n"
+                            "Subject: Test Subject\r\n"));
+        QCOMPARE(content.mid(date_end + 2),
+                 QByteArray("MIME-Version: 1.0\r\n"
+                            "Content-Type: text/plain; charset=utf-8\r\n"
+                            "Content-Transfer-Encoding: 8bit\r\n"
+                            "\r\n"
+                            "Hello, this is a test email."));
     }
 
     // ====================================================================
@@ -81,10 +94,29 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray content = file.readAll();
 
-        QVERIFY(content.contains("Content-Type: multipart/alternative; boundary=\""));
-        QVERIFY(content.contains("Content-Type: text/plain; charset=utf-8"));
-        QVERIFY(content.contains("Content-Type: text/html; charset=utf-8"));
-        QVERIFY(content.contains("<b>Bold test</b>"));
+        // Extract the declared boundary and prove the PARTS actually use it, in RFC 2046 order
+        // (least-preferred text/plain first), and that the closing delimiter terminates the
+        // entity. Membership of three Content-Type strings proves none of that.
+        const QByteArray kDecl = "Content-Type: multipart/alternative; boundary=\"";
+        const qsizetype decl_at = content.indexOf(kDecl);
+        QVERIFY(decl_at >= 0);
+        const qsizetype b_start = decl_at + kDecl.size();
+        const qsizetype b_end = content.indexOf('"', b_start);
+        QVERIFY(b_end > b_start);
+        const QByteArray boundary = content.mid(b_start, b_end - b_start);
+        QVERIFY(boundary.startsWith("----=_SAK_Part_"));
+
+        const qsizetype plain_at = content.indexOf("--" + boundary +
+                                                   "\r\nContent-Type: text/plain; charset=utf-8"
+                                                   "\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"
+                                                   "Plain text version\r\n");
+        const qsizetype html_at = content.indexOf("--" + boundary +
+                                                  "\r\nContent-Type: text/html; charset=utf-8"
+                                                  "\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"
+                                                  "<html><body><b>Bold test</b></body></html>\r\n");
+        QVERIFY(plain_at > 0);
+        QVERIFY(html_at > plain_at);  // RFC 2046: plain before html
+        QVERIFY(content.endsWith("--" + boundary + "--\r\n"));
     }
 
     // ====================================================================
@@ -114,10 +146,30 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray content = file.readAll();
 
-        QVERIFY(content.contains("Content-Type: multipart/mixed; boundary=\""));
-        QVERIFY(content.contains("name=\"document.pdf\""));
-        QVERIFY(content.contains("filename=\"document.pdf\""));
-        QVERIFY(content.contains("Content-Transfer-Encoding: base64"));
+        // The MIME parameters existing proves nothing about the PART STRUCTURE or the payload.
+        // Pin the whole attachment part, base64 of "fake pdf content" included, plus the body
+        // part that must precede it and the closing delimiter.
+        const QByteArray kDecl = "Content-Type: multipart/mixed; boundary=\"";
+        const qsizetype decl_at = content.indexOf(kDecl);
+        QVERIFY(decl_at >= 0);
+        const qsizetype b_start = decl_at + kDecl.size();
+        const qsizetype b_end = content.indexOf('"', b_start);
+        QVERIFY(b_end > b_start);
+        const QByteArray boundary = content.mid(b_start, b_end - b_start);
+
+        const qsizetype body_at = content.indexOf("--" + boundary +
+                                                  "\r\nContent-Type: text/plain; charset=utf-8"
+                                                  "\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"
+                                                  "See attached.\r\n");
+        QVERIFY(body_at > 0);
+        const qsizetype att_at =
+            content.indexOf("--" + boundary +
+                            "\r\nContent-Type: application/octet-stream; name=\"document.pdf\""
+                            "\r\nContent-Transfer-Encoding: base64"
+                            "\r\nContent-Disposition: attachment; filename=\"document.pdf\"\r\n\r\n"
+                            "ZmFrZSBwZGYgY29udGVudA==\r\n");
+        QVERIFY(att_at > body_at);
+        QVERIFY(content.endsWith("--" + boundary + "--\r\n"));
     }
 
     // ====================================================================
@@ -197,6 +249,15 @@ private Q_SLOTS:
         // <, >, ':' and '"' each map to '_' via the invalid-char regex; pin the whole
         // filename so dropping any single char from that class (e.g. ':') is caught.
         QCOMPARE(fi.fileName(), QStringLiteral("Re_ Invoice _2025_ for _Project_.eml"));
+
+        // The invalid-char class is [<>:"/\|?*\x00-\x1F]; the fixture above only covers <, >, ':'
+        // and '"'. Cover every remaining member (/, \, |, ?, * and a C0 control) so dropping any
+        // one of them from the class is caught -- a stray '/' or '\' turns the subject into a
+        // path component instead of a filename.
+        item.subject = QStringLiteral("a/b\\c|d?e*f\tg");
+        auto result2 = writer.writeMessage(item, no_attachments, QString());
+        QVERIFY(result2.has_value());
+        QCOMPARE(QFileInfo(result2.value()).fileName(), QStringLiteral("a_b_c_d_e_f_g.eml"));
     }
 
     // ====================================================================
@@ -222,6 +283,20 @@ private Q_SLOTS:
 
         QFileInfo fi(result.value());
         QCOMPARE(fi.fileName(), QStringLiteral("no_subject.eml"));
+
+        // The fallback keys off subject.trimmed().isEmpty(), and the same trim also strips padding
+        // from a NON-empty subject. An already-empty subject reaches neither behaviour, so pin
+        // both arms: whitespace-only falls back (and collides with the first file), and a padded
+        // subject is trimmed rather than left with spaces baked into the name.
+        item.subject = QStringLiteral("   \t  ");
+        auto blank = writer.writeMessage(item, no_attachments, QString());
+        QVERIFY(blank.has_value());
+        QCOMPARE(QFileInfo(blank.value()).fileName(), QStringLiteral("no_subject_(1).eml"));
+
+        item.subject = QStringLiteral("  Padded  ");
+        auto padded = writer.writeMessage(item, no_attachments, QString());
+        QVERIFY(padded.has_value());
+        QCOMPARE(QFileInfo(padded.value()).fileName(), QStringLiteral("Padded.eml"));
     }
 
     // ====================================================================
@@ -289,8 +364,38 @@ private Q_SLOTS:
         // The CRLF is collapsed, so no forged Bcc header line appears in the
         // header block; the subject text stays on the Subject line.
         QVERIFY(!content.contains("\nBcc: attacker@evil.com"));
-        QVERIFY(content.contains("Subject: Hello  Bcc: attacker@evil.com"));
-        QVERIFY(content.contains("attacker@evil.com"));  // present, but folded into Subject
+        // Pin the folded line WITH its terminator: a trailing CRLF proves the injected
+        // text ends the Subject rather than running into the next header. (The old
+        // contains("attacker@evil.com") below it was vacuous -- strictly implied by this.)
+        QVERIFY(content.contains("Subject: Hello  Bcc: attacker@evil.com\r\n"));
+
+        // sanitizeHeaderValue has three arms; only the CR/LF one is reached above. TAB
+        // must fold to a space (an obs-FWS header-continuation vector) and every OTHER
+        // C0 control must be dropped -- a BEL or SOH left in a header is passed through
+        // verbatim to downstream MTAs.
+        item.subject = QStringLiteral("A\tB\x01") + QStringLiteral("C\aD");
+        auto second = writer.writeMessage(item, {}, QString());
+        QVERIFY(second.has_value());
+        QFile file2(second.value());
+        QVERIFY(file2.open(QIODevice::ReadOnly));
+        QVERIFY(file2.readAll().contains(QByteArray("Subject: A BCD\r\n")));
+
+        // encodedDisplayName's non-ASCII arm is otherwise dead -- no fixture in this file sets a
+        // non-ASCII sender_name. The display NAME must be RFC 2047 'B'-encoded while the addr-spec
+        // stays RAW (RFC 2047 forbids an encoded-word inside an address), so pin the whole From
+        // line.
+        item.sender_name = QString::fromUtf8(
+            "J\xC3\xBC"
+            "rgen");  // "Jurgen" with u-umlaut
+        item.sender_email = QStringLiteral("s@example.com");
+        item.subject = QStringLiteral("ascii");
+        auto from_result = writer.writeMessage(item, {}, QString());
+        QVERIFY(from_result.has_value());
+        QFile from_file(from_result.value());
+        QVERIFY(from_file.open(QIODevice::ReadOnly));
+        const QByteArray from_content = from_file.readAll();
+        QVERIFY(from_content.startsWith("From: =?UTF-8?B?SsO8cmdlbg==?= <s@example.com>\r\n"));
+        QVERIFY(!from_content.contains(QByteArray("J\xC3\xBC")));  // no raw 8-bit in From
     }
 
     // ====================================================================
@@ -340,6 +445,16 @@ private Q_SLOTS:
         auto result = writer.writeMessage(item, no_attachments, QString());
         QVERIFY(result.has_value());
         QCOMPARE(writer.totalBytesWritten(), QFileInfo(result.value()).size());
+
+        // The counter ACCUMULATES across messages, so a second write must SUM rather than
+        // replace. A single message cannot tell "+=" from "=", and email_export_worker reads this
+        // value as a per-item delta.
+        item.subject = QStringLiteral("Track Bytes Two");
+        item.body_plain = QStringLiteral("A different and noticeably longer second body.");
+        auto second = writer.writeMessage(item, no_attachments, QString());
+        QVERIFY(second.has_value());
+        QCOMPARE(writer.totalBytesWritten(),
+                 QFileInfo(result.value()).size() + QFileInfo(second.value()).size());
     }
 
     // A generated _(n) collision name must itself be checked for existence so a
@@ -371,6 +486,10 @@ private Q_SLOTS:
         // Three distinct files; the second file's content is intact.
         QCOMPARE(QDir(temp_dir.path()).entryList({QStringLiteral("*.eml")}, QDir::Files).size(), 3);
         QVERIFY(third.value() != second.value());
+        // Pin the generated names, not merely "different": the third "foo" must SKIP the
+        // already-taken foo_(1).eml and land on foo_(2).eml.
+        QCOMPARE(QFileInfo(second.value()).fileName(), QStringLiteral("foo_(1).eml"));
+        QCOMPARE(QFileInfo(third.value()).fileName(), QStringLiteral("foo_(2).eml"));
         QFile f(second.value());
         QVERIFY(f.open(QIODevice::ReadOnly));
         QVERIFY(f.readAll().contains("body of foo_(1)"));
@@ -425,9 +544,16 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
         const QByteArray content = file.readAll();
         const QByteArray unwrapped = blob.toBase64();
-        QVERIFY(unwrapped.size() > 76);
-        QVERIFY(!content.contains(unwrapped));          // not one giant line
-        QVERIFY(content.contains(unwrapped.left(76)));  // but the first 76 cols are present
+        // 300 bytes -> 400 base64 chars -> five full 76-column lines plus a 20-char tail, each
+        // terminated by CRLF. Pinning the whole run catches a wrap that is correct only on the
+        // first line, an LF-only terminator, and a dropped tail line.
+        QCOMPARE(unwrapped.size(), static_cast<qsizetype>(400));
+        QVERIFY(!content.contains(unwrapped));  // not one giant line
+        const QByteArray wrapped = unwrapped.mid(0, 76) + "\r\n" + unwrapped.mid(76, 76) + "\r\n" +
+                                   unwrapped.mid(152, 76) + "\r\n" + unwrapped.mid(228, 76) +
+                                   "\r\n" + unwrapped.mid(304, 76) + "\r\n" +
+                                   unwrapped.mid(380, 20) + "\r\n";
+        QVERIFY(content.contains(wrapped));
     }
 
     // A subfolder path that escapes the output directory must be refused, not
@@ -443,9 +569,20 @@ private Q_SLOTS:
         item.body_plain = QStringLiteral("b");
         item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
 
-        auto result = writer.writeMessage(item, {}, QStringLiteral("../escape"));
+        // Escape into a sibling of the temp dir whose name is unique to this run, so the "was
+        // anything created outside?" check below cannot be confused by a leftover.
+        const QString sibling = QFileInfo(temp_dir.path()).fileName() + QStringLiteral("_escaped");
+        auto result = writer.writeMessage(item, {}, QStringLiteral("../") + sibling);
         QVERIFY(!result.has_value());
         QCOMPARE(result.error(), sak::error_code::path_traversal_attempt);
+
+        // TWO distinct guards return path_traversal_attempt: the lexical subfolderEscapes BEFORE
+        // mkpath, and the junction/symlink targetWithinRoot AFTER it. Prove the lexical one
+        // fired: nothing was created outside the output root, and nothing inside it either.
+        QVERIFY(
+            !QFileInfo::exists(QFileInfo(temp_dir.path()).path() + QStringLiteral("/") + sibling));
+        QCOMPARE(QDir(temp_dir.path()).entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot),
+                 QStringList());
     }
 };
 

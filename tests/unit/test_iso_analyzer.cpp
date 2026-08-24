@@ -232,6 +232,22 @@ void IsoAnalyzerTests::analyzeReadsPrimaryVolumeDescriptorFields() {
     QCOMPARE(info.volume_size, static_cast<uint64_t>(kSyntheticSectors) * kSectorSize);
     QCOMPARE(info.creation_date, QStringLiteral("2026-01-02 03:04:05"));  // parsed from the PVD
     QVERIFY(!info.is_bootable);  // no El Torito boot record in this image
+
+    // "ISO 9660" above is also exactly what a DEAD UDF detector reports, because no fixture in
+    // this file carries a UDF Volume Structure Descriptor -- so that pin cannot tell "found no
+    // UDF" from "never looked". Stamp BEA01 into a spare sector: the detector must upgrade the
+    // filesystem string for the hybrid disc the image now is.
+    QByteArray hybrid = buildSyntheticIso({.volume_label = "SAK_UDF_VOL"});
+    QByteArray udf_descriptor(kSectorSize, '\0');
+    writePadded(udf_descriptor, 1, "BEA01", 5);  // Extended Area beginning descriptor
+    udf_descriptor[6] = 1;                       // structure version
+    hybrid.replace(kBootCatalogSector * kSectorSize, kSectorSize, udf_descriptor);
+    const QString hybrid_path = writeImage("hybrid-udf.iso", hybrid);
+    QVERIFY(!hybrid_path.isEmpty());
+
+    const IsoInfo hybrid_info = IsoAnalyzer::analyze(hybrid_path);
+    QCOMPARE(hybrid_info.filesystem, QStringLiteral("ISO 9660 + UDF"));
+    QCOMPARE(hybrid_info.volume_label, QStringLiteral("SAK_UDF_VOL"));
 }
 
 // The Windows routing decision, made from bytes rather than from a hand-built
@@ -249,6 +265,26 @@ void IsoAnalyzerTests::analyzeClassifiesSyntheticWindowsMediaFromLabel() {
     QCOMPARE(info.os_family, QStringLiteral("Windows"));
     QCOMPARE(info.architecture, QStringLiteral("x64"));  // from the X64 label token
     QCOMPARE(info.os_name, QStringLiteral("Windows"));   // no 11/10/server token -> default
+    QCOMPARE(info.windows_editions, QStringList());      // no edition token in this label
+    QVERIFY(IsoAnalyzer::isWindowsInstallMedia(info));
+
+    // Editions are an ORDERED catalog: the parser emits Pro, Home, Education, Enterprise in its
+    // own order, not the order the tokens appear in the label, and the analyze_iso result reports
+    // that list in order. The label below carries the four tokens REVERSED, so this fails if the
+    // emission order ever tracks the label. It also pins the "11" arm of the name table, which the
+    // image above cannot reach (it lands on the default).
+    const QString editions_path = writeImage(
+        "windows-editions.iso", buildSyntheticIso({.volume_label = "WIN11_ENT_EDU_HOME_PRO_X64"}));
+    QVERIFY(!editions_path.isEmpty());
+
+    const IsoInfo editions_info = IsoAnalyzer::analyze(editions_path);
+    QCOMPARE(editions_info.os_name, QStringLiteral("Windows 11"));  // the 11 arm, not the default
+    QCOMPARE(editions_info.windows_editions,
+             QStringList({QStringLiteral("Pro"),
+                          QStringLiteral("Home"),
+                          QStringLiteral("Education"),
+                          QStringLiteral("Enterprise")}));
+    QVERIFY(IsoAnalyzer::isWindowsInstallMedia(editions_info));
     QVERIFY(IsoAnalyzer::isWindowsInstallMedia(info));
 }
 
@@ -266,6 +302,28 @@ void IsoAnalyzerTests::analyzeClassifiesSyntheticLinuxMediaAsNotWindows() {
     QCOMPARE(info.os_family, QStringLiteral("Linux"));
     QCOMPARE(info.distro_name, QStringLiteral("Ubuntu"));
     QCOMPARE(info.distro_version, QStringLiteral("24.04.1"));  // regex over the label
+    QCOMPARE(info.os_version, QStringLiteral("24.04.1"));      // mirrored from distro_version
+    QCOMPARE(info.os_name, QStringLiteral("Ubuntu 24.04.1"));  // name + version composite
+    QCOMPARE(info.architecture, QStringLiteral("x64"));        // amd64 label token -> x64
+    QVERIFY(!info.is_live);                                    // no LIVE/DESKTOP token
+    QVERIFY(info.desktop_env.isEmpty());                       // no GNOME/KDE/XFCE token
+    QVERIFY(!IsoAnalyzer::isWindowsInstallMedia(info));
+
+    // The other arm of both label predicates: a live image with a desktop-environment token must
+    // set is_live and desktop_env. With only the server image above, a distro match that stopped
+    // writing either field -- or an isLiveLinuxLabel that always returned false -- still passes.
+    const QString live_path = writeImage(
+        "fedora-live.iso", buildSyntheticIso({.volume_label = "Fedora-41-KDE-Live-x86_64"}));
+    QVERIFY(!live_path.isEmpty());
+
+    const IsoInfo live = IsoAnalyzer::analyze(live_path);
+    QCOMPARE(live.distro_name, QStringLiteral("Fedora"));
+    QCOMPARE(live.os_name, QStringLiteral("Fedora 41"));
+    QCOMPARE(live.os_version, QStringLiteral("41"));
+    QCOMPARE(live.architecture, QStringLiteral("x64"));  // x86_64 label token -> x64
+    QVERIFY(live.is_live);
+    QCOMPARE(live.desktop_env, QStringLiteral("KDE Plasma"));
+    QVERIFY(!IsoAnalyzer::isWindowsInstallMedia(live));
     QCOMPARE(info.os_name, QStringLiteral("Ubuntu 24.04.1"));  // name + version composite
     QCOMPARE(info.architecture, QStringLiteral("x64"));        // amd64 label token -> x64
     QVERIFY(!IsoAnalyzer::isWindowsInstallMedia(info));
@@ -294,6 +352,21 @@ void IsoAnalyzerTests::analyzeReadsElToritoBootTypeFromCatalog() {
     const IsoInfo bios_info = IsoAnalyzer::analyze(bios);
     QVERIFY(bios_info.is_bootable);
     QCOMPARE(bios_info.boot_type, QStringLiteral("Legacy BIOS"));
+
+    // The Boot Indicator's other arm. Both images above carry 0x88 in the Default Entry, so the
+    // "not bootable" early return in applyDefaultBootEntry never runs: drop it and every El Torito
+    // image is classified from the Validation Entry platform whether or not any entry is bootable.
+    // Here the indicator is 0x00 with an EFI platform byte, so the catalog yields no flag at all --
+    // Unknown/Invalid, and not bootable.
+    const QString stale = writeImage("not-bootable.iso",
+                                     buildSyntheticIso({.volume_label = "SAK_NOBOOT",
+                                                        .with_boot_record = true,
+                                                        .boot_platform = kPlatformEfi,
+                                                        .boot_entry_bootable = false}));
+    QVERIFY(!stale.isEmpty());
+    const IsoInfo stale_info = IsoAnalyzer::analyze(stale);
+    QCOMPARE(stale_info.boot_type, QStringLiteral("Unknown/Invalid"));
+    QVERIFY(!stale_info.is_bootable);
 }
 
 // A file too short to hold a system area plus one descriptor must come back
@@ -352,6 +425,33 @@ void IsoAnalyzerTests::analyzeStopsAtTheDescriptorSetTerminator() {
     const IsoInfo info = IsoAnalyzer::analyze(path);
     QCOMPARE(info.volume_label, QStringLiteral("SAK_TERM"));
     QVERIFY2(!info.is_bootable, "a boot record after the terminator is outside the descriptor set");
+
+    // The PVD scan has its OWN terminator check, and nothing reaches it: every fixture in this
+    // file parks the PVD at LBA 16, so readPrimaryVolumeDescriptor returns on the first sector
+    // it reads and the check is never taken. The swap above only exercises the El Torito-side
+    // check. Here LBA 16 is a supplementary descriptor the scan skips, LBA 17 is the terminator,
+    // and a real labelled PVD sits at LBA 18: if that terminator check went away the reader would
+    // walk past the end of the descriptor set and adopt a volume that is not part of it.
+    QByteArray past_end = buildSyntheticIso({.volume_label = "AFTER_TERM"});
+    const int pvd_lba16 = kPvdSector * kSectorSize;
+    const int lba17 = kBootRecordSector * kSectorSize;
+    const int lba18 = kTerminatorSector * kSectorSize;
+    const QByteArray real_pvd = past_end.mid(pvd_lba16, kSectorSize);
+    const QByteArray term_sector = past_end.mid(lba18, kSectorSize);
+    QByteArray supplementary(kSectorSize, '\0');
+    supplementary[0] = 2;  // Supplementary Volume Descriptor: skipped, not a stop
+    writePadded(supplementary, 1, "CD001", 5);
+    supplementary[6] = 1;
+    past_end.replace(pvd_lba16, kSectorSize, supplementary);
+    past_end.replace(lba17, kSectorSize, term_sector);
+    past_end.replace(lba18, kSectorSize, real_pvd);
+    const QString past_end_path = writeImage("pvd-after-terminator.iso", past_end);
+    QVERIFY(!past_end_path.isEmpty());
+
+    const IsoInfo past_end_info = IsoAnalyzer::analyze(past_end_path);
+    QVERIFY(past_end_info.volume_label.isEmpty());
+    QVERIFY(past_end_info.filesystem.isEmpty());
+    QCOMPARE(past_end_info.volume_size, static_cast<uint64_t>(0));
 }
 
 // The minimum-size guard rejects an image too small to hold the 16-sector system

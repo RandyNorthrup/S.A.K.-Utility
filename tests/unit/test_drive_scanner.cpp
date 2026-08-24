@@ -107,6 +107,22 @@ void DriveScannerTests::constructor_defaults() {
 void DriveScannerTests::driveInfo_defaultInvalid() {
     sak::DriveInfo info;
     QVERIFY(!info.isValid());
+
+    // isValid() is a TWO-arm AND (!devicePath.isEmpty() && size > 0) and the default record trips
+    // BOTH arms, so it stays invalid even with one arm deleted. Exercise each arm alone.
+    sak::DriveInfo pathOnly;
+    pathOnly.devicePath = QStringLiteral("\\\\.\\PhysicalDrive0");
+    QVERIFY(!pathOnly.isValid());  // size still 0
+
+    sak::DriveInfo sizeOnly;
+    sizeOnly.size = 1024;
+    QVERIFY(!sizeOnly.isValid());  // devicePath still empty
+
+    // ...and the size arm is `> 0`, not `!= 0`: a negative geometry result is not a valid drive.
+    sak::DriveInfo negativeSize;
+    negativeSize.devicePath = QStringLiteral("\\\\.\\PhysicalDrive0");
+    negativeSize.size = -1;
+    QVERIFY(!negativeSize.isValid());
 }
 
 void DriveScannerTests::driveInfo_validWhenPopulated() {
@@ -124,6 +140,58 @@ void DriveScannerTests::driveInfo_validWhenPopulated() {
 
 void DriveScannerTests::getDrives_returnsNonEmpty() {
     DriveScanner scanner;
+
+    // The first scan lands on an EMPTY cache, so applyDriveScan() must PUBLISH it: one
+    // driveAttached per drive found, and exactly one drivesUpdated carrying the whole list. No
+    // test in this file ever asserted a signal, so an applyDriveScan() that filled m_drives and
+    // emitted nothing at all (every subscribed panel showing no drives) passed the suite.
+    int attachedCount = 0;
+    int updatedCount = 0;
+    QList<sak::DriveInfo> published;
+    QObject::connect(&scanner,
+                     &DriveScanner::driveAttached,
+                     &scanner,
+                     [&attachedCount](const sak::DriveInfo&) { ++attachedCount; });
+    QObject::connect(&scanner,
+                     &DriveScanner::drivesUpdated,
+                     &scanner,
+                     [&updatedCount, &published](const QList<sak::DriveInfo>& drives) {
+                         ++updatedCount;
+                         published = drives;
+                     });
+
+    scanner.refresh();
+
+    // The scan runs on a worker thread; spin the event loop until it lands.
+    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+
+    const QList<sak::DriveInfo> drives = scanner.getDrives();
+    QCOMPARE(updatedCount, 1);  // one scan, one publication -- not per-drive, not zero
+    QCOMPARE(attachedCount, static_cast<int>(drives.size()));
+    QStringList publishedPaths;
+    for (const sak::DriveInfo& drive : published) {
+        publishedPaths.append(drive.devicePath);
+    }
+    QStringList cachedPaths;
+    for (const sak::DriveInfo& drive : drives) {
+        cachedPaths.append(drive.devicePath);
+    }
+    QCOMPARE(publishedPaths, cachedPaths);  // the published list IS the cache, in cache order
+
+    // Every cached record passed the isValid() filter in enumerateDrivesOnce(), carries the exact
+    // "\\.\PhysicalDriveN" path queryDriveInfo() builds, and the list is in the STRICTLY ascending
+    // drive-number order enumeratePhysicalDriveNumbers() sorts and de-duplicates into. A bare
+    // !isEmpty() equally passed a scan that cached invalid records or listed a drive twice.
+    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
+    int previousNumber = -1;
+    for (const sak::DriveInfo& drive : drives) {
+        QVERIFY2(drive.isValid(), qPrintable(drive.devicePath));
+        QCOMPARE(drive.devicePath.left(prefix.size()), prefix);
+        bool numberOk = false;
+        const int number = drive.devicePath.mid(prefix.size()).toInt(&numberOk);
+        QVERIFY2(numberOk && number > previousNumber, qPrintable(drive.devicePath));
+        previousNumber = number;
+    }
     scanner.refresh();
 
     // The scan runs on a worker thread; spin the event loop until it lands.
@@ -164,11 +232,21 @@ void DriveScannerTests::isSystemDrive_systemDriveDetected() {
     bool foundSystem = false;
     for (const auto& drive : drives) {
         if (drive.isSystem) {
-            QVERIFY(scanner.isSystemDrive(drive.devicePath));
+            QVERIFY2(scanner.isSystemDrive(drive.devicePath), qPrintable(drive.devicePath));
             foundSystem = true;
+        } else {
+            // The negative arm: a cached NON-system drive must not be reported as one. Only the
+            // positive arm was asserted, so `return true;` passed the whole test.
+            QVERIFY2(!scanner.isSystemDrive(drive.devicePath), qPrintable(drive.devicePath));
         }
     }
     QVERIFY(foundSystem);  // Should always have a system drive
+
+    // isSystemDrive() resolves the path through getDriveInfo() (drive_scanner.cpp:208-211): an
+    // unknown or empty device path is not in the cache and is never the system drive. These two
+    // hold on any machine, so they kill the `return true;` mutant unconditionally.
+    QVERIFY(!scanner.isSystemDrive(QStringLiteral("\\\\.\\PhysicalDrive999")));
+    QVERIFY(!scanner.isSystemDrive(QString()));
 }
 
 // ============================================================================
@@ -178,6 +256,22 @@ void DriveScannerTests::isSystemDrive_systemDriveDetected() {
 void DriveScannerTests::refresh_doubleCallStillCompletes() {
     DriveScanner scanner;
     scanner.refresh();
+    QVERIFY(scanner.m_isScanning.load());  // the first scan claimed the in-flight guard
+    scanner.refresh();  // Lands while the first scan is still in flight -> swallowed at the CAS.
+
+    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+
+    // The guard is RELEASED again when the scan lands. onScanFinished() clears m_isScanning right
+    // after applyDriveScan(), both on THIS thread, so it is already false the moment the cache
+    // becomes visible -- no timing assumption. The bare !isEmpty() above passes even with the
+    // guard left permanently set, because the FIRST scan still landed; a wedged scanner then
+    // ignores every later refresh() and hot-plug notification forever.
+    QVERIFY(!scanner.m_isScanning.load());
+
+    // ...and a released guard really does admit the next scan.
+    scanner.refresh();
+    QVERIFY(scanner.m_isScanning.load());
+    QTRY_VERIFY(!scanner.m_isScanning.load());
     scanner.refresh();  // Lands while the first scan is still in flight.
 
     // The second call is swallowed by the m_isScanning in-flight guard. The point is that
@@ -193,6 +287,21 @@ void DriveScannerTests::refresh_doubleCallStillCompletes() {
 
 void DriveScannerTests::startStop_lifecycle() {
     DriveScanner scanner;
+    QVERIFY(!scanner.m_refreshTimer->isActive());  // idle until start()
+    scanner.start();
+    // start() kicks an initial scan before arming the refresh timer, so monitoring really
+    // is live once this lands.
+    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+    // The cache alone did not prove monitoring is LIVE: the fallback refresh timer must be armed,
+    // otherwise start() is a one-shot scan and no drive ever hot-plugs in again.
+    QVERIFY(scanner.m_refreshTimer->isActive());
+
+    scanner.stop();
+    // stop() joins the in-flight worker scan and DROPS the cache: a stopped scanner must
+    // never keep handing out a drive list it is no longer refreshing.
+    QVERIFY(scanner.getDrives().isEmpty());
+    // ...and it disarms the timer, so nothing repopulates the cache it just dropped.
+    QVERIFY(!scanner.m_refreshTimer->isActive());
     scanner.start();
     // start() kicks an initial scan before arming the refresh timer, so monitoring really
     // is live once this lands.
@@ -211,9 +320,27 @@ void DriveScannerTests::startStop_lifecycle() {
 void DriveScannerTests::getDriveInfo_nonExistentDrive() {
     DriveScanner scanner;
     scanner.refresh();
+    // Wait for the scan to LAND. refresh() only kicks a worker future (drive_scanner.cpp:225);
+    // without this the cache is still EMPTY when the lookup runs, so getDriveInfo() misses for
+    // every path and the miss this test is named for is never reached.
+    QTRY_VERIFY(!scanner.getDrives().isEmpty());
 
-    auto info = scanner.getDriveInfo("\\\\.\\PhysicalDrive999");
+    const auto info = scanner.getDriveInfo(QStringLiteral("\\\\.\\PhysicalDrive999"));
     QVERIFY(!info.isValid());
+    // A miss returns a DEFAULT-constructed record, not a neighbouring drive's payload.
+    QVERIFY(info.devicePath.isEmpty());
+    QCOMPARE(info.size, qint64(0));
+    QCOMPARE(info.blockSize, 0u);
+    QVERIFY(info.name.isEmpty());
+    QVERIFY(info.mountPoints.isEmpty());
+
+    // ...and a path that IS cached hits, proving the miss above came from the lookup rather than
+    // from an unpopulated cache.
+    const auto cached = scanner.getDrives().first();
+    const auto hit = scanner.getDriveInfo(cached.devicePath);
+    QVERIFY(hit.isValid());
+    QCOMPARE(hit.devicePath, cached.devicePath);
+    QCOMPARE(hit.size, cached.size);
 }
 
 // ============================================================================
@@ -228,6 +355,13 @@ void DriveScannerTests::drivesDetached_partialScanKeepsAll() {
     // enumeration_ok == false: NOTHING is reported detached even though scanned is empty.
     const auto detached = DriveScanner::drivesDetached(current, scanned, /*enumeration_ok=*/false);
     QVERIFY(detached.isEmpty());
+
+    // ...and it is the enumeration_ok flag that carries that, not the empty `scanned`: a PARTIAL
+    // scan that really saw one cached drive and missed the other is still non-authoritative, so it
+    // detaches nothing either. An `if (scanned.isEmpty()) return {};` short-circuit passed the
+    // case above, which is the shape a real partial enumeration actually takes.
+    const QList<sak::DriveInfo> partial = {makeDrive("\\\\.\\PhysicalDrive0")};
+    QVERIFY(DriveScanner::drivesDetached(current, partial, /*enumeration_ok=*/false).isEmpty());
 }
 
 void DriveScannerTests::drivesDetached_authoritativeReportsRemoved() {
@@ -243,7 +377,10 @@ void DriveScannerTests::drivesDetached_authoritativeReportsRemoved() {
 void DriveScannerTests::mergeDriveList_partialUnionsNeverDrops() {
     const QList<sak::DriveInfo> current = {makeDrive("\\\\.\\PhysicalDrive0"),
                                            makeDrive("\\\\.\\PhysicalDrive1")};
-    const QList<sak::DriveInfo> scanned = {makeDrive("\\\\.\\PhysicalDrive2")};
+    // Drive0 is ALREADY cached, so the union must de-duplicate it rather than append a second
+    // copy; a scanned list disjoint from `current` never reaches the containsDevicePath() guard.
+    const QList<sak::DriveInfo> scanned = {makeDrive("\\\\.\\PhysicalDrive0"),
+                                           makeDrive("\\\\.\\PhysicalDrive2")};
 
     // Non-authoritative: cached drives are kept, the newly-seen one is added.
     const auto merged = DriveScanner::mergeDriveList(current, scanned, /*enumeration_ok=*/false);
@@ -265,6 +402,16 @@ void DriveScannerTests::mergeDriveList_authoritativeReplaces() {
     const auto merged = DriveScanner::mergeDriveList(current, scanned, /*enumeration_ok=*/true);
     QCOMPARE(merged.size(), 1);
     QCOMPARE(merged.first().devicePath, QStringLiteral("\\\\.\\PhysicalDrive0"));
+
+    // "Replace" is not "intersect": the scanned list here is a SUBSET of the cache, so an
+    // implementation that kept only the drives common to both passed the case above. An
+    // authoritative scan must install a newly-seen drive and adopt the scan's own order.
+    const QList<sak::DriveInfo> fresh = {makeDrive("\\\\.\\PhysicalDrive2"),
+                                         makeDrive("\\\\.\\PhysicalDrive0")};
+    const auto replaced = DriveScanner::mergeDriveList(current, fresh, /*enumeration_ok=*/true);
+    QCOMPARE(replaced.size(), 2);
+    QCOMPARE(replaced.at(0).devicePath, QStringLiteral("\\\\.\\PhysicalDrive2"));
+    QCOMPARE(replaced.at(1).devicePath, QStringLiteral("\\\\.\\PhysicalDrive0"));
 }
 
 // ============================================================================
@@ -286,6 +433,16 @@ void DriveScannerTests::descriptorString_rejectsOutOfRangeOffset() {
     // Offset at/after bytes_returned -> outside the returned data -> empty (no OOB read).
     QVERIFY(DriveScanner::descriptorString(buffer.data(), 64, 32, 32).isEmpty());
     QVERIFY(DriveScanner::descriptorString(buffer.data(), 64, 32, 40).isEmpty());
+
+    // Both cases above keep bytes_returned (32) <= buffer_size (64), so only the bytes_returned
+    // half of the std::min() clamp is exercised. The hostile case B6-24 exists for is a driver
+    // that OVER-reports bytes_returned: the offset must then be measured against OUR buffer.
+    // `readable` is deliberately larger than the declared buffer_size so a regression reads real
+    // 'A' bytes (a non-empty result that fails deterministically) instead of stepping off the
+    // allocation.
+    std::vector<BYTE> readable(256, 'A');
+    QVERIFY(DriveScanner::descriptorString(readable.data(), 64, 4096, 64).isEmpty());
+    QVERIFY(DriveScanner::descriptorString(readable.data(), 64, 4096, 200).isEmpty());
 }
 
 void DriveScannerTests::descriptorString_stopsAtBufferEndWhenUnterminated() {
@@ -294,6 +451,15 @@ void DriveScannerTests::descriptorString_stopsAtBufferEndWhenUnterminated() {
     // bytes_returned=32, offset=8 -> at most 24 chars read, never past the returned region.
     const QString out = DriveScanner::descriptorString(buffer.data(), 64, 32, 8);
     QCOMPARE(out, QString(24, QLatin1Char('A')));
+
+    // The same clamp bounds the READ LENGTH, not just the offset: a driver that over-reports
+    // bytes_returned cannot stretch an unterminated field past our buffer either. buffer_size=64,
+    // offset=8 -> exactly 56 characters however large bytes_returned claims to be. (`readable`
+    // holds 256 real bytes so an unclamped regression returns 248+ chars and fails
+    // deterministically instead of running off the allocation.)
+    std::vector<BYTE> readable(256, 'A');
+    QCOMPARE(DriveScanner::descriptorString(readable.data(), 64, 4096, 8),
+             QString(56, QLatin1Char('A')));
 }
 
 void DriveScannerTests::descriptorString_absentFieldIsEmpty() {
@@ -345,6 +511,31 @@ void DriveScannerTests::hasWindowsIndicators_emptyRootIsNotSystem() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
     QVERIFY(!DriveScanner::hasWindowsIndicators(temp.path()));
+
+    // An empty root trips no rule at all, so none of the four AND-rules is actually exercised.
+    // Boot files ALONE are explicitly not a Windows installation (drive_scanner.cpp:868-872) --
+    // that rule is exactly what separates hasWindowsIndicators() from hasBootManagerIndicators().
+    QTemporaryDir bootOnly;
+    QVERIFY(bootOnly.isValid());
+    QFile bootmgr(QDir(bootOnly.path()).filePath("bootmgr"));
+    QVERIFY(bootmgr.open(QIODevice::WriteOnly));
+    bootmgr.write("stub");
+    bootmgr.close();
+    QVERIFY(!DriveScanner::hasWindowsIndicators(bootOnly.path()));     // no \Windows beside it
+    QVERIFY(DriveScanner::hasBootManagerIndicators(bootOnly.path()));  // ...but still boot-critical
+
+    // ...and rule 1 is an AND: a Windows\System32 DIRECTORY with no kernel in it is not an
+    // installation, while \bootmgr next to a \Windows tree (rule 3) is.
+    QTemporaryDir noKernel;
+    QVERIFY(noKernel.isValid());
+    QDir noKernelRoot(noKernel.path());
+    QVERIFY(noKernelRoot.mkpath("Windows/System32"));
+    QVERIFY(!DriveScanner::hasWindowsIndicators(noKernel.path()));
+    QFile bootWithWindows(noKernelRoot.filePath("bootmgr"));
+    QVERIFY(bootWithWindows.open(QIODevice::WriteOnly));
+    bootWithWindows.write("stub");
+    bootWithWindows.close();
+    QVERIFY(DriveScanner::hasWindowsIndicators(noKernel.path()));
 }
 
 // ============================================================================
@@ -363,6 +554,28 @@ void DriveScannerTests::hasBootManagerIndicators_detectsBootmgr() {
     bootmgr.close();
 
     QVERIFY(DriveScanner::hasBootManagerIndicators(temp.path()));
+
+    // \bootmgr is only ONE of the three indicators. The split-boot case this guard exists for
+    // (drive_scanner.h:251-254) carries EFI\Microsoft\Boot\bootmgfw.efi and NO \bootmgr, and
+    // BOOTNXT is the third arm -- neither was ever exercised, so a probe narrowed to bootmgr
+    // alone stayed green while leaving a split-boot ESP erasable.
+    QTemporaryDir esp;
+    QVERIFY(esp.isValid());
+    QDir espRoot(esp.path());
+    QVERIFY(espRoot.mkpath("EFI/Microsoft/Boot"));
+    QFile bootmgfw(espRoot.filePath("EFI/Microsoft/Boot/bootmgfw.efi"));
+    QVERIFY(bootmgfw.open(QIODevice::WriteOnly));
+    bootmgfw.write("stub");
+    bootmgfw.close();
+    QVERIFY(DriveScanner::hasBootManagerIndicators(esp.path()));
+
+    QTemporaryDir nxtDir;
+    QVERIFY(nxtDir.isValid());
+    QFile bootnxt(QDir(nxtDir.path()).filePath("BOOTNXT"));
+    QVERIFY(bootnxt.open(QIODevice::WriteOnly));
+    bootnxt.write("stub");
+    bootnxt.close();
+    QVERIFY(DriveScanner::hasBootManagerIndicators(nxtDir.path()));
 }
 
 void DriveScannerTests::hasBootManagerIndicators_emptyRootIsNotBoot() {
@@ -382,18 +595,47 @@ void DriveScannerTests::physicalDriveBootProbe_negativeIsUndetermined() {
 // ============================================================================
 
 void DriveScannerTests::driveInfoChanged_detectsSizeChange() {
-    sak::DriveInfo a = makeDrive("\\\\.\\PhysicalDrive0");
-    sak::DriveInfo b = a;
-    b.size = a.size + 4096;
-    QVERIFY(DriveScanner::driveInfoChanged(a, b));
+    const sak::DriveInfo base = makeDrive("\\\\.\\PhysicalDrive0");
 
-    sak::DriveInfo c = a;
-    c.isReadOnly = !a.isReadOnly;
-    QVERIFY(DriveScanner::driveInfoChanged(a, c));
+    // driveInfoChanged() compares NINE fields and each one must count as a change on its own.
+    // Only size, isReadOnly and mountPoints were pinned, so dropping any of the other six
+    // conjuncts left an in-place property change silently unreported (no drivesUpdated, stale
+    // panels) while this test stayed green.
+    sak::DriveInfo sized = base;
+    sized.size = base.size + 4096;
+    QVERIFY(DriveScanner::driveInfoChanged(base, sized));
 
-    sak::DriveInfo d = a;
-    d.mountPoints = QStringList{QStringLiteral("E:\\")};
-    QVERIFY(DriveScanner::driveInfoChanged(a, d));
+    sak::DriveInfo blocked = base;
+    blocked.blockSize = base.blockSize + 512;
+    QVERIFY(DriveScanner::driveInfoChanged(base, blocked));
+
+    sak::DriveInfo named = base;
+    named.name = QStringLiteral("Generic USB Flash Disk");
+    QVERIFY(DriveScanner::driveInfoChanged(base, named));
+
+    sak::DriveInfo readOnly = base;
+    readOnly.isReadOnly = !base.isReadOnly;
+    QVERIFY(DriveScanner::driveInfoChanged(base, readOnly));
+
+    sak::DriveInfo system = base;
+    system.isSystem = !base.isSystem;
+    QVERIFY(DriveScanner::driveInfoChanged(base, system));
+
+    sak::DriveInfo removable = base;
+    removable.isRemovable = !base.isRemovable;
+    QVERIFY(DriveScanner::driveInfoChanged(base, removable));
+
+    sak::DriveInfo mounted = base;
+    mounted.mountPoints = QStringList{QStringLiteral("E:\\")};
+    QVERIFY(DriveScanner::driveInfoChanged(base, mounted));
+
+    sak::DriveInfo labelled = base;
+    labelled.volumeLabel = QStringLiteral("SAK");
+    QVERIFY(DriveScanner::driveInfoChanged(base, labelled));
+
+    sak::DriveInfo bus = base;
+    bus.busType = QStringLiteral("USB");
+    QVERIFY(DriveScanner::driveInfoChanged(base, bus));
 }
 
 void DriveScannerTests::driveInfoChanged_identicalIsUnchanged() {
@@ -408,6 +650,12 @@ void DriveScannerTests::driveInfoChanged_identicalIsUnchanged() {
 
 void DriveScannerTests::volumePathQuery_completeOnSuccess() {
     QCOMPARE(DriveScanner::volumePathQueryOutcome(true, ERROR_SUCCESS, 0u, 1024u),
+             sak::VolumePathQuery::Complete);
+    // A successful call wins over whatever GetLastError() happens to hold. collectMountPaths()
+    // passes GetLastError() UNCONDITIONALLY (drive_scanner.cpp:792-793), including after a call
+    // that succeeded, so a stale ERROR_MORE_DATA left behind by an earlier API must not turn a
+    // completed query into a retry -- and, once the attempts run out, into a bogus "unmounted".
+    QCOMPARE(DriveScanner::volumePathQueryOutcome(true, ERROR_MORE_DATA, 65'536u, 1024u),
              sak::VolumePathQuery::Complete);
 }
 
