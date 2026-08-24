@@ -62,11 +62,23 @@ void TestWifiProfileScanner::security_wpa3Personal() {
 void TestWifiProfileScanner::security_open() {
     QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("open"))),
              QStringLiteral("Open"));
+    // The rest of the non-WPA rows: a dropped/renamed table row does not fail, it passes the raw
+    // schema token through verbatim, which sampling only "open" would never notice.
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("shared"))),
+             QStringLiteral("Shared (WEP)"));
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("OWE"))),
+             QStringLiteral("Enhanced Open (OWE)"));
 }
 
 void TestWifiProfileScanner::security_enterprise() {
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPA"))),
+             QStringLiteral("WPA-Enterprise"));
     QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPA2"))),
              QStringLiteral("WPA2-Enterprise"));
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPA3"))),
+             QStringLiteral("WPA3-Enterprise"));
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPA3ENT"))),
+             QStringLiteral("WPA3-Enterprise"));
     QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("WPA3ENT192"))),
              QStringLiteral("WPA3-Enterprise (192-bit)"));
 }
@@ -88,11 +100,30 @@ void TestWifiProfileScanner::security_unknownTokenPassthrough() {
 
 void TestWifiProfileScanner::security_noAuthElement() {
     const QString xml = QStringLiteral("<WLANProfile><name>MyNet</name></WLANProfile>");
-    QVERIFY(sak::wifiSecurityTypeFromProfileXml(xml).isEmpty());
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(xml), QString());
+    // Differential control on the real skeleton: the SAME document with only <authentication>
+    // removed must still refuse, so an "infer the type from <encryption>/<useOneX> when the
+    // element is missing" fallback cannot hide behind a document that has no such siblings.
+    QString stripped = profileXml(QStringLiteral("WPA2PSK"));
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(stripped), QStringLiteral("WPA2-Personal"));
+    stripped.remove(QStringLiteral("<authentication>WPA2PSK</authentication>"));
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(stripped), QString());
+    // Present-but-blank is the sibling refusal path (the regex captures the single space, which
+    // trims away to nothing): the caller gets nothing back, never raw whitespace as a type.
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(profileXml(QStringLiteral("   "))), QString());
 }
 
 void TestWifiProfileScanner::security_emptyXml() {
-    QVERIFY(sak::wifiSecurityTypeFromProfileXml(QString()).isEmpty());
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(QString()), QString());
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(QStringLiteral("   \r\n")), QString());
+    // Bare token text is not a profile: the parser keys off the element, so loose text in the
+    // document never becomes a security type.
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(QStringLiteral("WPA2PSK")), QString());
+    // A truncated element is malformed, not a security type: the closing </authentication> anchor
+    // is required, so a half-written WlanGetProfile buffer fails closed instead of reporting
+    // "WPA2-Personal".
+    const QString truncated = QStringLiteral("<WLANProfile><authentication>WPA2PSK");
+    QCOMPARE(sak::wifiSecurityTypeFromProfileXml(truncated), QString());
 }
 
 void TestWifiProfileScanner::security_localeIndependent() {

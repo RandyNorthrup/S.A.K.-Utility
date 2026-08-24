@@ -5024,6 +5024,61 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 FIRST-pass sweep b78 (gated 249/249): 22 weak assertions pinned across
+    five never-swept files (ai_recovery_policy 9, ai_run_state 4, wifi_profile_scanner 4,
+    win32_mcp_json_clamp 3, elevation_manager 2).
+    PRIVILEGE BOUNDARY, MUTATION-PROVED: isElevated_returnsConsistently asserted
+    QCOMPARE(first, second) over two calls of the SAME function, which constrains repeatability
+    and pins the VALUE to nothing -- `return true;`, `return false;` and an INVERTED result all
+    satisfy it equally. This is the predicate restartElevated short-circuits on and the whole
+    elevation gate keys off. The answer is now cross-checked against the process token itself,
+    building the Administrators SID from its SDDL form (S-1-5-32-544) rather than via
+    AllocateAndInitializeSid, so a wrong sub-authority count or RID in the production SID is
+    caught too; both sides read the same token, so the pin is machine-invariant on an elevated or
+    unelevated host. Inverting the production return turns it RED with exactly the bug in the
+    output: first=1 (reports ELEVATED) while the token reports member=0. The verifier also
+    CORRECTED the finder's over-claim here -- three of the mutants it listed are killed only when
+    the test process is itself elevated, and it said so rather than passing the claim through.
+    The other elevation pin covers FORMAT_MESSAGE_IGNORE_INSERTS, which the existing codes (5 and
+    1223) structurally cannot see because neither message takes an argument. ERROR_BAD_EXE_FORMAT
+    (193) does, and FormatMessageA fails with ERROR_INVALID_PARAMETER for it when the flag is
+    dropped -- silently degrading every insert-bearing system code to the bare numeric fallback,
+    so a technician is shown "Error code: 193" instead of why the elevated launch failed. Only
+    the "%1" placeholder is pinned; the surrounding sentence is localized.
+    ai_recovery_policy is the classic multi-guard refuser at scale: THREE branches return
+    AskHuman, THREE return ContinueDegraded and TWO return Retry, and each group sets the same
+    flag -- so action+flag could not show which branch fired. Every case now pins the branch
+    REASON, including the cause appended through reasonWithCause. Two gained differential arms:
+    the ambiguous-package error satisfied BOTH the "ambiguous" and the "choose" needle, so the
+    needle the case is NAMED for could be deleted without reddening it; and the degraded-continue
+    is granted to a read-only package lookup rather than to the tool name alone. The JSON round
+    trip compared a struct against itself through toJson/fromJson, so a symmetric key rename
+    round-tripped green while breaking the persisted transcript the orchestrator reads by name --
+    the wire keys are pinned now, along with the clamping of a CONTRADICTORY decision (an abort
+    claiming it is safe to continue and may retry) and of unknown action text, both of which must
+    resolve to the most restrictive action rather than a permissive one.
+    ai_run_state: the status strings are the persisted wire form of a run snapshot and three of
+    eight enum values were checked, so a run could reload as a different run; all eight now
+    round-trip, plus the normalization (a padded/upper-cased status must resolve rather than
+    degrade to Idle). isTerminalRunStatus was asserted only on the three terminal values, never
+    on the five non-terminal ones -- Cancelling above all, which is a run still draining a live
+    mutation. And aiStopRunStatus was driven by one activity source out of six, so a stop that
+    reported the busy predicate through a single-flag proxy would persist "Cancelled" while
+    another source was still executing.
+    win32_mcp_json_clamp: the non-numeric fallback was probed only with a string, though the
+    underlying toDouble(def) defaults for ALL non-Double types -- a guard that recognised only
+    strings turns a hostile `"timeout_ms": true` into 0, clamped to the FLOOR, i.e. a 200 ms wait
+    instead of the caller's 10 s default. The key lookup was probed only with single-key objects,
+    which cannot tell args.value(key) from "take the object's only entry" even though real
+    callers read three keys out of one args object. And the overflow test covered only the
+    positive side, so a naive "doesn't fit in qint64 -> return hi" guard passed both cases while
+    turning a hostile -1e19 into a two-hour wait.
+    wifi_profile_scanner: the security-type table was sampled rather than covered, and a dropped
+    or renamed row does not fail -- it passes the raw schema token through verbatim, which
+    sampling would never notice. The no-auth-element refusal used a skeleton with no siblings at
+    all, so an "infer the type from encryption/useOneX when the element is missing" fallback had
+    nowhere to show itself; it now strips the element from the REAL document. A truncated element
+    (a half-written WlanGetProfile buffer) must fail closed rather than report WPA2-Personal.
   - PROGRESS 2026-08-24 FIRST-pass sweep b77 (gated 249/249): 30 weak assertions pinned across
     five never-swept files (ai_prompt_assembler 18, user_profile_restore_selection 5,
     ai_human_gate_store 4, thermal_monitor 2 + 1 new slot, resource_soak 1).

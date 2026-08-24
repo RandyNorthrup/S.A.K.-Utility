@@ -10,6 +10,16 @@
 
 #ifdef _WIN32
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include <sddl.h>
+
 class ElevationManagerTests : public QObject {
     Q_OBJECT
 
@@ -37,6 +47,19 @@ void ElevationManagerTests::isElevated_returnsConsistently() {
     bool first = sak::ElevationManager::isElevated();
     bool second = sak::ElevationManager::isElevated();
     QCOMPARE(first, second);
+    // Two identical calls agree for `return false;`, `return true;` and an inverted result
+    // alike, so the pair alone pins nothing. Cross-check the answer against the process token
+    // itself, building the well-known Administrators SID from its SDDL form (S-1-5-32-544)
+    // instead of via AllocateAndInitializeSid, so a wrong sub-authority count or RID in the
+    // production SID (elevation_manager.cpp:102-112) is caught too. Machine-invariant: both
+    // sides read the same token, so they move together on an elevated or unelevated host.
+    PSID administrators = nullptr;
+    QVERIFY(ConvertStringSidToSidW(L"S-1-5-32-544", &administrators) != 0);
+    BOOL member = FALSE;
+    const BOOL checked = CheckTokenMembership(nullptr, administrators, &member);
+    LocalFree(administrators);
+    QVERIFY(checked != 0);
+    QCOMPARE(first, member == TRUE);
 }
 
 // ============================================================================
@@ -63,6 +86,15 @@ void ElevationManagerTests::errorMessage_knownCode() {
     QVERIFY(!msg.isEmpty());
     QVERIFY2(msg != QStringLiteral("Error code: 5"),
              "fell back to the numeric form for a well-known system error code");
+    // FORMAT_MESSAGE_IGNORE_INSERTS is load-bearing, and codes 5/1223 cannot see it: neither
+    // message takes an argument. ERROR_BAD_EXE_FORMAT (193) does -- "%1 is not a valid Win32
+    // application." -- and FormatMessageA fails with ERROR_INVALID_PARAMETER (87) for it when
+    // that flag is dropped, silently degrading every insert-bearing code to the numeric
+    // fallback. Only the "%1" placeholder is pinned; the surrounding text is localized.
+    const QString with_insert =
+        QString::fromStdString(sak::ElevationManager::getElevationErrorMessage(193));
+    QVERIFY2(with_insert != QStringLiteral("Error code: 193"), qPrintable(with_insert));
+    QVERIFY2(with_insert.contains(QStringLiteral("%1")), qPrintable(with_insert));
     QVERIFY2(!msg.endsWith(QLatin1Char('\n')) && !msg.endsWith(QLatin1Char('\r')),
              qPrintable(QStringLiteral("trailing newline not stripped: %1").arg(msg)));
 }
