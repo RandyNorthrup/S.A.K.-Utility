@@ -11,7 +11,7 @@
 class TestAiModelCatalog : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void catalogIsExactlyTheThreeGpt56Models();
     void defaultIsSol();
     void membershipAcceptsSupported();

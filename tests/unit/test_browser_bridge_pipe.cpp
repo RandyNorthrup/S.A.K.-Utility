@@ -151,7 +151,7 @@ BrowserBridgePipeServer::Options testOptions(const QString& rendezvous, DWORD ti
 class BrowserBridgePipeTests : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void send_beforeAnyClientReturnsNotConnected();
     void handshake_refusesForgedTokenAndUnknownType();
     void handshake_refusesProtocolMismatch();

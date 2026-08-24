@@ -71,7 +71,7 @@ int countOf(const QVector<ResolvedPackage>& resolved, const char* id) {
 class TestNuGetDependencyResolver : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void resolvesLinearChain();
     void resolvesDiamondOnce();
     void handlesCycleWithoutLooping();

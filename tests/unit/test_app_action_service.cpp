@@ -108,7 +108,7 @@ private:
 class AppActionServiceTests : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void runQuickActionSync_returnsResultSynchronously();
     void runQuickActionSync_reportsUnknownAction();
     void runQuickActionSync_nullControllerFailsCleanly();

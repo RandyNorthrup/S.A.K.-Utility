@@ -110,6 +110,15 @@ $CppcheckArgs += @(
     "-DQTEST_SET_MAIN_SOURCE_PATH="
 )
 
+# The lower-case spellings (slots, signals, emit) are deliberately NOT defined here.
+# -DQT_NO_KEYWORDS above tells Qt not to define them, so a translation unit that still spells
+# them lower-case hands cppcheck an unknown token inside a class body; cppcheck does not report
+# that as a syntax error, it silently degrades to "Active checkers: 4/186" and finds nothing.
+# Defining them looks like the fix and is not: they are ordinary identifiers elsewhere in this
+# codebase (partition_apfs_writer.cpp declares a local QVector named "slots"), so -Dslots= turns
+# real production code into a syntax error and takes the whole run down with it. The root cause
+# is fixed at the source instead -- every test class spells its test section Q_SLOTS.
+
 # ---------------------------------------------------------------------------
 # Determine files to check
 # ---------------------------------------------------------------------------
@@ -134,7 +143,12 @@ if ($Files -and $Files.Count -gt 0) {
 } else {
     # Full project scan -- exclude third-party code
     $CppcheckArgs += "-i"
-    $CppcheckArgs += (Join-Path $ProjectRoot "src" "third_party")
+    # Nested, not Join-Path $ProjectRoot "src" "third_party": the three-argument form needs the
+    # -AdditionalChildPath parameter added in PowerShell 7, and the pre-commit hook (and the
+    # documented manual invocation) run this script under Windows PowerShell 5.1, where the third
+    # positional argument is an error -- so the whole-project branch died with a PowerShell
+    # argument exception before cppcheck was ever launched.
+    $CppcheckArgs += (Join-Path (Join-Path $ProjectRoot "src") "third_party")
     $CppcheckArgs += (Join-Path $ProjectRoot "src")
     $CppcheckArgs += (Join-Path $ProjectRoot "include")
 }

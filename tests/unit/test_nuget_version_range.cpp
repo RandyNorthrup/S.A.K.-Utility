@@ -28,7 +28,7 @@ NuGetVersion v(const char* s) {
 class TestNuGetVersionRange : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     // ---- NuGetVersion::parse -------------------------------------------------
     void parse_acceptsReleaseAndPrerelease();
     void parse_rejectsEmptyAndNonNumericRelease();

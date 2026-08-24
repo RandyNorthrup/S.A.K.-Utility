@@ -40,7 +40,7 @@ QJsonObject node(
 class BrowserContractTests : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void renderSnapshot_assignsSequentialRefsToInteractableNodes();
     void renderSnapshot_dropsInvisibleZeroAreaAndUnnamedNoise();
     void renderSnapshot_carriesMetaAndStateSuffix();

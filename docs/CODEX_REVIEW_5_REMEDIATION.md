@@ -5436,11 +5436,43 @@ So the suite itself must be audited for tests that pass regardless of the code.
     mechanism (--inline-suppr is enabled) rather than a blanket entry in the suppressions list.
     The transferable lesson: a per-file cppcheck run is strictly stronger than the multi-file run
     the hook performs, so passing the hook does not mean a file is clean.
+    CLOSED 2026-08-24. The root cause above is stated WRONG and the fix it proposed was wrong too.
+    cppcheck parses Q_SLOTS perfectly well -- the hook already defines it away (-DQ_SLOTS=), and
+    every file spelling it that way analyzes at 183/186. What degrades a file to 4/186 is the
+    LOWER-CASE `slots` keyword: the hook also passes -DQT_NO_KEYWORDS, which is exactly the
+    configuration in which Qt does NOT define `slots`, so cppcheck meets an unknown token inside a
+    class body and abandons the translation unit. Measured: 16 test files spelled `private slots:`,
+    every one of them 4/186; the other 222 already used Q_SLOTS and were analyzed all along. So the
+    blind spot was 16 files, not "most Qt test files", and --library=qt was never needed.
+    The obvious fix -- adding -Dslots= -Dsignals=protected -Demit= beside the existing -DQ_SLOTS=
+    -- lifts all 16 to 183/186 with zero findings, and is WRONG: those are ordinary identifiers
+    elsewhere in this codebase. partition_apfs_writer.cpp:12310 declares a local
+    `QVector<uint64_t> slots`, so -Dslots= rewrites `slots.at(0)` into `.at(0)` and the whole run
+    dies on a critical syntaxError. Fixed at the source instead: the 16 files now spell their test
+    section Q_SLOTS like the other 222, they analyze at 183/186, and all 16 are clean with no
+    define hacks. The rejected defines are recorded in run_cppcheck.ps1 with the reason, so the
+    next reader does not re-add them.
+    SECOND BUG, FOUND ONLY BECAUSE THE FIRST FIX HAD TO BE DISPROVEN: run_cppcheck.ps1:146 built
+    the third-party exclude path with the three-argument Join-Path form, whose -AdditionalChildPath
+    parameter did not exist before PowerShell 7 -- and the pre-commit hook invokes this script with
+    powershell.exe, i.e. Windows PowerShell 5.1, where the third positional argument is an error.
+    The whole-project branch therefore died with a PowerShell argument exception before cppcheck
+    was ever launched. It fails CLOSED (exit 1), so no false green shipped, but "cppcheck found
+    issues" was really an argument error. Fixed with nested Join-Path, which is correct on both.
+    The two defects were hiding each other: the hook only ever runs the -Files branch, so nothing
+    exercised line 146; and only the whole-project branch reads src/, so nothing would have caught
+    -Dslots= shredding production code. Proving the wrong fix wrong is what found both.
   - PROGRESS 2026-08-24 FIRST-pass sweep b80 (gated 249/249): 13 weak assertions pinned across the
     last six never-swept files (follow_scroll_controller 4, ai_model_catalog 2, deadline_canceller
     2, email_view_ids 2, ai_mcp_stdio_client 2, splash_screen 1). THIS CLOSES THE NEVER-SWEPT
     SURFACE: of the 41 unit-test files no G18-4 commit had ever touched, 40 are now swept and one
     (fuzz_command_classifier) was verified CLEAN by the b75 adversarial pass.
+    CORRECTION 2026-08-24: that closure claim covers tests/unit/*.cpp only. The enumeration behind
+    it never descended into tests/unit/actions/, so nine action tests (action_factory,
+    all_actions_metadata, backup_bitlocker_keys, screenshot_settings, verify_system_files,
+    optimize_power_settings, check_disk_errors, reset_network, generate_system_report) have still
+    never been touched by any G18-4 sweep -- confirmed against their full git history, not just a
+    G18-4 grep. The never-swept surface was 50 files, not 41.
     THE WHOLE SUITE SHIPPED GREEN ON A NO-OP finish(). Both DeadlineCanceller cases used a 100 s
     timeout, so the deadline could never elapse while the test was looking: fired() is false for
     BOTH the Running and the Done state, so `void finish() { }` -- no compare-exchange to Done, no

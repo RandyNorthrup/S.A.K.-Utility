@@ -81,7 +81,7 @@ QJsonObject resultFrameEpoch(const QString& id,
 class BrowserBridgeTests : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void beginCommand_refusedWhenNotConnected();
     void beginCommand_mintsCommandFrameWithTypeAndId();
     void beginCommand_refusesSecondWhileOutstanding();

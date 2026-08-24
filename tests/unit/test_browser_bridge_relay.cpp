@@ -98,7 +98,7 @@ struct SlowFakeExtension {
 class BrowserBridgeRelayTests : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void relayConnect_rejectsForeignServerPid();
     void relayHandshake_rejectsBadToken();
     void relayHandshake_rejectsProtocolMismatch();

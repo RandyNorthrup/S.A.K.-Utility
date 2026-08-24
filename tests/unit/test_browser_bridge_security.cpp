@@ -37,7 +37,7 @@ QString descriptorToSddl(PSECURITY_DESCRIPTOR descriptor) {
 class BrowserBridgeSecurityTests : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void currentUserSid_isAWellFormedUserSid();
     void pipeName_isScopedNoncedAndUnique();
     void token_is128BitHexAndUnique();

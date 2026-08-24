@@ -18,7 +18,7 @@ using sak::win32mcp::parseFrame;
 class NativeMessagingTests : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void encode_prefixesLittleEndianLength();
     void roundTrip_encodeThenParseRecoversObject();
     void parse_shortBufferNeedsMore();

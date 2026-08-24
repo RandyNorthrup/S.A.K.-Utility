@@ -56,7 +56,7 @@ QString toolError(const ToolResult& result) {
 class Win32McpServerTests : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void initialize_reportsNativeServerIdentityAndProtocol();
     void toolsList_advertisesReadOnlyBatchWithStrictSchemas();
     void notification_withoutIdGetsNoResponse();

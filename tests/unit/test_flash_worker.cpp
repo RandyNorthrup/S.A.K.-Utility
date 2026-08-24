@@ -75,7 +75,7 @@ private:
 class FlashWorkerTests : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     // ---- ValidationResult struct ----
     void validationResultDefaults();
     void validationResultFieldAssignment();

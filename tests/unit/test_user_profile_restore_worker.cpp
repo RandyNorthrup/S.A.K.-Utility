@@ -113,7 +113,7 @@ private:
                           const QStringList& relativePaths,
                           const QByteArray& fileContent = "backup-content");
 
-private slots:
+private Q_SLOTS:
     void initTestCase();
     void cleanupTestCase();
 

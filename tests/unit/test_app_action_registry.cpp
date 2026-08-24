@@ -27,7 +27,7 @@ AppActionDescriptor readOnlyDescriptor(const QString& id) {
 class AppActionRegistryTests : public QObject {
     Q_OBJECT
 
-private slots:
+private Q_SLOTS:
     void registerAndInvoke_roundTripsResult();
     void registerRejectsEmptyId();
     void registerRejectsNullInvoke();

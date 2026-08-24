@@ -145,7 +145,7 @@ class BrowserExtensionInstallerTest : public QObject {
     }
 #endif
 
-private slots:
+private Q_SLOTS:
     void init() {
 #if defined(_WIN32)
         nukeTestTree();
