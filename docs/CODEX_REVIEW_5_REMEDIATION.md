@@ -5024,6 +5024,40 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-23 second-pass re-sweep b72e (gated 249/249): 21 residual weak assertions
+    pinned in tests/unit/test_ai_tool_policy.cpp, plus FINDING N6 (below). This file is the AI
+    privilege boundary, and its residual class is the MULTI-GUARD REFUSER seen through two bools:
+    ReadOnlyPc has three distinct refusals, all of which return !allowed, and only the reason
+    separates them, so a consolidation that reported the allowlist refusal for a mutating command
+    (or vice versa) mislabelled every row with no test failure. All four ReadOnlyPc refusal sites
+    -- the five mutating cmdlets, the fourteen native mutators, the app_run_action provider
+    operation, and the obfuscated-command set -- now pin the exact guard, and the allowed sides
+    pin which of the TWO allow() sites fired (the allowlist proof vs the generic read-only-tool
+    allow). Three "allowed under every policy" loops covered three of the six enum members; they
+    now cover all six, because PackageToolsOnly and DownloadOnly are exactly the modes whose
+    fall-through refuses an unrecognized tool, so narrowing a short-circuit was invisible.
+    clampToolPolicy gained seven rows: no existing row used an ExclusiveMutatingExecutor CEILING,
+    so deleting that containment branch silently promoted every narrower sub-agent back to full
+    exclusive. Mutation-proved -- with the branch removed, clampToolPolicy(ReadOnlyPc, Exclusive)
+    returns ExclusiveMutatingExecutor, and no assertion in the tree caught it. Also pinned: the
+    catastrophic human-confirmation message (the message IS the contract -- it tells the caller
+    what unblocks the call) on both the blocked and confirmed paths, the exclusive-tier allow
+    message (an inverted ternary reporting the exclusive wording under MutatingRequiresLease was
+    invisible file-wide), restore_point_recommended wherever it is derived from the same `risky`
+    value as requires_lease (so a decoupling that takes the lease but skips the restore point
+    cannot pass), and !requires_exclusive_lease on the tiers that must never grant it.
+  - FINDING N6 (FIXED, test defect + uncovered policy guard, HIGH): the DownloadOnly guard had
+    ZERO coverage. downloadOnlyAllowsDirectDownloadButBlocksInstall set operation=install_bundle
+    with an EMPTY user_message, but packageMutationMissingExplicitIntent runs earlier in
+    evaluateToolPolicy and refuses first, so evaluateDownloadOnlyPolicy was never reached -- the
+    test named for that guard was asserting a different one. Fixed by supplying the explicit
+    intent so the call actually reaches the DownloadOnly branch, pinning its exact refusal, and
+    keeping the empty-message case as a separate pinned assertion so the two refusals (which carry
+    DIFFERENT risky_change/requires_lease flags) can never be confused again. Proved the same way
+    as N5, not argued: dropping the operation gate from isDownloadTool makes the new arm RED,
+    while the PRE-PIN test file compiled against that same mutated production code passes the
+    whole suite (exit 0) -- so an offline-downloader install_bundle would have been admitted under
+    a download-only ceiling with no test in the tree objecting.
   - PROGRESS 2026-08-23 second-pass re-sweep b72d (gated 249/249): 22 residual weak assertions
     pinned in tests/unit/test_mbox_parser.cpp. The dominant residual here is the NAMED-BUT-NOT-READ
     attachment: several tests proved an attachment was enumerated and named, but never read its

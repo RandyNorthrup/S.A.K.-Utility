@@ -47,11 +47,19 @@ void AiToolPolicyTests::readOnlyPolicyBlocksRiskyCommands() {
     auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
     QVERIFY(decision.allowed);
     QVERIFY(!decision.risky_change);
+    QVERIFY(!decision.requires_lease);
+    // WHICH allow fired: the read-only shell ALLOWLIST proved this command read-only. A
+    // regression that stopped classifying run_powershell as a shell tool would still be allowed
+    // here through the generic "Read-only tool allowed", bypassing the allowlist entirely.
+    QCOMPARE(decision.reason, QStringLiteral("Read-only diagnostic shell command allowed"));
 
     request.command_preview = QStringLiteral("Remove-Item C:\\temp\\x -Recurse");
     decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
     QVERIFY(!decision.allowed);
     QVERIFY(decision.risky_change);
+    // Refused by the mutating-command guard, not held pending a human confirmation.
+    QVERIFY(!decision.catastrophic_change);
+    QCOMPARE(decision.reason, QStringLiteral("Read-only PC policy blocked mutating command"));
 }
 
 void AiToolPolicyTests::readOnlyPolicyBlocksMutatingFileCmdlets() {
@@ -70,6 +78,10 @@ void AiToolPolicyTests::readOnlyPolicyBlocksMutatingFileCmdlets() {
                                                           request);
         QVERIFY2(!decision.allowed, qPrintable(preview));
         QVERIFY2(decision.risky_change, qPrintable(preview));
+        // WHICH guard refused. Three ReadOnlyPc guards return !allowed and only the reason
+        // separates them, so a consolidation that reported the allowlist refusal while still
+        // setting risky_change would mislabel every row with no test failure.
+        QCOMPARE(decision.reason, QStringLiteral("Read-only PC policy blocked mutating command"));
     }
 }
 
@@ -104,6 +116,9 @@ void AiToolPolicyTests::readOnlyPolicyBlocksNativeMutators() {
                                                           request);
         QVERIFY2(!decision.allowed, qPrintable(preview));
         QVERIFY2(decision.risky_change, qPrintable(preview));
+        // Fourteen mutator shapes funnel through two bools; the reason is the only field that
+        // says WHICH of the three ReadOnlyPc refusals fired.
+        QCOMPARE(decision.reason, QStringLiteral("Read-only PC policy blocked mutating command"));
     }
 
     // Legit read-only diagnostics that merely suppress or merge output streams must NOT be
@@ -121,6 +136,10 @@ void AiToolPolicyTests::readOnlyPolicyBlocksNativeMutators() {
         // allowed==true is the stronger claim: a regression that blocked the command while
         // leaving risky_change false would still pass the old !risky_change check.
         QVERIFY2(decision.allowed, qPrintable(preview));
+        QVERIFY2(!decision.risky_change, qPrintable(preview));
+        QVERIFY2(!decision.requires_lease, qPrintable(preview));
+        // ...and that the ALLOWLIST proved it read-only, not the generic read-only-tool allow.
+        QCOMPARE(decision.reason, QStringLiteral("Read-only diagnostic shell command allowed"));
     }
 }
 
@@ -224,11 +243,22 @@ void AiToolPolicyTests::readOnlyPolicyAllowsProviderGatewayStatus() {
     request.operation = QStringLiteral("app_run_action");
     decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
     QVERIFY(!decision.allowed);
+    // The mutating-provider-operation classification must be what refuses: drop app_run_action
+    // from it and the call falls to the not-a-permitted-tool catch-all, where !allowed alone
+    // still passes while the classification is dead. (The win32_mcp_call case below already
+    // asserts risky_change, so the two were asymmetric.)
+    QVERIFY(decision.risky_change);
+    QCOMPARE(decision.reason, QStringLiteral("Read-only PC policy blocked mutating command"));
 
     decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease, request);
     QVERIFY(decision.allowed);
     QVERIFY(decision.risky_change);
     QVERIFY(decision.requires_lease);
+    // requires_lease and restore_point_recommended come from the SAME `risky` value; pin both so
+    // a decoupling that takes the lease but skips the restore point cannot pass.
+    QVERIFY(decision.restore_point_recommended);
+    QVERIFY(!decision.requires_exclusive_lease);
+    QCOMPARE(decision.reason, QStringLiteral("Known local tool allowed"));
 
     request.operation = QStringLiteral("win32_mcp_call");
     decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
@@ -249,6 +279,11 @@ void AiToolPolicyTests::readOnlyPolicyAllowsSessionSearch() {
     const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
     QVERIFY(decision.allowed);
     QVERIFY(!decision.risky_change);
+    // The provider-gateway sibling above asserts these; without them here the two are
+    // asymmetric. This allow comes from the read-only TOOL branch, not the shell allowlist.
+    QVERIFY(!decision.requires_lease);
+    QVERIFY(!decision.restore_point_recommended);
+    QCOMPARE(decision.reason, QStringLiteral("Read-only tool allowed"));
 }
 
 void AiToolPolicyTests::skillToolAllowedUnderEveryPolicy() {
@@ -258,14 +293,23 @@ void AiToolPolicyTests::skillToolAllowedUnderEveryPolicy() {
     request.tool_name = QStringLiteral("sak_skill");
     request.operation = QStringLiteral("load");
 
+    // "Every policy" means all SIX enum members. PackageToolsOnly and DownloadOnly are the ones
+    // whose fall-through refuses an unrecognized tool outright, so narrowing the skill
+    // short-circuit to a subset is only visible with them in the loop.
     for (const auto policy : {sak::ai::AiToolPolicy::NoLocalExecution,
                               sak::ai::AiToolPolicy::ReadOnlyPc,
-                              sak::ai::AiToolPolicy::MutatingRequiresLease}) {
+                              sak::ai::AiToolPolicy::PackageToolsOnly,
+                              sak::ai::AiToolPolicy::DownloadOnly,
+                              sak::ai::AiToolPolicy::MutatingRequiresLease,
+                              sak::ai::AiToolPolicy::ExclusiveMutatingExecutor}) {
+        const QByteArray label = sak::ai::toolPolicyToString(policy).toUtf8();
         const auto decision = sak::ai::evaluateToolPolicy(policy, request);
-        QVERIFY(decision.allowed);
-        QVERIFY(!decision.risky_change);
-        QVERIFY(!decision.requires_lease);
-        QVERIFY(!decision.catastrophic_change);
+        QVERIFY2(decision.allowed, label.constData());
+        QVERIFY2(!decision.risky_change, label.constData());
+        QVERIFY2(!decision.requires_lease, label.constData());
+        QVERIFY2(!decision.catastrophic_change, label.constData());
+        QVERIFY2(!decision.requires_exclusive_lease, label.constData());
+        QCOMPARE(decision.reason, QStringLiteral("Skill guidance lookup allowed"));
     }
 }
 
@@ -280,14 +324,25 @@ void AiToolPolicyTests::delegateSubagentAllowedUnderEveryPolicy() {
 
     for (const auto policy : {sak::ai::AiToolPolicy::NoLocalExecution,
                               sak::ai::AiToolPolicy::ReadOnlyPc,
+                              sak::ai::AiToolPolicy::PackageToolsOnly,
+                              sak::ai::AiToolPolicy::DownloadOnly,
+                              sak::ai::AiToolPolicy::MutatingRequiresLease,
                               sak::ai::AiToolPolicy::ExclusiveMutatingExecutor}) {
+        const QByteArray label = sak::ai::toolPolicyToString(policy).toUtf8();
         const auto decision = sak::ai::evaluateToolPolicy(policy, request);
-        QVERIFY(decision.allowed);
-        QVERIFY(!decision.requires_lease);
-        QVERIFY(!decision.catastrophic_change);
+        QVERIFY2(decision.allowed, label.constData());
+        QVERIFY2(!decision.risky_change, label.constData());
+        QVERIFY2(!decision.requires_lease, label.constData());
+        QVERIFY2(!decision.catastrophic_change, label.constData());
+        QCOMPARE(decision.reason,
+                 QStringLiteral("Sub-agent delegation allowed (sub-agent policy clamped)"));
         // run_workflow is allowed under every mode too; its phases self-gate.
         const auto workflow_decision = sak::ai::evaluateToolPolicy(policy, workflow_request);
-        QVERIFY(workflow_decision.allowed);
+        QVERIFY2(workflow_decision.allowed, label.constData());
+        QVERIFY2(!workflow_decision.risky_change, label.constData());
+        QVERIFY2(!workflow_decision.requires_lease, label.constData());
+        QCOMPARE(workflow_decision.reason,
+                 QStringLiteral("Workflow launch allowed (per-phase gates apply)"));
     }
 }
 
@@ -301,11 +356,19 @@ void AiToolPolicyTests::appActionToolAllowedAtPolicyLayer() {
 
     for (const auto policy : {sak::ai::AiToolPolicy::NoLocalExecution,
                               sak::ai::AiToolPolicy::ReadOnlyPc,
-                              sak::ai::AiToolPolicy::MutatingRequiresLease}) {
+                              sak::ai::AiToolPolicy::PackageToolsOnly,
+                              sak::ai::AiToolPolicy::DownloadOnly,
+                              sak::ai::AiToolPolicy::MutatingRequiresLease,
+                              sak::ai::AiToolPolicy::ExclusiveMutatingExecutor}) {
+        const QByteArray label = sak::ai::toolPolicyToString(policy).toUtf8();
         const auto decision = sak::ai::evaluateToolPolicy(policy, request);
-        QVERIFY(decision.allowed);
-        QVERIFY(!decision.risky_change);
-        QVERIFY(!decision.requires_lease);
+        QVERIFY2(decision.allowed, label.constData());
+        QVERIFY2(!decision.risky_change, label.constData());
+        QVERIFY2(!decision.requires_lease, label.constData());
+        // A pure catalog read must never demand an exclusive lease -- untested until the
+        // exclusive tier joined this loop, and the run branch sets exactly that field.
+        QVERIFY2(!decision.requires_exclusive_lease, label.constData());
+        QCOMPARE(decision.reason, QStringLiteral("App action catalog listing allowed (read-only)"));
     }
 }
 
@@ -337,12 +400,18 @@ void AiToolPolicyTests::appActionRunGatedByEffectivePolicyAndTakesLease() {
     QVERIFY(lease.requires_lease);
     QVERIFY(!lease.requires_exclusive_lease);
     QVERIFY(lease.restore_point_recommended);
+    // Rerouting this through the generic mutating-policy allow produces the identical five
+    // flags, so only the reason catches it.
+    QCOMPARE(lease.reason, QStringLiteral("App action run allowed (mutation lease required)"));
 
     auto exclusive = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ExclusiveMutatingExecutor,
                                                  request);
     QVERIFY(exclusive.allowed);
+    QVERIFY(exclusive.risky_change);
     QVERIFY(exclusive.requires_lease);
     QVERIFY(exclusive.requires_exclusive_lease);
+    QVERIFY(exclusive.restore_point_recommended);
+    QCOMPARE(exclusive.reason, QStringLiteral("App action run allowed (mutation lease required)"));
 }
 
 void AiToolPolicyTests::clampToolPolicyBoundsToCeiling() {
@@ -362,6 +431,30 @@ void AiToolPolicyTests::clampToolPolicyBoundsToCeiling() {
     // Same policy passes through.
     QCOMPARE(clampToolPolicy(AiToolPolicy::ReadOnlyPc, AiToolPolicy::ReadOnlyPc),
              AiToolPolicy::ReadOnlyPc);
+    // An exclusive-executor ceiling contains every mode, so a self-limiting request is honored.
+    // No row above has that ceiling, so deleting the branch silently promotes every narrower
+    // sub-agent back to full exclusive -- a privilege escalation invisible to all five rows.
+    QCOMPARE(clampToolPolicy(AiToolPolicy::ReadOnlyPc, AiToolPolicy::ExclusiveMutatingExecutor),
+             AiToolPolicy::ReadOnlyPc);
+    QCOMPARE(clampToolPolicy(AiToolPolicy::PackageToolsOnly,
+                             AiToolPolicy::ExclusiveMutatingExecutor),
+             AiToolPolicy::PackageToolsOnly);
+    // NoLocalExecution is honored under every ceiling.
+    QCOMPARE(clampToolPolicy(AiToolPolicy::NoLocalExecution, AiToolPolicy::ReadOnlyPc),
+             AiToolPolicy::NoLocalExecution);
+    // The documented non-linearity: ReadOnlyPc ranks BELOW PackageToolsOnly yet grants shell
+    // diagnostics the package-only ceiling never granted, so it clamps to the ceiling rather
+    // than handing a package-only session a shell-capable sub-agent.
+    QCOMPARE(clampToolPolicy(AiToolPolicy::ReadOnlyPc, AiToolPolicy::PackageToolsOnly),
+             AiToolPolicy::PackageToolsOnly);
+    QCOMPARE(clampToolPolicy(AiToolPolicy::PackageToolsOnly, AiToolPolicy::DownloadOnly),
+             AiToolPolicy::DownloadOnly);
+    // Only the exclusive tier lies outside a MutatingRequiresLease ceiling.
+    QCOMPARE(clampToolPolicy(AiToolPolicy::ExclusiveMutatingExecutor,
+                             AiToolPolicy::MutatingRequiresLease),
+             AiToolPolicy::MutatingRequiresLease);
+    QCOMPARE(clampToolPolicy(AiToolPolicy::DownloadOnly, AiToolPolicy::MutatingRequiresLease),
+             AiToolPolicy::DownloadOnly);
 }
 
 void AiToolPolicyTests::packagePolicyRequiresLeaseForInstall() {
@@ -377,6 +470,11 @@ void AiToolPolicyTests::packagePolicyRequiresLeaseForInstall() {
     QVERIFY(decision.risky_change);
     QVERIFY(decision.requires_lease);
     QVERIFY(decision.restore_point_recommended);
+    // PackageToolsOnly never grants an exclusive lease and never reaches the catastrophic tier;
+    // an escalation of either kind passes the four assertions above.
+    QVERIFY(!decision.requires_exclusive_lease);
+    QVERIFY(!decision.catastrophic_change);
+    QCOMPARE(decision.reason, QStringLiteral("Package tool allowed"));
 }
 
 void AiToolPolicyTests::packageMutationBlockedWhenUserAskedForScan() {
@@ -397,6 +495,13 @@ void AiToolPolicyTests::packageMutationBlockedWhenUserAskedForScan() {
     request.user_message = QStringLiteral("install SUPERAntiSpyware then run a scan");
     decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::PackageToolsOnly, request);
     QVERIFY(decision.allowed);
+    // The scan guard yielding to an explicit install intent must still hand back the FULL
+    // mutation treatment; allowed==true alone cannot see a dropped lease or restore point.
+    QCOMPARE(decision.reason, QStringLiteral("Package tool allowed"));
+    QVERIFY(decision.risky_change);
+    QVERIFY(decision.requires_lease);
+    QVERIFY(decision.restore_point_recommended);
+    QVERIFY(!decision.requires_exclusive_lease);
 }
 
 void AiToolPolicyTests::packageMutationRequiresExplicitIntent_data() {
@@ -488,6 +593,17 @@ void AiToolPolicyTests::packageMutationRequiresExplicitIntent() {
         // ("scan")` accepted either message for any blocked row, so a scan-vs-intent mislabel
         // (or losing the scan-specific refusal) stayed green.
         QCOMPARE(decision.reason, expected_reason);
+        QVERIFY(decision.risky_change);
+        QVERIFY(decision.requires_lease);
+    } else {
+        // An AUTHORIZED package mutation still takes the full mutation treatment: dropping the
+        // lease or the restore point here is exactly what allowed==true alone cannot see.
+        QCOMPARE(decision.reason, QStringLiteral("Package tool allowed"));
+        QVERIFY(decision.risky_change);
+        QVERIFY(decision.requires_lease);
+        QVERIFY(decision.restore_point_recommended);
+        QVERIFY(!decision.requires_exclusive_lease);
+        QVERIFY(!decision.catastrophic_change);
     }
 }
 
@@ -499,9 +615,30 @@ void AiToolPolicyTests::downloadOnlyAllowsDirectDownloadButBlocksInstall() {
     auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::DownloadOnly, request);
     QVERIFY(decision.allowed);
 
+    QCOMPARE(decision.reason, QStringLiteral("Download tool allowed"));
+
     request.operation = QStringLiteral("install_bundle");
+    // The package-intent guard runs FIRST and, with an empty user_message, refuses before the
+    // DownloadOnly branch is ever reached -- so the assertion this test is named for was
+    // proving the wrong guard. Supply the explicit intent to actually reach
+    // evaluateDownloadOnlyPolicy.
+    request.user_message = QStringLiteral("install firefox");
     decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::DownloadOnly, request);
     QVERIFY(!decision.allowed);
+    QCOMPARE(decision.reason, QStringLiteral("Download-only policy blocked non-download tool"));
+    QVERIFY(!decision.risky_change);
+    QVERIFY(!decision.requires_lease);
+
+    // Without an explicit intent the SAME call is refused by that earlier guard, carrying
+    // different flags; pin it too so the two refusals can never be confused again.
+    request.user_message.clear();
+    decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::DownloadOnly, request);
+    QVERIFY(!decision.allowed);
+    QCOMPARE(decision.reason,
+             QStringLiteral("Package install/upgrade/uninstall blocked because the user did not "
+                            "explicitly request package mutation"));
+    QVERIFY(decision.risky_change);
+    QVERIFY(decision.requires_lease);
 }
 
 void AiToolPolicyTests::exclusivePolicyMarksRiskyCallsExclusive() {
@@ -516,6 +653,12 @@ void AiToolPolicyTests::exclusivePolicyMarksRiskyCallsExclusive() {
     QVERIFY(decision.risky_change);
     QVERIFY(decision.requires_lease);
     QVERIFY(decision.requires_exclusive_lease);
+    // An exclusive-tier mutation still offers a restore point and must NOT be promoted to the
+    // catastrophic confirmation tier; the exclusive allow also carries its own message.
+    QVERIFY(decision.restore_point_recommended);
+    QVERIFY(!decision.catastrophic_change);
+    QCOMPARE(decision.reason,
+             QStringLiteral("Known local tool allowed with exclusive mutation policy"));
 }
 
 void AiToolPolicyTests::obfuscatedCommandsCountAsRisky_data() {
@@ -547,6 +690,11 @@ void AiToolPolicyTests::obfuscatedCommandsCountAsRisky() {
     request.command_preview = command;
     const auto decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
     QVERIFY2(!decision.allowed, qPrintable(command));
+    // The RISKY guard must be what refuses, not the allowlist fallback: every row's lead token
+    // is non-allowlisted anyway, so !allowed alone survives a dead obfuscation detector or a
+    // reordering that lets the allowlist answer first (which would drop risky_change).
+    QVERIFY2(decision.risky_change, qPrintable(command));
+    QCOMPARE(decision.reason, QStringLiteral("Read-only PC policy blocked mutating command"));
 }
 
 void AiToolPolicyTests::catastrophicCommandsForceRiskyAndFlag_data() {
@@ -598,6 +746,10 @@ void AiToolPolicyTests::legitimateShellEscapesAreNotTreatedAsObfuscation() {
     QFETCH(QString, command);
     QVERIFY2(!sak::ai::commandLooksObfuscated(command), qPrintable(command));
     QVERIFY2(!sak::ai::commandLooksCatastrophic(command), qPrintable(command));
+    // risky ORs in both predicates above, so this is the strictly stronger claim: an
+    // escape-stripping over-match that escalated these ordinary reads to the lease +
+    // restore-point tier is only caught here.
+    QVERIFY2(!sak::ai::commandLooksRiskyChange(command), qPrintable(command));
 }
 
 void AiToolPolicyTests::catastrophicCommandsForceRiskyAndFlag() {
@@ -618,6 +770,12 @@ void AiToolPolicyTests::catastrophicCommandsForceRiskyAndFlag() {
     QVERIFY2(blocked.risky_change, qPrintable(command));
     QVERIFY2(blocked.requires_lease, qPrintable(command));
     QVERIFY2(blocked.restore_point_recommended, qPrintable(command));
+    QVERIFY2(!blocked.requires_exclusive_lease, qPrintable(command));
+    // The message IS the contract: it tells the caller that a human confirmation -- not any
+    // other remediation -- is what unblocks this call.
+    QCOMPARE(blocked.reason,
+             QStringLiteral("Catastrophic operation blocked: an explicit human confirmation is "
+                            "required"));
 
     // With the human confirmation recorded, the same catastrophic op is allowed and keeps
     // the full risk treatment plus the catastrophic flag the panel gates on.
@@ -629,6 +787,10 @@ void AiToolPolicyTests::catastrophicCommandsForceRiskyAndFlag() {
     QVERIFY2(decision.risky_change, qPrintable(command));
     QVERIFY2(decision.requires_lease, qPrintable(command));
     QVERIFY2(decision.restore_point_recommended, qPrintable(command));
+    QVERIFY2(!decision.requires_exclusive_lease, qPrintable(command));
+    // Without this, an inverted ternary reporting the EXCLUSIVE message under
+    // MutatingRequiresLease is invisible to the entire file.
+    QCOMPARE(decision.reason, QStringLiteral("Known local tool allowed"));
 }
 
 void AiToolPolicyTests::ordinaryCommandsAreNotCatastrophic_data() {
@@ -646,6 +808,10 @@ void AiToolPolicyTests::ordinaryCommandsAreNotCatastrophic() {
     // These are legitimately risky or benign, but never catastrophic -- they must
     // not trip the mandatory-confirmation tier (no false positives).
     QVERIFY2(!sak::ai::commandLooksCatastrophic(command), qPrintable(command));
+    // The tier is the OR of catastrophic and obfuscated, so !catastrophic alone does not
+    // establish this test's own claim: an indirection-detector over-match escalates these
+    // ordinary commands with that line still green.
+    QVERIFY2(!sak::ai::commandLooksObfuscated(command), qPrintable(command));
 }
 
 void AiToolPolicyTests::obfuscatedShellCommandsForceCatastrophic_data() {
@@ -674,6 +840,12 @@ void AiToolPolicyTests::obfuscatedShellCommandsForceCatastrophic() {
     QVERIFY2(blocked.catastrophic_change, qPrintable(command));
     QVERIFY2(blocked.risky_change, qPrintable(command));
     QVERIFY2(blocked.requires_lease, qPrintable(command));
+    // This tier most needs a restore point -- its true effect is unknown by construction --
+    // and the message is what tells the caller a human confirm unblocks it.
+    QVERIFY2(blocked.restore_point_recommended, qPrintable(command));
+    QCOMPARE(blocked.reason,
+             QStringLiteral("Catastrophic operation blocked: an explicit human confirmation is "
+                            "required"));
 
     // Recording the human confirmation lets the same obfuscated-catastrophic op run.
     request.human_confirmed = true;
