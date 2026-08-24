@@ -44,6 +44,7 @@ constexpr qsizetype kHfsHeaderOffset = 1024;
 constexpr qsizetype kApfsMagicOffset = 32;
 constexpr uint16_t kBootSignature = 0xAA55;
 constexpr uint16_t kExtMagic = 0xEF53;
+constexpr qsizetype kSwapSignatureBytes = 10;  // "SWAPSPACE2" / "SWAP-SPACE"
 
 QByteArray seedWith(void (*poke)(QByteArray*)) {
     QByteArray bytes(kSeedBytes, '\0');
@@ -125,6 +126,33 @@ QString detectorInvariant(const QByteArray& input) {
     return {};
 }
 
+// HFS+ volume header carrying an explicit geometry triple. The capacity guard is four arms
+// (block size >= 512, power of two, total blocks > 0, free <= total) and an all-zero header
+// short-circuits on the FIRST one, so probing the others needs an otherwise-valid header.
+std::optional<sak::PartitionFileSystemDetection> detectHfsGeometry(uint32_t blockSize,
+                                                                   uint32_t totalBlocks,
+                                                                   uint32_t freeBlocks) {
+    constexpr qsizetype kHfsBlockSizeOffset = 40;
+    constexpr qsizetype kHfsTotalBlocksOffset = 44;
+    constexpr qsizetype kHfsFreeBlocksOffset = 48;
+    QByteArray probe(kSeedBytes, '\0');
+    sak::testfixtures::writeAscii(&probe, kHfsHeaderOffset, "H+");
+    sak::testfixtures::writeBe32(&probe, kHfsHeaderOffset + kHfsBlockSizeOffset, blockSize);
+    sak::testfixtures::writeBe32(&probe, kHfsHeaderOffset + kHfsTotalBlocksOffset, totalBlocks);
+    sak::testfixtures::writeBe32(&probe, kHfsHeaderOffset + kHfsFreeBlocksOffset, freeBlocks);
+    return sak::PartitionFileSystemDetector::detectBytes(probe,
+                                                         static_cast<uint64_t>(probe.size()));
+}
+
+// The detail lines an HFS+ header yields when the geometry guard REFUSES it: the three block
+// lines are suppressed, leaving only the four header lines.
+QStringList hfsHeaderOnlyDetails() {
+    return QStringList({QStringLiteral("Version: 0"),
+                        QStringLiteral("Files: 0"),
+                        QStringLiteral("Folders: 0"),
+                        QStringLiteral("Journaled: No")});
+}
+
 QByteArray failureBanner(const sak::fuzz::FuzzOutcome& outcome) {
     const QString message =
         QStringLiteral("fs detector fuzz failed after %1 inputs: %2\n  reproducer (hex): %3")
@@ -168,6 +196,38 @@ private Q_SLOTS:
     // mutation catalog. detectBytes is called with the buffer's own size as the partition size,
     // matching the primary call shape in detectFromDevice.
     // -------------------------------------------------------------------------------------------
+
+    void unknownPartitionSizeStillBoundsChecksSwapPageOffsets() {
+        // detectBytes(bytes, 0) is the "partition size unknown" call shape. It bypasses the
+        // page-size filter in swapSignatureInfo (partition_file_system_detector.cpp:708), so the
+        // 8K/16K/64K swap pages are probed at offsets 8182/16374/65526 even against a 4 KiB
+        // buffer -- offsets the sized shape (and therefore the determinism check above) never
+        // reaches. Only hasBytes() keeps those reads inside the caller's bytes. Back the 4 KiB
+        // view with a LARGER real allocation that truly carries "SWAPSPACE2" at the out-of-range
+        // offset: a bounds-checked probe must ignore bytes the caller never handed over, while an
+        // unchecked compare reports "Linux swap" read from past the end. A determinism re-run
+        // cannot substitute for this: heap bytes just past the buffer are stable between two
+        // back-to-back calls, so sameDetection() stays green under the same break.
+        for (const qsizetype pageSize : {8192, 16'384, 65'536}) {
+            QByteArray backing(pageSize, '\0');
+            sak::testfixtures::writeAscii(&backing, pageSize - kSwapSignatureBytes, "SWAPSPACE2");
+            const QByteArray view = QByteArray::fromRawData(backing.constData(), kSeedBytes);
+            const auto unsized = sak::PartitionFileSystemDetector::detectBytes(view, 0);
+            QVERIFY2(!unsized.has_value(),
+                     qPrintable(QStringLiteral("size-0 probe read the %1-byte swap page offset "
+                                               "past the end of a %2-byte buffer")
+                                    .arg(pageSize)
+                                    .arg(kSeedBytes)));
+        }
+        // Positive control: the rejections above are bounds, not blindness -- inside the bytes the
+        // caller DID hand over, the size-0 shape still detects the 4096-byte swap page.
+        QByteArray inRange(kSeedBytes, '\0');
+        sak::testfixtures::writeAscii(&inRange, kSeedBytes - kSwapSignatureBytes, "SWAPSPACE2");
+        const auto detected = sak::PartitionFileSystemDetector::detectBytes(inRange, 0);
+        QVERIFY(detected.has_value());
+        QCOMPARE(detected->file_system, QStringLiteral("Linux swap"));
+        QVERIFY(detected->details.contains(QStringLiteral("Detected page size: 4096")));
+    }
 
     void detectsApfsContainerByNxsbMagic() {
         QByteArray image(kSeedBytes, '\0');
@@ -244,6 +304,46 @@ private Q_SLOTS:
         QVERIFY(!sak::PartitionFileSystemDetector::detectBytes(
                      unsignedImage, static_cast<uint64_t>(unsignedImage.size()))
                      .has_value());
+        // Zeroing the WHOLE 16-bit word above proves only that ONE of the two byte compares
+        // refuses it -- either arm alone satisfies that assertion, so neither is load-bearing.
+        // The signature is a TWO-byte compare (0x55 at 510 AND 0xAA at 511), so perturb exactly
+        // one byte at a time: a sector ending 0x55 0x00, or 0x00 0xAA, is not a boot sector and
+        // must never be reported to the technician as NTFS.
+        constexpr uint16_t kFirstSignatureByteOnly = 0x0055;   // 0x55 at 510, 0x00 at 511
+        constexpr uint16_t kSecondSignatureByteOnly = 0xAA00;  // 0x00 at 510, 0xAA at 511
+        for (const uint16_t halfSignature : {kFirstSignatureByteOnly, kSecondSignatureByteOnly}) {
+            QByteArray halfSigned(kSeedBytes, '\0');
+            sak::testfixtures::writeAscii(&halfSigned, kOemTagOffset, "NTFS    ");
+            sak::testfixtures::writeLe16(&halfSigned, kBootSignatureOffset, halfSignature);
+            QVERIFY2(!sak::PartitionFileSystemDetector::detectBytes(
+                          halfSigned, static_cast<uint64_t>(halfSigned.size()))
+                          .has_value(),
+                     qPrintable(QStringLiteral("half boot signature %1 was accepted as NTFS")
+                                    .arg(halfSignature)));
+        }
+
+        // The OEM tag match is an EIGHT-byte compare, but every fixture in the suite writes the
+        // tag whole, so a shortened (or shifted) compare window still accepts every positive
+        // case. A vendor boot sector tagged "NTFSBOOT" is NOT an NTFS volume; reporting it as
+        // one would send a technician at the wrong reader. Pin the full width, and probe each
+        // byte position the way the APFS case does.
+        QByteArray vendorTag(kSeedBytes, '\0');
+        sak::testfixtures::writeAscii(&vendorTag, kOemTagOffset, "NTFSBOOT");
+        sak::testfixtures::writeLe16(&vendorTag, kBootSignatureOffset, kBootSignature);
+        QVERIFY(!sak::PartitionFileSystemDetector::detectBytes(
+                     vendorTag, static_cast<uint64_t>(vendorTag.size()))
+                     .has_value());
+        constexpr qsizetype kNtfsOemTagByteCount = 8;
+        for (qsizetype index = 0; index < kNtfsOemTagByteCount; ++index) {
+            QByteArray probe(kSeedBytes, '\0');
+            sak::testfixtures::writeAscii(&probe, kOemTagOffset, "NTFS    ");
+            sak::testfixtures::writeLe16(&probe, kBootSignatureOffset, kBootSignature);
+            probe[kOemTagOffset + index] = 'Z';
+            const auto probeDetection = sak::PartitionFileSystemDetector::detectBytes(
+                probe, static_cast<uint64_t>(probe.size()));
+            QVERIFY2(!probeDetection.has_value(),
+                     qPrintable(QStringLiteral("NTFS OEM byte %1 was not compared").arg(index)));
+        }
     }
 
     void detectsExt2ByEf53SuperblockMagic() {
@@ -268,6 +368,47 @@ private Q_SLOTS:
                               QStringLiteral("Feature compat: 0x00000000"),
                               QStringLiteral("Feature incompat: 0x00000000"),
                               QStringLiteral("Feature ro compat: 0x00000000")}));
+        const QStringList noGeometryDetails = detection->details;  // block lines suppressed
+
+        // Production compares BOTH magic bytes (partition_file_system_detector.cpp:512-518), but
+        // the only ext-shaped negative in this file is the all-0xFF buffer, whose 0xFF at 0x438 is
+        // already refused by the FIRST arm -- so nothing here distinguishes "both bytes matched"
+        // from "the low byte matched". Perturb each byte in turn: with the second arm gone, any
+        // stray 'S' (0x53) at 0x438 in unrelated payload is reported to the technician as ext2.
+        constexpr qsizetype kExtMagicByteCount = 2;
+        for (qsizetype index = 0; index < kExtMagicByteCount; ++index) {
+            QByteArray probe(kSeedBytes, '\0');
+            sak::testfixtures::writeLe16(&probe, kExtMagicOffset, kExtMagic);
+            probe[kExtMagicOffset + index] = '\x01';
+            QVERIFY2(!sak::PartitionFileSystemDetector::detectBytes(
+                          probe, static_cast<uint64_t>(probe.size()))
+                          .has_value(),
+                     qPrintable(QStringLiteral("ext magic byte %1 was not compared").arg(index)));
+        }
+
+        // The zero superblock reaches exactly ONE of the geometry guard's five arms: with
+        // s_log_block_size 0 the block size is 1024, which clears the floor, the 1 MiB ceiling
+        // and the power-of-two arms, so only `totalBlocks == 0` refuses it above. Drive the arm
+        // nothing else in the suite reaches -- test_partition_manager_core.cpp:1831-1853 only
+        // builds the all-pass 4096/2048/512 case -- isolated so it is the sole rejecter.
+        // 4096-byte blocks clear arms 1-3 and 1000 blocks clears arm 4, so only
+        // `freeBlocks > totalBlocks` can refuse this superblock. Without that arm the technician
+        // is shown 8192000 free bytes inside a 4096000-byte volume.
+        constexpr qsizetype kExtBlocksCountLoOffset = 1024 + 0x4;
+        constexpr qsizetype kExtFreeBlocksCountLoOffset = 1024 + 0xC;
+        constexpr qsizetype kExtLogBlockSizeOffset = 1024 + 0x18;
+        QByteArray freeOverTotal(kSeedBytes, '\0');
+        sak::testfixtures::writeLe16(&freeOverTotal, kExtMagicOffset, kExtMagic);
+        sak::testfixtures::writeLe32(&freeOverTotal, kExtLogBlockSizeOffset, 2);  // 4096-byte
+        sak::testfixtures::writeLe32(&freeOverTotal, kExtBlocksCountLoOffset, 1000);
+        sak::testfixtures::writeLe32(&freeOverTotal, kExtFreeBlocksCountLoOffset, 2000);
+        const auto inconsistent = sak::PartitionFileSystemDetector::detectBytes(
+            freeOverTotal, static_cast<uint64_t>(freeOverTotal.size()));
+        QVERIFY(inconsistent.has_value());
+        QCOMPARE(inconsistent->file_system, QStringLiteral("ext2"));
+        QCOMPARE(inconsistent->total_bytes, 0ULL);
+        QCOMPARE(inconsistent->free_bytes, 0ULL);
+        QCOMPARE(inconsistent->details, noGeometryDetails);
     }
 
     void detectsHfsPlusByVolumeHeaderSignature() {
@@ -282,11 +423,50 @@ private Q_SLOTS:
         // no wrapper present, no wrapper lines either.
         QCOMPARE(detection->total_bytes, 0ULL);
         QCOMPARE(detection->free_bytes, 0ULL);
-        QCOMPARE(detection->details,
+        QCOMPARE(detection->details, hfsHeaderOnlyDetails());
+
+        // Sane geometry: capacity IS reported and the three block lines are appended in order.
+        const auto accepted = detectHfsGeometry(4096, 1000, 250);
+        QVERIFY(accepted.has_value());
+        QCOMPARE(accepted->total_bytes, 4096ULL * 1000ULL);
+        QCOMPARE(accepted->free_bytes, 4096ULL * 250ULL);
+        QCOMPARE(accepted->details,
                  QStringList({QStringLiteral("Version: 0"),
                               QStringLiteral("Files: 0"),
                               QStringLiteral("Folders: 0"),
-                              QStringLiteral("Journaled: No")}));
+                              QStringLiteral("Journaled: No"),
+                              QStringLiteral("Block size: 4096"),
+                              QStringLiteral("Total blocks: 1000"),
+                              QStringLiteral("Free blocks: 250")}));
+    }
+
+    void hfsPlusGeometryGuardRejectsEachHostileField() {
+        // One hostile field each. A rejected header is still named HFS+, but claims NO capacity:
+        // 256 trips only "block size >= 512", 3000 only "power of two", zero total blocks only
+        // "total blocks > 0", and free 2000 of 1000 only "free <= total" -- which is the arm that
+        // would otherwise report 8.19 MB free on a 4.10 MB volume.
+        struct GeometryCase {
+            uint32_t block_size;
+            uint32_t total_blocks;
+            uint32_t free_blocks;
+        };
+        const std::vector<GeometryCase> rejectedGeometry{
+            {.block_size = 256, .total_blocks = 1000, .free_blocks = 250},
+            {.block_size = 3000, .total_blocks = 1000, .free_blocks = 250},
+            {.block_size = 4096, .total_blocks = 0, .free_blocks = 0},
+            {.block_size = 4096, .total_blocks = 1000, .free_blocks = 2000}};
+        for (const GeometryCase& testCase : rejectedGeometry) {
+            const auto rejected =
+                detectHfsGeometry(testCase.block_size, testCase.total_blocks, testCase.free_blocks);
+            QVERIFY(rejected.has_value());
+            QCOMPARE(rejected->file_system, QStringLiteral("HFS+"));
+            QVERIFY2(rejected->total_bytes == 0ULL && rejected->free_bytes == 0ULL,
+                     qPrintable(QStringLiteral("HFS+ geometry %1/%2/%3 was accepted as capacity")
+                                    .arg(testCase.block_size)
+                                    .arg(testCase.total_blocks)
+                                    .arg(testCase.free_blocks)));
+            QCOMPARE(rejected->details, hfsHeaderOnlyDetails());
+        }
     }
 
     void garbageAndEmptyBytesFailClosedToUnknown() {

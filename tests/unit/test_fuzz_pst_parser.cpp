@@ -194,12 +194,38 @@ bool writeWholeFile(const QString& path, const QByteArray& bytes) {
     return wrote;
 }
 
-// Touch every accepted-parser accessor that reads attacker-derived structure. Return
-// value is ignored on purpose: a fail-closed std::unexpected is a correct outcome; the
-// invariant is only that none of these faults or hangs.
-void walkOpenedParser(PstParser& parser) {
-    static_cast<void>(parser.fileInfo());
-    static_cast<void>(parser.folderTree());
+// Independent recursive oracle over the returned tree -- deliberately NOT
+// PstParser::countFolders, so the production recursion is what is under test.
+int countTreeFoldersRecursively(const sak::PstFolderTree& tree) {
+    int count = 0;
+    for (const sak::PstFolder& folder : tree) {
+        count += 1 + countTreeFoldersRecursively(folder.children);
+    }
+    return count;
+}
+
+// Touch every accepted-parser accessor that reads attacker-derived structure. Most return
+// values are ignored on purpose: a fail-closed std::unexpected is a correct outcome; the
+// invariant is that none of these faults or hangs. fileInfo() and folderTree() are the
+// exception -- they are RELATED to each other rather than discarded.
+QString walkOpenedParser(PstParser& parser) {
+    // total_folders is the RECURSIVE folder count of the very tree folderTree() hands back,
+    // and it is the number the conversion report and the file-info panel print. The foldered
+    // seed runs unmutated through checkSeeds on every execution, so dropping the recursion arm
+    // of countFolders -- which every single-root fixture elsewhere still reports as 1 -- fails
+    // HERE with 1 != 2. The check is relational, not a hardcoded count, so it also holds for
+    // the 1-folder seeds and for every mutant that happens to open.
+    const sak::PstFileInfo info = parser.fileInfo();
+    const sak::PstFolderTree tree = parser.folderTree();
+    const int expected_folders = countTreeFoldersRecursively(tree);
+    if (info.total_folders != expected_folders) {
+        return QStringLiteral(
+                   "fileInfo().total_folders is %1 but folderTree() holds %2 folders "
+                   "counted recursively")
+            .arg(info.total_folders)
+            .arg(expected_folders);
+    }
+
     const QVector<uint64_t> node_ids = parser.allNodeIds();
     int budget = kNodeWalkBudget;
     for (uint64_t nid : node_ids) {
@@ -211,6 +237,7 @@ void walkOpenedParser(PstParser& parser) {
         static_cast<void>(parser.readAttachments(nid));
         static_cast<void>(parser.readFolderItems(nid, 0, kNodeWalkBudget));
     }
+    return {};
 }
 
 QString pstInvariant(const QByteArray& input, const QString& path) {
@@ -220,9 +247,31 @@ QString pstInvariant(const QByteArray& input, const QString& path) {
     PstParser parser;
     parser.open(path);  // synchronous; must return without crashing on any bytes
     if (parser.isOpen()) {
-        walkOpenedParser(parser);
+        return walkOpenedParser(parser);
     }
-    return {};  // no crash and no hang == invariant satisfied
+
+    // A refusal is a TWO-part contract and only the first part ("open() reported false") was
+    // ever observed here. loadPstStructure fails an accepted-so-far file through
+    // failOpen(..., close_parser == true), whose close() sheds the NBT/BBT caches and the
+    // QFile. That second half is load-bearing: allNodeIds and readAttachments carry NO
+    // !m_is_open guard -- unlike readItemDetail, readItemProperties, readFolderItems and
+    // readAttachmentData -- so they are safe purely because the cache was cleared. Drop the
+    // teardown and any mutant that loads both BTrees and then dies in buildFolderHierarchy
+    // keeps serving the REJECTED file's nodes and answers SUCCESS with an empty attachment
+    // list for them, while a bare "skip the walk" stays green.
+    const QVector<uint64_t> refused_nodes = parser.allNodeIds();
+    if (!refused_nodes.isEmpty()) {
+        return QStringLiteral("open() was refused but the parser still serves %1 NBT node(s)")
+            .arg(static_cast<qlonglong>(refused_nodes.size()));
+    }
+    if (!parser.folderTree().isEmpty()) {
+        return QStringLiteral("open() was refused but the parser still serves a folder tree");
+    }
+    if (parser.readAttachments(sak::email::kNidRootFolder).has_value()) {
+        return QStringLiteral(
+            "open() was refused but readAttachments answered SUCCESS for the rejected file");
+    }
+    return {};  // no crash, no hang, and a refusal that actually shed what it had built
 }
 
 QByteArray failureBanner(const sak::fuzz::FuzzOutcome& outcome) {
@@ -243,6 +292,31 @@ private Q_SLOTS:
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
         const QString path = dir.filePath(QStringLiteral("fuzz.pst"));
+
+        // Non-vacuity for the corpus's documented outcomes: pstInvariant scores an ACCEPTED file
+        // and a REFUSED one identically once the walk is clean, so the empty store's claim --
+        // that it reaches buildFolderHierarchy and fails closed there for want of a root-folder
+        // node -- is pinned here rather than left to the harness. A readPropertyContext that
+        // answered a missing NBT entry with an empty property set would let
+        // buildFolderHierarchyGuarded synthesize an empty root folder, and open() would ACCEPT a
+        // store with no folder structure at all, with this fuzz still green.
+        const QString reject_seed_path = dir.filePath(QStringLiteral("seed_empty_store.pst"));
+        QVERIFY(writeWholeFile(reject_seed_path, sak::pst_fixture::buildEmptyUnicodeStore()));
+        PstParser reject_seed_parser;
+        reject_seed_parser.open(reject_seed_path);
+        QVERIFY2(!reject_seed_parser.isOpen(),
+                 "buildEmptyUnicodeStore must be REFUSED: its NBT declares no root-folder node, "
+                 "so buildFolderHierarchy must fail closed instead of synthesizing an empty root");
+
+        // ...and the accept-path seed must still OPEN, so the refusal above cannot pass merely
+        // because the parser refuses every seed (which would leave the walk exercising nothing).
+        const QString accept_seed_path = dir.filePath(QStringLiteral("seed_openable_store.pst"));
+        QVERIFY(writeWholeFile(accept_seed_path, sak::pst_fixture::buildOpenableUnicodeStore()));
+        PstParser accept_seed_parser;
+        accept_seed_parser.open(accept_seed_path);
+        QVERIFY2(accept_seed_parser.isOpen(),
+                 "buildOpenableUnicodeStore must be ACCEPTED: the refusal pinned above must not "
+                 "rest on a parser that refuses everything");
 
         const sak::fuzz::Target target = [&path](const QByteArray& input) {
             return pstInvariant(input, path);

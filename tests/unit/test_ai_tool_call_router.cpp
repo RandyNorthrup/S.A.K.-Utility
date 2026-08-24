@@ -44,6 +44,7 @@ class AiToolCallRouterTests : public QObject {
 
 private Q_SLOTS:
     void kindForNameMapsKnownTools();
+    void kindForNameRejectsNearMissNames();
     void predicatesClassifyEveryKind();
     void prepareRecognizesSkillToolAsBuiltIn();
     void prepareBuildsMetadataAndUnknownError();
@@ -113,12 +114,54 @@ void AiToolCallRouterTests::kindForNameMapsKnownTools() {
     QVERIFY(!AiToolCallRouter::isBuiltInTool(AiToolCallKind::Unknown));
 }
 
+void AiToolCallRouterTests::kindForNameRejectsNearMissNames() {
+    using sak::ai::AiToolCallKind;
+    using sak::ai::AiToolCallRouter;
+
+    // "missing_tool" shares no prefix, suffix or substring with any registered key, so it
+    // returns Unknown under an exact, prefix, substring or fuzzy lookup alike -- it cannot
+    // prove the lookup is EXACT. Each name below is exactly one leniency away from a real
+    // key: an extension of one, a truncation shared by four, a wrapper containing one, a
+    // one-character typo, and the empty name that every key starts with. kindForName() is
+    // consumed as a bare existence check (workflowRequirementAvailable,
+    // src/gui/ai_assistant_panel.cpp:1282) and as the phase/tool dispatch key
+    // (ai_assistant_panel.cpp:10088, :10122), so a match here would declare an invented
+    // sak_tool requirement satisfied and route a model-supplied name into a handler it was
+    // never registered for.
+    QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("sak_skill_reader")),
+             AiToolCallKind::Unknown);
+    QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("run_")), AiToolCallKind::Unknown);
+    QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("please_run_powershell_now")),
+             AiToolCallKind::Unknown);
+    QCOMPARE(AiToolCallRouter::kindForName(QStringLiteral("run_powershel")),
+             AiToolCallKind::Unknown);
+    QCOMPARE(AiToolCallRouter::kindForName(QString()), AiToolCallKind::Unknown);
+}
+
 void AiToolCallRouterTests::predicatesClassifyEveryKind() {
     // Spot-checking a subset (the block above never passes Screenshot, Download,
     // PackageManager or OfflineDownloader to either predicate) lets a predicate that swallows
     // one extra kind ship green: isCommandTool() true for Screenshot makes isBuiltInTool()
     // false, so take_screenshot is never dispatched and the call falls through to the command
     // planner instead of its registered handler.
+    // Pin the ENUM, not just this file's row count: 13 rows is a compile-time fact about the
+    // literal table above and survives any edit to ai_tool_call_router.{h,cpp}. Pin VALUES, so
+    // an enumerator inserted mid-list -- the shape that leaves a new kind unclassified while
+    // every existing row still matches -- turns these red instead of shipping green and
+    // dropping its tool past the isBuiltInTool() dispatch gate.
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::Unknown), 0);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::Shell), 1);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::Process), 2);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::Screenshot), 3);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::Download), 4);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::PackageManager), 5);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::OfflineDownloader), 6);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::ProviderGateway), 7);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::SessionSearch), 8);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::Skill), 9);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::DelegateSubagent), 10);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::RunWorkflow), 11);
+    QCOMPARE(static_cast<int>(sak::ai::AiToolCallKind::AppAction), 12);
     QCOMPARE(static_cast<int>(sizeof(kKindMatrix) / sizeof(kKindMatrix[0])), 13);
     for (const KindExpectation& expected : kKindMatrix) {
         QCOMPARE(sak::ai::AiToolCallRouter::isCommandTool(expected.kind), expected.command);
@@ -148,6 +191,31 @@ void AiToolCallRouterTests::prepareRecognizesSkillToolAsBuiltIn() {
     // toInt(-1), not toInt(): a missing or non-numeric index must not read as the 0 we passed.
     QCOMPARE(prepared.metadata.value(QStringLiteral("index")).toInt(-1), 0);
     QCOMPARE(prepared.metadata.size(), 3);
+
+    // prepare()'s recognition rule is `kind != Unknown`, which is STRICTLY WIDER than
+    // isBuiltInTool(): command tools are recognized but not built-in. Re-deriving
+    // isBuiltInTool(Skill) above only re-proves what predicatesClassifyEveryKind() already pins
+    // for every enumerator. What is unpinned is that Shell/Process -- built-in FALSE -- still
+    // clear the recognition gate; narrow `recognized` to isBuiltInTool() and every shell and
+    // process call is answered "Unknown function" before the command dispatch is ever reached.
+    sak::ai::OpenAIFunctionCall shell_call;
+    shell_call.call_id = QStringLiteral("call_shell");
+    shell_call.name = QStringLiteral("run_powershell");
+    const auto shell_prepared = sak::ai::AiToolCallRouter::prepare(shell_call, 1);
+    QCOMPARE(shell_prepared.kind, sak::ai::AiToolCallKind::Shell);
+    QVERIFY(!sak::ai::AiToolCallRouter::isBuiltInTool(shell_prepared.kind));
+    QVERIFY(shell_prepared.recognized);
+    // A recognized command tool must carry no pre-baked "Unknown function" output either.
+    QVERIFY(shell_prepared.output.output.isEmpty());
+
+    sak::ai::OpenAIFunctionCall process_call;
+    process_call.call_id = QStringLiteral("call_process");
+    process_call.name = QStringLiteral("run_process");
+    const auto process_prepared = sak::ai::AiToolCallRouter::prepare(process_call, 2);
+    QCOMPARE(process_prepared.kind, sak::ai::AiToolCallKind::Process);
+    QVERIFY(!sak::ai::AiToolCallRouter::isBuiltInTool(process_prepared.kind));
+    QVERIFY(process_prepared.recognized);
+    QVERIFY(process_prepared.output.output.isEmpty());
 }
 
 void AiToolCallRouterTests::prepareBuildsMetadataAndUnknownError() {
@@ -163,8 +231,16 @@ void AiToolCallRouterTests::prepareBuildsMetadataAndUnknownError() {
     QCOMPARE(prepared.metadata.value(QStringLiteral("name")).toString(), call.name);
     QCOMPARE(prepared.metadata.value(QStringLiteral("index")).toInt(), 4);
     QCOMPARE(prepared.output.call_id, call.call_id);
-    QCOMPARE(outputObject(prepared.output).value(QStringLiteral("error")).toString(),
+    const QJsonObject unknown_json = outputObject(prepared.output);
+    QCOMPARE(unknown_json.value(QStringLiteral("error")).toString(),
              QStringLiteral("Unknown function"));
+    // The Unknown-function refusal shares errorOutput() with the cancellation path, whose
+    // "extra" object is seeded before "error" is stamped over it. So the refusal must carry the
+    // error key ALONE: a stray "cancelled" flag here would report every unrecognized tool name
+    // to the model as a cancellation and quietly falsify the discrimination
+    // cancelledOutputIsStructured() asserts.
+    QVERIFY(!unknown_json.contains(QStringLiteral("cancelled")));
+    QCOMPARE(unknown_json.size(), 1);
 }
 
 void AiToolCallRouterTests::parseArgumentsAcceptsObject() {
@@ -213,8 +289,16 @@ void AiToolCallRouterTests::parseArgumentsRejectsInvalidJson() {
     QVERIFY(parsed.arguments.isEmpty());
     QCOMPARE(parsed.error_message, QStringLiteral("Invalid run_powershell arguments"));
     QCOMPARE(parsed.output.call_id, call.call_id);
-    QCOMPARE(outputObject(parsed.output).value(QStringLiteral("error")).toString(),
+    // The refusal object must be a PLAIN error -- exactly {"error": ...}. errorOutput() seeds
+    // the object from its `extra` argument before writing "error", so a producer that passed an
+    // extra map here would keep this error text intact while telling the model something else
+    // entirely, and echoing the raw argument blob back would splice unbounded model text into
+    // the transcript.
+    const QJsonObject error_json = outputObject(parsed.output);
+    QCOMPARE(error_json.value(QStringLiteral("error")).toString(),
              QStringLiteral("Invalid run_powershell arguments"));
+    QVERIFY(!error_json.contains(QStringLiteral("cancelled")));
+    QCOMPARE(error_json.size(), 1);
 
     // "[1,2,3]" is WELL-FORMED JSON that merely is not an object, so it exercises only the
     // isObject() half of the two ANDed guards. Syntactically broken JSON must be refused by the
@@ -229,8 +313,11 @@ void AiToolCallRouterTests::parseArgumentsRejectsInvalidJson() {
     QVERIFY(malformed_parsed.arguments.isEmpty());
     QCOMPARE(malformed_parsed.error_message, QStringLiteral("Invalid run_process arguments"));
     QCOMPARE(malformed_parsed.output.call_id, malformed.call_id);
-    QCOMPARE(outputObject(malformed_parsed.output).value(QStringLiteral("error")).toString(),
+    const QJsonObject malformed_json = outputObject(malformed_parsed.output);
+    QCOMPARE(malformed_json.value(QStringLiteral("error")).toString(),
              QStringLiteral("Invalid run_process arguments"));
+    QVERIFY(!malformed_json.contains(QStringLiteral("cancelled")));
+    QCOMPARE(malformed_json.size(), 1);
 }
 
 void AiToolCallRouterTests::cancelledOutputIsStructured() {
@@ -255,6 +342,21 @@ void AiToolCallRouterTests::cancelledOutputIsStructured() {
     QCOMPARE(plain_error.value(QStringLiteral("error")).toString(), QStringLiteral("boom"));
     QVERIFY(!plain_error.contains(QStringLiteral("cancelled")));
     QCOMPARE(plain_error.size(), 1);
+    // The message must survive compactJson() BYTE-EXACT, not merely ASCII-exact. Every message
+    // this file pushes through errorOutput() is 7-bit, so a helper that decoded toJson()'s UTF-8
+    // bytes as Latin-1 would round-trip all of them green. Two real callers feed non-ASCII
+    // through this exact helper -- the tr()-translated loop-guard refusal, and "Invalid %1
+    // arguments" interpolating a model-supplied tool name -- and mojibake there is what the
+    // model reads back as the reason its call failed. The characters are built from QChar code
+    // points rather than written literally, both because the repo's ASCII gate rejects any source
+    // byte above 0x7F and because that keeps the expected value independent of how the compiler
+    // happens to encode a non-ASCII source literal.
+    const QString unicode_message = QStringLiteral("Invalid caf") + QChar(0x00E9) +
+                                    QStringLiteral("_") + QChar(0x4E2D) + QChar(0x6587) +
+                                    QStringLiteral(" arguments");
+    const QJsonObject unicode_error =
+        outputObject(sak::ai::AiToolCallRouter::errorOutput(call, unicode_message));
+    QCOMPARE(unicode_error.value(QStringLiteral("error")).toString(), unicode_message);
 }
 
 QTEST_GUILESS_MAIN(AiToolCallRouterTests)

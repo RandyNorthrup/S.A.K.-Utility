@@ -98,6 +98,18 @@ void Win32McpTextMatchTests::punctuationIsStripped() {
                    false);
     QCOMPARE(q.size(), 1);
     QCOMPARE(q.first().text, QStringLiteral("Scan Results"));
+    // The LEADING strip is a SECOND, independent loop and nothing above reaches it: every
+    // punctuation case so far is trailing. Real OCR brackets a lone button label -- "(Cancel)",
+    // "[OK]" -- and that is exactly the click target this matcher exists to find. Word side:
+    const QVector<TextMatch> lead =
+        locateText(line({QStringLiteral("(Cancel)")}), QStringLiteral("Cancel"), false);
+    QCOMPARE(lead.size(), 1);
+    QCOMPARE(lead.first().text, QStringLiteral("(Cancel)"));  // raw caption, brackets kept
+    // ...and the query side, which strips leading punctuation the same way.
+    const QVector<TextMatch> lead_query =
+        locateText(line({QStringLiteral("Cancel")}), QStringLiteral("[Cancel]"), false);
+    QCOMPARE(lead_query.size(), 1);
+    QCOMPARE(lead_query.first().text, QStringLiteral("Cancel"));
 }
 
 void Win32McpTextMatchTests::multiWordMatchesConsecutiveSameLineRun() {
@@ -114,6 +126,28 @@ void Win32McpTextMatchTests::multiWordMatchesConsecutiveSameLineRun() {
     QCOMPARE(m.first().w, 38);
     QCOMPARE(m.first().h, 16);
     QCOMPARE(m.first().line, 0);
+    // score is the one struct field the multi-word tests never read. A whole-word run that OWNS
+    // its line scores 2 * 100000: the tie-breaker subtracts words-on-line MINUS THE RUN LENGTH
+    // (2 - 2 = 0), not minus 1 -- otherwise a two-word standalone label scores 199'999 and
+    // loses to any single-word label.
+    QCOMPARE(m.first().score, 200'000);
+
+    // The VERTICAL half of the union is real behaviour, not an artifact of the fixture: `add`
+    // gives every word the same y and h, so the y/h above are also hits[0]'s own box. Build the
+    // two words with DIFFERENT vertical extents -- "Scan" short and low [8,16), "Results" tall
+    // and starting higher [0,24) -- so the run box is only right if BOTH the min on y and the
+    // max on y + h run over every word. The OCR click path aims at y + h/2, so a box seeded
+    // from one word alone clicks the wrong row.
+    QVector<WordHit> uneven;
+    uneven.append(WordHit{QStringLiteral("Scan"), 0, 8, 18, 8, 0});       // vertical [8, 16)
+    uneven.append(WordHit{QStringLiteral("Results"), 20, 0, 18, 24, 0});  // vertical [0, 24)
+    const QVector<TextMatch> u = locateText(uneven, QStringLiteral("Scan Results"), false);
+    QCOMPARE(u.size(), 1);
+    QCOMPARE(u.first().text, QStringLiteral("Scan Results"));
+    QCOMPARE(u.first().x, 0);
+    QCOMPARE(u.first().w, 38);
+    QCOMPARE(u.first().y, 0);   // min over BOTH words, not hits[0].y (8)
+    QCOMPARE(u.first().h, 24);  // max(y + h) - y over BOTH words, not hits[0].h (8)
 }
 
 void Win32McpTextMatchTests::multiWordDoesNotMatchAcrossLines() {
@@ -194,6 +228,26 @@ void Win32McpTextMatchTests::wholeWordOutranksSubstring() {
     QCOMPARE(m2.first().line, 0);
     QCOMPARE(m2.at(1).text, QStringLiteral("Scanning"));
     QCOMPARE(m2.at(1).line, 1);
+
+    // Both cases above are SINGLE-token, where the run's strength and the one token's strength
+    // are indistinguishable. The "a substring hit can never outrank a whole-word hit" rule only
+    // bites on MULTI-word queries -- the ones that actually build a run -- and there the strength
+    // is latched DOWN by any substring token and must NOT be restored by a later whole-word one.
+    QVector<WordHit> runs;
+    add(runs, QStringLiteral("Scanning"), 0);  // substring token FIRST...
+    add(runs, QStringLiteral("Results"), 0);   // ...then a whole-word token: the latch must hold
+    add(runs, QStringLiteral("Scan"), 1);      // the genuine whole-word run
+    add(runs, QStringLiteral("Results"), 1);
+    const QVector<TextMatch> m3 = locateText(runs, QStringLiteral("Scan Results"), true);
+    QCOMPARE(m3.size(), 2);
+    QCOMPARE(m3.first().text, QStringLiteral("Scan Results"));
+    QCOMPARE(m3.first().line, 1);
+    QCOMPARE(m3.first().score, 200'000);  // 2 * 100000, no extra words on line 1
+    QCOMPARE(m3.at(1).text, QStringLiteral("Scanning Results"));
+    QCOMPARE(m3.at(1).line, 0);
+    // Latched by the FIRST token and NOT overwritten by the last: a full weight below, so the
+    // substring run can never tie -- let alone outrank -- the whole-word run.
+    QCOMPARE(m3.at(1).score, 100'000);
 }
 
 void Win32McpTextMatchTests::standaloneLabelOutranksSentenceWord() {
@@ -223,6 +277,25 @@ void Win32McpTextMatchTests::standaloneLabelOutranksSentenceWord() {
 void Win32McpTextMatchTests::blankQueryReturnsNothing() {
     QVERIFY(locateText(line({QStringLiteral("OK")}), QString(), false).isEmpty());
     QVERIFY(locateText(line({QStringLiteral("OK")}), QStringLiteral("   "), false).isEmpty());
+    // Both of the above die at the SPLIT (SkipEmptyParts yields no parts at all), which says
+    // nothing about the second, independent guard: a part that survives the split but
+    // normalizes away must be DROPPED, not appended as an empty token. An empty token is a
+    // substring of every string, so with contains=true it would return every word on screen as
+    // a click target -- fail OPEN, not closed. The caller only rejects text.trimmed().isEmpty(),
+    // so "!!!" does reach here in production.
+    QVERIFY(locateText(
+                line({QStringLiteral("OK"), QStringLiteral("Cancel")}), QStringLiteral("!!!"), true)
+                .isEmpty());
+    // ...and the drop must not swallow the whole query: a junk part alongside a real word is
+    // removed from the token list entirely, leaving a one-token query that still matches.
+    const QVector<TextMatch> mixed =
+        locateText(line({QStringLiteral("Scan"), QStringLiteral("Results")}),
+                   QStringLiteral("Scan !!!"),
+                   false);
+    QCOMPARE(mixed.size(), 1);
+    QCOMPARE(mixed.first().text, QStringLiteral("Scan"));
+    QCOMPARE(mixed.first().x, 0);
+    QCOMPARE(mixed.first().w, 18);
 }
 
 void Win32McpTextMatchTests::emptyHitsReturnNothing() {

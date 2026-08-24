@@ -76,6 +76,14 @@ private Q_SLOTS:
             QVERIFY2(!sak::isMailFolder(QStringLiteral("Folder"),
                                         prefix + QStringLiteral(".Variant")),
                      label.constData());
+            // The continuation need not be a '.' separator. The rule is a raw prefix test,
+            // not a component-boundary match, so a class that runs straight on -- a plural,
+            // or a trailing byte from a damaged store -- is still that container and must
+            // NOT be exported as mail.
+            QVERIFY2(!sak::isMailFolder(QStringLiteral("Folder"), prefix + QStringLiteral("s")),
+                     label.constData());
+            QVERIFY2(!sak::isMailFolder(QStringLiteral("Folder"), prefix + QStringLiteral(" ")),
+                     label.constData());
             // A class that merely ENDS with one of them is mail, so the rule is not contains().
             QVERIFY2(sak::isMailFolder(QStringLiteral("Folder"),
                                        QStringLiteral("IPF.Note.") + prefix),
@@ -160,6 +168,38 @@ private Q_SLOTS:
         QVERIFY(only_empty->children.isEmpty());
     }
 
+    // The childless subtree loses to a populated one even when they are SIBLINGS in one
+    // folder list -- the case where the contest is settled by the direct-match emptiness
+    // gate (email_folder_selection.cpp:83) rather than by the recursion gate at :91. Real
+    // OSTs order the roots either way round. Returning the empty node here does not merely
+    // pick the wrong pointer: mailFolderNodeIds sees an empty ipm->children and falls back
+    // to the raw roots, so the export set silently becomes the container nodes and
+    // everything beneath them.
+    void populatedSubtreeWinsOverAnEarlierEmptySibling() {
+        sak::PstFolder empty_subtree = makeFolder(10, QStringLiteral("IPM_SUBTREE"));
+        sak::PstFolder real_subtree = makeFolder(20, QStringLiteral("IPM_SUBTREE"));
+        real_subtree.children.append(makeFolder(21, QStringLiteral("Inbox")));
+
+        // Empty one FIRST: the childless match must not short-circuit the scan.
+        const QVector<sak::PstFolder> tree{empty_subtree, real_subtree};
+        const sak::PstFolder* found = sak::findIpmSubtree(tree);
+        QVERIFY(found != nullptr);
+        QCOMPARE(found->node_id, static_cast<uint64_t>(20));
+        QCOMPARE(found, &tree.at(1));
+        // ...and the export set is the populated subtree's children, not the roots.
+        QCOMPARE(sak::mailFolderNodeIds(tree), (QVector<uint64_t>{21}));
+
+        // The same contest one level down, where the recursion gate cannot rescue it either.
+        sak::PstFolder root = makeFolder(1, QStringLiteral("Root - Mailbox"));
+        root.children.append(empty_subtree);
+        root.children.append(real_subtree);
+        const QVector<sak::PstFolder> nested{root};
+        const sak::PstFolder* nested_found = sak::findIpmSubtree(nested);
+        QVERIFY(nested_found != nullptr);
+        QCOMPARE(nested_found->node_id, static_cast<uint64_t>(20));
+        QCOMPARE(sak::mailFolderNodeIds(nested), (QVector<uint64_t>{21}));
+    }
+
     void topOfInformationStoreIsRecognised() {
         sak::PstFolder subtree = makeFolder(30, QStringLiteral("Top of Information Store"));
         subtree.children.append(makeFolder(31, QStringLiteral("Inbox")));
@@ -226,6 +266,24 @@ private Q_SLOTS:
         const QVector<sak::PstFolder> tree{makeFolder(1, QStringLiteral("Inbox")),
                                            makeFolder(2, QStringLiteral("Archive"))};
         QCOMPARE(sak::mailFolderNodeIds(tree), (QVector<uint64_t>{1, 2}));
+    }
+
+    // The OTHER half of the same choice: an OST whose only IPM_SUBTREE is the empty one under
+    // "Root - Public". findIpmSubtree returns that childless node -- a non-null result means
+    // "this store HAS an IPM_SUBTREE", not "...a useful one" -- so mailFolderNodeIds must walk
+    // the ROOTS anyway. Taking the childless node's (empty) children would return nothing, and
+    // exportAllMailFoldersAs would refuse with "This store has no mail folders to export" on a
+    // store that plainly has mail, while the tree still showed those folders.
+    void fallsBackToTheRootsWhenTheOnlySubtreeIsChildless() {
+        sak::PstFolder public_root = makeFolder(1, QStringLiteral("Root - Public"));
+        public_root.children.append(makeFolder(10, QStringLiteral("IPM_SUBTREE")));
+
+        const QVector<sak::PstFolder> tree{public_root, makeFolder(2, QStringLiteral("Inbox"))};
+        const sak::PstFolder* ipm = sak::findIpmSubtree(tree);
+        QVERIFY(ipm != nullptr);
+        QVERIFY(ipm->children.isEmpty());
+        // Every root is walked, NOT the childless subtree's empty children.
+        QCOMPARE(sak::mailFolderNodeIds(tree), (QVector<uint64_t>{1, 10, 2}));
     }
 
     void emptyTreeYieldsNoIds() {

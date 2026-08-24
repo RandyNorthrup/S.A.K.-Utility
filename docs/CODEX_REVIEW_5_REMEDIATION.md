@@ -5024,6 +5024,55 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b91 (gated 249/249): 33 weak assertions pinned across six
+    more already-swept files (ai_prompt_assembler 10, fuzz_fs_detector 6, ai_tool_call_router 6,
+    win32_mcp_text_match 5, email_folder_selection 3, fuzz_pst_parser 3). Four further candidates
+    were REJECTED by the adversarial pass and are not in that count.
+    A FUZZ HARNESS THAT SCORED ACCEPT AND REJECT IDENTICALLY. test_fuzz_pst_parser's invariant
+    returned {} whether PstParser::open() accepted the bytes or refused them, so the refusal --
+    the outcome of very nearly every mutated input -- was asserted only as "open() reported
+    false". The second half of that contract is load-bearing: loadPstStructure fails through
+    failOpen(close_parser=true), and close() is what sheds the NBT/BBT caches. allNodeIds and
+    readAttachments carry NO !m_is_open guard, unlike readItemDetail, readItemProperties,
+    readFolderItems and readAttachmentData, so they are safe purely because the cache was
+    cleared. Drop that teardown and any mutant that loads both BTrees before dying in
+    buildFolderHierarchy keeps serving the REJECTED file's nodes and answers SUCCESS with an
+    empty attachment list. The refusal path now asserts an empty node list, an empty folder tree,
+    and a refused readAttachments; the accept path RELATES fileInfo().total_folders to a
+    recursive count over the tree folderTree() actually returned, rather than discarding both.
+    Also pinned there: the corpus's two documented outcomes (the empty store must be refused, the
+    openable store must open), so the refusal claim cannot pass on a parser that refuses
+    everything.
+    fuzz_fs_detector: an OUT-OF-BOUNDS READ the determinism check structurally cannot see. The
+    size-0 call shape bypasses the page-size filter in swapSignatureInfo, so the 8K/16K/64K swap
+    pages are probed at offsets 8182/16374/65526 even against a 4 KiB buffer, and only hasBytes()
+    keeps those reads inside the caller's bytes. The new case backs a 4 KiB view with a LARGER
+    real allocation carrying "SWAPSPACE2" at the out-of-range offset: an unchecked compare reports
+    "Linux swap" read from past the end. A determinism re-run is no substitute -- heap bytes just
+    past the buffer are stable between two back-to-back calls, so sameDetection() stays green
+    under exactly that break. Two-byte magics (boot signature, ext) and the eight-byte NTFS OEM
+    tag are now probed one byte at a time; the all-zero negatives proved only that ONE arm of each
+    compare refuses them, leaving neither arm load-bearing. The HFS+ capacity guard's four arms
+    are each isolated, including free-blocks > total-blocks, the arm that would otherwise report
+    8.19 MB free on a 4.10 MB volume.
+    win32_mcp_text_match: a query part like "!!!" survives the split but normalizes to an empty
+    token, and an empty token is a substring of every string -- so with contains=true the matcher
+    would return EVERY word on screen as a click target, and the OCR path clicks matches.first().
+    The caller only rejects text.trimmed().isEmpty(), so "!!!" reaches that path in production.
+    Both blank-query cases previously died at the split instead, proving nothing about that guard.
+    ai_tool_call_router: prepare()'s recognition rule is `kind != Unknown`, which is strictly
+    wider than isBuiltInTool(); nothing pinned that Shell/Process (built-in FALSE) still clear the
+    gate, so narrowing `recognized` to isBuiltInTool() would answer every shell and process call
+    "Unknown function" before command dispatch. The Unknown-function and invalid-argument
+    refusals are now pinned as EXACTLY {"error": ...}: errorOutput() seeds its object from an
+    `extra` argument before stamping "error" over it, so a stray "cancelled" would report every
+    unrecognized tool name to the model as a cancellation.
+    ai_prompt_assembler: the guardrail assertions were .contains() on two or three header words of
+    lines the assembler produces deterministically; they are exact whole-line compares now. The
+    rule-precedence guardrail PROMISES the model that catalogs, context, memory and user steering
+    appear later in the prompt and are therefore reference data -- that ordering is pinned rather
+    than mere membership, so untrusted dynamic text cannot be hoisted above the operator rules.
+    The steering fixture carried one message, so dropping the 2nd..Nth correction was invisible.
   - PROGRESS 2026-08-24 SECOND-pass sweep b90 (gated 249/249): 35 weak assertions pinned across six
     more already-swept files (ai_workflow_powershell_tool_runner 9, ai_provider_registry 7,
     hardware_inventory_scanner 7, email_attachment_saver 6, quick_action_result_io 4,
