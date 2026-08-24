@@ -49,6 +49,13 @@ private Q_SLOTS:
         QVERIFY(!listing.entries.first().directory);
         QVERIFY(listing.entries.first().regular_file);
         QVERIFY(!listing.entries.first().symlink);
+        // The remaining classification fields are equally deterministic for a plain local file;
+        // leaving them unobserved would let a listing that mislabelled every entry as
+        // hidden/compressed/sparse still pass.
+        QVERIFY(!listing.entries.first().hidden);
+        QVERIFY(!listing.entries.first().compressed);
+        QVERIFY(!listing.entries.first().sparse);
+        QCOMPARE(listing.entries.first().resource_fork_bytes, static_cast<uint64_t>(0));
 
         const auto read = sak::FileManagementFileSystemBridge::readFile(
             target, listing.entries.first().path, 1024);
@@ -217,7 +224,7 @@ private Q_SLOTS:
             target, destPath, srcPath, counting);
         QVERIFY2(written.ok, qPrintable(written.blockers.join(QStringLiteral("; "))));
         QCOMPARE(seen, static_cast<qint64>(payload.size()));
-        QVERIFY(windows >= 3);
+        QCOMPARE(windows, 3);  // 3,000,000 through the 1 MiB window: 1048576 + 1048576 + 902848
 
         // Cancel before the first window: blocked with the canceled marker,
         // and the partial destination is removed.
@@ -229,7 +236,9 @@ private Q_SLOTS:
         const auto canceled = sak::FileManagementFileSystemBridge::writeFileFromHostPath(
             target, canceledPath, srcPath, canceling);
         QVERIFY(!canceled.ok);
-        QVERIFY(canceled.blockers.contains(sak::kFileManagementTransferCancelledBlocker));
+        // Exactly ONE blocker, nothing written: the cancel poll is the copy loop's first act.
+        QCOMPARE(canceled.blockers, QStringList{sak::kFileManagementTransferCancelledBlocker});
+        QCOMPARE(canceled.bytes_written, static_cast<uint64_t>(0));
         QVERIFY(!QFile::exists(canceledPath));
 
         // copyFileToHost honors the same observer; QSaveFile discards the
@@ -248,7 +257,10 @@ private Q_SLOTS:
         const auto export_canceled = sak::FileManagementFileSystemBridge::copyFileToHost(
             target, srcPath, outCanceled, 0, canceling);
         QVERIFY(!export_canceled.ok);
-        QVERIFY(export_canceled.blockers.contains(sak::kFileManagementTransferCancelledBlocker));
+        QCOMPARE(export_canceled.blockers,
+                 QStringList{sak::kFileManagementTransferCancelledBlocker});
+        QCOMPARE(export_canceled.bytes_written, static_cast<uint64_t>(0));
+        QVERIFY(export_canceled.sha256.isEmpty());  // no partial-export digest handed back
         QVERIFY(!QFile::exists(outCanceled));
     }
 
@@ -261,11 +273,17 @@ private Q_SLOTS:
         QVERIFY(target.can_duplicate_scan);
         QVERIFY(target.can_advanced_search);
         QVERIFY(!target.can_organize);
-        // can_organize == false always records the exact non-native-organizer blocker;
-        // pin that specific message rather than merely "some blocker exists".
-        QVERIFY(target.blockers.contains(QStringLiteral(
-            "Generic organizer moves are blocked for raw/non-native targets; use certified "
-            "Partition Manager file actions for supported writes")));
+        // The blocker LIST is deterministic and ordered (organizer first, then the write gate):
+        // a manual APFS image has no known container size, so the size-unknown arm fires. Pin
+        // both, since contains() cannot see an extra or missing blocker.
+        QCOMPARE(
+            target.blockers,
+            (QStringList{QStringLiteral("Generic organizer moves are blocked for raw/non-native "
+                                        "targets; use certified Partition Manager file actions for "
+                                        "supported writes"),
+                         QStringLiteral("APFS writes need a known container size to range-gate the "
+                                        "certified engine; rescan disks or re-add the target with "
+                                        "its size")}));
     }
 
     void rawDevicePathClassificationIsCaseInsensitive() {
@@ -310,6 +328,16 @@ private Q_SLOTS:
             QStringLiteral("APFS"),
             32ULL * 1024ULL * 1024ULL);
         QVERIFY(!tooSmall.can_write_files);
+        // A KNOWN but out-of-range size selects the certified-RANGE blocker, not the
+        // size-unknown one; pinning the list keeps the two arms distinguishable.
+        QCOMPARE(
+            tooSmall.blockers,
+            (QStringList{QStringLiteral("Generic organizer moves are blocked for raw/non-native "
+                                        "targets; use certified Partition Manager file actions for "
+                                        "supported writes"),
+                         QStringLiteral("APFS writes are certified for containers of %1; this "
+                                        "container is outside that range")
+                             .arg(sak::apfsCapacityRangeText())}));
 
         // Above the 24 TiB ceiling remains fail-closed with the certified-range blocker.
         const auto oversized = sak::FileManagementFileSystemBridge::manualTarget(
@@ -369,6 +397,10 @@ private Q_SLOTS:
         QByteArray binary("AB\x00\x01Z", 5);
         const auto dump = sak::FileManagementFileSystemBridge::renderPreview(binary, false);
         QVERIFY(dump.is_binary);
+        // 5 bytes is far under the dump window, so nothing is capped and the whole payload is
+        // shown -- the counterpart of renderPreviewHexDumpCapsLargeBinary below.
+        QVERIFY(!dump.truncated);
+        QCOMPARE(dump.shown_bytes, static_cast<uint64_t>(5));
         // The whole single-row dump is deterministic: 8-digit offset, 5 hex bytes then 11 empty
         // columns (33 spaces), then the ASCII gutter (NUL and 0x01 render as '.'). Three disjoint
         // contains() left the middle bytes (00 01 5A) and the spacing unpinned.
@@ -385,6 +417,14 @@ private Q_SLOTS:
         QVERIFY(dump.is_binary);
         QVERIFY(dump.truncated);
         QCOMPARE(dump.shown_bytes, static_cast<uint64_t>(4096));
+        // shown_bytes is a reported number; the rendered TEXT is what the operator actually
+        // sees. 4096 / 16 = 256 rows joined by '\n' (255 separators), and the final row is the
+        // last 16 bytes at offset 0x00000ff0 -- so a dump that stopped early, or padded past the
+        // window, cannot pass on the count alone.
+        QCOMPARE(dump.text.count(QLatin1Char('\n')), qsizetype(255));
+        QVERIFY2(dump.text.endsWith(QStringLiteral("00000ff0  00 00 00 00 00 00 00 00 00 00 00 "
+                                                   "00 00 00 00 00  |................|")),
+                 qPrintable(dump.text.right(80)));
     }
 
     void hashFileComputesSha256OfLocalFile() {
@@ -569,6 +609,10 @@ private Q_SLOTS:
         QCOMPARE(result.files_exported, 3);
         QCOMPARE(result.directories_created, 2);
         QCOMPARE(result.capped_files, 0);
+        // bytes_written is accumulated per exported file and is NOT part of the `complete`
+        // derivation, so nothing else in this test would notice it going wrong: 9 + 12 + 12.
+        QCOMPARE(result.bytes_written, static_cast<uint64_t>(33));
+        QVERIFY(result.warnings.isEmpty());
 
         const auto readAll = [](const QString& path) {
             QFile file(path);
@@ -615,6 +659,8 @@ private Q_SLOTS:
         QCOMPARE(result.files_imported, 3);
         QCOMPARE(result.directories_created, 2);
         QCOMPARE(result.symlinks_skipped, 0);
+        QCOMPARE(result.bytes_written, static_cast<uint64_t>(33));  // 9 + 12 + 12
+        QVERIFY(result.warnings.isEmpty());
 
         const auto readAll = [](const QString& path) {
             QFile file(path);
@@ -667,6 +713,11 @@ private Q_SLOTS:
             QDir(destination.path()).filePath(QStringLiteral("moved-root")));
         QVERIFY(imported.ok);
         QCOMPARE(imported.entries_skipped, 1);  // the depth-33 subtree is dropped as one skip
+        // The bound stops the walk at a specific DEPTH, so the counters say exactly how far it
+        // got: levels 0..32 each created one child, and the leaf (depth 40) never arrived.
+        QCOMPARE(imported.directories_created, 33);
+        QCOMPARE(imported.files_imported, 0);
+        QCOMPARE(imported.bytes_written, static_cast<uint64_t>(0));
         // ok alone overclaims: complete must report the dropped entries so a caller
         // cannot mistake this partial import for a whole one (B8-19).
         QVERIFY(!imported.complete);
@@ -715,8 +766,13 @@ private Q_SLOTS:
             sak::FileManagementFileSystemBridge::listDirectory(target, lockedPath, 100);
         QVERIFY(!blocked.ok);
         QVERIFY(blocked.entries.isEmpty());
-        QVERIFY2(!blocked.blockers.isEmpty(),
-                 "an unreadable directory must report a blocker, not an empty success");
+        // Exactly one blocker, naming the directory that could not be read: the OS reason text
+        // varies, but the frame and the path do not, and "not empty" would pass on a generic or
+        // duplicated message that told the operator nothing about WHICH folder failed.
+        QCOMPARE(blocked.blockers.size(), qsizetype(1));
+        QVERIFY2(blocked.blockers.first().startsWith(
+                     QStringLiteral("Could not read directory %1: ").arg(lockedPath)),
+                 qPrintable(blocked.blockers.first()));
 #else
         QSKIP("Exclusive directory handles are a Windows-only concept");
 #endif
@@ -775,11 +831,22 @@ private Q_SLOTS:
             QDir(destination.path()).filePath(QStringLiteral("copy")));
         QVERIFY(!imported.ok);
         QVERIFY(!imported.complete);
-        QVERIFY2(!imported.blockers.isEmpty(),
-                 "an unreadable source level must be a blocker, not a silently empty level");
+        // One blocker, naming the level that failed -- the walk stops there, so a second
+        // blocker would mean it kept going past a failure it had already recorded.
+        QCOMPARE(imported.blockers.size(), qsizetype(1));
+        QVERIFY2(
+            imported.blockers.first().startsWith(
+                QStringLiteral("Could not read directory %1: ")
+                    .arg(QFileInfo(src.filePath(QStringLiteral("root/sub"))).absoluteFilePath())),
+            qPrintable(imported.blockers.first()));
         // The readable part still copied: the failure is reported, not swallowed, and not
-        // inflated into a claim that nothing transferred.
+        // inflated into a claim that nothing transferred. The exact counters say how far it
+        // got -- "sub" itself IS created, the level below it is what could not be read.
         QCOMPARE(imported.files_imported, 1);
+        QCOMPARE(imported.directories_created, 1);
+        QCOMPARE(imported.bytes_written, static_cast<uint64_t>(7));
+        QCOMPARE(imported.symlinks_skipped, 0);
+        QCOMPARE(imported.entries_skipped, 0);
 #else
         QSKIP("Exclusive directory handles are a Windows-only concept");
 #endif
@@ -1000,7 +1067,7 @@ private Q_SLOTS:
             target, hostDir.filePath(QStringLiteral("bundle")), QStringLiteral("/bundle"));
         QVERIFY2(imported.ok, qPrintable(imported.blockers.join(QStringLiteral("; "))));
         QCOMPARE(imported.files_imported, 2);
-        QCOMPARE(imported.directories_created, 1);
+        QCOMPARE(imported.directories_created, 1);  // the "deep" child; the root is not counted
         QCOMPARE(rawReadAll(target, QStringLiteral("/bundle/deep/leaf.txt")), leafBytes);
 
         // Leg 2 - raw -> local: file copy-out + recursive directory export, byte-exact.
@@ -1176,9 +1243,14 @@ private Q_SLOTS:
         QVERIFY(!unknown.can_write_files);
         // Pin the exact size-unknown blocker (distinct from the out-of-range one); the substring
         // "known container size" is shared with the safetyNotes text, so contains() is looser.
-        QVERIFY(unknown.blockers.contains(QStringLiteral(
-            "APFS writes need a known container size to range-gate the certified engine; rescan "
-            "disks or re-add the target with its size")));
+        QCOMPARE(
+            unknown.blockers,
+            (QStringList{QStringLiteral("Generic organizer moves are blocked for raw/non-native "
+                                        "targets; use certified Partition Manager file actions for "
+                                        "supported writes"),
+                         QStringLiteral("APFS writes need a known container size to range-gate the "
+                                        "certified engine; rescan disks or re-add the target with "
+                                        "its size")}));
     }
 
     void inventoryPartitionBuildsRawAlias() {
@@ -1202,6 +1274,16 @@ private Q_SLOTS:
         QCOMPARE(it->root_path, QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition2"));
         QVERIFY(it->can_browse);
         QVERIFY(!it->can_organize);
+        // The rest of the derived target is deterministic from the inventory entry: the display
+        // label, the normalized file-system name, the kind, and the capability verdict (hfsplus
+        // is writer-certified with no container-size gate, unlike apfs above).
+        QCOMPARE(it->label, QStringLiteral("Disk 4 Partition 2 - HFS+"));
+        QCOMPARE(it->file_system, QStringLiteral("HFS+"));
+        QCOMPARE(it->kind, sak::FileManagementTargetKind::Partition);
+        QVERIFY(!it->local_file_system);
+        QVERIFY(it->read_only);
+        QVERIFY(it->can_write_files);
+        QCOMPARE(it->size_bytes, static_cast<uint64_t>(0));
     }
 
     // B8-01: a local recursive directory delete must refuse an empty path (which
@@ -1300,6 +1382,15 @@ private Q_SLOTS:
         QVERIFY(!B::writeFile(locked, target_file, QByteArrayLiteral("x")).ok);
         QVERIFY(!B::deleteFile(locked, target_file).ok);
         QVERIFY(!B::removeExistingEntry(locked, target_file, 100).ok);
+        // Each refusal states WHY: this target is read-only, as opposed to the sibling
+        // "does not permit writes" message for a writable-but-ungranted target. !ok alone would
+        // also hold if the entrypoint failed for an unrelated reason (a filesystem error), which
+        // would mean the capability gate itself never ran.
+        const QStringList kRefused{QStringLiteral("Target is read-only; the write was refused.")};
+        QCOMPARE(B::createDirectory(locked, target_file).blockers, kRefused);
+        QCOMPARE(B::writeFile(locked, target_file, QByteArrayLiteral("x")).blockers, kRefused);
+        QCOMPARE(B::deleteFile(locked, target_file).blockers, kRefused);
+        QCOMPARE(B::removeExistingEntry(locked, target_file, 100).blockers, kRefused);
         // Nothing was created on disk by the refused writes.
         QVERIFY(!QFile::exists(target_file));
     }
@@ -1341,6 +1432,18 @@ private Q_SLOTS:
         QVERIFY(locked.read_only);
         QVERIFY(!locked.can_write_files);  // write-protected -> refused (B8-03)
         QVERIFY(!locked.can_organize);
+        // The blocker list records the refusal for the operator. The size IS known and in range
+        // here, so the certified-RANGE arm is the one that fires -- the write-protect revoked
+        // the capability AFTER the range check granted it, and the message still reflects the
+        // range arm rather than the size-unknown one.
+        QCOMPARE(
+            locked.blockers,
+            (QStringList{QStringLiteral("Generic organizer moves are blocked for raw/non-native "
+                                        "targets; use certified Partition Manager file actions for "
+                                        "supported writes"),
+                         QStringLiteral("APFS writes are certified for containers of %1; this "
+                                        "container is outside that range")
+                             .arg(sak::apfsCapacityRangeText())}));
     }
 
     // B8-04: the certified raw HFS/APFS writer's enable + destructive/hardware

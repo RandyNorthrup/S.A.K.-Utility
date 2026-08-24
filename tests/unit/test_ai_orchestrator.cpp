@@ -176,6 +176,10 @@ void AiOrchestratorTests::runsAllPhasesSequentially() {
     QCOMPARE(result.phases.size(), 2);
     QVERIFY(result.phases[0].success);
     QVERIFY(result.phases[1].success);
+    // success is derived; the delegate's own terminal status is what the runner reported, and a
+    // phase that ended Failed/Cancelled but was recorded successful would still pass the bool.
+    QCOMPARE(result.phases[0].subagent_status, sak::ai::AiSubagentStatus::Complete);
+    QCOMPARE(result.phases[1].subagent_status, sak::ai::AiSubagentStatus::Complete);
     QCOMPARE(result.parallel_groups_executed, 0);
 }
 
@@ -293,7 +297,9 @@ void AiOrchestratorTests::skipsPhaseWhenConditionUnmet() {
     QCOMPARE(result.phases.size(), 2);
     QVERIFY(result.phases[0].success);
     QVERIFY(result.phases[1].skipped);
-    QVERIFY(result.phases[1].skip_reason.contains(QStringLiteral("first_failed")));
+    // The skip reason names the unsatisfied CONDITION inside a fixed frame; pinning it whole
+    // keeps the framing (which tells the operator WHY the phase was skipped) under test.
+    QCOMPARE(result.phases[1].skip_reason, QStringLiteral("Condition not satisfied: first_failed"));
 }
 
 void AiOrchestratorTests::runsFallbackWhenPriorPhaseFlagged() {
@@ -330,9 +336,13 @@ void AiOrchestratorTests::runsFallbackWhenPriorPhaseFlagged() {
     QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
     QCOMPARE(result.phases.size(), 2);
     QVERIFY(!result.phases[0].success);
+    QCOMPARE(result.phases[0].subagent_status, sak::ai::AiSubagentStatus::Failed);
     QVERIFY(result.phases[1].ran);
     QVERIFY(!result.phases[1].skipped);
-    QVERIFY(result.flags.contains(QStringLiteral("first_failed")));
+    // The flag SET is what later phase conditions are evaluated against, so pin it exactly: an
+    // extra flag would silently enable other conditional phases in a real workflow.
+    QCOMPARE(result.flags,
+             QSet<QString>({QStringLiteral("first_failed"), QStringLiteral("fallback_succeeded")}));
 }
 
 void AiOrchestratorTests::stopsOnPhaseFailureWhenConfigured() {
@@ -358,7 +368,9 @@ void AiOrchestratorTests::stopsOnPhaseFailureWhenConfigured() {
 
     QCOMPARE(result.status, sak::ai::AiRunStatus::Failed);
     QCOMPARE(result.phases.size(), 1);
-    QVERIFY(result.error_message.contains(QStringLiteral("HTTP 500")));
+    // The abort message attributes the failure to a specific PHASE; contains("HTTP 500") would
+    // pass even if the attribution were lost or pointed at the wrong phase.
+    QCOMPARE(result.error_message, QStringLiteral("Phase p1 failed: HTTP 500"));
     const auto recovery =
         result.phases.first().metadata.value(QStringLiteral("recovery_decision")).toObject();
     QCOMPARE(recovery.value(QStringLiteral("action")).toString(), QStringLiteral("abort"));
@@ -366,8 +378,10 @@ void AiOrchestratorTests::stopsOnPhaseFailureWhenConfigured() {
     // Not just non-empty: the recovery reason must carry the underlying cause. reasonWithCause
     // appends "Underlying failure: <error>" (the phase error here is exactly "HTTP 500"), so a
     // regression that stops appending the cause -- or emits an empty/generic reason -- fails here.
-    QVERIFY2(reason.contains(QStringLiteral("Underlying failure:")), qPrintable(reason));
-    QVERIFY2(reason.contains(QStringLiteral("HTTP 500")), qPrintable(reason));
+    // Pin the whole reason: the two contains() checks left the POLICY-BRANCH half unobserved, so
+    // a run that aborted for a different reason (or with a generic one) still passed.
+    QCOMPARE(reason,
+             QStringLiteral("No safe automatic recovery path. Underlying failure: HTTP 500"));
 }
 
 void AiOrchestratorTests::cancelsRunWhenRootTokenCancelled() {
@@ -392,8 +406,9 @@ void AiOrchestratorTests::cancelsRunWhenRootTokenCancelled() {
     // Pin the SPECIFIC token reason ("test_cancelled", set by FakeModelClient::invoke ->
     // token.cancel), so a regression that drops the subagent's error_message and falls back to the
     // generic phrase fails here.
-    QVERIFY2(result.error_message.contains(QStringLiteral("test_cancelled")),
-             qPrintable(result.error_message));
+    // The token reason is propagated VERBATIM -- contains() would still pass if it were wrapped
+    // or re-worded on the way out, which is exactly the laundering this test exists to catch.
+    QCOMPARE(result.error_message, QStringLiteral("test_cancelled"));
 }
 
 void AiOrchestratorTests::overseerHandlerInvoked() {
@@ -423,6 +438,9 @@ void AiOrchestratorTests::overseerHandlerInvoked() {
     QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
     QCOMPARE(handler_calls.load(), 1);
     QVERIFY(result.phases.first().success);
+    // The overseer handler's returned object becomes the phase metadata verbatim -- pin it, or a
+    // handler result that was dropped on the floor still leaves the phase "successful".
+    QCOMPARE(result.phases.first().metadata, (QJsonObject{{QStringLiteral("checked"), true}}));
 }
 
 void AiOrchestratorTests::toolPhaseUsesExecutor() {
@@ -499,6 +517,11 @@ void AiOrchestratorTests::cleanupPhaseAlwaysRunsAfterFailure() {
     QCOMPARE(result.phases.size(), 2);
     QCOMPARE(result.phases[1].phase_id, QStringLiteral("cleanup"));
     QVERIFY(result.phases[1].success);
+    // The always-run cleanup phase carries the executor's result AND the marker that identifies
+    // it as the post-failure recovery pass -- both deterministic, neither observed by the bool.
+    QCOMPARE(result.phases[1].metadata, (QJsonObject{{QStringLiteral("recovery_pass"), true}}));
+    QCOMPARE(result.phases[1].tool_result,
+             QJsonObject({{QStringLiteral("cleaned"), true}, {QStringLiteral("success"), true}}));
     QCOMPARE(tool.calls, 1);
 }
 
@@ -538,6 +561,11 @@ void AiOrchestratorTests::cleanupFailureRecordedButRunCompletes() {
         result.phases.last().metadata.value(QStringLiteral("recovery_decision")).toObject();
     QCOMPARE(recovery.value(QStringLiteral("action")).toString(),
              QStringLiteral("continue_degraded"));
+    // The reason names the POLICY BRANCH that produced this action (several branches yield
+    // continue_degraded) and carries the underlying cause through reasonWithCause.
+    QCOMPARE(recovery.value(QStringLiteral("reason")).toString(),
+             QStringLiteral("Cleanup failed; preserve artifacts and report cleanup debt. "
+                            "Underlying failure: locked file"));
     QVERIFY(recovery.value(QStringLiteral("safe_to_continue")).toBool(false));
 
     // The persisted JSON (used by the transcript + run trace) must retain cleanup_failures.
@@ -580,11 +608,30 @@ void AiOrchestratorTests::retriesTransientToolFailureOnce() {
     QCOMPARE(result.phases.size(), 1);
     QVERIFY(result.phases.first().success);
     QCOMPARE(result.phases.first().metadata.value(QStringLiteral("retry_count")).toInt(), 1);
-    QVERIFY(result.phases.first().metadata.contains(QStringLiteral("first_failure")));
+    // The stored first_failure record is what the transcript shows an operator; presence alone
+    // passes on an empty object, or on the WRONG (successful) attempt being recorded. Every
+    // field below is deterministic (duration_ms is not, hence the field-by-field pin).
+    const QJsonObject first_failure =
+        result.phases.first().metadata.value(QStringLiteral("first_failure")).toObject();
+    QCOMPARE(first_failure.value(QStringLiteral("phase_id")).toString(),
+             QStringLiteral("download"));
+    QCOMPARE(first_failure.value(QStringLiteral("phase_type")).toString(),
+             QStringLiteral("tool_action"));
+    QVERIFY(!first_failure.value(QStringLiteral("success")).toBool(true));
+    QCOMPARE(first_failure.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Connection closed"));
+    QCOMPARE(first_failure.value(QStringLiteral("tool_result"))
+                 .toObject()
+                 .value(QStringLiteral("error_message"))
+                 .toString(),
+             QStringLiteral("Connection closed"));
     QVERIFY(result.phases.first().metadata.value(QStringLiteral("recovered")).toBool(false));
     const auto recovery =
         result.phases.first().metadata.value(QStringLiteral("recovery_decision")).toObject();
     QCOMPARE(recovery.value(QStringLiteral("action")).toString(), QStringLiteral("retry"));
+    QCOMPARE(recovery.value(QStringLiteral("reason")).toString(),
+             QStringLiteral("Transient network/model/tool failure. "
+                            "Underlying failure: Connection closed"));
     QCOMPARE(result.phases.first().tool_result.value(QStringLiteral("artifact")).toString(),
              QStringLiteral("vlc-offline.exe"));
 }
@@ -626,12 +673,21 @@ void AiOrchestratorTests::continuesDegradedToFallbackOnOfflineDownloaderFailure(
     QCOMPARE(result.phases.size(), 2);
     QVERIFY(!result.phases.first().success);
     QVERIFY(result.phases.last().success);
-    QVERIFY(result.flags.contains(QStringLiteral("direct_download_failed")));
-    QVERIFY(result.flags.contains(QStringLiteral("official_source_fallback_succeeded")));
+    // Pin the flag SET, not two memberships: a spurious extra flag would enable other
+    // conditional phases in a real workflow and neither contains() would notice.
+    QCOMPARE(result.flags,
+             QSet<QString>({QStringLiteral("direct_download_failed"),
+                            QStringLiteral("official_source_fallback_succeeded")}));
     const auto recovery =
         result.phases.first().metadata.value(QStringLiteral("recovery_decision")).toObject();
     QCOMPARE(recovery.value(QStringLiteral("action")).toString(),
              QStringLiteral("continue_degraded"));
+    // Which continue_degraded branch fired matters: the cleanup branch and the package-lookup
+    // branch produce the same action, so only the reason proves the DOWNLOAD path was taken.
+    QCOMPARE(recovery.value(QStringLiteral("reason")).toString(),
+             QStringLiteral("Built-in download step failed; continue degraded and surface the "
+                            "download failure. Underlying failure: package unavailable in "
+                            "offline catalog"));
 }
 
 void AiOrchestratorTests::waitsForHumanOnRiskyMutationFailure() {
@@ -661,7 +717,12 @@ void AiOrchestratorTests::waitsForHumanOnRiskyMutationFailure() {
 
     QCOMPARE(result.status, sak::ai::AiRunStatus::WaitingForHuman);
     QCOMPARE(result.phases.size(), 1);
-    QVERIFY(result.error_message.contains(QStringLiteral("needs human input")));
+    // The message names the phase AND carries the full recovery reason (policy branch + cause);
+    // contains("needs human input") observes only the fixed frame.
+    QCOMPARE(result.error_message,
+             QStringLiteral("Phase install needs human input: Risky or mutating action failed; "
+                            "human decision needed. Underlying failure: installer failed after "
+                            "system change"));
     const auto recovery =
         result.phases.first().metadata.value(QStringLiteral("recovery_decision")).toObject();
     QCOMPARE(recovery.value(QStringLiteral("action")).toString(), QStringLiteral("ask_human"));
@@ -724,6 +785,12 @@ void AiOrchestratorTests::resumesAfterHumanGateWithoutRerunningPriorPhase() {
     QCOMPARE(resumed.phases.at(0).phase_id, QStringLiteral("install"));
     QCOMPARE(resumed.phases.at(1).phase_id, QStringLiteral("fallback"));
     QVERIFY(resumed.phases.at(1).success);
+    QCOMPARE(resumed.phases.at(1).subagent_status, sak::ai::AiSubagentStatus::Complete);
+    // The carried-over prior phase must be replayed AS IT WAS -- still failed, still carrying the
+    // original error. A resume that quietly "healed" it would also satisfy phases.size()==2.
+    QVERIFY(!resumed.phases.at(0).success);
+    QCOMPARE(resumed.phases.at(0).error_message,
+             QStringLiteral("installer failed after system change"));
     QCOMPARE(resume_tool.calls, 0);
 }
 
@@ -758,13 +825,33 @@ void AiOrchestratorTests::reassignsCriticFailureToOverseer() {
     QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
     QCOMPARE(result.phases.size(), 1);
     QVERIFY(!result.phases.first().success);
+    QCOMPARE(result.phases.first().subagent_status, sak::ai::AiSubagentStatus::Failed);
     QCOMPARE(overseer_calls.load(), 1);
     const auto recovery =
         result.phases.first().metadata.value(QStringLiteral("recovery_decision")).toObject();
     QCOMPARE(recovery.value(QStringLiteral("action")).toString(), QStringLiteral("reassign"));
+    // The reassign decision names both the target agent and the branch that chose it.
+    QCOMPARE(recovery.value(QStringLiteral("suggested_agent")).toString(),
+             QStringLiteral("overseer"));
+    QCOMPARE(recovery.value(QStringLiteral("reason")).toString(),
+             QStringLiteral("Critic failed; reassign review to overseer/report agent. "
+                            "Underlying failure: review model failed"));
     QCOMPARE(result.phases.first().metadata.value(QStringLiteral("reassigned_to")).toString(),
              QStringLiteral("overseer"));
-    QVERIFY(result.phases.first().metadata.contains(QStringLiteral("reassignment")));
+    // The recorded reassignment execution is the overseer pass that actually ran; presence alone
+    // would pass on an empty object or on a record of the failed critic attempt.
+    const QJsonObject reassignment =
+        result.phases.first().metadata.value(QStringLiteral("reassignment")).toObject();
+    QCOMPARE(reassignment.value(QStringLiteral("phase_id")).toString(),
+             QStringLiteral("quality_gate_reassignment"));
+    QCOMPARE(reassignment.value(QStringLiteral("phase_type")).toString(),
+             QStringLiteral("overseer"));
+    QVERIFY(reassignment.value(QStringLiteral("success")).toBool(false));
+    QCOMPARE(reassignment.value(QStringLiteral("metadata"))
+                 .toObject()
+                 .value(QStringLiteral("phase_id"))
+                 .toString(),
+             QStringLiteral("quality_gate_reassignment"));
 }
 
 void AiOrchestratorTests::emitsPhaseStartedBeforeCompletion() {
@@ -831,9 +918,15 @@ void AiOrchestratorTests::delegateSubagentReceivesResolvedWorkflowGuidance() {
     const auto result = orchestrator.run(workflow, QStringLiteral("gr1"), root);
 
     QCOMPARE(result.status, sak::ai::AiRunStatus::Completed);
-    QVERIFY(model.last_system_instructions.contains(
-        QStringLiteral("SKILL_BODY prefer exact vendor IDs")));
-    QVERIFY(model.last_system_instructions.contains(QStringLiteral("INSTRUCTION_BODY be careful")));
+    // The guidance block is appended whole and in a fixed shape: header, then instructions
+    // BEFORE skills, each framed with its kind and ref. Two contains() checks prove neither the
+    // ordering, the per-block framing, nor that the bodies arrived inside the guidance section
+    // at all. The agent-specific prefix varies, so pin the block as a suffix.
+    QVERIFY2(model.last_system_instructions.endsWith(QStringLiteral(
+                 "\n\nWorkflow guidance to follow (skills and instructions):\n"
+                 "--- Instruction: instructions/base.md ---\nINSTRUCTION_BODY be careful\n\n"
+                 "--- Skill: skills/package-selection.md ---\nSKILL_BODY prefer exact vendor IDs")),
+             qPrintable(model.last_system_instructions));
 }
 
 void AiOrchestratorTests::delegateSubagentHasNoGuidanceBlockWithoutResolver() {
@@ -999,7 +1092,8 @@ void AiOrchestratorTests::preflightFailsClosedWhenRequiredSoftwareMissing() {
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("pf1"));
     const auto blocked = orchestrator.run(workflow, QStringLiteral("pf1"), root);
     QCOMPARE(blocked.status, sak::ai::AiRunStatus::Failed);
-    QVERIFY(blocked.error_message.contains(QStringLiteral("run_powershell")));
+    QCOMPARE(blocked.error_message,
+             QStringLiteral("Required software unavailable: run_powershell"));
     QVERIFY(blocked.phases.isEmpty());
     QCOMPARE(model.last_objective, QString());  // subagent never invoked
 
