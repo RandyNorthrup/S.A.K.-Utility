@@ -569,7 +569,9 @@ void AdvancedSearchWorkerTests::plainText_findsMatch() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY(matches.size() >= 3);  // "Hello" appears 3 times
+    // The fixture contains exactly three "Hello" occurrences; a floor cannot catch a
+    // duplicated or spuriously extra match.
+    QCOMPARE(matches.size(), 3);
 }
 
 void AdvancedSearchWorkerTests::plainText_caseInsensitive() {
@@ -580,7 +582,7 @@ void AdvancedSearchWorkerTests::plainText_caseInsensitive() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY(matches.size() >= 3);  // Case-insensitive should find all "Hello"
+    QCOMPARE(matches.size(), 3);  // case-insensitive finds the same three, no more
 }
 
 void AdvancedSearchWorkerTests::plainText_caseSensitive() {
@@ -602,7 +604,8 @@ void AdvancedSearchWorkerTests::wholeWord_matchesBoundary() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY(matches.size() >= 3);
+    // Whole-word matching must not LOSE any of the three occurrences either.
+    QCOMPARE(matches.size(), 3);
 }
 
 void AdvancedSearchWorkerTests::wholeWord_rejectsPartial() {
@@ -624,7 +627,7 @@ void AdvancedSearchWorkerTests::regexMode_specialChars() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY(matches.size() >= 2);
+    QCOMPARE(matches.size(), 2);
 }
 
 void AdvancedSearchWorkerTests::regexEscape_literalDots() {
@@ -650,7 +653,12 @@ void AdvancedSearchWorkerTests::textSearch_singleMatch() {
 
     auto matches = runWorker(config);
     QCOMPARE(matches.size(), 1);
-    QVERIFY(matches[0].line_content.contains("iostream"));
+    // The whole match record is deterministic: line number, the full line text, and the
+    // match span the UI highlights. contains() proved only that the word appears somewhere.
+    QCOMPARE(matches[0].line_number, 1);
+    QCOMPARE(matches[0].line_content, QStringLiteral("#include <iostream>"));
+    QCOMPARE(matches[0].match_start, 10);
+    QCOMPARE(matches[0].match_end, 18);
 }
 
 void AdvancedSearchWorkerTests::textSearch_multipleMatches() {
@@ -723,8 +731,9 @@ void AdvancedSearchWorkerTests::textSearch_maxResults() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY(matches.size() <= 5);
-    QVERIFY(matches.size() > 0);
+    // The cap is EXACT, not merely respected: the fixture has more than five matches, so a
+    // "<= 5 and > 0" pair also passed when the cap cut the run short at one match.
+    QCOMPARE(matches.size(), 5);
 }
 
 // ============================================================================
@@ -744,7 +753,8 @@ void AdvancedSearchWorkerTests::extensionFilter_matchesIncluded() {
         QVERIFY2(m.file_path.endsWith(".txt"),
                  qPrintable(QString("Unexpected file: %1").arg(m.file_path)));
     }
-    QVERIFY(!matches.isEmpty());
+    // Non-empty is not enough: the filter must not silently drop .txt matches either.
+    QCOMPARE(matches.size(), 3);
 }
 
 void AdvancedSearchWorkerTests::extensionFilter_excludesOthers() {
@@ -755,11 +765,12 @@ void AdvancedSearchWorkerTests::extensionFilter_excludesOthers() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    // Should only find matches in .cpp files
-    for (const auto& m : matches) {
-        QVERIFY2(m.file_path.endsWith(".cpp"),
-                 qPrintable(QString("Unexpected file: %1").arg(m.file_path)));
-    }
+    // A loop over an EMPTY list passes vacuously, so pin the one real match and its record --
+    // that is what proves the filter kept the .cpp hit rather than dropping everything.
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].file_path, m_temp_dir.path() + "/code.cpp");
+    QCOMPARE(matches[0].line_number, 3);
+    QCOMPARE(matches[0].line_content, QStringLiteral("    std::cout << \"Hello\" << std::endl;"));
 }
 
 void AdvancedSearchWorkerTests::extensionFilter_emptyMatchesAll() {
@@ -793,6 +804,9 @@ void AdvancedSearchWorkerTests::excludePatterns_gitExcluded() {
         QVERIFY2(!m.file_path.contains(".git"),
                  qPrintable(QString("Should exclude .git: %1").arg(m.file_path)));
     }
+    // ...and the non-.git matches ARE still found: without a count, excluding EVERYTHING
+    // would satisfy the loop above.
+    QCOMPARE(matches.size(), 5);
 }
 
 void AdvancedSearchWorkerTests::excludePatterns_customExclude() {
@@ -806,6 +820,7 @@ void AdvancedSearchWorkerTests::excludePatterns_customExclude() {
         QVERIFY2(!m.file_path.contains("subdir"),
                  qPrintable(QString("Should exclude subdir: %1").arg(m.file_path)));
     }
+    QCOMPARE(matches.size(), 100);
 }
 
 // ============================================================================
@@ -839,7 +854,12 @@ void AdvancedSearchWorkerTests::singleFileSearch_worksWithFilePath() {
 
     auto matches = runWorker(config);
     QCOMPARE(matches.size(), 1);
-    QVERIFY(matches[0].file_path.endsWith("data.csv"));
+    // The whole record is deterministic -- pin the file, the row it came from, the row text
+    // and the highlighted span, not just the file suffix.
+    QCOMPARE(matches[0].file_path, m_temp_dir.path() + "/data.csv");
+    QCOMPARE(matches[0].line_number, 2);
+    QCOMPARE(matches[0].line_content, QStringLiteral("Alice,alice@example.com,555-1234"));
+    QCOMPARE(matches[0].match_start, 0);
 }
 
 // ============================================================================
@@ -858,8 +878,10 @@ void AdvancedSearchWorkerTests::batchEmission_emitsResults() {
     worker.start();
     QVERIFY(worker.wait(10'000));
 
-    // Should have emitted at least one batch
-    QVERIFY(resultsSpy.count() >= 1);
+    // Exactly one batch, carrying every match: the batch size cap is far above six, so a
+    // floor would also pass if the results were split (or a batch were dropped).
+    QCOMPARE(resultsSpy.count(), 1);
+    QCOMPARE(resultsSpy[0][0].value<QVector<SearchMatch>>().size(), 6);
 
     // Each batch should have at least one match
     for (int i = 0; i < resultsSpy.count(); ++i) {
@@ -880,7 +902,12 @@ void AdvancedSearchWorkerTests::hexSearch_findsPattern() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY(matches.size() >= 1);
+    // Exactly one hit, reported at its byte offset with the raw line text.
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].line_number, 100);
+    QCOMPARE(matches[0].line_content, QStringLiteral("hidden_text_marker"));
+    QCOMPARE(matches[0].match_start, 0);
+    QCOMPARE(matches[0].match_end, 18);
 }
 
 void AdvancedSearchWorkerTests::hexSearch_exclusiveMode() {
@@ -892,8 +919,8 @@ void AdvancedSearchWorkerTests::hexSearch_exclusiveMode() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    // Should still find the pattern (binary mode reads as UTF-8)
-    QVERIFY(matches.size() >= 1);
+    // Should still find the pattern (binary mode reads as UTF-8) -- all three occurrences.
+    QCOMPARE(matches.size(), 3);
 
     // But the result format should be binary-style (line_number = byte offset)
     // and context_before should contain hex data
@@ -922,7 +949,12 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_findsEmbeddedMetadata() {
 
     auto matches = runWorker(config);
     // Should find the embedded image metadata value.
-    QVERIFY(matches.size() >= 1);
+    // Exactly one metadata line, with the exact rendered text and the span highlighted
+    // inside it -- a floor cannot catch a duplicated or mis-spanned metadata hit.
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].line_content, QStringLiteral("[Metadata] Comment: CameraTrip"));
+    QCOMPARE(matches[0].match_start, 20);
+    QCOMPARE(matches[0].match_end, 30);
 
     // Verify metadata format
     bool hasMetadataLine = false;
@@ -950,7 +982,11 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_matchesByTagName() {
 
     auto matches = runWorker(config);
     // "Comment" is a metadata key name -- key matching should find it
-    QVERIFY2(matches.size() >= 1, "Searching by metadata tag name should produce matches");
+    // Searching the TAG NAME highlights the key, not the value: same line, different span.
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].line_content, QStringLiteral("[Metadata] Comment: CameraTrip"));
+    QCOMPARE(matches[0].match_start, 11);
+    QCOMPARE(matches[0].match_end, 18);
 
     bool found_key_match = false;
     for (const auto& m : matches) {
@@ -971,7 +1007,10 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_matchesDimensions() {
 
     auto matches = runWorker(config);
     // supplementWithImageReader adds Dimensions = "32x24"
-    QVERIFY2(matches.size() >= 1, "Image metadata should include dimensions from QImageReader");
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].line_content, QStringLiteral("[Metadata] Dimensions: 32x24"));
+    QCOMPARE(matches[0].match_start, 23);
+    QCOMPARE(matches[0].match_end, 28);
 
     bool found_dimensions = false;
     for (const auto& m : matches) {
@@ -1004,7 +1043,8 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_jpegExifExtraction() {
         config.exclude_patterns.clear();
 
         auto matches = runWorker(config);
-        QVERIFY2(matches.size() >= 1, "JPEG EXIF Software tag should be searchable");
+        QCOMPARE(matches.size(), 1);
+        QCOMPARE(matches[0].line_content, QStringLiteral("[Metadata] Software: TestCamera"));
 
         bool found_software = false;
         for (const auto& m : matches) {
@@ -1025,7 +1065,11 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_jpegExifExtraction() {
         config.exclude_patterns.clear();
 
         auto matches = runWorker(config);
-        QVERIFY2(matches.size() >= 1, "JPEG EXIF DateTime should be searchable by year");
+        QCOMPARE(matches.size(), 1);
+        QCOMPARE(matches[0].line_content,
+                 QStringLiteral("[Metadata] DateTime: 2025:01:15 10:30:00"));
+        QCOMPARE(matches[0].match_start, 21);
+        QCOMPARE(matches[0].match_end, 25);
 
         bool found_date = false;
         for (const auto& m : matches) {
@@ -1046,7 +1090,11 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_jpegExifExtraction() {
         config.exclude_patterns.clear();
 
         auto matches = runWorker(config);
-        QVERIFY2(matches.size() >= 1, "JPEG EXIF tag names should be searchable");
+        QCOMPARE(matches.size(), 1);
+        QCOMPARE(matches[0].line_content,
+                 QStringLiteral("[Metadata] DateTime: 2025:01:15 10:30:00"));
+        QCOMPARE(matches[0].match_start, 11);
+        QCOMPARE(matches[0].match_end, 19);
     }
 }
 
@@ -1061,7 +1109,9 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_directorySearch() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY2(matches.size() >= 1, "Directory search should find EXIF metadata in JPEG files");
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].file_path, m_temp_dir.path() + "/exif_test.jpg");
+    QCOMPARE(matches[0].line_content, QStringLiteral("[Metadata] Software: TestCamera"));
 
     // Verify the match came from the JPEG file
     bool from_jpeg = false;
@@ -1119,7 +1169,10 @@ void AdvancedSearchWorkerTests::fileMetadataSearch_findsFileInfo() {
 
     auto matches = runWorker(config);
     // Should find filesystem metadata
-    QVERIFY(matches.size() >= 1);
+    // Both synthesized metadata lines are emitted, in order.
+    QCOMPARE(matches.size(), 2);
+    QCOMPARE(matches[0].line_content, QStringLiteral("[Metadata] FileName: test_meta.json"));
+    QCOMPARE(matches[1].line_content, QStringLiteral("[Metadata] FileType: JSON"));
 }
 
 void AdvancedSearchWorkerTests::fileMetadataSearch_hasMetadataFormat() {
@@ -1132,7 +1185,10 @@ void AdvancedSearchWorkerTests::fileMetadataSearch_hasMetadataFormat() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY2(matches.size() >= 1, "Searching by metadata key name should find FileType field");
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].line_content, QStringLiteral("[Metadata] FileType: JSON"));
+    QCOMPARE(matches[0].match_start, 11);
+    QCOMPARE(matches[0].match_end, 19);
 
     // Verify the metadata output format uses [Metadata] prefix
     bool has_metadata_prefix = false;
@@ -1158,7 +1214,11 @@ void AdvancedSearchWorkerTests::archiveSearch_validZip() {
 
     auto matches = runWorker(config);
     // The ZIP contains "Hello from inside ZIP!" in readme.txt
-    QVERIFY(matches.size() >= 1);
+    // The archive-relative path, the line inside the entry, and the span are all fixed.
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].file_path, m_temp_dir.path() + "/test.zip!/readme.txt");
+    QCOMPARE(matches[0].line_number, 1);
+    QCOMPARE(matches[0].line_content, QStringLiteral("Hello from inside ZIP!"));
 
     // Check that matches reference the archive path format
     bool hasArchivePath = false;
@@ -1179,7 +1239,11 @@ void AdvancedSearchWorkerTests::archiveSearch_zipEntryNames() {
     config.exclude_patterns.clear();
 
     auto matches = runWorker(config);
-    QVERIFY(matches.size() >= 1);
+    // An entry-NAME hit is reported at line 0 with the synthesized entry header.
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].file_path, m_temp_dir.path() + "/test.zip!/readme.txt");
+    QCOMPARE(matches[0].line_number, 0);
+    QCOMPARE(matches[0].line_content, QStringLiteral("[Archive Entry] readme.txt"));
 
     // Should have an archive entry match
     bool hasEntryMatch = false;
@@ -1201,7 +1265,9 @@ void AdvancedSearchWorkerTests::archiveSearch_deflateCompressed() {
 
     auto matches = runWorker(config);
     // The deflate-compressed ZIP contains "SearchableToken" inside compressed.txt
-    QVERIFY2(matches.size() >= 1, "Deflate-compressed ZIP entry content should be searchable");
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches[0].file_path, m_temp_dir.path() + "/deflate_test.zip!/compressed.txt");
+    QCOMPARE(matches[0].line_number, 1);
 
     // Verify it found the match inside the archive
     bool foundInArchive = false;
@@ -1387,8 +1453,10 @@ void AdvancedSearchWorkerTests::invalidExcludePattern_failsClosed() {
     QVERIFY(worker.wait(10'000));
 
     // An invalid exclude regex must abort the search (fail closed), not silently
-    // drop the exclusion and search the paths it was meant to exclude.
+    // drop the exclusion and search the paths it was meant to exclude. The code says WHY:
+    // a malformed pattern is an invalid argument, not (say) a missing file.
     QCOMPARE(failedSpy.count(), 1);
+    QCOMPARE(failedSpy[0][0].toInt(), static_cast<int>(sak::error_code::invalid_argument));
 }
 
 void AdvancedSearchWorkerTests::unreadableFile_isCounted() {
@@ -1587,6 +1655,12 @@ void AdvancedSearchWorkerTests::overLongLine_notScannedAndMarkedIncomplete() {
     // ... and the omission is surfaced, never silent.
     QCOMPARE(worker.filesUnreadable(), 1);
     QVERIFY(worker.scanIncomplete());
+    // The reason names the file AND the limit it hit -- the operator has to know WHY a line
+    // was skipped, and "incomplete" alone could equally mean an open failure.
+    QCOMPARE(worker.incompleteReasons(),
+             QStringList{
+                 QStringLiteral("'%1': line 1 exceeds the 262144-character regex scan limit")
+                     .arg(path)});
 }
 
 void AdvancedSearchWorkerTests::incompleteScan_reportedAsIncompleteNotComplete() {
@@ -1611,7 +1685,9 @@ void AdvancedSearchWorkerTests::incompleteScan_reportedAsIncompleteNotComplete()
     QVERIFY(!clean_worker.scanIncomplete());
     QVERIFY(clean_progress.count() >= 1);
     const QString clean_final = clean_progress[clean_progress.count() - 1][2].toString();
-    QVERIFY2(clean_final.startsWith(QStringLiteral("Search complete")), qPrintable(clean_final));
+    // The terminal message carries the run's counters; startsWith() proved only the prefix.
+    QCOMPARE(clean_final,
+             QStringLiteral("Search complete: 1 matches in 1 files (1 files scanned)"));
 
     // (b) A file the worker cannot open makes the run non-authoritative: the
     // terminal message must say INCOMPLETE, not "Search complete".
@@ -1642,11 +1718,15 @@ void AdvancedSearchWorkerTests::incompleteScan_reportedAsIncompleteNotComplete()
     QVERIFY(finished);
 
     QVERIFY(worker.scanIncomplete());
-    QVERIFY(!worker.incompleteReasons().isEmpty());
+    QCOMPARE(worker.incompleteReasons(),
+             QStringList{QStringLiteral("'%1': open failed").arg(lockedPath)});
     QVERIFY(progress.count() >= 1);
     const QString final_message = progress[progress.count() - 1][2].toString();
-    QVERIFY2(final_message.startsWith(QStringLiteral("Search INCOMPLETE")),
-             qPrintable(final_message));
+    // The whole message, including the counters and the "results may be missing matches"
+    // warning that is the operator-facing point of the INCOMPLETE state.
+    QCOMPARE(final_message,
+             QStringLiteral("Search INCOMPLETE: 0 matches in 0 files (1 scanned); some files could "
+                            "not be searched, results may be missing matches"));
 }
 
 void AdvancedSearchWorkerTests::targetReadFailure_marksScanIncomplete() {
@@ -1687,8 +1767,9 @@ void AdvancedSearchWorkerTests::targetReadFailure_marksScanIncomplete() {
     QVERIFY(worker.scanIncomplete());
     QVERIFY(progress.count() >= 1);
     const QString final_message = progress[progress.count() - 1][2].toString();
-    QVERIFY2(final_message.startsWith(QStringLiteral("Search INCOMPLETE")),
-             qPrintable(final_message));
+    QCOMPARE(final_message,
+             QStringLiteral("Search INCOMPLETE: 0 matches in 0 files (1 scanned); some files could "
+                            "not be searched, results may be missing matches"));
 }
 
 void AdvancedSearchWorkerTests::dataDescriptorZip_reportedIncomplete() {
@@ -1719,6 +1800,12 @@ void AdvancedSearchWorkerTests::dataDescriptorZip_reportedIncomplete() {
     // as a partial match list indistinguishable from a full scan.
     QCOMPARE(worker.filesUnreadable(), 1);
     QVERIFY(worker.scanIncomplete());
+    // The reason states where the chain stopped, which is what distinguishes a streaming ZIP
+    // from an unreadable file or a filtered-out entry.
+    QCOMPARE(worker.incompleteReasons(),
+             QStringList{QStringLiteral(
+                             "'%1': entry chain stopped at offset 0 before the central directory")
+                             .arg(zipPath)});
 
     // Control: a well-formed ZIP whose chain ends exactly on the central directory
     // must NOT trip the premature-stop detection.
@@ -1756,8 +1843,14 @@ void AdvancedSearchWorkerTests::singleFileSearch_appliesSkipFilters() {
         QVERIFY(worker.wait(10'000));
 
         QCOMPARE(resultsSpy.count(), 0);
-        // The named file was never opened, so "0 matches" is not authoritative.
+        // The named file was never opened, so "0 matches" is not authoritative. The reason
+        // names the file and says it was FILTERED (not unreadable) -- the distinction the
+        // operator needs to decide whether to widen the filters or fix a permission.
         QVERIFY(worker.scanIncomplete());
+        QCOMPARE(worker.incompleteReasons(),
+                 QStringList{QStringLiteral("'%1' was filtered out (exclusion, extension filter "
+                                            "or max_file_size) and never searched")
+                                 .arg(config.root_path)});
     }
 
     // (b) extension filter

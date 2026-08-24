@@ -270,8 +270,9 @@ void UserProfileRestoreWorkerTests::emptyMappingsCompleteSuccessfully() {
     QCOMPARE(completeSpy.first().at(0).toBool(), true);  // success
     // A restore of nothing: the summary must report zero files, not just "true". This is
     // what separates "no mappings, nothing to do" from "restored something unasked-for".
-    QVERIFY2(completeSpy.first().at(1).toString().contains(QStringLiteral("Files restored: 0")),
-             qPrintable(completeSpy.first().at(1).toString()));
+    QCOMPARE(completeSpy.first().at(1).toString(),
+             QStringLiteral("Restore complete!\nFiles restored: 0\nFiles skipped: 0\nErrors: "
+                            "0\nTotal size: 0.0 MB"));
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +307,9 @@ void UserProfileRestoreWorkerTests::manifestChecksumMismatchFailsValidation() {
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);  // integrity failure -> refuse
+    // A validation refusal reports the fixed "Invalid backup" summary rather than a
+    // zero-file "Restore complete!" that a caller could mistake for an empty success.
+    QCOMPARE(completeSpy.first().at(1).toString(), QStringLiteral("Invalid backup"));
     // "before any file is touched" is the actual claim: validateBackup runs ahead of the
     // user loop, so the destination profile root is never even created.
     QVERIFY(!QDir(destDir.path() + "/Users").exists());
@@ -345,6 +349,9 @@ void UserProfileRestoreWorkerTests::payloadChecksumMismatchFailsValidation() {
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);
+    QCOMPARE(completeSpy.first().at(1).toString(), QStringLiteral("Invalid backup"));
+    // The refusal happens in validation, so nothing was written from the tampered payload.
+    QVERIFY(!QDir(destDir.path() + "/Users").exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -371,7 +378,11 @@ void UserProfileRestoreWorkerTests::correctChecksumsPassValidation() {
     // Seal with the ACTUAL payload + manifest digests, as the backup worker does.
     manifest.users[0].checksum_sha256 =
         sak::BackupManifest::hashDirectoryTree(backupDir.path() + "/TestUser");
-    QVERIFY(!manifest.users[0].checksum_sha256.isEmpty());
+    // hashDirectoryTree is a pure content+relative-path digest of the fixture this test just
+    // wrote, so the value is fixed: pinning it proves the seal covers the real payload rather
+    // than merely being non-empty (an all-zero or constant digest would pass the old check).
+    QCOMPARE(manifest.users[0].checksum_sha256,
+             QStringLiteral("779de05d12530d405aa3d6a151b6f12ec56dfba2b7aaa584a1bf2b72aef6ffeb"));
     manifest.manifest_checksum = manifest.computeManifestChecksum();
     auto mapping = makeMapping(QStringLiteral("TestUser"));
 
@@ -388,7 +399,11 @@ void UserProfileRestoreWorkerTests::correctChecksumsPassValidation() {
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), true);  // valid integrity -> proceeds
-    QVERIFY(QFile::exists(destDir.path() + "/Users/TestUser/Documents/hello.txt"));
+    // Existence alone would pass on an empty or truncated file: the payload is copied
+    // verbatim, so pin the restored CONTENT.
+    QFile probeRestored(destDir.path() + "/Users/TestUser/Documents/hello.txt");
+    QVERIFY(probeRestored.open(QIODevice::ReadOnly));
+    QCOMPARE(probeRestored.readAll(), QByteArray("hello from backup"));
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +445,8 @@ void UserProfileRestoreWorkerTests::sealedManifestMissingUserDigestFailsClosed()
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
     QCOMPARE(completeSpy.first().at(0).toBool(), false);  // sealed manifest, no payload digest
+    QCOMPARE(completeSpy.first().at(1).toString(), QStringLiteral("Invalid backup"));
+    QVERIFY(!QDir(destDir.path() + "/Users").exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +571,12 @@ void UserProfileRestoreWorkerTests::unselectedMappingSkipped() {
     // Destination file should NOT exist.
     const QString destFile = destDir.path() + "/Users/SkippedUser/Documents/file.txt";
     QVERIFY2(!QFile::exists(destFile), "Unselected mapping should not be restored");
+    // The unselected user is skipped by `continue` BEFORE the only mkpath, so not even the
+    // profile root appears -- and the summary counts it as neither restored nor skipped.
+    QVERIFY(!QDir(destDir.path() + "/Users").exists());
+    QCOMPARE(completeSpy.first().at(1).toString(),
+             QStringLiteral("Restore complete!\nFiles restored: 0\nFiles skipped: 0\nErrors: "
+                            "0\nTotal size: 0.0 MB"));
 }
 
 // ---------------------------------------------------------------------------
@@ -593,13 +616,19 @@ void UserProfileRestoreWorkerTests::sourceUserNotInManifest() {
     // Check that a warning was logged about the missing user.
     bool foundWarning = false;
     for (const auto& args : logSpy) {
-        if (args.at(0).toString().contains(QStringLiteral("Source user not found")) &&
+        // The exact message names the MISSING user; a contains() on the prefix would pass even
+        // if the warning pointed at the wrong (or an empty) user name.
+        if (args.at(0).toString() == QStringLiteral("Source user not found in manifest: Bob") &&
             args.at(1).toBool()) {
             foundWarning = true;
             break;
         }
     }
     QVERIFY2(foundWarning, "Expected warning about source user not in manifest");
+    // The failure is COUNTED, so the summary reports the error rather than a clean zero-file run.
+    QCOMPARE(completeSpy.first().at(1).toString(),
+             QStringLiteral("Restore complete!\nFiles restored: 0\nFiles skipped: 0\nErrors: "
+                            "1\nTotal size: 0.0 MB"));
 }
 
 // ---------------------------------------------------------------------------
@@ -646,9 +675,18 @@ void UserProfileRestoreWorkerTests::multipleFoldersRestored() {
 
     // All three files should be present at the destination.
     const QString base = destDir.path() + "/Users/MultiUser/";
-    QVERIFY(QFile::exists(base + "Documents/doc.txt"));
-    QVERIFY(QFile::exists(base + "Desktop/shortcut.txt"));
-    QVERIFY(QFile::exists(base + "Pictures/photo.jpg"));
+    // Each of the three files is copied verbatim; existence alone would pass on empty files or
+    // on content copied into the wrong folder.
+    for (const QString& rel : {QStringLiteral("Documents/doc.txt"),
+                               QStringLiteral("Desktop/shortcut.txt"),
+                               QStringLiteral("Pictures/photo.jpg")}) {
+        QFile restored(base + rel);
+        QVERIFY2(restored.open(QIODevice::ReadOnly), qPrintable(rel));
+        QCOMPARE(restored.readAll(), QByteArray("backup-content"));
+    }
+    QCOMPARE(completeSpy.first().at(1).toString(),
+             QStringLiteral("Restore complete!\nFiles restored: 3\nFiles skipped: 0\nErrors: "
+                            "0\nTotal size: 0.0 MB"));
 }
 
 // ===========================================================================
@@ -699,6 +737,10 @@ void UserProfileRestoreWorkerTests::conflictSkipDuplicate() {
     QFile f(destFile);
     QVERIFY(f.open(QIODevice::ReadOnly));
     QCOMPARE(f.readAll(), QByteArray("original-content"));
+    // The skip is COUNTED as a skip, not silently dropped from both tallies.
+    QCOMPARE(completeSpy.first().at(1).toString(),
+             QStringLiteral("Restore complete!\nFiles restored: 0\nFiles skipped: 1\nErrors: "
+                            "0\nTotal size: 0.0 MB"));
 }
 
 // ---------------------------------------------------------------------------
@@ -970,17 +1012,18 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel() {
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
 
-    // Join before touching logSpy. QSignalSpy connects with Qt::DirectConnection, so the
-    // worker thread appends to the spy's list itself, and in Qt 6.5.3 that append is not
-    // locked (the mutex only arrives in 6.10.3). Observing restoreComplete is a logical
-    // ordering, not a synchronisation edge; wait() is one, and it also pins the claim that
-    // a cancelled run actually terminates rather than merely reporting that it did.
+    // Join before touching logSpy. QSignalSpy connects with Qt::DirectConnection, so the worker
+    // thread appends to the spy's list itself, and in Qt 6.5.3 that append is not locked (the
+    // mutex only arrives in 6.10.3). Observing restoreComplete is a logical ordering, not a
+    // synchronisation edge; wait() is one, and it also pins that a cancelled run terminates.
     QVERIFY2(worker.wait(5000), "restore worker did not finish after cancel");
 
     // The "EmitsCancel" half of the name: cancel() announces the cancellation.
     bool announced = false;
     for (const auto& args : logSpy) {
-        if (args.at(0).toString().contains(QStringLiteral("Canceling restore"))) {
+        // Exact text + non-warning severity (an informational status line, not an error).
+        if (args.at(0).toString() == QStringLiteral("Canceling restore...") &&
+            !args.at(1).toBool()) {
             announced = true;
             break;
         }
@@ -1041,12 +1084,17 @@ void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted() {
     // planted file was restored, and nothing was skipped or errored. A non-empty check
     // alone passed even when the counters were wrong.
     const QString summary = args.at(1).toString();
-    QVERIFY2(summary.contains(QStringLiteral("Files restored: 1")), qPrintable(summary));
-    QVERIFY2(summary.contains(QStringLiteral("Files skipped: 0")), qPrintable(summary));
-    QVERIFY2(summary.contains(QStringLiteral("Errors: 0")), qPrintable(summary));
+    QCOMPARE(summary,
+             QStringLiteral("Restore complete!\nFiles restored: 1\nFiles skipped: 0\nErrors: "
+                            "0\nTotal size: 0.0 MB"));
 
-    // statusUpdate should have been emitted at least once.
-    QVERIFY(statusSpy.count() >= 1);
+    // statusUpdate is emitted exactly twice -- once at the start and once at the end -- and
+    // each carries the user it is reporting on. ">= 1" could not catch a lost final update
+    // (the one that tells the UI the run is over) or a status attributed to the wrong user.
+    QCOMPARE(statusSpy.count(), 2);
+    QCOMPARE(statusSpy.at(0).at(0).toString(), QStringLiteral("SigUser"));
+    QCOMPARE(statusSpy.at(0).at(1).toString(), QStringLiteral("Starting restore..."));
+    QCOMPARE(statusSpy.at(1).at(0).toString(), QStringLiteral("SigUser"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1083,8 +1131,12 @@ void UserProfileRestoreWorkerTests::logMessageSignalEmitted() {
     // Several log messages should have been emitted:
     // "=== Restore Started ===", "Backup: ...", "Users to restore: 1",
     // "Backup validation passed", "Calculating total size...", etc.
-    QVERIFY2(logSpy.count() >= 5,
-             qPrintable(QString("Expected >=5 log messages, got %1").arg(logSpy.count())));
+    // This single-user, single-file run emits an exact, fixed number of log lines; a floor
+    // cannot notice log messages disappearing while five remain.
+    QCOMPARE(logSpy.count(), 10);
+    // The first line is the banner, emitted as an informational (non-warning) message.
+    QCOMPARE(logSpy.at(0).at(0).toString(), QStringLiteral("=== Restore Started ==="));
+    QCOMPARE(logSpy.at(0).at(1).toBool(), false);
 
     // Check for "Restore Started" message.
     bool foundStart = false;
@@ -1194,7 +1246,11 @@ void UserProfileRestoreWorkerTests::overwriteRestoreLeavesNoTempArtifacts() {
     // The larger backup replaced the small original.
     QFile result(destBase + "data.txt");
     QVERIFY(result.open(QIODevice::ReadOnly));
-    QCOMPARE(result.readAll().size(), 5000);
+    // Size alone would pass on 5000 bytes of the WRONG content (or a zero-filled file); the
+    // replace path copies the backup payload verbatim.
+    const QByteArray probeData = result.readAll();
+    QCOMPARE(probeData.size(), 5000);
+    QCOMPARE(probeData, QByteArray(5000, 'X'));
 
     // No swap temporaries left behind. The real staging/rename temp is
     // "data.txt.sak-<tag>-<random-hex>.tmp" (makeRestoreTempPath), so the two fixed names the
@@ -1290,7 +1346,11 @@ void UserProfileRestoreWorkerTests::missingFolderSourceFailsClosed() {
     // its mkpath). Without these, any unrelated failure would satisfy the flag check.
     bool reported = false;
     for (const auto& args : logSpy) {
-        if (args.at(0).toString().contains(QStringLiteral("Source folder does not exist")) &&
+        // "naming the missing source folder" is the claim -- so assert the NAME, not just the
+        // prefix. The path is the manifest-composed source, built by buildSafePath.
+        if (args.at(0).toString() ==
+                QStringLiteral("Source folder does not exist: ") +
+                    QDir(backupDir.path()).filePath(QStringLiteral("MfsUser/Documents")) &&
             args.at(1).toBool()) {
             reported = true;
             break;
@@ -1298,6 +1358,10 @@ void UserProfileRestoreWorkerTests::missingFolderSourceFailsClosed() {
     }
     QVERIFY2(reported, "Expected a warning naming the missing source folder");
     QVERIFY(!QDir(destDir.path() + "/Users/MfsUser/Documents").exists());
+    // Counted as an error, so the summary reports it rather than a clean empty run.
+    QCOMPARE(completeSpy.first().at(1).toString(),
+             QStringLiteral("Restore complete!\nFiles restored: 0\nFiles skipped: 0\nErrors: "
+                            "1\nTotal size: 0.0 MB"));
 }
 
 // ===========================================================================
@@ -1422,7 +1486,9 @@ void UserProfileRestoreWorkerTests::system32NetshResolvesUnderSystemRoot() {
     }
     // Fully qualified under System32 (no bare "netsh.exe" search-order exposure).
     const QString normalized = QDir::fromNativeSeparators(netsh).toLower();
-    QVERIFY2(normalized.endsWith(QStringLiteral("/windows/system32/netsh.exe")), qPrintable(netsh));
+    // The env var was set to exactly "C:\Windows" above, so the WHOLE resolved path is
+    // deterministic; endsWith() would also accept a path rooted somewhere else entirely.
+    QCOMPARE(normalized, QStringLiteral("c:/windows/system32/netsh.exe"));
 }
 
 void UserProfileRestoreWorkerTests::system32NetshEmptyWhenNoSystemRoot() {
