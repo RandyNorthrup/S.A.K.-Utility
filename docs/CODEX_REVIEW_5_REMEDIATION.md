@@ -5024,6 +5024,37 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-23 second-pass re-sweep b72c (gated 249/249): 25 residual weak assertions
+    pinned in tests/unit/test_file_explorer_item_model.cpp. Two pins are cross-version data
+    contracts rather than strength alone. (1) The grouping option NAMES are persisted: the panel
+    writes fileExplorerGroupOptionName() into QSettings and reads it back through
+    fileExplorerGroupOptionFromName(), but the only coverage was a round trip through the pair,
+    which never observes the stored string -- swapping the "size" and "fileType" literals
+    round-trips perfectly while silently reinterpreting every saved settings file. All seven
+    literals, the trim behaviour and the fail-closed None default now live in their own slot,
+    groupOptionNamesArePersistedLiterals; mutation-proved by swapping those two literals, which
+    the new slot catches and the old round trip did not. (2) QCOMPARE(columnCount(), ColumnCount)
+    put the same symbol on both sides and could not fail; the count and PathColumn's ordinal are
+    now literals, which matters because the details view persists a POSITIONAL column-width list
+    into QSettings and reapplies it by index. Also: the nine-column header table (three of nine
+    were checked, so swapping the Type and Size labels left the probed sections correct while
+    every other header in the view was wrong), the size-bucket ladder pinned with its RANGE half
+    -- the half that carried the shipped B8-24 GiB/MiB/KiB unit defect, which a startsWith(name)
+    ladder structurally cannot see -- plus the bucket RANK that orders the sections; the adjacent
+    EntryModifiedTimeRole / EntryCreatedTimeRole lambdas, where isValid() on both could not see
+    either returning the other field, and the Modified display string, which was compared against
+    the model's OWN role output so a swapped role table made both sides swap together; the
+    checkStateForEntry COLUMN guard, isolated from the visibility guard for the first time (no
+    assertion in tests/unit had ever probed CheckStateRole on a non-Name column, so dropping that
+    guard -- every column paints a checkbox -- was invisible; mutation-proved); the mimeData
+    empty-row-list return, which the no-provider probe could not reach; whole ItemFlags sets
+    instead of single-bit probes (Qt::NoItemFlags, or a grouped-view proxy that synthesised flags
+    and dropped ItemIsEditable, killed selection or inline rename while passing); supportedDragActions
+    compared whole (losing CopyAction silently kills ctrl-drag copy); the grouped header ROW
+    POSITIONS rather than their count (emitting each header AFTER its rows keeps size() == 3
+    while every header the view paints lands on the wrong item); and the identity of the two rows
+    surviving a type filter, where an off-by-one inside filterAcceptsRow yields two rows that are
+    entirely the wrong items.
   - PROGRESS 2026-08-23 second-pass re-sweep b72b (gated 249/249): 28 residual weak assertions
     pinned in tests/unit/test_file_management_explorer_panel.cpp, plus one NEW test arm covering a
     security guard that had no coverage at all (FINDING N5, below). Two file-scope helpers do the
