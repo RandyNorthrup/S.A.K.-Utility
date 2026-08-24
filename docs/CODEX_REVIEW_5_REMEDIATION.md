@@ -5024,7 +5024,29 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
-  - FINDING N4 (FIXED this commit, test defect, medium): test_user_data_manager's
+  - PROGRESS 2026-08-23 second-pass re-sweep b71c (gated 249/249): 29 residual weak assertions
+    pinned in tests/unit/test_linux_iso_downloader.cpp, closing the b71 worklist. This file's
+    residual class is the SHAPE-PROBED URL: nine tests asserted a resolved download/checksum URL
+    only by host + contains(version) + suffix, which is jointly satisfied by a template whose
+    release-path segment is wrong or unsubstituted (a guaranteed 404), and -- where {version}
+    appears TWICE (SystemRescue, Clonezilla, GParted) -- by only ONE of the two substitutions
+    landing. All nine now compare the fully-resolved URL. The checksum URLs matter more than the
+    download URLs: they decide WHICH HOST attests to an ISO before it is written to removable
+    media, and contains("SHA256SUMS") / startsWith("https://") permitted any host at all. Also
+    closed: two VACUOUS constructs -- testResolveFileName_GitHubTemplate guarded its only
+    assertion behind `if (!d.fileName.isEmpty())`, so a dropped filename template (exactly the
+    regression it guards) made it assert nothing; and testSourceForgeUrlStructure_AllDistros
+    skips its whole body for non-SourceForge entries, so it would pass with zero iterations if
+    the catalog stopped carrying SourceForge distros -- it now counts and pins 3 checks. Plus
+    the category-name map pinned exactly (the Security heading carries a DOUBLED ampersand
+    because Qt eats a single '&' as a mnemonic -- invisible to !isEmpty(), and it renders as
+    "Security  Pen-Testing" if lost), the per-category distro split pinned (the old
+    sum-equals-total compare was satisfied by ANY partition, including one where a category had
+    gone empty), the GeneralPurpose membership pinned as an ordered id list, and the downloader's
+    unknown-distro / no-pinned-checksum / cancel-from-idle messages pinned verbatim (the
+    checksum refusal must prove the download was refused BEFORE any bytes were fetched, which
+    contains("checksum") could not distinguish from a fetch failure or a digest mismatch).
+  - FINDING N4 (FIXED, test defect, medium): test_user_data_manager's
     deleteBackupRefusesForgedSidecarMismatch never exercised the guard it is named for. It wrote a
     forged sidecar carrying only app_name and backup_path; parseMetadataObject REQUIRES a string
     checksum (an absent one must not become "" and silently disable verification), so readMetadata

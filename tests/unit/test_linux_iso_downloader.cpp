@@ -212,12 +212,15 @@ void LinuxISODownloaderTests::testAllCategoriesRepresented() {
 
 void LinuxISODownloaderTests::testCategoryNames() {
     auto names = LinuxDistroCatalog::categoryNames();
-    QVERIFY(names.size() >= 5);
-    QVERIFY(!names[LinuxDistroCatalog::Category::GeneralPurpose].isEmpty());
-    QVERIFY(!names[LinuxDistroCatalog::Category::Security].isEmpty());
-    QVERIFY(!names[LinuxDistroCatalog::Category::SystemRecovery].isEmpty());
-    QVERIFY(!names[LinuxDistroCatalog::Category::DiskTools].isEmpty());
-    QVERIFY(!names[LinuxDistroCatalog::Category::Utilities].isEmpty());
+    // These strings are the rendered tab/section headings, and the Security one carries a
+    // DOUBLED ampersand because Qt eats a single '&' as a mnemonic -- a detail no !isEmpty()
+    // check could protect, and one that silently renders as "Security  Pen-Testing" if lost.
+    QCOMPARE(names.size(), 5);
+    QCOMPARE(names[LinuxDistroCatalog::Category::GeneralPurpose], QString("General Purpose"));
+    QCOMPARE(names[LinuxDistroCatalog::Category::Security], QString("Security && Pen-Testing"));
+    QCOMPARE(names[LinuxDistroCatalog::Category::SystemRecovery], QString("System Recovery"));
+    QCOMPARE(names[LinuxDistroCatalog::Category::DiskTools], QString("Disk Tools"));
+    QCOMPARE(names[LinuxDistroCatalog::Category::Utilities], QString("Utilities"));
 }
 
 // ============================================================================
@@ -229,6 +232,17 @@ void LinuxISODownloaderTests::testDistroByIdFound() {
     QVERIFY(!d.id.isEmpty());
     QCOMPARE(d.id, QString("ubuntu-desktop"));
     QCOMPARE(d.name, QString("Ubuntu Desktop"));
+    // The rest of the looked-up record. id+name matching proved the INDEX resolved, but said
+    // nothing about the fields every later step consumes: the version that is substituted into
+    // the download URL, the source type that selects the resolver, and the checksum type that
+    // decides how the ISO is verified before it is written to removable media.
+    QCOMPARE(d.version, QString("26.04"));
+    QCOMPARE(d.versionLabel, QString("Resolute Raccoon (LTS)"));
+    QCOMPARE(d.category, LinuxDistroCatalog::Category::GeneralPurpose);
+    QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::DirectURL);
+    QCOMPARE(d.checksumType, QString("sha256"));
+    QCOMPARE(d.homepage, QString("https://ubuntu.com/desktop"));
+    QCOMPARE(d.approximateSize, Q_INT64_C(6'549'825'126));
 }
 
 void LinuxISODownloaderTests::testDistroByIdNotFound() {
@@ -244,13 +258,20 @@ void LinuxISODownloaderTests::testDistrosByCategory() {
     // Six general-purpose distros: ubuntu-desktop, ubuntu-server, linuxmint, fedora, debian, arch.
     QCOMPARE(general.size(), 6);
 
-    bool foundUbuntu = false;
+    // The exact membership AND order of the category, which is what the picker renders. A
+    // single presence flag could not see another distro silently dropping out of the group
+    // (the size check alone would still pass if one were swapped for another).
+    QStringList generalIds;
     for (const auto& d : general) {
-        if (d.id == "ubuntu-desktop") {
-            foundUbuntu = true;
-        }
+        generalIds << d.id;
     }
-    QVERIFY(foundUbuntu);
+    QCOMPARE(generalIds,
+             QStringList({"ubuntu-desktop",
+                          "ubuntu-server",
+                          "linuxmint-cinnamon",
+                          "fedora-workstation",
+                          "debian-live-gnome",
+                          "arch-linux"}));
 }
 
 void LinuxISODownloaderTests::testDistrosByCategoryCount() {
@@ -260,7 +281,16 @@ void LinuxISODownloaderTests::testDistrosByCategoryCount() {
         auto distros = m_catalog->distrosByCategory(it.key());
         total += distros.size();
     }
-    QCOMPARE(total, m_catalog->allDistros().size());
+    // Pin the per-category split, not only that the parts sum to the whole: the old compare was
+    // satisfied by ANY partition of the catalog, including one where a category had gone empty
+    // and its distros had all landed in another.
+    QCOMPARE(m_catalog->distrosByCategory(LinuxDistroCatalog::Category::GeneralPurpose).size(), 6);
+    QCOMPARE(m_catalog->distrosByCategory(LinuxDistroCatalog::Category::Security).size(), 1);
+    QCOMPARE(m_catalog->distrosByCategory(LinuxDistroCatalog::Category::SystemRecovery).size(), 1);
+    QCOMPARE(m_catalog->distrosByCategory(LinuxDistroCatalog::Category::DiskTools).size(), 3);
+    QCOMPARE(m_catalog->distrosByCategory(LinuxDistroCatalog::Category::Utilities).size(), 1);
+    QCOMPARE(total, 12);
+    QCOMPARE(total, static_cast<int>(m_catalog->allDistros().size()));
 }
 
 // ============================================================================
@@ -270,18 +300,19 @@ void LinuxISODownloaderTests::testDistrosByCategoryCount() {
 void LinuxISODownloaderTests::testResolveDirectUrl_Ubuntu() {
     auto d = m_catalog->distroById("ubuntu-desktop");
     QString url = m_catalog->resolveDownloadUrl(d);
-    QVERIFY2(url.contains("releases.ubuntu.com"), qPrintable("URL: " + url));
-    QVERIFY2(url.contains(d.version), qPrintable("URL missing version: " + url));
-    QVERIFY2(url.endsWith(".iso"), qPrintable("URL doesn't end with .iso: " + url));
-    QVERIFY2(!url.contains("{version}"), qPrintable("Unresolved {version} placeholder: " + url));
+    // The fully-resolved URL. The four probes were jointly satisfied by a template whose
+    // RELEASE PATH segment ("resolute") was wrong or unsubstituted -- the download would 404,
+    // and every probe would still pass.
+    QCOMPARE(url, QString("https://releases.ubuntu.com/resolute/ubuntu-26.04-desktop-amd64.iso"));
 }
 
 void LinuxISODownloaderTests::testResolveDirectUrl_Kali() {
     auto d = m_catalog->distroById("kali-linux");
     QString url = m_catalog->resolveDownloadUrl(d);
-    QVERIFY(url.contains("cdimage.kali.org"));
-    QVERIFY(url.contains(d.version));
-    QVERIFY(url.endsWith(".iso"));
+    // Kali downloads from a rolling current/ directory, so the catalog-built URL is the
+    // STARTING point the rolling-filename discovery later rewrites; pin it exactly.
+    QCOMPARE(url,
+             QString("https://cdimage.kali.org/current/kali-linux-2026.1-installer-amd64.iso"));
 }
 
 // ============================================================================
@@ -293,11 +324,11 @@ void LinuxISODownloaderTests::testResolveSourceForgeUrl_SystemRescue() {
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::SourceForge);
 
     QString url = m_catalog->resolveDownloadUrl(d);
-    QVERIFY2(url.contains("sourceforge.net"), qPrintable("URL: " + url));
-    QVERIFY2(url.contains("systemrescuecd"), qPrintable("URL should contain project name: " + url));
-    QVERIFY2(url.contains(d.version), qPrintable("URL missing version: " + url));
-    QVERIFY2(url.endsWith("/download"),
-             qPrintable("SourceForge URL must end with /download: " + url));
+    // The version appears TWICE in this template (directory and filename); a contains() check
+    // passes when only one of the two is substituted, which yields a 404 mirror path.
+    QCOMPARE(url,
+             QString("https://sourceforge.net/projects/systemrescuecd/files/sysresccd-x86/"
+                     "13.00/systemrescue-13.00-amd64.iso/download"));
 }
 
 void LinuxISODownloaderTests::testResolveSourceForgeUrl_Clonezilla() {
@@ -305,10 +336,9 @@ void LinuxISODownloaderTests::testResolveSourceForgeUrl_Clonezilla() {
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::SourceForge);
 
     QString url = m_catalog->resolveDownloadUrl(d);
-    QVERIFY2(url.contains("sourceforge.net"), qPrintable("URL: " + url));
-    QVERIFY2(url.contains(d.version), qPrintable("URL missing version: " + url));
-    QVERIFY2(url.endsWith("/download"),
-             qPrintable("SourceForge URL must end with /download: " + url));
+    QCOMPARE(url,
+             QString("https://sourceforge.net/projects/clonezilla/files/clonezilla_live_stable/"
+                     "3.3.1-35/clonezilla-live-3.3.1-35-amd64.iso/download"));
 }
 
 void LinuxISODownloaderTests::testResolveSourceForgeUrl_GParted() {
@@ -316,9 +346,9 @@ void LinuxISODownloaderTests::testResolveSourceForgeUrl_GParted() {
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::SourceForge);
 
     QString url = m_catalog->resolveDownloadUrl(d);
-    QVERIFY(url.contains("sourceforge.net"));
-    QVERIFY(url.contains(d.version));
-    QVERIFY(url.endsWith("/download"));
+    QCOMPARE(url,
+             QString("https://sourceforge.net/projects/gparted/files/gparted-live-stable/"
+                     "1.8.1-3/gparted-live-1.8.1-3-amd64.iso/download"));
 }
 
 // ============================================================================
@@ -349,8 +379,9 @@ void LinuxISODownloaderTests::testResolveGitHubUrl_RequiresVersionCheck() {
 void LinuxISODownloaderTests::testResolveChecksumUrl_Ubuntu() {
     auto d = m_catalog->distroById("ubuntu-desktop");
     QString url = m_catalog->resolveChecksumUrl(d);
-    QVERIFY(!url.isEmpty());
-    QVERIFY(url.contains("SHA256SUMS"));
+    // The digest source is a security-load-bearing URL: it decides which host attests to the
+    // ISO before it is written to removable media. contains("SHA256SUMS") passed for ANY host.
+    QCOMPARE(url, QString("https://releases.ubuntu.com/resolute/SHA256SUMS"));
 }
 
 void LinuxISODownloaderTests::testResolveChecksumUrl_SystemRescue() {
@@ -359,10 +390,12 @@ void LinuxISODownloaderTests::testResolveChecksumUrl_SystemRescue() {
     // mirror network that serves the ISO.
     auto d = m_catalog->distroById("systemrescue");
     const QString url = m_catalog->resolveChecksumUrl(d);
-    QVERIFY2(url.startsWith("https://www.system-rescue.org/releases/"), qPrintable(url));
-    QVERIFY2(url.endsWith(".iso.sha256"), qPrintable(url));
-    QVERIFY2(url.contains(d.version), qPrintable(url));
-    QVERIFY2(!url.contains("{version}"), qPrintable(url));
+    // Both {version} substitutions (directory and filename) resolved, on the project's own
+    // host rather than the SourceForge mirror that serves the ISO -- which is the entire point
+    // of this entry. A contains() on the version passed with only one of the two substituted.
+    QCOMPARE(url,
+             QString("https://www.system-rescue.org/releases/13.00/"
+                     "systemrescue-13.00-amd64.iso.sha256"));
     QCOMPARE(d.checksumType, QString("sha256"));
 }
 
@@ -371,10 +404,9 @@ void LinuxISODownloaderTests::testResolveChecksumUrl_GParted() {
     // note in the same {version} directory as the ISO, which is equally per-release.
     auto d = m_catalog->distroById("gparted-live");
     const QString url = m_catalog->resolveChecksumUrl(d);
-    const QString expectedPrefix = "https://downloads.sourceforge.net/project/gparted/";
-    QVERIFY2(url.startsWith(expectedPrefix), qPrintable(url));
-    QVERIFY2(url.contains(d.version), qPrintable(url));
-    QVERIFY2(!url.contains("{version}"), qPrintable(url));
+    QCOMPARE(url,
+             QString("https://downloads.sourceforge.net/project/gparted/gparted-live-stable/"
+                     "1.8.1-3/gparted-live-1.8.1-3-README.md"));
     QCOMPARE(d.checksumType, QString("sha256"));
 }
 
@@ -476,10 +508,11 @@ void LinuxISODownloaderTests::testResolveChecksumUrl_Fedora() {
     // could read its BSD-style records. Assert the pin still satisfies the catalog invariant.
     auto d = m_catalog->distroById("fedora-workstation");
     const QString url = m_catalog->resolveChecksumUrl(d);
-    QVERIFY2(url.startsWith("https://"), qPrintable(url));
-    QVERIFY2(url.endsWith("-CHECKSUM"), qPrintable(url));
-    QVERIFY2(url.contains(d.version), qPrintable(url));
-    QVERIFY2(!url.contains("{version}"), qPrintable(url));
+    // startsWith("https://") is the weakest possible form of the HTTPS claim this test is
+    // named for; the whole URL pins the host as well as the scheme.
+    QCOMPARE(url,
+             QString("https://download.fedoraproject.org/pub/fedora/linux/releases/44/"
+                     "Workstation/x86_64/iso/Fedora-Workstation-44-1.7-x86_64-CHECKSUM"));
     QCOMPARE(d.checksumType, QString("sha256"));
 }
 
@@ -511,27 +544,24 @@ void LinuxISODownloaderTests::testEveryPinnedChecksumUrlIsHttpsAndPerRelease() {
 void LinuxISODownloaderTests::testResolveFileName_Direct() {
     auto d = m_catalog->distroById("ubuntu-desktop");
     QString filename = m_catalog->resolveFileName(d);
-    QVERIFY(!filename.isEmpty());
-    QVERIFY(filename.contains(d.version));
-    QVERIFY(filename.endsWith(".iso"));
-    QVERIFY(!filename.contains("{version}"));
+    // This is the name the ISO is SAVED under, and the same name the checksum record is matched
+    // against; a shape check could not see the flavour ("desktop" vs "live-server") drifting.
+    QCOMPARE(filename, QString("ubuntu-26.04-desktop-amd64.iso"));
 }
 
 void LinuxISODownloaderTests::testResolveFileName_SourceForge() {
     auto d = m_catalog->distroById("gparted-live");
     QString filename = m_catalog->resolveFileName(d);
-    QVERIFY(!filename.isEmpty());
-    QVERIFY(filename.contains(d.version));
-    QVERIFY(filename.endsWith(".iso"));
+    QCOMPARE(filename, QString("gparted-live-1.8.1-3-amd64.iso"));
 }
 
 void LinuxISODownloaderTests::testResolveFileName_GitHubTemplate() {
     auto d = m_catalog->distroById("ventoy");
     QString filename = m_catalog->resolveFileName(d);
-    // GitHub-backed distros keep a deterministic filename template before live asset resolution.
-    if (!d.fileName.isEmpty()) {
-        QVERIFY(filename.contains(d.version));
-    }
+    // GitHub-backed distros keep a deterministic filename template before live asset
+    // resolution. The old guarded check was VACUOUS whenever fileName was empty -- which is
+    // precisely the regression (a dropped template) it was meant to catch.
+    QCOMPARE(filename, QString("ventoy-1.1.12-livecd.iso"));
 }
 
 // ============================================================================
@@ -541,9 +571,11 @@ void LinuxISODownloaderTests::testResolveFileName_GitHubTemplate() {
 void LinuxISODownloaderTests::testVersionSubstitution() {
     auto d = m_catalog->distroById("ubuntu-server");
     QString url = m_catalog->resolveDownloadUrl(d);
-    // {version} should be replaced with actual version
-    QVERIFY(!url.contains("{version}"));
-    QVERIFY(url.contains(d.version));
+    // Substitution proven by the whole result: "contains the version" also held if the version
+    // were spliced into the wrong segment, and the server flavour is what distinguishes this
+    // entry from ubuntu-desktop, which shares every other part of the URL.
+    QCOMPARE(url,
+             QString("https://releases.ubuntu.com/resolute/ubuntu-26.04-live-server-amd64.iso"));
 }
 
 void LinuxISODownloaderTests::testVersionSubstitutionNoPlaceholder() {
@@ -613,11 +645,12 @@ void LinuxISODownloaderTests::testArchLinuxCatalogEntry() {
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::DirectURL);
 
     const QString url = m_catalog->resolveDownloadUrl(d);
-    QVERIFY2(url.contains("geo.mirror.pkgbuild.com"), qPrintable("URL: " + url));
-    QVERIFY2(url.endsWith("archlinux-x86_64.iso"), qPrintable("URL: " + url));
+    // Arch serves a rolling "latest" path with no version in it, so the two probes could not
+    // detect the directory changing underneath; pin both URLs whole.
+    QCOMPARE(url, QString("https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso"));
 
     const QString checksumUrl = m_catalog->resolveChecksumUrl(d);
-    QVERIFY2(checksumUrl.endsWith("sha256sums.txt"), qPrintable("Checksum URL: " + checksumUrl));
+    QCOMPARE(checksumUrl, QString("https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt"));
 }
 
 // ============================================================================
@@ -647,7 +680,9 @@ void LinuxISODownloaderTests::testStartDownload_UnknownDistro() {
     downloader.startDownload("nonexistent-distro", "C:/tmp/test.iso");
 
     QCOMPARE(errorSpy.count(), 1);
-    QVERIFY(errorSpy.at(0).at(0).toString().contains("Unknown"));
+    // The message ECHOES the rejected id, which is what tells a caller the lookup failed rather
+    // than the download; "Unknown" alone also matched an unrelated unknown-error path.
+    QCOMPARE(errorSpy.at(0).at(0).toString(), QString("Unknown distribution: nonexistent-distro"));
 }
 
 void LinuxISODownloaderTests::testStartDownload_WhileDownloading() {
@@ -660,6 +695,8 @@ void LinuxISODownloaderTests::testStartDownload_WhileDownloading() {
     // First attempt with unknown distro to trigger error
     downloader.startDownload("nonexistent", "C:/tmp/test.iso");
     QCOMPARE(errorSpy.count(), 1);
+    // Explicitly NOT the "already in progress" refusal this test exists to rule out.
+    QCOMPARE(errorSpy.at(0).at(0).toString(), QString("Unknown distribution: nonexistent"));
 }
 
 void LinuxISODownloaderTests::testStartDownload_RefusesReleaseWithoutPinnedChecksum() {
@@ -675,8 +712,13 @@ void LinuxISODownloaderTests::testStartDownload_RefusesReleaseWithoutPinnedCheck
     downloader.startDownload("clonezilla", QDir::tempPath() + "/sak-test-clonezilla.iso");
 
     QCOMPARE(errorSpy.count(), 1);
-    QVERIFY2(errorSpy.at(0).at(0).toString().contains("checksum", Qt::CaseInsensitive),
-             qPrintable(errorSpy.at(0).at(0).toString()));
+    // The whole refusal, naming the distro and the reason. "mentions checksum" was equally
+    // satisfied by a checksum DOWNLOAD failure or a mismatch, neither of which proves the
+    // download was refused BEFORE any bytes were fetched.
+    QCOMPARE(errorSpy.at(0).at(0).toString(),
+             QString("No pinned checksum is published for Clonezilla Live; refusing to download "
+                     "an ISO whose integrity cannot be verified before it is written to "
+                     "removable media."));
     QCOMPARE(downloader.currentPhase(), LinuxISODownloader::Phase::Failed);
     QVERIFY(!downloader.isDownloading());
 
@@ -701,6 +743,9 @@ void LinuxISODownloaderTests::testPhaseTransitions() {
     // After failed start attempt, should not be in downloading state
     downloader.startDownload("nonexistent", "C:/tmp/test.iso");
     QVERIFY(!downloader.isDownloading());
+    // isDownloading() is false for Idle AND Failed alike, so pin the phase the failed start
+    // actually left behind -- an unknown id must not latch the machine into Failed.
+    QCOMPARE(downloader.currentPhase(), LinuxISODownloader::Phase::Idle);
 }
 
 // ============================================================================
@@ -714,6 +759,10 @@ void LinuxISODownloaderTests::testCancelFromIdle() {
     // Cancel from idle should not crash
     downloader.cancel();
     QCOMPARE(downloader.currentPhase(), LinuxISODownloader::Phase::Idle);
+    // The spy was declared and never asserted. A cancel from idle still reports itself once,
+    // so the user is not left wondering whether the click registered.
+    QCOMPARE(statusSpy.count(), 1);
+    QCOMPARE(statusSpy.at(0).at(0).toString(), QString("Download cancelled"));
 }
 
 void LinuxISODownloaderTests::testShouldApplyVerifyResult_gating() {
@@ -800,10 +849,15 @@ void LinuxISODownloaderTests::testDirectUrlReachable_Ubuntu() {
 void LinuxISODownloaderTests::testSourceForgeUrlStructure_AllDistros() {
     // Verify all SourceForge distros have properly formed URLs
     auto all = m_catalog->allDistros();
+    // The whole loop body is skipped for every non-SourceForge entry, so it would pass
+    // VACUOUSLY if the catalog stopped carrying SourceForge distros at all (or if the
+    // sourceType of all three drifted). Count what was actually checked.
+    int sourceForgeChecked = 0;
     for (const auto& d : all) {
         if (d.sourceType != LinuxDistroCatalog::SourceType::SourceForge) {
             continue;
         }
+        ++sourceForgeChecked;
 
         QString url = m_catalog->resolveDownloadUrl(d);
 
@@ -823,6 +877,8 @@ void LinuxISODownloaderTests::testSourceForgeUrlStructure_AllDistros() {
         QVERIFY2(filename.contains(d.version),
                  qPrintable("SF filename missing version: " + d.id + " -> " + filename));
     }
+    // systemrescue, clonezilla, gparted-live.
+    QCOMPARE(sourceForgeChecked, 3);
 }
 
 QTEST_GUILESS_MAIN(LinuxISODownloaderTests)
