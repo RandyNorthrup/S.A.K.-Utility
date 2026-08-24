@@ -34,6 +34,15 @@ void TestEmailAttachmentSaver::sanitizeStripsInvalidChars() {
              QStringLiteral("a_b_c_d.txt"));
     QCOMPARE(sak::sanitizeAttachmentFilename(QString()), QStringLiteral("attachment"));
     QCOMPARE(sak::sanitizeAttachmentFilename(QStringLiteral("name...")), QStringLiteral("name"));
+    // The rest of the Windows invalid-character catalog: '"', '|', '?' and '*' are
+    // stripped too, not just the three exercised above (and '/' '\\' in
+    // sanitizeStripsPathSeparators).
+    QCOMPARE(sak::sanitizeAttachmentFilename(QStringLiteral("q\"u|e?s*t.txt")),
+             QStringLiteral("q_u_e_s_t.txt"));
+    // A name that passes the empty check but sanitizes down to nothing falls back to
+    // "attachment" as well -- a SECOND, distinct fallback site from the empty-input one.
+    QCOMPARE(sak::sanitizeAttachmentFilename(QStringLiteral("...")), QStringLiteral("attachment"));
+    QCOMPARE(sak::sanitizeAttachmentFilename(QStringLiteral("   ")), QStringLiteral("attachment"));
 }
 
 void TestEmailAttachmentSaver::sanitizeStripsPathSeparators() {
@@ -89,6 +98,31 @@ void TestEmailAttachmentSaver::saveToDirectoryDeduplicates() {
     QFile untouched(first.saved_path);
     QVERIFY(untouched.open(QIODevice::ReadOnly));
     QCOMPARE(untouched.readAll(), original);
+
+    // ...and the deduped slot holds the SECOND payload, not a re-write of the first.
+    QFile deduped(next.saved_path);
+    QVERIFY(deduped.open(QIODevice::ReadOnly));
+    QCOMPARE(deduped.readAll(), second);
+
+    // The counter is inserted before the extension only when there IS one (dot > 0).
+    // "a.txt" only ever exercises that arm; a name with no dot and a dot-LEADING name
+    // both take the suffix at the end.
+    const QByteArray third("THIRD", 5);
+    const QString noext = QStringLiteral("readme");
+    const auto noext_a = sak::saveAttachmentToDirectory(dir.path(), noext, original);
+    const auto noext_b = sak::saveAttachmentToDirectory(dir.path(), noext, third);
+    QVERIFY(noext_a.success);
+    QVERIFY(noext_b.success);
+    QCOMPARE(noext_a.saved_path, dir.path() + QStringLiteral("/readme"));
+    QCOMPARE(noext_b.saved_path, dir.path() + QStringLiteral("/readme_1"));
+
+    const QString dotfile = QStringLiteral(".hidden");
+    const auto dot_a = sak::saveAttachmentToDirectory(dir.path(), dotfile, original);
+    const auto dot_b = sak::saveAttachmentToDirectory(dir.path(), dotfile, third);
+    QVERIFY(dot_a.success);
+    QVERIFY(dot_b.success);
+    QCOMPARE(dot_a.saved_path, dir.path() + QStringLiteral("/.hidden"));
+    QCOMPARE(dot_b.saved_path, dir.path() + QStringLiteral("/.hidden_1"));
 }
 
 void TestEmailAttachmentSaver::saveToDirectoryDoesNotTruncateWhenExhausted() {
@@ -111,6 +145,11 @@ void TestEmailAttachmentSaver::saveToDirectoryDoesNotTruncateWhenExhausted() {
     const auto result =
         sak::saveAttachmentToDirectory(dir.path(), QStringLiteral("a.txt"), attacker);
     QVERIFY(!result.success);
+    // Refused for the STATED reason (name exhaustion), not by the empty-dir or
+    // null-payload guard, and only after walking every dedupe slot up to _999.
+    QCOMPARE(result.error_message,
+             QStringLiteral("No unique attachment name available in: ") + dir.path());
+    QCOMPARE(result.saved_path, dir.path() + QStringLiteral("/a_999.txt"));
 
     // The last slot must be intact, not truncated to the new payload.
     QFile last(dir.path() + QStringLiteral("/a_999.txt"));
@@ -181,6 +220,9 @@ void TestEmailAttachmentSaver::batchRecordsEachExpectedRefOnce() {
     QVERIFY(batch.isComplete());
     QCOMPARE(batch.succeeded(), 2);
     QCOMPARE(batch.failed(), 0);
+    // The counters reach the user only through summaryText(); its clean arm must name
+    // the SAVED count and the directory the bytes actually went to.
+    QCOMPARE(batch.summaryText(), QStringLiteral("Saved 2 attachment(s) to ") + dir.path());
 }
 
 // G22-9: a batch save must count a FAILURE by attachment identity, not off a bare
@@ -230,6 +272,9 @@ void TestEmailAttachmentSaver::batchRecordErrorRefusesDuplicate() {
     QVERIFY(batch.recordError(only));
     QCOMPARE(batch.failed(), 1);
     QVERIFY(batch.isComplete());
+    // The failure arm of the same user-facing summary: saved / expected / failed, each
+    // count in its own slot.
+    QCOMPARE(batch.summaryText(), QStringLiteral("Saved 0 of 1 attachment(s) (1 failed)"));
 
     // A duplicate failure for the same ref is refused: no second increment.
     QVERIFY(!batch.recordError(only));
@@ -246,13 +291,33 @@ void TestEmailAttachmentSaver::batchRefusesOverlappingBegin() {
     QVERIFY(dir.isValid());
 
     sak::AttachmentBatchSave batch;
-    QVERIFY(batch.begin(dir.path(), {sak::AttachmentRef{1, 0}}));
+    QVERIFY(batch.begin(dir.path(), {sak::AttachmentRef{1, 0}, sak::AttachmentRef{1, 1}}));
+    const auto first_saved =
+        batch.recordOne(sak::AttachmentRef{1, 0}, QStringLiteral("a.txt"), QByteArray("ONE", 3));
+    QVERIFY(first_saved.success);
 
-    // Two live expectation sets would interleave their arrivals, so the second
-    // batch is refused and the first one is left untouched.
-    QVERIFY(!batch.begin(dir.path(), {sak::AttachmentRef{2, 0}}));
-    QVERIFY(batch.expects(sak::AttachmentRef{1, 0}));
+    // Two live expectation sets would interleave their arrivals, so the second batch is
+    // refused and the first one is left FULLY untouched: same target directory (the
+    // refused begin names a DIFFERENT one, so a clobbered m_dir is visible), same
+    // expectation set, same progress counters.
+    QTemporaryDir other_dir;
+    QVERIFY(other_dir.isValid());
+    QVERIFY(!batch.begin(other_dir.path(), {sak::AttachmentRef{2, 0}}));
+    QCOMPARE(batch.directory(), dir.path());
+    QCOMPARE(batch.expectedCount(), 2);
+    QCOMPARE(batch.succeeded(), 1);
+    QCOMPARE(batch.failed(), 0);
+    QVERIFY(batch.expects(sak::AttachmentRef{1, 1}));
     QVERIFY(!batch.expects(sak::AttachmentRef{2, 0}));
+
+    // The still-outstanding arrival lands in the ORIGINAL directory, not the one the
+    // refused begin() named.
+    const auto second_saved =
+        batch.recordOne(sak::AttachmentRef{1, 1}, QStringLiteral("b.txt"), QByteArray("TWO", 3));
+    QVERIFY(second_saved.success);
+    QCOMPARE(second_saved.saved_path, dir.path() + QStringLiteral("/b.txt"));
+    QVERIFY(QFile::exists(dir.path() + QStringLiteral("/b.txt")));
+    QVERIFY(!QFile::exists(other_dir.path() + QStringLiteral("/b.txt")));
 
     batch.reset();
     QVERIFY(!batch.isActive());

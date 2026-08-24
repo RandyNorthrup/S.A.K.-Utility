@@ -163,6 +163,18 @@ private Q_SLOTS:
         // result would leave cooperative Work spinning to completion.
         QVERIFY(token->load());
         QVERIFY(runner.isRunning());
+        // A start() refused by the one-at-a-time guard must leave the in-flight job alone.
+        // start() re-arms m_attached and lowers the per-job token only AFTER its guard
+        // (ai_async_tool_runner.cpp:38-46). An implementation that did either before the
+        // guard would silently un-cancel this detached job -- cooperative Work would resume
+        // to completion -- or re-attach it, so the stale result it was detached from would
+        // be delivered as live. The panel refuses that way on every busy tool call
+        // (ai_assistant_panel.cpp:5997-6005). Nothing else in this file calls start() while a
+        // job is in flight with the token raised, so both mutants stay green without this.
+        QVERIFY(!runner.start([]() { return QJsonObject{{QStringLiteral("intruder"), true}}; }));
+        QVERIFY(token->load());
+        QVERIFY(runner.isRunning());
+        QCOMPARE(drained_spy.count(), 0);
         QCOMPARE(drained_spy.count(), 0);
 
         gate.release();
@@ -183,11 +195,22 @@ private Q_SLOTS:
         // emitted inside one onWatcherFinished() call, so the main thread only ever samples the
         // state after both have fired. Record the sequence from direct connections. drained() is
         // the went-idle notice, so a handler must not see it before the result it belongs to.
-        QObject::connect(&runner, &sak::ai::AiAsyncToolRunner::finished, [&order]() {
+        QObject::connect(&runner, &sak::ai::AiAsyncToolRunner::finished, [&order, &runner]() {
             order += QStringLiteral("F");
+            // Sampled from INSIDE the emission -- the only place this claim is visible.
+            // onWatcherFinished clears m_running BEFORE it emits (ai_async_tool_runner.cpp:59
+            // vs :81/:87), and the panel's finished() slot chains straight back into a new
+            // start() for the next call of the same tool turn (finishAsyncBuiltInToolCall ->
+            // appendToolOutputAndContinue -> dispatchNextToolCall -> dispatchBuiltInToolCall
+            // -> startAsyncBuiltInToolCall). A runner that cleared m_running only after both
+            // emissions would refuse that chained start, yet every isRunning() read in this
+            // file is sampled after the emissions have already returned.
+            QVERIFY(!runner.isRunning());
         });
-        QObject::connect(&runner, &sak::ai::AiAsyncToolRunner::drained, [&order]() {
+        QObject::connect(&runner, &sak::ai::AiAsyncToolRunner::drained, [&order, &runner]() {
             order += QStringLiteral("D");
+            // drained() is the went-idle notice: it must not arrive while still running.
+            QVERIFY(!runner.isRunning());
         });
         QVERIFY(runner.start([]() { return QJsonObject{{QStringLiteral("done"), true}}; }));
 

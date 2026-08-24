@@ -5024,6 +5024,44 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b90 (gated 249/249): 35 weak assertions pinned across six
+    more already-swept files (ai_workflow_powershell_tool_runner 9, ai_provider_registry 7,
+    hardware_inventory_scanner 7, email_attachment_saver 6, quick_action_result_io 4,
+    ai_async_tool_runner 2).
+    A GUARD NO TEST COULD REACH: providerStatusObject strips a "resolved_command" off any
+    non-stdio provider before publishing it, because the gateway feeds that field straight to the
+    process launcher. No fixture ever declared one, so the strip ran on data that never carried
+    the key and deleting it changed nothing observable. The fixture now FORGES a resolved_command
+    of cmd.exe on the http entry, which is the only way the guard is exercised at all. The same
+    test read "available" on two of the classifier's six arms; all six (http, stdio-missing,
+    native, disabled, planned, unknown-transport) are now pinned by exact missing_reason, and
+    win32_mcp's published command is pinned as the path RESOLVED AGAINST THE APP DIR rather than
+    the raw relative string the manifest declared -- publishing the latter launches it relative
+    to the CWD.
+    stdioCommandOutsideAppDirIsUnavailable only ever tried "../evil.exe", so a containment check
+    written as a ".."/prefix test passed while handing the launcher any ABSOLUTE path. That second
+    arm -- the one the guard's own comment claims -- is now a real case.
+    diskPolicyOverrideRequiresOptIn proved the embedded manifest loaded by finding ONE extra id in
+    the result, which shows only that the un-opted-in disk file was not the SOLE source; a merge
+    that added the attacker endpoint IN ADDITION passed. The embedded catalog is now pinned
+    exactly (ids, in order) and every loaded entry is swept for the attacker endpoint.
+    ai_async_tool_runner: isRunning() was only ever sampled after both emissions had returned, but
+    onWatcherFinished clears m_running BEFORE it emits, and the panel's finished() slot chains
+    straight back into a new start() for the next call of the same tool turn. A runner that
+    cleared the flag only after emitting would refuse that chained start and no test could see it.
+    Both claims are now sampled from INSIDE the emissions via direct connections.
+    email_attachment_saver: the overlapping-begin refusal re-used the SAME directory for both
+    calls, so a refused begin() that still clobbered m_dir was invisible; the second begin now
+    names a different directory and the outstanding arrival is proved to land in the original one.
+    hardware_inventory_scanner: cancel_doesNotCrash asserted only that a QObject cast is non-null,
+    which is a compile-time truth. cancel() is called on the GUI thread with scanComplete and
+    errorOccurred connected, so a cancel() that emitted a terminal signal itself would deliver a
+    "finished" hardware scan over an unread inventory; all four signal counts are pinned at zero.
+    A LEFTOVER TAIL THE DETECTOR FLAGGED AND I FIRST WAVED OFF: the tail detector reported a
+    duplicate run in test_ai_workflow_powershell_tool_runner.cpp, and reading only the FIRST of
+    the two windows showed genuine sibling arms, so it was dismissed. The real duplicate was 20
+    lines further down -- four superseded assertions left behind by an earlier pin. It surfaced as
+    a lizard length violation, not as a test failure. Reading one window is not reading the hit.
   - PROGRESS 2026-08-24 SECOND-pass sweep b89 (gated 249/249): 36 weak assertions pinned across six
     more already-swept files (package_list_manager 11, ai_recovery_policy 8, app_action_service 6,
     file_explorer_session_store 5, config_schema_versioning 4, stress_test_worker 2).

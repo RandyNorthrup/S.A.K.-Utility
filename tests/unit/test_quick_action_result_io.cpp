@@ -111,6 +111,14 @@ void TestQuickActionResultIO::fromStringWithWhitespace() {
 void TestQuickActionResultIO::fromStringUnknownReturnsIdle() {
     QCOMPARE(actionStatusFromString("Bogus"), QuickAction::ActionStatus::Idle);
     QCOMPARE(actionStatusFromString("xyz123"), QuickAction::ActionStatus::Idle);
+    // Near-miss tokens. The parser compares the trimmed+lowered token for EQUALITY
+    // (quick_action_result_io.cpp:46-63), so a superstring, a substring-carrier, or a prefix
+    // of a real token must NOT be accepted. "Bogus"/"xyz123" share no substring with any
+    // token, so without these a contains()/startsWith() parser stays green everywhere.
+    QCOMPARE(actionStatusFromString("Successful"), QuickAction::ActionStatus::Idle);
+    QCOMPARE(actionStatusFromString("not success"), QuickAction::ActionStatus::Idle);
+    QCOMPARE(actionStatusFromString("succes"), QuickAction::ActionStatus::Idle);
+    QCOMPARE(actionStatusFromString("cancelled-by-user"), QuickAction::ActionStatus::Idle);
 }
 
 void TestQuickActionResultIO::fromStringEmptyReturnsIdle() {
@@ -202,10 +210,22 @@ void TestQuickActionResultIO::writeReadLargeValues() {
     QuickAction::ActionStatus loadedStatus;
     QVERIFY(readExecutionResultFile(path, &loaded, &loadedStatus));
 
-    QCOMPARE(loaded.bytes_processed, original.bytes_processed);
-    QCOMPARE(loaded.files_processed, original.files_processed);
-    QCOMPARE(loaded.duration_ms, original.duration_ms);
-    QCOMPARE(loadedStatus, status);
+    // Pin the fixture magnitudes as literals: these are the exact values the double-encoded
+    // counters must survive (quick_action_result_io.cpp:109-111 writes each counter through
+    // static_cast<double>; :23-40 + :185-191 read it back).
+    QCOMPARE(loaded.bytes_processed, 1'099'511'627'776LL);
+    QCOMPARE(loaded.files_processed, 999'999LL);
+    QCOMPARE(loaded.duration_ms, 86'400'000LL);
+    // Siblings this fixture sets but never checked. success=false is the ONLY exercise of the
+    // false arm of the persisted bool anywhere in the suite (writeReadRoundTrip only ever proves
+    // true), so without it a reader that hard-codes success stays green
+    // (quick_action_result_io.cpp:192). The two deliberately-cleared strings must survive as
+    // empty (:197-198).
+    QCOMPARE(loaded.success, false);
+    QCOMPARE(loaded.message, QStringLiteral("Partial failure"));
+    QCOMPARE(loaded.output_path, QString());
+    QCOMPARE(loaded.log, QString());
+    QCOMPARE(loadedStatus, QuickAction::ActionStatus::Failed);
 }
 
 // ============================================================================
@@ -237,6 +257,53 @@ void TestQuickActionResultIO::readInvalidJsonReturnsFalse() {
     QString error;
     QVERIFY(!readExecutionResultFile(path, &result, &status, &error));
     QVERIFY(error.startsWith(QStringLiteral("Invalid result file JSON: ")));
+
+    // A file whose JSON PARSES but whose payload is corrupt must be refused too, and for its
+    // own stated reason. These are distinct fail-closed guards from the parse branch above and
+    // no test in the suite reached either of them, so a reader that dropped both stayed green.
+    // (a) a counter present but negative, (b) present but non-numeric: :23-40 + :185-191.
+    const QString negPath = tmpDir.path() + "/negative.json";
+    QFile negFile(negPath);
+    QVERIFY(negFile.open(QIODevice::WriteOnly));
+    negFile.write("{\"bytes_processed\":-1,\"status\":\"Success\"}");
+    negFile.close();
+    QString negError;
+    QVERIFY(!readExecutionResultFile(negPath, &result, &status, &negError));
+    QCOMPARE(negError,
+             QStringLiteral("Result file has an invalid numeric field (non-numeric, negative, "
+                            "or out of range)."));
+
+    const QString textPath = tmpDir.path() + "/text_counter.json";
+    QFile textFile(textPath);
+    QVERIFY(textFile.open(QIODevice::WriteOnly));
+    textFile.write("{\"files_processed\":\"lots\",\"status\":\"Success\"}");
+    textFile.close();
+    QString textError;
+    QVERIFY(!readExecutionResultFile(textPath, &result, &status, &textError));
+    QCOMPARE(textError,
+             QStringLiteral("Result file has an invalid numeric field (non-numeric, negative, "
+                            "or out of range)."));
+
+    // (c) a parseable object with an UNKNOWN status token: the reader is strict here and must
+    //     NOT reuse the lenient unknown -> Idle mapping (:230-235 vs the public :90-100).
+    const QString badStatusPath = tmpDir.path() + "/bad_status.json";
+    QFile badStatusFile(badStatusPath);
+    QVERIFY(badStatusFile.open(QIODevice::WriteOnly));
+    badStatusFile.write("{\"success\":true,\"message\":\"m\",\"status\":\"Bogus\"}");
+    badStatusFile.close();
+    QString badStatusError;
+    QVERIFY(!readExecutionResultFile(badStatusPath, &result, &status, &badStatusError));
+    QCOMPARE(badStatusError, QStringLiteral("Result file has a missing or unknown status field."));
+
+    // (d) and an object with no status field at all takes that same fail-closed exit.
+    const QString noStatusPath = tmpDir.path() + "/no_status.json";
+    QFile noStatusFile(noStatusPath);
+    QVERIFY(noStatusFile.open(QIODevice::WriteOnly));
+    noStatusFile.write("{\"success\":true,\"message\":\"m\"}");
+    noStatusFile.close();
+    QString noStatusError;
+    QVERIFY(!readExecutionResultFile(noStatusPath, &result, &status, &noStatusError));
+    QCOMPARE(noStatusError, QStringLiteral("Result file has a missing or unknown status field."));
 }
 
 void TestQuickActionResultIO::readEmptyFileReturnsFalse() {
@@ -254,6 +321,29 @@ void TestQuickActionResultIO::readEmptyFileReturnsFalse() {
     QVERIFY(!readExecutionResultFile(path, &result, &status, &error));
     // An empty file parses to a null JSON document -> the invalid-JSON branch.
     QVERIFY(error.startsWith(QStringLiteral("Invalid result file JSON: ")));
+
+    // The other degenerate size, plus the exact boundary between the two branches. The cap is
+    // `file.size() > kMaxResultFileBytes` with kMaxResultFileBytes = 4 * 1024 * 1024
+    // (quick_action_result_io.cpp:161-164), so 4 MiB exactly must still be READ (and then fail
+    // on its contents) while 4 MiB + 1 must be refused by the size guard with its own message.
+    // Pinned as a pair: one case alone cannot see a `>` -> `>=` slip.
+    const QString atLimitPath = tmpDir.path() + "/at_limit.json";
+    QFile atLimit(atLimitPath);
+    QVERIFY(atLimit.open(QIODevice::WriteOnly));
+    QVERIFY(atLimit.resize(4 * 1024 * 1024));
+    atLimit.close();
+    QString atLimitError;
+    QVERIFY(!readExecutionResultFile(atLimitPath, &result, &status, &atLimitError));
+    QVERIFY(atLimitError.startsWith(QStringLiteral("Invalid result file JSON: ")));
+
+    const QString overLimitPath = tmpDir.path() + "/over_limit.json";
+    QFile overLimit(overLimitPath);
+    QVERIFY(overLimit.open(QIODevice::WriteOnly));
+    QVERIFY(overLimit.resize(4 * 1024 * 1024 + 1));
+    overLimit.close();
+    QString overLimitError;
+    QVERIFY(!readExecutionResultFile(overLimitPath, &result, &status, &overLimitError));
+    QCOMPARE(overLimitError, QStringLiteral("Result file is too large to be a valid result."));
 }
 
 void TestQuickActionResultIO::writeToInvalidPathReturnsFalse() {
