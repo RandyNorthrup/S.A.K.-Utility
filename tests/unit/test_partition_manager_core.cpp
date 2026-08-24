@@ -112,6 +112,16 @@ static_assert(!std::is_assignable_v<decltype(PartitionTarget::partition_number)&
 
 namespace {
 
+// A commit that fails closed must record WHICH guard refused it. Several distinct guards in the
+// APFS writer all surface as ok=false, so asserting the bool alone lets one over-broad screen
+// stand in for every other guard while they quietly go dead. Every fail-closed commit assertion
+// therefore names its blocker, and requires it to be the ONLY one.
+template <typename CommitResult>
+void expectSingleBlocker(const CommitResult& result, const QString& blocker) {
+    QVERIFY2(!result.ok, qPrintable(blocker));
+    QCOMPARE(result.blockers, QStringList{blocker});
+}
+
 // Boundary-steered block index for the format-write confinement property (G23-7): interior, the
 // two edges, the first index past the end, index 0, and a near-max index whose byte offset would
 // wrap. Keeping the switch out here holds the property test method itself under the CCN gate.
@@ -2352,7 +2362,16 @@ void verifyNativeRegistryCapabilities() {
     const auto ntfs = PartitionFileSystemRegistry::capabilityFor(QStringLiteral("NTFS"));
     QCOMPARE(ntfs.id, QStringLiteral("ntfs"));
     QVERIFY(!ntfs.non_native);
-    QVERIFY(ntfs.support_level.contains(QStringLiteral("Windows-native")));
+    // One factory (nativeWindowsCapability) backs NTFS, FAT16 and FAT12, and its action lists
+    // are what the panel OFFERS for a native volume. Nothing asserted them, so a destructive
+    // fourth action added there -- to all three filesystems at once -- was invisible.
+    QCOMPARE(ntfs.support_level, QStringLiteral("Windows-native support"));
+    QCOMPARE(ntfs.available_actions,
+             QStringList({QStringLiteral("Browse mounted volume"),
+                          QStringLiteral("Check/repair where Windows supports it"),
+                          QStringLiteral("Format/resize where safety checks pass")}));
+    QVERIFY(ntfs.blocked_actions.isEmpty());
+    QVERIFY(ntfs.required_tools.isEmpty());
     const auto fat16 = PartitionFileSystemRegistry::capabilityFor(QStringLiteral("FAT16"));
     QCOMPARE(fat16.id, QStringLiteral("fat16"));
     QVERIFY(!fat16.non_native);
@@ -2365,15 +2384,26 @@ void verifyExtRegistryCapability() {
     const auto ext4 = PartitionFileSystemRegistry::capabilityFor(QStringLiteral("ext4"));
     QCOMPARE(ext4.id, QStringLiteral("ext4"));
     QVERIFY(ext4.non_native);
-    QVERIFY(ext4.required_tools.contains(QStringLiteral("e2fsck")));
-    QVERIFY(ext4.required_tools.contains(QStringLiteral("mke2fs")));
-    QVERIFY(ext4.required_tools.contains(QStringLiteral("resize2fs")));
-    const QString available = PartitionFileSystemRegistry::actionSummary(ext4.available_actions);
-    QVERIFY(available.contains(QStringLiteral("Read-only e2fsck check")));
-    QVERIFY(available.contains(QStringLiteral("Confirmed ext format")));
-    QVERIFY(available.contains(QStringLiteral("Read-only directory browse")));
-    QVERIFY(available.contains(QStringLiteral("recursive directory export")));
-    QVERIFY(available.contains(QStringLiteral("Confirmed ext shrink")));
+    // required_tools is the manifest-APPROVAL surface: an appended fourth binary is a real
+    // security change that three membership probes cannot see.
+    QCOMPARE(ext4.required_tools,
+             QStringList({QStringLiteral("e2fsck"),
+                          QStringLiteral("mke2fs"),
+                          QStringLiteral("resize2fs")}));
+    // The whole advertised capability list. Two of the seven entries were unasserted, and an
+    // EXTRA advertised capability was invisible to five substring probes on the joined summary.
+    QCOMPARE(ext4.available_actions,
+             QStringList({QStringLiteral("Read-only signature detection"),
+                          QStringLiteral("Read-only directory browse and selected-file extract "
+                                         "with original S.A.K. parser"),
+                          QStringLiteral("Read-only bounded recursive directory export"),
+                          QStringLiteral("Read-only e2fsck check when manifest-approved"),
+                          QStringLiteral("Confirmed ext format and repair through Pending "
+                                         "Operations"),
+                          QStringLiteral("Confirmed ext grow through Pending Operations and "
+                                         "resize2fs"),
+                          QStringLiteral("Confirmed ext shrink with e2fsck, resize2fs, and "
+                                         "partition shrink")}));
     QVERIFY(PartitionFileSystemRegistry::actionSummary(ext4.blocked_actions)
                 .contains(QStringLiteral("XFS/Btrfs/APFS write workflows")));
 }
@@ -2384,16 +2414,23 @@ void verifyMetadataOnlyRegistryCapabilities() {
     QVERIFY(xfs.support_level.contains(QStringLiteral("metadata checks")));
     QVERIFY(PartitionFileSystemRegistry::actionSummary(xfs.available_actions)
                 .contains(QStringLiteral("metadata consistency check")));
-    QVERIFY(PartitionFileSystemRegistry::actionSummary(xfs.blocked_actions)
-                .contains(QStringLiteral("Deep xfs_repair check")));
+    // Only the FIRST of the two blocked entries was probed; deleting the second -- the one
+    // that actually keeps format/repair off the table -- failed nothing.
+    QCOMPARE(xfs.blocked_actions,
+             QStringList({QStringLiteral("Deep xfs_repair check requires manifest-approved "
+                                         "xfs_repair"),
+                          QStringLiteral("Format and repair remain blocked until bundled tools "
+                                         "and certification pass")}));
 
     const auto btrfs = PartitionFileSystemRegistry::capabilityFor(QStringLiteral("Btrfs"));
     QCOMPARE(btrfs.id, QStringLiteral("btrfs"));
     QVERIFY(btrfs.support_level.contains(QStringLiteral("metadata checks")));
     QVERIFY(PartitionFileSystemRegistry::actionSummary(btrfs.available_actions)
                 .contains(QStringLiteral("metadata consistency check")));
-    QVERIFY(PartitionFileSystemRegistry::actionSummary(btrfs.blocked_actions)
-                .contains(QStringLiteral("Deep btrfs check")));
+    QCOMPARE(btrfs.blocked_actions,
+             QStringList({QStringLiteral("Deep btrfs check requires manifest-approved btrfs"),
+                          QStringLiteral("Repair remains disabled until destructive VM/lab "
+                                         "certification proves safe scenarios")}));
 }
 
 void verifyApfsRegistryCapability() {
@@ -2417,10 +2454,19 @@ void verifyApfsRegistryCapability() {
     QVERIFY(available.contains(QStringLiteral("multi-CIB")));
     QVERIFY(available.contains(QStringLiteral("CAB-tier")));
     QVERIFY(available.contains(QStringLiteral("24 TiB")));
-    const QString blocked = PartitionFileSystemRegistry::actionSummary(apfs.blocked_actions);
-    QVERIFY(blocked.contains(QStringLiteral("Arbitrary existing Apple APFS mutation")));
-    QVERIFY(blocked.contains(QStringLiteral("Encrypted/compressed files")));
-    QVERIFY(blocked.contains(QStringLiteral("single spaceman chunk")));
+    // The whole blocked list. The "single spaceman chunk" probe still matched if the
+    // certified-ceiling clause of entry 2 were silently dropped -- i.e. the ~24 TiB / 48 TiB
+    // CAB bound could disappear from the advertised limits with this test green.
+    QCOMPARE(apfs.blocked_actions,
+             QStringList({QStringLiteral("Arbitrary existing Apple APFS mutation remains blocked "
+                                         "by generated-layout guards"),
+                          QStringLiteral("Generated APFS in-place root-file write/patch/delete is "
+                                         "bounded to a single spaceman chunk (<=128 MiB) pending "
+                                         "multi-CIB/CAB in-place commit wiring; generated "
+                                         "format/repair targets above the certified ~24 TiB / 48 "
+                                         "TiB-engine CAB ceiling remain blocked"),
+                          QStringLiteral("Encrypted/compressed files, file writes on arbitrary "
+                                         "Apple APFS, and resize remain blocked")}));
     QVERIFY(PartitionFileSystemRegistry::actionSummary(apfs.required_tools)
                 .contains(QStringLiteral("sak_apfs_writer_cli")));
 }
@@ -2454,18 +2500,24 @@ void verifyHfsRegistryCapability() {
                           QStringLiteral("bundled fsck_hfs")});
     const QString confirmed = PartitionFileSystemRegistry::actionSummary(hfs.available_actions);
     QVERIFY(confirmed.contains(QStringLiteral("arbitrary-depth catalog B-tree split")));
-    const QString blocked = PartitionFileSystemRegistry::actionSummary(hfs.blocked_actions);
-    QVERIFY(blocked.contains(QStringLiteral("Raw-partition HFS+ complex file delete")));
-    QVERIFY(blocked.contains(QStringLiteral("unbounded folder-tree delete")));
-    QVERIFY(blocked.contains(QStringLiteral("complex file delete")));
-    QVERIFY(blocked.contains(QStringLiteral("broad allocation growth")));
-    QVERIFY(blocked.contains(QStringLiteral("Inline/broad attribute growth")));
-    // H2 promotion: catalog B-tree split/rebalance is no longer a blocked action.
-    QVERIFY(!blocked.contains(QStringLiteral("B-tree split/rebalance")));
-    const QString requiredTools = PartitionFileSystemRegistry::actionSummary(hfs.required_tools);
-    QVERIFY(requiredTools.contains(QStringLiteral("newfs_hfs")));
-    QVERIFY(requiredTools.contains(QStringLiteral("fsck_hfs")));
-    QVERIFY(requiredTools.contains(QStringLiteral("sak_hfs_writer_cli")));
+    // Five of the six old probes were substrings of ENTRY 1 alone ("complex file delete" is
+    // literally contained in "Raw-partition HFS+ complex file delete"), so deleting entry 2
+    // outright broke only one assertion, and the negative probe was satisfied by any rewording.
+    // H2 promotion: catalog B-tree split/rebalance is no longer a blocked action, which the
+    // exact list now states by its absence rather than by a !contains() probe.
+    QCOMPARE(hfs.blocked_actions,
+             QStringList({QStringLiteral("Raw-partition HFS+ complex file delete, unbounded "
+                                         "folder-tree delete, and broad allocation growth remain "
+                                         "blocked pending operation-specific certification"),
+                          QStringLiteral("Inline/broad attribute growth and recursive "
+                                         "extents-overflow-file overflow remain blocked in this "
+                                         "milestone")}));
+    // Flattening the tools to one string meant a fourth approved binary, a reorder, or a
+    // collapse into a single mangled entry all still satisfied the three contains() probes.
+    QCOMPARE(hfs.required_tools,
+             QStringList({QStringLiteral("newfs_hfs"),
+                          QStringLiteral("fsck_hfs"),
+                          QStringLiteral("sak_hfs_writer_cli")}));
 }
 
 void verifySwapAndUnknownRegistryCapability() {
@@ -2473,16 +2525,28 @@ void verifySwapAndUnknownRegistryCapability() {
     QCOMPARE(swap.id, QStringLiteral("linux-swap"));
     QVERIFY(swap.support_level.contains(QStringLiteral("header metadata")));
     QVERIFY(swap.support_level.contains(QStringLiteral("confirmed format")));
-    const QString available = PartitionFileSystemRegistry::actionSummary(swap.available_actions);
-    QVERIFY(available.contains(QStringLiteral("swap header metadata inspection")));
-    QVERIFY(available.contains(QStringLiteral("Confirmed Linux swap format")));
-    QVERIFY(PartitionFileSystemRegistry::actionSummary(swap.blocked_actions)
-                .contains(QStringLiteral("Repair is not applicable")));
+    QCOMPARE(swap.available_actions,
+             QStringList({QStringLiteral("Read-only signature detection"),
+                          QStringLiteral("Read-only swap header metadata inspection"),
+                          QStringLiteral("Confirmed Linux swap format through Pending "
+                                         "Operations")}));
+    // The operative resize clause could be dropped while "Repair is not applicable" still
+    // matched -- swap resize could quietly unblock with this test green.
+    QCOMPARE(swap.blocked_actions,
+             QStringList{QStringLiteral("Repair is not applicable to Linux swap; resize remains "
+                                        "partition-only until operation-specific proof exists")});
 
     const auto unknown = PartitionFileSystemRegistry::capabilityFor(QString());
     QCOMPARE(unknown.id, QStringLiteral("unknown"));
-    QVERIFY(PartitionFileSystemRegistry::actionSummary(unknown.blocked_actions)
-                .contains(QStringLiteral("must be identified")));
+    QCOMPARE(unknown.display_name, QStringLiteral("Unknown"));
+    QCOMPARE(unknown.support_level, QStringLiteral("Unknown"));
+    // The safety-relevant field: an unidentified filesystem must be offered NOTHING. That was
+    // unasserted, so handing the unknown capability a browse or format action passed unchanged.
+    QVERIFY(unknown.available_actions.isEmpty());
+    QVERIFY(!unknown.non_native);
+    QCOMPARE(unknown.blocked_actions,
+             QStringList{
+                 QStringLiteral("Filesystem must be identified before S.A.K. can offer actions")});
 }
 
 QString sha256Hex(const QByteArray& bytes) {
@@ -3312,9 +3376,13 @@ void PartitionManagerCoreTests::hfsFileSystemReader_surfacesTheReaderOwnLoadBloc
     const auto listing =
         PartitionHfsFileSystemReader::listDirectory(&buffer, QStringLiteral("/"), 20);
     QVERIFY(!listing.ok);
-    const QString blockers = listing.blockers.join(' ');
-    QVERIFY(blockers.contains(QStringLiteral("volume header was not found")));  // the real cause
-    QVERIFY(blockers.contains(QStringLiteral("for listing")));                  // and the context
+    // Exactly the specific cause followed by the operation-naming context. Probing the JOINED
+    // string would also accept a reversed order, a duplicated generic line, or the unrelated
+    // "Unable to open HFS+ image read-only ... for listing" message -- and the whole point of
+    // this fix was that the specific cause must travel WITH the generic one, not instead of it.
+    QCOMPARE(listing.blockers,
+             QStringList({QStringLiteral("HFS+ volume header was not found"),
+                          QStringLiteral("Unable to open HFS+ filesystem for listing")}));
 }
 
 void PartitionManagerCoreTests::extFileSystemReader_boundsBlockAndInodeReferences() {
@@ -6935,6 +7003,22 @@ void verifyApfsImageOnlyPlanShape(const PartitionApfsImageMutationPlan& plan) {
     QCOMPARE(plan.target_path, QStringLiteral("/Users/Test/new-file.txt"));
     QVERIFY(plan.execution_blockers.join(' ').contains(QStringLiteral("structured evidence")));
     QVERIFY(plan.steps.size() >= kMinimumApfsMutationPlanSteps);
+    // The ordered step names. A floor plus two per-step predicates could not see a step
+    // dropped, duplicated, or reordered -- and the order IS the contract here: block
+    // allocation must precede the fs-tree update, which must precede the checkpoint commit.
+    QStringList stepNames;
+    stepNames.reserve(plan.steps.size());
+    for (const auto& step : plan.steps) {
+        stepNames.append(step.name);
+    }
+    QCOMPARE(stepNames,
+             QStringList({QStringLiteral("preflight"),
+                          QStringLiteral("scratch-image"),
+                          QStringLiteral("block-allocation"),
+                          QStringLiteral("fs-tree-update"),
+                          QStringLiteral("object-map-update"),
+                          QStringLiteral("checkpoint-commit"),
+                          QStringLiteral("post-verify")}));
     QVERIFY(std::any_of(
         plan.steps.cbegin(), plan.steps.cend(), [](const PartitionApfsImageMutationStep& step) {
             return step.name == QStringLiteral("checkpoint-commit") && step.requires_checkpoint;
@@ -9539,6 +9623,11 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryCreatePreservesTree()
          .directory_name = QStringLiteral("folder"),
          .options = options});
     QVERIFY(!dup.ok);
+    // The message also documents that directory-create shares the file-insert collision helper
+    // ("file-insert-commit" on a directory-create), which the bare !ok hid entirely.
+    QCOMPARE(dup.blockers,
+             QStringList{QStringLiteral(
+                 "APFS file-insert-commit: a directory named 'folder' already exists")});
 }
 
 namespace {
@@ -10540,26 +10629,39 @@ void verifyApfsDirMutationFailClosed(const QDir& dir,
                                      const PartitionApfsWriteOptions& options) {
     // Fail-closed: deleting a non-empty directory, a missing directory, and writing a
     // child into a missing directory are all rejected.
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyDirectoryDelete(
-                 {.source_image_path = withDelTmp,
-                  .written_image_path = dir.filePath(QStringLiteral("a2dm-x1.apfs")),
-                  .directory_name = QStringLiteral("docs"),
-                  .options = options})
-                 .ok);
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyDirectoryDelete(
-                 {.source_image_path = withDelTmp,
-                  .written_image_path = dir.filePath(QStringLiteral("a2dm-x2.apfs")),
-                  .directory_name = QStringLiteral("ghost"),
-                  .options = options})
-                 .ok);
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
-                 {.source_image_path = withDelTmp,
-                  .written_image_path = dir.filePath(QStringLiteral("a2dm-x3.apfs")),
-                  .directory_name = QStringLiteral("ghost"),
-                  .file_name = QStringLiteral("c.txt"),
-                  .file_data = QByteArrayLiteral("nope"),
-                  .options = options})
-                 .ok);
+    // Three DIFFERENT guards, each named. A bare !ok on all three was satisfied by one
+    // over-broad "name is not the empty directory we just created" screen placed ahead of
+    // resolveDeletableRootDirectory, which would leave the not-empty guard entirely dead --
+    // and that is the guard standing between a technician and a recursive directory delete.
+    const auto nonEmptyDelete = PartitionApfsWriter::commitImageOnlyDirectoryDelete(
+        {.source_image_path = withDelTmp,
+         .written_image_path = dir.filePath(QStringLiteral("a2dm-x1.apfs")),
+         .directory_name = QStringLiteral("docs"),
+         .options = options});
+    QVERIFY(!nonEmptyDelete.ok);
+    QCOMPARE(nonEmptyDelete.blockers,
+             QStringList{
+                 QStringLiteral("APFS directory-delete-commit: directory 'docs' is not empty")});
+    const auto missingDelete = PartitionApfsWriter::commitImageOnlyDirectoryDelete(
+        {.source_image_path = withDelTmp,
+         .written_image_path = dir.filePath(QStringLiteral("a2dm-x2.apfs")),
+         .directory_name = QStringLiteral("ghost"),
+         .options = options});
+    QVERIFY(!missingDelete.ok);
+    QCOMPARE(missingDelete.blockers,
+             QStringList{
+                 QStringLiteral("APFS directory-delete-commit: directory 'ghost' was not found")});
+    const auto orphanChildWrite = PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
+        {.source_image_path = withDelTmp,
+         .written_image_path = dir.filePath(QStringLiteral("a2dm-x3.apfs")),
+         .directory_name = QStringLiteral("ghost"),
+         .file_name = QStringLiteral("c.txt"),
+         .file_data = QByteArrayLiteral("nope"),
+         .options = options});
+    QVERIFY(!orphanChildWrite.ok);
+    QCOMPARE(orphanChildWrite.blockers,
+             QStringList{QStringLiteral(
+                 "APFS directory-child-write-commit: directory 'ghost' was not found")});
 }
 
 }  // namespace
@@ -11403,17 +11505,19 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotRevertTagsDeferredReve
     verifyApfsSnapshotRevertTag(rev, frozenSblock, snapAlloc, snapRoot, snapNextObj);
 
     // A revert with no snapshot fails closed.
-    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotRevert(
-                 {.source_image_path = base,
-                  .written_image_path = dir.filePath(QStringLiteral("a3r-x.apfs")),
-                  .options = options})
-                 .ok);
+    // Folding the already-pending check into this one kills the guard below, both !ok green.
+    expectSingleBlocker(PartitionApfsWriter::commitImageOnlySnapshotRevert(
+                            {.source_image_path = base,
+                             .written_image_path = dir.filePath(QStringLiteral("a3r-x.apfs")),
+                             .options = options}),
+                        QStringLiteral("APFS snapshot-revert: the volume carries no snapshot"));
     // A second revert (one already pending) fails closed.
-    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotRevert(
-                 {.source_image_path = rev,
-                  .written_image_path = dir.filePath(QStringLiteral("a3r-y.apfs")),
-                  .options = options})
-                 .ok);
+    expectSingleBlocker(PartitionApfsWriter::commitImageOnlySnapshotRevert(
+                            {.source_image_path = rev,
+                             .written_image_path = dir.filePath(QStringLiteral("a3r-y.apfs")),
+                             .options = options}),
+                        QStringLiteral(
+                            "APFS snapshot-revert: a revert is already pending on this volume"));
 }
 
 namespace {
@@ -11780,6 +11884,12 @@ void PartitionManagerCoreTests::apfsWriter_rawNestedDirectoryCreate() {
          .allow_raw_device_target = true,
          .options = rawOptions});
     QVERIFY(!orphan.ok);
+    // The parent-path resolution failure. This runs BEFORE the raw/confirmation gate, so a
+    // bare !ok here was equally satisfied by the target gate refusing -- which would mean the
+    // orphan-parent check itself was never exercised on a raw device target.
+    QCOMPARE(orphan.blockers,
+             QStringList{QStringLiteral("APFS directory-create-commit: parent directory '/nope' "
+                                        "was not found")});
 }
 
 namespace {
@@ -12307,17 +12417,18 @@ void PartitionManagerCoreTests::apfsWriter_clonesFileSharingPhysicalExtents() {
          .source_file_name = QStringLiteral("absent.bin"),
          .clone_file_name = QStringLiteral("x.bin"),
          .options = options});
-    QVERIFY(!missing.ok);
+    // The source lookup, not the zero-length branch nor a clone-name collision beside it.
+    expectSingleBlocker(missing,
+                        QStringLiteral("APFS file-clone-commit: source file 'absent.bin' not "
+                                       "found in the container root"));
 
     // The container superblock stays self-consistent (object checksum).
     verifyApfsContainerSuperblockChecksum(out);
 }
 
 void PartitionManagerCoreTests::apfsWriter_addsHardLinkToFile() {
-    // A7 (A-h) hard links: adding a second name to a file makes both names resolve to
-    // the same inode (link count 2). No data or inode is copied; sibling-link and
-    // sibling-map records track the two names. apfsck/kernel-certified; the reader reads
-    // the identical bytes through either name.
+    // A7 (A-h) hard links: a second name resolves to the SAME inode (link count 2), no data or
+    // inode copied, sibling-link/sibling-map records tracking both names. apfsck/kernel-certified.
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -12352,7 +12463,7 @@ void PartitionManagerCoreTests::apfsWriter_addsHardLinkToFile() {
     QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
     QCOMPARE(commit.new_xid, 4ULL);
 
-    // Both names are present, each reporting the inode's size.
+    // Both names present, each reporting the inode's size.
     const auto listing =
         PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
@@ -12371,14 +12482,16 @@ void PartitionManagerCoreTests::apfsWriter_addsHardLinkToFile() {
     QVERIFY2(linkRead.ok, qPrintable(linkRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(linkRead.data, payload);
 
-    // Linking a source that does not exist fails closed.
-    const auto missing = PartitionApfsWriter::commitImageOnlyFileHardlink(
-        {.source_image_path = src,
-         .written_image_path = dir.filePath(QStringLiteral("hl-miss.apfs")),
-         .source_file_name = QStringLiteral("absent.bin"),
-         .link_file_name = QStringLiteral("y.bin"),
-         .options = options});
-    QVERIFY(!missing.ok);
+    // A missing source fails closed on the source LOOKUP, not on a link-name collision.
+    expectSingleBlocker(PartitionApfsWriter::commitImageOnlyFileHardlink(
+                            {.source_image_path = src,
+                             .written_image_path = dir.filePath(QStringLiteral("hl-miss.apfs")),
+                             .source_file_name = QStringLiteral("absent.bin"),
+                             .link_file_name = QStringLiteral("y.bin"),
+                             .options = options}),
+                        QStringLiteral(
+                            "APFS file-hardlink-commit: source file 'absent.bin' not found in the "
+                            "container root"));
 
     // The container superblock stays self-consistent (object checksum).
     verifyApfsContainerSuperblockChecksum(out);
@@ -12482,18 +12595,28 @@ void verifyApfsInChunkShrinkAndFailClosed(const QDir& dir,
     QCOMPARE(sread.data, payload);
     // A non-block-aligned size, and a shrink below the metadata high-water (256 KiB, whose tail
     // holds used metadata blocks), both fail closed.
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
-                 {.source_image_path = withFile,
-                  .written_image_path = dir.filePath(QStringLiteral("rz-unaligned.apfs")),
-                  .new_size_bytes = kNewBytes + 1,
-                  .options = options})
-                 .ok);
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
-                 {.source_image_path = withFile,
-                  .written_image_path = dir.filePath(QStringLiteral("rz-tiny.apfs")),
-                  .new_size_bytes = 256ULL * 1024ULL,
-                  .options = options})
-                 .ok);
+    // These two take entirely different paths -- the unaligned size never reaches the shrink
+    // leg at all, while the tiny size runs the whole in-chunk shrink and is stopped by the
+    // used-tail scan. A bare !ok could not tell one from the other, so an alignment guard that
+    // also swallowed the tiny case would hide a real data-loss check going dead.
+    const auto unalignedResize = PartitionApfsWriter::commitImageOnlyResize(
+        {.source_image_path = withFile,
+         .written_image_path = dir.filePath(QStringLiteral("rz-unaligned.apfs")),
+         .new_size_bytes = kNewBytes + 1,
+         .options = options});
+    QVERIFY(!unalignedResize.ok);
+    QCOMPARE(unalignedResize.blockers,
+             QStringList{QStringLiteral(
+                 "APFS resize-commit: the new size must be a multiple of the block size")});
+    const auto tinyResize = PartitionApfsWriter::commitImageOnlyResize(
+        {.source_image_path = withFile,
+         .written_image_path = dir.filePath(QStringLiteral("rz-tiny.apfs")),
+         .new_size_bytes = 256ULL * 1024ULL,
+         .options = options});
+    QVERIFY(!tinyResize.ok);
+    QCOMPARE(tinyResize.blockers,
+             QStringList{QStringLiteral("APFS resize-shrink: the truncated tail holds used blocks "
+                                        "(data past the new size)")});
 }
 
 }  // namespace
@@ -14567,13 +14690,14 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileRenameKeepsContentAndObjec
         payload);
 
     // Renaming a missing file, or to an existing name, fails closed.
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyFileRename(
-                 {.source_image_path = r2,
-                  .written_image_path = dir.filePath(QStringLiteral("rn-miss.apfs")),
-                  .file_name = QStringLiteral("nope.txt"),
-                  .new_file_name = QStringLiteral("x.txt"),
-                  .options = options})
-                 .ok);
+    const auto missingRename = PartitionApfsWriter::commitImageOnlyFileRename(
+        {.source_image_path = r2,
+         .written_image_path = dir.filePath(QStringLiteral("rn-miss.apfs")),
+         .file_name = QStringLiteral("nope.txt"),
+         .new_file_name = QStringLiteral("x.txt"),
+         .options = options});
+    expectSingleBlocker(missingRename,
+                        QStringLiteral("APFS file-rename-commit: file 'nope.txt' was not found"));
     const QString r3 = dir.filePath(QStringLiteral("rn3.apfs"));
     QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = r2,
                                                             .written_image_path = r3,
@@ -14587,8 +14711,9 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileRenameKeepsContentAndObjec
          .file_name = QStringLiteral("new.txt"),
          .new_file_name = QStringLiteral("keep.txt"),
          .options = options});
-    QVERIFY(!collide.ok);
-    QVERIFY(collide.blockers.join(' ').contains(QStringLiteral("already exists")));
+    // FILE-collision: a sibling DIRECTORY-collision message also contains "already exists".
+    expectSingleBlocker(
+        collide, QStringLiteral("APFS file-rename-commit: a file named 'keep.txt' already exists"));
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceRenameOfHardLinkKeepsOneInode() {
@@ -15099,7 +15224,13 @@ void PartitionManagerCoreTests::apfsWriter_nestedFileInsertPlacesFileAtDepth() {
     QVERIFY2(insert(QStringLiteral("deep.txt"), QByteArrayLiteral("root copy"), QString()).ok,
              "root deep.txt must coexist with /docs/sub/deep.txt");
     // A missing parent path fails closed.
-    QVERIFY(!insert(QStringLiteral("x.txt"), payload, QStringLiteral("/docs/nope")).ok);
+    const auto orphanInsert =
+        insert(QStringLiteral("x.txt"), payload, QStringLiteral("/docs/nope"));
+    QVERIFY(!orphanInsert.ok);
+    // Resolved BEFORE the raw target is opened, so !ok alone did not show the path check ran.
+    QCOMPARE(orphanInsert.blockers,
+             QStringList{QStringLiteral("APFS raw file-insert-commit: parent directory path "
+                                        "'/docs/nope' was not found")});
 }
 
 void PartitionManagerCoreTests::apfsWriter_nestedFileWriteDeleteRenameAtDepth() {
@@ -15137,7 +15268,10 @@ void PartitionManagerCoreTests::apfsWriter_nestedFileWriteDeleteRenameAtDepth() 
     // Rename in place, then delete, under /docs/sub.
     QVERIFY2(rawNestedRename(c, QStringLiteral("f.txt"), QStringLiteral("g.txt"), sub), "rename");
     QVERIFY(readSub(QStringLiteral("g.txt")).ok);
-    QVERIFY(!readSub(QStringLiteral("f.txt")).ok);
+    // The FILE-not-found message, not the parent-not-found one: the sibling read of g.txt
+    // proves /docs/sub resolves, so distinguishing the two is the whole point here.
+    QCOMPARE(readSub(QStringLiteral("f.txt")).blockers,
+             QStringList{QStringLiteral("APFS file path not found: /docs/sub/f.txt")});
     QVERIFY2(rawNestedDelete(c, QStringLiteral("g.txt"), sub), "delete");
     QVERIFY(!readSub(QStringLiteral("g.txt")).ok);
     // The root file with the same name is byte-intact.
@@ -17988,10 +18122,22 @@ void PartitionManagerCoreTests::apfsWriter_formatBlockWriteNeverEscapesValidated
             const qsizetype off = static_cast<qsizetype>(blockIndex) *
                                   static_cast<qsizetype>(blockSize);
             expected.replace(off, static_cast<qsizetype>(blockSize), block);
-            QCOMPARE(backing, expected);   // exactly its own block changed, nothing else
+            QCOMPARE(backing, expected);  // exactly its own block changed, nothing else
         } else {
-            QCOMPARE(backing, sentinel);   // rejected: mutated nothing...
-            QVERIFY(!blockers.isEmpty());  // ...and recorded why
+            QCOMPARE(backing, sentinel);  // rejected: mutated nothing...
+            // ...and recorded WHICH guard rejected it. A non-empty list was satisfied by one
+            // over-broad screen doing all the refusing, which would leave the range guard dead
+            // while every property here stayed green. Only these two are reachable:
+            // containerBlockCount is always >= 1, so the range guard pre-empts the overflow
+            // branch even for the ~0ULL steer, and the write-failure branch is excluded by the
+            // no-growth assertion above.
+            QCOMPARE(blockers,
+                     QStringList{wrongSize
+                                     ? QStringLiteral("APFS format block has invalid size")
+                                     : QStringLiteral("APFS format block index %1 is outside the "
+                                                      "container's %2-block range")
+                                           .arg(blockIndex)
+                                           .arg(containerBlockCount)});
         }
     }
 }
@@ -18042,8 +18188,22 @@ void PartitionManagerCoreTests::apfsWriter_repairBlockWriteRespectsDeviceCapAndS
             expected.replace(off, static_cast<qsizetype>(blockSize), block);
             QCOMPARE(backing, expected);
         } else {
-            QCOMPARE(backing, sentinel);   // rejected: mutated nothing...
-            QVERIFY(!blockers.isEmpty());  // ...and recorded why
+            QCOMPARE(backing, sentinel);  // rejected: mutated nothing...
+            // ...and named the guard. The two reachable refusals are the device-end bound and
+            // the block-0 NXSB screen; pinning them apart is what proves the DEVICE remains
+            // authoritative over a hostile over-claimed nx_block_count, rather than one blanket
+            // refusal covering both properties. The unstamped block is filled with 0x22, so its
+            // object magic reads 0x22222222.
+            QCOMPARE(blockers,
+                     QStringList{blockIndex >= deviceBlocks
+                                     ? QStringLiteral("APFS write guard: block %1 is past the "
+                                                      "device end (%2)")
+                                           .arg(blockIndex)
+                                           .arg(deviceBlocks)
+                                     : QStringLiteral("APFS write guard: refusing to overwrite "
+                                                      "the container superblock (block 0) with a "
+                                                      "non-NXSB block (magic 0x%1)")
+                                           .arg(0x22'22'22'22u, 0, 16)});
         }
     }
 }
@@ -20489,7 +20649,11 @@ void PartitionManagerCoreTests::fileRecoveryEngine_confinesCraftedCandidateNames
     dotsRestore.candidates = {dots};
     const auto skipped = FileRecoveryEngine::restoreCandidates(dotsRestore);
     QVERIFY(skipped.restored_paths.isEmpty());
-    QVERIFY(!skipped.warnings.isEmpty());
+    // The unsafe-name skip specifically. A non-empty warnings list was equally produced by a
+    // read error or a hash mismatch, neither of which proves the traversal-shaped candidate id
+    // was the thing refused.
+    QCOMPARE(skipped.warnings,
+             QStringList{QStringLiteral("Skipped candidate with an unsafe name: ..")});
 }
 
 namespace {

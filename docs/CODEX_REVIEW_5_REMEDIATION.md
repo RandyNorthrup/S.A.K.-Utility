@@ -5024,6 +5024,39 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-23 second-pass re-sweep b72a (gated 249/249): 51 residual weak assertions
+    pinned across the two largest destructive/parsing suites, from a fresh 7-file finder sweep
+    (b72) that returned 167 adversarially-confirmed nominees -- 24 per file, the SAME rate as
+    b71, on files the first pass had already touched. The vein is not thinning.
+    test_partition_manager_core.cpp (26): the APFS writer is the archetype of the class-A
+    residual -- many distinct guards, one ok=false. A new file-scope expectSingleBlocker()
+    helper now asserts every fail-closed commit names its blocker AND that it is the only one,
+    across directory delete/child-write, snapshot revert, resize, rename, clone, hardlink,
+    nested insert and raw directory create. The verifier named the surviving mutant for each:
+    e.g. one over-broad "name is not the empty directory we just created" screen ahead of
+    resolveDeletableRootDirectory satisfies all three directory !ok assertions while the
+    not-empty guard -- the one standing between a technician and a recursive delete -- is dead;
+    and folding the already-pending check into the no-snapshot guard kills a real guard with
+    both revert assertions still green. The two G23-7 property tests (4000 iterations each) had
+    a rejected-path arm asserting only !blockers.isEmpty(), which one blanket screen satisfies;
+    both now pin the specific guard per steered input, keeping the device-authoritative bound
+    distinct from the block-0 NXSB screen. Also the whole PartitionFileSystemRegistry capability
+    cluster: NTFS/ext4/xfs/btrfs/APFS/HFS+/swap/unknown action lists and required_tools pinned
+    exactly -- required_tools is the manifest-APPROVAL surface, and for HFS+ five of six probes
+    were substrings of ENTRY 1 alone, so deleting entry 2 broke only one assertion. The
+    unknown-filesystem capability now pins available_actions EMPTY, which nothing asserted: an
+    unidentified filesystem could have been handed a browse or format action silently.
+    test_pst_parser.cpp (25): every open-failure arm pinned to its exact wrapped message, which
+    separates refusals that the shared "Invalid PST header" / "Failed to load Node BTree" /
+    "Failed to build folder hierarchy" fragments had collapsed into one. Load-bearing case: the
+    BLOCKTRAILER dwCRC test. Delete that CRC gate and the flipped byte STILL fails the open --
+    it decodes to an out-of-range heap offset and reports "Invalid heap structure" -- so the old
+    !error_spy.isEmpty() stayed green with the block authentication removed entirely. Same shape
+    for the empty-file vs short-file boundary (read_error vs invalid header, which a widened
+    empty-check would collapse), the magic-vs-CRC ordering, the wVer gate (whose own comment
+    claims to have removed exactly this false green), and the 461-vs-465 ANSI encryption offset.
+    The per-field BLOCKTRAILER loop now pins the error CODE, so an unrelated node-lookup
+    regression can no longer satisfy all four iterations with all four trailer guards dead.
   - PROGRESS 2026-08-23 second-pass re-sweep b71c (gated 249/249): 29 residual weak assertions
     pinned in tests/unit/test_linux_iso_downloader.cpp, closing the b71 worklist. This file's
     residual class is the SHAPE-PROBED URL: nine tests asserted a resolved download/checksum URL

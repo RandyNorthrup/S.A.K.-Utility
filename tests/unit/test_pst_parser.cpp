@@ -5,6 +5,7 @@
 /// @brief Unit tests for PST/OST file parser
 
 #include "sak/email_constants.h"
+#include "sak/error_codes.h"
 #include "sak/pst_parser.h"
 
 #include "../support/pst_fixture.h"
@@ -497,7 +498,10 @@ void TestPstParser::rejectsEmptyFile() {
     QVERIFY(!parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
+    // An EMPTY file is a read failure; a short-but-present one is an invalid header. Widening
+    // the empty check in readBytes to "size < count" collapses the two classifications while
+    // both tests stay green under the shared "Invalid PST header" fragment.
+    QCOMPARE(error, QStringLiteral("Invalid PST header: Read error"));
 }
 
 void TestPstParser::rejectsTooSmallFile() {
@@ -515,7 +519,9 @@ void TestPstParser::rejectsTooSmallFile() {
     QVERIFY(!parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
+    // The size gate's distinct contract: a short-but-present header is an INVALID HEADER, not
+    // a read error. Together with the empty-file pin above, this holds that boundary.
+    QCOMPARE(error, QStringLiteral("Invalid PST header: Invalid file header"));
 }
 
 void TestPstParser::rejectsInvalidMagic() {
@@ -539,7 +545,10 @@ void TestPstParser::rejectsInvalidMagic() {
     QVERIFY(!parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
+    // This fixture also carries no valid CRC, so the exact code is what proves the ORDER:
+    // the magic gate runs before verifyHeaderIntegrity. Swap them and the file is refused as
+    // an integrity failure while contains("Invalid PST header") still passes.
+    QCOMPARE(error, QStringLiteral("Invalid PST header: Invalid file header"));
 }
 
 void TestPstParser::parsesValidPstMagic() {
@@ -561,7 +570,11 @@ void TestPstParser::parsesValidPstMagic() {
     QVERIFY(!parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(!error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
+    // "later than the header" is only half the claim. Pin WHERE it failed: the NBT
+    // expected-ptype gate. Delete that gate and the header's own bytes parse as an empty NBT
+    // page, the run fails later with a different message, and the negated probe stays green
+    // while a non-BTree region was walked as one.
+    QCOMPARE(error, QStringLiteral("Failed to load Node BTree: Corrupted BTree structure"));
     parser.close();
 }
 
@@ -599,7 +612,9 @@ void TestPstParser::detectsAnsiVersion() {
     QVERIFY(!parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(!error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
+    // The ANSI layout really was parsed: pin the NBT-stage refusal rather than only ruling
+    // out a header rejection, which any unrelated failure also satisfies.
+    QCOMPARE(error, QStringLiteral("Failed to load Node BTree: Corrupted BTree structure"));
 }
 
 void TestPstParser::legacyUnicodePstReads512ByteBTreePages() {
@@ -613,10 +628,13 @@ void TestPstParser::legacyUnicodePstReads512ByteBTreePages() {
     QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
     parser.open(temp_file.fileName());
 
-    QVERIFY(!error_spy.isEmpty());
+    QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(!error.contains(QStringLiteral("Failed to load Node BTree")), qPrintable(error));
-    QVERIFY2(error.contains(QStringLiteral("Failed to build folder hierarchy")), qPrintable(error));
+    // "reached the hierarchy stage" is too weak: that same wrapper also carries depth-exceeded,
+    // cycle-detected, heap, decompression and integrity failures. A page walk that regressed
+    // into producing garbage nodes would fail under the identical fragment and still read as
+    // "the walk worked". Pin the node-not-found that an EMPTY but correctly-walked BTree gives.
+    QCOMPARE(error, QStringLiteral("Failed to build folder hierarchy: Node not found"));
 }
 
 void TestPstParser::unicode4kOstReads4096ByteBTreePages() {
@@ -630,10 +648,13 @@ void TestPstParser::unicode4kOstReads4096ByteBTreePages() {
     QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
     parser.open(temp_file.fileName());
 
-    QVERIFY(!error_spy.isEmpty());
+    QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(!error.contains(QStringLiteral("Failed to load Node BTree")), qPrintable(error));
-    QVERIFY2(error.contains(QStringLiteral("Failed to build folder hierarchy")), qPrintable(error));
+    // "reached the hierarchy stage" is too weak: that same wrapper also carries depth-exceeded,
+    // cycle-detected, heap, decompression and integrity failures. A page walk that regressed
+    // into producing garbage nodes would fail under the identical fragment and still read as
+    // "the walk worked". Pin the node-not-found that an EMPTY but correctly-walked BTree gives.
+    QCOMPARE(error, QStringLiteral("Failed to build folder hierarchy: Node not found"));
 }
 
 void TestPstParser::unicode4kCompressedBlockInflates() {
@@ -661,7 +682,13 @@ void TestPstParser::unicode4kCompressedBlockInflates() {
     QCOMPARE(opened_spy.count(), 1);
     const auto info = opened_spy.first().at(0).value<sak::PstFileInfo>();
     QCOMPARE(info.is_ost, true);
+    // All five fields are stamped together by populateFileInfo. Dropping the is_unicode stamp
+    // leaves this 4k OST opening and reporting OST + 1 folder while every consumer is told the
+    // store is ANSI -- and the Unicode test covers only the legacy wVer-23 PST, never this one.
+    QCOMPARE(info.is_unicode, true);
+    QCOMPARE(info.encryption_type, sak::email::kEncryptNone);
     QCOMPARE(info.total_folders, 1);
+    QCOMPARE(info.total_items, 0);
 }
 
 void TestPstParser::unicode4kUncompressedBlockPassesThrough() {
@@ -715,8 +742,15 @@ void TestPstParser::unicode4kBadZlibFailsClosed() {
     temp_file.close();
 
     PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
     parser.open(temp_file.fileName());
     QVERIFY(!parser.isOpen());  // the root block cannot be read, so open() fails closed
+    // ...specifically because the DECOMPRESS failed. verifyBlockTrailer runs first, and a
+    // regressed footer read reports read_error -- either would refuse this file for an
+    // unrelated reason, leaving the branch under test never reached.
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.takeFirst().at(0).toString(),
+             QStringLiteral("Failed to build folder hierarchy: Block decompression failed"));
 }
 
 void TestPstParser::unicode4kDecompressSizeMismatchFailsClosed() {
@@ -732,8 +766,14 @@ void TestPstParser::unicode4kDecompressSizeMismatchFailsClosed() {
     temp_file.close();
 
     PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
     parser.open(temp_file.fileName());
     QVERIFY(!parser.isOpen());  // inflated size != declared -> fail closed
+    // The exact-size invariant, named. A regressed page/trailer size or footer read would
+    // refuse the store as an integrity or read failure and leave this invariant untested.
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.takeFirst().at(0).toString(),
+             QStringLiteral("Failed to build folder hierarchy: Block decompression failed"));
 }
 
 void TestPstParser::compressibleEncryptedPstDecodesRootPropertyContext() {
@@ -952,6 +992,10 @@ void TestPstParser::corruptBlockTrailerFieldFailsClosed() {
         const auto props = parser.readItemProperties(sak::pst_fixture::kMessageNid);
         QVERIFY2(!props.has_value(),
                  label);  // the corrupt trailer field must fail the block closed
+        // ...and on THIS field's integrity check. A bare !has_value() is equally produced by an
+        // unrelated regression -- an NBT lookup returning pst_node_not_found, say -- which would
+        // pass all four iterations with all four trailer guards dead.
+        QCOMPARE(props.error(), sak::error_code::pst_integrity_check_failed);
     }
 }
 
@@ -1290,9 +1334,13 @@ void TestPstParser::rejectsUnknownDataVersion() {
     parser.open(temp_file.fileName());
 
     QVERIFY(!parser.isOpen());
-    QVERIFY(!error_spy.isEmpty());
+    QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
+    // The VERSION gate, which runs before verifyHeaderIntegrity. If the CRC stamping in the
+    // fixture helper broke, the file would be refused as an integrity failure and
+    // contains("Invalid PST header") would still pass with the version gate deleted -- exactly
+    // the false green this test was written to remove.
+    QCOMPARE(error, QStringLiteral("Invalid PST header: Invalid file header"));
 }
 
 void TestPstParser::rejectsMistypedNodeBTreePage() {
@@ -1318,9 +1366,13 @@ void TestPstParser::rejectsMistypedNodeBTreePage() {
     parser.open(temp_file.fileName());
 
     QVERIFY(!parser.isOpen());
-    QVERIFY(!error_spy.isEmpty());
+    QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(error.contains(QStringLiteral("Failed to load Node BTree")), qPrintable(error));
+    // The expected-ptype gate. A ROOT-BREF regression handing this stage an offset past EOF
+    // yields "Failed to load Node BTree: Read error", which still contains the fragment -- so
+    // the test passed with the gate dead. The exact text also finally separates this test from
+    // rejectsPageCrcMismatch, which asserted the identical string.
+    QCOMPARE(error, QStringLiteral("Failed to load Node BTree: Corrupted BTree structure"));
 }
 
 // A header whose stored dwCRCPartial no longer matches its body is corrupt or
@@ -1342,9 +1394,14 @@ void TestPstParser::rejectsHeaderCrcMismatch() {
     parser.open(temp_file.fileName());
 
     QVERIFY(!parser.isOpen());
-    QVERIFY(!error_spy.isEmpty());
+    QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(error.contains(QStringLiteral("Invalid PST header")), qPrintable(error));
+    // The CRC guard specifically. The version and content-type gates run earlier and both
+    // report "Invalid PST header: Invalid file header" -- a DIFFERENT code -- so the fragment
+    // could not show the integrity check ran at all.
+    QCOMPARE(error,
+             QStringLiteral("Invalid PST header: PST/OST integrity check failed "
+                            "(CRC or signature mismatch)"));
 }
 
 // Corrupting a byte inside the Node BTree page body (covered by the PAGETRAILER
@@ -1367,9 +1424,14 @@ void TestPstParser::rejectsPageCrcMismatch() {
     parser.open(temp_file.fileName());
 
     QVERIFY(!parser.isOpen());
-    QVERIFY(!error_spy.isEmpty());
+    QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(error.contains(QStringLiteral("Failed to load Node BTree")), qPrintable(error));
+    // The PAGETRAILER CRC. Changing the expected NBT ptype constant would reject this
+    // still-valid 0x81 page at the same stage with a different code, keeping the old fragment
+    // green while the page-CRC guard this test exists for was never reached.
+    QCOMPARE(error,
+             QStringLiteral("Failed to load Node BTree: PST/OST integrity check failed "
+                            "(CRC or signature mismatch)"));
 }
 
 // Corrupting a byte of a data block breaks its BLOCKTRAILER dwCRC; the otherwise
@@ -1392,7 +1454,14 @@ void TestPstParser::rejectsBlockCrcMismatch() {
     parser.open(temp_file.fileName());
 
     QVERIFY(!parser.isOpen());
-    QVERIFY(!error_spy.isEmpty());
+    // The BLOCKTRAILER dwCRC. This is the load-bearing pin of the whole file: delete that CRC
+    // gate and the flipped byte still fails the open -- it decodes to an out-of-range heap
+    // offset and reports "Invalid heap structure" instead -- so a non-empty spy stayed green
+    // with the block authentication removed entirely.
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.takeFirst().at(0).toString(),
+             QStringLiteral("Failed to build folder hierarchy: PST/OST integrity check failed "
+                            "(CRC or signature mismatch)"));
 }
 
 // ============================================================================
@@ -1420,7 +1489,10 @@ void TestPstParser::detectsNoEncryption() {
     QVERIFY(!parser.isOpen());  // still no BTrees in a header-only file
     QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(!error.contains(QStringLiteral("Unsupported encryption")), qPrintable(error));
+    // Ruling out one message proves nothing about WHICH offset was read: any refusal before
+    // parseHeaderEncryption also lacks "Unsupported encryption". Pin the NBT-stage failure that
+    // only happens once the encryption byte at 513 has been read and ACCEPTED.
+    QCOMPARE(error, QStringLiteral("Failed to load Node BTree: Corrupted BTree structure"));
 }
 
 // Compressible is the other accepted bCryptMethod, and it too is read from 513 in
@@ -1442,7 +1514,10 @@ void TestPstParser::detectsCompressibleEncryption() {
     QVERIFY(!parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(!error.contains(QStringLiteral("Unsupported encryption")), qPrintable(error));
+    // Ruling out one message proves nothing about WHICH offset was read: any refusal before
+    // parseHeaderEncryption also lacks "Unsupported encryption". Pin the NBT-stage failure that
+    // only happens once the encryption byte at 513 has been read and ACCEPTED.
+    QCOMPARE(error, QStringLiteral("Failed to load Node BTree: Corrupted BTree structure"));
 }
 
 // P05-44: the ANSI bCryptMethod byte is at offset 461, not 465. Put High
@@ -1464,9 +1539,12 @@ void TestPstParser::ansiHeaderReadsEncryptionFromOffset461() {
     parser.open(temp_file.fileName());
 
     QVERIFY(!parser.isOpen());
-    QVERIFY(!error_spy.isEmpty());
+    QCOMPARE(error_spy.count(), 1);
     const QString error = error_spy.takeFirst().at(0).toString();
-    QVERIFY2(error.contains(QStringLiteral("Unsupported encryption")), qPrintable(error));
+    // Reading 461 gives this refusal; reading the old wrong offset 465 would find the None
+    // decoy and fall through to the BTree stage instead. The wrapper matters too -- it places
+    // the rejection in the HEADER parse, before any page is walked.
+    QCOMPARE(error, QStringLiteral("Invalid PST header: Unsupported encryption"));
 }
 
 // Env-gated real-file smoke: point SAK_TEST_PST_DIR at a folder of .pst/.ost/.nst
