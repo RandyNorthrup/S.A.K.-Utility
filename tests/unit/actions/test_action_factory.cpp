@@ -10,8 +10,11 @@
 #include "sak/actions/verify_system_files_action.h"
 #include "sak/quick_action.h"
 
+#include <QHash>
 #include <QSet>
 #include <QTest>
+
+#include <vector>
 
 using namespace sak;
 
@@ -104,10 +107,37 @@ void TestActionFactory::testAllNamesNonEmpty() {
 }
 
 void TestActionFactory::testAllDescriptionsNonEmpty() {
+    // Every description() is a compile-time literal, so pin the exact text. A !isEmpty() floor
+    // lets a truncated blurb through -- notably the two adjacent split literals in
+    // reset_network_action.h and backup_bitlocker_keys_action.h, where dropping a half leaves a
+    // non-empty but wrong string that a .contains() check also fails to catch.
+    const QHash<QString, QString> expected = {
+        {QStringLiteral("BitLocker Key Backup"),
+         QStringLiteral("Backup BitLocker recovery keys for all encrypted volumes")},
+        {QStringLiteral("Check Disk Errors"), QStringLiteral("Run CHKDSK scan on all drives")},
+        {QStringLiteral("Generate System Report"),
+         QStringLiteral("Create comprehensive system report")},
+        {QStringLiteral("Optimize Power Settings"),
+         QStringLiteral("Switch to High Performance power plan")},
+        {QStringLiteral("Reset Network Settings"),
+         QStringLiteral("Reset TCP/IP, DNS, Winsock and Windows Firewall rules, and restart "
+                        "network adapters")},
+        {QStringLiteral("Screenshot Settings"),
+         QStringLiteral("Capture screenshots of Windows Settings")},
+        {QStringLiteral("Verify System Files"),
+         QStringLiteral("Run SFC and DISM to repair system files")},
+    };
+
+    // The table must cover the factory exactly -- a new action cannot slip past unpinned.
+    QCOMPARE(static_cast<int>(expected.size()), static_cast<int>(m_actions.size()));
+
     for (const auto& action : m_actions) {
-        QVERIFY2(!action->description().isEmpty(),
-                 qPrintable(
-                     QStringLiteral("Action '%1' has empty description()").arg(action->name())));
+        const QString action_name = action->name();
+        QVERIFY2(
+            expected.contains(action_name),
+            qPrintable(
+                QStringLiteral("No expected description pinned for action '%1'").arg(action_name)));
+        QCOMPARE(action->description(), expected.value(action_name));
     }
 }
 
@@ -125,9 +155,27 @@ void TestActionFactory::testAllCategoriesValid() {
 }
 
 void TestActionFactory::testRequiresAdminIsBool() {
-    for (const auto& action : m_actions) {
-        const bool val = action->requiresAdmin();
-        QVERIFY(val == true || val == false);
+    // `val == true || val == false` is a tautology over a bool: it holds for every
+    // implementation, so the elevation contract was entirely unpinned. Pin it exactly, in
+    // initTestCase() construction order -- which action needs admin decides whether the run is
+    // launched elevated at all.
+    struct Expected {
+        QString name;
+        bool requires_admin;
+    };
+    const std::vector<Expected> expected = {
+        {QStringLiteral("BitLocker Key Backup"), true},
+        {QStringLiteral("Check Disk Errors"), true},
+        {QStringLiteral("Generate System Report"), false},
+        {QStringLiteral("Optimize Power Settings"), false},
+        {QStringLiteral("Reset Network Settings"), true},
+        {QStringLiteral("Screenshot Settings"), false},
+        {QStringLiteral("Verify System Files"), true},
+    };
+    QCOMPARE(m_actions.size(), expected.size());
+    for (size_t i = 0; i < m_actions.size(); ++i) {
+        QCOMPARE(m_actions[i]->name(), expected[i].name);
+        QCOMPARE(m_actions[i]->requiresAdmin(), expected[i].requires_admin);
     }
 }
 
@@ -179,18 +227,53 @@ void TestActionFactory::testInitialStatusIsIdle() {
 
 void TestActionFactory::testInitialScanResultNotApplicable() {
     for (const auto& action : m_actions) {
+        const QuickAction::ScanResult& scan = action->lastScanResult();
         QVERIFY2(
-            !action->lastScanResult().applicable,
+            !scan.applicable,
             qPrintable(
                 QStringLiteral("Action '%1' initial scan claims applicable").arg(action->name())));
+
+        // The panel renders bytes/count/ETA as the pre-scan estimate, so a dropped or wrong
+        // default member initializer would show garbage before any scan runs. Pin the whole
+        // default-constructed struct, not just `applicable`.
+        QCOMPARE(scan.bytes_affected, Q_INT64_C(0));
+        QCOMPARE(scan.files_count, Q_INT64_C(0));
+        QCOMPARE(scan.estimated_duration_ms, Q_INT64_C(0));
+        QVERIFY2(scan.summary.isEmpty(),
+                 qPrintable(QStringLiteral("Action '%1' initial scan summary is '%2'")
+                                .arg(action->name(), scan.summary)));
+        QVERIFY2(scan.details.isEmpty(),
+                 qPrintable(QStringLiteral("Action '%1' initial scan details is '%2'")
+                                .arg(action->name(), scan.details)));
+        QVERIFY2(scan.warning.isEmpty(),
+                 qPrintable(QStringLiteral("Action '%1' initial scan warning is '%2'")
+                                .arg(action->name(), scan.warning)));
     }
 }
 
 void TestActionFactory::testInitialExecutionResultNotSuccess() {
     for (const auto& action : m_actions) {
-        QVERIFY2(!action->lastExecutionResult().success,
+        // A freshly constructed action has run nothing, so EVERY field of the default
+        // ExecutionResult must read clean: the constructor sets none of them, and the panels
+        // publish these counters before any run.
+        const QuickAction::ExecutionResult& result = action->lastExecutionResult();
+        QVERIFY2(!result.success,
                  qPrintable(QStringLiteral("Action '%1' initial execution claims success")
                                 .arg(action->name())));
+        QVERIFY2(
+            result.message.isEmpty(),
+            qPrintable(
+                QStringLiteral("Action '%1' initial execution has a message").arg(action->name())));
+        QCOMPARE(result.bytes_processed, Q_INT64_C(0));
+        QCOMPARE(result.files_processed, Q_INT64_C(0));
+        QCOMPARE(result.duration_ms, Q_INT64_C(0));
+        QVERIFY2(result.output_path.isEmpty(),
+                 qPrintable(QStringLiteral("Action '%1' initial execution has an output_path")
+                                .arg(action->name())));
+        QVERIFY2(
+            result.log.isEmpty(),
+            qPrintable(
+                QStringLiteral("Action '%1' initial execution has a log").arg(action->name())));
     }
 }
 

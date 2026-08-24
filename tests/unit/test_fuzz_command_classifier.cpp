@@ -143,6 +143,13 @@ std::vector<QString> catastrophicSeeds() {
         QStringLiteral("wbadmin delete catalog -quiet"),
         QStringLiteral("cipher /w:c"),
         QStringLiteral("set-executionpolicy bypass"),
+        // Both ExecutionPolicy values the catastrophic arm names must be pinned: the arm is
+        // `\bset-executionpolicy\b\s+\S*(unrestricted|bypass)`, and Unrestricted is the wider of
+        // the two -- it also drops the remote-signed check for downloaded scripts. No obfuscation
+        // operator can turn "bypass" into "unrestricted", so without this seed the `unrestricted|`
+        // alternative can be deleted with the whole suite still green, silently losing the
+        // human-confirmation gate for `Set-ExecutionPolicy Unrestricted`.
+        QStringLiteral("set-executionpolicy unrestricted"),
         QStringLiteral("mkfs ext4 /dev/sdb"),
         QStringLiteral("dd if=/dev/zero of=/dev/sdb"),
     };
@@ -192,7 +199,7 @@ PropertyOutcome runProperty(const std::vector<QString>& seeds,
     return outcome;
 }
 
-void assertProperty(const PropertyOutcome& outcome) {
+void assertProperty(const PropertyOutcome& outcome, int seed_count) {
     if (!outcome.ok) {
         const QByteArray banner =
             QStringLiteral("classifier property failed after %1 checks: %2\n  command: \"%3\"")
@@ -201,7 +208,15 @@ void assertProperty(const PropertyOutcome& outcome) {
                 .toUtf8();
         QVERIFY2(false, banner.constData());
     }
-    QVERIFY(outcome.checks_run > 0);
+    // iterationsFromEnv clamps a non-positive SAK_FUZZ_ITERS back to kDefaultIterations. Without
+    // that clamp the mutant loop runs zero times and this file silently degenerates into a
+    // 12-command smoke test.
+    const int iterations = sak::fuzz::iterationsFromEnv();
+    QVERIFY(iterations > 0);
+    // runProperty increments checks_run once per seed plus once per mutant, so the exact count
+    // is knowable; a > 0 floor is satisfied by the seed pass alone. Same convention as the
+    // sibling fuzz suites.
+    QCOMPARE(outcome.checks_run, seed_count + iterations);
 }
 
 }  // namespace
@@ -211,17 +226,51 @@ class CommandClassifierFuzzTests : public QObject {
 
 private Q_SLOTS:
     void catastrophicSurvivesObfuscation() {
+        const std::vector<QString> seeds = catastrophicSeeds();
         assertProperty(runProperty(
-            catastrophicSeeds(),
-            [](const QString& c) { return sak::ai::commandLooksCatastrophic(c); },
-            QStringLiteral("catastrophic command was NOT classified catastrophic")));
+                           seeds,
+                           [](const QString& c) { return sak::ai::commandLooksCatastrophic(c); },
+                           QStringLiteral("catastrophic command was NOT classified catastrophic")),
+                       static_cast<int>(seeds.size()));
     }
 
     void benignNeverBecomesCatastrophic() {
+        const std::vector<QString> seeds = benignSeeds();
         assertProperty(runProperty(
-            benignSeeds(),
-            [](const QString& c) { return !sak::ai::commandLooksCatastrophic(c); },
-            QStringLiteral("benign command WAS classified catastrophic")));
+                           seeds,
+                           [](const QString& c) { return !sak::ai::commandLooksCatastrophic(c); },
+                           QStringLiteral("benign command WAS classified catastrophic")),
+                       static_cast<int>(seeds.size()));
+        // The catastrophic TIER is `shell && (catastrophic || obfuscated)`, so
+        // !commandLooksCatastrophic alone cannot establish this test's own claim. A tightening
+        // of the escape/indirection detector that starts firing on an intra-word caret --
+        // undoing the deliberate carve-out -- escalates these safe diagnostics to the mandatory
+        // human-confirmation gate with the assertion above still green.
+        assertProperty(runProperty(
+                           seeds,
+                           [](const QString& c) { return !sak::ai::commandLooksObfuscated(c); },
+                           QStringLiteral("benign command WAS classified obfuscated")),
+                       static_cast<int>(seeds.size()));
+    }
+
+    // The disk-format arm accepts ANY drive letter (`[a-z]:`), but the seed corpus only ever
+    // presents c: and d: and no obfuscation operator can change a drive letter -- an intra-word
+    // escape needs two adjacent word characters so it never splits "c:", and a case flip is
+    // absorbed by CaseInsensitiveOption. Narrowing the class therefore survives the entire fuzz
+    // run untouched, while "format E:" wipes an attached data volume just as irreversibly and
+    // must still reach the confirmation gate. Proving the whole class also kills sibling
+    // narrowings such as [a-e]: that one extra seed would survive.
+    void everyDriveLetterFormatIsCatastrophic() {
+        const QString drive_letters = QStringLiteral("abcdefghijklmnopqrstuvwxyz");
+        for (const QChar drive : drive_letters) {
+            const QString bare = QStringLiteral("format ") + drive + QLatin1Char(':');
+            QVERIFY2(sak::ai::commandLooksCatastrophic(bare), qPrintable(bare));
+            const QString switched = QStringLiteral("format /q /fs:ntfs ") + drive +
+                                     QLatin1Char(':');
+            QVERIFY2(sak::ai::commandLooksCatastrophic(switched), qPrintable(switched));
+            const QString split = QStringLiteral("fo^rmat ") + drive + QLatin1Char(':');
+            QVERIFY2(sak::ai::commandLooksCatastrophic(split), qPrintable(split));
+        }
     }
 };
 

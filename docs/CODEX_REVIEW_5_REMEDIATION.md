@@ -5024,6 +5024,54 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 FIRST-pass sweep b92 (gated 249/249): 34 weak assertions pinned across six
+    NEVER-swept files (backup_bitlocker_keys 10, screenshot_settings 8, action_factory 4,
+    all_actions_metadata 4, verify_system_files 4, fuzz_command_classifier 4). Four further
+    candidates were REJECTED by the adversarial pass. These are the files the b80 closure claim
+    missed -- see the CORRECTION on that entry.
+    TWO VACUOUS ASSERTIONS, both first-pass classics. testRequiresAdminIsBool asserted
+    `val == true || val == false` over a bool, which holds for every implementation, so the
+    ELEVATION contract -- which of the seven actions runs elevated -- was entirely unpinned; it is
+    now an exact table in construction order. And verifyAction() called findByName(expectedName)
+    and then asserted QCOMPARE(action->name(), expectedName), re-checking the very field the
+    lookup matched on. That one is replaced by the premise the lookup actually rests on: exactly
+    ONE catalog entry carries the name, so a shadowed sibling cannot go uninspected.
+    A DISJUNCTION THAT ACCEPTED BOTH OUTCOMES: testCancelAllActionsWhenIdle asserted
+    `status == Idle || status == Cancelled` after cancel(). QuickAction::cancel() only transitions
+    from Scanning/Running and no concrete action overrides it, so with every fixture action Idle
+    there is exactly ONE correct post-state. The pin also asserts statusChanged does not fire at
+    all, since setStatus() is never reached -- a subclass fabricating Cancelled for something that
+    never ran would drive the panel's button state off a bogus emission. testStatusAfterCancel was
+    the companion defect: its only assertion was satisfied by the fixture's own pre-state (a fresh
+    action is Idle before cancel() is ever called), so it proved nothing about cancel(); all four
+    arms of the guard are now driven.
+    backup_bitlocker_keys: screenBackupLocation's refusal test accepted "empty result AND some
+    non-empty reason", which any of the three guards satisfies for any other's input -- a blank
+    path is ALSO QFileInfo::isRelative(), so the dedicated blank guard could be deleted with the
+    suite green. Each refusal is now pinned to its exact diagnostic, which is the text the
+    technician is shown. parseDetectedVolumes' only success case asserted size()==1 and read back
+    NO field: drive_letter routes the per-volume protector query, and the -1 sentinels on
+    ProtectionStatus/LockStatus/EncryptionPct exist so a MISSING field reads "Unknown"/"N/A"
+    instead of index 0 ("Off"/"Unlocked"/"0%") -- an encrypted volume documented as unprotected.
+    The array arm, which is the shape ConvertTo-Json emits on a multi-volume machine, was never
+    executed at all. And every malformed element the parser rejects sat in FIRST position, where
+    "rejected" and "never accumulated anything" are indistinguishable; a malformed entry AFTER a
+    valid one now proves the whole response is discarded rather than half-returned.
+    fuzz_command_classifier: the catastrophic arm names two ExecutionPolicy values
+    (unrestricted|bypass) and only "bypass" was seeded -- no obfuscation operator can turn one
+    into the other, so the `unrestricted|` alternative was deletable with the suite green, losing
+    the human-confirmation gate for Set-ExecutionPolicy Unrestricted. The disk-format arm accepts
+    any `[a-z]:` but the corpus only ever presented c: and d:, and no mutation operator can change
+    a drive letter, so the class is now swept end to end. benignNeverBecomesCatastrophic checked
+    only !commandLooksCatastrophic, but the escalation tier is `shell && (catastrophic ||
+    obfuscated)` -- the second disjunct is pinned now, so a tightening of the escape detector
+    cannot silently escalate safe diagnostics to the confirmation gate.
+    screenshot_settings: the report test was four .contains() calls on a pure, deterministic
+    builder; the whole report shape is pinned now, including WHICH marker each page gets ([x] vs
+    [ ]) and that a clean run emits no FAILED PAGES banner at all. generateReport asserted only
+    that a file with the right NAME exists -- it is now compared line-for-line against the pure
+    builder, skipping only the wall-clock line. The unwritten-report case proved "not a success"
+    but never that the log withholds REPORT_PATH for a file that does not exist.
   - PROGRESS 2026-08-24 SECOND-pass sweep b91 (gated 249/249): 33 weak assertions pinned across six
     more already-swept files (ai_prompt_assembler 10, fuzz_fs_detector 6, ai_tool_call_router 6,
     win32_mcp_text_match 5, email_folder_selection 3, fuzz_pst_parser 3). Four further candidates
