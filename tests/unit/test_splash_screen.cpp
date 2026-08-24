@@ -31,6 +31,18 @@ void SplashScreenTests::splashAcceptsNonSquareAssets() {
     sak::ui::SplashScreen splash(pixmap);
 
     QCOMPARE(splash.size(), QSize(sak::ui::kSplashSizePx, sak::ui::kSplashSizePx));
+
+    // The widget size above is set unconditionally by setFixedSize() and says
+    // nothing about the asset, so pin the rendered content instead: a 1024x512
+    // source must be expanded to cover and then centre-cropped, leaving the whole
+    // square opaque -- not a letterboxed strip and not a dropped (null) pixmap.
+    // Sampled relative to the grabbed image so the check is device-pixel-ratio
+    // independent, and well inside the corner radius / shadow padding.
+    const QImage rendered = splash.grab().toImage();
+    QCOMPARE(rendered.pixelColor(rendered.width() / 2, rendered.height() / 6), QColor(Qt::black));
+    QCOMPARE(rendered.pixelColor(rendered.width() / 2, rendered.height() / 2), QColor(Qt::black));
+    QCOMPARE(rendered.pixelColor(rendered.width() / 2, (rendered.height() * 5) / 6),
+             QColor(Qt::black));
 }
 
 QTEST_MAIN(SplashScreenTests)

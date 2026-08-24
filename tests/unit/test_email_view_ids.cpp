@@ -42,6 +42,14 @@ void TestEmailViewIds::zeroIsAnIdNotAnAbsence() {
     const auto decoded = sak::decodeEmailViewId(QVariant::fromValue<uint64_t>(0));
     QVERIFY(decoded.has_value());
     QCOMPARE(*decoded, static_cast<uint64_t>(0));
+
+    // The same must hold when the role was stored as a signed int, which is the
+    // only path that reaches the sign guard at all: an off-by-one there (<= 0
+    // instead of < 0) would turn the MBOX root folder and the first message back
+    // into "this item cannot be acted on".
+    const auto signed_zero = sak::decodeEmailViewId(QVariant::fromValue<int>(0));
+    QVERIFY(signed_zero.has_value());
+    QCOMPARE(*signed_zero, static_cast<uint64_t>(0));
 }
 
 void TestEmailViewIds::refusesUnsetAndNonIntegralRoles() {
@@ -60,6 +68,13 @@ void TestEmailViewIds::refusesNegativeIds() {
     // arbitrary node, so it is refused rather than converted.
     QVERIFY(!sak::decodeEmailViewId(QVariant::fromValue<int>(-1)).has_value());
     QVERIFY(!sak::decodeEmailViewId(QVariant::fromValue<qlonglong>(-9)).has_value());
+
+    // The qlonglong refusal above must come from the sign guard, not from
+    // LongLong having quietly dropped out of the accepted-type set: the same
+    // type decodes to its exact value when the number is not negative.
+    const auto long_positive = sak::decodeEmailViewId(QVariant::fromValue<qlonglong>(9));
+    QVERIFY(long_positive.has_value());
+    QCOMPARE(*long_positive, static_cast<uint64_t>(9));
 }
 
 QTEST_MAIN(TestEmailViewIds)

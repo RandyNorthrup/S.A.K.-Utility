@@ -5024,6 +5024,36 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 FIRST-pass sweep b80 (gated 249/249): 13 weak assertions pinned across the
+    last six never-swept files (follow_scroll_controller 4, ai_model_catalog 2, deadline_canceller
+    2, email_view_ids 2, ai_mcp_stdio_client 2, splash_screen 1). THIS CLOSES THE NEVER-SWEPT
+    SURFACE: of the 41 unit-test files no G18-4 commit had ever touched, 40 are now swept and one
+    (fuzz_command_classifier) was verified CLEAN by the b75 adversarial pass.
+    THE WHOLE SUITE SHIPPED GREEN ON A NO-OP finish(). Both DeadlineCanceller cases used a 100 s
+    timeout, so the deadline could never elapse while the test was looking: fired() is false for
+    BOTH the Running and the Done state, so `void finish() { }` -- no compare-exchange to Done, no
+    request_stop -- passed every slot in the file. That is not imprecision: the monitor's callback
+    is worker.cancel(), and finish() runs the instant a search returns, so without the Done claim
+    the monitor can still win the race and cancel an already-completed search, making fired()
+    report a COMPLETED PST search as timed out. The deadlines are now 60 ms and 300 ms with waits
+    that outlive them, which is deterministic in the safe direction: a correct finish() claims
+    Done microseconds after construction and the monitor's first loop check returns before any
+    deadline evaluation, so no host speed can make it fire.
+    follow_scroll_controller: isScrolledToBottom() is VACUOUSLY TRUE when the scrollbar maximum is
+    0, so every bottom assertion in the file passed if the 80 appended lines happened not to
+    overflow the viewport -- and nothing asserted that they did. The tests now pin the scrollbar
+    value against its maximum and require the maximum to be positive.
+    ai_mcp_stdio_client: the initialize handshake was checked on four fields, leaving
+    protocolVersion, capabilities and clientInfo.version unasserted -- blanking them sends a
+    handshake with no protocol revision, which this codebase's own session transport treats as
+    fatal on the response side. And the tool-call arguments object is a VERBATIM pass-through
+    tested with a single-key input, so it could not tell "forwarded whole" from "kept exactly this
+    key"; an implementation that forwarded one argument would silently misfire every click/type/
+    wait tool. Both are pinned as whole-object comparisons now, against hand-written literals
+    rather than a call back into the builder.
+    ai_model_catalog: membership is whole-string and case-sensitive, and the tests probed neither
+    -- a suffixed real ID, a truncation, and case-folded variants are all rejected, and the trim
+    is a TRIM rather than a whitespace squeeze (interior whitespace stays fatal).
   - PROGRESS 2026-08-24 FIRST-pass sweep b79 (gated 249/249): 20 weak assertions pinned across
     five never-swept files (ai_cancellation_token 8, organizer_worker 4, view_empty_state 3,
     win32_mcp_uia_ref 3, app_installation_busy 2).

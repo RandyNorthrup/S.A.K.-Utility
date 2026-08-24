@@ -27,13 +27,17 @@ void AiMcpStdioClientTests::buildsInitializePayload() {
     QCOMPARE(payload.value(QStringLiteral("jsonrpc")).toString(), QStringLiteral("2.0"));
     QCOMPARE(payload.value(QStringLiteral("id")).toInt(), 1);
     QCOMPARE(payload.value(QStringLiteral("method")).toString(), QStringLiteral("initialize"));
-    QCOMPARE(payload.value(QStringLiteral("params"))
-                 .toObject()
-                 .value(QStringLiteral("clientInfo"))
-                 .toObject()
-                 .value(QStringLiteral("name"))
-                 .toString(),
-             QStringLiteral("sak-utility"));
+    const QJsonObject expected_initialize{
+        {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+        {QStringLiteral("id"), 1},
+        {QStringLiteral("method"), QStringLiteral("initialize")},
+        {QStringLiteral("params"),
+         QJsonObject{{QStringLiteral("protocolVersion"), QStringLiteral("2024-11-05")},
+                     {QStringLiteral("capabilities"), QJsonObject{}},
+                     {QStringLiteral("clientInfo"),
+                      QJsonObject{{QStringLiteral("name"), QStringLiteral("sak-utility")},
+                                  {QStringLiteral("version"), QStringLiteral("1")}}}}}};
+    QCOMPARE(payload, expected_initialize);
 }
 
 void AiMcpStdioClientTests::buildsToolCallPayload() {
@@ -47,11 +51,35 @@ void AiMcpStdioClientTests::buildsToolCallPayload() {
     QCOMPARE(payload.value(QStringLiteral("method")).toString(), QStringLiteral("tools/call"));
     const QJsonObject params = payload.value(QStringLiteral("params")).toObject();
     QCOMPARE(params.value(QStringLiteral("name")).toString(), QStringLiteral("list_windows"));
-    QCOMPARE(params.value(QStringLiteral("arguments"))
-                 .toObject()
-                 .value(QStringLiteral("filter"))
-                 .toString(),
-             QStringLiteral("SAK"));
+    const QJsonObject expected_tool_call{
+        {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+        {QStringLiteral("id"), 9},
+        {QStringLiteral("method"), QStringLiteral("tools/call")},
+        {QStringLiteral("params"),
+         QJsonObject{{QStringLiteral("name"), QStringLiteral("list_windows")},
+                     {QStringLiteral("arguments"),
+                      QJsonObject{{QStringLiteral("filter"), QStringLiteral("SAK")}}}}}};
+    QCOMPARE(payload, expected_tool_call);
+
+    // Multi-key, mixed-type arguments must survive verbatim: a single-key probe cannot catch
+    // an implementation that forwards only one argument or coerces argument values.
+    const QJsonObject multi_payload = sak::ai::AiMcpStdioClient::toolCallPayloadForTesting(
+        10,
+        QStringLiteral("run_app_action"),
+        QJsonObject{{QStringLiteral("filter"), QStringLiteral("SAK")},
+                    {QStringLiteral("limit"), 5},
+                    {QStringLiteral("dry_run"), true}});
+    const QJsonObject expected_multi{
+        {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+        {QStringLiteral("id"), 10},
+        {QStringLiteral("method"), QStringLiteral("tools/call")},
+        {QStringLiteral("params"),
+         QJsonObject{{QStringLiteral("name"), QStringLiteral("run_app_action")},
+                     {QStringLiteral("arguments"),
+                      QJsonObject{{QStringLiteral("filter"), QStringLiteral("SAK")},
+                                  {QStringLiteral("limit"), 5},
+                                  {QStringLiteral("dry_run"), true}}}}}};
+    QCOMPARE(multi_payload, expected_multi);
 }
 
 void AiMcpStdioClientTests::liveWin32McpListWindows_optIn() {
