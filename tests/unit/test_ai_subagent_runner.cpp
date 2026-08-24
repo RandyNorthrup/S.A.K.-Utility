@@ -205,10 +205,21 @@ void AiSubagentRunnerTests::completeRoundTripPopulatesFields() {
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Complete);
     QCOMPARE(result.summary, QStringLiteral("Drive healthy"));
     QCOMPARE(result.findings.size(), 1);
+    // The finding is parsed field by field out of the model payload; title alone leaves the
+    // severity (which drives how the UI presents it) and the recommendation unobserved.
     QCOMPARE(result.findings.first().title, QStringLiteral("SMART OK"));
+    QCOMPARE(result.findings.first().severity, QStringLiteral("info"));
+    QCOMPARE(result.findings.first().recommendation, QStringLiteral("None"));
     QCOMPARE(result.confidence, 0.91);
+    // total_tokens is the SUM the client reported; pin the components too, so a parse that
+    // dropped input or output tokens (and happened to still add up) cannot pass.
+    QCOMPARE(result.usage.input_tokens, 100);
+    QCOMPARE(result.usage.output_tokens, 50);
     QCOMPARE(result.usage.total_tokens, 150);
-    QVERIFY(client.last_request.context.contains(QStringLiteral("Tool policy:")));
+    // The policy is NAMED in the prompt, not merely mentioned: a subagent told the wrong
+    // policy would still contain the bare label.
+    QVERIFY(
+        client.last_request.context.contains(QStringLiteral("Tool policy: no_local_execution")));
 }
 
 void AiSubagentRunnerTests::malformedJsonReportsFailure() {
@@ -224,7 +235,9 @@ void AiSubagentRunnerTests::malformedJsonReportsFailure() {
     const auto result = runner.run(task, {});
 
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Failed);
-    QVERIFY(result.error_message.contains(QStringLiteral("non-JSON")));
+    // A fixed prefix plus the offending text, so pin the prefix exactly.
+    QVERIFY2(result.error_message.startsWith(QStringLiteral("Subagent returned non-JSON output: ")),
+             qPrintable(result.error_message));
 }
 
 void AiSubagentRunnerTests::modelFailureSurfaces() {
@@ -241,7 +254,9 @@ void AiSubagentRunnerTests::modelFailureSurfaces() {
     const auto result = runner.run(task, {});
 
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Failed);
-    QVERIFY(result.error_message.contains(QStringLiteral("HTTP 429")));
+    // The client error is surfaced VERBATIM -- contains() would still pass if it were wrapped
+    // in prose that hid which layer failed.
+    QCOMPARE(result.error_message, QStringLiteral("HTTP 429"));
 }
 
 void AiSubagentRunnerTests::cancelledParentTokenSkipsInvoke() {
@@ -257,7 +272,10 @@ void AiSubagentRunnerTests::cancelledParentTokenSkipsInvoke() {
     const auto result = runner.run(task, root);
 
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Cancelled);
-    QVERIFY(client.last_request.objective.isEmpty());
+    // The cancel reason is propagated, and the model was never invoked at all -- an empty
+    // last_request could also mean it was invoked with an empty objective.
+    QCOMPARE(result.error_message, QStringLiteral("user_cancelled"));
+    QCOMPARE(client.invocation_count, 0);
 }
 
 void AiSubagentRunnerTests::cancellationDuringInvokeReportsCancelled() {
@@ -275,6 +293,8 @@ void AiSubagentRunnerTests::cancellationDuringInvokeReportsCancelled() {
     const auto result = runner.run(task, root);
 
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Cancelled);
+    // The token reason set by the fake client is propagated verbatim.
+    QCOMPARE(result.error_message, QStringLiteral("fake_cancelled"));
 }
 
 void AiSubagentRunnerTests::exceededTokenBudgetRecordsRisk() {
@@ -297,7 +317,10 @@ void AiSubagentRunnerTests::exceededTokenBudgetRecordsRisk() {
 
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Complete);
     QVERIFY(result.error_message.isEmpty());
-    QVERIFY(result.risks.join(QStringLiteral("\n")).contains(QStringLiteral("token budget")));
+    // Exactly one risk, naming both the actual usage and the budget it exceeded.
+    QCOMPARE(result.risks.size(), 1);
+    QCOMPARE(result.risks.first(),
+             QStringLiteral("Subagent exceeded advisory token budget (9001 > 1000)"));
 }
 
 void AiSubagentRunnerTests::emptyFailedModelStatusContinuesDegraded() {
@@ -326,10 +349,22 @@ void AiSubagentRunnerTests::emptyFailedModelStatusContinuesDegraded() {
              QStringLiteral("Subagent returned a failed status without explanation or content; "
                             "recording this phase as degraded and continuing with available prior "
                             "workflow evidence."));
-    QVERIFY(result.risks.join(QStringLiteral("\n")).contains(QStringLiteral("failed status")));
-    QVERIFY(client.last_request.context.contains(
-        QStringLiteral("Output schema label: drive_evidence")));
-    QVERIFY(client.last_request.context.contains(QStringLiteral("Use status 'complete'")));
+    // Exactly one risk, stating that the output was treated as degraded rather than
+    // as a clean success -- the auditable half of the honest-degradation contract.
+    QCOMPARE(result.risks.size(), 1);
+    QCOMPARE(result.risks.first(),
+             QStringLiteral("Subagent returned a failed status without an error message or "
+                            "content; treated as degraded output, not a clean success."));
+    // The schema label is followed by the instruction that makes it binding; a prefix
+    // check would pass even if that instruction were dropped.
+    QVERIFY(client.last_request.context.contains(QStringLiteral(
+        "Output schema label: drive_evidence. Use the standard SAK subagent result shape; "
+        "do not invent a different JSON shape.")));
+    QVERIFY(client.last_request.context.contains(QStringLiteral(
+        "Use status 'complete' when you can analyze available evidence, even if evidence "
+        "is partial. Put caveats, missing admin data, and uncertainty in risks/questions. "
+        "Use status 'failed' only when no useful analysis can be produced, and then "
+        "include error_message.")));
 }
 
 void AiSubagentRunnerTests::taskAndResultJsonRoundTrip() {
@@ -344,6 +379,8 @@ void AiSubagentRunnerTests::taskAndResultJsonRoundTrip() {
 
     const auto task_copy = sak::ai::AiSubagentTask::fromJson(task.toJson());
     QCOMPARE(task_copy.task_id, task.task_id);
+    QCOMPARE(task_copy.agent_id, QStringLiteral("package_agent"));
+    QCOMPARE(task_copy.objective, QStringLiteral("Find chrome"));
     QCOMPARE(task_copy.tool_policy, sak::ai::AiToolPolicy::PackageToolsOnly);
     QCOMPARE(task_copy.token_budget, 6000);
     QCOMPARE(task_copy.context_refs, task.context_refs);
@@ -373,6 +410,8 @@ void AiSubagentRunnerTests::taskAndResultJsonRoundTrip() {
     QCOMPARE(result_copy.artifacts, result.artifacts);
     QCOMPARE(result_copy.findings.size(), 1);
     QCOMPARE(result_copy.findings.first().title, finding.title);
+    QCOMPARE(result_copy.findings.first().severity, QStringLiteral("info"));
+    QCOMPARE(result_copy.findings.first().recommendation, QStringLiteral("direct_download"));
     QCOMPARE(result_copy.confidence, 0.75);
     // All four detailed token counts must survive the round trip, not just totals.
     QCOMPARE(result_copy.usage.input_tokens, 100);
@@ -406,6 +445,7 @@ void AiSubagentRunnerTests::retriesUntilSuccess() {
     task.agent_id = QStringLiteral("a");
 
     const auto result = runner.run(task, {});
+    QCOMPARE(result.summary, QStringLiteral("ok after retry"));
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Complete);
     QCOMPARE(client.invocation_count, 2);
 }
@@ -428,7 +468,7 @@ void AiSubagentRunnerTests::retriesExhaustedReturnsLastFailure() {
 
     const auto result = runner.run(task, {});
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Failed);
-    QVERIFY(result.error_message.contains(QStringLiteral("HTTP 500")));
+    QCOMPARE(result.error_message, QStringLiteral("HTTP 500"));
     QCOMPARE(client.invocation_count, 3);
 }
 
@@ -454,7 +494,9 @@ void AiSubagentRunnerTests::wallClockTimeoutMarksTimedOut() {
 
     const auto result = runner.run(task, {});
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::TimedOut);
-    QVERIFY(result.error_message.contains(QStringLiteral("timeout")));
+    // The message names the budget that was exceeded, so a timeout attributed to the
+    // wrong limit (or a generic "timeout") cannot pass.
+    QCOMPARE(result.error_message, QStringLiteral("Subagent wall-clock timeout exceeded (50 ms)"));
     QVERIFY(client.invocation_count < 6);
 }
 
@@ -479,6 +521,7 @@ void AiSubagentRunnerTests::lateSuccessAfterDeadlineDemotedToTimedOut() {
 
     const auto result = runner.run(task, {});
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::TimedOut);
+    QCOMPARE(result.error_message, QStringLiteral("Subagent wall-clock timeout exceeded (20 ms)"));
     QCOMPARE(client.invocation_count, 1);  // the model WAS invoked, then demoted
 }
 
@@ -508,6 +551,8 @@ void AiSubagentRunnerTests::perTaskTimeoutBoundsRun() {
 
     const auto result = runner.run(task, {});
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::TimedOut);
+    QCOMPARE(result.error_message,
+             QStringLiteral("Subagent wall-clock timeout exceeded (1000 ms)"));
     QVERIFY(client.invocation_count < 12);  // stopped before exhausting all retries
 }
 
@@ -584,8 +629,11 @@ void AiSubagentRunnerTests::actingSubagentExecutesToolCallsThenCompletes() {
     QCOMPARE(client.last_continuation_response_id, QStringLiteral("resp_1"));
     QCOMPARE(client.received_outputs.size(), 1);
     QCOMPARE(client.received_outputs.first().call_id, QStringLiteral("call_1"));
+    // The tool RESULT is what is fed back to the model; pinning only the id left the
+    // payload unobserved.
+    QCOMPARE(client.received_outputs.first().output_json, QStringLiteral("{\"ok\":true}"));
     // actions_taken reflects the REAL executed tool, not just a model claim.
-    QVERIFY(result.actions_taken.contains(QStringLiteral("executed tool: run_powershell")));
+    QCOMPARE(result.actions_taken, QStringList{QStringLiteral("executed tool: run_powershell")});
     // Tools were offered to the model because the policy permits local execution.
     QVERIFY(client.last_request.enable_local_tools);
 }
@@ -613,7 +661,10 @@ void AiSubagentRunnerTests::toolLoopStopsAtIterationCapWithDegraded() {
 
     // Hitting the cap yields an honest Degraded status, not a fake Complete.
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Degraded);
-    QVERIFY(result.risks.join(QStringLiteral("\n")).contains(QStringLiteral("iteration cap")));
+    QCOMPARE(result.risks.size(), 1);
+    QCOMPARE(result.risks.first(),
+             QStringLiteral("Tool-call iteration cap (2) reached; the subagent may not have "
+                            "completed its work."));
     // Exactly the cap number of tool round trips ran before stopping.
     QCOMPARE(executor.executed_calls.size(), 2);
 }
@@ -643,6 +694,10 @@ void AiSubagentRunnerTests::noLocalExecutionPolicyStaysSingleShot() {
     // The tool-call-only response has no final JSON, so it surfaces as a failure
     // rather than being silently accepted.
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Failed);
+    QCOMPARE(result.error_message,
+             QStringLiteral("Model requested 1 tool call(s) but no tool executor is "
+                            "available under this task's policy; the turn produced no "
+                            "final answer"));
 }
 
 void AiSubagentRunnerTests::usageAccumulatesAcrossToolRoundTrips() {
@@ -691,7 +746,8 @@ void AiSubagentRunnerTests::executedToolsRecordedWhenContinuationFails() {
     // The turn failed, but the tool that DID run must still be recorded so the
     // ground-truth "what did it do" survives on the failure path.
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Failed);
-    QVERIFY(result.actions_taken.contains(QStringLiteral("executed tool: run_powershell")));
+    QCOMPARE(result.error_message, QStringLiteral("boom"));
+    QCOMPARE(result.actions_taken, QStringList{QStringLiteral("executed tool: run_powershell")});
 }
 
 void AiSubagentRunnerTests::perCallCancellationStopsRemainingToolCalls() {
@@ -722,6 +778,10 @@ void AiSubagentRunnerTests::perCallCancellationStopsRemainingToolCalls() {
                                    sak::ai::CancellationToken::createRoot(QStringLiteral("run")));
 
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::Cancelled);
+    // The executor's cancel reason reaches the result, and the call that DID run is still
+    // recorded -- the ground-truth "what did it do" must survive the cancellation.
+    QCOMPARE(result.error_message, QStringLiteral("cancelled mid-batch"));
+    QCOMPARE(result.actions_taken, QStringList{QStringLiteral("executed tool: run_powershell")});
     // Only the first call ran; the second was skipped by the per-call recheck.
     QCOMPARE(executor.executed_calls.size(), 1);
     // The batch was abandoned before continuing the model with tool outputs.
