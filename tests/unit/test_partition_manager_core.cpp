@@ -19227,6 +19227,49 @@ void verifyApfsSafetyValidatorFailClosedCases(const PartitionInventory& inventor
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("byte offset")));
 }
 
+// The container-level APFS operations (snapshot create/delete/revert, clone, hard link, container
+// grow) are listed as supported non-native tool operations, so the validator's FILE-SYSTEM pairing
+// table must agree. It did not: none of the six had a branch there, so each fell through to the
+// create/format/check tail and was reported unsupported for every file system -- the APFS Container
+// dialog could queue an operation the validator then blocked unconditionally. This pins both
+// directions: allowed on APFS, still refused when the payload names a different file system.
+void verifyApfsContainerToolValidatorCases(const PartitionInventory& inventory,
+                                           const PartitionTarget& target,
+                                           const QJsonObject& payload) {
+    QJsonObject snapshotPayload = payload;
+    snapshotPayload[QStringLiteral("apfs_snapshot_name")] = QStringLiteral("sak.ui.snap");
+    QJsonObject linkPayload = payload;
+    linkPayload[QStringLiteral("apfs_root_file_new_name")] = QStringLiteral("copy.bin");
+
+    const QVector<QPair<PartitionOperationType, QJsonObject>> allowed = {
+        {PartitionOperationType::ApfsSnapshotCreate, snapshotPayload},
+        {PartitionOperationType::ApfsSnapshotDelete, snapshotPayload},
+        {PartitionOperationType::ApfsSnapshotRevert, snapshotPayload},
+        {PartitionOperationType::ApfsCloneRootFile, linkPayload},
+        {PartitionOperationType::ApfsHardlinkRootFile, linkPayload},
+        {PartitionOperationType::ApfsResizeContainer, payload}};
+    for (const auto& [type, opPayload] : allowed) {
+        const auto preview = previewNonNativeOperation(inventory, type, target, opPayload);
+        QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
+    }
+
+    // The same operations against a non-APFS payload stay refused BY THE PAIRING TABLE. Both a
+    // foreign filesystem (xfs) and ext are probed: ext used to short-circuit that table to
+    // "supported" for every operation type, which granted an ext payload the APFS-only container
+    // mutations it has no implementation for.
+    for (const QString& foreign : {QStringLiteral("xfs"), QStringLiteral("ext4")}) {
+        for (const auto& [type, opPayload] : allowed) {
+            QJsonObject foreignPayload = opPayload;
+            foreignPayload[QStringLiteral("file_system")] = foreign;
+            const auto preview = previewNonNativeOperation(inventory, type, target, foreignPayload);
+            QVERIFY2(!preview.canApply(), qPrintable(foreign));
+            QVERIFY2(preview.blockers.join(' ').contains(
+                         QStringLiteral("APFS generated create/format/repair")),
+                     qPrintable(preview.blockers.join(QStringLiteral("; "))));
+        }
+    }
+}
+
 }  // namespace
 
 void PartitionManagerCoreTests::safetyValidator_gatesApfsRootFileMutations() {
@@ -19251,6 +19294,7 @@ void PartitionManagerCoreTests::safetyValidator_gatesApfsRootFileMutations() {
     const auto payload = baseApfsRootFileMutationPayload();
     verifyApfsSafetyValidatorPositiveCases(inventory, target, payload);
     verifyApfsSafetyValidatorFailClosedCases(inventory, target, payload);
+    verifyApfsContainerToolValidatorCases(inventory, target, payload);
 }
 
 namespace {

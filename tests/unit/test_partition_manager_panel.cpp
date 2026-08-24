@@ -677,20 +677,29 @@ void verifyRawHfsSidebarControls(sak::PartitionManagerPanel* panel) {
     QVERIFY2(inspect != nullptr && browse != nullptr && check != nullptr, "HFS actions exist");
     QVERIFY2(resize != nullptr && nativeCheck != nullptr, "Native actions exist");
     QVERIFY2(changeCluster != nullptr && changeLabel != nullptr, "Metadata actions exist");
+    // Every tooltip here is a DISABLED-reason or a capability claim the operator reads before
+    // touching a foreign filesystem, and each is built by .arg(file_system) from a shared
+    // template -- so a contains() on the prefix cannot see the wrong filesystem name
+    // interpolated, nor the three "Non-Windows filesystem actions" reasons diverging.
+    const QString nativeDisabledReason = QStringLiteral(
+        "Use the Non-Windows filesystem actions for HFS+; Windows-native file-system action is "
+        "disabled.");
     QVERIFY(inspect->isEnabled());
-    QVERIFY(inspect->toolTip().contains(QStringLiteral("Inspect captured read-only HFS+")));
+    QCOMPARE(inspect->toolTip(), QStringLiteral("Inspect captured read-only HFS+ metadata"));
     QVERIFY(browse->isEnabled());
-    QVERIFY(browse->toolTip().contains(QStringLiteral("Browse read-only HFS+")));
+    QCOMPARE(browse->toolTip(), QStringLiteral("Browse read-only HFS+ directory entries"));
     QVERIFY(check->isEnabled());
     QVERIFY(check->toolTip().contains(QStringLiteral("fsck_hfs")));
     QVERIFY(!resize->isEnabled());
-    QVERIFY(resize->toolTip().contains(QStringLiteral("HFS+ resize is not supported yet")));
+    QCOMPARE(resize->toolTip(),
+             QStringLiteral("HFS+ resize is not supported yet. Non-Windows resize currently "
+                            "supports ext2/ext3/ext4 only."));
     QVERIFY(!nativeCheck->isEnabled());
-    QVERIFY(nativeCheck->toolTip().contains(QStringLiteral("Non-Windows filesystem actions")));
+    QCOMPARE(nativeCheck->toolTip(), nativeDisabledReason);
     QVERIFY(!changeCluster->isEnabled());
-    QVERIFY(changeCluster->toolTip().contains(QStringLiteral("Non-Windows filesystem actions")));
+    QCOMPARE(changeCluster->toolTip(), nativeDisabledReason);
     QVERIFY(!changeLabel->isEnabled());
-    QVERIFY(changeLabel->toolTip().contains(QStringLiteral("Non-Windows filesystem actions")));
+    QCOMPARE(changeLabel->toolTip(), nativeDisabledReason);
 }
 
 void verifyRawHfsInspectDialog(sak::PartitionManagerPanel* panel) {
@@ -703,8 +712,9 @@ void verifyRawHfsInspectDialog(sak::PartitionManagerPanel* panel) {
         QVERIFY2(properties != nullptr, "Inspect filesystem table should exist");
         const QString metadata = propertyTableValue(properties,
                                                     QStringLiteral("Read-only metadata"));
-        QVERIFY(metadata.contains(QStringLiteral("HFS wrapper: Yes")));
-        QVERIFY(metadata.contains(QStringLiteral("Block size: 4096")));
+        // The whole read-only metadata block, in order: two contains() probes could not see a
+        // third line appearing, a line dropping, or the values pairing with the wrong labels.
+        QCOMPARE(metadata, QStringLiteral("HFS wrapper: Yes\nVersion: 4\nBlock size: 4096"));
         QCOMPARE(propertyTableValue(properties, QStringLiteral("File system")),
                  QStringLiteral("HFS+"));
         inspected = true;
@@ -748,7 +758,7 @@ void configureRawMetadataPanel(sak::PartitionManagerPanel* panel,
     table->selectRow(1);
 }
 
-void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedNeedle) {
+void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedFinding) {
     bool inspected = false;
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
@@ -760,8 +770,10 @@ void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedNeedl
                  QStringLiteral("Original read-only metadata consistency check"));
         QCOMPARE(propertyTableValue(properties, QStringLiteral("Result")),
                  QStringLiteral("No sanity warnings"));
-        QVERIFY(
-            propertyTableValue(properties, QStringLiteral("Findings")).contains(expectedNeedle));
+        // The findings cell is the check's ENTIRE verdict list. A contains() on the
+        // "Metadata sanity: <FS>" prefix passed regardless of what the sentence went on to
+        // say -- including a warning line the "No sanity warnings" result contradicts.
+        QCOMPARE(propertyTableValue(properties, QStringLiteral("Findings")), expectedFinding);
         inspected = true;
         dialog->reject();
     });
@@ -779,7 +791,11 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
         QVERIFY2(properties != nullptr, "Properties table should exist");
         const QString metadata = propertyTableValue(properties,
                                                     QStringLiteral("File system metadata"));
-        QVERIFY(metadata.contains(QStringLiteral("Metadata sanity: XFS")));
+        // All three captured probe lines, in order: the geometry values are what the sanity
+        // verdict was computed FROM, so a verdict shown without them is unsupported.
+        QCOMPARE(metadata,
+                 QStringLiteral("Block size: 4096\nData blocks: 32768\nMetadata sanity: XFS "
+                                "superblock geometry is internally consistent"));
         propertiesInspected = true;
         dialog->reject();
     });
@@ -797,7 +813,10 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
         QVERIFY2(properties != nullptr, "Inspect filesystem table should exist");
         const QString metadata = propertyTableValue(properties,
                                                     QStringLiteral("Read-only metadata"));
-        QVERIFY(metadata.contains(QStringLiteral("Metadata sanity: XFS")));
+        // Inspect must show the SAME captured block as Properties above, not a shortened one.
+        QCOMPARE(metadata,
+                 QStringLiteral("Block size: 4096\nData blocks: 32768\nMetadata sanity: XFS "
+                                "superblock geometry is internally consistent"));
         inspectInspected = true;
         dialog->reject();
     });
@@ -817,11 +836,15 @@ void configureRawWritePanel(sak::PartitionManagerPanel* panel, const QString& fi
     table->selectRow(1);
 }
 
+// The queued line is "<operation display name> - <target summary>", and a blocked operation
+// appends " - BLOCKED: <reasons>" (partition_manager_panel.cpp refreshPendingOperations). Compare
+// the WHOLE line: a contains() on the name half could not see the operation queued against the
+// wrong disk/partition, nor a BLOCKED suffix appended to an operation the caller expects to run.
 void verifySingleQueuedOperation(sak::PartitionManagerPanel* panel, const QString& text) {
     auto* queue = panel->findChild<QListWidget*>();
     QVERIFY2(queue != nullptr, "Pending operation queue should exist");
     QCOMPARE(queue->count(), 1);
-    QVERIFY(queue->item(0)->text().contains(text));
+    QCOMPARE(queue->item(0)->text(), text);
 }
 
 void queueExtFormatAndVerify() {
@@ -845,7 +868,7 @@ void queueExtFormatAndVerify() {
     QVERIFY2(format != nullptr, "Format action should exist");
     format->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition"));
+    verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition - Disk 0 Partition 1"));
 }
 
 void queueLinuxSwapFormatAndVerify() {
@@ -873,7 +896,7 @@ void queueLinuxSwapFormatAndVerify() {
     QVERIFY2(format != nullptr, "Format action should exist");
     format->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition"));
+    verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition - Disk 0 Partition 1"));
 }
 
 void queueApfsFormatAndVerify() {
@@ -897,7 +920,7 @@ void queueApfsFormatAndVerify() {
     QVERIFY2(format != nullptr, "Format action should exist");
     format->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition"));
+    verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition - Disk 0 Partition 1"));
 }
 
 void queueExtRepairAndVerify() {
@@ -918,7 +941,11 @@ void queueExtRepairAndVerify() {
             dialog, QStringLiteral("Non-Windows filesystem target path"));
         QVERIFY(targetPath != nullptr);
         QVERIFY(targetPath->isReadOnly());
-        QVERIFY(targetPath->toolTip().contains(QStringLiteral("selected raw partition")));
+        // The read-only field's tooltip is the reason it cannot be typed into: the target is
+        // taken from the selection, never from operator input. The other branch of that same
+        // ternary ("Run read-only check for %1.") also mentions no such phrase, so pin it whole.
+        QCOMPARE(targetPath->toolTip(),
+                 QStringLiteral("Queued repair uses the selected raw partition target."));
         auto* confirm = findAccessibleWidget<QCheckBox>(
             dialog, QStringLiteral("Confirm ext filesystem repair"));
         QVERIFY(confirm != nullptr);
@@ -930,7 +957,7 @@ void queueExtRepairAndVerify() {
     QVERIFY2(check != nullptr, "Non-Windows check action should exist");
     check->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("Check File System"));
+    verifySingleQueuedOperation(&panel, QStringLiteral("Check File System - Disk 0 Partition 1"));
 }
 
 void queueHfsRepairAndVerify() {
@@ -943,8 +970,18 @@ void queueHfsRepairAndVerify() {
         auto* mode = findAccessibleWidget<QComboBox>(
             dialog, QStringLiteral("Non-Windows filesystem check mode"));
         QVERIFY(mode != nullptr);
-        QVERIFY(mode->findText(QStringLiteral("Original HFS+ catalog check now")) >= 0);
-        QVERIFY(mode->findText(QStringLiteral("Read-only check now")) >= 0);
+        // The mode list is the CLOSED set of things this dialog can do to an HFS+ volume, and
+        // each entry's data value is what actually selects the operation. findText() >= 0
+        // proved only presence: a fourth destructive mode, or a read-only entry carrying the
+        // REPAIR operation payload, was invisible.
+        QCOMPARE(mode->count(), 3);
+        QCOMPARE(mode->itemText(0), QStringLiteral("Original HFS+ catalog check now"));
+        QCOMPARE(mode->itemText(1), QStringLiteral("Read-only check now"));
+        QCOMPARE(mode->itemData(1).toString(),
+                 sak::PartitionFileSystemToolRunner::readOnlyCheckOperation());
+        QCOMPARE(mode->itemText(2), QStringLiteral("Queue HFS+ repair"));
+        QCOMPARE(mode->itemData(2).toString(),
+                 sak::PartitionFileSystemToolRunner::repairOperation());
         const int repairIndex =
             mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
         QVERIFY(repairIndex >= 0);
@@ -964,7 +1001,7 @@ void queueHfsRepairAndVerify() {
     QVERIFY2(check != nullptr, "Non-Windows check action should exist");
     check->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("Check File System"));
+    verifySingleQueuedOperation(&panel, QStringLiteral("Check File System - Disk 0 Partition 1"));
 }
 
 void queueGeneratedApfsRepairAndVerify() {
@@ -989,7 +1026,16 @@ void queueGeneratedApfsRepairAndVerify() {
         auto* mode = findAccessibleWidget<QComboBox>(
             dialog, QStringLiteral("Non-Windows filesystem check mode"));
         QVERIFY(mode != nullptr);
-        QVERIFY(mode->findText(QStringLiteral("Read-only check now")) >= 0);
+        // APFS offers exactly the read-only check and the generated repair -- no catalog-check
+        // entry (that is HFS+ only). Pinning count + text + data payload is what shows the
+        // read-only entry is not silently wired to the repair operation.
+        QCOMPARE(mode->count(), 2);
+        QCOMPARE(mode->itemText(0), QStringLiteral("Read-only check now"));
+        QCOMPARE(mode->itemData(0).toString(),
+                 sak::PartitionFileSystemToolRunner::readOnlyCheckOperation());
+        QCOMPARE(mode->itemText(1), QStringLiteral("Queue generated APFS repair"));
+        QCOMPARE(mode->itemData(1).toString(),
+                 sak::PartitionFileSystemToolRunner::repairOperation());
         const int repairIndex =
             mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
         QVERIFY(repairIndex >= 0);
@@ -1005,7 +1051,7 @@ void queueGeneratedApfsRepairAndVerify() {
     QVERIFY2(check != nullptr, "Non-Windows check action should exist");
     check->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("Check File System"));
+    verifySingleQueuedOperation(&panel, QStringLiteral("Check File System - Disk 0 Partition 1"));
 }
 
 sak::PartitionInventory generatedApfsInventoryFixture() {
@@ -1026,10 +1072,13 @@ void verifyApfsContainerModeItems(QComboBox* mode) {
     // dialog now offers only snapshot and resize modes.
     QVERIFY(!comboHasItem(mode, QStringLiteral("Change volume label")));
     QCOMPARE(mode->currentText(), QStringLiteral("Create snapshot"));
-    QVERIFY(comboHasItem(mode, QStringLiteral("Create snapshot")));
-    QVERIFY(comboHasItem(mode, QStringLiteral("Delete snapshot")));
-    QVERIFY(comboHasItem(mode, QStringLiteral("Revert to snapshot")));
-    QVERIFY(comboHasItem(mode, QStringLiteral("Resize container to fill partition")));
+    // The exact ordered set. Four presence probes plus one absence probe still allowed a FIFTH
+    // container mode to appear, and could not see the four reordered -- which matters because
+    // index 0 is the default the dialog opens on (asserted above).
+    QCOMPARE(mode->count(), 4);
+    QCOMPARE(comboItemsText(mode),
+             QStringLiteral("Create snapshot|Delete snapshot|Revert to snapshot|Resize container "
+                            "to fill partition"));
 }
 
 void queueApfsVolumeLabelChangeAndVerify() {
@@ -1056,7 +1105,8 @@ void queueApfsVolumeLabelChangeAndVerify() {
     });
     changeLabel->click();
     QVERIFY(handled);
-    verifySingleQueuedOperation(&panel, QStringLiteral("APFS Change Volume Label"));
+    verifySingleQueuedOperation(&panel,
+                                QStringLiteral("APFS Change Volume Label - Disk 0 Partition 1"));
 }
 
 // Drives the APFS Container action dialog into snapshot-create mode (checking
@@ -1074,7 +1124,10 @@ void queueApfsContainerSnapshotAndVerify() {
     auto* button = findToolButtonByName(&panel, QStringLiteral("APFS Container"));
     QVERIFY2(button != nullptr, "APFS Container action should exist");
     QVERIFY(button->isEnabled());
-    QVERIFY(button->toolTip().contains(QStringLiteral("APFS container action")));
+    // Two different tooltips in production contain this fragment -- the enabled invitation and
+    // the longer "snapshot or resize" static label -- so the fragment could not tell an enabled
+    // action from a disabled one carrying a leftover reason string.
+    QCOMPARE(button->toolTip(), QStringLiteral("Queue an APFS container action."));
 
     bool inspected = false;
     QTimer::singleShot(0, [&]() {
@@ -1102,7 +1155,8 @@ void queueApfsContainerSnapshotAndVerify() {
     });
     button->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("APFS Snapshot Create"));
+    verifySingleQueuedOperation(&panel,
+                                QStringLiteral("APFS Snapshot Create - Disk 0 Partition 1"));
 }
 
 void queueExtResizeAndVerify(bool grow) {
@@ -1132,7 +1186,7 @@ void queueExtResizeAndVerify(bool grow) {
     QVERIFY2(resize != nullptr, "Resize action should exist");
     resize->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("Resize Partition"));
+    verifySingleQueuedOperation(&panel, QStringLiteral("Resize Partition - Disk 0 Partition 1"));
 }
 
 void queueUnallocatedAllocateAndVerifyResize() {
@@ -1149,6 +1203,13 @@ void queueUnallocatedAllocateAndVerifyResize() {
         auto* target = findAccessibleWidget<QComboBox>(
             dialog, QStringLiteral("Allocate free space target partition"));
         QVERIFY(target != nullptr);
+        // Which partitions are offered, and in which order, decides what index 0 (the default
+        // this test then accepts) actually resizes. currentIndex()==0 alone said nothing about
+        // that: an empty or reordered list satisfies it while allocating the free space to a
+        // different partition than the operator expects.
+        QCOMPARE(target->count(), 2);
+        QCOMPARE(target->itemText(0), QStringLiteral("Extend Partition 1 (P:)"));
+        QCOMPARE(target->itemText(1), QStringLiteral("Move/extend Partition 2 (T:)"));
         QCOMPARE(target->currentIndex(), 0);
         inspected = true;
         dialog->accept();
@@ -1157,7 +1218,7 @@ void queueUnallocatedAllocateAndVerifyResize() {
     QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
     button->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("Resize"));
+    verifySingleQueuedOperation(&panel, QStringLiteral("Resize Partition - Disk 0 Partition 1"));
 }
 
 void queueUnallocatedAllocateAndVerifyMove() {
@@ -1192,7 +1253,7 @@ void queueUnallocatedAllocateAndVerifyMove() {
     QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
     button->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("Move Partition"));
+    verifySingleQueuedOperation(&panel, QStringLiteral("Move Partition - Disk 0 Partition 2"));
 }
 
 struct ExpectedMetadataAction {
@@ -1201,6 +1262,7 @@ struct ExpectedMetadataAction {
     QString backup_accessible_name;
     QString confirm_accessible_name;
     QString queued_text;
+    QString tooltip;
     bool dynamic_disk{false};
     int selected_row{1};
 };
@@ -1210,17 +1272,20 @@ QVector<ExpectedMetadataAction> expectedMetadataActions() {
              QStringLiteral("Convert Primary/Logical"),
              QStringLiteral("Primary logical backup directory"),
              QStringLiteral("Confirm primary logical backup and restore"),
-             QStringLiteral("Convert Primary/Logical")},
+             QStringLiteral("Convert Primary/Logical - Disk 0 Partition 1"),
+             QStringLiteral("Back up, rebuild MBR primary/logical layout, restore, and verify")},
             {QStringLiteral("Change Serial Number"),
              QStringLiteral("Change Serial Number"),
              QStringLiteral("Volume serial backup directory"),
              QStringLiteral("Confirm volume serial backup and restore"),
-             QStringLiteral("Change Volume Serial Number")},
+             QStringLiteral("Change Volume Serial Number - Disk 0 Partition 1"),
+             QStringLiteral("Back up, reformat to regenerate volume serial, restore, and verify")},
             {QStringLiteral("Convert Dynamic Disk to Basic"),
              QStringLiteral("Convert Dynamic Disk to Basic"),
              QStringLiteral("Dynamic to basic backup directory"),
              QStringLiteral("Confirm dynamic to basic backup and restore"),
-             QStringLiteral("Convert Dynamic Disk to Basic"),
+             QStringLiteral("Convert Dynamic Disk to Basic - Disk 0"),
+             QStringLiteral("Back up dynamic volume, convert disk to basic, restore, and verify"),
              true,
              0}};
 }
@@ -1235,7 +1300,10 @@ void queueMetadataActionAndVerify(const ExpectedMetadataAction& action,
     auto* button = findToolButtonByName(&panel, action.button);
     QVERIFY2(button != nullptr, qPrintable(action.button));
     QVERIFY(button->isEnabled());
-    QVERIFY(!button->toolTip().contains(QStringLiteral("blocked"), Qt::CaseInsensitive));
+    // The tooltip is the operator's one-line summary of what the action DOES (back up, mutate,
+    // restore, verify). "does not say blocked" was satisfied by an empty tooltip, or by one
+    // copied from a different action -- either of which misdescribes a destructive rebuild.
+    QCOMPARE(button->toolTip(), action.tooltip);
 
     bool inspected = false;
     QTimer::singleShot(0, [&]() {
@@ -1278,7 +1346,10 @@ void PartitionManagerPanelTests::scanButtonIsStatefulAndInventorySummaryUsesStat
 
     QSignalSpy statusSpy(&panel, &sak::PartitionManagerPanel::statusMessage);
     panel.setTestInventoryForReview(applyReviewInventoryFixture());
-    QVERIFY(!statusSpy.isEmpty());
+    // Exactly one status message: !isEmpty() tolerated a burst of intermediate messages, and
+    // takeLast() then hid all but the final one -- so a spurious earlier status (or a duplicate
+    // inventory summary) was invisible.
+    QCOMPARE(statusSpy.count(), 1);
     const auto lastStatus = statusSpy.takeLast();
     QCOMPARE(lastStatus.at(0).toString(), QStringLiteral("1 disk(s), layout panel-appl"));
     QCOMPARE(lastStatus.at(1).toInt(), 0);
@@ -2038,7 +2109,7 @@ void PartitionManagerPanelTests::propertiesDialogShowsRawFilesystemMetadata() {
                                               QStringLiteral("Browse Non-Windows File System"));
     QVERIFY2(browseButton != nullptr, "Non-native filesystem browse action should exist");
     QVERIFY(browseButton->isEnabled());
-    QVERIFY(browseButton->toolTip().contains(QStringLiteral("Browse read-only ext4")));
+    QCOMPARE(browseButton->toolTip(), QStringLiteral("Browse read-only ext4 directory entries"));
 
     bool inspected = false;
     QTimer::singleShot(0, [&]() {
@@ -2049,8 +2120,10 @@ void PartitionManagerPanelTests::propertiesDialogShowsRawFilesystemMetadata() {
         QVERIFY2(properties != nullptr, "Properties table should exist");
         const QString metadata = propertyTableValue(properties,
                                                     QStringLiteral("File system metadata"));
-        QVERIFY(metadata.contains(QStringLiteral("Block size: 4096")));
-        QVERIFY(metadata.contains(QStringLiteral("Volume label: SAK_EXT4")));
+        // All three probe lines, in order. The two contains() checks skipped over the middle
+        // line entirely, so a dropped or reordered detail was invisible.
+        QCOMPARE(metadata,
+                 QStringLiteral("Block size: 4096\nTotal blocks: 2048\nVolume label: SAK_EXT4"));
         inspected = true;
         dialog->reject();
     });
@@ -2080,9 +2153,14 @@ void PartitionManagerPanelTests::propertiesAndInspectShowRawFilesystemSanityNote
                                              QStringLiteral("Check Non-Windows File System"));
     QVERIFY2(checkButton != nullptr, "Non-native filesystem check action should exist");
     QVERIFY(checkButton->isEnabled());
-    QVERIFY(checkButton->toolTip().contains(QStringLiteral("original read-only")));
-    QVERIFY(checkButton->toolTip().contains(QStringLiteral("metadata consistency")));
-    verifyMetadataCheckDialog(checkButton, QStringLiteral("Metadata sanity: XFS"));
+    // The tooltip is built by .arg(file_system) from one shared template, so the two fragments
+    // held even if the WRONG filesystem name was interpolated into an XFS partition's action.
+    QCOMPARE(checkButton->toolTip(),
+             QStringLiteral("Run original read-only XFS metadata consistency check from captured "
+                            "probe data"));
+    verifyMetadataCheckDialog(checkButton,
+                              QStringLiteral("Metadata sanity: XFS superblock geometry is "
+                                             "internally consistent"));
     verifyXfsPropertiesAndInspect(&panel);
 
     sak::PartitionManagerPanel apfsPanel;
@@ -2097,8 +2175,12 @@ void PartitionManagerPanelTests::propertiesAndInspectShowRawFilesystemSanityNote
                                            QStringLiteral("Check Non-Windows File System"));
     QVERIFY2(apfsCheck != nullptr, "APFS non-native filesystem check action should exist");
     QVERIFY(apfsCheck->isEnabled());
-    QVERIFY(apfsCheck->toolTip().contains(QStringLiteral("original read-only")));
-    verifyMetadataCheckDialog(apfsCheck, QStringLiteral("Metadata sanity: APFS"));
+    QCOMPARE(apfsCheck->toolTip(),
+             QStringLiteral("Run original read-only APFS metadata consistency check from captured "
+                            "probe data"));
+    verifyMetadataCheckDialog(apfsCheck,
+                              QStringLiteral("Metadata sanity: APFS container block geometry is "
+                                             "internally consistent"));
 }
 
 void PartitionManagerPanelTests::extFilesystemWriteActionsQueueWithConfirmation() const {
@@ -2152,7 +2234,8 @@ void PartitionManagerPanelTests::apfsContainerActionAllowsWritableApfsVolumes() 
     });
     changeLabel->click();
     QVERIFY(handled);
-    verifySingleQueuedOperation(&panel, QStringLiteral("APFS Change Volume Label"));
+    verifySingleQueuedOperation(&panel,
+                                QStringLiteral("APFS Change Volume Label - Disk 0 Partition 1"));
 }
 
 void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
@@ -2186,10 +2269,20 @@ void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
                  QStringLiteral("Protection on"));
         QCOMPARE(propertyTableValue(status, QStringLiteral("Lock state")),
                  QStringLiteral("Locked"));
-        QVERIFY(propertyTableValue(status, QStringLiteral("Safe commands"))
-                    .contains(QStringLiteral("manage-bde.exe -protectors -disable")));
-        QVERIFY(propertyTableValue(status, QStringLiteral("In-app mutation"))
-                    .contains(QStringLiteral("Queue unlock")));
+        // These are commands an operator is invited to run by hand against an ENCRYPTED
+        // volume, so the whole list matters: contains() on one line could not see the mount
+        // point interpolated wrong (targeting a different drive), a command missing, or an
+        // extra unvetted one appended. The recovery-password form is the dangerous one.
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Safe commands")),
+                 QStringLiteral("manage-bde.exe -status T:\n"
+                                "manage-bde.exe -protectors -disable T:\n"
+                                "manage-bde.exe -protectors -enable T:\n"
+                                "Suspend-BitLocker -MountPoint \"T:\" -RebootCount 1\n"
+                                "Resume-BitLocker -MountPoint \"T:\"\n"
+                                "Unlock-BitLocker -MountPoint \"T:\" -RecoveryPassword "
+                                "\"<48-digit-recovery-key>\""));
+        QCOMPARE(propertyTableValue(status, QStringLiteral("In-app mutation")),
+                 QStringLiteral("Queue unlock, suspend, or resume through elevated Apply"));
         auto* unlockButton =
             findAccessibleWidget<QPushButton>(dialog, QStringLiteral("Queue BitLocker unlock"));
         QVERIFY(unlockButton != nullptr);
@@ -2236,10 +2329,14 @@ void PartitionManagerPanelTests::diskDefragShowsOptimizeDialog() {
         QCOMPARE(status->accessibleName(), QStringLiteral("Disk optimization status table"));
         QCOMPARE(propertyTableValue(status, QStringLiteral("Optimization mode")),
                  QStringLiteral("HDD analyze and defrag"));
-        QVERIFY(propertyTableValue(status, QStringLiteral("Safe commands"))
-                    .contains(QStringLiteral("Optimize-Volume -DriveLetter T -Defrag")));
-        QVERIFY(propertyTableValue(status, QStringLiteral("In-app HDD defrag execution"))
-                    .contains(QStringLiteral("Queue HDD defrag")));
+        // The command list is media-type dependent: an HDD gets Analyze + Defrag, an SSD gets
+        // ReTrim instead. contains("-Defrag") passed even if the ReTrim line were ALSO listed
+        // for this HDD -- which would invite an operator to trim a spinning disk.
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Safe commands")),
+                 QStringLiteral("Optimize-Volume -DriveLetter T -Analyze -Verbose\n"
+                                "Optimize-Volume -DriveLetter T -Defrag -Verbose"));
+        QCOMPARE(propertyTableValue(status, QStringLiteral("In-app HDD defrag execution")),
+                 QStringLiteral("Queue HDD defrag through cancellable elevated Apply"));
         auto* defragButton = findAccessibleWidget<QPushButton>(dialog,
                                                                QStringLiteral("Queue HDD defrag"));
         QVERIFY(defragButton != nullptr);
@@ -2289,14 +2386,24 @@ void PartitionManagerPanelTests::ssdSecureEraseShowsQueueDialog() {
         QCOMPARE(status->accessibleName(), QStringLiteral("SSD Secure Erase readiness table"));
         QCOMPARE(propertyTableValue(status, QStringLiteral("Device class")),
                  QStringLiteral("NVMe SSD"));
-        QVERIFY(propertyTableValue(status, QStringLiteral("Secure erase status"))
-                    .contains(QStringLiteral("Ready")));
-        QVERIFY(propertyTableValue(status, QStringLiteral("In-app ATA/NVMe purge"))
-                    .contains(QStringLiteral("ReTrim")));
-        QVERIFY(propertyTableValue(status, QStringLiteral("In-app ATA/NVMe purge"))
-                    .contains(QStringLiteral("clear-level disk wipe")));
-        QVERIFY(propertyTableValue(status, QStringLiteral("Evidence checklist"))
-                    .contains(QStringLiteral("Disposable non-system SSD/NVMe media only")));
+        // "Ready" is a substring of the NOT-ready gate texts too, so it could not distinguish
+        // a permitted erase from a refused one; pin the whole gate sentence.
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Secure erase status")),
+                 QStringLiteral("Ready: queue ReTrim plus clear-level wipe through Apply"));
+        QCOMPARE(propertyTableValue(status, QStringLiteral("In-app ATA/NVMe purge")),
+                 QStringLiteral("Uses Windows ReTrim followed by clear-level disk wipe"));
+        // The checklist is the evidence record for an IRREVERSIBLE purge. One contains() left
+        // the target-identity line (disk number, model, serial -- the proof the right device
+        // was wiped) and every other step unasserted.
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Evidence checklist")),
+                 QStringLiteral(
+                     "Target identity: Disk 0, model Fixture NVMe, serial SER123\n"
+                     "Disposable non-system SSD/NVMe media only\n"
+                     "Record bus type, firmware, SMART health, and wear before erase\n"
+                     "Verify vendor ATA Secure Erase or NVMe Format/Sanitize support externally\n"
+                     "Show purge warning and typed operator confirmation in evidence\n"
+                     "Capture before/after layout and post-erase readback proof\n"
+                     "Attach evidence to external.ssd-retrim or hardware wipe certification"));
         QVERIFY(findAccessibleWidget<QPushButton>(
                     dialog, QStringLiteral("Copy SSD Secure Erase evidence checklist")) != nullptr);
         QVERIFY(findAccessibleWidget<QPushButton>(
@@ -2332,22 +2439,35 @@ void PartitionManagerPanelTests::spaceAnalyzerExposesCommercialViews() {
     QCOMPARE(result.value(QStringLiteral("file_type_count")).toInt(), 2);
     QCOMPARE(result.value(QStringLiteral("scanned_entries")).toInt(), 2);
 
+    // Both catalogs are the CLOSED sets the analyzer offers, in tab/menu order. Presence
+    // probes could not see a fourth view or context action appearing, nor the order changing
+    // (which decides the default tab and the top menu entry).
     const QJsonArray views = result.value(QStringLiteral("view_names")).toArray();
-    QVERIFY(views.contains(QStringLiteral("Tree View")));
-    QVERIFY(views.contains(QStringLiteral("Largest Files")));
-    QVERIFY(views.contains(QStringLiteral("File Types")));
+    QCOMPARE(views.size(), 3);
+    QCOMPARE(views.at(0).toString(), QStringLiteral("Tree View"));
+    QCOMPARE(views.at(1).toString(), QStringLiteral("Largest Files"));
+    QCOMPARE(views.at(2).toString(), QStringLiteral("File Types"));
 
     const QJsonArray actions = result.value(QStringLiteral("context_actions")).toArray();
-    QVERIFY(actions.contains(QStringLiteral("Open")));
-    QVERIFY(actions.contains(QStringLiteral("Explore in File Explorer")));
-    QVERIFY(actions.contains(QStringLiteral("Copy Path")));
+    QCOMPARE(actions.size(), 3);
+    QCOMPARE(actions.at(0).toString(), QStringLiteral("Open"));
+    QCOMPARE(actions.at(1).toString(), QStringLiteral("Explore in File Explorer"));
+    QCOMPARE(actions.at(2).toString(), QStringLiteral("Copy Path"));
 
-    QStringList fileTypes;
-    for (const auto& value : result.value(QStringLiteral("file_types")).toArray()) {
-        fileTypes.append(value.toObject().value(QStringLiteral("name")).toString());
-    }
-    QVERIFY(fileTypes.contains(QStringLiteral(".bin")));
-    QVERIFY(fileTypes.contains(QStringLiteral(".log")));
+    // The rows carry the analysis itself. Collecting only the names threw away the byte and
+    // count columns -- the numbers an operator uses to decide what to delete -- so a report
+    // that attributed the 64-byte .bin total to .log passed unnoticed.
+    const QJsonArray typeRows = result.value(QStringLiteral("file_types")).toArray();
+    QCOMPARE(typeRows.size(), 2);
+    const QJsonObject binRow = typeRows.at(0).toObject();
+    QCOMPARE(binRow.value(QStringLiteral("name")).toString(), QStringLiteral(".bin"));
+    QCOMPARE(binRow.value(QStringLiteral("bytes")).toString(), QStringLiteral("64"));
+    QCOMPARE(binRow.value(QStringLiteral("count")).toString(), QStringLiteral("1 file(s)"));
+    const QJsonObject logRow = typeRows.at(1).toObject();
+    QCOMPARE(logRow.value(QStringLiteral("name")).toString(), QStringLiteral(".log"));
+    QCOMPARE(logRow.value(QStringLiteral("bytes")).toString(), QStringLiteral("32"));
+    QCOMPARE(logRow.value(QStringLiteral("count")).toString(), QStringLiteral("1 file(s)"));
+    QCOMPARE(result.value(QStringLiteral("total_bytes")).toString(), QStringLiteral("96"));
 }
 
 void PartitionManagerPanelTests::changeClusterSizeQueuesVerifiedReformatOperation() {
@@ -2399,7 +2519,9 @@ void PartitionManagerPanelTests::changeClusterSizeQueuesVerifiedReformatOperatio
     auto* queue = panel.findChild<QListWidget*>();
     QVERIFY2(queue != nullptr, "Pending operation queue should exist");
     QCOMPARE(queue->count(), 1);
-    QVERIFY(queue->item(0)->text().contains(QStringLiteral("Change Cluster Size")));
+    // Whole line: the target half is what proves the reformat was queued against the selected
+    // partition, and a " - BLOCKED: ..." suffix would otherwise pass silently.
+    QCOMPARE(queue->item(0)->text(), QStringLiteral("Change Cluster Size - Disk 0 Partition 1"));
 }
 
 void PartitionManagerPanelTests::allocateFreeSpaceQueuesAdjacentDonorOperation() {
@@ -2449,7 +2571,7 @@ void PartitionManagerPanelTests::allocateFreeSpaceQueuesAdjacentDonorOperation()
     auto* queue = panel.findChild<QListWidget*>();
     QVERIFY2(queue != nullptr, "Pending operation queue should exist");
     QCOMPARE(queue->count(), 1);
-    QVERIFY(queue->item(0)->text().contains(QStringLiteral("Allocate Free Space")));
+    QCOMPARE(queue->item(0)->text(), QStringLiteral("Allocate Free Space - Disk 0 Partition 1"));
 }
 
 void PartitionManagerPanelTests::unallocatedAllocateFreeSpaceQueuesAdjacentEngines() {
@@ -2520,7 +2642,7 @@ void PartitionManagerPanelTests::wipeActionLetsUserChooseScope() {
 
     QVERIFY(QMetaObject::invokeMethod(&panel, "onWipeSelected", Qt::DirectConnection));
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("Wipe Partition"));
+    verifySingleQueuedOperation(&panel, QStringLiteral("Wipe Partition - Disk 0 Partition 1"));
 }
 
 // Fail-closed rule for Quick Partition size derivation: malformed custom sizes must NOT be
@@ -2533,7 +2655,14 @@ void PartitionManagerPanelTests::quickPartitionSizesFailClosedOnMalformedCustomA
     const QJsonObject equalOpts{{QStringLiteral("partition_count"), 4},
                                 {QStringLiteral("size_mode"), QStringLiteral("equal")}};
     const auto equalSizes = sak::partitionQuickSizesForOptionsForTest(equalOpts, usable);
-    QCOMPARE(equalSizes.size(), 4);
+    // "Even split" is the actual claim: a count of 4 plus the validity predicate (total <=
+    // usable) is equally satisfied by 4 unequal sizes, or by 4 sizes that leave most of the
+    // disk unallocated. 400 MiB / 4 = 100 MiB each, exactly.
+    QCOMPARE(equalSizes,
+             QVector<uint64_t>({100 * kTestMegabyteBytes,
+                                100 * kTestMegabyteBytes,
+                                100 * kTestMegabyteBytes,
+                                100 * kTestMegabyteBytes}));
     QVERIFY(sak::partitionQuickSizesAreValidForTest(equalSizes, usable));
 
     // Custom mode with a malformed (zero) size fails closed: empty result, never an equal-size
@@ -2604,7 +2733,14 @@ void verifyWizardGuardedWhileApplying(const char* slot,
     QApplication::processEvents();
 
     panel.setTestApplyStateForReview(sak::PartitionManagerState::Applying);
+    // The wizard not opening is necessary but not sufficient: a slot that silently did nothing
+    // (a missing entry point, a null selection) also satisfies it. The guard is what must have
+    // fired, and it announces itself exactly once through statusMessage.
+    QSignalSpy guardSpy(&panel, &sak::PartitionManagerPanel::statusMessage);
     QVERIFY2(!invokeWizardSlot(&panel, slot), slot);
+    QCOMPARE(guardSpy.count(), 1);
+    QCOMPARE(guardSpy.takeFirst().at(0).toString(),
+             QStringLiteral("Finish or cancel the running operation before changing the queue"));
     auto* queue = panel.findChild<QListWidget*>();
     QVERIFY2(queue != nullptr, "Pending operation queue should exist");
     QCOMPARE(queue->count(), 0);
@@ -2646,12 +2782,14 @@ void PartitionManagerPanelTests::inventoryStateIsHonestAboutFailedPartitionEnume
     QCOMPARE(sak::PartitionManagerController::inventoryReadyState(degraded),
              sak::PartitionManagerState::ReadyPartial);
 
-    const QString message = sak::PartitionManagerController::inventoryStatusMessage(degraded);
-    QVERIFY2(message.contains(QStringLiteral("INCOMPLETE")), qPrintable(message));
-    const QString failedDisk =
-        QStringLiteral("disk(s) %1").arg(degraded.disks[0].disk_number.value());
-    QVERIFY2(message.contains(failedDisk), qPrintable(message));
-    QVERIFY2(!message.contains(QStringLiteral("inventory ready")), qPrintable(message));
+    // The honesty claim is the WHOLE sentence: it must name the failed disk AND state that
+    // operations on it are refused. The three fragment checks were jointly satisfied by a
+    // message that flagged INCOMPLETE and listed the disk while omitting the refusal promise
+    // -- which is the part an operator acts on.
+    QCOMPARE(sak::PartitionManagerController::inventoryStatusMessage(degraded),
+             QStringLiteral("Partition Manager: inventory INCOMPLETE -- partition enumeration "
+                            "failed for disk(s) 0; operations on them are refused until a "
+                            "refresh succeeds"));
 }
 
 QTEST_MAIN(PartitionManagerPanelTests)

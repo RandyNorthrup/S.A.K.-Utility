@@ -4971,6 +4971,50 @@ So the suite itself must be audited for tests that pass regardless of the code.
     'sources' key is JSON Undefined, not an empty array, so it is refused by the type screen in
     compressSourcesFromArgs, never by validateCompressInputs' requires-both message. Cumulative
     second-pass total: 371 pins across 8 gated commits (b68..b70c).
+  - PROGRESS 2026-08-23 second-pass re-sweep b71a (gated 249/249): 32 residual weak assertions
+    pinned in tests/unit/test_partition_manager_panel.cpp, AND the two production defects those
+    pins exposed in src/core/partition_safety_validator.cpp (below). The verifySingleQueuedOperation
+    helper compared the queued line with contains() on the operation-name half, so neither the
+    target ("- Disk 0 Partition N") nor an appended " - BLOCKED: <reasons>" suffix was asserted at
+    any of its fourteen call sites; it now compares the whole line, and every call site passes the
+    full summary. That single change is what surfaced FINDING N2. Also pinned: the non-native
+    filesystem tooltips (each built by .arg(file_system) from a shared template, so a prefix
+    contains() could not see the WRONG filesystem interpolated), the check-mode and APFS-container
+    combo catalogs as exact ordered item text PLUS each item's data payload (a read-only entry
+    silently carrying the repair operation was invisible), the BitLocker / Optimize-Volume /
+    secure-erase command blocks and the secure-erase evidence checklist in full (these are commands
+    an operator is invited to run against an encrypted or about-to-be-purged device, and the
+    target-identity line is the proof the right device was named), the space-analyzer view and
+    context-action catalogs with their byte/count columns, the equal-split quick-partition sizes as
+    exact values (count + "total <= usable" was equally satisfied by four UNEQUAL sizes), the
+    wizard-guard status message (the wizard not opening was also satisfied by a slot that did
+    nothing), and the INCOMPLETE-inventory sentence whole (its three fragments were jointly
+    satisfied by a message that omitted the "operations are refused" promise). DELIBERATELY NOT
+    pinned, as G18-3 impl-detail-over-reach: four cosmetic geometry/color nominees (sidebar link
+    maximumHeight == 22, unallocated swatch #464e58, disk-map QMargins(1,1,1,1), preview
+    minimumHeight == 130) -- those bounds are contracts ("compact", "dark, not white") that a
+    legitimate visual tweak may change with no behavioural consequence.
+  - FINDING N2 (FIXED this commit, correctness, medium): partition_safety_validator's two
+    non-native-tool tables disagreed. isSupportedNonNativeFileSystemToolOperation lists the six
+    container-level APFS operations (ApfsSnapshotCreate/Delete/Revert, ApfsCloneRootFile,
+    ApfsHardlinkRootFile, ApfsResizeContainer) as supported, but nonNativeFileSystemSupportedForOperation
+    had no branch for them: they fell through to the create/format/check tail and were reported
+    unsupported for EVERY filesystem. Effect: the APFS Container dialog offers four modes, queues
+    the operation, and the validator then blocks it unconditionally -- an operation a technician can
+    queue but never apply, even though the snapshot/clone/hardlink/resize engines are Apple-certified
+    (A3/A7) and the script builder already accepts them. Fixed by adding isApfsContainerToolOperation
+    and an APFS-only branch. Non-vacuous by the G18-4 discipline, observed not asserted: the new
+    whole-line queue pin was RED against the unfixed tree ("APFS Snapshot Create - Disk 0 Partition 1
+    - BLOCKED: Non-Windows write support is limited to ...") and green after.
+  - FINDING N3 (FIXED this commit, fail-open, medium): the same pairing table opened with a blanket
+    `if (isExtFileSystemToken(fileSystem)) return true;`, granting an ext payload EVERY operation
+    type -- including the APFS- and HFS-specific mutations that have no ext implementation. That
+    contradicts the validator's own refusal message ("Non-Windows write support is limited to
+    ext2/ext3/ext4 create/format/repair/resize, ..."), and it is a fail-OPEN in a destructive gate,
+    which [[no-fallbacks-fail-closed]] forbids. Now returns the advertised set
+    (create/format/check/resize). Regression test covers both directions for all six container ops
+    (allowed on APFS; refused on xfs AND on ext4) in test_partition_manager_core.cpp. The function
+    was split into named predicates to stay inside the CCN<=10 budget.
   - FINDING N1 (open, reporting accuracy, low): files.find_in_files serializes its matched-file count
     under the key "total_files" (src/core/app_readonly_actions.cpp serializeSearch), which reads to a
     model as "files scanned". The op's own summary line is honest ("N match(es) across M file(s)"),

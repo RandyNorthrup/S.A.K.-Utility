@@ -385,6 +385,20 @@ bool isSupportedNonNativeFileSystemToolOperation(const PartitionOperation& opera
     return std::ranges::find(kSupportedTypes, operation.type) != std::end(kSupportedTypes);
 }
 
+// APFS operations that act on the CONTAINER or on whole objects rather than on a root file's
+// bytes: snapshot create/delete/revert, clone, hardlink, and the container grow. They are listed
+// in isSupportedNonNativeFileSystemToolOperation above, so they must also be recognized by the
+// filesystem-pairing table below; otherwise the two tables disagree and every one of them is
+// blocked unconditionally no matter which filesystem is selected.
+bool isApfsContainerToolOperation(PartitionOperationType type) {
+    return type == PartitionOperationType::ApfsSnapshotCreate ||
+           type == PartitionOperationType::ApfsSnapshotDelete ||
+           type == PartitionOperationType::ApfsSnapshotRevert ||
+           type == PartitionOperationType::ApfsCloneRootFile ||
+           type == PartitionOperationType::ApfsHardlinkRootFile ||
+           type == PartitionOperationType::ApfsResizeContainer;
+}
+
 bool isApfsRootFileMutationOperation(PartitionOperationType type) {
     return type == PartitionOperationType::ApfsWriteRootFile ||
            type == PartitionOperationType::ApfsPatchRootFile ||
@@ -805,26 +819,47 @@ bool nonNativeToolUnsupportedOperation(const PartitionOperation& operation) {
            !isSupportedNonNativeFileSystemToolOperation(operation);
 }
 
+bool isCreateOrFormatOperation(PartitionOperationType type) {
+    return type == PartitionOperationType::Create || type == PartitionOperationType::Format;
+}
+
+bool isCreateFormatOrCheckOperation(PartitionOperationType type) {
+    return isCreateOrFormatOperation(type) || type == PartitionOperationType::CheckFileSystem;
+}
+
+// ext supports exactly what the refusal message advertises -- create, format, repair (the check
+// operation carries the repair mode) and resize.
+bool isExtSupportedOperation(PartitionOperationType type) {
+    return isCreateFormatOrCheckOperation(type) || type == PartitionOperationType::Resize;
+}
+
+// Every APFS-only operation: the root-file/directory mutations plus the container-level work
+// (snapshot create/delete/revert, clone, hard link, container grow).
+bool isApfsOnlyToolOperation(PartitionOperationType type) {
+    return isApfsRootFileMutationOperation(type) || isApfsContainerToolOperation(type);
+}
+
 bool nonNativeFileSystemSupportedForOperation(PartitionOperationType type,
                                               const QString& fileSystem) {
+    // A blanket "ext supports everything" here granted an ext payload EVERY operation type,
+    // including the APFS- and HFS-specific mutations that have no ext implementation, so the
+    // gate failed OPEN for those pairings.
     if (isExtFileSystemToken(fileSystem)) {
-        return true;
+        return isExtSupportedOperation(type);
     }
-    const bool createOrFormat = type == PartitionOperationType::Create ||
-                                type == PartitionOperationType::Format;
     if (isLinuxSwapFileSystemToken(fileSystem)) {
-        return createOrFormat;
+        return isCreateOrFormatOperation(type);
     }
-    const bool createFormatOrCheck = createOrFormat ||
-                                     type == PartitionOperationType::CheckFileSystem;
-    const bool apfsRootMutation = isApfsRootFileMutationOperation(type);
-    if (apfsRootMutation) {
+    // The container operations previously had no branch at all and fell through to the
+    // create/format/check tail below, which reported them unsupported for EVERY filesystem --
+    // so the APFS Container dialog could queue an operation the validator then always blocked.
+    if (isApfsOnlyToolOperation(type)) {
         return isApfsFileSystemToken(fileSystem);
     }
     if (isHfsFileMutationOperation(type)) {
         return isHfsFileSystemToken(fileSystem);
     }
-    return createFormatOrCheck &&
+    return isCreateFormatOrCheckOperation(type) &&
            (isHfsFileSystemToken(fileSystem) || isApfsFileSystemToken(fileSystem));
 }
 
