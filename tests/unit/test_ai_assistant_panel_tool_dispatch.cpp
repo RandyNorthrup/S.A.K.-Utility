@@ -264,9 +264,11 @@ private Q_SLOTS:
                         {QStringLiteral("packed_only"), 1}},
             QStringLiteral("install_bundle"));
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
-        QVERIFY(result.value(QStringLiteral("error_message"))
-                    .toString()
-                    .contains(QStringLiteral("packed_only")));
+        // Exact text: "packed_only" alone also appears in the missing-manifest and
+        // unknown-operation refusals, so only the full message proves the TYPE guard fired.
+        QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("install_bundle 'packed_only' must be a boolean (or the string "
+                                "\"true\"/\"false\")"));
     }
 
     // A malformed package_id (a path-like 'fire/fox') is rejected rather than
@@ -279,9 +281,10 @@ private Q_SLOTS:
         const QJsonObject result = panel.offlineRunOperation(
             QJsonObject{{QStringLiteral("packages"), packages}}, QStringLiteral("direct_download"));
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
-        QVERIFY(result.value(QStringLiteral("error_message"))
-                    .toString()
-                    .contains(QStringLiteral("invalid package_id")));
+        // The refusal must ECHO the rejected id: that is what proves nothing was silently
+        // repaired into a different, valid package before the check ran.
+        QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("Package item has an invalid package_id: fire/fox"));
     }
 
     // A valid recovery-resume snapshot enables resume at its recorded index; a
@@ -330,7 +333,10 @@ private Q_SLOTS:
 
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("operation")).toString(), QStringLiteral("list"));
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 7);
+        // Exact catalog size: 7 QuickActions + 40 read-only + 21 mutating registrations. A
+        // floor would tolerate registrations silently failing (registerAction returns false
+        // on a duplicate/empty id) and the assistant losing actions it can no longer reach.
+        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 68);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found_verify = false;
@@ -388,8 +394,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + read-only + mutating ops (floor; grows as ops are added).
-        QVERIFY(result.value(QStringLiteral("action_count")).toInt() >= 61);
+        // 7 built-in QuickActions + 40 read-only + 21 mutating ops, pinned exactly.
+        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 68);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -545,6 +551,9 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"),
                          QStringLiteral("{\"path\":\"C:/nonexistent/no_such.iso\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        // The missing-file branch, not the UNC/symlink screens that also refuse this op.
+        QCOMPARE(result.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("No such image file: C:/nonexistent/no_such.iso"));
     }
 
     // imaging.analyze_iso: refuse a UNC/network path -- reading it would pull over SMB and could
@@ -576,9 +585,12 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QStringLiteral("diagnostics.run_benchmark")},
                         {QStringLiteral("arguments"), QStringLiteral("{\"target\":\"disk\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
-        const QString message = result.value(QStringLiteral("message")).toString();
-        QVERIFY(message.contains(QStringLiteral("cpu"), Qt::CaseInsensitive));
-        QVERIFY(message.contains(QStringLiteral("memory"), Qt::CaseInsensitive));
+        // "cpu"/"memory" appear in several benchmark messages; only the whole text shows the
+        // routing default fell through to the reject rather than running a suite.
+        QCOMPARE(result.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("benchmark 'target' must be \"cpu\" or \"memory\" (the disk "
+                                "benchmark writes a test file and is not exposed as a read-only "
+                                "op)"));
     }
 
     // diagnostics.run_benchmark: the descriptor is registered read-only with a 'target' enum
@@ -610,7 +622,9 @@ private Q_SLOTS:
                                              .toObject()
                                              .value(QStringLiteral("enum"))
                                              .toArray();
-            QCOMPARE(enum_vals.size(), 2);
+            // The enum is the CLOSED set the model may pass; a size check cannot see "disk"
+            // replacing one of them.
+            QCOMPARE(enum_vals, QJsonArray({QStringLiteral("cpu"), QStringLiteral("memory")}));
         }
         QVERIFY(found);
     }
@@ -784,12 +798,24 @@ private Q_SLOTS:
         QCOMPARE(data.value(QStringLiteral("total_matches")).toInt(), 2);
         const QJsonArray matches = data.value(QStringLiteral("matches")).toArray();
         QCOMPARE(matches.size(), 2);
+        // The whole reported line, not "it mentions NEEDLE": clampLine() truncating the text
+        // or the wrong file's line landing here would both survive a contains() check.
+        QSet<QString> lines;
         for (const auto& value : matches) {
-            QVERIFY(value.toObject()
-                        .value(QStringLiteral("line_content"))
-                        .toString()
-                        .contains(QStringLiteral("NEEDLE")));
+            lines.insert(value.toObject().value(QStringLiteral("line_content")).toString());
         }
+        QCOMPARE(lines,
+                 QSet<QString>({QStringLiteral("hello NEEDLE world"),
+                                QStringLiteral("another NEEDLE token")}));
+        // The report-integrity siblings: nothing was dropped, capped, or truncated, and the
+        // unmatched third file was still walked.
+        QCOMPARE(data.value(QStringLiteral("reported_matches")).toInt(), 2);
+        QCOMPARE(data.value(QStringLiteral("report_truncated")).toBool(), false);
+        QCOMPARE(data.value(QStringLiteral("search_capped")).toBool(), false);
+        // total_files counts files that MATCHED, not files walked: AdvancedSearchWorker emits
+        // fileSearched only from the non-empty-matches path, so the unmatched c.txt is absent.
+        // Pinned at 2 to record that contract exactly (see R5-G18-4-N1 on the field's name).
+        QCOMPARE(data.value(QStringLiteral("total_files")).toInt(), 2);
     }
 
     // W1b: an ungated read-only search must refuse UNC/network roots, so prompt
@@ -1206,7 +1232,14 @@ private Q_SLOTS:
         const QJsonArray candidates = data.value(QStringLiteral("candidates")).toArray();
         QCOMPARE(candidates.size(), 1);
         const QJsonObject first = candidates.at(0).toObject();
+        // The whole carve, not just its extension: the offset/size are what a later recover
+        // would slice out of the image, so an off-by-one there recovers the WRONG bytes.
+        QCOMPARE(first.value(QStringLiteral("format")).toString(), QStringLiteral("JPEG image"));
         QCOMPARE(first.value(QStringLiteral("extension")).toString(), QStringLiteral("jpg"));
+        QCOMPARE(first.value(QStringLiteral("offset_bytes")).toInt(), 64);
+        QCOMPARE(first.value(QStringLiteral("size_bytes")).toInt(), 140);
+        QCOMPARE(first.value(QStringLiteral("id")).toString(),
+                 QStringLiteral("recovered_000000000040.jpg"));
         // Metadata only: never a recovered-content field.
         QVERIFY(!first.contains(QStringLiteral("recovered_bytes")));
         QVERIFY(!first.contains(QStringLiteral("content")));
@@ -1513,11 +1546,13 @@ private Q_SLOTS:
 
         const QJsonObject viaJunction = runScan(junction + QStringLiteral("/disk.img"));
         QVERIFY(!viaJunction.value(QStringLiteral("success")).toBool());
-        const QString message = viaJunction.value(QStringLiteral("message")).toString();
-        QVERIFY2(message.contains(QStringLiteral("junction")) ||
-                     message.contains(QStringLiteral("symlink")) ||
-                     message.contains(QStringLiteral("path")),
-                 qPrintable(message));
+        // The A-or-B-or-"path" disjunction was satisfied by almost any refusal (every message
+        // here contains the path). Pin the reparse-screen text, so a plain missing-file or
+        // UNC refusal can no longer stand in for the ancestor-junction guard.
+        QCOMPARE(viaJunction.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("scan_recoverable does not allow a symlink/junction image_path "
+                                "(or one in its path): %1")
+                     .arg(junction + QStringLiteral("/disk.img")));
     }
 
     // R2 sweep: a symlink FILE entry discovered INSIDE a scanned tree must be skipped by all three
@@ -1716,10 +1751,22 @@ private Q_SLOTS:
         QCOMPARE(data.value(QStringLiteral("message_count")).toInt(), 2);
         const QJsonArray messages = data.value(QStringLiteral("messages")).toArray();
         QCOMPARE(messages.size(), 2);
-        QCOMPARE(messages.at(0).toObject().value(QStringLiteral("subject")).toString(),
-                 QStringLiteral("First message"));
-        QCOMPARE(messages.at(0).toObject().value(QStringLiteral("from")).toString(),
-                 QStringLiteral("alice@example.com"));
+        // Both messages, header by header. Checking only message 0's subject+from cannot see
+        // headers bleeding ACROSS the From_-line boundary -- carol's To: is absent, and
+        // alice's must not be attributed to her.
+        const QJsonObject m0 = messages.at(0).toObject();
+        QCOMPARE(m0.value(QStringLiteral("index")).toInt(), 0);
+        QCOMPARE(m0.value(QStringLiteral("subject")).toString(), QStringLiteral("First message"));
+        QCOMPARE(m0.value(QStringLiteral("from")).toString(), QStringLiteral("alice@example.com"));
+        QCOMPARE(m0.value(QStringLiteral("to")).toString(), QStringLiteral("bob@example.com"));
+        QCOMPARE(m0.value(QStringLiteral("cc")).toString(), QString());
+        QCOMPARE(m0.value(QStringLiteral("has_attachments")).toBool(), false);
+        const QJsonObject m1 = messages.at(1).toObject();
+        QCOMPARE(m1.value(QStringLiteral("index")).toInt(), 1);
+        QCOMPARE(m1.value(QStringLiteral("subject")).toString(), QStringLiteral("Second message"));
+        QCOMPARE(m1.value(QStringLiteral("from")).toString(), QStringLiteral("carol@example.com"));
+        QCOMPARE(m1.value(QStringLiteral("to")).toString(), QString());
+        QCOMPARE(data.value(QStringLiteral("returned")).toInt(), 2);
     }
 
     // W1c: read_mbox on a non-MBOX file fails cleanly (never crashes).
@@ -1742,6 +1789,10 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QStringLiteral("email.read_mbox")},
                         {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        // The parser's open() rejected it -- not the path screens, the missing-arg guard, or a
+        // successful open that then failed to read messages.
+        QCOMPARE(result.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("Not a valid MBOX file: %1").arg(path));
     }
 
     // email.read_pst helper: run the op with a JSON args object (robust path escaping).
@@ -1761,6 +1812,9 @@ private Q_SLOTS:
         const QJsonObject result = runReadPst(
             panel, QJsonObject{{QStringLiteral("path"), QStringLiteral("C:/nope/no_such.pst")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        // The isFile() precondition, not the size cap or a path screen further down.
+        QCOMPARE(result.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("No such PST/OST file: C:/nope/no_such.pst"));
     }
 
     // email.read_pst: refuse a UNC/network path -- reading it would pull over SMB and could leak
@@ -1837,6 +1891,10 @@ private Q_SLOTS:
         const QJsonObject result = runRecoverDeleted(
             panel, QJsonObject{{QStringLiteral("path"), QStringLiteral("C:/nope/no_such.pst")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        // Identical text to read_pst's: that sameness is the point -- it proves recover_deleted
+        // routes through the SHARED validatePstReadPath rather than its own weaker check.
+        QCOMPARE(result.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("No such PST/OST file: C:/nope/no_such.pst"));
     }
 
     // email.recover_deleted: refuse a UNC/network path (reading it would pull over SMB and could
@@ -1981,7 +2039,15 @@ private Q_SLOTS:
         QCOMPARE(hits.size(), 1);
         const QJsonObject hit = hits.at(0).toObject();
         QCOMPARE(hit.value(QStringLiteral("subject")).toString(), QStringLiteral("Second message"));
-        QVERIFY(hit.contains(QStringLiteral("context")));
+        QCOMPARE(hit.value(QStringLiteral("sender")).toString(),
+                 QStringLiteral("carol@example.com"));
+        // match_field names WHICH field matched: "Second" appears only in the subject, so a
+        // body/sender match here would mean the search scanned more than it reported.
+        QCOMPARE(hit.value(QStringLiteral("match_field")).toString(), QStringLiteral("subject"));
+        // The snippet is the whole (short) subject, un-elided: contains() could not tell a
+        // correct window from one that leaked adjacent text.
+        QCOMPARE(hit.value(QStringLiteral("context")).toString(), QStringLiteral("Second message"));
+        QCOMPARE(hit.value(QStringLiteral("folder")).toString(), QStringLiteral("MBOX"));
         QVERIFY(!hit.contains(QStringLiteral("body")));  // snippet only, never the full body
     }
 
@@ -2130,9 +2196,15 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         const QString script = data.value(QStringLiteral("script")).toString();
-        // netsh is invoked by its absolute System32 path (anti-hijack).
-        QVERIFY(script.contains(QStringLiteral("netsh.exe\" wlan add profile")));
-        QVERIFY(script.contains(QStringLiteral("wlan connect name=\"MyNet\"")));
+        // netsh is invoked by its absolute System32 path (anti-hijack). The old fragment
+        // started INSIDE the quoted path, so a relative or hijackable prefix ("evil\\netsh.exe")
+        // satisfied it just as well; pin the whole invocation line including the %SystemRoot%
+        // anchor and the trailing CRLF.
+        QVERIFY(
+            script.contains(QStringLiteral("\"%SystemRoot%\\System32\\netsh.exe\" wlan add profile "
+                                           "filename=\"%PROFILE_XML%\" user=all\r\n")));
+        QVERIFY(script.contains(QStringLiteral(
+            "\"%SystemRoot%\\System32\\netsh.exe\" wlan connect name=\"MyNet\"\r\n")));
         QVERIFY(data.value(QStringLiteral("embeds_password")).toBool());
     }
 
@@ -2154,8 +2226,14 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(!data.value(QStringLiteral("embeds_password")).toBool());
-        QVERIFY(
-            !data.value(QStringLiteral("note")).toString().contains(QStringLiteral("password")));
+        // The exact no-password note: an absence check also passes on an EMPTY note, which
+        // discloses nothing at all rather than disclosing honestly.
+        QCOMPARE(data.value(QStringLiteral("note")).toString(),
+                 QStringLiteral("Save as a .cmd and run as Administrator. It adds the WLAN "
+                                "profile then connects."));
+        // The security mode is echoed back verbatim -- it is what selected the no-keyMaterial
+        // branch above.
+        QCOMPARE(data.value(QStringLiteral("security")).toString(), QStringLiteral("open"));
     }
 
     // An SSID with a double quote cannot be safely embedded -> refused (no script).
@@ -2494,8 +2572,16 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QStringLiteral("network.connect_wifi")},
                         {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        // The pre-netsh input screen, named exactly: every other failure of this op (missing
+        // ssid, over-length, enterprise security, netsh itself failing) also reports
+        // profile_added=false, so the flag alone proved nothing about WHERE it stopped.
+        QCOMPARE(result.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("Could not connect to 'Net\"work': SSID is empty or contains a "
+                                "double quote / control character"));
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(!data.value(QStringLiteral("profile_added")).toBool());
+        // Nothing was issued either -- the refusal happened before any netsh invocation.
+        QCOMPARE(data.value(QStringLiteral("connect_issued")).toBool(), false);
     }
 
     // software.clean_leftovers -- MUTATING + destructive + CATASTROPHIC + requires_admin: deletes
@@ -2603,11 +2689,27 @@ private Q_SLOTS:
             QJsonObject{{QStringLiteral("type"), QStringLiteral("scheduled_task")},
                         {QStringLiteral("path"), QStringLiteral("\\Microsoft\\Windows\\Foo")}}};
 
-        for (const QJsonObject& item : denied) {
-            const QJsonObject result = runCleanRefusedItem(panel, item);
+        // Each item must be refused by ITS OWN guard, naming the item index and the offending
+        // target. A non-empty list also passed when a single blunt guard (or the proof-of-scan
+        // check, which refuses every unscanned path) swallowed all five.
+        const QStringList expected = {
+            QStringLiteral("item 0 (HKLM\\SYSTEM\\CurrentControlSet\\Services\\RpcSs): refusing "
+                           "to delete a protected system registry subtree (system)"),
+            QStringLiteral("item 0 (RpcSs): refusing to delete a critical Windows service (RpcSs)"),
+            QStringLiteral("item 0 (all): refusing firewall wildcard name=all (deletes ALL "
+                           "rules); name a specific rule"),
+            QStringLiteral("item 0 (C:\\Windows\\System32): refusing a path inside the Windows "
+                           "system directory"),
+            QStringLiteral("item 0 (\\Microsoft\\Windows\\Foo): refusing to delete a "
+                           "Windows/Microsoft scheduled task")};
+        QCOMPARE(denied.size(), expected.size());
+        for (qsizetype index = 0; index < denied.size(); ++index) {
+            const QJsonObject result = runCleanRefusedItem(panel, denied.at(index));
             QVERIFY(!result.value(QStringLiteral("success")).toBool());
             const QJsonObject data = result.value(QStringLiteral("data")).toObject();
-            QVERIFY(!data.value(QStringLiteral("refused")).toArray().isEmpty());
+            const QJsonArray refused = data.value(QStringLiteral("refused")).toArray();
+            QCOMPARE(refused.size(), 1);
+            QCOMPARE(refused.at(0).toString(), expected.at(index));
         }
     }
 
@@ -2633,7 +2735,14 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
-        QVERIFY(!data.value(QStringLiteral("refused")).toArray().isEmpty());
+        // Exactly ONE refusal, naming index 1 -- the denylisted service. That index is what
+        // proves the VALID item at index 0 was not itself refused (which would make the
+        // all-or-nothing claim vacuous: nothing would have been deletable anyway).
+        const QJsonArray refused = data.value(QStringLiteral("refused")).toArray();
+        QCOMPARE(refused.size(), 1);
+        QCOMPARE(refused.at(0).toString(),
+                 QStringLiteral("item 1 (Dnscache): refusing to delete a critical Windows "
+                                "service (Dnscache)"));
     }
 
     // A catastrophic batch too large to review item-by-item is REFUSED outright rather than
@@ -3867,10 +3976,26 @@ private Q_SLOTS:
                         {QStringLiteral("output_path"), dir.filePath(QStringLiteral("o.zip"))}},
             // missing args (no sources)
             QJsonObject{{QStringLiteral("output_path"), dir.filePath(QStringLiteral("o.zip"))}}};
-        for (const QJsonObject& args : bad) {
+        // One expected refusal per case, in order. !success alone let ANY guard stand in for the
+        // intended one -- so a single over-broad screen (or the reparse check firing on the temp
+        // dir) would have satisfied all six while several of these guards were dead.
+        const QStringList expected = {
+            QStringLiteral("compress_zip does not allow network/UNC or device sources: "
+                           "\\\\host\\share\\a.txt"),
+            QStringLiteral("compress_zip does not allow network/UNC or device paths"),
+            QStringLiteral("output_path must end in .zip"),
+            QStringLiteral("output_path already exists (refusing to overwrite): ") + existing_zip,
+            QStringLiteral("No such source: ") + dir.filePath(QStringLiteral("nope.txt")),
+            // An ABSENT 'sources' key is Undefined, not an empty array, so it is caught by the
+            // type screen in compressSourcesFromArgs -- validateCompressInputs' requires-both
+            // message is reached only by an empty array or an empty output_path.
+            QStringLiteral("sources must be an array of absolute file/folder paths")};
+        QCOMPARE(bad.size(), expected.size());
+        for (qsizetype index = 0; index < bad.size(); ++index) {
             const QJsonObject result =
-                runArchiveOp(panel, QStringLiteral("files.compress_zip"), args);
+                runArchiveOp(panel, QStringLiteral("files.compress_zip"), bad.at(index));
             QVERIFY(!result.value(QStringLiteral("success")).toBool());
+            QCOMPARE(result.value(QStringLiteral("message")).toString(), expected.at(index));
             QVERIFY(!result.contains(QStringLiteral("failure_class")));  // a guard, not the gate
         }
         // The pre-existing archive was never clobbered/removed by a failed run.
@@ -3913,10 +4038,23 @@ private Q_SLOTS:
                         {QStringLiteral("destination_dir"), nonempty}},
             // missing args
             QJsonObject{{QStringLiteral("archive_path"), real_zip}}};
-        for (const QJsonObject& args : bad) {
+        // Per-case refusal text. The first two cases SHARE a message (the shared screen tests
+        // both paths at once) -- which is exactly why a bare !success could not show that the
+        // destination side was screened at all.
+        const QStringList expected = {
+            QStringLiteral("extract_zip does not allow network/UNC or device paths"),
+            QStringLiteral("extract_zip does not allow network/UNC or device paths"),
+            QStringLiteral("No such archive file: ") + dir.filePath(QStringLiteral("nope.zip")),
+            QStringLiteral("destination_dir must be a new or empty directory (refusing to write "
+                           "into a non-empty directory to avoid overwriting existing files): ") +
+                nonempty,
+            QStringLiteral("extract_zip requires 'archive_path' and 'destination_dir'")};
+        QCOMPARE(bad.size(), expected.size());
+        for (qsizetype index = 0; index < bad.size(); ++index) {
             const QJsonObject result =
-                runArchiveOp(panel, QStringLiteral("files.extract_zip"), args);
+                runArchiveOp(panel, QStringLiteral("files.extract_zip"), bad.at(index));
             QVERIFY(!result.value(QStringLiteral("success")).toBool());
+            QCOMPARE(result.value(QStringLiteral("message")).toString(), expected.at(index));
             QVERIFY(!result.contains(QStringLiteral("failure_class")));  // a guard, not the gate
         }
         // The populated directory's pre-existing file survived every refused extract.
@@ -3995,7 +4133,15 @@ private Q_SLOTS:
         QVERIFY(!listed.contains(QStringLiteral("failure_class")));  // read-only, never gated
         QVERIFY(listed.value(QStringLiteral("success")).toBool());
         const QJsonObject data = listed.value(QStringLiteral("data")).toObject();
-        QVERIFY(data.value(QStringLiteral("total_entries")).toInt() >= 2);
+        // Exactly the four archived entries: the "src" and "src/nested" directory records plus
+        // the two files. A >= 2 floor could not see the directory records going missing (which
+        // is what makes an extract recreate the tree) nor a duplicate entry being written.
+        QCOMPARE(data.value(QStringLiteral("total_entries")).toInt(), 4);
+        QCOMPARE(data.value(QStringLiteral("reported_entries")).toInt(), 4);
+        QCOMPARE(data.value(QStringLiteral("truncated")).toBool(), false);
+        // 7 bytes each, directories counted as 0 -- so the sum also proves the dir entries did
+        // not pick up a bogus size.
+        QCOMPARE(data.value(QStringLiteral("total_uncompressed_bytes")).toInt(), 14);
         bool have_a = false;
         bool have_b = false;
         for (const auto& value : data.value(QStringLiteral("entries")).toArray()) {
@@ -4797,19 +4943,26 @@ private Q_SLOTS:
     // W2d(1): the guard REFUSES the system disk, the boot disk, and a read-only disk,
     // and refuses a disk number that is not present -- fail closed.
     void resolveFlashTargetRefusesUnsafeDisks() {
-        // System disk.
-        QVERIFY(!resolveFlashTarget(inventoryWithDisk(0, true, false, false), 0).ok);
-        // Boot disk.
-        QVERIFY(!resolveFlashTarget(inventoryWithDisk(0, false, true, false), 0).ok);
-        // Read-only disk.
-        QVERIFY(!resolveFlashTarget(inventoryWithDisk(3, false, false, true), 3).ok);
+        // Each refusal names its own reason. !ok alone was satisfied by ANY refusal, so a
+        // single early screen (the negative-number check, say) could have covered for every
+        // later guard being dead.
+        QCOMPARE(resolveFlashTarget(inventoryWithDisk(0, true, false, false), 0).error.message,
+                 QStringLiteral("Refusing to flash disk 0 (Test Disk): it is the system/boot "
+                                "disk"));
+        QCOMPARE(resolveFlashTarget(inventoryWithDisk(0, false, true, false), 0).error.message,
+                 QStringLiteral("Refusing to flash disk 0 (Test Disk): it is the system/boot "
+                                "disk"));
+        QCOMPARE(resolveFlashTarget(inventoryWithDisk(3, false, false, true), 3).error.message,
+                 QStringLiteral("Refusing to flash disk 3 (Test Disk): it is "
+                                "read-only/write-protected"));
         // Missing disk number.
         const FlashTargetResolution missing =
             resolveFlashTarget(inventoryWithDisk(1, false, false, false), 7);
         QVERIFY(!missing.ok);
-        QVERIFY(missing.error.message.contains(QStringLiteral("No physical disk")));
+        QCOMPARE(missing.error.message, QStringLiteral("No physical disk with number 7 was found"));
         // Negative disk number.
-        QVERIFY(!resolveFlashTarget(inventoryWithDisk(0, false, false, false), -1).ok);
+        QCOMPARE(resolveFlashTarget(inventoryWithDisk(0, false, false, false), -1).error.message,
+                 QStringLiteral("flash_image requires a non-negative disk_number"));
     }
 
     // W2d(1b): fail CLOSED against the OS disk hiding behind degraded/absent Get-Disk
@@ -4817,23 +4970,37 @@ private Q_SLOTS:
     // carrying an EFI/boot/system partition are all refused even when the disk-level
     // is_system/is_boot came back false.
     void resolveFlashTargetRefusesHiddenOsSignals() {
+        // These five cases are the whole point of the test: each plants a DIFFERENT hidden
+        // signal and must be caught by the guard that reads it. Pinning the reason is what
+        // distinguishes them -- !ok is identical for all five and for a guard that refuses
+        // every disk unconditionally.
+        const QString dynamic_reason = QStringLiteral(
+            "Refusing to flash disk 2 (Test Disk): it is a dynamic / Storage "
+            "Spaces disk (flashing it would destroy the whole volume set or "
+            "pool)");
+        const QString hosts_reason = QStringLiteral(
+            "Refusing to flash disk 2 (Test Disk): it hosts a system/boot/EFI "
+            "partition or the running OS volume");
         // Degraded scan (warnings present) -> refuse regardless of the disk flags.
         {
             PartitionInventory inv = inventoryWithDisk(2, false, false, false);
             inv.warnings.append(QStringLiteral("enumeration degraded"));
-            QVERIFY(!resolveFlashTarget(inv, 2).ok);
+            QCOMPARE(resolveFlashTarget(inv, 2).error.message,
+                     QStringLiteral("Refusing to flash: the disk inventory scan reported "
+                                    "warnings and cannot be trusted to identify the system "
+                                    "disk"));
         }
         // Dynamic disk.
         {
             PartitionInventory inv = inventoryWithDisk(2, false, false, false);
             inv.disks[0].is_dynamic = true;
-            QVERIFY(!resolveFlashTarget(inv, 2).ok);
+            QCOMPARE(resolveFlashTarget(inv, 2).error.message, dynamic_reason);
         }
         // Storage Spaces disk.
         {
             PartitionInventory inv = inventoryWithDisk(2, false, false, false);
             inv.disks[0].is_storage_spaces = true;
-            QVERIFY(!resolveFlashTarget(inv, 2).ok);
+            QCOMPARE(resolveFlashTarget(inv, 2).error.message, dynamic_reason);
         }
         // Disk carries an EFI system partition (disk-level flags both false).
         {
@@ -4841,7 +5008,7 @@ private Q_SLOTS:
             PartitionInfoEx efi;
             efi.is_efi = true;
             inv.disks[0].partitions.append(efi);
-            QVERIFY(!resolveFlashTarget(inv, 2).ok);
+            QCOMPARE(resolveFlashTarget(inv, 2).error.message, hosts_reason);
         }
         // Disk carries a partition flagged as the boot partition.
         {
@@ -4849,7 +5016,7 @@ private Q_SLOTS:
             PartitionInfoEx boot;
             boot.is_boot = true;
             inv.disks[0].partitions.append(boot);
-            QVERIFY(!resolveFlashTarget(inv, 2).ok);
+            QCOMPARE(resolveFlashTarget(inv, 2).error.message, hosts_reason);
         }
     }
 
@@ -4860,7 +5027,11 @@ private Q_SLOTS:
             resolveFlashTarget(inventoryWithDisk(2, false, false, false), 2);
         QVERIFY(resolved.ok);
         QCOMPARE(resolved.device_path, QStringLiteral("\\\\.\\PhysicalDrive2"));
-        QVERIFY(resolved.description.contains(QStringLiteral("disk 2")));
+        // The description is what a human sees in the catastrophic confirm, so pin it whole:
+        // "disk 2" alone would still read correctly while the model/bus/size identifying the
+        // physical device were wrong or missing.
+        QCOMPARE(resolved.description,
+                 QStringLiteral("disk 2: Test Disk (USB, 8e+09 bytes, removable)"));
     }
 
     // ------------------------------------------------------------------
@@ -4879,28 +5050,44 @@ private Q_SLOTS:
             i.layout_hash = hash;
             return i;
         };
-        QVERIFY(!resolvePartitionApplyTarget(inv(0, true, false, false), 0, hash).ok);  // system
-        QVERIFY(!resolvePartitionApplyTarget(inv(0, false, true, false), 0, hash).ok);  // boot
-        QVERIFY(!resolvePartitionApplyTarget(inv(3, false, false, true), 3, hash).ok);  // read-only
-        QVERIFY(!resolvePartitionApplyTarget(inv(1, false, false, false), 7, hash).ok);  // missing
-        QVERIFY(
-            !resolvePartitionApplyTarget(inv(0, false, false, false), -1, hash).ok);     // negative
+        // "Refusing to APPLY to" (not "to flash"): the wording proves this op reuses the flash
+        // denylist through its own entry point, and the per-case reason proves each signal is
+        // read separately rather than one blanket refusal covering all seven.
+        const QString dynamic_reason = QStringLiteral(
+            "Refusing to apply to disk 2 (Test Disk): it is a dynamic / Storage "
+            "Spaces disk (flashing it would destroy the whole volume set or "
+            "pool)");
+        QCOMPARE(resolvePartitionApplyTarget(inv(0, true, false, false), 0, hash).error.message,
+                 QStringLiteral("Refusing to apply to disk 0 (Test Disk): it is the system/boot "
+                                "disk"));
+        QCOMPARE(resolvePartitionApplyTarget(inv(0, false, true, false), 0, hash).error.message,
+                 QStringLiteral("Refusing to apply to disk 0 (Test Disk): it is the system/boot "
+                                "disk"));
+        QCOMPARE(resolvePartitionApplyTarget(inv(3, false, false, true), 3, hash).error.message,
+                 QStringLiteral("Refusing to apply to disk 3 (Test Disk): it is "
+                                "read-only/write-protected"));
+        QCOMPARE(resolvePartitionApplyTarget(inv(1, false, false, false), 7, hash).error.message,
+                 QStringLiteral("No physical disk with number 7 was found"));
+        QCOMPARE(resolvePartitionApplyTarget(inv(0, false, false, false), -1, hash).error.message,
+                 QStringLiteral("apply_operation requires a non-negative disk_number"));
         {
             PartitionInventory i = inv(2, false, false, false);
             i.disks[0].is_dynamic = true;
-            QVERIFY(!resolvePartitionApplyTarget(i, 2, hash).ok);
+            QCOMPARE(resolvePartitionApplyTarget(i, 2, hash).error.message, dynamic_reason);
         }
         {
             PartitionInventory i = inv(2, false, false, false);
             i.disks[0].is_storage_spaces = true;
-            QVERIFY(!resolvePartitionApplyTarget(i, 2, hash).ok);
+            QCOMPARE(resolvePartitionApplyTarget(i, 2, hash).error.message, dynamic_reason);
         }
         {
             PartitionInventory i = inv(2, false, false, false);
             PartitionInfoEx efi;
             efi.is_efi = true;
             i.disks[0].partitions.append(efi);
-            QVERIFY(!resolvePartitionApplyTarget(i, 2, hash).ok);
+            QCOMPARE(resolvePartitionApplyTarget(i, 2, hash).error.message,
+                     QStringLiteral("Refusing to apply to disk 2 (Test Disk): it hosts a "
+                                    "system/boot/EFI partition or the running OS volume"));
         }
     }
 
@@ -4928,7 +5115,9 @@ private Q_SLOTS:
             resolvePartitionApplyTarget(i, 2, QStringLiteral("match"));
         QVERIFY(r.ok);
         QCOMPARE(r.device_path, QStringLiteral("\\\\.\\PhysicalDrive2"));
-        QVERIFY(r.description.contains(QStringLiteral("disk 2")));
+        // Same whole-description pin as the flash guard: this text is what the catastrophic
+        // confirm shows the technician before an elevated, data-erasing apply.
+        QCOMPARE(r.description, QStringLiteral("disk 2: Test Disk (USB, 8e+09 bytes, removable)"));
     }
 
     // W2f(4): registered destructive + CATASTROPHIC + requires_admin so the gate
@@ -4966,40 +5155,52 @@ private Q_SLOTS:
         };
         // A clean args object passes.
         QVERIFY(!sak::validatePartitionApplyArgs(base()).has_value());
+        // Each case pins the message its OWN branch produces. has_value() alone was satisfied
+        // by any refusal -- including the unknown-key screen at the top of the validator, which
+        // would fire first and mask every branch below it if a key name ever drifted.
         // Wrong-typed disk_number (string, not a JSON number).
         {
             QJsonObject a = base();
             a[QStringLiteral("disk_number")] = QStringLiteral("2");
-            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+            QCOMPARE(sak::validatePartitionApplyArgs(a)->message,
+                     QStringLiteral("apply_operation requires a numeric 'disk_number'"));
         }
         // Wrong-typed byte field (string) -> refused, never coerced to 0.
         {
             QJsonObject a = base();
             a[QStringLiteral("size_bytes")] = QStringLiteral("1024");
-            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+            QCOMPARE(sak::validatePartitionApplyArgs(a)->message,
+                     QStringLiteral("size_bytes must be a number of bytes"));
         }
         // Fractional byte field -> refused, never truncated.
         {
             QJsonObject a = base();
             a[QStringLiteral("offset_bytes")] = 1024.5;
-            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+            QCOMPARE(sak::validatePartitionApplyArgs(a)->message,
+                     QStringLiteral("offset_bytes must be a finite, non-negative, whole number "
+                                    "of bytes"));
         }
         // Non-object payload -> refused (never coerced to an empty {} that drops op fields).
         {
             QJsonObject a = base();
             a[QStringLiteral("payload")] = QStringLiteral("not-an-object");
-            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+            QCOMPARE(sak::validatePartitionApplyArgs(a)->message,
+                     QStringLiteral("payload must be an object of operation fields"));
         }
         // Present-but-non-bool dry_run -> refused (never a silent false -> destructive apply).
         {
             QJsonObject a = base();
             a[QStringLiteral("dry_run")] = QStringLiteral("true");
-            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+            QCOMPARE(sak::validatePartitionApplyArgs(a)->message,
+                     QStringLiteral("dry_run must be a boolean (true or false)"));
         }
         // Missing confirm_layout_hash -> refused (drift guard is mandatory).
         {
             const QJsonObject a{{QStringLiteral("disk_number"), 2}};
-            QVERIFY(sak::validatePartitionApplyArgs(a).has_value());
+            QCOMPARE(sak::validatePartitionApplyArgs(a)->message,
+                     QStringLiteral("apply_operation requires 'confirm_layout_hash' (the "
+                                    "layout_hash from a prior list_inventory/preview_operation, "
+                                    "to detect layout drift)"));
         }
         // Well-formed integral byte field + real bool dry_run + object payload all pass.
         {
@@ -5251,7 +5452,12 @@ private Q_SLOTS:
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(!data.value(QStringLiteral("can_apply")).toBool());
-        QVERIFY(data.value(QStringLiteral("blocker_count")).toInt() >= 1);
+        // Exactly the missing-disk blocker. A >= 1 floor also passed when the preview blocked
+        // for an unrelated reason (a validator that blocks everything reads the same), which
+        // would make this a test of "preview refuses" rather than of the disk lookup.
+        QCOMPARE(data.value(QStringLiteral("blocker_count")).toInt(), 1);
+        QCOMPARE(data.value(QStringLiteral("blockers")).toArray().at(0).toString(),
+                 QStringLiteral("Target disk was not found in current inventory"));
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("BLOCKED")));
     }
@@ -5917,8 +6123,15 @@ private Q_SLOTS:
             QStringLiteral("MsiExec.exe /X{12345678-90AB-CDEF-1234-567890ABCDEF}");
         cmd.clear();
         QVERIFY(sak::UninstallWorker::buildSilentUninstallCommand(msi, cmd));
-        QVERIFY(cmd.contains(QStringLiteral("/qn")));
-        QVERIFY(cmd.contains(QStringLiteral("{12345678-90AB-CDEF-1234-567890ABCDEF}")));
+        // The anti-hijack property is WHERE msiexec comes from, which contains("/qn") could not
+        // see: take the quoted first token as data, prove it is an absolute msiexec.exe, then
+        // pin the entire command around it (the /x GUID and the "/qn /norestart" tail in order).
+        const QString msiexec_exe = cmd.section(QLatin1Char('"'), 1, 1);
+        QVERIFY2(QFileInfo(msiexec_exe).isAbsolute(), qPrintable(cmd));
+        QCOMPARE(QFileInfo(msiexec_exe).fileName(), QStringLiteral("msiexec.exe"));
+        QCOMPARE(cmd,
+                 QStringLiteral("\"%1\" /x {12345678-90AB-CDEF-1234-567890ABCDEF} /qn /norestart")
+                     .arg(msiexec_exe));
 
         sak::ProgramInfo interactive;
         interactive.uninstallString = QStringLiteral("\"C:\\App\\setup.exe\" /uninstall");
@@ -5943,11 +6156,15 @@ private Q_SLOTS:
         const QString guid_b = QStringLiteral("{22222222-2222-2222-2222-222222222222}");
         sak::ProgramInfo out;
 
-        // System component -> refused (never silently removed headless).
-        QVERIFY(sak::resolveWin32ProgramFromList({msi(QStringLiteral("VC Runtime"), guid_a, true)},
-                                                 QStringLiteral("VC Runtime"),
-                                                 out)
-                    .has_value());
+        // System component -> refused (never silently removed headless). The refusal must be
+        // the SYSTEM-COMPONENT one: this list has exactly one match, so a "not found" or
+        // "no silent command" refusal would mean the component check never ran.
+        QCOMPARE(sak::resolveWin32ProgramFromList({msi(QStringLiteral("VC Runtime"), guid_a, true)},
+                                                  QStringLiteral("VC Runtime"),
+                                                  out)
+                     ->message,
+                 QStringLiteral("'VC Runtime' is a protected Windows system component; uninstall "
+                                "it from the GUI panel, not headless"));
 
         // Two distinct programs sharing a name (different GUIDs -> different commands) ->
         // ambiguous.
@@ -5956,7 +6173,10 @@ private Q_SLOTS:
         const auto ambiguous =
             sak::resolveWin32ProgramFromList(distinct, QStringLiteral("Updater"), out);
         QVERIFY(ambiguous.has_value());
-        QVERIFY(ambiguous->message.contains(QStringLiteral("distinct")));
+        // The COUNT in the message is what tells a technician how ambiguous it is.
+        QCOMPARE(ambiguous->message,
+                 QStringLiteral("'Updater' matches 2 distinct installed programs; use a more "
+                                "specific name or the GUI uninstall panel"));
 
         // Same program double-registered across hives (same GUID -> same command) -> resolves to
         // one.
@@ -5968,9 +6188,15 @@ private Q_SLOTS:
         sak::ProgramInfo interactive;
         interactive.displayName = QStringLiteral("Setupy");
         interactive.uninstallString = QStringLiteral("\"C:\\App\\setup.exe\" /uninstall");
-        QVERIFY(sak::resolveWin32ProgramFromList({interactive}, QStringLiteral("Setupy"), out)
-                    .has_value());
-        QVERIFY(sak::resolveWin32ProgramFromList({}, QStringLiteral("Nope"), out).has_value());
+        // These two refusals differ only in WHY, and telling them apart is what lets a
+        // technician know whether to retype the name or open the GUI panel.
+        QCOMPARE(
+            sak::resolveWin32ProgramFromList({interactive}, QStringLiteral("Setupy"), out)->message,
+            QStringLiteral("'Setupy' has no silent uninstall command (its uninstaller is "
+                           "interactive and cannot run headless); use the GUI uninstall "
+                           "panel"));
+        QCOMPARE(sak::resolveWin32ProgramFromList({}, QStringLiteral("Nope"), out)->message,
+                 QStringLiteral("No installed Win32 program named 'Nope'"));
     }
 
     // Wave 1 (network): list_adapters drives NetworkAdapterInspector (GetAdaptersAddresses:
@@ -6541,10 +6767,18 @@ private Q_SLOTS:
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QCOMPARE(data.value(QStringLiteral("total_cycles")).toInt(), 2);
-        QVERIFY(data.value(QStringLiteral("hop_count")).toInt() >= 1);
+        // Loopback is exactly one hop: a floor would also pass on a run that invented extra
+        // hops, and 0.0% loss on the first hop says nothing about whether the probes were
+        // actually sent. sent/received pin the 2 requested cycles reaching that hop.
+        QCOMPARE(data.value(QStringLiteral("hop_count")).toInt(), 1);
         const QJsonArray hops = data.value(QStringLiteral("hops")).toArray();
-        QVERIFY(!hops.isEmpty());
-        QCOMPARE(hops.first().toObject().value(QStringLiteral("loss_percent")).toDouble(), 0.0);
+        QCOMPARE(hops.size(), 1);
+        const QJsonObject hop = hops.first().toObject();
+        QCOMPARE(hop.value(QStringLiteral("hop")).toInt(), 1);
+        QCOMPARE(hop.value(QStringLiteral("ip")).toString(), QStringLiteral("127.0.0.1"));
+        QCOMPARE(hop.value(QStringLiteral("sent")).toInt(), 2);
+        QCOMPARE(hop.value(QStringLiteral("received")).toInt(), 2);
+        QCOMPARE(hop.value(QStringLiteral("loss_percent")).toDouble(), 0.0);
     }
 
     // Wave 1 (network probes): mtr against a resolvable-but-unreachable literal reports an
@@ -6638,6 +6872,14 @@ private Q_SLOTS:
                         {QStringLiteral("arguments"),
                          QStringLiteral("{\"target\":\"example.com\",\"ports\":[80]}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        // The private-target screen specifically. A hostname could equally have been refused by
+        // a DNS failure or a port-argument error, neither of which is the guard under test --
+        // and either would leave a resolvable hostname free to reach a third-party host.
+        QCOMPARE(result.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("port_scan is limited to local/private targets (loopback, 10/8, "
+                                "172.16/12, 192.168/16, link-local, or 'localhost'); scanning "
+                                "public or remote hosts is disabled for the assistant -- pass a "
+                                "private IP literal"));
     }
 
     // Wave 1 (network probes): the sequential scan is hard-capped so an unbounded port range
@@ -7099,9 +7341,11 @@ private Q_SLOTS:
 
         const QJsonObject unknown = panel.runRunWorkflowTool(
             QJsonObject{{QStringLiteral("workflow_id"), QStringLiteral("does_not_exist_xyz")}});
-        QVERIFY(unknown.value(QStringLiteral("error_message"))
-                    .toString()
-                    .contains(QStringLiteral("Unknown workflow_id")));
+        // success=false was never asserted for this arm at all, so the refusal could have been
+        // reported alongside a successful launch. The message echoes the rejected id.
+        QCOMPARE(unknown.value(QStringLiteral("success")).toBool(), false);
+        QCOMPARE(unknown.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("Unknown workflow_id 'does_not_exist_xyz' (not in the catalog)"));
     }
 
     // A sub-agent must never be able to delegate to another sub-agent or launch a
@@ -7113,16 +7357,18 @@ private Q_SLOTS:
         request.tool_name = QStringLiteral("delegate_subagent");
         const QJsonObject delegated = panel.dispatchSubagentToolCall(
             ai::AiToolPolicy::ReadOnlyPc, request, QJsonObject{}, QStringLiteral("sub"));
-        QVERIFY(delegated.value(QStringLiteral("error_message"))
-                    .toString()
-                    .contains(QStringLiteral("may not delegate")));
+        // Neither arm asserted success=false, and the recursion backstop is the whole point:
+        // pin the structural refusal itself, not a fragment shared with the policy messages.
+        QCOMPARE(delegated.value(QStringLiteral("success")).toBool(), false);
+        QCOMPARE(delegated.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("Sub-agents may not delegate to sub-agents or launch workflows"));
 
         request.tool_name = QStringLiteral("run_workflow");
         const QJsonObject workflowed = panel.dispatchSubagentToolCall(
             ai::AiToolPolicy::ReadOnlyPc, request, QJsonObject{}, QStringLiteral("sub"));
-        QVERIFY(workflowed.value(QStringLiteral("error_message"))
-                    .toString()
-                    .contains(QStringLiteral("may not delegate")));
+        QCOMPARE(workflowed.value(QStringLiteral("success")).toBool(), false);
+        QCOMPARE(workflowed.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("Sub-agents may not delegate to sub-agents or launch workflows"));
     }
 
     // A workflow phase likewise may not use the orchestration tools (an authored
@@ -7136,9 +7382,11 @@ private Q_SLOTS:
         ai::AiWorkflowPhaseContext context;
         const QJsonObject result =
             panel.dispatchWorkflowToolPhase(phase, ai::AiToolPolicy::ReadOnlyPc, context);
-        QVERIFY(result.value(QStringLiteral("error_message"))
-                    .toString()
-                    .contains(QStringLiteral("may not use")));
+        QCOMPARE(result.value(QStringLiteral("success")).toBool(), false);
+        // Names BOTH banned tools: a phase refused only for run_workflow while
+        // delegate_subagent still slipped through would satisfy any "may not use" fragment.
+        QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("Workflow phases may not use delegate_subagent or run_workflow"));
     }
 
     void skillToolReachesHandlerThroughRealToolLoop() {

@@ -4947,6 +4947,37 @@ So the suite itself must be audited for tests that pass regardless of the code.
     weak assertions remain -- a deeper re-sweep keeps yielding per-branch siblings (as b13's re-sweep
     of nominally-"clean" files showed, and as the G18-1 mutation tail shows), and the break-every-fix
     half of the item is proven end-to-end only for the G18-1 decoder/parser/comparator corpus so far.
+  - PROGRESS 2026-08-23 second-pass re-sweep b70c (gated 249/249): 36 residual weak assertions pinned
+    in tests/unit/test_ai_assistant_panel_tool_dispatch.cpp, the single largest app-action dispatch
+    suite. The dominant residual class here is the multi-guard refuser reporting through one flag:
+    resolveFlashTarget / resolvePartitionApplyTarget (12 arms), validatePartitionApplyArgs (6 arms),
+    the compress_zip / extract_zip guard loops (11 arms) and the clean_leftovers denylist loop (6
+    arms) all asserted only !ok / !success / !refused.isEmpty(), which one over-broad screen could
+    satisfy for every case in the loop while the specific guard under test was dead. Each arm now
+    pins the exact refusal naming its own reason (and, for the cleanup loop, the item INDEX -- which
+    is what proves the valid sibling item was not itself refused, i.e. that the all-or-nothing claim
+    is not vacuous). Also pinned: action_count floors (>= 7 / >= 61) to the exact 68-entry catalog
+    (7 QuickActions + 40 read-only + 21 mutating registrations, counted from the add() call sites --
+    a floor tolerated up to 61 registrations silently failing); the carved-JPEG candidate's whole
+    offset/size/id (an off-by-one there recovers the WRONG bytes); both MBOX messages header by
+    header (header bleed ACROSS the From_ boundary was invisible when only message 0's subject was
+    checked); the wifi script's netsh invocations including the %SystemRoot% anchor (the old fragment
+    started INSIDE the quoted path, so a hijackable relative prefix satisfied it); and the msiexec
+    uninstall command, pinned whole around a first token proven absolute + named msiexec.exe rather
+    than by contains("/qn"). TWO pins went red and were corrected against production, both worth
+    recording: (a) files.find_in_files reports total_files = files that MATCHED, not files walked
+    (AdvancedSearchWorker emits fileSearched only from the non-empty-matches path), so a 3-file tree
+    with 2 matching files reports 2 -- pinned at 2, see finding N1 below; (b) an ABSENT compress_zip
+    'sources' key is JSON Undefined, not an empty array, so it is refused by the type screen in
+    compressSourcesFromArgs, never by validateCompressInputs' requires-both message. Cumulative
+    second-pass total: 371 pins across 8 gated commits (b68..b70c).
+  - FINDING N1 (open, reporting accuracy, low): files.find_in_files serializes its matched-file count
+    under the key "total_files" (src/core/app_readonly_actions.cpp serializeSearch), which reads to a
+    model as "files scanned". The op's own summary line is honest ("N match(es) across M file(s)"),
+    and no guard depends on the value, so nothing is unsafe -- but a model that reads total_files=2
+    after searching a 3-file tree can conclude the tree holds 2 files. Fix is a rename to
+    files_with_matches (model-facing JSON key change, so it needs its own gated commit alongside the
+    schema/description text); logged here rather than folded into a test-only sweep commit.
       campaign, prove it by reverting the fix locally and observing the failure
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.
