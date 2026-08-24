@@ -5024,6 +5024,36 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b89 (gated 249/249): 36 weak assertions pinned across six
+    more already-swept files (package_list_manager 11, ai_recovery_policy 8, app_action_service 6,
+    file_explorer_session_store 5, config_schema_versioning 4, stress_test_worker 2).
+    A "NO WRITE" ASSERTION THAT COULD NOT SEE A WRITE: reconcileSchemaVersion's Current and
+    FromFuture arms are both contracted to leave the store untouched, and both tests checked that
+    by comparing the file's BYTES before and after. QSettings regenerates the whole INI from its
+    parsed map, so a redundant re-stamp of the version the store ALREADY holds reproduces the file
+    byte-for-byte -- verified empirically against this project's own Qt 6.10.3. Both arms
+    therefore accepted the two most likely regressions: merging Current into the Migrated branch
+    (one unconditional setValue, which rewrites the user's config on every launch and flips a
+    read-only or locked store to AccessError, so isHealthy() refuses) and a "normalize the stamp"
+    touch at the top of the function (which writes into a config a NEWER build owns). Both tests
+    now append a comment line first -- the one thing the INI rewriter drops -- so ANY write is
+    visible. Also pinned: the persisted key NAME "meta/schema_version", which no test in the repo
+    constrained; renaming the constant round-trips green everywhere while orphaning an installed
+    store's stamp and making a newer build's config read as ABSENT, so it reconciles as Migrated
+    and isHealthy() reports true on a schema this build does not understand.
+    package_list_manager: the duplicate, remove and merge paths all match case-INSENSITIVELY and
+    every fixture used the id's exact case, so a case-sensitive comparison stayed green and would
+    let "FireFox" in as a second copy of one package. createList's timestamps were checked only
+    for non-emptiness; the ISO-8601 shape and the created==modified invariant are pinned now.
+    A merge miss must also leave the list byte-identical -- order intact and no modified_date bump.
+    file_explorer_session_store: the five per-mode view sizes are five separate persisted keys and
+    only "details" carried a non-default value, so a dropped or cross-wired key was invisible; and
+    the enum validator's `value <= max_valid` bound is only proved by the HIGHEST enumerator of
+    each enum, without which a stale bound silently demotes the newest mode to the fallback.
+    stress_test_worker: three per-component error counters were assigned by the fixture and never
+    read back -- cppcheck caught that as unreadVariable, which is the same defect the sweep hunts
+    from the other direction. disk_errors in particular is never folded into errors_detected, so
+    it is the only record of a disk fault.
   - PROGRESS 2026-08-24 SECOND-pass sweep b88 (gated 249/249): 42 weak assertions pinned across six
     more already-swept files (ai_trace_store 10, config_manager 9,
     package_internalization_engine 9, nuget_version_range 8, decompressor_factory 4,

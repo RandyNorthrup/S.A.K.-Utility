@@ -17,6 +17,11 @@ private Q_SLOTS:
     void packageLookupFailureContinuesDegraded();
     void offlineDownloaderFailureFallsBack();
     void riskyMutationFailureAsksHuman();
+
+private:
+    static void verifyHumanGateOutranksRiskGate();
+
+private Q_SLOTS:
     void decisionRoundTripsJson();
 };
 
@@ -43,6 +48,26 @@ void AiRecoveryPolicyTests::cancelledAborts() {
              QStringLiteral("User or parent run cancelled this work. "
                             "Underlying failure: Run cancelled by parent"));
     QVERIFY(!text_decision.safe_to_continue);
+
+    // reasonWithCause must keep the persisted run record -- and the operator-facing
+    // "Phase <id> needs human input: <reason>" message -- SINGLE-LINE and BOUNDED. Every cause
+    // used anywhere in this suite is a short single-line string, so neither sanitation step is
+    // observable: a build that stopped collapsing newlines, or stopped truncating, stays green.
+    sak::ai::AiFailureContext multiline_context;
+    multiline_context.user_cancelled = true;
+    multiline_context.error_message = QStringLiteral("cancelled\r\nby operator");
+    const auto multiline_decision = sak::ai::AiRecoveryPolicy::classifyFailure(multiline_context);
+    QCOMPARE(multiline_decision.reason,
+             QStringLiteral("User or parent run cancelled this work. "
+                            "Underlying failure: cancelled  by operator"));
+
+    sak::ai::AiFailureContext long_context;
+    long_context.user_cancelled = true;
+    long_context.error_message = QString(500, QChar::fromLatin1('x'));
+    const auto long_decision = sak::ai::AiRecoveryPolicy::classifyFailure(long_context);
+    QCOMPARE(long_decision.reason,
+             QStringLiteral("User or parent run cancelled this work. Underlying failure: ") +
+                 QString(400, QChar::fromLatin1('x')) + QStringLiteral("..."));
 }
 
 void AiRecoveryPolicyTests::missingInputAsksHuman() {
@@ -61,6 +86,32 @@ void AiRecoveryPolicyTests::missingInputAsksHuman() {
     QVERIFY(!decision.safe_to_continue);
     QVERIFY(!decision.retry_allowed);
     QVERIFY(decision.preserve_artifacts);
+
+    // The human gate has a SECOND branch -- a policy/approval refusal -- that returns the same
+    // action and the same flags, so nothing above can show it is alive; it can be deleted whole
+    // (the context then falls through to the terminal abort, losing the human gate entirely)
+    // without reddening anything. Pin its own reason, and probe two needles separately.
+    sak::ai::AiFailureContext policy_context;
+    policy_context.error_message = QStringLiteral("Approval required before this action");
+    const auto policy_decision = sak::ai::AiRecoveryPolicy::classifyFailure(policy_context);
+    QCOMPARE(policy_decision.action, sak::ai::AiRecoveryAction::AskHuman);
+    QCOMPARE(policy_decision.reason,
+             QStringLiteral("Policy gate or approval blocked the action. "
+                            "Underlying failure: Approval required before this action"));
+    QVERIFY(policy_decision.requires_human);
+    QVERIFY(!policy_decision.safe_to_continue);
+    QVERIFY(!policy_decision.retry_allowed);
+    QVERIFY(policy_decision.preserve_artifacts);
+
+    sak::ai::AiFailureContext restore_point_context;
+    restore_point_context.error_message = QStringLiteral("Restore point could not be created");
+    const auto restore_point_decision =
+        sak::ai::AiRecoveryPolicy::classifyFailure(restore_point_context);
+    QCOMPARE(restore_point_decision.action, sak::ai::AiRecoveryAction::AskHuman);
+    QCOMPARE(restore_point_decision.reason,
+             QStringLiteral("Policy gate or approval blocked the action. "
+                            "Underlying failure: Restore point could not be created"));
+    QVERIFY(!restore_point_decision.safe_to_continue);
 }
 
 void AiRecoveryPolicyTests::ambiguousPackageAsksHuman() {
@@ -103,6 +154,31 @@ void AiRecoveryPolicyTests::transientFailureRetries() {
     QVERIFY(!decision.safe_to_continue);
     QVERIFY(!decision.requires_human);
     QVERIFY(decision.preserve_artifacts);
+
+    // The comment above names TWO Retry branches but only the transient one is ever reached, so
+    // the malformed-model-output branch can be deleted whole -- the context then falls through
+    // to the terminal abort -- without reddening anything. Probe two of its needles separately.
+    sak::ai::AiFailureContext malformed_context;
+    malformed_context.error_message = QStringLiteral("Model returned invalid json");
+    const auto malformed_decision = sak::ai::AiRecoveryPolicy::classifyFailure(malformed_context);
+    QCOMPARE(malformed_decision.action, sak::ai::AiRecoveryAction::Retry);
+    QCOMPARE(malformed_decision.reason,
+             QStringLiteral("Model output did not match expected schema. "
+                            "Underlying failure: Model returned invalid json"));
+    QVERIFY(malformed_decision.retry_allowed);
+    QVERIFY(!malformed_decision.safe_to_continue);
+    QVERIFY(!malformed_decision.requires_human);
+    QVERIFY(malformed_decision.preserve_artifacts);
+
+    sak::ai::AiFailureContext no_output_context;
+    no_output_context.error_message = QStringLiteral("Model produced no output text");
+    const auto no_output_decision = sak::ai::AiRecoveryPolicy::classifyFailure(no_output_context);
+    QCOMPARE(no_output_decision.action, sak::ai::AiRecoveryAction::Retry);
+    QCOMPARE(no_output_decision.reason,
+             QStringLiteral("Model output did not match expected schema. "
+                            "Underlying failure: Model produced no output text"));
+    QVERIFY(no_output_decision.retry_allowed);
+    QVERIFY(!no_output_decision.safe_to_continue);
 }
 
 void AiRecoveryPolicyTests::cleanupFailureContinuesDegraded() {
@@ -121,6 +197,36 @@ void AiRecoveryPolicyTests::cleanupFailureContinuesDegraded() {
     QVERIFY(decision.preserve_artifacts);
     QVERIFY(!decision.requires_human);
     QVERIFY(!decision.retry_allowed);
+
+    // The fixture above leaves risk EMPTY, which clears the risk gate through the isEmpty()
+    // disjunct alone. The shipped workflow catalog labels these phases with real non-mutating
+    // risks, and each is a SEPARATE disjunct of isNonMutatingRisk that no case in this file
+    // reaches: drop any one of them and that label's phases start demanding a human.
+    sak::ai::AiFailureContext none_risk = context;
+    none_risk.risk = QStringLiteral("none");
+    const auto none_decision = sak::ai::AiRecoveryPolicy::classifyFailure(none_risk);
+    QCOMPARE(none_decision.action, sak::ai::AiRecoveryAction::ContinueDegraded);
+    QCOMPARE(none_decision.reason,
+             QStringLiteral("Cleanup failed; preserve artifacts and report cleanup debt. "
+                            "Underlying failure: locked file"));
+
+    sak::ai::AiFailureContext artifact_cleanup_risk = context;
+    artifact_cleanup_risk.risk = QStringLiteral("artifact_cleanup");
+    const auto artifact_cleanup_decision =
+        sak::ai::AiRecoveryPolicy::classifyFailure(artifact_cleanup_risk);
+    QCOMPARE(artifact_cleanup_decision.action, sak::ai::AiRecoveryAction::ContinueDegraded);
+    QCOMPARE(artifact_cleanup_decision.reason,
+             QStringLiteral("Cleanup failed; preserve artifacts and report cleanup debt. "
+                            "Underlying failure: locked file"));
+
+    sak::ai::AiFailureContext web_read_only_risk = context;
+    web_read_only_risk.risk = QStringLiteral("web_read_only");
+    const auto web_read_only_decision =
+        sak::ai::AiRecoveryPolicy::classifyFailure(web_read_only_risk);
+    QCOMPARE(web_read_only_decision.action, sak::ai::AiRecoveryAction::ContinueDegraded);
+    QCOMPARE(web_read_only_decision.reason,
+             QStringLiteral("Cleanup failed; preserve artifacts and report cleanup debt. "
+                            "Underlying failure: locked file"));
 }
 
 void AiRecoveryPolicyTests::packageLookupFailureContinuesDegraded() {
@@ -160,6 +266,30 @@ void AiRecoveryPolicyTests::packageLookupFailureContinuesDegraded() {
              QStringLiteral("No safe automatic recovery path. "
                             "Underlying failure: Package search returned no candidates"));
     QVERIFY(!other_tool_decision.safe_to_continue);
+
+    // The last gate before that terminal abort matches the critic ROLE as a whole token. An
+    // agent id that merely EMBEDS those letters must still abort: a substring match would hand
+    // a model-named agent an automatic review reassignment with safe_to_continue set. Neither
+    // side is reachable from any other case here, and no case here sets agent_id at all.
+    sak::ai::AiFailureContext embedded_critic = other_tool;
+    embedded_critic.agent_id = QStringLiteral("criticality_triage_agent");
+    const auto embedded_decision = sak::ai::AiRecoveryPolicy::classifyFailure(embedded_critic);
+    QCOMPARE(embedded_decision.action, sak::ai::AiRecoveryAction::Abort);
+    QCOMPARE(embedded_decision.reason,
+             QStringLiteral("No safe automatic recovery path. "
+                            "Underlying failure: Package search returned no candidates"));
+    QVERIFY(embedded_decision.suggested_agent.isEmpty());
+    QVERIFY(!embedded_decision.safe_to_continue);
+
+    sak::ai::AiFailureContext critic_context = other_tool;
+    critic_context.agent_id = QStringLiteral("code-critic");
+    const auto critic_decision = sak::ai::AiRecoveryPolicy::classifyFailure(critic_context);
+    QCOMPARE(critic_decision.action, sak::ai::AiRecoveryAction::Reassign);
+    QCOMPARE(critic_decision.reason,
+             QStringLiteral("Critic failed; reassign review to overseer/report agent. "
+                            "Underlying failure: Package search returned no candidates"));
+    QCOMPARE(critic_decision.suggested_agent, QStringLiteral("overseer"));
+    QVERIFY(critic_decision.safe_to_continue);
 }
 
 void AiRecoveryPolicyTests::offlineDownloaderFailureFallsBack() {
@@ -220,6 +350,32 @@ void AiRecoveryPolicyTests::riskyMutationFailureAsksHuman() {
     QVERIFY(!decision.retry_allowed);
     QVERIFY(decision.preserve_artifacts);
 
+    // The risk gate fails CLOSED on any label the non-mutating allow-list does not name. Both of
+    // these ship in resources/ai/workflows and both are near-misses for an allow-list member, so
+    // widening the list to admit them (or to a contains() check) would wave them through -- and
+    // the packaging one is on a phase whose tool and name would then continue degraded.
+    sak::ai::AiFailureContext packaged_download = context;
+    packaged_download.tool_name = QStringLiteral("sak_offline_downloader");
+    packaged_download.phase_id = QStringLiteral("build_bundle");
+    packaged_download.risk = QStringLiteral("download_and_package");
+    const auto packaged_decision = sak::ai::AiRecoveryPolicy::classifyFailure(packaged_download);
+    QCOMPARE(packaged_decision.action, sak::ai::AiRecoveryAction::AskHuman);
+    QCOMPARE(packaged_decision.reason,
+             QStringLiteral("Risky or mutating action failed; human decision needed. "
+                            "Underlying failure: installer failed"));
+    QVERIFY(!packaged_decision.safe_to_continue);
+    QVERIFY(!packaged_decision.retry_allowed);
+
+    sak::ai::AiFailureContext artifact_write_context = context;
+    artifact_write_context.risk = QStringLiteral("artifact_write");
+    const auto artifact_write_decision =
+        sak::ai::AiRecoveryPolicy::classifyFailure(artifact_write_context);
+    QCOMPARE(artifact_write_decision.action, sak::ai::AiRecoveryAction::AskHuman);
+    QCOMPARE(artifact_write_decision.reason,
+             QStringLiteral("Risky or mutating action failed; human decision needed. "
+                            "Underlying failure: installer failed"));
+    QVERIFY(!artifact_write_decision.safe_to_continue);
+
     // The risk gate must run BEFORE the automatic retry/degraded paths: a half-applied system
     // change must not be re-run because its error text looks transient, nor walked past because
     // its phase type is cleanup. Neither ordering is observable from the case above.
@@ -240,6 +396,26 @@ void AiRecoveryPolicyTests::riskyMutationFailureAsksHuman() {
     const auto cleanup_decision = sak::ai::AiRecoveryPolicy::classifyFailure(cleanup_risky);
     QCOMPARE(cleanup_decision.action, sak::ai::AiRecoveryAction::AskHuman);
     QVERIFY(!cleanup_decision.safe_to_continue);
+
+    verifyHumanGateOutranksRiskGate();
+}
+
+// The OTHER half of the ordering: the human gate is classified BEFORE the risk gate so the more
+// specific reason survives. Every sibling case has either an empty risk or an error the human
+// gate ignores, so swapping the two gates changes nothing they assert -- yet it would replace
+// "Missing or ambiguous required input" with the generic risk reason in the operator-facing gate
+// message, losing the one thing that tells them WHAT to supply.
+void AiRecoveryPolicyTests::verifyHumanGateOutranksRiskGate() {
+    sak::ai::AiFailureContext risky_missing_input;
+    risky_missing_input.risk = QStringLiteral("system_change");
+    risky_missing_input.error_message = QStringLiteral("Missing required input: app_name");
+    const auto risky_missing_decision =
+        sak::ai::AiRecoveryPolicy::classifyFailure(risky_missing_input);
+    QCOMPARE(risky_missing_decision.action, sak::ai::AiRecoveryAction::AskHuman);
+    QCOMPARE(risky_missing_decision.reason,
+             QStringLiteral("Missing or ambiguous required input. "
+                            "Underlying failure: Missing required input: app_name"));
+    QVERIFY(!risky_missing_decision.safe_to_continue);
 }
 
 void AiRecoveryPolicyTests::decisionRoundTripsJson() {
@@ -283,6 +459,22 @@ void AiRecoveryPolicyTests::decisionRoundTripsJson() {
     QVERIFY(!clamped.safe_to_continue);
     QVERIFY(!clamped.retry_allowed);
     QVERIFY(clamped.preserve_artifacts);
+
+    // The abort above cannot isolate the safe_to_continue rule: the abort rule clears the SAME
+    // flag, so the rule this assertion is aimed at is dead weight as far as the suite can tell.
+    // Nor does any case prove retry_allowed SURVIVES on a genuine retry, so a blanket clear --
+    // the obvious over-clamp -- passes everything above. A retry that claims it may be walked
+    // past isolates both: the flag it may keep, and the flag it may not.
+    QJsonObject retry_object = json;
+    retry_object[QStringLiteral("action")] = QStringLiteral("retry");
+    retry_object[QStringLiteral("retry_allowed")] = true;
+    retry_object[QStringLiteral("safe_to_continue")] = true;
+    const auto retry_clamped = sak::ai::AiRecoveryDecision::fromJson(retry_object);
+    QCOMPARE(retry_clamped.action, sak::ai::AiRecoveryAction::Retry);
+    QVERIFY(retry_clamped.retry_allowed);
+    QVERIFY(!retry_clamped.safe_to_continue);
+    QVERIFY(!retry_clamped.requires_human);
+    QVERIFY(retry_clamped.preserve_artifacts);
 
     // Unknown action text resolves to the most restrictive action, not a permissive one.
     QJsonObject unknown = json;

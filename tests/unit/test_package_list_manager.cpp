@@ -69,31 +69,100 @@ void TestPackageListManager::presetNames_returnsAllFive() {
 void TestPackageListManager::preset_officePc_hasPackages() {
     sak::PackageListManager manager;
     auto list = manager.preset("Office PC");
-    QCOMPARE(list.entries.size(), 10);
+    QStringList ids;
+    for (const auto& entry : list.entries) {
+        ids.append(entry.package_id);
+    }
+    QCOMPARE(ids,
+             QStringList({"googlechrome",
+                          "firefox",
+                          "7zip",
+                          "vlc",
+                          "adobereader",
+                          "libreoffice-fresh",
+                          "notepadplusplus",
+                          "greenshot",
+                          "everything",
+                          "treesizefree"}));
     QCOMPARE(list.name, QString("Office PC"));
+    QCOMPARE(list.entries.size(), 10);
 }
 
 void TestPackageListManager::preset_developer_hasPackages() {
     sak::PackageListManager manager;
     auto list = manager.preset("Developer Workstation");
+    QStringList ids;
+    for (const auto& entry : list.entries) {
+        ids.append(entry.package_id);
+    }
+    QCOMPARE(ids,
+             QStringList({"git",
+                          "vscode",
+                          "nodejs-lts",
+                          "python3",
+                          "dotnet-sdk",
+                          "powershell-core",
+                          "windows-terminal",
+                          "postman",
+                          "winscp",
+                          "putty",
+                          "7zip",
+                          "notepadplusplus"}));
+    QCOMPARE(list.name, QString("Developer Workstation"));
     QCOMPARE(list.entries.size(), 12);
 }
 
 void TestPackageListManager::preset_kiosk_hasPackages() {
     sak::PackageListManager manager;
     auto list = manager.preset("Kiosk / POS");
+    QStringList ids;
+    for (const auto& entry : list.entries) {
+        ids.append(entry.package_id);
+    }
+    QCOMPARE(ids, QStringList({"googlechrome", "adobereader", "7zip", "vlc"}));
+    QCOMPARE(list.name, QString("Kiosk / POS"));
     QCOMPARE(list.entries.size(), 4);
 }
 
 void TestPackageListManager::preset_security_hasPackages() {
     sak::PackageListManager manager;
     auto list = manager.preset("Security / IT Admin");
+    QStringList ids;
+    for (const auto& entry : list.entries) {
+        ids.append(entry.package_id);
+    }
+    QCOMPARE(ids,
+             QStringList({"wireshark",
+                          "nmap",
+                          "putty",
+                          "winscp",
+                          "sysinternals",
+                          "7zip",
+                          "notepadplusplus",
+                          "everything",
+                          "powershell-core",
+                          "keepassxc"}));
+    QCOMPARE(list.name, QString("Security / IT Admin"));
     QCOMPARE(list.entries.size(), 10);
 }
 
 void TestPackageListManager::preset_education_hasPackages() {
     sak::PackageListManager manager;
     auto list = manager.preset("Education Lab");
+    QStringList ids;
+    for (const auto& entry : list.entries) {
+        ids.append(entry.package_id);
+    }
+    QCOMPARE(ids,
+             QStringList({"googlechrome",
+                          "firefox",
+                          "libreoffice-fresh",
+                          "vlc",
+                          "gimp",
+                          "audacity",
+                          "7zip",
+                          "notepadplusplus"}));
+    QCOMPARE(list.name, QString("Education Lab"));
     QCOMPARE(list.entries.size(), 8);
 }
 
@@ -115,8 +184,13 @@ void TestPackageListManager::createList_setsNameAndDescription() {
 
 void TestPackageListManager::createList_setsTimestamps() {
     auto list = sak::PackageListManager::createList("Test", "Test list");
-    QVERIFY(!list.created_date.isEmpty());
-    QVERIFY(!list.modified_date.isEmpty());
+    // createList stamps ONE QDateTime::currentDateTime().toString(Qt::ISODate) and copies it into
+    // modified_date (package_list_manager.cpp:72-73), and both strings are what saveToFile writes
+    // to disk (:147-148): pin the canonical ISO-8601 shape and the created==modified invariant.
+    const QDateTime created = QDateTime::fromString(list.created_date, Qt::ISODate);
+    QVERIFY(created.isValid());
+    QCOMPARE(list.created_date, created.toString(Qt::ISODate));
+    QCOMPARE(list.modified_date, list.created_date);
 }
 
 // ============================================================================
@@ -136,7 +210,13 @@ void TestPackageListManager::addPackage_duplicateSkipped() {
     sak::PackageListManager::addPackage(list, "firefox");
     bool added_again = sak::PackageListManager::addPackage(list, "firefox");
     QVERIFY(!added_again);
+    // The duplicate check is case-INSENSITIVE (package_list_manager.cpp:93-96); exercising only
+    // the same-case arm leaves a case-sensitive comparison green and lets "FireFox" in as a
+    // second copy of one package.
+    const bool added_other_case = sak::PackageListManager::addPackage(list, "FireFox");
+    QVERIFY(!added_other_case);
     QCOMPARE(list.entries.size(), 1);
+    QCOMPARE(list.entries.first().package_id, QString("firefox"));
 }
 
 void TestPackageListManager::addPackage_withVersionAndNotes() {
@@ -152,16 +232,29 @@ void TestPackageListManager::removePackage_removesEntry() {
     sak::PackageListManager::addPackage(list, "chrome");
     QCOMPARE(list.entries.size(), 2);
 
-    bool removed = sak::PackageListManager::removePackage(list, "firefox");
+    // removePackage matches case-INSENSITIVELY (package_list_manager.cpp:114-116); removing with
+    // the id's exact case leaves a case-sensitive implementation green.
+    bool removed = sak::PackageListManager::removePackage(list, "FIREFOX");
     QVERIFY(removed);
     QCOMPARE(list.entries.size(), 1);
     QCOMPARE(list.entries.first().package_id, QString("chrome"));
+    QVERIFY(sak::PackageListManager::removePackage(list, "chrome"));
+    QVERIFY(list.entries.isEmpty());
 }
 
 void TestPackageListManager::removePackage_notFound_returnsFalse() {
     auto list = sak::PackageListManager::createList("Test", "");
+    sak::PackageListManager::addPackage(list, "firefox");
+    sak::PackageListManager::addPackage(list, "chrome");
+    const QString modified_before = list.modified_date;
     bool removed = sak::PackageListManager::removePackage(list, "nonexistent");
     QVERIFY(!removed);
+    // A miss must leave the list byte-identical: nothing erased, order intact, and no
+    // modified_date bump (package_list_manager.cpp:118-123 returns before both).
+    QCOMPARE(list.entries.size(), 2);
+    QCOMPARE(list.entries[0].package_id, QString("firefox"));
+    QCOMPARE(list.entries[1].package_id, QString("chrome"));
+    QCOMPARE(list.modified_date, modified_before);
 }
 
 // ============================================================================
@@ -173,11 +266,21 @@ void TestPackageListManager::mergeLists_addsNew() {
     sak::PackageListManager::addPackage(target, "firefox");
 
     auto source = sak::PackageListManager::createList("Source", "");
-    sak::PackageListManager::addPackage(source, "chrome");
+    sak::PackageListManager::addPackage(source, "chrome", "120.0", "held browser", true);
     sak::PackageListManager::addPackage(source, "vlc");
 
     sak::PackageListManager::mergeLists(target, source);
     QCOMPARE(target.entries.size(), 3);
+    // Merged entries must arrive in source order AFTER the target's own and must carry their
+    // version/notes/pinned across (package_list_manager.cpp:130-132) -- a size-only check sees none
+    // of that.
+    QCOMPARE(target.entries[0].package_id, QString("firefox"));
+    QCOMPARE(target.entries[1].package_id, QString("chrome"));
+    QCOMPARE(target.entries[2].package_id, QString("vlc"));
+    QCOMPARE(target.entries[1].version, QString("120.0"));
+    QCOMPARE(target.entries[1].notes, QString("held browser"));
+    QVERIFY(target.entries[1].pinned);
+    QVERIFY(!target.entries[2].pinned);
 }
 
 void TestPackageListManager::mergeLists_skipsDuplicates() {
@@ -185,11 +288,17 @@ void TestPackageListManager::mergeLists_skipsDuplicates() {
     sak::PackageListManager::addPackage(target, "firefox");
 
     auto source = sak::PackageListManager::createList("Source", "");
-    sak::PackageListManager::addPackage(source, "firefox");
+    // Case-differing duplicate: the merge must SKIP it (package_list_manager.cpp:93-100), not
+    // overwrite the target's entry, and the surviving entry must still be the target's own.
+    sak::PackageListManager::addPackage(source, "FireFox", "999.0", "must not overwrite");
     sak::PackageListManager::addPackage(source, "vlc");
 
-    sak::PackageListManager::mergeLists(target, source);
+    QCOMPARE(sak::PackageListManager::mergeLists(target, source), 1);
     QCOMPARE(target.entries.size(), 2);
+    QCOMPARE(target.entries[0].package_id, QString("firefox"));
+    QCOMPARE(target.entries[0].version, QString());
+    QCOMPARE(target.entries[0].notes, QString());
+    QCOMPARE(target.entries[1].package_id, QString("vlc"));
 }
 
 void TestPackageListManager::mergeLists_returnsAddedCount() {

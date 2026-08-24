@@ -152,6 +152,12 @@ void TestStressTestWorker::result_fieldAssignment() {
     QVERIFY(result.passed);
     QCOMPARE(result.duration_seconds, 600);
     QCOMPARE(result.errors_detected, 0);
+    // The three per-component counters were assigned above but never read back, so a struct
+    // that dropped or aliased any of them was invisible here -- and disk_errors in particular
+    // is never folded into errors_detected, so it is the only record of a disk fault.
+    QCOMPARE(result.memory_pattern_errors, 0);
+    QCOMPARE(result.disk_errors, 0);
+    QCOMPARE(result.gpu_errors, 0);
     QCOMPARE(result.avg_cpu_temp, 72.5);
     QCOMPARE(result.max_cpu_temp, 85.0);
     QVERIFY(result.abort_reason.isEmpty());
@@ -209,6 +215,14 @@ void TestStressTestWorker::computeStressPassed_errorsDetected_fails() {
 void TestStressTestWorker::resolveCpuThreadCount_neverZero() {
     // Explicit positive request is honored verbatim.
     QCOMPARE(StressTestWorker::resolveCpuThreadCount(4, 8), 4);
+    // ...but only up to the internal ceiling (kMaxCpuStressThreads == 4096,
+    // src/core/stress_test_worker.cpp:66): a bogus or hostile cpu_threads value is CLAMPED,
+    // not honored, so it cannot spawn an unbounded number of std::async stress threads
+    // (launchStressThreads pushes one future per thread). Pin the exact boundary --
+    // "honored verbatim" alone stays green with the clamp deleted.
+    QCOMPARE(StressTestWorker::resolveCpuThreadCount(4096, 8), 4096);
+    QCOMPARE(StressTestWorker::resolveCpuThreadCount(4097, 8), 4096);
+    QCOMPARE(StressTestWorker::resolveCpuThreadCount(std::numeric_limits<int>::max(), 1), 4096);
     // "All CPUs" (<=0) uses the detected count when known.
     QCOMPARE(StressTestWorker::resolveCpuThreadCount(0, 8), 8);
     QCOMPARE(StressTestWorker::resolveCpuThreadCount(-1, 8), 8);
@@ -292,6 +306,44 @@ void TestStressTestWorker::execute_invalidMemoryPercent_failsClosed() {
     QVERIFY(!over_result.has_value());
     QCOMPARE(static_cast<int>(over_result.error()),
              static_cast<int>(sak::error_code::invalid_argument));
+
+    // The remaining two validateStressConfig() guards are reached by NO case in this file,
+    // so deleting either one stays green. Reach them here (duration is 1 minute, the smallest
+    // value the duration guard accepts, so a regression fails fast instead of burning a full run).
+    // (a) thermal limit: a NaN / +Inf / <= 0 limit makes the "temp >= thermal_limit_celsius"
+    //     abort comparison never fire, silently disabling thermal protection.
+    StressExecProbe thermal_probe;
+    StressTestConfig thermal_config;
+    thermal_config.stress_cpu = true;
+    thermal_config.stress_memory = false;
+    thermal_config.duration_minutes = 1;
+    for (const double bad_limit :
+         {std::nan(""), std::numeric_limits<double>::infinity(), 0.0, -1.0}) {
+        thermal_config.thermal_limit_celsius = bad_limit;
+        thermal_probe.setConfig(thermal_config);
+        const auto thermal_result = thermal_probe.runExecute();
+        QVERIFY(!thermal_result.has_value());
+        QCOMPARE(static_cast<int>(thermal_result.error()),
+                 static_cast<int>(sak::error_code::invalid_argument));
+    }
+
+    // (b) disk target: an empty/whitespace/relative disk_test_drive resolves against the
+    //     process working directory (a guessed target), so it must be refused, not guessed.
+    StressExecProbe disk_probe;
+    StressTestConfig disk_config;
+    disk_config.stress_cpu = false;
+    disk_config.stress_memory = false;
+    disk_config.stress_disk = true;
+    disk_config.duration_minutes = 1;
+    for (const QString& bad_drive :
+         {QString(), QStringLiteral("   "), QStringLiteral("relative_dir")}) {
+        disk_config.disk_test_drive = bad_drive;
+        disk_probe.setConfig(disk_config);
+        const auto disk_result = disk_probe.runExecute();
+        QVERIFY(!disk_result.has_value());
+        QCOMPARE(static_cast<int>(disk_result.error()),
+                 static_cast<int>(sak::error_code::invalid_argument));
+    }
 }
 
 QTEST_MAIN(TestStressTestWorker)

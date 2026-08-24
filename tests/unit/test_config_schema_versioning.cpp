@@ -90,8 +90,22 @@ void ConfigSchemaVersioningTests::reconcile_currentVersion_isByteIdenticalNoWrit
         seed.setValue(QStringLiteral("future/unknown_feature"), kFutureFeatureProbe);
         seed.sync();
     }
+    // QSettings regenerates the whole INI from its parsed map -- same groups, same values,
+    // same bytes -- so a redundant re-stamp of the version the store ALREADY holds
+    // reproduces the file EXACTLY, and "no write" is unfalsifiable through the bytes alone.
+    // A hand-added comment line is the one thing that rewriter drops, so ANY write is now
+    // visible. This is what kills the natural merge of the Current and Migrated arms into
+    // one unconditional setValue(kSchemaVersionKey, ...), which would dirty and rewrite the
+    // user's config on every launch and flip a read-only or locked store to AccessError,
+    // making isHealthy() refuse.
+    const QByteArray marker = QByteArrayLiteral("; sak-no-rewrite-marker\n");
+    {
+        QFile raw(path);
+        QVERIFY(raw.open(QIODevice::Append));
+        QCOMPARE(raw.write(marker), static_cast<qint64>(marker.size()));
+    }
     const QByteArray before = readAllBytes(path);
-    QVERIFY(!before.isEmpty());
+    QVERIFY(before.endsWith(marker));
 
     QSettings store(path, QSettings::IniFormat);
     const auto state = ConfigManager::reconcileSchemaVersion(store);
@@ -101,6 +115,14 @@ void ConfigSchemaVersioningTests::reconcile_currentVersion_isByteIdenticalNoWrit
     QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
     QCOMPARE(store.value(QStringLiteral("future/unknown_feature")).toInt(), kFutureFeatureProbe);
     QCOMPARE(store.value(schemaKey()).toInt(), ConfigManager::kCurrentSchemaVersion);
+    // Pin the PERSISTED name, not only schemaKey(): every seed and every read-back in this
+    // file resolves the stamp through the same constant, so renaming kSchemaVersionKey round
+    // trips green everywhere. On upgrade the rename orphans an installed store's stamp -- and
+    // worse, a config a NEWER build stamped under the OLD name then reads as ABSENT, so
+    // reconcileSchemaVersion returns Migrated instead of FromFuture and isHealthy() reports
+    // true on a schema this build does not understand (config_manager.h:122,
+    // config_manager.cpp:225/239/244).
+    QCOMPARE(schemaKey(), QStringLiteral("meta/schema_version"));
     // Exact key set: an at-current store is neither tidied nor added to.
     QStringList keys_after = store.allKeys();
     keys_after.sort();
@@ -206,8 +228,20 @@ void ConfigSchemaVersioningTests::reconcile_newerVersion_preservesUnknownKeysAnd
     // prune direction was covered; the ADDITIVE direction was wide open -- stamping a
     // breadcrumb key here dirties and rewrites a config a NEWER build owns and this build has
     // just admitted it does not understand.
+    // The bytes alone only catch a write that CHANGES the content: QSettings regenerates an
+    // INI from its parsed map, so re-writing a key with the value it already holds reproduces
+    // the file exactly (verified against Qt 6.10.3). A hand-added comment line is dropped by
+    // that rewriter, so a same-value "normalize the stamp" touch -- the one write most likely
+    // to be added blindly to the top of reconcileSchemaVersion, and the one this build must
+    // NEVER perform on a newer build's store -- now shows up too.
+    const QByteArray marker = QByteArrayLiteral("; sak-no-rewrite-marker\n");
+    {
+        QFile raw(path);
+        QVERIFY(raw.open(QIODevice::Append));
+        QCOMPARE(raw.write(marker), static_cast<qint64>(marker.size()));
+    }
     const QByteArray before = readAllBytes(path);
-    QVERIFY(!before.isEmpty());
+    QVERIFY(before.endsWith(marker));
 
     QSettings store(path, QSettings::IniFormat);
     const auto state = ConfigManager::reconcileSchemaVersion(store);
@@ -247,6 +281,20 @@ void ConfigSchemaVersioningTests::singleton_freshStore_isCurrentVersionAndHealth
     // the whole file would stay green. Read with no getter-side default so a dropped key cannot
     // be masked by the getter's own fallback.
     QCOMPARE(mgr.getValue(QStringLiteral("backup/thread_count")).toInt(), 4);
+    // The REST of initializeBackupAndOrganizerDefaults() (config_manager.cpp:119-136). Only
+    // thread_count and keep_strategy were pinned, so deleting -- or flipping -- the other three
+    // default writes ships green here, and in test_config_manager.cpp too, whose
+    // backup/organizer/duplicate cases each SET a value first and never read a freshly reset
+    // store.
+    QVERIFY(mgr.contains(QStringLiteral("backup/verify_md5")));
+    QCOMPARE(mgr.getValue(QStringLiteral("backup/verify_md5")).toBool(), true);
+    QVERIFY(mgr.contains(QStringLiteral("organizer/preview_mode")));
+    QCOMPARE(mgr.getValue(QStringLiteral("organizer/preview_mode")).toBool(), true);
+    // 0 is also what an ABSENT key converts to, so contains() is what carries this one.
+    QVERIFY(mgr.contains(QStringLiteral("duplicate/minimum_file_size")));
+    QCOMPARE(mgr.getValue(QStringLiteral("duplicate/minimum_file_size")).toLongLong(), qint64{0});
+    QCOMPARE(mgr.getValue(QStringLiteral("duplicate/keep_strategy")).toString(),
+             QStringLiteral("oldest"));
     QCOMPARE(mgr.getValue(QStringLiteral("duplicate/keep_strategy")).toString(),
              QStringLiteral("oldest"));
     QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/validation_mode")).toString(),

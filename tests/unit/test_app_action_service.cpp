@@ -156,10 +156,29 @@ void AppActionServiceTests::runQuickActionSync_timesOutWhenActionStalls() {
     controller.registerAction(std::move(probe));
     // Do NOT release yet: execute() blocks, so the 60ms timeout must fire.
 
+    // The controller must report this action finished exactly once, and only because the
+    // timeout REQUESTED cancellation -- the probe is deliberately never released first.
+    auto completed = std::make_shared<int>(0);
+    QObject::connect(&controller,
+                     &QuickActionController::actionExecutionComplete,
+                     &controller,
+                     [completed](QuickAction*) { ++(*completed); });
+
     const AppActionResult result =
         runQuickActionSync(&controller, QStringLiteral("Slow Probe"), 60);
     QVERIFY(!result.success);
     QCOMPARE(result.message, QStringLiteral("Action timed out after 60 ms"));
+    // Proves the fixture really reached the TIMEOUT guard: the action was still running.
+    QCOMPARE(*completed, 0);
+
+    // Drain WITHOUT release(): the timeout must have queued cancelCurrentAction() on the
+    // controller (src/core/app_action_bridge.cpp:170-173), which sets the action's cancel
+    // flag so execute() unwinds and the controller stops being busy. Without that request
+    // this never completes, instead of passing on a status that never moves off Idle.
+    QTRY_VERIFY_WITH_TIMEOUT(*completed == 1, 5000);
+    QCOMPARE(*completed, 1);
+    QCOMPARE(raw->lastExecutionResult().files_processed, static_cast<qint64>(7));
+    raw->release();  // no-op safety: the worker is already out of its loop
 
     // Drain: release the worker and let it finish before the controller tears down,
     // so the still-running execute() cannot outlive its action.
@@ -179,6 +198,17 @@ void AppActionServiceTests::resultFromExecution_mapsFieldsIntoData() {
     QCOMPARE(r.data.value(QStringLiteral("duration_ms")).toInt(), 250);
     QCOMPARE(r.data.value(QStringLiteral("output_path")).toString(),
              QStringLiteral("C:/out/report.html"));
+    QCOMPARE(static_cast<int>(r.data.size()), 4);  // exactly those four keys, no strays
+
+    // The other arm of the output_path guard (src/core/app_action_bridge.cpp:112): an EMPTY
+    // path is OMITTED, never emitted as an empty string the model would try to open.
+    const AppActionResult no_path = sak::appActionResultFromExecution(
+        {false, QStringLiteral("nothing written"), 0, 0, 12, QString()});
+    QVERIFY(!no_path.success);
+    QCOMPARE(no_path.message, QStringLiteral("nothing written"));
+    QVERIFY(!no_path.data.contains(QStringLiteral("output_path")));
+    QCOMPARE(static_cast<int>(no_path.data.size()), 3);
+    QCOMPARE(no_path.data.value(QStringLiteral("duration_ms")).toInt(), 12);
 }
 
 void AppActionServiceTests::registerQuickActionsInto_buildsSluggedDescriptorsWithAdminFlags() {
@@ -187,14 +217,21 @@ void AppActionServiceTests::registerQuickActionsInto_buildsSluggedDescriptorsWit
         std::make_unique<ProbeAction>(QStringLiteral("Verify System Files"), true, /*admin=*/true));
     controller.registerAction(std::make_unique<ProbeAction>(
         QStringLiteral("Optimize Power Settings"), true, /*admin=*/false));
+    // Exercises every slugify() arm the two plain names above leave dead: leading
+    // non-alnum skipped, a RUN of non-alnum collapsed to ONE underscore, trailing
+    // underscores chopped (src/core/app_action_bridge.cpp:37-54).
+    controller.registerAction(std::make_unique<ProbeAction>(
+        QStringLiteral("  Reset Network (Wi-Fi) -- TCP/IP!  "), true, /*admin=*/false));
 
     AppActionRegistry registry;
     const int registered = registerQuickActionsInto(controller, registry);
-    QCOMPARE(registered, 2);
+    QCOMPARE(registered, 3);
+    QCOMPARE(registry.count(), 3);
 
     // Ids are "action.<slug>": lowercased, spaces -> single underscore.
     QVERIFY(registry.contains(QStringLiteral("action.verify_system_files")));
     QVERIFY(registry.contains(QStringLiteral("action.optimize_power_settings")));
+    QVERIFY(registry.contains(QStringLiteral("action.reset_network_wi_fi_tcp_ip")));
 
     const auto verify = registry.descriptor(QStringLiteral("action.verify_system_files"));
     QVERIFY(verify.has_value());
@@ -202,10 +239,25 @@ void AppActionServiceTests::registerQuickActionsInto_buildsSluggedDescriptorsWit
     QVERIFY(verify->mutating);        // actions perform system changes
     QVERIFY(!verify->read_only);
     QCOMPARE(verify->category, QStringLiteral("maintenance"));
+    // Model-facing text is the action's OWN name/description, not the slugged id.
+    QCOMPARE(verify->title, QStringLiteral("Verify System Files"));
+    QCOMPARE(verify->description, QStringLiteral("probe action"));
+    // Risk flags the assistant gates on: mutating alone forces the human gate, while
+    // destructive/catastrophic stay FALSE for every QuickAction until one maps a real
+    // irreversible flag (src/core/app_action_bridge.cpp:196-204).
+    QVERIFY(!verify->destructive);
+    QVERIFY(!verify->catastrophic);
+    // No arguments: an empty schema is what tells the model to invoke with {}.
+    QVERIFY(verify->params_schema.isEmpty());
 
     const auto power = registry.descriptor(QStringLiteral("action.optimize_power_settings"));
     QVERIFY(power.has_value());
     QVERIFY(!power->requires_admin);
+    // Per-action descriptor, not a copy of the first one: the label tracks THIS action while
+    // the shared risk flags still apply to it (src/core/app_action_bridge.cpp:192-204).
+    QCOMPARE(power->title, QStringLiteral("Optimize Power Settings"));
+    QVERIFY(power->mutating);
+    QVERIFY(!power->destructive);
 }
 
 void AppActionServiceTests::asyncInvocation_deliversCompletion() {
@@ -255,6 +307,16 @@ void AppActionServiceTests::asyncInvocation_firstWins() {
         inv.run([&op]() { op.scheduleDoneThenFail(1, 1, QStringLiteral("late failure")); });
     QVERIFY(result.success);
     QCOMPARE(result.message, QStringLiteral("completed"));
+    QVERIFY(inv.isDone());
+
+    // Reuse must fail closed with its OWN reason and must NOT launch a second operation
+    // nobody waits on -- never silently replay the recorded success
+    // (src/core/app_action_bridge.cpp:88-90).
+    auto restarted = std::make_shared<bool>(false);
+    const AppActionResult reused = inv.run([restarted]() { *restarted = true; });
+    QVERIFY(!reused.success);
+    QCOMPARE(reused.message, QStringLiteral("AsyncActionInvocation already used"));
+    QVERIFY(!*restarted);
 }
 
 void AppActionServiceTests::asyncInvocation_accumulatesBatchesThenFinishes() {

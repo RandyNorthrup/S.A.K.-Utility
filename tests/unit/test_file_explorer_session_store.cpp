@@ -38,6 +38,33 @@ private:
     }
 
 private Q_SLOTS:
+    // All FIVE per-mode sizes round trip, each with a DISTINCT non-default value: writePane
+    // persists five separate keys and readPane reads five, and a dropped or cross-wired key is
+    // invisible while list/cards/columns hold their defaults.
+    static void verifyPerModeSizesRoundTrip(QSettings& settings) {
+        const QString sizes_group = QStringLiteral("Sizes");
+        sak::FileExplorerTabSession size_session;
+        size_session.tabs.append(makeTab(QStringLiteral("S"),
+                                         QStringLiteral("t7"),
+                                         QStringLiteral("/s"),
+                                         sak::FileExplorerViewMode::Details));
+        auto& size_view = size_session.tabs[0].primary.view;
+        size_view.sizes.details = 4;
+        size_view.sizes.list = 5;
+        size_view.sizes.cards = 3;
+        size_view.sizes.grid = 11;
+        size_view.sizes.columns = 1;
+        sak::FileExplorerSessionStore::save(settings, sizes_group, size_session);
+        const auto size_loaded = sak::FileExplorerSessionStore::load(settings, sizes_group);
+        QCOMPARE(size_loaded.tabs.size(), 1);
+        const auto& size_result = size_loaded.tabs[0].primary.view.sizes;
+        QCOMPARE(size_result.details, 4);
+        QCOMPARE(size_result.list, 5);
+        QCOMPARE(size_result.cards, 3);
+        QCOMPARE(size_result.grid, 11);
+        QCOMPARE(size_result.columns, 1);
+    }
+
     void savesAndLoadsDurableTabFields() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
@@ -91,6 +118,8 @@ private Q_SLOTS:
         // A size that equals its default proves nothing -- readPane's fallback yields the same
         // number whether or not writePane persisted the key.
         QCOMPARE(loaded.tabs[0].primary.view.sizes.cards, sak::FileExplorerLayoutSizes{}.cards);
+        // ...so carry all FIVE layout sizes through a round trip with distinct in-range
+        verifyPerModeSizesRoundTrip(settings);
         QCOMPARE(loaded.tabs[0].primary.view.group_option, sak::FileExplorerGroupOption::Size);
         QCOMPARE(loaded.tabs[0].primary.view.group_order, Qt::DescendingOrder);
         QCOMPARE(loaded.tabs[0].primary.view.group_date_unit,
@@ -126,6 +155,15 @@ private Q_SLOTS:
                                                                 QStringLiteral("Missing"));
         QVERIFY(loaded.isEmpty());
         QCOMPARE(loaded.active_index, 0);
+
+        // A settings file is attacker-writable, so the declared array size is untrusted input:
+        // load() must clamp the read loop to kMaxSessionTabs rather than iterate the count it was
+        // handed. Pin the cap itself -- an unclamped loop is invisible to an emptiness check.
+        const QString huge_group = QStringLiteral("Huge");
+        settings.setValue(huge_group + QStringLiteral("/tabs/size"), 100'000);
+        const auto clamped = sak::FileExplorerSessionStore::load(settings, huge_group);
+        QCOMPARE(clamped.tabs.size(), 512);
+        QCOMPARE(clamped.active_index, 0);
     }
 
     void saveReplacesPriorSessionAndClampsActiveIndex() {
@@ -223,10 +261,25 @@ private Q_SLOTS:
         QCOMPARE(view.group_date_unit, sak::FileExplorerGroupDateUnit::Year);
         QCOMPARE(view.folder_placement, sak::FileExplorerFolderSortPlacement::FoldersFirst);
         QCOMPARE(view.sort_order, Qt::AscendingOrder);
+        // The catalog of validated enums is seven, not five: groupOrder and the tab-level split
+        // run through the same gate and were never corrupted here, so an unvalidated cast for
+        // either one hands an out-of-range enum to later switches unnoticed.
+        settings.setValue(QStringLiteral("Session/tabs/1/primary/groupOrder"), 8);
+        settings.setValue(QStringLiteral("Session/tabs/1/split"), 17);
+        const auto recorrupted = sak::FileExplorerSessionStore::load(settings, group);
+        QCOMPARE(recorrupted.tabs.size(), 1);
+        QCOMPARE(recorrupted.tabs[0].primary.view.group_order, Qt::AscendingOrder);
+        QCOMPARE(recorrupted.tabs[0].split, sak::FileExplorerPaneSplit::None);
 
-        // Falling back to a default must be a decision ABOUT the persisted value, not a
-        // constant: the same keys have to carry an in-range NON-default value through a clean
-        // round trip, or a reader that ignored the store entirely passes every line above.
+        verifyInRangeNonDefaultsSurvive(settings);
+
+        verifyHighestEnumeratorSurvives(settings);
+    }
+
+    // Falling back to a default must be a decision ABOUT the persisted value, not a constant:
+    // the same keys have to carry an in-range NON-default value through a clean round trip, or a
+    // reader that ignored the store entirely passes every corrupt-value assertion.
+    static void verifyInRangeNonDefaultsSurvive(QSettings& settings) {
         sak::FileExplorerTabSession valid;
         valid.tabs.append(makeTab(QStringLiteral("V"),
                                   QStringLiteral("t2"),
@@ -247,6 +300,35 @@ private Q_SLOTS:
         QCOMPARE(reloaded_view.sort_order, Qt::DescendingOrder);
         QCOMPARE(reloaded_view.sort_key, QStringLiteral("size"));
         QVERIFY(!reloaded_view.show_extensions);
+    }
+
+    // Every validatedEnum call site is gated by `value <= max_valid`, and the HIGHEST enumerator
+    // of each enum is the only value that proves that bound is still current: a stale bound (or
+    // a `<`) silently demotes the newest mode to the fallback while every corrupt/valid case
+    // stays green.
+    static void verifyHighestEnumeratorSurvives(QSettings& settings) {
+        const QString edge_group = QStringLiteral("Edge");
+        sak::FileExplorerTabSession edge;
+        edge.tabs.append(makeTab(QStringLiteral("E"),
+                                 QStringLiteral("t3"),
+                                 QStringLiteral("/e"),
+                                 sak::FileExplorerViewMode::Adaptive));
+        auto& edge_view = edge.tabs[0].primary.view;
+        edge_view.group_option = sak::FileExplorerGroupOption::FileTag;
+        edge_view.group_date_unit = sak::FileExplorerGroupDateUnit::Day;
+        edge_view.folder_placement = sak::FileExplorerFolderSortPlacement::Together;
+        edge.tabs[0].split = sak::FileExplorerPaneSplit::Horizontal;
+        sak::FileExplorerSessionStore::save(settings, edge_group, edge);
+        const auto edge_loaded = sak::FileExplorerSessionStore::load(settings, edge_group);
+        QCOMPARE(edge_loaded.tabs.size(), 1);
+        QCOMPARE(edge_loaded.tabs[0].primary.view.mode, sak::FileExplorerViewMode::Adaptive);
+        QCOMPARE(edge_loaded.tabs[0].primary.view.group_option,
+                 sak::FileExplorerGroupOption::FileTag);
+        QCOMPARE(edge_loaded.tabs[0].primary.view.group_date_unit,
+                 sak::FileExplorerGroupDateUnit::Day);
+        QCOMPARE(edge_loaded.tabs[0].primary.view.folder_placement,
+                 sak::FileExplorerFolderSortPlacement::Together);
+        QCOMPARE(edge_loaded.tabs[0].split, sak::FileExplorerPaneSplit::Horizontal);
     }
 
     void clearRemovesStoredSession() {
@@ -283,6 +365,23 @@ private Q_SLOTS:
         QCOMPARE(other.tabs[0].title, QStringLiteral("A"));
         QCOMPARE(settings.value(QStringLiteral("Unrelated/keep")).toString(),
                  QStringLiteral("intact"));
+
+        // Same root-scope hazard, other arm: an EMPTY group makes beginGroup("") +
+        // remove(QString()) target the root scope, so all three entry points must refuse it.
+        // Root-level decoy keys make an unguarded load() visible too -- it would resurrect
+        // unrelated top-level keys as a session instead of returning empty.
+        const QString other_group = QStringLiteral("Other");
+        settings.setValue(QStringLiteral("tabs/size"), 1);
+        settings.setValue(QStringLiteral("tabs/1/title"), QStringLiteral("root"));
+        QVERIFY(sak::FileExplorerSessionStore::load(settings, QString()).isEmpty());
+        sak::FileExplorerSessionStore::save(settings, QString(), session);
+        sak::FileExplorerSessionStore::clear(settings, QString());
+        QCOMPARE(settings.value(QStringLiteral("tabs/1/title")).toString(), QStringLiteral("root"));
+        QCOMPARE(settings.value(QStringLiteral("Unrelated/keep")).toString(),
+                 QStringLiteral("intact"));
+        const auto other_after = sak::FileExplorerSessionStore::load(settings, other_group);
+        QCOMPARE(other_after.tabs.size(), 1);
+        QCOMPARE(other_after.tabs[0].title, QStringLiteral("A"));
     }
 };
 
