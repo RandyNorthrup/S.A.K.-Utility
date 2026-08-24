@@ -14,6 +14,8 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QRandomGenerator>
+#include <QRegularExpression>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
@@ -56,10 +58,20 @@ private Q_SLOTS:
     void commonDataLocationsHaveDescriptions() {
         UserDataManager mgr;
         auto locations = mgr.getCommonDataLocations();
-        for (const auto& loc : locations) {
-            QVERIFY2(!loc.description.isEmpty(),
-                     qPrintable("Missing description for pattern: " + loc.pattern));
-        }
+        // The descriptions are what the backup wizard shows beside each entry, so pin them:
+        // !isEmpty() also passed on a description copied onto the WRONG pattern, and the two
+        // browsers legitimately share one string, which is exactly the kind of duplication a
+        // per-entry emptiness check cannot distinguish from a copy-paste error.
+        QCOMPARE(locations[0].description,
+                 QStringLiteral("Browser profile, history, bookmarks, extensions"));
+        QCOMPARE(locations[1].description,
+                 QStringLiteral("Browser profile, history, bookmarks, extensions"));
+        QCOMPARE(locations[2].description,
+                 QStringLiteral("Settings, keybindings, extensions, snippets"));
+        QCOMPARE(locations[3].description,
+                 QStringLiteral("BitLocker recovery keys for all encrypted volumes"));
+        // The BitLocker entry is handled by a sentinel PATH, not a filesystem glob.
+        QCOMPARE(locations[3].paths, QStringList{QStringLiteral("bitlocker://recovery-keys")});
     }
 
     void checksumDeterministic() {
@@ -72,8 +84,13 @@ private Q_SLOTS:
         QString hash1 = mgr.generateChecksum(tmp.fileName());
         QString hash2 = mgr.generateChecksum(tmp.fileName());
 
-        QVERIFY(!hash1.isEmpty());
-        QCOMPARE(hash1, hash2);
+        // The real SHA-256 of the written bytes, cross-checked with an independent
+        // implementation. Determinism alone was satisfied by any stable function of the file --
+        // including one that hashed the PATH, or a truncated/hex-mangled digest.
+        QCOMPARE(hash1,
+                 QStringLiteral(
+                     "cd448eb2aaa5c3a4a197d2113dbd0f35080d90aff2c275ca67868a20350cf50c"));
+        QCOMPARE(hash2, hash1);
     }
 
     void checksumDifferentForDifferentContent() {
@@ -89,9 +106,14 @@ private Q_SLOTS:
         QString hash1 = mgr.generateChecksum(tmp1.fileName());
         QString hash2 = mgr.generateChecksum(tmp2.fileName());
 
-        QVERIFY(!hash1.isEmpty());
-        QVERIFY(!hash2.isEmpty());
-        QVERIFY(hash1 != hash2);
+        // Both exact digests. "different and non-empty" held for a hash of the file NAME (the
+        // two temp files differ there too), which would make every content change invisible.
+        QCOMPARE(hash1,
+                 QStringLiteral(
+                     "49114a9a2b7d46ec27be62ae3eade12f78d46cf5a99c52cd4f80381d723eed6e"));
+        QCOMPARE(hash2,
+                 QStringLiteral(
+                     "d27a54dc662fff702c2183d536e87414d5fe6fc072f6bc270b01a34f6de265bc"));
     }
 
     void compareChecksumsMatch() {
@@ -195,13 +217,22 @@ private Q_SLOTS:
         cfg.verify_checksum = true;
         auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
         QVERIFY(e.has_value());
-        QVERIFY(!e->checksum.isEmpty());
+        // The checksum must be the archive's REAL digest in the canonical 64-hex-char form:
+        // !isEmpty() also passed on a placeholder, a truncated digest, or a hash of the wrong
+        // file -- any of which makes the later corruption check pass for the wrong reason.
+        QCOMPARE(e->checksum, mgr.generateChecksum(e->backup_path));
+        QCOMPARE(e->checksum.size(), 64);
+        QVERIFY(QRegularExpression(QStringLiteral("^[0-9a-f]{64}$")).match(e->checksum).hasMatch());
 
         QFile meta(e->backup_path + ".json");
         QVERIFY(meta.open(QIODevice::ReadOnly));
         const auto obj = QJsonDocument::fromJson(meta.readAll()).object();
-        QVERIFY(!obj.value("checksum").toString().isEmpty());
         QCOMPARE(obj.value("checksum").toString(), e->checksum);
+        // The rest of the sidecar is what a later restore reads back, so pin it too.
+        QCOMPARE(obj.value("app_name").toString(), QStringLiteral("App"));
+        QCOMPARE(obj.value("backup_path").toString(), e->backup_path);
+        QCOMPARE(obj.value("encrypted").toBool(), false);
+        QCOMPARE(obj.value("total_size").toInteger(), static_cast<qint64>(13));
 
         // Corrupt the archive: verifyBackup must now fail closed.
         QFile arc(e->backup_path);
@@ -241,9 +272,18 @@ private Q_SLOTS:
         cfg.compress = true;
         cfg.encrypt = true;
         cfg.password = "";
+        QSignalSpy err(&mgr, &UserDataManager::operationError);
         auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
         QVERIFY(!e.has_value());
-        QCOMPARE(QDir(backupDir.path()).entryList({"*.zip"}, QDir::Files).size(), 0);
+        // WHICH precondition refused: the two encryption guards sit side by side and both
+        // return nullopt, so a nullopt alone could not show the password check ran.
+        QCOMPARE(err.count(), 1);
+        QCOMPARE(err.at(0).at(0).toString(), QStringLiteral("App"));
+        QCOMPARE(err.at(0).at(1).toString(), QStringLiteral("Encryption requires a password"));
+        // Nothing at all was written -- not just no .zip. A plaintext copy DIRECTORY is the
+        // exact leak this guard exists to prevent, and a *.zip glob cannot see one.
+        QCOMPARE(QDir(backupDir.path()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot).size(),
+                 0);
     }
 
     // P06-19: encryption without compression would leave a plaintext copy dir.
@@ -259,8 +299,16 @@ private Q_SLOTS:
         cfg.compress = false;
         cfg.encrypt = true;
         cfg.password = "pw";
+        QSignalSpy err(&mgr, &UserDataManager::operationError);
         auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
         QVERIFY(!e.has_value());
+        // The COMPRESSION precondition, not the password one that sits beside it.
+        QCOMPARE(err.count(), 1);
+        QCOMPARE(err.at(0).at(0).toString(), QStringLiteral("App"));
+        QCOMPARE(err.at(0).at(1).toString(), QStringLiteral("Encryption requires compression"));
+        // The plaintext copy directory this guard exists to prevent was never created.
+        QCOMPARE(QDir(backupDir.path()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot).size(),
+                 0);
     }
 
     // P06-21: two backups sharing a one-second timestamp must both survive.
@@ -300,6 +348,14 @@ private Q_SLOTS:
         QVERIFY(e.has_value());
         QVERIFY(!e->backup_path.endsWith(".zip"));
         QVERIFY(QFileInfo(e->backup_path).isDir());
+        // The uncompressed entry's own fields: no checksum is generated for a directory backup,
+        // and the two size fields must agree (nothing was compressed).
+        QCOMPARE(e->checksum, QString());
+        QCOMPARE(e->total_size_bytes, static_cast<qint64>(10));
+        QCOMPARE(e->compressed_size_bytes, static_cast<qint64>(10));
+        QCOMPARE(e->encrypted, false);
+        QCOMPARE(e->app_name, QStringLiteral("App"));
+        QCOMPARE(e->source_paths, QStringList{src});
         QCOMPARE(static_cast<int>(mgr.listBackups(backupDir.path()).size()), 1);
 
         QTemporaryDir restoreDir;
@@ -308,7 +364,11 @@ private Q_SLOTS:
         rcfg.verify_checksum = false;
         rcfg.create_backup = false;
         QVERIFY(mgr.restoreAppData(e->backup_path, restoreDir.path(), rcfg));
-        QVERIFY(QFileInfo::exists(QDir(restoreDir.path()).filePath("data.txt")));
+        // Round-trip means the BYTES came back, not merely that a file with the right name
+        // exists: an empty or truncated restore satisfies an exists() check unchanged.
+        QFile restored(QDir(restoreDir.path()).filePath("data.txt"));
+        QVERIFY(restored.open(QIODevice::ReadOnly));
+        QCOMPARE(restored.readAll(), QByteArray("round trip"));
     }
 
     // P06-24: a directory junction inside the source must NOT be followed --
@@ -392,7 +452,9 @@ private Q_SLOTS:
     void deletionRefusalScreensDriveRoot() {
         const QString r = UserDataManager::backupDeletionRefusal(
             QStringLiteral("C:/"), std::optional<QString>(QStringLiteral("C:/")));
-        QVERIFY(!r.isEmpty());  // a drive root is refused even with matching metadata
+        // Layer 1 fires FIRST even though the metadata matches: pin its text, or a regression that
+        // reordered the layers would still "refuse" here via the identity check and look correct.
+        QCOMPARE(r, QStringLiteral("refusing a drive root"));
     }
 
     void deletionRefusalNeedsMetadataSidecar() {
@@ -400,7 +462,7 @@ private Q_SLOTS:
         QVERIFY(work.isValid());
         const QString p = QDir(work.path()).filePath("App_backup");
         const QString r = UserDataManager::backupDeletionRefusal(p, std::nullopt);
-        QVERIFY(!r.isEmpty());  // no sidecar -> unmanaged directory -> refused
+        QCOMPARE(r, QStringLiteral("no backup metadata sidecar identifies this path"));
     }
 
     void deletionRefusalNeedsIdentityMatch() {
@@ -409,7 +471,9 @@ private Q_SLOTS:
         const QString p = QDir(work.path()).filePath("App_backup");
         const QString other = QDir(work.path()).filePath("Somewhere_else");
         const QString r = UserDataManager::backupDeletionRefusal(p, std::optional<QString>(other));
-        QVERIFY(!r.isEmpty());  // sidecar records a DIFFERENT object -> refused
+        // Distinct from the no-sidecar text above: these two are the only way to tell an
+        // unmanaged tree from a forged sidecar, and !isEmpty() collapsed them into one case.
+        QCOMPARE(r, QStringLiteral("backup metadata does not identify this target"));
     }
 
     void deletionRefusalAllowsManagedBackup() {
@@ -465,7 +529,11 @@ private Q_SLOTS:
             QCOMPARE(r.readAll(), QByteArray("new"));
         }
         QVERIFY(!QFileInfo::exists(tmp));
-        QVERIFY(!QFileInfo::exists(target + ".sak_old"));
+        // No residue of ANY kind: the staged file and the .sak_old rollback copy are both gone,
+        // and nothing else was left behind. Naming only the two expected leftovers could not see
+        // a third temporary the replace forgot to clean up.
+        QCOMPARE(QDir(work.path()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot),
+                 QStringList{QStringLiteral("data.bin")});
 
         // Replacing a not-yet-existing target: the staged file is simply moved into place.
         const QString target2 = QDir(work.path()).filePath("fresh.bin");
@@ -476,7 +544,11 @@ private Q_SLOTS:
             s2.write("hello");
         }
         QVERIFY(UserDataManager::atomicReplaceFile(tmp2, target2));
-        QVERIFY(QFileInfo::exists(target2));
+        // The staged CONTENT arrived, not just a file at that name -- a zero-byte target would
+        // satisfy exists() while losing everything the caller staged.
+        QFile r2(target2);
+        QVERIFY(r2.open(QIODevice::ReadOnly));
+        QCOMPARE(r2.readAll(), QByteArray("hello"));
         QVERIFY(!QFileInfo::exists(tmp2));
     }
 
@@ -559,9 +631,24 @@ private Q_SLOTS:
         f.close();
 
         UserDataManager mgr;
+        QSignalSpy err(&mgr, &UserDataManager::operationError);
         QVERIFY(!mgr.deleteBackup(victim));  // no metadata sidecar -> refused
+        // Which LAYER refused matters: the shared path screens (layer 1) and the metadata
+        // identity check (layer 2) both return false, so pinning the reason is the only way to
+        // show an unmanaged directory is rejected for lacking a sidecar rather than, say, for
+        // sitting under a screened root.
+        QCOMPARE(err.count(), 1);
+        QCOMPARE(err.at(0).at(0).toString(), QStringLiteral("not_a_backup"));
+        QCOMPARE(err.at(0).at(1).toString(),
+                 QStringLiteral("Refusing to delete backup: no backup metadata sidecar identifies "
+                                "this path"));
         QVERIFY(QFileInfo::exists(victim));  // tree left fully intact
-        QVERIFY(QFileInfo::exists(QDir(victim).filePath("important.txt")));
+        // The payload survived byte-for-byte and nothing else was added or removed.
+        QFile kept(QDir(victim).filePath("important.txt"));
+        QVERIFY(kept.open(QIODevice::ReadOnly));
+        QCOMPARE(kept.readAll(), QByteArray("keep me"));
+        QCOMPARE(QDir(victim).entryList(QDir::AllEntries | QDir::NoDotAndDotDot),
+                 QStringList{QStringLiteral("important.txt")});
     }
 
     // End-to-end: a forged sidecar that points elsewhere must not authorize deletion.
@@ -573,13 +660,25 @@ private Q_SLOTS:
         QJsonObject obj;
         obj["app_name"] = QStringLiteral("X");
         obj["backup_path"] = QDir(work.path()).filePath("elsewhere");
+        // parseMetadataObject requires a STRING checksum (an absent one must not become "" and
+        // silently disable verification). Without this field the forged sidecar fails to parse,
+        // readMetadata returns nullopt, and this test lands on the SAME no-sidecar branch as
+        // deleteBackupRefusesUnmanagedDirectory -- i.e. it was a stealth duplicate that never
+        // exercised the identity-mismatch guard it is named for.
+        obj["checksum"] = QString();
         QFile meta(victim + ".json");
         QVERIFY(meta.open(QIODevice::WriteOnly));
         meta.write(QJsonDocument(obj).toJson());
         meta.close();
 
         UserDataManager mgr;
+        QSignalSpy err(&mgr, &UserDataManager::operationError);
         QVERIFY(!mgr.deleteBackup(victim));  // sidecar identity mismatch -> refused
+        QCOMPARE(err.count(), 1);
+        QCOMPARE(err.at(0).at(0).toString(), QStringLiteral("victim"));
+        QCOMPARE(err.at(0).at(1).toString(),
+                 QStringLiteral("Refusing to delete backup: backup metadata does not identify "
+                                "this target"));
         QVERIFY(QFileInfo::exists(victim));
     }
 
@@ -663,7 +762,15 @@ private Q_SLOTS:
         cfg.password = QStringLiteral("hunter2");
         auto e = mgr.backupAppData("App", {src}, backupDir.path(), cfg);
         QVERIFY(e.has_value());
-        QVERIFY(e->backup_path.endsWith(".zip"));
+        QCOMPARE(QFileInfo(e->backup_path).suffix(), QStringLiteral("zip"));
+        // The entry and its sidecar must both RECORD the encryption, or a later restore has no
+        // way to know a password is required and reports a confusing extraction failure.
+        QVERIFY(e->encrypted);
+        QFile meta(e->backup_path + ".json");
+        QVERIFY(meta.open(QIODevice::ReadOnly));
+        QCOMPARE(QJsonDocument::fromJson(meta.readAll()).object().value("encrypted").toBool(),
+                 true);
+        meta.close();
 
         QTemporaryDir restoreDir;
         QVERIFY(restoreDir.isValid());
@@ -722,6 +829,14 @@ private Q_SLOTS:
                           QDir::Files,
                           QDirIterator::Subdirectories);
         QVERIFY(kept.hasNext());  // non-excluded file present
+        // ...with its real bytes: "a file named keep.txt exists" also held if the exclusion
+        // filter had archived an empty placeholder for every source file.
+        QFile keptFile(kept.next());
+        QVERIFY(keptFile.open(QIODevice::ReadOnly));
+        QCOMPARE(keptFile.readAll(), QByteArray("KEEP"));
+        // The pattern the caller asked for is recorded on the entry, so a restore can explain
+        // why the secret is absent rather than looking like data loss.
+        QCOMPARE(e->excluded_patterns, QStringList{QStringLiteral("*.key")});
         QDirIterator leaked(restoreDir.path(),
                             {QStringLiteral("password.key")},
                             QDir::Files,
@@ -761,8 +876,19 @@ private Q_SLOTS:
         UserDataManager::RestoreConfig rcfg;
         rcfg.verify_checksum = true;  // integrity is REQUIRED
         rcfg.create_backup = false;
-        // A compressed archive with no checksum cannot be verified -> fail closed.
+        // A compressed archive with no checksum cannot be verified -> fail closed, with the
+        // reason that names the emptied checksum. A bare false was equally produced by the
+        // sidecar failing to parse, or by the extraction failing -- neither of which shows the
+        // tamper was DETECTED rather than merely getting in the way.
+        QSignalSpy err(&mgr, &UserDataManager::operationError);
         QVERIFY(!mgr.restoreAppData(e->backup_path, restoreDir.path(), rcfg));
+        QCOMPARE(err.count(), 1);
+        QCOMPARE(err.at(0).at(0).toString(), QStringLiteral("App"));
+        QCOMPARE(err.at(0).at(1).toString(),
+                 QStringLiteral("Compressed backup has no checksum to verify - refusing restore"));
+        // Nothing was extracted before the refusal.
+        QCOMPARE(QDir(restoreDir.path()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot).size(),
+                 0);
     }
 
     // --- CR3-7: strict metadata parse rejects a wrong-typed / oversized sidecar ---
@@ -817,8 +943,19 @@ private Q_SLOTS:
         QVERIFY(backupDir.isValid());
         UserDataManager mgr;
         UserDataManager::BackupConfig cfg;
+        // Each empty input names ITS OWN field. Both return nullopt, so without the messages a
+        // single guard covering only one of them would look like both were checked.
+        QSignalSpy err(&mgr, &UserDataManager::operationError);
         QVERIFY(!mgr.backupAppData(QString(), {src}, backupDir.path(), cfg).has_value());
+        QCOMPARE(err.count(), 1);
+        QCOMPARE(err.at(0).at(0).toString(), QString());
+        QCOMPARE(err.at(0).at(1).toString(), QStringLiteral("App name must not be empty"));
+
+        err.clear();
         QVERIFY(!mgr.backupAppData(QStringLiteral("App"), {src}, QString(), cfg).has_value());
+        QCOMPARE(err.count(), 1);
+        QCOMPARE(err.at(0).at(0).toString(), QStringLiteral("App"));
+        QCOMPARE(err.at(0).at(1).toString(), QStringLiteral("Backup directory must not be empty"));
     }
 };
 

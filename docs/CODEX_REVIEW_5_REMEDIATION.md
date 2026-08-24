@@ -4994,7 +4994,46 @@ So the suite itself must be audited for tests that pass regardless of the code.
     maximumHeight == 22, unallocated swatch #464e58, disk-map QMargins(1,1,1,1), preview
     minimumHeight == 130) -- those bounds are contracts ("compact", "dark, not white") that a
     legitimate visual tweak may change with no behavioural consequence.
-  - FINDING N2 (FIXED this commit, correctness, medium): partition_safety_validator's two
+  - PROGRESS 2026-08-23 second-pass re-sweep b71b (gated 249/249): 66 residual weak assertions
+    pinned across three files, plus one STEALTH-DUPLICATE test repaired (below).
+    test_file_explorer_types.cpp (24): the command registry reports every refusal through
+    state().enabled, so a dozen distinct guards were indistinguishable -- "Select an item first.",
+    "Selected target cannot read files.", "Copy files to the clipboard first.", "Enable dual pane
+    first.", the per-capability build gates and the target's OWN propagated write blocker are now
+    each pinned at their call sites. Two shape classes also closed: groupOrder() pinned as the
+    ordered sequence (it IS the palette's section order) and groupName() pinned per group (the
+    in-loop !isEmpty() also passed on the "Other" fallback an unmapped group returns -- exactly
+    the symptom a newly added group produces); and the status-card graph pinned as whole QPointF
+    values rather than only the last x. test_email_profile_manager.cpp (17): every errorOccurred
+    arm pinned to its exact message and count (size cap vs version check vs open failure were
+    mutually indistinguishable under "count > 0"), registryBackupFileName pinned to its exact
+    sanitized output (the four shape probes were jointly satisfied by a sanitizer that DROPPED
+    traversal segments, which silently collides two profiles onto one .reg), the dedupe helper
+    pinned to full paths incl. the deterministic _2 suffix (a random/timestamped suffix satisfied
+    the old startsWith/endsWith pair but is not reproducible across a backup/restore pair), the
+    empty-selection backup's manifest CONTENT pinned (version/tool/empty profiles array -- an
+    exists() check passes on a zero-byte file), and thunderbirdProfileDir pinned to the resolved
+    path ("non-empty and under the root" was satisfied by the ROOT ITSELF, which would widen a
+    per-profile backup to the whole tree). One nominee REJECTED as an over-reach: adding
+    per-data_file is_linked/type assertions to the env-dependent discovery smoke test would be
+    G18-5 environment-dependence (is_linked is not an invariant across clients).
+    test_user_data_manager.cpp (25): the three deletion-refusal layers pinned by exact reason
+    (drive-root screen vs no-sidecar vs identity-mismatch), both checksum tests pinned to real
+    SHA-256 digests cross-checked with an independent implementation (the old "deterministic" /
+    "different and non-empty" pair was satisfied by a hash of the file NAME), the encryption
+    preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
+    backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
+    zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - FINDING N4 (FIXED this commit, test defect, medium): test_user_data_manager's
+    deleteBackupRefusesForgedSidecarMismatch never exercised the guard it is named for. It wrote a
+    forged sidecar carrying only app_name and backup_path; parseMetadataObject REQUIRES a string
+    checksum (an absent one must not become "" and silently disable verification), so readMetadata
+    returned nullopt, `recorded` stayed empty, and the test landed on the no-sidecar branch -- a
+    stealth duplicate of deleteBackupRefusesUnmanagedDirectory, leaving the sameBackupObject
+    identity-mismatch path untested. Fixed by adding a checksum field so the sidecar parses; the
+    test now pins the distinct "backup metadata does not identify this target" refusal. Same class
+    as the stealth-duplicate caught by G10-9 mutation testing (leading-dash package_id).
+  - FINDING N2 (FIXED, correctness, medium): partition_safety_validator's two
     non-native-tool tables disagreed. isSupportedNonNativeFileSystemToolOperation lists the six
     container-level APFS operations (ApfsSnapshotCreate/Delete/Revert, ApfsCloneRootFile,
     ApfsHardlinkRootFile, ApfsResizeContainer) as supported, but nonNativeFileSystemSupportedForOperation

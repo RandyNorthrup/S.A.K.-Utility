@@ -153,10 +153,10 @@ void TestEmailProfileManager::cancelBeforeDiscoveryDoesNotBlockNextRun() {
     manager.discoverProfiles();
 
     QCOMPARE(discovered_spy.count(), 1);
-    for (const auto& call : error_spy) {
-        QVERIFY2(!call.at(0).toString().contains(QStringLiteral("already in progress")),
-                 qPrintable(call.at(0).toString()));
-    }
+    // This loop passed VACUOUSLY on an empty spy, which is the very state it is meant to
+    // distinguish from "the single-flight guard wrongly refused a legitimate call". A clean
+    // discovery emits no error at all.
+    QCOMPARE(error_spy.count(), 0);
 }
 
 // ============================================================================
@@ -206,9 +206,23 @@ void TestEmailProfileManager::backupWithEmptyIndices() {
 
     QCOMPARE(error_spy.count(), 0);
     QCOMPARE(complete_spy.count(), 1);
+    // The destination the signal reports is what a caller shows the user and what a later
+    // restore is pointed at; it was never asserted.
+    QCOMPARE(complete_spy.first().at(0).toString(), backup_dir.path());
     QCOMPARE(complete_spy.first().at(1).toInt(), 0);         // files backed up
     QCOMPARE(complete_spy.first().at(2).toLongLong(), 0LL);  // bytes copied
-    QVERIFY(QFile::exists(backup_dir.path() + QStringLiteral("/backup_manifest.json")));
+
+    // The manifest's own content, not just its existence: an empty-selection backup must still
+    // write a well-formed, versioned manifest with an EMPTY profiles array, because that is what
+    // a later restore reads. A zero-byte or malformed file passes an exists() check unchanged.
+    QFile manifest_file(backup_dir.path() + QStringLiteral("/backup_manifest.json"));
+    QVERIFY(manifest_file.open(QIODevice::ReadOnly));
+    const QJsonObject manifest = QJsonDocument::fromJson(manifest_file.readAll()).object();
+    manifest_file.close();
+    QCOMPARE(manifest.value(QStringLiteral("version")).toInt(), 1);
+    QCOMPARE(manifest.value(QStringLiteral("tool")).toString(), QStringLiteral("SAK Utility"));
+    QVERIFY(manifest.value(QStringLiteral("profiles")).isArray());
+    QVERIFY(manifest.value(QStringLiteral("profiles")).toArray().isEmpty());
 }
 
 void TestEmailProfileManager::backupWithInvalidPath() {
@@ -222,7 +236,7 @@ void TestEmailProfileManager::backupWithInvalidPath() {
     // An empty destination fails closed: the reason is surfaced and NO backup is
     // reported complete (it must never fall back to the working directory).
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY(error_spy.first().at(0).toString().contains(QStringLiteral("Backup path is empty")));
+    QCOMPARE(error_spy.first().at(0).toString(), QStringLiteral("Backup path is empty"));
     QCOMPARE(complete_spy.count(), 0);
 }
 
@@ -243,7 +257,9 @@ void TestEmailProfileManager::backupWithNoDiscoveredProfiles() {
     // .reg or copy here would mean an unmapped index reached the copy path).
     QCOMPARE(error_spy.count(), 0);
     QCOMPARE(complete_spy.count(), 1);
+    QCOMPARE(complete_spy.first().at(0).toString(), temp_dir.path());
     QCOMPARE(complete_spy.first().at(1).toInt(), 0);
+    QCOMPARE(complete_spy.first().at(2).toLongLong(), 0LL);
     QCOMPARE(QDir(temp_dir.path()).entryList(QDir::Files),
              QStringList{QStringLiteral("backup_manifest.json")});
 }
@@ -262,8 +278,7 @@ void TestEmailProfileManager::restoreFromNonExistentManifest() {
     // Fail closed: the specific reason is surfaced and no restore is reported as
     // complete (a restoreComplete(0) here would read as "nothing needed restoring").
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY(error_spy.first().at(0).toString().contains(
-        QStringLiteral("Failed to open backup manifest")));
+    QCOMPARE(error_spy.first().at(0).toString(), QStringLiteral("Failed to open backup manifest"));
     QCOMPARE(complete_spy.count(), 0);
 }
 
@@ -276,8 +291,7 @@ void TestEmailProfileManager::restoreFromEmptyPath() {
 
     // An empty path is refused at the manifest open, exactly like a missing file.
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY(error_spy.first().at(0).toString().contains(
-        QStringLiteral("Failed to open backup manifest")));
+    QCOMPARE(error_spy.first().at(0).toString(), QStringLiteral("Failed to open backup manifest"));
     QCOMPARE(complete_spy.count(), 0);
 }
 
@@ -502,17 +516,17 @@ void TestEmailProfileManager::registryBackupFileName_sanitizesTraversal() {
     // A clean profile name passes through unchanged.
     QCOMPARE(EmailProfileManager::registryBackupFileName(QStringLiteral("Default")),
              QStringLiteral("registry_Default.reg"));
-    // Path separators and traversal are neutralized so the .reg stays a bare basename.
-    for (const QString& hostile : {QStringLiteral("../evil"),
-                                   QStringLiteral("..\\..\\evil"),
-                                   QStringLiteral("a/b\\c"),
-                                   QStringLiteral("x:y*z?")}) {
-        const QString name = EmailProfileManager::registryBackupFileName(hostile);
-        QVERIFY2(!name.contains(QLatin1Char('/')), qPrintable(name));
-        QVERIFY2(!name.contains(QLatin1Char('\\')), qPrintable(name));
-        QVERIFY(name.startsWith(QStringLiteral("registry_")));
-        QVERIFY(name.endsWith(QStringLiteral(".reg")));
-    }
+    // Path separators and traversal are neutralized so the .reg stays a bare basename. Pin the
+    // exact result rather than the four shape probes: those were jointly satisfied by a
+    // sanitizer that DROPPED the traversal segments entirely, which silently collides
+    // "../evil" and "..\\..\\evil" onto one file -- so one profile's registry backup would
+    // overwrite another's.
+    QCOMPARE(EmailProfileManager::registryBackupFileName(QStringLiteral("../evil")),
+             QStringLiteral("registry_.._evil.reg"));
+    QCOMPARE(EmailProfileManager::registryBackupFileName(QStringLiteral("..\\..\\evil")),
+             QStringLiteral("registry_.._.._evil.reg"));
+    QCOMPARE(EmailProfileManager::registryBackupFileName(QStringLiteral("a/b\\c")),
+             QStringLiteral("registry_a_b_c.reg"));
     // Pin the exact reserved-char mapping. The loop's slash/backslash checks could not catch a
     // regression that re-admits ':' (or '*' / '?') as a safe char -- none of those add a '/' -- so
     // assert each maps to '_' outright: "x:y*z?" -> "registry_x_y_z_.reg".
@@ -543,7 +557,11 @@ void TestEmailProfileManager::restoreRejectsOversizedManifest() {
     QSignalSpy complete_spy(&manager, &EmailProfileManager::restoreComplete);
     manager.restoreProfiles(manifest);
 
-    QVERIFY(error_spy.count() > 0);
+    // The SIZE cap specifically. "> 0 errors" was equally satisfied by the open failing, by a
+    // parse error, or by the version check -- none of which prove the file was refused BEFORE
+    // being parsed, which is the whole point of a pre-parse cap.
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.first().at(0).toString(), QStringLiteral("Backup manifest is too large"));
     QCOMPARE(complete_spy.count(), 0);  // oversized manifest never reaches a restore result
 }
 
@@ -578,19 +596,13 @@ void TestEmailProfileManager::singleFlightRefusesReentry() {
 
     manager.discoverProfiles();
 
-    bool saw_in_progress = false;
-    bool saw_open_failure = false;
-    for (const auto& call : error_spy) {
-        const QString msg = call.at(0).toString();
-        if (msg.contains(QStringLiteral("already in progress"))) {
-            saw_in_progress = true;
-        }
-        if (msg.contains(QStringLiteral("Failed to open backup manifest"))) {
-            saw_open_failure = true;
-        }
-    }
-    QVERIFY2(saw_in_progress, "nested op was not refused by the single-flight guard");
-    QVERIFY2(!saw_open_failure, "nested op actually ran despite the guard");
+    // Exactly one error, and it is the guard's. The two-flag scan proved the guard fired and
+    // the nested restore did not, but it tolerated ADDITIONAL unrelated errors alongside them
+    // -- including a second guard refusal, which would mean the outer discovery was also
+    // blocked by its own flag.
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.first().at(0).toString(),
+             QStringLiteral("An email-profile operation is already in progress"));
 }
 
 void TestEmailProfileManager::restoreCountsOnlyCleanProfiles() {
@@ -695,7 +707,9 @@ void TestEmailProfileManager::registryBackupDestination_dedupesCollision() {
 
     const QString first =
         EmailProfileManager::uniqueRegistryBackupDestination(dir.path(), QStringLiteral("Default"));
-    QCOMPARE(QFileInfo(first).fileName(), QStringLiteral("registry_Default.reg"));
+    // The full path, not just the basename: the helper must place the export INSIDE the
+    // requested backup directory, which a basename-only check cannot show.
+    QCOMPARE(first, dir.path() + QStringLiteral("/registry_Default.reg"));
     {
         QFile f(first);  // simulate the first export having been written
         QVERIFY(f.open(QIODevice::WriteOnly));
@@ -703,10 +717,11 @@ void TestEmailProfileManager::registryBackupDestination_dedupesCollision() {
     }
     const QString second =
         EmailProfileManager::uniqueRegistryBackupDestination(dir.path(), QStringLiteral("Default"));
-    QVERIFY(second != first);
+    // The exact deduped name. "different, starts with registry_Default_, ends with .reg" was
+    // satisfied by a random or timestamped suffix, which is not reproducible across a
+    // backup/restore pair and would make the manifest entry unpredictable.
+    QCOMPARE(second, dir.path() + QStringLiteral("/registry_Default_2.reg"));
     QVERIFY(!QFile::exists(second));  // a fresh, non-colliding target
-    QVERIFY(QFileInfo(second).fileName().startsWith(QStringLiteral("registry_Default_")));
-    QVERIFY(QFileInfo(second).fileName().endsWith(QStringLiteral(".reg")));
 
     // Names that only COLLIDE after sanitization ('Test/1' and 'Test:1' -> registry_Test_1) also
     // get distinct files.
@@ -719,7 +734,10 @@ void TestEmailProfileManager::registryBackupDestination_dedupesCollision() {
     }
     const QString b =
         EmailProfileManager::uniqueRegistryBackupDestination(dir.path(), QStringLiteral("Test:1"));
-    QVERIFY(a != b);
+    // Both names sanitize to registry_Test_1; pin which file each actually gets, so a
+    // regression that swaps the collision order (or reuses the taken name) is visible.
+    QCOMPARE(a, dir.path() + QStringLiteral("/registry_Test_1.reg"));
+    QCOMPARE(b, dir.path() + QStringLiteral("/registry_Test_1_2.reg"));
 }
 
 void TestEmailProfileManager::regContent_rejectsAnyDeletion() {
@@ -774,7 +792,12 @@ void TestEmailProfileManager::restoreRejectsBadVersion() {
     QSignalSpy complete_spy(&manager, &EmailProfileManager::restoreComplete);
     manager.restoreProfiles(manifest);
 
-    QVERIFY(error_spy.count() > 0);
+    // The VERSION check specifically: this manifest is small and well-formed JSON, so an
+    // error count alone could also have come from the size cap or a parse failure -- neither
+    // of which would prove a wrong-typed version is refused rather than coerced.
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.first().at(0).toString(),
+             QStringLiteral("Unsupported or missing backup manifest version"));
     QCOMPARE(complete_spy.count(), 0);
 }
 
@@ -812,8 +835,10 @@ void TestEmailProfileManager::thunderbirdProfileDir_confinesRelative() {
 
     const QString ok = EmailProfileManager::thunderbirdProfileDir(
         root, QStringLiteral("Profiles/abc.default"), true);
-    QVERIFY(!ok.isEmpty());
-    QVERIFY(QDir(ok).absolutePath().startsWith(QDir(root).absolutePath()));
+    // The resolved path exactly. "non-empty and under the root" was equally satisfied by the
+    // root ITSELF being returned -- which would silently widen a per-profile backup to the whole
+    // Thunderbird tree -- and by any sibling directory under it.
+    QCOMPARE(ok, root + QStringLiteral("/Profiles/abc.default"));
 
     // A relative '..' escape is rejected (empty).
     QVERIFY(EmailProfileManager::thunderbirdProfileDir(root, QStringLiteral("../../evil"), true)

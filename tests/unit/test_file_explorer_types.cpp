@@ -230,8 +230,10 @@ private Q_SLOTS:
         QVERIFY(read_only.can_copy_path);
         QVERIFY(!read_only.can_rename);
         QVERIFY(!read_only.can_delete);
-        QVERIFY(read_only.blockers.join(QStringLiteral("; "))
-                    .contains(QStringLiteral("write blocker")));
+        // Exactly the target's own write blocker, and nothing else: joining then searching for a
+        // fragment could not see a SECOND blocker appearing (which would mean an unrelated guard
+        // also fired), nor the read-only reason being replaced by a generic one.
+        QCOMPARE(read_only.blockers, QStringList{QStringLiteral("raw fixture write blocker")});
     }
 
     void registryEnablesWritableLocalCommands() {
@@ -264,10 +266,13 @@ private Q_SLOTS:
         const auto preview =
             sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::Preview, context);
 
+        // The blocker must be the TARGET's own reason, propagated verbatim -- not a generic
+        // registry refusal that happens to contain "read-only". That propagation is what tells
+        // the operator which layer refused and why.
         QVERIFY(!write_file.enabled);
-        QVERIFY(write_file.blocker.contains(QStringLiteral("read-only")));
+        QCOMPARE(write_file.blocker, QStringLiteral("ext raw target is read-only"));
         QVERIFY(!delete_item.enabled);
-        QVERIFY(delete_item.blocker.contains(QStringLiteral("read-only")));
+        QCOMPARE(delete_item.blocker, QStringLiteral("ext raw target is read-only"));
         QVERIFY2(preview.enabled, qPrintable(preview.blocker));
     }
 
@@ -341,8 +346,13 @@ private Q_SLOTS:
         const auto redo_ok = Reg::state(Id::Redo, writable);
         QVERIFY2(undo_ok.enabled, qPrintable(undo_ok.blocker));
         QVERIFY2(redo_ok.enabled, qPrintable(redo_ok.blocker));
-        QVERIFY(!Reg::state(Id::Undo, read_only).enabled);
-        QVERIFY(!Reg::state(Id::Redo, read_only).enabled);
+        // The target's own write blocker reaches both commands verbatim. !enabled alone was
+        // satisfied by any refusal, including the "Select an item first." guard that fires on
+        // this same empty-selection context for other commands.
+        QCOMPARE(Reg::state(Id::Undo, read_only).blocker,
+                 QStringLiteral("raw target is read-only"));
+        QCOMPARE(Reg::state(Id::Redo, read_only).blocker,
+                 QStringLiteral("raw target is read-only"));
 
         QVERIFY(Reg::command(Id::CreateFolderWithSelection).destructive);
     }
@@ -350,9 +360,10 @@ private Q_SLOTS:
     void registryHashNeedsSingleReadableSelection() {
         using sak::FileExplorerCommandId;
         // No selection: hashing has nothing to act on.
-        QVERIFY(!sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Hash,
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Hash,
                                                          contextFor(writableLocalTarget(), false))
-                     .enabled);
+                     .blocker,
+                 QStringLiteral("Select an item first."));
         // A single readable file, even on a read-only raw target, can be hashed.
         QVERIFY(sak::FileExplorerCommandRegistry::state(
                     FileExplorerCommandId::Hash,
@@ -363,15 +374,18 @@ private Q_SLOTS:
             FileExplorerCommandId::Hash,
             contextFor(rawTarget(QStringLiteral("xfs"), false, false, false), true));
         QVERIFY(!blocked.enabled);
-        QVERIFY(!blocked.blocker.isEmpty());
+        // The READ-capability refusal specifically: a non-empty blocker was equally produced by
+        // the selection guard above, so the two cases were indistinguishable.
+        QCOMPARE(blocked.blocker, QStringLiteral("Selected target cannot read files."));
     }
 
     void registryCopyOutNeedsSingleReadableSelection() {
         using sak::FileExplorerCommandId;
         // No selection: nothing to copy out.
-        QVERIFY(!sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyOut,
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyOut,
                                                          contextFor(writableLocalTarget(), false))
-                     .enabled);
+                     .blocker,
+                 QStringLiteral("Select an item first."));
         // A single readable file, even on a read-only raw target, can be copied out.
         QVERIFY(sak::FileExplorerCommandRegistry::state(
                     FileExplorerCommandId::CopyOut,
@@ -382,15 +396,18 @@ private Q_SLOTS:
             FileExplorerCommandId::CopyOut,
             contextFor(rawTarget(QStringLiteral("xfs"), false, false, false), true));
         QVERIFY(!blocked.enabled);
-        QVERIFY(!blocked.blocker.isEmpty());
+        // The READ-capability refusal specifically: a non-empty blocker was equally produced by
+        // the selection guard above, so the two cases were indistinguishable.
+        QCOMPARE(blocked.blocker, QStringLiteral("Selected target cannot read files."));
     }
 
     void registryCopyItemsNeedsReadableSelection() {
         using sak::FileExplorerCommandId;
         // No selection: nothing to copy.
-        QVERIFY(!sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyItems,
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyItems,
                                                          contextFor(writableLocalTarget(), false))
-                     .enabled);
+                     .blocker,
+                 QStringLiteral("Select an item first."));
         // Multi-select is allowed: two readable files can go to the clipboard together.
         auto multi = contextFor(readOnlyRawTarget(QStringLiteral("read-only raw fixture")), true);
         auto second = selectedFile();
@@ -404,7 +421,9 @@ private Q_SLOTS:
             FileExplorerCommandId::CopyItems,
             contextFor(rawTarget(QStringLiteral("btrfs"), false, false, false), true));
         QVERIFY(!blocked.enabled);
-        QVERIFY(!blocked.blocker.isEmpty());
+        // The READ-capability refusal specifically: a non-empty blocker was equally produced by
+        // the selection guard above, so the two cases were indistinguishable.
+        QCOMPARE(blocked.blocker, QStringLiteral("Selected target cannot read files."));
     }
 
     void registryPasteNeedsClipboardFilesAndWritableTarget() {
@@ -414,7 +433,7 @@ private Q_SLOTS:
         const auto no_clipboard =
             sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Paste, context);
         QVERIFY(!no_clipboard.enabled);
-        QVERIFY(no_clipboard.blocker.contains(QStringLiteral("clipboard"), Qt::CaseInsensitive));
+        QCOMPARE(no_clipboard.blocker, QStringLiteral("Copy files to the clipboard first."));
         // Clipboard files + writable target: paste enables.
         context.clipboard_has_files = true;
         QVERIFY(
@@ -436,10 +455,13 @@ private Q_SLOTS:
         const auto no_split = sak::FileExplorerCommandRegistry::state(
             FileExplorerCommandId::CopyToOtherPane, context);
         QVERIFY(!no_split.enabled);
-        QVERIFY(no_split.blocker.contains(QStringLiteral("dual pane"), Qt::CaseInsensitive));
-        QVERIFY(
-            !sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes, context)
-                 .enabled);
+        QCOMPARE(no_split.blocker, QStringLiteral("Enable dual pane first."));
+        // Compare must give the SAME reason: it is the dual-pane requirement that blocks it here,
+        // not a missing selection or an unwritable other pane.
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes,
+                                                         context)
+                     .blocker,
+                 QStringLiteral("Enable dual pane first."));
 
         // Split active + writable other pane: copy and compare both enable.
         context.dual_pane_active = true;
@@ -484,10 +506,13 @@ private Q_SLOTS:
         const auto dual_pane = sak::FileExplorerCommandRegistry::state(
             sak::FileExplorerCommandId::ToggleDualPane, context);
 
+        // Each names ITS OWN missing capability. Both messages end in "unavailable in this
+        // build", so the shared fragment could not tell them apart -- the tab command reporting
+        // the dual-pane reason (or either reporting a generic one) read the same.
         QVERIFY(!new_tab.enabled);
-        QVERIFY(new_tab.blocker.contains(QStringLiteral("unavailable")));
+        QCOMPARE(new_tab.blocker, QStringLiteral("Explorer tabs are unavailable in this build."));
         QVERIFY(!dual_pane.enabled);
-        QVERIFY(dual_pane.blocker.contains(QStringLiteral("unavailable")));
+        QCOMPARE(dual_pane.blocker, QStringLiteral("Dual pane is unavailable in this build."));
 
         context.can_create_tabs = true;
         context.can_use_dual_pane = true;
@@ -559,15 +584,24 @@ private Q_SLOTS:
         QCOMPARE(permanent.command.shortcut, QStringLiteral("Shift+Del"));
         QVERIFY(permanent.command.destructive);
         auto empty_selection = contextFor(writableLocalTarget(), false);
-        QVERIFY(!sak::FileExplorerCommandRegistry::state(
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(
                      sak::FileExplorerCommandId::DeletePermanently, empty_selection)
-                     .enabled);
+                     .blocker,
+                 QStringLiteral("Select an item first."));
     }
 
     void registryAssignsEveryCommandToAnOrderedGroup() {
         using Registry = sak::FileExplorerCommandRegistry;
         const auto order = Registry::groupOrder();
-        QCOMPARE(order.size(), 6);
+        // groupOrder IS the palette's section order, so the sequence is the contract -- a size
+        // check could not see two sections swapped or one replaced by a duplicate.
+        QCOMPARE(order,
+                 QVector<sak::FileExplorerCommandGroup>({sak::FileExplorerCommandGroup::Navigation,
+                                                         sak::FileExplorerCommandGroup::File,
+                                                         sak::FileExplorerCommandGroup::View,
+                                                         sak::FileExplorerCommandGroup::Pane,
+                                                         sak::FileExplorerCommandGroup::Target,
+                                                         sak::FileExplorerCommandGroup::Safety}));
 
         // Every registered command resolves to a group that appears in groupOrder,
         // so the palette can never drop a command by leaving its section unrendered.
@@ -575,8 +609,20 @@ private Q_SLOTS:
             const auto group = Registry::group(command.id);
             QCOMPARE(command.group, group);
             QVERIFY2(order.contains(group), qPrintable(Registry::commandIdName(command.id)));
-            QVERIFY(!Registry::groupName(group).isEmpty());
         }
+
+        // Each section's rendered heading, pinned. !isEmpty() inside the loop above also passed
+        // on the "Other" fallback groupName() returns for an unmapped group -- which is exactly
+        // the symptom a newly added group would produce.
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::Navigation),
+                 QStringLiteral("Navigation"));
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::File), QStringLiteral("File"));
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::View), QStringLiteral("View"));
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::Pane), QStringLiteral("Pane"));
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::Target),
+                 QStringLiteral("Target"));
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::Safety),
+                 QStringLiteral("Safety"));
 
         // Representative anchors for the section split.
         QCOMPARE(Registry::group(sak::FileExplorerCommandId::Back),
@@ -805,8 +851,12 @@ private Q_SLOTS:
         QCOMPARE(item.message(), QStringLiteral("750 bytes of 1000 bytes processed"));
         QCOMPARE(item.progressPercentage(), 75);
         QCOMPARE(item.header(), QStringLiteral("Copying 3 items to \"Bundle\" (75%)"));
+        // Both coordinates of both points. Checking only the last x proved the graph advanced
+        // along the percentage axis but said nothing about the y (throughput) values it plots,
+        // nor that the first sample survived the second report.
         QCOMPARE(item.graphPoints().size(), 2);
-        QCOMPARE(item.graphPoints().last().x(), 75.0);
+        QCOMPARE(item.graphPoints().first(), QPointF(25.0, 500.0));
+        QCOMPARE(item.graphPoints().last(), QPointF(75.0, 750.0));
 
         // Delete-family cards report the items footer instead of sizes.
         sak::FileExplorerStatusCardRequest delete_request = request;
@@ -866,15 +916,20 @@ private Q_SLOTS:
         const auto readable = rawTarget(QStringLiteral("apfs"), true, true, true);
         const auto blocked = contextFor(unreadable, true);
         const auto ready = contextFor(readable, true);
-        QVERIFY(!sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CompressIntoZip,
+        // The refusal must be the READ gate. Both targets are writable and both contexts carry a
+        // selection, so any other blocker text here would mean the isolation this test claims
+        // (can_read_files as the only delta) does not hold.
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CompressIntoZip,
                                                          blocked)
-                     .enabled);
+                     .blocker,
+                 QStringLiteral("Selected target cannot read files."));
         QVERIFY(
             sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CompressIntoZip, ready)
                 .enabled);
-        QVERIFY(
-            !sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ExtractHere, blocked)
-                 .enabled);
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ExtractHere,
+                                                         blocked)
+                     .blocker,
+                 QStringLiteral("Selected target cannot read files."));
     }
 
     void statusProgressReporterThrottlesAndComputesDeltaSpeed() {
@@ -1009,7 +1064,9 @@ private Q_SLOTS:
         QVERIFY(!item.isCancelable());
         QVERIFY(item.isIndeterminate());
         QVERIFY(!item.isSpeedAndProgressAvailable());
-        QVERIFY(item.header().startsWith(QStringLiteral("Canceling - ")));
+        // The whole header, including the tail the operator reads to know what was already
+        // discovered before the cancel landed. startsWith() left that half unasserted.
+        QCOMPARE(item.header(), QStringLiteral("Canceling - Discovered 1 item"));
 
         // Files ReportProgress bails after cancellation.
         const QString frozen_header = item.header();
