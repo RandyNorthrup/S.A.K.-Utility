@@ -77,6 +77,30 @@ void SecureMemoryTests::wipe_spanOverload() {
     for (auto val : data) {
         QCOMPARE(val, 0);
     }
+
+    // secure_memory_guard is the scope-exit half of the same wiping contract and has neither a
+    // caller nor a test anywhere in the tree, so nothing pins its destructor at all. Both
+    // factories must wipe the FULL m_size * sizeof(T) byte extent: with the sizeof(T) factor
+    // dropped an 8-int region keeps six of its eight secrets.
+    std::array<int, 8> guarded_span{};
+    std::fill(guarded_span.begin(), guarded_span.end(), 0x5A'5A'5A'5A);
+    {
+        auto span_guard = sak::makeSecureGuard(std::span<int>(guarded_span));
+        Q_UNUSED(span_guard);
+    }
+    for (auto val : guarded_span) {
+        QCOMPARE(val, 0);
+    }
+
+    std::array<int, 8> guarded_ptr{};
+    std::fill(guarded_ptr.begin(), guarded_ptr.end(), 0x5A'5A'5A'5A);
+    {
+        auto ptr_guard = sak::makeSecureGuard(guarded_ptr.data(), guarded_ptr.size());
+        Q_UNUSED(ptr_guard);
+    }
+    for (auto val : guarded_ptr) {
+        QCOMPARE(val, 0);
+    }
 }
 
 void SecureMemoryTests::wipe_nullIsNoop() {
@@ -107,6 +131,15 @@ void SecureMemoryTests::secureBuffer_allocAndAccess() {
     buf[127] = 0xAB;
     QCOMPARE(buf[0], static_cast<unsigned char>(0xFF));
     QCOMPARE(buf[127], static_cast<unsigned char>(0xAB));
+
+    // The const operator[] and const data() have their own separate bodies and, like the const
+    // span() pinned in secureBuffer_spanAccess, no caller anywhere in the tree: every access above
+    // binds the non-const overload. They must address exactly the same storage.
+    const sak::secure_buffer<unsigned char>& cbuf = buf;
+    QVERIFY(cbuf.data() == buf.data());
+    QCOMPARE(cbuf.size(), std::size_t{128});
+    QCOMPARE(cbuf[0], static_cast<unsigned char>(0xFF));
+    QCOMPARE(cbuf[127], static_cast<unsigned char>(0xAB));
 }
 
 void SecureMemoryTests::secureBuffer_clear() {
@@ -277,6 +310,35 @@ void SecureMemoryTests::secureAllocator_stringUsage() {
 // generateSecureRandom Tests
 // ============================================================================
 
+namespace {
+
+// The std::span overload of generateSecureRandom has its own body and no caller anywhere in the
+// tree: it must request size_bytes(), not size(). With the sizeof(T) factor dropped, a 16-int
+// span gets only its first four elements randomized and the tail keeps whatever secret the
+// caller left there. The sentinel is re-laid every round, so an element the generator never
+// touches is byte-identical to it in EVERY round and the verdict is deterministic.
+void verifySpanOverloadRandomizesEveryElement() {
+    std::array<bool, 16> span_written{};
+    for (int span_round = 0; span_round < 8; ++span_round) {
+        std::array<int, 16> wide_draw{};
+        std::fill(wide_draw.begin(), wide_draw.end(), 0x0D'0D'0D'0D);
+        QVERIFY(sak::generateSecureRandom(std::span<int>(wide_draw)));
+        for (std::size_t i = 0; i < wide_draw.size(); ++i) {
+            if (wide_draw[i] != 0x0D'0D'0D'0D) {
+                span_written[i] = true;
+            }
+        }
+    }
+    for (std::size_t i = 0; i < span_written.size(); ++i) {
+        QVERIFY2(
+            span_written[i],
+            qPrintable(
+                QStringLiteral("span element %1 was never randomized").arg(static_cast<int>(i))));
+    }
+}
+
+}  // namespace
+
 void SecureMemoryTests::secureRandom_fillsBuffer() {
     std::array<unsigned char, 32> buffer{};
     bool result = sak::generateSecureRandom(buffer.data(), buffer.size());
@@ -319,6 +381,8 @@ void SecureMemoryTests::secureRandom_fillsBuffer() {
         }
     }
     QVERIFY2(!allZero, "Random buffer should not be all zeros");
+
+    verifySpanOverloadRandomizesEveryElement();
 }
 
 void SecureMemoryTests::secureRandom_differentEachCall() {
@@ -365,6 +429,17 @@ void SecureMemoryTests::secureCompare_notEqual() {
     std::array<int, 8> wide_c = {1, 2, 3, 4, 5, 6, 7, 8};
     QVERIFY(!sak::secureCompare(std::span<const int>(wide_a), std::span<const int>(wide_b)));
     QVERIFY(sak::secureCompare(std::span<const int>(wide_a), std::span<const int>(wide_c)));
+
+    // The size-overflow guard is the second of secureCompare's two refusals and has no coverage:
+    // only the length-mismatch arm is ever reached. A count whose byte size wraps must be refused
+    // OUTRIGHT -- with the guard gone the wrapped byte count is 0, the compare loop never runs and
+    // two spans are reported EQUAL without a single byte being read. Equal sizes are used so the
+    // length arm at the top cannot be what produces the refusal. No element is dereferenced on
+    // either path.
+    const std::size_t wrapping_count = std::numeric_limits<std::size_t>::max() / sizeof(int) + 1;
+    QVERIFY2(!sak::secureCompare(std::span<const int>(wide_a.data(), wrapping_count),
+                                 std::span<const int>(wide_c.data(), wrapping_count)),
+             "secureCompare must refuse a length whose byte count would wrap");
 }
 
 void SecureMemoryTests::secureCompare_differentLengths() {
@@ -377,6 +452,13 @@ void SecureMemoryTests::secureCompare_differentLengths() {
 void SecureMemoryTests::secureCompare_stringView() {
     QVERIFY(sak::secureCompare(std::string_view("hello"), std::string_view("hello")));
     QVERIFY(!sak::secureCompare(std::string_view("hello"), std::string_view("world")));
+
+    // Every inequality above differs at index 0, so the loop bound is never exercised: a compare
+    // that looked at only the first byte -- or that stopped one byte short of the end -- returns
+    // the same three verdicts. Pin both ends of the bound with pairs that differ ONLY at the last
+    // byte and ONLY at an interior byte.
+    QVERIFY(!sak::secureCompare(std::string_view("hello"), std::string_view("hellO")));
+    QVERIFY(!sak::secureCompare(std::string_view("hello"), std::string_view("heLlo")));
     QVERIFY(!sak::secureCompare(std::string_view("short"), std::string_view("longer_string")));
 }
 

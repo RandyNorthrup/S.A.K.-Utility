@@ -114,6 +114,27 @@ private Q_SLOTS:
         QVERIFY(!worker.isRunning());
         QVERIFY(!worker.isPaused());
 
+        // The not-running arm of the pause/resume/cancel guards
+        // (app_installation_worker.cpp:326, 337, 353) has no test anywhere, yet the
+        // cancel() one fires in production on a real path every time: the destructor
+        // calls cancel() unconditionally (cpp:198) and the panel cancels a worker that
+        // may already have finished (app_installation_panel.cpp:102). All three must be
+        // silent no-ops on a worker that is not running -- no state flip, no stray
+        // signal, in particular no migrationCancelled emitted out of a destructor.
+        // Fully deterministic: no worker thread exists yet, so nothing can race these.
+        QSignalSpy pausedSpy(&worker, &sak::AppInstallationWorker::migrationPaused);
+        QSignalSpy resumedSpy(&worker, &sak::AppInstallationWorker::migrationResumed);
+        QSignalSpy cancelledSpy(&worker, &sak::AppInstallationWorker::migrationCancelled);
+        worker.pause();
+        QVERIFY(!worker.isPaused());
+        QCOMPARE(pausedSpy.count(), 0);
+        worker.resume();
+        QVERIFY(!worker.isPaused());
+        QCOMPARE(resumedSpy.count(), 0);
+        worker.cancel();
+        QVERIFY(!worker.isRunning());
+        QCOMPARE(cancelledSpy.count(), 0);
+
         auto stats = worker.getStats();
         QCOMPARE(stats.total, 0);
         QCOMPARE(stats.pending, 0);
@@ -158,6 +179,23 @@ private Q_SLOTS:
         worker.cancel();
 
         QCOMPARE(cancelSpy.count(), 1);
+
+        // The signal was the ONLY thing this test checked, despite its name: a cancel()
+        // that emitted without draining the queue and marking those jobs Cancelled
+        // (app_installation_worker.cpp:360-368) shipped green. That drain is what the
+        // panel's progress readout depends on -- it counts finished work as
+        // success+failed+skipped+cancelled (app_installation_panel.cpp:466) -- and what
+        // stamps "cancelled" onto the report entries (cpp:365). At concurrency 1 at most
+        // one job can have left the queue before cancel() took the mutex: a job cycle
+        // costs a full registry+AppX scan (cpp:588) and then a 5s backoff sleep that
+        // blocks processQueue (cpp:509). So at least three of the four are provably
+        // marked -- a bound that holds however the threads interleave, and one a
+        // signal-only cancel() cannot satisfy: it leaves all four Queued, cancelled == 0.
+        const auto stats = worker.getStats();
+        QCOMPARE(stats.total, 4);
+        QVERIFY2(stats.cancelled >= 3,
+                 qPrintable(QStringLiteral("cancel() marked only %1 of 4 jobs cancelled")
+                                .arg(stats.cancelled)));
 
         // Worker destructor will wait for processQueue thread to finish
     }
@@ -211,22 +249,59 @@ private Q_SLOTS:
         sak::AppInstallationWorker worker(chocoMgr);
 
         auto report = std::make_shared<sak::MigrationReport>();
-        sak::MigrationReport::MigrationEntry entry;
-        entry.app_name = "LockedApp";
-        entry.choco_package = "locked-app";
-        entry.selected = true;
-        entry.available = true;
-        entry.version_lock = true;
-        entry.locked_version = "1.2.3";
-        report->addEntry(entry);
+        sak::MigrationReport::MigrationEntry locked;
+        locked.app_name = "LockedApp";
+        locked.choco_package = "locked-app";
+        locked.selected = true;
+        locked.available = true;
+        locked.version_lock = true;
+        locked.locked_version = "1.2.3";
+        report->addEntry(locked);
+
+        // A rejected SELECTED entry sits BETWEEN the two installable ones so a job's
+        // entryIndex can no longer be confused with its ordinal in m_jobs: buildJobQueue
+        // passes the ENTRY index (app_installation_worker.cpp:287) and cancel() writes
+        // report status through it (cpp:365).
+        sak::MigrationReport::MigrationEntry rejected;
+        rejected.app_name = "RejectedApp";
+        rejected.choco_package = "rejected-app";
+        rejected.selected = true;
+        rejected.available = false;
+        report->addEntry(rejected);
+
+        // version_lock false with a stale locked_version: the OTHER arm of makeJob's
+        // ternary (app_installation_worker.cpp:318), which no fixture reached because
+        // every unlocked entry in this file also has an empty locked_version.
+        sak::MigrationReport::MigrationEntry unlocked;
+        unlocked.app_name = "UnlockedApp";
+        unlocked.choco_package = "unlocked-app";
+        unlocked.selected = true;
+        unlocked.available = true;
+        unlocked.version_lock = false;
+        unlocked.locked_version = "9.9.9";
+        report->addEntry(unlocked);
 
         int jobCount = worker.startMigration(report, 0);
-        QCOMPARE(jobCount, 1);
+        QCOMPARE(jobCount, 2);
 
         auto jobs = worker.getJobs();
-        QCOMPARE(jobs.size(), 1);
-        QCOMPARE(jobs[0].packageId, "locked-app");
-        QCOMPARE(jobs[0].version, "1.2.3");
+        QCOMPARE(jobs.size(), 2);
+        // maxConcurrent==0 never launches a job, so Queued is deterministic here.
+        const int queued_status = static_cast<int>(sak::MigrationStatus::Queued);
+        QCOMPARE(jobs[0].appName, QStringLiteral("LockedApp"));
+        QCOMPARE(jobs[0].packageId, QStringLiteral("locked-app"));
+        QCOMPARE(jobs[0].version, QStringLiteral("1.2.3"));
+        QCOMPARE(jobs[0].entryIndex, 0);
+        QCOMPARE(static_cast<int>(jobs[0].status), queued_status);
+        QVERIFY(jobs[0].errorMessage.isEmpty());
+        QCOMPARE(jobs[0].retryCount, 0);
+
+        QCOMPARE(jobs[1].appName, QStringLiteral("UnlockedApp"));
+        QCOMPARE(jobs[1].packageId, QStringLiteral("unlocked-app"));
+        QVERIFY2(jobs[1].version.isEmpty(),
+                 "an unlocked entry must not inherit a stale locked_version");
+        QCOMPARE(jobs[1].entryIndex, 2);
+        QCOMPARE(static_cast<int>(jobs[1].status), queued_status);
 
         worker.cancel();
     }
@@ -290,6 +365,23 @@ private Q_SLOTS:
         // working perfectly. QTRY_COMPARE succeeds immediately if the signal has
         // already arrived, and polls with an event loop if it has not.
         QTRY_COMPARE(doneSpy.count(), 1);
+
+        // The payload is the whole point of the signal and nothing asserted it. A dry
+        // run must report the 3 jobs it queued AND fold back the one
+        // selected-but-unavailable entry it declined to queue
+        // (app_installation_worker.cpp:424-425), so a completed migration accounts for
+        // all 4 requested items rather than only the installable subset. total and
+        // skipped are what the panel renders (app_installation_panel.cpp:408-418,
+        // 465-469), so dropping the fold misreports the run to the user as 3-of-3.
+        const auto done = doneSpy.at(0).at(0).value<sak::AppInstallationWorker::Stats>();
+        QCOMPARE(done.total, 4);
+        QCOMPARE(done.queued, 3);
+        QCOMPARE(done.skipped, 1);
+        QCOMPARE(done.pending, 0);
+        QCOMPARE(done.installing, 0);
+        QCOMPARE(done.success, 0);
+        QCOMPARE(done.failed, 0);
+        QCOMPARE(done.cancelled, 0);
     }
 
     /// migrationSkipReason (CODEX REVIEW 3 #6): a SELECTED entry that cannot be
@@ -329,8 +421,23 @@ private Q_SLOTS:
         auto chocoMgr = std::make_shared<sak::ChocolateyManager>();
         sak::AppInstallationWorker worker(chocoMgr);
 
+        QSignalSpy progressSpy(&worker, &sak::AppInstallationWorker::jobProgress);
+
         auto report = createTestReport(1, 1, 0, 1);  // 1 valid, 1 unavailable, 1 no-package
         worker.startMigration(report, 0);
+
+        // Each rejected SELECTED entry is also NOTIFIED, in entry order, with the "Skipped: "
+        // prefix and the reason -- a path nothing asserted, so the notify loop could be deleted
+        // with the suite green and the user's log would never mention the dropped apps.
+        // maxConcurrent==0 launches no install, so these are the ONLY jobProgress emissions and
+        // the catalog is exact and ordered, not a membership floor.
+        QCOMPARE(progressSpy.count(), 2);
+        QCOMPARE(progressSpy.at(0).at(0).toInt(), 1);
+        QCOMPARE(progressSpy.at(0).at(1).toString(),
+                 QStringLiteral("Skipped: Package not available in the configured feed"));
+        QCOMPARE(progressSpy.at(1).at(0).toInt(), 2);
+        QCOMPARE(progressSpy.at(1).at(1).toString(),
+                 QStringLiteral("Skipped: No matched Chocolatey package"));
 
         int skipped = 0;
         const auto& entries = report->getEntries();
@@ -347,6 +454,21 @@ private Q_SLOTS:
         }
         QCOMPARE(skipped, 2);  // the unavailable + the no-package selected entries
 
+        // The report side was checked but the WORKER side was not: entries rejected at
+        // queue construction never become jobs, so getStats() has to fold them back into
+        // total/skipped (app_installation_worker.cpp:424-425) or a finished migration
+        // silently under-reports the work it was asked to do -- total and skipped are
+        // exactly what the panel renders (app_installation_panel.cpp:408-418, 465-469).
+        // maxConcurrent==0 dequeues nothing, so 1 queued + 2 rejected is exact, not a
+        // floor.
+        const auto stats = worker.getStats();
+        QCOMPARE(stats.total, 3);
+        QCOMPARE(stats.skipped, 2);
+        QCOMPARE(stats.queued, 1);
+        QCOMPARE(stats.success, 0);
+        QCOMPARE(stats.failed, 0);
+        QCOMPARE(stats.cancelled, 0);
+
         worker.cancel();
     }
 
@@ -361,6 +483,14 @@ private Q_SLOTS:
         // Embedded-token lookalikes must NOT match.
         QVERIFY(!W::nameIndicatesApp("Notepadster Deluxe", "Notepad"));
         QVERIFY(!W::nameIndicatesApp("SuperGitHubTool", "Git"));
+        // Every negative above is rejected by the TRAILING lookahead, so the leading
+        // (?<![A-Za-z0-9]) half of the whole-word guard (app_installation_worker.cpp:719)
+        // was never the reason any of them failed and could be deleted with the suite
+        // still green. These put the token at the END of the candidate, where only the
+        // lookbehind can reject it -- one for the letter half of the class, one for the
+        // digit half, so narrowing it to [A-Za-z] is caught too.
+        QVERIFY(!W::nameIndicatesApp("MyNotepad", "Notepad"));
+        QVERIFY(!W::nameIndicatesApp("Java8Update", "Update"));
         // Empty operands fail closed.
         QVERIFY(!W::nameIndicatesApp("", "Notepad"));
         QVERIFY(!W::nameIndicatesApp("Notepad", ""));
@@ -396,6 +526,24 @@ private Q_SLOTS:
         const int jobCount = worker.startMigration(report, 0);
         QCOMPARE(jobCount, 0);  // refuses to start with a null manager
         QVERIFY(!worker.isRunning());
+        // The refusal must land BEFORE any queue is built (the guard at
+        // app_installation_worker.cpp:227-230 sits ahead of buildJobQueue at cpp:249):
+        // returning 0 while having already populated m_jobs leaves phantom jobs that
+        // getStats().total reports (cpp:393) straight into the panel's progress label,
+        // and that a later start would inherit.
+        QVERIFY(worker.getJobs().isEmpty());
+        QCOMPARE(worker.getStats().total, 0);
+
+        // The OTHER fail-closed arm of startMigration -- a null report
+        // (app_installation_worker.cpp:223-226) -- had no test at all; delete it and
+        // buildJobQueue null-derefs m_report at cpp:269. It is checked on a FRESH worker
+        // holding a LIVE manager so neither the null-manager guard nor the
+        // already-running guard can be what returns 0 here.
+        auto liveMgr = std::make_shared<sak::ChocolateyManager>();
+        sak::AppInstallationWorker liveWorker(liveMgr);
+        QCOMPARE(liveWorker.startMigration(nullptr, 0), 0);
+        QVERIFY(!liveWorker.isRunning());
+        QVERIFY(liveWorker.getJobs().isEmpty());
     }
 };
 

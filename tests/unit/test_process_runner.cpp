@@ -60,6 +60,16 @@ void ProcessRunnerTests::runProcess_echoCommand() {
     QCOMPARE(result.exit_code, 0);
     QVERIFY(!result.timed_out);
     QVERIFY(!result.cancelled);
+    QVERIFY(result.completedSuccessfully());
+    QCOMPARE(result.std_out.trimmed(), QStringLiteral("Hello World"));
+    // The stream split is real: appendOutput routes each drained chunk to exactly ONE buffer
+    // (process_runner.cpp:58), so a child that wrote only to stdout leaves stderr EMPTY. A
+    // mutant that mirrored chunks into both buffers passes every other assertion in this file
+    // (runProcess_stderrCapture's child writes only to stderr), while ~20 callers that treat
+    // any stderr text as a failure -- e.g. reset_network_action.cpp:68 -- would break.
+    QVERIFY2(result.std_err.isEmpty(), qPrintable(result.std_err));
+    // Nothing was dropped, so the truncation flag must stay clear (process_runner.cpp:59-61).
+    QVERIFY(!result.output_truncated);
     QCOMPARE(result.std_out.trimmed(), QStringLiteral("Hello World"));
 }
 
@@ -93,7 +103,15 @@ void ProcessRunnerTests::runProcess_timeout() {
     // Start a long-running process with a short timeout
     auto result = sak::runProcess("cmd.exe", {"/C", "ping -n 3 127.0.0.1"}, 1000);
 
+    // The timeout arm (process_runner.cpp:143-148) must be distinguishable from the cancel arm
+    // and from a normal finish: it sets timed_out and NOT cancelled, appends the timeout marker
+    // to stderr, and returns on the early path that never overwrites the fail-closed -1.
     QVERIFY(result.timed_out);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY2(result.std_err.contains(QStringLiteral("Process timed out")),
+             qPrintable(result.std_err));
+    QVERIFY(!result.completedSuccessfully());
 }
 
 void ProcessRunnerTests::runProcess_timeoutKillsChildTree() {
@@ -134,6 +152,37 @@ void ProcessRunnerTests::runProcess_cancellation() {
                                   {"/C", "ping -n 3 127.0.0.1"},
                                   10'000,
                                   [&shouldCancel]() -> bool { return shouldCancel; });
+
+    // A cancel already set BEFORE the launch must make runProcessInternal refuse to START the
+    // child at all (process_runner.cpp:171-174), not kill it after the fact -- so it returns
+    // the fail-closed -1 with nothing ever captured.
+    QVERIFY(result.cancelled);
+    QVERIFY(!result.timed_out);
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY(!result.completedSuccessfully());
+    QVERIFY2(result.std_out.isEmpty(), qPrintable(result.std_out));
+    QVERIFY2(result.std_err.isEmpty(), qPrintable(result.std_err));
+
+    // ...and prove it through the one channel that fires for every process that REALLY
+    // launches (process_runner.cpp:180-182): with the pre-launch guard deleted, the in-loop
+    // cancel check sets the very same `cancelled` flag AFTER the child has already started.
+    bool started = false;
+    bool cancelAtOnce = true;
+    sak::ProcessStreamingRequest request;
+    request.program = QStringLiteral("cmd.exe");
+    request.args = {QStringLiteral("/C"), QStringLiteral("ping -n 3 127.0.0.1")};
+    request.timeout_ms = 10'000;
+    request.should_cancel = [&cancelAtOnce]() -> bool {
+        return cancelAtOnce;
+    };
+    request.on_started = [&started](qint64) {
+        started = true;
+    };
+
+    const auto streamed = sak::runProcessStreaming(request);
+    QVERIFY(streamed.cancelled);
+    QVERIFY2(!started, "a request cancelled before launch must never start the child process");
+    QCOMPARE(streamed.exit_code, -1);
 
     QVERIFY(result.cancelled);
 }
@@ -200,7 +249,57 @@ void ProcessRunnerTests::runPowerShell_withNoProfile() {
                                      true);  // bypass_policy
 
     QCOMPARE(result.exit_code, 0);
-    QVERIFY(!result.std_out.trimmed().isEmpty());
+    QVERIFY(!result.timed_out);
+    // $PSVersionTable.PSVersion.Major is a bare integer on every Windows PowerShell; pinning the
+    // shape (not the version) stays machine-invariant while proving the script actually ran.
+    QVERIFY2(
+        QRegularExpression(QStringLiteral("^\\d+$")).match(result.std_out.trimmed()).hasMatch(),
+        qPrintable(result.std_out));
+
+    // The flags this test is NAMED for were never observed. Capture the exact argv the launcher
+    // builds and pin it as an ORDERED catalog for BOTH arms of each switch, so a dropped
+    // -NoProfile (the user's profile then runs inside an elevated launch), a dropped
+    // -ExecutionPolicy Bypass, a reordering that puts -Command first, or a flag emitted when the
+    // caller asked for it OFF is all caught.
+    QStringList seen;
+    sak::ScopedProcessFaultInjector guard(
+        [&seen](const QString&, const QStringList& args) -> std::optional<sak::ProcessResult> {
+            seen = args;
+            sak::ProcessResult injected;
+            injected.exit_code = 3;  // distinctive: proves the injector, not a real child, ran
+            return injected;
+        });
+
+    seen.clear();
+    QCOMPARE(sak::runPowerShell(QStringLiteral("Write-Output 1"), 10'000, true, true).exit_code, 3);
+    QCOMPARE(seen,
+             (QStringList{QStringLiteral("-NoProfile"),
+                          QStringLiteral("-ExecutionPolicy"),
+                          QStringLiteral("Bypass"),
+                          QStringLiteral("-Command"),
+                          QStringLiteral("Write-Output 1")}));
+
+    seen.clear();
+    QCOMPARE(sak::runPowerShell(QStringLiteral("Write-Output 1"), 10'000, false, false).exit_code,
+             3);
+    QCOMPARE(seen, (QStringList{QStringLiteral("-Command"), QStringLiteral("Write-Output 1")}));
+
+    seen.clear();
+    QCOMPARE(sak::runPowerShell(QStringLiteral("Write-Output 1"), 10'000, true, false).exit_code,
+             3);
+    QCOMPARE(seen,
+             (QStringList{QStringLiteral("-NoProfile"),
+                          QStringLiteral("-Command"),
+                          QStringLiteral("Write-Output 1")}));
+
+    seen.clear();
+    QCOMPARE(sak::runPowerShell(QStringLiteral("Write-Output 1"), 10'000, false, true).exit_code,
+             3);
+    QCOMPARE(seen,
+             (QStringList{QStringLiteral("-ExecutionPolicy"),
+                          QStringLiteral("Bypass"),
+                          QStringLiteral("-Command"),
+                          QStringLiteral("Write-Output 1")}));
 }
 
 void ProcessRunnerTests::runPowerShell_scriptError() {
@@ -238,6 +337,30 @@ void ProcessRunnerTests::appendCappedOutput_boundsAccumulation() {
     QString empty;
     QVERIFY(sak::appendCappedOutput(empty, QStringLiteral("x"), 0));
     QVERIFY(empty.isEmpty());
+
+    // An EMPTY chunk never reports a drop -- not against a FULL buffer, not against a zero cap.
+    // The empty-chunk check (process_runner.cpp:210-212) must come first; otherwise a harmless
+    // empty read from a saturated buffer sets output_truncated and the result claims output was
+    // lost. The case above uses a 5-of-10 buffer, which is not full, so it cannot see this.
+    QVERIFY(!sak::appendCappedOutput(buf, QString(), 10));
+    QCOMPARE(buf, QStringLiteral("helloworld"));
+    QString none;
+    QVERIFY(!sak::appendCappedOutput(none, QString(), 0));
+    QVERIFY(none.isEmpty());
+
+    // The exact-fit boundary: a chunk that exactly fills the remaining room is appended whole
+    // and reports NO drop (process_runner.cpp:217 compares <=, not <); the very next character
+    // does. Without this, `<` ships green -- identical content, but a spurious truncation
+    // report that propagates to ProcessResult::output_truncated.
+    QString exact;
+    QVERIFY(!sak::appendCappedOutput(exact, QStringLiteral("12345"), 5));
+    QCOMPARE(exact, QStringLiteral("12345"));
+    QVERIFY(sak::appendCappedOutput(exact, QStringLiteral("6"), 5));
+    QCOMPARE(exact, QStringLiteral("12345"));
+    QString split;
+    QVERIFY(!sak::appendCappedOutput(split, QStringLiteral("ab"), 5));
+    QVERIFY(!sak::appendCappedOutput(split, QStringLiteral("cde"), 5));
+    QCOMPARE(split, QStringLiteral("abcde"));
 }
 
 // B5-05: reporting an operation's outcome must treat a cancelled or timed-out or
@@ -264,6 +387,28 @@ void ProcessRunnerTests::completedSuccessfully_strictOutcome() {
     cancelled.cancelled = true;
     QVERIFY(cancelled.succeeded());  // documents the weaker check
     QVERIFY(!cancelled.completedSuccessfully());
+
+    // The crash arm: a child that CRASHED but still reports exit_code 0 must be rejected by
+    // BOTH predicates via exit_status (1 == QProcess::CrashExit, process_runner.h:21-22).
+    // Nothing above sets exit_status, so dropping that term from either predicate is invisible.
+    sak::ProcessResult crashed;
+    crashed.exit_code = 0;
+    crashed.exit_status = 1;
+    QVERIFY(!crashed.succeeded());
+    QVERIFY(!crashed.completedSuccessfully());
+
+    // ...and the crash term is not over-broad: a normal exit really is 0.
+    QCOMPARE(clean.exit_status, 0);
+
+    // A ProcessResult that was never run is a failure under both, because exit_code defaults
+    // to -1 rather than 0 (process_runner.h:17-20).
+    sak::ProcessResult never;
+    QCOMPARE(never.exit_code, -1);
+    QCOMPARE(never.exit_status, 0);
+    QVERIFY(!never.timed_out);
+    QVERIFY(!never.cancelled);
+    QVERIFY(!never.succeeded());
+    QVERIFY(!never.completedSuccessfully());
 }
 
 // CODEX_REVIEW_4 H14: an elevated process must launch system tools by their
@@ -285,6 +430,28 @@ void ProcessRunnerTests::system32Path_qualifiesUnderSystem32() {
                          Qt::CaseInsensitive),
              qPrintable(ps));
     QVERIFY2(QFileInfo::exists(ps), qPrintable(ps));
+
+    // The REFUSAL arm nothing exercised (process_runner.cpp:280-283, gating 288-290): a name
+    // that could escape the resolved system directory is rejected outright -- empty return, no
+    // join, no bare-name fallback -- so the caller must fail closed. Without this, dropping the
+    // guard leaves every assertion above green while "../../Temp/netsh.exe" cleanPaths to
+    // C:/Temp/netsh.exe and is handed to an elevated CreateProcess.
+    QVERIFY(sak::system32Path(QString()).isEmpty());
+    QVERIFY(sak::system32Path(QStringLiteral("..")).isEmpty());
+    QVERIFY(sak::system32Path(QStringLiteral("../../Temp/netsh.exe")).isEmpty());
+    QVERIFY(sak::system32Path(QStringLiteral("..\\Temp\\netsh.exe")).isEmpty());
+    QVERIFY(sak::system32Path(QStringLiteral("C:/Temp/netsh.exe")).isEmpty());
+
+    // The Windows-directory sibling (process_runner.cpp:303-318) resolves and refuses on
+    // exactly the same terms, and had no coverage anywhere in the suite.
+    const QString explorer = sak::windowsDirPath(QStringLiteral("explorer.exe"));
+    QVERIFY2(QDir::isAbsolutePath(explorer), qPrintable(explorer));
+    QVERIFY2(explorer.endsWith(QStringLiteral("/explorer.exe"), Qt::CaseInsensitive),
+             qPrintable(explorer));
+    QVERIFY2(QFileInfo::exists(explorer), qPrintable(explorer));
+    QVERIFY(sak::windowsDirPath(QString()).isEmpty());
+    QVERIFY(sak::windowsDirPath(QStringLiteral("../../Temp/explorer.exe")).isEmpty());
+    QVERIFY(sak::windowsDirPath(QStringLiteral("C:/Temp/explorer.exe")).isEmpty());
 #endif
 }
 
@@ -350,8 +517,20 @@ void ProcessRunnerTests::processFaultInjector_substitutesResultForEveryLauncher(
     QCOMPARE(shell.std_err, QStringLiteral("INJECTED-FAILURE"));
 
     QCOMPARE(calls, 2);
+#ifdef Q_OS_WIN
+    // R5-P7-22: the launcher must hand the runner the ABSOLUTE System32 interpreter
+    // (process_runner.cpp:263 + 272). The bare string "powershell.exe" ALSO satisfies
+    // endsWith("powershell.exe"), so that check alone is green for exactly the hijackable
+    // launch this contract exists to forbid.
+    QVERIFY2(QDir::isAbsolutePath(lastProgram), qPrintable(lastProgram));
+    QVERIFY2(lastProgram.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe"),
+                                  Qt::CaseInsensitive),
+             qPrintable(lastProgram));
+    QCOMPARE(lastProgram, sak::systemPowerShellPath());
+#else
     QVERIFY2(lastProgram.endsWith(QStringLiteral("powershell.exe"), Qt::CaseInsensitive),
              qPrintable(lastProgram));
+#endif
 }
 
 // The injector must not leak and must be a controllable OVERLAY, not a permanent break of
@@ -372,6 +551,32 @@ void ProcessRunnerTests::processFaultInjector_scopeRestoresRealLaunch() {
     const auto real = sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000);
     QCOMPARE(real.exit_code, 0);
     QVERIFY(real.succeeded());
+
+    // Nesting: the guard restores the PREVIOUS injector (process_runner.cpp:362-369), not
+    // merely "none". Every check above runs with an empty outer state, so a destructor that
+    // simply cleared the global would pass them all while silently disarming an enclosing
+    // guard -- the enclosing test's remaining launches would then spawn REAL processes.
+    {
+        sak::ScopedProcessFaultInjector outer(
+            [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+                sak::ProcessResult injected;
+                injected.exit_code = 11;
+                return injected;
+            });
+        QCOMPARE(sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000).exit_code, 11);
+        {
+            sak::ScopedProcessFaultInjector inner(
+                [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+                    sak::ProcessResult injected;
+                    injected.exit_code = 22;
+                    return injected;
+                });
+            QCOMPARE(sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000).exit_code, 22);
+        }
+        // inner gone -> outer is back, NOT "no injector" (which would give the real 0).
+        QCOMPARE(sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000).exit_code, 11);
+    }
+    QCOMPARE(sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000).exit_code, 0);
 
     // An armed injector that returns nullopt must let the real launch through.
     sak::ScopedProcessFaultInjector passthrough(

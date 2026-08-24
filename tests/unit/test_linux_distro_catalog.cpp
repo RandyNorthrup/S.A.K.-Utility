@@ -97,6 +97,20 @@ void TestLinuxDistroCatalog::testAllDistrosHavePositiveSize() {
         QVERIFY2(d.approximateSize > 0,
                  qPrintable("Distro '" + d.name + "' has non-positive size"));
     }
+
+    // '> 0' is a floor a unit-confused helper walks straight through. sizeFromMiB()
+    // (linux_distro_catalog.cpp:55-57) multiplies by sak::kBytesPerMB; swapping that one token
+    // for the adjacent sak::kBytesPerKB (layout_constants.h:21-22) makes every MiB-derived entry
+    // 1024x too small -- still strictly positive, so this loop and the sibling file's '> 0'
+    // sweep (test_linux_iso_downloader.cpp:167) both stay green, while the only exact size pin
+    // anywhere (ubuntu-desktop, test_linux_iso_downloader.cpp:245) goes through sizeFromGiB and
+    // is untouched. The picker would then advertise "530.0 KB" for a 530 MiB ISO
+    // (linux_iso_download_dialog.cpp:343-344). Pin the four MiB-derived entries exactly --
+    // integer arithmetic, no float rounding.
+    QCOMPARE(m_catalog->distroById("clonezilla").approximateSize, Q_INT64_C(555'745'280));
+    QCOMPARE(m_catalog->distroById("gparted-live").approximateSize, Q_INT64_C(680'525'824));
+    QCOMPARE(m_catalog->distroById("shredos").approximateSize, Q_INT64_C(943'718'400));
+    QCOMPARE(m_catalog->distroById("ventoy").approximateSize, Q_INT64_C(205'520'896));
 }
 
 void TestLinuxDistroCatalog::testNoDuplicateIds() {
@@ -261,8 +275,23 @@ void TestLinuxDistroCatalog::testResolveGitHubReleaseBranch() {
     // this fallback and returns empty.
     const QString expectedVentoyName = "ventoy-" + ventoy.version + "-livecd.iso";
     QCOMPARE(m_catalog->resolveFileName(ventoy), expectedVentoyName);
-    // shredos ships no static filename template, so its GitHubRelease filename fails closed.
+    // Two DISTINCT arms of resolveFileName's GitHubRelease branch both yield empty for shredos --
+    // the cached-asset MISS and the empty static template -- so a bare isEmpty() here is equally
+    // satisfied when the cached-asset arm is deleted outright. That arm is otherwise dead in the
+    // whole suite. Deleting it would save a freshly resolved asset under the STALE template name,
+    // so the on-disk name and the checksum-record lookup diverge. Pin the precondition that makes
+    // the template arm operative here, then prove the cached-asset arm is LIVE on a locally
+    // seeded catalog: shredos ships no fileName template, so the basename can ONLY come from the
+    // cached URL's path.
+    QVERIFY2(shredos.fileName.isEmpty(), "shredos ships no static filename template");
     QVERIFY(m_catalog->resolveFileName(shredos).isEmpty());
+
+    LinuxDistroCatalog seeded;
+    const QString shredosAsset = QStringLiteral(
+        "https://github.com/PartialVolume/shredos.x86_64/releases/download/"
+        "v2025.11_30_x86-64_0.41/shredos-2025.11_30_x86-64_0.41.iso");
+    seeded.m_githubAssetUrls[shredos.id] = shredosAsset;  // friend access
+    QCOMPARE(seeded.resolveFileName(shredos), QStringLiteral("shredos-2025.11_30_x86-64_0.41.iso"));
 }
 
 void TestLinuxDistroCatalog::testResolveGitHubReleaseCachedAsset() {
@@ -315,6 +344,36 @@ void TestLinuxDistroCatalog::testFilenameFromChecksumsKali() {
                          "  kali-linux-2026.2-installer-arm64.iso\n" + kHash +
                          "  kali-linux-2026.2-installer-amd64.iso\n";
     QCOMPARE(LinuxDistroCatalog::filenameFromChecksums(sums, kaliPattern()),
+             QStringLiteral("kali-linux-2026.2-installer-amd64.iso"));
+
+    // Every pattern this file feeds the parser is ^...$-anchored, so production's OWN full-match
+    // guard (linux_distro_catalog.cpp:608-609) never decides anything: weakening it to a bare
+    // `if (match.hasMatch())` leaves the whole suite green. (The catalogued mutants flip == to
+    // != , i.e. always-FALSE; the always-TRUE direction that DELETES the defense is the one
+    // nothing covers.) Drive it with an UNANCHORED pattern -- the case the guard exists for --
+    // and prove a substring hit is refused at either end, with a positive control showing the
+    // pattern itself DOES match, so only the full-match guard can be doing the refusing.
+    const QString unanchored = QStringLiteral(R"(kali-linux-[0-9][0-9.]*-installer-amd64\.iso)");
+    QCOMPARE(LinuxDistroCatalog::filenameFromChecksums(
+                 kHash + "  kali-linux-2026.2-installer-amd64.iso\n", unanchored),
+             QStringLiteral("kali-linux-2026.2-installer-amd64.iso"));
+    QVERIFY2(LinuxDistroCatalog::filenameFromChecksums(
+                 kHash + "  mirror-kali-linux-2026.2-installer-amd64.iso\n", unanchored)
+                 .isEmpty(),
+             "a prefixed name must be refused: the match does not span the whole filename");
+    QVERIFY2(LinuxDistroCatalog::filenameFromChecksums(
+                 kHash + "  kali-linux-2026.2-installer-amd64.iso.bin\n", unanchored)
+                 .isEmpty(),
+             "a suffixed name must be refused: the match does not span the whole filename");
+
+    // WHICH record wins is a documented contract (linux_distro_catalog.h:151 "returns the first
+    // remaining filename that FULLY matches"): with exactly one matching record the fixture above
+    // cannot tell first-wins from last-wins, so moving the in-loop `return filename;` (:610) to a
+    // last-wins accumulate would silently pick a different image with no test noticing.
+    QCOMPARE(LinuxDistroCatalog::filenameFromChecksums(
+                 kHash + "  kali-linux-2026.2-installer-amd64.iso\n" + kHash +
+                     "  kali-linux-2026.3-installer-amd64.iso\n",
+                 kaliPattern()),
              QStringLiteral("kali-linux-2026.2-installer-amd64.iso"));
 }
 
@@ -398,7 +457,23 @@ void TestLinuxDistroCatalog::testCancelAllWithNoPendingIsSafe() {
     // finished()-driven removeOne() cannot invalidate the iteration. With no pending
     // replies it is a safe no-op; the catalog stays usable afterward.
     m_catalog->cancelAll();
-    QVERIFY(!m_catalog->allDistros().isEmpty());
+    // !isEmpty() is a floor that survives cancelAll() wiping state it has no business touching:
+    // it proves only that m_distros is non-empty. LinuxISODownloader::cancel() calls this on
+    // EVERY user cancel, and cancelAll deliberately touches ONLY m_pendingReplies. A "cancel
+    // everything" edit that also cleared m_distroIndex would leave allDistros() non-empty while
+    // every distroById() returned the not-found sentinel; one that cleared m_githubAssetUrls
+    // would leave a user who cancels one download and restarts a GitHub-backed one with an empty
+    // download URL until another network version check. Pin the catalog, the index, and the
+    // resolved-asset cache.
+    QCOMPARE(m_catalog->allDistros().size(), 12);
+    QCOMPARE(m_catalog->distroById("ubuntu-desktop").id, QStringLiteral("ubuntu-desktop"));
+
+    LinuxDistroCatalog seeded;
+    const QString asset = QStringLiteral(
+        "https://github.com/ventoy/Ventoy/releases/download/v1.1.12/ventoy-1.1.12-livecd.iso");
+    seeded.m_githubAssetUrls[QStringLiteral("ventoy")] = asset;  // friend access
+    seeded.cancelAll();
+    QCOMPARE(seeded.resolveDownloadUrl(seeded.distroById("ventoy")), asset);
     m_catalog->cancelAll();  // idempotent
 }
 

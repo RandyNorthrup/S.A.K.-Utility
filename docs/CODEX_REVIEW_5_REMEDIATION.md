@@ -5024,6 +5024,40 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b86 (gated 249/249): 44 weak assertions pinned across six
+    more already-swept files (smart_file_filter 13, process_runner 9, app_installation_worker 8,
+    secure_memory 5, file_hash 5, linux_distro_catalog 4).
+    FOUR TESTS NEVER TESTED THE CALLER'S RULES AT ALL. SmartFilter's constructor already seeds the
+    defaults, so calling initializeDefaults() AFTER assigning exclude_patterns / exclude_folders
+    REPLACES the caller's list with the built-in one -- and four tests did exactly that, then
+    asserted against names the built-in list happens to contain. Every one was passing on the
+    default rules while the custom rules under test were discarded. The calls are gone, every
+    entry of the caller's list is now checked (not just the first), and the pattern case pins
+    getExclusionReason so it is the surviving PATTERN that excluded the file rather than one of
+    shouldExcludeFile's four sibling arms. The nested-folder case also moved off a "Cache" fixture
+    (isInCacheDirectory fires on any path containing "/cache/", so it proved nothing about the
+    relative-path walk) and onto an ANCESTOR component, which is the only way to reach that walk
+    at all -- the leaf name is tested first and returns before it.
+    THE POWERSHELL FLAGS A TEST IS NAMED FOR WERE NEVER OBSERVED: runPowerShell_withNoProfile
+    asserted only exit_code == 0 and non-empty stdout. The argv the launcher builds is now
+    captured through the fault-injection seam and pinned as an ORDERED catalog for BOTH arms of
+    each switch, so a dropped -NoProfile (the user's profile then runs inside an elevated launch),
+    a dropped -ExecutionPolicy Bypass, a reordering that puts -Command first, or a flag emitted
+    when the caller asked for it OFF is caught.
+    file_hash's cancellation test only ever cancelled BEFORE the call, so the in-loop token check
+    the test is named for was unexercised -- without it the whole 10 MB file is hashed and the
+    post-loop check still reports operation_cancelled. The second arm cancels from inside the
+    first progress callback and pins that exactly one 4096-byte chunk was consumed.
+    secure_memory: secureCompare's every inequality differed at index 0, so a compare that looked
+    at only the first byte, or stopped one byte short, returned the same three verdicts; its
+    size-overflow guard (the one that stops a wrapped byte count comparing only a prefix) had zero
+    coverage; and the std::span overload of generateSecureRandom has no caller anywhere in the
+    tree, so requesting size() instead of size_bytes() -- randomizing 4 of 16 elements and leaving
+    the tail as the caller left it -- was invisible.
+    linux_distro_catalog: cancelAll()'s postcondition was !isEmpty(), which survives that function
+    wiping the distro index or the resolved-asset cache; and resolveFileName's cached-asset arm
+    was dead in the whole suite, so deleting it would save a freshly resolved asset under the
+    STALE template name and diverge the on-disk name from the checksum-record lookup.
   - PROGRESS 2026-08-24 SECOND-pass sweep b85 (gated 249/249): 43 weak assertions pinned across six
     more already-swept files (html_email_writer 12, windows_usb_creator 8, migration_report 8,
     email_search_worker 7, duplicate_finder_worker 5, fuzz_pst_structure 3).

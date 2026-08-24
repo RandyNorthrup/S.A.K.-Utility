@@ -118,6 +118,18 @@ void FileHashTests::constructor_customValues() {
     sak::file_hasher hasher(sak::hash_algorithm::sha256, 4096);
     QCOMPARE(hasher.getAlgorithm(), sak::hash_algorithm::sha256);
     QCOMPARE(hasher.getChunkSize(), std::size_t{4096});
+
+    // The chunk size is clamped at the TOP end too (file_hash.cpp:59,
+    // std::min(chunk_size, MAX_CHUNK_SIZE)) so QFile::read can never be handed a
+    // value that goes negative when narrowed to qint64 or drives an outsized
+    // per-read allocation. Only the ==0 arm of that expression is pinned (by
+    // constructor_zeroChunkCoercedToDefault); pin both arms of the std::min here:
+    // the boundary passes through, one past it is clamped down.
+    sak::file_hasher at_max(sak::hash_algorithm::md5, sak::file_hasher::MAX_CHUNK_SIZE);
+    QCOMPARE(at_max.getChunkSize(), sak::file_hasher::MAX_CHUNK_SIZE);
+    sak::file_hasher over_max(sak::hash_algorithm::md5, sak::file_hasher::MAX_CHUNK_SIZE + 1);
+    QCOMPARE(over_max.getChunkSize(), sak::file_hasher::MAX_CHUNK_SIZE);
+    QCOMPARE(over_max.getAlgorithm(), sak::hash_algorithm::md5);
 }
 
 void FileHashTests::constructor_zeroChunkCoercedToDefault() {
@@ -230,12 +242,25 @@ void FileHashTests::inMemory_emptySpan() {
 
 void FileHashTests::verifyHash_correct() {
     sak::file_hasher hasher(sak::hash_algorithm::md5);
-    auto hash_result = hasher.calculateHash(m_knownFile);
-    QVERIFY(hash_result.has_value());
-
-    auto verify = hasher.verifyHash(m_knownFile, hash_result.value());
+    // The literal MD5 of "Hello, World!\n", not the hasher's own output: feeding
+    // calculateHash's result straight back into verifyHash is a round trip
+    // through the same pair of functions, so a symmetric break survives it.
+    auto verify = hasher.verifyHash(m_knownFile, "bea8252ff4e80f41719ea13cdf007273");
     QVERIFY(verify.has_value());
     QVERIFY(verify.value());
+
+    // verifyHash must hash with THIS hasher's algorithm (file_hash.cpp:120 calls
+    // calculateHash, which switches on m_algorithm at file_hash.cpp:92-96), not a
+    // hard-coded MD5: every other verify test uses an md5 hasher, so the sha256
+    // arm is otherwise never reached.
+    sak::file_hasher sha_hasher(sak::hash_algorithm::sha256);
+    auto sha_ok = sha_hasher.verifyHash(
+        m_knownFile, "c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31");
+    QVERIFY(sha_ok.has_value());
+    QVERIFY(sha_ok.value());
+    auto sha_reject = sha_hasher.verifyHash(m_knownFile, "bea8252ff4e80f41719ea13cdf007273");
+    QVERIFY(sha_reject.has_value());
+    QVERIFY(!sha_reject.value());
 }
 
 void FileHashTests::verifyHash_incorrect() {
@@ -243,6 +268,25 @@ void FileHashTests::verifyHash_incorrect() {
     auto verify = hasher.verifyHash(m_knownFile, "00000000000000000000000000000000");
     QVERIFY(verify.has_value());
     QVERIFY(!verify.value());
+
+    // The comparison covers the WHOLE string (file_hash.cpp:137). The all-zeros
+    // case above differs in the very first character, so it is also satisfied by
+    // a prefix-only or length-blind comparison. Pin the three cases that are not:
+    // a near miss in the LAST nibble, a correct digest with trailing garbage, and
+    // a truncated prefix of the correct digest.
+    std::string near_miss = "bea8252ff4e80f41719ea13cdf007273";
+    near_miss.back() = '4';
+    auto verify_near = hasher.verifyHash(m_knownFile, near_miss);
+    QVERIFY(verify_near.has_value());
+    QVERIFY(!verify_near.value());
+
+    auto verify_long = hasher.verifyHash(m_knownFile, "bea8252ff4e80f41719ea13cdf00727300");
+    QVERIFY(verify_long.has_value());
+    QVERIFY(!verify_long.value());
+
+    auto verify_short = hasher.verifyHash(m_knownFile, "bea8252ff4e80f41719ea13cdf0072");
+    QVERIFY(verify_short.has_value());
+    QVERIFY(!verify_short.value());
 }
 
 void FileHashTests::verifyHash_caseInsensitive() {
@@ -312,13 +356,27 @@ void FileHashTests::progressCallback_invoked() {
     f.close();
 
     int callbackCount = 0;
+    std::size_t lastProcessed = 0;
     sak::file_hasher hasher(sak::hash_algorithm::md5, 8192);  // Small chunk for more callbacks
     auto result = hasher.calculateHash(
         bigPath.toStdWString(),
-        [&callbackCount](std::size_t /*processed*/, std::size_t /*total*/) { ++callbackCount; });
+        [&callbackCount, &lastProcessed](std::size_t processed, std::size_t total) {
+            ++callbackCount;
+            // Both callback arguments are pinned, not just the call count:
+            // `total` is the size captured when hashing began and never moves,
+            // and `processed` is the RUNNING total, not this chunk's size
+            // (file_hash.cpp:306-308).
+            QCOMPARE(total, std::size_t{102'400});
+            const std::size_t expected = (callbackCount < 13)
+                                             ? static_cast<std::size_t>(callbackCount) * 8192U
+                                             : std::size_t{102'400};
+            QCOMPARE(processed, expected);
+            lastProcessed = processed;
+        });
     QVERIFY(result.has_value());
     // 102400 bytes / 8192 chunk = 12 full reads + one 4096 read = 13 non-empty reads.
     QCOMPARE(callbackCount, 13);
+    QCOMPARE(lastProcessed, std::size_t{102'400});
 }
 
 // ============================================================================
@@ -336,15 +394,39 @@ void FileHashTests::cancellation_stopsHashing() {
     }
     f.close();
 
-    std::stop_source stopSource;
     sak::file_hasher hasher(sak::hash_algorithm::sha256, 4096);
 
-    // Request stop immediately
-    stopSource.request_stop();
-
-    auto result = hasher.calculateHash(largePath.toStdWString(), nullptr, stopSource.get_token());
+    // Arm 1: cancelled BEFORE the call -- the chunk loop must not read at all.
+    std::stop_source preStop;
+    preStop.request_stop();
+    int preCallbacks = 0;
+    auto result = hasher.calculateHash(
+        largePath.toStdWString(),
+        [&preCallbacks](std::size_t, std::size_t) { ++preCallbacks; },
+        preStop.get_token());
     QVERIFY(!result.has_value());
     QCOMPARE(result.error(), sak::error_code::operation_cancelled);
+    QCOMPARE(preCallbacks, 0);
+
+    // Arm 2: cancelled from inside the FIRST progress callback -- the arm this test is NAMED
+    // for. The loop re-tests the token at the top of every iteration, so exactly one 4096-byte
+    // chunk of the 10 MB file is consumed. Without that in-loop check the whole file would be
+    // hashed and the post-loop check would STILL report operation_cancelled, i.e. arm 1 alone
+    // cannot tell the two apart.
+    std::stop_source midStop;
+    int midCallbacks = 0;
+    auto mid_result = hasher.calculateHash(
+        largePath.toStdWString(),
+        [&midCallbacks, &midStop](std::size_t processed, std::size_t total) {
+            ++midCallbacks;
+            QCOMPARE(processed, std::size_t{4096});
+            QCOMPARE(total, std::size_t{10} * 1024 * 1024);
+            midStop.request_stop();
+        },
+        midStop.get_token());
+    QVERIFY(!mid_result.has_value());
+    QCOMPARE(mid_result.error(), sak::error_code::operation_cancelled);
+    QCOMPARE(midCallbacks, 1);
 }
 
 // ============================================================================
