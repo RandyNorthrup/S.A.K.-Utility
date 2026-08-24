@@ -5024,6 +5024,63 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 FIRST-pass sweep b76 (gated 249/249): 29 weak assertions pinned across
+    five never-swept files (win32_mcp_text_match 10, win32_mcp_input_plan 9, win32_mcp_key_chord
+    4, diagnostic_types 3, keep_awake 3) -- the largest single-batch yield of the never-swept
+    tranche, and the win32 input trio is the code that drives a real desktop through SendInput.
+    THE MOST DIRECT SELF-COMPARISON YET: typePlanCollapsesCrlf asserted
+    QCOMPARE(planTypeText("\r\n"), planTypeText("\n")) -- the same production symbol on BOTH
+    sides, so any implementation satisfied it, including one that emitted nothing at all. It now
+    pins the literal keystroke plan, plus the lone-CR case (a bare CR is itself a line break and
+    must NOT be swallowed the way the CR of a CRLF is) and the full ordered plan for "a\r\nb",
+    whose size alone could not see a CR emitted in place of one of the six strokes.
+    CATALOG UNDER-COVERAGE, three instances: the named-key table has 30 alias rows and five were
+    spot-checked, so a paired-row typo (up<->down) or a dropped alias sent scripted keystrokes to
+    the wrong virtual key; the modifier-alias test was named "all aliases" while omitting "ctrl"
+    itself, and asserted only .modifiers even though production appends the modifier BEFORE
+    deciding success and the header states a false return may still leave the parsed prefix
+    there; and every single-character case in the file was range INTERIOR ('s', '1', 'A'), so the
+    four endpoints A/Z/0/9 were pinned nowhere and an off-by-one bound would silently make Ctrl+Z
+    and Alt+0 unusable. The refusal test used only multi-character strings, exercising the named
+    catalog and never the single-character path, so punctuation bracketing the accepted ranges
+    could reach the key injector as an unassigned virtual-key code.
+    ORDERED CATALOGS BY HEAD ONLY: the keystroke plans probed a[1] and nl[1] through .key_up
+    alone, leaving their .code and .is_vk asserted nowhere -- a release stroke carrying the wrong
+    key leaves a modifier stuck down on the real desktop -- and the surrogate-pair test read
+    strokes[0] and strokes[2] while never reading the two RELEASE strokes at all. In text_match,
+    the ranking tests compared size plus the head, so the loser entry, every box and the
+    extra-words scoring term went unchecked; both are now pinned exactly (200000 / 199997 /
+    100000), along with a MIRRORED input order, because a comment claiming "whole word wins
+    regardless of order" only holds if both orders are exercised.
+    BOXES ARE WHAT PRODUCTION CLICKS, and they were unasserted throughout text_match: the OCR
+    click path uses the match box's centre, so a box seeded from the vector head instead of the
+    matched word clicks the wrong control. Union boxes for multi-word runs, the raw-vs-normalized
+    caption, and the query-side normalization all gained pins. Three emptiness assertions gained
+    controls that make them falsifiable -- same-line, consecutive, and one-directional
+    containment each had only ONE direction or only line 0 / index 0 exercised.
+    win32_mcp_input_plan also: absCoordDegenerateScreenDoesNotDivideByZero probed pixel 0, which
+    maps to 0 under ANY divisor, so the floor it is named for was unobserved; the y divisor and
+    the half-away-from-zero rounding had no test; pointInVirtualScreen never probed the last
+    INSIDE pixel; and mouseButtonFlags writes a PAIR of out-params while only `down` was checked
+    past the first row, so a row whose UP flag came from the wrong button would press one button
+    and release another. Its refusal was checked as a bare false, never for its documented effect
+    of leaving the caller's flags untouched.
+    diagnostic_types (3 confirmed, 6 FALSE POSITIVE): the verifier rejected the finder's chosen
+    fields as equivalent mutants -- the throughput fields are assigned unconditionally before any
+    success return -- and identified the three struct defaults that genuinely survive a real run
+    and that no caller ever overwrites: thread_scaling_efficiency (a nonzero default reports
+    perfect scaling, and a full multi-thread score, for a pass that was never timed),
+    random_block_size_kb (no caller assigns it, so a silent bump to 64 makes the reported "Random
+    4K" IOPS 16x wrong) and memory_usage_percent (no caller sets it, and a zero default makes
+    every out-of-the-box stress run die before launching a thread). It also corrected the
+    finder's claim that the block-size helper CLAMPS -- it rejects, so only an in-range mutant
+    ships silently.
+    keep_awake: the doubled-stop slot computed its result and never asserted it, though the slot
+    exists for the documented success no-op; the non-copyable test pinned the two constructors
+    and not the two deleted ASSIGNMENT operators, whose absence lets a second destructor
+    over-release a reference it never started; and no slot ever held a guard alongside another
+    request, so a destructor that dropped the process request outright -- over-releasing an
+    overlapping worker's hold -- passed.
   - PROGRESS 2026-08-24 FIRST-pass sweep b75 (gated 249/249): 20 weak assertions pinned across
     four never-swept files plus two more suites outside the sweep set that carried an identical
     defect. test_fuzz_command_classifier came back 0 confirmed / 3 false-positive -- a genuinely

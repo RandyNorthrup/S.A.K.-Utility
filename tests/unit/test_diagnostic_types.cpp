@@ -36,6 +36,11 @@ void DiagnosticTypesTests::cpuBenchmarkResult_defaults() {
     QCOMPARE(r.multi_thread_score, 0);
     QCOMPARE(r.thread_count, 0u);
     QVERIFY(!r.thermal_throttle_detected);
+    // thread_scaling_efficiency is the ONE CpuBenchmarkResult default that survives a real run:
+    // the worker assigns it only when the parallel pass produced a positive wall time, and
+    // calculateScores() multiplies the multi-thread score by it. A nonzero default would report
+    // perfect scaling -- and a full multi-thread score -- for a pass that was never timed.
+    QCOMPARE(r.thread_scaling_efficiency, 0.0);
 }
 
 void DiagnosticTypesTests::diskBenchmarkConfig_defaults() {
@@ -46,6 +51,10 @@ void DiagnosticTypesTests::diskBenchmarkConfig_defaults() {
     QCOMPARE(c.queue_depth_high, 32);
     QCOMPARE(c.sequential_passes, 3);
     QCOMPARE(c.random_duration_sec, 30);
+    // random_block_size_kb sets the block size of the "Random 4K" passes, and no caller ever
+    // assigns it (the panel sets only drive_path), so this default is its sole input. A silent
+    // bump to 64 keeps every other assertion green while the reported 4K IOPS come out 16x wrong.
+    QCOMPARE(c.random_block_size_kb, 4);
 }
 
 void DiagnosticTypesTests::diskBenchmarkResult_defaults() {
@@ -74,6 +83,10 @@ void DiagnosticTypesTests::stressTestConfig_defaults() {
     QCOMPARE(c.cpu_threads, 0);
     QCOMPARE(c.thermal_limit_celsius, 95.0);
     QVERIFY(c.abort_on_error);
+    // No caller ever sets memory_usage_percent, so this literal is the sole input to the
+    // validator -- which rejects the WHOLE run when the percentage is outside (0, 100] while
+    // stress_memory (default true) is on -- and to the sizing of the allocation itself.
+    QCOMPARE(c.memory_usage_percent, 80.0);
 }
 
 void DiagnosticTypesTests::stressTestResult_defaults() {

@@ -57,6 +57,15 @@ void TestKeepAwake::startStop_doubleStart() {
 void TestKeepAwake::startStop_doubleStop() {
     [[maybe_unused]] const auto first_stop = KeepAwake::stop();
     const auto result = KeepAwake::stop();
+    // A stop with nothing outstanding is a documented SUCCESS no-op, and the slot is named for
+    // that contract -- yet the result was computed and never asserted. It must also not
+    // underflow the refcount: one later start must still arm it, one stop release it.
+    QVERIFY(result.has_value());
+    QVERIFY(!KeepAwake::isActive());
+    const auto restart = KeepAwake::start();
+    QVERIFY(restart.has_value());
+    QVERIFY(KeepAwake::isActive());
+    [[maybe_unused]] const auto release = KeepAwake::stop();
     QVERIFY(!KeepAwake::isActive());
 }
 
@@ -96,16 +105,29 @@ void TestKeepAwake::guard_construction() {
 void TestKeepAwake::guard_nonCopyable() {
     QVERIFY(!std::is_copy_constructible_v<KeepAwakeGuard>);
     QVERIFY(!std::is_move_constructible_v<KeepAwakeGuard>);
+    // The two deleted ASSIGNMENT operators are the other half of the same contract: an
+    // assignable guard would copy m_is_active, so a second destructor issues a stop() for a
+    // reference it never started -- an over-release.
+    QVERIFY(!std::is_copy_assignable_v<KeepAwakeGuard>);
+    QVERIFY(!std::is_move_assignable_v<KeepAwakeGuard>);
 }
 
 void TestKeepAwake::guard_scopeActivation() {
     [[maybe_unused]] const auto cleanup = KeepAwake::stop();
     QVERIFY(!KeepAwake::isActive());
 
+    const auto outer = KeepAwake::start();
+    QVERIFY(outer.has_value());
     {
         KeepAwakeGuard guard(KeepAwake::PowerRequest::Both);
         QVERIFY(guard.isActive());
+        QVERIFY(KeepAwake::isActive());
     }
+    // The guard released exactly ONE reference. No slot in this file ever had a guard
+    // outstanding alongside another request, so a destructor that dropped the process request
+    // outright -- over-releasing an overlapping worker's hold -- passed.
+    QVERIFY(KeepAwake::isActive());
+    [[maybe_unused]] const auto release_outer = KeepAwake::stop();
     QVERIFY(!KeepAwake::isActive());
 }
 
