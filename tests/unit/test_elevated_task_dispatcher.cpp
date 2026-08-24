@@ -11,6 +11,8 @@
 
 #include "sak/elevated_task_dispatcher.h"
 
+#include <QList>
+#include <QPair>
 #include <QTest>
 
 class TestElevatedTaskDispatcher : public QObject {
@@ -90,7 +92,10 @@ private Q_SLOTS:
 
         QVERIFY(result.has_value());
         QVERIFY(result->success);
-        QCOMPARE(result->data["result"].toString(), "fixed 3 items");
+        // The handler's result is returned verbatim: pin the whole data object (an injected or
+        // dropped key would survive a single-key check) and the empty error on a success.
+        QCOMPARE(result->data, expected_data);
+        QVERIFY(result->error_message.isEmpty());
     }
 
     void testDispatchFailure() {
@@ -109,6 +114,8 @@ private Q_SLOTS:
         QVERIFY(result.has_value());
         QVERIFY(!result->success);
         QCOMPARE(result->error_message, "disk not found");
+        // Fail closed: a failure hands back no data payload for the caller to act on.
+        QCOMPARE(result->data, QJsonObject{});
     }
 
     // ======================================================================
@@ -117,11 +124,23 @@ private Q_SLOTS:
 
     void testDispatchUnregisteredTask() {
         sak::ElevatedTaskDispatcher dispatcher;
+        int progress_calls = 0;
+        int cancel_checks = 0;
         auto result = dispatcher.dispatch(
-            "NeverRegistered", {}, [](int, const QString&) {}, [] { return false; });
+            "NeverRegistered",
+            {},
+            [&](int, const QString&) { ++progress_calls; },
+            [&] {
+                ++cancel_checks;
+                return false;
+            });
 
         QVERIFY(!result.has_value());
         QCOMPARE(result.error(), sak::error_code::task_not_allowed);
+        // The allowlist check happens BEFORE anything runs: neither callback is ever reached,
+        // so a rejected task cannot report progress or observe the cancel state.
+        QCOMPARE(progress_calls, 0);
+        QCOMPARE(cancel_checks, 0);
     }
 
     // ======================================================================
@@ -143,6 +162,28 @@ private Q_SLOTS:
         QVERIFY(result.has_value());
         QVERIFY(!result->success);
         QCOMPARE(result->error_message, QStringLiteral("unexpected error"));
+        QCOMPARE(result->data, QJsonObject{});
+    }
+
+    void testDispatchNonStdExceptionSafety() {
+        // Sibling of the catch(const std::exception&) branch above: a NON-std throw must also be
+        // converted into a structured failure rather than escaping and terminating the elevated
+        // helper. This branch synthesizes its own message (the throw carries none), so the exact
+        // text -- which names the task -- is what proves the right handler caught it.
+        sak::ElevatedTaskDispatcher dispatcher;
+        dispatcher.registerHandler("ThrowNonStdTask",
+                                   [](const QJsonObject&,
+                                      sak::ProgressCallback,
+                                      sak::CancelCheck) -> sak::TaskHandlerResult { throw 42; });
+
+        auto result = dispatcher.dispatch(
+            "ThrowNonStdTask", {}, [](int, const QString&) {}, [] { return false; });
+
+        QVERIFY(result.has_value());
+        QVERIFY(!result->success);
+        QCOMPARE(result->error_message,
+                 QStringLiteral("Task 'ThrowNonStdTask' failed with an unknown exception"));
+        QCOMPARE(result->data, QJsonObject{});
     }
 
     // ======================================================================
@@ -160,24 +201,24 @@ private Q_SLOTS:
                 return sak::TaskHandlerResult{true, {}, {}};
             });
 
-        int last_percent = 0;
-        QString last_status;
-        int callback_count = 0;
+        QList<QPair<int, QString>> progress_events;
 
         auto result = dispatcher.dispatch(
             "ProgressTask",
             {},
-            [&](int pct, const QString& status) {
-                last_percent = pct;
-                last_status = status;
-                ++callback_count;
-            },
+            [&](int pct, const QString& status) { progress_events.append({pct, status}); },
             [] { return false; });
 
         QVERIFY(result.has_value());
-        QCOMPARE(callback_count, 3);
-        QCOMPARE(last_percent, 100);
-        QCOMPARE(last_status, "Done");
+        QVERIFY(result->success);
+        QVERIFY(result->error_message.isEmpty());
+        QCOMPARE(result->data, QJsonObject{});
+        // Recording only the LAST callback cannot catch a dropped, reordered or duplicated
+        // intermediate report -- pin the whole ordered sequence the handler emitted.
+        QCOMPARE(progress_events,
+                 (QList<QPair<int, QString>>{{25, QStringLiteral("Step 1")},
+                                             {50, QStringLiteral("Step 2")},
+                                             {100, QStringLiteral("Done")}}));
     }
 
     // ======================================================================
@@ -197,12 +238,20 @@ private Q_SLOTS:
         // Normal run -- not cancelled
         auto result1 = dispatcher.dispatch(
             "CancellableTask", {}, [](int, const QString&) {}, [] { return false; });
+        QVERIFY(result1.has_value());
         QVERIFY(result1->success);
+        QVERIFY(result1->error_message.isEmpty());
+        QCOMPARE(result1->data, QJsonObject{});
 
-        // Cancelled run
+        // Cancelled run: the handler reports failure through the SAME structured result, so the
+        // two runs must differ in `success` alone -- a cancellation is not an error_message and
+        // does not fabricate a data payload.
         auto result2 = dispatcher.dispatch(
             "CancellableTask", {}, [](int, const QString&) {}, [] { return true; });
+        QVERIFY(result2.has_value());
         QVERIFY(!result2->success);
+        QVERIFY(result2->error_message.isEmpty());
+        QCOMPARE(result2->data, QJsonObject{});
     }
 
     // ======================================================================
@@ -227,8 +276,11 @@ private Q_SLOTS:
             "PayloadTask", input, [](int, const QString&) {}, [] { return false; });
 
         QVERIFY(result.has_value());
-        QCOMPARE(result->data["drive"].toString(), "D:");
-        QCOMPARE(result->data["deep_scan"].toBool(), true);
+        QVERIFY(result->success);
+        QVERIFY(result->error_message.isEmpty());
+        // The payload reaches the handler UNCHANGED -- pin the whole object so an added,
+        // renamed or dropped key cannot pass a per-key check.
+        QCOMPARE(result->data, input);
     }
 };
 

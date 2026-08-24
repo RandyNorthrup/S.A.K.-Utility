@@ -21,7 +21,7 @@ private Q_SLOTS:
 void AiPackageToolPlannerTests::normalizesInstallPlan() {
     const QJsonObject args{
         {QStringLiteral("operation"), QStringLiteral(" INSTALL ")},
-        {QStringLiteral("package_id"), QStringLiteral(" superantispyware ")},
+        {QStringLiteral("package_id"), QStringLiteral(" SuperAntiSpyware ")},
         {QStringLiteral("version"), QStringLiteral("10.0.1288")},
         {QStringLiteral("timeout_seconds"), 90},
     };
@@ -30,12 +30,17 @@ void AiPackageToolPlannerTests::normalizesInstallPlan() {
 
     QVERIFY(plan.ok());
     QCOMPARE(plan.operation, QStringLiteral("install"));
-    // Trimmed but otherwise preserved -- a valid id is never mangled.
-    QCOMPARE(plan.package_id, QStringLiteral("superantispyware"));
+    // Trimmed but otherwise preserved -- a valid id is never mangled. The MIXED-CASE input is
+    // what proves "otherwise preserved": only `operation` is lowercased, so a package_id that
+    // picked up a .toLower() would resolve to a different token here and turn this red.
+    QCOMPARE(plan.package_id, QStringLiteral("SuperAntiSpyware"));
     QCOMPARE(plan.version, QStringLiteral("10.0.1288"));
     QCOMPARE(plan.timeout_seconds, 90);
+    // install classifies as exactly ONE operation class; pin all three so a plan that leaked a
+    // second class (and with it a second execution path) cannot pass.
     QVERIFY(plan.change_operation);
     QVERIFY(!plan.read_operation);
+    QVERIFY(!plan.query_operation);
 }
 
 void AiPackageToolPlannerTests::rejectsInjectionPackageId() {
@@ -119,6 +124,8 @@ void AiPackageToolPlannerTests::rejectsNonStringVersion() {
     QVERIFY(latest.ok());
     QVERIFY(latest.version.isEmpty());
     QVERIFY(latest.change_operation);
+    // No timeout_seconds argument -> the documented default budget, not a zero/clamp artifact.
+    QCOMPARE(latest.timeout_seconds, 1800);
 }
 
 void AiPackageToolPlannerTests::rejectsUnknownOperation() {
@@ -137,6 +144,10 @@ void AiPackageToolPlannerTests::clampsTimeout() {
         QJsonObject{{QStringLiteral("operation"), QStringLiteral("search")},
                     {QStringLiteral("timeout_seconds"), 999'999}});
 
+    // Both plans are otherwise usable, so the clamped value is the value an execution would
+    // actually run with -- not a bound recorded on a plan that fails closed anyway.
+    QVERIFY(low.ok());
+    QVERIFY(high.ok());
     QCOMPARE(low.timeout_seconds, 5);
     QCOMPARE(high.timeout_seconds, 7200);
 }

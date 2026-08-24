@@ -192,18 +192,18 @@ void NetworkDiagnosticUtilsTests::wifi_freqToBand_boundaries() {
 // ============================================================================
 
 void NetworkDiagnosticUtilsTests::wifi_lookupVendor_knownOui() {
-    // The OUI database should contain major manufacturers
-    // We can verify that *some* well-known OUI returns a non-empty string
-    // without depending on the exact vendor name
-    const auto result = WiFiAnalyzer::lookupVendor(QStringLiteral("AA:BB:CC:DD:EE:FF"));
-    // May or may not be in the database -- just test it doesn't crash
-    Q_UNUSED(result);
+    // No oui_database.txt ships, so the built-in fallback set IS the database and its entries are
+    // deterministic. "AA:BB:CC" is in no set at all, so the old input proved nothing about a
+    // lookup ever succeeding; a seeded OUI pins the vendor the caller is shown.
+    const auto result = WiFiAnalyzer::lookupVendor(QStringLiteral("00:50:56:11:22:33"));
+    QCOMPARE(result, QStringLiteral("VMware"));
 }
 
 void NetworkDiagnosticUtilsTests::wifi_lookupVendor_unknownOui() {
+    // An unseeded OUI resolves to nothing -- and specifically NOT to a "closest match" or a
+    // placeholder vendor string the UI would then display as fact.
     const auto result = WiFiAnalyzer::lookupVendor(QStringLiteral("00:00:00:00:00:00"));
-    // Unknown OUI should return empty or a valid string (no crash)
-    Q_UNUSED(result);
+    QCOMPARE(result, QString());
 }
 
 void NetworkDiagnosticUtilsTests::wifi_lookupVendor_tooShort() {
@@ -253,6 +253,11 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_singleNetwork() {
     QCOMPARE(result[0].networkCount, 1);
     QCOMPARE(result[0].ssids.size(), 1);
     QCOMPARE(result[0].ssids[0], QStringLiteral("TestNet"));
+    // The remaining fields of the entry are equally deterministic: the band is carried through
+    // from the network, and the score is 1 * (1 - (-50 / -80)) == 0.375.
+    QCOMPARE(result[0].band, QStringLiteral("2.4 GHz"));
+    QCOMPARE(result[0].averageSignalDbm, -50.0);
+    QCOMPARE(result[0].interferenceScore, 0.375);
 }
 
 void NetworkDiagnosticUtilsTests::wifi_channelUtil_multipleOnSameChannel() {
@@ -276,7 +281,13 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_multipleOnSameChannel() {
     QCOMPARE(result.size(), 1);
     QCOMPARE(result[0].channelNumber, 1);
     QCOMPARE(result[0].networkCount, 2);
-    QCOMPARE(result[0].ssids.size(), 2);
+    // Both SSIDs are collected, in encounter order -- a size-only check cannot catch one SSID
+    // being recorded twice while the other is dropped.
+    QCOMPARE(result[0].ssids, (QVector<QString>{QStringLiteral("Net1"), QStringLiteral("Net2")}));
+    QCOMPARE(result[0].band, QStringLiteral("2.4 GHz"));
+    QCOMPARE(result[0].averageSignalDbm, -60.0);
+    // 2 networks * (1 - (-60 / -80)) == 0.5
+    QCOMPARE(result[0].interferenceScore, 0.5);
 }
 
 void NetworkDiagnosticUtilsTests::wifi_channelUtil_multipleChannels() {
@@ -305,6 +316,20 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_multipleChannels() {
 
     const auto result = WiFiAnalyzer::calculateChannelUtilization(networks);
     QCOMPARE(result.size(), 3);
+    // Three distinct channels means three one-network entries, each carrying its OWN network --
+    // a bucketing bug that merged or cross-assigned them still yields size 3.
+    QCOMPARE(result[0].channelNumber, 1);
+    QCOMPARE(result[1].channelNumber, 6);
+    QCOMPARE(result[2].channelNumber, 11);
+    QCOMPARE(result[0].ssids, (QVector<QString>{QStringLiteral("Net1")}));
+    QCOMPARE(result[1].ssids, (QVector<QString>{QStringLiteral("Net2")}));
+    QCOMPARE(result[2].ssids, (QVector<QString>{QStringLiteral("Net3")}));
+    QCOMPARE(result[0].networkCount, 1);
+    QCOMPARE(result[1].networkCount, 1);
+    QCOMPARE(result[2].networkCount, 1);
+    QCOMPARE(result[0].averageSignalDbm, -50.0);
+    QCOMPARE(result[1].averageSignalDbm, -65.0);
+    QCOMPARE(result[2].averageSignalDbm, -75.0);
 }
 
 void NetworkDiagnosticUtilsTests::wifi_channelUtil_sortedByChannel() {
@@ -333,6 +358,12 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_sortedByChannel() {
     QCOMPARE(result[0].channelNumber, 1);
     QCOMPARE(result[1].channelNumber, 6);
     QCOMPARE(result[2].channelNumber, 11);
+    // The per-channel payload must travel WITH its channel through the sort: each entry keeps
+    // the signal of the network that was added at that channel (ch1 -60, ch6 -55, ch11 -50 --
+    // deliberately the reverse of channel order, so a payload left behind by the sort shows up).
+    QCOMPARE(result[0].averageSignalDbm, -60.0);
+    QCOMPARE(result[1].averageSignalDbm, -55.0);
+    QCOMPARE(result[2].averageSignalDbm, -50.0);
 }
 
 void NetworkDiagnosticUtilsTests::wifi_channelUtil_averageSignal() {
@@ -365,7 +396,10 @@ void NetworkDiagnosticUtilsTests::wifi_channelUtil_interferenceNonNegative() {
 
     const auto result = WiFiAnalyzer::calculateChannelUtilization(networks);
     QCOMPARE(result.size(), 1);
-    QVERIFY(result[0].interferenceScore >= 0.0);
+    // -90 dBm is weaker than kSignalWeak (-80), so the raw score is negative and the clamp is
+    // what produces the result: pin the exact clamped value, since ">= 0.0" also holds for
+    // every un-clamped positive score and so cannot fail if the clamp were removed.
+    QCOMPARE(result[0].interferenceScore, 0.0);
 }
 
 // ============================================================================
@@ -380,54 +414,63 @@ void NetworkDiagnosticUtilsTests::port_presets_notEmpty() {
 }
 
 void NetworkDiagnosticUtilsTests::port_presets_haveNames() {
+    // The catalog is a fixed literal, so the names the technician picks from are deterministic
+    // in both spelling AND order -- a non-empty check would not notice a renamed or reordered
+    // preset (the combo-box selection is by row).
     const auto presets = PortScanner::getPresets();
-    for (const auto& p : presets) {
-        QVERIFY2(!p.name.isEmpty(), qPrintable(QStringLiteral("Preset has empty name")));
-    }
+    QCOMPARE(presets.size(), 7);
+    QCOMPARE(presets[0].name, QStringLiteral("Common Services"));
+    QCOMPARE(presets[1].name, QStringLiteral("Web Servers"));
+    QCOMPARE(presets[2].name, QStringLiteral("Database"));
+    QCOMPARE(presets[3].name, QStringLiteral("File Sharing"));
+    QCOMPARE(presets[4].name, QStringLiteral("Email"));
+    QCOMPARE(presets[5].name, QStringLiteral("Remote Access"));
+    QCOMPARE(presets[6].name, QStringLiteral("Top 100"));
 }
 
 void NetworkDiagnosticUtilsTests::port_presets_havePorts() {
+    // Each preset's port count is fixed; a dropped port still leaves the list non-empty.
     const auto presets = PortScanner::getPresets();
-    for (const auto& p : presets) {
-        QVERIFY2(!p.ports.isEmpty(),
-                 qPrintable(QStringLiteral("Preset '%1' has no ports").arg(p.name)));
-    }
+    QCOMPARE(presets.size(), 7);
+    QCOMPARE(presets[0].ports.size(), 21);  // Common Services
+    QCOMPARE(presets[1].ports.size(), 8);   // Web Servers
+    QCOMPARE(presets[2].ports.size(), 7);   // Database
+    QCOMPARE(presets[3].ports.size(), 11);  // File Sharing
+    QCOMPARE(presets[4].ports.size(), 7);   // Email
+    QCOMPARE(presets[5].ports.size(), 7);   // Remote Access
+    QCOMPARE(presets[6].ports.size(), 98);  // Top 100
 }
 
 void NetworkDiagnosticUtilsTests::port_presets_commonServices() {
+    // The preset IS the scan the technician runs, so pin the whole ordered port list rather
+    // than four spot-checks: a silently added port scans a host the operator did not intend,
+    // and a silently dropped one leaves a service unscanned. Both pass a contains() check.
     const auto presets = PortScanner::getPresets();
-
-    // Find "Common Services" preset
-    bool found = false;
-    for (const auto& p : presets) {
-        if (p.name.contains(QStringLiteral("Common"), Qt::CaseInsensitive)) {
-            found = true;
-            QVERIFY(p.ports.contains(80));   // HTTP
-            QVERIFY(p.ports.contains(443));  // HTTPS
-            QVERIFY(p.ports.contains(22));   // SSH
-            QVERIFY(p.ports.contains(53));   // DNS
-            break;
-        }
-    }
-    QVERIFY2(found, "Could not find 'Common Services' preset");
+    QCOMPARE(presets.size(), 7);
+    QCOMPARE(presets[0].name, QStringLiteral("Common Services"));
+    QCOMPARE(presets[0].ports,
+             (QVector<uint16_t>{20,  21,  22,  23,  25,  53,   80,   110,  115,  135, 139,
+                                143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080}));
 }
 
 void NetworkDiagnosticUtilsTests::port_presets_top100HasExpectedPorts() {
     const auto presets = PortScanner::getPresets();
 
-    bool found = false;
-    for (const auto& p : presets) {
-        if (p.name.contains(QStringLiteral("Top 100"), Qt::CaseInsensitive)) {
-            found = true;
-            QCOMPARE(p.ports.size(), 98);  // the fixed "Top 100" list holds 98 ports
-            QVERIFY(p.ports.contains(80));
-            QVERIFY(p.ports.contains(443));
-            QVERIFY(p.ports.contains(22));
-            QVERIFY(p.ports.contains(3389));  // RDP
-            break;
-        }
-    }
-    QVERIFY2(found, "Could not find 'Top 100' preset");
+    // Same reasoning as Common Services: the "Top 100" list (98 entries despite the name) is a
+    // fixed literal, so pin it whole and in order.
+    QCOMPARE(presets.size(), 7);
+    QCOMPARE(presets[6].name, QStringLiteral("Top 100"));
+    QCOMPARE(presets[6].ports,
+             (QVector<uint16_t>{7,    9,    13,   21,     22,     23,     25,     26,    37,   53,
+                                79,   80,   81,   88,     106,    110,    111,    113,   119,  135,
+                                139,  143,  144,  179,    199,    389,    427,    443,   444,  445,
+                                465,  513,  514,  515,    543,    544,    548,    554,   587,  631,
+                                646,  873,  990,  993,    995,    1025,   1026,   1027,  1028, 1029,
+                                1110, 1433, 1720, 1723,   1755,   1900,   2000,   2001,  2049, 2121,
+                                2717, 3000, 3128, 3306,   3389,   3986,   4899,   5000,  5009, 5051,
+                                5060, 5101, 5190, 5357,   5432,   5631,   5666,   5800,  5900, 5901,
+                                6000, 6001, 6646, 7070,   8000,   8008,   8009,   8080,  8081, 8443,
+                                8888, 9100, 9999, 10'000, 32'768, 49'152, 49'153, 49'154}));
 }
 
 // ============================================================================
@@ -485,10 +528,21 @@ void NetworkDiagnosticUtilsTests::dns_servers_notEmpty() {
 }
 
 void NetworkDiagnosticUtilsTests::dns_servers_haveNames() {
-    const auto servers = DnsDiagnosticTool::wellKnownDnsServers();
-    for (const auto& s : servers) {
-        QVERIFY2(!s.first.isEmpty(), qPrintable(QStringLiteral("DNS server has empty name")));
-    }
+    // The catalog is a fixed literal and the name/address PAIRING is the security-relevant part:
+    // a name attached to the wrong resolver address would send the technician's queries somewhere
+    // other than the provider they picked, and a non-empty-name check cannot see that.
+    const QVector<QPair<QString, QString>> kExpected = {
+        {QStringLiteral("System Default"), QString()},
+        {QStringLiteral("Google DNS"), QStringLiteral("8.8.8.8")},
+        {QStringLiteral("Google DNS (Secondary)"), QStringLiteral("8.8.4.4")},
+        {QStringLiteral("Cloudflare"), QStringLiteral("1.1.1.1")},
+        {QStringLiteral("Cloudflare (Secondary)"), QStringLiteral("1.0.0.1")},
+        {QStringLiteral("Quad9"), QStringLiteral("9.9.9.9")},
+        {QStringLiteral("Quad9 (Secondary)"), QStringLiteral("149.112.112.112")},
+        {QStringLiteral("OpenDNS"), QStringLiteral("208.67.222.222")},
+        {QStringLiteral("OpenDNS (Secondary)"), QStringLiteral("208.67.220.220")},
+    };
+    QCOMPARE(DnsDiagnosticTool::wellKnownDnsServers(), kExpected);
 }
 
 void NetworkDiagnosticUtilsTests::dns_servers_includeGoogle() {
@@ -497,7 +551,7 @@ void NetworkDiagnosticUtilsTests::dns_servers_includeGoogle() {
     for (const auto& s : servers) {
         if (s.second == QStringLiteral("8.8.8.8")) {
             found = true;
-            QVERIFY(s.first.contains(QStringLiteral("Google"), Qt::CaseInsensitive));
+            QCOMPARE(s.first, QStringLiteral("Google DNS"));
             break;
         }
     }
@@ -510,7 +564,9 @@ void NetworkDiagnosticUtilsTests::dns_servers_includeCloudflare() {
     for (const auto& s : servers) {
         if (s.second == QStringLiteral("1.1.1.1")) {
             found = true;
-            QVERIFY(s.first.contains(QStringLiteral("Cloudflare"), Qt::CaseInsensitive));
+            // The exact label, not merely one containing "Cloudflare": the SECONDARY entry also
+            // contains it, so a mispaired address would still pass a contains() check.
+            QCOMPARE(s.first, QStringLiteral("Cloudflare"));
             break;
         }
     }
@@ -537,7 +593,10 @@ void NetworkDiagnosticUtilsTests::dns_servers_includeSystemDefault() {
 
 void NetworkDiagnosticUtilsTests::dns_recordTypes_notEmpty() {
     const auto types = DnsDiagnosticTool::supportedRecordTypes();
-    QVERIFY(!types.isEmpty());
+    // Fixed list: A, AAAA, MX, CNAME, TXT, SOA, NS, SRV, PTR. The two tests below assert every
+    // one of those is PRESENT; pinning the count here is what makes them a closed set, so an
+    // extra unhandled record type offered in the UI cannot slip in unnoticed.
+    QCOMPARE(types.size(), 9);
 }
 
 void NetworkDiagnosticUtilsTests::dns_recordTypes_includeCommon() {
@@ -586,11 +645,14 @@ void NetworkDiagnosticUtilsTests::port_scan_concurrentReturnsAllPorts() {
     QCOMPARE(completeCount, 1);
     QCOMPARE(completed.size(), config.ports.size());
 
-    QSet<uint16_t> seenPorts;
-    for (const auto& r : completed) {
-        seenPorts.insert(r.port);
+    // Batches are joined in order, so results come back in the REQUESTED port order -- pin that
+    // index-for-index (a set of seen ports proves only that each port appears somewhere, not that
+    // a result carries the port it was actually probed for), along with the target each result
+    // is attributed to.
+    for (int i = 0; i < completed.size(); ++i) {
+        QCOMPARE(completed[i].port, config.ports[i]);
+        QCOMPARE(completed[i].target, QStringLiteral("127.0.0.1"));
     }
-    QCOMPARE(seenPorts.size(), config.ports.size());
 }
 
 QTEST_GUILESS_MAIN(NetworkDiagnosticUtilsTests)

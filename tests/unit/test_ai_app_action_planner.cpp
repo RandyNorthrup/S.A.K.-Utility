@@ -59,7 +59,13 @@ void AiAppActionPlannerTests::buildsSupportedPowerShellActionPlan() {
     QCOMPARE(plan.request.command, QStringLiteral("Start-MpScan -ScanType QuickScan"));
     QVERIFY(plan.request.requires_admin);
     QCOMPARE(plan.request.timeout_seconds, 7200);
-    QCOMPARE(plan.evidence.size(), 2);
+    // No max_output_bytes argument, so the default Options budget (256 KiB) survives the clamp.
+    QCOMPARE(plan.request.max_output_bytes, 262'144);
+    // The evidence array is copied verbatim from the manifest profile, so pin the whole ordered
+    // array -- a size-only check cannot catch a reordered, renamed or substituted entry.
+    QCOMPARE(plan.evidence,
+             QJsonArray(
+                 {QStringLiteral("process_exit_code"), QStringLiteral("Get-MpThreatDetection")}));
     QVERIFY(plan.risky);
     QCOMPARE(plan.preview,
              QStringLiteral(
@@ -122,7 +128,10 @@ void AiAppActionPlannerTests::carriesGuardBlockForChecksumBypass() {
         QStringLiteral("sample_app"), QStringLiteral("install"), manifest, QJsonObject{});
 
     QVERIFY(!plan.ok());
-    QVERIFY(plan.guard_block_error.contains(QStringLiteral("checksum bypass")));
+    QCOMPARE(plan.guard_block_error,
+             QStringLiteral("Blocked package checksum bypass. Do not pass --ignore-checksums, "
+                            "substitute checksums, or run cached installers after a package "
+                            "checksum mismatch."));
     QCOMPARE(plan.error_message, plan.guard_block_error);
     QVERIFY(plan.guard_approval_reason.isEmpty());
 }
@@ -139,6 +148,11 @@ void AiAppActionPlannerTests::flagsCatastrophicManifestCommand() {
         QStringLiteral("some_app"), QStringLiteral("wipe"), destructive, QJsonObject{});
     QVERIFY2(destroy.ok(), qPrintable(destroy.error_message));
     QVERIFY(destroy.catastrophic);
+    // Catastrophic implies risky (the destructive-command classifier also fires), and the
+    // preview is the exact text the confirm dialog shows for this action.
+    QVERIFY(destroy.risky);
+    QCOMPARE(destroy.preview,
+             QStringLiteral("Run Sample App action 'wipe': Format-Volume -DriveLetter D -Force"));
 
     const QJsonObject benign =
         actionManifest(QJsonObject{{QStringLiteral("method"), QStringLiteral("powershell")},
@@ -147,6 +161,10 @@ void AiAppActionPlannerTests::flagsCatastrophicManifestCommand() {
         QStringLiteral("some_app"), QStringLiteral("time"), benign, QJsonObject{});
     QVERIFY(safe.ok());
     QVERIFY(!safe.catastrophic);
+    // Non-vacuity for the pair above: with no safety flags in the profile and a benign command,
+    // BOTH classifications stay clear -- so `destroy.risky` above is the destructive command, not
+    // a flag every plan carries.
+    QVERIFY(!safe.risky);
 }
 
 void AiAppActionPlannerTests::buildsWin32GuiActionPlan() {
@@ -167,11 +185,25 @@ void AiAppActionPlannerTests::buildsWin32GuiActionPlan() {
 
     QVERIFY(plan.ok());
     QCOMPARE(plan.method, QStringLiteral("win32_gui"));
+    // The steps array is the recipe the desktop step-runner executes, copied verbatim from the
+    // manifest: pin the whole ordered array so a dropped/reordered/rewritten step cannot pass a
+    // size-only check.
+    QCOMPARE(plan.steps,
+             manifest.value(QStringLiteral("requested_action_profile"))
+                 .toObject()
+                 .value(QStringLiteral("steps"))
+                 .toArray());
     QCOMPARE(plan.steps.size(), 2);
+    QCOMPARE(plan.steps.at(0).toObject().value(QStringLiteral("tool")).toString(),
+             QStringLiteral("focus_window"));
+    QCOMPARE(plan.steps.at(1).toObject().value(QStringLiteral("tool")).toString(),
+             QStringLiteral("click_text"));
     QVERIFY(plan.risky);  // GUI input injection is always at least input-tier
     QVERIFY(plan.request.command.isEmpty());
     QCOMPARE(plan.preview,
              QStringLiteral("Drive Sample App GUI action 'quick_scan' (2 desktop-control steps)"));
+    // Evidence is copied before the win32_gui branch, so a GUI recipe carries it too.
+    QCOMPARE(plan.evidence, QJsonArray({QStringLiteral("Items Detected")}));
     QVERIFY(plan.error_message.isEmpty());
 }
 
@@ -184,7 +216,8 @@ void AiAppActionPlannerTests::blocksWin32GuiWithoutSteps() {
         QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
 
     QVERIFY(!plan.ok());
-    QVERIFY(plan.error_message.contains(QStringLiteral("non-empty 'steps'")));
+    QCOMPARE(plan.error_message,
+             QStringLiteral("win32_gui action requires a non-empty 'steps' array in the manifest"));
 }
 
 void AiAppActionPlannerTests::blocksWin32GuiStepMissingTool() {
@@ -197,7 +230,9 @@ void AiAppActionPlannerTests::blocksWin32GuiStepMissingTool() {
         QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
 
     QVERIFY(!plan.ok());
-    QVERIFY(plan.error_message.contains(QStringLiteral("missing a 'tool'")));
+    // The refusal names the offending step INDEX, so the exact message also proves the loop
+    // reports which step failed rather than a generic recipe error.
+    QCOMPARE(plan.error_message, QStringLiteral("win32_gui step 0 is missing a 'tool' name"));
 }
 
 void AiAppActionPlannerTests::blocksWin32GuiNonObjectStep() {
@@ -210,7 +245,7 @@ void AiAppActionPlannerTests::blocksWin32GuiNonObjectStep() {
         QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
 
     QVERIFY(!plan.ok());
-    QVERIFY(plan.error_message.contains(QStringLiteral("must be an object")));
+    QCOMPARE(plan.error_message, QStringLiteral("win32_gui step 0 must be an object"));
 }
 
 void AiAppActionPlannerTests::blocksWin32GuiNonObjectArguments() {
@@ -225,7 +260,7 @@ void AiAppActionPlannerTests::blocksWin32GuiNonObjectArguments() {
         QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
 
     QVERIFY(!plan.ok());
-    QVERIFY(plan.error_message.contains(QStringLiteral("'arguments' must be an object")));
+    QCOMPARE(plan.error_message, QStringLiteral("win32_gui step 0 'arguments' must be an object"));
 }
 
 void AiAppActionPlannerTests::mistypedSafetyFlagStaysRisky() {
@@ -258,7 +293,7 @@ void AiAppActionPlannerTests::blocksWin32GuiNonBoolOptionalStep() {
         QStringLiteral("superantispyware"), QStringLiteral("quick_scan"), manifest, QJsonObject{});
 
     QVERIFY(!plan.ok());
-    QVERIFY(plan.error_message.contains(QStringLiteral("'optional' must be a boolean")));
+    QCOMPARE(plan.error_message, QStringLiteral("win32_gui step 0 'optional' must be a boolean"));
 }
 
 QTEST_GUILESS_MAIN(AiAppActionPlannerTests)
