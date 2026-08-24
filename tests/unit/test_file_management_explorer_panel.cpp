@@ -19,6 +19,7 @@
 #include "sak/file_explorer_tag_store.h"
 #include "sak/file_explorer_transfer_worker.h"
 #include "sak/file_management_explorer_panel.h"
+#include "sak/rich_text_safety.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -1277,7 +1278,11 @@ private Q_SLOTS:
         armAutoAcceptQuestion(&question_text);
         QTest::keyClick(table, Qt::Key_Z, Qt::ControlModifier);
         QTRY_VERIFY(!QFile::exists(copy_path));
-        QVERIFY2(question_text.contains(QStringLiteral("delete")), qPrintable(question_text));
+        // Both undo headers contain "delete", so the create wording -- a different count
+        // noun and a second scope note -- passed the fragment unchanged.
+        verifyUndoConfirmation(question_text,
+                               QStringLiteral("Undoing this copy will delete 1 copied item(s):"),
+                               QStringLiteral("These will be moved to the Recycle Bin."));
         // The dismissed confirmation cleared focus; the focus-scoped Ctrl+Y
         // shortcut needs it back.
         panel.activateWindow();
@@ -1311,7 +1316,13 @@ private Q_SLOTS:
         armAutoAcceptQuestion(&question_text);
         QTest::keyClick(table, Qt::Key_Z, Qt::ControlModifier);
         QTRY_VERIFY(!QFileInfo::exists(folder_path));
-        QVERIFY2(question_text.contains(QStringLiteral("create")), qPrintable(question_text));
+        // Ctrl+Shift+N journals a directory, so the scope must carry the second note; the
+        // fragment could not see it go missing.
+        verifyUndoConfirmation(
+            question_text,
+            QStringLiteral("Undoing this create will delete 1 item(s):"),
+            QStringLiteral("These will be moved to the Recycle Bin.<br/>Any folder is removed "
+                           "together with its entire contents."));
         // Re-focus after the dismissed confirmation before the redo shortcut.
         panel.activateWindow();
         table->setFocus();
@@ -1616,12 +1627,15 @@ private Q_SLOTS:
         QSettings settings;
         const QString tagged_path =
             QDir::fromNativeSeparators(QDir(dir_path).filePath(QStringLiteral("tagme.txt")));
-        QTRY_VERIFY(
-            sak::FileExplorerTagStore::tagsFor(settings,
-                                               QStringLiteral("FileManagementExplorer/Tags"),
-                                               payload_target,
-                                               tagged_path)
-                .contains(QStringLiteral("crimson"), Qt::CaseInsensitive));
+        // The entry is new for this run and carried no prior tags, so the drop leaves exactly
+        // one. A case-insensitive membership probe also passes on a case-mangled "CRIMSON" or
+        // on crimson plus unrelated tags harvested out of the drag payload.
+        QTRY_COMPARE(sak::FileExplorerTagStore::tagsFor(settings,
+                                                        QStringLiteral("FileManagementExplorer/"
+                                                                       "Tags"),
+                                                        payload_target,
+                                                        tagged_path),
+                     (QStringList{QStringLiteral("crimson")}));
     }
 
     void verifySidebarFavoriteReorder(QListWidget* targetList,
@@ -1716,11 +1730,21 @@ private Q_SLOTS:
         QVERIFY(rename);
         QVERIFY(deleteButton);
         QVERIFY(!copy->isEnabled());
-        QVERIFY(!copy->toolTip().isEmpty());
         QVERIFY(!rename->isEnabled());
-        QVERIFY(!rename->toolTip().isEmpty());
         QVERIFY(!deleteButton->isEnabled());
-        QVERIFY(!deleteButton->toolTip().isEmpty());
+        // All three are selection_required commands, so they resolve at the same registry
+        // gate and must carry the same blocker: either "no target" (nothing mounted on this
+        // host) or "no selection". A non-empty check cannot tell those from the fail-closed
+        // "Unknown File Explorer command." sentinel, which means the id is not wired at all.
+        const QString no_selection =
+            sak::ui::asLiteralRichText(QStringLiteral("Select an item "
+                                                      "first."));
+        const QString no_target =
+            sak::ui::asLiteralRichText(QStringLiteral("No File Explorer target selected."));
+        QVERIFY2(copy->toolTip() == no_selection || copy->toolTip() == no_target,
+                 qPrintable(copy->toolTip()));
+        QCOMPARE(rename->toolTip(), copy->toolTip());
+        QCOMPARE(deleteButton->toolTip(), copy->toolTip());
     }
 
     void targetSelectionFeedsOmnibarAndSafetyPane() {
@@ -1743,7 +1767,27 @@ private Q_SLOTS:
         targetList->setCurrentRow(targetRow);
         QApplication::processEvents();
         QVERIFY(!pathEdit->text().trimmed().isEmpty());
-        QVERIFY(safety->toPlainText().contains(QStringLiteral("Write state:")));
+        // buildDetailsSafety emits six fixed lines in a fixed order. The current probe checks
+        // one LABEL and ignores its value and every sibling line, so an empty capability word
+        // or a lost Read/Browse line passes. The host-dependent label, file system and root
+        // path are deliberately left unpinned; the capability words are a closed vocabulary.
+        const QStringList safety_lines = safety->toPlainText().split(QLatin1Char('\n'));
+        QVERIFY2(safety_lines.size() >= 6, qPrintable(safety->toPlainText()));
+        const QStringList prefixes{QStringLiteral("Target: "),
+                                   QStringLiteral("File system: "),
+                                   QStringLiteral("Identity: ")};
+        for (int i = 0; i < prefixes.size(); ++i) {
+            QVERIFY2(safety_lines.at(i).startsWith(prefixes.at(i)), qPrintable(safety_lines.at(i)));
+        }
+        const QStringList capabilities{QStringLiteral("Write state: "),
+                                       QStringLiteral("Read state: "),
+                                       QStringLiteral("Browse state: ")};
+        for (int i = 0; i < capabilities.size(); ++i) {
+            const QString line = safety_lines.at(3 + i);
+            QVERIFY2(line == capabilities.at(i) + QStringLiteral("enabled") ||
+                         line == capabilities.at(i) + QStringLiteral("blocked"),
+                     qPrintable(line));
+        }
     }
 
     void contextMenusExposeRegistryActionsAndTargetActions() {
@@ -1773,13 +1817,25 @@ private Q_SLOTS:
         // No selection -> the Files background menu: Layout / Sort by / Refresh,
         // the New group, Paste, selection helpers, then terminal.
         const QStringList tableActions = collectContextMenuTexts(table->viewport());
-        QVERIFY2(tableActions.size() >= 8, qPrintable(tableActions.join(QStringLiteral(" | "))));
-        QVERIFY(tableActions.at(0).startsWith(QStringLiteral("Layout")));
-        QVERIFY(tableActions.at(1).startsWith(QStringLiteral("Sort by")));
-        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("Refresh")));
-        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("New")));
-        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("Paste")));
-        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("Open in Windows Terminal")));
+        // buildBackgroundContextMenu adds all nine top-level entries unconditionally and in
+        // this compile-time order. The `>= 8` floor was blind to the Group by submenu --
+        // deleting it leaves size() == 8 with every other probe green -- and the scattered
+        // membership checks were blind to duplicates and to order. A disabled command renders
+        // as "<text> - <blocker>", so each row is anchored by prefix.
+        const QStringList expected_rows{QStringLiteral("Layout"),
+                                        QStringLiteral("Sort by"),
+                                        QStringLiteral("Group by"),
+                                        QStringLiteral("Refresh"),
+                                        QStringLiteral("New"),
+                                        QStringLiteral("Paste"),
+                                        QStringLiteral("Select All"),
+                                        QStringLiteral("Invert Selection"),
+                                        QStringLiteral("Open in Windows Terminal")};
+        QCOMPARE(tableActions.size(), expected_rows.size());
+        for (int i = 0; i < expected_rows.size(); ++i) {
+            QVERIFY2(tableActions.at(i).startsWith(expected_rows.at(i)),
+                     qPrintable(tableActions.join(QStringLiteral(" | "))));
+        }
         QVERIFY(!containsTextStartingWith(tableActions, QStringLiteral("Rename")));
         QVERIFY(!containsTextStartingWith(tableActions, QStringLiteral("Delete")));
 
@@ -2035,7 +2091,11 @@ private Q_SLOTS:
         item.destination_path = occupied;
         item.replace_destination = true;
         QVERIFY(!engine.transferEntry(item));  // the copy failed
-        QVERIFY(!engine.blockers().isEmpty());
+        // Named exactly: a regression later in the replace chain (staging, backup, restore)
+        // records one of five other blockers and passes the non-empty probe unchanged.
+        QCOMPARE(engine.blockers(),
+                 (QStringList{
+                     QStringLiteral("Source is not a readable file: %1").arg(item.source_path)}));
 
         // The original destination survived untouched, and no staging/backup cruft
         // was left behind in the destination folder. (Read via a scoped handle so it
@@ -2168,7 +2228,12 @@ private Q_SLOTS:
         const auto blocked = sak::FileExplorerArchiveService::compressToZip(
             zip, {root.filePath(QStringLiteral("payload.txt"))});
         QVERIFY(!blocked.ok);  // refused: the path is occupied
-        QVERIFY(!blocked.blockers.isEmpty());
+        // The NewOnly exclusive-create refusal specifically, not one of the three sibling
+        // compress failures (inside-source-folder, writer status, add failure).
+        QCOMPARE(blocked.blockers,
+                 (QStringList{QStringLiteral("Could not create archive %1 (it already exists or "
+                                             "is not writable).")
+                                  .arg(zip)}));
 
         // The pre-existing file is byte-for-byte intact -- neither truncated by the
         // writer nor deleted by the failure cleanup.
@@ -2185,8 +2250,8 @@ private Q_SLOTS:
         QVERIFY(dir.isValid());
         const QDir root(dir.path());
 
-        // A zip whose first entry is valid and whose second is a zip-slip escape that
-        // aborts the extraction after the first file has already landed.
+        // A zip whose first entry is valid and whose second aborts the extraction after the
+        // first file has already landed.
         const QString zip = root.filePath(QStringLiteral("partial.zip"));
         {
             QZipWriter writer(zip);
@@ -2200,7 +2265,15 @@ private Q_SLOTS:
         const QString out = root.filePath(QStringLiteral("out"));
         const auto result = sak::FileExplorerArchiveService::extractZip(zip, out);
         QVERIFY(!result.ok);
-        QVERIFY(!result.blockers.isEmpty());
+        // What ACTUALLY aborts this extraction, pinned: QZipReader reports the second entry as
+        // "escape.txt" -- the leading "../" is normalized away before any of our guards see it
+        // -- so entryEscapesDestination never fires, and fileData() then misses the entry
+        // stored under the raw name. The rollback this test exists for runs either way. The
+        // absolute-path arm in extractRejectsZipSlipAndPerFileSizeBomb is the fixture that does
+        // reach the traversal guard.
+        QCOMPARE(result.blockers,
+                 (QStringList{QStringLiteral(
+                     "Extraction of entry escape.txt failed (corrupt or unsupported).")}));
 
         // good.txt was written first, then rolled back; nothing we created survives.
         QVERIFY(!QFileInfo(QDir(out).filePath(QStringLiteral("good.txt"))).exists());
@@ -2249,7 +2322,15 @@ private Q_SLOTS:
         const QString out = root.filePath(QStringLiteral("out"));
         const auto result = sak::FileExplorerArchiveService::extractZip(zip, out);
         QVERIFY(!result.ok);  // refused before materializing the central directory
-        QVERIFY(!result.blockers.isEmpty());
+        // The bound, with both numbers. If zipCentralDirectorySize regressed to -1 the code
+        // reports "is not a readable zip archive." instead and the central-directory bound
+        // this test exists for is never exercised.
+        QCOMPARE(result.blockers,
+                 (QStringList{QStringLiteral("%1 has a central directory too large to read (%2 "
+                                             "bytes > %3 limit).")
+                                  .arg(zip)
+                                  .arg(2'147'483'647LL)
+                                  .arg(64LL * 1024 * 1024)}));
         // Nothing was extracted.
         QVERIFY(!QFileInfo(QDir(out).filePath(QStringLiteral("a.txt"))).exists());
     }
@@ -2295,8 +2376,33 @@ private Q_SLOTS:
         const QString out = root.filePath(QStringLiteral("out"));
         const auto result = sak::FileExplorerArchiveService::extractZip(zip, out);
         QVERIFY(!result.ok);  // refused before decoding into RAM
-        QVERIFY(!result.blockers.isEmpty());
+        // The size cap, naming the entry. The depth and symlink notices go to warnings, not
+        // blockers, so this is the whole list.
+        QCOMPARE(result.blockers,
+                 (QStringList{QStringLiteral("Entry a.txt exceeds the extraction size limit.")}));
         QVERIFY(!QFileInfo(QDir(out).filePath(QStringLiteral("a.txt"))).exists());
+    }
+
+    // The fixture that actually reaches entryEscapesDestination. An ABSOLUTE entry name
+    // survives QZipReader intact (unlike a leading "../", which it normalizes away), so this
+    // is the only zip-slip shape the guard ever sees. The target sits inside the temp tree
+    // beside the destination, so a regression writes somewhere harmless and still fails here.
+    static void verifyAbsoluteEntryNameIsRefused(const QDir& root) {
+        const QString abs_zip = root.filePath(QStringLiteral("abs_slip.zip"));
+        const QString abs_target = root.filePath(QStringLiteral("escaped_abs.txt"));
+        {
+            QZipWriter writer(abs_zip);
+            writer.addFile(abs_target, QByteArrayLiteral("owned"));
+            writer.close();
+            QCOMPARE(writer.status(), QZipWriter::NoError);
+        }
+        const auto refused = sak::FileExplorerArchiveService::extractZip(
+            abs_zip, root.filePath(QStringLiteral("abs_out")));
+        QVERIFY(!refused.ok);
+        QCOMPARE(refused.blockers,
+                 (QStringList{QStringLiteral("Refused entry %1 (path escapes the destination).")
+                                  .arg(abs_target)}));
+        QVERIFY(!QFile::exists(abs_target));
     }
 
     void extractRejectsZipSlipAndPerFileSizeBomb() {
@@ -2318,7 +2424,17 @@ private Q_SLOTS:
         const QString slip_out = root.filePath(QStringLiteral("slip_out"));
         const auto slip = sak::FileExplorerArchiveService::extractZip(slip_zip, slip_out);
         QVERIFY(!slip.ok);
-        QVERIFY(!slip.blockers.isEmpty());
+        // Pinned to what a relative "../" fixture actually exercises. QZipReader normalizes the
+        // name to "escapee.txt" before extractZipEntry sees it, so entryEscapesDestination is
+        // NOT what refuses this archive -- fileData() misses the entry stored under the raw
+        // name. The old non-empty probe read as proof of a traversal guard it never reached.
+        QCOMPARE(slip.blockers,
+                 (QStringList{QStringLiteral(
+                     "Extraction of entry escapee.txt failed (corrupt or unsupported).")}));
+        verifyAbsoluteEntryNameIsRefused(root);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
         // The traversal target next to the destination must never be written.
         QVERIFY(!QFile::exists(QDir(root.filePath(QStringLiteral("slip_out")))
                                    .filePath(QStringLiteral("../escapee.txt"))));
@@ -2394,8 +2510,11 @@ private Q_SLOTS:
         QTRY_VERIFY(panel.statusCenterModel()->hasAnyItem());
         const auto* card = panel.statusCenterModel()->items().first();
         QCOMPARE(card->kind(), sak::FileExplorerStatusItemKind::Successful);
-        QVERIFY2(card->header().startsWith(QStringLiteral("Extracted \"wrapped.zip\" to \"")),
-                 qPrintable(card->header()));
+        // The prefix probe stops immediately before the destination, so an empty m_destination
+        // -- the exact failure mode headerText() guards -- renders `to ""` and still passes.
+        QCOMPARE(
+            card->header(),
+            QStringLiteral("Extracted \"wrapped.zip\" to \"%1\"").arg(QDir(dir.path()).dirName()));
     }
 
     void compressContextMenuRunsOnWorkerWithCompressCard() {
@@ -2598,11 +2717,13 @@ private Q_SLOTS:
         // (Ctrl+Alt+C).
         QVERIFY(selectRowStable(table, QStringLiteral("a_sel")));
         QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
-        QTRY_VERIFY(QApplication::clipboard()->text().contains(QStringLiteral("a_sel.txt")));
-        QVERIFY(!QApplication::clipboard()->text().startsWith(QLatin1Char('"')));
+        // The whole line: contains() passes on a truncated path, a wrong parent, or a second
+        // leaked row, and the quote probes never look at what got quoted.
+        const QString expected_path = root.filePath(QStringLiteral("a_sel.txt"));
+        QTRY_COMPARE(QApplication::clipboard()->text(), expected_path);
         QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier | Qt::AltModifier);
-        QTRY_VERIFY(QApplication::clipboard()->text().startsWith(QLatin1Char('"')));
-        QVERIFY(QApplication::clipboard()->text().contains(QStringLiteral("a_sel.txt")));
+        QTRY_COMPARE(QApplication::clipboard()->text(),
+                     QStringLiteral("\"%1\"").arg(expected_path));
     }
 
     void armAutoDismissMessageBox(QString* captured_text) {
@@ -2659,8 +2780,10 @@ private Q_SLOTS:
         panel.activateWindow();
         table->setFocus();
         QTest::keyClick(table, Qt::Key_N, Qt::ControlModifier | Qt::ShiftModifier);
-        QTRY_VERIFY2(warning_text.contains(QStringLiteral("already exists")),
-                     qPrintable(warning_text));
+        // The OTHER branch of the same guard -- "Could not verify whether %1 already exists
+        // here; nothing was created." -- also contains the fragment, so a destinationEntryKind()
+        // regression returning Unknown (which refuses genuinely vacant paths too) passed today.
+        QTRY_COMPARE(warning_text, QStringLiteral("An item named New Folder already exists here."));
 
         // The pre-existing folder and its file are untouched, and an undo has
         // nothing to remove (no CreateNew was journaled).
@@ -3359,7 +3482,9 @@ private Q_SLOTS:
         dismiss.start();
         QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
         dismiss.stop();
-        QVERIFY2(warning_text.contains(QStringLiteral("own subfolder")), qPrintable(warning_text));
+        // Ctrl+C makes this a COPY, so the paste wording is the contract; the move and copy
+        // siblings at two other call sites carry the same fragment.
+        QCOMPARE(warning_text, QStringLiteral("Cannot paste bundle into its own subfolder."));
         QVERIFY(!QDir(root.filePath(QStringLiteral("bundle/bundle"))).exists());
 
         // The dismissed modal cleared the focus; the panel shortcuts are
@@ -3479,6 +3604,46 @@ private Q_SLOTS:
         accept->start();
     }
 
+    // confirmHistoryDelete builds a fixed four-part message -- header, path list, scope
+    // notes, "Continue?" -- and hands it to ui::asLiteralRichText, which escapes it and
+    // turns each newline into <br/>. Pinning the head and the tail leaves only the
+    // host-dependent temp path list unchecked.
+    static void verifyUndoConfirmation(const QString& question_text,
+                                       const QString& header,
+                                       const QString& scope) {
+        QVERIFY2(question_text.startsWith(sak::ui::literalRichTextOpenTag() + header +
+                                          QStringLiteral("<br/><br/>")),
+                 qPrintable(question_text));
+        QVERIFY2(question_text.endsWith(QStringLiteral("<br/><br/>") + scope +
+                                        QStringLiteral("<br/><br/>Continue?") +
+                                        sak::ui::literalRichTextCloseTag()),
+                 qPrintable(question_text));
+    }
+
+    // deleteConfirmationText() is "<head>\n\n<paths>" through the same wrapper; the paths
+    // are host-dependent, so the tail is anchored on the entry name that is about to be
+    // destroyed -- the field the old fragment probes never looked at.
+    static void verifyDeleteConfirmation(const QString& question_text,
+                                         const QString& head,
+                                         const QString& entry_name) {
+        QVERIFY2(question_text.startsWith(sak::ui::literalRichTextOpenTag() + head),
+                 qPrintable(question_text));
+        QVERIFY2(question_text.endsWith(entry_name + sak::ui::literalRichTextCloseTag()),
+                 qPrintable(question_text));
+    }
+
+    // The permanent leg names the host-dependent target label between two fixed halves, so
+    // the middle is bridged by a third anchor instead of being pinned.
+    static void verifyPermanentDeleteConfirmation(const QString& question_text,
+                                                  const QString& entry_name) {
+        verifyDeleteConfirmation(question_text,
+                                 QStringLiteral("Delete 1 item(s) from '"),
+                                 entry_name);
+        QVERIFY2(question_text.contains(QStringLiteral("'? This permanently removes data from "
+                                                       "the selected target.<br/><br/>")),
+                 qPrintable(question_text));
+    }
+
     void deleteRecyclesLocallyAndShiftDeleteIsPermanent() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
@@ -3523,7 +3688,11 @@ private Q_SLOTS:
                      },
                      5000),
                  "delete did not recycle the file");
-        QVERIFY2(question_text.contains(QStringLiteral("Recycle Bin")), qPrintable(question_text));
+        // The count and the path list -- what tells the user what is about to be destroyed --
+        // are what the fragment never looked at.
+        verifyDeleteConfirmation(question_text,
+                                 QStringLiteral("Move 1 item(s) to the Recycle Bin?<br/><br/>"),
+                                 QStringLiteral("bin_me.txt"));
 
         // Shift+Delete is the permanent path (DeleteItemPermanentlyAction).
         panel.activateWindow();
@@ -3539,7 +3708,7 @@ private Q_SLOTS:
                      },
                      5000),
                  "shift-delete did not remove the file");
-        QVERIFY2(question_text.contains(QStringLiteral("permanently")), qPrintable(question_text));
+        verifyPermanentDeleteConfirmation(question_text, QStringLiteral("perma.txt"));
     }
 
     void activationMatrixAndMouseNavigation() {
@@ -3641,8 +3810,19 @@ private Q_SLOTS:
         // (Context-menu events on a scroll area land on its viewport.)
         const QStringList headerActions =
             collectContextMenuTexts(table->horizontalHeader()->viewport());
-        QVERIFY2(headerActions.contains(QStringLiteral("Size all columns to fit")),
-                 qPrintable(headerActions.join(QStringLiteral("; "))));
+        // One checkable entry per column except Name, which showColumnMenu deliberately skips
+        // so it can never be hidden -- a functional contract the membership probe cannot see,
+        // along with a lost, renamed or reordered column.
+        QCOMPARE(headerActions,
+                 (QStringList{QStringLiteral("Type"),
+                              QStringLiteral("Size"),
+                              QStringLiteral("Modified"),
+                              QStringLiteral("Created"),
+                              QStringLiteral("ID"),
+                              QStringLiteral("Attributes"),
+                              QStringLiteral("Tags"),
+                              QStringLiteral("Path"),
+                              QStringLiteral("Size all columns to fit")}));
 
         auto* details = qobject_cast<sak::FileExplorerDetailsView*>(table);
         QVERIFY(details);
@@ -4080,6 +4260,11 @@ private Q_SLOTS:
         // connected targets, is dropped silently (recents do not warn). Assert the
         // favorite persisted and rendered.
         QVERIFY2(foundFavorite, "persisted favorite id not rendered after reconstruction");
+        // foundRecent was computed above and never asserted, so the other half of the contract
+        // -- only Favorites passes warn_when_missing, so a disconnected RECENT id must render
+        // nothing at all -- went unchecked. A connected target renders its label, never the
+        // raw id, so this stays host-independent.
+        QVERIFY2(!foundRecent, "an unconnected recent id must not render a sidebar row");
     }
 
     void tagColumnShowsProviderTagsInDetailsView() {
@@ -4356,8 +4541,11 @@ private Q_SLOTS:
         const int filteredCount = suggestions->count();
         QVERIFY(filteredCount > 0);
         QVERIFY(filteredCount < fullCount);
-        QVERIFY(
-            suggestions->item(0)->text().contains(QStringLiteral("Hidden"), Qt::CaseInsensitive));
+        // ToggleHiddenItems is the only command whose searchable text matches, and the row
+        // label carries its shortcut suffix. The count floor and the fragment hide both a
+        // dropped suffix and a filter that stopped narrowing.
+        QCOMPARE(filteredCount, 1);
+        QCOMPARE(suggestions->item(0)->text(), QStringLiteral("Hidden Items (Ctrl+H)"));
 
         // Enter executes the selected suggestion (ToggleHiddenItems) and the
         // omnibar reverts to Path mode.
@@ -4393,8 +4581,9 @@ private Q_SLOTS:
         QApplication::processEvents();
         QCOMPARE(suggestions->count(), 1);
         QCOMPARE(suggestions->item(0)->flags(), Qt::NoItemFlags);
-        QVERIFY(suggestions->item(0)->text().contains(QStringLiteral("no commands"),
-                                                      Qt::CaseInsensitive));
+        // A row that lost .arg(needle) still contains the fragment.
+        QCOMPARE(suggestions->item(0)->text(),
+                 QStringLiteral("There are no commands containing zz-no-such-command"));
     }
 
     void duplicateTabClonesCurrentTab() {
@@ -4460,8 +4649,10 @@ private Q_SLOTS:
         QVERIFY(suggestions);
         QTest::keyClicks(pathEdit, QStringLiteral("Reopen Closed Tab"));
         QApplication::processEvents();
-        QVERIFY(suggestions->count() > 0);
-        QVERIFY(suggestions->item(0)->text().startsWith(QStringLiteral("Reopen Closed Tab")));
+        // Exactly one command matches the typed phrase, and its label carries the shortcut.
+        // The count floor plus the prefix probe accept a dropped suffix and extra rows.
+        QCOMPARE(suggestions->count(), 1);
+        QCOMPARE(suggestions->item(0)->text(), QStringLiteral("Reopen Closed Tab (Ctrl+Shift+T)"));
         QTest::keyClick(pathEdit, Qt::Key_Return);
         QApplication::processEvents();
         QCOMPARE(tabs->count(), 2);
@@ -4570,11 +4761,14 @@ private Q_SLOTS:
 
         QVERIFY2(worker.completedItems().isEmpty(),
                  "a copy that dropped entries was still listed as completed");
-        QVERIFY(!worker.blockers().isEmpty());
-        QVERIFY2(worker.blockers()
-                     .join(QStringLiteral(" | "))
-                     .contains(QStringLiteral("did not copy whole")),
-                 qPrintable(worker.blockers().join(QStringLiteral(" | "))));
+        // Both path arguments, in order: the joined-substring probe hides a mis-pairing of
+        // source and destination -- the classic bug in a two-.arg() message -- and hides the
+        // list size, so extra blockers from the depth cap would go unnoticed.
+        QCOMPARE(worker.blockers(),
+                 (QStringList{QStringLiteral("%1 did not copy whole; the partial copy at %2 is "
+                                             "not reported as a completed item.")
+                                  .arg(root.filePath(QStringLiteral("tree")),
+                                       root.filePath(QStringLiteral("dest/tree")))}));
         // The source is untouched (this is a copy, not a move).
         QVERIFY(QFileInfo(root.filePath(QStringLiteral("tree"))).isDir());
     }
@@ -4657,9 +4851,13 @@ private Q_SLOTS:
         QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 1, 10'000);
 
         QVERIFY(worker.completedItems().isEmpty());
-        const QString reported = worker.blockers().join(QStringLiteral(" | "));
-        QVERIFY2(reported.contains(QStringLiteral("not on a volume with a Recycle Bin")),
-                 qPrintable(reported));
+        // The whole blocker: the sibling this test exists to exclude is "Could not move %1 to
+        // the Recycle Bin.", which is what a regressed pathVolumeHasRecycleBin would produce
+        // after actually attempting the shell delete.
+        QCOMPARE(worker.blockers(),
+                 (QStringList{QStringLiteral("\\\\sak-no-such-host\\share\\payload.txt is not on "
+                                             "a volume with a Recycle Bin, so it was left in "
+                                             "place; use Delete to remove it permanently.")}));
     }
 
     void pasteCopyRunsOnWorkerWithStatusCards() {
@@ -4797,7 +4995,9 @@ private Q_SLOTS:
         cancelAction->trigger();
         QApplication::processEvents();
         QVERIFY(item->isCancelRequested());
-        QVERIFY(title->text().startsWith(QStringLiteral("Canceling - ")));
+        // requestCancel prepends, so the surviving tail is the contract: the rebuilt copy
+        // header plus the live percentage the progress report above drove to 40.
+        QCOMPARE(title->text(), QStringLiteral("Canceling - Copying 2 items to \"Bundle\" (40%)"));
         QVERIFY(!more->isVisible());
     }
 
@@ -4890,13 +5090,15 @@ private Q_SLOTS:
         armAutoAcceptQuestion(&question_text);
         QTest::keyClick(table, Qt::Key_Delete, Qt::ShiftModifier);
         QTRY_VERIFY(!QFile::exists(doomed));
-        QVERIFY2(question_text.contains(QStringLiteral("permanently")), qPrintable(question_text));
+        verifyPermanentDeleteConfirmation(question_text, QStringLiteral("doomed.txt"));
         QTRY_COMPARE(panel.statusCenterModel()->inProgressCount(), 0);
         QTRY_VERIFY(panel.statusCenterModel()->hasAnyItem());
         const auto* card = panel.statusCenterModel()->items().first();
         QCOMPARE(card->kind(), sak::FileExplorerStatusItemKind::Successful);
-        QVERIFY2(card->header().startsWith(QStringLiteral("Deleted 1 item from")),
-                 qPrintable(card->header()));
+        // The prefix probe drops the second field entirely, so `Deleted 1 item from ""` -- the
+        // exact empty-m_source failure mode -- passes.
+        QCOMPARE(card->header(),
+                 QStringLiteral("Deleted 1 item from \"%1\"").arg(QDir(dir.path()).dirName()));
     }
 
     void statusCenterVisibilitySettingTogglesButton() {

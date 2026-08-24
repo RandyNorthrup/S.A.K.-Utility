@@ -5024,6 +5024,55 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-23 second-pass re-sweep b72b (gated 249/249): 28 residual weak assertions
+    pinned in tests/unit/test_file_management_explorer_panel.cpp, plus one NEW test arm covering a
+    security guard that had no coverage at all (FINDING N5, below). Two file-scope helpers do the
+    load-bearing work. verifyUndoConfirmation() and verifyDeleteConfirmation() pin each destructive
+    confirmation through the ui::asLiteralRichText wrapper by head and tail, leaving only the
+    host-dependent temp path list unpinned: the undo dialogs previously asserted contains("delete")
+    and contains("create"), which BOTH undo headers satisfy, so the create wording -- a different
+    count noun and a second scope note warning that a folder goes with its entire contents -- could
+    vanish unnoticed; and the two delete dialogs asserted contains("Recycle Bin") and
+    contains("permanently"), never looking at the count or the path list, which is the entire
+    content of a destructive confirmation. The archive service's five fail-closed extract/compress
+    refusals now compare the whole blockers list rather than !isEmpty(), which any of five sibling
+    refusals in the same loop satisfies. Also pinned: the transfer worker's partial-copy blocker,
+    which carries TWO path arguments and was checked by a joined substring that hides a mis-pairing;
+    the Recycle-Bin refusal, whose fail-open sibling ("Could not move %1 to the Recycle Bin.") is
+    exactly what a regressed pathVolumeHasRecycleBin would produce AFTER attempting the shell
+    delete; the status-center Extract/Delete card headers, whose prefix probes stopped immediately
+    before the destination field, so the empty-m_source failure mode rendered `to ""` and passed;
+    the cancel header, where requestCancel PREPENDS so the surviving tail is the contract; the
+    background context menu, whose `>= 8` floor was blind to the Group by submenu (deleting it
+    leaves size() == 8 with every other probe green) and now pins nine ordered entries; the details
+    header menu, which now pins all eight column entries plus the auto-fit row, making the
+    never-hideable Name column a checked contract; the command palette's filtered row, no-match row
+    and reopen row, whose fragments accepted a dropped shortcut suffix and a filter that stopped
+    narrowing; the safety pane, where contains("Write state:") checked one LABEL and ignored its
+    value and all five sibling lines; the three disabled command buttons, whose non-empty tooltip
+    check could not distinguish a real blocker from the fail-closed "Unknown File Explorer command."
+    sentinel; the copied clipboard path, compared whole instead of by contains(); and one VACUOUS
+    construct -- favoritesAndRecentPersistAcrossConstruction computed foundRecent and never asserted
+    it, leaving the half of the contract that says a disconnected RECENT id must render NOTHING
+    (only Favorites passes warn_when_missing) completely unchecked.
+  - FINDING N5 (FIXED, test defect + uncovered security guard, HIGH): the two tests that claim to
+    prove zip-slip protection never reached the guard. Both build their fixture with
+    QZipWriter::addFile("../escape.txt", ...), but QZipReader reports that entry back as
+    "escape.txt" -- the leading "../" is normalized away before extractZipEntry sees it -- so
+    entryEscapesDestination() never fires. What actually refuses the archive is fileData() missing
+    the entry stored under the raw name, reported as "Extraction of entry escape.txt failed (corrupt
+    or unsupported)." The old QVERIFY(!blockers.isEmpty()) read as proof of a traversal guard it did
+    not exercise. Ground-truthed with a temporary listEntries() probe rather than assumed. Fix, in
+    two parts: (1) both tests now pin the decode-miss blocker they actually produce, with the reason
+    written down, so neither reads as traversal coverage again -- extractRollsBackPartialTreeOnFailure
+    still validly proves the rollback, which runs whatever aborts the entry; (2) a new
+    verifyAbsoluteEntryNameIsRefused() arm builds an archive whose entry name is ABSOLUTE, which
+    survives QZipReader intact and is therefore the only zip-slip shape the guard ever sees. It pins
+    the exact "Refused entry %1 (path escapes the destination)." blocker. Mutation-proved: flipping
+    the isAbsolutePath arm to return false makes extractZip report ok=TRUE and write the file to the
+    absolute path OUTSIDE the destination -- an arbitrary-path write that, before this arm, no test
+    in the tree would have caught. Production code is unchanged and was already fail-closed; what
+    was missing was the coverage.
   - PROGRESS 2026-08-23 second-pass re-sweep b72a (gated 249/249): 51 residual weak assertions
     pinned across the two largest destructive/parsing suites, from a fresh 7-file finder sweep
     (b72) that returned 167 adversarially-confirmed nominees -- 24 per file, the SAME rate as
