@@ -5024,6 +5024,39 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 second-pass re-sweep b72f (gated 249/249): 21 residual weak assertions
+    pinned in tests/unit/test_leftover_scanner.cpp, closing the b72 worklist. Three slots asserted
+    NOTHING: construction_safe/moderate/advanced each built a scanner and discarded it via
+    Q_UNUSED, so they passed against any implementation that compiled, including one where
+    ScanLevel is ignored entirely. Each now pins the level gate it is named for with a synthetic
+    name that matches nothing on the host -- Safe must not walk ProgramFiles, Moderate must,
+    CommonProgramFiles is Advanced-only. Mutation-proved: leaking CommonProgramFiles into Moderate
+    turns construction_advanced RED. (The Advanced arm does run the real shell-out phases; measured
+    at 2.4s for the whole 51-test suite, so no runtime concern.) Two more constructs were vacuous:
+    scan_serviceScanAtAdvanced's two loops never execute because results is empty, so their eight
+    type assertions never ran -- emptiness is now pinned, which is what kills the "drop the
+    exact-name filter" mutant that makes the loops run and pass while every directory under the
+    live roots is reported. scan_preSelectsSafeItems' loop runs exactly once, so its else arm is
+    dead code and the count was unpinned. Security-relevant: isSharedContainerPath_isDriveAgnostic
+    probed three of the ELEVEN shared-container leaf names, so deleting "syswow64" (or "windows",
+    "winsxs", "common files", "microsoft", "microsoft shared", "windowsapps", "program files")
+    left every assertion green while turning that shared OS/vendor container from Risky into an
+    auto-selected recursive-delete target; all eleven are now probed on three drives, and removing
+    syswow64 turns the test RED. The install-location syntax screens collapsed three distinct
+    technician-facing reasons into !isEmpty(); every value now pins its exact reason, which matters
+    because a widened empty-check reports "no install location is recorded" for a value that DID
+    name a whole volume, and because "c:\\windows" is the only lowercase-drive input in the file --
+    requiring an upper-case drive letter in the literal-path screen refuses it with the wrong
+    message while every old assertion stays green. Also: both callback arguments (path and running
+    count) were named and discarded; the folder/file description literals and deletable/selected
+    were unasserted (they are DIFFERENT literals, so pasting one into the other's branch passed);
+    two contains() probes re-checked the test's own fixture names and could never fail once
+    findByPath had matched; each firewall field slot ignored the other two fields, so a stray
+    cross-assignment passed all three while the cleanup's narrowed netsh delete matched nothing;
+    growRunValueBuffers' !ok said nothing about which of two ceilings fired or what the buffers
+    became, and the at-the-ceiling boundary (a legitimate exactly-1 MiB Run value) had no test;
+    and the report-only install-location item's reported spelling and type were unchecked while
+    "yields NO item at all" was only ever "no item with THIS path".
   - PROGRESS 2026-08-23 second-pass re-sweep b72e (gated 249/249): 21 residual weak assertions
     pinned in tests/unit/test_ai_tool_policy.cpp, plus FINDING N6 (below). This file is the AI
     privilege boundary, and its residual class is the MULTI-GUARD REFUSER seen through two bools:
