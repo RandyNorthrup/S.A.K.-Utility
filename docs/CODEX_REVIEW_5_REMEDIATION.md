@@ -5024,6 +5024,45 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b88 (gated 249/249): 42 weak assertions pinned across six
+    more already-swept files (ai_trace_store 10, config_manager 9,
+    package_internalization_engine 9, nuget_version_range 8, decompressor_factory 4,
+    browser_bridge_relay 2). Back above 40, which confirms b87's dip was a file-SIZE effect
+    rather than a thinning surface.
+    A CASE-FOLDING COMPARE HID A MIS-ROUTED FORMAT: detectFormat's four magic-detection tests
+    compared through .toLower(), but create() dispatches on an EXACT format string. Relabelling a
+    single kMagicTable row ("gzip" -> "GZIP") therefore left detection reporting success while
+    create() fell through and returned nullptr -- isCompressed() true with create() null, the
+    guard-true-then-create-null split this very file forbids elsewhere, and the ".iso that is
+    really a gzip image" case its sibling suite says must never be written raw. No test in the
+    repo calls create() through the magic path (every create() call site passes an
+    extension-bearing name), so nothing else could catch it. NOTE: scripts/mutation_catalogs/
+    decompressor_factory.json quotes these assertions verbatim in its "why" strings; those quotes
+    were updated in the same commit so the catalog does not document an assertion that no longer
+    exists.
+    A ROTATION TEST THAT NEVER CHECKED THE ROLL: appendEvent_rotatesInsteadOfDroppingAtCap
+    asserted only that a ".1" file EXISTS, and the bounded-ring sibling only that ".3" exists and
+    ".4" does not. A rotation that truncated instead of rolling, or that rolled the wrong
+    generation into the wrong slot, satisfied both. Each generation's first run_id is pinned now
+    (live=run_3, .1=run_2, .2=run_1, .3=run_0).
+    TWO SKIP-INVALID-LINE TESTS PUT THE GARBAGE FIRST, so a loader that ABORTED on the first
+    parse failure and returned what it had was indistinguishable from one that skipped and
+    resumed -- both yield the single trailing event. The garbage is bracketed by valid lines now,
+    which also pins the surviving order.
+    config_manager: five setter/getter round trips drove the value that is BOTH the initialized
+    default AND the getter's own fallback, with cleanup() re-running resetToDefaults() before
+    every case -- so each was green with the setter entirely gutted. They drive the non-default
+    value now and pin the RAW key, so a symmetric key rename cannot hide inside the pair. The
+    flasher-defaults test asserted only key EXISTENCE, which lets the defaults be written with
+    wrong values (every typed getter carries the same fallback, so a wrong stored value is
+    invisible through the getters). And clear() was probed with a key inside a group this build
+    knows, so a clear() that walked only recognized groups passed.
+    package_internalization_engine: the reserved-device screen sampled 3 of 22 names; all 22 are
+    swept now, each also in its lower-cased ".txt" form. The IsLatestVersion flag was tested only
+    in its true arm, so a parser keying on the flag's PRESENCE rather than its VALUE passed --
+    with every entry flagged false the SemVer-max must still win. And scriptHasNetworkDownload
+    ORs three guards through one bool; each is isolated now, including every raw download
+    primitive on a line carrying no literal URL.
   - PROGRESS 2026-08-24 SECOND-pass sweep b87 (gated 249/249): 26 weak assertions pinned across six
     more already-swept files (offline_package_search 7, logger 6, browser_extension_installer 6,
     elevated_pipe_protocol 3, uup_dump_api 3, mixed_tier_operations 1). FIRST batch of the second

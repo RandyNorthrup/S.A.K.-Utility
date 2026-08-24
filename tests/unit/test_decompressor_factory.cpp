@@ -193,7 +193,10 @@ void DecompressorFactoryTests::detectFormat_gzipMagic() {
     writeFile("magic_gz.bin", data);
 
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("magic_gz.bin"));
-    QCOMPARE(fmt.toLower(), QString("gzip"));
+    // EXACT case: create() dispatches on format == "gzip". A .toLower() compare lets the magic
+    // table row be relabelled "GZIP" -- detection still reports success while create() falls
+    // through and returns nullptr, the guard-true-then-create-null split this file forbids.
+    QCOMPARE(fmt, QString("gzip"));
 }
 
 void DecompressorFactoryTests::detectFormat_bzip2Magic() {
@@ -204,7 +207,8 @@ void DecompressorFactoryTests::detectFormat_bzip2Magic() {
     writeFile("magic_bz2.bin", data);
 
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("magic_bz2.bin"));
-    QCOMPARE(fmt.toLower(), QString("bzip2"));
+    // EXACT case: create() dispatches on format == "bzip2" (see the gzip sibling).
+    QCOMPARE(fmt, QString("bzip2"));
 }
 
 void DecompressorFactoryTests::detectFormat_xzMagic() {
@@ -220,7 +224,8 @@ void DecompressorFactoryTests::detectFormat_xzMagic() {
     writeFile("magic_xz.bin", data);
 
     QString fmt = sak::DecompressorFactory::detectFormat(filePath("magic_xz.bin"));
-    QCOMPARE(fmt.toLower(), QString("xz"));
+    // EXACT case: create() dispatches on format == "xz" (see the gzip sibling).
+    QCOMPARE(fmt, QString("xz"));
 }
 
 void DecompressorFactoryTests::detectFormat_noMagicNoExtension() {
@@ -330,7 +335,9 @@ void DecompressorFactoryTests::detectFormat_shortBufferNotSpoofedByZeroFill() {
     full.append(static_cast<char>(0x00));
     full.append(QByteArray(13, '\0'));
     writeFile("full_lzma_magic.bin", full);
-    QCOMPARE(sak::DecompressorFactory::detectFormat(filePath("full_lzma_magic.bin")).toLower(),
+    // EXACT case: the legacy-lzma row carries its OWN format literal, and create() dispatches
+    // on format == "xz". Relabelling that row alone is invisible to a folded compare.
+    QCOMPARE(sak::DecompressorFactory::detectFormat(filePath("full_lzma_magic.bin")),
              QString("xz"));
 }
 

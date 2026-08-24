@@ -57,9 +57,22 @@ void TestPackageInternalizationEngine::isSafePackageComponent_rejectsTraversalAn
     QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("a\nb")));
     // CODEX_REVIEW_4 M-B2-35: Windows reserved device names, trailing dot/space, and
     // the Win32-illegal filename characters must also be rejected.
-    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("CON")));
-    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("nul.txt")));
-    QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("LPT1")));
+    const QStringList reserved_devices = {
+        QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
+        QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
+        QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
+        QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
+        QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
+        QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
+        QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
+        QStringLiteral("LPT9")};
+    QCOMPARE(reserved_devices.size(), qsizetype(22));  // the loop below is not vacuous
+    for (const QString& device : reserved_devices) {
+        QVERIFY2(!PackageInternalizationEngine::isSafePackageComponent(device), qPrintable(device));
+        QVERIFY2(!PackageInternalizationEngine::isSafePackageComponent(device.toLower() +
+                                                                       QStringLiteral(".txt")),
+                 qPrintable(device));
+    }
     QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("name.")));
     QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("name ")));
     QVERIFY(!PackageInternalizationEngine::isSafePackageComponent(QStringLiteral("a<b")));
@@ -75,6 +88,9 @@ void TestPackageInternalizationEngine::binaryChecksumMatches_verifiesNamedAndInf
     const QString sha1 = QStringLiteral("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
     const QString sha256 =
         QStringLiteral("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+    const QString sha512 = QStringLiteral(
+        "9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca7"
+        "2323c3d99ba5c11d7c7acc6e14b8c5da0c4663475c2e5c3adef46f73bcdec043");
 
     // Explicit type hint (case-insensitive on both sides).
     QVERIFY(PackageInternalizationEngine::binaryChecksumMatches(data, md5, QStringLiteral("md5")));
@@ -82,10 +98,16 @@ void TestPackageInternalizationEngine::binaryChecksumMatches_verifiesNamedAndInf
         data, sha256.toUpper(), QStringLiteral("sha256")));
     QVERIFY(
         PackageInternalizationEngine::binaryChecksumMatches(data, sha1, QStringLiteral("SHA1")));
+    QVERIFY(PackageInternalizationEngine::binaryChecksumMatches(
+        data, sha512, QStringLiteral("sha512")));
 
-    // No type hint -> algorithm inferred from the checksum's hex length.
+    // No type hint -> algorithm inferred from the checksum's hex length. Every
+    // supported length must resolve: 32 -> MD5, 40 -> SHA1, 64 -> SHA256,
+    // 128 -> SHA512 (a partial length table would still pass an md5/sha256-only check).
     QVERIFY(PackageInternalizationEngine::binaryChecksumMatches(data, md5, QString()));
+    QVERIFY(PackageInternalizationEngine::binaryChecksumMatches(data, sha1, QString()));
     QVERIFY(PackageInternalizationEngine::binaryChecksumMatches(data, sha256, QString()));
+    QVERIFY(PackageInternalizationEngine::binaryChecksumMatches(data, sha512, QString()));
 
     // Empty expected checksum: nothing declared, so nothing to fail on.
     QVERIFY(PackageInternalizationEngine::binaryChecksumMatches(data, QString(), QString()));
@@ -102,6 +124,11 @@ void TestPackageInternalizationEngine::binaryChecksumMatches_rejectsMismatchAndU
     // Declared but unresolvable: no hint and a nonstandard hex length.
     QVERIFY(!PackageInternalizationEngine::binaryChecksumMatches(
         data, QStringLiteral("deadbeef"), QString()));
+    // An explicit type hint OUTRANKS the hex length: a 32-hex digest declared as
+    // sha256 is hashed with SHA-256 (and so cannot match), never re-inferred as MD5
+    // from its length.
+    QVERIFY(!PackageInternalizationEngine::binaryChecksumMatches(
+        data, QStringLiteral("5d41402abc4b2a76b9719d911017c592"), QStringLiteral("sha256")));
 }
 
 void TestPackageInternalizationEngine::installerVerified_failsClosedOnMissingChecksum() {
@@ -193,6 +220,15 @@ void TestPackageInternalizationEngine::parsePackageHashFromOData_extractsHashFor
     const auto missing = PackageInternalizationEngine::parsePackageHashFromOData(doc, "9.9.9");
     QVERIFY(missing.first.isEmpty());
     QVERIFY(missing.second.isEmpty());  // the whole pair is empty (fail closed), not just the hash
+    // A feed that emits the OData properties WITHOUT the m:/d: prefixes resolves
+    // through the plain-name fallback arm, not only the prefixed arm.
+    const QByteArray plain = QByteArrayLiteral(
+        "<feed><entry><properties><Version>3.0.0</Version>"
+        "<PackageHash>CCCCHASH==</PackageHash>"
+        "<PackageHashAlgorithm>SHA256</PackageHashAlgorithm></properties></entry></feed>");
+    const auto plain_meta = PackageInternalizationEngine::parsePackageHashFromOData(plain, "3.0.0");
+    QCOMPARE(plain_meta.first, QStringLiteral("CCCCHASH=="));
+    QCOMPARE(plain_meta.second, QStringLiteral("SHA256"));
 }
 
 void TestPackageInternalizationEngine::
@@ -206,14 +242,25 @@ void TestPackageInternalizationEngine::
         "<entry><m:properties><d:Version>1.9.0</d:Version></m:properties></entry></feed>");
     QCOMPARE(PackageInternalizationEngine::parseLatestVersionFromOData(unsorted),
              QStringLiteral("1.10.0"));
-    // An explicit IsLatestVersion flag wins outright over SemVer ordering.
+    // An explicit IsLatestVersion flag wins outright over SemVer ordering, and the flag text is
+    // matched case-insensitively ("True" counts).
     const QByteArray flagged = QByteArrayLiteral(
         "<feed xmlns:m='m' xmlns:d='d'>"
         "<entry><m:properties><d:Version>2.0.0</d:Version></m:properties></entry>"
         "<entry><m:properties><d:Version>1.5.0</d:Version>"
-        "<d:IsLatestVersion>true</d:IsLatestVersion></m:properties></entry></feed>");
+        "<d:IsLatestVersion>True</d:IsLatestVersion></m:properties></entry></feed>");
     QCOMPARE(PackageInternalizationEngine::parseLatestVersionFromOData(flagged),
              QStringLiteral("1.5.0"));
+    // The flag's VALUE decides, not its mere PRESENCE: with every entry flagged false the
+    // SemVer-max (2.0.0) wins, never the first flag-bearing entry.
+    const QByteArray flagged_false = QByteArrayLiteral(
+        "<feed xmlns:m='m' xmlns:d='d'>"
+        "<entry><m:properties><d:Version>1.5.0</d:Version>"
+        "<d:IsLatestVersion>false</d:IsLatestVersion></m:properties></entry>"
+        "<entry><m:properties><d:Version>2.0.0</d:Version>"
+        "<d:IsLatestVersion>false</d:IsLatestVersion></m:properties></entry></feed>");
+    QCOMPARE(PackageInternalizationEngine::parseLatestVersionFromOData(flagged_false),
+             QStringLiteral("2.0.0"));
 }
 
 void TestPackageInternalizationEngine::
@@ -226,6 +273,15 @@ void TestPackageInternalizationEngine::
         "<entry><m:properties><d:Version>not-a-version</d:Version></m:properties></entry>"
         "<entry><m:properties><d:Version>also.bad.$$</d:Version></m:properties></entry></feed>");
     QVERIFY(PackageInternalizationEngine::parseLatestVersionFromOData(garbage).isEmpty());
+    // ...but an unparseable entry ALONGSIDE a parseable one is skipped, not allowed
+    // to poison the whole feed: the SemVer-max of the parseable entries is returned.
+    const QByteArray mixed = QByteArrayLiteral(
+        "<feed xmlns:m='m' xmlns:d='d'>"
+        "<entry><m:properties><d:Version>not-a-version</d:Version></m:properties></entry>"
+        "<entry><m:properties><d:Version>1.4.0</d:Version></m:properties></entry>"
+        "<entry><m:properties><d:Version>also.bad.$$</d:Version></m:properties></entry></feed>");
+    QCOMPARE(PackageInternalizationEngine::parseLatestVersionFromOData(mixed),
+             QStringLiteral("1.4.0"));
 }
 
 void TestPackageInternalizationEngine::
@@ -241,6 +297,18 @@ void TestPackageInternalizationEngine::
     QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
         QStringLiteral("Start-Process curl -ArgumentList $u")));
     QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(QStringLiteral("& wget $u")));
+    // irm (the fourth alias), the .exe form, and the remaining command boundaries
+    // (pipe / semicolon / paren) are part of the same catalog and must all fire.
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("irm $u -OutFile $o")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("curl.exe -o $out $u")));
+    QVERIFY(
+        PackageInternalizationEngine::scriptHasNetworkDownload(QStringLiteral("$list | wget $u")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("$x = 1; iwr $u -OutFile $o")));
+    QVERIFY(
+        PackageInternalizationEngine::scriptHasNetworkDownload(QStringLiteral("$body = (irm $u)")));
     // A URL assembled by string concatenation to dodge a literal-URL scan.
     QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
         QStringLiteral("$u = 'http' + '://' + $host + '/f'")));
@@ -265,6 +333,27 @@ void TestPackageInternalizationEngine::
         QStringLiteral("Start-BitsTransfer -Source http://host/f -Destination x")));
     QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
         QStringLiteral("curl -o x ftp://h/f")));
+    // Each of the three OR'd guards is reported through ONE bool, so isolate them: a scheme on a
+    // line with no download token and no curl/wget/choco command leaves only the literal-URL scan
+    // able to fire.
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("$src = 'https://ex.com/vc.exe'")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("$src = 'http://ex.com/vc.exe'")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("$src = 'ftp://h/f'")));
+    // Every raw download primitive in the token catalog, each isolated on a line with NO literal
+    // URL: a partial token list must not stay green.
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("Invoke-WebRequest -Uri $u -OutFile $out")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("Invoke-RestMethod -Uri $u -OutFile $out")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("Start-BitsTransfer -Source $src -Destination x")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("bitsadmin /transfer job $src x")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("$c.DownloadFile($u, $p)")));
     // A nested Chocolatey invocation fetches another package from the feed at
     // install time and cannot be constrained to the bundle -> honestly will-fetch,
     // even though the parser extracts no URL from such a script.
@@ -274,6 +363,11 @@ void TestPackageInternalizationEngine::
         PackageInternalizationEngine::scriptHasNetworkDownload(QStringLiteral("cinst othertool")));
     QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
         QStringLiteral("choco.exe upgrade thing -y")));
+    // The spelled-out "chocolatey" alias of the same verb counts too.
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("chocolatey install somedep -y")));
+    QVERIFY(PackageInternalizationEngine::scriptHasNetworkDownload(
+        QStringLiteral("chocolatey upgrade thing -y")));
 }
 
 void TestPackageInternalizationEngine::scriptHasNetworkDownload_ignoresLocalOnlyScripts() {

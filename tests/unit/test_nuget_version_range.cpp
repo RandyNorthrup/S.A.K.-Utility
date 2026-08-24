@@ -95,6 +95,15 @@ void TestNuGetVersionRange::parse_ignoresBuildMetadata() {
     // Build metadata does not affect precedence.
     QCOMPARE(v("1.0.0+build5").compare(v("1.0.0")), 0);
     QCOMPARE(v("1.0.0+a").compare(v("1.0.0+b")), 0);
+    // Every metadata fixture here is a PLAIN release, so the ORDER of the two splits was
+    // never pinned: '+' must be stripped BEFORE '-' is split, or the prerelease becomes
+    // "beta+exp.sha.5114f85" and a legal SemVer version is rejected outright.
+    const auto meta_pre = NuGetVersion::parse(QStringLiteral("1.0.0-beta+exp.sha.5114f85"));
+    QVERIFY(meta_pre.has_value());
+    QVERIFY(meta_pre->isPrerelease());
+    QCOMPARE(meta_pre->original(), QStringLiteral("1.0.0-beta+exp.sha.5114f85"));
+    QCOMPARE(meta_pre->compare(v("1.0.0-beta")), 0);
+    QVERIFY(*meta_pre < v("1.0.0"));
     // Metadata is ignored for precedence but must still be WELL FORMED: an empty or
     // non-identifier metadata run is a malformed version, not a plain release. Deleting the
     // validation and keeping only the strip passes both comparisons above.
@@ -121,8 +130,14 @@ void TestNuGetVersionRange::compare_prereleaseIdentifierRules() {
     // Numeric identifiers compare numerically and rank below alphanumeric.
     QVERIFY(v("1.0.0-2") < v("1.0.0-10"));
     QVERIFY(v("1.0.0-1") < v("1.0.0-alpha"));
+    // ...and the MIRROR arm: `return a_num ? -1 : 1` has two arms, but every numeric-vs-alpha
+    // fixture here puts the NUMERIC identifier on the left, so `return -1;` stayed green.
+    QCOMPARE(v("1.0.0-alpha").compare(v("1.0.0-1")), 1);
     // A longer prerelease with a shared prefix has higher precedence.
     QVERIFY(v("1.0.0-alpha") < v("1.0.0-alpha.1"));
+    // The shared-prefix length rule is a two-arm ternary too, and only the a-shorter arm was
+    // ever evaluated, so `return -1;` (longer prefix reported as LOWER) stayed green.
+    QCOMPARE(v("1.0.0-alpha.1").compare(v("1.0.0-alpha")), 1);
     // Case-insensitive identifier comparison.
     QCOMPARE(v("1.0.0-Beta").compare(v("1.0.0-beta")), 0);
 }
@@ -134,6 +149,11 @@ void TestNuGetVersionRange::compare_prereleaseNumericArbitraryPrecision() {
     QVERIFY(v("1.0.0-2") < v("1.0.0-10"));  // numeric, not lexical
     // Leading zeros do not change a numeric identifier's value.
     QCOMPARE(v("1.0.0-007").compare(v("1.0.0-7")), 0);
+    // Every numeric pair above differs in significant-digit COUNT, so the length branch
+    // answers first and the lexical tail of compareNumericIdentifiers never decides: equal-
+    // length identifiers must still order by value.
+    QVERIFY(v("1.0.0-11") < v("1.0.0-12"));
+    QCOMPARE(v("1.0.0-0012").compare(v("1.0.0-11")), 1);
     // An all-digit identifier still ranks below an alphanumeric one.
     QVERIFY(v("1.0.0-123") < v("1.0.0-alpha"));
 }
@@ -158,6 +178,13 @@ void TestNuGetVersionRange::range_halfOpenLowerUpper() {
     QVERIFY(ge.satisfies(v("1.0")));
     QVERIFY(ge.satisfies(v("9.9")));
     QVERIFY(!ge.satisfies(v("0.5")));
+    // Each bound TOKEN is trimmed individually, so a spaced feed range ("[4.8, )" ships in
+    // real Chocolatey nuspec data) is the same range, not a malformed one. Only the OUTER
+    // trim was covered ("   " in range_emptyIsPermissive).
+    const auto spaced = NuGetVersionRange::parse(QStringLiteral("[ 1.0 , )"));
+    QVERIFY(spaced.isValid());
+    QVERIFY(spaced.satisfies(v("1.0")));
+    QVERIFY(!spaced.satisfies(v("0.5")));
 
     const auto gt = NuGetVersionRange::parse(QStringLiteral("(1.0,)"));
     QVERIFY(!gt.satisfies(v("1.0")));  // exclusive lower
@@ -193,7 +220,10 @@ void TestNuGetVersionRange::range_closedAndExclusiveIntervals() {
 
 void TestNuGetVersionRange::range_emptyIsPermissive() {
     // An empty/whitespace range means "the feed omitted a range" -> any version.
-    for (const char* s : {"", "   "}) {
+    // "[,]" and "(,)" are the explicitly unbounded spellings the header contract calls
+    // permissive; only the empty spellings were probed, so an applyInterval that rejected a
+    // double-unbounded interval stayed green.
+    for (const char* s : {"", "   ", "[,]", "(,)"}) {
         const auto r = NuGetVersionRange::parse(QString::fromLatin1(s));
         QVERIFY2(r.isValid(), QByteArray("expected valid for: ").append(s).constData());
         QVERIFY(r.isAny());
@@ -209,10 +239,14 @@ void TestNuGetVersionRange::range_malformedRejectsAll() {
     // "[1.0,2.0x" isolates the close-char guard (the existing "[bad"/"(1.0" are still refused
     // downstream without it, so it was never actually tested), and "[x,2.0)" isolates the LOWER
     // half of the interval bound check -- only the upper half was.
+    // "[1.0)" isolates the CLOSE half of applyExact's bracket guard: the only other
+    // mismatched-bracket exact fixture, "(1.0)", trips the OPEN half and short-circuits, so a
+    // build that dropped the `close != ']'` half accepted "[1.0)" as an exact range for 1.0.
     for (const char* s : {"not-a-range",
                           "[bad",
                           "(1.0",
                           "[]",
+                          "[1.0)",
                           "(1.0)",
                           "[1.0,x)",
                           "1.0.x",
@@ -302,6 +336,13 @@ void TestNuGetVersionRange::select_excludesPrereleaseUnlessRangeTargetsIt() {
         NuGetVersionRange::parse(QStringLiteral("[2.0.0-alpha,)")).selectHighestSatisfying(avail);
     QVERIFY(targeted.has_value());
     QCOMPARE(targeted->original(), QStringLiteral("2.0.0-beta"));
+
+    // Eligibility is a two-term OR; every prerelease-bound fixture here puts it on the LOWER
+    // bound, so dropping `|| boundIsPrerelease(m_upper)` stayed green.
+    const auto upper_targeted =
+        NuGetVersionRange::parse(QStringLiteral("(,2.0.0-rc.2]")).selectHighestSatisfying(avail);
+    QVERIFY(upper_targeted.has_value());
+    QCOMPARE(upper_targeted->original(), QStringLiteral("2.0.0-beta"));
 
     // A plain range with ONLY a prerelease available qualifies nothing.
     const QVector<NuGetVersion> only_pre{v("2.0.0-beta")};

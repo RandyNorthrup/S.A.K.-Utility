@@ -10,7 +10,7 @@
       "find": "{0x1F, 0x8B, 0, 0, 0, 0}",
       "replace": "{0x1E, 0x8B, 0, 0, 0, 0}",
       "expect": "killed",
-      "why": "gzip is identified by the first magic byte 0x1F; flipping it to 0x1E stops the gzip signature matching a real 1F 8B stream so detection returns empty. detectFormat_gzipMagic writes 1F 8B and asserts QCOMPARE(fmt.toLower(), QString(\"gzip\"))"
+      "why": "gzip is identified by the first magic byte 0x1F; flipping it to 0x1E stops the gzip signature matching a real 1F 8B stream so detection returns empty. detectFormat_gzipMagic writes 1F 8B and asserts QCOMPARE(fmt, QString(\"gzip\"))"
     },
     {
       "id": "gzip-detection-routes-to-bzip2",
@@ -18,7 +18,7 @@
       "find": ".length = 2, .format = \"gzip\"},",
       "replace": ".length = 2, .format = \"bzip2\"},",
       "expect": "killed",
-      "why": "the 1F 8B signature must route to the \"gzip\" format; relabelling that table row to \"bzip2\" mis-routes a genuine gzip stream. detectFormat_gzipMagic asserts QCOMPARE(fmt.toLower(), QString(\"gzip\")) which now yields \"bzip2\""
+      "why": "the 1F 8B signature must route to the \"gzip\" format; relabelling that table row to \"bzip2\" mis-routes a genuine gzip stream. detectFormat_gzipMagic asserts QCOMPARE(fmt, QString(\"gzip\")) which now yields \"bzip2\""
     },
     {
       "id": "bzip2-magic-third-byte-flip",
@@ -26,7 +26,7 @@
       "find": "{0x42, 0x5A, 0x68, 0, 0, 0}",
       "replace": "{0x42, 0x5A, 0x69, 0, 0, 0}",
       "expect": "killed",
-      "why": "the bzip2 magic is 'BZh' = 42 5A 68; changing the third byte to 0x69 makes a real 'BZh' header fail to match so detection returns empty. detectFormat_bzip2Magic writes 'B','Z','h' and asserts QCOMPARE(fmt.toLower(), QString(\"bzip2\"))"
+      "why": "the bzip2 magic is 'BZh' = 42 5A 68; changing the third byte to 0x69 makes a real 'BZh' header fail to match so detection returns empty. detectFormat_bzip2Magic writes 'B','Z','h' and asserts QCOMPARE(fmt, QString(\"bzip2\"))"
     },
     {
       "id": "xz-magic-first-byte-flip",
@@ -34,7 +34,7 @@
       "find": "{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}",
       "replace": "{0xFC, 0x37, 0x7A, 0x58, 0x5A, 0x00}",
       "expect": "killed",
-      "why": "xz begins with 0xFD 37 7A 58 5A 00; flipping the leading 0xFD to 0xFC breaks the 6-byte signature match so a real xz stream is unrecognised. detectFormat_xzMagic writes the exact 6 bytes and asserts QCOMPARE(fmt.toLower(), QString(\"xz\"))"
+      "why": "xz begins with 0xFD 37 7A 58 5A 00; flipping the leading 0xFD to 0xFC breaks the 6-byte signature match so a real xz stream is unrecognised. detectFormat_xzMagic writes the exact 6 bytes and asserts QCOMPARE(fmt, QString(\"xz\"))"
     },
     {
       "id": "xz-magic-terminator-byte-flip",
@@ -42,7 +42,7 @@
       "find": "0x5A, 0x00}, .length = 6",
       "replace": "0x5A, 0x01}, .length = 6",
       "expect": "killed",
-      "why": "the sixth xz magic byte is the 0x00 terminator that distinguishes it from other 'XZ' leaders; requiring 0x01 there makes a genuine ...5A 00 header fail the full length-6 compare. detectFormat_xzMagic writes 0x00 as the sixth byte and asserts QCOMPARE(fmt.toLower(), QString(\"xz\"))"
+      "why": "the sixth xz magic byte is the 0x00 terminator that distinguishes it from other 'XZ' leaders; requiring 0x01 there makes a genuine ...5A 00 header fail the full length-6 compare. detectFormat_xzMagic writes 0x00 as the sixth byte and asserts QCOMPARE(fmt, QString(\"xz\"))"
     },
     {
       "id": "min-bytes-guard-operator-inverted",
@@ -50,7 +50,7 @@
       "find": "if (entry.length > bytesRead) {",
       "replace": "if (entry.length < bytesRead) {",
       "expect": "killed",
-      "why": "the guard skips a signature only when it is LONGER than the bytes actually read; inverting > to < skips every signature shorter than the read length (all of them for a 16-byte probe) so no format is ever matched. detectFormat_xzMagic asserts QCOMPARE(fmt.toLower(), QString(\"xz\")) which now returns empty (detectFormat_gzipMagic/bzip2Magic likewise)"
+      "why": "the guard skips a signature only when it is LONGER than the bytes actually read; inverting > to < skips every signature shorter than the read length (all of them for a 16-byte probe) so no format is ever matched. detectFormat_xzMagic asserts QCOMPARE(fmt, QString(\"xz\")) which now returns empty (detectFormat_gzipMagic/bzip2Magic likewise)"
     },
     {
       "id": "magic-byte-compare-operator-inverted",
@@ -58,7 +58,7 @@
       "find": "if (magic[i] != entry.bytes[i]) {",
       "replace": "if (magic[i] == entry.bytes[i]) {",
       "expect": "killed",
-      "why": "the per-byte compare must clear the match on a MISMATCH; flipping != to == clears it on equality, so a real 1F 8B stream stops matching gzip and instead falls through to a spurious match (its zero tail matches the bzip2 row's non-prefix positions). detectFormat_gzipMagic asserts QCOMPARE(fmt.toLower(), QString(\"gzip\")) which no longer holds"
+      "why": "the per-byte compare must clear the match on a MISMATCH; flipping != to == clears it on equality, so a real 1F 8B stream stops matching gzip and instead falls through to a spurious match (its zero tail matches the bzip2 row's non-prefix positions). detectFormat_gzipMagic asserts QCOMPARE(fmt, QString(\"gzip\")) which no longer holds"
     },
     {
       "id": "iscompressed-decision-inverted",
@@ -90,7 +90,7 @@
       "find": "if (!format.isEmpty()) {",
       "replace": "if (format.isEmpty()) {",
       "expect": "killed",
-      "why": "detectFormat returns the extension result when it is non-empty; inverting the guard discards a valid extension hit and falls through to magic sniffing, so a .gz file whose bytes are not a real gzip stream detects as empty. detectFormat_gzExtension writes non-magic \"dummy\" to test.gz and asserts QCOMPARE(fmt.toLower(), QString(\"gzip\"))"
+      "why": "detectFormat returns the extension result when it is non-empty; inverting the guard discards a valid extension hit and falls through to magic sniffing, so a .gz file whose bytes are not a real gzip stream detects as empty. detectFormat_gzExtension writes non-magic \"dummy\" to test.gz and asserts QCOMPARE(fmt, QString(\"gzip\"))"
     },
     {
       "id": "gzip-magic-length-shortened-to-one-byte",

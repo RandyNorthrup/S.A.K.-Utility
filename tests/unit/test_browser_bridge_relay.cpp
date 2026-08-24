@@ -163,6 +163,18 @@ void BrowserBridgeRelayTests::relayHandshake_rejectsProtocolMismatch() {
         relayConnect(dir.filePath(QStringLiteral("r.json")), &token, &protocol, &error);
     QVERIFY(pipe != INVALID_HANDLE_VALUE);
     QVERIFY(!relayHandshake(pipe, token, protocol + 1, &error));  // wrong protocol -> refused
+    // ...and the refusal is the SERVER's protocol gate, with the peer never admitted. Without
+    // these two pins the QVERIFY above is satisfied by ANY failure path -- including a relay
+    // that sent the wrong protocol in its own hello (browser_bridge_relay.cpp:234), got
+    // WELCOMED, and only then noticed the skew in its defense-in-depth check: the server would
+    // be pumping frames under a version skew, which is exactly what B13-08 forbids.
+    // Two accepted messages, not one: the server's best-effort "protocol_mismatch" frame can be
+    // discarded by its immediate DisconnectNamedPipe (browser_bridge_pipe.cpp:406) before the
+    // relay reads it -- the same race test_browser_bridge_pipe.cpp:285-296 documents.
+    QVERIFY2(error == QStringLiteral("Bridge server refused the relay: protocol_mismatch") ||
+                 error == QStringLiteral("Bridge server closed before welcoming the relay."),
+             qPrintable(error));
+    QCOMPARE(server.connectionGeneration(), quint64{0});
     CloseHandle(pipe);
     server.stop();
 }
@@ -199,9 +211,14 @@ void BrowserBridgeRelayTests::relay_forwardsCommandAndReplyOverRealPipe() {
                 .toObject()
                 .value(QStringLiteral("echoed"))
                 .toBool());
-    // The relay forwarded exactly the server's command, id-transparent.
-    QCOMPARE(extension.last_command.value(QStringLiteral("cmd")).toString(),
-             QStringLiteral("snapshot"));
+    // The relay forwarded exactly the server's command -- EVERY key, id-transparent. Pinning
+    // only "cmd" leaves a relay that REBUILDS the frame green: dropping "type" (what the
+    // extension dispatches on) and every command argument (browser_contract.cpp:1513-1531 puts
+    // url/backendNodeId/text beside "cmd") still satisfies a one-key check.
+    QCOMPARE(extension.last_command,
+             (QJsonObject{{QStringLiteral("type"), QStringLiteral("command")},
+                          {QStringLiteral("id"), QStringLiteral("b-1")},
+                          {QStringLiteral("cmd"), QStringLiteral("snapshot")}}));
     CloseHandle(pipe);
     server.stop();
 }
