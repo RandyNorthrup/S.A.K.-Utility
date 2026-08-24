@@ -39,6 +39,19 @@ constexpr int kModalPollIntervalMs = 50;
 /// running here, so the row is placed directly.
 constexpr auto kFakeDevicePath = "\\\\.\\PhysicalDrive99";
 
+/// The Step 1 -> Step 2 navigation button. Every assertion in this file watched the Flash
+/// button only, so the Next gate -- which decides whether a user can reach drive selection at
+/// all -- had no coverage in either direction.
+QPushButton* findNextButton(QWidget* panel) {
+    const auto buttons = panel->findChildren<QPushButton*>();
+    for (QPushButton* button : buttons) {
+        if (button->accessibleName() == QLatin1String("Next Step")) {
+            return button;
+        }
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 class ImageFlasherPanelTests : public QObject {
@@ -170,6 +183,13 @@ void ImageFlasherPanelTests::flashEnablesOnlyWithBothAnImageAndADrive() {
     QVERIFY(flash);
     QVERIFY(!flash->isEnabled());
 
+    // ...but it must still open the road to drive selection. Next is gated on the selected
+    // image path alone, and nothing in this suite touched it -- so hard-wiring that gate to
+    // disabled, which kills Step 1 -> Step 2 for every user, would ship green.
+    QPushButton* next = findNextButton(m_panel.get());
+    QVERIFY(next);
+    QVERIFY2(next->isEnabled(), "a selected image must enable Next into drive selection");
+
     // Image + drive is.
     selectOneDrive();
     QVERIFY(flash->isEnabled());
@@ -213,6 +233,11 @@ void ImageFlasherPanelTests::aRejectedImageLeavesFlashDisabled() {
 
     selectOneDrive();
     QVERIFY2(!flashButton()->isEnabled(), "a rejected image is not a selected image");
+    // The other half of the same fail-closed contract, and the half the download-flow bug this
+    // test is named for actually broke: navigation must stay shut too.
+    QPushButton* next = findNextButton(m_panel.get());
+    QVERIFY(next);
+    QVERIFY2(!next->isEnabled(), "a rejected image must not open drive selection");
 }
 
 QTEST_MAIN(ImageFlasherPanelTests)

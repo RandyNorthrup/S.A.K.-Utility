@@ -5024,6 +5024,61 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 FIRST-pass sweep b74 (gated 249/249): 22 weak assertions pinned across the
+    next five never-swept files (ai_tool_call_router 6, ai_async_tool_runner 6,
+    file_explorer_session_store 6, image_flasher_panel 2, fuzz_pst_structure 2). The verifier's
+    rejection rate is itself the notable result: test_image_flasher_panel returned 2 confirmed and
+    4 FALSE POSITIVES, the G18-3 cosmetic restraint holding on a GUI file without my intervention,
+    and on the PST fuzz harness it rejected the finder's named mutant as factually wrong
+    (kPidTagLtpRowId is a SUMMARY setter, not a detail setter, so the proposed mutation changes
+    nothing on any fixture) and substituted two defects it could actually name.
+    TWO MORE ASSERT-NOTHING SITES, both in the fuzz harness whose entire purpose is hostile bytes.
+    walkOpenedParser discarded FOUR accessor results via static_cast<void>, so any non-crashing
+    fail-open in readItemDetail / readItemProperties / readAttachments / readFolderItems shipped
+    green; it now pins the identity contract (the detail's node_id is the REQUESTED node, never a
+    parsed one), the attachment index-pairing contract (a walk that skips an unparsable sub-node
+    while still advancing the counter makes readAttachmentData(nid, i) return a DIFFERENT
+    attachment's bytes), and the row-window bound every paging caller relies on. Separately, the
+    seed loop asserted only isOpen(), never the node set the mutation walk iterates -- so a filter
+    added to allNodeIds would walk every mutant against a ONE-NODE store and the fuzz would still
+    report success; the exact per-fixture NBT node set is now pinned, order-independently.
+    The async runner had the sharpest single gap: resultIsDeliveredOnOwningThread proved the WORK
+    ran off-thread but never observed the DELIVERY thread, which is the entire P10-04 contract (the
+    panel's finished() slot touches GUI state, so an emission straight from the pool task is a live
+    data race). A direct-connection probe now records it. Also: start()'s single false return
+    covers two guards and only already-running was exercised, so an empty callable reaching the
+    pool yielded a swallowed bad_function_call -- drained() with no result and no reported failure;
+    detach() has TWO effects and only the result-dropping half was asserted, leaving the
+    cooperative cancel token (the ONLY lever over an abandoned QtConcurrent task) unchecked; the
+    token is per-job and nothing proved start() lowers it; attachedJobEmitsFinishedThenDrained
+    asserted two counts of 1, which cannot carry the ORDER it is named for since both signals fire
+    inside one call; and the destructor's raise-before-join -- the anti-freeze property -- was read
+    by nothing in the file, so a destructor that only joined stayed green.
+    Router: the kindForName catalog is entirely lower-case and untrimmed, so the whole block stayed
+    green against a lookup that dropped normalization -- which would classify " RUN_PowerShell " as
+    Unknown and slip it past the sub-agent command-tool refusal and the workflow recursion guard.
+    The predicate spot-checks never passed four of the thirteen kinds; a hand-written matrix now
+    covers every enumerator, because isCommandTool() true for Screenshot makes isBuiltInTool()
+    false and take_screenshot then falls through to the command planner. Also pinned: the call_id
+    stamped on the RECOGNIZED path (a version stamping it only in the Unknown branch aborts the
+    whole tool turn), whitespace-only arguments as a NO-ARGUMENT call rather than a parse failure,
+    the parse-error half of two ANDed guards (the existing "[1,2,3]" is well-formed JSON and
+    exercises only isObject()), and the cancelled flag as DISCRIMINATING rather than stamped on
+    every error.
+    Session store: show_hidden was asserted only where true (a hardcoded true passes), sizes only
+    at their defaults (indistinguishable from a dropped setValue), and locations only by path on
+    one pane -- the unused secondary pane inheriting the primary's location was invisible. The
+    active-index clamp was exercised on a ONE-tab session, where clamping, wrapping and collapsing
+    to zero are indistinguishable; it now pins the bound over three tabs in both directions. The
+    corrupt-enum test proved only that defaults come back, which a reader ignoring the store
+    entirely satisfies, so a non-default round trip was added. And clear() gained the scoping
+    assertion its implementation exists for: dropping the beginGroup/endGroup bracket around
+    remove(QString()) wipes the ROOT scope, satisfying the emptiness check while destroying every
+    unrelated setting in the same QSettings.
+    Image flasher: every assertion watched the Flash button, so the Next gate that decides whether
+    a user reaches drive selection at all had no coverage in EITHER direction -- hard-wiring it
+    disabled (killing Step 1 -> Step 2 for everyone) or enabled (the download-flow bug this file
+    was written for) both shipped green.
   - PROGRESS 2026-08-24 FIRST-pass sweep b73 (gated 249/249): 43 weak assertions pinned across the
     five largest NEVER-SWEPT unit-test files (browser_bridge 11, duplicate_finder_worker 9,
     secure_memory 9, nuget_version_range 8, config_schema_versioning 6), from a finder sweep that

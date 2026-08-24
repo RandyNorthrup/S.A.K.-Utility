@@ -330,10 +330,27 @@ void walkOpenedParser(PstParser& parser) {
         if (budget-- <= 0) {
             break;
         }
-        static_cast<void>(parser.readItemDetail(nid));
+        // Each accessor carries an identity / alignment / bound contract that must survive
+        // HOSTILE bytes; discarding every result let all three break silently. readItemDetail
+        // stamps the REQUESTED node id, never a parsed one; readAttachments promises entry i
+        // pairs with readAttachmentData(nid, i), so a walk that skipped an unparsable sub-node
+        // while still advancing the counter would hand back a DIFFERENT attachment's bytes; and
+        // the row window is clipped to the caller's limit, which every paging caller relies on.
+        const auto detail = parser.readItemDetail(nid);
+        QVERIFY2(!detail.has_value() || detail->node_id == nid,
+                 "readItemDetail returned a detail whose node_id is not the node requested");
         static_cast<void>(parser.readItemProperties(nid));
-        static_cast<void>(parser.readAttachments(nid));
-        static_cast<void>(parser.readFolderItems(nid, 0, kNodeWalkBudget));
+        const auto attachments = parser.readAttachments(nid);
+        if (attachments.has_value()) {
+            for (qsizetype att_idx = 0; att_idx < attachments->size(); ++att_idx) {
+                QVERIFY2(attachments->at(att_idx).index == static_cast<int>(att_idx),
+                         "readAttachments compacted its indices; index i no longer pairs with "
+                         "readAttachmentData(nid, i)");
+            }
+        }
+        const auto rows = parser.readFolderItems(nid, 0, kNodeWalkBudget);
+        QVERIFY2(!rows.has_value() || rows->size() <= kNodeWalkBudget,
+                 "readFolderItems returned more rows than the caller's limit");
         // loadFolderItems runs the per-item enrichment pass (extractSenderFromLeaf /
         // scanBthForSubjectAndClass) that readFolderItems skips; the load* wrappers emit their
         // result signals to no receiver here -- they just drive the async accept path under
@@ -384,6 +401,27 @@ private Q_SLOTS:
             PstParser seed_parser;
             seed_parser.open(path);
             QVERIFY2(seed_parser.isOpen(), label);
+            // isOpen() is ONE flag; it says nothing about WHAT the mutation walk will have to
+            // walk. allNodeIds() is the INPUT to walkOpenedParser's loop, so pin the exact node
+            // set each fixture's NBT declares: if it silently shrinks (a filter added to
+            // allNodeIds, a leaf loop that caches only the first NBTENTRY), every mutant is
+            // walked against a one-node store and this fuzz still reports success.
+            // Order-independent -- allNodeIds returns unordered hash keys.
+            const QVector<uint64_t> seed_nodes = seed_parser.allNodeIds();
+            const QVector<uint64_t> expected_nodes =
+                (qstrcmp(label, "openable") == 0)
+                    ? QVector<uint64_t>{sak::pst_fixture::kRootFolderNid}
+                : (qstrcmp(label, "foldered") == 0)
+                    ? QVector<uint64_t>{sak::pst_fixture::kRootFolderNid,
+                                        sak::pst_fixture::kHierarchyTableNid,
+                                        sak::pst_fixture::kChildFolderNid}
+                    : QVector<uint64_t>{sak::pst_fixture::kRootFolderNid,
+                                        sak::pst_fixture::kContentsTableNid,
+                                        sak::pst_fixture::kMessageNid};
+            QVERIFY2(seed_nodes.size() == expected_nodes.size(), label);
+            for (uint64_t want : expected_nodes) {
+                QVERIFY2(seed_nodes.contains(want), label);
+            }
             seed_parser.close();
         }
 
