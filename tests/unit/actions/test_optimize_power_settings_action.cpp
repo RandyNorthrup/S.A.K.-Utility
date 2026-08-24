@@ -29,10 +29,21 @@ void OptimizePowerSettingsActionTests::isHighPerformanceGuid_matchesBuiltinsByGu
     QVERIFY(
         Action::isHighPerformanceGuid(QStringLiteral("  8C5E7FDA-E8BF-4A96-9A85-A6E23A8C635C  ")));
     QVERIFY(Action::isHighPerformanceGuid(QStringLiteral("e9a42b02-d5df-448d-aa00-03f14749eb61")));
+    // Ultimate Performance in the SAME normalized shape the case above proves for SCHEME_MIN:
+    // without it, the trim/lower normalization could be applied to one built-in only.
+    QVERIFY(
+        Action::isHighPerformanceGuid(QStringLiteral("  E9A42B02-D5DF-448D-AA00-03F14749EB61  ")));
 
     // A custom plan's GUID (even if the plan is NAMED "High Performance") is not
     // a built-in high-performance scheme.
     QVERIFY(!Action::isHighPerformanceGuid(QStringLiteral("11111111-2222-3333-4444-555555555555")));
+    // The OTHER canonical built-in schemes are NOT high-performance. Balanced is the active plan
+    // on a stock machine, so refusing it is what makes execute() actually run powercfg -SETACTIVE
+    // instead of reporting "already optimized" and changing nothing.
+    QVERIFY(!Action::isHighPerformanceGuid(QStringLiteral("381b4222-f694-41f0-9685-ff5bb260df2e")));
+    QVERIFY(
+        !Action::isHighPerformanceGuid(QStringLiteral("  381B4222-F694-41F0-9685-FF5BB260DF2E  ")));
+    QVERIFY(!Action::isHighPerformanceGuid(QStringLiteral("a1841308-3541-4fab-bc81-f71556f20b4a")));
     QVERIFY(!Action::isHighPerformanceGuid(QString()));
     QVERIFY(!Action::isHighPerformanceGuid(QStringLiteral("High Performance")));
 }

@@ -5024,6 +5024,52 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 FIRST-pass sweep b93 (gated 249/249): 30 weak assertions pinned across the
+    LAST four never-swept files plus two more (wifi_setup_script 11, reset_network 6,
+    check_disk_errors 5, fuzz_ai_response 4, generate_system_report 2, optimize_power_settings 2).
+    One further candidate was REJECTED by the adversarial pass. THIS CLOSES THE NEVER-SWEPT
+    SURFACE FOR REAL: all 50 files (not the 41 b80 counted) have now been swept.
+    A READ-ONLY CLAIM PROVED BY ONE SPELLING OF ONE VERB. test_check_disk_errors_action's whole
+    premise -- "the check must never schedule an offline repair" -- rested on
+    !contains("OfflineScanAndFix"). PowerShell binds any unambiguous parameter prefix, so
+    `-Offline` invokes -OfflineScanAndFix while that literal never appears; and `-SpotFix`
+    performs a mutating ONLINE repair with no offline token at all. Nothing bounded how many
+    Repair-Volume calls the script emits, so an APPENDED second invocation left every assertion
+    true. The sole invocation is now pinned exactly, and its count pinned at 1.
+    A "NOTHING HAPPENED" ASSERTION AIMED AT A STRING THE SCRIPT NEVER EMITS: the companion
+    !contains("RebootRequired: Yes") is true of every implementation -- scheduling a boot-time
+    repair is done by passing a parameter, not by printing that text -- while the tokens that ARE
+    load-bearing went unchecked. parseDriveScanResult keys off exact-equality block markers and
+    processScanKeyValue matches exact values, so renaming any of them silently degrades the whole
+    scan pipeline; those are pinned now, with both verdict branches bound to their own arm by
+    relative order.
+    wifi_setup_script: the batch-metacharacter test asserted the script contains "^&" and "%%" --
+    both of which occur in the script's OWN boilerplate regardless of the SSID, so the escaping it
+    claimed to prove was untested. The exact escaped connect line and echo line are pinned now,
+    plus the negative that a single undoubled '%' never reaches the connect line. The 32-octet
+    SSID limit was proved only with ASCII, where characters and octets coincide: 11 copies of
+    U+4E2D are 11 characters but 33 octets, which a char-count check would accept. The two `del`
+    wipes of the plaintext-passphrase XML were counted but not POSITIONED -- the failure branch
+    must wipe BEFORE `exit /b 1` and inside that branch, the success path before the connect. And
+    an open network built with a passphrase still in hand (the panel keeps the field populated
+    when the user flips security to Open) must emit no key material at all: with the previous
+    empty-password fixture, `!password.isEmpty()` alone suppressed the block, so the open-vs-WEP
+    half of that guard was never reached.
+    reset_network / generate_system_report: stepFailed and collectorFailed were proved only at
+    exit code 1, but -1 is the never-ran default of a ProcessResult and a crash arrives as an
+    NTSTATUS reinterpreted as a negative int -- a guard written `exit_code > 0` calls both a
+    success and reports a network reset or a system report that never happened. The reset script's
+    guard flags are now bound to the Restart-NetAdapter line ITSELF rather than found anywhere in
+    the file, and the catch arm must write the exception message to stderr, which is the only
+    cause an operator ever sees behind "exit 1".
+    fuzz_ai_response: the harness's own oracle called OpenAIResponsesClient::extractApiError --
+    the parser's OWN fail-closed helper -- so a bug inside it would disable the oracle and the
+    parser together; it is re-derived from the JSON now. resultIsEmpty checked four fields but not
+    raw_json or the five token counters, and `usage` is billed downstream, so a fail-closed path
+    that scrubbed the calls but kept the token block would mis-bill the session from an untrusted
+    body. The broken-call case used a single-call body, where "poisoned the whole response" and
+    "dropped just the broken item" are indistinguishable; the broken item is now last in a body
+    that also carries a well-formed sibling, a message and an id.
   - PROGRESS 2026-08-24 FIRST-pass sweep b92 (gated 249/249): 34 weak assertions pinned across six
     NEVER-swept files (backup_bitlocker_keys 10, screenshot_settings 8, action_factory 4,
     all_actions_metadata 4, verify_system_files 4, fuzz_command_classifier 4). Four further

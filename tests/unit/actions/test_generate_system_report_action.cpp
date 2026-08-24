@@ -26,6 +26,16 @@ void GenerateSystemReportActionTests::collectorFailed_truthTable() {
     QVERIFY(!Action::collectorFailed(false, 0));  // clean run
     QVERIFY(Action::collectorFailed(true, 0));    // timed out
     QVERIFY(Action::collectorFailed(false, 1));   // non-zero exit
+    // NEGATIVE exit codes: -1 is the never-run default of a ProcessResult, and a crash arrives
+    // as an NTSTATUS reinterpreted as a negative int. A guard written `exit_code > 0` calls both
+    // a clean collector and reports a system report built from nothing.
+    QVERIFY(Action::collectorFailed(false, -1));
+    QVERIFY(Action::collectorFailed(false, -1'073'741'819));
+    // THIRD ARM, which the two-argument calls above never reach: a collector that exits 0, on
+    // time, but hands back blank or ceiling-truncated stdout is still a failure.
+    QVERIFY(Action::collectorFailed(false, 0, true));
+    QVERIFY(!Action::collectorFailed(false, 0, false));  // explicit false == the 2-arg default
+    QVERIFY(Action::collectorFailed(true, 1, true));     // all three arms together
 }
 
 void GenerateSystemReportActionTests::reportGenerationSucceeded_requiresSaveAndCollectors() {
