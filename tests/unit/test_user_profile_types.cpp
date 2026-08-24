@@ -31,6 +31,16 @@ private Q_SLOTS:
         QTest::newRow("Videos") << static_cast<int>(FolderType::Videos) << "Videos";
         QTest::newRow("Music") << static_cast<int>(FolderType::Music) << "Music";
         QTest::newRow("Downloads") << static_cast<int>(FolderType::Downloads) << "Downloads";
+        // The remaining five names were untested: dropping or swapping one of those rows
+        // keeps folderTypeToString/stringToFolderType mutually inverse, so the round trip
+        // stayed green while a standard folder loaded back as Custom.
+        QTest::newRow("AppData_Roaming")
+            << static_cast<int>(FolderType::AppData_Roaming) << "AppData_Roaming";
+        QTest::newRow("AppData_Local")
+            << static_cast<int>(FolderType::AppData_Local) << "AppData_Local";
+        QTest::newRow("Favorites") << static_cast<int>(FolderType::Favorites) << "Favorites";
+        QTest::newRow("StartMenu") << static_cast<int>(FolderType::StartMenu) << "StartMenu";
+        QTest::newRow("Custom") << static_cast<int>(FolderType::Custom) << "Custom";
     }
 
     void folderTypeRoundTrip() {
@@ -55,17 +65,34 @@ private Q_SLOTS:
     void folderSelectionSerialize() {
         FolderSelection fs;
         fs.type = FolderType::Documents;
+        fs.display_name = "My Documents";
         fs.relative_path = "Documents";
         fs.selected = true;
+        fs.include_patterns = QStringList{"*.docx", "*.pdf"};
+        fs.exclude_patterns = QStringList{"~$*", "*.tmp"};
         fs.size_bytes = 1024 * 1024;
+        fs.file_count = 37;
 
         QJsonObject json = fs.toJson();
         FolderSelection restored = FolderSelection::fromJson(json);
 
+        // All EIGHT fields: four of them were written by toJson and read by fromJson with
+        // nothing asserting they survived, so dropping either pattern list -- which is the
+        // per-folder include/exclude scope of the backup -- round-tripped green.
         QCOMPARE(restored.type, fs.type);
+        QCOMPARE(restored.display_name, fs.display_name);
         QCOMPARE(restored.relative_path, fs.relative_path);
         QCOMPARE(restored.selected, fs.selected);
+        QCOMPARE(restored.include_patterns, fs.include_patterns);
+        QCOMPARE(restored.exclude_patterns, fs.exclude_patterns);
         QCOMPARE(restored.size_bytes, fs.size_bytes);
+        QCOMPARE(restored.file_count, fs.file_count);
+
+        // `selected` must round-trip in BOTH arms: a true-only fixture is satisfied by a
+        // fromJson that hard-codes true, which would silently re-select deselected folders.
+        FolderSelection unselected = fs;
+        unselected.selected = false;
+        QCOMPARE(FolderSelection::fromJson(unselected.toJson()).selected, false);
     }
 
     // --- UserProfile JSON round-trip ---
@@ -77,6 +104,14 @@ private Q_SLOTS:
         profile.profile_path = "X:\\Profiles\\TestUser";
         profile.is_current_user = true;
         profile.is_selected = true;  // was dropped on round-trip (B7-34)
+        profile.total_size_estimated = 5'368'709'120LL;
+        FolderSelection docs;
+        docs.type = FolderType::Documents;
+        docs.relative_path = "Documents";
+        FolderSelection music;
+        music.type = FolderType::Music;
+        music.relative_path = "Music";
+        profile.folder_selections << docs << music;
 
         QJsonObject json = profile.toJson();
         UserProfile restored = UserProfile::fromJson(json);
@@ -86,6 +121,15 @@ private Q_SLOTS:
         QCOMPARE(restored.profile_path, profile.profile_path);
         QCOMPARE(restored.is_current_user, profile.is_current_user);
         QCOMPARE(restored.is_selected, profile.is_selected);
+        QCOMPARE(restored.total_size_estimated, profile.total_size_estimated);
+        // The folder selections ARE the backup scope: carry them, and in order. Nothing asserted
+        // them, so a toJson that omitted the array entirely round-tripped a profile whose backup
+        // would copy nothing.
+        QCOMPARE(restored.folder_selections.size(), qsizetype(2));
+        QCOMPARE(restored.folder_selections.at(0).type, FolderType::Documents);
+        QCOMPARE(restored.folder_selections.at(0).relative_path, QStringLiteral("Documents"));
+        QCOMPARE(restored.folder_selections.at(1).type, FolderType::Music);
+        QCOMPARE(restored.folder_selections.at(1).relative_path, QStringLiteral("Music"));
     }
 
     // --- SmartFilter ---
@@ -111,12 +155,43 @@ private Q_SLOTS:
     void smartFilterSerialize() {
         SmartFilter filter;
         filter.initializeDefaults();
+        // A DEFAULT-valued fixture cannot prove this round trip: SmartFilter::fromJson starts
+        // from a default-constructed filter whose ctor already re-seeds the exact same lists and
+        // sizes, so a toJson that wrote NO KEYS AT ALL still compared equal. Every field below is
+        // deliberately not its seeded default.
+        filter.enable_file_size_limit = true;
+        filter.enable_folder_size_limit = true;
+        filter.max_single_file_size_bytes = 123'456'789;
+        filter.max_folder_size_bytes = 987'654'321;
+        filter.exclude_patterns = QStringList{"z_last$", "a_first$"};
+        filter.exclude_folders = QStringList{"ZFolder", "AFolder"};
+        // Deliberately OMITS every mandatory entry: dangerous_files is a UNION with the built-in
+        // protected set, not a replacement, so a stored profile cannot un-protect NTUSER.DAT.
+        filter.dangerous_files = QStringList{"extra_secret.dat"};
 
         QJsonObject json = filter.toJson();
         SmartFilter restored = SmartFilter::fromJson(json);
 
         // Round-trip must preserve content AND order, not merely the count.
         QCOMPARE(restored.exclude_patterns, filter.exclude_patterns);
+        QCOMPARE(restored.exclude_folders, filter.exclude_folders);
+        // The caller's extra survives AND all seven mandatory files are re-added, in
+        // mandatoryDangerousFiles() order, after the supplied entries. Written as literals
+        // rather than by calling mandatoryDangerousFiles(), which would compare production
+        // against itself and stay green if the whole protected set were emptied.
+        QCOMPARE(restored.dangerous_files,
+                 (QStringList{"extra_secret.dat",
+                              "NTUSER.DAT",
+                              "NTUSER.DAT.LOG1",
+                              "NTUSER.DAT.LOG2",
+                              "ntuser.ini",
+                              "UsrClass.dat",
+                              "UsrClass.dat.LOG1",
+                              "UsrClass.dat.LOG2"}));
+        QCOMPARE(restored.enable_file_size_limit, true);
+        QCOMPARE(restored.enable_folder_size_limit, true);
+        QCOMPARE(restored.max_single_file_size_bytes, qint64(123'456'789));
+        QCOMPARE(restored.max_folder_size_bytes, qint64(987'654'321));
     }
 
     // --- BackupManifest ---
@@ -124,21 +199,45 @@ private Q_SLOTS:
     void backupManifestSerialize() {
         BackupManifest manifest;
         manifest.version = "1.0";
-        manifest.created = QDateTime::currentDateTime();
+        // A fixed whole-second timestamp: ISODate is second-precision, so this round-trips
+        // exactly (currentDateTime() carries milliseconds that the format silently drops).
+        manifest.created = QDateTime(QDate(2026, 1, 2), QTime(3, 4, 5));
         manifest.source_machine = "WORKSTATION01";
+        manifest.sak_version = "9.9.9";
+        manifest.backup_type = "user_profiles";
+        manifest.total_backup_size_bytes = 4'294'967'296LL;
+        manifest.compressed = true;
+        manifest.encrypted = true;
 
         BackupUserData user;
         user.username = "Admin";
         user.sid = "S-1-5-21-000";
+        user.permissions_mode = PermissionMode::PreserveOriginal;
         manifest.users.append(user);
+        BackupUserData second;
+        second.username = "Guest";
+        second.sid = "S-1-5-21-001";
+        manifest.users.append(second);
 
         QJsonObject json = manifest.toJson();
         BackupManifest restored = BackupManifest::fromJson(json);
 
         QCOMPARE(restored.version, manifest.version);
         QCOMPARE(restored.source_machine, manifest.source_machine);
-        QCOMPARE(restored.users.size(), 1);
-        QCOMPARE(restored.users.first().username, QStringLiteral("Admin"));
+        QCOMPARE(restored.sak_version, manifest.sak_version);
+        QCOMPARE(restored.backup_type, manifest.backup_type);
+        QCOMPARE(restored.created, manifest.created);
+        QCOMPARE(restored.total_backup_size_bytes, manifest.total_backup_size_bytes);
+        // Restore reads these to know a payload is a codec container / needs a password.
+        QCOMPARE(restored.compressed, true);
+        QCOMPARE(restored.encrypted, true);
+        // Users carry identity, permission mode AND order - not just a count.
+        QCOMPARE(restored.users.size(), qsizetype(2));
+        QCOMPARE(restored.users.at(0).username, QStringLiteral("Admin"));
+        QCOMPARE(restored.users.at(0).sid, QStringLiteral("S-1-5-21-000"));
+        QCOMPARE(restored.users.at(0).permissions_mode, PermissionMode::PreserveOriginal);
+        QCOMPARE(restored.users.at(1).username, QStringLiteral("Guest"));
+        QCOMPARE(restored.users.at(1).sid, QStringLiteral("S-1-5-21-001"));
     }
 
     void backupManifestFileRoundTrip() {
@@ -156,6 +255,20 @@ private Q_SLOTS:
         BackupManifest loaded = BackupManifest::loadFromFile(path);
         QCOMPARE(loaded.version, manifest.version);
         QCOMPARE(loaded.source_machine, manifest.source_machine);
+
+        // Fail closed on the two failure arms, which the happy path alone never reaches:
+        // an unreadable file must NOT come back as the ctor's default manifest (version
+        // "1.0"), because callers gate validity on version.isEmpty().
+        const BackupManifest missing =
+            BackupManifest::loadFromFile(path + QStringLiteral(".absent"));
+        QVERIFY(missing.version.isEmpty());
+        QVERIFY(missing.users.isEmpty());
+        QVERIFY(missing.source_machine.isEmpty());
+
+        // A truncated/corrupt manifest parses to an empty object and must be rejected by
+        // that same gate rather than degrading into a plausible-looking default manifest.
+        writeFile(path, QByteArrayLiteral("{ not json"));
+        QVERIFY(BackupManifest::loadFromFile(path).version.isEmpty());
     }
 
     // --- PermissionMode string conversion ---
@@ -224,7 +337,11 @@ private Q_SLOTS:
     void manifestChecksumMatchesAfterCompute() {
         BackupManifest m = sampleManifest();
         m.manifest_checksum = m.computeManifestChecksum();
-        QVERIFY(!m.manifest_checksum.isEmpty());
+        // 64 lowercase hex characters = a full SHA-256. !isEmpty() was satisfied by an MD5 hex, a
+        // truncated digest, or any placeholder string.
+        QCOMPARE(m.manifest_checksum.size(), qsizetype(64));
+        QCOMPARE(m.manifest_checksum, m.manifest_checksum.toLower());
+        QCOMPARE(QByteArray::fromHex(m.manifest_checksum.toLatin1()).size(), qsizetype(32));
         QVERIFY(m.verifyManifestChecksum());
     }
 
@@ -265,6 +382,29 @@ private Q_SLOTS:
         // Tamper the embedded profile without updating the digest.
         m.wifi_profiles[0].xml_data = "<WLANProfile>evil</WLANProfile>";
         QVERIFY(!m.verifyManifestChecksum());
+
+        // The contract names the WiFi/Ethernet/AppData trio but only WiFi was proved, and
+        // toJson adds ethernet_configs / app_data_sources CONDITIONALLY - a manifest that
+        // left either array out of the hashed JSON authenticated nothing about it.
+        BackupManifest eth_manifest = sampleManifest();
+        EthernetConfigInfo eth_info;
+        eth_info.adapter_name = "Ethernet";
+        eth_info.ip_address = "10.0.0.5";
+        eth_manifest.ethernet_configs.append(eth_info);
+        eth_manifest.manifest_checksum = eth_manifest.computeManifestChecksum();
+        QVERIFY(eth_manifest.verifyManifestChecksum());
+        eth_manifest.ethernet_configs[0].ip_address = "10.6.6.6";
+        QVERIFY(!eth_manifest.verifyManifestChecksum());
+
+        BackupManifest app_manifest = sampleManifest();
+        AppDataSourceInfo app_info;
+        app_info.name = "Chrome Profiles";
+        app_info.relative_path = "AppData/Local/Google/Chrome";
+        app_manifest.app_data_sources.append(app_info);
+        app_manifest.manifest_checksum = app_manifest.computeManifestChecksum();
+        QVERIFY(app_manifest.verifyManifestChecksum());
+        app_manifest.app_data_sources[0].relative_path = "AppData/Local/Evil";
+        QVERIFY(!app_manifest.verifyManifestChecksum());
     }
 
     void manifestChecksumSurvivesSaveLoad() {
@@ -305,7 +445,11 @@ private Q_SLOTS:
         writeFile(b.filePath("one.txt"), "hello");
         const QString ha = BackupManifest::hashDirectoryTree(a.path());
         const QString hb = BackupManifest::hashDirectoryTree(b.path());
-        QVERIFY(!ha.isEmpty());
+        // Pin the digest shape too: order-independence and change-detection are both satisfied by
+        // a shorter or alternate hash, so !isEmpty() left the algorithm entirely unconstrained.
+        QCOMPARE(ha.size(), qsizetype(64));
+        QCOMPARE(ha, ha.toLower());
+        QCOMPARE(QByteArray::fromHex(ha.toLatin1()).size(), qsizetype(32));
         QCOMPARE(ha, hb);
     }
 
@@ -391,8 +535,13 @@ private Q_SLOTS:
 
     void filterSizeDefaultPreservedWhenMissing() {
         SmartFilter f = SmartFilter::fromJson(QJsonObject{});
-        QCOMPARE(f.max_single_file_size_bytes, kDefaultMaxSingleFileSizeBytes);
-        QCOMPARE(f.max_folder_size_bytes, kDefaultMaxFolderSizeBytes);
+        // Pin the literal byte counts, not the production constants: the members are seeded FROM
+        // kDefaultMax* by the constructor, so comparing them against those same constants is
+        // green for ANY value the constants take -- including zero, which would refuse every file.
+        QCOMPARE(f.max_single_file_size_bytes, qint64(2) * 1024 * 1024 * 1024);  // 2 GiB
+        QCOMPARE(f.max_folder_size_bytes, qint64(50) * 1024 * 1024 * 1024);      // 50 GiB
+        QCOMPARE(kDefaultMaxSingleFileSizeBytes, qint64(2) * 1024 * 1024 * 1024);
+        QCOMPARE(kDefaultMaxFolderSizeBytes, qint64(50) * 1024 * 1024 * 1024);
     }
 
     void filterExplicitListOverridesDefault() {
@@ -474,6 +623,28 @@ private Q_SLOTS:
                            R"("Gateway":{},"Dns":[]})"));
         QCOMPARE(object_gateway.size(), qsizetype(1));
         QVERIFY(object_gateway.at(0).default_gateway.isEmpty());
+
+        // A record with NO Prefix (or a stringly-typed one) must leave subnet_mask EMPTY.
+        // Without the isDouble() guard, toInt() yields 0 and restore is handed the mask
+        // "0.0.0.0", which netsh accepts - no other fixture here omits Prefix.
+        const auto no_prefix = EthernetConfigInfo::parseNetIpConfigJson(
+            QStringLiteral(R"({"Name":"Ethernet 5","Dhcp":"Disabled","IPv4":"172.16.0.9"})"));
+        QCOMPARE(no_prefix.size(), qsizetype(1));
+        QCOMPARE(no_prefix.at(0).ip_address, QStringLiteral("172.16.0.9"));
+        QVERIFY(no_prefix.at(0).subnet_mask.isEmpty());
+        const auto string_prefix = EthernetConfigInfo::parseNetIpConfigJson(QStringLiteral(
+            R"({"Name":"Ethernet 6","Dhcp":"Disabled","IPv4":"172.16.0.9","Prefix":"24"})"));
+        QCOMPARE(string_prefix.size(), qsizetype(1));
+        QVERIFY(string_prefix.at(0).subnet_mask.isEmpty());
+
+        // Single-DNS adapter: primary set, secondary empty (the middle arm - the existing
+        // cases only cover two entries and none).
+        const auto one_dns = EthernetConfigInfo::parseNetIpConfigJson(
+            QStringLiteral(R"({"Name":"Ethernet 7","Dhcp":"Enabled","IPv4":"10.2.2.2",)"
+                           R"("Prefix":24,"Dns":["9.9.9.9"]})"));
+        QCOMPARE(one_dns.size(), qsizetype(1));
+        QCOMPARE(one_dns.at(0).dns_primary, QStringLiteral("9.9.9.9"));
+        QVERIFY(one_dns.at(0).dns_secondary.isEmpty());
     }
 
     void parseNetIpConfig_skipsNamelessAndHandlesEmpty() {

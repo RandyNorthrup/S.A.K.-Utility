@@ -5024,6 +5024,48 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b82 (gated 249/249): 36 weak assertions pinned across six
+    more already-swept files (user_profile_types 11, ai_conversation_store 10, mbox_writer 8,
+    restore_point_manager 3, thermal_monitor 2, flash_worker 2). Two of these files were seeded by
+    FINDING N7 below rather than by the finder.
+    A LITERAL TAUTOLOGY: test_restore_point_manager asserted QVERIFY(!elevated || elevated) -- A
+    or not-A, true for every possible implementation -- and backed it with
+    QCOMPARE(isElevated(), elevated), which calls the SAME function twice, so a mutated body
+    agrees with itself. `return true;` shipped green, and that value feeds createRestorePoint's
+    preflight gate directly (restore_point_manager.cpp:157), so a hardcoded true makes a
+    NON-ELEVATED process skip the admin refusal and run Checkpoint-Computer. Now pinned against
+    the canonical delegate, the same shape used for PermissionManager. This is the identical
+    defect fixed for elevation_manager in b78, in a file the broken cppcheck gate had been hiding.
+    A ROUND TRIP THAT COULD NOT FAIL: smartFilterSerialize used a DEFAULT-valued fixture, and
+    SmartFilter::fromJson starts from a default-constructed filter whose constructor re-seeds the
+    identical lists and sizes -- so a toJson that wrote NO KEYS AT ALL still compared equal. The
+    fixture is now entirely non-default. Pinning it turned the test RED and taught us the real
+    contract: dangerous_files is a UNION with the mandatory protected set, not a replacement
+    (user_profile_types.cpp:152-156 re-adds any built-in the stored list omitted), so a saved
+    profile cannot un-protect NTUSER.DAT. The pin now proves that union, written as literals
+    rather than by calling mandatoryDangerousFiles(), which would compare production against
+    itself and stay green if the whole protected set were emptied.
+    Other classes: FolderSelection round-tripped 4 of 8 fields (both per-folder pattern lists,
+    the include/exclude SCOPE of the backup, were unasserted), and UserProfile never asserted
+    folder_selections at all -- a toJson that omitted the array round-tripped a profile whose
+    backup would copy nothing. Two SHA-256 digests were pinned only by !isEmpty(), which an MD5
+    hex or any placeholder satisfies. mbox_writer's mboxrd escaping never reached the
+    already-escaped ">From " arm, so `return line.startsWith("From ")` stayed green while a reader
+    that strips one '>' gets a bare "From " separator back and splits one record into two; its
+    multipart test named no outer content type, so emitting multipart/mixed instead of
+    multipart/alternative -- which shows the message TWICE -- was green; and its collision test
+    asserted only that two files exist, not which name or which mail went where.
+    ai_conversation_store: commandLogPath's traversal test asserted things that cannot fail for
+    ANY input (QFileInfo::fileName() never returns a separator, and a surviving ".." would be a
+    directory component and get stripped from the name rather than reported); the artifact
+    containment guard was proved to refuse but not to refuse FOR ITS OWN REASON, and its accepting
+    arm (a relative path resolving back inside the subdir) was untested, so "reject anything
+    containing .." was a passing implementation; and the redaction test proved only that the
+    secret was absent, which a dropped or blanked command satisfies equally.
+    thermal_monitor: the runaway-poll bound was ONE-SIDED. `window_cycles <= 12` is satisfied by
+    0, i.e. by a monitor that went silent, and the isRunning() check does not rule that out
+    because a monitor that never re-arms its single-shot timer still reports running. Now
+    two-sided.
   - PROGRESS 2026-08-24 SECOND-pass sweep b81 (gated 249/249): 44 weak assertions pinned across the
     six LARGEST already-swept files (vulnerability_scanner 13, encryption 10, ai_workflow_evals 7,
     browser_bridge 7, browser_bridge_pipe 5, network_diagnostic_types 2). This is the first
@@ -5077,6 +5119,19 @@ So the suite itself must be audited for tests that pass regardless of the code.
     from 4/186 to 174/186 with zero findings on that file. NOT applied in b81 because enabling
     real analysis across tests/unit surfaces ~446 previously-invisible findings, which is its own
     gated campaign rather than a rider on a test-assertion commit. OPEN.
+    SECOND FACET, found while gating b82: the gate's result also depends on HOW MANY files are
+    staged. test_thermal_monitor.cpp uses `private Q_SLOTS:`, which the hook DOES define
+    (-DQ_SLOTS=), so it is analyzed properly -- and it fails cppcheck at HEAD, on code committed
+    in b77 that the hook passed at the time. Verified pre-existing by checking out the HEAD copy
+    and re-running the hook against the real path (an earlier attempt to test a scratchpad copy
+    was invalid: a stale .moc in that directory produced a preprocessorErrorDirective and
+    "no working configuration", which is NOT the same as clean). The finding itself is a genuine
+    cppcheck false positive -- `cycles` is incremented from a Qt signal connection during
+    qWait(), so the tool sees no assignment between the two reads and calls them the same value --
+    and is now documented with an inline suppression at the site, which is the sanctioned
+    mechanism (--inline-suppr is enabled) rather than a blanket entry in the suppressions list.
+    The transferable lesson: a per-file cppcheck run is strictly stronger than the multi-file run
+    the hook performs, so passing the hook does not mean a file is clean.
   - PROGRESS 2026-08-24 FIRST-pass sweep b80 (gated 249/249): 13 weak assertions pinned across the
     last six never-swept files (follow_scroll_controller 4, ai_model_catalog 2, deadline_canceller
     2, email_view_ids 2, ai_mcp_stdio_client 2, splash_screen 1). THIS CLOSES THE NEVER-SWEPT

@@ -4,8 +4,10 @@
 /// @file test_restore_point_manager.cpp
 /// @brief Unit tests for RestorePointManager
 
+#include "sak/elevation_manager.h"
 #include "sak/restore_point_manager.h"
 
+#include <QSignalSpy>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -38,8 +40,15 @@ void TestRestorePointManager::construction_nonCopyable() {
 
 void TestRestorePointManager::isElevated_returnsBool() {
     const bool elevated = RestorePointManager::isElevated();
-    // Unit tests typically run without elevation
-    QVERIFY(!elevated || elevated);
+    // (!elevated || elevated) is A||!A -- vacuously true for EVERY implementation, including a
+    // hardcoded "return true"; the determinism check below only compares the function to itself.
+    // The real contract is delegation: RestorePointManager::isElevated forwards to the one
+    // canonical token check (src/core/restore_point_manager.cpp:376-378), and createRestorePoint
+    // feeds that value straight into its preflight gate (cpp:157), so a hardcoded true makes a
+    // non-elevated process skip the admin refusal and run Checkpoint-Computer. Both sides read
+    // the same live token, so this holds on an elevated or an unelevated host alike. Same pin the
+    // campaign uses for PermissionManager (tests/unit/test_permission_manager.cpp:465).
+    QCOMPARE(elevated, sak::ElevationManager::isElevated());
     // Verify it's a deterministic call -- same result twice
     QCOMPARE(RestorePointManager::isElevated(), elevated);
 }
@@ -64,6 +73,14 @@ void TestRestorePointManager::restoreEnabledFromProbe_failsClosed() {
     QVERIFY(!RestorePointManager::restoreEnabledFromProbe(false, QString()));
     // Unexpected/garbage output on a successful probe -> not enabled.
     QVERIFY(!RestorePointManager::restoreEnabledFromProbe(true, QStringLiteral("VSS Running")));
+    // EXACT match, not substring/prefix/suffix: production compares trimmed() == "ENABLED"
+    // (src/core/restore_point_manager.cpp:68) against a script that writes only the bare
+    // 'ENABLED'/'DISABLED' sentinels (cpp:56-59). A contains()/endsWith() reading would report
+    // "NOT ENABLED" as enabled and a contains()/startsWith() reading would accept ENABLED trailed
+    // by a warning -- both are this safety check failing OPEN, which is what B5-10 removed.
+    QVERIFY(!RestorePointManager::restoreEnabledFromProbe(true, QStringLiteral("NOT ENABLED")));
+    QVERIFY(!RestorePointManager::restoreEnabledFromProbe(
+        true, QStringLiteral("ENABLED\r\nWARNING: not a REG_DWORD")));
     QVERIFY(!RestorePointManager::restoreEnabledFromProbe(true, QString()));
 }
 
@@ -87,6 +104,20 @@ void TestRestorePointManager::createRestorePointPreflight_failsClosedWithoutAdmi
     // lets the real elevated work run, so a mutation that dropped the elevation guard would make
     // the (valid, false) case above return empty and turn this test red.
     QVERIFY(RPM::restorePointPreflightRefusal(QStringLiteral("Before update"), true).isEmpty());
+    // The pure preflight is only a GATE if the real entry point acts on it; nothing in this file
+    // (or anywhere in tests/) reached createRestorePoint, so a body that computed the refusal and
+    // proceeded anyway stayed green. Pin the wiring at src/core/restore_point_manager.cpp:157-161:
+    // refuse, report the refusal string VERBATIM on restorePointFailed, and never claim success.
+    // An empty description is rejected by the FIRST guard on any host, elevated or not
+    // (cpp:142-144), so this spawns no PowerShell and creates no restore point.
+    RPM manager;
+    QSignalSpy failed_spy(&manager, &RPM::restorePointFailed);
+    QSignalSpy created_spy(&manager, &RPM::restorePointCreated);
+    QVERIFY(!manager.createRestorePoint(QString()));
+    QCOMPARE(failed_spy.count(), 1);
+    QCOMPARE(failed_spy.at(0).at(0).toString(),
+             QStringLiteral("A restore point description is required."));
+    QCOMPARE(created_spy.count(), 0);
 }
 
 void TestRestorePointManager::listRestorePoints_doesNotCrash() {

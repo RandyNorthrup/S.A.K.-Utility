@@ -129,7 +129,17 @@ void ThermalMonitorTests::singleShotTimerBehavior() {
     // poll completes, and onTimerTick defers while one is in flight. A 3s window at a
     // 500ms interval can therefore retire only a handful of cycles even if every poll
     // returned instantly; a timer that stacked a poll per tick would blow past this.
+    // cppcheck-suppress duplicateExpression  // `cycles` is incremented from the readingsUpdated
+    // connection above during qWait(), which cppcheck cannot model: it sees no assignment between
+    // the two reads and concludes they are the same value. They are not.
     const int window_cycles = cycles - cycles_before_window;
+    // The bound is TWO-SIDED. An upper bound alone is satisfied by window_cycles == 0, i.e. by a
+    // monitor that went silent -- and isRunning() above does not rule that out, because a monitor
+    // that never re-arms its single-shot timer still reports running. A 3s window at the 500ms
+    // interval this fixture uses must retire at least one further cycle.
+    QVERIFY2(window_cycles >= 1,
+             qPrintable(
+                 QString("Monitor went silent: %1 cycles in the window").arg(window_cycles)));
     QVERIFY2(window_cycles <= 12,
              qPrintable(QString("Runaway poll cycles: %1").arg(window_cycles)));
 }
@@ -140,11 +150,25 @@ void ThermalMonitorTests::clampPollInterval_flooring() {
     // Every assertion below is written RELATIVE to the symbol, so changing the floor's
     // magnitude keeps them all true while the anti-busy-spin guarantee moves. Pin the value.
     QCOMPARE(sak::kMinThermalPollIntervalMs, 250);
+    // Sibling constant: the DEFAULT cadence (thermal_monitor.h:19) is an alias of
+    // kTimerBroadcastMs, a constant owned by peer discovery (layout_constants.h:54).
+    // Retuning that unrelated timer silently retunes start()'s documented 2000ms default
+    // and every assertion in this file stays green. Pin the value, and pin that the default
+    // sits ABOVE the floor rather than being silently clamped up to it.
+    QCOMPARE(sak::kDefaultThermalPollIntervalMs, 2000);
+    QCOMPARE(ThermalMonitor::clampPollIntervalMs(sak::kDefaultThermalPollIntervalMs), 2000);
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(1000), 1000);
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(sak::kMinThermalPollIntervalMs),
              sak::kMinThermalPollIntervalMs);
     // Below the floor / zero / negative all clamp up to the floor.
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(10), sak::kMinThermalPollIntervalMs);
+    // Both sides of the EXACT boundary. Without them a floor written against the wrong
+    // constant -- `requested >= 100 ? requested : kMinThermalPollIntervalMs` -- satisfies
+    // every other case here (1000, 250, 10, 0, -5 all stay green) while start(150) arms a
+    // 150ms sensor poll, killing the contract at thermal_monitor.h:64-67. A `>= 500` variant
+    // passes them too, and dies on the 251 probe.
+    QCOMPARE(ThermalMonitor::clampPollIntervalMs(249), 250);
+    QCOMPARE(ThermalMonitor::clampPollIntervalMs(251), 251);
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(0), sak::kMinThermalPollIntervalMs);
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(-5), sak::kMinThermalPollIntervalMs);
 }

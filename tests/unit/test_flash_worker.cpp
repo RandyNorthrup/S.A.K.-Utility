@@ -374,7 +374,11 @@ void FlashWorkerTests::padToSectorSizePads512() {
     QVERIFY(FlashWorker::padToSectorSize(buf, bytesRead, 512));
     QCOMPARE(bytesRead, static_cast<qint64>(1024));  // rounded up to 2 sectors
     QCOMPARE(buf.size(), 1024);
-    QCOMPARE(buf.at(1023), '\0');                    // tail zero-filled
+    // The pad must begin exactly at bytesRead: the 513 valid bytes survive and only the tail is
+    // zeroed. A whole-buffer memset also leaves size 1024 with buf.at(1023) == '\0' -- and would
+    // write 513 bytes of zeroes over real image data on every short read.
+    QCOMPARE(buf.left(513), QByteArray(513, 'x'));
+    QCOMPARE(buf.mid(513), QByteArray(1024 - 513, '\0'));
 }
 
 void FlashWorkerTests::padToSectorSizePads4Kn() {
@@ -383,7 +387,9 @@ void FlashWorkerTests::padToSectorSizePads4Kn() {
     QVERIFY(FlashWorker::padToSectorSize(buf, bytesRead, 4096));
     QCOMPARE(bytesRead, static_cast<qint64>(4096));  // one full 4Kn sector
     QCOMPARE(buf.size(), 4096);
-    QCOMPARE(buf.at(4095), '\0');
+    // Same content contract at 4Kn geometry: only bytes past bytesRead are zeroed.
+    QCOMPARE(buf.left(513), QByteArray(513, 'x'));
+    QCOMPARE(buf.mid(513), QByteArray(4096 - 513, '\0'));
 }
 
 void FlashWorkerTests::padToSectorSizeAlreadyAligned4Kn() {

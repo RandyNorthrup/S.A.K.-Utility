@@ -50,7 +50,20 @@ void AiConversationStoreTests::startSession_writesManifestAndListsSession() {
     const auto sessions = store.listSessions();
     QCOMPARE(sessions.size(), 1);
     QCOMPARE(sessions.first().title, QStringLiteral("Drive Check"));
-    QVERIFY(QFile::exists(sessions.first().path + QStringLiteral("/manifest.json")));
+    QCOMPARE(sessions.first().id, store.currentSessionId());
+    QCOMPARE(sessions.first().path, store.currentSessionInfo().path);
+    // The manifest must carry the WHOLE record, not merely exist: id and title round-trip through
+    // disk and both timestamps are written in a parseable form (the session picker renders
+    // updated_at and listSessions sorts on it).
+    QFile manifest(sessions.first().path + QStringLiteral("/manifest.json"));
+    QVERIFY(manifest.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QJsonObject manifest_root = QJsonDocument::fromJson(manifest.readAll()).object();
+    QCOMPARE(manifest_root.value(QStringLiteral("id")).toString(), store.currentSessionId());
+    QCOMPARE(manifest_root.value(QStringLiteral("title")).toString(),
+             QStringLiteral("Drive Check"));
+    QVERIFY(sessions.first().created_at.isValid());
+    QVERIFY(sessions.first().updated_at.isValid());
+    QCOMPARE(sessions.first().created_at, store.currentSessionInfo().created_at);
 }
 
 void AiConversationStoreTests::appendTranscript_loadsDisplayLines() {
@@ -113,10 +126,24 @@ void AiConversationStoreTests::listPromptedSessions_filtersUnpromptedSessions() 
     const QString prompted_id = store.currentSessionId();
     QVERIFY(store.appendTranscript(QStringLiteral("You"), QStringLiteral("run scan"), {}, &error));
 
+    // An assistant-only session HAS a transcript but no user prompt, and a user-role line whose
+    // text is only whitespace is not a prompt either: the filter is on role AND text, not on
+    // "the session has any transcript line at all".
+    QVERIFY(store.startSession(QStringLiteral("AssistantOnly"), &error));
+    const QString assistant_only_id = store.currentSessionId();
+    QVERIFY(store.appendTranscript(
+        QStringLiteral("Assistant"), QStringLiteral("scan finished"), {}, &error));
+    QVERIFY(store.startSession(QStringLiteral("Blank"), &error));
+    const QString blank_id = store.currentSessionId();
+    QVERIFY(store.appendTranscript(QStringLiteral("You"), QStringLiteral("   "), {}, &error));
+
     const auto sessions = store.listPromptedSessions();
     QCOMPARE(sessions.size(), 1);
     QCOMPARE(sessions.first().id, prompted_id);
-    QVERIFY(sessions.first().id != empty_id);
+    QCOMPARE(sessions.first().title, QStringLiteral("Prompted"));
+    QVERIFY(std::none_of(sessions.cbegin(), sessions.cend(), [&](const auto& session) {
+        return session.id == empty_id || session.id == assistant_only_id || session.id == blank_id;
+    }));
 }
 
 void AiConversationStoreTests::clearCurrentSession_preventsAccidentalWrites() {
@@ -128,6 +155,14 @@ void AiConversationStoreTests::clearCurrentSession_preventsAccidentalWrites() {
     store.clearCurrentSession();
 
     QVERIFY(store.currentSessionId().isEmpty());
+    // The WHOLE record is cleared, not just the id: a stale title/path left behind is still shown
+    // by the panel and still names an artifact directory the next chat writes into.
+    const sak::ai::AiSessionInfo cleared = store.currentSessionInfo();
+    QVERIFY(cleared.id.isEmpty());
+    QVERIFY(cleared.title.isEmpty());
+    QVERIFY(cleared.path.isEmpty());
+    QVERIFY(!cleared.created_at.isValid());
+    QVERIFY(!cleared.updated_at.isValid());
     QVERIFY(
         !store.appendTranscript(QStringLiteral("System"), QStringLiteral("not saved"), {}, &error));
     QCOMPARE(error, QStringLiteral("No active AI session"));
@@ -143,21 +178,38 @@ void AiConversationStoreTests::writeUsage_persistsUsageJson() {
 
     sak::ai::TokenUsage turn;
     turn.input_tokens = 10;
+    turn.cached_input_tokens = 4;
     turn.output_tokens = 5;
+    turn.reasoning_tokens = 2;
     turn.total_tokens = 15;
-    sak::ai::TokenUsage total = turn;
-    QVERIFY(store.writeUsage(turn, total, &error));
+    // Deliberately DIFFERENT from `turn` so swapping writeUsage's two arguments, or writing one
+    // of them into both slots, cannot pass.
+    sak::ai::TokenUsage total;
+    total.input_tokens = 110;
+    total.cached_input_tokens = 44;
+    total.output_tokens = 55;
+    total.reasoning_tokens = 22;
+    total.total_tokens = 165;
+    QVERIFY2(store.writeUsage(turn, total, &error), qPrintable(error));
 
     QFile file(store.currentSessionInfo().path + QStringLiteral("/usage.json"));
     QVERIFY(file.open(QIODevice::ReadOnly));
     const auto doc = QJsonDocument::fromJson(file.readAll());
     QVERIFY(doc.isObject());
-    QCOMPARE(doc.object()
-                 .value(QStringLiteral("session_total"))
-                 .toObject()
-                 .value(QStringLiteral("total_tokens"))
-                 .toInt(),
-             15);
+    const QJsonObject usage_root = doc.object();
+    const QJsonObject last_turn = usage_root.value(QStringLiteral("last_turn")).toObject();
+    QCOMPARE(last_turn.value(QStringLiteral("input_tokens")).toInt(), 10);
+    QCOMPARE(last_turn.value(QStringLiteral("cached_input_tokens")).toInt(), 4);
+    QCOMPARE(last_turn.value(QStringLiteral("output_tokens")).toInt(), 5);
+    QCOMPARE(last_turn.value(QStringLiteral("reasoning_tokens")).toInt(), 2);
+    QCOMPARE(last_turn.value(QStringLiteral("total_tokens")).toInt(), 15);
+    const QJsonObject session_total = usage_root.value(QStringLiteral("session_total")).toObject();
+    QCOMPARE(session_total.value(QStringLiteral("input_tokens")).toInt(), 110);
+    QCOMPARE(session_total.value(QStringLiteral("cached_input_tokens")).toInt(), 44);
+    QCOMPARE(session_total.value(QStringLiteral("output_tokens")).toInt(), 55);
+    QCOMPARE(session_total.value(QStringLiteral("reasoning_tokens")).toInt(), 22);
+    QCOMPARE(session_total.value(QStringLiteral("total_tokens")).toInt(), 165);
+    QVERIFY(!usage_root.value(QStringLiteral("updated_at")).toString().isEmpty());
 }
 
 void AiConversationStoreTests::commandLogPath_createsLogsDirectoryAndReturnsPath() {
@@ -190,11 +242,15 @@ void AiConversationStoreTests::commandLogPath_confinesTraversalTokens() {
     const QString path =
         store.commandLogPath(QStringLiteral("../../etc"), QStringLiteral(".."), &error);
     QVERIFY2(!path.isEmpty(), qPrintable(error));
-    QVERIFY(path.contains(QStringLiteral("/artifacts/Logs/logs/")));
-    const QString file_name = QFileInfo(path).fileName();
-    QVERIFY(!file_name.contains(QStringLiteral("..")));
-    QVERIFY(!file_name.contains(QLatin1Char('/')));
-    QVERIFY(!file_name.contains(QLatin1Char('\\')));
+    // Both tokens are fully determined by sanitizeLogToken, so pin the whole resulting path:
+    // separators and reserved characters become '_' and any run of 2+ dots collapses to a single
+    // '_', landing the file under THIS session's own logs directory. The QFileInfo::fileName()
+    // checks below cannot fail for ANY input -- fileName() never returns a path separator, and a
+    // ".." that survived sanitizing would be a DIRECTORY component, so it would be stripped from
+    // the name rather than reported.
+    QCOMPARE(path,
+             store.currentSessionInfo().path +
+                 QStringLiteral("/artifacts/Logs/logs/____etc__.txt"));
 }
 
 void AiConversationStoreTests::safeArtifactDirectoryName_rejectsDotSegments() {
@@ -234,13 +290,23 @@ void AiConversationStoreTests::artifactPath_createsSubdirectoryAndReturnsPath() 
     QVERIFY2(!downloads_dir.isEmpty(), qPrintable(error));
     QVERIFY(QDir(downloads_dir).exists());
 
-    // P08-01: a filename that escapes the artifact subdir must be rejected.
+    // P08-01: a filename that escapes the artifact subdir must be rejected -- and rejected BY THE
+    // CONTAINMENT GUARD, not by one of artifactPath's other empty-with-error return paths.
     error.clear();
     const QString escaped = store.artifactPath(QStringLiteral("downloads"),
                                                QStringLiteral("../../../../evil.txt"),
                                                &error);
     QVERIFY(escaped.isEmpty());
-    QVERIFY(!error.isEmpty());
+    QCOMPARE(error,
+             QStringLiteral("Artifact filename escapes the artifact directory: "
+                            "../../../../evil.txt"));
+    // The other arm of the same guard: a relative filename that resolves back INSIDE the subdir
+    // is accepted, so a crude "reject anything containing .." is not a passing implementation.
+    error.clear();
+    QCOMPARE(
+        store.artifactPath(QStringLiteral("downloads"), QStringLiteral("nested/../ok.txt"), &error),
+        downloads_dir + QStringLiteral("/ok.txt"));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
 }
 
 void AiConversationStoreTests::renameSession_updatesTitleAndArtifactRoot() {
@@ -310,8 +376,14 @@ void AiConversationStoreTests::memoryFile_appendsEntries() {
                                     QStringLiteral("SMART OK"),
                                     &error));
     const QString memory = store.memoryText(16'000, &error);
-    QVERIFY(memory.contains(QStringLiteral("check my drive")));
-    QVERIFY(memory.contains(QStringLiteral("SMART OK")));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    // Entries are APPENDED in order, each under its own "<iso> - <kind> - <title>" heading:
+    // membership alone survives a store that prepends, or that drops the kind/title heading and
+    // leaves the two bodies run together with no attribution.
+    const qsizetype first_at = memory.indexOf(QStringLiteral(" - User - Request\ncheck my drive"));
+    const qsizetype second_at = memory.indexOf(QStringLiteral(" - Assistant - Finding\nSMART OK"));
+    QVERIFY(first_at >= 0);
+    QVERIFY(second_at > first_at);
 }
 
 void AiConversationStoreTests::memoryFile_initializesStructuredSections() {
@@ -336,6 +408,32 @@ void AiConversationStoreTests::memoryFile_initializesStructuredSections() {
     QVERIFY(memory.contains(QStringLiteral("## Resolved History")));
     QVERIFY(memory.contains(QStringLiteral("install firefox")));
 }
+
+namespace {
+
+// All SIX sections must survive the trim, in memorySectionNames() order, each with its body.
+// "Decisions" and "Artifacts" were entirely unchecked, so a compactor that dropped them --
+// losing exactly the record of what was already decided and produced -- stayed green.
+// Returns the offset of "## Resolved History", which the caller needs to place the marker.
+qsizetype verifyMemorySectionsInOrder(const QString& text) {
+    const qsizetype pinned_at = text.indexOf(QStringLiteral("## Pinned Facts"));
+    const qsizetype task_at = text.indexOf(QStringLiteral("## Current Task"));
+    const qsizetype decisions_at = text.indexOf(QStringLiteral("## Decisions"));
+    const qsizetype questions_at = text.indexOf(QStringLiteral("## Open Questions"));
+    const qsizetype artifacts_at = text.indexOf(QStringLiteral("## Artifacts"));
+    const qsizetype resolved_at = text.indexOf(QStringLiteral("## Resolved History"));
+    [&] {
+        QVERIFY(pinned_at >= 0);
+        QVERIFY(task_at > pinned_at);
+        QVERIFY(decisions_at > task_at);
+        QVERIFY(questions_at > decisions_at);
+        QVERIFY(artifacts_at > questions_at);
+        QVERIFY(resolved_at > artifacts_at);
+    }();
+    return resolved_at;
+}
+
+}  // namespace
 
 void AiConversationStoreTests::memoryFile_trimPreservesStructuredSections() {
     QTemporaryDir temp;
@@ -383,13 +481,17 @@ void AiConversationStoreTests::memoryFile_trimPreservesStructuredSections() {
     trimmed.close();
 
     QVERIFY2(error.isEmpty(), qPrintable(error));
-    QVERIFY(text.contains(QStringLiteral("## Pinned Facts")));
+    const qsizetype resolved_at = verifyMemorySectionsInOrder(text);
     QVERIFY(text.contains(QStringLiteral("Preserve Randy's package preference")));
-    QVERIFY(text.contains(QStringLiteral("## Current Task")));
     QVERIFY(text.contains(QStringLiteral("Build the offline installer bundle")));
-    QVERIFY(text.contains(QStringLiteral("## Open Questions")));
+    QVERIFY(text.contains(QStringLiteral("Use SAK built-in downloader first")));
     QVERIFY(text.contains(QStringLiteral("Confirm destination drive")));
-    QVERIFY(text.contains(QStringLiteral("[older section content compacted by SAK]")));
+    QVERIFY(text.contains(QStringLiteral("reports/session.md")));
+    // The compaction marker belongs to Resolved History (the only oversized section), and
+    // compaction keeps the NEWEST history while dropping the oldest.
+    QVERIFY(text.indexOf(QStringLiteral("[older section content compacted by SAK]")) > resolved_at);
+    QVERIFY(!text.contains(QStringLiteral("resolved detail 00 with")));
+    QVERIFY(text.contains(QStringLiteral("resolved detail 8999 with")));
     QVERIFY(text.contains(QStringLiteral("Latest preserved finding")));
     QVERIFY(QFileInfo(file.fileName()).size() <= 256 * 1024);
 }
@@ -419,6 +521,28 @@ void AiConversationStoreTests::searchSessions_findsTranscriptAndCommandIndex() {
     const QJsonObject index_line =
         QJsonDocument::fromJson(index_file.readLine().trimmed()).object();
     QCOMPARE(index_line.value(QStringLiteral("schema_version")).toInt(), 1);
+    QCOMPARE(index_line.value(QStringLiteral("source")).toString(), QStringLiteral("transcript"));
+    QCOMPARE(index_line.value(QStringLiteral("role")).toString(), QStringLiteral("You"));
+    QCOMPARE(index_line.value(QStringLiteral("text")).toString(),
+             QStringLiteral("You Run SUPERAntiSpyware scan"));
+    // Both snippets are fully determined (shorter than the 220-char snippet cap, so they are the
+    // whole simplified indexed text) and each query term occurs exactly once.
+    const auto transcript_hit = std::find_if(results.cbegin(), results.cend(), [](const auto& hit) {
+        return hit.source == QStringLiteral("transcript");
+    });
+    QVERIFY(transcript_hit != results.cend());
+    QCOMPARE(transcript_hit->snippet, QStringLiteral("You Run SUPERAntiSpyware scan"));
+    QCOMPARE(transcript_hit->score, 1);
+    QCOMPARE(transcript_hit->session.id, store.currentSessionId());
+    const auto command_hit = std::find_if(results.cbegin(), results.cend(), [](const auto& hit) {
+        return hit.source == QStringLiteral("command");
+    });
+    QVERIFY(command_hit != results.cend());
+    QCOMPARE(command_hit->snippet,
+             QStringLiteral("Get-Process SUPERAntiSpyware "
+                            "{\"error_message\":\"health_suppressed\",\"success\":false}"));
+    QCOMPARE(command_hit->score, 1);
+    QCOMPARE(command_hit->session.id, store.currentSessionId());
     QVERIFY(std::any_of(results.cbegin(), results.cend(), [](const auto& hit) {
         return hit.source == QStringLiteral("transcript") &&
                hit.snippet.contains(QStringLiteral("SUPERAntiSpyware"));
@@ -446,7 +570,25 @@ void AiConversationStoreTests::appendCommand_redactsSecretsInPersistedRecord() {
 
     QFile commands(store.currentSessionInfo().path + QStringLiteral("/commands.jsonl"));
     QVERIFY(commands.open(QIODevice::ReadOnly | QIODevice::Text));
-    QVERIFY(!QString::fromUtf8(commands.readAll()).contains(secret));
+    const QByteArray commands_bytes = commands.readAll();
+    QVERIFY(!QString::fromUtf8(commands_bytes).contains(secret));
+    // Not merely "the secret is gone": the record must persist the EXACT redacted form, so a
+    // command that was dropped, blanked or wholly replaced cannot pass for redaction.
+    const QString redacted =
+        QStringLiteral("Invoke-RestMethod -Headers @{ Authorization = '[redacted-context7-key]' }");
+    const QJsonObject record = QJsonDocument::fromJson(commands_bytes.trimmed()).object();
+    QCOMPARE(record.value(QStringLiteral("command")).toString(), redacted);
+    QVERIFY(record.value(QStringLiteral("result"))
+                .toObject()
+                .value(QStringLiteral("success"))
+                .toBool());
+    // appendCommand persists the command at TWO sites; the search-index copy is the second, and
+    // searchSessions hands it back to the model verbatim as a snippet.
+    QFile index(store.currentSessionInfo().path + QStringLiteral("/search_index.jsonl"));
+    QVERIFY(index.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString index_text = QString::fromUtf8(index.readAll());
+    QVERIFY(!index_text.contains(secret));
+    QVERIFY(index_text.contains(QStringLiteral("[redacted-context7-key]")));
 }
 
 void AiConversationStoreTests::concurrentReadersAndWriterDoNotDeadlockOrCorrupt() {
