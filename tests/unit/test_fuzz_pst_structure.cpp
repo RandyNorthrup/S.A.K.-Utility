@@ -321,6 +321,29 @@ bool writeWholeFile(const QString& path, const QByteArray& bytes) {
 
 // Touch every accepted-parser accessor that reads attacker-derived structure. Return values are
 // ignored: a fail-closed std::unexpected is correct; the invariant is only that none fault/hang.
+// readAttachments promises that entry i pairs with readAttachmentData(nid, i). The index loop
+// below cannot fail on anything this harness can build -- it is EMPTY for every node whose
+// subnode_bid is 0, which is every node of all nine fixtures except the attachment store's
+// message, and that message's SLBLOCK holds at most ONE SLENTRY, leaving index 0 the only
+// reachable value. So the OBSERVABLE half of the contract is pinned too: one index PAST the list
+// readAttachments produced must fail closed, never hand back some other sub-node's bytes. That
+// runs on every accepted node of every mutant.
+void checkAttachmentIndexPairing(PstParser& parser, uint64_t nid) {
+    const auto attachments = parser.readAttachments(nid);
+    if (!attachments.has_value()) {
+        return;
+    }
+    for (qsizetype att_idx = 0; att_idx < attachments->size(); ++att_idx) {
+        QVERIFY2(attachments->at(att_idx).index == static_cast<int>(att_idx),
+                 "readAttachments compacted its indices; index i no longer pairs with "
+                 "readAttachmentData(nid, i)");
+    }
+    const auto past_end = parser.readAttachmentData(nid, static_cast<int>(attachments->size()));
+    QVERIFY2(!past_end.has_value(),
+             "readAttachmentData returned bytes for an index past the end of the list "
+             "readAttachments produced; index i no longer names one fixed sub-node");
+}
+
 void walkOpenedParser(PstParser& parser) {
     static_cast<void>(parser.fileInfo());
     static_cast<void>(parser.folderTree());
@@ -340,17 +363,24 @@ void walkOpenedParser(PstParser& parser) {
         QVERIFY2(!detail.has_value() || detail->node_id == nid,
                  "readItemDetail returned a detail whose node_id is not the node requested");
         static_cast<void>(parser.readItemProperties(nid));
-        const auto attachments = parser.readAttachments(nid);
-        if (attachments.has_value()) {
-            for (qsizetype att_idx = 0; att_idx < attachments->size(); ++att_idx) {
-                QVERIFY2(attachments->at(att_idx).index == static_cast<int>(att_idx),
-                         "readAttachments compacted its indices; index i no longer pairs with "
-                         "readAttachmentData(nid, i)");
-            }
-        }
+        checkAttachmentIndexPairing(parser, nid);
         const auto rows = parser.readFolderItems(nid, 0, kNodeWalkBudget);
         QVERIFY2(!rows.has_value() || rows->size() <= kNodeWalkBudget,
                  "readFolderItems returned more rows than the caller's limit");
+        // kNodeWalkBudget (64) is a ceiling no fixture's Table Context can reach -- every store
+        // declares exactly ONE row (pst_fixture.h:541 rgibBm == kTcRowSize; :552-553 one cell plus
+        // the CEB) -- so the bound above is 1 <= 64 for every seed and a readFolderItems that
+        // ignored `offset` and `limit` outright still satisfies it. Ask for the smallest window a
+        // pager ever asks for, one row starting one row in, so the clamp at
+        // pst_parser.cpp:2968-2970 is load-bearing: the window must hold at most that one row, and
+        // skipping a row must make the window strictly shorter.
+        const auto shifted = parser.readFolderItems(nid, 1, 1);
+        QVERIFY2(!shifted.has_value() || shifted->size() <= 1,
+                 "readFolderItems returned more than the single row the caller asked for");
+        QVERIFY2(!shifted.has_value() || !rows.has_value() || rows->isEmpty() ||
+                     shifted->size() < rows->size(),
+                 "readFolderItems ignored the caller's offset: starting one row later did not "
+                 "shorten the window");
         // loadFolderItems runs the per-item enrichment pass (extractSenderFromLeaf /
         // scanBthForSubjectAndClass) that readFolderItems skips; the load* wrappers emit their
         // result signals to no receiver here -- they just drive the async accept path under
@@ -358,7 +388,17 @@ void walkOpenedParser(PstParser& parser) {
         parser.loadFolderItems(nid, 0, kNodeWalkBudget);
         parser.loadItemDetail(nid);
         parser.loadItemProperties(nid);
+        // loadAttachmentContent MUST answer the request it was handed -- bytes via
+        // attachmentContentReady or an identity-carrying refusal via attachmentContentFailed. The
+        // load* calls here assert nothing at all, so a version that emitted NEITHER on some
+        // hostile-byte path would strand every batch-save caller waiting on that pair, and this
+        // fuzz would report success over it. Exactly one of the two, every call.
+        QSignalSpy att_ready_spy(&parser, &PstParser::attachmentContentReady);
+        QSignalSpy att_failed_spy(&parser, &PstParser::attachmentContentFailed);
         parser.loadAttachmentContent(nid, 0);
+        QVERIFY2(att_ready_spy.size() + att_failed_spy.size() == 1,
+                 "loadAttachmentContent emitted neither attachmentContentReady nor "
+                 "attachmentContentFailed (or emitted both): the request was never answered");
     }
 }
 

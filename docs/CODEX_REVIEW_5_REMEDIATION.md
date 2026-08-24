@@ -5024,6 +5024,44 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b85 (gated 249/249): 43 weak assertions pinned across six
+    more already-swept files (html_email_writer 12, windows_usb_creator 8, migration_report 8,
+    email_search_worker 7, duplicate_finder_worker 5, fuzz_pst_structure 3).
+    A ONE-SIDED BRANCH NOTHING IN THE REPO DISTINGUISHED: recursive_scan selects between
+    recursive_directory_iterator and directory_iterator, and the only fixture in the suite with a
+    SUBDIRECTORY wants recursion. The four tests that set the flag false all run on FLAT temp dirs
+    where both iterators return the identical set, so `always recurse` passed the entire suite --
+    while the GUI's "Include all nested subfolders" checkbox and the AI action's `recursive`
+    argument both write that flag, meaning an un-honoured false would silently hash the whole
+    subtree. The recursive test now carries its own non-recursive control, and the summary pin
+    separates "walked the root only" ("No duplicate files found.") from "collected nothing" ("No
+    files found to scan.").
+    A COOPERATIVE STOP PROVED ONLY THAT ITS OWN FLAG FLIPPED: cancellationFlag asserted
+    stopRequested() after requestStop(), which is WorkerBase's atomic answering itself. Deleting
+    every checkStop() poll from scanDirectories/collectEntries/hashFiles leaves that assertion
+    green -- and run() still emits cancelled() from its own post-execute check, so even a
+    cancelled() spy would not have caught it, while a cancelled scan runs to completion after the
+    user presses Stop. The pin drives a real scan with the stop raised BEFORE start() (run()
+    deliberately does not clear the flag) and requires NO results to have been produced.
+    email_search_worker's criteriaDateRange was fully vacuous -- every assertion compared values
+    the test had just assigned -- so the window is now proved to FILTER: one message before
+    date_from and one after date_to are rejected while all three match the query. Its
+    mapi_property_id check compared kPropIdSubject to itself; the MS-OXPROPS tag 0x0037 is pinned
+    directly now.
+    html_email_writer went from substring checks to exact markup: the From/To rows and the <pre>
+    body wrapper are three independent emitters that a bare address substring cannot tell apart,
+    the inline-image rewrite is pinned as the WHOLE tag with its base64 payload (a prefix check
+    passes for a truncated body, and "no cid:" passes when the <img> is dropped outright), and the
+    sanitizer's exact output proves a javascript: URI is NEUTRALIZED to "blocked:" with the link
+    text and the handler-free <img> still standing rather than both being deleted. The traversal
+    test now also proves WHICH of the two guards returning path_traversal_attempt fired, by
+    rooting the export tree one level down so the escape target is a path the test owns.
+    windows_usb_creator: five refusal messages went from contains() to exact, and the cancel test
+    now proves a pre-run cancel does not survive into the next run.
+    migration_report: selectByConfidence's else-arm (clear below threshold) was satisfied by
+    `selected` defaulting to false, clear() never checked that the cached header statistics were
+    reset, the CSV formula-injection guard covered only 2 of its 6 triggers, and a size floor
+    stood in for the CSV content -- now pinned byte for byte.
   - PROGRESS 2026-08-24 SECOND-pass sweep b84 (gated 249/249): 59 weak assertions pinned across six
     more already-swept files (drive_scanner 15, ost_converter_controller 15, eml_writer 11,
     cleanup_worker 7, email_export_worker 6, iso_analyzer 5). Highest single-batch yield of the

@@ -131,6 +131,19 @@ void TestMigrationReport::testRemoveEntryInvalidIndex() {
     m_report.removeEntry(-1);
     m_report.removeEntry(999);
     QCOMPARE(m_report.getEntryCount(), 0);
+
+    // On an EMPTY report "still 0 entries" is trivially true whatever the guard does. Repeat
+    // against a POPULATED report, including the one-past-the-end index, so a dropped negative
+    // check or a <= off-by-one visibly loses an entry.
+    m_report.addEntry(makeEntry("A", "a", 1.0, "exact"));
+    m_report.addEntry(makeEntry("B", "b", 0.5, "fuzzy"));
+    m_report.removeEntry(-1);
+    m_report.removeEntry(2);
+    m_report.removeEntry(999);
+    QCOMPARE(m_report.getEntryCount(), 2);
+    QCOMPARE(m_report.getEntry(0).app_name, QStringLiteral("A"));
+    QCOMPARE(m_report.getEntry(1).app_name, QStringLiteral("B"));
+    QCOMPARE(m_report.getMetadata().total_apps, 2);
 }
 
 // B7-22: getEntry() must be bounds-checked -- std::vector::operator[] on a bad
@@ -154,10 +167,24 @@ void TestMigrationReport::testGetEntryBoundsChecked() {
 }
 
 void TestMigrationReport::testClear() {
-    m_report.addEntry(makeEntry("A", "a", 1.0, "exact"));
+    m_report.addEntry(makeEntry("A", "a", 1.0, "exact", true));
     m_report.addEntry(makeEntry("B", "b", 0.5, "fuzzy"));
+    m_report.selectEntry(1, true);
+    // Dirty every cached header statistic so clear() has something to reset; otherwise the
+    // post-conditions below are satisfied by their pre-existing zero values.
+    m_report.getMetadata().matched_apps = 2;
+    m_report.getMetadata().match_rate = 1.0;
+    QCOMPARE(m_report.getMetadata().total_apps, 2);
+    QCOMPARE(m_report.getMetadata().selected_apps, 2);
+
     m_report.clear();
     QCOMPARE(m_report.getEntryCount(), 0);
+    // clear() must zero the cached header statistics too, not just the vector -- a stale
+    // total_apps/selected_apps is what the exported report header would carry.
+    QCOMPARE(m_report.getMetadata().total_apps, 0);
+    QCOMPARE(m_report.getMetadata().selected_apps, 0);
+    QCOMPARE(m_report.getMetadata().matched_apps, 0);
+    QCOMPARE(m_report.getSelectedCount(), 0);
 }
 
 // ============================================================================
@@ -192,13 +219,17 @@ void TestMigrationReport::testDeselectAll() {
 }
 
 void TestMigrationReport::testSelectByConfidence() {
-    m_report.addEntry(makeEntry("Low", "l", 0.3, "fuzzy"));
+    // "Low" starts SELECTED so the else-arm (clear below threshold) is actually proven rather
+    // than satisfied by MigrationEntry::selected defaulting to false.
+    m_report.addEntry(makeEntry("Low", "l", 0.3, "fuzzy", true));
     m_report.addEntry(makeEntry("Mid", "m", 0.5, "fuzzy"));
     m_report.addEntry(makeEntry("High", "h", 0.9, "exact"));
+    QCOMPARE(m_report.getSelectedCount(), 1);
 
     m_report.selectByConfidence(0.5);
 
-    // Mid (0.5) and High (0.9) selected, Low (0.3) not
+    // Mid (0.5 -- the threshold is inclusive) and High (0.9) selected; Low (0.3) CLEARED:
+    // selectByConfidence is exclusive, unlike the additive selectByMatchType.
     QVERIFY(!m_report.getEntry(0).selected);
     QVERIFY(m_report.getEntry(1).selected);
     QVERIFY(m_report.getEntry(2).selected);
@@ -209,13 +240,18 @@ void TestMigrationReport::testSelectByMatchType() {
     m_report.addEntry(makeEntry("E1", "e1", 1.0, "exact"));
     m_report.addEntry(makeEntry("F1", "f1", 0.5, "fuzzy"));
     m_report.addEntry(makeEntry("E2", "e2", 0.9, "exact"));
+    // A pre-selected NON-matching entry: selectByMatchType is ADDITIVE -- it only ever sets
+    // selected=true for the requested type and must never clear an existing selection.
+    m_report.addEntry(makeEntry("F2", "f2", 0.4, "fuzzy", true));
 
     m_report.selectByMatchType("exact");
 
     QVERIFY(m_report.getEntry(0).selected);
     QVERIFY(!m_report.getEntry(1).selected);
     QVERIFY(m_report.getEntry(2).selected);
-    QCOMPARE(m_report.getSelectedCount(), 2);
+    QVERIFY(m_report.getEntry(3).selected);
+    QCOMPARE(m_report.getSelectedCount(), 3);
+    QCOMPARE(m_report.getMetadata().selected_apps, 3);
 }
 
 // ============================================================================
@@ -237,7 +273,15 @@ void TestMigrationReport::testGetSelectedCount() {
 void TestMigrationReport::testGetMatchedCount() {
     m_report.addEntry(makeEntry("Matched", "pkg", 1.0, "exact"));
     m_report.addEntry(makeEntry("Unmatched", "", 0.0, "none"));
-    QCOMPARE(m_report.getMatchedCount(), 1);
+    // De-confound the fixture: makeEntry ties both `available` and `match_type` to whether a
+    // package was given, so counting either of those also yields 1 above. This entry HAS a
+    // package while being unavailable and typed "none" -- matched is keyed only on a
+    // non-empty choco_package.
+    auto stale = makeEntry("MatchedUnavailable", "pkg2", 0.0, "none");
+    stale.available = false;
+    m_report.addEntry(stale);
+    QCOMPARE(m_report.getMatchedCount(), 2);
+    QCOMPARE(m_report.getUnmatchedCount(), 1);
 }
 
 void TestMigrationReport::testGetUnmatchedCount() {
@@ -335,6 +379,11 @@ void TestMigrationReport::testHtmlEscapesMarkup() {
 // a leading single quote to fields that start with a formula trigger.
 void TestMigrationReport::testCsvNeutralizesFormula() {
     auto e = makeEntry("=HYPERLINK(\"http://x\",\"y\")", "", 0.5, "@cmd");
+    // The trigger set is "=+-@\t\r"; only '=' and '@' were covered, so an implementation that
+    // neutralized just those two stayed green. Drive one field per remaining trigger.
+    e.app_version = QStringLiteral("+1+1");
+    e.app_publisher = QStringLiteral("-2-2");
+    e.notes = QStringLiteral("\tTAB");
     m_report.addEntry(e);
 
     QTemporaryDir dir;
@@ -348,6 +397,10 @@ void TestMigrationReport::testCsvNeutralizesFormula() {
     QVERIFY(csv.contains("\"'=HYPERLINK(\"\"http://x\"\",\"\"y\"\")\""));
     QVERIFY(csv.contains("\"'@cmd\""));
     QVERIFY(!csv.contains(",=HYPERLINK"));
+    // The remaining triggers: '+', '-' and a leading TAB must be neutralized the same way.
+    QVERIFY(csv.contains("\"'+1+1\""));
+    QVERIFY(csv.contains("\"'-2-2\""));
+    QVERIFY(csv.contains("\"'\tTAB\""));
 }
 
 // P06-37: a malformed import must be rejected without wiping the current report.
@@ -376,6 +429,45 @@ void TestMigrationReport::testImportRejectsInvalidPreservesEntries() {
     }
     QVERIFY(!m_report.importFromJson(bad));
     QCOMPARE(m_report.getEntryCount(), 2);
+
+    // A well-formed array holding a NON-object element hits a DIFFERENT guard, and must be
+    // refused without half-committing the entries parsed before it.
+    const QString nonobj = QDir(dir.path()).filePath("nonobject.json");
+    {
+        QFile f(nonobj);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        const QByteArray payload = "{\"entries\": [{\"app_name\": \"Ghost\"}, 5]}";
+        QCOMPARE(f.write(payload), payload.size());
+    }
+    QVERIFY(!m_report.importFromJson(nonobj));
+    QCOMPARE(m_report.getEntryCount(), 2);
+    QCOMPARE(m_report.getEntry(0).app_name, QStringLiteral("Keep1"));
+    QCOMPARE(m_report.getEntry(1).app_name, QStringLiteral("Keep2"));
+
+    // Positive control: without it every refusal above is satisfied by an importFromJson()
+    // that unconditionally returns false. Hand-written JSON (NOT exportToJson output) so the
+    // key names are pinned independently of the writer.
+    const QString good = QDir(dir.path()).filePath("good.json");
+    {
+        QFile f(good);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        const QByteArray payload =
+            "{\"entries\": [{\"app_name\": \"Imported\", \"choco_package\": \"imp\", "
+            "\"confidence\": 0.75, \"match_type\": \"exact\", \"selected\": true}]}";
+        QCOMPARE(f.write(payload), payload.size());
+    }
+    QVERIFY(m_report.importFromJson(good));
+    QCOMPARE(m_report.getEntryCount(), 1);
+    QCOMPARE(m_report.getEntry(0).app_name, QStringLiteral("Imported"));
+    QCOMPARE(m_report.getEntry(0).choco_package, QStringLiteral("imp"));
+    QCOMPARE(m_report.getEntry(0).confidence, 0.75);
+    QCOMPARE(m_report.getEntry(0).match_type, QStringLiteral("exact"));
+    QVERIFY(m_report.getEntry(0).selected);
+    // Counts are recomputed from the parsed entries, never taken from the file header.
+    QCOMPARE(m_report.getMetadata().total_apps, 1);
+    QCOMPARE(m_report.getMetadata().matched_apps, 1);
+    QCOMPARE(m_report.getMetadata().selected_apps, 1);
+    QCOMPARE(m_report.getMetadata().match_rate, 1.0);
 }
 
 void TestMigrationReport::testImportRejectPreservesMetadata() {
@@ -411,8 +503,20 @@ void TestMigrationReport::testExportSuccessReportsTrue() {
     QVERIFY(m_report.exportToCsv(cs));
     QVERIFY(m_report.exportToHtml(ht));
     QVERIFY(QFileInfo(js).size() > 0);
-    QVERIFY(QFileInfo(cs).size() > 0);
     QVERIFY(QFileInfo(ht).size() > 0);
+    // A size floor passes for a header-only or column-scrambled writer. The CSV for this fixture
+    // is fully determined, so pin it byte for byte (EOLs normalized because the writer emits
+    // platform line endings).
+    QFile csf(cs);
+    QVERIFY(csf.open(QIODevice::ReadOnly));
+    QString csv_text = QString::fromUtf8(csf.readAll());
+    csv_text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    QCOMPARE(csv_text,
+             QStringLiteral("App Name,Version,Publisher,Install Location,Install Date,"
+                            "Chocolatey Package,Confidence,Match Type,Available,"
+                            "Available Version,Selected,Version Lock,Locked Version,Notes,"
+                            "Status,Error Message\n"
+                            "App1,1.0,TestPublisher,,,app1,0.90,exact,Yes,,No,No,,,pending,\n"));
 }
 
 QTEST_MAIN(TestMigrationReport)

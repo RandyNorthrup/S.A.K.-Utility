@@ -111,8 +111,7 @@ void WindowsUSBCreatorTests::validDiskNumbers() {
     QVERIFY(!result);
 
     // Error should mention "ISO file not found" (not "Invalid disk number").
-    QVERIFY2(creator.lastError().contains(QStringLiteral("ISO file not found")),
-             qPrintable("Expected ISO error but got: " + creator.lastError()));
+    QCOMPARE(creator.lastError(), QStringLiteral("ISO file not found: /nonexistent/test.iso"));
 }
 
 // ---------------------------------------------------------------------------
@@ -151,8 +150,7 @@ void WindowsUSBCreatorTests::invalidDiskNumbersRejected() {
     bool result = creator.createBootableUSB(QStringLiteral("/nonexistent.iso"), diskNum);
 
     QVERIFY2(!result, "Invalid disk number should be rejected");
-    QVERIFY2(creator.lastError().contains(QStringLiteral("Invalid disk number")),
-             qPrintable("Expected disk number error but got: " + creator.lastError()));
+    QCOMPARE(creator.lastError(), QStringLiteral("Invalid disk number format: ") + diskNum);
 }
 
 // ===========================================================================
@@ -192,10 +190,19 @@ void WindowsUSBCreatorTests::cancelSetsFlag() {
     // cancel() should not crash or throw.
     creator.cancel();
 
-    // After cancellation, a createBootableUSB call that passes validation
-    // would be cancelled at the first m_cancelled check in the format step.
-    // We just verify cancel doesn't crash when called on a fresh object.
-    QVERIFY(creator.lastError().isEmpty());
+    // cancel() must not fabricate an error of its own.
+    QCOMPARE(creator.lastError(), QString());
+
+    // A cancel raised BEFORE a run must not survive into it: resetPerRunState() clears
+    // m_cancelled at the top of createBootableUSB, so the next run must report its OWN
+    // validation reason, never "Operation cancelled".
+    QSignalSpy failedSpy(&creator, &WindowsUSBCreator::failed);
+    QVERIFY(failedSpy.isValid());
+    QVERIFY(!creator.createBootableUSB(QStringLiteral("/no/such.iso"), QStringLiteral("1")));
+    QCOMPARE(failedSpy.count(), 1);
+    QCOMPARE(failedSpy.first().at(0).toString(),
+             QStringLiteral("ISO file not found: /no/such.iso"));
+    QCOMPARE(creator.lastError(), QStringLiteral("ISO file not found: /no/such.iso"));
 }
 
 void WindowsUSBCreatorTests::lastErrorIsThreadSafe() {
@@ -224,7 +231,7 @@ void WindowsUSBCreatorTests::failedSignalOnBadDiskNumber() {
 
     QCOMPARE(failedSpy.count(), 1);
     const QString errorMsg = failedSpy.first().at(0).toString();
-    QVERIFY(errorMsg.contains(QStringLiteral("Invalid disk number")));
+    QCOMPARE(errorMsg, QStringLiteral("Invalid disk number format: evil;cmd"));
 }
 
 void WindowsUSBCreatorTests::failedSignalOnMissingIso() {
@@ -236,7 +243,7 @@ void WindowsUSBCreatorTests::failedSignalOnMissingIso() {
 
     QCOMPARE(failedSpy.count(), 1);
     const QString errorMsg = failedSpy.first().at(0).toString();
-    QVERIFY(errorMsg.contains(QStringLiteral("ISO file not found")));
+    QCOMPARE(errorMsg, QStringLiteral("ISO file not found: /no/such/file.iso"));
 }
 
 // ===========================================================================
@@ -279,7 +286,11 @@ void WindowsUSBCreatorTests::sanitizeVolumeLabel_keepsLegitimateLabel() {
 
 void WindowsUSBCreatorTests::sanitizeVolumeLabel_capsLength() {
     const QString longLabel(100, QChar('A'));
-    QCOMPARE(sak::sanitizeVolumeLabel(longLabel).size(), 32);
+    QCOMPARE(sak::sanitizeVolumeLabel(longLabel), QString(32, QChar('A')));
+    // The 32-char cap counts ALLOWLISTED characters, not raw input positions: the stripped
+    // metacharacters must not consume label budget.
+    const QString mixed = QStringLiteral("!!!!!!!!ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+    QCOMPARE(sak::sanitizeVolumeLabel(mixed), QStringLiteral("ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"));
 }
 
 // ===========================================================================
@@ -340,6 +351,14 @@ void WindowsUSBCreatorTests::diskpartOutputIsError_detectsSelectionAndArgumentFa
         WindowsUSBCreator::diskpartOutputIsError(QStringLiteral("The media is write protected.")));
     QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
         QStringLiteral("The disk management services could not complete the operation.")));
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("DiskPart failed to clear disk attributes.")));
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("The specified disk is not convertible.")));
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("There is not enough usable space for this operation.")));
+    QVERIFY(WindowsUSBCreator::diskpartOutputIsError(
+        QStringLiteral("The operation is not supported by the object.")));
     // Normal progress chatter still reads as success.
     QVERIFY(!WindowsUSBCreator::diskpartOutputIsError(
         QStringLiteral("Volume 3 is the selected volume.\nDiskPart successfully assigned the "
@@ -359,6 +378,13 @@ void WindowsUSBCreatorTests::isSafeBundledExecutable_acceptsRegularFileUnderAppD
     f.write("MZ");
     f.close();
     QVERIFY(WindowsUSBCreator::isSafeBundledExecutable(exe, dir.path()));
+    // A DIRECTORY is not a bundled executable. Without the isFile() guard the
+    // canonical==canonicalDir branch would certify the app directory itself as
+    // runnable, and a subdirectory would pass the containment branch.
+    QVERIFY(!WindowsUSBCreator::isSafeBundledExecutable(dir.path(), dir.path()));
+    QVERIFY(QDir().mkpath(dir.path() + QStringLiteral("/tools")));
+    QVERIFY(!WindowsUSBCreator::isSafeBundledExecutable(dir.path() + QStringLiteral("/tools"),
+                                                        dir.path()));
 }
 
 void WindowsUSBCreatorTests::isSafeBundledExecutable_rejectsMissingFile() {

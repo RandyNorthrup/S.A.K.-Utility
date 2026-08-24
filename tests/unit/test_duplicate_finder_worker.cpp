@@ -40,6 +40,89 @@ private:
         return config;
     }
 
+#ifdef _WIN32
+    /// Open @p path with NO sharing, so any subsequent read open (the hasher's) fails. The
+    /// caller owns the returned handle.
+    static HANDLE openExclusive(const QString& path) {
+        const std::wstring wpath = path.toStdWString();
+        return CreateFileW(wpath.c_str(),
+                           GENERIC_READ,
+                           0,  // dwShareMode = 0 -> exclusive
+                           nullptr,
+                           OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL,
+                           nullptr);
+    }
+#endif
+
+    /// Pin one duplicate group's whole shape: digest, sizes, and the exact unordered pair of
+    /// paths. total_duplicates and wasted_space are derived from the hash BUCKET, not from
+    /// group.file_paths, so a group that listed ONE path twice reports the identical count and
+    /// bytes -- yet acting on it deletes the only copy. The digest pins SHA-256 (an MD5 downgrade
+    /// groups the same pair); every one was verified independently with hashlib, not on trust.
+    static void verifyDuplicatePair(const DuplicateFinderWorker::DuplicateGroup& group,
+                                    const QString& digest,
+                                    qint64 size,
+                                    const QString& path_a,
+                                    const QString& path_b) {
+        QCOMPARE(group.hash, digest);
+        QCOMPARE(group.file_size, size);
+        QCOMPARE(group.wasted_space, size);
+        QCOMPARE(group.file_paths.size(), 2);
+        const QString first = QDir::cleanPath(group.file_paths.at(0));
+        const QString second = QDir::cleanPath(group.file_paths.at(1));
+        QVERIFY(first != second);
+        QVERIFY((first == path_a && second == path_b) || (first == path_b && second == path_a));
+    }
+
+    /// The SEQUENTIAL hashing arm must produce the IDENTICAL result as the parallel one. Every
+    /// test in this file leaves parallel_hashing at its default true, so hashFiles()'s
+    /// else-branch -- the sequential loop, its cancel monitor and its per-file scanProgress -- is
+    /// never executed, even though the settings-dialog checkbox and the live certifier both
+    /// select it. The progress count is deterministic on this arm (exactly one emission per
+    /// collected file, emitted on the worker thread before each hash), unlike the parallel arm
+    /// where a poller thread emits it.
+    static void verifySequentialArmMatches(const DuplicateFinderWorker::Config& base,
+                                           qint64 wasted_bytes) {
+        DuplicateFinderWorker::Config sequential = base;
+        sequential.parallel_hashing = false;
+        DuplicateFinderWorker worker(sequential);
+        int count = -1;
+        qint64 wasted = -1;
+        int progressEmissions = 0;
+        int lastProgressCurrent = -1;
+        int lastProgressTotal = -1;
+        connect(&worker,
+                &DuplicateFinderWorker::scanProgress,
+                [&](int current, int total, const QString&) {
+                    ++progressEmissions;
+                    lastProgressCurrent = current;
+                    lastProgressTotal = total;
+                });
+        connect(&worker,
+                &DuplicateFinderWorker::resultsReady,
+                [&](const QString&, int c, qint64 w) {
+                    count = c;
+                    wasted = w;
+                });
+        QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
+        worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
+        QCOMPARE(count, 1);
+        QCOMPARE(wasted, wasted_bytes);
+        QCOMPARE(worker.filesUnhashed(), 0);
+        QCOMPARE(static_cast<int>(worker.duplicateGroups().size()), 1);
+        const DuplicateFinderWorker::DuplicateGroup& group = worker.duplicateGroups().front();
+        QCOMPARE(group.file_size, wasted_bytes);
+        QCOMPARE(group.file_paths.size(), 2);
+        // Three files were collected, so the sequential loop reported progress exactly three
+        // times and ended on (3, 3): a loop that skipped files or mis-sized its total would still
+        // find the duplicate pair but would drive the progress bar wrong.
+        QCOMPARE(progressEmissions, 3);
+        QCOMPARE(lastProgressCurrent, 3);
+        QCOMPARE(lastProgressTotal, 3);
+    }
+
 private Q_SLOTS:
     void findsExactDuplicates() {
         QTemporaryDir tmpDir;
@@ -97,6 +180,8 @@ private Q_SLOTS:
         QVERIFY(first_path != second_path);
         QVERIFY((first_path == path_a && second_path == path_b) ||
                 (first_path == path_b && second_path == path_a));
+
+        verifySequentialArmMatches(config, static_cast<qint64>(content.size()));
     }
 
     // B6-21: a file that cannot be hashed (here: exclusively locked) must be
@@ -111,14 +196,7 @@ private Q_SLOTS:
         createFile(tmpDir.path(), "locked.bin", "locked payload xyz");
 
         // Open with NO sharing, so any subsequent read open (the hasher's) fails.
-        const std::wstring wpath = lockedPath.toStdWString();
-        HANDLE handle = CreateFileW(wpath.c_str(),
-                                    GENERIC_READ,
-                                    0,  // dwShareMode = 0 -> exclusive
-                                    nullptr,
-                                    OPEN_EXISTING,
-                                    FILE_ATTRIBUTE_NORMAL,
-                                    nullptr);
+        HANDLE handle = openExclusive(lockedPath);
         QVERIFY(handle != INVALID_HANDLE_VALUE);
         // The lock has to outlive the scan but still be released if an assertion below returns
         // early, otherwise QTemporaryDir cannot remove locked.bin.
@@ -142,22 +220,31 @@ private Q_SLOTS:
         // two failures -- and the action layer prints it to the caller verbatim.
         createFile(tmpDir.path(), "locked2.bin", "second locked payload");
         const QString lockedPath2 = QDir(tmpDir.path()).filePath("locked2.bin");
-        const std::wstring wpath2 = lockedPath2.toStdWString();
-        HANDLE handle2 = CreateFileW(wpath2.c_str(),
-                                     GENERIC_READ,
-                                     0,  // dwShareMode = 0 -> exclusive
-                                     nullptr,
-                                     OPEN_EXISTING,
-                                     FILE_ATTRIBUTE_NORMAL,
-                                     nullptr);
+        HANDLE handle2 = openExclusive(lockedPath2);
         QVERIFY(handle2 != INVALID_HANDLE_VALUE);
         const auto release2 = qScopeGuard([handle2]() { CloseHandle(handle2); });
+
+        // A readable duplicate PAIR alongside the two unhashable files: the unhashed count is
+        // only half the contract. The other half is that the readable files still produce a
+        // COMPLETE result -- a hash failure must not drop the rest of the comparison set, and a
+        // fail-closed over-reach must not suppress the groups just because the set is partial.
+        const QByteArray readable_content("readable content here");  // same bytes as readable.txt
+        createFile(tmpDir.path(), "readable2.txt", readable_content);
 
         DuplicateFinderWorker worker2(config);
         QSignalSpy spy2(&worker2, &DuplicateFinderWorker::finished);
         worker2.start();
         QTRY_COMPARE_WITH_TIMEOUT(spy2.count(), 1, 10'000);
         QCOMPARE(worker2.filesUnhashed(), 2);
+        // Four files scanned, two unhashable -> the two readable ones are still hashed, bucketed
+        // and reported as one group. The digest was verified independently with hashlib.
+        QCOMPARE(static_cast<int>(worker2.duplicateGroups().size()), 1);
+        verifyDuplicatePair(worker2.duplicateGroups().front(),
+                            QStringLiteral(
+                                "65bf0c536912b576da86ee9664a53392037986e18aa6e86303ddc096ff86c4ba"),
+                            static_cast<qint64>(readable_content.size()),
+                            QDir(tmpDir.path()).filePath(QStringLiteral("readable.txt")),
+                            QDir(tmpDir.path()).filePath(QStringLiteral("readable2.txt")));
     }
 
     void noDuplicatesWhenAllUnique() {
@@ -281,8 +368,42 @@ private Q_SLOTS:
         QVERIFY((first_path == root_file && second_path == sub_file) ||
                 (first_path == sub_file && second_path == root_file));
         QCOMPARE(worker.filesUnhashed(), 0);
+
+        verifyNonRecursiveArmStopsAtRoot(config);
     }
 
+private:
+    /// The SAME fixture with recursive_scan OFF must stop at the root and never reach
+    /// sub/sub.txt. recursive_scan selects between recursive_directory_iterator and
+    /// directory_iterator; the recursive test is the only fixture in the file with a
+    /// subdirectory (the other tests set the flag false over FLAT temp dirs, where both
+    /// iterators return the identical set), so without this case an implementation that ignores
+    /// the flag and always recurses passes the entire suite -- the branch is only ever proven in
+    /// its true arm. The summary pin separates "walked the root only" from "collected nothing":
+    /// an empty file set emits the literal "No files found to scan.", while "No duplicate files
+    /// found." is reachable only after root.txt was actually collected, hashed and bucketed.
+    static void verifyNonRecursiveArmStopsAtRoot(const DuplicateFinderWorker::Config& base) {
+        DuplicateFinderWorker::Config shallow = base;
+        shallow.recursive_scan = false;
+        DuplicateFinderWorker shallow_worker(shallow);
+        int shallowCount = -1;
+        QString shallowSummary;
+        connect(&shallow_worker,
+                &DuplicateFinderWorker::resultsReady,
+                [&](const QString& text, int count, qint64) {
+                    shallowSummary = text;
+                    shallowCount = count;
+                });
+        QSignalSpy shallowSpy(&shallow_worker, &DuplicateFinderWorker::finished);
+        shallow_worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(shallowSpy.count(), 1, 10'000);
+        QCOMPARE(shallowCount, 0);
+        QCOMPARE(shallowSummary, QStringLiteral("No duplicate files found."));
+        QVERIFY(shallow_worker.duplicateGroups().empty());
+        QCOMPARE(shallow_worker.filesUnhashed(), 0);
+    }
+
+private Q_SLOTS:
     void cancellationFlag() {
         DuplicateFinderWorker::Config config;
         config.scanDirectories << "C:\\nonexistent";
@@ -295,6 +416,35 @@ private Q_SLOTS:
         QVERIFY(!worker.isExecuting());
         worker.requestStop();
         QVERIFY(worker.stopRequested());
+
+        // ...and the flag must actually ABORT a scan, which nothing above shows. run() emits
+        // cancelled() purely from its own m_stop_requested check AFTER execute() returns
+        // (worker_base.cpp:76-77), so even a cancelled() spy proves nothing about this worker:
+        // an execute() that never called checkStop() would hash the whole tree and still emit
+        // it. What proves the cooperative stop is live is that NO results were produced.
+        // Requesting the stop BEFORE start() is deterministic (run() deliberately does not clear
+        // the flag -- worker_base.cpp:63-67), so the first checkStop() in scanDirectories()
+        // fires on the first directory.
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+        const QByteArray content("cancelled scan payload");
+        createFile(tmpDir.path(), "c1.bin", content);
+        createFile(tmpDir.path(), "c2.bin", content);
+        DuplicateFinderWorker::Config scan_config;
+        scan_config.scanDirectories << tmpDir.path();
+        scan_config.minimum_file_size = 0;
+        scan_config.recursive_scan = false;
+        DuplicateFinderWorker cancelled_worker(scan_config);
+        QSignalSpy cancelledSpy(&cancelled_worker, &WorkerBase::cancelled);
+        QSignalSpy resultsSpy(&cancelled_worker, &DuplicateFinderWorker::resultsReady);
+        QSignalSpy finishedSpy(&cancelled_worker, &DuplicateFinderWorker::finished);
+        cancelled_worker.requestStop();
+        cancelled_worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(cancelledSpy.count(), 1, 10'000);
+        QCOMPARE(resultsSpy.count(), 0);
+        QCOMPARE(finishedSpy.count(), 0);
+        QVERIFY(cancelled_worker.duplicateGroups().empty());
+        QCOMPARE(cancelled_worker.filesUnhashed(), 0);
     }
 
     // ------------------------------------------------------------------
@@ -440,6 +590,28 @@ private Q_SLOTS:
         QVERIFY((first_path == path_a && second_path == path_b) ||
                 (first_path == path_b && second_path == path_a));
         QCOMPARE(worker.filesUnhashed(), 0);
+
+        // Control: the IMAGE walk has its OWN size filter -- a different expression from the
+        // on-disk one respectsMinimumFileSize pins -- and it is inclusive at the threshold.
+        // Every virtual test here runs with minimum_file_size 0, so a `>` in place of `>=`
+        // there silently drops exactly-at-threshold files from an image scan while the whole
+        // suite stays green.
+        DuplicateFinderWorker::Config at_size = makeVirtualConfig(tmpDir.path());
+        at_size.virtual_directories = {root};
+        at_size.minimum_file_size = static_cast<qint64>(content.size());
+        DuplicateFinderWorker size_worker(at_size);
+        int sizeCount = -1;
+        connect(&size_worker,
+                &DuplicateFinderWorker::resultsReady,
+                [&](const QString&, int count, qint64) { sizeCount = count; });
+        QSignalSpy sizeFinished(&size_worker, &DuplicateFinderWorker::finished);
+        size_worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(sizeFinished.count(), 1, 30'000);
+        QCOMPARE(sizeCount, 1);
+        QCOMPARE(static_cast<int>(size_worker.duplicateGroups().size()), 1);
+        QCOMPARE(size_worker.duplicateGroups().front().file_size,
+                 static_cast<qint64>(content.size()));
+        QCOMPARE(size_worker.duplicateGroups().front().file_paths.size(), 2);
     }
 };
 

@@ -93,6 +93,59 @@ void TestEmailSearchWorker::criteriaDateRange() {
     QVERIFY(criteria.date_from.isValid());
     QVERIFY(criteria.date_to.isValid());
     QVERIFY(criteria.date_from < criteria.date_to);
+
+    // Vacuous as written: every assertion above compares values this test just assigned. Prove
+    // instead that the window actually FILTERS -- one message before date_from and one after
+    // date_to must be rejected, leaving only the in-window message even though all three match
+    // the query.
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    QByteArray content;
+    content += "From a@example.com Sun Dec 31 12:00:00 2023\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "Subject: WINDOWKEY too early\r\n";
+    content += "Date: Sun, 31 Dec 2023 12:00:00 +0000\r\n";
+    content += "\r\n";
+    content += "Body.\r\n";
+    content += "\r\n";
+    content += "From b@example.com Sat Jun  1 12:00:00 2024\r\n";
+    content += "From: B <b@example.com>\r\n";
+    content += "Subject: WINDOWKEY inside\r\n";
+    content += "Date: Sat, 01 Jun 2024 12:00:00 +0000\r\n";
+    content += "\r\n";
+    content += "Body.\r\n";
+    content += "\r\n";
+    content += "From c@example.com Wed Jan  1 12:00:00 2025\r\n";
+    content += "From: C <c@example.com>\r\n";
+    content += "Subject: WINDOWKEY too late\r\n";
+    content += "Date: Wed, 01 Jan 2025 12:00:00 +0000\r\n";
+    content += "\r\n";
+    content += "Body.\r\n";
+    mbox.write(content);
+    mbox.close();
+
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QCOMPARE(parser.messageCount(), 3);
+
+    criteria.query_text = QStringLiteral("WINDOWKEY");
+    criteria.search_body = false;
+    criteria.search_sender = false;
+
+    EmailSearchWorker worker;
+    QSignalSpy hit_spy(&worker, &EmailSearchWorker::searchHit);
+    QSignalSpy done_spy(&worker, &EmailSearchWorker::searchComplete);
+    worker.searchMbox(&parser, criteria);
+
+    QCOMPARE(done_spy.count(), 1);
+    QCOMPARE(done_spy.first().at(0).toInt(), 1);
+    QCOMPARE(hit_spy.count(), 1);  // ONLY the in-window message survives both bounds
+    const auto hit = hit_spy.first().first().value<sak::EmailSearchHit>();
+    QCOMPARE(hit.item_node_id, static_cast<uint64_t>(1));
+    QCOMPARE(hit.subject, QStringLiteral("WINDOWKEY inside"));
+    parser.close();
 }
 
 void TestEmailSearchWorker::criteriaFolderScope() {
@@ -106,7 +159,9 @@ void TestEmailSearchWorker::criteriaMapiProperty() {
     criteria.mapi_property_id = sak::email::kPropIdSubject;
     criteria.mapi_property_value = QStringLiteral("Important");
 
-    QCOMPARE(criteria.mapi_property_id, sak::email::kPropIdSubject);
+    // Pin the MS-OXPROPS wire tag itself: kPropIdSubject == kPropIdSubject holds no matter what
+    // value the constant takes, so it proves nothing about the tag actually searched for.
+    QCOMPARE(criteria.mapi_property_id, static_cast<uint16_t>(0x0037));
     QCOMPARE(criteria.mapi_property_value, QStringLiteral("Important"));
 }
 
@@ -147,11 +202,26 @@ void TestEmailSearchWorker::cancelBeforeSearchDoesNotPoisonNextSearch() {
 
     QSignalSpy hit_spy(&worker, &EmailSearchWorker::searchHit);
     QSignalSpy done_spy(&worker, &EmailSearchWorker::searchComplete);
+    QSignalSpy cancel_spy(&worker, &EmailSearchWorker::searchCancelled);
     worker.searchMbox(&parser, criteria);
 
     QCOMPARE(done_spy.count(), 1);
     QCOMPARE(hit_spy.count(), 1);
+    QCOMPARE(cancel_spy.count(), 0);  // a finished run is COMPLETE, never also cancelled
     QCOMPARE(done_spy.first().at(0).toInt(), 1);  // the run was not cut short
+    // The hit must carry the matching message verbatim: subject/sender/date/type/container are
+    // filled by searchMessagePage (email_search_worker.cpp:290-298) and are read by nothing
+    // else in this file, so a transposed or hard-coded field ships green without these.
+    const auto hit = hit_spy.first().first().value<sak::EmailSearchHit>();
+    QCOMPARE(hit.item_node_id, static_cast<uint64_t>(0));
+    QCOMPARE(hit.item_type, sak::EmailItemType::Email);
+    QCOMPARE(hit.subject, QStringLiteral("ZEBRASUBJECT"));
+    QCOMPARE(hit.sender, QStringLiteral("A <a@example.com>"));
+    QCOMPARE(hit.match_field, QStringLiteral("subject"));
+    QCOMPARE(hit.context_snippet, QStringLiteral("ZEBRASUBJECT"));
+    QCOMPARE(hit.folder_path, QStringLiteral("MBOX"));
+    // Explicit +0000 in the fixture plus toUTC() keeps this host- and locale-independent.
+    QCOMPARE(hit.date.toUTC().toString(Qt::ISODate), QStringLiteral("2024-01-01T00:00:00Z"));
     parser.close();
 }
 
@@ -247,6 +317,28 @@ void TestEmailSearchWorker::searchWithNullMboxParserFailsClosed() {
     QCOMPARE(error_spy.first().at(0).toString(), QStringLiteral("No MBOX file open for search"));
     QCOMPARE(done_spy.count(), 1);
     QCOMPARE(done_spy.first().at(0).toInt(), 0);
+
+    // Second arm of the SAME guard (email_search_worker.cpp:200): a non-null parser that was
+    // never opened. Only the nullptr arm was exercised, so narrowing the guard to
+    // `parser == nullptr` stayed green while a closed parser fell through to readMessages(),
+    // which fails invalid_operation and reports the WRONG reason ("Failed to read MBOX
+    // messages") instead of the fail-closed "no file open".
+    MboxParser closed_parser;
+    QVERIFY(!closed_parser.isOpen());
+    EmailSearchWorker closed_worker;
+    QSignalSpy closed_error_spy(&closed_worker, &EmailSearchWorker::errorOccurred);
+    QSignalSpy closed_done_spy(&closed_worker, &EmailSearchWorker::searchComplete);
+    closed_worker.searchMbox(&closed_parser, criteria);
+    QCOMPARE(closed_error_spy.count(), 1);
+    QCOMPARE(closed_error_spy.first().at(0).toString(),
+             QStringLiteral("No MBOX file open for search"));
+    QCOMPARE(closed_done_spy.count(), 1);
+    QCOMPARE(closed_done_spy.first().at(0).toInt(), 0);
+
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.first().at(0).toString(), QStringLiteral("No MBOX file open for search"));
+    QCOMPARE(done_spy.count(), 1);
+    QCOMPARE(done_spy.first().at(0).toInt(), 0);
 }
 
 // ============================================================================
@@ -328,6 +420,24 @@ void TestEmailSearchWorker::mboxBodySearchUsesMessageIndex() {
     const auto hit = hit_spy.first().first().value<sak::EmailSearchHit>();
     QCOMPARE(hit.item_node_id, static_cast<uint64_t>(1));  // the SECOND message
     QCOMPARE(hit.match_field, QStringLiteral("body"));
+    // The snippet is cut from the SECOND message's body, so it also proves WHICH body was
+    // loaded -- "reports body" alone says nothing about the text shown to the user. The body is
+    // 36 chars, well inside the 120-char window, so extractContextSnippet returns it whole with
+    // no ellipsis on either end (email_search_worker.cpp:354-368).
+    QCOMPARE(hit.context_snippet, QStringLiteral("This body contains ZEBRACODE only.\r\n"));
+
+    // search_body must GATE the matcher (:586-588): re-run with it off while another
+    // detail-based criterion keeps the detail load alive, so matchMboxBody IS reached with the
+    // flag clear and ZEBRACODE still in the body. It must refuse (the fixture has no recipient
+    // header, so matchMboxRecipients finds nothing either).
+    criteria.search_body = false;
+    criteria.search_recipients = true;
+    EmailSearchWorker gated_worker;
+    QSignalSpy gated_hit_spy(&gated_worker, &EmailSearchWorker::searchHit);
+    QSignalSpy gated_done_spy(&gated_worker, &EmailSearchWorker::searchComplete);
+    gated_worker.searchMbox(&parser, criteria);
+    QCOMPARE(gated_done_spy.count(), 1);
+    QCOMPARE(gated_hit_spy.count(), 0);
     parser.close();
 }
 
@@ -367,6 +477,21 @@ void TestEmailSearchWorker::mboxRecipientSearchMatchesToField() {
     QCOMPARE(hit_spy.count(), 1);
     const auto hit = hit_spy.first().first().value<sak::EmailSearchHit>();
     QCOMPARE(hit.match_field, QStringLiteral("recipient"));
+    // The context IS the To value (email_search_worker.cpp:606 -> detail.to). "recipient"
+    // alone says nothing about which string the technician is actually shown.
+    QCOMPARE(hit.context_snippet, QStringLiteral("Zebra Recipient <zebracontact@example.com>"));
+
+    // search_recipients must GATE the matcher (:600-602), not merely select it: re-run with it
+    // off while search_body keeps the detail load alive, so matchMboxRecipients IS reached with
+    // the flag clear and the To header still matching. It must refuse (the body lacks the query).
+    criteria.search_recipients = false;
+    criteria.search_body = true;
+    EmailSearchWorker gated_worker;
+    QSignalSpy gated_hit_spy(&gated_worker, &EmailSearchWorker::searchHit);
+    QSignalSpy gated_done_spy(&gated_worker, &EmailSearchWorker::searchComplete);
+    gated_worker.searchMbox(&parser, criteria);
+    QCOMPARE(gated_done_spy.count(), 1);
+    QCOMPARE(gated_hit_spy.count(), 0);
     parser.close();
 }
 
@@ -418,6 +543,21 @@ void TestEmailSearchWorker::mboxAttachmentNameSearchMatches() {
     QCOMPARE(hit_spy.count(), 1);
     const auto hit = hit_spy.first().first().value<sak::EmailSearchHit>();
     QCOMPARE(hit.match_field, QStringLiteral("attachment"));
+    // The context is the decoded FILENAME (email_search_worker.cpp:618-620), not the part's
+    // mime type: an "attachment" label alone says nothing about which string is shown.
+    QCOMPARE(hit.context_snippet, QStringLiteral("zebrafile.bin"));
+
+    // search_attachment_names must GATE the matcher (:614): re-run with it off while search_body
+    // keeps the detail load alive, so matchMboxAttachments IS reached with the flag clear and the
+    // attachment still named zebrafile.bin. It must refuse (the body lacks the keyword).
+    criteria.search_attachment_names = false;
+    criteria.search_body = true;
+    EmailSearchWorker gated_worker;
+    QSignalSpy gated_hit_spy(&gated_worker, &EmailSearchWorker::searchHit);
+    QSignalSpy gated_done_spy(&gated_worker, &EmailSearchWorker::searchComplete);
+    gated_worker.searchMbox(&parser, criteria);
+    QCOMPARE(gated_done_spy.count(), 1);
+    QCOMPARE(gated_hit_spy.count(), 0);
     parser.close();
 }
 
