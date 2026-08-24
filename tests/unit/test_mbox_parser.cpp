@@ -141,9 +141,11 @@ void TestMboxParser::openEmptyFile() {
     // reason and leaves the parser shut instead of accepting an "empty mailbox".
     QVERIFY(!parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY2(error_spy.first().at(0).toString().startsWith(
-                 QStringLiteral("Not a valid MBOX file (missing 'From ' header): ")),
-             qPrintable(error_spy.first().at(0).toString()));
+    // The path is the useful half of this message; .arg(QString()) still startsWith() the
+    // prefix. The sibling openNonExistentFile already compares the whole string.
+    QCOMPARE(error_spy.first().at(0).toString(),
+             QStringLiteral("Not a valid MBOX file (missing 'From ' header): ") +
+                 temp_file.fileName());
     QCOMPARE(parser.messageCount(), 0);
 }
 
@@ -191,8 +193,15 @@ void TestMboxParser::cancelDoesNotCrash() {
     parser.cancel();
     QVERIFY(!parser.isOpen());
     QCOMPARE(parser.messageCount(), 0);
-    QVERIFY(!parser.readMessages(0, 10).has_value());
-    QVERIFY(!parser.readMessageDetail(0).has_value());
+    // Deleting readMessageDetail's !m_is_open guard leaves it falling through to the range
+    // check, which returns invalid_argument -- !has_value() stays green while the "no file is
+    // open" contract is gone.
+    const auto messages = parser.readMessages(0, 10);
+    QVERIFY(!messages.has_value());
+    QCOMPARE(messages.error(), sak::error_code::invalid_operation);
+    const auto detail = parser.readMessageDetail(0);
+    QVERIFY(!detail.has_value());
+    QCOMPARE(detail.error(), sak::error_code::invalid_operation);
 }
 
 // ============================================================================
@@ -294,8 +303,16 @@ void TestMboxParser::loadMessagesFromValidFile() {
     QCOMPARE(msg_spy.count(), 1);
     const auto messages = msg_spy.at(0).at(0).value<QVector<sak::MboxMessage>>();
     QCOMPARE(messages.size(), 2);
+    // Emitting both rows with message 0's `from`, or flagging a text/plain row as carrying an
+    // attachment (which drives the paperclip column), passes a subject-only check.
+    QCOMPARE(messages.at(0).message_index, 0);
     QCOMPARE(messages.at(0).subject, QStringLiteral("Hello World"));
+    QCOMPARE(messages.at(0).from, QStringLiteral("Test Sender <sender@example.com>"));
+    QVERIFY(!messages.at(0).has_attachments);
+    QCOMPARE(messages.at(1).message_index, 1);
     QCOMPARE(messages.at(1).subject, QStringLiteral("Second Message"));
+    QCOMPARE(messages.at(1).from, QStringLiteral("Another Sender <another@example.com>"));
+    QVERIFY(!messages.at(1).has_attachments);
     QCOMPARE(msg_spy.at(0).at(1).toInt(), 2);
 
     parser.close();
@@ -318,10 +335,18 @@ void TestMboxParser::loadMessageDetailFromValidFile() {
     // (the raw slice ends at the following "From " separator).
     QCOMPARE(detail_spy.count(), 1);
     const auto detail = detail_spy.at(0).at(0).value<sak::MboxMessageDetail>();
+    QCOMPARE(detail.message_index, 0);
     QCOMPARE(detail.subject, QStringLiteral("Hello World"));
     QCOMPARE(detail.from, QStringLiteral("Test Sender <sender@example.com>"));
-    QVERIFY(detail.body_plain.contains(QStringLiteral("This is the body of the test email.")));
-    QVERIFY(!detail.body_plain.contains(QStringLiteral("Body of the second email message.")));
+    QCOMPARE(detail.to, QStringLiteral("Test Recipient <recipient@example.com>"));
+    QCOMPARE(detail.message_id, QStringLiteral("<test-001@example.com>"));
+    QVERIFY(detail.cc.isEmpty());
+    QVERIFY(detail.bcc.isEmpty());
+    // A phantom attachment manufactured on a plain text/plain message is unasserted today.
+    QCOMPARE(detail.attachments.size(), 0);
+    // Byte-exact: leaking message 0's OWN header block into the body passes both contains()
+    // probes, since message 1's text is still absent either way.
+    QCOMPARE(detail.body_plain, QStringLiteral("This is the body of the test email.\r\n\r\n"));
 
     parser.close();
     delete temp_file;
@@ -339,12 +364,28 @@ void TestMboxParser::readMessagesSync() {
     const auto result = parser.readMessages(0, 10);
     QVERIFY(result.has_value());
     QCOMPARE(result->size(), 2);
+    // file_offset and message_size are asserted NOWHERE else in this file, yet an off-by-one in
+    // m_message_offsets, or a size computed from the whole block instead of the post-separator
+    // slice, is exactly the regression the index exists to prevent. The geometry below was
+    // recomputed from the fixture byte by byte, not read off a comment.
     QCOMPARE(result->at(0).message_index, 0);
     QCOMPARE(result->at(0).subject, QStringLiteral("Hello World"));
+    QCOMPARE(result->at(0).from, QStringLiteral("Test Sender <sender@example.com>"));
+    QCOMPARE(result->at(0).to, QStringLiteral("Test Recipient <recipient@example.com>"));
+    QVERIFY(result->at(0).cc.isEmpty());
+    QCOMPARE(result->at(0).file_offset, Q_INT64_C(0));
+    QCOMPARE(result->at(0).message_size, Q_INT64_C(282));
+    // The explicit +0000 offset plus toUTC() keeps this host- and locale-independent.
+    QCOMPARE(result->at(0).date.toUTC().toString(Qt::ISODate),
+             QStringLiteral("2024-01-01T00:00:00Z"));
     QCOMPARE(result->at(1).message_index, 1);
     QCOMPARE(result->at(1).subject, QStringLiteral("Second Message"));
+    QCOMPARE(result->at(1).from, QStringLiteral("Another Sender <another@example.com>"));
+    QCOMPARE(result->at(1).file_offset, Q_INT64_C(332));
+    QCOMPARE(result->at(1).message_size, Q_INT64_C(285));
     // text/plain with no attachment disposition: the summary flag must stay false.
     QVERIFY(!result->at(0).has_attachments);
+    QVERIFY(!result->at(1).has_attachments);
     parser.close();
     delete temp_file;
 }
@@ -364,7 +405,9 @@ void TestMboxParser::readMessageDetailSync() {
     QCOMPARE(result->subject, QStringLiteral("Second Message"));
     QCOMPARE(result->from, QStringLiteral("Another Sender <another@example.com>"));
     QCOMPARE(result->message_id, QStringLiteral("<test-002@example.com>"));
-    QVERIFY(result->body_plain.contains(QStringLiteral("Body of the second email message.")));
+    // Byte-exact: including the header block, or running the slice past the intended end,
+    // still contains the sentence.
+    QCOMPARE(result->body_plain, QStringLiteral("Body of the second email message.\r\n"));
     parser.close();
     delete temp_file;
 }
@@ -409,10 +452,23 @@ void TestMboxParser::nestedMultipartRecoversBodyAndAttachment() {
 
     auto detail = parser.readMessageDetail(0);
     QVERIFY(detail.has_value());
-    QVERIFY(detail->body_plain.contains(QStringLiteral("Hello plain body")));
-    QVERIFY(detail->body_html.contains(QStringLiteral("Hello html body")));
+    // Byte-exact: handing back the whole inner sub-part (its "Content-Type:" header block
+    // included), or leaving the "--INNER--" delimiter attached, passes contains().
+    QCOMPARE(detail->body_plain, QStringLiteral("Hello plain body\r\n"));
+    QCOMPARE(detail->body_html, QStringLiteral("<p>Hello html body</p>\r\n"));
     QCOMPARE(detail->attachments.size(), 1);
-    QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("a.bin"));
+    const auto& att = detail->attachments.first();
+    QCOMPARE(att.index, 0);
+    QCOMPARE(att.long_filename, QStringLiteral("a.bin"));
+    QCOMPARE(att.filename, QStringLiteral("a.bin"));
+    QCOMPARE(att.mime_type, QStringLiteral("application/octet-stream"));
+    QCOMPARE(att.size_bytes, Q_INT64_C(15));
+    QVERIFY(att.content_id.isEmpty());
+    // A recursion that recovers the NAME from the part header but zero bytes passes today.
+    const auto bytes = parser.readAttachmentData(sak::MboxMessageIndex{0},
+                                                 sak::MboxAttachmentIndex{0});
+    QVERIFY(bytes.has_value());
+    QCOMPARE(*bytes, QByteArray("payload-bytes\r\n"));
     parser.close();
 }
 
@@ -471,7 +527,13 @@ void TestMboxParser::deepNestedMultipartFailsClosed() {
     QVERIFY(shallowParser.isOpen());
     const auto detail = shallowParser.readMessageDetail(0);
     QVERIFY(detail.has_value());
-    QVERIFY(detail->body_plain.contains(QStringLiteral("deep body")));
+    // This is the arm proving the refusal above is the DEPTH CAP and not "any nesting fails",
+    // so it has to prove the walk was CLEAN: contains() stays green if the body also carries
+    // every level's part headers or the "--L9--" trailer, and a spurious per-level attachment
+    // was entirely unasserted.
+    QCOMPARE(detail->body_plain, QStringLiteral("deep body\r\n"));
+    QVERIFY(detail->body_html.isEmpty());
+    QCOMPARE(detail->attachments.size(), 0);
     shallowParser.close();
 }
 
@@ -516,8 +578,17 @@ void TestMboxParser::readAttachmentDataAlignsWithRecursiveEnumeration() {
     auto detail = parser.readMessageDetail(0);
     QVERIFY(detail.has_value());
     QCOMPARE(detail->attachments.size(), 2);
+    QCOMPARE(detail->attachments.at(0).index, 0);
     QCOMPARE(detail->attachments.at(0).long_filename, QStringLiteral("pic.png"));
+    QCOMPARE(detail->attachments.at(0).mime_type, QStringLiteral("image/png"));
+    QCOMPARE(detail->attachments.at(0).size_bytes, Q_INT64_C(3));
+    QCOMPARE(detail->attachments.at(1).index, 1);
     QCOMPARE(detail->attachments.at(1).long_filename, QStringLiteral("report.pdf"));
+    QCOMPARE(detail->attachments.at(1).mime_type, QStringLiteral("application/pdf"));
+    QCOMPARE(detail->attachments.at(1).size_bytes, Q_INT64_C(3));
+    // This is the index-ALIGNMENT test, so the sibling text part of the same nested walk is
+    // exactly what must not silently vanish while both attachments still enumerate.
+    QCOMPARE(detail->body_html, QStringLiteral("<p>hi</p>\r\n"));
 
     // Bytes at each index must match the name at that index -- not the old top-level-only mapping.
     auto bytes0 = parser.readAttachmentData(sak::MboxMessageIndex{0}, sak::MboxAttachmentIndex{0});
@@ -528,8 +599,12 @@ void TestMboxParser::readAttachmentDataAlignsWithRecursiveEnumeration() {
     QCOMPARE(*bytes1, QByteArray("DEF"));
 
     // Out-of-range index is rejected.
-    QVERIFY(!parser.readAttachmentData(sak::MboxMessageIndex{0}, sak::MboxAttachmentIndex{2})
-                 .has_value());
+    // Three refusal paths collapse into the same !has_value(): the negative-index check, a
+    // readAllAttachments failure, and the range check under test. The reason is user-visible.
+    const auto out_of_range = parser.readAttachmentData(sak::MboxMessageIndex{0},
+                                                        sak::MboxAttachmentIndex{2});
+    QVERIFY(!out_of_range.has_value());
+    QCOMPARE(out_of_range.error(), sak::error_code::invalid_argument);
     parser.close();
 }
 
@@ -638,9 +713,9 @@ void TestMboxParser::fromLineDetectsValidSeparator() {
     rejecting_parser.open(invalid_first_line.fileName());
     QVERIFY(!rejecting_parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
-    QVERIFY2(error_spy.first().at(0).toString().startsWith(
-                 QStringLiteral("Not a valid MBOX file (missing 'From ' header): ")),
-             qPrintable(error_spy.first().at(0).toString()));
+    QCOMPARE(error_spy.first().at(0).toString(),
+             QStringLiteral("Not a valid MBOX file (missing 'From ' header): ") +
+                 invalid_first_line.fileName());
     QCOMPARE(rejecting_parser.messageCount(), 0);
 }
 
@@ -777,8 +852,22 @@ void TestMboxParser::singlePartAttachmentNotTreatedAsBody() {
     auto detail = parser.readMessageDetail(0);
     QVERIFY(detail.has_value());
     QCOMPARE(detail->attachments.size(), 1);
-    QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("doc.pdf"));
+    const auto& att = detail->attachments.first();
+    QCOMPARE(att.index, 0);
+    QCOMPARE(att.long_filename, QStringLiteral("doc.pdf"));
+    QCOMPARE(att.filename, QStringLiteral("doc.pdf"));
+    QCOMPARE(att.mime_type, QStringLiteral("application/pdf"));
+    QCOMPARE(att.size_bytes, Q_INT64_C(9));
+    QVERIFY(att.content_id.isEmpty());
+    QCOMPARE(att.attach_method, sak::email::kAttachByValue);
     QVERIFY(detail->body_plain.isEmpty());  // NOT dumped into the body
+    QVERIFY(detail->body_html.isEmpty());   // nor into the html body
+    // The decoded PAYLOAD was never read at all, so the test proved the PDF is NAMED but not
+    // that its bytes are recoverable -- a zero-byte attachment passed.
+    const auto bytes = parser.readAttachmentData(sak::MboxMessageIndex{0},
+                                                 sak::MboxAttachmentIndex{0});
+    QVERIFY(bytes.has_value());
+    QCOMPARE(*bytes, QByteArray("Hello PDF"));
     parser.close();
 }
 
@@ -811,8 +900,11 @@ void TestMboxParser::boundaryPrefixLineNotTreatedAsBoundary() {
     auto detail = parser.readMessageDetail(0);
     QVERIFY(detail.has_value());
     // The whole part body survived: the prefix-sharing line stayed in the text.
-    QVERIFY(detail->body_plain.contains(QStringLiteral("--ABCDEF is not a boundary.")));
-    QVERIFY(detail->body_plain.contains(QStringLiteral("Line three.")));
+    // Byte-exact: dumping the part HEADERS into the body, swallowing "Line one.", or appending
+    // the closing "--ABC--" line all keep both contains() probes green, yet the contract under
+    // test is precisely that the prefix-sharing line did not split the part.
+    QCOMPARE(detail->body_plain,
+             QStringLiteral("Line one.\r\n--ABCDEF is not a boundary.\r\nLine three.\r\n"));
     parser.close();
 }
 
@@ -847,9 +939,18 @@ void TestMboxParser::summaryAttachmentHeuristicBroadened() {
     auto msgs = parser.readMessages(0, 10);
     QVERIFY(msgs.has_value());
     QCOMPARE(msgs->size(), 3);
+    // Nothing tied a row to its message, so returning them as [plain, related, pdf] -- a
+    // permutation of the two `true` rows -- left the false/true/true pattern unchanged. The
+    // whole point of the broadened heuristic is that it classifies the RIGHT message.
+    QCOMPARE(msgs->at(0).message_index, 0);
+    QCOMPARE(msgs->at(0).subject, QStringLiteral("plain"));
     QVERIFY(!msgs->at(0).has_attachments);  // plain text
-    QVERIFY(msgs->at(1).has_attachments);   // lone non-text part
-    QVERIFY(msgs->at(2).has_attachments);   // multipart/related (old code missed this)
+    QCOMPARE(msgs->at(1).message_index, 1);
+    QCOMPARE(msgs->at(1).subject, QStringLiteral("pdf"));
+    QVERIFY(msgs->at(1).has_attachments);  // lone non-text part
+    QCOMPARE(msgs->at(2).message_index, 2);
+    QCOMPARE(msgs->at(2).subject, QStringLiteral("related"));
+    QVERIFY(msgs->at(2).has_attachments);  // multipart/related (old code missed this)
     parser.close();
 }
 
@@ -877,6 +978,12 @@ void TestMboxParser::quotedFilenameWithSpacesPreserved() {
     QVERIFY(detail.has_value());
     QCOMPARE(detail->attachments.size(), 1);
     QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("my long report.pdf"));
+    // filename comes from the SAME capture as long_filename but was never compared -- so the
+    // short-name truncation at the first space that this test is named for was invisible there.
+    QCOMPARE(detail->attachments.first().filename, QStringLiteral("my long report.pdf"));
+    QCOMPARE(detail->attachments.first().mime_type, QStringLiteral("application/octet-stream"));
+    QCOMPARE(detail->attachments.first().size_bytes, Q_INT64_C(6));
+    QVERIFY(detail->body_plain.isEmpty());
     parser.close();
 }
 
@@ -968,11 +1075,20 @@ void TestMboxParser::multipartWithManyPartsSplitsCorrectly() {
     QVERIFY(parser.isOpen());
     auto detail = parser.readMessageDetail(0);
     QVERIFY(detail.has_value());
+    // The three NAMES come from the part header blocks and survive a mis-carve; the BYTES do
+    // not. An off-by-one that shifts "chunk1" into part 0, or an empty running buffer yielding
+    // zero-byte payloads, is what this streaming-rewrite regression test has to catch.
     QCOMPARE(detail->attachments.size(), 3);
-    QCOMPARE(detail->attachments.at(0).long_filename, QStringLiteral("f0.bin"));
-    QCOMPARE(detail->attachments.at(1).long_filename, QStringLiteral("f1.bin"));
-    QCOMPARE(detail->attachments.at(2).long_filename, QStringLiteral("f2.bin"));
-    QVERIFY(detail->body_plain.contains(QStringLiteral("body text")));
+    for (int i = 0; i < 3; ++i) {
+        QCOMPARE(detail->attachments.at(i).index, i);
+        QCOMPARE(detail->attachments.at(i).long_filename, QStringLiteral("f%1.bin").arg(i));
+        QCOMPARE(detail->attachments.at(i).size_bytes, Q_INT64_C(8));
+        const auto bytes = parser.readAttachmentData(sak::MboxMessageIndex{0},
+                                                     sak::MboxAttachmentIndex{i});
+        QVERIFY(bytes.has_value());
+        QCOMPARE(*bytes, QByteArray("chunk") + QByteArray::number(i) + QByteArray("\r\n"));
+    }
+    QCOMPARE(detail->body_plain, QStringLiteral("body text\r\n"));
     parser.close();
 }
 
@@ -1005,14 +1121,25 @@ void TestMboxParser::trailingPartRecoveredWhenClosingDelimiterMissing() {
     auto detail = parser.readMessageDetail(0);
     QVERIFY(detail.has_value());
     // The first part parsed normally, and the delimiter-truncated FINAL part was still recovered.
-    QVERIFY(detail->body_plain.contains(QStringLiteral("first body")));
+    // Byte-exact: the missing closing delimiter making the running buffer swallow the SECOND
+    // part's headers and bytes into body_plain is the exact bug this test guards, and
+    // contains() stays green through it.
+    QCOMPARE(detail->body_plain, QStringLiteral("first body\r\n"));
     QCOMPARE(detail->attachments.size(), 1);
+    QCOMPARE(detail->attachments.first().index, 0);
     QCOMPARE(detail->attachments.first().long_filename, QStringLiteral("tail.bin"));
+    QCOMPARE(detail->attachments.first().mime_type, QStringLiteral("application/octet-stream"));
+    // size_bytes is what proves the running buffer was flushed WITH its content; the name comes
+    // from the header block either way.
+    QCOMPARE(detail->attachments.first().size_bytes, Q_INT64_C(12));
 
     // The recovered part's bytes are reachable (index 0 must resolve to the trailing attachment).
     auto bytes = parser.readAttachmentData(sak::MboxMessageIndex{0}, sak::MboxAttachmentIndex{0});
     QVERIFY(bytes.has_value());
-    QVERIFY(bytes->contains("tail-bytes"));
+    // The entire un-split MIME part, the whole multipart body and the whole raw message all
+    // contain "tail-bytes"; only the exact payload proves the trailing flush recovered the
+    // FINAL part's BYTES.
+    QCOMPARE(*bytes, QByteArray("tail-bytes\r\n"));
     parser.close();
 }
 

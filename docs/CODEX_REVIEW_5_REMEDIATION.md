@@ -5024,6 +5024,30 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-23 second-pass re-sweep b72d (gated 249/249): 22 residual weak assertions
+    pinned in tests/unit/test_mbox_parser.cpp. The dominant residual here is the NAMED-BUT-NOT-READ
+    attachment: several tests proved an attachment was enumerated and named, but never read its
+    decoded payload, so a recursion that recovers the name from the part header and hands back
+    zero bytes passed. singlePartAttachmentNotTreatedAsBody, nestedMultipartRecoversBodyAndAttachment,
+    multipartWithManyPartsSplitsCorrectly and trailingPartRecoveredWhenClosingDelimiterMissing now
+    each read the bytes back through readAttachmentData and compare them exactly, alongside index,
+    mime_type and size_bytes. Mutation-proved with the defect those tests exist for: changing
+    `att.filename = att.long_filename` to the unquoted capture group (null for a quoted value)
+    turns three of the new pins RED, including quotedFilenameWithSpacesPreserved -- the test named
+    for exactly that truncation, which compared only long_filename and was blind to it. The second
+    class is the CONTAINS-PROBED BODY: eight bodies now compare byte-exact, because leaking the
+    part's own header block, swallowing a leading line, appending the closing delimiter, or (for
+    the boundary-prefix and truncated-multipart regressions) merging the following part's bytes in
+    all leave the probed sentence present. Also pinned: the two open-failure reasons in full, since
+    .arg(QString()) still startsWith() the prefix and the path is the useful half; the index
+    geometry (file_offset 0 / message_size 282, then 332 / 285), recomputed from the fixture byte
+    by byte and asserted NOWHERE else in the file, so an off-by-one in m_message_offsets or a size
+    taken from the whole block instead of the post-separator slice was invisible; the closed-parser
+    guard by error code, because deleting readMessageDetail's !m_is_open check leaves it falling
+    through to the range check and still returning no value; the out-of-range attachment refusal by
+    code, since three refusal paths collapse into one !has_value(); and the summary rows bound to
+    the messages they came from -- returning them as [plain, related, pdf] left the broadened
+    heuristic's false/true/true pattern unchanged while classifying the wrong messages.
   - PROGRESS 2026-08-23 second-pass re-sweep b72c (gated 249/249): 25 residual weak assertions
     pinned in tests/unit/test_file_explorer_item_model.cpp. Two pins are cross-version data
     contracts rather than strength alone. (1) The grouping option NAMES are persisted: the panel
