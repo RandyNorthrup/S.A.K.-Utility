@@ -215,17 +215,30 @@ private slots:
         QFile ux(QDir(dir.path()).filePath("browser_ext_update.xml"));
         QVERIFY(ux.open(QIODevice::ReadOnly));
         const QString xml = QString::fromUtf8(ux.readAll());
-        QVERIFY(xml.contains(QString::fromLatin1(kBrowserExtensionId)));
-        QVERIFY(xml.contains(QString::fromLatin1(kBrowserExtensionVersion)));
-        QVERIFY(xml.contains(QStringLiteral("codebase='") +
-                             QUrl::fromLocalFile(crx).toString(QUrl::FullyEncoded) +
-                             QStringLiteral("'")));
+        // Compared WHOLE: appid, codebase and version must each sit in their OWN attribute of the
+        // Omaha document Chrome actually parses -- not merely appear somewhere in the text.
+        QCOMPARE(xml,
+                 QStringLiteral(
+                     "<?xml version='1.0' encoding='UTF-8'?>\n"
+                     "<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>\n"
+                     "  <app appid='%1'>\n"
+                     "    <updatecheck codebase='%2' version='%3'/>\n"
+                     "  </app>\n"
+                     "</gupdate>\n")
+                     .arg(QString::fromLatin1(kBrowserExtensionId),
+                          QUrl::fromLocalFile(crx).toString(QUrl::FullyEncoded),
+                          QString::fromLatin1(kBrowserExtensionVersion)));
 
         // Host manifest allows exactly our extension origin.
         QFile hm(hostManifest);
         QVERIFY(hm.open(QIODevice::ReadOnly));
         const QJsonObject host = QJsonDocument::fromJson(hm.readAll()).object();
-        QCOMPARE(host.value("allowed_origins").toArray().first().toString(),
+        QCOMPARE(host.value("name").toString(), QString::fromLatin1(kNativeHostName));
+        QCOMPARE(host.value("type").toString(), QStringLiteral("stdio"));
+        QCOMPARE(host.value("path").toString(), QDir::toNativeSeparators(exe));
+        const auto origins = host.value("allowed_origins").toArray();
+        QCOMPARE(origins.size(), 1);  // EXACTLY ours -- no second, wildcard origin
+        QCOMPARE(origins.first().toString(),
                  QStringLiteral("chrome-extension://") + QString::fromLatin1(kBrowserExtensionId) +
                      QStringLiteral("/"));
 
@@ -241,6 +254,13 @@ private slots:
         const ExtensionInstallResult r = inst.install();
         QVERIFY(!r.ok);
         QCOMPARE(r.summary, QStringLiteral("Extension package missing"));
+        // The refusal must name the CONFIGURED package path: a non-empty configured crx_path is
+        // passed through untouched, never silently swapped for some other location.
+        QCOMPARE(r.detail, QStringLiteral("signed CRX not found at ") + crx);
+        // No policy entry and no generated update manifest when the package is missing.
+        QVERIFY(enumReg(forcelistKey()).isEmpty());
+        QVERIFY(
+            !QFile::exists(QDir(dir.path()).filePath(QStringLiteral("browser_ext_update.xml"))));
         // No policy entry written when the package is missing.
         QVERIFY(enumReg(forcelistKey()).isEmpty());
         QCOMPARE(inst.stateString(), QStringLiteral("not_installed"));
@@ -268,17 +288,24 @@ private slots:
         QTemporaryDir dir;
         const QString crx = makeFile(dir.filePath("sak_browser_control.crx"), "CRX");
         const QString exe = makeFile(dir.filePath("sak_win32_mcp.exe"), "EXE");
+        // Non-contiguous foreign slots: "1" and "3" are taken, so the LOWEST FREE name is "2".
+        // A "count + 1" allocator would overwrite the foreign policy entry at "3".
         seedReg(forcelistKey(),
                 "1",
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;https://clients2.google.com/x");
+        seedReg(forcelistKey(),
+                "3",
+                "cccccccccccccccccccccccccccccccc;https://clients2.google.com/y");
 
         BrowserExtensionInstaller inst(testConfig(dir.path(), crx, exe));
         QVERIFY(inst.install().ok);
 
         const auto values = enumReg(forcelistKey());
-        QCOMPARE(values.size(), 2);
+        QCOMPARE(values.size(), 3);
         QCOMPARE(values.value("1"),
                  QStringLiteral("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;https://clients2.google.com/x"));
+        QCOMPARE(values.value(QStringLiteral("3")),
+                 QStringLiteral("cccccccccccccccccccccccccccccccc;https://clients2.google.com/y"));
         QCOMPARE(values.value(QStringLiteral("2")),
                  QString::fromLatin1(kBrowserExtensionId) + QStringLiteral(";") +
                      QUrl::fromLocalFile(
@@ -306,7 +333,19 @@ private slots:
         QVERIFY(inst.install().ok);
 
         const ExtensionInstallResult r = inst.uninstall();
-        QVERIFY(r.ok);
+        QVERIFY2(r.ok, qPrintable(r.summary + " / " + r.detail));
+        // The "touched" arm of the report: work really was done, so it must not claim the
+        // was-not-installed wording...
+        QCOMPARE(r.summary, QStringLiteral("Browser extension uninstalled"));
+        QCOMPARE(r.detail,
+                 QStringLiteral("removed force-install policy entry + native host for id ") +
+                     QString::fromLatin1(kBrowserExtensionId));
+        // ...and the generated files must not be left orphaned in the data dir.
+        QVERIFY(
+            !QFile::exists(QDir(dir.path()).filePath(QStringLiteral("browser_ext_update.xml"))));
+        QVERIFY(!QFile::exists(
+            QDir(dir.path())
+                .filePath(QString::fromLatin1(kNativeHostName) + QStringLiteral(".json"))));
 
         const auto values = enumReg(forcelistKey());
         QCOMPARE(values.size(), 1);  // foreign entry survives
@@ -340,9 +379,19 @@ private slots:
         const QString exe = makeFile(dir.filePath("sak_win32_mcp.exe"), "EXE");
         seedReg(hostKey(), QString(), "C:/somewhere/host.json");  // host only, no policy
         BrowserExtensionInstaller inst(testConfig(dir.path(), crx, exe));
-        QCOMPARE(inst.stateString(), QStringLiteral("partial"));
+        QCOMPARE(inst.stateString(), QStringLiteral("partial"));  // host present, policy absent
+
+        // Mirror arm of the same OR guard: force-install policy present with the native host
+        // ABSENT is ALSO "partial" -- never "not_installed", or the repair path is never offered
+        // while Chrome keeps force-installing the extension.
+        nukeTestTree();
+        seedReg(forcelistKey(),
+                "1",
+                QString::fromLatin1(kBrowserExtensionId) +
+                    QStringLiteral(";file:///C:/x/browser_ext_update.xml"));
+        QCOMPARE(inst.stateString(), QStringLiteral("partial"));  // policy present, host absent
     }
-#endif  // SAK_WIN_REGISTRY_TESTS
+#endif                                                            // SAK_WIN_REGISTRY_TESTS
 };
 
 QTEST_MAIN(BrowserExtensionInstallerTest)

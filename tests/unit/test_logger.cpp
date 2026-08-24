@@ -124,6 +124,16 @@ void LoggerTests::initialize_validDir() {
     QVERIFY2(logFile.parent_path() == m_logSubDir,
              "initialize() must place the log file in the directory it was given");
     QVERIFY(std::filesystem::exists(logFile));
+
+    // Class (F): existence is not content. The only operator-facing statement of
+    // WHERE entries are going is the record initialize() writes into the stream
+    // it opened ("Logger initialized: <path>"), and it must name THAT file --
+    // announcing the directory, a stale member, or nothing at all still leaves a
+    // file that exists under the right parent. Both sides here go through
+    // path::string(), so the comparison is byte-exact on any host.
+    const std::string bootContent = readLogContent();
+    QVERIFY2(bootContent.find("Logger initialized: " + logFile.string()) != std::string::npos,
+             "initialize() must announce, inside the file it opened, that exact path");
 }
 
 void LoggerTests::initialize_createsDir() {
@@ -138,6 +148,24 @@ void LoggerTests::initialize_reInitFails() {
     const auto originalFile = log.getLogFile();
     auto result = log.initialize(std::filesystem::path("Z:\\InvalidDrive\\NoDir"), "reinit");
     QVERIFY(!result.has_value());
+
+    // Class (A): a refusal reported through !has_value() alone is satisfied by ANY
+    // of initialize()'s distinct failure modes -- not_a_directory, permission_denied,
+    // unknown_error from ensureLogDirectory, or the later stream-open write_error --
+    // so the guard this fixture is aimed at can be dead and the test stays green.
+    // Pin the REASON with a deterministic, machine-invariant fixture: a path that IS
+    // a regular file must be refused as not_a_directory.
+    QTemporaryDir occupied;
+    QVERIFY(occupied.isValid());
+    const std::filesystem::path fileAsDir = std::filesystem::path(occupied.path().toStdWString()) /
+                                            "iam_a_file";
+    {
+        std::ofstream f(fileAsDir);
+        f << "x";
+    }
+    const auto fileResult = log.initialize(fileAsDir, "reinit");
+    QVERIFY(!fileResult.has_value());
+    QCOMPARE(fileResult.error(), sak::error_code::not_a_directory);
     // Original initialization should still be active
     QVERIFY(log.isInitialized());
     // Fail closed: a rejected initialize() must leave the sink where it was,
@@ -171,6 +199,17 @@ void LoggerTests::levelFiltering_belowMinNotWritten() {
     QVERIFY(content.find("FILTER_MARKER_SHOULD_NOT_APPEAR_DEBUG") == std::string::npos);
     QVERIFY(content.find("FILTER_MARKER_SHOULD_NOT_APPEAR_INFO") == std::string::npos);
 
+    // Two residual gaps. (1) Only levels FAR below the threshold are proved
+    // filtered, so an off-by-one in `level < m_min_level` that lets the level
+    // IMMEDIATELY below through stays green. (2) "marker absent" is equally
+    // satisfied by a logger that writes nothing at all, so the same window needs
+    // a live-sink control at the threshold itself.
+    log.log(sak::log_level::warning, "FILTER_MARKER_SHOULD_NOT_APPEAR_WARNING");
+    log.log(sak::log_level::error, "FILTER_CONTROL_ERROR_MUST_APPEAR_5512");
+    const std::string boundary = readLogContent();
+    QVERIFY(boundary.find("FILTER_MARKER_SHOULD_NOT_APPEAR_WARNING") == std::string::npos);
+    QCOMPARE(countOccurrences(boundary, "FILTER_CONTROL_ERROR_MUST_APPEAR_5512"), 1);
+
     // Restore level for subsequent tests
     log.setLevel(sak::log_level::debug);
 }
@@ -199,6 +238,31 @@ void LoggerTests::log_writesToFile() {
 
     std::string content = readLogContent();
     QVERIFY(content.find("WRITE_TEST_ENTRY_UNIQUE_98765") != std::string::npos);
+
+    // Marker presence leaves the record SHAPE unpinned. Production formats every
+    // entry as "[<ts>] [<LEVEL>] [<file>:<line>:<function>] <message>\n", so a
+    // build that dropped the level tag or the source location -- or stamped one
+    // hardcoded level on every entry -- still contains this marker. Log a second
+    // entry at a DIFFERENT severity and pin the header of each record.
+    log.log(sak::log_level::critical, "WRITE_TEST_ENTRY_CRITICAL_98766");
+    const std::string shaped = readLogContent();
+
+    const auto infoAt = shaped.find("WRITE_TEST_ENTRY_UNIQUE_98765");
+    QVERIFY(infoAt != std::string::npos);
+    const auto infoNl = shaped.rfind('\n', infoAt);
+    const std::string::size_type infoBegin =
+        (infoNl == std::string::npos) ? std::string::size_type{0} : infoNl + 1;
+    const std::string infoRecord = shaped.substr(infoBegin, infoAt - infoBegin);
+    QVERIFY2(infoRecord.starts_with("["), "an entry must begin its own line");
+    QCOMPARE(countOccurrences(infoRecord, "] [INFO] [test_logger.cpp:"), 1);
+
+    const auto critAt = shaped.find("WRITE_TEST_ENTRY_CRITICAL_98766");
+    QVERIFY(critAt != std::string::npos);
+    const auto critNl = shaped.rfind('\n', critAt);
+    const std::string::size_type critBegin =
+        (critNl == std::string::npos) ? std::string::size_type{0} : critNl + 1;
+    const std::string critRecord = shaped.substr(critBegin, critAt - critBegin);
+    QCOMPARE(countOccurrences(critRecord, "] [CRITICAL] [test_logger.cpp:"), 1);
 }
 
 void LoggerTests::log_multipleMessages() {
@@ -304,6 +368,27 @@ void LoggerTests::concurrentWrites_noCorruption() {
         pos += 23;
     }
     QCOMPARE(count, THREADS * MSGS_PER_THREAD);
+
+    // Class (B): "no corruption" is never actually checked -- counting markers
+    // cannot see records SPLICED into one another, which is exactly what losing
+    // the write lock produces. Production writes the message last, immediately
+    // before the single '\n', and starts every record with '[', so each marker
+    // must sit at end-of-record inside a record carrying exactly one header.
+    constexpr std::string::size_type MARKER_LEN = 23;
+    for (std::string::size_type p = content.find("CONCURRENT_WRITE_MARKER"); p != std::string::npos;
+         p = content.find("CONCURRENT_WRITE_MARKER", p + MARKER_LEN)) {
+        const auto recordEnd = p + MARKER_LEN;
+        QVERIFY2(recordEnd < content.size() &&
+                     (content[recordEnd] == '\n' || content[recordEnd] == '\r'),
+                 "a concurrent record must terminate right after its message");
+        const auto nl = content.rfind('\n', p);
+        const std::string::size_type begin = (nl == std::string::npos) ? std::string::size_type{0}
+                                                                       : nl + 1;
+        const std::string record = content.substr(begin, recordEnd - begin);
+        QVERIFY2(record.starts_with("["), "a concurrent record must begin its own line");
+        QCOMPARE(countOccurrences(record, "] [INFO] [test_logger.cpp:"), 1);
+        QCOMPARE(countOccurrences(record, "CONCURRENT_WRITE_MARKER"), 1);
+    }
 }
 
 // ============================================================================
@@ -316,6 +401,20 @@ void LoggerTests::logLevel_toString() {
     QCOMPARE(sak::to_string(sak::log_level::warning), std::string_view("WARNING"));
     QCOMPARE(sak::to_string(sak::log_level::error), std::string_view("ERROR"));
     QCOMPARE(sak::to_string(sak::log_level::critical), std::string_view("CRITICAL"));
+
+    // Class (G): the catalog is pinned by MEMBERSHIP only. Production depends on
+    // its ORDER -- log() drops entries via `level < m_min_level`, and
+    // writeEntryToFile / writeEntryToConsole force-flush and route to stderr via
+    // `level >= log_level::error`. Pin the ranking so a reordering cannot keep
+    // every string above correct while silently changing severity semantics.
+    static_assert(sak::log_level::debug < sak::log_level::info);
+    static_assert(sak::log_level::info < sak::log_level::warning);
+    static_assert(sak::log_level::warning < sak::log_level::error);
+    static_assert(sak::log_level::error < sak::log_level::critical);
+
+    // The default arm is a real production path: a level outside the catalog must
+    // be labelled UNKNOWN, not mislabelled as a genuine severity.
+    QCOMPARE(sak::to_string(static_cast<sak::log_level>(7)), std::string_view("UNKNOWN"));
 }
 
 // ============================================================================

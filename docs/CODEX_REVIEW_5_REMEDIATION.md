@@ -5024,6 +5024,41 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b87 (gated 249/249): 26 weak assertions pinned across six
+    more already-swept files (offline_package_search 7, logger 6, browser_extension_installer 6,
+    elevated_pipe_protocol 3, uup_dump_api 3, mixed_tier_operations 1). FIRST batch of the second
+    pass to yield under 40; these are the smaller files (349-384 lines), so it is a size effect
+    rather than evidence the surface has thinned.
+    A TEST THAT SKIPPED ITSELF ON THE CONFIGURATION THAT MATTERS: canReadPath had exactly one
+    negative case, and it QSKIPped whenever the suite ran elevated (which the CI runner does) and
+    otherwise leaned on the host happening to have a denied "C:/System Volume Information". Every
+    other canReadPath assertion in the tree asserts TRUE, so `return true;` shipped green on the
+    elevated configuration. The denial is now BUILT deterministically and without elevation: a
+    protected DACL that denies FILE_READ_DATA to Everyone ahead of a full-control ACE for the
+    file's own owner. THE VERIFIER CORRECTED THE FINDER HERE by measuring the real Win32
+    behaviour: the finder's proposed seed made the file unopenable with the mask production
+    itself uses, so its own final assertion would have gone red.
+    browser_extension_installer: the generated Omaha update.xml was checked with three
+    contains() calls, so appid/codebase/version merely had to appear SOMEWHERE in the text rather
+    than each in its own attribute of the document Chrome parses -- pinned whole now. The native
+    host manifest checked only the first allowed origin, never that there is exactly ONE (a second
+    wildcard origin was invisible), nor the name/type/path. The foreign-policy test seeded one
+    contiguous slot, so a "count + 1" allocator passed; slots "1" and "3" are now seeded and the
+    lowest FREE name must be "2". And the partial-state test covered only one arm of an OR guard:
+    policy present with the native host absent must also report "partial", or the repair path is
+    never offered while Chrome keeps force-installing.
+    uup_dump_api's SHA-1 validator was probed with a single non-hex character, so widening any
+    accepted range by one shipped green; the characters immediately OUTSIDE each range ('/', ':',
+    '@', 'G', '`') are pinned now -- that digest is the sole justification for the plain-HTTP CDN
+    allowance. elevated_pipe_protocol pinned the generated pipe name only as "longer than the base
+    path", which the pid digits alone satisfy, so a nonce truncated to a couple of hex digits was
+    invisible (the uniqueness sibling only flakes, it does not fail); the exact shape is pinned
+    now, nonce width included.
+    logger: initialize()'s refusal was reported through !has_value(), which five distinct failure
+    modes satisfy, and the fixture provably never reached the is_directory guard at all; a regular
+    file handed in as a log directory must be refused as not_a_directory specifically. The level
+    filter was probed two and three steps below the threshold, never at the boundary, so an
+    off-by-one that leaks WARNING into an error-only log stayed green.
   - PROGRESS 2026-08-24 SECOND-pass sweep b86 (gated 249/249): 44 weak assertions pinned across six
     more already-swept files (smart_file_filter 13, process_runner 9, app_installation_worker 8,
     secure_memory 5, file_hash 5, linux_distro_catalog 4).

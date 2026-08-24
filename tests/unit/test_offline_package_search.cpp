@@ -71,6 +71,14 @@ void TestOfflinePackageSearch::parseSearchResults_validOutput_extractsPackages()
     QCOMPARE(results.size(), static_cast<size_t>(1));
     QCOMPARE(results[0].package_id, QString("googlechrome"));
     QCOMPARE(results[0].version, QString("120.0.6099.130"));
+    // The four siblings the parser also fills (chocolatey_manager.cpp:534-537): title mirrors
+    // the id, and --limit-output carries NO approval/description/download data, so those must
+    // stay at the "no data" values rather than claim community approval the feed never
+    // asserted -- ai_assistant_panel.cpp:1940-1952 hands all four to the model verbatim.
+    QCOMPARE(results[0].title, QString("googlechrome"));
+    QVERIFY(results[0].description.isEmpty());
+    QVERIFY(!results[0].is_approved);
+    QCOMPARE(results[0].download_count, 0);
 }
 
 void TestOfflinePackageSearch::parseSearchResults_multipleResults_allParsed() {
@@ -100,12 +108,18 @@ void TestOfflinePackageSearch::parseSearchResults_garbageOutput_returnsEmpty() {
 
 void TestOfflinePackageSearch::parseSearchResults_headerLines_skipped() {
     sak::ChocolateyManager manager;
+    // The banner must be dropped by the "Chocolatey" PREFIX guard, not merely by the record
+    // guard: a banner with no '|' splits into 1 part and is refused by the record guard
+    // regardless, so it proves nothing about the guard this test is named for. The piped header
+    // line below parses cleanly as a record and can ONLY be refused by the prefix guard.
     QString output =
         "Chocolatey v2.3.0\n"
+        "Chocolatey|2.3.0\n"
         "googlechrome|120.0.6099.130\n";
     const auto results = manager.parseSearchResults(output);
     QCOMPARE(results.size(), static_cast<size_t>(1));
     QCOMPARE(results[0].package_id, QString("googlechrome"));
+    QCOMPARE(results[0].version, QString("120.0.6099.130"));
 }
 
 void TestOfflinePackageSearch::parseSearchResults_trailingNewlines_handled() {
@@ -114,6 +128,17 @@ void TestOfflinePackageSearch::parseSearchResults_trailingNewlines_handled() {
     const auto results = manager.parseSearchResults(output);
     QCOMPARE(results.size(), static_cast<size_t>(1));
     QCOMPARE(results[0].package_id, QString("firefox"));
+
+    // Real choco output is CRLF and the parser splits on '\n', so every record still carries a
+    // trailing '\r'; production strips it -- and any padding -- with .trimmed() on BOTH fields.
+    // No other fixture in this file carries whitespace, so without this the trim is untested, and
+    // an untrimmed id/version is rejected downstream by validatePackageName/validateVersion,
+    // which silently kills the install. Not cosmetic.
+    QString padded = "  notepadplusplus  |  8.6.2  \r\n";
+    const auto trimmed = manager.parseSearchResults(padded);
+    QCOMPARE(trimmed.size(), static_cast<size_t>(1));
+    QCOMPARE(trimmed[0].package_id, QString("notepadplusplus"));
+    QCOMPARE(trimmed[0].version, QString("8.6.2"));
 }
 
 // ============================================================================
@@ -132,6 +157,18 @@ void TestOfflinePackageSearch::chocoManager_searchPackage_emptyQuery_fails() {
     // also fail with exit_code -1, so !success alone does not prove which fired).
     QCOMPARE(result.error_message, QString("Search query is empty"));
     QCOMPARE(result.exit_code, -1);
+    QVERIFY(!result.success);
+    QVERIFY(result.output.isEmpty());
+
+    // The SIBLING arm of the same refuser, refused for its OWN stated reason: an option-like
+    // query must never reach choco as a bare argv element. This guard runs BEFORE the
+    // not-initialized guard, so it is reachable on an uninitialized manager without launching
+    // anything.
+    const auto option_like = manager.searchPackage("--source=https://attacker.example/feed", 10);
+    QCOMPARE(option_like.error_message, QString("Search query must not start with '-'"));
+    QCOMPARE(option_like.exit_code, -1);
+    QVERIFY(!option_like.success);
+    QVERIFY(option_like.output.isEmpty());
 }
 
 void TestOfflinePackageSearch::chocoManager_parseSearchResults_multipleVersions() {
@@ -324,7 +361,13 @@ void TestOfflinePackageSearch::searchResult_selectionClearsOnNewSearch() {
 
 void TestOfflinePackageSearch::constants_searchDefaults_reasonable() {
     QCOMPARE(sak::offline::kSearchResultsDefault, 30);
+    // A <= relation between two constants this very test pins exactly on the lines above is a
+    // compile-time tautology: it can only ever fail after one of those exact pins has already
+    // failed. Pin instead the offline request defaults NO test pins today.
     QVERIFY(sak::offline::kSearchResultsDefault <= sak::offline::kSearchMaxResults);
+    QCOMPARE(sak::offline::kApiRequestTimeoutMs, 30'000);
+    QCOMPARE(sak::offline::kApiMaxRetries, 3);
+    QCOMPARE(sak::offline::kApiRetryDelayBaseMs, 2000);
     QCOMPARE(sak::offline::kSearchMaxResults, 50);
 }
 
@@ -332,6 +375,13 @@ void TestOfflinePackageSearch::constants_nugetUrl_notEmpty() {
     QCOMPARE(QString(sak::offline::kNuGetBaseUrl),
              QString("https://community.chocolatey.org/api/v2/"));
     QCOMPARE(QString(sak::offline::kNuGetSearchPath), QString("Search()"));
+    // Siblings in the same endpoint catalog: these are concatenated onto the base URL to form
+    // live request URLs (offline_deployment_worker.cpp:681/1806/1860,
+    // package_internalization_engine.cpp:564/568/623/663-664), so a typo in one is a silent
+    // runtime 404, not a build error.
+    QCOMPARE(QString(sak::offline::kNuGetFindByIdPath), QString("FindPackagesById()"));
+    QCOMPARE(QString(sak::offline::kNuGetPackagePath), QString("package/"));
+    QCOMPARE(QString(sak::offline::kNuGetPackagesPath), QString("Packages"));
 }
 
 // ============================================================================
@@ -345,18 +395,49 @@ void TestOfflinePackageSearch::packageList_addWithVersion_preservedOnSaveLoad() 
 
     // Create and populate a list with versioned packages
     auto list = sak::PackageListManager::createList("Test", "Package search test");
-    sak::PackageListManager::addPackage(list, "googlechrome", "120.0.6099.130");
-    sak::PackageListManager::addPackage(list, "firefox", "121.0");
-    sak::PackageListManager::addPackage(list, "7zip", "");  // latest
+    QVERIFY(sak::PackageListManager::addPackage(
+        list, "googlechrome", "120.0.6099.130", "Web browser", true));
+    QVERIFY(sak::PackageListManager::addPackage(list, "firefox", "121.0"));
+    QVERIFY(sak::PackageListManager::addPackage(list, "7zip", ""));  // latest
 
     QVERIFY(sak::PackageListManager::saveToFile(list, file_path));
 
+    // Pin the ON-DISK shape, not only load(save(x)): a symmetric rename of a JSON key on both
+    // the write (package_list_manager.cpp:144-165) and the read (:234-255) side survives a
+    // same-pair round trip untouched while every list already saved on disk stops loading.
+    QFile raw_file(file_path);
+    QVERIFY(raw_file.open(QIODevice::ReadOnly));
+    const QJsonObject root = QJsonDocument::fromJson(raw_file.readAll()).object();
+    raw_file.close();
+    QCOMPARE(root.keys(), QStringList({"created", "description", "modified", "name", "packages"}));
+    QCOMPARE(root.value(QStringLiteral("name")).toString(), QString("Test"));
+    QCOMPARE(root.value(QStringLiteral("description")).toString(), QString("Package search test"));
+    const QJsonArray raw_entries = root.value(QStringLiteral("packages")).toArray();
+    QCOMPARE(raw_entries.size(), 3);
+    const QJsonObject raw_chrome = raw_entries.at(0).toObject();
+    QCOMPARE(raw_chrome.value(QStringLiteral("package_id")).toString(), QString("googlechrome"));
+    QCOMPARE(raw_chrome.value(QStringLiteral("version")).toString(), QString("120.0.6099.130"));
+    QCOMPARE(raw_chrome.value(QStringLiteral("notes")).toString(), QString("Web browser"));
+    QVERIFY(raw_chrome.value(QStringLiteral("pinned")).toBool());
+    // Optional fields are written ONLY when they carry data (:154-162).
+    QVERIFY(!raw_entries.at(1).toObject().contains(QStringLiteral("pinned")));
+    QVERIFY(!raw_entries.at(2).toObject().contains(QStringLiteral("version")));
+
     auto loaded = sak::PackageListManager::loadFromFile(file_path);
+    QCOMPARE(loaded.name, QString("Test"));
+    QCOMPARE(loaded.description, QString("Package search test"));
+    QVERIFY(!list.created_date.isEmpty());
+    QCOMPARE(loaded.created_date, list.created_date);
+    QCOMPARE(loaded.modified_date, list.modified_date);
     QCOMPARE(loaded.entries.size(), 3);
     QCOMPARE(loaded.entries[0].package_id, QString("googlechrome"));
     QCOMPARE(loaded.entries[0].version, QString("120.0.6099.130"));
+    QCOMPARE(loaded.entries[0].notes, QString("Web browser"));
+    QVERIFY(loaded.entries[0].pinned);
     QCOMPARE(loaded.entries[1].package_id, QString("firefox"));
     QCOMPARE(loaded.entries[1].version, QString("121.0"));
+    QVERIFY(loaded.entries[1].notes.isEmpty());
+    QVERIFY(!loaded.entries[1].pinned);
     QCOMPARE(loaded.entries[2].package_id, QString("7zip"));
     QVERIFY(loaded.entries[2].version.isEmpty());
 }

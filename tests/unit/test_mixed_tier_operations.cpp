@@ -188,13 +188,36 @@ private Q_SLOTS:
     }
 
     void testCanReadPathOnProtectedSystemPath() {
-        // System Volume Information typically requires admin
-        if (sak::PermissionManager::isRunningAsAdmin()) {
-            QSKIP("Test only meaningful when not running as admin");
-        }
-        bool result = sak::UserProfileBackupWorker::canReadPath(
-            QStringLiteral("C:/System Volume Information"));
-        QVERIFY(!result);
+        // The old fixture proved nothing in half the supported configurations: it QSKIPped
+        // outright whenever the suite ran elevated, and otherwise leaned on the host happening to
+        // have a denied "C:/System Volume Information". canReadPath has no other test anywhere in
+        // the tree (this file's other cases all assert TRUE), so `return true;` shipped green in
+        // every elevated run. Build the denial instead, deterministically and WITHOUT elevation:
+        // a PROTECTED DACL that DENIES FILE_READ_DATA (0x1) to Everyone ahead of a full-control
+        // ACE for the file's own owner. GetFileAttributesW still succeeds (the parent directory
+        // answers it), so the false verdict comes from the CreateFileW probe; the deny ACE binds
+        // an elevated run too (a file DACL has no administrator override, and SeBackupPrivilege
+        // cannot rescue it because canReadPath opens a FILE with flags=0); and DELETE is left
+        // granted, so QTemporaryDir still tears the fixture down even if an assertion aborts.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.path() + QStringLiteral("/denied.txt");
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+        f.close();
+        // Positive control: readable BEFORE the lockout, so the false below is caused by the ACL
+        // and not by the fixture being unreadable for some unrelated reason.
+        QVERIFY(sak::UserProfileBackupWorker::canReadPath(path));
+
+        sak::PermissionManager pm;
+        const QString owner_sid = pm.getOwner(path);
+        QVERIFY(!owner_sid.isEmpty());
+        QVERIFY2(pm.setSecurityDescriptorSddl(
+                     path, QStringLiteral("D:P(D;;0x1;;;WD)(A;;FA;;;%1)").arg(owner_sid)),
+                 qPrintable(pm.getLastError()));
+        // Pins the CreateFileW arm -- the one the callers turn into an elevationSkipped report.
+        QVERIFY(!sak::UserProfileBackupWorker::canReadPath(path));
     }
 
     // ======================================================================

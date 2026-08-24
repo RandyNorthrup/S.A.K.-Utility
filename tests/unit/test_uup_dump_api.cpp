@@ -67,6 +67,19 @@ private Q_SLOTS:
 void TestUupDumpApi::construction_default() {
     UupDumpApi api;
     QVERIFY(api.parent() == nullptr);
+    // parent()==nullptr on a default construction is true of ANY QObject-derived type, and
+    // the is_copy_constructible_v line that stood here only repeated construction_nonCopyable.
+    // What is load-bearing is the ownership graph: uup_dump_api.cpp:41 parents the
+    // QNetworkAccessManager to `this` and that parent edge is its ONLY owner (~UupDumpApi,
+    // :45-47, just calls cancelAll()), so `new QNetworkAccessManager()` would leak one
+    // manager -- sockets and thread included -- per UupDumpApi destroyed.
+    QVERIFY(api.findChild<QNetworkAccessManager*>() != nullptr);
+    // ...and the parent overload must actually forward (uup_dump_api.cpp:41 `: QObject(parent)`),
+    // the ownership contract the explicit ctor (uup_dump_api.h:76) offers its callers.
+    QObject owner;
+    UupDumpApi child(&owner);
+    QCOMPARE(child.parent(), &owner);
+    QVERIFY(owner.children().contains(&child));
     QVERIFY(!std::is_copy_constructible_v<UupDumpApi>);
 }
 
@@ -205,8 +218,20 @@ void TestUupDumpApi::isValidSha1_rejectsMalformed() {
         QStringLiteral("da39a3ee5e6b4b0d3255bfef95601890afd80709aa")));  // too long
     QVERIFY(!UupDumpApi::isValidSha1(
         QStringLiteral("da39a3ee5e6b4b0d3255bfef95601890afd8070g")));    // non-hex 'g'
+    // The characters immediately OUTSIDE each accepted range: '/' one below '0', ':' one above
+    // '9', '@' one below 'A', 'G' one above 'F', '`' one below 'a'. 'g' alone probes a single
+    // endpoint; widening any range by one (e.g. `ch <= ':'`) ships green and lets a non-hex
+    // "digest" through the integrity gate that is the sole justification for the plain-HTTP CDN
+    // allowance.
+    const QString base39 = QStringLiteral("da39a3ee5e6b4b0d3255bfef95601890afd8070");
+    QCOMPARE(base39.size(), qsizetype(39));
+    for (const QChar bad : {QChar(u'/'), QChar(u':'), QChar(u'@'), QChar(u'G'), QChar(u'`')}) {
+        const QString candidate = base39 + bad;
+        QCOMPARE(candidate.size(), qsizetype(40));
+        QVERIFY2(!UupDumpApi::isValidSha1(candidate), qPrintable(candidate));
+    }
     QVERIFY(!UupDumpApi::isValidSha1(
-        QStringLiteral("da39a3ee5e6b4b0d3255 fef95601890afd80709")));    // embedded space
+        QStringLiteral("da39a3ee5e6b4b0d3255 fef95601890afd80709")));  // embedded space
 }
 
 // ===================================================================
@@ -298,6 +323,33 @@ void TestUupDumpApi::isSafeAria2FileEntry_rejectsReservedDeviceName() {
     QVERIFY(!UupDumpApi::isSafeAria2FileEntry(e));
     e.fileName = QStringLiteral("COM1.txt");
     QVERIFY(!UupDumpApi::isSafeAria2FileEntry(e));
+    // The WHOLE catalog (uup_dump_api.cpp:531-539), bare and with an extension: sampling
+    // three members left the other nineteen free to fall out of the list -- only CON, NUL,
+    // COM1 and LPT9 are named anywhere in the suite, so dropping PRN/AUX (the two names a
+    // "generate COM1..9/LPT1..9 in a loop" rewrite forgets) would ship green and let
+    // aria2 out=PRN.esd open the printer device.
+    const QStringList reserved = QStringLiteral(
+                                     "CON PRN AUX NUL COM1 COM2 COM3 COM4 COM5 COM6 COM7 COM8 COM9 "
+                                     "LPT1 LPT2 LPT3 LPT4 LPT5 LPT6 LPT7 LPT8 LPT9")
+                                     .split(QLatin1Char(' '));
+    QCOMPARE(reserved.size(), qsizetype(22));
+    for (const QString& name : reserved) {
+        e.fileName = name;
+        QVERIFY2(!UupDumpApi::isSafeAria2FileEntry(e), qPrintable(e.fileName));
+        e.fileName = name.toLower() + QStringLiteral(".esd");
+        QVERIFY2(!UupDumpApi::isSafeAria2FileEntry(e), qPrintable(e.fileName));
+    }
+    // ...and ONLY the exact pre-dot base is reserved (uup_dump_api.cpp:529-530,540): the
+    // guard must not turn into a prefix match and start refusing ordinary CDN names, and
+    // COM0/LPT0 are not devices.
+    e.fileName = QStringLiteral("COM0.esd");
+    QVERIFY(UupDumpApi::isSafeAria2FileEntry(e));
+    e.fileName = QStringLiteral("LPT0.esd");
+    QVERIFY(UupDumpApi::isSafeAria2FileEntry(e));
+    e.fileName = QStringLiteral("console_en-us.esd");
+    QVERIFY(UupDumpApi::isSafeAria2FileEntry(e));
+    e.fileName = QStringLiteral("auxiliary.esd");
+    QVERIFY(UupDumpApi::isSafeAria2FileEntry(e));
 }
 
 void TestUupDumpApi::isSafeAria2FileEntry_rejectsControlCharInFileName() {

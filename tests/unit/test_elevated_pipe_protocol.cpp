@@ -131,6 +131,18 @@ private Q_SLOTS:
         auto doc = QJsonDocument::fromJson(json_bytes);
         QCOMPARE(doc["code"].toInt(), 413);
         QCOMPARE(doc["message"].toString(), "Task not allowed");
+        // Round-trip anchor: the body this builder emits must be exactly what the READER's
+        // TaskError schema gate demands, and that gate must refuse both malformed arms.
+        // Nothing in the suite reaches taskErrorBodyIsValid today, so `case TaskError:
+        // return false;` (every real helper error frame dropped -> helper_crashed instead
+        // of the actual message) and `return true;` (a forged empty body accepted as an
+        // error report) BOTH ship green.
+        using T = sak::PipeMessageType;
+        QVERIFY(sak::parsePayload(T::TaskError, json_bytes).valid);
+        QVERIFY(!sak::parsePayload(T::TaskError, R"({"message":"Task not allowed"})").valid);
+        QVERIFY(!sak::parsePayload(T::TaskError, R"({"code":413})").valid);
+        QVERIFY(!sak::parsePayload(T::TaskError, R"({"code":"413","message":"x"})").valid);
+        QVERIFY(!sak::parsePayload(T::TaskError, R"({"code":413,"message":{}})").valid);
     }
 
     void testBuildCancelRequest() {
@@ -187,6 +199,18 @@ private Q_SLOTS:
         // TaskResult with empty payload should be invalid
         sak::PipeMessage msg = sak::parsePayload(sak::PipeMessageType::TaskResult, {});
         QVERIFY(!msg.valid);
+        // That refusal is decided by the payload.isEmpty() branch and never reaches the
+        // TaskResult field schema. Add the non-vacuity anchor (a well-formed body IS
+        // accepted) plus both refusal arms of taskResultBodyIsValid, which nothing else in
+        // the suite exercises: with no accept anchor a blanket `case TaskResult: return
+        // false;` would drop every real helper result (each task -> helper_crashed) and
+        // still ship green.
+        using T = sak::PipeMessageType;
+        QVERIFY(sak::parsePayload(T::TaskResult, R"({"success":true,"data":{}})").valid);
+        QVERIFY(!sak::parsePayload(T::TaskResult, R"({"success":1,"data":{}})").valid);
+        QVERIFY(!sak::parsePayload(T::TaskResult, R"({"data":{}})").valid);
+        QVERIFY(!sak::parsePayload(T::TaskResult, R"({"success":true})").valid);
+        QVERIFY(!sak::parsePayload(T::TaskResult, R"({"success":true,"data":[]})").valid);
     }
 
     void testParseInvalidJson() {
@@ -208,7 +232,23 @@ private Q_SLOTS:
     void testPipeNameFormat() {
         QString name = sak::generatePipeName();
         QVERIFY(name.startsWith(sak::kPipeBasePath));
-        QVERIFY(name.length() > static_cast<int>(strlen(sak::kPipeBasePath)));
+        // Pin the exact generated shape instead of a length floor: base + decimal pid + '_' +
+        // exactly kPipeNonceHexWidth lowercase hex digits. "longer than the base path" is already
+        // satisfied by the pid digits alone, so a nonce truncated to a couple of hex digits ships
+        // green (testPipeNameUniqueness only flakes, it does not fail) -- and a guessable name is
+        // exactly what the 64-bit CSPRNG nonce exists to prevent.
+        const QString suffix = name.mid(static_cast<int>(strlen(sak::kPipeBasePath)));
+        const int sep = static_cast<int>(suffix.indexOf(QLatin1Char('_')));
+        QVERIFY2(sep > 0, qPrintable(name));
+        QCOMPARE(suffix.left(sep),
+                 QString::number(static_cast<quint32>(QCoreApplication::applicationPid())));
+        const QString nonce = suffix.mid(sep + 1);
+        QCOMPARE(static_cast<int>(nonce.size()), sak::kPipeNonceHexWidth);
+        for (const QChar ch : nonce) {
+            const char16_t code = ch.unicode();
+            QVERIFY2((code >= u'0' && code <= u'9') || (code >= u'a' && code <= u'f'),
+                     qPrintable(name));
+        }
     }
 
     void testPipeNameUniqueness() {
