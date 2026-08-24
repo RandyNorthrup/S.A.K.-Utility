@@ -50,15 +50,26 @@ private Q_SLOTS:
         online_running.online_worker_running = true;
         QVERIFY(sak::packageOperationInFlight(online_running));
         // Offline entry points read the same predicate, so they see the online work.
-        QVERIFY(!online_running.offline_claimed);
-        QVERIFY(!online_running.offline_worker_running);
+        QCOMPARE(online_running.offline_claimed, false);
+        QCOMPARE(online_running.offline_worker_running, false);
+        // The mixed sample the single authority must answer for: an offline bundle install
+        // claimed on top of the running online install is busy, never idle.
+        sak::PackageOperationActivity both_paths = online_running;
+        both_paths.offline_claimed = true;
+        both_paths.offline_worker_running = true;
+        QCOMPARE(sak::packageOperationInFlight(both_paths), true);
 
         sak::PackageOperationActivity offline_running;
         offline_running.offline_claimed = true;
         offline_running.offline_worker_running = true;
         QVERIFY(sak::packageOperationInFlight(offline_running));
-        QVERIFY(!offline_running.online_claimed);
-        QVERIFY(!offline_running.online_worker_running);
+        QCOMPARE(offline_running.online_claimed, false);
+        QCOMPARE(offline_running.online_worker_running, false);
+        // Reverse overlap: an online install claimed while the offline worker is still
+        // running keeps the panel busy even before any online worker thread reports running.
+        sak::PackageOperationActivity offline_plus_online_claim = offline_running;
+        offline_plus_online_claim.online_claimed = true;
+        QCOMPARE(sak::packageOperationInFlight(offline_plus_online_claim), true);
     }
 
     // The claim flag covers the dispatch window before the worker thread reports running,

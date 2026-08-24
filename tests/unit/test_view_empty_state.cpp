@@ -57,6 +57,12 @@ void ViewEmptyStateTests::loadingOverridesRowCount() {
     empty.setLoading(QStringLiteral("Scanning disks..."));
     QVERIFY(empty.isOverlayVisible());  // loading shows even with rows
     QCOMPARE(empty.overlayText(), QStringLiteral("Scanning disks..."));
+
+    // An empty loading string is documented as equivalent to clearLoading(), so
+    // the row-count-driven state must come straight back (rows present -> hidden).
+    empty.setLoading(QString());
+    QVERIFY(!empty.isOverlayVisible());
+    QCOMPARE(empty.overlayText(), QStringLiteral("No disks scanned"));
 }
 
 void ViewEmptyStateTests::clearLoadingRestoresRowDrivenState() {
@@ -78,6 +84,12 @@ void ViewEmptyStateTests::emptyTextIsShownAndUpdatable() {
     empty.setEmptyText(QStringLiteral("No packages found"));
     QCOMPARE(empty.overlayText(), QStringLiteral("No packages found"));
     QVERIFY(empty.isOverlayVisible());
+
+    // The message is announced to assistive technology, and the announcement
+    // tracks setEmptyText() instead of going stale on the constructor's text.
+    auto* overlay = table.viewport()->findChild<QWidget*>();
+    QVERIFY(overlay != nullptr);
+    QCOMPARE(overlay->accessibleName(), QStringLiteral("No packages found"));
 }
 
 void ViewEmptyStateTests::worksOnListWidget() {
@@ -96,11 +108,20 @@ void ViewEmptyStateTests::survivesViewDestruction() {
     // signal connections must be tied to the label's lifetime so the callback can
     // never reach a dangling setText(). Destroying a populated view must not crash.
     auto* table = new QTableWidget(0, 2);
-    new sak::ui::ViewEmptyState(table, QStringLiteral("Nothing here"));
+    auto* empty = new sak::ui::ViewEmptyState(table, QStringLiteral("Nothing here"));
+    // The view is the overlay's QObject parent (view_empty_state.cpp:18); that parenting
+    // is what ties the overlay's lifetime to the view it decorates.
+    QCOMPARE(empty->parent(), static_cast<QObject*>(table));
+    QVERIFY(empty->isOverlayVisible());
     table->insertRow(0);
     table->insertRow(1);
-    delete table;  // triggers the model-reset-during-destruction path
-    QVERIFY(true);
+    QVERIFY(!empty->isOverlayVisible());
+    QCOMPARE(empty->overlayText(), QStringLiteral("Nothing here"));
+
+    bool state_destroyed = false;
+    QObject::connect(empty, &QObject::destroyed, [&state_destroyed] { state_destroyed = true; });
+    delete table;              // triggers the model-reset-during-destruction path
+    QVERIFY(state_destroyed);  // died WITH the view, not orphaned or leaked
 }
 
 QTEST_MAIN(ViewEmptyStateTests)

@@ -5024,6 +5024,49 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 FIRST-pass sweep b79 (gated 249/249): 20 weak assertions pinned across
+    five never-swept files (ai_cancellation_token 8, organizer_worker 4, view_empty_state 3,
+    win32_mcp_uia_ref 3, app_installation_busy 2).
+    A LITERAL QVERIFY(true): survivesViewDestruction ended in QVERIFY(true), so it could fail only
+    on a hard crash and every observable contract of the overlay was unpinned. Re-parenting the
+    ViewEmptyState to nullptr -- orphaning and leaking it for each of the 15+ panels that build
+    one, and leaving its view pointer dangling past the view's death -- shipped green, as did
+    deleting the label creation outright, which kills the whole overlay feature. The test now
+    pins the QObject parenting and requires the overlay to die WITH the view. HONESTY NOTE: the
+    verifier explicitly reported that one mutant it had considered (reverting the connection
+    CONTEXT to `this`) is NOT killed by this pin and cannot be caught by any assertion in a
+    non-sanitized unit test, rather than claiming coverage it does not have.
+    Two more view_empty_state gaps: setLoading(QString()) is documented as equivalent to
+    clearLoading(), and no test in the tree ever called it, so hard-wiring the loading flag to
+    true left a permanently visible BLANK label pasted over a populated view; and the
+    setAccessibleName call inside refresh() had zero coverage, so deleting it (every overlay
+    announces nothing to a screen reader) or hoisting it into the constructor (the announcement
+    freezes on the ctor text and goes stale on every later setEmptyText) both shipped green.
+    ai_cancellation_token: the cancel stamp is threaded down the tree from ONE instant, and only
+    the root's validity was checked -- so descendants each taking their own "now" passed. The
+    child-cancel isolation test asserted only the parent's flag, not that the parent kept NO
+    reason and NO timestamp, and never checked that the untouched sibling stays REGISTERED so a
+    later root cancel still reaches it. The toJson pins were two fields of a five-field object
+    plus a child-array SIZE; the concurrency stress test called child.toJson() and discarded the
+    result with (void), so a torn or invalid JSON produced under contention -- the entire reason
+    to call it there -- was unobservable.
+    organizer_worker: previewResults carries the whole user-visible output of a dry run and had
+    no spy at all, so a preview that planned nothing still emitted finished() and passed. The
+    exact summary text and operation count are pinned now, along with the planned operations
+    themselves (source -> category|destination) and the fact that a dry run writes NOTHING, not
+    even a category folder -- "no files moved" is equally true of a preview that never scanned.
+    The apply path checked only that the destination files exist, which also passes an
+    executeMove that drops its counter or that deletes the source and leaves an empty placeholder;
+    it now pins movedCount and reads the relocated bytes back.
+    win32_mcp_uia_ref: every drift case changed the node AT the ref, so a whole-tree "anything
+    changed" implementation stayed green on the entire file -- an unrelated sibling repainting
+    would then invalidate every stored ref. The out-of-range case used an EMPTY live walk, which
+    an isEmpty()-shaped guard also catches, so the ref >= live.size() bound was not isolated. And
+    the bounds case moved the control only horizontally, leaving the `top` comparison dead
+    file-wide: a control pushed down a row reported no drift.
+    app_installation_busy: the online and offline in-flight samples were tested in isolation
+    only, so the mixed states the single authority exists to answer for -- an offline bundle
+    claimed on top of a running online install, and the reverse -- were never asked.
   - PROGRESS 2026-08-24 FIRST-pass sweep b78 (gated 249/249): 22 weak assertions pinned across
     five never-swept files (ai_recovery_policy 9, ai_run_state 4, wifi_profile_scanner 4,
     win32_mcp_json_clamp 3, elevation_manager 2).
