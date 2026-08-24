@@ -124,7 +124,13 @@ void runFuzz(const char* label,
         const QByteArray banner = failureBanner(QString::fromLatin1(label), outcome);
         QVERIFY2(false, banner.constData());
     }
-    QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
+    // On the all-pass path (guaranteed here: any failure QVERIFY2(false)-returns above),
+    // run() increments iterations_run once per seed (checkSeeds) plus once per mutation
+    // iteration, so the exact count is corpus.size() + the iteration budget. The old >=
+    // bound would still pass if the mutation loop ran ZERO iterations -- the whole
+    // campaign silently evaporating while the seed rounds alone satisfied it.
+    QCOMPARE(outcome.iterations_run,
+             static_cast<int>(corpus.size()) + sak::fuzz::iterationsFromEnv());
 }
 
 }  // namespace
@@ -154,14 +160,36 @@ private Q_SLOTS:
         const QByteArray over(sak::ai::mcp::kMaxJsonRpcMessageBytes + 1, 'a');
         const QJsonObject rejected = sak::ai::mcp::parseJsonLine(over, &error);
         QVERIFY(rejected.isEmpty());
-        QVERIFY2(error.contains(QStringLiteral("ceiling")), error.toUtf8().constData());
+        // Byte-exact: the reason names the ceiling VALUE, which separates the size branch from
+        // the parse-error and version-tag branches word for word.
+        QCOMPARE(error, QStringLiteral("MCP message exceeds the 16777216-byte ceiling"));
+
+        // Boundary: the guard is strictly greater-than, so a line of EXACTLY the ceiling is
+        // legal and must still parse. A >= mutation would wrongly refuse a maximum-sized
+        // message, and nothing else in the suite reaches this size.
+        QByteArray at_ceiling = QByteArrayLiteral("{\"jsonrpc\":\"2.0\",\"id\":1,\"pad\":\"");
+        const QByteArray at_tail = QByteArrayLiteral("\"}");
+        at_ceiling.append(QByteArray(
+            sak::ai::mcp::kMaxJsonRpcMessageBytes - at_ceiling.size() - at_tail.size(), 'a'));
+        at_ceiling.append(at_tail);
+        QCOMPARE(at_ceiling.size(), sak::ai::mcp::kMaxJsonRpcMessageBytes);
+        QString at_error;
+        const QJsonObject at_parsed = sak::ai::mcp::parseJsonLine(at_ceiling, &at_error);
+        QVERIFY2(at_error.isEmpty(), at_error.toUtf8().constData());
+        QCOMPARE(at_parsed.value(QStringLiteral("id")).toInt(), 1);
 
         // Non-vacuity: a well-formed line under the ceiling still parses to a JSON-RPC object.
         const QByteArray ok("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n");
         const QJsonObject parsed = sak::ai::mcp::parseJsonLine(ok, &error);
         QVERIFY(!parsed.isEmpty());
         QVERIFY(error.isEmpty());
-        QCOMPARE(parsed.value(QStringLiteral("jsonrpc")).toString(), QStringLiteral("2.0"));
+        // The WHOLE object, not one field: parseJsonLine returns doc.object() intact and its
+        // callers correlate on "id" and dispatch on "result"/"error", so a version that kept
+        // only the fields this test looked at would break every one of them.
+        QCOMPARE(parsed,
+                 QJsonObject({{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                              {QStringLiteral("id"), 1},
+                              {QStringLiteral("result"), QJsonObject{}}}));
     }
 };
 

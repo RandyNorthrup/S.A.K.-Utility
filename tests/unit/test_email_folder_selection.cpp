@@ -62,6 +62,28 @@ private Q_SLOTS:
                                    QStringLiteral("IPF.Contact.MOC.ImContactList")));
         QVERIFY(!sak::isMailFolder(QStringLiteral("Birthdays"),
                                    QStringLiteral("IPF.Appointment.Birthday")));
+        // The prefix rule holds for EVERY entry of nonMailContainerPrefixes(), not only the two
+        // with famous variants, and it matches a PREFIX of the class rather than a substring
+        // anywhere in it. Dropping any entry exports that container's items as email.
+        const QVector<QString> non_mail_prefixes{QStringLiteral("IPF.Contact"),
+                                                 QStringLiteral("IPF.Appointment"),
+                                                 QStringLiteral("IPF.Task"),
+                                                 QStringLiteral("IPF.StickyNote"),
+                                                 QStringLiteral("IPF.Journal")};
+        for (const QString& prefix : non_mail_prefixes) {
+            const QByteArray label = prefix.toUtf8();
+            QVERIFY2(!sak::isMailFolder(QStringLiteral("Folder"), prefix), label.constData());
+            QVERIFY2(!sak::isMailFolder(QStringLiteral("Folder"),
+                                        prefix + QStringLiteral(".Variant")),
+                     label.constData());
+            // A class that merely ENDS with one of them is mail, so the rule is not contains().
+            QVERIFY2(sak::isMailFolder(QStringLiteral("Folder"),
+                                       QStringLiteral("IPF.Note.") + prefix),
+                     label.constData());
+            // ...and a truncated class is not one of them at all.
+            QVERIFY2(sak::isMailFolder(QStringLiteral("Folder"), prefix.chopped(1)),
+                     label.constData());
+        }
     }
 
     // IPF.Configuration is matched exactly, not by prefix, so a mail folder whose class
@@ -72,12 +94,37 @@ private Q_SLOTS:
     }
 
     void bookkeepingFolderNamesAreExcluded() {
-        QVERIFY(!sak::isMailFolder(QStringLiteral("Sync Issues"), QStringLiteral("IPF.Note")));
-        QVERIFY(!sak::isMailFolder(QStringLiteral("Conflicts"), QStringLiteral("IPF.Note")));
-        QVERIFY(
-            !sak::isMailFolder(QStringLiteral("Conversation History"), QStringLiteral("IPF.Note")));
-        // Name matching is case-insensitive: the store's casing varies by Outlook version.
-        QVERIFY(!sak::isMailFolder(QStringLiteral("sync issues"), QStringLiteral("IPF.Note")));
+        // Every name in nonMailFolderNames(). Only three of the thirteen were covered, so
+        // dropping any of the other ten put an Outlook housekeeping folder in the tree AND in
+        // "Export ALL Mail Folders".
+        const QVector<QString> bookkeeping{QStringLiteral("PersonMetadata"),
+                                           QStringLiteral("MeContact"),
+                                           QStringLiteral("ExternalContacts"),
+                                           QStringLiteral("Quick Step Settings"),
+                                           QStringLiteral("Conversation Action Settings"),
+                                           QStringLiteral("Yammer Root"),
+                                           QStringLiteral("Social Activity Notifications"),
+                                           QStringLiteral("Conversation History"),
+                                           QStringLiteral("Files"),
+                                           QStringLiteral("Sync Issues"),
+                                           QStringLiteral("Conflicts"),
+                                           QStringLiteral("Local Failures"),
+                                           QStringLiteral("Server Failures")};
+        for (const QString& name : bookkeeping) {
+            const QByteArray label = name.toUtf8();
+            QVERIFY2(!sak::isMailFolder(name, QStringLiteral("IPF.Note")), label.constData());
+            // Name matching is case-insensitive: the store's casing varies by Outlook version.
+            QVERIFY2(!sak::isMailFolder(name.toUpper(), QStringLiteral("IPF.Note")),
+                     label.constData());
+            QVERIFY2(!sak::isMailFolder(name.toLower(), QStringLiteral("IPF.Note")),
+                     label.constData());
+            // The WHOLE name must match: a user folder that merely begins with or contains a
+            // bookkeeping name is real mail and must survive both the tree and the export.
+            QVERIFY2(sak::isMailFolder(name + QStringLiteral(" 2025"), QStringLiteral("IPF.Note")),
+                     label.constData());
+            QVERIFY2(sak::isMailFolder(QStringLiteral("Re: ") + name, QStringLiteral("IPF.Note")),
+                     label.constData());
+        }
     }
 
     // ====================================================================
@@ -100,6 +147,17 @@ private Q_SLOTS:
         const sak::PstFolder* found = sak::findIpmSubtree(tree);
         QVERIFY(found != nullptr);
         QCOMPARE(found->node_id, static_cast<uint64_t>(20));
+        // The winner is the node in the CALLER's tree, not a copy: the callers read
+        // found->children straight out of it.
+        QCOMPARE(found, &tree.at(1).children.at(0));
+        // The childless sibling is not merely a loser. With no populated subtree anywhere it IS
+        // the answer, which is what makes a non-null result mean "this store HAS an IPM_SUBTREE"
+        // rather than "...a useful one" -- a branch nothing exercised.
+        const QVector<sak::PstFolder> only_public{public_root};
+        const sak::PstFolder* only_empty = sak::findIpmSubtree(only_public);
+        QVERIFY(only_empty != nullptr);
+        QCOMPARE(only_empty->node_id, static_cast<uint64_t>(10));
+        QVERIFY(only_empty->children.isEmpty());
     }
 
     void topOfInformationStoreIsRecognised() {

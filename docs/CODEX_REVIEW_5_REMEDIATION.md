@@ -5024,6 +5024,50 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 FIRST-pass sweep b75 (gated 249/249): 20 weak assertions pinned across
+    four never-swept files plus two more suites outside the sweep set that carried an identical
+    defect. test_fuzz_command_classifier came back 0 confirmed / 3 false-positive -- a genuinely
+    clean file, recorded as such rather than padded.
+    THE SHARED-HARNESS FINDING: four fuzz suites asserted `outcome.iterations_run >=
+    corpus.size()`, a floor the SEED pass alone satisfies. A run() that stopped honoring its
+    iterations parameter -- a zeroed loop bound, or an early return after checkSeeds -- executes
+    ZERO mutants, the entire mutation campaign silently evaporates, and the assertion stays green.
+    Fourteen of the eighteen fuzz suites already pin the exact value (corpus.size() +
+    iterationsFromEnv()), so this was a known-good convention with four stragglers; per
+    fix-every-issue-found all four are converted, including test_fuzz_ext_reader and
+    test_fuzz_mbox_container which were outside the b75 file set.
+    fs_detector (7): the exact-value covering suite compared ONE of five result fields, so the
+    detail catalog that IS the product of each parse was ignored -- APFS 11 lines, ext 8, HFS+ 4,
+    NTFS none -- along with source and both size fields. The verifier hand-walked
+    detectApfsFamily / detectExtFamily / detectHfsHeaderAt to derive every literal, and all six
+    catalogs landed green first try. Two guard-isolation gaps closed with them: the APFS magic
+    test perturbed only the LAST of four bytes, so a compare window shifted one byte in still
+    accepted real "NXSB" and still rejected "NXSX" while a buffer carrying "ZXSB" would be
+    reported to the technician as an APFS container; and the NTFS case tested only the accepting
+    combination of a two-guard acceptor, so the OEM tag alone deciding the family was invisible.
+    The garbage case used an all-0xFF buffer, which every family guard refuses at once and which
+    therefore isolates none of them.
+    mcp_framing (2, plus the harness fix): the 16 MiB ceiling refusal was checked by
+    contains("ceiling") and the boundary itself -- a line of EXACTLY the ceiling, which the
+    strictly-greater guard must still parse -- had no test, so tightening to >= would wrongly
+    refuse a maximum-sized message with nothing going red. parseJsonLine returns doc.object()
+    WHOLE and its callers correlate on "id" and dispatch on "result"/"error"; only one field was
+    compared.
+    email_folder_selection (3): catalog under-coverage in the two lists that decide what reaches
+    "Export ALL Mail Folders". Three of THIRTEEN bookkeeping folder names were covered and two of
+    FIVE non-mail container prefixes, so dropping any other entry put an Outlook housekeeping
+    folder in the export with every assertion green. Both loops now also pin the matching RULE --
+    whole-name and case-insensitive for names, prefix rather than substring for classes -- and
+    findIpmSubtree gained the branch where the only subtree present is the empty one, which is
+    what makes a non-null result mean "this store HAS an IPM_SUBTREE" rather than "a useful one".
+    image_source (5): four of the nine extension-catalog rows (wic/zip/dmg/dsk) were unreachable
+    from any test in the tree; detectFormat was never given an uppercase name though production
+    lower-cases the suffix precisely because vendor downloads arrive as "WIN11.ISO";
+    isCompressed("file.iso") is refused for TWO reasons at once (wrong extension AND no such
+    file) so the content probe behind it was untested -- a .iso that is really a gzip stream must
+    never be written raw to the device; the constructor derives a whole metadata block from the
+    path and only the closed flag was checked; and the failed open reported through its RETURN
+    value only, while the flash coordinator listens on readError.
   - PROGRESS 2026-08-24 FIRST-pass sweep b74 (gated 249/249): 22 weak assertions pinned across the
     next five never-swept files (ai_tool_call_router 6, ai_async_tool_runner 6,
     file_explorer_session_store 6, image_flasher_panel 2, fuzz_pst_structure 2). The verifier's

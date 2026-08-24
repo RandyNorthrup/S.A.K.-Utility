@@ -161,7 +161,13 @@ private Q_SLOTS:
             const QByteArray banner = failureBanner(outcome);
             QVERIFY2(false, banner.constData());
         }
-        QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
+        // On the all-pass path (guaranteed here: any failure QVERIFY2(false)-returns above),
+        // run() increments iterations_run once per seed (checkSeeds) plus once per mutation
+        // iteration, so the exact count is corpus.size() + the iteration budget. The old >=
+        // bound would still pass if the mutation loop ran ZERO iterations -- the whole
+        // campaign silently evaporating while the seed rounds alone satisfied it.
+        QCOMPARE(outcome.iterations_run,
+                 static_cast<int>(corpus.size()) + sak::fuzz::iterationsFromEnv());
     }
 
     // The shared accept-path fixture must actually open, or the fuzz above would never reach the

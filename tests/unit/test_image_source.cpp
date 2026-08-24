@@ -6,6 +6,7 @@
 
 #include "sak/image_source.h"
 
+#include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
 
@@ -92,6 +93,13 @@ void TestImageSource::metadata_isValid_unknownFormat() {
 
 void TestImageSource::detectFormat_iso() {
     QCOMPARE(FileImageSource::detectFormat("image.iso"), ImageFormat::ISO);
+    // The suffix is lower-cased before the table lookup, so case must not change the verdict --
+    // an uppercase name off a real vendor download ("WIN11.ISO") is the common case, and every
+    // detectFormat assertion in this file used a lower-case name.
+    QCOMPARE(FileImageSource::detectFormat("IMAGE.ISO"), ImageFormat::ISO);
+    QCOMPARE(FileImageSource::detectFormat("Image.Iso"), ImageFormat::ISO);
+    // Only the EXTENSION decides: a name that merely contains "iso" is not an image.
+    QCOMPARE(FileImageSource::detectFormat("isolated.txt"), ImageFormat::Unknown);
 }
 
 void TestImageSource::detectFormat_img() {
@@ -115,6 +123,16 @@ void TestImageSource::detectFormat_xz() {
 
 void TestImageSource::detectFormat_unknown() {
     QCOMPARE(FileImageSource::detectFormat("readme.txt"), ImageFormat::Unknown);
+    // The other half of the extension catalog, which no case in the tree reached: dropping any
+    // of these four rows misclassifies a real image as Unknown while every existing
+    // detectFormat assertion still passes.
+    QCOMPARE(FileImageSource::detectFormat("install.wic"), ImageFormat::WIC);
+    QCOMPARE(FileImageSource::detectFormat("bundle.zip"), ImageFormat::ZIP);
+    QCOMPARE(FileImageSource::detectFormat("apple.dmg"), ImageFormat::DMG);
+    QCOMPARE(FileImageSource::detectFormat("floppy.dsk"), ImageFormat::DSK);
+    // A near-miss extension must stay Unknown rather than fall into a neighbouring row.
+    QCOMPARE(FileImageSource::detectFormat("archive.gzipped"), ImageFormat::Unknown);
+    QCOMPARE(FileImageSource::detectFormat("readme.txt.bak"), ImageFormat::Unknown);
 }
 
 void TestImageSource::detectFormat_emptyPath() {
@@ -139,6 +157,25 @@ void TestImageSource::isCompressed_xz() {
 
 void TestImageSource::isCompressed_iso() {
     QVERIFY(!CompressedImageSource::isCompressed("file.iso"));
+    // "file.iso" is refused for TWO reasons at once -- the extension is not compressed AND no
+    // such file exists -- so the content probe behind isCompressed was never reached. Pin it
+    // with real files: uncompressed bytes under a name carrying no compressed extension stay
+    // false...
+    QTemporaryFile plain;
+    QVERIFY(plain.open());
+    const QByteArray plainBytes("CD001 plain bytes, no compression header");
+    QCOMPARE(plain.write(plainBytes), qint64(plainBytes.size()));
+    plain.close();
+    QVERIFY(!CompressedImageSource::isCompressed(plain.fileName()));
+    // ...while a gzip stream is recognised from its MAGIC even when the name carries no
+    // compressed extension at all. A .iso that is really a gzip image must never be written
+    // raw to the device.
+    QTemporaryFile gzipBody;
+    QVERIFY(gzipBody.open());
+    const QByteArray gzipMagic = QByteArray::fromHex("1f8b0800000000000003");
+    QCOMPARE(gzipBody.write(gzipMagic), qint64(gzipMagic.size()));
+    gzipBody.close();
+    QVERIFY(CompressedImageSource::isCompressed(gzipBody.fileName()));
 }
 
 void TestImageSource::isCompressed_emptyPath() {
@@ -168,12 +205,40 @@ void TestImageSource::isCompressed_zipNotStreamable() {
 void TestImageSource::fileSource_construction() {
     FileImageSource source("C:\\nonexistent.iso");
     QVERIFY(!source.isOpen());
+    // The constructor populates the whole metadata block from the path alone; pin the fields it
+    // derives, not just the closed flag.
+    const ImageMetadata fileMeta = source.metadata();
+    QCOMPARE(fileMeta.name, QStringLiteral("nonexistent.iso"));
+    QCOMPARE(fileMeta.path, QStringLiteral("C:\\nonexistent.iso"));
+    QCOMPARE(fileMeta.format, ImageFormat::ISO);
+    QCOMPARE(fileMeta.isCompressed, false);
+    QCOMPARE(fileMeta.uncompressedSize, qint64(0));
+    // No device exists before open(), so every cursor accessor must answer from the closed
+    // state instead of dereferencing it, and seek/read must fail closed.
+    QCOMPARE(source.position(), qint64(0));
+    QVERIFY(source.atEnd());
+    QVERIFY(!source.seek(0));
+    QByteArray sink(8, '\0');
+    QCOMPARE(source.read(sink.data(), sink.size()), qint64(-1));
 }
 
 void TestImageSource::fileSource_openNonExistent() {
     FileImageSource source("C:\\definitely_does_not_exist_12345.iso");
+    QSignalSpy errorSpy(&source, &ImageSource::readError);
     const bool opened = source.open();
     QVERIFY(!opened);
+    QVERIFY(!source.isOpen());
+    // A refusal that is only RETURNED is invisible to the flash coordinator, which listens on
+    // readError: exactly one report, carrying the documented prefix. The tail is the OS
+    // errorString (locale-dependent), so only the invariant prefix is pinned.
+    QCOMPARE(errorSpy.count(), 1);
+    const QString reported = errorSpy.at(0).at(0).toString();
+    QVERIFY2(reported.startsWith(QStringLiteral("Failed to open file: ")), qPrintable(reported));
+    // The failed open must leave the source cleanly closed rather than half-initialised: a
+    // second attempt re-tries and reports again instead of taking an "already open"
+    // short-circuit and returning true.
+    QVERIFY(!source.open());
+    QCOMPARE(errorSpy.count(), 2);
     QVERIFY(!source.isOpen());
 }
 

@@ -150,7 +150,13 @@ private Q_SLOTS:
             const QByteArray banner = failureBanner(outcome);
             QVERIFY2(false, banner.constData());
         }
-        QVERIFY(outcome.iterations_run >= static_cast<int>(corpus.size()));
+        // On the all-pass path (guaranteed here: any failure QVERIFY2(false)-returns above),
+        // run() increments iterations_run once per seed (checkSeeds) plus once per mutation
+        // iteration, so the exact count is corpus.size() + the iteration budget. The old >=
+        // bound would still pass if the mutation loop ran ZERO iterations -- the whole
+        // campaign silently evaporating while the seed rounds alone satisfied it.
+        QCOMPARE(outcome.iterations_run,
+                 static_cast<int>(corpus.size()) + sak::fuzz::iterationsFromEnv());
     }
 
     // -------------------------------------------------------------------------------------------
@@ -170,6 +176,28 @@ private Q_SLOTS:
             image, static_cast<uint64_t>(image.size()));
         QVERIFY(detection.has_value());
         QCOMPARE(detection->file_system, QStringLiteral("APFS"));
+        QCOMPARE(detection->source, QStringLiteral("RawSignature"));
+        // The family name is one of five fields; the detail catalog IS the product of the parse.
+        // A zero block size is not a usable geometry: nothing may be reported as capacity, and
+        // the sanity block must surface BOTH warnings rather than an "consistent" OK line.
+        QCOMPARE(detection->total_bytes, 0ULL);
+        QCOMPARE(detection->free_bytes, 0ULL);
+        QCOMPARE(detection->details,
+                 QStringList({QStringLiteral("Container UUID: "
+                                             "00000000-0000-0000-0000-000000000000"),
+                              QStringLiteral("Features: 0x0000000000000000"),
+                              QStringLiteral("Read-only compatible features: "
+                                             "0x0000000000000000"),
+                              QStringLiteral("Incompatible features: 0x0000000000000000"),
+                              QStringLiteral("Checkpoint descriptor next index: 0"),
+                              QStringLiteral("Checkpoint data next index: 0"),
+                              QStringLiteral("Checkpoint descriptor start index: 0"),
+                              QStringLiteral("Checkpoint data start index: 0"),
+                              QStringLiteral("Volume OID slots used: 0"),
+                              QStringLiteral("Metadata sanity warning: APFS block size is "
+                                             "outside supported sane bounds"),
+                              QStringLiteral("Metadata sanity warning: APFS block count is "
+                                             "zero")}));
     }
 
     void rejectsApfsWhenFourthMagicByteWrong() {
@@ -180,6 +208,19 @@ private Q_SLOTS:
         const auto detection = sak::PartitionFileSystemDetector::detectBytes(
             image, static_cast<uint64_t>(image.size()));
         QVERIFY(!detection.has_value());
+        // No test anywhere perturbs magic byte 0, 1 or 2, so a compare window shifted one byte
+        // in still accepts real "NXSB" and still rejects "NXSX" -- while a buffer carrying
+        // "ZXSB" would be reported to the technician as an APFS container. Probe every position.
+        constexpr qsizetype kApfsMagicByteCount = 4;
+        for (qsizetype index = 0; index < kApfsMagicByteCount; ++index) {
+            QByteArray probe(kSeedBytes, '\0');
+            sak::testfixtures::writeAscii(&probe, kApfsMagicOffset, "NXSB");
+            probe[kApfsMagicOffset + index] = 'Z';
+            const auto probeDetection = sak::PartitionFileSystemDetector::detectBytes(
+                probe, static_cast<uint64_t>(probe.size()));
+            QVERIFY2(!probeDetection.has_value(),
+                     qPrintable(QStringLiteral("APFS magic byte %1 was not compared").arg(index)));
+        }
     }
 
     void detectsNtfsBySignedBootSectorOemTag() {
@@ -190,6 +231,19 @@ private Q_SLOTS:
             image, static_cast<uint64_t>(image.size()));
         QVERIFY(detection.has_value());
         QCOMPARE(detection->file_system, QStringLiteral("NTFS"));
+        QCOMPARE(detection->source, QStringLiteral("RawSignature"));
+        // A boot-sector verdict is a NAME ONLY: no geometry and no detail lines are claimed.
+        QCOMPARE(detection->total_bytes, 0ULL);
+        QCOMPARE(detection->free_bytes, 0ULL);
+        QCOMPARE(detection->details, QStringList());
+        // Production requires BOTH the OEM tag and the boot signature, but only the accepting
+        // combination was tested: strip the 0xAA55 and the sector is no longer a boot sector,
+        // so detection must fail closed rather than decide the family on the tag alone.
+        QByteArray unsignedImage(kSeedBytes, '\0');
+        sak::testfixtures::writeAscii(&unsignedImage, kOemTagOffset, "NTFS    ");
+        QVERIFY(!sak::PartitionFileSystemDetector::detectBytes(
+                     unsignedImage, static_cast<uint64_t>(unsignedImage.size()))
+                     .has_value());
     }
 
     void detectsExt2ByEf53SuperblockMagic() {
@@ -200,6 +254,20 @@ private Q_SLOTS:
             image, static_cast<uint64_t>(image.size()));
         QVERIFY(detection.has_value());
         QCOMPARE(detection->file_system, QStringLiteral("ext2"));
+        QCOMPARE(detection->source, QStringLiteral("RawSignature"));
+        // Zero total blocks fails the geometry guard: no capacity, no block detail lines, and no
+        // volume-label line for an all-zero label field.
+        QCOMPARE(detection->total_bytes, 0ULL);
+        QCOMPARE(detection->free_bytes, 0ULL);
+        QCOMPARE(detection->details,
+                 QStringList({QStringLiteral("Inodes: 0"),
+                              QStringLiteral("Free inodes: 0"),
+                              QStringLiteral("Blocks per group: 0"),
+                              QStringLiteral("Inodes per group: 0"),
+                              QStringLiteral("Journaled: No"),
+                              QStringLiteral("Feature compat: 0x00000000"),
+                              QStringLiteral("Feature incompat: 0x00000000"),
+                              QStringLiteral("Feature ro compat: 0x00000000")}));
     }
 
     void detectsHfsPlusByVolumeHeaderSignature() {
@@ -209,12 +277,30 @@ private Q_SLOTS:
             image, static_cast<uint64_t>(image.size()));
         QVERIFY(detection.has_value());
         QCOMPARE(detection->file_system, QStringLiteral("HFS+"));
+        QCOMPARE(detection->source, QStringLiteral("RawSignature"));
+        // Block size 0 fails the geometry guard: no capacity and no block detail lines, and with
+        // no wrapper present, no wrapper lines either.
+        QCOMPARE(detection->total_bytes, 0ULL);
+        QCOMPARE(detection->free_bytes, 0ULL);
+        QCOMPARE(detection->details,
+                 QStringList({QStringLiteral("Version: 0"),
+                              QStringLiteral("Files: 0"),
+                              QStringLiteral("Folders: 0"),
+                              QStringLiteral("Journaled: No")}));
     }
 
     void garbageAndEmptyBytesFailClosedToUnknown() {
         const auto allOnes = sak::PartitionFileSystemDetector::detectBytes(
             QByteArray(kSeedBytes, '\xFF'), static_cast<uint64_t>(kSeedBytes));
         QVERIFY(!allOnes.has_value());
+        // An all-0xFF buffer is refused by every family guard at once, so any single surviving
+        // guard satisfies it. 0xAA55 alone names no family: with no NTFS/exFAT OEM tag and no
+        // FAT type string the boot-sector branch must fall through to unknown, never default.
+        QByteArray signedBootSectorOnly(kSeedBytes, '\0');
+        sak::testfixtures::writeLe16(&signedBootSectorOnly, kBootSignatureOffset, kBootSignature);
+        QVERIFY(!sak::PartitionFileSystemDetector::detectBytes(
+                     signedBootSectorOnly, static_cast<uint64_t>(signedBootSectorOnly.size()))
+                     .has_value());
         const auto empty = sak::PartitionFileSystemDetector::detectBytes(QByteArray(), 0);
         QVERIFY(!empty.has_value());
     }
